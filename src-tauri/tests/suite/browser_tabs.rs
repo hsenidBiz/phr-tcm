@@ -1023,7 +1023,7 @@ async fn a_current_tab_that_closes_itself_fails_the_next_call_with_its_name() {
 
     // An action that acts in the page says so plainly, not as the browser
     // having stopped answering.
-    let out = execute(&mut cdp, &Action::CheckUrl { contains: "x".into() }).await;
+    let out = execute(&mut cdp, &Action::CheckUrl { contains: "x".into(), timeout_ms: None }).await;
     assert!(!out.ok && !out.harness, "{out:?}");
     assert_eq!(out.detail, "there is no tab preview");
 

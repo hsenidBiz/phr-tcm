@@ -693,3 +693,82 @@ fn a_clean_up_is_its_own_block_and_its_failure_its_own_line() {
     assert!(html.contains("<p><strong>Clean-up:</strong> button &quot;Delete&quot; not found</p>"), "{html}");
     assert!(!html.contains("<h4>Step 2</h4>"), "{html}");
 }
+
+
+#[test]
+fn the_new_check_options_have_words() {
+    let say = |v: serde_json::Value| action_words(&serde_json::from_value(v).unwrap());
+    let sel = serde_json::json!({ "css": "#n" });
+    assert_eq!(
+        say(serde_json::json!({ "kind": "expect_text", "selector": sel, "matches": "^Showing" })),
+        "expect #n to match /^Showing/"
+    );
+    assert_eq!(
+        say(serde_json::json!({ "kind": "expect_attribute", "selector": sel, "name": "aria-label", "matches": "^View " })),
+        "expect #n's aria-label to match /^View /"
+    );
+    assert_eq!(say(serde_json::json!({ "kind": "expect_count", "selector": sel, "at_least": 2 })), "expect at least 2 of #n");
+    assert_eq!(say(serde_json::json!({ "kind": "expect_count", "selector": sel, "at_most": 5 })), "expect at most 5 of #n");
+    assert_eq!(say(serde_json::json!({ "kind": "expect_count", "selector": sel, "equals": 3 })), "expect 3 of #n");
+}
+
+#[test]
+fn an_each_check_has_words() {
+    let say = |v: serde_json::Value| action_words(&serde_json::from_value(v).unwrap());
+    let list = serde_json::json!({ "css": "div.card" });
+    let h3 = serde_json::json!({ "css": "h3" });
+    assert_eq!(
+        say(serde_json::json!({ "kind": "expect_each", "selector": list, "child": h3, "matches": "^AUTOTEST " })),
+        "expect h3 in each of div.card to match /^AUTOTEST /"
+    );
+    assert_eq!(
+        say(serde_json::json!({ "kind": "expect_each", "selector": list, "visible": true, "child": h3, "min": 2 })),
+        "expect h3 in each of div.card to be visible (at least 2)"
+    );
+    assert_eq!(say(serde_json::json!({ "kind": "expect_each", "selector": list, "equals": "Draft" })), "expect each of div.card to read \"Draft\"");
+    assert_eq!(say(serde_json::json!({ "kind": "expect_each", "selector": list, "contains": "Draft", "min": 1 })), "expect each of div.card to contain \"Draft\"");
+    assert_eq!(say(serde_json::json!({ "kind": "expect_each", "selector": list, "not_empty": true })), "expect each of div.card to have text");
+    assert_eq!(
+        say(serde_json::json!({ "kind": "expect_each", "selector": list, "attribute": "href", "equals": "/a" })),
+        "expect each of div.card to have href=\"/a\""
+    );
+    assert_eq!(
+        say(serde_json::json!({ "kind": "expect_each", "selector": list, "attribute": "href", "contains": "a" })),
+        "expect each of div.card to have href containing \"a\""
+    );
+    assert_eq!(
+        say(serde_json::json!({ "kind": "expect_each", "selector": list, "attribute": "aria-label", "matches": "^View " })),
+        "expect each of div.card to have aria-label matching /^View /"
+    );
+    assert_eq!(
+        say(serde_json::json!({ "kind": "expect_each", "selector": list, "attribute": "title", "not_empty": true })),
+        "expect each of div.card to have a title"
+    );
+}
+
+#[test]
+fn an_order_check_and_a_position_check_have_words() {
+    let say = |v: serde_json::Value| action_words(&serde_json::from_value(v).unwrap());
+    assert_eq!(
+        say(serde_json::json!({ "kind": "expect_order", "selector": { "css": "li" }, "texts": ["All", "Draft", "Published"] })),
+        "expect li to list \"All\", \"Draft\", \"Published\" in that order"
+    );
+    let bar = serde_json::json!({ "css": "#bar" });
+    let new = serde_json::json!({ "css": "#new" });
+    for (relation, words) in [
+        ("left_of", "left of"),
+        ("right_of", "right of"),
+        ("above", "above"),
+        ("below", "below"),
+        ("inside", "inside"),
+        ("in_top_left", "in the top-left of"),
+        ("in_top_right", "in the top-right of"),
+        ("in_bottom_left", "in the bottom-left of"),
+        ("in_bottom_right", "in the bottom-right of"),
+    ] {
+        assert_eq!(
+            say(serde_json::json!({ "kind": "expect_position", "selector": new, "relative_to": bar, "relation": relation })),
+            format!("expect #new to be {words} #bar")
+        );
+    }
+}

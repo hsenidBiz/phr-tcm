@@ -17,7 +17,8 @@ use crate::browser::actions::{Action, DropAt, TAB_WAIT_MS, WHEN_VISIBLE_FLOOR_MS
 use crate::browser::expect::READ_TEXT_JS;
 use crate::browser::keys;
 use crate::browser::locator::Target;
-use crate::browser::table::{self, RowCount, SortAs, SortKind, TableCheck};
+use crate::browser::position::READ_BOX_JS;
+use crate::browser::table::{self, RowCount, SortAs, SortKind, TableCheck, SETTLE_MS, SETTLE_POLL_MS};
 use crate::browser::timing::Timing;
 use serde_json::Value;
 use std::collections::BTreeMap;
@@ -81,6 +82,15 @@ fn check_action(a: &Action, origins: &[String]) -> Res<()> {
         | Action::SwitchTab { .. }
         | Action::ExpectTabClosed { .. } => Ok(()),
         Action::PressKey { key, .. } => key_name(key).map(|_| ()),
+        Action::ExpectEach { selector, child, .. } => {
+            check_target(selector)?;
+            child.as_ref().map_or(Ok(()), check_target)
+        }
+        Action::ExpectOrder { selector, .. } => check_target(selector),
+        Action::ExpectPosition { selector, relative_to, .. } => {
+            check_target(selector)?;
+            check_target(relative_to)
+        }
         Action::Click { selector }
         | Action::Fill { selector, .. }
         | Action::WaitFor { selector, .. }
@@ -186,7 +196,17 @@ pub fn raw_spec(input: &RawSpecInput) -> Res<String> {
     let _ = write!(em.out, "  test({}, async ({{ page }}) => {{\n", lit(&input.script.title));
 
     em.line(4, "let cur = page;");
-    if uses(input, &|a| matches!(a, Action::ExpectText { .. } | Action::ExpectContainsText { .. })) {
+    // The app's text reader: `expect_text`, `expect_contains_text`, an
+    // `expect_each` that reads text and an `expect_order`.
+    if uses(input, &|a| {
+        matches!(
+            a,
+            Action::ExpectText { .. }
+                | Action::ExpectContainsText { .. }
+                | Action::ExpectOrder { .. }
+                | Action::ExpectEach { attribute: None, visible: false, .. }
+        )
+    }) {
         em.read_text();
     }
     if uses(input, &|a| {
@@ -196,6 +216,19 @@ pub fn raw_spec(input: &RawSpecInput) -> Res<String> {
             em.out.push_str(&l);
             em.out.push('\n');
         }
+    }
+    if uses(input, &|a| matches!(a, Action::ExpectCount { at_most: Some(_), .. })) {
+        em.still_count();
+    }
+    // The three checks that pass only once they have held still.
+    if uses(input, &|a| matches!(a, Action::ExpectEach { .. } | Action::ExpectOrder { .. } | Action::ExpectPosition { .. })) {
+        em.settle_helper();
+    }
+    if uses(input, &|a| matches!(a, Action::ExpectEach { attribute: None, visible: false, .. })) {
+        em.saw();
+    }
+    if uses(input, &|a| matches!(a, Action::ExpectPosition { .. })) {
+        em.placed();
     }
     if tabs {
         em.collector();
@@ -309,6 +342,95 @@ pub fn read_text_ts(indent: usize) -> Vec<String> {
     }
     lines
 }
+
+/// The app's own box reader (`READ_BOX_JS`) as a TypeScript function of the
+/// element, one line per entry: the body is the constant's, word for word
+/// (its frame walk - each frame element's corner, border and padding - is
+/// what puts a box in the top window); only `this` and the frame walk's
+/// `win` are given a type, so the spec type-checks. Playwright's own
+/// `boundingBox()` is not used: it moves a box by the frame element's
+/// border box, leaving the frame's border and padding out.
+pub fn read_box_ts(indent: usize) -> Vec<String> {
+    let typed = READ_BOX_JS.replacen("function() {", "function (this: Element) {", 1);
+    assert!(typed != READ_BOX_JS, "READ_BOX_JS no longer starts with `function() {{`");
+    let walked = typed.replacen(
+        "let win = this.ownerDocument.defaultView;",
+        "let win: Window | null = this.ownerDocument.defaultView;",
+        1,
+    );
+    assert!(walked != typed, "READ_BOX_JS no longer starts its frame walk with `let win = ...defaultView;`");
+    let pad = " ".repeat(indent);
+    let mut lines: Vec<String> = walked.lines().map(|l| format!("{pad}{l}")).collect();
+    if let Some(first) = lines.first_mut() {
+        *first = format!("{pad}const readBox = (e: Element) => ({}", first.trim_start());
+    }
+    if let Some(last) = lines.last_mut() {
+        last.push_str(").call(e);");
+    }
+    lines
+}
+
+/// `expect_position`'s rule, written once per spec that uses it: the same
+/// as `browser::position::holds` and the element checks around it in
+/// `browser::expect` - one element each (none and several are different
+/// failures), a box of no size is nowhere, a pixel of give (`t`), and a
+/// corner is being inside with the centre in that quarter, a centre within
+/// a pixel of a midline counting for both halves. Answers why not, or what
+/// it read: both boxes, which must stay within a pixel of where the hold
+/// began (`settle`). Needs `readBox` above it.
+pub const PLACED_TS: &str = r#"const placed = async (a: ReturnType<typeof page.locator>, b: ReturnType<typeof page.locator>, relation: string): Promise<string | { read: string; boxes: number[] }> => {
+  const found: { x: number; y: number; w: number; h: number }[] = [];
+  for (const [who, loc] of [['the element', a], ['the reference element', b]] as const) {
+    const n = await loc.count();
+    if (n === 0) return `${who} is not on the page`;
+    if (n > 1) return `${who} matched ${n} elements, not one`;
+    const box = await loc.evaluate(readBox, undefined, { timeout: left() });
+    if (box.w <= 0 || box.h <= 0) return `${who} is drawn at no size, so it has no place`;
+    found.push(box);
+  }
+  const [p, q] = found;
+  const t = 1;
+  const inside = p.x >= q.x - t && p.y >= q.y - t && p.x + p.w <= q.x + q.w + t && p.y + p.h <= q.y + q.h + t;
+  const cx = p.x + p.w / 2;
+  const cy = p.y + p.h / 2;
+  const mx = q.x + q.w / 2;
+  const my = q.y + q.h / 2;
+  let ok = false;
+  switch (relation) {
+    case 'left_of':
+      ok = p.x + p.w <= q.x + t;
+      break;
+    case 'right_of':
+      ok = p.x >= q.x + q.w - t;
+      break;
+    case 'above':
+      ok = p.y + p.h <= q.y + t;
+      break;
+    case 'below':
+      ok = p.y >= q.y + q.h - t;
+      break;
+    case 'inside':
+      ok = inside;
+      break;
+    case 'in_top_left':
+      ok = inside && cx <= mx + t && cy <= my + t;
+      break;
+    case 'in_top_right':
+      ok = inside && cx >= mx - t && cy <= my + t;
+      break;
+    case 'in_bottom_left':
+      ok = inside && cx <= mx + t && cy >= my - t;
+      break;
+    case 'in_bottom_right':
+      ok = inside && cx >= mx - t && cy >= my - t;
+      break;
+  }
+  if (!ok) {
+    const at = (r: { x: number; y: number; w: number; h: number }) => `(${Math.round(r.x)}, ${Math.round(r.y)}) ${Math.round(r.w)}x${Math.round(r.h)}`;
+    return `${relation} does not hold: it is at ${at(p)}, and the reference at ${at(q)}`;
+  }
+  return { read: '', boxes: [p.x, p.y, p.w, p.h, q.x, q.y, q.w, q.h] };
+};"#;
 
 /// Whitespace runs as one space, ends trimmed - what the app does to both
 /// sides of a text check.
@@ -607,6 +729,118 @@ impl Em<'_> {
         }
     }
 
+    /// `expect_count` with `at_most` passes on too few, so it is not a poll:
+    /// the app's own loop (`expect::keep_looking`) - the count must stay at
+    /// or under the bound, the same, for `SETTLE_MS`, or time runs out on a
+    /// pass still held - written once as `stillCount`, which answers the
+    /// count the spec then compares.
+    fn still_count(&mut self) {
+        let poll = SETTLE_POLL_MS.to_string();
+        let settle = SETTLE_MS.to_string();
+        for l in [
+            "const stillCount = async (loc: ReturnType<typeof page.locator>, most: number, timeout: number): Promise<number> => {",
+            "  const end = Date.now() + timeout;",
+            "  let held = -1;",
+            "  let since = 0;",
+            "  for (;;) {",
+            "    const n = await loc.count();",
+            "    if (n > most) {",
+            "      held = -1;",
+            "    } else {",
+            "      if (n !== held) {",
+            "        held = n;",
+            "        since = Date.now();",
+            "      }",
+            "      if (Date.now() - since >= SETTLE) return n;",
+            "    }",
+            "    if (Date.now() >= end) return held === -1 ? n : held;",
+            "    await new Promise((r) => setTimeout(r, Math.min(POLL, Math.max(0, end - Date.now()))));",
+            "  }",
+            "};",
+        ] {
+            self.line(4, &l.replace("SETTLE", &settle).replace("POLL", &poll));
+        }
+    }
+
+    /// `expect_each`, `expect_order` and `expect_position` pass only once
+    /// the same pass has held for `SETTLE_MS` (`expect::keep_looking`), so
+    /// they are not a poll: `settle` looks every `SETTLE_POLL_MS`, a look
+    /// that fails (or throws, an item re-rendered under it) starts the hold
+    /// over, a look that differs from the one the hold began with - the
+    /// item count, the texts read, a box more than a pixel off - restarts
+    /// it too, and a pass still held at the deadline passes - also when the
+    /// look that reached the deadline was cut off by it, as the app's loop
+    /// keeps a pass through a look that ran out of time. It answers why not,
+    /// or null. `left` is what every call of a look may take: two seconds,
+    /// or what the check has left, so a page that stopped answering cannot
+    /// carry a look of many items far past the check's timeout.
+    fn settle_helper(&mut self) {
+        let poll = SETTLE_POLL_MS.to_string();
+        let settle = SETTLE_MS.to_string();
+        for l in [
+            "let lookEnd = 0;",
+            "const left = () => Math.max(1, Math.min(2000, lookEnd - Date.now()));",
+            "type Held = { read: string; boxes?: number[] };",
+            "const settle = async (look: () => Promise<string | Held>, timeout: number): Promise<string | null> => {",
+            "  const end = Date.now() + timeout;",
+            "  lookEnd = end;",
+            "  let held: Held | null = null;",
+            "  let since = 0;",
+            "  let last = 'it was not looked at';",
+            "  for (;;) {",
+            "    let cut = false;",
+            "    const got = await look().catch((e: Error) => {",
+            "      cut = Date.now() >= end;",
+            "      return String(e.message).split('\\n')[0];",
+            "    });",
+            "    if (typeof got === 'string') {",
+            "      if (!(cut && held !== null)) {",
+            "        held = null;",
+            "        last = got;",
+            "      }",
+            "    } else {",
+            "      const was = held;",
+            "      const before = was?.boxes ?? [];",
+            "      const boxes = got.boxes ?? [];",
+            "      const same = was !== null && was.read === got.read && before.length === boxes.length && before.every((v, i) => Math.abs(v - boxes[i]) <= 1);",
+            "      if (!same) {",
+            "        held = got;",
+            "        since = Date.now();",
+            "      }",
+            "      if (Date.now() - since >= SETTLE) return null;",
+            "    }",
+            "    if (Date.now() >= end) return held === null ? last : null;",
+            "    await new Promise((r) => setTimeout(r, Math.min(POLL, Math.max(0, end - Date.now()))));",
+            "  }",
+            "};",
+        ] {
+            self.line(4, &l.replace("SETTLE", &settle).replace("POLL", &poll));
+        }
+    }
+
+    /// What a failure of an `expect_each` that reads text shows of the text:
+    /// never a form control's value (a password's included) - the run names
+    /// such an item by its label instead.
+    fn saw(&mut self) {
+        for l in [
+            "const saw = async (el: ReturnType<typeof page.locator>, got: string | null): Promise<string> =>",
+            "  (await el.evaluate((e: Element) => e instanceof HTMLInputElement || e instanceof HTMLTextAreaElement, undefined, { timeout: left() })) ? '(a field)' : JSON.stringify(got);",
+        ] {
+            self.line(4, l);
+        }
+    }
+
+    /// The app's box reader, then `expect_position`'s rule.
+    fn placed(&mut self) {
+        for l in read_box_ts(4) {
+            self.out.push_str(&l);
+            self.out.push('\n');
+        }
+        for l in PLACED_TS.lines() {
+            self.line(4, l);
+        }
+    }
+
     /// The tabs the page opens, as they open, for `expect_tab` to claim.
     fn collector(&mut self) {
         for l in [
@@ -761,6 +995,122 @@ impl Em<'_> {
         Ok(())
     }
 
+    /// `expect_each`: the list, then each item, as `each::look_each` reads
+    /// them - more than `EACH_MAX` items is a failure, fewer than `min`
+    /// too; the `child` is the one element the locator finds in the item;
+    /// the text is the app's (`readText`, already collapsed), an attribute
+    /// is read raw. What it passes on is the item count, which must hold.
+    #[allow(clippy::too_many_arguments)]
+    fn each(
+        &mut self,
+        indent: usize,
+        selector: &Target,
+        min: Option<u32>,
+        child: Option<&Target>,
+        attribute: Option<&str>,
+        visible: bool,
+        equals: &Option<String>,
+        contains: &Option<String>,
+        matches: &Option<String>,
+        not_empty: bool,
+        timeout_ms: Option<u32>,
+    ) -> Res<()> {
+        let min = min.unwrap_or(1);
+        let max = crate::browser::each::EACH_MAX;
+        let at = |extra: usize| indent + 2 + extra;
+        self.line(indent, "expect(await settle(async () => {");
+        self.line(at(0), &format!("const items = {};", locator("cur", selector)));
+        self.line(at(0), "const n = await items.count();");
+        self.line(at(0), &format!("if (n > {max}) return `matched ${{n}} items, more than the {max} expect_each reads`;"));
+        self.line(at(0), &format!("if (n < {min}) return `expected at least {min}, counted ${{n}}`;"));
+        self.line(at(0), "for (let i = 0; i < n; i++) {");
+        self.line(at(2), "const item = items.nth(i);");
+        match child {
+            Some(c) => {
+                self.line(at(2), &format!("const el = {};", locator("item", c)));
+                self.line(at(2), "const found = await el.count();");
+                self.line(
+                    at(2),
+                    &format!("if (found !== 1) return `item ${{i + 1}} of ${{n}}: found ${{found}} of ` + {};", lit(&c.describe())),
+                );
+                // A selector written to match what cannot be seen is judged
+                // visible by the run once it has found the one element.
+                if visible && matches_hidden(c) {
+                    self.line(
+                        at(2),
+                        &format!(
+                            "if (!(await el.isVisible())) return `item ${{i + 1}} of ${{n}}: ` + {};",
+                            lit(&format!("{} {}", c.describe(), crate::browser::expect::HIDDEN))
+                        ),
+                    );
+                }
+            }
+            None => self.line(at(2), "const el = item;"),
+        }
+        if !visible {
+            // `validate` holds the four to exactly one; `want` is how a
+            // value fails, collapsed for text as the run collapses it.
+            let text = attribute.is_none();
+            let fix = |w: &str| if text { collapse(w) } else { w.to_string() };
+            let fail = if text {
+                "return `item ${i + 1} of ${n}: saw ${await saw(el, got)}`;"
+            } else {
+                "return `item ${i + 1} of ${n}: saw ${JSON.stringify(got)}`;"
+            };
+            let judge = match (equals, contains, matches, not_empty) {
+                (Some(w), _, _, _) => format!("got !== {}", lit(&fix(w))),
+                (_, Some(w), _, _) => format!("got === null || !got.includes({})", lit(&fix(w))),
+                (_, _, Some(p), _) => format!("got === null || !new RegExp({}).test(got)", lit(p)),
+                (_, _, _, true) => "!got || !got.trim()".to_string(),
+                _ => return no("expect_each takes exactly one of visible, equals, contains, matches or not_empty"),
+            };
+            match attribute {
+                Some(name) => self.line(at(2), &format!("const got = await el.getAttribute({}, {{ timeout: left() }});", lit(name))),
+                None => self.line(at(2), "const got = await el.evaluate(readText, undefined, { timeout: left() });"),
+            }
+            self.line(at(2), &format!("if ({judge}) {fail}"));
+        }
+        self.line(at(0), "}");
+        // An item the page took away mid-read says nothing about the page now.
+        self.line(at(0), "if ((await items.count()) !== n) return 'the list changed while it was read';");
+        self.line(at(0), "return { read: String(n) };");
+        self.line(indent, &format!("}}, {})).toBeNull();", expect_timeout(timeout_ms)));
+        Ok(())
+    }
+
+    /// `expect_order`: every item's text read as the run reads it, then each
+    /// wanted text (collapsed) matched by the earliest item after the one
+    /// that held the text before it. What it passes on is the texts read.
+    /// A failure names the wanted texts only - never what a field holds.
+    fn order(&mut self, indent: usize, selector: &Target, texts: &[String], timeout_ms: Option<u32>) {
+        let max = crate::browser::order::ORDER_MAX;
+        let order = texts.iter().map(|t| lit(&collapse(t))).collect::<Vec<_>>().join(", ");
+        let at = |extra: usize| indent + 2 + extra;
+        self.line(indent, "expect(await settle(async () => {");
+        self.line(at(0), &format!("const items = {};", locator("cur", selector)));
+        self.line(at(0), "const n = await items.count();");
+        self.line(at(0), &format!("if (n === 0) return {};", lit(crate::browser::expect::NOT_ON_PAGE)));
+        self.line(at(0), &format!("if (n > {max}) return `matched ${{n}} items, more than the {max} expect_order reads`;"));
+        self.line(at(0), "const texts: string[] = [];");
+        self.line(
+            at(0),
+            "for (let i = 0; i < n; i++) texts.push(await items.nth(i).evaluate(readText, undefined, { timeout: left() }));",
+        );
+        self.line(at(0), "if ((await items.count()) !== n) return 'the list changed while it was read';");
+        self.line(at(0), &format!("const order = [{order}];"));
+        self.line(at(0), "let from = 0;");
+        self.line(at(0), "for (const want of order) {");
+        self.line(at(2), "const at = texts.findIndex((t, i) => i >= from && t.includes(want));");
+        self.line(
+            at(2),
+            "if (at === -1) return `expected text order ${JSON.stringify(order)} but ${JSON.stringify(want)} has no place after the one before it`;",
+        );
+        self.line(at(2), "from = at + 1;");
+        self.line(at(0), "}");
+        self.line(at(0), "return { read: texts.join('\\u001f') };");
+        self.line(indent, &format!("}}, {})).toBeNull();", expect_timeout(timeout_ms)));
+    }
+
     fn action(&mut self, a: &Action, indent: usize) -> Res<()> {
         check_action(a, self.input.origins)?;
         let sc = self.scope.clone();
@@ -777,9 +1127,13 @@ impl Em<'_> {
                 indent,
                 &format!("await expect(cur.locator('body')).toContainText({}, {{ ignoreCase: true, useInnerText: true }});", lit(value)),
             ),
-            Action::CheckUrl { contains } => self.line(
+            Action::CheckUrl { contains, timeout_ms } => self.line(
                 indent,
-                &format!("await expect(cur).toHaveURL(new RegExp({}));", lit(&escape_regex(contains))),
+                &format!(
+                    "await expect(cur).toHaveURL(new RegExp({}), {{ timeout: {} }});",
+                    lit(&escape_regex(contains)),
+                    expect_timeout(*timeout_ms)
+                ),
             ),
             Action::ExpectVisible { selector, timeout_ms } => {
                 self.line(indent, &format!("await expect({}).{};", one(selector), call("toBeVisible", &[], *timeout_ms)))
@@ -790,15 +1144,22 @@ impl Em<'_> {
             // The app reads a field's value, a list's chosen label, else the
             // rendered text (READ_TEXT_JS), collapses whitespace on both sides
             // and compares case-sensitively: whole, or as a substring.
-            Action::ExpectText { selector, equals, timeout_ms } => self.line(
-                indent,
-                &format!(
-                    "await expect.poll(() => {}.evaluate(readText){}).toBe({});",
-                    one(selector),
-                    poll_opts(*timeout_ms),
-                    lit(&collapse(equals))
-                ),
-            ),
+            Action::ExpectText { selector, equals, matches, timeout_ms } => {
+                // `validate` holds the two to exactly one.
+                let want = match (equals, matches) {
+                    (Some(equals), _) => format!("toBe({})", lit(&collapse(equals))),
+                    (_, Some(p)) => format!("toMatch(new RegExp({}))", lit(p)),
+                    _ => return no("expect_text takes exactly one of equals or matches"),
+                };
+                self.line(
+                    indent,
+                    &format!(
+                        "await expect.poll(() => {}.evaluate(readText){}).{want};",
+                        one(selector),
+                        poll_opts(*timeout_ms)
+                    ),
+                )
+            }
             Action::ExpectContainsText { selector, value, timeout_ms } => self.line(
                 indent,
                 &format!(
@@ -808,12 +1169,58 @@ impl Em<'_> {
                     lit(&collapse(value))
                 ),
             ),
-            Action::ExpectCount { selector, equals, timeout_ms } => self.line(
+            Action::ExpectCount { selector, equals, at_least, at_most, timeout_ms } => {
+                match table::row_count(*equals, *at_least, *at_most).map_err(Untranslatable)? {
+                    table::RowCount::Equals(n) => self.line(
+                        indent,
+                        &format!(
+                            "await expect({}).{};",
+                            locator("cur", selector),
+                            call("toHaveCount", &[n.to_string()], *timeout_ms)
+                        ),
+                    ),
+                    table::RowCount::AtMost(n) => self.line(
+                        indent,
+                        &format!(
+                            "expect(await stillCount({}, {n}, {})).toBeLessThanOrEqual({n});",
+                            locator("cur", selector),
+                            expect_timeout(*timeout_ms)
+                        ),
+                    ),
+                    table::RowCount::AtLeast(n) => self.line(
+                        indent,
+                        &format!(
+                            "await expect.poll(() => {}.count(){}).toBeGreaterThanOrEqual({n});",
+                            locator("cur", selector),
+                            poll_opts(*timeout_ms)
+                        ),
+                    ),
+                }
+            }
+            Action::ExpectEach { selector, min, child, attribute, visible, equals, contains, matches, not_empty, timeout_ms } => {
+                self.each(indent, selector, *min, child.as_ref(), attribute.as_deref(), *visible, equals, contains, matches, *not_empty, *timeout_ms)?
+            }
+            Action::ExpectOrder { selector, texts, timeout_ms } => self.order(indent, selector, texts, *timeout_ms),
+            Action::ExpectPosition { selector, relative_to, relation, timeout_ms } => {
+                // The relation's serde name is what the helper switches on.
+                let name = serde_json::to_value(relation).ok().and_then(|v| v.as_str().map(str::to_string)).unwrap_or_default();
+                self.line(
+                    indent,
+                    &format!(
+                        "expect(await settle(() => placed({}, {}, {}), {})).toBeNull();",
+                        locator("cur", selector),
+                        locator("cur", relative_to),
+                        lit(&name),
+                        expect_timeout(*timeout_ms)
+                    ),
+                )
+            }
+            Action::ExpectAttribute { selector, name, matches: Some(p), timeout_ms, .. } => self.line(
                 indent,
                 &format!(
                     "await expect({}).{};",
-                    locator("cur", selector),
-                    call("toHaveCount", &[equals.to_string()], *timeout_ms)
+                    one(selector),
+                    call("toHaveAttribute", &[lit(name), format!("new RegExp({})", lit(p))], *timeout_ms)
                 ),
             ),
             Action::ExpectAttribute { selector, name, equals: Some(equals), timeout_ms, .. } => self.line(
@@ -1049,7 +1456,10 @@ impl Em<'_> {
             }
             // Refused by `check_action` above; written out so that a new
             // action has to be decided here.
-            Action::SignIn { .. } | Action::UseComponent { .. } | Action::Upload { .. } | Action::ExpectDialog { .. } => {
+            Action::SignIn { .. }
+            | Action::UseComponent { .. }
+            | Action::Upload { .. }
+            | Action::ExpectDialog { .. } => {
                 return check_action(a, self.input.origins)
             }
         }

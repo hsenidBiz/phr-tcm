@@ -17,7 +17,7 @@ use v2_lib::browser::cdp::{
 use v2_lib::browser::dialogs::DialogBook;
 use v2_lib::browser::page_errors::PageErrorBook;
 use v2_lib::browser::downloads::DownloadEntry;
-use v2_lib::browser::expect::{CHECKED_JS, DISABLED_JS, READ_ATTR_JS, READ_STYLE_JS, READ_TEXT_JS};
+use v2_lib::browser::expect::{CHECKED_JS, DISABLED_JS, IS_PASSWORD_JS, READ_ATTR_JS, READ_STYLE_JS, READ_TEXT_JS};
 use v2_lib::browser::input::{FOCUS_JS, HAS_FOCUS_JS, PROBE_JS};
 use v2_lib::browser::locator::VISIBLE_JS;
 use v2_lib::browser::net_record::{NetEntry, NetRecord};
@@ -676,6 +676,8 @@ pub struct FakePage {
     /// Answers to "what does it say", in turn; the last repeats.
     pub texts: Vec<&'static str>,
     pub attribute: Option<&'static str>,
+    /// Is the element a password input (`IS_PASSWORD_JS`)?
+    pub password: bool,
     /// What `DISABLED_JS` answers: why the element is disabled, or `""`.
     pub disabled_why: &'static str,
     /// What `CHECKED_JS` answers: "true", "false", "mixed", or None.
@@ -716,6 +718,7 @@ impl Default for FakePage {
             navigate_reply: json!({ "frameId": "F", "loaderId": "L" }),
             texts: vec!["Saved"],
             attribute: None,
+            password: false,
             disabled_why: "",
             checked: None,
             styles: vec![json!({ "value": "rgb(0, 0, 0)", "moving": false })],
@@ -774,6 +777,7 @@ impl FakePage {
                 json!({ "result": { "value": self.texts[i] } })
             }
             "Runtime.callFunctionOn" if f == READ_ATTR_JS => json!({ "result": { "value": self.attribute } }),
+            "Runtime.callFunctionOn" if f == IS_PASSWORD_JS => json!({ "result": { "value": self.password } }),
             "Runtime.callFunctionOn" if f == DISABLED_JS => json!({ "result": { "value": self.disabled_why } }),
             "Runtime.callFunctionOn" if f == CHECKED_JS => json!({ "result": { "value": self.checked } }),
             "Runtime.callFunctionOn" if f == READ_STYLE_JS => {

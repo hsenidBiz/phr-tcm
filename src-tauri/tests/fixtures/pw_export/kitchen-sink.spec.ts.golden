@@ -55,7 +55,7 @@ test.describe('F', () => {
     // Not checked: A person checks the colour.
     const mark2 = opened.length;
     await expect(cur.locator('body')).toContainText('Welcome', { ignoreCase: true, useInnerText: true });
-    await expect(cur).toHaveURL(new RegExp('\\/hr\\/x\\?y=1'));
+    await expect(cur).toHaveURL(new RegExp('\\/hr\\/x\\?y=1'), { timeout: 10000 });
     await expect(cur.locator('#a').first()).toBeVisible({ timeout: 1000 });
     await expect(cur.locator('.toast').filter({ visible: true }).first()).toBeHidden({ timeout: 10000 });
     await expect.poll(() => cur.locator('select#level').filter({ visible: true }).first().evaluate(readText), { timeout: 2000 }).toBe('Senior Expert');

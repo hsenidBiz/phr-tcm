@@ -18,6 +18,8 @@
 //! activity log the gate writes is the one place those go.
 
 use super::{CaseScript, Precondition, PreconditionOp, PreconditionRepair};
+use crate::browser::actions::Action;
+use crate::browser::locator::Target;
 use crate::api_templates::flow::{Flow, Subject, SubjectType};
 use crate::api_templates::flow_store;
 use crate::api_templates::gate::{self, CheckFor, SqlcmdStageDb, StageDb, StageState};
@@ -93,6 +95,125 @@ pub fn check_saved(root: &Path, org: &str, project: &str, scripts: &[CaseScript]
     } else {
         Err(refused.join("; "))
     }
+}
+
+/// What the assistant's save adds, after "names {records} (from step {n})",
+/// when a script relies on a record it declares no precondition for. A note,
+/// never a refusal.
+pub const UNDECLARED_RECORD: &str = "but declares no precondition: on an environment without that record the case fails as a wrong result instead of being Blocked before step 1 - declare each record it relies on in \"preconditions\" (see \"Preconditions\" in the guide).";
+
+/// The most records the note names before saying how many more.
+const RECORDS_SHOWN: usize = 3;
+
+/// A literal numeric id in a css attribute: `[id="42"]`, `[data-id="7"]`,
+/// `[data-cycle-id="11171"]`. The attribute name is captured: one that only
+/// ends in the letters (`data-grid`, `data-valid`) is not an id, and a
+/// column's or a row's id is not a record's (`RECORD_ID_NOT`).
+const RECORD_ID_CSS: &str = r#"(?i)\[\s*(id|data-(?:[a-z0-9_-]*[-_])?id)\s*=\s*["']?[0-9]+["']?\s*\]"#;
+
+/// The parts of an id attribute's name that make it a column's or a row's.
+const RECORD_ID_NOT: [&str; 3] = ["col", "column", "row"];
+
+/// Does `css` hold a numeric id attribute of a record?
+fn names_a_record_id(re: &regex::Regex, css: &str) -> bool {
+    re.captures_iter(css).any(|c| {
+        let name = c[1].to_lowercase();
+        !name.split(['-', '_']).any(|part| RECORD_ID_NOT.contains(&part))
+    })
+}
+
+/// Does the click in `action` press a save button: a name or text holding,
+/// as whole words, a built-in save word (`browser::save_guard`) or one of
+/// the project's own?
+fn clicks_save(action: &Action, words: &[String]) -> bool {
+    use crate::browser::locator::fold_name;
+    let Action::Click { selector } = action else { return false };
+    selector.links().iter().any(|l| {
+        let shown = match (&l.role, &l.name, &l.text) {
+            (Some(_), Some(n), _) => n,
+            (None, _, Some(t)) => t,
+            _ => return false,
+        };
+        let shown = fold_name(shown);
+        words.iter().any(|w| crate::autorun::seen_check::has_phrase(&shown, w))
+    })
+}
+
+/// One note, or none, for a script with no preconditions and no setup whose
+/// checked steps (`only_steps`, else all) name a record by hand: a name or
+/// a text holding the environment's `test_prefix` as a whole word (and not
+/// typed by the script itself), or a css attribute holding a literal record
+/// id. "names {list} (from step {n}) {UNDECLARED_RECORD}", `n` being the
+/// first one's step. Anything with a `{{` placeholder is not a record.
+/// A name the script made itself is not either: a value it typed, holding
+/// the prefix as a whole word (`{{prefix}}` is the prefix), in an earlier
+/// step that also clicks a save button (the built-in save words and
+/// `save_words`, the project's own). Typing into a search box and opening
+/// the result is not making it.
+pub fn undeclared_record_note(
+    script: &CaseScript,
+    only_steps: Option<&[i32]>,
+    test_prefix: &str,
+    save_words: &[String],
+) -> Option<String> {
+    use crate::browser::locator::fold_name;
+    if !script.preconditions.is_empty() || script.setup.is_some() {
+        return None;
+    }
+    let prefix = fold_name(test_prefix);
+    let id_css = regex::Regex::new(RECORD_ID_CSS).ok()?;
+    let words: Vec<String> = crate::browser::save_guard::SAVE_WORDS
+        .iter()
+        .chain(crate::browser::save_guard::WORD_SAVES.iter())
+        .map(|w| w.to_string())
+        .chain(save_words.iter().map(|w| w.trim().to_lowercase()))
+        .filter(|w| !w.is_empty())
+        .collect();
+    // What the script made itself: test records it typed and saved.
+    let mut typed: Vec<(i32, String)> = Vec::new();
+    for step in &script.steps {
+        if !step.actions.iter().flat_map(Action::each).any(|a| clicks_save(a, &words)) {
+            continue;
+        }
+        for value in step.actions.iter().flat_map(Action::each).filter_map(|a| a.typed_value()) {
+            let value = value.replace("{{prefix}}", test_prefix);
+            let folded = fold_name(&value);
+            if !value.contains("{{") && crate::autorun::seen_check::has_phrase(&folded, &prefix) {
+                typed.push((step.step_number, folded));
+            }
+        }
+    }
+    let mut records: Vec<(i32, String)> = Vec::new();
+    for step in script.steps.iter().filter(|s| only_steps.is_none_or(|only| only.contains(&s.step_number))) {
+        for action in step.actions.iter().flat_map(Action::each) {
+            for link in action.targets().into_iter().flat_map(Target::links) {
+                let words = match (&link.role, &link.name, &link.text) {
+                    (Some(_), Some(n), _) => Some(n),
+                    (None, _, Some(t)) => Some(t),
+                    _ => None,
+                };
+                let found = match (words, &link.css) {
+                    (Some(w), _) if !prefix.is_empty() && !w.contains("{{") => {
+                        let folded = fold_name(w);
+                        let made = typed.iter().any(|(at, t)| *at < step.step_number && folded.contains(t.as_str()));
+                        (crate::autorun::seen_check::has_phrase(&folded, &prefix) && !made).then(|| w.clone())
+                    }
+                    (None, Some(c)) if !c.contains("{{") && names_a_record_id(&id_css, c) => Some(c.clone()),
+                    _ => None,
+                };
+                if let Some(record) = found {
+                    if !records.iter().any(|(_, r)| *r == record) {
+                        records.push((step.step_number, record));
+                    }
+                }
+            }
+        }
+    }
+    let first = records.first()?.0;
+    let shown: Vec<String> = records.iter().take(RECORDS_SHOWN).map(|(_, r)| format!("{r:?}")).collect();
+    let more = records.len().saturating_sub(RECORDS_SHOWN);
+    let more = if more > 0 { format!(" and {more} more") } else { String::new() };
+    Some(format!("names {}{more} (from step {first}) {UNDECLARED_RECORD}", shown.join(", ")))
 }
 
 /// A precondition as a person reads it: "<stage> for <value> (<flow>)",

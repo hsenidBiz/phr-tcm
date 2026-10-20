@@ -50,6 +50,9 @@ pub const ACTION_KINDS: &[&str] = &[
     "expect_no_row",
     "expect_sorted",
     "expect_row_count",
+    "expect_each",
+    "expect_order",
+    "expect_position",
     "use_component",
 ];
 
@@ -220,17 +223,17 @@ no script step for it, and do not renumber the steps that come after it.
 - `{ "kind": "wait_for", "selector": ..., "timeout_ms": 5000 }`
 - `{ "kind": "expect_visible", "selector": ... }`
 - `{ "kind": "expect_hidden", "selector": ... }` - gone counts as hidden
-- `{ "kind": "expect_text", "selector": ..., "equals": "..." }`
+- `{ "kind": "expect_text", "selector": ..., "equals": "..." }` - or `"matches": "^Showing 1-10 of \\d+$"` (a pattern) in place of `equals`
 - `{ "kind": "expect_contains_text", "selector": ..., "value": "..." }`
-- `{ "kind": "expect_count", "selector": ..., "equals": 3 }`
-- `{ "kind": "expect_attribute", "selector": ..., "name": "aria-checked", "equals": "true" }` - with `"absent": true` in place of `equals`, the element has no such attribute
+- `{ "kind": "expect_count", "selector": ..., "equals": 3 }` - or `at_least` / `at_most` in its place (`at_most` passes only once the count has held still for a moment, so give it a `timeout_ms` of at least 1500)
+- `{ "kind": "expect_attribute", "selector": ..., "name": "aria-checked", "equals": "true" }` - with `"absent": true` in place of `equals`, the element has no such attribute; with `"matches": "^View "` (a pattern) in place of `equals`, the value must match it
 - `{ "kind": "expect_style", "selector": ..., "property": "color", "equals": "red" }` - the element's computed style (what the browser draws after every stylesheet), with exactly one of `equals`, `contains` or `not_equals`. A colour is compared as the rgb() the browser reports, however it is written (`red`, `#f00`, `rgb(255 0 0)`, `hsl(0, 100%, 50%)`); any other value ignores case and surrounding spaces (not inside quotes). Write the property as CSS does (`background-color`, never `backgroundColor`). A transition or animation still changing that property is waited out. `contains` reads a colour word as a colour (`"contains": "black"` matches `rgb(0, 0, 0) 0px 1px 2px`). A `not_equals` on a property that is always animating can pass by chance. `currentcolor` cannot be compared: write the colour itself
 - `{ "kind": "expect_enabled", "selector": ... }` - the element can be used
 - `{ "kind": "expect_checked", "selector": ..., "checked": true }` - the checkbox or radio is ticked (`"checked": false`: it is not), read from its live state, which follows clicks; any other element answers by its `aria-checked`, and a partly ticked box (`mixed`) is neither. `checked` is true when left out
 - `{ "kind": "expect_disabled", "selector": ... }` - the element is disabled: its `disabled` property is set, it or an element around it has `aria-disabled="true"`, or it is a form control (button, input, select, textarea) a disabled fieldset holds outside that fieldset's first legend; a link in a disabled fieldset is not disabled. A click waits out the same rule
 - `{ "kind": "sign_in", "account": "hr.supervisor" }` - change who is signed in, in the middle of a case
 - `{ "kind": "check_text", "value": "..." }`  - is this text anywhere on the page (same-origin frames included), right now? A hidden frame is not searched, and a frame holding a page from another site is not searched.
-- `{ "kind": "check_url", "contains": "..." }` - is this in the address, right now?
+- `{ "kind": "check_url", "contains": "..." }` - is this in the address? Looked for again until it is, like every expect_ check (timeout_ms optional)
 - `{ "kind": "upload", "selector": ..., "file": "appraisal-form.pdf" }` - put a file into the page
 - `{ "kind": "expect_response", "method": "POST", "url_contains": "/PerformanceCycle/Save", "status": 200, "json": { "success": true } }` - a request the page made during this step finished with that status (and, with `json`, those fields); `method`, `status` (default 200), `json` and `timeout_ms` are optional
 - `{ "kind": "api_request", "path": "/api/cycles/42", "query": { "include": "rules" }, "expect": { "status": 200, "json": { "name": "Q4 Cycle" } } }` - the page asks its own site a GET question and checks the answer; `path` is a path on the site, never an address, and `query`, `status` (default 200) and `json` are optional
@@ -245,6 +248,9 @@ no script step for it, and do not renumber the steps that come after it.
 - `{ "kind": "expect_no_row", "table": ..., "cells": { "Name": "Ann" } }` - no row has them
 - `{ "kind": "expect_sorted", "table": ..., "column": "Joined", "order": "descending", "as": "date" }` - the column is in that order
 - `{ "kind": "expect_row_count", "table": ..., "at_least": 1 }` - the table has that many rows (`equals`, `at_least` or `at_most`)
+- `{ "kind": "expect_each", "selector": { "css": "div[data-cycle-id]" }, "child": { "css": "h3" }, "matches": "^AUTOTEST " }` - every match of the selector (a list) passes one check: `"visible": true` (needs `child`), `equals`, `contains`, `matches` or `"not_empty": true`; with `child`, the check reads the one element `child` finds inside each item, and with `attribute`, that attribute instead of the text; `min` (default 1) is the fewest items there may be; at most 200 items are read, and the list must hold still for 750 ms before it passes, so a `timeout_ms` is at least 1500 (see "Checking thoroughly")
+- `{ "kind": "expect_order", "selector": { "role": "option" }, "texts": ["All", "Draft", "Published"] }` - the matches, in page order, contain these texts in this order (others may sit between); case matters, and an item only has to contain a text, so write enough of it to tell items apart (`All (`, not `All`); 2 to 50 texts, and the list must hold still for 750 ms before it passes, so a `timeout_ms` is at least 1500 (see "Checking thoroughly")
+- `{ "kind": "expect_position", "selector": ..., "relative_to": ..., "relation": "right_of" }` - where one element sits against another: `left_of`, `right_of`, `above`, `below`, `inside`, `in_top_left`, `in_top_right`, `in_bottom_left` or `in_bottom_right`; no pixel sizes. A corner means the centre of the element is in that quarter of `relative_to`, and a centre on a midline (within 1 px) counts for both halves, so a button centred up the middle of a bar is in its top-right when it is in the right half; both elements must hold still for 750 ms before it passes, so a `timeout_ms` is at least 1500 (see "Checking thoroughly")
 - `{ "kind": "drag", "from": ..., "to": ..., "position": "before" }` - pick `from` up and drop it on `to`: `before` it, `after` it, or `onto` it (the default); `within_ms` (default 10000) is optional (see "Dragging to reorder")
 - `{ "kind": "use_component", "component": "pick-date", "inputs": { "day": "5" } }` - runs a saved component with its inputs (see "Components")
 - `{ "kind": "expect_focused", "selector": ... }` - the focus is on this element, or on something inside it
@@ -304,7 +310,7 @@ assume what the case made was removed. Its failure, a failed
 never fails the case. Its locators must have been seen like any step's,
 and every other run rule (Must not save included) applies to it.
 
-Every `expect_` action looks again until it holds, for up to 10 seconds
+Every `expect_` action, and `check_url`, looks again until it holds, for up to 10 seconds
 (add `"timeout_ms"` to change that), and a failure says what it actually
 saw. Prefer them to `check_text`, which looks once and cannot tell you
 where on the page the words were. Text is compared with runs of
@@ -1078,6 +1084,9 @@ sentence per problem, counting preconditions from 1:
 - `precondition 1: flow Performance cycle wizard has no stage published` - the flow has no stage with that id
 - `precondition 1: give the value the flow's checks take` - the value is missing, or not the type the subject takes
 
+A save also notes a script that names a test record and declares no
+precondition, in a `case N: note: ...` line. It never refuses the save.
+
 A repair keeps every precondition the script has, and may add new ones.
 Send each existing precondition back exactly as it is: a repair that
 leaves one out or changes it is refused, unless the case's `edits` entry
@@ -1130,6 +1139,10 @@ The publish example:
 
     { "case_id": 503, "title": "...", "changes": ["cycle published"], "steps": [ ... ] }
     { "case_id": 504, "title": "...", "needs_unchanged": ["cycle published"], "steps": [ ... ] }
+
+A case that flips shared state and flips it back should put the flip-back in
+its clean-up step, guarded, so a failure partway does not strand the state:
+see the example in "Checking thoroughly".
 
 A name is a short phrase, for example "cycle published" or "appraisal
 submitted for A001". Reuse one name for one change across the set: names
@@ -1228,6 +1241,93 @@ to cover them: leave the step with its navigation actions, mark it
 watching; an honest gap is worth more than a green tick that means
 nothing.
 
+## Checking thoroughly
+
+A check is only as good as what it can catch. A test case that says "each",
+"every" or "all" is a claim about a whole list, so check the whole list. A
+check that would pass even if the app were broken is worse than none.
+
+**"Each", "every", "all".** Use `expect_each` over the list, never a count
+and never just the first item. `min` is the fewest items the list may hold:
+when the case says how many at least, say it there, and the check fails on a
+shorter list instead of passing on an empty one. The list must hold still for
+750 ms, so give it a `timeout_ms` of at least 1500. `selector` is a locator
+(a plain string selector is refused), and `child` must be seen inside that
+list as a whole chain.
+
+    { "kind": "expect_each", "selector": { "css": "div[data-cycle-id]" },
+      "child": { "css": "h3" }, "matches": "^AUTOTEST ", "min": 2, "timeout_ms": 3000 }
+
+**Live data.** Do not copy a number or a date the app showed today into
+`equals`: it changes. Use `matches` on `expect_text`, `expect_attribute` or
+`expect_each`, a regular expression for the shape of the text:
+`"^Showing 1-10 of \\d+$"`. It is case sensitive, matches anywhere in the
+text unless written with `^` and `$`, and sees runs of whitespace as one
+space. `\w`, `\d`, `\s` and `\b` match English letters and digits only, so a
+name with an accent needs an explicit class (`[A-Za-z\\u00C0-\\u00FF]`). The save
+refuses a pattern with an inline flag such as `(?i)`, `\A`, `\z`, `\p{...}`, a
+`[[:alpha:]]` class or a class inside a class, one over 500 characters, and
+one that fits any text. For a count use `at_least` or `at_most` on
+`expect_count`, not a hard-coded total. `at_most` passes once the count has
+held for 750 ms, so give it a `timeout_ms` of at least 1500.
+
+**Order.** When the case states an order, use `expect_order`, with one text
+for each item it names. Others may sit between. Each text only has to be part
+of an item, and case matters, so "Published" is not found in "Unpublished"
+but "Draft" is found in "Draft (3)": write enough of the text to tell items
+apart. Give it a `timeout_ms` of at least 1500.
+
+**Position.** When the case says where something is ("on the right", "at the
+top", "below the title"), use `expect_position` with a relation. Relations
+only, no pixel sizes or distances: a layout moves a few pixels without being
+wrong. A corner puts the element's centre in that quarter of the other element.
+Give it a `timeout_ms` of at least 1500.
+
+**A check that something is absent needs a positive control.** `expect_hidden`
+and `expect_count` of 0 pass when the locator matches nothing, so a locator
+that is wrong passes forever. The save refuses one whose locator "was only
+ever seen matching nothing on the live app". There are two ways through:
+probe the locator where it is shown (in any area), or have the script check
+the same thing present somewhere else, with the same last part. Say a
+Draft cycle card has no Unpublish switch. The switch is seen on a Published
+card, so check it absent on the Draft card and present on the Published one:
+
+    { "kind": "expect_hidden", "selector": [ { "css": "div[data-cycle-id=\"10749\"]" },
+        { "role": "switch", "name": "Unpublish" } ] }
+    { "kind": "expect_visible", "selector": [ { "css": "div[data-cycle-id=\"10750\"]" },
+        { "role": "switch", "name": "Unpublish" } ] }
+
+A use that passes with nothing there (a guard, a `repeat_while_visible`, an
+`at_most`) is no proof. The save judges only the new and changed steps, and
+never one unchanged from the saved script.
+
+**Names that can match a second record.** A name matches as a part of the
+page's name, so "Open Cycle 7" also finds "Open Cycle 70" as soon as both are
+on the page. Put `"exact": true` on every `Open <name>`, and on any name that
+is part of a longer one:
+`{ "role": "link", "name": "Open AUTOTEST Cycle 7", "exact": true }`. When the
+save sees such a name also inside a longer seen one, it adds a note.
+
+**Records the script relies on.** A case that opens a record someone made by
+hand (a cycle, a leave type) lists it in `preconditions`, so a run without it
+is Blocked before step 1 instead of failing halfway (see "Preconditions").
+A record the script makes itself (it types the name and clicks a save button in an earlier step) needs none, and the save adds a note when it finds a test record named with no precondition.
+
+**A search that waits.** A debounced search shows stale rows for a moment
+after typing. Wait for it as "Tables and grids" says, with an
+`expect_response` on the search request.
+
+**Putting shared state back.** A case that flips a toggle and flips it back
+puts the flip-back in the clean-up step, guarded, so a failure partway does
+not strand the state for the next case. The guard looks for the state to be
+undone and clicks only then. It needs `"exact": true` here, because
+"Unpublished" holds "published":
+
+    { "step_number": 7, "cleanup": true, "unchecked": "puts the cycle back to unpublished if a step failed first",
+      "actions": [ { "kind": "when_visible",
+        "selector": [ { "css": "div[data-cycle-id=\"10750\"]" }, { "text": "Published", "exact": true } ],
+        "then": [ { "kind": "click", "selector": [ { "css": "div[data-cycle-id=\"10750\"]" }, { "role": "switch" } ] } ] } ] }
+
 ## Selectors
 
 A `selector` says which element. The best form is a locator, because it
@@ -1267,11 +1367,11 @@ the action fails and says how many: narrow it with a list, `"exact"`, or
 `"nth"` (zero-based: `{ "css": "tbody tr", "nth": 0 }` is the first row).
 `nth` picks from THAT entry's matches across everything the previous
 entry matched, taken in page order, not from the matches inside one of
-them. Only `expect_count`, `expect_hidden` and `wait_for` are happy with
-many.
+them. Only `expect_count`, `expect_each`, `expect_order`, `expect_hidden` and `wait_for` are
+happy with many.
 
 Use full names, and probe `nth` locators exactly as written. A check that
-may match several (`expect_hidden`, `expect_count`, `wait_for`) may name
+may match several (`expect_hidden`, `expect_count`, `expect_each`, `expect_order`, `wait_for`) may name
 a part of a seen name in the same role, of at least 3 characters, on a
 plain locator (one entry, no `nth`, no `"visible": false`, not `"exact"`):
 "Reviewer:" for the text "Reviewer: 30%", "Evaluators" for the
@@ -1900,6 +2000,14 @@ Before every save:
   included. A precondition removed or changed without a precondition edit
   is refused. A repair may send `patch_steps` in place of `steps`.
   "Repairing a script that failed" has the shapes and every refusal.
+
+An absence check (`expect_hidden`, or `expect_count` of 0) whose locator was
+only ever seen matching nothing is refused, because it could pass with the
+locator wrong. This applies only to new or changed steps; "Checking
+thoroughly" gives the two ways through. Other things a save notices come back
+as `case N: note: ...` lines after the answer: a loose name also seen inside a
+longer one, or a record named with no precondition declared. A note never
+refuses a save.
 
 `save_autorun_script` does NOT take the steps array on its own - it takes
 a LIST of scripts, one entry per case, so a whole PBI can be saved in one

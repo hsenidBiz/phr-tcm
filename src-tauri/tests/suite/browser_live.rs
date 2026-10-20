@@ -3959,3 +3959,97 @@ async fn expect_style_reads_the_computed_style() {
     // An endless animation never settles: its value is read as it is.
     must(run(&mut live, style("#pulse", "color", "contains", "rgb(")).await);
 }
+
+/// `expect_each` against a real page: a pattern on every full card, the
+/// blank title named by its item number, and a child's visibility.
+#[tokio::test]
+#[ignore = "starts a real headless Edge"]
+async fn expect_each_reads_every_item_of_a_real_list() {
+    let mut live = open().await;
+    let url = fixture_url().replace("autorun-live.html", "autorun-thorough.html");
+    must(run(&mut live, json!({ "kind": "navigate", "url": url })).await);
+    let each = |list: &str, rest: serde_json::Value| {
+        let mut v = json!({ "kind": "expect_each", "selector": { "css": list }, "timeout_ms": 1500 });
+        v.as_object_mut().unwrap().extend(rest.as_object().unwrap().clone());
+        v
+    };
+    // The full cards all start with AUTOTEST.
+    let out = run(&mut live, each("div.card.full[data-cycle-id]", json!({ "child": { "css": "h3" }, "matches": "^AUTOTEST " }))).await;
+    assert!(out.ok, "{}", out.detail);
+    assert_eq!(out.detail, "2 items of div.card.full[data-cycle-id], each with h3 that matches /^AUTOTEST /");
+    // The blank one is the third card, and is named so.
+    let out = run(&mut live, each("div.card[data-cycle-id]", json!({ "child": { "css": "h3" }, "not_empty": true }))).await;
+    refused(out, "item 3 of 3 (\"\"): expected text but saw \"\"");
+    let out = run(&mut live, each("div.card[data-cycle-id]", json!({ "child": { "css": "h3" }, "matches": "^AUTOTEST " }))).await;
+    refused(out, "item 3 of 3 (\"\"): expected text to match /^AUTOTEST / but saw \"\"");
+    // The eye icon is drawn on every card.
+    must(run(&mut live, each("div.card[data-cycle-id]", json!({ "child": { "css": "i.fa-eye" }, "visible": true }))).await);
+    // The cards themselves hold text, and the attribute is read, not the text.
+    must(run(&mut live, each("div.card[data-cycle-id]", json!({ "attribute": "data-cycle-id", "matches": "^10\\d$" }))).await);
+    refused(
+        run(&mut live, each("div.card[data-cycle-id]", json!({ "attribute": "title", "not_empty": true }))).await,
+        "item 1 of 3 (",
+    );
+    // A control is named by its label, never by what was typed into it.
+    let out = run(&mut live, each("input.secret", json!({ "attribute": "data-x", "not_empty": true }))).await;
+    assert!(!out.ok && !out.detail.contains("hunter2"), "{}", out.detail);
+    assert!(out.detail.contains("item 1 of 1 (\"Secret\"): has no data-x attribute"), "{}", out.detail);
+    // A list that is not there fails on its count, not on an item.
+    refused(run(&mut live, each("div.gone", json!({ "not_empty": true }))).await, "expected at least 1, counted 0");
+}
+
+/// `expect_order` and `expect_position` against a real page: the status
+/// options in order, a button drawn in the corner of its bar, boxes of no
+/// size, and a button inside a bordered and padded frame.
+#[tokio::test]
+#[ignore = "starts a real headless Edge"]
+async fn expect_order_and_position_read_a_real_page() {
+    let mut live = open().await;
+    let url = fixture_url().replace("autorun-live.html", "autorun-thorough.html");
+    must(run(&mut live, json!({ "kind": "navigate", "url": url })).await);
+    let order = |css: &str, texts: serde_json::Value| {
+        json!({ "kind": "expect_order", "selector": { "css": css }, "texts": texts, "timeout_ms": 1500 })
+    };
+    let out = run(&mut live, order("ul#status li", json!(["All", "Draft", "Published", "Unpublished"]))).await;
+    assert!(out.ok, "{}", out.detail);
+    assert_eq!(out.detail, "ul#status li reads \"All\", \"Draft\", \"Published\", \"Unpublished\" in that order");
+    refused(
+        run(&mut live, order("ul#status li", json!(["Unpublished", "Published"]))).await,
+        "\"Published\" is not after \"Unpublished\"; saw \"All (12)\", \"Draft (3)\", \"Published (5)\", \"Unpublished (4)\"",
+    );
+    // A select is shown by the option chosen, a password field by its name.
+    refused(run(&mut live, order("select#pick", json!(["x", "y"]))).await, "saw \"Two\"");
+    let out = run(&mut live, order("input.secret", json!(["x", "y"]))).await;
+    assert!(!out.ok && !out.detail.contains("hunter2") && out.detail.contains("saw \"Secret\""), "{}", out.detail);
+
+    // The button is vertically centred in a one-row bar, in its right half.
+    let place = |selector: serde_json::Value, relative_to: serde_json::Value, relation: &str| {
+        json!({ "kind": "expect_position", "selector": selector, "relative_to": relative_to, "relation": relation, "timeout_ms": 1500 })
+    };
+    let (new, bar) = (json!({ "css": "#new" }), json!({ "css": "#bar" }));
+    for (relation, holds) in [("in_top_right", true), ("in_bottom_right", true), ("inside", true), ("in_top_left", false), ("right_of", false)] {
+        let out = run(&mut live, place(new.clone(), bar.clone(), relation)).await;
+        assert_eq!(out.ok, holds, "{relation}: {}", out.detail);
+    }
+    refused(run(&mut live, place(new.clone(), bar.clone(), "left_of")).await, "#new is not left of #bar: it is at (");
+
+    // A box of no size is nowhere: never right of anything.
+    let ghost = json!({ "css": "#ghost", "visible": false });
+    refused(run(&mut live, place(new.clone(), ghost.clone(), "right_of")).await, "cannot be placed: #ghost is drawn at no size");
+    refused(run(&mut live, place(ghost, bar.clone(), "left_of")).await, "cannot be placed: #ghost is drawn at no size");
+    let out = run(&mut live, place(new.clone(), json!({ "css": "#wrap", "visible": false }), "below")).await;
+    assert!(!out.ok && out.detail.contains("cannot be placed: #wrap"), "{}", out.detail);
+
+    // A button in a frame with a border and padding is measured in the window:
+    // the frame is at (500, 120), its border 3 and padding 5 put the page in
+    // it at (508, 128), and the button at (140, 2) in that page.
+    let fbtn = json!([{ "css": "#frm" }, { "css": "#fbtn" }]);
+    let fbar = json!([{ "css": "#frm" }, { "css": "#fbar" }]);
+    must(run(&mut live, place(fbtn.clone(), bar.clone(), "below")).await);
+    refused(
+        run(&mut live, place(fbtn.clone(), bar.clone(), "above")).await,
+        "is not above #bar: it is at (648, 130) 50x30, and #bar at (0, 0) 800x48",
+    );
+    must(run(&mut live, place(fbtn.clone(), fbar.clone(), "in_top_right")).await);
+    must(run(&mut live, place(fbtn, new, "left_of")).await);
+}

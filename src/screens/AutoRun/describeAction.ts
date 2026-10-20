@@ -253,6 +253,19 @@ function isPasswordField(target: unknown): boolean {
 
 const quoted = (list: readonly string[]) => list.map((s) => `"${s}"`).join(", ");
 
+/** What an `expect_position` relation reads as. */
+const RELATIONS: Record<string, string | undefined> = {
+  left_of: "left of",
+  right_of: "right of",
+  above: "above",
+  below: "below",
+  inside: "inside",
+  in_top_left: "in the top-left of",
+  in_top_right: "in the top-right of",
+  in_bottom_left: "in the bottom-left of",
+  in_bottom_right: "in the bottom-right of",
+};
+
 /** The details an `expect_download` reads in the file, as a clause each. */
 function downloadDetails(a: Extract<Action, { kind: "expect_download" }>): string {
   const parts: string[] = [];
@@ -340,10 +353,12 @@ function tabAddress(contains: unknown): string {
 
 /** `check_url`'s part of an address: a path, a handler, or neither (a
  * query only), never a host or the rest of a query string. */
-function urlPart(contains: string): Sentence {
+function urlPart(contains: string, timeout: unknown): Sentence {
   const { path, handler } = splitAddress(contains);
   const shown = handler ? `${path}?handler=${handler}` : path;
-  return shown ? [words(`Check the address contains "${shown}"`)] : [words("Check the address has the expected query")];
+  return shown
+    ? [words(`Check the address contains "${shown}"${upTo(timeout)}`)]
+    : [words(`Check the address has the expected query${upTo(timeout)}`)];
 }
 
 /** A row's wanted cells: `Status "Active" and Name "Ann"`. */
@@ -390,23 +405,51 @@ function describeKnown(a: Action): Sentence {
     case "check_text":
       return [words(`Check the page shows "${withoutHosts(str(a.value))}"`)];
     case "check_url":
-      return urlPart(str(a.contains));
+      return urlPart(str(a.contains), a.timeout_ms);
     case "expect_visible":
       return [words("Check "), ...describeTarget(a.selector), words(` is showing${upTo(a.timeout_ms)}`)];
     case "expect_hidden":
       return [words("Check "), ...describeTarget(a.selector), words(` is not showing${upTo(a.timeout_ms)}`)];
-    case "expect_text":
-      return [words("Check "), ...describeTarget(a.selector), words(` reads "${withoutHosts(str(a.equals))}"${upTo(a.timeout_ms)}`)];
+    case "expect_text": {
+      const equals = optStr(a.equals);
+      const matches = optStr(a.matches);
+      if ((equals === undefined) === (matches === undefined)) throw new Unreadable();
+      const said = matches !== undefined ? ` matches /${withoutHosts(matches)}/` : ` reads "${withoutHosts(equals as string)}"`;
+      return [words("Check "), ...describeTarget(a.selector), words(`${said}${upTo(a.timeout_ms)}`)];
+    }
     case "expect_contains_text":
       return [words("Check "), ...describeTarget(a.selector), words(` contains "${str(a.value)}"${upTo(a.timeout_ms)}`)];
     case "expect_count": {
-      num(a.equals);
-      const times = a.equals === 0 ? " is nowhere on the page" : a.equals === 1 ? " shows once" : ` shows ${a.equals} times`;
-      return [words("Check "), ...describeTarget(a.selector), words(`${times}${upTo(a.timeout_ms)}`)];
+      const given = [
+        ["equals", optNum(a.equals)],
+        ["at_least", optNum(a.at_least)],
+        ["at_most", optNum(a.at_most)],
+      ].filter(([, n]) => n !== undefined) as [string, number][];
+      if (given.length !== 1) throw new Unreadable();
+      const [how, n] = given[0];
+      const said =
+        how === "equals"
+          ? n === 0
+            ? " is nowhere on the page"
+            : n === 1
+              ? " shows once"
+              : ` shows ${n} times`
+          : how === "at_least"
+            ? ` shows at least ${n} ${n === 1 ? "time" : "times"}`
+            : n === 0
+              ? " is nowhere on the page"
+              : ` shows at most ${n} ${n === 1 ? "time" : "times"}`;
+      return [words("Check "), ...describeTarget(a.selector), words(`${said}${upTo(a.timeout_ms)}`)];
     }
     case "expect_attribute":
       if (a.absent === true)
         return [words("Check "), ...describeTarget(a.selector), words(` has no ${str(a.name)}${upTo(a.timeout_ms)}`)];
+      if (optStr(a.matches) !== undefined)
+        return [
+          words("Check "),
+          ...describeTarget(a.selector),
+          words(` has ${str(a.name)} matching /${withoutHosts(optStr(a.matches) as string)}/${upTo(a.timeout_ms)}`),
+        ];
       return [
         words("Check "),
         ...describeTarget(a.selector),
@@ -520,6 +563,57 @@ function describeKnown(a: Action): Sentence {
       if (given.length !== 1) throw new Unreadable();
       const [how, n] = given[0];
       return [words("Check "), ...describeTarget(a.table), words(` has ${how}${n} ${n === 1 ? "row" : "rows"}${upTo(a.timeout_ms)}`)];
+    }
+    case "expect_each": {
+      const visible = a.visible === true;
+      const notEmpty = a.not_empty === true;
+      const equals = optStr(a.equals);
+      const contains = optStr(a.contains);
+      const matches = optStr(a.matches);
+      const given = [visible, equals !== undefined, contains !== undefined, matches !== undefined, notEmpty].filter(Boolean);
+      if (given.length !== 1) throw new Unreadable();
+      const name = optStr(a.attribute)?.trim();
+      const withName = name !== undefined && name !== "";
+      let verb: string;
+      if (visible) verb = "is showing";
+      else if (equals !== undefined)
+        verb = withName ? `has ${name} set to "${withoutHosts(equals)}"` : `reads "${withoutHosts(equals)}"`;
+      else if (contains !== undefined)
+        verb = withName ? `has ${name} containing "${withoutHosts(contains)}"` : `contains "${withoutHosts(contains)}"`;
+      else if (matches !== undefined)
+        verb = withName ? `has ${name} matching /${withoutHosts(matches)}/` : `matches /${withoutHosts(matches)}/`;
+      else verb = withName ? `has a ${name}` : "is not empty";
+      const min = optNum(a.min);
+      const atLeast = min !== undefined && min > 1 ? ` (at least ${min})` : "";
+      const tail = `${verb}${atLeast}${upTo(a.timeout_ms)}`;
+      if (a.child == null) return [words("Check each match of "), ...describeTarget(a.selector), words(`: it ${tail}`)];
+      return [
+        words("Check each match of "),
+        ...describeTarget(a.selector),
+        words(": "),
+        ...describeTarget(a.child),
+        words(` in it ${tail}`),
+      ];
+    }
+    case "expect_order": {
+      const texts = strList(a.texts);
+      if (texts.length < 2) throw new Unreadable();
+      return [
+        words("Check "),
+        ...describeTarget(a.selector),
+        words(` lists ${quoted(texts.map(withoutHosts))} in that order${upTo(a.timeout_ms)}`),
+      ];
+    }
+    case "expect_position": {
+      const where = RELATIONS[str(a.relation)];
+      if (where === undefined) throw new Unreadable();
+      return [
+        words("Check "),
+        ...describeTarget(a.selector),
+        words(` is ${where} `),
+        ...describeTarget(a.relative_to),
+        words(upTo(a.timeout_ms)),
+      ];
     }
     case "drag": {
       const position = optStr(a.position) ?? "onto";

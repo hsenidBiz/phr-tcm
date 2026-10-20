@@ -50,6 +50,9 @@ pub enum ErrorClass {
     /// An `expect_style`'s computed value was not the one wanted
     /// (`style::judge`).
     StyleMismatch,
+    /// An `expect_position`'s element was not where it was wanted
+    /// (`expect::look`'s `is not ...: it is at (...)`).
+    PositionMismatch,
     StillVisible,
     PageTextMissing,
     UrlMismatch,
@@ -100,6 +103,7 @@ impl ErrorClass {
             ErrorClass::CountMismatch => "count_mismatch",
             ErrorClass::AttributeMismatch => "attribute_mismatch",
             ErrorClass::StyleMismatch => "style_mismatch",
+            ErrorClass::PositionMismatch => "position_mismatch",
             ErrorClass::StillVisible => "still_visible",
             ErrorClass::PageTextMissing => "page_text_missing",
             ErrorClass::UrlMismatch => "url_mismatch",
@@ -134,6 +138,7 @@ impl ErrorClass {
             ErrorClass::CountMismatch => "a different number of elements".to_string(),
             ErrorClass::AttributeMismatch => "a different attribute".to_string(),
             ErrorClass::StyleMismatch => "a different style".to_string(),
+            ErrorClass::PositionMismatch => "a different position".to_string(),
             ErrorClass::StillVisible => "still visible".to_string(),
             ErrorClass::PageTextMissing => "the page lacked the words".to_string(),
             ErrorClass::UrlMismatch => "a different address".to_string(),
@@ -289,6 +294,10 @@ pub fn classify(detail: &str, target: Option<&str>) -> ErrorClass {
         return ErrorClass::FrameUnreachable;
     }
     let t = tail(whole, target);
+    // An `expect_each` failure names the item and its text first
+    // (`item 2 of 3 ("Other B"): ...`): the reason is what follows, and the
+    // item's text is the page's, never read for a class.
+    let t = item_reason(t, target.is_some()).unwrap_or(t);
     if let Some(class) = by_start(t) {
         return class;
     }
@@ -376,6 +385,48 @@ fn is_api_check(whole: &str) -> bool {
             || rest.contains(api::REDIRECTED))
 }
 
+/// What follows `item N of M ("label"): ` in an `expect_each` failure, found
+/// at the start of `t` or after the list's target. The label is Debug-quoted,
+/// so its end is the first quote no backslash escapes that is followed by
+/// `): `. With `anchored` (the target is known and already off the front),
+/// only at the very start.
+fn item_reason(t: &str, anchored: bool) -> Option<&str> {
+    let mut from = 0;
+    while let Some(i) = t[from..].find("item ") {
+        let at = from + i;
+        from = at + "item ".len();
+        // With the list's target known it has been taken off the front, so
+        // the prefix is the start of the reason; anywhere else it is page
+        // text (an element's id, say) that only looks like one.
+        if anchored && at > 0 {
+            return None;
+        }
+        if at > 0 && !t[..at].ends_with(' ') {
+            continue;
+        }
+        let rest = &t[from..];
+        let digits = |s: &str| s.bytes().take_while(u8::is_ascii_digit).count();
+        let a = digits(rest);
+        let Some(rest) = rest[a..].strip_prefix(" of ").filter(|_| a > 0) else { continue };
+        let b = digits(rest);
+        let Some(label) = rest[b..].strip_prefix(" (\"").filter(|_| b > 0) else { continue };
+        let mut escaped = false;
+        for (j, c) in label.char_indices() {
+            match c {
+                '\\' if !escaped => escaped = true,
+                '"' if !escaped => return label[j + 1..].strip_prefix("): "),
+                _ => escaped = false,
+            }
+        }
+        return None;
+    }
+    None
+}
+
+/// What an `expect_position` failure says between the relation and the
+/// boxes: `is not left of #bar: it is at (300, 10) 80x30, and ...`.
+const POSITION_AT: &str = ": it is at (";
+
 /// The reason words that a target-prefixed sentence starts with, once
 /// the target is gone.
 fn by_start(t: &str) -> Option<ErrorClass> {
@@ -398,6 +449,8 @@ fn by_start(t: &str) -> Option<ErrorClass> {
         (inp::DISABLED, ErrorClass::Disabled),
         (inp::NOT_EDITABLE, ErrorClass::NotEditable),
         (inp::STILL_MOVING, ErrorClass::StillMoving),
+        (crate::browser::each::LIST_CHANGED, ErrorClass::StillMoving),
+        (crate::browser::each::TOO_SLOW, ErrorClass::TimedOut),
         (inp::STILL_LOOKING, ErrorClass::TimedOut),
         (exp::STILL_VISIBLE, ErrorClass::StillVisible),
     ];
@@ -412,6 +465,9 @@ fn by_start(t: &str) -> Option<ErrorClass> {
     }
     if (t.starts_with(exp::HAS_NO) && t.ends_with(exp::ATTRIBUTE_TAIL)) || (t.starts_with("expected ") && t.contains("=")) {
         return Some(ErrorClass::AttributeMismatch);
+    }
+    if t.starts_with("is not ") && t.contains(POSITION_AT) {
+        return Some(ErrorClass::PositionMismatch);
     }
     style_class(t, false)
 }
@@ -463,8 +519,11 @@ fn by_end(t: &str) -> Option<ErrorClass> {
         (inp::DISABLED, ErrorClass::Disabled),
         (inp::NOT_EDITABLE, ErrorClass::NotEditable),
         (inp::STILL_MOVING, ErrorClass::StillMoving),
+        (crate::browser::each::LIST_CHANGED, ErrorClass::StillMoving),
+        (crate::browser::each::TOO_SLOW, ErrorClass::TimedOut),
         (inp::STILL_LOOKING, ErrorClass::TimedOut),
         (exp::STILL_VISIBLE, ErrorClass::StillVisible),
+        (exp::DRAWN_AT_NO_SIZE, ErrorClass::NotVisible),
         (exp::ATTRIBUTE_TAIL, ErrorClass::AttributeMismatch),
     ];
     if let Some((_, class)) = endings.into_iter().find(|(words, _)| t.ends_with(&format!(" {words}")) || t.ends_with(words)) {
@@ -482,6 +541,11 @@ fn by_end(t: &str) -> Option<ErrorClass> {
         if t.contains(&format!(" {words}")) {
             return Some(class);
         }
+    }
+    // After the text checks: the boxes' sentence holds no page text but the
+    // locators, an order failure's `saw` list holds the page's.
+    if t.contains(" is not ") && t.contains(POSITION_AT) {
+        return Some(ErrorClass::PositionMismatch);
     }
     if t.contains(exp::COUNTED) && t.contains(" expected ") {
         return Some(ErrorClass::CountMismatch);
@@ -519,6 +583,9 @@ pub fn action_target(action: &Action) -> Option<String> {
         | Action::ExpectDisabled { selector, .. }
         | Action::ExpectChecked { selector, .. }
         | Action::ExpectFocused { selector, .. }
+        | Action::ExpectEach { selector, .. }
+        | Action::ExpectOrder { selector, .. }
+        | Action::ExpectPosition { selector, .. }
         | Action::Upload { selector, .. }
         | Action::WhenVisible { selector, .. }
         | Action::RepeatWhileVisible { selector, .. } => Some(selector.describe()),

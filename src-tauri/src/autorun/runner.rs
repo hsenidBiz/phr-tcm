@@ -358,6 +358,9 @@ pub fn changes_the_page(action: &Action) -> bool {
             | Action::ExpectNoRow { .. }
             | Action::ExpectSorted { .. }
             | Action::ExpectRowCount { .. }
+            | Action::ExpectEach { .. }
+            | Action::ExpectOrder { .. }
+            | Action::ExpectPosition { .. }
     )
 }
 

@@ -29,13 +29,13 @@ fn the_guide_names_every_action_the_executor_can_run() {
         Action::Fill { selector: "s".into(), value: "v".into() },
         Action::WaitFor { selector: "s".into(), timeout_ms: 1 },
         Action::CheckText { value: "v".into() },
-        Action::CheckUrl { contains: "c".into() },
+        Action::CheckUrl { contains: "c".into(), timeout_ms: None },
         Action::ExpectVisible { selector: "s".into(), timeout_ms: None },
         Action::ExpectHidden { selector: "s".into(), timeout_ms: None },
-        Action::ExpectText { selector: "s".into(), equals: "v".into(), timeout_ms: None },
+        Action::ExpectText { selector: "s".into(), equals: Some("v".into()), matches: None, timeout_ms: None },
         Action::ExpectContainsText { selector: "s".into(), value: "v".into(), timeout_ms: None },
-        Action::ExpectCount { selector: "s".into(), equals: 1, timeout_ms: None },
-        Action::ExpectAttribute { selector: "s".into(), name: "n".into(), equals: Some("v".into()), absent: false, timeout_ms: None },
+        Action::ExpectCount { selector: "s".into(), equals: Some(1), at_least: None, at_most: None, timeout_ms: None },
+        Action::ExpectAttribute { selector: "s".into(), name: "n".into(), equals: Some("v".into()), matches: None, absent: false, timeout_ms: None },
         serde_json::from_value(serde_json::json!({ "kind": "expect_style", "selector": "s", "property": "color", "equals": "red" })).unwrap(),
         Action::ExpectEnabled { selector: "s".into(), timeout_ms: None },
         Action::ExpectDisabled { selector: "s".into(), timeout_ms: None },
@@ -67,6 +67,9 @@ fn the_guide_names_every_action_the_executor_can_run() {
         serde_json::from_value(serde_json::json!({ "kind": "expect_no_row", "table": "t", "cells": { "A": "b" } })).unwrap(),
         serde_json::from_value(serde_json::json!({ "kind": "expect_sorted", "table": "t", "column": "A", "order": "ascending" })).unwrap(),
         serde_json::from_value(serde_json::json!({ "kind": "expect_row_count", "table": "t", "equals": 1 })).unwrap(),
+        serde_json::from_value(serde_json::json!({ "kind": "expect_each", "selector": "s", "not_empty": true })).unwrap(),
+        serde_json::from_value(serde_json::json!({ "kind": "expect_order", "selector": "s", "texts": ["a", "b"] })).unwrap(),
+        serde_json::from_value(serde_json::json!({ "kind": "expect_position", "selector": "s", "relative_to": "t", "relation": "inside" })).unwrap(),
         serde_json::from_value(serde_json::json!({ "kind": "use_component", "component": "c" })).unwrap(),
     ];
     let emitted: Vec<String> = samples
@@ -1869,4 +1872,204 @@ fn the_guide_says_when_the_clean_up_runs_and_what_it_may_check() {
         assert!(flat.contains(said), "the guide does not say: {said}");
     }
     assert!(!flat.contains("It runs after the case's last step and also after a step that failed"), "the old, unqualified rule is still there");
+}
+
+/// `expect_each` is taught with a sample that is a real, valid action, and
+/// it is one of the checks that may match several.
+#[test]
+fn the_guide_teaches_expect_each() {
+    let g = autorun_guide();
+    let line = g.lines().find(|l| l.starts_with("- `{ \"kind\": \"expect_each\"")).expect("a vocabulary line for expect_each");
+    let sample = first_balanced(line, line.find('{').unwrap(), '{', '}');
+    let action: Action = serde_json::from_str(sample).expect("the sample parses");
+    assert_eq!(action.validate(), Ok(()));
+    assert!(matches!(action, Action::ExpectEach { .. }));
+    for word in ["`min` (default 1)", "at most 200 items", "`\"not_empty\": true`", "`child`", "`attribute`"] {
+        assert!(line.contains(word), "the line never says {word}");
+    }
+    assert!(
+        g.contains("Only `expect_count`, `expect_each`, `expect_order`, `expect_hidden` and `wait_for` are"),
+        "the selectors section never names expect_each"
+    );
+    assert!(!line.contains('\u{2014}') && !line.contains('\u{2013}'));
+}
+
+/// `expect_order` is taught with a sample that is a real, valid action; the
+/// selectors section lets it match several.
+#[test]
+fn the_guide_teaches_expect_order() {
+    let g = autorun_guide();
+    let line = g.lines().find(|l| l.starts_with("- `{ \"kind\": \"expect_order\"")).expect("a vocabulary line for expect_order");
+    let sample = first_balanced(line, line.find('{').unwrap(), '{', '}');
+    let action: Action = serde_json::from_str(sample).expect("the sample parses");
+    assert_eq!(action.validate(), Ok(()));
+    assert!(matches!(action, Action::ExpectOrder { .. }));
+    for word in ["in page order", "others may sit between", "case matters"] {
+        assert!(line.contains(word), "the line never says {word}");
+    }
+    assert!(!line.contains('\u{2014}') && !line.contains('\u{2013}'));
+    assert!(line.contains("an item only has to contain a text"), "the line never says what an item must hold");
+    assert!(
+        g.contains("(`expect_hidden`, `expect_count`, `expect_each`, `expect_order`, `wait_for`)"),
+        "the part-of-a-seen-name rule never names expect_order"
+    );
+}
+
+/// `expect_position` names every relation the check knows and says that no
+/// pixel size is involved.
+#[test]
+fn the_guide_teaches_expect_position() {
+    let g = autorun_guide();
+    let line = g.lines().find(|l| l.starts_with("- `{ \"kind\": \"expect_position\"")).expect("a vocabulary line for expect_position");
+    for word in [
+        "`left_of`",
+        "`right_of`",
+        "`above`",
+        "`below`",
+        "`inside`",
+        "`in_top_left`",
+        "`in_top_right`",
+        "`in_bottom_left`",
+        "`in_bottom_right`",
+        "no pixel sizes",
+        "the centre of the element is in that quarter of `relative_to`",
+        "a centre on a midline (within 1 px) counts for both halves",
+        "`timeout_ms` is at least 1500",
+        "\"relative_to\"",
+    ] {
+        assert!(line.contains(word), "the line never says {word}");
+    }
+    assert!(!line.contains('\u{2014}') && !line.contains('\u{2013}'));
+    // Every relation it names is one the action reads.
+    for relation in ["left_of", "right_of", "above", "below", "inside", "in_top_left", "in_top_right", "in_bottom_left", "in_bottom_right"] {
+        let a: Action = serde_json::from_value(serde_json::json!({
+            "kind": "expect_position", "selector": { "css": "#a" }, "relative_to": { "css": "#b" }, "relation": relation
+        }))
+        .unwrap();
+        assert_eq!(a.validate(), Ok(()), "{relation}");
+    }
+}
+
+/// "Checking thoroughly" is the section every pointer to it names, and it
+/// teaches each thorough check, the absence rule and the clean-up flip-back
+/// with a clean-up example that is a real step.
+#[test]
+fn the_guide_teaches_thorough_checks() {
+    use v2_lib::autorun::guide::guide_section;
+    use v2_lib::autorun::{CaseScript, StepScript};
+    let g = autorun_guide();
+    let section = guide_section(&g, "Checking thoroughly").expect("a Checking thoroughly section");
+    let flat = section.split_whitespace().collect::<Vec<_>>().join(" ");
+    for term in [
+        "`expect_each`",
+        "`min`",
+        "`matches`",
+        "`at_least`",
+        "`at_most`",
+        "`expect_order`",
+        "`expect_position`",
+        "no pixel",
+        "positive control",
+        "\"exact\": true",
+        "`preconditions`",
+        "clean-up step",
+        "debounced",
+    ] {
+        assert!(flat.contains(term), "Checking thoroughly never says {term}");
+    }
+    assert!(!section.contains('\u{2014}') && !section.contains('\u{2013}'), "no em or en dashes");
+
+    // The clean-up example is a real step, and a real script holding it saves.
+    let at = section.find("{ \"step_number\": 7").expect("the clean-up example");
+    let sample = first_balanced(&section, at, '{', '}');
+    let cleanup: StepScript = serde_json::from_str(sample).expect("the clean-up example parses");
+    assert!(cleanup.cleanup);
+    let case: CaseScript = serde_json::from_value(serde_json::json!({
+        "case_id": 9001,
+        "title": "Publish and put back",
+        "steps": [
+            { "step_number": 1, "actions": [ { "kind": "expect_visible", "selector": { "css": "#a" } } ] },
+            serde_json::from_str::<serde_json::Value>(sample).unwrap()
+        ]
+    }))
+    .unwrap();
+    assert_eq!(v2_lib::autorun::store::check_scripts(&[case]), Ok(()));
+
+    // Every pointer to the section lands on it, and the section is where the
+    // vocabulary lines send the reader.
+    let mut pointers = 0;
+    for line in g.lines() {
+        if line.contains("Checking thoroughly") && !line.starts_with("## ") {
+            pointers += 1;
+        }
+    }
+    assert!(pointers >= 4, "only {pointers} lines point at Checking thoroughly");
+    assert!(g.contains("## Checking thoroughly"));
+    assert_eq!(g.matches("\n## Checking thoroughly").count(), 1);
+    // And the section does what its pointers say it does: the vocabulary lines
+    // that send a reader there are about checks it teaches.
+    for line in g.lines().filter(|l| l.starts_with("- `{ \"kind\"") && l.contains("(see \"Checking thoroughly\")")) {
+        assert!(
+            ["expect_each", "expect_order", "expect_position"].iter().any(|k| line.contains(k)),
+            "an unexpected line points at Checking thoroughly: {line}"
+        );
+    }
+}
+
+/// The quick rules stay a short list; the new section does not grow them.
+#[test]
+fn the_quick_rules_do_not_grow_for_thorough_checks() {
+    assert!(v2_lib::autorun::guide::quick_rules().lines().count() <= 45);
+    assert!(!v2_lib::autorun::guide::quick_rules().contains("Checking thoroughly"));
+}
+
+/// "Saving it" says, before its example, what the save refuses for an
+/// absence check and that its notes never refuse.
+#[test]
+fn the_saving_section_names_the_absence_refusal_and_the_notes() {
+    use v2_lib::autorun::guide::guide_section;
+    let g = autorun_guide();
+    let section = guide_section(&g, "Saving it").expect("a Saving it section");
+    let before_example = section.split("For the case above").next().unwrap();
+    let flat = before_example.split_whitespace().collect::<Vec<_>>().join(" ");
+    for term in ["only ever seen matching nothing", "note:", "never refuse"] {
+        assert!(flat.contains(term), "Saving it never says {term}");
+    }
+    // The first clause is the save's own.
+    assert!(
+        v2_lib::autorun::seen_check::ABSENCE_UNPROVEN.contains("was only ever seen matching nothing on the live app"),
+        "the guide quotes a sentence the save no longer says"
+    );
+    // The shared-state and precondition sections point at what they need.
+    let shared = guide_section(&g, "Shared state a case changes").unwrap();
+    assert!(shared.contains("clean-up step") && shared.contains("Checking thoroughly"));
+    let pre = guide_section(&g, "Preconditions").unwrap();
+    assert!(pre.contains("names a test record and declares no"), "Preconditions never says the save notes it");
+}
+
+/// The publish example is its bullets and then its two-line block; the
+/// flip-back paragraph comes after the block, not between the two.
+#[test]
+fn the_shared_state_section_keeps_its_example_whole() {
+    use v2_lib::autorun::guide::guide_section;
+    let g = autorun_guide();
+    let section = guide_section(&g, "Shared state a case changes").expect("a Shared state section");
+    let example = section.find("The publish example:").expect("the publish example");
+    let second_line = section.find(r#"{ "case_id": 504"#).expect("the example's block");
+    let flip_back = section.find("A case that flips shared state").expect("the flip-back paragraph");
+    assert!(example < second_line && second_line < flip_back, "the flip-back paragraph splits the publish example");
+}
+
+/// The part about locators that may match many names every check that does.
+#[test]
+fn the_selectors_section_lists_every_check_happy_with_many() {
+    use v2_lib::autorun::guide::guide_section;
+    let g = autorun_guide();
+    let section = guide_section(&g, "Selectors").expect("a Selectors section");
+    let flat = section.split_whitespace().collect::<Vec<_>>().join(" ");
+    let at = flat.find("are happy with many").expect("the happy-with-many sentence");
+    let sentence = &flat[at.saturating_sub(120)..at + 20];
+    for kind in ["expect_count", "expect_hidden", "wait_for", "expect_each", "expect_order"] {
+        assert!(sentence.contains(kind), "the happy-with-many sentence never names {kind}: {sentence}");
+    }
 }

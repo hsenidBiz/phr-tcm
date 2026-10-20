@@ -31,7 +31,17 @@ pub enum Check<'a> {
     Text(&'a str),
     ContainsText(&'a str),
     Count(u32),
+    /// `expect_count` with `at_least` or `at_most` (never `Equals`, which
+    /// is `Count`). `AtMost` is passed by too FEW, so it settles in
+    /// `keep_looking`; `equals: 0` and `expect_hidden` keep passing on the
+    /// first look that holds.
+    CountBound(super::table::RowCount),
+    /// The one match's text (collapsed) matches `re`; `pattern` is how it
+    /// is written. Not anchored unless the pattern is (`pattern`).
+    TextMatches { pattern: &'a str, re: &'a regex::Regex },
     Attribute { name: &'a str, equals: &'a str },
+    /// The one match has attribute `name` and its value matches `re`.
+    AttributeMatches { name: &'a str, pattern: &'a str, re: &'a regex::Regex },
     /// The one match has no attribute `name`.
     NoAttribute { name: &'a str },
     /// The focus is on the one match, or inside it.
@@ -45,6 +55,16 @@ pub enum Check<'a> {
     /// The one match's computed style `property`, by `READ_STYLE_JS`,
     /// judged by `style::judge`.
     Style { property: &'a str, want: super::style::Want<'a> },
+    /// Every match of the target is an item of a list, and each passes
+    /// `want` (`each::look_each`): the item's text, its `attribute`, or the
+    /// one element `child` finds inside it. At least `min` items.
+    Each { min: u32, child: Option<&'a Target>, attribute: Option<&'a str>, want: super::each::EachWant<'a> },
+    /// The matches, in page order, contain these texts in this order, others
+    /// between allowed (`order::look_order`).
+    Order(&'a [String]),
+    /// The one match sits `relation` the one element `relative_to` finds
+    /// (`position::holds`).
+    Position { relative_to: &'a Target, relation: super::position::Relation },
 }
 
 /// `this` is the element. Why it is disabled, in a few words, or `""` when
@@ -123,6 +143,16 @@ pub const READ_TEXT_JS: &str = r#"function() {
   return norm(this.innerText);
 }"#;
 
+/// `this` is the element. Is it a password input? Asked only when a sentence
+/// would carry what the element holds, so that sentence can say
+/// [`A_PASSWORD_FIELD`] instead.
+pub const IS_PASSWORD_JS: &str =
+    "function() { return this instanceof HTMLInputElement && String(this.type).toLowerCase() === 'password'; }";
+
+/// What a sentence says in place of what a password input holds. Other
+/// fields keep showing their value: a typo is what the sentence is for.
+pub const A_PASSWORD_FIELD: &str = "(a password field)";
+
 /// `this` is the element. Argument: the attribute name. null when absent.
 pub const READ_ATTR_JS: &str = r#"function(name) { return this.getAttribute(name); }"#;
 
@@ -165,6 +195,12 @@ pub const HIDDEN: &str = "is there but cannot be seen";
 pub const NOT_ON_PAGE: &str = "is not on the page";
 /// `expect_hidden` still sees one of them.
 pub const STILL_VISIBLE: &str = "is still visible";
+/// `expect_position` when the element it is placed against cannot be found
+/// (or is not one element): followed by that element and why.
+pub const CANNOT_BE_PLACED: &str = "cannot be placed: ";
+/// What follows the element in a `cannot be placed` sentence when it has no
+/// size on the page.
+pub const DRAWN_AT_NO_SIZE: &str = " is drawn at no size";
 /// `expect_text`: followed by the wanted text and what was seen.
 pub const EXPECTED_TEXT: &str = "expected text ";
 /// `expect_contains_text`: followed by the wanted text and what was seen.
@@ -190,6 +226,26 @@ async fn shown<D: Driver>(d: &mut D, h: &Handle) -> Result<bool, CdpError> {
     Ok(page::call_value(d, h, SHOWN_JS, &[]).await?.as_bool().unwrap_or(false))
 }
 
+/// Is the element a password input? Asked only by a check that is about to
+/// put what the element holds into a sentence.
+pub(crate) async fn is_password<D: Driver>(d: &mut D, h: &Handle) -> Result<bool, CdpError> {
+    Ok(page::call_value(d, h, IS_PASSWORD_JS, &[]).await?.as_bool().unwrap_or(false))
+}
+
+/// Is `name` the attribute that holds what a field holds?
+pub(crate) fn is_value_attribute(name: &str) -> bool {
+    name.eq_ignore_ascii_case("value")
+}
+
+/// What a sentence says for a value read from the page.
+fn shown_value(value: &str, password: bool) -> String {
+    if password {
+        A_PASSWORD_FIELD.to_string()
+    } else {
+        format!("{value:?}")
+    }
+}
+
 fn only(handles: &[Handle]) -> Result<&Handle, String> {
     match handles {
         [] => Err(NOT_ON_PAGE.to_string()),
@@ -198,11 +254,40 @@ fn only(handles: &[Handle]) -> Result<&Handle, String> {
     }
 }
 
+/// What a settling check read besides its sentence: a pass is only the same
+/// pass if this is the same too. For `expect_order` the texts of every item
+/// (a list re-sorted during the hold is a new list); for `expect_position`
+/// the two boxes, which may differ by `position::TOLERANCE_PX` from where
+/// the hold began (a box still moving is not at rest).
+#[derive(Debug, Default, Clone)]
+pub(crate) struct Read {
+    items: String,
+    boxes: Vec<f64>,
+}
+
+impl Read {
+    fn same(&self, then: &Read) -> bool {
+        self.items == then.items
+            && self.boxes.len() == then.boxes.len()
+            && self.boxes.iter().zip(&then.boxes).all(|(a, b)| (a - b).abs() <= super::position::TOLERANCE_PX)
+    }
+}
+
 /// One look. `Ok(Ok(detail))` holds; `Ok(Err(why))` does not hold yet.
 pub(crate) async fn look<D: Driver>(
     d: &mut D,
     target: &Target,
     check: &Check<'_>,
+) -> Result<Result<String, String>, CdpError> {
+    look_reading(d, target, check, &mut Read::default()).await
+}
+
+/// [`look`], also saying in `read` what a settling check read.
+async fn look_reading<D: Driver>(
+    d: &mut D,
+    target: &Target,
+    check: &Check<'_>,
+    read: &mut Read,
 ) -> Result<Result<String, String>, CdpError> {
     let what = target.describe();
     let found = resolve_explained(d, target).await?;
@@ -275,15 +360,58 @@ pub(crate) async fn look<D: Driver>(
                 Err(format!("expected {n}{COUNTED}{}", handles.len()))
             }
         }
+        Check::CountBound(want) => {
+            let n = handles.len() as u32;
+            match want {
+                super::table::RowCount::AtLeast(k) if n < *k => Err(format!("expected at least {k}{COUNTED}{n}")),
+                super::table::RowCount::AtMost(k) if n > *k => Err(format!("expected at most {k}{COUNTED}{n}")),
+                super::table::RowCount::Equals(k) if n != *k => Err(format!("expected {k}{COUNTED}{n}")),
+                _ => Ok(format!("counted {n}: {what}")),
+            }
+        }
+        Check::TextMatches { pattern, re } => match only(&handles) {
+            Err(why) => Err(why),
+            Ok(h) => {
+                let got = page::call_value(d, h, READ_TEXT_JS, &[]).await?;
+                let got = collapse(got.as_str().unwrap_or(""));
+                if re.is_match(&got) {
+                    // Not the text: it may be a field's, and passes are listed in the report.
+                    Ok(format!("{what} matches {}", super::pattern::shown(pattern)))
+                } else {
+                    let password = is_password(d, h).await?;
+                    Err(format!("{EXPECTED_TEXT}to match {} but saw {}", super::pattern::shown(pattern), shown_value(&got, password)))
+                }
+            }
+        },
+        Check::AttributeMatches { name, pattern, re } => match only(&handles) {
+            Err(why) => Err(why),
+            Ok(h) => {
+                let got = page::call_value(d, h, READ_ATTR_JS, &[json!(name)]).await?;
+                match got.as_str() {
+                    None => Err(format!("{HAS_NO}{name}{ATTRIBUTE_TAIL}")),
+                    Some(v) => {
+                        let password = is_value_attribute(name) && is_password(d, h).await?;
+                        let v_shown = shown_value(v, password);
+                        if re.is_match(v) {
+                            Ok(format!("{what} has {name}={v_shown}, matching {}", super::pattern::shown(pattern)))
+                        } else {
+                            Err(format!("expected {name}={} but saw {v_shown}", super::pattern::shown(pattern)))
+                        }
+                    }
+                }
+            }
+        },
         Check::Text(want) => match only(&handles) {
             Err(why) => Err(why),
             Ok(h) => {
                 let got = page::call_value(d, h, READ_TEXT_JS, &[]).await?;
                 let (got, want) = (collapse(got.as_str().unwrap_or("")), collapse(want));
+                let password = is_password(d, h).await?;
                 if got == want {
-                    Ok(format!("{what} says {want:?}"))
+                    // On a pass the wanted text IS what the field holds.
+                    Ok(format!("{what} says {}", shown_value(&want, password)))
                 } else {
-                    Err(format!("{EXPECTED_TEXT}{want:?} but saw {got:?}"))
+                    Err(format!("{EXPECTED_TEXT}{want:?} but saw {}", shown_value(&got, password)))
                 }
             }
         },
@@ -292,10 +420,12 @@ pub(crate) async fn look<D: Driver>(
             Ok(h) => {
                 let got = page::call_value(d, h, READ_TEXT_JS, &[]).await?;
                 let (got, want) = (collapse(got.as_str().unwrap_or("")), collapse(want));
+                let password = is_password(d, h).await?;
                 if got.contains(&want) {
-                    Ok(format!("{what} contains {want:?}"))
+                    // On a pass the wanted text is part of what the field holds.
+                    Ok(format!("{what} contains {}", shown_value(&want, password)))
                 } else {
-                    Err(format!("{EXPECTED_TO_CONTAIN}{want:?} but saw {got:?}"))
+                    Err(format!("{EXPECTED_TO_CONTAIN}{want:?} but saw {}", shown_value(&got, password)))
                 }
             }
         },
@@ -305,8 +435,15 @@ pub(crate) async fn look<D: Driver>(
                 let got = page::call_value(d, h, READ_ATTR_JS, &[json!(name)]).await?;
                 match got.as_str() {
                     None => Err(format!("{HAS_NO}{name}{ATTRIBUTE_TAIL}")),
-                    Some(v) if v == *equals => Ok(format!("{what} has {name}={equals:?}")),
-                    Some(v) => Err(format!("expected {name}={equals:?} but saw {v:?}")),
+                    Some(v) => {
+                        let password = is_value_attribute(name) && is_password(d, h).await?;
+                        if v == *equals {
+                            // On a pass the wanted value IS what the field holds.
+                            Ok(format!("{what} has {name}={}", shown_value(equals, password)))
+                        } else {
+                            Err(format!("expected {name}={equals:?} but saw {}", shown_value(v, password)))
+                        }
+                    }
                 }
             }
         },
@@ -316,7 +453,10 @@ pub(crate) async fn look<D: Driver>(
                 let got = page::call_value(d, h, READ_ATTR_JS, &[json!(name)]).await?;
                 match got.as_str() {
                     None => Ok(format!("{what} {HAS_NO}{name}{ATTRIBUTE_TAIL}")),
-                    Some(v) => Err(format!("{HAS_ATTRIBUTE}{name}={v:?}")),
+                    Some(v) => {
+                        let password = is_value_attribute(name) && is_password(d, h).await?;
+                        Err(format!("{HAS_ATTRIBUTE}{name}={}", shown_value(v, password)))
+                    }
                 }
             }
         },
@@ -357,6 +497,53 @@ pub(crate) async fn look<D: Driver>(
                     Err(format!("{property} is {} ({} so far)", super::style::STILL_CHANGING, super::style::shown(value)))
                 } else {
                     super::style::judge(property, value, *want).map(|ok| format!("{what} {ok}"))
+                }
+            }
+        },
+        Check::Each { min, child, attribute, want } => {
+            // A look that runs out of time after reading some items is a
+            // list too long for the time given (`TOO_SLOW`), which
+            // `keep_looking` does not hold against a pass already held.
+            return super::each::look_each(d, &what, &handles, *min, *child, *attribute, want).await;
+        }
+        Check::Order(want) => {
+            // As for a list of items.
+            return super::order::look_order(d, &what, &handles, want, &mut read.items).await;
+        }
+        Check::Position { relative_to, relation } => match only(&handles) {
+            Err(why) => Err(why),
+            Ok(h) => {
+                let reference = relative_to.describe();
+                let found = resolve_explained(d, relative_to).await?;
+                // Nothing found because a frame could not be entered is not
+                // "not on the page".
+                let placed = match (found.handles.is_empty(), found.unreachable_frame.clone()) {
+                    (true, Some(why)) => Err(why),
+                    _ => only(&found.handles).map(Handle::clone),
+                };
+                match placed {
+                    Err(why) => Err(format!("{CANNOT_BE_PLACED}{reference} {why}")),
+                    Ok(other) => {
+                        let (a, b) = (super::position::read_box(d, h).await?, super::position::read_box(d, &other).await?);
+                        match (a, b) {
+                            // A box of no size (`display: none`, `display:
+                            // contents`) is nowhere: `right_of` and `below`
+                            // would hold of it against anything.
+                            (Some(a), _) if a.w <= 0.0 || a.h <= 0.0 => Err(format!("{CANNOT_BE_PLACED}{what}{DRAWN_AT_NO_SIZE}")),
+                            (_, Some(b)) if b.w <= 0.0 || b.h <= 0.0 => Err(format!("{CANNOT_BE_PLACED}{reference}{DRAWN_AT_NO_SIZE}")),
+                            (Some(a), Some(b)) if super::position::holds(*relation, a, b) => {
+                                read.boxes = vec![a.x, a.y, a.w, a.h, b.x, b.y, b.w, b.h];
+                                Ok(format!("{what} is {} {reference}", relation.words()))
+                            }
+                            (Some(a), Some(b)) => Err(format!(
+                                "is not {} {reference}: it is at {}, and {reference} at {}",
+                                relation.words(),
+                                super::position::shown(&a),
+                                super::position::shown(&b)
+                            )),
+                            _ => Err(format!("{CANNOT_BE_PLACED}{what} has no box on the page")),
+                        }
+                    }
                 }
             }
         },
@@ -406,18 +593,56 @@ async fn keep_looking<D: Driver>(
     // stopped answering, and the two must not be reported the same way.
     let mut looked = false;
     let mut last = STILL_LOOKING.to_string();
+    // `at_most` passes on too few, so a page whose rows have not arrived
+    // would pass it at once: it passes only once the same pass has held for
+    // `table::SETTLE_MS`. The pass held so far, and since when.
+    // An `expect_each` is settled the same way: a list still filling in
+    // passes on the items drawn so far, so it passes only once its count
+    // and its items have held for the same time. An `expect_order` passes
+    // only once it kept passing with the very same items read, and an
+    // `expect_position` once it kept passing with both boxes at rest
+    // (`Read`).
+    let settling = matches!(
+        check,
+        Check::CountBound(super::table::RowCount::AtMost(_)) | Check::Each { .. } | Check::Order(_) | Check::Position { .. }
+    );
+    let mut held: Option<(String, Read, Instant)> = None;
     loop {
         page::release(d).await;
-        match look(d, target, &check).await {
-            Ok(Ok(detail)) => return ActionOutcome::passed(detail),
+        let mut read = Read::default();
+        match look_reading(d, target, &check, &mut read).await {
+            Ok(Ok(detail)) => {
+                if !settling {
+                    return ActionOutcome::passed(detail);
+                }
+                looked = true;
+                // The hold goes on only while this look matches the one it
+                // began with: the same sentence and the same reading.
+                let (read, since) = match &held {
+                    Some((before, began, t)) if *before == detail && began.same(&read) => (began.clone(), *t),
+                    _ => (read, Instant::now()),
+                };
+                if since.elapsed() >= Duration::from_millis(super::table::SETTLE_MS) {
+                    return ActionOutcome::passed(detail);
+                }
+                held = Some((detail, read, since));
+            }
+            // A look the deadline cut short tells nothing new about a list
+            // that has kept passing: the pass held so far stands (as it
+            // does when `expect_position`'s or `at_most`'s look times out).
+            Ok(Err(why)) if held.is_some() && why == super::each::TOO_SLOW => {
+                looked = true;
+            }
             Ok(Err(why)) => {
                 looked = true;
+                held = None;
                 last = why;
             }
             // The page refusing mid-navigation is the page answering, just
             // between two documents - it counts as a completed look.
             Err(e) if e.is_transient() => {
                 looked = true;
+                held = None;
                 last = e.to_string();
             }
             // No new information about the page: the browser did not
@@ -427,12 +652,21 @@ async fn keep_looking<D: Driver>(
             Err(e) => return harness(e),
         }
         if Instant::now() >= deadline {
+            // Still held when time ran out: what it held is the answer.
+            if let Some((detail, _, _)) = held {
+                return ActionOutcome::passed(detail);
+            }
             return if looked {
                 ActionOutcome::failed(format!("waited {timeout_ms}ms: {} {last}", target.describe()))
             } else {
                 harness_timeout(timeout_ms, &target.describe())
             };
         }
-        d.idle(Duration::from_millis(poll_ms)).await;
+        let mut poll = Duration::from_millis(poll_ms);
+        if settling {
+            let left = deadline.saturating_duration_since(Instant::now());
+            poll = poll.max(Duration::from_millis(super::table::SETTLE_POLL_MS)).min(left);
+        }
+        d.idle(poll).await;
     }
 }

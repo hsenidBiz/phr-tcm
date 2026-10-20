@@ -91,7 +91,7 @@ fn refusal_as(step: i32, describe: &str, kind: &str) -> String {
             "Step {step}: {describe} was never seen on the live app. Find it on the page first with probe_autorun_locator or discover_autorun_actions, then save again."
         );
     }
-    let many = matches!(kind, "expect_hidden" | "expect_count" | "wait_for");
+    let many = matches!(kind, "expect_hidden" | "expect_count" | "expect_each" | "expect_order" | "wait_for");
     // `expect_hidden` (and, as these tests write it, an `expect_count` of
     // 0) passes with nothing there: a probe of none counts.
     let none = matches!(kind, "expect_hidden" | "expect_count");
@@ -2886,4 +2886,535 @@ fn a_clean_up_steps_locators_must_be_seen_like_any_steps() {
         check_seen(&map, &none(), &script(Some("Ratings"), steps("Remove")), &[], None),
         Err(refusal(2, "button \"Remove\""))
     );
+}
+
+/// An `at_most: 0` count passes with nothing there, so a locator seen
+/// matching none vouches for it, as for `equals: 0`; a bound that needs
+/// something there (`at_least: 1`) is refused on a locator never seen.
+#[test]
+fn an_at_most_zero_count_takes_a_probe_of_none_like_equals_zero() {
+    let form = serde_json::json!({ "css": ".gone" });
+    let map = filed(form.clone(), 0);
+    let at_most = one_step("Cycles", serde_json::json!([{ "kind": "expect_count", "selector": form.clone(), "at_most": 0 }]));
+    assert_eq!(check_seen(&map, &none(), &at_most, &[], None), Ok(()));
+    let at_least = one_step("Cycles", serde_json::json!([{ "kind": "expect_count", "selector": form.clone(), "at_least": 1 }]));
+    let refused = check_seen(&map, &none(), &at_least, &[], None).unwrap_err();
+    assert!(refused.contains("never seen"), "{refused}");
+}
+
+// ------------------------- expect_order and expect_position
+
+/// A list read in order may have been seen matching several elements; a
+/// click on the same locator may not.
+#[test]
+fn an_order_check_takes_its_list_seen_matching_several() {
+    let order = one_step(
+        "Cycles",
+        serde_json::json!([{ "kind": "expect_order", "selector": { "css": LIST }, "texts": ["All", "Draft"] }]),
+    );
+    let map = sighted_matching("Cycles", css(LIST), 12);
+    assert_eq!(check_seen(&map, &none(), &order, &[], None), Ok(()));
+    // Not seen at all: refused as a check that takes any number.
+    assert_eq!(check_seen(&DiscoveryMap::default(), &none(), &order, &[], None), Err(refusal_as(1, LIST, "expect_order")));
+    // A click on it needs one.
+    assert!(check_seen(&map, &none(), &clicks(serde_json::json!({ "css": LIST })), &[], None).is_err());
+}
+
+/// `#new` and `#bar` seen in Cycles, matching this many elements each.
+fn two_sighted(new: u32, bar: u32) -> DiscoveryMap {
+    let mut map = sighted_matching("Cycles", css("#new"), new);
+    map.areas[0].sightings.extend(sighted_matching("Cycles", css("#bar"), bar).areas.remove(0).sightings);
+    map
+}
+
+/// Both locators are the one element each: an element and the box it is
+/// placed against.
+#[test]
+fn a_position_check_takes_both_locators_seen_matching_one() {
+    let place = one_step(
+        "Cycles",
+        serde_json::json!([{ "kind": "expect_position", "selector": { "css": "#new" }, "relative_to": { "css": "#bar" }, "relation": "in_top_right" }]),
+    );
+    let both = two_sighted(1, 1);
+    assert_eq!(check_seen(&both, &none(), &place, &[], None), Ok(()));
+    // The reference seen matching several is not one box.
+    let wide = two_sighted(1, 2);
+    assert_eq!(check_seen(&wide, &none(), &place, &[], None), Err(many_refusal(1, "#bar")));
+    // The element seen matching several is not either.
+    let wide = two_sighted(2, 1);
+    assert_eq!(check_seen(&wide, &none(), &place, &[], None), Err(many_refusal(1, "#new")));
+    // The reference never seen is refused by name.
+    let only_new = sighted_matching("Cycles", css("#new"), 1);
+    let refused = check_seen(&only_new, &none(), &place, &[], None).unwrap_err();
+    assert!(refused.contains("#bar was never seen on the live app"), "{refused}");
+}
+
+// ------------------------- expect_each: a list, and a child looked for in it
+
+/// The list an `expect_each` reads in these tests.
+const LIST: &str = "div[data-cycle-id]";
+
+fn each_script(with_child: bool) -> CaseScript {
+    let mut action = serde_json::json!({ "kind": "expect_each", "selector": { "css": LIST }, "not_empty": true });
+    if with_child {
+        action["child"] = serde_json::json!({ "css": "h3" });
+    }
+    one_step("Cycles", serde_json::json!([action]))
+}
+
+/// A list is read whole, so the locator may have been seen matching
+/// several elements; a click on the same one may not.
+#[test]
+fn an_each_check_takes_its_list_seen_matching_several() {
+    let map = sighted_matching("Cycles", css(LIST), 12);
+    assert_eq!(check_seen(&map, &none(), &each_script(false), &[], None), Ok(()));
+    // Not seen at all: refused as a check that takes any number.
+    let empty = DiscoveryMap::default();
+    assert_eq!(check_seen(&empty, &none(), &each_script(false), &[], None), Err(refusal_as(1, LIST, "expect_each")));
+    // A click on it needs one.
+    assert!(check_seen(&map, &none(), &clicks(serde_json::json!({ "css": LIST })), &[], None).is_err());
+}
+
+/// The child is checked inside its list: the chain list then child, filed
+/// as one, is what is looked for.
+#[test]
+fn an_each_child_is_checked_inside_its_list() {
+    let chain = serde_json::json!([{ "css": LIST }, { "css": "h3" }]);
+    let map = filed(chain, 12);
+    assert_eq!(check_seen(&map, &none(), &each_script(true), &[], None), Ok(()));
+    // The list alone is seen, the child inside it never is.
+    let list_only = filed(serde_json::json!({ "css": LIST }), 12);
+    let refused = check_seen(&list_only, &none(), &each_script(true), &[], None).unwrap_err();
+    assert!(refused.contains(&format!("h3 in {LIST} was never seen on the live app")), "{refused}");
+    // The same child, seen on its own elsewhere, is not seen inside the list.
+    let alone = sighted_matching("Cycles", css("h3"), 12);
+    assert!(check_seen(&alone, &none(), &each_script(true), &[], None).is_err());
+}
+
+/// What a saved `expect_each` saw vouches for its child only inside its
+/// list, never for the bare child.
+#[test]
+fn a_saved_each_vouches_its_child_only_inside_its_list() {
+    let mut map = DiscoveryMap::default();
+    add_saved_scripts(&mut map, &[each_script(true)], &none());
+    assert_eq!(check_seen(&map, &none(), &each_script(true), &[], None), Ok(()));
+    assert!(check_seen(&map, &none(), &clicks(serde_json::json!({ "css": "h3" })), &[], None).is_err());
+}
+
+/// The list and a bare `h3` seen separately do not say there is an `h3`
+/// inside the list: the child is accepted only as the chain, seen whole.
+#[test]
+fn an_each_child_seen_apart_from_its_list_is_not_seen_inside_it() {
+    let apart = joined(sighted_matching("Cycles", css(LIST), 12), sighted_matching("Cycles", css("h3"), 12));
+    let refused = check_seen(&apart, &none(), &each_script(true), &[], None).unwrap_err();
+    assert!(refused.contains(&format!("h3 in {LIST} was never seen")) || refused.contains(&format!("h3 in {LIST} was seen")), "{refused}");
+    // Seen as the chain, it is.
+    let whole = filed(serde_json::json!([{ "css": LIST }, { "css": "h3" }]), 12);
+    assert_eq!(check_seen(&whole, &none(), &each_script(true), &[], None), Ok(()));
+}
+
+/// A saved `expect_each` vouches for its child only as the chain: a bare
+/// `h3` in a check that may match several is still never seen.
+#[test]
+fn a_saved_each_does_not_vouch_for_its_bare_child() {
+    let mut map = DiscoveryMap::default();
+    add_saved_scripts(&mut map, &[each_script(true)], &none());
+    assert_eq!(check_seen(&map, &none(), &each_script(true), &[], None), Ok(()));
+    let wait = one_step("Cycles", serde_json::json!([{ "kind": "wait_for", "selector": { "css": "h3" }, "timeout_ms": 500 }]));
+    assert!(check_seen(&map, &none(), &wait, &[], None).is_err(), "a saved expect_each vouched for a bare h3");
+    assert!(check_seen(&map, &none(), &clicks(serde_json::json!({ "css": "h3" })), &[], None).is_err());
+}
+
+fn each_actions() -> Vec<v2_lib::browser::actions::Action> {
+    serde_json::from_value(serde_json::json!([
+        { "kind": "expect_each", "selector": { "css": LIST }, "child": { "css": "h3x" }, "not_empty": true }
+    ]))
+    .unwrap()
+}
+
+/// A component's own save checks its `expect_each` child inside its list.
+#[test]
+fn a_components_each_child_is_checked_when_the_component_is_saved() {
+    let list_only = sighted_matching("Cycles", css(LIST), 12);
+    let refused = check_component_seen(&list_only, Some("Cycles"), &each_actions()).unwrap_err();
+    assert!(refused.contains(&format!("h3x in {LIST} was never seen")), "{refused}");
+    let whole = filed(serde_json::json!([{ "css": LIST }, { "css": "h3x" }]), 12);
+    assert_eq!(check_component_seen(&whole, Some("Cycles"), &each_actions()), Ok(()));
+}
+
+/// A script's use of a component whose `expect_each` list is an input: the
+/// locator the input made is checked with the child inside it.
+#[test]
+fn a_used_components_each_child_is_checked_inside_the_list_an_input_gave() {
+    let have = components(serde_json::json!([{
+        "name": "Check cards", "description": "d", "version": 1,
+        "inputs": [{ "name": "list", "kind": "target", "description": "" }],
+        "actions": [{ "kind": "expect_each", "selector": { "input": "list" }, "child": { "css": "h3" }, "not_empty": true }]
+    }]));
+    let uses = one_step(
+        "Cycles",
+        serde_json::json!([{ "kind": "use_component", "component": "Check cards", "inputs": { "list": { "css": LIST } } }]),
+    );
+    let whole = filed(serde_json::json!([{ "css": LIST }, { "css": "h3" }]), 12);
+    assert_eq!(check_seen(&whole, &have, &uses, &[], None), Ok(()));
+    // The list is seen, the child inside it is not.
+    let list_only = sighted_matching("Cycles", css(LIST), 12);
+    let all = check_seen_all(&list_only, &have, &uses, &[], None);
+    assert_eq!(all.iter().map(|u| u.locator.as_str()).collect::<Vec<_>>(), [format!("h3 in {LIST}")]);
+}
+
+/// A child holding a `{{x}}` placeholder is fitted against the map when the
+/// run has filled it in, as a step's own locator is.
+#[test]
+fn an_each_child_with_a_placeholder_is_checked_at_run_time() {
+    let chain = serde_json::json!([{ "css": LIST }, { "css": "h3[data-cycle-id=\"10066\"]" }]);
+    let map = filed(chain, 12);
+    let each = |child: &str| {
+        one_step(
+            "Cycles",
+            serde_json::json!([{ "kind": "expect_each", "selector": { "css": LIST }, "child": { "css": child }, "not_empty": true }]),
+        )
+    };
+    let saved = each("h3[data-cycle-id=\"{{setup.cycle_id}}\"]");
+    assert_eq!(check_seen(&map, &none(), &saved, &[], None), Ok(()));
+    assert!(has_data_placeholders(&saved.steps));
+    let run = |filled: &str| check_resolved_inputs(&map, &none(), &["Cycles"], &saved.steps, &each(filled).steps);
+    assert_eq!(run("h3[data-cycle-id=\"10071\"]"), Ok(()));
+    assert_eq!(
+        run("h3[data-cycle-id=\"draft-7\"]"),
+        Err(format!("Step 1: h3[data-cycle-id=\"draft-7\"] in {LIST}, as filled in, does not fit what was seen on the live app. Explore that screen again with discovery, or check the value the setup or fixture gives."))
+    );
+}
+
+// ------------------------- the save's own rules: absence needs a control
+
+use v2_lib::autorun::seen_check::{absence_refusals, loose_name_notes, ABSENCE_UNPROVEN};
+
+fn two_steps(first: serde_json::Value, second: serde_json::Value) -> CaseScript {
+    script(
+        Some("Cycles"),
+        serde_json::json!([
+            { "step_number": 1, "actions": first },
+            { "step_number": 2, "actions": second }
+        ]),
+    )
+}
+
+#[test]
+fn an_absence_check_seen_only_as_none_is_refused_unless_proven() {
+    let none_only = filed(serde_json::json!({ "css": ".x" }), 0);
+    let line = format!("Step 1: .x {ABSENCE_UNPROVEN}");
+    for check in [
+        serde_json::json!({ "kind": "expect_hidden", "selector": { "css": ".x" } }),
+        serde_json::json!({ "kind": "expect_count", "selector": { "css": ".x" }, "equals": 0 }),
+        serde_json::json!({ "kind": "expect_count", "selector": { "css": ".x" }, "at_most": 0 }),
+    ] {
+        let s = one_step("Cycles", serde_json::json!([check.clone()]));
+        assert_eq!(absence_refusals(&none_only, &s, None, None), vec![line.clone()], "{check}");
+    }
+
+    // A count that is not zero is not an absence check.
+    let counted = one_step("Cycles", serde_json::json!([{ "kind": "expect_count", "selector": { "css": ".x" }, "equals": 2 }]));
+    assert!(absence_refusals(&none_only, &counted, None, None).is_empty());
+
+    // A guard is skipped when its locator is absent: not an absence check.
+    let guard = one_step(
+        "Cycles",
+        serde_json::json!([{ "kind": "when_visible", "selector": { "css": ".x" }, "then": [click(serde_json::json!({ "css": ".y" }))] }]),
+    );
+    assert!(absence_refusals(&none_only, &guard, None, None).is_empty());
+
+    let hidden = one_step("Cycles", serde_json::json!([{ "kind": "expect_hidden", "selector": { "css": ".x" } }]));
+
+    // Shown once, in any other area.
+    let mut shown = none_only.clone();
+    shown.areas.extend(sighted_matching("Other", css(".x"), 1).areas);
+    assert!(absence_refusals(&shown, &hidden, None, None).is_empty());
+
+    // Used present by another step of the script, as a part of a chain.
+    let used = two_steps(
+        serde_json::json!([{ "kind": "expect_hidden", "selector": { "css": ".x" } }]),
+        serde_json::json!([{ "kind": "expect_visible", "selector": [{ "css": ".card-published" }, { "css": ".x" }] }]),
+    );
+    assert!(absence_refusals(&none_only, &used, None, None).is_empty());
+
+    // Used only by a guard: still unproven.
+    let also_absent = two_steps(
+        serde_json::json!([{ "kind": "expect_hidden", "selector": { "css": ".x" } }]),
+        serde_json::json!([{ "kind": "when_visible", "selector": { "css": ".x" }, "then": [click(serde_json::json!({ "css": ".y" }))] }]),
+    );
+    assert_eq!(absence_refusals(&none_only, &also_absent, None, None), vec![line.clone()]);
+
+    // Uses that pass with nothing there prove nothing: a loop's selector,
+    // a count with an upper bound, and anything a guard or a loop runs.
+    let hidden_then = |other: serde_json::Value| {
+        two_steps(serde_json::json!([{ "kind": "expect_hidden", "selector": { "css": ".x" } }]), other)
+    };
+    for (what, other) in [
+        (
+            "a repeat's selector",
+            serde_json::json!([{ "kind": "repeat_while_visible", "selector": { "css": ".x" }, "max": 3, "then": [click(serde_json::json!({ "css": ".y" }))] }]),
+        ),
+        ("a count at most 1", serde_json::json!([{ "kind": "expect_count", "selector": { "css": ".x" }, "at_most": 1 }])),
+        (
+            "a click in a guard's then",
+            serde_json::json!([{ "kind": "when_visible", "selector": { "css": ".y" }, "then": [click(serde_json::json!({ "css": ".x" }))] }]),
+        ),
+        (
+            "a click in a repeat's then",
+            serde_json::json!([{ "kind": "repeat_while_visible", "selector": { "css": ".y" }, "max": 3, "then": [click(serde_json::json!({ "css": ".x" }))] }]),
+        ),
+    ] {
+        assert_eq!(absence_refusals(&none_only, &hidden_then(other), None, None), vec![line.clone()], "{what}");
+    }
+    // A count that needs some does.
+    for count in [serde_json::json!({ "equals": 2 }), serde_json::json!({ "at_least": 1 })] {
+        let mut check = serde_json::json!({ "kind": "expect_count", "selector": { "css": ".x" } });
+        for (k, v) in count.as_object().unwrap() {
+            check[k] = v.clone();
+        }
+        assert!(absence_refusals(&none_only, &hidden_then(serde_json::json!([check])), None, None).is_empty());
+    }
+
+    // The same locator checked twice in a case is refused once.
+    let twice = one_step(
+        "Cycles",
+        serde_json::json!([
+            { "kind": "expect_hidden", "selector": { "css": ".x" } },
+            { "kind": "expect_count", "selector": { "css": ".x" }, "equals": 0 }
+        ]),
+    );
+    assert_eq!(absence_refusals(&none_only, &twice, None, None), vec![line.clone()]);
+
+    // Only the steps a repair declares are read.
+    let step_one = two_steps(
+        serde_json::json!([{ "kind": "expect_hidden", "selector": { "css": ".x" } }]),
+        serde_json::json!([click(serde_json::json!({ "css": ".y" }))]),
+    );
+    assert!(absence_refusals(&none_only, &step_one, Some(&[2]), None).is_empty());
+    assert_eq!(absence_refusals(&none_only, &step_one, Some(&[1]), None), vec![line]);
+}
+
+#[test]
+fn an_absence_check_on_a_chain_is_proven_by_its_last_part_seen_anywhere() {
+    let chain = serde_json::json!([{ "css": ".card-draft" }, { "role": "switch" }]);
+    let none_only = filed(chain.clone(), 0);
+    let hidden = one_step("Cycles", serde_json::json!([{ "kind": "expect_hidden", "selector": chain.clone() }]));
+    let described = serde_json::from_value::<Target>(chain).unwrap().describe();
+    assert_eq!(absence_refusals(&none_only, &hidden, None, None), vec![format!("Step 1: {described} {ABSENCE_UNPROVEN}")]);
+
+    let mut seen = none_only.clone();
+    let switch = LocatorStep { role: Some("switch".to_string()), ..LocatorStep::default() };
+    seen.areas.extend(sighted_matching("Cycles", switch, 3).areas);
+    assert!(absence_refusals(&seen, &hidden, None, None).is_empty());
+
+    // The same last part seen whole, present, inside another chain in
+    // another area proves it too.
+    let mut whole = none_only.clone();
+    let present = filed(serde_json::json!([{ "css": ".card-published" }, { "role": "switch" }]), 2);
+    whole.areas.extend(present.areas.into_iter().map(|mut a| {
+        a.area = "Other".to_string();
+        a
+    }));
+    assert!(absence_refusals(&whole, &hidden, None, None).is_empty());
+}
+
+#[test]
+fn an_absence_check_whose_locator_is_seen_present_is_never_refused() {
+    let present = sighted_matching("Cycles", css(".x"), 1);
+    let hidden = one_step("Cycles", serde_json::json!([{ "kind": "expect_hidden", "selector": { "css": ".x" } }]));
+    assert!(absence_refusals(&present, &hidden, None, None).is_empty());
+}
+
+// ------------------------- loose record names
+
+const REVIEW: &str = "Open AUTOTEST Review FY2026";
+
+fn review_map() -> DiscoveryMap {
+    map_with("Cycles", "/cycles", &[role("button", REVIEW), role("button", &format!("{REVIEW} Copy"))])
+}
+
+#[test]
+fn a_loose_record_name_seen_inside_a_longer_one_is_noted_once() {
+    let click_it = serde_json::json!([click(serde_json::json!({ "role": "button", "name": REVIEW }))]);
+    let s = two_steps(click_it.clone(), click_it);
+    let notes = loose_name_notes(&review_map(), &none(), &s, None);
+    assert_eq!(
+        notes,
+        vec![format!(
+            "step 1: button \"{REVIEW}\" matches loosely, and the live app also showed button \"{REVIEW} Copy\", which it would match too when both are on the page: add \"exact\": true."
+        )]
+    );
+    // Only the steps a repair declares are read.
+    assert_eq!(loose_name_notes(&review_map(), &none(), &s, Some(&[2])).len(), 1);
+    assert!(loose_name_notes(&review_map(), &none(), &s, Some(&[3])).is_empty());
+
+    // A text is said as a text.
+    let texts = map_with("Cycles", "/cycles", &[text(REVIEW), text(&format!("{REVIEW} Copy"))]);
+    let t = one_step("Cycles", serde_json::json!([click(serde_json::json!({ "text": REVIEW }))]));
+    assert_eq!(
+        loose_name_notes(&texts, &none(), &t, None),
+        vec![format!(
+            "step 1: text \"{REVIEW}\" matches loosely, and the live app also showed text \"{REVIEW} Copy\", which it would match too when both are on the page: add \"exact\": true."
+        )]
+    );
+
+    // A name with a digit counts without three words; a longer name seen
+    // in another area is not one the script's areas show.
+    let digit = map_with("Cycles", "/cycles", &[role("button", "FY2026"), role("button", "FY2026 Copy")]);
+    let d = one_step("Cycles", serde_json::json!([click(serde_json::json!({ "role": "button", "name": "FY2026" }))]));
+    assert_eq!(loose_name_notes(&digit, &none(), &d, None).len(), 1);
+    let elsewhere = map_with("Other", "/cycles", &[role("button", REVIEW), role("button", &format!("{REVIEW} Copy"))]);
+    let c = one_step("Cycles", serde_json::json!([click(serde_json::json!({ "role": "button", "name": REVIEW }))]));
+    assert!(loose_name_notes(&elsewhere, &none(), &c, None).is_empty());
+}
+
+#[test]
+fn exact_short_or_many_uses_are_not_noted() {
+    let name = serde_json::json!({ "role": "button", "name": REVIEW });
+    let with = |extra: serde_json::Value| {
+        let mut link = name.clone();
+        for (k, v) in extra.as_object().unwrap() {
+            link[k] = v.clone();
+        }
+        link
+    };
+    for (what, s) in [
+        ("exact", one_step("Cycles", serde_json::json!([click(with(serde_json::json!({ "exact": true })))]))),
+        ("nth", one_step("Cycles", serde_json::json!([click(with(serde_json::json!({ "nth": 0 })))]))),
+        ("visible", one_step("Cycles", serde_json::json!([click(with(serde_json::json!({ "visible": false })))]))),
+        (
+            "a count",
+            one_step("Cycles", serde_json::json!([{ "kind": "expect_count", "selector": name.clone(), "equals": 1 }])),
+        ),
+        ("hidden", one_step("Cycles", serde_json::json!([{ "kind": "expect_hidden", "selector": name.clone() }]))),
+        (
+            "a guard",
+            one_step(
+                "Cycles",
+                serde_json::json!([{ "kind": "when_visible", "selector": name.clone(), "then": [click(serde_json::json!({ "css": ".y" }))] }]),
+            ),
+        ),
+    ] {
+        assert!(loose_name_notes(&review_map(), &none(), &s, None).is_empty(), "{what}");
+    }
+
+    // A short name with no digit: "Save" inside "Save as Draft".
+    let short = map_with("Cycles", "/cycles", &[role("button", "Save"), role("button", "Save as Draft")]);
+    let save = one_step("Cycles", serde_json::json!([click(serde_json::json!({ "role": "button", "name": "Save" }))]));
+    assert!(loose_name_notes(&short, &none(), &save, None).is_empty());
+
+    // Nothing longer seen, or a name holding a placeholder.
+    let alone = map_with("Cycles", "/cycles", &[role("button", REVIEW)]);
+    let one = one_step("Cycles", serde_json::json!([click(name.clone())]));
+    assert!(loose_name_notes(&alone, &none(), &one, None).is_empty());
+    let filled = one_step(
+        "Cycles",
+        serde_json::json!([click(serde_json::json!({ "role": "button", "name": "Open AUTOTEST {{setup.review}} FY2026" }))]),
+    );
+    assert!(loose_name_notes(&review_map(), &none(), &filled, None).is_empty());
+
+    // The same name in another case is the same name, not a longer one.
+    let cased = map_with("Cycles", "/cycles", &[role("button", REVIEW), role("button", &REVIEW.to_uppercase())]);
+    assert!(loose_name_notes(&cased, &none(), &one, None).is_empty());
+}
+
+#[test]
+fn loose_name_notes_are_capped() {
+    let names: Vec<String> = (1..=7).map(|n| format!("Open AUTOTEST Review {n}")).collect();
+    let links: Vec<LocatorStep> =
+        names.iter().flat_map(|n| [role("button", n), role("button", &format!("{n} Copy"))]).collect();
+    let map = map_with("Cycles", "/cycles", &links);
+    let clicks: Vec<serde_json::Value> =
+        names.iter().map(|n| click(serde_json::json!({ "role": "button", "name": n }))).collect();
+    let s = one_step("Cycles", serde_json::Value::Array(clicks));
+    let notes = loose_name_notes(&map, &none(), &s, None);
+    let expected: Vec<String> = names
+        .iter()
+        .take(5)
+        .map(|n| {
+            format!(
+                "step 1: button \"{n}\" matches loosely, and the live app also showed button \"{n} Copy\", which it would match too when both are on the page: add \"exact\": true."
+            )
+        })
+        .chain(["and 2 more loose names like these".to_string()])
+        .collect();
+    assert_eq!(notes, expected);
+}
+
+#[test]
+fn an_absence_check_is_proven_by_a_use_of_the_same_name_however_it_is_narrowed() {
+    let none_only = filed(serde_json::json!({ "role": "button", "name": "Save" }), 0);
+    let hidden = |other: serde_json::Value| {
+        two_steps(serde_json::json!([{ "kind": "expect_hidden", "selector": { "role": "button", "name": "Save" } }]), other)
+    };
+    let line = absence_refusals(&none_only, &hidden(serde_json::json!([])), None, None);
+    assert_eq!(line.len(), 1, "{line:?}");
+    for (what, used) in [
+        ("exact", serde_json::json!({ "role": "button", "name": "Save", "exact": true })),
+        ("nth", serde_json::json!({ "role": "button", "name": "Save", "nth": 1 })),
+        ("visible", serde_json::json!({ "role": "button", "name": "Save", "visible": false })),
+        ("in a chain", serde_json::json!([{ "css": ".card" }, { "role": "button", "name": "Save", "exact": true }])),
+    ] {
+        let s = hidden(serde_json::json!([click(used)]));
+        assert!(absence_refusals(&none_only, &s, None, None).is_empty(), "{what}");
+    }
+    // A different name is a different control.
+    let other = hidden(serde_json::json!([click(serde_json::json!({ "role": "button", "name": "Save as Draft" }))]));
+    assert_eq!(absence_refusals(&none_only, &other, None, None).len(), 1);
+}
+
+#[test]
+fn an_absence_action_saved_before_is_never_judged_again() {
+    let none_only = filed(serde_json::json!({ "css": ".x" }), 0);
+    let hidden = serde_json::json!({ "kind": "expect_hidden", "selector": { "css": ".x" } });
+    let old = script(
+        Some("Cycles"),
+        serde_json::json!([
+            { "step_number": 1, "actions": [click(serde_json::json!({ "css": ".y" }))] },
+            { "step_number": 3, "actions": [click(serde_json::json!({ "css": ".old" })), hidden.clone()] }
+        ]),
+    );
+    // Step 3 repaired: its click is new, its absence check is the saved one.
+    let repaired = script(
+        Some("Cycles"),
+        serde_json::json!([
+            { "step_number": 1, "actions": [click(serde_json::json!({ "css": ".y" }))] },
+            { "step_number": 3, "actions": [click(serde_json::json!({ "css": ".new" })), hidden.clone()] }
+        ]),
+    );
+    assert!(absence_refusals(&none_only, &repaired, Some(&[3]), Some(&old)).is_empty());
+    // Without the saved script the same step is judged.
+    assert_eq!(absence_refusals(&none_only, &repaired, Some(&[3]), None).len(), 1);
+
+    // Renumbered: the same actions under another number.
+    let renumbered = script(
+        Some("Cycles"),
+        serde_json::json!([
+            { "step_number": 1, "actions": [click(serde_json::json!({ "css": ".y" }))] },
+            { "step_number": 4, "actions": [click(serde_json::json!({ "css": ".old" })), hidden.clone()] }
+        ]),
+    );
+    assert!(absence_refusals(&none_only, &renumbered, Some(&[4]), Some(&old)).is_empty());
+
+    // A new absence check in that step is judged, saved ones beside it or not.
+    let added = script(
+        Some("Cycles"),
+        serde_json::json!([
+            { "step_number": 3, "actions": [
+                click(serde_json::json!({ "css": ".new" })),
+                hidden.clone(),
+                { "kind": "expect_hidden", "selector": { "css": ".z" } }
+            ] }
+        ]),
+    );
+    let lines = absence_refusals(&none_only, &added, Some(&[3]), Some(&old));
+    assert_eq!(lines.len(), 1, "{lines:?}");
+    assert!(lines[0].starts_with("Step 3: .z "), "{lines:?}");
+    // A saved check whose locator changed is a new one.
+    let changed = script(
+        Some("Cycles"),
+        serde_json::json!([{ "step_number": 3, "actions": [{ "kind": "expect_hidden", "selector": { "css": ".other" } }] }]),
+    );
+    assert_eq!(absence_refusals(&none_only, &changed, Some(&[3]), Some(&old)).len(), 1);
 }

@@ -431,3 +431,97 @@ fn a_style_mismatch_is_its_own_class() {
     let style: Action = serde_json::from_value(serde_json::json!({ "kind": "expect_style", "selector": { "role": "button", "name": "Save" }, "property": "color", "equals": "red" })).unwrap();
     assert_eq!(action_target(&style).as_deref(), Some(save));
 }
+
+
+#[test]
+fn pattern_and_bound_failures_fall_in_their_classes() {
+    let n = Some("#n");
+    assert_eq!(classify("waited 300ms: #n expected text to match /^a/ but saw \"b\"", n), ErrorClass::TextMismatch);
+    assert_eq!(classify("waited 300ms: li expected at least 4, counted 3", Some("li")), ErrorClass::CountMismatch);
+    assert_eq!(classify("waited 300ms: li expected at most 2, counted 3", Some("li")), ErrorClass::CountMismatch);
+    assert_eq!(classify("waited 300ms: #n expected aria-label=/^View / but saw \"Edit\"", n), ErrorClass::AttributeMismatch);
+}
+
+/// An `expect_each` failure names the item and its text first; the class is
+/// the reason after them, never anything the item's text happens to say.
+#[test]
+fn each_failures_fall_in_their_classes() {
+    let list = "div.card";
+    let item = |label: &str, why: &str| format!("waited 300ms: {list} item 2 of 3 ({label:?}): {why}");
+    let class = |detail: String| classify(&detail, Some(list));
+    for (why, expected) in [
+        ("expected text to match /^AUTOTEST / but saw \"Other B\"", ErrorClass::TextMismatch),
+        ("expected text \"a\" but saw \"b\"", ErrorClass::TextMismatch),
+        ("expected it to contain \"a\" but saw \"b\"", ErrorClass::TextMismatch),
+        ("expected text but saw \"\"", ErrorClass::TextMismatch),
+        ("h3 is not on the page", ErrorClass::NotFound),
+        ("h3 is there but cannot be seen", ErrorClass::NotVisible),
+        ("h3 matched 2 elements - narrow it, or add nth", ErrorClass::MatchedMany),
+        ("has no aria-label attribute", ErrorClass::AttributeMismatch),
+        ("expected href=\"/a\" but saw \"/b\"", ErrorClass::AttributeMismatch),
+        ("expected href=/a$/ but saw \"/b\"", ErrorClass::AttributeMismatch),
+        ("expected href=(not empty) but saw \"\"", ErrorClass::AttributeMismatch),
+    ] {
+        assert_eq!(class(item("Other B", why)), expected, "{why}");
+    }
+    // Whatever the item says is the page's: a label that reads like a
+    // reason, or holds a quote and a closing bracket, decides nothing.
+    for label in ["Draft is not on the page", "has no x attribute", "a \"b\"): c", "x is still changing (1 so far)", "it is disabled"] {
+        assert_eq!(class(item(label, "expected text \"a\" but saw \"b\"")), ErrorClass::TextMismatch, "{label}");
+        assert_eq!(class(item(label, "h3 is not on the page")), ErrorClass::NotFound, "{label}");
+    }
+    // The list's own sentences.
+    assert_eq!(class(format!("waited 300ms: {list} expected at least 3, counted 2")), ErrorClass::CountMismatch);
+    assert_eq!(class(format!("waited 300ms: {list} the list changed while it was read")), ErrorClass::StillMoving);
+    // Without the script's target the sentence still reads the same way.
+    let bare = format!("waited 300ms: {list} item 1 of 2 (\"x is not on the page\"): expected text \"a\" but saw \"b\"");
+    assert_eq!(classify(&bare, None), ErrorClass::TextMismatch);
+    assert_eq!(classify(&format!("waited 300ms: {list} the list changed while it was read"), None), ErrorClass::StillMoving);
+    // And the list is what a pattern is about.
+    let each: Action = serde_json::from_value(serde_json::json!({ "kind": "expect_each", "selector": { "css": list }, "child": { "css": "h3" }, "not_empty": true })).unwrap();
+    assert_eq!(action_target(&each).as_deref(), Some(list));
+}
+
+/// An `expect_order` and an `expect_position` fail in their own sentences;
+/// the words of the page inside them decide nothing.
+#[test]
+fn order_and_position_failures_fall_in_their_classes() {
+    // An order failure is text that did not come in order, whatever the
+    // items say.
+    let order = "waited 300ms: li expected text order \"A\", \"B\" but \"B\" is not after \"A\"; saw \"B\", \"A\"";
+    assert_eq!(classify(order, Some("li")), ErrorClass::TextMismatch);
+    assert_eq!(classify(order, None), ErrorClass::TextMismatch);
+    let words = "waited 300ms: li expected text order \"A\", \"B\" but \"A\" is in none of them; saw \"x is not on the page\"";
+    assert_eq!(classify(words, Some("li")), ErrorClass::TextMismatch);
+    // A position that is not where it was wanted.
+    let place = "waited 300ms: #a is not left of #bar: it is at (300, 10) 80x30, and #bar at (0, 0) 400x60";
+    assert_eq!(classify(place, Some("#a")), ErrorClass::PositionMismatch);
+    assert_eq!(classify(place, None), ErrorClass::PositionMismatch);
+    let corner = "waited 300ms: #a is not in the top-right of #bar: it is at (3, 1) 8x3, and #bar at (0, 0) 40x6";
+    assert_eq!(classify(corner, Some("#a")), ErrorClass::PositionMismatch);
+    // Page text that reads like the boxes' sentence decides nothing for an
+    // order failure.
+    let tricky = "waited 300ms: li expected text order \"A\", \"B\" but \"B\" is not after \"A\"; saw \"x is not y: it is at (1\", \"A\"";
+    assert_eq!(classify(tricky, None), ErrorClass::TextMismatch);
+    assert_eq!(classify(tricky, Some("li")), ErrorClass::TextMismatch);
+    // A reference that is not there is a thing not found.
+    let missing = "waited 300ms: #a cannot be placed: #bar is not on the page";
+    assert_eq!(classify(missing, Some("#a")), ErrorClass::NotFound);
+    assert_eq!(classify(missing, None), ErrorClass::NotFound);
+    // And the keys and words are fixed.
+    assert_eq!(ErrorClass::PositionMismatch.key(), "position_mismatch");
+    assert_eq!(ErrorClass::PositionMismatch.label(), "a different position");
+    // The element is what a pattern is about; for a position, the first.
+    let pos: Action = serde_json::from_value(serde_json::json!({ "kind": "expect_position", "selector": { "css": "#a" }, "relative_to": { "css": "#bar" }, "relation": "above" })).unwrap();
+    assert_eq!(action_target(&pos).as_deref(), Some("#a"));
+    let ord: Action = serde_json::from_value(serde_json::json!({ "kind": "expect_order", "selector": { "css": "li" }, "texts": ["a", "b"] })).unwrap();
+    assert_eq!(action_target(&ord).as_deref(), Some("li"));
+}
+
+/// The item prefix is read only at the start of the reason: page text
+/// that merely looks like it, further along, decides nothing.
+#[test]
+fn an_item_prefix_inside_other_page_text_is_not_read() {
+    let detail = "waited 5000ms: button \"Save\" is covered by div#x item 1 of 2 (\"a\"): x is not on the page";
+    assert!(matches!(classify(detail, Some("button \"Save\"")), ErrorClass::CoveredBy(_)), "{:?}", classify(detail, Some("button \"Save\"")));
+}

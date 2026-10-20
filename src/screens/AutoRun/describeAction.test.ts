@@ -42,6 +42,19 @@ describe("a sentence for every action kind", () => {
     [{ kind: "expect_count", selector: { role: "row" }, equals: 3 }, "Check the row shows 3 times"],
     [{ kind: "expect_count", selector: { role: "row" }, equals: 1 }, "Check the row shows once"],
     [{ kind: "expect_count", selector: { role: "row" }, equals: 0 }, "Check the row is nowhere on the page"],
+    [{ kind: "expect_count", selector: { role: "row" }, at_least: 2 }, "Check the row shows at least 2 times"],
+    [{ kind: "expect_count", selector: { role: "row" }, at_least: 1 }, "Check the row shows at least 1 time"],
+    [{ kind: "expect_count", selector: { role: "row" }, at_most: 0 }, "Check the row is nowhere on the page"],
+    [{ kind: "expect_count", selector: { role: "row" }, at_most: 5 }, "Check the row shows at most 5 times"],
+    [
+      { kind: "expect_text", selector: SAVE, matches: "^Saved" },
+      'Check the "Save & Continue" button matches /^Saved/',
+    ],
+    [
+      { kind: "expect_attribute", selector: SAVE, name: "aria-label", matches: "^View " },
+      'Check the "Save & Continue" button has aria-label matching /^View /',
+    ],
+    [{ kind: "check_url", contains: "/cycles", timeout_ms: 5000 }, 'Check the address contains "/cycles" (up to 5 s)'],
     [
       { kind: "expect_attribute", selector: SAVE, name: "aria-disabled", equals: "true" },
       'Check the "Save & Continue" button has aria-disabled set to "true"',
@@ -111,6 +124,95 @@ describe("a sentence for every action kind", () => {
     [
       { kind: "expect_row", table: { css: "#people" }, cells: { A: "1", B: "2", C: "3" }, timeout_ms: 5000 },
       'Check the element #people has a row with A "1", B "2" and C "3" (up to 5 s)',
+    ],
+    [
+      { kind: "expect_each", selector: { role: "row" }, matches: "^AUTOTEST " },
+      "Check each match of the row: it matches /^AUTOTEST /",
+    ],
+    [
+      { kind: "expect_each", selector: { role: "row" }, equals: "Active", timeout_ms: 5000 },
+      'Check each match of the row: it reads "Active" (up to 5 s)',
+    ],
+    [
+      { kind: "expect_each", selector: { role: "row" }, contains: "Draft", min: 2 },
+      'Check each match of the row: it contains "Draft" (at least 2)',
+    ],
+    [
+      { kind: "expect_each", selector: { role: "row" }, min: 1, not_empty: true },
+      "Check each match of the row: it is not empty",
+    ],
+    [
+      { kind: "expect_each", selector: { role: "article", name: "Cycle" }, child: { role: "heading", name: "Title" }, visible: true },
+      'Check each match of the "Cycle" card: the "Title" heading in it is showing',
+    ],
+    [
+      { kind: "expect_each", selector: { role: "row" }, child: { role: "link" }, attribute: "href", equals: "/cycles" },
+      'Check each match of the row: the link in it has href set to "/cycles"',
+    ],
+    [
+      { kind: "expect_each", selector: { role: "row" }, child: { role: "link" }, attribute: "href", contains: "cycle" },
+      'Check each match of the row: the link in it has href containing "cycle"',
+    ],
+    [
+      { kind: "expect_each", selector: { role: "row" }, attribute: "aria-label", matches: "^View " },
+      "Check each match of the row: it has aria-label matching /^View /",
+    ],
+    [
+      { kind: "expect_each", selector: { role: "row" }, attribute: "title", not_empty: true },
+      "Check each match of the row: it has a title",
+    ],
+    [
+      { kind: "expect_each", selector: { role: "row" }, child: { role: "heading" }, not_empty: true, min: 3, timeout_ms: 2500 },
+      "Check each match of the row: the heading in it is not empty (at least 3) (up to 2.5 s)",
+    ],
+    [
+      { kind: "expect_order", selector: { role: "option" }, texts: ["All", "Draft", "Published"] },
+      'Check the option lists "All", "Draft", "Published" in that order',
+    ],
+    [
+      { kind: "expect_order", selector: { css: "li" }, texts: ["a", "b"], timeout_ms: 3000 },
+      'Check the element li lists "a", "b" in that order (up to 3 s)',
+    ],
+    [
+      {
+        kind: "expect_position",
+        selector: { role: "button", name: "New Cycle", exact: true },
+        relative_to: { css: "#bar" },
+        relation: "in_top_right",
+      },
+      'Check the "New Cycle" button is in the top-right of the element #bar',
+    ],
+    [
+      { kind: "expect_position", selector: { css: "#a" }, relative_to: { css: "#b" }, relation: "left_of", timeout_ms: 2000 },
+      "Check the element #a is left of the element #b (up to 2 s)",
+    ],
+    [
+      { kind: "expect_position", selector: { css: "#a" }, relative_to: { css: "#b" }, relation: "right_of" },
+      "Check the element #a is right of the element #b",
+    ],
+    [
+      { kind: "expect_position", selector: { css: "#a" }, relative_to: { css: "#b" }, relation: "above" },
+      "Check the element #a is above the element #b",
+    ],
+    [
+      { kind: "expect_position", selector: { css: "#a" }, relative_to: { css: "#b" }, relation: "below" },
+      "Check the element #a is below the element #b",
+    ],
+    [
+      { kind: "expect_position", selector: { css: "#a" }, relative_to: { css: "#b" }, relation: "inside" },
+      "Check the element #a is inside the element #b",
+    ],
+    [
+      { kind: "expect_position", selector: { css: "#a" }, relative_to: { css: "#b" }, relation: "in_top_left" },
+      "Check the element #a is in the top-left of the element #b",
+    ],
+    [
+      { kind: "expect_position", selector: { css: "#a" }, relative_to: { css: "#b" }, relation: "in_bottom_left" },
+      "Check the element #a is in the bottom-left of the element #b",
+    ],
+    [
+      { kind: "expect_position", selector: { css: "#a" }, relative_to: { css: "#b" }, relation: "in_bottom_right" },
+      "Check the element #a is in the bottom-right of the element #b",
     ],
     [
       { kind: "expect_sorted", table: { role: "grid", name: "Employees" }, column: "Joined", order: "descending", as: "date" },
@@ -225,6 +327,7 @@ describe("a sentence for every action kind", () => {
         "expect_response", "api_request", "when_visible", "reload", "expire_session", "return_to_area",
         "press_key", "expect_focused", "expect_download", "expect_tab", "open_tab", "switch_tab", "close_tab",
         "expect_tab_closed", "drag", "expect_dialog", "expect_row", "expect_no_row", "expect_sorted", "expect_row_count",
+        "expect_each", "expect_order", "expect_position",
       ].sort(),
     );
   });
@@ -375,6 +478,20 @@ describe("an action that is not the right shape reads as one plain line, never a
     ["a dialog answer it does not know", { kind: "expect_dialog", answer: "maybe" }],
     ["a dialog with no answer", { kind: "expect_dialog", text: "x" }],
     ["a row with no cells", { kind: "expect_row", table: "#t", cells: {} }],
+    ["a text check with both equals and matches", { kind: "expect_text", selector: "#a", equals: "x", matches: "y" }],
+    ["a text check with neither", { kind: "expect_text", selector: "#a" }],
+    ["a count with no bound", { kind: "expect_count", selector: "#a" }],
+    ["an each check with two checks", { kind: "expect_each", selector: { css: "li" }, equals: "a", not_empty: true }],
+    ["an each check with none", { kind: "expect_each", selector: { css: "li" } }],
+    ["an order check with one text", { kind: "expect_order", selector: { css: "li" }, texts: ["a"] }],
+    ["an order check with no texts", { kind: "expect_order", selector: { css: "li" } }],
+    ["an order check with a text that is not text", { kind: "expect_order", selector: { css: "li" }, texts: ["a", 2] }],
+    [
+      "a position with a relation it does not know",
+      { kind: "expect_position", selector: { css: "#a" }, relative_to: { css: "#b" }, relation: "near" },
+    ],
+    ["a position with no relation", { kind: "expect_position", selector: { css: "#a" }, relative_to: { css: "#b" } }],
+    ["a position with no reference", { kind: "expect_position", selector: { css: "#a" }, relation: "above" }],
     ["a row count with two counts", { kind: "expect_row_count", table: "#t", equals: 1, at_most: 2 }],
     ["a style check with two comparisons", { kind: "expect_style", selector: "#a", property: "color", equals: "red", contains: "r" }],
     ["a style check with no comparison", { kind: "expect_style", selector: "#a", property: "color" }],
@@ -394,6 +511,15 @@ describe("an action that is not the right shape reads as one plain line, never a
 describe("no host or query string in any sentence", () => {
   test("a protocol-relative navigate", () => {
     expect(say({ kind: "navigate", url: "//cdn.example.test/a/b?token=1" })).toBe("Go to /a/b");
+  });
+
+  test("a pattern, like a text, loses the host of any address in it", () => {
+    expect(say({ kind: "expect_text", selector: { role: "alert" }, matches: "Open https://hr.example.test/a?b=1 now" })).toBe(
+      "Check the alert matches /Open /a now/",
+    );
+    expect(
+      say({ kind: "expect_attribute", selector: { role: "link", name: "Help" }, name: "href", matches: "https://hr.example.test/docs" }),
+    ).toBe('Check the "Help" link has href matching //docs/');
   });
 
   test("check_text, with an address inside other words", () => {

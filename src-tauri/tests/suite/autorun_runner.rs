@@ -1078,6 +1078,9 @@ fn every_action_kind_says_whether_it_changes_the_page() {
         (json!({ "kind": "expect_no_row", "table": css, "cells": { "Name": "a" } }), false),
         (json!({ "kind": "expect_sorted", "table": css, "column": "Name", "order": "ascending" }), false),
         (json!({ "kind": "expect_row_count", "table": css, "equals": 1 }), false),
+        (json!({ "kind": "expect_each", "selector": css, "not_empty": true }), false),
+        (json!({ "kind": "expect_order", "selector": css, "texts": ["a", "b"] }), false),
+        (json!({ "kind": "expect_position", "selector": css, "relative_to": css, "relation": "inside" }), false),
     ];
     let mut kinds = std::collections::BTreeSet::new();
     for (raw, changes) in &table {

@@ -80,17 +80,29 @@ pub fn action_words(action: &Action) -> String {
         Action::Fill { selector, .. } => format!("fill in {}", selector.describe()),
         Action::WaitFor { selector, .. } => format!("wait for {}", selector.describe()),
         Action::CheckText { value } => format!("check the page says \"{value}\""),
-        Action::CheckUrl { contains } => format!("check the address contains \"{contains}\""),
+        Action::CheckUrl { contains, .. } => format!("check the address contains \"{contains}\""),
         Action::ExpectVisible { selector, .. } => format!("expect {} to be visible", selector.describe()),
         Action::ExpectHidden { selector, .. } => format!("expect {} to be hidden", selector.describe()),
+        Action::ExpectText { selector, matches: Some(p), .. } => {
+            format!("expect {} to match {}", selector.describe(), crate::browser::pattern::shown(p))
+        }
         Action::ExpectText { selector, equals, .. } => {
-            format!("expect {} to read \"{equals}\"", selector.describe())
+            format!("expect {} to read \"{}\"", selector.describe(), equals.as_deref().unwrap_or(""))
         }
         Action::ExpectContainsText { selector, value, .. } => {
             format!("expect {} to contain \"{value}\"", selector.describe())
         }
+        Action::ExpectCount { selector, at_least: Some(n), .. } => {
+            format!("expect at least {n} of {}", selector.describe())
+        }
+        Action::ExpectCount { selector, at_most: Some(n), .. } => {
+            format!("expect at most {n} of {}", selector.describe())
+        }
         Action::ExpectCount { selector, equals, .. } => {
-            format!("expect {equals} of {}", selector.describe())
+            format!("expect {} of {}", equals.unwrap_or(0), selector.describe())
+        }
+        Action::ExpectAttribute { selector, name, matches: Some(p), .. } => {
+            format!("expect {}'s {name} to match {}", selector.describe(), crate::browser::pattern::shown(p))
         }
         Action::ExpectAttribute { selector, name, equals: Some(equals), .. } => {
             format!("expect {}'s {name} to be \"{equals}\"", selector.describe())
@@ -146,6 +158,47 @@ pub fn action_words(action: &Action) -> String {
             Some(n) if *n > 1 => format!("press {} {n} times", key.trim()),
             _ => format!("press {}", key.trim()),
         },
+        Action::ExpectEach { selector, min, child, attribute, visible, equals, contains, matches, .. } => {
+            let name = attribute.as_deref().unwrap_or("").trim();
+            let to = if *visible {
+                "be visible".to_string()
+            } else if let Some(w) = equals {
+                match name {
+                    "" => format!("read \"{w}\""),
+                    _ => format!("have {name}=\"{w}\""),
+                }
+            } else if let Some(w) = contains {
+                match name {
+                    "" => format!("contain \"{w}\""),
+                    _ => format!("have {name} containing \"{w}\""),
+                }
+            } else if let Some(p) = matches {
+                let p = crate::browser::pattern::shown(p);
+                match name {
+                    "" => format!("match {p}"),
+                    _ => format!("have {name} matching {p}"),
+                }
+            } else if name.is_empty() {
+                "have text".to_string()
+            } else {
+                format!("have a {name}")
+            };
+            let at_least = match min {
+                Some(n) if *n > 1 => format!(" (at least {n})"),
+                _ => String::new(),
+            };
+            match child {
+                Some(c) => format!("expect {} in each of {} to {to}{at_least}", c.describe(), selector.describe()),
+                None => format!("expect each of {} to {to}{at_least}", selector.describe()),
+            }
+        }
+        Action::ExpectOrder { selector, texts, .. } => {
+            let texts: Vec<String> = texts.iter().map(|t| format!("\"{t}\"")).collect();
+            format!("expect {} to list {} in that order", selector.describe(), texts.join(", "))
+        }
+        Action::ExpectPosition { selector, relative_to, relation, .. } => {
+            format!("expect {} to be {} {}", selector.describe(), relation.words(), relative_to.describe())
+        }
         Action::ExpectDialog { text, contains, answer, prompt_text, .. } => {
             let said = match (text, contains) {
                 (Some(t), _) => format!(" saying \"{t}\""),

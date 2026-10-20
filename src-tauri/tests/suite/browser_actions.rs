@@ -316,13 +316,13 @@ async fn navigate_refuses_a_javascript_url_without_touching_the_browser() {
 async fn check_text_and_check_url_answer_from_the_page() {
     let mut d = FakePage::default().driver();
     assert!(execute_with(&mut d, &Action::CheckText { value: "Dashboard".into() }, &quick()).await.ok);
-    let out = execute_with(&mut d, &Action::CheckUrl { contains: "/home".into() }, &quick()).await;
+    let out = execute_with(&mut d, &Action::CheckUrl { contains: "/home".into(), timeout_ms: None }, &quick()).await;
     assert!(out.ok && out.detail.contains("https://app.example/home"), "{}", out.detail);
 
     let mut d = FakePage { body_has_text: false, ..FakePage::default() }.driver();
     let out = execute_with(&mut d, &Action::CheckText { value: "Dashboard".into() }, &quick()).await;
     assert!(!out.ok && out.detail.contains("does NOT contain"), "{}", out.detail);
-    assert!(!execute_with(&mut d, &Action::CheckUrl { contains: "/login".into() }, &quick()).await.ok);
+    assert!(!execute_with(&mut d, &Action::CheckUrl { contains: "/login".into(), timeout_ms: None }, &quick()).await.ok);
 }
 
 /// A page that pops an alert no longer freezes the run; the person is told
@@ -381,7 +381,7 @@ async fn a_page_refusal_during_a_check_is_the_pages_doing() {
     };
     for action in [
         Action::CheckText { value: "Dashboard".into() },
-        Action::CheckUrl { contains: "/home".into() },
+        Action::CheckUrl { contains: "/home".into(), timeout_ms: None },
     ] {
         let mut d = refusing();
         let out = execute_with(&mut d, &action, &quick()).await;
@@ -398,7 +398,7 @@ async fn a_closed_browser_at_those_same_sites_is_still_the_harness() {
     for action in [
         Action::Click { selector: "#go".into() },
         Action::CheckText { value: "Dashboard".into() },
-        Action::CheckUrl { contains: "/home".into() },
+        Action::CheckUrl { contains: "/home".into(), timeout_ms: None },
         Action::Navigate { url: "https://app.example/x".into() },
     ] {
         let mut d = ScriptedDriver::new(|_, _| Err(CdpError::Closed));
@@ -621,13 +621,13 @@ fn only_checks_and_expectations_are_checks() {
         Action::Fill { selector: "s".into(), value: "v".into() },
         Action::WaitFor { selector: "s".into(), timeout_ms: 1 },
         Action::CheckText { value: "v".into() },
-        Action::CheckUrl { contains: "c".into() },
+        Action::CheckUrl { contains: "c".into(), timeout_ms: None },
         Action::ExpectVisible { selector: "s".into(), timeout_ms: None },
         Action::ExpectHidden { selector: "s".into(), timeout_ms: None },
-        Action::ExpectText { selector: "s".into(), equals: "v".into(), timeout_ms: None },
+        Action::ExpectText { selector: "s".into(), equals: Some("v".into()), matches: None, timeout_ms: None },
         Action::ExpectContainsText { selector: "s".into(), value: "v".into(), timeout_ms: None },
-        Action::ExpectCount { selector: "s".into(), equals: 1, timeout_ms: None },
-        Action::ExpectAttribute { selector: "s".into(), name: "n".into(), equals: Some("v".into()), absent: false, timeout_ms: None },
+        Action::ExpectCount { selector: "s".into(), equals: Some(1), at_least: None, at_most: None, timeout_ms: None },
+        Action::ExpectAttribute { selector: "s".into(), name: "n".into(), equals: Some("v".into()), matches: None, absent: false, timeout_ms: None },
         serde_json::from_value(json!({ "kind": "expect_style", "selector": "s", "property": "color", "equals": "red" })).unwrap(),
         Action::ExpectEnabled { selector: "s".into(), timeout_ms: None },
         Action::ExpectDisabled { selector: "s".into(), timeout_ms: None },
@@ -660,6 +660,9 @@ fn only_checks_and_expectations_are_checks() {
         serde_json::from_value(serde_json::json!({ "kind": "expect_no_row", "table": "t", "cells": { "A": "b" } })).unwrap(),
         serde_json::from_value(serde_json::json!({ "kind": "expect_sorted", "table": "t", "column": "A", "order": "ascending" })).unwrap(),
         serde_json::from_value(serde_json::json!({ "kind": "expect_row_count", "table": "t", "equals": 1 })).unwrap(),
+        serde_json::from_value(serde_json::json!({ "kind": "expect_each", "selector": "s", "not_empty": true })).unwrap(),
+        serde_json::from_value(serde_json::json!({ "kind": "expect_order", "selector": "s", "texts": ["a", "b"] })).unwrap(),
+        serde_json::from_value(serde_json::json!({ "kind": "expect_position", "selector": "s", "relative_to": "t", "relation": "inside" })).unwrap(),
         Action::UseComponent { component: "c".into(), inputs: serde_json::Map::new() },
     ];
     assert_eq!(samples.len(), ACTION_KINDS.len(), "this list has drifted from ACTION_KINDS");
@@ -689,6 +692,9 @@ fn only_checks_and_expectations_are_checks() {
                 | "expect_no_row"
                 | "expect_sorted"
                 | "expect_row_count"
+                | "expect_each"
+                | "expect_order"
+                | "expect_position"
         )
     };
     for (action, kind) in samples.iter().zip(ACTION_KINDS.iter()) {
@@ -1118,6 +1124,215 @@ fn expect_style_takes_exactly_one_comparison_and_a_css_property_name() {
     }
 }
 
+#[test]
+fn expect_each_is_validated() {
+    use v2_lib::browser::actions::EACH_NEEDS_ONE;
+    assert_eq!(
+        EACH_NEEDS_ONE,
+        "expect_each takes exactly one of \"visible\": true, \"equals\", \"contains\", \"matches\" or \"not_empty\": true"
+    );
+    let bad = |v: serde_json::Value| serde_json::from_value::<Action>(v).unwrap().validate().unwrap_err();
+    let base = |rest: serde_json::Value| {
+        let mut v = json!({ "kind": "expect_each", "selector": { "css": "li" } });
+        v.as_object_mut().unwrap().extend(rest.as_object().unwrap().clone());
+        v
+    };
+    // The selector is checked first.
+    assert!(bad(json!({ "kind": "expect_each", "selector": {}, "not_empty": true })).contains("role, text or css"));
+    // A selector string reaches only the first match, so it cannot be a list.
+    assert_eq!(
+        bad(json!({ "kind": "expect_each", "selector": "div.card", "not_empty": true })),
+        "expect_each needs a locator object for selector, not a selector string - a string reaches only the first match, and this reads every item"
+    );
+    assert_eq!(bad(json!({ "kind": "expect_each", "selector": " ", "not_empty": true })), "a selector is empty");
+    // The list must be seen holding still, which takes time.
+    for t in [0, 300, 1499] {
+        assert_eq!(
+            bad(base(json!({ "not_empty": true, "timeout_ms": t }))),
+            "expect_each: needs at least 1500 ms to see the list hold still",
+            "{t}"
+        );
+    }
+    for t in [1500, 5000] {
+        let a: Action = serde_json::from_value(base(json!({ "not_empty": true, "timeout_ms": t }))).unwrap();
+        assert_eq!(a.validate(), Ok(()), "{t}");
+    }
+    // `min`.
+    assert_eq!(
+        bad(base(json!({ "not_empty": true, "min": 0 }))),
+        "expect_each needs \"min\" of 1 or more - a list of none would pass any check"
+    );
+    assert_eq!(
+        bad(base(json!({ "not_empty": true, "min": 201 }))),
+        "expect_each reads at most 200 items, so \"min\" cannot be 201"
+    );
+    // Exactly one of the five.
+    for rest in [
+        json!({}),
+        json!({ "equals": "a", "contains": "a" }),
+        json!({ "equals": "a", "matches": "a" }),
+        json!({ "not_empty": true, "equals": "a" }),
+        json!({ "visible": true, "child": { "css": "h3" }, "not_empty": true }),
+        json!({ "visible": false }),
+        json!({ "not_empty": false }),
+    ] {
+        assert_eq!(bad(base(rest.clone())), EACH_NEEDS_ONE, "{rest}");
+    }
+    assert_eq!(
+        bad(base(json!({ "visible": true }))),
+        "expect_each: \"visible\": true needs a \"child\" - every item of the list is already visible"
+    );
+    assert_eq!(
+        bad(base(json!({ "visible": true, "child": { "css": "h3" }, "attribute": "title" }))),
+        "expect_each: \"visible\" reads no attribute - leave \"attribute\" out"
+    );
+    assert_eq!(bad(base(json!({ "equals": "a", "attribute": " " }))), "expect_each has an empty attribute name");
+    assert_eq!(
+        bad(base(json!({ "contains": " " }))),
+        "expect_each has an empty contains - everything contains nothing"
+    );
+    // A pattern goes through the one check every `matches` has.
+    assert_eq!(
+        bad(base(json!({ "matches": "" }))),
+        v2_lib::browser::pattern::check_pattern("expect_each", "").unwrap_err()
+    );
+    assert!(bad(base(json!({ "matches": ".*" }))).starts_with("expect_each: \"matches\" fits any text"));
+    assert!(bad(base(json!({ "matches": "(?i)a" }))).starts_with("expect_each: "));
+    // The child.
+    assert_eq!(
+        bad(base(json!({ "not_empty": true, "child": "h3" }))),
+        "expect_each's child is a locator object or a list of them, not a selector string: it is looked for inside each item"
+    );
+    assert_eq!(
+        bad(base(json!({ "not_empty": true, "child": { "input": "title" } }))),
+        "expect_each's child cannot hold a component input - put the input in the list's locator"
+    );
+    assert_eq!(
+        bad(base(json!({ "not_empty": true, "child": [{ "css": "h3" }, { "input": "x" }] }))),
+        "expect_each's child cannot hold a component input - put the input in the list's locator"
+    );
+    assert_eq!(
+        bad(base(json!({ "not_empty": true, "child": { "role": "button", "css": "x" } }))),
+        "expect_each child: a locator takes only one of role, text or css"
+    );
+    // A component input in the LIST's locator is fine.
+    assert_eq!(
+        serde_json::from_value::<Action>(base(json!({ "not_empty": true, "selector": { "input": "list" } }))).unwrap().validate(),
+        Ok(())
+    );
+    // Valid shapes round trip exactly, and only what was given is written.
+    for good in [
+        json!({ "kind": "expect_each", "selector": { "css": "div[data-cycle-id]" }, "child": { "css": "h3" }, "matches": "^AUTOTEST " }),
+        json!({ "kind": "expect_each", "selector": { "css": "li" }, "not_empty": true }),
+        json!({ "kind": "expect_each", "selector": { "css": "li" }, "min": 3, "equals": "a", "timeout_ms": 1500 }),
+        json!({ "kind": "expect_each", "selector": { "css": "li" }, "child": [{ "css": "a" }, { "css": "i" }], "visible": true }),
+        json!({ "kind": "expect_each", "selector": { "css": "li" }, "attribute": "href", "contains": "/x", "min": 200 }),
+    ] {
+        let a: Action = serde_json::from_value(good.clone()).unwrap();
+        assert_eq!(a.validate(), Ok(()), "{good}");
+        assert_eq!(serde_json::to_value(&a).unwrap(), good);
+    }
+    // A check, and its targets are the list then the child.
+    let a: Action = serde_json::from_value(json!({ "kind": "expect_each", "selector": { "css": "li" }, "child": { "css": "h3" }, "not_empty": true })).unwrap();
+    assert!(a.is_check());
+    assert_eq!(a.targets().len(), 2);
+}
+
+#[test]
+fn expect_order_and_position_are_validated() {
+    let bad = |v: serde_json::Value| serde_json::from_value::<Action>(v).unwrap().validate().unwrap_err();
+    let order = |texts: serde_json::Value| json!({ "kind": "expect_order", "selector": { "role": "option" }, "texts": texts });
+    // The selector is checked first, and is a locator object: a string
+    // reaches only the first match.
+    assert!(bad(json!({ "kind": "expect_order", "selector": {}, "texts": ["a", "b"] })).contains("role, text or css"));
+    assert_eq!(
+        bad(json!({ "kind": "expect_order", "selector": "li", "texts": ["a", "b"] })),
+        "expect_order needs a locator object for selector, not a selector string - a string reaches only the first match, and this reads every item"
+    );
+    assert_eq!(bad(order(json!([]))), "expect_order needs at least two texts - for one, use expect_contains_text");
+    assert_eq!(bad(order(json!(["a"]))), "expect_order needs at least two texts - for one, use expect_contains_text");
+    let fifty_one: Vec<String> = (0..51).map(|i| format!("t{i}")).collect();
+    assert_eq!(bad(order(json!(fifty_one))), "expect_order takes at most 50 texts");
+    assert_eq!(bad(order(json!(["a", " "]))), "expect_order has an empty text - everything contains nothing");
+    assert_eq!(bad(order(json!(["", "b"]))), "expect_order has an empty text - everything contains nothing");
+    // The list must be seen holding still, which takes time.
+    for t in [0, 300, 1499] {
+        let mut v = order(json!(["a", "b"]));
+        v["timeout_ms"] = json!(t);
+        assert_eq!(bad(v), "expect_order: needs at least 1500 ms to see the list hold still", "{t}");
+    }
+    let fifty: Vec<String> = (0..50).map(|i| format!("t{i}")).collect();
+    for good in [
+        json!({ "kind": "expect_order", "selector": { "role": "option" }, "texts": ["All", "Draft", "Published", "Unpublished"] }),
+        json!({ "kind": "expect_order", "selector": { "css": "li" }, "texts": ["a", "b"], "timeout_ms": 1500 }),
+        json!({ "kind": "expect_order", "selector": [{ "role": "list" }, { "role": "listitem" }], "texts": fifty }),
+        json!({ "kind": "expect_order", "selector": { "input": "list" }, "texts": ["a", "b"] }),
+    ] {
+        let a: Action = serde_json::from_value(good.clone()).unwrap();
+        assert_eq!(a.validate(), Ok(()), "{good}");
+        assert_eq!(serde_json::to_value(&a).unwrap(), good);
+        assert!(a.is_check());
+        assert_eq!(a.targets().len(), 1);
+    }
+
+    let pos = |relation: serde_json::Value| {
+        json!({ "kind": "expect_position", "selector": { "role": "button", "name": "New Cycle", "exact": true }, "relative_to": { "css": "#bar" }, "relation": relation })
+    };
+    // Every relation, written as the guide writes it.
+    for relation in
+        ["left_of", "right_of", "above", "below", "inside", "in_top_left", "in_top_right", "in_bottom_left", "in_bottom_right"]
+    {
+        let good = pos(json!(relation));
+        let a: Action = serde_json::from_value(good.clone()).unwrap();
+        assert_eq!(a.validate(), Ok(()), "{relation}");
+        assert_eq!(serde_json::to_value(&a).unwrap(), good);
+        assert!(a.is_check());
+        assert_eq!(a.targets().len(), 2);
+    }
+    // Both boxes must be seen at rest, which takes time.
+    for t in [0, 500, 1499] {
+        let mut v = pos(json!("above"));
+        v["timeout_ms"] = json!(t);
+        assert_eq!(bad(v), "expect_position: needs at least 1500 ms to see both elements at rest", "{t}");
+    }
+    let mut with_time = pos(json!("above"));
+    with_time["timeout_ms"] = json!(1500);
+    let a: Action = serde_json::from_value(with_time.clone()).unwrap();
+    assert_eq!(a.validate(), Ok(()));
+    assert_eq!(serde_json::to_value(&a).unwrap(), with_time);
+    // A relation it does not know is not read.
+    let err = serde_json::from_value::<Action>(pos(json!("near"))).unwrap_err().to_string();
+    assert!(err.contains("unknown variant `near`"), "{err}");
+    // Each locator is checked, the reference under its own name.
+    assert!(bad(json!({ "kind": "expect_position", "selector": {}, "relative_to": { "css": "#bar" }, "relation": "above" }))
+        .contains("role, text or css"));
+    assert_eq!(
+        bad(json!({ "kind": "expect_position", "selector": { "css": "#a" }, "relative_to": {}, "relation": "above" })),
+        "expect_position relative_to: a locator needs one of role, text or css"
+    );
+    assert_eq!(
+        bad(json!({ "kind": "expect_position", "selector": { "css": "#a" }, "relative_to": " ", "relation": "above" })),
+        "expect_position relative_to: a selector is empty"
+    );
+    // The same locator twice compares an element with itself, however written.
+    for (selector, relative_to) in [
+        (json!({ "css": "#a" }), json!({ "css": "#a" })),
+        (json!({ "css": "#a" }), json!([{ "css": "#a" }])),
+        (json!("#a"), json!({ "css": "#a" })),
+    ] {
+        assert_eq!(
+            bad(json!({ "kind": "expect_position", "selector": selector, "relative_to": relative_to, "relation": "inside" })),
+            "expect_position compares two elements - relative_to is the same locator as selector"
+        );
+    }
+    // A different locator for the same words is a different element.
+    let ok: Action = serde_json::from_value(
+        json!({ "kind": "expect_position", "selector": { "css": "li", "nth": 0 }, "relative_to": { "css": "li", "nth": 1 }, "relation": "above" }),
+    )
+    .unwrap();
+    assert_eq!(ok.validate(), Ok(()));
+}
+
 /// The colour rule on its own: the CSS basic colours and `transparent`,
 /// every hex form, rgb()/rgba() with commas, spaces, a slash or percents,
 /// and hsl(); anything else is not a colour.
@@ -1227,4 +1442,112 @@ fn comma_spacing_is_normalised() {
     assert!(judge("transform", computed, Want::Equals("matrix(1,0,0,1,0,0)")).is_ok());
     assert!(judge("transform", computed, Want::Contains("1,0,0")).is_ok());
     assert!(judge("transform", computed, Want::NotEquals("matrix(1,0,0,1,0,0)")).is_err());
+}
+
+#[tokio::test]
+async fn check_url_looks_again_until_the_address_holds() {
+    let reads = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let seen = reads.clone();
+    let mut d = ScriptedDriver::new(move |method, _| {
+        Ok(match method {
+            "Runtime.evaluate" => {
+                let n = seen.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                json!({ "result": { "value": if n < 2 { "https://app.example/login" } else { "https://app.example/home" } } })
+            }
+            _ => json!({}),
+        })
+    });
+    let out = execute_with(&mut d, &Action::CheckUrl { contains: "/home".into(), timeout_ms: Some(2000) }, &quick()).await;
+    assert!(out.ok, "{}", out.detail);
+    assert_eq!(out.detail, "url is https://app.example/home");
+    assert_eq!(reads.load(std::sync::atomic::Ordering::SeqCst), 3);
+}
+
+#[tokio::test]
+async fn check_url_still_fails_naming_the_address_it_last_saw() {
+    let mut d = FakePage::default().driver();
+    let out = execute_with(&mut d, &Action::CheckUrl { contains: "/login".into(), timeout_ms: None }, &quick()).await;
+    assert!(!out.ok && !out.harness, "{}", out.detail);
+    assert_eq!(out.detail, "url is https://app.example/home");
+}
+
+#[test]
+fn the_new_check_options_are_validated() {
+    use v2_lib::browser::actions::{ATTRIBUTE_NEEDS_ONE, ATTRIBUTE_ONE_OF, COUNT_NEEDS_ONE, TEXT_NEEDS_ONE};
+    let bad = |v: serde_json::Value| serde_json::from_value::<Action>(v).unwrap().validate().unwrap_err();
+    assert_eq!(bad(json!({ "kind": "expect_text", "selector": "s", "equals": "a", "matches": "b" })), TEXT_NEEDS_ONE);
+    assert_eq!(bad(json!({ "kind": "expect_text", "selector": "s" })), TEXT_NEEDS_ONE);
+    assert_eq!(bad(json!({ "kind": "expect_attribute", "selector": "s", "name": "n", "matches": "a", "equals": "b" })), ATTRIBUTE_ONE_OF);
+    assert_eq!(bad(json!({ "kind": "expect_attribute", "selector": "s", "name": "n", "matches": "a", "absent": true })), ATTRIBUTE_ONE_OF);
+    assert_eq!(bad(json!({ "kind": "expect_attribute", "selector": "s", "name": "n" })), ATTRIBUTE_NEEDS_ONE);
+    assert_eq!(bad(json!({ "kind": "expect_count", "selector": "s" })), COUNT_NEEDS_ONE);
+    assert_eq!(bad(json!({ "kind": "expect_count", "selector": "s", "equals": 1, "at_least": 1 })), COUNT_NEEDS_ONE);
+    assert!(bad(json!({ "kind": "expect_text", "selector": "s", "matches": ".*" })).contains("fits any text"));
+    assert!(bad(json!({ "kind": "expect_attribute", "selector": "s", "name": "n", "matches": "(?i)x" })).starts_with("expect_attribute: "));
+
+    for old in [
+        json!({ "kind": "expect_count", "selector": "s", "equals": 3 }),
+        json!({ "kind": "expect_text", "selector": "s", "equals": "v" }),
+        json!({ "kind": "check_url", "contains": "/x" }),
+    ] {
+        let a: Action = serde_json::from_value(old.clone()).unwrap();
+        assert_eq!(a.validate(), Ok(()));
+        // The same bytes, key for key and in order, not just the same map.
+        assert_eq!(serde_json::to_string(&a).unwrap(), old.to_string());
+    }
+}
+
+/// `check_url` waits for its own `timeout_ms`, not the default: the page
+/// turns after `quick()`'s 300 ms, and only a longer wait sees it.
+#[tokio::test]
+async fn check_url_waits_for_its_own_timeout() {
+    let began = std::time::Instant::now();
+    let mut d = ScriptedDriver::new(move |method, _| {
+        Ok(match method {
+            "Runtime.evaluate" => {
+                let late = began.elapsed() >= std::time::Duration::from_millis(450);
+                json!({ "result": { "value": if late { "https://app.example/home" } else { "https://app.example/login" } } })
+            }
+            _ => json!({}),
+        })
+    });
+    let out = execute_with(&mut d, &Action::CheckUrl { contains: "/home".into(), timeout_ms: Some(2000) }, &quick()).await;
+    assert!(out.ok, "{}", out.detail);
+    assert!(began.elapsed() >= std::time::Duration::from_millis(450), "{:?}", began.elapsed());
+
+    // The same page with the default wait gives up first.
+    let began = std::time::Instant::now();
+    let mut d = ScriptedDriver::new(move |method, _| {
+        Ok(match method {
+            "Runtime.evaluate" => {
+                let late = began.elapsed() >= std::time::Duration::from_millis(450);
+                json!({ "result": { "value": if late { "https://app.example/home" } else { "https://app.example/login" } } })
+            }
+            _ => json!({}),
+        })
+    });
+    let out = execute_with(&mut d, &Action::CheckUrl { contains: "/home".into(), timeout_ms: None }, &quick()).await;
+    assert!(!out.ok && out.detail == "url is https://app.example/login", "{}", out.detail);
+    assert!(began.elapsed() < std::time::Duration::from_millis(450), "{:?}", began.elapsed());
+}
+
+/// An address that never comes fails after about the wait asked for.
+#[tokio::test]
+async fn check_url_that_never_holds_fails_after_its_own_timeout() {
+    let mut d = FakePage::default().driver();
+    let began = std::time::Instant::now();
+    let out = execute_with(&mut d, &Action::CheckUrl { contains: "/login".into(), timeout_ms: Some(700) }, &quick()).await;
+    let took = began.elapsed();
+    assert!(!out.ok && out.detail == "url is https://app.example/home", "{}", out.detail);
+    assert!(took >= std::time::Duration::from_millis(700) && took < std::time::Duration::from_millis(1500), "{took:?}");
+}
+
+/// A browser that never answers is the harness's doing, said with the
+/// time waited and what for.
+#[tokio::test]
+async fn check_url_on_a_browser_that_never_answers_is_a_harness_failure() {
+    let mut d = ScriptedDriver::new(|method, _| Err(CdpError::Timeout { what: method.to_string(), ms: 50 }));
+    let out = execute_with(&mut d, &Action::CheckUrl { contains: "/home".into(), timeout_ms: Some(300) }, &quick()).await;
+    assert!(!out.ok && out.harness, "{}", out.detail);
+    assert!(out.detail.contains("the page address") && out.detail.contains("300ms"), "{}", out.detail);
 }

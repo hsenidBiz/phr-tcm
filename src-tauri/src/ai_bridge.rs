@@ -3196,7 +3196,10 @@ pub async fn file_component_finds<D: crate::browser::cdp::Driver>(
 /// counted. A `wait_for` passes on one or more and its outcome does not
 /// say how many, so it is left out here and probed once the try worked
 /// (`try_action`), as is any legacy string target: a run takes its first
-/// match, so it passes on several too. Matched without a catch-all, so a
+/// match, so it passes on several too, and so are the list of an
+/// `expect_each` or `expect_order` and an `expect_each`'s child chain
+/// (`list_targets`, `list_chain_of`), whose outcome does not say how many
+/// items it read. Matched without a catch-all, so a
 /// new kind will not compile until it is classified here.
 fn matched_targets(action: &crate::browser::actions::Action) -> Vec<(&crate::browser::locator::Target, usize)> {
     use crate::browser::actions::Action;
@@ -3213,14 +3216,14 @@ fn matched_targets(action: &crate::browser::actions::Action) -> Vec<(&crate::bro
         | Action::ExpectDisabled { selector, .. }
         | Action::ExpectChecked { selector, .. }
         | Action::ExpectFocused { selector, .. } => vec![(selector, 1)],
-        Action::ExpectCount { selector, equals, .. } => {
-            if *equals >= 1 {
-                vec![(selector, *equals as usize)]
-            } else {
-                vec![]
-            }
-        }
+        // Only an exact count says how many elements it saw; a bound
+        // (`at_least`, `at_most`) does not.
+        Action::ExpectCount { selector, equals, .. } => match equals {
+            Some(n) if *n >= 1 => vec![(selector, *n as usize)],
+            _ => vec![],
+        },
         Action::Drag { from, to, .. } => vec![(from, 1), (to, 1)],
+        Action::ExpectPosition { selector, relative_to, .. } => vec![(selector, 1), (relative_to, 1)],
         Action::ExpectRow { table, .. } | Action::ExpectSorted { table, .. } => vec![(table, 1)],
         Action::ExpectRowCount { table, equals, at_least, .. } => {
             if equals.is_some_and(|n| n >= 1) || at_least.is_some_and(|n| n >= 1) {
@@ -3231,6 +3234,8 @@ fn matched_targets(action: &crate::browser::actions::Action) -> Vec<(&crate::bro
         }
         Action::ExpectHidden { .. }
         | Action::WaitFor { .. }
+        | Action::ExpectEach { .. }
+        | Action::ExpectOrder { .. }
         | Action::UseComponent { .. }
         | Action::ExpectNoRow { .. }
         | Action::WhenVisible { .. }
@@ -3252,6 +3257,27 @@ fn matched_targets(action: &crate::browser::actions::Action) -> Vec<(&crate::bro
         | Action::CloseTab { .. }
         | Action::ExpectTabClosed { .. }
         | Action::ExpectDialog { .. } => vec![],
+    }
+}
+
+/// The list an `expect_each` or `expect_order` reads: probed once the try
+/// passed (`try_action`).
+fn list_targets(action: &crate::browser::actions::Action) -> Vec<&crate::browser::locator::Target> {
+    use crate::browser::actions::Action;
+    match action {
+        Action::ExpectEach { selector, .. } | Action::ExpectOrder { selector, .. } if !selector.is_legacy() => vec![selector],
+        _ => vec![],
+    }
+}
+
+/// An `expect_each`'s child as it is looked for inside the list: the list's
+/// links and then its own, the chain the save needs seen whole.
+fn list_chain_of(action: &crate::browser::actions::Action) -> Option<crate::browser::locator::Target> {
+    match action {
+        crate::browser::actions::Action::ExpectEach { selector, child: Some(child), .. } if !selector.is_legacy() => {
+            Some(crate::browser::locator::Target::Chain(selector.links().into_iter().chain(child.links()).collect()))
+        }
+        _ => None,
     }
 }
 
@@ -3718,7 +3744,7 @@ pub fn describe_action(action: &crate::browser::actions::Action) -> String {
         // Its path only: a host and a query string never reach a log line
         // or the discovery map, and a query can carry a token.
         Action::Navigate { url } => crate::autorun::discovery_map::path_only(url),
-        Action::CheckUrl { contains } => contains.clone(),
+        Action::CheckUrl { contains, .. } => contains.clone(),
         Action::UseComponent { component, .. } => component.trim().to_string(),
         Action::CheckText { .. }
         | Action::SignIn { .. }
@@ -3761,6 +3787,9 @@ pub fn describe_action(action: &crate::browser::actions::Action) -> String {
         | Action::ExpectDisabled { selector, .. }
         | Action::ExpectChecked { selector, .. }
         | Action::ExpectFocused { selector, .. }
+        | Action::ExpectEach { selector, .. }
+        | Action::ExpectOrder { selector, .. }
+        | Action::ExpectPosition { selector, .. }
         | Action::Upload { selector, .. }
         | Action::WhenVisible { selector, .. }
         | Action::RepeatWhileVisible { selector, .. } => selector.describe(),
@@ -7602,8 +7631,13 @@ async fn try_action<D: crate::browser::cdp::Driver>(
         crate::browser::actions::Action::WaitFor { selector, .. } => Some(selector),
         _ => None,
     };
-    let started_on =
-        if matched.is_empty() && waited.is_none() { String::new() } else { page_address(d).await.0 };
+    // (A list check changes no page either, so its list is filed at the page
+    // it is probed on, after the try.)
+    let started_on = if matched.is_empty() && waited.is_none() && list_targets(action).is_empty() {
+        String::new()
+    } else {
+        page_address(d).await.0
+    };
     let step = crate::autorun::StepScript { step_number: 0, actions: vec![action.clone()], unchecked: None, cleanup: false };
     // A try fails on a request the application refused: the assistant learns
     // the reason now, not from a wait that times out later.
@@ -7677,7 +7711,21 @@ async fn try_action<D: crate::browser::cdp::Driver>(
             // Only the application's own pages count (`may_record`).
             policy: recording_policy(root, organization, project),
         };
+        // A list check's outcome does not say how many items it read, and a
+        // passed one has proved its list was there: the list is probed once
+        // the try worked, and an `expect_each`'s child as the chain inside
+        // the list (the whole the save asks to have seen), each filed as
+        // found. Nothing visible now files nothing: the check alone does not
+        // say what was there.
+        let list_chain = list_chain_of(action);
         let mut matched = matched;
+        for target in list_targets(action).into_iter().chain(list_chain.as_ref()) {
+            if let Ok(text) = crate::browser::snapshot::probe(d, target).await {
+                if let Some((n, all)) = counted(d, target, &text).await {
+                    matched.push((target, n, all));
+                }
+            }
+        }
         if let Some(target) = waited {
             let found = match crate::browser::snapshot::probe(d, target).await {
                 Ok(text) => counted(d, target, &text).await,
@@ -9434,7 +9482,16 @@ async fn save_autorun_scripts(
     // The saved scripts, read once for every check of this save.
     let saved_scripts =
         if seen_scope.is_empty() { Vec::new() } else { crate::autorun::store::list_scripts(&root) };
-    let check_and_save = || -> Result<(), SaveRefusal> {
+    // The environment's test name prefix, for the note on a record a script
+    // relies on without declaring it.
+    let test_prefix = crate::environments::active(&root)
+        .map(|e| e.test_prefix)
+        .unwrap_or_else(|_| crate::environments::default_test_prefix());
+    // The project's own save words, for what counts as saving a record.
+    let save_words = crate::autorun::nav::load_nav(&root, &ctx.org, &ctx.project).map(|n| n.save_words).unwrap_or_default();
+    let check_and_save = || -> Result<Vec<String>, SaveRefusal> {
+        // What the save noticed without refusing: said after its answer.
+        let mut notes: Vec<String> = Vec::new();
         if !seen_scope.is_empty() {
             let (map, components, files) = seen_check_inputs(&root, ctx, uses_components, &saved_scripts)
                 .map_err(|e| SaveRefusal::Other(400, e))?;
@@ -9442,6 +9499,10 @@ async fn save_autorun_scripts(
             // of them is named at once; a refusal of any other kind is
             // answered alone, as it always was.
             let mut unseen: Vec<(i32, Vec<String>)> = Vec::new();
+            // Locators only ever seen matching nothing, used to check that
+            // something is absent: refused after the unseen ones, which a
+            // discovery in progress may still record.
+            let mut unproven: Vec<(i32, Vec<String>)> = Vec::new();
             for (case_id, only) in &seen_scope {
                 let (Some(script), Some(case)) = (
                     prepared.iter().find(|s| s.case_id == *case_id),
@@ -9461,7 +9522,17 @@ async fn save_autorun_scripts(
                     only.as_deref(),
                     &files,
                 ) {
-                    SeenVerdict::Passed => {}
+                    SeenVerdict::Passed => {
+                        let lines = crate::autorun::seen_check::absence_refusals(
+                            &map,
+                            script,
+                            only.as_deref(),
+                            saved_scripts.iter().find(|s| s.case_id == *case_id),
+                        );
+                        if !lines.is_empty() {
+                            unproven.push((*case_id, lines));
+                        }
+                    }
                     SeenVerdict::Other(why) => return Err(SaveRefusal::Unseen(why)),
                     SeenVerdict::Unseen(lines) => unseen.push((*case_id, lines)),
                 }
@@ -9469,14 +9540,32 @@ async fn save_autorun_scripts(
             if !unseen.is_empty() {
                 return Err(SaveRefusal::Unseen(unseen_in_bundle(&unseen)));
             }
+            if !unproven.is_empty() {
+                return Err(SaveRefusal::Other(400, unseen_in_bundle(&unproven)));
+            }
+            // Everything is seen. Notes, for the new and changed steps only.
+            for (case_id, only) in &seen_scope {
+                let Some(script) = prepared.iter().find(|s| s.case_id == *case_id) else { continue };
+                let sentences = crate::autorun::seen_check::loose_name_notes(&map, &components, script, only.as_deref())
+                    .into_iter()
+                    .chain(crate::autorun::preconditions::undeclared_record_note(script, only.as_deref(), &test_prefix, &save_words));
+                notes.extend(sentences.map(|n| format!("case {case_id}: note: {n}")));
+            }
+            if notes.len() > MAX_SAVE_NOTES {
+                let more = notes.len() - MAX_SAVE_NOTES;
+                notes.truncate(MAX_SAVE_NOTES);
+                notes.push(format!("and {more} more notes"));
+            }
         }
         // Everything has passed. A dry run checks the bundle as the write
         // would and stops there; a save writes it.
         if dry_run {
-            return crate::autorun::store::check_scripts(&prepared).map_err(|e| SaveRefusal::Other(400, e));
+            return crate::autorun::store::check_scripts(&prepared)
+                .map(|()| notes)
+                .map_err(|e| SaveRefusal::Other(400, e));
         }
         match crate::autorun::store::save_scripts_atomically(&root, &prepared) {
-            Ok(()) => Ok(()),
+            Ok(()) => Ok(notes),
             Err(crate::autorun::store::SaveScriptsError::Invalid(e)) => Err(SaveRefusal::Other(400, e)),
             Err(crate::autorun::store::SaveScriptsError::Io(e)) => {
                 Err(SaveRefusal::Other(500, format!("could not save the bundle: {e}")))
@@ -9537,17 +9626,19 @@ async fn save_autorun_scripts(
         Some(found) => after_recording(found, said),
         None => said,
     };
-    if let Err(refused) = checked {
-        return answer(refused.said());
-    }
+    let notes = match checked {
+        Ok(notes) => notes,
+        Err(refused) => return answer(refused.said()),
+    };
     if dry_run {
-        let said = std::iter::once(dry_run_answer(prepared.len(), &lines)).chain(precondition_lines);
+        let said = std::iter::once(dry_run_answer(prepared.len(), &lines)).chain(precondition_lines).chain(notes);
         return (200, said.collect::<Vec<_>>().join("\n"));
     }
     crate::applog::info(format!("AI saved {} auto-run script(s)", prepared.len()));
 
     let mut report = vec![format!("saved {} script(s): {}", prepared.len(), lines.join(", "))];
     report.extend(precondition_lines);
+    report.extend(notes);
     for (case_id, step) in &repaired_marks {
         match crate::autorun::store::clear_suspected_defect_at(&root, *case_id, *step) {
             Ok(true) => {
@@ -9601,6 +9692,9 @@ async fn save_autorun_scripts(
     }
     answer((200, report.join("\n")))
 }
+
+/// The most notes one save answers with before saying how many more.
+const MAX_SAVE_NOTES: usize = 20;
 
 /// The refusal of a bundle whose scripts name locators never seen, from
 /// each refused case's lines in bundle order: the lines alone when one
