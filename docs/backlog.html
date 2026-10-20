@@ -42,7 +42,35 @@
 <body>
 <main>
   <h1>Test Case Manager backlog</h1>
-  <p class="sub">Updated 20 October 2026, after 2.2.3-beta.17 (a repair can change a script's preconditions). What is left is below.</p>
+  <p class="sub">Updated 20 October 2026, after 2.2.3-beta.18 (fewer, leaner assistant tools; area path repair; cleanup). What is left is below.</p>
+
+  <h2>Cleanup and area path repair (2.2.3-beta.18, 20 October 2026)</h2>
+  <div class="item">
+    <div class="head"><span class="title">Hand checks owed</span><span class="status todo">Waiting on you</span></div>
+    <ul>
+      <li>Start a new assistant session: it lists the merged tools (about 52 with Network tools off), and a call to an old tool name answers with its new name.</li>
+      <li>Switch Network tools on for one environment in AI Bridge: the six network tools appear in a new session; switch it off and they are refused.</li>
+      <li>Move or rename a menu entry an area uses (or point an area at a wrong click): the assistant repairs the area's path with a reason, Auto Run, Areas shows "Path repaired by an assistant", and Put old path back restores it.</li>
+      <li>With API Templates on, a discovery that saves something builds and proves a template from the request it saw; with it off, the summary lists "API templates to make".</li>
+      <li>Settings, Logs shows one line per tool call (name and outcome only).</li>
+    </ul>
+  </div>
+  <div class="item">
+    <div class="head"><span class="title">Left for you to decide</span><span class="status todo">Owner's call</span></div>
+    <ul>
+      <li>scripts/csp-verify.mjs (a one-off from the CSP work) and scripts/measure-text-centre.mjs: keep or delete.</li>
+      <li>.claude/settings.local.json still holds allow rules for v1 scripts.</li>
+      <li>Two stale git worktree branches (claude/cool-bohr-..., claude/hopeful-swirles-...) and the ignored old v2/ folder (about 6 GB).</li>
+      <li>.test-cases/ in the repository folder is test-case data the AI bridge wrote; add it to .gitignore or move it.</li>
+    </ul>
+  </div>
+  <div class="item">
+    <div class="head"><span class="title">Not fully done</span><span class="status todo">Follow-ups</span></div>
+    <ul>
+      <li>Calls the assistant's connection refuses on its own (a wrong argument shape, an unknown or old tool name, a guide topic that is off) are not in the call log.</li>
+      <li>A server name written without a path or port (for example "example.com" alone) is not hidden in notes the assistant writes.</li>
+    </ul>
+  </div>
 
   <h2>Preconditions in repairs, item 28 (2.2.3-beta.17, 20 October 2026)</h2>
   <div class="item">
@@ -104,20 +132,12 @@
 
   <h2>Tool errors from 19 October, rows 25-71 (2.2.3-beta.15, 20 October 2026)</h2>
   <div class="item">
-    <div class="head"><span class="title">Needs you</span><span class="status todo">Waiting on you</span></div>
-    <ul>
-      <li>Row 53: on QA Automation, perf_goal_group is empty (groups 698 and 753 gone) and the profile assignments went from 7 to 0, from an earlier run. Restore them.</li>
-      <li>Row 62: two Definition Wizard cases have a precondition that no longer fits how the Playwright suite sets things up. Item 28 shipped in 2.2.3-beta.17: the assistant can now remove it in a repair, with a reason.</li>
-      <li>A step that names a tab that is not there ("there is no tab X") does not stop its step, so a later action can wait out its whole timeout. The code does this on purpose; say if a missing tab should stop the step.</li>
-    </ul>
-  </div>
-  <div class="item">
     <div class="head"><span class="title">Hand checks owed (need your organisation)</span><span class="status todo">Waiting on you</span></div>
     <ul>
       <li>Replay a case three times with reset_autorun_browser between: the reset says "still signed in", and the next replays say "Signed in already". If a reset still says the sign-in has gone, Settings, Logs names the cookie that changed.</li>
       <li>A case whose old cookie-banner guard (when_visible on the banner's close button) used to fail: it now carries on.</li>
       <li>A discovery with "page": false answers without the page dump.</li>
-      <li>A long replay stopped with stop_autorun_replay answers "stopped on request".</li>
+      <li>A long replay stopped with replay_autorun_to_step and stop: true answers "stopped on request".</li>
       <li>A script with a clean-up step that removes what the case made: run it unattended with a step made to fail; the clean-up still runs and the case reads failed, not passed. With a confirm on the Delete, the clean-up's expect_dialog answers it.</li>
       <li>Save a script whose "there is no X" check was only probed (0 matches): it saves.</li>
     </ul>
