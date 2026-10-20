@@ -45,6 +45,14 @@ pub const LABEL_JS: &str = r#"function() {
   return norm(this.innerText);
 }"#;
 
+/// `this` is an item. Is it a form field (an `<input>` or `<textarea>`,
+/// whatever its type), whose value a message must never carry? The
+/// exported spec's `saw` asks the same.
+pub const IS_FIELD_JS: &str = "function() { return this instanceof HTMLInputElement || this instanceof HTMLTextAreaElement; }";
+
+/// What a failure says in place of the text of a form field.
+pub const A_FIELD: &str = "(a field)";
+
 /// What every item must be.
 pub enum EachWant<'a> {
     /// The child is visible (needs a child).
@@ -64,9 +72,17 @@ fn collapse(s: &str) -> String {
 /// then its raw value, `None` when the element has none); without it `got`
 /// is the collapsed text. `Visible` is judged elsewhere and passes here.
 pub fn judge_value(want: &EachWant, attribute: Option<&str>, got: Option<&str>) -> Result<(), String> {
+    judge(want, attribute, got, false)
+}
+
+/// [`judge_value`]; `field` says the text is a form field's, which a
+/// failure then does not show ([`A_FIELD`]). An attribute is never a field's
+/// value.
+fn judge(want: &EachWant, attribute: Option<&str>, got: Option<&str>, field: bool) -> Result<(), String> {
     match attribute {
         None => {
             let got = collapse(got.unwrap_or(""));
+            let saw = if field { A_FIELD.to_string() } else { format!("{got:?}") };
             match want {
                 EachWant::Visible => Ok(()),
                 EachWant::Equals(w) => {
@@ -74,7 +90,7 @@ pub fn judge_value(want: &EachWant, attribute: Option<&str>, got: Option<&str>) 
                     if got == w {
                         Ok(())
                     } else {
-                        Err(format!("expected text {w:?} but saw {got:?}"))
+                        Err(format!("expected text {w:?} but saw {saw}"))
                     }
                 }
                 EachWant::Contains(w) => {
@@ -82,19 +98,19 @@ pub fn judge_value(want: &EachWant, attribute: Option<&str>, got: Option<&str>) 
                     if got.contains(&w) {
                         Ok(())
                     } else {
-                        Err(format!("expected it to contain {w:?} but saw {got:?}"))
+                        Err(format!("expected it to contain {w:?} but saw {saw}"))
                     }
                 }
                 EachWant::Matches { pattern, re } => {
                     if re.is_match(&got) {
                         Ok(())
                     } else {
-                        Err(format!("expected text to match {} but saw {got:?}", super::pattern::shown(pattern)))
+                        Err(format!("expected text to match {} but saw {saw}", super::pattern::shown(pattern)))
                     }
                 }
                 EachWant::NotEmpty => {
                     if got.is_empty() {
-                        Err("expected text but saw \"\"".to_string())
+                        Err(format!("expected text but saw {saw}"))
                     } else {
                         Ok(())
                     }
@@ -265,7 +281,14 @@ async fn read_items<D: Driver>(
                 }
                 None => {
                     let got = page::call_value(d, &subject, READ_TEXT_JS, &[]).await?;
-                    judge_value(want, None, Some(&collapse(got.as_str().unwrap_or(""))))
+                    let got = collapse(got.as_str().unwrap_or(""));
+                    // Asked only when it fails: a field's value is not evidence.
+                    match judge(want, None, Some(&got), false) {
+                        Err(_) if page::call_value(d, &subject, IS_FIELD_JS, &[]).await?.as_bool().unwrap_or(false) => {
+                            judge(want, None, Some(&got), true)
+                        }
+                        other => other,
+                    }
                 }
             }
         };

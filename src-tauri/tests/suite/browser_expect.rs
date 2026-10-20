@@ -402,12 +402,24 @@ async fn text_matches_a_pattern_on_the_collapsed_text() {
     let mut d = FakePage { texts: vec!["Showing  1-10 of 57"], ..FakePage::default() }.driver();
     let out = execute_with(&mut d, &check, &quick()).await;
     assert!(out.ok, "{}", out.detail);
-    assert_eq!(out.detail, "#n matches /^Showing 1-10 of \\d+$/: \"Showing 1-10 of 57\"");
+    // What a field holds is never in a pass: the sentence does not carry the text.
+    assert_eq!(out.detail, "#n matches /^Showing 1-10 of \\d+$/");
 
     let mut d = FakePage { texts: vec!["Showing 1-10 of many"], ..FakePage::default() }.driver();
     let out = execute_with(&mut d, &check, &quick()).await;
     assert!(!out.ok);
     assert!(out.detail.ends_with("expected text to match /^Showing 1-10 of \\d+$/ but saw \"Showing 1-10 of many\""), "{}", out.detail);
+}
+
+/// A password at least eight long passes `matches` without the password
+/// reaching the outcome (passed outcomes are listed in the HTML report).
+#[tokio::test]
+async fn a_passing_text_match_does_not_carry_the_text() {
+    let check = action(json!({ "kind": "expect_text", "selector": { "css": "#password" }, "matches": "^.{8,}$" }));
+    let mut d = FakePage { texts: vec!["hunter2-hunter2"], ..FakePage::default() }.driver();
+    let out = execute_with(&mut d, &check, &quick()).await;
+    assert!(out.ok, "{}", out.detail);
+    assert!(!out.detail.contains("hunter2"), "{}", out.detail);
 }
 
 #[tokio::test]
@@ -576,6 +588,9 @@ struct ListPage {
     /// Elements that are a `<select>`: shown by the option chosen (their
     /// text), where a text field is shown by its name.
     selects: std::collections::HashSet<String>,
+    /// Elements that are an `<input>` or `<textarea>`: what they hold is
+    /// never put in a message.
+    fields: std::collections::HashSet<String>,
 }
 
 impl ListPage {
@@ -610,7 +625,7 @@ impl ListPage {
     }
     /// Answers as a browser would; the counter is how many looks were made.
     fn driver(self, looks: Arc<AtomicUsize>) -> common::ScriptedDriver {
-        use v2_lib::browser::each::CONNECTED_JS;
+        use v2_lib::browser::each::{CONNECTED_JS, IS_FIELD_JS};
         use v2_lib::browser::expect::{READ_ATTR_JS, READ_TEXT_JS};
         use v2_lib::browser::input::SHOWN_JS;
         use v2_lib::browser::locator::{FRAME_JS, VISIBLE_JS};
@@ -629,6 +644,9 @@ impl ListPage {
                 "Runtime.callFunctionOn" if f == CONNECTED_JS => {
                     let gone = self.detached.contains(&id) && looks.load(Ordering::SeqCst) <= self.detached_looks;
                     json!({ "result": { "value": !gone } })
+                }
+                "Runtime.callFunctionOn" if f == IS_FIELD_JS => {
+                    json!({ "result": { "value": self.fields.contains(&id) } })
                 }
                 "Runtime.callFunctionOn" if f == READ_BOX_JS => {
                     let moved = looks.load(Ordering::SeqCst) >= self.moves_at;
@@ -964,6 +982,50 @@ async fn each_names_a_failing_control_by_its_label_not_its_value() {
     assert!(!out.ok);
     assert!(!out.detail.contains("hunter2"), "the typed value reached the failure: {}", out.detail);
     assert!(out.detail.contains("item 1 of 1 (\"Password\"): has no data-x attribute"), "{}", out.detail);
+}
+
+/// What a form field holds is never put in a failure - not by `equals`,
+/// `contains`, `matches` or `not_empty` - whatever its type: the failure says
+/// `(a field)`, as the exported spec does. An ordinary element's text is
+/// still shown.
+#[tokio::test]
+async fn each_never_prints_what_a_field_holds() {
+    let run = |want: Value| async move {
+        let mut page = ListPage::default().list("input.f", 2).text("c1", "ok-value").text("c2", "hunter2");
+        page.fields.insert("c1".to_string());
+        page.fields.insert("c2".to_string());
+        page.names.insert("c2".to_string(), "Password".to_string());
+        let mut base = json!({ "kind": "expect_each", "selector": { "css": "input.f" } });
+        for (k, v) in want.as_object().unwrap() {
+            base[k] = v.clone();
+        }
+        execute_with(&mut page.driver(Arc::default()), &action(base), &quick()).await
+    };
+    for (want, tail) in [
+        (json!({ "equals": "ok-value" }), "item 2 of 2 (\"Password\"): expected text \"ok-value\" but saw (a field)"),
+        (json!({ "contains": "ok" }), "item 2 of 2 (\"Password\"): expected it to contain \"ok\" but saw (a field)"),
+        (json!({ "matches": "^ok" }), "item 2 of 2 (\"Password\"): expected text to match /^ok/ but saw (a field)"),
+    ] {
+        let out = run(want).await;
+        assert!(!out.ok);
+        assert!(!out.detail.contains("hunter2"), "a field's value reached the failure: {}", out.detail);
+        assert!(out.detail.ends_with(tail), "{}", out.detail);
+    }
+    // An empty field is not shown as empty either.
+    let mut page = ListPage::default().list("input.f", 1).text("c1", "");
+    page.fields.insert("c1".to_string());
+    page.names.insert("c1".to_string(), "Name".to_string());
+    let out = execute_with(
+        &mut page.driver(Arc::default()),
+        &action(json!({ "kind": "expect_each", "selector": { "css": "input.f" }, "not_empty": true })),
+        &quick(),
+    )
+    .await;
+    assert!(out.detail.ends_with("item 1 of 1 (\"Name\"): expected text but saw (a field)"), "{}", out.detail);
+    // An ordinary element's text is still the evidence.
+    let page = ListPage::default().list("div.card", 1).text("c1", "Draft one");
+    let out = execute_with(&mut page.driver(Arc::default()), &each(json!({ "equals": "Open" })), &quick()).await;
+    assert!(out.detail.ends_with("expected text \"Open\" but saw \"Draft one\""), "{}", out.detail);
 }
 
 /// A child behind a frame this page cannot enter is not "not on the page".

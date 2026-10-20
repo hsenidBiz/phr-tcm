@@ -345,7 +345,8 @@ async fn look_reading<D: Driver>(
                 let got = page::call_value(d, h, READ_TEXT_JS, &[]).await?;
                 let got = collapse(got.as_str().unwrap_or(""));
                 if re.is_match(&got) {
-                    Ok(format!("{what} matches {}: {got:?}", super::pattern::shown(pattern)))
+                    // Not the text: it may be a field's, and passes are listed in the report.
+                    Ok(format!("{what} matches {}", super::pattern::shown(pattern)))
                 } else {
                     Err(format!("{EXPECTED_TEXT}to match {} but saw {got:?}", super::pattern::shown(pattern)))
                 }
