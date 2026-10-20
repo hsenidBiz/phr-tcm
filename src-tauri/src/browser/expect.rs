@@ -448,21 +448,14 @@ async fn look_reading<D: Driver>(
             }
         },
         Check::Each { min, child, attribute, want } => {
-            // The list was found, so the browser is answering: a call that
-            // then runs out of time is a list too long for the time given,
-            // which is this check's failure, not a silent browser.
-            return match super::each::look_each(d, &what, &handles, *min, *child, *attribute, want).await {
-                Err(CdpError::Timeout { .. }) => Ok(Err(super::each::TOO_SLOW.to_string())),
-                other => other,
-            };
+            // A look that runs out of time after reading some items is a
+            // list too long for the time given (`TOO_SLOW`), which
+            // `keep_looking` does not hold against a pass already held.
+            return super::each::look_each(d, &what, &handles, *min, *child, *attribute, want).await;
         }
         Check::Order(want) => {
-            // As for a list of items: a look that runs out of time partway
-            // is the check's own failure.
-            return match super::order::look_order(d, &what, &handles, want, &mut read.items).await {
-                Err(CdpError::Timeout { .. }) => Ok(Err(super::each::TOO_SLOW.to_string())),
-                other => other,
-            };
+            // As for a list of items.
+            return super::order::look_order(d, &what, &handles, want, &mut read.items).await;
         }
         Check::Position { relative_to, relation } => match only(&handles) {
             Err(why) => Err(why),
@@ -580,6 +573,12 @@ async fn keep_looking<D: Driver>(
                     return ActionOutcome::passed(detail);
                 }
                 held = Some((detail, read, since));
+            }
+            // A look the deadline cut short tells nothing new about a list
+            // that has kept passing: the pass held so far stands (as it
+            // does when `expect_position`'s or `at_most`'s look times out).
+            Ok(Err(why)) if held.is_some() && why == super::each::TOO_SLOW => {
+                looked = true;
             }
             Ok(Err(why)) => {
                 looked = true;

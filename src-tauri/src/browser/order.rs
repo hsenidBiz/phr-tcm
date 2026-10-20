@@ -14,7 +14,7 @@
 //! name a person knows it by, never the value typed into it.
 
 use super::cdp::{CdpError, Driver};
-use super::each::{CONNECTED_JS, LIST_CHANGED};
+use super::each::{CONNECTED_JS, LIST_CHANGED, TOO_SLOW};
 use super::expect::{NOT_ON_PAGE, READ_TEXT_JS};
 use super::page::{self, Handle};
 
@@ -137,12 +137,32 @@ pub(crate) fn judge_shown(want: &[String], items: &[String], shown: &[String], t
 /// One look at the whole list. `Ok(Ok(detail))` holds; `Ok(Err(why))` does
 /// not hold yet; an `Err` is the browser. `read` is set to the texts read,
 /// which a hold on the pass is keyed on.
+///
+/// A call that runs out of time after an item has been read is a list too
+/// long for the time given ([`TOO_SLOW`]); before any was, it is the
+/// browser's silence and the timeout is passed on (see `each::look_each`).
 pub(crate) async fn look_order<D: Driver>(
     d: &mut D,
     what: &str,
     items: &[Handle],
     want: &[String],
     read: &mut String,
+) -> Result<Result<String, String>, CdpError> {
+    let mut done = 0;
+    match read_texts(d, what, items, want, read, &mut done).await {
+        Err(CdpError::Timeout { .. }) if done > 0 => Ok(Err(TOO_SLOW.to_string())),
+        other => other,
+    }
+}
+
+/// [`look_order`]; `done` counts the items whose text has been read.
+async fn read_texts<D: Driver>(
+    d: &mut D,
+    what: &str,
+    items: &[Handle],
+    want: &[String],
+    read: &mut String,
+    done: &mut usize,
 ) -> Result<Result<String, String>, CdpError> {
     let n = items.len();
     if n == 0 {
@@ -154,6 +174,7 @@ pub(crate) async fn look_order<D: Driver>(
     let mut texts = Vec::with_capacity(n);
     for item in items {
         let got = page::call_value(d, item, READ_TEXT_JS, &[]).await?;
+        *done += 1;
         // An item gone from the page was read for nothing.
         if !page::call_value(d, item, CONNECTED_JS, &[]).await?.as_bool().unwrap_or(false) {
             return Ok(Err(LIST_CHANGED.to_string()));

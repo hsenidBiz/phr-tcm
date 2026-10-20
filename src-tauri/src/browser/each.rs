@@ -187,6 +187,11 @@ fn passed(n: usize, what: &str, child: Option<&Target>, attribute: Option<&str>,
 
 /// One look at the whole list. `Ok(Ok(detail))` holds; `Ok(Err(why))` does
 /// not hold yet (the first item that fails, named); an `Err` is the browser.
+///
+/// A call that runs out of time after an item has been read is a list too
+/// long for the time given - [`TOO_SLOW`], the check's own failure. One that
+/// does so before any item was read says nothing about the list: the browser
+/// stopped answering, and the timeout is passed on as the browser's.
 pub(crate) async fn look_each<D: Driver>(
     d: &mut D,
     what: &str,
@@ -195,6 +200,25 @@ pub(crate) async fn look_each<D: Driver>(
     child: Option<&Target>,
     attribute: Option<&str>,
     want: &EachWant<'_>,
+) -> Result<Result<String, String>, CdpError> {
+    let mut read = 0;
+    match read_items(d, what, items, min, child, attribute, want, &mut read).await {
+        Err(CdpError::Timeout { .. }) if read > 0 => Ok(Err(TOO_SLOW.to_string())),
+        other => other,
+    }
+}
+
+/// [`look_each`]; `read` counts the items whose value has been read.
+#[allow(clippy::too_many_arguments)]
+async fn read_items<D: Driver>(
+    d: &mut D,
+    what: &str,
+    items: &[Handle],
+    min: u32,
+    child: Option<&Target>,
+    attribute: Option<&str>,
+    want: &EachWant<'_>,
+    read: &mut usize,
 ) -> Result<Result<String, String>, CdpError> {
     let n = items.len();
     if n > EACH_MAX {
@@ -245,6 +269,7 @@ pub(crate) async fn look_each<D: Driver>(
                 }
             }
         };
+        *read += 1;
         // An element gone from the page was read for nothing: whatever it
         // said (or failed to have) is not the page's answer. The element
         // that was read, and the item it sits in - a child remounted inside

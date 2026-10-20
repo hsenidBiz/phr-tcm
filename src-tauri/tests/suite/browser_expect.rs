@@ -979,10 +979,32 @@ async fn each_child_behind_an_unreachable_frame_says_so() {
     assert_eq!(v2_lib::autorun::patterns::classify(&out.detail, Some("div.card")), v2_lib::autorun::patterns::ErrorClass::FrameUnreachable);
 }
 
-/// A first look that runs out of time on a long list is the list check's
-/// own failure, not a browser that stopped answering.
+/// A look that runs out of time on a long list - after it has read some of
+/// the items - is the list check's own failure, not a browser that stopped
+/// answering.
 #[tokio::test]
 async fn each_overrunning_look_is_the_lists_own_failure() {
+    use v2_lib::browser::expect::READ_TEXT_JS;
+    let page = ListPage::default().list("div.card", 3).text("c1", "a").text("c2", "b").text("c3", "c");
+    let reads = Arc::new(AtomicUsize::new(0));
+    let mut d = page.driver(Arc::default()).answering_first(move |method, params| {
+        (method == "Runtime.callFunctionOn" && params["functionDeclaration"] == READ_TEXT_JS && reads.fetch_add(1, Ordering::SeqCst) >= 1)
+            .then(|| Err(CdpError::Timeout { what: "Runtime.callFunctionOn".to_string(), ms: 50 }))
+    });
+    let out = execute_with(&mut d, &each(json!({ "not_empty": true })), &quick()).await;
+    assert!(!out.ok);
+    assert_eq!(out.detail, "waited 250ms: div.card could not read every item in time - narrow the list, or allow more time");
+    assert!(!out.harness, "the page's own slowness is not the browser's silence");
+    assert_eq!(
+        v2_lib::autorun::patterns::classify(&out.detail, Some("div.card")),
+        v2_lib::autorun::patterns::ErrorClass::TimedOut
+    );
+}
+
+/// The list was found but not one item could be read: the browser stopped
+/// answering between the two, which is the browser's silence, not the list's.
+#[tokio::test]
+async fn each_a_browser_that_goes_silent_after_the_list_was_found_is_a_harness_timeout() {
     use v2_lib::browser::expect::READ_TEXT_JS;
     let page = ListPage::default().list("div.card", 3).text("c1", "a").text("c2", "b").text("c3", "c");
     let mut d = page.driver(Arc::default()).answering_first(|method, params| {
@@ -991,11 +1013,32 @@ async fn each_overrunning_look_is_the_lists_own_failure() {
     });
     let out = execute_with(&mut d, &each(json!({ "not_empty": true })), &quick()).await;
     assert!(!out.ok);
-    assert_eq!(out.detail, "waited 250ms: div.card could not read every item in time - narrow the list, or allow more time");
-    assert_eq!(
-        v2_lib::autorun::patterns::classify(&out.detail, Some("div.card")),
-        v2_lib::autorun::patterns::ErrorClass::TimedOut
-    );
+    assert!(out.harness, "{}", out.detail);
+    assert!(!out.detail.contains("could not read every item"), "{}", out.detail);
+}
+
+/// A pass that has held when a later look is cut off by the deadline is
+/// still the answer at the deadline - as `expect_position` and `at_most`
+/// give it, and the exported spec.
+#[tokio::test]
+async fn each_a_held_pass_survives_a_look_cut_off_at_the_deadline() {
+    use v2_lib::browser::expect::READ_TEXT_JS;
+    let page = ListPage::default().list("div.card", 2).text("c1", "AUTOTEST A").text("c2", "AUTOTEST B");
+    // Two items a look: from the sixth read (look 3, its second item) every
+    // second read is cut off.
+    let reads = Arc::new(AtomicUsize::new(0));
+    let mut d = page.driver(Arc::default()).answering_first(move |method, params| {
+        if method == "Runtime.callFunctionOn" && params["functionDeclaration"] == READ_TEXT_JS {
+            let n = reads.fetch_add(1, Ordering::SeqCst) + 1;
+            if n >= 6 && n % 2 == 0 {
+                return Some(Err(CdpError::Timeout { what: "Runtime.callFunctionOn".to_string(), ms: 50 }));
+            }
+        }
+        None
+    });
+    let out = execute_with(&mut d, &each(json!({ "matches": "^AUTOTEST ", "timeout_ms": 1500 })), &quick()).await;
+    assert!(out.ok, "{}", out.detail);
+    assert_eq!(out.detail, "2 items of div.card each match /^AUTOTEST /");
 }
 
 // ---- expect_order: the texts of a list come in this order -------------
@@ -1126,10 +1169,25 @@ async fn order_passes_a_stable_list_only_after_it_has_held_still() {
     assert!(started.elapsed() >= Duration::from_millis(700), "passed after {:?}", started.elapsed());
 }
 
-/// A look that runs out of time on a long list is the list check's own
-/// failure, not a silent browser.
+/// A look that runs out of time on a long list, after it has read some of
+/// the items, is the list check's own failure, not a silent browser.
 #[tokio::test]
 async fn order_overrunning_look_is_the_lists_own_failure() {
+    use v2_lib::browser::expect::READ_TEXT_JS;
+    let reads = Arc::new(AtomicUsize::new(0));
+    let mut d = items(&["a", "b", "c"]).driver(Arc::default()).answering_first(move |method, params| {
+        (method == "Runtime.callFunctionOn" && params["functionDeclaration"] == READ_TEXT_JS && reads.fetch_add(1, Ordering::SeqCst) >= 1)
+            .then(|| Err(CdpError::Timeout { what: "Runtime.callFunctionOn".to_string(), ms: 50 }))
+    });
+    let out = execute_with(&mut d, &order(json!(["a", "b"])), &quick()).await;
+    assert!(!out.ok);
+    assert_eq!(out.detail, "waited 250ms: li could not read every item in time - narrow the list, or allow more time");
+    assert!(!out.harness);
+}
+
+/// Not one item read: the browser's silence.
+#[tokio::test]
+async fn order_a_browser_that_goes_silent_after_the_list_was_found_is_a_harness_timeout() {
     use v2_lib::browser::expect::READ_TEXT_JS;
     let mut d = items(&["a", "b", "c"]).driver(Arc::default()).answering_first(|method, params| {
         (method == "Runtime.callFunctionOn" && params["functionDeclaration"] == READ_TEXT_JS)
@@ -1137,7 +1195,30 @@ async fn order_overrunning_look_is_the_lists_own_failure() {
     });
     let out = execute_with(&mut d, &order(json!(["a", "b"])), &quick()).await;
     assert!(!out.ok);
-    assert_eq!(out.detail, "waited 250ms: li could not read every item in time - narrow the list, or allow more time");
+    assert!(out.harness, "{}", out.detail);
+}
+
+/// A pass held when a later look is cut off is still the answer.
+#[tokio::test]
+async fn order_a_held_pass_survives_a_look_cut_off_at_the_deadline() {
+    use v2_lib::browser::expect::READ_TEXT_JS;
+    let reads = Arc::new(AtomicUsize::new(0));
+    let mut d = items(&["a", "b"]).driver(Arc::default()).answering_first(move |method, params| {
+        if method == "Runtime.callFunctionOn" && params["functionDeclaration"] == READ_TEXT_JS {
+            let n = reads.fetch_add(1, Ordering::SeqCst) + 1;
+            if n >= 6 && n % 2 == 0 {
+                return Some(Err(CdpError::Timeout { what: "Runtime.callFunctionOn".to_string(), ms: 50 }));
+            }
+        }
+        None
+    });
+    let out = execute_with(
+        &mut d,
+        &action(json!({ "kind": "expect_order", "selector": { "css": "li" }, "texts": ["a", "b"], "timeout_ms": 1500 })),
+        &quick(),
+    )
+    .await;
+    assert!(out.ok, "{}", out.detail);
 }
 
 /// A form control in the list is shown by its label, never by what was
