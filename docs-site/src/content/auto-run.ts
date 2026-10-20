@@ -6,7 +6,7 @@
 //
 // Locates come from screens/AutoRun/index.tsx, ScriptEditor.tsx,
 // RunPane.tsx, ReplayPane.tsx, PastRuns.tsx, RunReview.tsx,
-// SiteAddressDialog.tsx, AccountsDialog.tsx, ReadinessStrip.tsx and
+// SiteAddressDialog.tsx, AccountsDialog.tsx, SetupPanel.tsx and
 // SuspectedDefectMark.tsx. The sample data (src/dev/demo.ts) gives the
 // first Product Backlog Item's cases scripts: #5001 has a setup, #5002
 // carries a suspected defect, #5003 a
@@ -73,7 +73,7 @@ export const autoRun: Screen = {
     {
       id: CASES,
       route: [NAV, READY, ...OPEN_CARD(5002), ...OPEN_CARD(5005), { waitFor: { role: "button", name: "Run #5002" } }],
-      alt: "Auto Run on its Test cases tab: the search, the result filters, the cases with their last results, two of them open, and the Setup panel beside them",
+      alt: "Auto Run on its Test cases tab: the result filters, the cases with their last results, two of them open, and the Setup panel beside them with the search at its top",
     },
     { id: SELECTED, route: [NAV, READY, ...PICK_TWO], alt: "Two scripted cases selected, with the buttons that run them" },
     {
@@ -156,7 +156,8 @@ export const autoRun: Screen = {
       group: "cases",
       locate: { role: "tab", nameRe: "^Test cases" },
       name: "Test cases",
-      does: "The Product Backlog Item's test cases, with how many there are, and the Setup panel beside them. Auto Run always opens here.",
+      does:
+        "The Product Backlog Item's test cases, with how many there are, and the Setup panel beside them. While the filters or the search hide some, the tab says how many show, such as **5 of 60**. Auto Run always opens here.",
     },
     {
       id: "tab-runs",
@@ -173,7 +174,7 @@ export const autoRun: Screen = {
       locate: { role: "list", name: "Setup summary" },
       name: "Setup",
       does:
-        "What a run needs before it can start, one line each: the site address, the sign-in, the accounts, the areas, what discovery has mapped, the test files and the database. " +
+        "What a run needs before it can start, one line each: the environment runs go to, the site address, the sign-in, the accounts, the areas, what discovery has mapped, the test files and the database. " +
         "A green dot means that part is ready, a red one that it is missing, and an amber one that it is worth a look. " +
         "The panel opens by itself when something a run needs is missing, and says **Needs attention**.",
     },
@@ -186,24 +187,14 @@ export const autoRun: Screen = {
       does: "Opens the panel's full rows, each with the button that changes it. **Hide setup details** goes back to the summary.",
     },
     {
-      id: "readiness",
-      shot: CASES,
-      group: "cases",
-      locate: { role: "group", name: "Readiness" },
-      name: "Readiness",
-      does:
-        "One line on where runs go: the environment and its site. When something a run needs is missing, such as the sign-in, the accounts or a test file a script uploads, a warning names it here, even with the Setup panel shut. " +
-        "What is in place is shown in the Setup panel, not repeated here.",
-    },
-    {
       id: "search",
       shot: CASES,
       group: "cases",
       locate: { role: "textbox", name: "Search test cases" },
       name: "Search",
       does:
-        "Shows only the cases whose id or title holds what you type, with or without the **#** before an id. It works together with the result filters. " +
-        "Press [[Escape]] or the clear button to show every case again.",
+        "At the top of the Setup panel, on both tabs. Shows only the cases whose id or title holds what you type, with or without the **#** before an id. It works together with the result filters. " +
+        "Typing in it on Past runs takes you to Test cases. Press [[Escape]] or the clear button to show every case again.",
     },
     {
       id: "expand-all",
@@ -250,6 +241,7 @@ export const autoRun: Screen = {
       tips: [
         "To run the failed cases again: press **Failed**, then **Select all shown**.",
         "While any case is marked as a suspected defect, a **Suspected defects** button sits beside them and shows only those cases. It works together with the result buttons: **Suspected defects** and **Failed** show the marked cases that failed last time.",
+        "**Has a script**, after them, shows only the cases that already have a script, with how many there are. It works together with the result buttons, and the app remembers it for each project.",
       ],
     },
     {
@@ -736,7 +728,7 @@ export const autoRun: Screen = {
       locate: { role: "group", name: "Site address" },
       name: "Site address",
       does:
-        "Where runs go: the address of the site you test, in the active environment. Environments, each with its own site, accounts and saved sign-ins, are chosen on the AI Bridge tab.",
+        "Where runs go: the address of the site you test, in the active environment. The **Environment** row above it names that environment and its database. Environments, each with its own site, accounts and saved sign-ins, are chosen on the AI Bridge tab.",
     },
     {
       id: "edit-site-address",
