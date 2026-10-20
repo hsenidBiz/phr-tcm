@@ -787,6 +787,28 @@ fn the_guide_explains_flows() {
     assert!(flows.contains("a row only when the stage is done"), "{flows}");
 }
 
+/// "How to build one" has a route for a request a discovery captured: the
+/// real call is read with `get_autorun_request` (only with the network
+/// tools on), a `[redacted]` value becomes a param, the anti-forgery token
+/// comes from the template's page, and `sources` may be empty.
+#[test]
+fn the_guide_builds_a_template_from_a_captured_request() {
+    let text = v2_lib::api_templates::guide::text(&[], None).split_whitespace().collect::<Vec<_>>().join(" ");
+    let build = text.split("## How to build one").nth(1).unwrap().split("
+## ").next().unwrap();
+    for said in [
+        "with the network tools on",
+        "read the real request with `get_autorun_request` by its id",
+        "copy its method, path and the SHAPE of its body",
+        "A `[redacted]` value in a capture is a placeholder for a secret, never a value: do not copy it, make it a param",
+        "The anti-forgery token never comes from the capture: it comes from the template's `antiforgery` page",
+        "`sources` may be `[]`; never invent a `file:line`",
+        "when they are off, use the method and path the discovery's write answer listed",
+    ] {
+        assert!(build.contains(said), "How to build one never says {said:?}: {build}");
+    }
+}
+
 /// The guide warns that an account can be signed in in one place at a
 /// time, and what that looks like when it goes wrong.
 #[test]
