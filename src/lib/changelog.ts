@@ -27,6 +27,18 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.2.3-beta.15",
+    date: "2026-10-20",
+    items: [
+      "Auto Run: a reset, and a replay that finds the browser already signed in, now keep the sign-in. Before, a cookie the application's pages rewrite made every reset sign in again.",
+      "Auto Run: a guard on a pop-up (when visible) no longer treats a button that is hidden or off the page as shown, so a cookie banner the run already closed no longer fails the step.",
+      "Auto Run: a script may end with one clean-up step that removes what the case made. In an unattended run it runs even after a step failed, and it never turns a passed case failed.",
+      "Auto Run: the assistant can stop a replay that is going (stop_autorun_replay), leave the page out of discovery answers, and gets the page when a replay stops at a failing step.",
+      "Auto Run: a precondition check that could not reach the database is tried once more before the replay stops.",
+      "Auto Run: the save check remembers what discovery saw across sessions, accepts a \"there is none\" check on something a probe found missing, and says which elements a locator matched.",
+    ],
+  },
+  {
     version: "2.2.3-beta.14",
     date: "2026-10-20",
     items: [
