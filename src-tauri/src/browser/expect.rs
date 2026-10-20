@@ -188,6 +188,9 @@ pub const STILL_VISIBLE: &str = "is still visible";
 /// `expect_position` when the element it is placed against cannot be found
 /// (or is not one element): followed by that element and why.
 pub const CANNOT_BE_PLACED: &str = "cannot be placed: ";
+/// What follows the element in a `cannot be placed` sentence when it has no
+/// size on the page.
+pub const DRAWN_AT_NO_SIZE: &str = " is drawn at no size";
 /// `expect_text`: followed by the wanted text and what was seen.
 pub const EXPECTED_TEXT: &str = "expected text ";
 /// `expect_contains_text`: followed by the wanted text and what was seen.
@@ -221,11 +224,40 @@ fn only(handles: &[Handle]) -> Result<&Handle, String> {
     }
 }
 
+/// What a settling check read besides its sentence: a pass is only the same
+/// pass if this is the same too. For `expect_order` the texts of every item
+/// (a list re-sorted during the hold is a new list); for `expect_position`
+/// the two boxes, which may differ by `position::TOLERANCE_PX` from where
+/// the hold began (a box still moving is not at rest).
+#[derive(Debug, Default, Clone)]
+pub(crate) struct Read {
+    items: String,
+    boxes: Vec<f64>,
+}
+
+impl Read {
+    fn same(&self, then: &Read) -> bool {
+        self.items == then.items
+            && self.boxes.len() == then.boxes.len()
+            && self.boxes.iter().zip(&then.boxes).all(|(a, b)| (a - b).abs() <= super::position::TOLERANCE_PX)
+    }
+}
+
 /// One look. `Ok(Ok(detail))` holds; `Ok(Err(why))` does not hold yet.
 pub(crate) async fn look<D: Driver>(
     d: &mut D,
     target: &Target,
     check: &Check<'_>,
+) -> Result<Result<String, String>, CdpError> {
+    look_reading(d, target, check, &mut Read::default()).await
+}
+
+/// [`look`], also saying in `read` what a settling check read.
+async fn look_reading<D: Driver>(
+    d: &mut D,
+    target: &Target,
+    check: &Check<'_>,
+    read: &mut Read,
 ) -> Result<Result<String, String>, CdpError> {
     let what = target.describe();
     let found = resolve_explained(d, target).await?;
@@ -427,7 +459,7 @@ pub(crate) async fn look<D: Driver>(
         Check::Order(want) => {
             // As for a list of items: a look that runs out of time partway
             // is the check's own failure.
-            return match super::order::look_order(d, &what, &handles, want).await {
+            return match super::order::look_order(d, &what, &handles, want, &mut read.items).await {
                 Err(CdpError::Timeout { .. }) => Ok(Err(super::each::TOO_SLOW.to_string())),
                 other => other,
             };
@@ -448,7 +480,13 @@ pub(crate) async fn look<D: Driver>(
                     Ok(other) => {
                         let (a, b) = (super::position::read_box(d, h).await?, super::position::read_box(d, &other).await?);
                         match (a, b) {
+                            // A box of no size (`display: none`, `display:
+                            // contents`) is nowhere: `right_of` and `below`
+                            // would hold of it against anything.
+                            (Some(a), _) if a.w <= 0.0 || a.h <= 0.0 => Err(format!("{CANNOT_BE_PLACED}{what}{DRAWN_AT_NO_SIZE}")),
+                            (_, Some(b)) if b.w <= 0.0 || b.h <= 0.0 => Err(format!("{CANNOT_BE_PLACED}{reference}{DRAWN_AT_NO_SIZE}")),
                             (Some(a), Some(b)) if super::position::holds(*relation, a, b) => {
+                                read.boxes = vec![a.x, a.y, a.w, a.h, b.x, b.y, b.w, b.h];
                                 Ok(format!("{what} is {} {reference}", relation.words()))
                             }
                             (Some(a), Some(b)) => Err(format!(
@@ -512,27 +550,36 @@ async fn keep_looking<D: Driver>(
     // `at_most` passes on too few, so a page whose rows have not arrived
     // would pass it at once: it passes only once the same pass has held for
     // `table::SETTLE_MS`. The pass held so far, and since when.
-    // An `expect_each` or `expect_order` is settled the same way: a list
-    // still filling in passes on the items drawn so far, so it passes only
-    // once its count and its items have held for the same time.
-    let settling = matches!(check, Check::CountBound(super::table::RowCount::AtMost(_)) | Check::Each { .. } | Check::Order(_));
-    let mut held: Option<(String, Instant)> = None;
+    // An `expect_each` is settled the same way: a list still filling in
+    // passes on the items drawn so far, so it passes only once its count
+    // and its items have held for the same time. An `expect_order` passes
+    // only once it kept passing with the very same items read, and an
+    // `expect_position` once it kept passing with both boxes at rest
+    // (`Read`).
+    let settling = matches!(
+        check,
+        Check::CountBound(super::table::RowCount::AtMost(_)) | Check::Each { .. } | Check::Order(_) | Check::Position { .. }
+    );
+    let mut held: Option<(String, Read, Instant)> = None;
     loop {
         page::release(d).await;
-        match look(d, target, &check).await {
+        let mut read = Read::default();
+        match look_reading(d, target, &check, &mut read).await {
             Ok(Ok(detail)) => {
                 if !settling {
                     return ActionOutcome::passed(detail);
                 }
                 looked = true;
-                let since = match &held {
-                    Some((before, t)) if *before == detail => *t,
-                    _ => Instant::now(),
+                // The hold goes on only while this look matches the one it
+                // began with: the same sentence and the same reading.
+                let (read, since) = match &held {
+                    Some((before, began, t)) if *before == detail && began.same(&read) => (began.clone(), *t),
+                    _ => (read, Instant::now()),
                 };
                 if since.elapsed() >= Duration::from_millis(super::table::SETTLE_MS) {
                     return ActionOutcome::passed(detail);
                 }
-                held = Some((detail, since));
+                held = Some((detail, read, since));
             }
             Ok(Err(why)) => {
                 looked = true;
@@ -554,7 +601,7 @@ async fn keep_looking<D: Driver>(
         }
         if Instant::now() >= deadline {
             // Still held when time ran out: what it held is the answer.
-            if let Some((detail, _)) = held {
+            if let Some((detail, _, _)) = held {
                 return ActionOutcome::passed(detail);
             }
             return if looked {

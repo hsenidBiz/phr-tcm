@@ -1908,6 +1908,7 @@ fn the_guide_teaches_expect_order() {
         assert!(line.contains(word), "the line never says {word}");
     }
     assert!(!line.contains('\u{2014}') && !line.contains('\u{2013}'));
+    assert!(line.contains("an item only has to contain a text"), "the line never says what an item must hold");
     assert!(
         g.contains("(`expect_hidden`, `expect_count`, `expect_each`, `expect_order`, `wait_for`)"),
         "the part-of-a-seen-name rule never names expect_order"
@@ -1931,6 +1932,9 @@ fn the_guide_teaches_expect_position() {
         "`in_bottom_left`",
         "`in_bottom_right`",
         "no pixel sizes",
+        "the centre of the element is in that quarter of `relative_to`",
+        "a centre on a midline (within 1 px) counts for both halves",
+        "`timeout_ms` is at least 1500",
         "\"relative_to\"",
     ] {
         assert!(line.contains(word), "the line never says {word}");

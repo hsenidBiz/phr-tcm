@@ -3999,31 +3999,57 @@ async fn expect_each_reads_every_item_of_a_real_list() {
 }
 
 /// `expect_order` and `expect_position` against a real page: the status
-/// options in order, and a button drawn in the corner of its bar.
+/// options in order, a button drawn in the corner of its bar, boxes of no
+/// size, and a button inside a bordered and padded frame.
 #[tokio::test]
 #[ignore = "starts a real headless Edge"]
 async fn expect_order_and_position_read_a_real_page() {
     let mut live = open().await;
     let url = fixture_url().replace("autorun-live.html", "autorun-thorough.html");
     must(run(&mut live, json!({ "kind": "navigate", "url": url })).await);
-    let order = |texts: serde_json::Value| {
-        json!({ "kind": "expect_order", "selector": { "css": "ul#status li" }, "texts": texts, "timeout_ms": 1500 })
+    let order = |css: &str, texts: serde_json::Value| {
+        json!({ "kind": "expect_order", "selector": { "css": css }, "texts": texts, "timeout_ms": 1500 })
     };
-    let out = run(&mut live, order(json!(["All", "Draft", "Published", "Unpublished"]))).await;
+    let out = run(&mut live, order("ul#status li", json!(["All", "Draft", "Published", "Unpublished"]))).await;
     assert!(out.ok, "{}", out.detail);
     assert_eq!(out.detail, "ul#status li reads \"All\", \"Draft\", \"Published\", \"Unpublished\" in that order");
     refused(
-        run(&mut live, order(json!(["Unpublished", "Published"]))).await,
+        run(&mut live, order("ul#status li", json!(["Unpublished", "Published"]))).await,
         "\"Published\" is not after \"Unpublished\"; saw \"All (12)\", \"Draft (3)\", \"Published (5)\", \"Unpublished (4)\"",
     );
-    let place = |relation: &str| {
-        json!({ "kind": "expect_position", "selector": { "css": "#new" }, "relative_to": { "css": "#bar" }, "relation": relation, "timeout_ms": 500 })
+    // A select is shown by the option chosen, a password field by its name.
+    refused(run(&mut live, order("select#pick", json!(["x", "y"]))).await, "saw \"Two\"");
+    let out = run(&mut live, order("input.secret", json!(["x", "y"]))).await;
+    assert!(!out.ok && !out.detail.contains("hunter2") && out.detail.contains("saw \"Secret\""), "{}", out.detail);
+
+    // The button is vertically centred in a one-row bar, in its right half.
+    let place = |selector: serde_json::Value, relative_to: serde_json::Value, relation: &str| {
+        json!({ "kind": "expect_position", "selector": selector, "relative_to": relative_to, "relation": relation, "timeout_ms": 1500 })
     };
-    for held in ["in_top_right", "inside", "right_of", "below"] {
-        let out = run(&mut live, place(held)).await;
-        // `right_of` and `below` do not hold: the button is inside the bar.
-        assert_eq!(out.ok, matches!(held, "in_top_right" | "inside"), "{held}: {}", out.detail);
+    let (new, bar) = (json!({ "css": "#new" }), json!({ "css": "#bar" }));
+    for (relation, holds) in [("in_top_right", true), ("in_bottom_right", true), ("inside", true), ("in_top_left", false), ("right_of", false)] {
+        let out = run(&mut live, place(new.clone(), bar.clone(), relation)).await;
+        assert_eq!(out.ok, holds, "{relation}: {}", out.detail);
     }
-    refused(run(&mut live, place("left_of")).await, "#new is not left of #bar: it is at (");
-    refused(run(&mut live, place("in_top_left")).await, "#new is not in the top-left of #bar: it is at (");
+    refused(run(&mut live, place(new.clone(), bar.clone(), "left_of")).await, "#new is not left of #bar: it is at (");
+
+    // A box of no size is nowhere: never right of anything.
+    let ghost = json!({ "css": "#ghost", "visible": false });
+    refused(run(&mut live, place(new.clone(), ghost.clone(), "right_of")).await, "cannot be placed: #ghost is drawn at no size");
+    refused(run(&mut live, place(ghost, bar.clone(), "left_of")).await, "cannot be placed: #ghost is drawn at no size");
+    let out = run(&mut live, place(new.clone(), json!({ "css": "#wrap", "visible": false }), "below")).await;
+    assert!(!out.ok && out.detail.contains("cannot be placed: #wrap"), "{}", out.detail);
+
+    // A button in a frame with a border and padding is measured in the window:
+    // the frame is at (500, 120), its border 3 and padding 5 put the page in
+    // it at (508, 128), and the button at (140, 2) in that page.
+    let fbtn = json!([{ "css": "#frm" }, { "css": "#fbtn" }]);
+    let fbar = json!([{ "css": "#frm" }, { "css": "#fbar" }]);
+    must(run(&mut live, place(fbtn.clone(), bar.clone(), "below")).await);
+    refused(
+        run(&mut live, place(fbtn.clone(), bar.clone(), "above")).await,
+        "is not above #bar: it is at (648, 130) 50x30, and #bar at (0, 0) 800x48",
+    );
+    must(run(&mut live, place(fbtn.clone(), fbar.clone(), "in_top_right")).await);
+    must(run(&mut live, place(fbtn, new, "left_of")).await);
 }

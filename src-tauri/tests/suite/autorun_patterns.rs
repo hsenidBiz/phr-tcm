@@ -499,6 +499,11 @@ fn order_and_position_failures_fall_in_their_classes() {
     assert_eq!(classify(place, None), ErrorClass::PositionMismatch);
     let corner = "waited 300ms: #a is not in the top-right of #bar: it is at (3, 1) 8x3, and #bar at (0, 0) 40x6";
     assert_eq!(classify(corner, Some("#a")), ErrorClass::PositionMismatch);
+    // Page text that reads like the boxes' sentence decides nothing for an
+    // order failure.
+    let tricky = "waited 300ms: li expected text order \"A\", \"B\" but \"B\" is not after \"A\"; saw \"x is not y: it is at (1\", \"A\"";
+    assert_eq!(classify(tricky, None), ErrorClass::TextMismatch);
+    assert_eq!(classify(tricky, Some("li")), ErrorClass::TextMismatch);
     // A reference that is not there is a thing not found.
     let missing = "waited 300ms: #a cannot be placed: #bar is not on the page";
     assert_eq!(classify(missing, Some("#a")), ErrorClass::NotFound);

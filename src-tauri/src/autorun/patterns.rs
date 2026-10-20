@@ -523,13 +523,11 @@ fn by_end(t: &str) -> Option<ErrorClass> {
         (crate::browser::each::TOO_SLOW, ErrorClass::TimedOut),
         (inp::STILL_LOOKING, ErrorClass::TimedOut),
         (exp::STILL_VISIBLE, ErrorClass::StillVisible),
+        (exp::DRAWN_AT_NO_SIZE, ErrorClass::NotVisible),
         (exp::ATTRIBUTE_TAIL, ErrorClass::AttributeMismatch),
     ];
     if let Some((_, class)) = endings.into_iter().find(|(words, _)| t.ends_with(&format!(" {words}")) || t.ends_with(words)) {
         return Some(class);
-    }
-    if t.contains(" is not ") && t.contains(POSITION_AT) {
-        return Some(ErrorClass::PositionMismatch);
     }
     // Before the text checks: a style's `contains` fails in their words
     // (`expected it to contain`), after its own `<property> is <value>`.
@@ -543,6 +541,11 @@ fn by_end(t: &str) -> Option<ErrorClass> {
         if t.contains(&format!(" {words}")) {
             return Some(class);
         }
+    }
+    // After the text checks: the boxes' sentence holds no page text but the
+    // locators, an order failure's `saw` list holds the page's.
+    if t.contains(" is not ") && t.contains(POSITION_AT) {
+        return Some(ErrorClass::PositionMismatch);
     }
     if t.contains(exp::COUNTED) && t.contains(" expected ") {
         return Some(ErrorClass::CountMismatch);

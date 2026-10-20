@@ -570,6 +570,12 @@ struct ListPage {
     grown: std::collections::HashMap<(String, String), Vec<String>>,
     /// Where an element is drawn: `(x, y, width, height)` in the window.
     boxes: std::collections::HashMap<String, (f64, f64, f64, f64)>,
+    /// From this look on, `moved` replaces where an element is drawn.
+    moves_at: usize,
+    moved: std::collections::HashMap<String, (f64, f64, f64, f64)>,
+    /// Elements that are a `<select>`: shown by the option chosen (their
+    /// text), where a text field is shown by its name.
+    selects: std::collections::HashSet<String>,
 }
 
 impl ListPage {
@@ -625,7 +631,9 @@ impl ListPage {
                     json!({ "result": { "value": !gone } })
                 }
                 "Runtime.callFunctionOn" if f == READ_BOX_JS => {
-                    let (x, y, w, h) = self.boxes.get(&id).copied().unwrap_or((0.0, 0.0, 0.0, 0.0));
+                    let moved = looks.load(Ordering::SeqCst) >= self.moves_at;
+                    let there = if moved { self.moved.get(&id) } else { None };
+                    let (x, y, w, h) = there.or_else(|| self.boxes.get(&id)).copied().unwrap_or((0.0, 0.0, 0.0, 0.0));
                     json!({ "result": { "value": { "x": x, "y": y, "w": w, "h": h } } })
                 }
                 "Runtime.callFunctionOn" if f == FRAME_JS => {
@@ -636,6 +644,11 @@ impl ListPage {
                 }
                 "Runtime.callFunctionOn" if f == READ_ATTR_JS => {
                     json!({ "result": { "value": self.attrs.get(&id) } })
+                }
+                // How `expect_order` shows an item in a failure.
+                "Runtime.callFunctionOn" if f == v2_lib::browser::order::SHOWN_JS => {
+                    let said = if self.selects.contains(&id) { self.texts.get(&id) } else { self.names.get(&id).or_else(|| self.texts.get(&id)) };
+                    json!({ "result": { "value": said.cloned().unwrap_or_default() } })
                 }
                 // The label a failure names an item by: read from the
                 // element's labels, never its value.
@@ -1172,6 +1185,9 @@ fn position_relations_hold_within_one_pixel() {
         (Inside, rect(100.0, 100.0, 201.01, 10.0), false),
         (Inside, rect(150.0, 100.0, 10.0, 101.01), false),
         (InTopLeft, rect(100.0, 100.0, 20.0, 20.0), true),
+        (InTopLeft, rect(190.0, 100.0, 20.0, 20.0), true), // centre at 200: on the midline, both halves
+        (InTopLeft, rect(191.0, 100.0, 20.0, 20.0), true), // a pixel past it still counts
+        (InTopLeft, rect(191.01, 100.0, 20.0, 20.0), false), // past the pixel: the right half
         (InTopLeft, rect(200.0, 100.0, 20.0, 20.0), false), // centre at 210: the right half
         (InTopRight, rect(280.0, 100.0, 20.0, 20.0), true),
         (InTopRight, rect(100.0, 100.0, 20.0, 20.0), false),
@@ -1185,17 +1201,26 @@ fn position_relations_hold_within_one_pixel() {
     for (relation, a, expected) in table {
         assert_eq!(holds(relation, a, b), expected, "{relation:?} {}", shown(&a));
     }
-    // A box on the centre is inside, and in no corner.
+    // A box on the centre is inside, and on the midline both ways: in every
+    // corner. One two pixels off the centre is only in the corners it leans to.
     let centred = rect(190.0, 140.0, 20.0, 20.0);
     for corner in [InTopLeft, InTopRight, InBottomLeft, InBottomRight] {
-        assert!(!holds(corner, centred, b), "{corner:?}");
+        assert!(holds(corner, centred, b), "{corner:?}");
     }
     assert!(holds(Inside, centred, b));
+    let leaning = rect(192.0, 142.0, 20.0, 20.0); // centre (202, 152): right and below
+    for (corner, expected) in [(InTopLeft, false), (InTopRight, false), (InBottomLeft, false), (InBottomRight, true)] {
+        assert_eq!(holds(corner, leaning, b), expected, "{corner:?}");
+    }
+    // A button centred up a one-row bar, in its right half: top-right.
+    let bar = rect(0.0, 0.0, 800.0, 48.0);
+    assert!(holds(InTopRight, rect(702.0, 8.0, 90.0, 32.0), bar));
+    assert!(!holds(InTopLeft, rect(702.0, 8.0, 90.0, 32.0), bar));
     assert_eq!(shown(&rect(0.4, 9.6, 399.5, 60.0)), "(0, 10) 400x60");
 }
 
 fn position(relation: &str) -> Action {
-    action(json!({ "kind": "expect_position", "selector": { "css": "#a" }, "relative_to": { "css": "#bar" }, "relation": relation, "timeout_ms": 300 }))
+    action(json!({ "kind": "expect_position", "selector": { "css": "#a" }, "relative_to": { "css": "#bar" }, "relation": relation }))
 }
 
 fn bar_page() -> ListPage {
@@ -1212,7 +1237,7 @@ async fn position_passes_and_fails_naming_both_boxes() {
 
     let out = execute_with(&mut bar_page().driver(Arc::default()), &position("left_of"), &quick()).await;
     assert!(!out.ok);
-    assert_eq!(out.detail, "waited 300ms: #a is not left of #bar: it is at (300, 10) 80x30, and #bar at (0, 0) 400x60");
+    assert_eq!(out.detail, "waited 250ms: #a is not left of #bar: it is at (300, 10) 80x30, and #bar at (0, 0) 400x60");
 }
 
 #[tokio::test]
@@ -1232,4 +1257,145 @@ async fn position_says_when_its_reference_is_missing() {
     page.found.insert(("doc".to_string(), "#bar".to_string()), vec!["bar".into(), "bar2".into()]);
     let out = execute_with(&mut page.driver(Arc::default()), &position("inside"), &quick()).await;
     assert!(!out.ok && out.detail.contains("cannot be placed: #bar matched 2 elements"), "{}", out.detail);
+}
+
+// ---- fix round: no-size boxes, settling positions, order holds --------
+
+/// A box of no size (`display: none`, `display: contents`) is nowhere: it
+/// is never right of, below, left of or above anything.
+#[tokio::test]
+async fn position_refuses_a_box_of_no_size() {
+    // The reference has no box (the fake page draws what it is not told of
+    // at 0x0).
+    let no_bar = || ListPage::default().one("#a", "a").one("#bar", "bar").at("a", 300.0, 10.0, 80.0, 30.0);
+    for relation in ["right_of", "below", "left_of", "above", "inside", "in_top_right"] {
+        let out = execute_with(&mut no_bar().driver(Arc::default()), &position(relation), &quick()).await;
+        assert!(!out.ok, "{relation} passed against a box of no size: {}", out.detail);
+        assert!(out.detail.ends_with("cannot be placed: #bar is drawn at no size"), "{}", out.detail);
+    }
+    // The element itself has none.
+    let no_a = || ListPage::default().one("#a", "a").one("#bar", "bar").at("bar", 0.0, 0.0, 400.0, 60.0);
+    for relation in ["left_of", "above", "right_of", "inside"] {
+        let out = execute_with(&mut no_a().driver(Arc::default()), &position(relation), &quick()).await;
+        assert!(!out.ok, "{relation} passed with an element of no size: {}", out.detail);
+        assert!(out.detail.ends_with("cannot be placed: #a is drawn at no size"), "{}", out.detail);
+    }
+    // A box with a width and no height is none either.
+    let page = ListPage::default().one("#a", "a").one("#bar", "bar").at("a", 5.0, 5.0, 80.0, 0.0).at("bar", 0.0, 0.0, 400.0, 60.0);
+    let out = execute_with(&mut page.driver(Arc::default()), &position("inside"), &quick()).await;
+    assert!(!out.ok && out.detail.ends_with("cannot be placed: #a is drawn at no size"), "{}", out.detail);
+    assert_eq!(
+        v2_lib::autorun::patterns::classify(&out.detail, Some("#a")),
+        v2_lib::autorun::patterns::ErrorClass::NotVisible
+    );
+}
+
+fn timed(relation: &str) -> Action {
+    action(json!({
+        "kind": "expect_position", "selector": { "css": "#a" }, "relative_to": { "css": "#bar" },
+        "relation": relation, "timeout_ms": 3000
+    }))
+}
+
+/// A box still moving is not at rest: the pass is held until both boxes
+/// have stayed where they are for the settling time.
+#[tokio::test]
+async fn position_passes_only_once_both_boxes_are_at_rest() {
+    // At rest: it passes once it has held still.
+    let started = std::time::Instant::now();
+    let out = execute_with(&mut bar_page().driver(Arc::default()), &timed("in_top_right"), &quick()).await;
+    assert!(out.ok, "{}", out.detail);
+    assert!(started.elapsed() >= Duration::from_millis(700), "passed after {:?}", started.elapsed());
+
+    // Moving at the third look (a panel sliding in): the hold starts again.
+    let mut page = bar_page();
+    page.moves_at = 5; // two document reads a look: the third look
+    page.moved.insert("a".to_string(), (320.0, 10.0, 80.0, 30.0));
+    let started = std::time::Instant::now();
+    let out = execute_with(&mut page.driver(Arc::default()), &timed("in_top_right"), &quick()).await;
+    assert!(out.ok, "{}", out.detail);
+    assert!(started.elapsed() >= Duration::from_millis(1200), "a moved box passed after {:?}", started.elapsed());
+
+    // Within a pixel is rest: a box that shifts by half a pixel does not restart it.
+    let mut page = bar_page();
+    page.moves_at = 5; // two document reads a look: the third look
+    page.moved.insert("a".to_string(), (300.5, 10.0, 80.0, 30.0));
+    let started = std::time::Instant::now();
+    let out = execute_with(&mut page.driver(Arc::default()), &timed("in_top_right"), &quick()).await;
+    assert!(out.ok, "{}", out.detail);
+    assert!(started.elapsed() < Duration::from_millis(1100), "a half pixel restarted the hold: {:?}", started.elapsed());
+}
+
+/// A list re-sorted during the hold is a new list: the hold starts again.
+#[tokio::test]
+async fn order_hold_starts_again_when_the_items_change() {
+    let mut page = items(&["All", "Draft", "Zed"]);
+    page.grows_at = 3;
+    page.grown.insert(("doc".to_string(), "li".to_string()), vec!["c1".into(), "c3".into(), "c2".into()]);
+    let started = std::time::Instant::now();
+    let out = execute_with(
+        &mut page.driver(Arc::default()),
+        &action(json!({ "kind": "expect_order", "selector": { "css": "li" }, "texts": ["All", "Zed"], "timeout_ms": 3000 })),
+        &quick(),
+    )
+    .await;
+    assert!(out.ok, "{}", out.detail);
+    // It held from the first look; the re-sort at the third (500 ms) began it again.
+    assert!(started.elapsed() >= Duration::from_millis(1200), "a re-sorted list passed after {:?}", started.elapsed());
+}
+
+/// Each wanted text takes its own item.
+#[tokio::test]
+async fn order_with_a_text_twice_needs_two_items() {
+    let two = ["A", "A"];
+    let out = execute_with(&mut items(&["A", "B"]).driver(Arc::default()), &order(json!(two)), &quick()).await;
+    assert!(!out.ok && out.detail.contains("\"A\" is not after \"A\""), "{}", out.detail);
+    let out = execute_with(&mut items(&["A", "B", "A"]).driver(Arc::default()), &order(json!(two)), &quick()).await;
+    assert!(out.ok, "{}", out.detail);
+}
+
+/// A select is shown by the option that was compared, a text field by its name.
+#[tokio::test]
+async fn order_shows_a_select_by_its_chosen_option() {
+    let mut page = ListPage::default().list("select.pick", 2).text("c1", "Two").text("c2", "Open");
+    page.names.insert("c1".to_string(), "Pick".to_string());
+    page.names.insert("c2".to_string(), "State".to_string());
+    page.selects.insert("c1".to_string());
+    let out = execute_with(
+        &mut page.driver(Arc::default()),
+        &action(json!({ "kind": "expect_order", "selector": { "css": "select.pick" }, "texts": ["nope", "never"] })),
+        &quick(),
+    )
+    .await;
+    assert!(!out.ok);
+    assert!(out.detail.contains("saw \"Two\", \"State\""), "{}", out.detail);
+}
+
+/// The pure rule, on its own: `look_order` judges through it.
+#[test]
+fn order_judge_is_greedy_collapsed_and_cut() {
+    use v2_lib::browser::order::judge;
+    let s = |v: &[&str]| v.iter().map(|t| t.to_string()).collect::<Vec<_>>();
+    // Others between, the earliest later item each time.
+    assert_eq!(judge(&s(&["a", "c"]), &s(&["a", "b", "c"])).unwrap(), "reads \"a\", \"c\" in that order");
+    // The same text twice needs two items.
+    assert!(judge(&s(&["a", "a"]), &s(&["a", "b"])).is_err());
+    assert!(judge(&s(&["a", "a"]), &s(&["a", "a b"])).is_ok());
+    // One item never answers two texts.
+    assert!(judge(&s(&["a", "b"]), &s(&["a b"])).is_err());
+    // An item contains the text (collapsed, case kept): "Paid" is in "Part Paid".
+    assert!(judge(&s(&["Paid", "Unpaid"]), &s(&["Part   Paid", "Unpaid"])).is_ok());
+    assert!(judge(&s(&["paid", "Unpaid"]), &s(&["Part Paid", "Unpaid"])).is_err());
+    // The failure names the first text with no place.
+    assert_eq!(
+        judge(&s(&["x", "y"]), &s(&["a"])).unwrap_err(),
+        "expected text order \"x\", \"y\" but \"x\" is in none of them; saw \"a\""
+    );
+    assert_eq!(
+        judge(&s(&["a", "b", "c"]), &s(&["b", "a", "c"])).unwrap_err(),
+        "expected text order \"a\", \"b\", \"c\" but \"b\" is not after \"a\"; saw \"b\", \"a\", \"c\""
+    );
+    // Ten items are shown, then the count of the rest.
+    let many: Vec<String> = (0..12).map(|i| format!("i{i}")).collect();
+    assert!(judge(&s(&["i1", "zz"]), &many).unwrap_err().ends_with("\"i9\" and 2 more"));
 }

@@ -3,17 +3,18 @@
 //! The matches of a locator, in page order, contain the given texts in the
 //! given order; other items may sit between them (Playwright's
 //! `toContainText([...])`). Each text is compared as `expect_contains_text`
-//! compares: whitespace collapsed, case kept.
+//! compares: whitespace collapsed, case kept, and an item only has to
+//! CONTAIN the text.
 //!
 //! The list is read the way `expect_each` reads one: every item read is
 //! followed by a probe that it is still in the page (a detached one makes
 //! the look fail with [`LIST_CHANGED`], which the loop looks again on), a
 //! list longer than [`ORDER_MAX`] is refused rather than read for ever, and
-//! a failure shows items by their text - but a form control by the name a
-//! person knows it by, never the value typed into it.
+//! a failure shows items by what was compared - but a text field by the
+//! name a person knows it by, never the value typed into it.
 
 use super::cdp::{CdpError, Driver};
-use super::each::{CONNECTED_JS, LABEL_JS, LIST_CHANGED};
+use super::each::{CONNECTED_JS, LIST_CHANGED};
 use super::expect::{NOT_ON_PAGE, READ_TEXT_JS};
 use super::page::{self, Handle};
 
@@ -27,6 +28,21 @@ pub const TEXTS_MAX: usize = 50;
 const SEEN_ITEMS: usize = 10;
 /// How many characters of an item a failure shows.
 const SEEN_CHARS: usize = 40;
+
+/// `this` is an item. What a failure shows it as: what was compared (its
+/// text; a `<select>`'s chosen option), but for a text field the name a
+/// person knows it by (its aria-label, its label, its placeholder or name,
+/// else its tag) - never the value typed into it, a password's included.
+pub const SHOWN_JS: &str = r#"function() {
+  const norm = (s) => (s || '').replace(/\s+/g, ' ').trim();
+  if (this instanceof HTMLSelectElement) return norm(this.selectedOptions[0] ? this.selectedOptions[0].label : '');
+  if (this instanceof HTMLInputElement || this instanceof HTMLTextAreaElement) {
+    const labelled = Array.from(this.labels || []).map((l) => norm(l.innerText)).filter(Boolean).join(' ');
+    return norm(this.getAttribute('aria-label')) || labelled || norm(this.getAttribute('placeholder')) ||
+      norm(this.getAttribute('name')) || this.tagName.toLowerCase();
+  }
+  return norm(this.innerText);
+}"#;
 
 fn collapse(s: &str) -> String {
     s.split_whitespace().collect::<Vec<_>>().join(" ")
@@ -46,7 +62,8 @@ enum Fault {
 }
 
 /// The first text that has no place, going through the texts greedily: each
-/// is matched by the earliest item after the previous one that contains it.
+/// is matched by the earliest item after the previous one that contains it,
+/// and each item holds at most one text.
 fn find_fault(want: &[String], items: &[String]) -> Option<Fault> {
     let items: Vec<String> = items.iter().map(|i| collapse(i)).collect();
     let mut from = 0;
@@ -102,22 +119,30 @@ fn sentence(want: &[String], fault: &Fault, shown: &[String], total: usize) -> S
 /// Do `items` (the texts of the list, in page order) hold `want` in that
 /// order, others between allowed? The sentence for a pass, or the failure.
 pub fn judge(want: &[String], items: &[String]) -> Result<String, String> {
+    judge_shown(want, items, items, items.len())
+}
+
+/// [`judge`], a failure showing `shown` (the first items as the page names
+/// them) out of `total` rather than the texts compared.
+pub(crate) fn judge_shown(want: &[String], items: &[String], shown: &[String], total: usize) -> Result<String, String> {
     match find_fault(want, items) {
         None => {
             let collapsed: Vec<String> = want.iter().map(|t| collapse(t)).collect();
             Ok(format!("reads {} in that order", list_of(&collapsed)))
         }
-        Some(fault) => Err(sentence(want, &fault, items, items.len())),
+        Some(fault) => Err(sentence(want, &fault, shown, total)),
     }
 }
 
 /// One look at the whole list. `Ok(Ok(detail))` holds; `Ok(Err(why))` does
-/// not hold yet; an `Err` is the browser.
+/// not hold yet; an `Err` is the browser. `read` is set to the texts read,
+/// which a hold on the pass is keyed on.
 pub(crate) async fn look_order<D: Driver>(
     d: &mut D,
     what: &str,
     items: &[Handle],
     want: &[String],
+    read: &mut String,
 ) -> Result<Result<String, String>, CdpError> {
     let n = items.len();
     if n == 0 {
@@ -135,15 +160,14 @@ pub(crate) async fn look_order<D: Driver>(
         }
         texts.push(got.as_str().unwrap_or("").to_string());
     }
-    let Some(fault) = find_fault(want, &texts) else {
-        let collapsed: Vec<String> = want.iter().map(|t| collapse(t)).collect();
-        return Ok(Ok(format!("{what} reads {} in that order", list_of(&collapsed))));
-    };
-    // Shown by what a person calls each item: its text, but a form control
-    // by its label, never the value that was typed into it.
+    *read = texts.iter().map(|t| collapse(t)).collect::<Vec<_>>().join("\u{1f}");
+    if let Ok(said) = judge(want, &texts) {
+        return Ok(Ok(format!("{what} {said}")));
+    }
+    // Shown by what a person calls each item, never a typed value.
     let mut shown = Vec::with_capacity(SEEN_ITEMS);
     for item in items.iter().take(SEEN_ITEMS) {
-        shown.push(page::call_value(d, item, LABEL_JS, &[]).await?.as_str().unwrap_or("").to_string());
+        shown.push(page::call_value(d, item, SHOWN_JS, &[]).await?.as_str().unwrap_or("").to_string());
     }
-    Ok(Err(sentence(want, &fault, &shown, n)))
+    Ok(Err(judge_shown(want, &texts, &shown, n).err().unwrap_or_default()))
 }

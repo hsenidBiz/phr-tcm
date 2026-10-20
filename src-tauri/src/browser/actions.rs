@@ -1331,11 +1331,15 @@ impl Action {
                 }
                 Ok(())
             }
-            Action::ExpectPosition { selector, relative_to, .. } => {
+            Action::ExpectPosition { selector, relative_to, timeout_ms, .. } => {
                 selector.validate()?;
                 relative_to.validate().map_err(|why| format!("expect_position relative_to: {why}"))?;
                 if selector.links() == relative_to.links() {
                     return Err(POSITION_SAME.to_string());
+                }
+                // Both boxes must be seen at rest, which takes time.
+                if timeout_ms.is_some_and(|t| t < AT_MOST_MIN_MS) {
+                    return Err(POSITION_TIME.to_string());
                 }
                 Ok(())
             }
@@ -1739,6 +1743,9 @@ pub const ORDER_EMPTY_TEXT: &str = "expect_order has an empty text - everything 
 /// `expect_position` whose two locators are the same.
 pub const POSITION_SAME: &str =
     "expect_position compares two elements - relative_to is the same locator as selector";
+/// `expect_position` with a `timeout_ms` under `AT_MOST_MIN_MS`: both boxes
+/// must hold still for `table::SETTLE_MS`, and be seen to.
+pub const POSITION_TIME: &str = "expect_position: needs at least 1500 ms to see both elements at rest";
 /// `expect_text` given both `equals` and `matches`, or neither.
 pub const TEXT_NEEDS_ONE: &str = "expect_text takes exactly one of \"equals\" (the whole text) or \"matches\" (a pattern)";
 /// The shortest `timeout_ms` an `expect_count` with `at_most` may have: the

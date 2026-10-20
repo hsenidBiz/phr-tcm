@@ -55,8 +55,11 @@ pub const TOLERANCE_PX: f64 = 1.0;
 
 /// `this` is the element. `{ x, y, w, h }`: its `getBoundingClientRect()`
 /// moved into the top window's frame by adding each frame element's own
-/// left and top, up the `parent` chain. A parent from another site cannot
-/// be asked: the walk stops there, silently, with what it has.
+/// left and top, its border and its padding, up the `parent` chain. A parent
+/// from another site cannot be asked: the walk stops there, silently, with
+/// what it has. A CSS transform (a scaled or rotated frame or ancestor) is
+/// not undone: the box is the one the page draws, measured by the browser,
+/// which is right for a scale but is the bounding box of a rotation.
 pub const READ_BOX_JS: &str = r#"function() {
   const r = this.getBoundingClientRect();
   let x = r.left, y = r.top;
@@ -66,16 +69,20 @@ pub const READ_BOX_JS: &str = r#"function() {
       const frame = win.frameElement;
       if (!frame) break;
       const f = frame.getBoundingClientRect();
-      x += f.left + (frame.clientLeft || 0);
-      y += f.top + (frame.clientTop || 0);
+      const cs = win.parent.getComputedStyle(frame);
+      x += f.left + (frame.clientLeft || 0) + (parseFloat(cs.paddingLeft) || 0);
+      y += f.top + (frame.clientTop || 0) + (parseFloat(cs.paddingTop) || 0);
       win = win.parent;
     }
   } catch (_) {}
   return { x: x, y: y, w: r.width, h: r.height };
 }"#;
 
-/// Does `rel` hold of `a` against `b`? A corner is being inside `b` and the
-/// centre of `a` strictly in that half of `b` both ways.
+/// Does `rel` hold of `a` against `b`? A corner is being inside `b` with
+/// the centre of `a` in that quarter of `b`; a centre within
+/// `TOLERANCE_PX` of a midline counts for both halves, so a button centred
+/// up the middle of a one-row bar is in its top-right when it is in the
+/// right half.
 pub fn holds(rel: Relation, a: Rect, b: Rect) -> bool {
     let t = TOLERANCE_PX;
     let inside = a.x >= b.x - t && a.y >= b.y - t && a.x + a.w <= b.x + b.w + t && a.y + a.h <= b.y + b.h + t;
@@ -87,10 +94,10 @@ pub fn holds(rel: Relation, a: Rect, b: Rect) -> bool {
         Relation::Above => a.y + a.h <= b.y + t,
         Relation::Below => a.y >= b.y + b.h - t,
         Relation::Inside => inside,
-        Relation::InTopLeft => inside && cx < mx && cy < my,
-        Relation::InTopRight => inside && cx > mx && cy < my,
-        Relation::InBottomLeft => inside && cx < mx && cy > my,
-        Relation::InBottomRight => inside && cx > mx && cy > my,
+        Relation::InTopLeft => inside && cx <= mx + t && cy <= my + t,
+        Relation::InTopRight => inside && cx >= mx - t && cy <= my + t,
+        Relation::InBottomLeft => inside && cx <= mx + t && cy >= my - t,
+        Relation::InBottomRight => inside && cx >= mx - t && cy >= my - t,
     }
 }
 

@@ -1289,8 +1289,14 @@ fn expect_order_and_position_are_validated() {
         assert!(a.is_check());
         assert_eq!(a.targets().len(), 2);
     }
+    // Both boxes must be seen at rest, which takes time.
+    for t in [0, 500, 1499] {
+        let mut v = pos(json!("above"));
+        v["timeout_ms"] = json!(t);
+        assert_eq!(bad(v), "expect_position: needs at least 1500 ms to see both elements at rest", "{t}");
+    }
     let mut with_time = pos(json!("above"));
-    with_time["timeout_ms"] = json!(500);
+    with_time["timeout_ms"] = json!(1500);
     let a: Action = serde_json::from_value(with_time.clone()).unwrap();
     assert_eq!(a.validate(), Ok(()));
     assert_eq!(serde_json::to_value(&a).unwrap(), with_time);
