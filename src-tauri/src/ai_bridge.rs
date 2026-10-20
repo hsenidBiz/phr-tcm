@@ -11908,8 +11908,8 @@ pub async fn start_listener(
                     if n == 0 { return; }
                     used += n;
                     match parse_http(&buf[..used]) {
-                        Parsed::Complete { method, target, token, body, proxy_version } => {
-                            break (method, target, token, body, proxy_version)
+                        Parsed::Complete { method, target, token, body, proxy_version, tool } => {
+                            break (method, target, token, body, proxy_version, tool)
                         }
                         // Answer rather than close in silence: the proxy on
                         // the other end is waiting on a response, and "the
@@ -11930,7 +11930,7 @@ pub async fn start_listener(
                         return;
                     }
                 };
-                let (method, target, tok, body, proxy_version) = parsed;
+                let (method, target, tok, body, proxy_version, tool) = parsed;
                 let (status, payload) = if tok.as_deref() != Some(state.token.as_str()) {
                     (401, String::new())
                 } else {
@@ -11940,7 +11940,12 @@ pub async fn start_listener(
                         Some(f) => f().await,
                         None => None,
                     };
-                    route(&ctx, client.as_ref(), &method, &target, &body, &state.version).await
+                    let (status, payload) =
+                        route(&ctx, client.as_ref(), &method, &target, &body, &state.version).await;
+                    if let Some(line) = tool_call_line(tool.as_deref(), &target, status, &payload) {
+                        crate::applog::debug(line);
+                    }
+                    (status, payload)
                 };
                 let reason = match status {
                     200 => "OK",
@@ -11981,6 +11986,9 @@ pub enum Parsed {
         /// The `x-tcm-proxy-version` header: the build of the MCP proxy that
         /// sent this. None from a proxy older than the header.
         proxy_version: Option<String>,
+        /// The `x-tcm-tool` header: the MCP tool this request was made for
+        /// (`mcp::TOOL_HEADER`). None outside a tool call.
+        tool: Option<String>,
     },
     Incomplete,
     Malformed,
@@ -12011,6 +12019,7 @@ pub fn parse_http(raw: &[u8]) -> Parsed {
     };
     let mut token = None;
     let mut proxy_version = None;
+    let mut tool = None;
     let mut content_len = 0usize;
     for line in lines {
         // A header we cannot read is not a reason to reject the request -
@@ -12023,6 +12032,9 @@ pub fn parse_http(raw: &[u8]) -> Parsed {
         }
         if k.eq_ignore_ascii_case(crate::mcp::PROXY_VERSION_HEADER) {
             proxy_version = Some(v.to_string());
+        }
+        if k.eq_ignore_ascii_case(crate::mcp::TOOL_HEADER) {
+            tool = Some(v.to_string());
         }
         if k.eq_ignore_ascii_case("content-length") {
             match v.parse() {
@@ -12041,7 +12053,39 @@ pub fn parse_http(raw: &[u8]) -> Parsed {
         token,
         body: String::from_utf8_lossy(&raw[body_start..end]).to_string(),
         proxy_version,
+        tool,
     }
+}
+
+/// The app-log line for one MCP tool call, or None for a request that is
+/// not one to log. The proxy names the tool (`mcp::TOOL_HEADER`) on every
+/// request it makes for a call: first the `/tools` read that decides
+/// whether the tool is offered, then - unless that refused it - the tool's
+/// own route. So a call is logged once: "refused" on the `/tools` read when
+/// this very answer switches the tool off (decided as the proxy decides it,
+/// `mcp::tool_policy_from`), otherwise "ok" or the HTTP status of the
+/// route's answer. Only the tool's name and that outcome - never an
+/// argument, the answer's text, an id or a path - and only for a name this
+/// server offers.
+pub fn tool_call_line(tool: Option<&str>, target: &str, status: u16, payload: &str) -> Option<String> {
+    static NAMES: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
+    let tool = tool?;
+    if !NAMES.get_or_init(crate::mcp::all_tool_names).iter().any(|t| t == tool) {
+        return None;
+    }
+    let path = target.split_once('?').map_or(target, |(p, _)| p);
+    let outcome = if path == "/tools" {
+        let (off, _) = crate::mcp::tool_policy_from(Ok((status, payload.to_string())));
+        if !off.iter().any(|o| o == tool) {
+            return None;
+        }
+        "refused".to_string()
+    } else if status < 400 {
+        "ok".to_string()
+    } else {
+        format!("tool error, HTTP {status}")
+    };
+    Some(format!("AI tool {tool}: {outcome}"))
 }
 
 /// Logs - once per proxy version, not once per call - an MCP proxy that is

@@ -21,6 +21,43 @@ pub const PROXY_VERSION: &str = env!("CARGO_PKG_VERSION");
 /// log a proxy that is not its own build.
 pub const PROXY_VERSION_HEADER: &str = "x-tcm-proxy-version";
 
+/// The header every bridge request made for a tool call carries the tool's
+/// name in, so the app can log one line per call
+/// (`ai_bridge::tool_call_line`). Only the name: never an argument.
+pub const TOOL_HEADER: &str = "x-tcm-tool";
+
+thread_local! {
+    /// The tool `tools_call` is answering on this thread, for `TOOL_HEADER`.
+    static CALLING: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Names the tool being called for as long as it lives. A name that is not
+/// tool-shaped (lowercase letters, digits and underscores, at most 64) is
+/// not named: it would be the assistant's own text, and an invalid header
+/// value would fail the request.
+struct CallingTool;
+
+impl CallingTool {
+    fn set(name: &str) -> CallingTool {
+        let shaped = !name.is_empty()
+            && name.len() <= 64
+            && name.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_');
+        CALLING.with(|c| *c.borrow_mut() = shaped.then(|| name.to_string()));
+        CallingTool
+    }
+}
+
+impl Drop for CallingTool {
+    fn drop(&mut self) {
+        CALLING.with(|c| *c.borrow_mut() = None);
+    }
+}
+
+/// The tool a call on this thread is being answered for, if any.
+pub fn calling_tool() -> Option<String> {
+    CALLING.with(|c| c.borrow().clone())
+}
+
 /// What to say when this proxy and the running app are different builds,
 /// or None when they match or the app's version is not known (not running
 /// yet is not a mismatch).
@@ -1442,6 +1479,9 @@ fn merge_bundle_edits(
 fn tools_call(params: &serde_json::Value, call: BridgeCall) -> serde_json::Value {
     let name = params["name"].as_str().unwrap_or_default();
     let args = &params["arguments"];
+    // Every bridge request from here on names the tool, so the app logs the
+    // call once: a refusal on the `/tools` read, otherwise the route's answer.
+    let _naming = CallingTool::set(name);
     // Checked again here, not just in tools/list: a client may be working
     // from a list it cached before the tool was switched off.
     let (off, on) = tool_policy(call);
@@ -2006,13 +2046,23 @@ fn bridge_request(method: &str, path: &str, body: &str) -> Result<(u16, String),
     .map_err(|e| e.to_string())?;
     let port = hs["port"].as_u64().ok_or("bad handshake file")? as u16;
     let token = hs["token"].as_str().ok_or("bad handshake file")?;
+    send_to_bridge(port, token, method, path, body)
+}
 
+/// One request to the app's bridge on `port`: the transport under
+/// `bridge_request`, public so a test can drive a listener of its own
+/// (the handshake file belongs to a live app). A request made during a
+/// tool call carries the tool's name in `TOOL_HEADER`.
+pub fn send_to_bridge(port: u16, token: &str, method: &str, path: &str, body: &str) -> Result<(u16, String), String> {
     let client = reqwest::blocking::Client::new();
     let url = format!("http://127.0.0.1:{port}{path}");
-    let req = match method {
+    let mut req = match method {
         "POST" => client.post(&url).body(body.to_string()),
         _ => client.get(&url),
     };
+    if let Some(tool) = calling_tool() {
+        req = req.header(TOOL_HEADER, tool);
+    }
     let resp = req
         .header("x-bridge-token", token)
         .header(PROXY_VERSION_HEADER, PROXY_VERSION)
