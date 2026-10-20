@@ -1968,37 +1968,85 @@ fn is_absence_check(action: &Action) -> bool {
     takes_none(action) && !matches!(action, Action::WhenVisible { .. })
 }
 
+/// `link` as a name only: the same control however it is narrowed, so a
+/// click on `{name, exact: true}` shows the same button as `{name}`.
+fn loosened(link: &LocatorStep) -> LocatorStep {
+    LocatorStep { exact: false, nth: None, visible: None, ..link.clone() }
+}
+
+/// Does this action, written at the top of a step, fail when its locator
+/// matches nothing? Not a use that passes with nothing there (`takes_none`),
+/// a loop (it may not run at all), or a count with no lower bound
+/// (`at_most`, or a bound of 0). Whatever a guard or a loop runs in its
+/// `then` is left out by the caller: it runs only when the guard is there.
+fn needs_it_present(action: &Action) -> bool {
+    match action {
+        Action::RepeatWhileVisible { .. } => false,
+        Action::ExpectCount { equals, at_least, .. } => equals.is_some_and(|n| n >= 1) || at_least.is_some_and(|n| n >= 1),
+        other => !takes_none(other),
+    }
+}
+
 /// Every absence check of `script`'s checked steps (`only_steps`, else all)
 /// whose locator could be wrong without the check ever failing, one line
-/// each in step order: "Step {n}: {locator} {ABSENCE_UNPROVEN}". The last
-/// part of its locator (the chain's last link) must have been shown: seen
-/// matching something in any area, or a chain ending in it seen whole
-/// matching something, or used by the script itself in an action that needs
-/// it present.
-pub fn absence_refusals(map: &DiscoveryMap, script: &CaseScript, only_steps: Option<&[i32]>) -> Vec<String> {
+/// each in step order, a repeated line once: "Step {n}: {locator}
+/// {ABSENCE_UNPROVEN}". The last part of its locator (the chain's last
+/// link) must have been shown: seen matching something in any area, or a
+/// chain ending in it seen whole matching something, or named by an action
+/// of the script that fails when it is not there (`needs_it_present`),
+/// however that name is narrowed (`loosened`).
+///
+/// An absence action identical to one the `saved` script already has is not
+/// judged again, whatever step it is in now: what was saved is not this
+/// save's to refuse.
+pub fn absence_refusals(
+    map: &DiscoveryMap,
+    script: &CaseScript,
+    only_steps: Option<&[i32]>,
+    saved: Option<&CaseScript>,
+) -> Vec<String> {
+    let before: Vec<&Action> = saved
+        .into_iter()
+        .flat_map(|s| s.steps.iter())
+        .flat_map(|s| s.actions.iter())
+        .flat_map(Action::each)
+        .filter(|a| is_absence_check(a))
+        .collect();
+    let judged: Vec<(i32, &Action)> = script
+        .steps
+        .iter()
+        .filter(|s| only_steps.is_none_or(|only| only.contains(&s.step_number)))
+        .flat_map(|s| s.actions.iter().flat_map(Action::each).map(move |a| (s.step_number, a)))
+        .filter(|(_, a)| is_absence_check(a) && !before.contains(a))
+        .collect();
+    if judged.is_empty() {
+        return Vec::new();
+    }
     let areas = every_area(map);
     let shown = present_only(map);
     let present = Sightings::new(&shown, &areas);
     let wholes = each_wholes_in(map, &areas);
-    // What the script itself needs present: any step, checked or not.
-    let mut used: Vec<LocatorStep> = Vec::new();
-    for action in script.steps.iter().flat_map(|s| s.actions.iter()).flat_map(Action::each) {
-        if takes_none(action) {
-            continue;
-        }
-        used.extend(checked_targets(action).into_iter().filter_map(|(t, _)| t.links().pop()));
-    }
-    let mut out = Vec::new();
-    for step in script.steps.iter().filter(|s| only_steps.is_none_or(|only| only.contains(&s.step_number))) {
-        for action in step.actions.iter().flat_map(Action::each).filter(|a| is_absence_check(a)) {
-            for target in own_targets(action) {
-                let Some(last) = target.links().pop() else { continue };
-                let proven = present.has(&last, true)
-                    || wholes.iter().any(|w| w.last().is_some_and(|l| same_link_filled(l, &last)))
-                    || used.iter().any(|u| same_link(u, &last));
-                if !proven {
-                    out.push(format!("Step {}: {} {ABSENCE_UNPROVEN}", step.step_number, target.describe()));
-                }
+    // What the script itself needs present, in any step, checked or not.
+    let used: Vec<LocatorStep> = script
+        .steps
+        .iter()
+        .flat_map(|s| s.actions.iter())
+        .filter(|top| needs_it_present(top))
+        .flat_map(|top| checked_targets(top))
+        .filter_map(|(t, _)| t.links().pop())
+        .map(|l| loosened(&l))
+        .collect();
+    let mut out: Vec<String> = Vec::new();
+    for (step, action) in judged {
+        for target in own_targets(action) {
+            let Some(last) = target.links().pop() else { continue };
+            let loose = loosened(&last);
+            let proven = present.has(&last, true)
+                || wholes.iter().any(|w| w.last().is_some_and(|l| same_link_filled(&loosened(l), &loose)))
+                || used.iter().any(|u| same_link(u, &loose));
+            let line = format!("Step {step}: {} {ABSENCE_UNPROVEN}", target.describe());
+            if !proven && !out.contains(&line) {
+                out.push(line);
             }
         }
     }
@@ -2022,11 +2070,10 @@ pub fn loose_name_notes(
     script: &CaseScript,
     only_steps: Option<&[i32]>,
 ) -> Vec<String> {
-    let areas = script_areas(components, script.area_name(), &script.steps);
-    let areas: Vec<&str> = areas.iter().map(String::as_str).collect();
-    let seen = Sightings::new(&present_only(map), &areas);
+    // The names worth looking at, first: most cases have none, and then
+    // nothing of the map is read.
     let mut named: Vec<(String, String)> = Vec::new();
-    let mut notes: Vec<String> = Vec::new();
+    let mut found: Vec<(i32, LocatorStep, String)> = Vec::new();
     for step in script.steps.iter().filter(|s| only_steps.is_none_or(|only| only.contains(&s.step_number))) {
         for top in &step.actions {
             for action in top.each() {
@@ -2036,9 +2083,9 @@ pub fn loose_name_notes(
                     continue;
                 }
                 for link in own_targets(action).into_iter().flat_map(Target::links) {
-                    let (kind, raw, role) = match (&link.role, &link.name, &link.text) {
-                        (Some(r), Some(n), _) => (fold_name(r), n.as_str(), Some(r.as_str())),
-                        (None, _, Some(t)) => ("text".to_string(), t.as_str(), None),
+                    let (kind, raw) = match (&link.role, &link.name, &link.text) {
+                        (Some(r), Some(n), _) => (fold_name(r), n.as_str()),
+                        (None, _, Some(t)) => ("text".to_string(), t.as_str()),
                         _ => continue,
                     };
                     if link.exact || link.nth.is_some() || link.visible.is_some() || link.input.is_some() || raw.contains("{{") {
@@ -2051,28 +2098,37 @@ pub fn loose_name_notes(
                     if named.iter().any(|(k, n)| *k == kind && *n == want) {
                         continue;
                     }
-                    let Some(longer) = seen
-                        .holders(&link)
-                        .into_iter()
-                        .find(|h| norm_name(h.name.as_deref().or(h.text.as_deref()).unwrap_or("")) != want)
-                    else {
-                        continue;
-                    };
-                    named.push((kind, want));
-                    let (what, longer_what) = match role {
-                        Some(r) => (
-                            format!("{r} \"{raw}\""),
-                            format!("{r} \"{}\"", longer.name.as_deref().unwrap_or("")),
-                        ),
-                        None => (format!("text \"{raw}\""), format!("text \"{}\"", longer.text.as_deref().unwrap_or(""))),
-                    };
-                    notes.push(format!(
-                        "step {}: {what} matches loosely, and the live app also showed {longer_what}, which it would match too when both are on the page: add \"exact\": true.",
-                        step.step_number
-                    ));
+                    named.push((kind, want.clone()));
+                    found.push((step.step_number, link.clone(), want));
                 }
             }
         }
+    }
+    if found.is_empty() {
+        return Vec::new();
+    }
+    let areas = script_areas(components, script.area_name(), &script.steps);
+    let areas: Vec<&str> = areas.iter().map(String::as_str).collect();
+    let seen = Sightings::new(&present_only(map), &areas);
+    let mut notes: Vec<String> = Vec::new();
+    for (step, link, want) in found {
+        let Some(longer) = seen
+            .holders(&link)
+            .into_iter()
+            .find(|h| norm_name(h.name.as_deref().or(h.text.as_deref()).unwrap_or("")) != want)
+        else {
+            continue;
+        };
+        let (what, longer_what) = match (&link.role, &link.name) {
+            (Some(r), Some(n)) => (format!("{r} \"{n}\""), format!("{r} \"{}\"", longer.name.as_deref().unwrap_or(""))),
+            _ => (
+                format!("text \"{}\"", link.text.as_deref().unwrap_or("")),
+                format!("text \"{}\"", longer.text.as_deref().unwrap_or("")),
+            ),
+        };
+        notes.push(format!(
+            "step {step}: {what} matches loosely, and the live app also showed {longer_what}, which it would match too when both are on the page: add \"exact\": true."
+        ));
     }
     if notes.len() > MAX_LOOSE_NOTES {
         let more = notes.len() - MAX_LOOSE_NOTES;

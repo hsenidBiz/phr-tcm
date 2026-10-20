@@ -9444,6 +9444,8 @@ async fn save_autorun_scripts(
     let test_prefix = crate::environments::active(&root)
         .map(|e| e.test_prefix)
         .unwrap_or_else(|_| crate::environments::default_test_prefix());
+    // The project's own save words, for what counts as saving a record.
+    let save_words = crate::autorun::nav::load_nav(&root, &ctx.org, &ctx.project).map(|n| n.save_words).unwrap_or_default();
     let check_and_save = || -> Result<Vec<String>, SaveRefusal> {
         // What the save noticed without refusing: said after its answer.
         let mut notes: Vec<String> = Vec::new();
@@ -9478,7 +9480,12 @@ async fn save_autorun_scripts(
                     &files,
                 ) {
                     SeenVerdict::Passed => {
-                        let lines = crate::autorun::seen_check::absence_refusals(&map, script, only.as_deref());
+                        let lines = crate::autorun::seen_check::absence_refusals(
+                            &map,
+                            script,
+                            only.as_deref(),
+                            saved_scripts.iter().find(|s| s.case_id == *case_id),
+                        );
                         if !lines.is_empty() {
                             unproven.push((*case_id, lines));
                         }
@@ -9498,8 +9505,13 @@ async fn save_autorun_scripts(
                 let Some(script) = prepared.iter().find(|s| s.case_id == *case_id) else { continue };
                 let sentences = crate::autorun::seen_check::loose_name_notes(&map, &components, script, only.as_deref())
                     .into_iter()
-                    .chain(crate::autorun::preconditions::undeclared_record_note(script, only.as_deref(), &test_prefix));
+                    .chain(crate::autorun::preconditions::undeclared_record_note(script, only.as_deref(), &test_prefix, &save_words));
                 notes.extend(sentences.map(|n| format!("case {case_id}: note: {n}")));
+            }
+            if notes.len() > MAX_SAVE_NOTES {
+                let more = notes.len() - MAX_SAVE_NOTES;
+                notes.truncate(MAX_SAVE_NOTES);
+                notes.push(format!("and {more} more notes"));
             }
         }
         // Everything has passed. A dry run checks the bundle as the write
@@ -9637,6 +9649,9 @@ async fn save_autorun_scripts(
     }
     answer((200, report.join("\n")))
 }
+
+/// The most notes one save answers with before saying how many more.
+const MAX_SAVE_NOTES: usize = 20;
 
 /// The refusal of a bundle whose scripts name locators never seen, from
 /// each refused case's lines in bundle order: the lines alone when one

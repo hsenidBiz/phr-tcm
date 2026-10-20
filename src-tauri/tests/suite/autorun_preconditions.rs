@@ -551,15 +551,15 @@ fn a_script_naming_a_test_record_without_preconditions_gets_one_note() {
         ]),
     );
     assert_eq!(
-        undeclared_record_note(&s, None, "AUTOTEST"),
+        undeclared_record_note(&s, None, "AUTOTEST", &[]),
         Some(format!("names \"Open AUTOTEST Review FY2026\", \"AUTOTEST Other\" (from step 3) {UNDECLARED_RECORD}"))
     );
     // Only the steps a repair declares are read.
     assert_eq!(
-        undeclared_record_note(&s, Some(&[4]), "AUTOTEST"),
+        undeclared_record_note(&s, Some(&[4]), "AUTOTEST", &[]),
         Some(format!("names \"AUTOTEST Other\" (from step 4) {UNDECLARED_RECORD}"))
     );
-    assert_eq!(undeclared_record_note(&s, Some(&[1]), "AUTOTEST"), None);
+    assert_eq!(undeclared_record_note(&s, Some(&[1]), "AUTOTEST", &[]), None);
 
     // More than three: three are shown, then how many more.
     let many = naming(
@@ -573,7 +573,7 @@ fn a_script_naming_a_test_record_without_preconditions_gets_one_note() {
         ]),
     );
     assert_eq!(
-        undeclared_record_note(&many, None, "AUTOTEST"),
+        undeclared_record_note(&many, None, "AUTOTEST", &[]),
         Some(format!("names \"AUTOTEST A\", \"AUTOTEST B\", \"AUTOTEST C\" and 2 more (from step 1) {UNDECLARED_RECORD}"))
     );
     assert!(UNDECLARED_RECORD.starts_with("but declares no precondition: "));
@@ -582,38 +582,78 @@ fn a_script_naming_a_test_record_without_preconditions_gets_one_note() {
 #[test]
 fn no_note_when_a_precondition_or_setup_exists_or_the_record_is_typed() {
     let steps = json!([clicking(1, json!({ "role": "button", "name": "Open AUTOTEST Review FY2026" }))]);
-    assert!(undeclared_record_note(&naming(json!({}), steps.clone()), None, "AUTOTEST").is_some());
+    assert!(undeclared_record_note(&naming(json!({}), steps.clone()), None, "AUTOTEST", &[]).is_some());
 
     let with_pre = naming(
         json!({ "preconditions": [{ "flow": "pms-performance-cycle", "stage": "publish", "value": 274 }] }),
         steps.clone(),
     );
-    assert_eq!(undeclared_record_note(&with_pre, None, "AUTOTEST"), None);
+    assert_eq!(undeclared_record_note(&with_pre, None, "AUTOTEST", &[]), None);
     let with_setup = naming(json!({ "setup": { "fixture": "make-review" } }), steps.clone());
-    assert_eq!(undeclared_record_note(&with_setup, None, "AUTOTEST"), None);
+    assert_eq!(undeclared_record_note(&with_setup, None, "AUTOTEST", &[]), None);
 
-    // A record the script typed itself is its own.
-    let typed = naming(
+    // A record the script typed and saved itself, in an earlier step, is
+    // its own.
+    let creating = |save: &str, value: &str| {
+        naming(
+            json!({}),
+            json!([
+                { "step_number": 1, "actions": [
+                    { "kind": "fill", "selector": { "css": "#name" }, "value": value },
+                    { "kind": "click", "selector": { "role": "button", "name": save } }
+                ] },
+                clicking(2, json!({ "role": "button", "name": "Open AUTOTEST Review FY2026" })),
+            ]),
+        )
+    };
+    assert_eq!(undeclared_record_note(&creating("Save", "AUTOTEST Review FY2026"), None, "AUTOTEST", &[]), None);
+    assert_eq!(undeclared_record_note(&creating("Create review", "AUTOTEST Review FY2026"), None, "AUTOTEST", &[]), None);
+    // The run's own prefix placeholder is the prefix.
+    assert_eq!(undeclared_record_note(&creating("Save", "{{prefix}} Review FY2026"), None, "AUTOTEST", &[]), None);
+    // A button that is no save word is not a save, unless the project says so.
+    assert!(undeclared_record_note(&creating("Finish", "AUTOTEST Review FY2026"), None, "AUTOTEST", &[]).is_some());
+    assert_eq!(
+        undeclared_record_note(&creating("Finish", "AUTOTEST Review FY2026"), None, "AUTOTEST", &["finish".to_string()]),
+        None
+    );
+    // A value that is not a test record of its own does not make one.
+    assert!(undeclared_record_note(&creating("Save", "100"), None, "AUTOTEST", &[]).is_some());
+    assert!(undeclared_record_note(&creating("Save", "Review"), None, "AUTOTEST", &[]).is_some());
+
+    // Typed into a search box and never saved, or typed after the record
+    // was used: the record was there before.
+    let searched = naming(
         json!({}),
         json!([
-            { "step_number": 1, "actions": [{ "kind": "fill", "selector": { "css": "#name" }, "value": "AUTOTEST Review FY2026" }] },
+            { "step_number": 1, "actions": [{ "kind": "fill", "selector": { "css": "#search" }, "value": "AUTOTEST Review" }] },
             clicking(2, json!({ "role": "button", "name": "Open AUTOTEST Review FY2026" })),
         ]),
     );
-    assert_eq!(undeclared_record_note(&typed, None, "AUTOTEST"), None);
+    assert!(undeclared_record_note(&searched, None, "AUTOTEST", &[]).is_some());
+    let later = naming(
+        json!({}),
+        json!([
+            clicking(1, json!({ "role": "button", "name": "Open AUTOTEST Review FY2026" })),
+            { "step_number": 2, "actions": [
+                { "kind": "fill", "selector": { "css": "#name" }, "value": "AUTOTEST Review FY2026" },
+                { "kind": "click", "selector": { "role": "button", "name": "Save" } }
+            ] },
+        ]),
+    );
+    assert!(undeclared_record_note(&later, None, "AUTOTEST", &[]).is_some());
 
     // The prefix is a whole word, not the start of a longer one; nothing
     // with a placeholder is a record.
     let longer = naming(json!({}), json!([clicking(1, json!({ "text": "AUTOTESTS Review" }))]));
-    assert_eq!(undeclared_record_note(&longer, None, "AUTOTEST"), None);
+    assert_eq!(undeclared_record_note(&longer, None, "AUTOTEST", &[]), None);
     let placeholder = naming(json!({}), json!([clicking(1, json!({ "text": "AUTOTEST {{setup.review}}" }))]));
-    assert_eq!(undeclared_record_note(&placeholder, None, "AUTOTEST"), None);
+    assert_eq!(undeclared_record_note(&placeholder, None, "AUTOTEST", &[]), None);
 
     // The environment's own prefix is the one read, in any case.
     let qa = naming(json!({}), json!([clicking(1, json!({ "text": "Open qa-run Review" }))]));
-    assert_eq!(undeclared_record_note(&qa, None, "AUTOTEST"), None);
+    assert_eq!(undeclared_record_note(&qa, None, "AUTOTEST", &[]), None);
     assert_eq!(
-        undeclared_record_note(&qa, None, "QA-RUN"),
+        undeclared_record_note(&qa, None, "QA-RUN", &[]),
         Some(format!("names \"Open qa-run Review\" (from step 1) {UNDECLARED_RECORD}"))
     );
 }
@@ -622,17 +662,35 @@ fn no_note_when_a_precondition_or_setup_exists_or_the_record_is_typed() {
 fn a_literal_record_id_in_a_css_attribute_counts_as_a_record() {
     let literal = naming(json!({}), json!([clicking(2, json!({ "css": "div[data-cycle-id=\"11171\"]" }))]));
     assert_eq!(
-        undeclared_record_note(&literal, None, "AUTOTEST"),
+        undeclared_record_note(&literal, None, "AUTOTEST", &[]),
         Some(format!("names \"div[data-cycle-id=\\\"11171\\\"]\" (from step 2) {UNDECLARED_RECORD}"))
     );
-    let unquoted = naming(json!({}), json!([clicking(1, json!({ "css": "tr[data-row-id = 42] button" }))]));
-    assert!(undeclared_record_note(&unquoted, None, "AUTOTEST").is_some());
+    let unquoted = naming(json!({}), json!([clicking(1, json!({ "css": "tr[data-cycle-id = 42] button" }))]));
+    assert!(undeclared_record_note(&unquoted, None, "AUTOTEST", &[]).is_some());
+    // An id attribute, or data-id, is one.
+    for css in ["tr[id='42']", "li[data-id=\"7\"]", "li[DATA-Review-ID=\"7\"]"] {
+        let s = naming(json!({}), json!([clicking(1, json!({ "css": css }))]));
+        assert!(undeclared_record_note(&s, None, "AUTOTEST", &[]).is_some(), "{css}");
+    }
+    // Attributes that only end in the letters, and column and row ids, are not.
+    for css in [
+        "div[data-grid=\"3\"]",
+        "div[data-valid=\"1\"]",
+        "div[data-paid=\"0\"]",
+        "th[data-col-id=\"2\"]",
+        "th[data-column-id=\"2\"]",
+        "tr[data-row-id=\"2\"]",
+        "div[aria-id=\"4\"]",
+    ] {
+        let s = naming(json!({}), json!([clicking(1, json!({ "css": css }))]));
+        assert_eq!(undeclared_record_note(&s, None, "AUTOTEST", &[]), None, "{css}");
+    }
     let filled = naming(json!({}), json!([clicking(2, json!({ "css": "div[data-cycle-id=\"{{setup.cycle_id}}\"]" }))]));
-    assert_eq!(undeclared_record_note(&filled, None, "AUTOTEST"), None);
+    assert_eq!(undeclared_record_note(&filled, None, "AUTOTEST", &[]), None);
     // An attribute that is not an id, or an id that is not a number.
     let other = naming(
         json!({}),
         json!([clicking(1, json!({ "css": "div[data-tab=\"3\"]" })), clicking(2, json!({ "css": "div[data-cycle-id=\"abc\"]" }))]),
     );
-    assert_eq!(undeclared_record_note(&other, None, "AUTOTEST"), None);
+    assert_eq!(undeclared_record_note(&other, None, "AUTOTEST", &[]), None);
 }
