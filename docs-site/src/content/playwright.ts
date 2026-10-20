@@ -4,7 +4,7 @@
 // the Export to Playwright window, which opens here from Auto Run's More menu.
 //
 // Words come from screens/Playwright/index.tsx, HealthLine.tsx, Runner.tsx,
-// RunnerTree.tsx, Accounts.tsx, Sync.tsx, PlaywrightExportDialog.tsx and
+// RunnerTree.tsx, FeatureTree.tsx, Accounts.tsx, Sync.tsx, PlaywrightExportDialog.tsx and
 // FinishInRepo.tsx.
 // The screen has no shots yet: it needs a clone of the repo, which the
 // capture's sample data does not have, so it is described in tips and
@@ -28,7 +28,7 @@ export const playwright: Screen = {
     "Under the folder, a badge reads **All good** when nothing is wrong. Otherwise each badge names what stops the tab working, and pointing at it says what to do: the folder is not a clone of the repo; the clone has no node_modules, so run npm install in it; or Node was not found, so install Node.js and restart the app. Until those are fixed the Runner and Accounts tabs say why instead of showing their lists.",
     "A missing qa-options.json is only a warning: runs use the repo's default options. The app reads that file and never writes it.",
     "The rest of the tab is split into four tabs: **Overview**, **Runner**, **Accounts** and **Sync**. The tab opens on the one you chose last.",
-    "**Overview** sums up the clone: its features, specs, test cases, raw specs, accounts and navigation entries, then a table lists each feature by its folder and feature name with its specs and test cases. The folder is wherever the feature sits under the repo's suites folder, at any depth.",
+    "**Overview** sums up the clone: its features, specs, test cases, raw specs, accounts and navigation entries, then a tree shows what is under the repo's suites folder: each folder beneath its parent, at any depth, and each feature beneath its folder with its specs and test cases. A folder shows the totals of everything under it; fold or unfold it with the arrow beside it, and point at a name to see its full path.",
     "**New folder** makes a feature folder in the clone: type its path under suites, such as sl/admin/performance/new-feature, and press **Create**. It gets test-cases and specs folders, each with a .gitkeep so git keeps them when you commit, and it is listed and offered as an export destination straight away. A folder that is already there, or that differs from one there only in capitals, is refused. The same button is in the export window, under **Areas**.",
     "Only one repo command runs at a time. While a run, a listing or an account change is going, the buttons that would start another are greyed out.",
   ],
@@ -38,7 +38,7 @@ export const playwright: Screen = {
       steps: [
         "On the **Runner** tab, the tests are listed the way the repo's own console lists them: one level for each folder on the way down (however many the repo has), then the feature, the spec and each test. Fold or unfold a branch with the arrow beside it. Each test shows its Azure DevOps case number and, after a run, whether it passed, failed, was flaky or was skipped.",
         "Tick the tests you want, or tick a branch to take everything under it. **Tick all** ticks every test and **Clear** clears them. The ticks are remembered for this clone.",
-        "If the specs changed in the repo, press **List again** to read the tests afresh.",
+        "If the specs changed in the repo, press **Refresh** above the list to read the tests afresh.",
         "Choose how the browser shows: **Browser hidden**, **Browser shown** or **Debug**. Debug pauses at the start of every test, so a debug run of more than one test asks first; press **Run in debug** to go ahead or **Cancel**.",
         "Press **Run picked**, which shows how many are ticked. **Run all** runs every test in the clone, and **Re-run failures** runs again the ones that failed last time.",
         "To check first, press **Preview**: it shows how many tests would run, the run list and the exact command, without running anything.",
@@ -47,7 +47,7 @@ export const playwright: Screen = {
     {
       title: "Watch a run, stop it, and read the report",
       steps: [
-        "Before a run starts, the app counts what Playwright would run. If that count does not match the tests you picked, the run does not start, and the message gives both numbers. Use **List again**, then run again.",
+        "Before a run starts, the app counts what Playwright would run. If that count does not match the tests you picked, the run does not start, and the message gives both numbers. Use **Refresh** above the list, then run again.",
         "The output appears in the **Output** panel as it happens, and the panel follows the newest line until you scroll up. **Stop**, at the top of the panel, ends the run and every process it started.",
         "When the run ends, the top of the Output panel says whether it passed, ended with failures or was stopped, and the run's report opens in your browser.",
         "Under **Reports**, every past run is listed by date with its passed and failed counts. Press **Open** beside one to read its report again.",
@@ -56,7 +56,7 @@ export const playwright: Screen = {
     {
       title: "Manage the repo's test accounts",
       steps: [
-        "On the **Accounts** tab, a table shows each account's key, username, employee number, display name (with its supervisor), title, and how many specs and other files use it. **List again** reads them afresh.",
+        "On the **Accounts** tab, a table shows each account's key, username, employee number, display name (with its supervisor), title, and how many specs and other files use it. **Refresh** on the tab reads them afresh.",
         "The eye button at the end of an account's row (**Show password**) shows that account's password; press it again (**Hide password**) to hide it. Passwords are hidden until you ask, and hidden again after any change.",
         "Press **Add account** and fill in its key, username, password and the rest, or use the **Edit**, **Rename** or **Delete** button at the end of an account's row. The form opens in a window. Edit changes one field at a time: pick the field and type the new value, or leave it empty to clear an optional field.",
         "Press **Preview** to see what the repo's npm run users command will change. Nothing is written yet. Press **Apply** to make the change, or **Cancel**. Editing the form again drops the preview, so preview again before you apply.",

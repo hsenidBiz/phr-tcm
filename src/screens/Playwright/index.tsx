@@ -20,6 +20,7 @@ import {
   usePlaywrightExportRequest,
 } from "../../lib/playwrightExport";
 import Accounts, { ACCOUNTS_KEY } from "./Accounts";
+import FeatureTree from "./FeatureTree";
 import HealthLine, { HEALTH_TEXT, WARNING_ONLY } from "./HealthLine";
 import NewFolder from "./NewFolder";
 import { Hint, STRUCTURE_KEY, Stat, SubTabs, type TabSpec } from "./parts";
@@ -36,51 +37,27 @@ type Tab = "overview" | "runner" | "accounts" | "sync";
  * opens where the person left it. */
 let lastTab: Tab = "overview";
 
-function Overview({ s, clone, onCreated }: { s: RepoStructure; clone: string; onCreated: () => void }) {
+/** What the clone holds: the counts (counting up each time the tab is
+ * `shown`), New folder, and the folder tree under suites. */
+function Overview({ s, clone, shown, onCreated }: { s: RepoStructure; clone: string; shown: boolean; onCreated: () => void }) {
   const specs = s.features.reduce((n, f) => n + f.spec_count, 0);
   const cases = s.features.reduce((n, f) => n + f.case_count, 0);
-  const th = "px-3 py-2 text-left text-xs font-medium text-muted";
-  const num = "px-3 py-2 text-right tabular-nums";
   return (
     <section className="space-y-4" aria-label="Repo structure">
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-6">
-        <Stat value={s.features.length} label={s.features.length === 1 ? "feature" : "features"} />
-        <Stat value={specs} label={specs === 1 ? "spec" : "specs"} />
-        <Stat value={cases} label={cases === 1 ? "test case" : "test cases"} />
-        <Stat value={s.generated_ids.length} label={s.generated_ids.length === 1 ? "raw spec" : "raw specs"} />
-        <Stat value={s.user_keys.length} label={s.user_keys.length === 1 ? "account" : "accounts"} />
+        <Stat play={shown} value={s.features.length} label={s.features.length === 1 ? "feature" : "features"} />
+        <Stat play={shown} value={specs} label={specs === 1 ? "spec" : "specs"} />
+        <Stat play={shown} value={cases} label={cases === 1 ? "test case" : "test cases"} />
+        <Stat play={shown} value={s.generated_ids.length} label={s.generated_ids.length === 1 ? "raw spec" : "raw specs"} />
+        <Stat play={shown} value={s.user_keys.length} label={s.user_keys.length === 1 ? "account" : "accounts"} />
         <Stat
+          play={shown}
           value={s.navigation_keys.length}
           label={s.navigation_keys.length === 1 ? "navigation entry" : "navigation entries"}
         />
       </div>
       <NewFolder clone={clone} paths={s.features.map((f) => f.path.join("/"))} disabled={s.health.includes("NotTheRepo")} onCreated={onCreated} />
-      {s.features.length === 0 ? (
-        <Hint>No features under suites yet.</Hint>
-      ) : (
-        <div className="overflow-x-auto rounded-lg border border-border bg-surface">
-          <table className="w-full text-sm" aria-label="Features">
-            <thead className="border-b border-border bg-surface-2">
-              <tr>
-                <th className={th}>Folder</th>
-                <th className={th}>Feature</th>
-                <th className={`${th} text-right`}>Specs</th>
-                <th className={`${th} text-right`}>Cases</th>
-              </tr>
-            </thead>
-            <tbody>
-              {s.features.map((f) => (
-                <tr key={f.path.join("/")} className="border-b border-border last:border-b-0">
-                  <td className="px-3 py-2 text-muted">{f.path.slice(0, -1).join(" / ")}</td>
-                  <td className="px-3 py-2 font-medium text-text">{f.path[f.path.length - 1]}</td>
-                  <td className={`${num} text-text`}>{f.spec_count}</td>
-                  <td className={`${num} ${f.case_count ? "text-text" : "text-faint"}`}>{f.case_count}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
+      {s.features.length === 0 ? <Hint>No features under suites yet.</Hint> : <FeatureTree features={s.features} />}
     </section>
   );
 }
@@ -171,7 +148,7 @@ export default function Playwright({ org, project }: { org: string; project: str
 
   /** About to open the Runner: its listing starts now. Only when there is
    * none yet: a listing already there, or one that failed (a repo command
-   * that failed, which List again retries), is not asked for here. */
+   * that failed, which the Runner's Refresh retries), is not asked for here. */
   const intent = (t: Tab) => {
     if (t !== "runner" || !runnable) return;
     const now = qc.getQueryState([TESTS_KEY, clone]);
@@ -187,11 +164,11 @@ export default function Playwright({ org, project }: { org: string; project: str
   const tabs: TabSpec<Tab>[] = [
     { id: "overview", label: "Overview" },
     { id: "runner", label: "Runner" },
-    { id: "accounts", label: "Accounts", count: s?.user_keys.length },
+    { id: "accounts", label: "Accounts" },
     { id: "sync", label: "Sync" },
   ];
   const panels: Record<Tab, ReactNode> = {
-    overview: s && <Overview s={s} clone={clone} onCreated={changed} />,
+    overview: s && <Overview s={s} clone={clone} shown={tab === "overview"} onCreated={changed} />,
     runner: runnable ? <Runner key={clone} clone={clone} onBusy={onRunnerBusy} /> : s && <Blocked area="Runner" issues={s.health} />,
     accounts: runnable ? (
       <Accounts key={clone} clone={clone} onChanged={changed} onBusy={onAccountsBusy} />
@@ -216,7 +193,7 @@ export default function Playwright({ org, project }: { org: string; project: str
           </div>
           <div className="flex items-center gap-2">
             <Button size="sm" variant="outline" disabled={busy || !clone || structure.isFetching || runnerBusy || accountsBusy}
-              onClick={refreshAll}>
+              title="Read everything in the clone again" onClick={refreshAll}>
               <IconRefresh aria-hidden />
               Refresh
             </Button>

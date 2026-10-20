@@ -202,6 +202,11 @@ export {
   // an eye, open to show it and struck through to hide it again.
   Eye as IconShowSecret,
   EyeOff as IconHideSecret,
+  // The Playwright Overview's folder tree: a folder under the clone's
+  // suites, and a feature in it (a folder of specs and test cases) - a
+  // folder with code on it, since that is what a feature holds.
+  Folder as IconRepoFolder,
+  FolderCode as IconRepoFeature,
   // Seeing test case text formatted instead of as the Markdown typed (the
   // case editors' Preview toggle) - an eye, since it only shows what was
   // typed and changes none of it.

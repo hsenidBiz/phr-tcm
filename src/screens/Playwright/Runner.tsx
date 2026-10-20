@@ -78,10 +78,10 @@ export default function Runner({ clone, onBusy }: { clone: string; onBusy?: (bus
     queryKey: [TESTS_KEY, clone],
     queryFn: () => unwrapStr(commands.pwList(clone, false)),
     // A failed listing is a repo command that failed: running it again
-    // unasked would only take the run slot again. List again is the retry.
+    // unasked would only take the run slot again. The list's Refresh is the retry.
     retry: false,
-    // Kept until something says it changed: a run's end, List again,
-    // Refresh, an export or a Sync write.
+    // Kept until something says it changed: a run's end, the list's
+    // Refresh, the header's Refresh, an export or a Sync write.
     staleTime: Infinity,
   });
   const reports = useQuery({
@@ -449,9 +449,15 @@ export default function Runner({ clone, onBusy }: { clone: string; onBusy?: (bus
                 <IconClear aria-hidden />
                 Clear
               </Button>
-              <Button size="sm" variant="ghost" disabled={active || tests.isFetching} onClick={() => void refresh()}>
+              <Button
+                size="sm"
+                variant="ghost"
+                disabled={active || tests.isFetching}
+                title="List the tests in the clone again"
+                onClick={() => void refresh()}
+              >
                 <IconRefresh aria-hidden />
-                List again
+                Refresh
               </Button>
             </div>
           }

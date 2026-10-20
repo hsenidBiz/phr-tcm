@@ -4,6 +4,7 @@
 // the Tab order, and the arrow keys move along).
 
 import { useId, useRef, type KeyboardEvent, type ReactNode } from "react";
+import CountTo from "../../components/CountTo";
 import { Badge } from "../../components/ui/badge";
 import { cn } from "../../lib/cn";
 
@@ -60,11 +61,14 @@ export function Card({
   );
 }
 
-/** A count with its name under it. */
-export function Stat({ value, label }: { value: number; label: string }) {
+/** A count with its name under it. With `play`, the number counts up to its
+ * value each time `play` turns true, and again when the value changes. */
+export function Stat({ value, label, play }: { value: number; label: string; play?: boolean }) {
   return (
     <div className="rounded-lg border border-border bg-surface px-4 py-3">
-      <div className="text-2xl font-semibold tabular-nums text-text">{value}</div>
+      <div className="text-2xl font-semibold tabular-nums text-text">
+        {play === undefined ? value : <CountTo value={value} play={play} />}
+      </div>
       <div className="text-xs text-muted">{label}</div>
     </div>
   );
@@ -75,7 +79,7 @@ export function Hint({ children, className }: { children: ReactNode; className?:
   return <p className={cn("text-xs text-muted", className)}>{children}</p>;
 }
 
-export type TabSpec<T extends string> = { id: T; label: string; count?: number | null };
+export type TabSpec<T extends string> = { id: T; label: string };
 
 /** The tab list and the panels under it. A panel is mounted the first time
  * its tab is chosen, so a tab never opened reads nothing; from then on it
@@ -124,7 +128,7 @@ export function SubTabs<T extends string>({
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-4">
       <div role="tablist" aria-label={label} className="flex shrink-0 gap-1 border-b border-border">
-        {tabs.map(({ id, label: name, count }, i) => {
+        {tabs.map(({ id, label: name }, i) => {
           const on = shown === id;
           return (
             <button
@@ -147,15 +151,7 @@ export function SubTabs<T extends string>({
               onPointerEnter={() => onIntent?.(id)}
               onFocus={() => onIntent?.(id)}
             >
-              <span className="label-trim">
-                {name}
-                {count != null && (
-                  <>
-                    {" "}
-                    <span className="text-xs text-faint">{count}</span>
-                  </>
-                )}
-              </span>
+              <span className="label-trim">{name}</span>
             </button>
           );
         })}

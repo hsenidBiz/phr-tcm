@@ -76,8 +76,9 @@ type Props = {
   onTick: (ids: string[], on: boolean) => void;
 };
 
-/** The list under a branch: indented, hanging from a guide line. */
-const NESTED = "ml-[0.875rem] border-l border-border pl-2";
+/** The list under a branch: indented, hanging from a guide line. The
+ * Overview's folder tree hangs the same way. */
+export const NESTED = "ml-[0.875rem] border-l border-border pl-2";
 
 /** Memo: the Runner renders for every frame of output, the tree only when
  * its branches, ticks or `onTick` change. */
