@@ -83,7 +83,7 @@ fn script(case_id: i32, actions: Vec<Action>) -> CaseScript {
         title: "a case".into(),
         account: None,
         area: None,
-        steps: vec![StepScript { step_number: 2, actions, unchecked: None }],
+        steps: vec![StepScript { step_number: 2, actions, unchecked: None, cleanup: false }],
         repairs: 0,
         last_repair: None,
         suspected_defect: None,
@@ -360,7 +360,7 @@ fn pick_a_date() -> Component {
 fn seen_in(root: &std::path::Path, area: &str, locators: &[serde_json::Value]) {
     for l in locators {
         let t: Target = serde_json::from_value(l.clone()).unwrap();
-        record_matched(root, "o", "p", Some(area), "/leave", &t, 1).unwrap();
+        record_matched(root, "o", "p", Some(area), "/leave", &t, v2_lib::autorun::sessions::now_ms()).unwrap();
     }
 }
 

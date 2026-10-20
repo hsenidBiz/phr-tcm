@@ -56,7 +56,9 @@ pub fn on_shared_row(n: i32) -> String {
 /// has an opinion on). Rules 3-4 are driven by the SCRIPT: a step with
 /// `unchecked` set is judged wherever it sits, including step 0 and any
 /// step past the case's count, where "no case step there" is rule 4. Rule 5
-/// refuses a script step on a Shared Steps row.
+/// refuses a script step on a Shared Steps row. Rule 6: the clean-up step
+/// (`StepScript::cleanup`) comes right after the case's last step, where
+/// the case expects nothing, so rule 4 does not speak about it.
 pub fn check_floor(script: &CaseScript, expected: &[Expected]) -> Vec<String> {
     let mut out: Vec<(i32, String)> = Vec::new();
 
@@ -90,14 +92,27 @@ pub fn check_floor(script: &CaseScript, expected: &[Expected]) -> Vec<String> {
             continue;
         }
         let n = step.step_number;
-        let has_check = step.actions.iter().any(|a| a.is_check());
+        // A clean-up's `expect_dialog` answers its own Delete's confirm and
+        // checks nothing the case expects (`checks_in_cleanup`).
+        let has_check = match step.cleanup {
+            true => step.actions.iter().any(super::checks_in_cleanup),
+            false => step.actions.iter().any(|a| a.is_check()),
+        };
         if has_check {
             out.push((n, format!("step {n} says it is unchecked but has a check - drop one or the other")));
             continue;
         }
         let want_here = expected.iter().find(|e| e.step_number == n).is_some_and(|e| !e.expected.trim().is_empty());
-        if !want_here {
+        if !want_here && !step.cleanup {
             out.push((n, format!("step {n} says it is unchecked but the case expects nothing there")));
+        }
+    }
+
+    if let Some(step) = script.cleanup_step() {
+        let after = expected.len() as i32 + 1;
+        if step.step_number != after {
+            let n = step.step_number;
+            out.push((n, format!("step {n} is the clean-up, which comes right after the case's last step - number it {after}")));
         }
     }
 

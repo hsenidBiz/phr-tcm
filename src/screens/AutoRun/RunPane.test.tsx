@@ -1425,3 +1425,41 @@ async function reachTheResetNamed(s: ReturnType<typeof mockSession>, name: strin
   fireEvent.click(screen.getByRole("button", { name: /Save and next case/ }));
   return screen.findByRole("region", { name });
 }
+
+test("a clean-up step is run as the Clean-up and saved apart from the case's steps", async () => {
+  const steps = [
+    { step_number: 1, actions: [{ kind: "check_text", value: "ok" }] },
+    { step_number: 2, actions: [{ kind: "click", selector: "#delete" }], unchecked: "tidy", cleanup: true },
+  ];
+  const saved: { cases: { steps: { step_number: number }[]; cleanup?: { step_number: number; outcomes: unknown[] } }[] }[] = [];
+  mockIPC((cmd, args) => {
+    if (cmd === "auto_run_load_script") return { case_id: 1, title: "s", steps };
+    if (cmd === "auto_run_new_id") return "run-1";
+    if (cmd === "auto_run_step") {
+      const n = (args as { step: { step_number: number } }).step.step_number;
+      return { outcomes: [{ ok: true, detail: n === 2 ? "deleted" : "ok" }] };
+    }
+    if (cmd === "auto_run_save_run") {
+      saved.push((args as { run: (typeof saved)[number] }).run);
+      return null;
+    }
+    return null;
+  });
+  renderPane([{ id: 1, title: "Valid login" }]);
+
+  fireEvent.click(await screen.findByRole("button", { name: "Open browser" }));
+  expect(await screen.findByText("Clean-up")).toBeInTheDocument();
+  expect(screen.queryByText("Step 2")).not.toBeInTheDocument();
+  const tidy = screen.getByRole("button", { name: "Run clean-up" });
+  await waitFor(() => expect(tidy).toBeEnabled());
+  fireEvent.click(tidy);
+  expect(await screen.findByText("deleted")).toBeInTheDocument();
+
+  fireEvent.click(screen.getByRole("button", { name: "Passed" }));
+  fireEvent.click(screen.getByRole("button", { name: /Save result/ }));
+  await waitFor(() => expect(saved).toHaveLength(1));
+  const c = saved[0].cases[0];
+  expect(c.steps.map((s) => s.step_number)).toEqual([1]);
+  expect(c.cleanup?.step_number).toBe(2);
+  expect(c.cleanup?.outcomes).toEqual([{ ok: true, detail: "deleted" }]);
+});

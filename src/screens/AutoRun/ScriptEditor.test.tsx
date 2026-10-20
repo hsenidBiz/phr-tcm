@@ -747,3 +747,25 @@ test("an element named from its CSS carries the selector for a screen reader as 
   expect(hidden).toHaveClass("sr-only");
   expect(hidden.parentElement).toHaveAttribute("title", 'input[placeholder="Email"]');
 });
+
+test("a clean-up step is shown as the Clean-up, not as a step of the case", async () => {
+  const script = {
+    case_id: 7,
+    title: "t",
+    steps: [
+      { step_number: 1, actions: [{ kind: "check_text", value: "Saved" }] },
+      {
+        step_number: 2,
+        actions: [{ kind: "click", selector: "#delete" }],
+        unchecked: "removes the record step 1 made",
+        cleanup: true,
+      },
+    ],
+  };
+  mountWith(script, ACCOUNTS, [], [{ action: "Save the record", expected: "Saved" }]);
+  const view = await screen.findByRole("region", { name: "Action script" });
+  const tidy = await within(view).findByRole("region", { name: "Clean-up" });
+  expect(within(tidy).getByRole("heading")).toHaveTextContent(/^Clean-up$/);
+  expect(tidy).toHaveTextContent("Not checked: removes the record step 1 made");
+  expect(within(view).queryByRole("region", { name: "Step 2" })).not.toBeInTheDocument();
+});

@@ -747,7 +747,7 @@ impl FakePage {
                 self.probed.set(self.probed.get() + 1);
                 json!({ "result": { "value": self.probes[i] } })
             }
-            "Runtime.callFunctionOn" if f == VISIBLE_JS => json!({ "result": { "value": self.visible } }),
+            "Runtime.callFunctionOn" if f == VISIBLE_JS || f == v2_lib::browser::input::SHOWN_JS => json!({ "result": { "value": self.visible } }),
             // A legacy string resolves to its first match only.
             "Runtime.callFunctionOn" if f == v2_lib::browser::locator::LEGACY_JS => {
                 self.legacy_next.set(true);
@@ -898,12 +898,12 @@ pub fn stateful_app(cookie_is_good: bool, broken_selector: Option<&'static str>)
                 json!({ "frameId": "F", "loaderId": "L" })
             }
             "Network.getAllCookies" => json!({ "cookies": [
-                { "name": "sid", "value": "abc", "domain": "hr.example.internal", "path": "/", "session": true }
+                { "name": "sid", "value": "abc", "domain": "hr.example.internal", "path": "/", "httpOnly": true, "session": true }
             ] }),
             "Runtime.evaluate" if params["expression"] == "document" => json!({ "result": { "objectId": "doc" } }),
             "Runtime.evaluate" => json!({ "result": { "value": { "origin": "https://hr.example.internal", "entries": [] } } }),
             "Runtime.callFunctionOn" if f == PROBE_JS => json!({ "result": { "value": ready } }),
-            "Runtime.callFunctionOn" if f == VISIBLE_JS || f == HAS_FOCUS_JS => json!({ "result": { "value": true } }),
+            "Runtime.callFunctionOn" if f == VISIBLE_JS || f == v2_lib::browser::input::SHOWN_JS || f == HAS_FOCUS_JS => json!({ "result": { "value": true } }),
             "Runtime.callFunctionOn" if params["arguments"][0]["value"].is_string() && params["objectId"] == "doc" => {
                 last_selector = params["arguments"][0]["value"].as_str().unwrap().to_string();
                 json!({ "result": { "objectId": "arr" } })
@@ -1031,7 +1031,7 @@ pub fn stalling_menu_app(
                 last_probed = params["objectId"].as_str().unwrap_or("").to_string();
                 json!({ "result": { "value": ready_probe() } })
             }
-            "Runtime.callFunctionOn" if f == VISIBLE_JS || f == HIGHLIGHT_JS || f == HAS_FOCUS_JS => {
+            "Runtime.callFunctionOn" if f == VISIBLE_JS || f == v2_lib::browser::input::SHOWN_JS || f == HIGHLIGHT_JS || f == HAS_FOCUS_JS => {
                 json!({ "result": { "value": true } })
             }
             "Runtime.callFunctionOn" if f == CHECK_TEXT_JS => {
@@ -1202,13 +1202,15 @@ pub fn see_scripts(root: &std::path::Path, org: &str, project: &str, body: &str)
         .as_array()
         .map(|a| a.iter().filter_map(|s| serde_json::from_value(s.clone()).ok()).collect())
         .unwrap_or_default();
+    // Seen now: a save leaves out what was not seen for 30 days.
+    let now = v2_lib::autorun::sessions::now_ms();
     for script in &scripts {
         for action in script.steps.iter().flat_map(|s| s.actions.iter()).flat_map(Action::each) {
             if let Action::Navigate { url } = action {
-                record_seen(root, org, project, None, url, "", &[], None, None, 0).unwrap();
+                record_seen(root, org, project, None, url, "", &[], None, None, now).unwrap();
             }
             for target in action.targets() {
-                record_matched(root, org, project, None, "/", target, 0).unwrap();
+                record_matched(root, org, project, None, "/", target, now).unwrap();
             }
         }
     }

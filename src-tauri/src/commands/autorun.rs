@@ -1378,7 +1378,7 @@ pub fn reset_sentence(account: &str) -> String {
 /// asked to give way first, as release asks.
 pub async fn reset_for_assistant(organization: &str, project: &str) -> (u16, String) {
     if crate::autorun::replay_to::is_running() {
-        return (409, REPLAY_RUNNING_AT_RESET.to_string());
+        return (409, crate::ai_bridge::replay_running_refusal());
     }
     crate::ai_bridge::stop_batch();
     let Ok(mut slot) = tokio::time::timeout(RELEASE_WAIT, SESSION.lock()).await else {
@@ -1537,7 +1537,7 @@ fn with_changes_left(said: String, left: &[String]) -> String {
 /// reset's sign-in gone (`sign_in_forgotten_event`).
 pub async fn clear_cookies_for_assistant() -> (u16, String) {
     if crate::autorun::replay_to::is_running() {
-        return (409, REPLAY_RUNNING_AT_RESET.to_string());
+        return (409, crate::ai_bridge::replay_running_refusal());
     }
     let Ok(mut slot) = tokio::time::timeout(crate::ai_bridge::CAPTURE_LOCK_WAIT, SESSION.lock()).await else {
         return (409, crate::ai_bridge::OVERRIDES_BUSY.to_string());
@@ -1857,7 +1857,9 @@ pub async fn auto_run_replay_to_step(
     // The person's own replay, as their own step: it may lift an earlier
     // case's guard. The tabs its steps ran in go to the pane beside them.
     let (end, tabs, _, _, _, _, _) = replay_supervised(&app, &organization, &project, req, ReplayBy::Person).await?;
-    Ok(crate::autorun::replay_to::ReplayAnswer::with_tabs(end, tabs))
+    // The clean-up named as such: noted by this replay's steps.
+    let cleanup = crate::autorun::replay_to::cleanup_at();
+    Ok(crate::autorun::replay_to::ReplayAnswer::with_tabs(end, tabs, cleanup))
 }
 
 /// Who asked for a replay to a step, which decides two rules.
@@ -1940,7 +1942,12 @@ pub(crate) async fn replay_supervised(
     use crate::autorun::replay_to::{self, OneReplay, ReplayEnd, ReplayFrom};
     use tauri_specta::Event;
     const BEGINNING: ReplayFrom = ReplayFrom::Beginning;
-    let _one = match OneReplay::claim() {
+    // Whose it is: `stop_autorun_replay` stops the assistant's only.
+    let claimed = match by {
+        ReplayBy::Assistant => OneReplay::claim_for_assistant(),
+        ReplayBy::Person => OneReplay::claim(),
+    };
+    let _one = match claimed {
         Ok(one) => one,
         Err(why) => return Ok((ReplayEnd::Refused(why), Vec::new(), DiscoveryEnded::default(), None, BEGINNING, Default::default(), overrides_now())),
     };
@@ -2045,6 +2052,7 @@ pub(crate) async fn replay_supervised(
             step,
             notice: None,
             whole: saved.as_ref().and_then(|s| replay_to::whole_case(s, step)),
+            cleanup: saved.as_ref().and_then(|s| replay_to::cleanup_ran(s, step)),
         },
         (Ok(_), ReplayFrom::CarriedOn(k)) => {
             replay_to::carry_on(

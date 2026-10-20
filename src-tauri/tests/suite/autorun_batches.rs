@@ -289,6 +289,7 @@ fn script(case_id: i32, state: &[(&str, &str)]) -> CaseScript {
         step_number: 1,
         actions: vec![Action::Navigate { url: "https://app.example/".into() }],
         unchecked: None,
+        cleanup: false,
     }];
     sc.needs_state = state.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect::<BTreeMap<_, _>>();
     sc

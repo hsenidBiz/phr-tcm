@@ -391,8 +391,9 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
                 "within": {
                     "type": ["object", "string", "array"],
                     "items": { "type": "object" },
-                    "description": "A locator, written as a script writes one (a css string, a role-and-name object, or a chain): list only what is inside the one element it matches, such as a dialog or a form. A css string counts every visible match. Refused, naming the count, when it matches none or several.",
+                    "description": "A locator, written as a script writes one (a css string, a role-and-name object, or a chain): list only what is inside the one element it matches, such as a dialog or a form. A css string counts every visible match. Refused, naming the count and up to 3 of the matches, when it matches none or several.",
                 },
+                "nth": { "type": "number", "description": "Optional, with `within`: which of the elements it matches to list, counting from 0, as a locator's nth does." },
             }), &[]),
         },
         {
@@ -422,12 +423,17 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
         },
         {
             "name": "replay_autorun_to_step",
-            "description": "Replay a case's saved script in the supervised Auto Run browser, steps 1 to `step` - 1, and stop before `step` runs, so you can heal the failing step where it failed. Needs no browser open: when none is, the app opens one. A discovery of yours holding the browser is ended first, as end_autorun_discovery ends it (what it mapped is kept), and the answer says so; start a new one to explore again. The replay checks the case's preconditions, signs in as the case's account (unless the browser is already signed in as it) and goes to its area, as a run does. A script marked must not save replays at once too, its saves stopped throughout. Answers a sentence, and once the browser stands before `step`, the page as get_autorun_page shows it, so you can try that step at once with try_autorun_action. Replay to the failing step and never past it to see what happens. The browser stays open on that step afterwards, signed in, and the answer says what that blocks. Do not release it between replays: release_autorun_browser is for a broken browser (frozen, wrong account, session gone, \"the browser did not answer\"), and reset_autorun_browser gives a clean page with the sign-in kept. A replay in a browser already signed in as the case's account goes straight to the area (\"Signed in already: went to <area>.\"), and start_autorun_discovery takes the browser over (its other tabs closed) and goes home. Replaying the same case to a later step, in the browser your last replay of it left before an earlier step with nothing used in it since, carries on from there; the answer starts with Carried on from step K, or Started from the beginning. One replay at a time. A replay still going after about 45 seconds answers that it is still running, at which step and on which action of it (for how long), and how many of that step's actions already failed: call again with the same case and step to keep waiting on that same replay (never a new one); a different case or step is refused until it ends. A finished answer nobody collected is kept for 90 seconds, while the script and the browser are unchanged; after that the same call starts a new replay. While a replay runs, get_autorun_page, probes and tries answer at once that a replay is going.",
+            "description": "Replay a case's saved script in the supervised Auto Run browser, steps 1 to `step` - 1, and stop before `step` runs, so you can heal the failing step where it failed. Needs no browser open: when none is, the app opens one. A discovery of yours holding the browser is ended first, as end_autorun_discovery ends it (what it mapped is kept), and the answer says so; start a new one to explore again. The replay checks the case's preconditions, signs in as the case's account (unless the browser is already signed in as it) and goes to its area, as a run does. A script marked must not save replays at once too, its saves stopped throughout. Answers a sentence, and once the browser stands before `step`, or where the replay stopped at a failing step, the page as get_autorun_page shows it, so you can try that step at once with try_autorun_action. Replay to the failing step and never past it to see what happens. The browser stays open on that step afterwards, signed in, and the answer says what that blocks. Do not release it between replays: release_autorun_browser is for a broken browser (frozen, wrong account, session gone, \"the browser did not answer\"), and reset_autorun_browser gives a clean page with the sign-in kept. A replay in a browser already signed in as the case's account goes straight to the area (\"Signed in already: went to <area>.\"), and start_autorun_discovery takes the browser over (its other tabs closed) and goes home. Replaying the same case to a later step, in the browser your last replay of it left before an earlier step with nothing used in it since, carries on from there; the answer starts with Carried on from step K, or Started from the beginning. One replay at a time. A replay still going after about 45 seconds answers that it is still running, at which step and on which action of it (for how long), and whether an action of that step failed (action K failed - the replay ends at this step): call again with the same case and step to keep waiting on that same replay (never a new one); a different case or step is refused until it ends. A finished answer nobody collected is kept for 90 seconds, while the script and the browser are unchanged; after that the same call starts a new replay. While a replay runs, get_autorun_page, probes and tries answer at once that a replay is going.",
             "inputSchema": schema(serde_json::json!({
                 "case_id": { "type": "number", "description": "The case whose saved script is replayed." },
                 "step": { "type": "number", "description": "The step to stop before: the failing step. Steps 1 to step - 1 run." },
-                "page": { "type": "boolean", "description": "Optional: false leaves the page out of the answer; get_autorun_page reads it. True when left out." },
+                "page": { "type": "boolean", "description": "Optional: false leaves the page out of the answer; get_autorun_page reads it. Default true." },
             }), &["case_id", "step"]),
+        },
+        {
+            "name": "stop_autorun_replay",
+            "description": "Stop your replay that is still going (one replay_autorun_to_step answered still running for), when you no longer need it: say the script is wrong and every later action would only wait out its timeout. A failed action already ends a replay at once; this is for one you want ended before it gets there. It stops the replay before its next action - an action already waiting on the page finishes its wait first - and answers once it has stopped: that it was stopped on request, after which action of which step, with no page (get_autorun_page reads it). A replay that stopped at a failing step first answers that failure, with its page; one that had already reached its step before the stop was heard answers as a finished replay does (\"Replayed case ... to step ...\"), with its page. Not stopped within about 45 seconds, it answers that it was asked to stop: call it again to keep waiting. With no replay going it answers 404; the person's own replay is refused (only they can stop it). The browser stays open where the replay stopped.",
+            "inputSchema": schema(serde_json::json!({}), &[]),
         },
         {
             "name": "start_autorun_discovery",
@@ -439,6 +445,7 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
                 "mapping": { "type": "boolean", "description": "Optional: true starts a menu mapping run, which only walks the menus and saves each screen as an area. It is read-only: every save the page tries is blocked and counted, and the action's answer carries `blocked`. Needs `modules`. Used by /tcm:map-menus." },
                 "modules": { "type": "array", "items": { "type": "string" }, "description": "The modules to map, by name, for a mapping run. At least one is needed when `mapping` is true." },
                 "case_id": { "type": "number", "description": "Optional: the case this discovery explores for. When its saved script is marked no_save, every save the page tries is BLOCKED (not only reported) from then until the discovery ends, and each answer names the blocked request in `blocked_writes`." },
+                "page": { "type": "boolean", "description": "Optional: false leaves the landing page out of the answer (it is still read and recorded as seen; get_autorun_page reads it). Default true." },
                 "no_save": { "type": "boolean", "description": "Optional: true blocks every save the page tries from then until the discovery ends, as for a case marked no_save. Pass it, or the case_id, whenever the case you explore for must not save." },
             }), &["account"]),
         },
@@ -457,7 +464,7 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
                     "type": "object",
                     "description": "Optional, with a use_component action only: the component to try in place of the saved one of that name, exactly as you will send it to save_autorun_component: { name, description, inputs, actions }.",
                 },
-                "page": { "type": "boolean", "description": "Optional: false leaves the page out of the answer (it is still read and recorded as seen; get_autorun_page reads it). True when left out." },
+                "page": { "type": "boolean", "description": "Optional: false leaves the page out of the answer (it is still read and recorded as seen; get_autorun_page reads it). Default true." },
             }), &["action"]),
         },
         {
@@ -470,7 +477,7 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
                     "items": { "type": "object" },
                 },
                 "stop_on_failure": { "type": "boolean", "description": "Optional: false carries on past a failed action. True when left out." },
-                "page": { "type": "boolean", "description": "Optional: false leaves the page out of the answer (it is still read and recorded as seen; get_autorun_page reads it). True when left out." },
+                "page": { "type": "boolean", "description": "Optional: false leaves the page out of the answer (it is still read and recorded as seen; get_autorun_page reads it). Default true." },
                 "area": { "type": "string", "description": "Optional: the area this exploring belongs to, by name; what is seen from now on is filed under it." },
                 "case_id": { "type": "number", "description": "Optional: the case this call is for. When its saved script is marked no_save, every save the page tries is BLOCKED (not only reported) for this call only, and the answer names the blocked request in `blocked_writes`; so name it on every call for a case marked no_save. A discovery started guarded stays guarded until it ends." },
                 "no_save": { "type": "boolean", "description": "Optional: true blocks every save the page tries for this call only, as for a case marked no_save. Pass it, or the case_id, on every call for a case that must not save. A discovery started with no_save stays guarded until it ends." },
@@ -500,12 +507,12 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
         },
         {
             "name": "release_autorun_browser",
-            "description": "Let go of an Auto Run browser that is broken or that the app still holds after it closed. Only when the browser is broken (frozen, on the wrong account, its session gone), or the app refuses with 'close the supervised browser first' or answers \"the browser did not answer\" while no Auto Run browser is really open; never between replays, because replays, discovery and resets share one browser and its sign-in, and a browser that is signed in and answering is kept for the next one. For only a clean page use reset_autorun_browser, which keeps the sign-in. Never ask the person to restart the app. It frees a held browser that has gone, ends your own discovery as end_autorun_discovery does (what it mapped is kept), and closes a browser your own replay left open, which frees its account for discovery, component saves and template runs. It never closes the person's own browser while it is open and answering: then it answers that the person must close it or press Release Auto Run browser. It never stops a replay that is going.",
+            "description": "Let go of an Auto Run browser that is broken or that the app still holds after it closed. Only when the browser is broken (frozen, on the wrong account, its session gone), or the app refuses with 'close the supervised browser first' or answers \"the browser did not answer\" while no Auto Run browser is really open; never between replays, because replays, discovery and resets share one browser and its sign-in, and a browser that is signed in and answering is kept for the next one. For only a clean page use reset_autorun_browser, which keeps the sign-in. Never ask the person to restart the app. It frees a held browser that has gone, ends your own discovery as end_autorun_discovery does (what it mapped is kept), and closes a browser your own replay left open, which frees its account for discovery, component saves and template runs. It never closes the person's own browser while it is open and answering: then it answers that the person must close it or press Release Auto Run browser. It never stops a replay that is going: stop_autorun_replay does.",
             "inputSchema": schema(serde_json::json!({}), &[]),
         },
         {
             "name": "reset_autorun_browser",
-            "description": "Start clean in the Auto Run browser your replay or discovery left open, without signing out: it closes the other tabs, forgets any dialog a replay expected or saw, lifts your save guard, forgets where your last replay stopped, and loads the home page with the sign-in kept. Use it instead of release_autorun_browser when you only want a clean page; release is for a broken browser. It ends your discovery if one is going, as end_autorun_discovery does (what it mapped is kept). If the sign-in has gone it says so, and the next replay signs in again. Refused while a replay is running, and for the person's own browser.",
+            "description": "Start clean in the Auto Run browser your replay or discovery left open, without signing out: it closes the other tabs, forgets any dialog a replay expected or saw, lifts your save guard, forgets where your last replay stopped, and loads the home page with the sign-in kept. Use it instead of release_autorun_browser when you only want a clean page; release is for a broken browser. It ends your discovery if one is going, as end_autorun_discovery does (what it mapped is kept). If the sign-in has gone it says so, and the next replay signs in again. Refused while a replay is running (stop_autorun_replay stops one), and for the person's own browser.",
             "inputSchema": schema(serde_json::json!({}), &[]),
         },
         {
@@ -1372,6 +1379,13 @@ fn tools_call(params: &serde_json::Value, call: BridgeCall) -> serde_json::Value
                 serde_json::Value::String(s) => params.push(format!("within={}", percent_encode(s))),
                 other => params.push(format!("within={}", percent_encode(&other.to_string()))),
             }
+            // Forwarded as written, so the route names what is wrong with it.
+            match &args["nth"] {
+                serde_json::Value::Null => {}
+                serde_json::Value::Number(n) => params.push(format!("nth={n}")),
+                serde_json::Value::String(s) => params.push(format!("nth={}", percent_encode(s))),
+                other => params.push(format!("nth={}", percent_encode(&other.to_string()))),
+            }
             let target = if params.is_empty() { "/autorun-page".to_string() } else { format!("/autorun-page?{}", params.join("&")) };
             call("GET", &target, "")
         }
@@ -1381,6 +1395,7 @@ fn tools_call(params: &serde_json::Value, call: BridgeCall) -> serde_json::Value
         "probe_autorun_locator" => call("POST", "/autorun-probe", &args.to_string()),
         "try_autorun_action" => call("POST", "/autorun-try", &args.to_string()),
         "replay_autorun_to_step" => call("POST", "/autorun-replay", &args.to_string()),
+        "stop_autorun_replay" => call("POST", "/autorun-replay-stop", &args.to_string()),
         // Discovery: each route reads its own named fields out of the body,
         // so the arguments object travels whole.
         "start_autorun_discovery" => call("POST", "/autorun-discover-start", &args.to_string()),

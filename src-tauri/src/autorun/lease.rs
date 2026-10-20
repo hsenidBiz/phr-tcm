@@ -257,8 +257,8 @@ pub struct Held {
     holder: Holder,
     wait: Duration,
     lease: Option<Lease>,
-    /// The sign-in the app last made in this browser, as its cookies were
-    /// (`browser::session::CookiePrint`): how a replay tells that the
+    /// The sign-in the app last made in this browser, as its HttpOnly
+    /// cookies were (`browser::session::CookiePrint`): how a replay tells that the
     /// browser still holds that sign-in, and not one a step typed or the
     /// person made by hand. Memory only; gone with the lease, and whenever
     /// the browser's signed-in account is cleared (`forget_sign_in`).
@@ -295,8 +295,9 @@ impl Held {
         self.signed_in = None;
     }
 
-    /// The sign-in the app just made in this browser, as its cookies are
-    /// (`session::cookie_print`); `None` when it failed or left none.
+    /// The sign-in the app just made in this browser, as its HttpOnly
+    /// cookies are (`session::cookie_print`); `None` when it failed or left
+    /// none.
     pub fn note_sign_in(&mut self, print: Option<crate::browser::session::CookiePrint>) {
         self.signed_in = print;
     }
@@ -324,11 +325,18 @@ impl Held {
     }
 
     /// Does the browser still hold the app's last sign-in in it - its
-    /// cookies for `origins` there with the same values, the assistant's test
-    /// cookies left out (`session::same_cookies_except`)? None noted: no.
+    /// HttpOnly cookies for `origins` there with the same values, the
+    /// assistant's test cookies left out (`session::changed_cookies`)? None
+    /// noted: no. When they differ, the app log says which changed or went,
+    /// by name only - never a value.
     pub async fn same_sign_in<D: crate::browser::cdp::Driver>(&self, d: &mut D, origins: &[String]) -> bool {
-        match &self.signed_in {
-            Some(print) => crate::browser::session::same_cookies_except(d, origins, print, &self.ignored).await,
+        let Some(print) = &self.signed_in else { return false };
+        match crate::browser::session::changed_cookies(d, origins, print, &self.ignored).await {
+            Some(changed) if changed.is_empty() => true,
+            Some(changed) => {
+                crate::applog::info(format!("Auto Run: the sign-in's cookies changed: {}", changed.join(", ")));
+                false
+            }
             None => false,
         }
     }

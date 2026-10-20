@@ -484,3 +484,20 @@ fn a_repair_may_add_preconditions_but_never_drop_or_change_one() {
     another.preconditions.insert(0, serde_json::from_value(json!({ "flow": "pms-performance-cycle", "stage": "rules", "value": 274 })).unwrap());
     assert_eq!(check_edits(&old, &another, Some(&declared)), Ok(()), "kept, with one added in front");
 }
+
+/// #46: making a step the clean-up, or no longer the clean-up, changes it.
+#[test]
+fn turning_a_step_into_the_clean_up_is_a_change_to_that_step() {
+    let steps = |cleanup: bool| {
+        json!({
+            "case_id": 1, "title": "t",
+            "steps": [
+                { "step_number": 1, "actions": [{ "kind": "click", "selector": "#a" }] },
+                { "step_number": 2, "actions": [{ "kind": "click", "selector": "#tidy" }], "unchecked": "tidy", "cleanup": cleanup }
+            ]
+        })
+    };
+    let (old, new) = (script(steps(false)), script(steps(true)));
+    assert_eq!(check_edits(&old, &new, None), Err("case 1: step 2 was changed but not declared - name every step you change in \"edits\", or leave it as it was".to_string()));
+    assert_eq!(check_edits(&old, &new, Some(&edit(&[2], "it tidies up"))), Ok(()));
+}

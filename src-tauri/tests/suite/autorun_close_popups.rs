@@ -42,7 +42,7 @@ fn action(v: serde_json::Value) -> Action {
 }
 
 fn step(actions: Vec<Action>) -> StepScript {
-    StepScript { step_number: 1, actions, unchecked: None }
+    StepScript { step_number: 1, actions, unchecked: None, cleanup: false }
 }
 
 // ---------------------------------------------------------------- the recipe
@@ -161,7 +161,7 @@ fn banner_page(banner_up: bool, close_works: bool) -> (ScriptedDriver, Seen) {
                 json!({ "result": { "value": probe } })
             }
             "Runtime.callFunctionOn"
-                if f == v2_lib::browser::locator::VISIBLE_JS || f == v2_lib::browser::input::HAS_FOCUS_JS =>
+                if f == v2_lib::browser::locator::VISIBLE_JS || f == v2_lib::browser::input::SHOWN_JS || f == v2_lib::browser::input::HAS_FOCUS_JS =>
             {
                 json!({ "result": { "value": true } })
             }
@@ -288,6 +288,86 @@ async fn an_old_guard_on_the_close_control_stays_harmless() {
     assert!(out.iter().all(|o| o.ok), "{out:?}");
     assert_eq!(seen.clicks(), vec!["#btnCookieClose".to_string(), "#save".to_string()]);
     assert_eq!(out[1].detail, "clicked #save");
+}
+
+/// PeoplesHR's banner as tool errors #31, #34 and #71 met it: closing it
+/// leaves its x in the page, moved outside the visible part of it. The x
+/// is still drawn by the plain visibility rule, but a click's probe finds
+/// it off the page (`onscreen: false`), as `SHOWN_JS` does. Every other
+/// css locator is there, and covered while the banner is up.
+fn banner_that_moves_off_the_page() -> (ScriptedDriver, Seen) {
+    let banner = Arc::new(AtomicBool::new(true));
+    let clicks = Arc::new(Mutex::new(Vec::<String>::new()));
+    let looks = Arc::new(Mutex::new(Vec::<String>::new()));
+    let seen = Seen { clicks: clicks.clone(), looks: looks.clone(), banner: banner.clone() };
+    let mut last = String::new();
+    let d = ScriptedDriver::new(move |method, params| {
+        let f = params["functionDeclaration"].as_str().unwrap_or("");
+        let up = banner.load(Ordering::SeqCst);
+        let off = !up && last == "#btnCookieClose";
+        Ok(match method {
+            "Runtime.evaluate" if params["expression"] == "document" => json!({ "result": { "objectId": "doc" } }),
+            "Runtime.callFunctionOn" if f == v2_lib::browser::input::PROBE_JS => {
+                let mut probe = common::ready_probe();
+                if off {
+                    probe["onscreen"] = json!(false);
+                    probe["hit"] = json!(false);
+                } else if up && last != "#btnCookieClose" {
+                    probe["hit"] = json!(false);
+                    probe["covered_by"] = json!("div#cookieBanner.cookie-banner.show");
+                }
+                json!({ "result": { "value": probe } })
+            }
+            "Runtime.callFunctionOn" if f == v2_lib::browser::input::SHOWN_JS => json!({ "result": { "value": !off } }),
+            "Runtime.callFunctionOn"
+                if f == v2_lib::browser::locator::VISIBLE_JS || f == v2_lib::browser::input::HAS_FOCUS_JS =>
+            {
+                json!({ "result": { "value": true } })
+            }
+            "Runtime.callFunctionOn" if params["arguments"][0]["value"].is_string() && params["objectId"] == "doc" => {
+                last = params["arguments"][0]["value"].as_str().unwrap().to_string();
+                looks.lock().unwrap().push(last.clone());
+                json!({ "result": { "objectId": "arr" } })
+            }
+            "Runtime.getProperties" => {
+                let there = last != "#cookieBanner.show" || up;
+                json!({ "result": if there { vec![json!({ "name": "0", "value": { "objectId": "el" } })] } else { vec![] } })
+            }
+            "Runtime.callFunctionOn" => json!({ "result": { "value": "text" } }),
+            "Runtime.evaluate" => json!({ "result": { "value": { "origin": "https://hr.example.internal", "entries": [] } } }),
+            "Input.dispatchMouseEvent" if params["type"] == "mouseReleased" => {
+                clicks.lock().unwrap().push(last.clone());
+                if last == "#btnCookieClose" {
+                    banner.store(false, Ordering::SeqCst);
+                }
+                json!({})
+            }
+            _ => json!({}),
+        })
+    });
+    (d, seen)
+}
+
+/// Tool errors #31, #34, #71: the runner closes the banner before the
+/// step's first click, so a guard on its x later in the step meets a
+/// closed banner. The x left in the page outside the visible part of it is
+/// not shown: the guard is skipped and the step carries on, where its
+/// click used to wait 15 s and fail the step.
+#[tokio::test]
+async fn a_guard_on_a_banner_the_runner_already_closed_is_skipped() {
+    let dir = project_with_banner();
+    let (mut d, seen) = banner_that_moves_off_the_page();
+    let mut acc: Option<String> = None;
+    let save = action(json!({ "kind": "click", "selector": { "css": "#save" } }));
+    let guard = action(json!({ "kind": "when_visible", "selector": { "css": "#btnCookieClose" }, "within_ms": 200,
+                               "then": [ { "kind": "click", "selector": { "css": "#btnCookieClose" } } ] }));
+    let next = action(json!({ "kind": "click", "selector": { "css": "#next" } }));
+    let out = run_step(&mut d, dir.path(), "Acme", "Web", &step(vec![save, guard, next]), &quick(), &mut acc).await.unwrap();
+    assert!(out.iter().all(|o| o.ok), "{out:?}");
+    assert_eq!(out[0].detail, "clicked #save (closed the cookie banner first)");
+    assert_eq!(out[1].detail, format!("#btnCookieClose {}", v2_lib::browser::actions::NOT_SHOWN));
+    assert_eq!(out[2].detail, "clicked #next");
+    assert_eq!(seen.clicks(), vec!["#btnCookieClose".to_string(), "#save".to_string(), "#next".to_string()]);
 }
 
 #[tokio::test]

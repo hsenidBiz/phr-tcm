@@ -410,6 +410,8 @@ export const autoRun: Screen = {
       does:
         "What the app does at each step, in plain sentences under each of the case's steps: open a page, click, type, upload a test file, and check what the page shows. " +
         "A step whose expected result is not checked says why. A password is never shown: it reads **the account's password**. " +
+        "A **Clean-up** at the end removes what the case made, and its failure never fails the case. " +
+        "An unattended run plays it even after a step fails; in a watched run you press **Run clean-up**, and a replay runs it only when replayed past it. " +
         "Most scripts are written by an assistant from the case's steps. It finds each element on the live app and saves the script itself.",
       tips: [
         "An element the script finds only by its code shows that code in a smaller type. Point at it to see all of it.",

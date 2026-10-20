@@ -290,6 +290,21 @@ A step may carry `"unchecked": "<why>"` when its expected result
 genuinely cannot be checked (a PDF preview, an email). Use it rarely, say
 why in one sentence, and never to skip a check you could write.
 
+A script may end with one clean-up step that removes what the case made:
+`{ "step_number": <the case's last step + 1>, "cleanup": true, "unchecked": "<what it removes>", "actions": [ ... ] }`.
+It is no step of the case: it is the script's last, numbered right after
+the case's last step, and checks nothing - but for an `expect_dialog`
+answering the confirm its own Delete opens, the one check it may hold. In
+an unattended run it runs after the case's last step and also after a step
+that failed (the steps between still do not run), never when the run was
+stopped; in a watched run the person presses Run clean-up. A replay stops
+at a failed step without running it, and runs it only when replayed past
+it with every step before it passed: after healing by replay, do not
+assume what the case made was removed. Its failure, a failed
+`expect_dialog` included, is said on its own line, `clean-up: ...`, and
+never fails the case. Its locators must have been seen like any step's,
+and every other run rule (Must not save included) applies to it.
+
 Every `expect_` action looks again until it holds, for up to 10 seconds
 (add `"timeout_ms"` to change that), and a failure says what it actually
 saw. Prefer them to `check_text`, which looks once and cannot tell you
@@ -442,8 +457,12 @@ control (the banner's x, never Accept All); the step then says "closed the
 cookie banner first". This happens in runs, tries, discoveries and replays
 alike. So a script needs NO guard for a listed pop-up - do not add one. A
 "covered by div#cookieBanner" failure means the close did not work; the
-step says so too. An older script's guard on the banner is harmless and
-may stay:
+step says so too. An older script's guard on the banner may stay: once
+the runner has closed it, its x is not shown (even when it is still in
+the page, outside the visible part of it), so the guard is skipped. The
+runner closes a pop-up only before those actions: on a page whose next
+action is a check, the banner can still be open, and the page a tool reads
+(`get_autorun_page`, a replay's answer) can still list its x:
 
     { "kind": "when_visible", "selector": { "css": "#btnCookieClose" }, "within_ms": 4000, "then": [ { "kind": "click", "selector": { "css": "#btnCookieClose" } } ] }
 
@@ -454,7 +473,9 @@ For anything NOT on that list, guard the click with `when_visible`:
 - If the target becomes visible within `within_ms` (default 2000, at
   most 10000), the `then` actions run in order, and the step records what
   they did. Otherwise the step passes with "not shown, skipped" and the
-  run moves on.
+  run moves on. Shown means visible and inside the visible part of the
+  page, after the page is scrolled to it: one left in the page outside
+  that part is not shown.
 - `then` holds plain actions only: no `when_visible` inside it, no
   `sign_in`, and no checks (`expect_`, `check_`, `api_request`,
   `expect_response`). A guarded click is a tidy-up, not an assertion, so
@@ -475,8 +496,10 @@ For anything NOT on that list, guard the click with `when_visible`:
   test always expects belongs in the script as a plain action.
 - A save checks the `when_visible` selector, and any `then` action on
   that same locator, against what was seen in every area of the project,
-  not only the script's: a banner seen on the sign-in page counts. It
-  still needs one seen matching exactly one element.
+  not only the script's: a banner seen on the sign-in page counts. The
+  selector is a guard, so it counts seen matching any number of elements,
+  or none (a probe that matched nothing); a `then` click on that same
+  locator still needs one seen matching exactly one element.
 
 ## Resetting a list to a known state
 
@@ -1035,6 +1058,9 @@ Otherwise it is Blocked before step 1, and never signs in, with one of:
     precondition could not be checked: the check for Publish could not be run - see the activity folder in Settings, Logs
     preconditions need a database chosen on the AI Bridge tab
 
+A check that could not be run (the database did not answer, say over a
+VPN that dropped) is tried once more after 3 seconds before it blocks.
+
 A case Blocked by a precondition has nothing to repair: build the record,
 or tell the person it is missing.
 
@@ -1275,16 +1301,20 @@ browser (see "Discovering the app"):
   of the page with `within`: a locator, written as a script writes one,
   that matches exactly one element, such as a dialog or a form. Only that
   element and what is inside it is listed; a `within` that matches none
-  or several is refused with the count; a css string counts every
-  visible match. A replay's page, and the page `discover_autorun_action`
-  and `discover_autorun_actions` answer, stop at 120 lines too; send
-  `page: false` to those three to leave the page out of the answer.
+  or several is refused with the count, naming up to 3 of several; a css
+  string counts every visible match. `nth` beside `within` picks one of
+  several, counting from 0 as a locator's `nth` does. The page a replay,
+  `start_autorun_discovery`, `discover_autorun_action` and
+  `discover_autorun_actions` answer stops at 120 lines too; send
+  `page: false` to any of them to leave the page out of the answer.
 - Visible text that no line's name already says (a span, a div, a
   paragraph: "Self 20%", a status badge) prints as a `text "..."` line
-  with a text locator on its end. A read never counts a text line as
-  matching exactly one element: probe it before an action or a
-  one-element check uses it. Past the line limit, text lines are left out
-  before any control's line.
+  with a text locator on its end. A read counts a text line against every
+  line of the page whose words hold it, a control's name included: one no
+  other line holds counts as matching exactly one element, so a row of
+  text read from a table can go straight into an `expect_visible`. A
+  read that missed a frame does not count it: probe it then. Past the
+  line limit, text lines are left out before any control's line.
 - A line with no locator on its end names nothing a script can act on:
   the page itself, a list bullet, and the options of a native list
   (a customizable one included), which a script picks with `fill` on the
@@ -1294,7 +1324,8 @@ browser (see "Discovering the app"):
   page read gives it (`page read: button "Edit ..."`) when its own text
   is not that name.
 - `try_autorun_action` runs one action in that same browser and says what
-  happened - a rehearsal, not a run; nothing is recorded. Every try names
+  happened - a rehearsal, not a run: no run or step record is kept, but
+  what the try found on the page counts as seen. Every try names
   the case it is for, `case_id` beside the `action`, and is refused
   without it: a case marked `no_save` is tried with its saves stopped,
   as in a run.
@@ -1535,14 +1566,24 @@ What a save checks:
 - How many elements it was seen matching depends on how it is used. A
   check that can pass with several matches (`expect_hidden`,
   `expect_count`, `wait_for`) may use a locator seen matching several
-  elements. Every other use needs a locator seen matching exactly one: an
-  action (click, fill, upload, press_key, drag), the selector a
-  `when_visible` waits for, and the checks that read one element (`expect_visible`, `expect_text`,
+  elements, and so may the selector a `when_visible` waits for. Every
+  other use needs a locator seen matching exactly one: an action (click,
+  fill, upload, press_key, drag) and the checks that read one element (`expect_visible`, `expect_text`,
   `expect_contains_text`, `expect_attribute`, `expect_style`, `expect_enabled`,
   `expect_disabled`, `expect_checked`, `expect_focused`, and the table checks, whose table
   must be one). A locator never seen matching
-  anything is refused for every use, `expect_hidden` included: probe it
-  while what it names is on the page.
+  anything is refused for every use. A probe that matches nothing counts
+  as seen for a check that passes with nothing there: `expect_hidden`, an
+  `expect_count` of 0, and a `when_visible`'s own locator. Probe the
+  locator as written while what it names is not on the page; every other
+  use still needs it seen present, and a saved script that used it only
+  that way vouches for nothing else.
+- What was seen stays seen: a later discovery that reads the page without
+  it (a wizard's earlier step, a dropdown's item, a toast) keeps it. It
+  is let go only when the area's map is forgotten, or after 30 days not
+  seen. What a `wait_for` or an `expect_text` found counts as seen too,
+  tried, in a discovery, or inside a component a replay ran, even when it
+  is gone a moment later (a toast).
 - A `navigate` or `open_tab` address must be one discovery has visited.
 - Three kinds of locator pass without a sighting:
   1. Text the script typed itself: a locator whose text or name contains,
@@ -1563,7 +1604,7 @@ line, each with a hint when a close one was seen and what that use needs:
 `Step N: <the locator> was never seen on the live app; this click needs
 one seen matching exactly one element.` (at most 50, then how many more).
 A locator that was seen says instead why it does not count: seen only
-matching several elements, never counted as one (probe it as written,
+matching several elements (naming up to 3 it matched), never counted as one (probe it as written,
 with its `nth` when it has one), or used only in saved checks. A part
 of a seen name, where the full name is needed, is told to use the full
 name as seen. Find each on the page with
@@ -1892,9 +1933,14 @@ the answer says so; start a new one to explore again.
   try, a discovery action or another replay) has used it since; the
   answer starts with "Carried on from step K" or "Started from the
   beginning". Already standing before the step, nothing runs.
+- To prove a case's last step, replay to one past it, its last step number
+  + 1: the answer says "replayed the whole of case N (all M steps)", and
+  the browser stands on the page that last step left.
 - A replay still going after about 45 seconds answers "still running, now
   at step N of M". Call `replay_autorun_to_step` again with the same case
   and step to keep waiting on that same replay; it is never started twice.
+- A failed action ends a replay at once. To end one you no longer need,
+  call `stop_autorun_replay`: it stops before the next action and says where.
 
 Its `STOP:` lines are final, and mean the script must not be touched at
 all:
@@ -1984,6 +2030,8 @@ An edit's own `quirk` is one sentence about the APPLICATION, not about
 this particular script - something the next repair, yours or someone
 else's, would otherwise have to rediscover. It is recorded exactly like
 `record_autorun_quirk`, which also works on its own, outside a repair.
+That tool takes the line as `text` (not `note`), and a quirk, there or as an
+edit's `quirk`, is at most 300 characters.
 
 When this project has recorded quirks, this guide ends with a
 `## Known quirks of this application` section listing them, filed one at
@@ -1998,7 +2046,7 @@ on the same target failing the same way, or one element covering many
 targets - `get_autorun_failures` ends with a `## Patterns across cases`
 section. That is often the application behaving a certain way rather than
 several scripts being wrong. Put the same quirk on the edit of EVERY case
-you repair for it: each edit adds its case and steps to the one note, and
+you repair for it: each edit adds its case and steps to the one quirk, and
 that is what lets later runs say whether it helped. To file it without a
 repair, call `record_autorun_quirk` with `cases: [{ case_id, steps }]`
 naming the cases and steps that failed for it in their newest run; a step
@@ -2015,12 +2063,12 @@ A project keeps 60 active quirks. Past that, `record_autorun_quirk` (and
 an edit's `quirk`) is refused with up to three of the assistant's own
 notes to retire: ones that did not help more often than they helped
 first, then ones no run has confirmed, then ones never tied to a run,
-oldest first within each; and with the three oldest of its other notes. Retire one with
+oldest first within each; and with the three oldest of its other quirks. Retire one with
 `retire_autorun_quirk { id, reason, replacement? }` - `replacement`
-records a better note in the same call and keeps the old one's cases and
-steps. A retired note leaves this guide; recording the same line again
+records a better quirk in the same call and keeps the old one's cases and
+steps. A retired quirk leaves this guide; recording the same line again
 brings it back rather than adding a copy - unless a person wrote it or
-retired it, which is refused: ask them to restore it. A note a person
+retired it, which is refused: ask them to restore it. A quirk a person
 wrote cannot be retired by you - ask them to remove it. Nothing about a
 quirk ever changes a script or runs anything on its own.
 

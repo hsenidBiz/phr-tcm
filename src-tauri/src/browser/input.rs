@@ -39,51 +39,11 @@ pub struct Ready {
     pub y: f64,
 }
 
-/// `this` is the element. Arguments: `settle`, and `still` - measure the
-/// element where it stands, without scrolling it into view first (what
-/// `inspect` reads: a look that must not move the page).
-///
-/// Without `settle` it is one synchronous measurement (the re-check
-/// `click` makes the instant before it acts). With it, an element whose
-/// flags already say it is usable is measured, watched on every animation
-/// frame, and measured again, and `stable` says whether its `rect` held:
-/// whether it is still moving is decided inside ONE round trip, the way
-/// Playwright decides it, instead of across two looks a `poll_ms` apart.
-///
-/// The watch lasts at least two frames AND at least 50 ms, and ends at
-/// the first frame that sees it move. Two frames alone are not enough:
-/// a page that moves things from a timer moves them in steps, and the
-/// live fixture's `#mover` (a step every 40 ms) was seen standing still
-/// across two frames and clicked (`browser_live`, 2026-10-09). 50 ms
-/// catches anything that takes a step at least every 50 ms.
-///
-/// A page that paints no frames (a minimised or occluded window, which
-/// can also throttle timers) would never call `requestAnimationFrame`
-/// back, so a 100 ms timer ends the wait instead. `launch.rs` passes the
-/// switches that turn that throttling off for a browser this app starts;
-/// a browser the person attached some other way could still throttle,
-/// and then one look takes longer, not forever. The click point is the
-/// middle of the part of the rect actually inside the viewport - and inside
-/// every enclosing frame's visible box, so a button half hidden by a
-/// frame's edge is clicked in its visible half - and is only hit-tested
-/// when some of it is on screen at all.
-///
-/// It is aimed at the first box the element is really drawn in
-/// (`getClientRects`), not the middle of its bounding box: words that wrap
-/// have a box whose middle can sit past the end of a short later line,
-/// where only the element around them is (PeoplesHR's "Performance
-/// Management System", 2026-10-01). A block element has one box, the same
-/// as its bounding box, so for it nothing changes. `rect` stays the
-/// bounding box, which is what the holding-still comparison reads. The
-/// second measurement does not scroll: re-centring the element would hide
-/// the very movement it is looking for.
-///
-/// A form control sized to nothing, with a label a person can see, is
-/// measured, aimed at and hit-tested through that label, the way
-/// `locator::VISIBLE_JS` counts it as seen: the usual toggle switch, whose
-/// real `<input>` sits at 0 by 0 under a slider drawn in its label. A
-/// click there is what a person's click on the slider does.
-pub const PROBE_JS: &str = concat!(
+// `PROBE_JS`'s source, as one string literal, so `SHOWN_JS` can carry the
+// very same function rather than a second copy of its geometry.
+macro_rules! probe_js {
+    () => {
+        concat!(
     "async function(settle, still) {\n  const disabledWhy = ",
     disabled_why_js!(),
     ";\n",
@@ -238,6 +198,76 @@ pub const PROBE_JS: &str = concat!(
   const second = measure(false);
   second.stable = !moved && same(second.rect, first.rect);
   return second;
+}"#
+        )
+    };
+}
+
+/// `this` is the element. Arguments: `settle`, and `still` - measure the
+/// element where it stands, without scrolling it into view first (what
+/// `inspect` reads: a look that must not move the page).
+///
+/// Without `settle` it is one synchronous measurement (the re-check
+/// `click` makes the instant before it acts). With it, an element whose
+/// flags already say it is usable is measured, watched on every animation
+/// frame, and measured again, and `stable` says whether its `rect` held:
+/// whether it is still moving is decided inside ONE round trip, the way
+/// Playwright decides it, instead of across two looks a `poll_ms` apart.
+///
+/// The watch lasts at least two frames AND at least 50 ms, and ends at
+/// the first frame that sees it move. Two frames alone are not enough:
+/// a page that moves things from a timer moves them in steps, and the
+/// live fixture's `#mover` (a step every 40 ms) was seen standing still
+/// across two frames and clicked (`browser_live`, 2026-10-09). 50 ms
+/// catches anything that takes a step at least every 50 ms.
+///
+/// A page that paints no frames (a minimised or occluded window, which
+/// can also throttle timers) would never call `requestAnimationFrame`
+/// back, so a 100 ms timer ends the wait instead. `launch.rs` passes the
+/// switches that turn that throttling off for a browser this app starts;
+/// a browser the person attached some other way could still throttle,
+/// and then one look takes longer, not forever. The click point is the
+/// middle of the part of the rect actually inside the viewport - and inside
+/// every enclosing frame's visible box, so a button half hidden by a
+/// frame's edge is clicked in its visible half - and is only hit-tested
+/// when some of it is on screen at all.
+///
+/// It is aimed at the first box the element is really drawn in
+/// (`getClientRects`), not the middle of its bounding box: words that wrap
+/// have a box whose middle can sit past the end of a short later line,
+/// where only the element around them is (PeoplesHR's "Performance
+/// Management System", 2026-10-01). A block element has one box, the same
+/// as its bounding box, so for it nothing changes. `rect` stays the
+/// bounding box, which is what the holding-still comparison reads. The
+/// second measurement does not scroll: re-centring the element would hide
+/// the very movement it is looking for.
+///
+/// A form control sized to nothing, with a label a person can see, is
+/// measured, aimed at and hit-tested through that label, the way
+/// `locator::VISIBLE_JS` counts it as seen: the usual toggle switch, whose
+/// real `<input>` sits at 0 by 0 under a slider drawn in its label. A
+/// click there is what a person's click on the slider does.
+pub const PROBE_JS: &str = probe_js!();
+
+/// `this` is the element. Is it shown? This is what a script's
+/// `when_visible` guard asks of each match (`expect::Check::ShownToClick`),
+/// by the rule a click itself waits on: `PROBE_JS`'s `visible` and
+/// `onscreen`, never a second definition. The element is measured where it
+/// stands. One that is visible but outside the window is scrolled into view
+/// the way a click would scroll it, and measured again. Still outside after
+/// that (a closed cookie banner moved off the page) means not shown, since
+/// a click on it would wait out its whole time with `OFFSCREEN`. An element
+/// already in view is never moved. Whether something covers it is not
+/// asked.
+pub const SHOWN_JS: &str = concat!(
+    "async function() {
+  if (!(this instanceof Element)) return false;
+  const probe = ",
+    probe_js!(),
+    r#";
+  let p = await probe.call(this, false, true);
+  if (p.visible && !p.onscreen) p = await probe.call(this, false, false);
+  return !!(p.visible && p.onscreen);
 }"#
 );
 

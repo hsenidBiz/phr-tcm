@@ -673,3 +673,23 @@ fn a_style_check_is_said_in_words() {
     assert_eq!(say(serde_json::json!({ "kind": "expect_style", "selector": "#s", "property": "box-shadow", "contains": "2px" })), "expect #s's box-shadow to contain \"2px\"");
     assert_eq!(say(serde_json::json!({ "kind": "expect_style", "selector": "#s", "property": "display", "not_equals": "none" })), "expect #s's display not to be \"none\"");
 }
+
+/// #46: a case's clean-up is shown as its own block, named Clean-up, and a
+/// failed one is said under the case.
+#[test]
+fn a_clean_up_is_its_own_block_and_its_failure_its_own_line() {
+    let run: LocalRun = serde_json::from_value(serde_json::json!({
+        "id": "run-1786000200000", "pbi_id": 42, "started_at": "1786000200000", "mode": "unattended",
+        "cases": [{
+            "case_id": 301, "title": "Add a rating", "verdict": "", "note": "",
+            "proposed": "Passed", "reason": "every action of 1 steps passed, but its clean-up failed",
+            "steps": [{ "step_number": 1, "outcomes": [{ "ok": true, "detail": "clicked button \"Save\"" }] }],
+            "cleanup": { "step_number": 2, "outcomes": [{ "ok": false, "detail": "button \"Delete\" not found" }] }
+        }]
+    }))
+    .unwrap();
+    let html = build(&run, &[], "", &|_| false);
+    assert!(html.contains("<h4>Clean-up</h4>"), "{html}");
+    assert!(html.contains("<p><strong>Clean-up:</strong> button &quot;Delete&quot; not found</p>"), "{html}");
+    assert!(!html.contains("<h4>Step 2</h4>"), "{html}");
+}

@@ -17,7 +17,7 @@ use super::components::{self, ComponentUse};
 use super::{store, PageErrors, StepDialog, StepScript};
 use crate::browser::dialogs;
 use crate::browser::actions::{
-    execute_in, expectation, in_missing_tab, shows_up, upload_in, Action, ActionOutcome, Policy, CANNOT_RUN, NOT_SHOWN,
+    execute_in, expectation, in_missing_tab, shows_up_to_click, upload_in, Action, ActionOutcome, Policy, CANNOT_RUN, NOT_SHOWN,
     WHEN_VISIBLE_MS,
 };
 use super::refusals::{self, app_refused_line, refused_with_ids, RefusedRequest};
@@ -421,6 +421,11 @@ pub struct InRun<'a> {
     /// at its next look once it is set. `None` in a watched run or a try,
     /// where nothing waits that long unasked.
     pub cancel: Option<&'a AtomicBool>,
+    /// The Stop is heard before each action too, not only inside the
+    /// step's waits: a replay to a step, which the person's Stop and the
+    /// assistant's `stop_autorun_replay` end before the step's next action.
+    /// An unattended run hears its Stop between steps and in its waits.
+    pub stop_before_each_action: bool,
     /// Set by the step: the moment it began, as its `expect_download` takes
     /// it (after reading what the browser had already sent). The step's
     /// record dates its downloads from the same moment.
@@ -847,10 +852,14 @@ pub struct ActionNow {
     pub target: String,
     /// When it began.
     pub since: Option<Instant>,
-    /// How many of the step's actions have already failed (a wait that ran
-    /// out of time included). A failed action stops its step: the rest is
-    /// not run, and none is tried again.
+    /// 1 once an action of the step has failed (a wait that ran out of
+    /// time included), else 0: a failed action stops its step, so no later
+    /// action of it begins, the replay ends at that step, and nothing is
+    /// tried again. Never more than 1.
     pub failed: u32,
+    /// The action begun last was ended by the Stop while it ran (inside its
+    /// own wait), not after it finished.
+    pub stopped_inside: bool,
 }
 
 /// The longest target `ActionNow` keeps.
@@ -869,6 +878,7 @@ impl StepProgress {
             target: String::new(),
             since: None,
             failed: 0,
+            stopped_inside: false,
         }))
     }
 
@@ -898,6 +908,11 @@ impl StepProgress {
     }
 
     /// The action begun last ended, passing or not.
+    /// The action begun last was ended by the Stop while it ran.
+    pub fn stopped_inside(&self) {
+        self.held().stopped_inside = true;
+    }
+
     pub fn ended(&self, ok: bool) {
         if !ok {
             self.held().failed += 1;
@@ -1030,7 +1045,7 @@ pub async fn run_step_in_run<D: Driver>(
         all
     });
     let areas = merged.as_ref().or(run.areas);
-    let expanded_step = StepScript { step_number: step.step_number, actions, unchecked: step.unchecked.clone() };
+    let expanded_step = StepScript { step_number: step.step_number, actions, unchecked: step.unchecked.clone(), cleanup: step.cleanup };
     run.components = uses;
     let mut out =
         run_expanded(d, root, organization, project, &expanded_step, timing, account, lease, route, area, areas, run)
@@ -1121,6 +1136,8 @@ async fn run_expanded<D: Driver>(
         popups,
         loaders,
         cancel: run.cancel,
+        stop_each: run.stop_before_each_action,
+        stopped_between: AtomicBool::new(false),
     };
     let mut out = Vec::with_capacity(step.actions.len());
     let mut blocked: Option<&'static str> = None;
@@ -1141,6 +1158,13 @@ async fn run_expanded<D: Driver>(
     for (index, action) in step.actions.iter().enumerate() {
         if let Some(why) = blocked {
             out.push(ActionOutcome::failed(why));
+            continue;
+        }
+        // A Stop asked while the action before ran: this one and the rest
+        // of the step are not carried out.
+        if run.stop_before_each_action && run.cancel.is_some_and(|c| c.load(Ordering::SeqCst)) {
+            out.push(ActionOutcome::failed(AFTER_STOP));
+            blocked = Some(AFTER_STOP);
             continue;
         }
         // A save stopped before this action began - while the page loaded,
@@ -1460,8 +1484,18 @@ async fn run_expanded<D: Driver>(
                 d.net_unmark(old.mark);
             }
         }
+        // A guard that heard the Stop between its own actions was cut
+        // there, not inside a wait.
+        let between = here.stopped_between.swap(false, Ordering::SeqCst);
         if let Some(p) = run.progress {
-            p.ended(outcome.ok);
+            // A Stop heard inside the action is no failure of it.
+            if outcome.detail == AFTER_STOP {
+                if !between {
+                    p.stopped_inside();
+                }
+            } else {
+                p.ended(outcome.ok);
+            }
         }
         // A Stop is no failure to picture.
         if !outcome.ok && !outcome.harness && outcome.detail != AFTER_STOP {
@@ -1602,6 +1636,26 @@ struct Here<'a> {
     loaders: &'a [super::recipe::LoadingIndicator],
     /// The run's Stop, heard while a loading indicator is waited out.
     cancel: Option<&'a AtomicBool>,
+    /// `InRun::stop_before_each_action`: the Stop is heard before each
+    /// action a guard runs too (`stop_heard`).
+    stop_each: bool,
+    /// Set when a guard heard the Stop between its own actions or passes
+    /// (`stop_heard`): its outcome is the Stop, but nothing was cut inside
+    /// a wait, so the replay says it stopped after that action.
+    stopped_between: AtomicBool,
+}
+
+impl Here<'_> {
+    /// A replay's Stop, asked for: heard between a `when_visible`'s `then`
+    /// actions and between a `repeat_while_visible`'s passes, as between a
+    /// step's own actions.
+    fn stop_heard(&self) -> bool {
+        let heard = self.stop_each && self.cancel.is_some_and(|c| c.load(Ordering::SeqCst));
+        if heard {
+            self.stopped_between.store(true, Ordering::SeqCst);
+        }
+        heard
+    }
 }
 
 /// Said by the actions after one the application refused the session for.
@@ -1727,13 +1781,16 @@ async fn when_visible<D: Driver>(
         return (ActionOutcome::failed(format!("{CANNOT_RUN}this is not a when_visible")), None);
     };
     let target = selector.describe();
-    match shows_up(d, selector, within_ms.unwrap_or(WHEN_VISIBLE_MS), timing).await {
+    match shows_up_to_click(d, selector, within_ms.unwrap_or(WHEN_VISIBLE_MS), timing).await {
         Err(silent) => return (silent, None),
         Ok(false) => return (ActionOutcome::passed(format!("{target} {NOT_SHOWN}")), None),
         Ok(true) => {}
     }
     let mut said: Vec<String> = Vec::with_capacity(then.len());
     for guarded in then {
+        if here.stop_heard() {
+            return (ActionOutcome::failed(AFTER_STOP), Some(AFTER_STOP));
+        }
         // A bounce the guard caught (the page went home) is recovered by
         // walking back to the area, as the step's own `return_to_area`
         // would; not reaching it stops the step the same way.
@@ -1778,6 +1835,9 @@ async fn repeat_while_visible<D: Driver>(
     let scoped = then.iter().any(|a| a.targets().into_iter().any(repeat::is_row_scoped));
     let mut passes: u32 = 0;
     loop {
+        if passes > 0 && here.stop_heard() {
+            return (ActionOutcome::failed(AFTER_STOP), Some(AFTER_STOP));
+        }
         let found = match repeat::look(d, selector, except).await {
             Ok(found) => found,
             Err(e) if e.is_transient() => Vec::new(),
@@ -1818,6 +1878,10 @@ async fn repeat_while_visible<D: Driver>(
         passes += 1;
         let mut said: Vec<String> = Vec::with_capacity(then.len());
         for step in then {
+            if here.stop_heard() {
+                repeat::unmark(d).await;
+                return (ActionOutcome::failed(AFTER_STOP), Some(AFTER_STOP));
+            }
             let (out, stop) = match step {
                 Action::ReturnToArea { .. } => return_to_area(d, step, area, areas, here.step, timing).await,
                 _ => plain(d, here, step, timing).await,

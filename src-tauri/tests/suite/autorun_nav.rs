@@ -459,7 +459,7 @@ fn sidebar_app(at: &str, open: bool, covered: bool) -> (common::ScriptedDriver, 
                 p["covered_by"] = json!(if hit { "" } else { "div.modal" });
                 json!({ "result": { "value": p } })
             }
-            "Runtime.callFunctionOn" if f == VISIBLE_JS => json!({ "result": { "value": shows(&object) } }),
+            "Runtime.callFunctionOn" if f == VISIBLE_JS || f == v2_lib::browser::input::SHOWN_JS => json!({ "result": { "value": shows(&object) } }),
             "Runtime.callFunctionOn" if f == HIGHLIGHT_JS || f == HAS_FOCUS_JS => json!({ "result": { "value": true } }),
             "Runtime.callFunctionOn" => {
                 if let Some(sel) = params["arguments"][0]["value"].as_str() {

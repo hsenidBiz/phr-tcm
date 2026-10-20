@@ -365,6 +365,7 @@ fn script(case_id: i32, changes: &[&str], needs: &[&str]) -> CaseScript {
             step_number: 1,
             actions: vec![Action::Navigate { url: "https://app.example/".into() }],
             unchecked: None,
+            cleanup: false,
         }],
         repairs: 0,
         last_repair: None,

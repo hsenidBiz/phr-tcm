@@ -4048,6 +4048,37 @@ fn page_false_leaves_the_page_out() {
     assert_eq!(without_page(refused.clone(), r#"{"page":false}"#), refused);
 }
 
+/// Every route whose answer carries the page honours `page: false`: the
+/// JSON answers through `without_page`, the batch's text answer by being
+/// asked for it (`discover_actions_paged`). A discovery start's answer is
+/// one of them.
+#[test]
+fn every_route_that_answers_the_page_can_leave_it_out() {
+    let bridge = include_str!("../../src/ai_bridge.rs").replace("\r\n", "\n");
+    let arm = |path: &str| -> String {
+        let start = bridge.find(&format!("(\"POST\", \"{path}\") =>")).unwrap_or_else(|| panic!("{path} is routed"));
+        let rest = &bridge[start + 1..];
+        let end = rest.find("(\"POST\", \"").or_else(|| rest.find("(\"GET\", \"")).unwrap();
+        rest[..end].to_string()
+    };
+    for path in ["/autorun-discover-start", "/autorun-discover-action", "/autorun-replay"] {
+        assert!(arm(path).contains("without_page("), "{path} does not leave the page out:\n{}", arm(path));
+    }
+    let start = bridge.find("async fn autorun_discover_actions(").unwrap();
+    let batch = &bridge[start..start + bridge[start..].find("\n}\n").unwrap()];
+    assert!(batch.contains("discover_actions_paged(") && batch.contains("page_wanted(body)"), "{batch}");
+}
+
+/// `page_wanted`: only `"page": false` leaves the page out.
+#[test]
+fn only_page_false_leaves_the_page_out() {
+    use v2_lib::ai_bridge::page_wanted;
+    assert!(!page_wanted(r#"{"page":false}"#));
+    for body in [r#"{"page":true}"#, r#"{}"#, "not json", r#"{"page":null}"#] {
+        assert!(page_wanted(body), "{body}");
+    }
+}
+
 /// Every answer of a discovery that must not save says so; any other is
 /// unchanged.
 #[test]

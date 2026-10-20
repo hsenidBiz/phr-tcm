@@ -157,7 +157,7 @@ async fn a_session_is_not_saved_before_it_is_complete() {
 }
 
 fn step(actions: Vec<Action>) -> StepScript {
-    StepScript { step_number: 1, actions, unchecked: None }
+    StepScript { step_number: 1, actions, unchecked: None, cleanup: false }
 }
 
 fn project(root: &std::path::Path) {

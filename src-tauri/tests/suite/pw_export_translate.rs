@@ -750,3 +750,39 @@ fn a_style_pattern_tolerates_runs_of_spaces() {
     );
     assert!(got.contains(r#"toHaveCSS('box-shadow', new RegExp('0px\\s+1px', 'i'), { timeout: 10000 });"#), "{got}");
 }
+
+/// #46: a clean-up step runs whether the case's steps passed or failed, so
+/// the spec plays it in a `finally` around them, and says what it is.
+#[test]
+fn a_clean_up_step_is_a_finally_around_the_case_steps() {
+    let mut fx = Fx::new(script(json!([
+        { "step_number": 1, "actions": [{ "kind": "click", "selector": "#save" }] },
+        { "step_number": 2, "actions": [{ "kind": "click", "selector": "#delete" }],
+          "cleanup": true, "unchecked": "removes what step 1 made" }
+    ])));
+    fx.texts.insert(1, "Save the record".into());
+    let got = fx.run().unwrap();
+    let want = "    try {\n      // 1. Save the record\n      await cur.locator('#save').first().click();\n    } finally {\n      // Clean-up: removes what step 1 made\n      try {\n        await cur.locator('#delete').first().click();\n      } catch (e) {\n        test.info().annotations.push({ type: 'cleanup-failed', description: String(e) });\n      }\n    }\n";
+    assert!(lf(&got).contains(want), "{got}");
+    assert!(!got.contains("// 2."), "the clean-up is no step of the case: {got}");
+}
+
+#[test]
+fn a_script_with_no_clean_up_has_no_try() {
+    let got = one_step(json!([{ "kind": "click", "selector": "#save" }])).run().unwrap();
+    assert!(!got.contains("try {") && !got.contains("finally"), "{got}");
+}
+
+/// #46 review: an error in the clean-up never replaces the steps' own, and
+/// never fails a spec whose steps passed: it is caught and noted.
+#[test]
+fn a_clean_up_error_is_caught_and_noted_never_thrown() {
+    let fx = Fx::new(script(json!([
+        { "step_number": 1, "actions": [{ "kind": "click", "selector": "#save" }] },
+        { "step_number": 2, "actions": [{ "kind": "click", "selector": "#delete" }],
+          "cleanup": true, "unchecked": "removes what step 1 made" }
+    ])));
+    let got = lf(&fx.run().unwrap());
+    let want = "    } finally {\n      // Clean-up: removes what step 1 made\n      try {\n        await cur.locator('#delete').first().click();\n      } catch (e) {\n        test.info().annotations.push({ type: 'cleanup-failed', description: String(e) });\n      }\n    }\n";
+    assert!(got.contains(want), "{got}");
+}

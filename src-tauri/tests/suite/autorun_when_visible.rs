@@ -121,7 +121,7 @@ fn a_navigate_inside_a_guard_is_still_an_address() {
 }
 
 fn step(actions: Vec<Action>) -> StepScript {
-    StepScript { step_number: 1, actions, unchecked: None }
+    StepScript { step_number: 1, actions, unchecked: None, cleanup: false }
 }
 
 #[tokio::test]
@@ -172,6 +172,82 @@ async fn a_then_action_that_fails_fails_the_step() {
     assert_eq!(state.clicks.load(Ordering::SeqCst), 0, "the guard stops at its first failure");
 }
 
+/// A browser that sets `cancel` once `after` clicks have landed.
+struct StopsAfterClicks {
+    inner: ScriptedDriver,
+    clicks: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    after: usize,
+    cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
+}
+
+impl v2_lib::browser::cdp::Driver for StopsAfterClicks {
+    async fn call(&mut self, method: &str, params: serde_json::Value) -> Result<serde_json::Value, v2_lib::browser::cdp::CdpError> {
+        let answer = self.inner.call(method, params).await;
+        if self.clicks.load(Ordering::SeqCst) >= self.after {
+            self.cancel.store(true, Ordering::SeqCst);
+        }
+        answer
+    }
+    async fn wait_event(
+        &mut self,
+        method: &str,
+        limit: std::time::Duration,
+    ) -> Result<v2_lib::browser::cdp::Event, v2_lib::browser::cdp::CdpError> {
+        self.inner.wait_event(method, limit).await
+    }
+    fn forget_events(&mut self) {
+        self.inner.forget_events();
+    }
+    fn take_dialogs(&mut self) -> Vec<String> {
+        self.inner.take_dialogs()
+    }
+    fn set_deadline(&mut self, deadline: Option<std::time::Instant>) {
+        self.inner.set_deadline(deadline);
+    }
+}
+
+/// A replay's stop asked while a guard's `then` runs is heard before the
+/// guard's next action, as between a step's own actions: the guard ends
+/// as stopped - cut between two clicks, not inside a wait, so the replay
+/// says it stopped after that action (`stopped_inside` stays false). An
+/// unattended run (no stop before each action) runs the guard to its end,
+/// as it always has.
+#[tokio::test]
+async fn a_replays_stop_is_heard_between_a_guards_then_actions() {
+    use v2_lib::autorun::runner::{run_step_in_run, AreaRoute, InRun, StepProgress, AFTER_STOP, NEEDS_SCRIPT_AREA};
+    use v2_lib::autorun::lease::Held;
+    let guard = || {
+        action(json!({ "kind": "when_visible", "selector": { "css": "#banner" }, "within_ms": 200,
+                       "then": [ { "kind": "click", "selector": { "css": "#banner" } },
+                                 { "kind": "click", "selector": { "css": "#banner" } } ] }))
+    };
+    for (replay, clicks) in [(true, 1), (false, 2)] {
+        let dir = tempfile::tempdir().unwrap();
+        let (inner, state) = stateful_app(false, None);
+        let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let mut d = StopsAfterClicks { inner, clicks: state.clicks.clone(), after: 1, cancel: cancel.clone() };
+        let (mut acc, mut held) = (None, Held::supervised());
+        let progress = StepProgress::new();
+        let mut run = InRun { cancel: Some(&cancel), stop_before_each_action: replay, progress: Some(&progress), ..Default::default() };
+        let out = run_step_in_run(&mut d, dir.path(), "Acme", "Web", &step(vec![guard()]), &quick(), &mut acc, &mut held, None, AreaRoute::Unknown(NEEDS_SCRIPT_AREA), &mut run)
+            .await
+            .unwrap();
+        assert_eq!(state.clicks.load(Ordering::SeqCst), clicks, "replay: {replay}");
+        if replay {
+            assert_eq!(out[0].detail, AFTER_STOP, "{:?}", out[0]);
+            let now = progress.now();
+            assert!(!now.stopped_inside, "a stop between the guard's clicks was said as inside its wait");
+            assert_eq!(now.failed, 0, "a stop is no failure");
+            assert_eq!(
+                v2_lib::autorun::replay_to::stopped_on_request(77, 1, now.index, now.stopped_inside, None),
+                "the replay of case 77 was stopped on request after action 1 of step 1"
+            );
+        } else {
+            assert!(out[0].ok, "{:?}", out[0]);
+        }
+    }
+}
+
 #[tokio::test]
 async fn with_addresses_switched_off_a_guarded_navigate_never_reaches_the_browser() {
     let dir = tempfile::tempdir().unwrap();
@@ -203,7 +279,7 @@ fn late_banner_app() -> (ScriptedDriver, std::sync::Arc<std::sync::Mutex<Vec<Str
             "Runtime.evaluate" if params["expression"] == "document" => json!({ "result": { "objectId": "doc" } }),
             "Runtime.callFunctionOn" if f == v2_lib::browser::input::PROBE_JS => json!({ "result": { "value": common::ready_probe() } }),
             "Runtime.callFunctionOn"
-                if f == v2_lib::browser::locator::VISIBLE_JS || f == v2_lib::browser::input::HAS_FOCUS_JS =>
+                if f == v2_lib::browser::locator::VISIBLE_JS || f == v2_lib::browser::input::SHOWN_JS || f == v2_lib::browser::input::HAS_FOCUS_JS =>
             {
                 json!({ "result": { "value": true } })
             }
@@ -247,7 +323,7 @@ async fn a_banner_that_shows_up_after_within_ms_is_skipped_and_the_next_step_run
     // by then - the check after the click sees it.
     let save = action(json!({ "kind": "click", "selector": { "css": "#save" } }));
     let banner_up = action(json!({ "kind": "expect_visible", "selector": { "css": "#late" } }));
-    let next = StepScript { step_number: 2, actions: vec![save, banner_up], unchecked: None };
+    let next = StepScript { step_number: 2, actions: vec![save, banner_up], unchecked: None, cleanup: false };
     let second = run_step(&mut d, dir.path(), "Acme", "Web", &next, &quick(), &mut acc).await.unwrap();
     assert!(second[0].ok, "the next step runs as usual: {:?}", second[0]);
     assert!(second[1].ok, "the banner did show up late: {:?}", second[1]);
@@ -267,7 +343,7 @@ fn two_buttons_app() -> (ScriptedDriver, std::sync::Arc<std::sync::Mutex<Vec<Str
             "Runtime.evaluate" if params["expression"] == "document" => json!({ "result": { "objectId": "doc" } }),
             "Runtime.callFunctionOn" if f == v2_lib::browser::input::PROBE_JS => json!({ "result": { "value": common::ready_probe() } }),
             "Runtime.callFunctionOn"
-                if f == v2_lib::browser::locator::VISIBLE_JS || f == v2_lib::browser::input::HAS_FOCUS_JS =>
+                if f == v2_lib::browser::locator::VISIBLE_JS || f == v2_lib::browser::input::SHOWN_JS || f == v2_lib::browser::input::HAS_FOCUS_JS =>
             {
                 json!({ "result": { "value": true } })
             }
@@ -368,4 +444,115 @@ async fn the_executor_hands_when_visible_to_the_runner() {
     let out = execute_with(&mut d, &action(cookie_banner()), &quick()).await;
     assert!(!out.ok);
     assert_eq!(out.detail, "when_visible is carried out by the runner");
+}
+
+/// A page where `#gone` is in the page and drawn, but outside the window
+/// even once scrolled to (a closed cookie banner moved off the page): the
+/// click's own probe says `onscreen: false`, as `SHOWN_JS` does, though the
+/// plain visibility rule still says it is drawn. `#here` is in view. Every
+/// other css locator is there and clickable. Each click is logged by the
+/// locator it was aimed at.
+fn off_the_page_app() -> (ScriptedDriver, std::sync::Arc<std::sync::Mutex<Vec<String>>>) {
+    let clicked = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+    let log = clicked.clone();
+    let mut last_selector = String::new();
+    let d = ScriptedDriver::new(move |method, params| {
+        let f = params["functionDeclaration"].as_str().unwrap_or("");
+        let off = last_selector == "#gone";
+        Ok(match method {
+            "Runtime.evaluate" if params["expression"] == "document" => json!({ "result": { "objectId": "doc" } }),
+            "Runtime.callFunctionOn" if f == v2_lib::browser::input::PROBE_JS => {
+                let mut probe = common::ready_probe();
+                if off {
+                    probe["onscreen"] = json!(false);
+                    probe["hit"] = json!(false);
+                }
+                json!({ "result": { "value": probe } })
+            }
+            "Runtime.callFunctionOn" if f == v2_lib::browser::input::SHOWN_JS => json!({ "result": { "value": !off } }),
+            "Runtime.callFunctionOn"
+                if f == v2_lib::browser::locator::VISIBLE_JS || f == v2_lib::browser::input::HAS_FOCUS_JS =>
+            {
+                json!({ "result": { "value": true } })
+            }
+            "Runtime.callFunctionOn" if params["arguments"][0]["value"].is_string() && params["objectId"] == "doc" => {
+                last_selector = params["arguments"][0]["value"].as_str().unwrap().to_string();
+                json!({ "result": { "objectId": "arr" } })
+            }
+            "Runtime.getProperties" => json!({ "result": [ { "name": "0", "value": { "objectId": "el" } } ] }),
+            "Runtime.callFunctionOn" => json!({ "result": { "value": "text" } }),
+            "Runtime.evaluate" => json!({ "result": { "value": { "origin": "https://hr.example.internal", "entries": [] } } }),
+            "Input.dispatchMouseEvent" if params["type"] == "mouseReleased" => {
+                log.lock().unwrap().push(last_selector.clone());
+                json!({})
+            }
+            _ => json!({}),
+        })
+    });
+    (d, clicked)
+}
+
+/// Tool errors #71: a guard on a close button left in the page, outside
+/// the visible part of it, said "showed" and its click then waited 15 s
+/// for the button and failed the step. Shown is what a click needs, so
+/// the guard is skipped and the step carries on.
+#[tokio::test]
+async fn an_element_outside_the_visible_page_is_not_shown_and_the_step_carries_on() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut d, clicked) = off_the_page_app();
+    let mut acc: Option<String> = None;
+    let guard = action(json!({ "kind": "when_visible", "selector": { "css": "#gone" }, "within_ms": 40,
+                               "then": [ { "kind": "click", "selector": { "css": "#gone" } } ] }));
+    let after = action(json!({ "kind": "click", "selector": { "css": "#save" } }));
+    let started = std::time::Instant::now();
+    let out = run_step(&mut d, dir.path(), "Acme", "Web", &step(vec![guard, after]), &quick(), &mut acc).await.unwrap();
+    assert_eq!(out.len(), 2);
+    assert!(out[0].ok, "{:?}", out[0]);
+    assert_eq!(out[0].detail, format!("#gone {NOT_SHOWN}"));
+    assert!(out[1].ok, "the step carries on: {:?}", out[1]);
+    assert_eq!(*clicked.lock().unwrap(), vec!["#save".to_string()], "the guarded click never ran");
+    assert!(started.elapsed() < std::time::Duration::from_secs(3), "waited {:?}", started.elapsed());
+}
+
+/// The same page: an element in view is shown, and its `then` runs.
+#[tokio::test]
+async fn an_element_in_view_is_shown_and_its_then_runs() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut d, clicked) = off_the_page_app();
+    let mut acc: Option<String> = None;
+    let guard = action(json!({ "kind": "when_visible", "selector": { "css": "#here" }, "within_ms": 40,
+                               "then": [ { "kind": "click", "selector": { "css": "#here" } } ] }));
+    let out = run_step(&mut d, dir.path(), "Acme", "Web", &step(vec![guard]), &quick(), &mut acc).await.unwrap();
+    assert!(out[0].ok, "{:?}", out[0]);
+    assert!(out[0].detail.starts_with("#here showed: clicked"), "{}", out[0].detail);
+    assert_eq!(*clicked.lock().unwrap(), vec!["#here".to_string()]);
+}
+
+/// "Shown" is the click's own rule, carried whole: `SHOWN_JS` holds the
+/// probe a click waits on, and answers by its `visible` and `onscreen`.
+#[test]
+fn shown_is_the_clicks_own_visible_and_onscreen() {
+    use v2_lib::browser::input::{PROBE_JS, SHOWN_JS};
+    assert!(SHOWN_JS.contains(PROBE_JS), "SHOWN_JS must carry PROBE_JS itself, not a copy of its geometry");
+    assert!(SHOWN_JS.contains("p.visible && p.onscreen"), "{SHOWN_JS}");
+}
+
+/// Only a script's guard asks the click's rule. The runner's own one-look
+/// checks (a pop-up before a click, a loader, a sign-in prompt) and the
+/// sign-in recipe's prompt keep the plain visibility rule, which never
+/// scrolls: a loader wait that scrolled a far-off spinner into view on
+/// every look would move the page under the script.
+#[tokio::test]
+async fn the_runners_own_looks_never_ask_the_scrolling_rule() {
+    use v2_lib::browser::actions::{shown_now, shows_up};
+    let (mut d, _clicked) = off_the_page_app();
+    assert_eq!(shown_now(&mut d, &serde_json::from_value(json!({ "css": "#gone" })).unwrap()).await.unwrap(), Some(true));
+    let target = serde_json::from_value(json!({ "css": "#gone" })).unwrap();
+    assert!(shows_up(&mut d, &target, 40, &quick()).await.unwrap());
+    let asked_shown = d
+        .calls_to("Runtime.callFunctionOn")
+        .iter()
+        .filter(|p| p["functionDeclaration"] == v2_lib::browser::input::SHOWN_JS)
+        .count();
+    assert_eq!(asked_shown, 0, "only a script's when_visible guard asks SHOWN_JS");
 }

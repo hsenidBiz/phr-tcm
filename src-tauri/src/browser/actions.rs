@@ -2147,18 +2147,42 @@ async fn expire_session<D: Driver>(d: &mut D) -> ActionOutcome {
 pub const WHEN_VISIBLE_FLOOR_MS: u32 = 500;
 
 /// Did `target` become visible within `within_ms` (never less than
-/// `WHEN_VISIBLE_FLOOR_MS`)? The one look a `when_visible` takes, recipe or
-/// script. Any visible match counts, two or more included: the guarded
-/// actions then run and an ambiguous click says "matched N" itself. `Err`
-/// is the browser failing to answer, as the outcome to report.
+/// `WHEN_VISIBLE_FLOOR_MS`)? The look the sign-in recipe's `when_visible`
+/// takes for its prompt; it never moves the page. Any visible match
+/// counts, two or more included: the guarded actions then run and an
+/// ambiguous click says "matched N" itself. `Err` is the browser failing
+/// to answer, as the outcome to report.
 pub async fn shows_up<D: Driver>(
     d: &mut D,
     target: &Target,
     within_ms: u32,
     timing: &Timing,
 ) -> Result<bool, ActionOutcome> {
+    shows_up_as(d, target, within_ms, timing, Check::Shown).await
+}
+
+/// `shows_up` for a script's `when_visible` guard: shown the way the
+/// click that follows needs it (`Check::ShownToClick`), so a match left in
+/// the page outside the visible part of it is not shown and the guard is
+/// skipped, where its click would wait out its time and fail the step.
+pub async fn shows_up_to_click<D: Driver>(
+    d: &mut D,
+    target: &Target,
+    within_ms: u32,
+    timing: &Timing,
+) -> Result<bool, ActionOutcome> {
+    shows_up_as(d, target, within_ms, timing, Check::ShownToClick).await
+}
+
+async fn shows_up_as<D: Driver>(
+    d: &mut D,
+    target: &Target,
+    within_ms: u32,
+    timing: &Timing,
+    check: Check<'_>,
+) -> Result<bool, ActionOutcome> {
     let wait = u64::from(within_ms.max(WHEN_VISIBLE_FLOOR_MS));
-    let seen = expect::expect(d, target, Check::Shown, wait, timing.poll_ms).await;
+    let seen = expect::expect(d, target, check, wait, timing.poll_ms).await;
     if seen.harness {
         return Err(seen);
     }

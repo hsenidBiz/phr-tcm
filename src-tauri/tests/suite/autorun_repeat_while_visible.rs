@@ -33,7 +33,7 @@ fn refusal(v: Value) -> String {
 }
 
 fn step(actions: Vec<Action>) -> StepScript {
-    StepScript { step_number: 1, actions, unchecked: None }
+    StepScript { step_number: 1, actions, unchecked: None, cleanup: false }
 }
 
 /// The guide's example: delete every leftover goal group but the two the

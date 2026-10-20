@@ -2651,6 +2651,13 @@ export type CaseRecord_Deserialize = {
 	 *  and for runs from before timings.
 	 */
 	phases?: CasePhases | null,
+	/**
+	 *  What the script's clean-up step did (`StepScript::cleanup`): kept
+	 *  apart from `steps` because it is no step of the case - it is never
+	 *  sent to Azure DevOps and never changes what is proposed. Left out
+	 *  for a script without one.
+	 */
+	cleanup?: StepRecord_Deserialize | null,
 };
 
 /**
@@ -2699,6 +2706,13 @@ export type CaseRecord_Serialize = {
 	 *  and for runs from before timings.
 	 */
 	phases?: CasePhases | null,
+	/**
+	 *  What the script's clean-up step did (`StepScript::cleanup`): kept
+	 *  apart from `steps` because it is no step of the case - it is never
+	 *  sent to Azure DevOps and never changes what is proposed. Left out
+	 *  for a script without one.
+	 */
+	cleanup?: StepRecord_Serialize | null,
 };
 
 /**
@@ -5095,12 +5109,15 @@ export type ReplayEnd_Deserialize =
  *  `notice` is said beside it: the preconditions were not checked.
  *  `whole` is how many steps the case has, when `step` is past its last:
  *  the whole case ran, and the browser is on the page its last step left.
+ *  `cleanup`, beside a `whole`, is the number of the script's clean-up
+ *  step (`None` without one): it ran too when `step` is past it.
  */
 { kind: "ready"; detail: {
 	case_id: number,
 	step: number,
 	notice: string | null,
 	whole?: number | null,
+	cleanup?: number | null,
 } } | 
 /**
  *  The replay failed in `phase`: step `step` when it is `Step`; the
@@ -5152,12 +5169,15 @@ export type ReplayEnd_Serialize =
  *  `notice` is said beside it: the preconditions were not checked.
  *  `whole` is how many steps the case has, when `step` is past its last:
  *  the whole case ran, and the browser is on the page its last step left.
+ *  `cleanup`, beside a `whole`, is the number of the script's clean-up
+ *  step (`None` without one): it ran too when `step` is past it.
  */
 { kind: "ready"; detail: {
 	case_id: number,
 	step: number,
 	notice: string | null,
 	whole?: number | null,
+	cleanup?: number | null,
 } } | 
 /**
  *  The replay failed in `phase`: step `step` when it is `Step`; the
@@ -6008,6 +6028,15 @@ export type StepScript_Deserialize = {
 	 *  check only when this says why, and the app shows the sentence.
 	 */
 	unchecked?: string | null,
+	/**
+	 *  The script's clean-up: no step of the case, but what removes what
+	 *  the case made. At most one, the script's last, numbered right after
+	 *  the case's last step and `unchecked`. It runs after the case's last
+	 *  step and after a failed one, never when the run was stopped, and its
+	 *  failures are said on their own (`CaseRecord::cleanup`), never
+	 *  failing the case. Written only when true.
+	 */
+	cleanup?: boolean,
 };
 
 /**  The actions that carry out one numbered step of a test case. */
@@ -6020,6 +6049,15 @@ export type StepScript_Serialize = {
 	 *  check only when this says why, and the app shows the sentence.
 	 */
 	unchecked?: string | null,
+	/**
+	 *  The script's clean-up: no step of the case, but what removes what
+	 *  the case made. At most one, the script's last, numbered right after
+	 *  the case's last step and `unchecked`. It runs after the case's last
+	 *  step and after a failed one, never when the run was stopped, and its
+	 *  failures are said on their own (`CaseRecord::cleanup`), never
+	 *  failing the case. Written only when true.
+	 */
+	cleanup?: boolean,
 };
 
 export type Step_Deserialize = {

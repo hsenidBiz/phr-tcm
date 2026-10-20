@@ -72,6 +72,14 @@ pub struct StepScript {
     /// check only when this says why, and the app shows the sentence.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub unchecked: Option<String>,
+    /// The script's clean-up: no step of the case, but what removes what
+    /// the case made. At most one, the script's last, numbered right after
+    /// the case's last step and `unchecked`. It runs after the case's last
+    /// step and after a failed one, never when the run was stopped, and its
+    /// failures are said on their own (`CaseRecord::cleanup`), never
+    /// failing the case. Written only when true.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub cleanup: bool,
 }
 
 /// How one test case is driven. Keyed by the Azure DevOps case id so a
@@ -237,7 +245,48 @@ pub struct SuspectedDefect {
     pub marked_at: String,
 }
 
+/// What a clean-up step is called wherever a step's number would be.
+pub const CLEANUP_LABEL: &str = "Clean-up";
+
+/// Whether `action` is a check a clean-up step may not hold: every check
+/// but `expect_dialog`, which answers the confirm the clean-up's own Delete
+/// opens and asserts nothing the case expects. A failing one still fails
+/// only the clean-up, never the case.
+pub fn checks_in_cleanup(action: &Action) -> bool {
+    action.is_check() && !matches!(action, Action::ExpectDialog { .. })
+}
+
+impl CaseRecord {
+    /// `clean-up: <what failed>` when the case's clean-up ran and failed;
+    /// `None` when it passed, did not run, or the script has none.
+    pub fn cleanup_line(&self) -> Option<String> {
+        let failed = self
+            .cleanup
+            .as_ref()?
+            .outcomes
+            .iter()
+            .find(|o| !o.ok && !o.detail.starts_with("not run:"))?;
+        Some(format!("clean-up: {}", failed.detail))
+    }
+}
+
 impl CaseScript {
+    /// The script's clean-up step, if it has one.
+    pub fn cleanup_step(&self) -> Option<&StepScript> {
+        self.steps.iter().find(|s| s.cleanup)
+    }
+
+    /// The steps of the case itself, in the script's order: every step but
+    /// the clean-up.
+    pub fn case_steps(&self) -> impl Iterator<Item = &StepScript> {
+        self.steps.iter().filter(|s| !s.cleanup)
+    }
+
+    /// The case's steps, then its clean-up: the order a run plays them in.
+    pub fn in_run_order(&self) -> impl Iterator<Item = &StepScript> {
+        self.case_steps().chain(self.cleanup_step())
+    }
+
     /// The area this script names, trimmed; `None` when it names none or a
     /// blank one - both mean the module's default area (`nav::find_path`).
     pub fn area_name(&self) -> Option<&str> {
@@ -343,6 +392,12 @@ pub struct CaseRecord {
     /// and for runs from before timings.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub phases: Option<CasePhases>,
+    /// What the script's clean-up step did (`StepScript::cleanup`): kept
+    /// apart from `steps` because it is no step of the case - it is never
+    /// sent to Azure DevOps and never changes what is proposed. Left out
+    /// for a script without one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cleanup: Option<StepRecord>,
 }
 
 /// Where an unattended case's wall time went, in milliseconds. `total_ms`

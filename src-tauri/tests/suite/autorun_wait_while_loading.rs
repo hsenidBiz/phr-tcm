@@ -48,7 +48,7 @@ fn action(v: serde_json::Value) -> Action {
 }
 
 fn step(actions: Vec<Action>) -> StepScript {
-    StepScript { step_number: 1, actions, unchecked: None }
+    StepScript { step_number: 1, actions, unchecked: None, cleanup: false }
 }
 
 // ---------------------------------------------------------------- the recipe
@@ -193,7 +193,7 @@ fn loading_page(loading_ms: Option<u64>) -> (ScriptedDriver, Seen) {
                 }
                 json!({ "result": { "value": probe } })
             }
-            "Runtime.callFunctionOn" if f == v2_lib::browser::locator::VISIBLE_JS => {
+            "Runtime.callFunctionOn" if f == v2_lib::browser::locator::VISIBLE_JS || f == v2_lib::browser::input::SHOWN_JS => {
                 json!({ "result": { "value": params["objectId"] != "loader" || up } })
             }
             "Runtime.callFunctionOn" if f == v2_lib::browser::input::HAS_FOCUS_JS => json!({ "result": { "value": true } }),

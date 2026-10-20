@@ -89,6 +89,50 @@ pub async fn stage_state<D: StageDb>(
     stage_state_within(db, flow, stage, value, why, CHECK_TIMEOUT).await
 }
 
+/// `stage_state`, with the error a check that could not run met (`None`
+/// otherwise), so a caller can tell a database that did not answer
+/// (`unreachable`) from a check that will fail the same way again.
+pub async fn stage_answer<D: StageDb>(
+    db: &D,
+    flow: &Flow,
+    stage: &Stage,
+    value: &Value,
+    why: &CheckFor<'_>,
+) -> (StageState, Option<String>) {
+    stage_answer_within(db, flow, stage, value, why, CHECK_TIMEOUT).await
+}
+
+/// Whether a check's error is the database not being reached - a
+/// connection that could not be made or was lost, a login or a check that
+/// timed out - rather than an answer that would come back the same (a SQL
+/// error, a login refused, a value the check cannot take, no row count).
+/// Only the first is worth asking again. Read from sqlcmd's and the ODBC
+/// driver's own words, and from this module's and the runner's timeouts.
+pub fn unreachable(error: &str) -> bool {
+    const SIGNS: &[&str] = &[
+        "did not answer within",
+        "timeout expired",
+        "login timeout",
+        "query timeout",
+        "tcp provider",
+        "named pipes provider",
+        "shared memory provider",
+        "network-related",
+        "network path",
+        "communication link failure",
+        "could not open a connection",
+        "not found or not accessible",
+        "forcibly closed",
+        "transport-level error",
+        "unable to complete login process",
+        "server is not found",
+        "no connection could be made",
+        "connection timed out",
+    ];
+    let lower = error.to_lowercase();
+    SIGNS.iter().any(|sign| lower.contains(sign))
+}
+
 /// `stage_state` with the time limit given, so a test need not wait 15
 /// seconds to see one expire.
 pub async fn stage_state_within<D: StageDb>(
@@ -99,6 +143,18 @@ pub async fn stage_state_within<D: StageDb>(
     why: &CheckFor<'_>,
     limit: Duration,
 ) -> StageState {
+    stage_answer_within(db, flow, stage, value, why, limit).await.0
+}
+
+/// `stage_answer` with the time limit given.
+pub async fn stage_answer_within<D: StageDb>(
+    db: &D,
+    flow: &Flow,
+    stage: &Stage,
+    value: &Value,
+    why: &CheckFor<'_>,
+    limit: Duration,
+) -> (StageState, Option<String>) {
     let label = db.label();
     let started = Instant::now();
 
@@ -148,7 +204,7 @@ pub async fn stage_state_within<D: StageDb>(
         StageState::CouldNotRun => "could not run",
     };
     crate::applog::info(format!("db flow check for {}: {}/{} {said}", why.purpose, flow.id, stage.id));
-    state
+    (state, answer.err())
 }
 
 /// What a person is told when a stage's check could not run. No SQL and no

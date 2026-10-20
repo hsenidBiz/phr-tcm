@@ -56,12 +56,16 @@ pub enum ReplayEnd {
     /// `notice` is said beside it: the preconditions were not checked.
     /// `whole` is how many steps the case has, when `step` is past its last:
     /// the whole case ran, and the browser is on the page its last step left.
+    /// `cleanup`, beside a `whole`, is the number of the script's clean-up
+    /// step (`None` without one): it ran too when `step` is past it.
     Ready {
         case_id: i32,
         step: i32,
         notice: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         whole: Option<i32>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        cleanup: Option<i32>,
     },
     /// The replay failed in `phase`: step `step` when it is `Step`; the
     /// case's sign-in or its trip to the area before step 1 otherwise (then
@@ -91,10 +95,27 @@ pub enum ReplayEnd {
 impl ReplayEnd {
     /// What the pane, and the assistant, are told.
     pub fn sentence(&self) -> String {
+        self.sentence_in(None)
+    }
+
+    /// `sentence`, for a case whose clean-up is step `cleanup`: a replay
+    /// that ended there says "the clean-up", as the pane, the report and
+    /// the hand-over name it, never a step number the case does not have.
+    pub fn sentence_in(&self, cleanup: Option<i32>) -> String {
+        let at = |k: &i32| step_said(*k, cleanup);
         match self {
-            ReplayEnd::Ready { case_id, whole: Some(all), .. } => {
+            ReplayEnd::Ready { case_id, step, whole: Some(all), cleanup, .. } => {
                 let steps = if *all == 1 { "its 1 step".to_string() } else { format!("all {all} steps") };
-                format!("replayed the whole of case {case_id} ({steps}) - the browser is on the page its last step left")
+                match cleanup {
+                    Some(c) if step > c => format!(
+                        "replayed the whole of case {case_id} ({steps} and its clean-up) - the browser is on the page its clean-up left"
+                    ),
+                    Some(c) => format!(
+                        "replayed the whole of case {case_id} ({steps}; its clean-up did not run - replay to step {} to run it too) - the browser is on the page its last step left",
+                        c + 1
+                    ),
+                    None => format!("replayed the whole of case {case_id} ({steps}) - the browser is on the page its last step left"),
+                }
             }
             ReplayEnd::Ready { case_id, step, .. } => {
                 format!("replayed case {case_id} to step {step} - the browser is on the page before step {step} runs")
@@ -106,16 +127,25 @@ impl ReplayEnd {
                 format!("replay stopped while going to the case's area: {why}")
             }
             ReplayEnd::StoppedAt { phase: ReplayPhase::Step, step, why, .. } => {
-                format!("replay stopped at step {step}: {why}")
+                format!("replay stopped at {}: {why}", at(step))
             }
             ReplayEnd::Blocked(why) => why.clone(),
-            ReplayEnd::Stopped { step } => format!("the replay was stopped at step {step}: {ASKED_TO_STOP}"),
-            ReplayEnd::BrowserGone { step, why: None, .. } => format!("replay stopped at step {step}: {BROWSER_CLOSED}"),
+            ReplayEnd::Stopped { step } => format!("the replay was stopped at {}: {ASKED_TO_STOP}", at(step)),
+            ReplayEnd::BrowserGone { step, why: None, .. } => format!("replay stopped at {}: {BROWSER_CLOSED}", at(step)),
             ReplayEnd::BrowserGone { step, why: Some(why), .. } => {
-                format!("replay stopped at step {step}: {why}; then {BROWSER_CLOSED}")
+                format!("replay stopped at {}: {why}; then {BROWSER_CLOSED}", at(step))
             }
             ReplayEnd::Refused(why) => why.clone(),
         }
+    }
+}
+
+/// Step `k` as a replay's sentences say it: "the clean-up" when `k` is the
+/// case's clean-up step (`cleanup`), else "step k".
+pub fn step_said(k: i32, cleanup: Option<i32>) -> String {
+    match cleanup {
+        Some(c) if c == k => "the clean-up".to_string(),
+        _ => format!("step {k}"),
     }
 }
 
@@ -212,16 +242,17 @@ pub struct ReplayAnswer {
 }
 
 impl ReplayAnswer {
-    /// The answer for `end`, with the tabs its steps ran in.
-    pub fn with_tabs(end: ReplayEnd, tabs: Vec<ReplayedTab>) -> Self {
-        let sentence = end.sentence();
+    /// The answer for `end`, with the tabs its steps ran in, for a case
+    /// whose clean-up is step `cleanup` (`ReplayEnd::sentence_in`).
+    pub fn with_tabs(end: ReplayEnd, tabs: Vec<ReplayedTab>, cleanup: Option<i32>) -> Self {
+        let sentence = end.sentence_in(cleanup);
         ReplayAnswer { end, sentence, tabs }
     }
 }
 
 impl From<ReplayEnd> for ReplayAnswer {
     fn from(end: ReplayEnd) -> Self {
-        ReplayAnswer::with_tabs(end, Vec::new())
+        ReplayAnswer::with_tabs(end, Vec::new(), None)
     }
 }
 
@@ -231,8 +262,12 @@ pub fn stopped_before_opening(cancel: &AtomicBool) -> Option<ReplayEnd> {
     cancel.load(Ordering::SeqCst).then_some(ReplayEnd::Stopped { step: 1 })
 }
 
-/// Whether a replay is going. Only `OneReplay` flips it.
-static RUNNING: AtomicBool = AtomicBool::new(false);
+/// Whether a replay is going, and whose: `NOBODY`, `PERSON` or
+/// `ASSISTANT`. Only `OneReplay` sets it.
+static RUNNING: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(NOBODY);
+const NOBODY: u8 = 0;
+const PERSON: u8 = 1;
+const ASSISTANT: u8 = 2;
 
 /// The replay's stop control: set by `stop`, and by anything that closes
 /// the supervised browser. Read before each part of the replay and by the
@@ -245,17 +280,73 @@ pub fn stop() {
     CANCEL.store(true, Ordering::SeqCst);
 }
 
+/// Whether the replay going was asked to stop by the assistant's
+/// `stop_autorun_replay` (`stop_on_request`), not by the person's Stop,
+/// Close or Release. Cleared by a claim, and when the assistant starts a
+/// replay (`forget_stop_request`).
+static ON_REQUEST: AtomicBool = AtomicBool::new(false);
+
+/// The assistant's `stop_autorun_replay`: the same stop as `stop`, noted
+/// as asked for, so the replay's answer says it was stopped on request.
+pub fn stop_on_request() {
+    ON_REQUEST.store(true, Ordering::SeqCst);
+    stop();
+}
+
+/// Whether the replay that ended last was asked to stop by the assistant.
+pub fn stop_was_requested() -> bool {
+    ON_REQUEST.load(Ordering::SeqCst)
+}
+
+/// A new replay of the assistant's starts with no stop asked of it.
+pub fn forget_stop_request() {
+    ON_REQUEST.store(false, Ordering::SeqCst);
+}
+
+/// What the assistant's replay that `stop_autorun_replay` stopped answers:
+/// where the stop was heard, from the step it was on (`at`, 0 before step
+/// 1) and the last action of that step to begin (`action`, from 1; 0 when
+/// none had): "at" that action when the stop ended it inside its own wait
+/// (`inside`), "after" it when it had finished. Said alone, with no page.
+/// The case's clean-up (`cleanup`, its step number) is said as such.
+pub fn stopped_on_request(case_id: i32, at: i32, action: usize, inside: bool, cleanup: Option<i32>) -> String {
+    let front = format!("the replay of case {case_id} was stopped on request");
+    let step = step_said(at, cleanup);
+    match (at, action) {
+        (at, 0) if at > 0 => format!("{front} before {step}'s first action"),
+        (at, n) if at > 0 && inside => format!("{front} at action {n} of {step}, inside its wait"),
+        (at, n) if at > 0 => format!("{front} after action {n} of {step}"),
+        _ => format!(
+            "{front} before step 1, while the case was made ready (its preconditions, sign-in or trip to its area)"
+        ),
+    }
+}
+
 /// The one replay going. Taking it clears an earlier stop; dropping it - an
 /// end, an error or a panic - frees the slot.
 pub struct OneReplay(());
 
 impl OneReplay {
+    /// The person's replay (Replay to step in the pane) takes the slot.
     pub fn claim() -> Result<OneReplay, String> {
+        Self::claim_as(PERSON)
+    }
+
+    /// The assistant's replay (`replay_autorun_to_step`) takes the slot:
+    /// the only replay `stop_autorun_replay` may stop
+    /// (`assistants_replay_running`).
+    pub fn claim_for_assistant() -> Result<OneReplay, String> {
+        Self::claim_as(ASSISTANT)
+    }
+
+    fn claim_as(owner: u8) -> Result<OneReplay, String> {
         RUNNING
-            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+            .compare_exchange(NOBODY, owner, Ordering::SeqCst, Ordering::SeqCst)
             .map_err(|_| ALREADY_RUNNING.to_string())?;
         CANCEL.store(false, Ordering::SeqCst);
+        ON_REQUEST.store(false, Ordering::SeqCst);
         PROGRESS.store(0, Ordering::SeqCst);
+        CLEANUP_AT.store(0, Ordering::SeqCst);
         ACTIONS.reset();
         Ok(OneReplay(()))
     }
@@ -263,7 +354,7 @@ impl OneReplay {
 
 impl Drop for OneReplay {
     fn drop(&mut self) {
-        RUNNING.store(false, Ordering::SeqCst);
+        RUNNING.store(NOBODY, Ordering::SeqCst);
     }
 }
 
@@ -278,6 +369,22 @@ pub fn note_progress(step: i32, of: i32) {
     let packed = (u64::from(step.max(0) as u32) << 32) | u64::from(of.max(0) as u32);
     PROGRESS.store(packed, Ordering::SeqCst);
     ACTIONS.reset();
+}
+
+/// The step number of the clean-up of the case the replay going (or ended
+/// last) runs, 0 when it has none: noted as its steps start
+/// (`run_steps`), cleared by a claim, so its sentences say "the clean-up".
+static CLEANUP_AT: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
+
+/// The case the replay runs has its clean-up at step `step` (`None`: none).
+pub fn note_cleanup(step: Option<i32>) {
+    CLEANUP_AT.store(step.unwrap_or(0).max(0), Ordering::SeqCst);
+}
+
+/// The clean-up step of the case the replay going (or ended last) runs.
+pub fn cleanup_at() -> Option<i32> {
+    let k = CLEANUP_AT.load(Ordering::SeqCst);
+    (k > 0).then_some(k)
 }
 
 /// The action the replay going is on, within its step (`runner::StepProgress`).
@@ -298,7 +405,15 @@ pub fn progress() -> (i32, i32) {
 
 /// Whether a replay to a step is going right now.
 pub fn is_running() -> bool {
-    RUNNING.load(Ordering::SeqCst)
+    RUNNING.load(Ordering::SeqCst) != NOBODY
+}
+
+/// Whether the replay going right now is the assistant's own
+/// (`OneReplay::claim_for_assistant`). False while nothing runs - before
+/// its replay has claimed the slot, or once it has ended and its page is
+/// still being read - and while the person's replay runs.
+pub fn assistants_replay_running() -> bool {
+    RUNNING.load(Ordering::SeqCst) == ASSISTANT
 }
 
 /// What the checks before anything opens found: the case's script and the
@@ -439,8 +554,8 @@ pub async fn replay_to_checked<D: Driver, P: StageDb, B: Browsers>(
 /// signed in as the case's account, for its answer to say (`Reuse::said`).
 ///
 /// That browser - signed in by the app as the script's account, holding
-/// its lease in this environment, still holding the cookies that sign-in
-/// left (`session::same_cookies`), its page not refused and the recipe's
+/// its lease in this environment, still holding the HttpOnly cookies that
+/// sign-in left (`Held::same_sign_in`), its page not refused and the recipe's
 /// signed-in marker showing (`signin::already_signed_in`) - keeps its
 /// sign-in and goes to the area from where it is (`TripFrom::Elsewhere`).
 /// If that trip fails, the case is signed in as it always is and goes
@@ -605,14 +720,16 @@ pub async fn replay_to_traced<D: Driver, P: StageDb, B: Browsers>(
     {
         return stopped;
     }
-    ReplayEnd::Ready { case_id: id, step: n, notice: checked.notice, whole: whole_case(&script, n) }
+    ReplayEnd::Ready { case_id: id, step: n, notice: checked.notice, whole: whole_case(&script, n), cleanup: cleanup_ran(&script, n) }
 }
 
 /// Is the supervised browser `d` already signed in as `key`, the case's
 /// account? Its session is `key`'s (`account`), it holds `key`'s lease in
-/// the active environment (`Held::holds`), it still holds the cookies the
-/// app's own sign-in left (`Held::sign_in_print`, `session::same_cookies`:
-/// not a login a step typed or the person made by hand), and the page says
+/// the active environment (`Held::holds`), it still holds the HttpOnly
+/// cookies the app's own sign-in left (`Held::sign_in_print`,
+/// `Held::same_sign_in`: not a login a step typed or the person made by
+/// hand; a cookie a page's script rewrote is not the sign-in's, and one
+/// that changed is named in the app log), and the page says
 /// so (`signin::already_signed_in`). Only looked at, never changed. A
 /// project whose recipe cannot be read is signed in as always, which says
 /// why.
@@ -679,11 +796,21 @@ pub fn signed_in_already_line(area: &str) -> String {
     format!("Signed in already: went to {area}.")
 }
 
-/// How many steps `script` has when `step` is past its last, so a replay to
-/// it ran the whole case; `None` otherwise.
+/// How many steps of the case `script` has when `step` is past its last, so
+/// a replay to it ran the whole case; `None` otherwise. The clean-up step is
+/// not one of them.
 pub fn whole_case(script: &CaseScript, step: i32) -> Option<i32> {
-    let last = script.steps.iter().map(|s| s.step_number).max().unwrap_or(0);
-    (step > last).then(|| i32::try_from(script.steps.len()).unwrap_or(i32::MAX))
+    let last = script.case_steps().map(|s| s.step_number).max().unwrap_or(0);
+    (step > last).then(|| i32::try_from(script.case_steps().count()).unwrap_or(i32::MAX))
+}
+
+/// The number of the clean-up step, beside a replay to `step` that ran the
+/// whole case: it ran too when `step` is past it. `None` when the replay
+/// did not run the whole case or the script has no clean-up.
+pub fn cleanup_ran(script: &CaseScript, step: i32) -> Option<i32> {
+    let tidy = script.cleanup_step()?;
+    whole_case(script, step)?;
+    Some(tidy.step_number)
 }
 
 /// Run case `script`'s steps `from` to `n` - 1, in its order, in the
@@ -712,7 +839,7 @@ async fn run_steps<D: Driver>(
     let in_range = |k: i32| k >= from && k < n;
     // The other areas their `return_to_area` actions name are read once,
     // before the first.
-    let names = runner::named_areas(script.steps.iter().filter(|s| in_range(s.step_number)).flat_map(|s| s.actions.iter()));
+    let names = runner::named_areas(script.in_run_order().filter(|s| in_range(s.step_number)).flat_map(|s| s.actions.iter()));
     let areas = runner::area_routes(root, organization, project, &names);
     // The recipe and the areas file each step looks at: read once, and
     // again only when one changed.
@@ -724,7 +851,11 @@ async fn run_steps<D: Driver>(
     // no step records, so what came late is said only there.
     let mut noted = runner::Noted::default();
     noted.in_case(script.area.as_deref());
-    for (at, step) in script.steps.iter().filter(|s| in_range(s.step_number)).enumerate() {
+    // Its sentences name the clean-up as such.
+    note_cleanup(script.cleanup_step().map(|s| s.step_number));
+    // The case's steps, then its clean-up: a replay past the clean-up runs
+    // it last, and only once every step before it passed.
+    for (at, step) in script.in_run_order().filter(|s| in_range(s.step_number)).enumerate() {
         let k = step.step_number;
         if stopped() {
             return Some(ReplayEnd::Stopped { step: k });
@@ -735,6 +866,7 @@ async fn run_steps<D: Driver>(
         noted.take_late();
         let mut in_run = InRun {
             cancel: Some(cancel),
+            stop_before_each_action: true,
             areas: Some(&areas),
             files: Some(&files),
             fail_on_unexpected_dialog: script.fail_on_unexpected_dialog,
@@ -771,6 +903,11 @@ async fn run_steps<D: Driver>(
         if outcomes.iter().any(closed) {
             return Some(ReplayEnd::BrowserGone { step: k, why: None, outcomes: Vec::new() });
         }
+        // What the step's components waited for and read is filed as seen
+        // in the case's area, as a probe would file it: a toast is gone
+        // before anyone can probe it.
+        crate::ai_bridge::file_component_finds(d, root, organization, project, script.area.clone(), &step.actions, &outcomes)
+            .await;
         // A save the page sent after the step's last action passed is
         // still this step's.
         if outcomes.iter().all(|o| o.ok) {
@@ -872,9 +1009,12 @@ impl ReplayFrom {
         match self {
             ReplayFrom::Beginning => "Started from the beginning.".to_string(),
             ReplayFrom::CarriedOn(k) => format!("Carried on from step {k}."),
-            ReplayFrom::AlreadyThere => {
-                format!("The browser is already standing before step {step} of case {case_id}: nothing ran.")
-            }
+            // A reset takes the browser over (`DiscoveryBrowser::taken_over`
+            // in `commands::autorun::reset_in_for_assistant`), which drops
+            // the stand, so the next replay starts from the beginning.
+            ReplayFrom::AlreadyThere => format!(
+                "The browser is already standing before step {step} of case {case_id}: nothing ran. To run it again from the beginning, call reset_autorun_browser first."
+            ),
         }
     }
 }
@@ -973,5 +1113,5 @@ pub async fn carry_on<D: Driver>(
     {
         return stopped;
     }
-    ReplayEnd::Ready { case_id: id, step: n, notice: None, whole: whole_case(&script, n) }
+    ReplayEnd::Ready { case_id: id, step: n, notice: None, whole: whole_case(&script, n), cleanup: cleanup_ran(&script, n) }
 }

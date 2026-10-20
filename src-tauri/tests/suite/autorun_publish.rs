@@ -689,3 +689,24 @@ async fn a_cases_downloads_are_never_sent_only_its_pictures() {
         assert!(!body.contains(&marker_b64) && !body.contains("DOWNLOADED-CONTENT"), "a download was sent: {body}");
     }
 }
+
+/// #46: a case's clean-up is not one of its steps, so nothing of it is
+/// sent - no step mark, no picture - however it went.
+#[test]
+fn a_clean_up_is_never_sent_as_a_step() {
+    let dir = tempfile::tempdir().unwrap();
+    let shot = store::save_shot(dir.path(), b"\xFF\xD8\xFF\xD9").unwrap();
+    let tidy_shot = store::save_shot(dir.path(), b"\xFF\xD8\xFF\xDA").unwrap();
+    let case: v2_lib::autorun::CaseRecord = serde_json::from_value(serde_json::json!({
+        "case_id": 8, "title": "Cancel request", "verdict": "Passed", "note": "", "proposed": "Passed",
+        "reason": "every action of 1 steps passed, but its clean-up failed",
+        "steps": [{ "step_number": 1, "outcomes": [{ "ok": true, "detail": "ok" }], "screenshot": shot }],
+        "cleanup": { "step_number": 2, "outcomes": [{ "ok": false, "detail": "button \"Delete\" not found", "screenshot": tidy_shot }], "screenshot": tidy_shot }
+    }))
+    .unwrap();
+    // One more step id than the case has steps: the clean-up's number has
+    // one, and still gets no mark.
+    let ids = vec!["201".to_string(), "202".to_string()];
+    assert_eq!(step_marks(&case, &ids), vec![Some("Passed".to_string()), None]);
+    assert_eq!(pictures_for(&case), vec![(1, shot)]);
+}

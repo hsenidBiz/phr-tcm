@@ -311,10 +311,10 @@ pub fn propose_with(
     if stopped {
         return Proposal { verdict: "", reason: "stopped before it finished".into() };
     }
-    if !script.steps.iter().flat_map(|s| &s.actions).any(|a| a.is_check()) {
+    if !script.case_steps().flat_map(|s| &s.actions).any(|a| a.is_check()) {
         return Proposal { verdict: "", reason: "this script checks nothing, so there is nothing to propose".into() };
     }
-    Proposal { verdict: "Passed", reason: format!("every action of {} steps passed", script.steps.len()) }
+    Proposal { verdict: "Passed", reason: format!("every action of {} steps passed", script.case_steps().count()) }
 }
 
 /// Run one whole case as the script's own account, with no module step.
@@ -516,15 +516,26 @@ async fn run_case_in<D: Driver>(
     let mut noted = runner::Noted::default();
     noted.in_case(script.area.as_deref());
     let stepping = Instant::now();
-    for step in &script.steps {
-        if skip.is_none() && cancel.load(Ordering::SeqCst) {
+    // Whether a step of the case itself began, and whether the browser
+    // stopped answering in one: the clean-up runs only after the first and
+    // never after the second.
+    let (mut began_steps, mut gone) = (false, false);
+    // Where the clean-up's record is in `steps`, once it is there: taken
+    // out once every picture and download is on it.
+    let mut cleanup_at: Option<usize> = None;
+    for step in script.in_run_order() {
+        if step.cleanup {
+            cleanup_at = Some(steps.len());
+        } else if skip.is_none() && cancel.load(Ordering::SeqCst) {
             skip = Some(AFTER_STOP);
             stopped = true;
         }
-        if let Some(why) = skip {
+        let why_not = if step.cleanup { cleanup_skip(skip, began_steps, gone, cancel) } else { skip };
+        if let Some(why) = why_not {
             steps.push(not_run(step, why));
             continue;
         }
+        began_steps |= !step.cleanup;
         on_step(step.step_number);
         let asked_at = Instant::now();
         // A bare `return_to_area` goes where the run went before step 1; one
@@ -591,8 +602,11 @@ async fn run_case_in<D: Driver>(
         if let Some(sentence) = d.take_save_blocked() {
             charge_save(&mut outcomes, sentence);
         }
+        gone |= harness;
         if stopped_inside {
-            stopped = true;
+            // A stop inside the clean-up leaves the case's own steps as
+            // they finished.
+            stopped |= !step.cleanup;
             skip = Some(AFTER_STOP);
         } else if outcomes.iter().any(|o| !o.ok) {
             skip = Some(AFTER_FAILED_STEP);
@@ -608,7 +622,10 @@ async fn run_case_in<D: Driver>(
         }
         runner::credit_late(&mut steps, late);
         steps.push(StepRecord { step_number: step.step_number, outcomes, screenshot: None, downloads: Vec::new(), tab, dialog, components, duration_ms: Some(ms(asked_at.elapsed())) });
-        page_errors_seen += seen_errors;
+        // Page errors the clean-up met are not the case's.
+        if !step.cleanup {
+            page_errors_seen += seen_errors;
+        }
         if let Some(p) = picture {
             pictures.push((steps.len() - 1, p));
         }
@@ -639,10 +656,14 @@ async fn run_case_in<D: Driver>(
         }
     }
 
+    // The clean-up is no step of the case: kept apart, so nothing judges
+    // or sends it as one.
+    let cleanup = cleanup_at.map(|at| steps.remove(at));
+
     // A file that does not read leaves a component's outcomes unpaired.
     let components = super::components::load_components(root, organization, project).unwrap_or_default();
     let p = propose_with(script, &steps, signed_in, stopped, &components);
-    CaseRecord {
+    let mut record = CaseRecord {
         case_id: script.case_id,
         title: script.title.clone(),
         verdict: String::new(),
@@ -656,6 +677,29 @@ async fn run_case_in<D: Driver>(
         notice: None,
         page_errors_seen,
         phases: Some(CasePhases { sign_in_ms: sign_in_took, area_ms: area_took, steps_ms: steps_took, total_ms: ms(took), ..Default::default() }),
+        cleanup,
+    };
+    // A case that passed and whose clean-up failed says both.
+    if record.proposed == "Passed" && record.cleanup_line().is_some() {
+        record.reason = format!("{}{CLEANUP_FAILED}", record.reason);
+    }
+    record
+}
+
+/// Said after a passed case's reason when its clean-up failed.
+pub const CLEANUP_FAILED: &str = ", but its clean-up failed";
+
+/// Why the clean-up step does not run, or `None` when it does: it runs
+/// after the case's last step and after a step that failed, once a step
+/// of the case began - never once the run was stopped, the case could not
+/// start, or the browser stopped answering.
+fn cleanup_skip(skip: Option<&'static str>, began_steps: bool, gone: bool, cancel: &AtomicBool) -> Option<&'static str> {
+    if cancel.load(Ordering::SeqCst) {
+        return Some(AFTER_STOP);
+    }
+    match skip {
+        Some(why) if why == AFTER_FAILED_STEP && began_steps && !gone => None,
+        other => other,
     }
 }
 
@@ -703,7 +747,7 @@ fn unrun(case_id: i32, title: &str, proposed: &str, reason: String) -> CaseRecor
         account: None,
         retried: None,
         notice: None,
-        page_errors_seen: 0, phases: None,
+        page_errors_seen: 0, phases: None, cleanup: None,
     }
 }
 
@@ -719,7 +763,8 @@ fn stopped_at_reset(root: &Path, case: &CaseToRun, batch: u32) -> CaseRecord {
 fn left_unrun(root: &Path, case: &CaseToRun, reason: String, step_why: String) -> CaseRecord {
     let mut record = unrun(case.case_id, &case.title, "", reason);
     if let Ok(Some(script)) = store::load_script(root, case.case_id) {
-        record.steps = script.steps.iter().map(|s| not_run(s, &step_why)).collect();
+        record.steps = script.case_steps().map(|s| not_run(s, &step_why)).collect();
+        record.cleanup = script.cleanup_step().map(|s| not_run(s, &step_why));
     }
     record
 }
@@ -783,14 +828,14 @@ fn blocked_before_start(script: &CaseScript, account: Option<&str>, reason: Stri
         title: script.title.clone(),
         verdict: String::new(),
         note: String::new(),
-        steps: script.steps.iter().map(|s| not_run(s, &why)).collect(),
+        steps: script.case_steps().map(|s| not_run(s, &why)).collect(),
         proposed: "Blocked".to_string(),
         reason,
         duration_ms: None,
         account: account.map(str::to_string),
         retried: None,
         notice: None,
-        page_errors_seen: 0, phases: None,
+        page_errors_seen: 0, phases: None, cleanup: script.cleanup_step().map(|s| not_run(s, &why)),
     }
 }
 
@@ -886,10 +931,13 @@ async fn one_go<B: Browsers>(
             if let Err(e) = d.enable_downloads(&store::downloads_dir(go.root, run_id)).await {
                 crate::applog::warn(format!("{}: downloads could not be switched on: {e}", who(case_id)));
             }
+            // The clean-up is no step of the case: its own phase.
+            let tidy = go.script.cleanup_step().map(|s| s.step_number);
             let mut on_step = |n: i32| {
                 let phase = match n {
                     SIGN_IN_STEP => "signing_in",
                     MODULE_STEP => "module",
+                    _ if Some(n) == tidy => "cleanup",
                     _ => "step",
                 };
                 progress(tell(run_id, index, total, case_id, title, phase, n, count, ""));
@@ -1158,7 +1206,7 @@ pub async fn run_cases_planned<B: Browsers, P: StageDb, G: ResetGate>(
                 Err(why) => unrun(case_id, title, "", format!("the script could not be read: {why}")),
                 Ok(None) => unrun(case_id, title, "", "this case has no script on this machine".into()),
                 Ok(Some(script)) => {
-                    count = script.steps.len() as u32;
+                    count = script.case_steps().count() as u32;
                     let account = run_account.or(script.account.as_deref());
                     // Where the case starts, then the records it relies on -
                     // both before its browser opens, so a case that cannot

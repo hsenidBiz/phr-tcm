@@ -121,6 +121,8 @@ export function statusOf(p: { phase: string; step_number: number; steps: number;
   if (p.phase === "signing_in") return "Signing in";
   if (p.phase === "module") return "Going to the module";
   if (p.phase === "step") return `Step ${p.step_number} of ${p.steps}`;
+  // The clean-up is no step of the case: named, never counted.
+  if (p.phase === "cleanup") return "Clean-up";
   if (p.phase === "done") return p.proposed ? `Proposed: ${p.proposed}` : "Nothing proposed";
   return "Waiting";
 }

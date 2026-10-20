@@ -327,3 +327,33 @@ fn a_two_cycle_gets_one_before_line_in_the_planners_order() {
     assert_eq!(before_lines(&lines), vec!["run 1 before 2 (1 needs y unchanged and 2 changes it)"], "{lines:?}");
     assert_eq!(planned(&[&a, &b]), vec![1, 2]);
 }
+
+/// #46 review: what the script's clean-up step does is said of "the
+/// clean-up", as the spec names it, never as a step number it does not
+/// write.
+#[test]
+fn the_clean_up_step_is_named_the_clean_up() {
+    let row = |text: &str| {
+        json!({ "kind": "click", "selector": [{ "role": "row", "name": text }, { "role": "button", "name": "Delete" }] })
+    };
+    let s: CaseScript = serde_json::from_value(json!({
+        "case_id": 7, "title": "T",
+        "steps": [
+            { "step_number": 1, "actions": [{ "kind": "fill", "selector": "#name", "value": "QA Goal Group 7" }, button("Save")] },
+            { "step_number": 2, "actions": [row("QA Goal Group 7"), { "kind": "click", "selector": { "role": "button", "name": "Delete", "nth": 1 } }],
+              "cleanup": true, "unchecked": "removes the group step 1 made" }
+        ]
+    }))
+    .unwrap();
+    let h = of(&s);
+    assert_eq!(h.cleanup, vec!["the clean-up deletes \"QA Goal Group 7\" it created"]);
+    assert_eq!(
+        h.from_tcm,
+        vec![
+            "step 1 appears to save data (\"Save\")",
+            "the clean-up appears to delete data (\"Delete\")",
+            "relies on the clean-up to put data back",
+        ]
+    );
+    assert_eq!(h.warnings, vec!["the clean-up appears to delete a row it did not name"]);
+}

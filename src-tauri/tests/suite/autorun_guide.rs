@@ -586,13 +586,16 @@ fn the_guide_teaches_when_visible_with_its_two_examples() {
 }
 
 /// The runner closes the recipe's listed pop-ups itself, so the guide must
-/// not teach a guard for them - and must say an old one is harmless.
+/// not teach a guard for them - and must say an old one is skipped once
+/// the runner has closed the pop-up (tool errors #31, #71: it used to say
+/// "harmless" while the guard's click failed on the closed banner).
 #[test]
 fn the_guide_says_listed_popups_need_no_guard() {
     let g = autorun_guide();
     let section = g.split_once("## Dismissing what may not show up").unwrap().1;
     let section = section.split("\n## ").next().unwrap();
-    for term in ["close_when_shown", "without waiting", "NO guard", "harmless", "cookie banner first","never Accept All"] {
+    assert!(!section.contains("harmless"), "an old guard is skipped, not harmless");
+    for term in ["close_when_shown", "without waiting", "NO guard", "the guard is skipped", "outside the visible part", "cookie banner first","never Accept All"] {
         assert!(section.contains(term), "the when_visible section never says {term:?}");
     }
 }
@@ -1667,4 +1670,87 @@ fn the_guide_teaches_expect_style() {
     let seen = g.split("checks that read one element").nth(1).expect("no seen-check list");
     assert!(seen[..400].contains("`expect_style`"), "the seen-check list never names expect_style");
     assert!(!line.contains('\u{2014}'), "no em dashes in text an assistant reads");
+}
+
+/// Row 33: the replay part says a failed action ends a replay at once, and
+/// how to stop one no longer needed - in the replay part, never the quick
+/// rules (they are at their cap).
+#[test]
+fn the_replay_part_teaches_stopping_a_replay() {
+    let g = autorun_guide();
+    let part = g.split_once("## Repairing a script that failed").expect("no replay part").1;
+    let part = part.split("\n## ").next().unwrap();
+    let flat = part.split_whitespace().collect::<Vec<_>>().join(" ");
+    assert!(flat.contains("A failed action ends a replay at once."), "{flat}");
+    assert!(
+        flat.contains("call `stop_autorun_replay`: it stops before the next action and says where."),
+        "{flat}"
+    );
+    let quick = autorun_guide().split("\n## ").next().unwrap().to_string();
+    assert!(!quick.contains("stop_autorun_replay"), "the quick rules are at their cap");
+}
+
+/// Rows 32, 44 and 66 (tool errors 2026-10-19), and the `when_visible`
+/// wording: sentences in their sections, never the quick rules (at their cap).
+#[test]
+fn the_guide_teaches_the_quirk_field_the_last_step_replay_and_the_banner_on_a_check_page() {
+    let flat = |text: &str| text.split_whitespace().collect::<Vec<_>>().join(" ");
+    let g = autorun_guide();
+    let quick = g.split("
+## ").next().unwrap().to_string();
+
+    // Row 66: the field is `text`, not `note`, and the limit is 300.
+    let quirks = flat(g.split_once("## Repairing a script that failed").unwrap().1.split("
+## ").next().unwrap());
+    assert!(
+        quirks.contains("That tool takes the line as `text` (not `note`), and a quirk, there or as an edit's `quirk`, is at most 300 characters."),
+        "{quirks}"
+    );
+    assert!(!quirks.contains("the one note"), "a quirk is not called a note: {quirks}");
+
+    // Row 44: one past the last step proves the last step.
+    assert!(
+        quirks.contains("To prove a case's last step, replay to one past it, its last step number + 1:"),
+        "{quirks}"
+    );
+    assert!(quirks.contains("replayed the whole of case N (all M steps)"), "{quirks}");
+
+    // Row 32: the runner closes a pop-up only before an action.
+    let popups = flat(g.split_once("## Dismissing what may not show up").unwrap().1.split("
+## ").next().unwrap());
+    assert!(
+        popups.contains(
+            "The runner closes a pop-up only before those actions: on a page whose next action is a check, the banner can still be open, and the page a tool reads (`get_autorun_page`, a replay's answer) can still list its x"
+        ),
+        "{popups}"
+    );
+
+    // The guard's rule: visible and inside the page, not "nothing covers it".
+    assert!(
+        popups.contains("Shown means visible and inside the visible part of the page, after the page is scrolled to it"),
+        "{popups}"
+    );
+    assert!(!popups.contains("a click could reach it"), "the guard does not check what covers an element: {popups}");
+
+    for term in ["record_autorun_quirk", "replay_autorun_to_step", "last step number + 1"] {
+        assert!(!quick.contains(term), "the quick rules are at their cap, and {term:?} does not belong there");
+    }
+}
+
+/// The clean-up as the How To Use page teaches it: an unattended run plays
+/// it even after a failed step, a replay stops at a failed step without it
+/// and runs it only when replayed past it, and an `expect_dialog` for its
+/// own Delete's confirm is the one check it may hold.
+#[test]
+fn the_guide_says_when_the_clean_up_runs_and_what_it_may_check() {
+    let flat = autorun_guide().split_whitespace().collect::<Vec<_>>().join(" ");
+    for said in [
+        "In an unattended run it runs after the case's last step and also after a step that failed",
+        "in a watched run the person presses Run clean-up",
+        "A replay stops at a failed step without running it, and runs it only when replayed past it",
+        "but for an `expect_dialog` answering the confirm its own Delete opens, the one check it may hold",
+    ] {
+        assert!(flat.contains(said), "the guide does not say: {said}");
+    }
+    assert!(!flat.contains("It runs after the case's last step and also after a step that failed"), "the old, unqualified rule is still there");
 }

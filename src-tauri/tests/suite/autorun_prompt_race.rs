@@ -141,7 +141,7 @@ fn page_app(page: Page) -> (ScriptedDriver, PromptApp) {
         Ok(match method {
             "Page.navigate" => json!({ "frameId": "F", "loaderId": "L" }),
             "Network.getAllCookies" => json!({ "cookies": [
-                { "name": "sid", "value": "abc", "domain": "hr.example.internal", "path": "/", "session": true }
+                { "name": "sid", "value": "abc", "domain": "hr.example.internal", "path": "/", "httpOnly": true, "session": true }
             ] }),
             "Runtime.evaluate" if params["expression"] == "document" => json!({ "result": { "objectId": "doc" } }),
             "Runtime.evaluate" => json!({ "result": { "value": { "origin": "https://hr.example.internal", "entries": [] } } }),
@@ -170,7 +170,7 @@ fn page_app(page: Page) -> (ScriptedDriver, PromptApp) {
                     "x": 5.0, "y": 5.0, "rect": [0.0, 0.0, 10.0, 10.0], "stable": stable
                 } } })
             }
-            "Runtime.callFunctionOn" if f == VISIBLE_JS || f == HAS_FOCUS_JS => json!({ "result": { "value": true } }),
+            "Runtime.callFunctionOn" if f == VISIBLE_JS || f == v2_lib::browser::input::SHOWN_JS || f == HAS_FOCUS_JS => json!({ "result": { "value": true } }),
             "Runtime.callFunctionOn" if params["arguments"][0]["value"].is_string() && params["objectId"] == "doc" => {
                 let css = params["arguments"][0]["value"].as_str().unwrap();
                 let form = ["#user", "#pass", "#go", "#marker"].contains(&css);

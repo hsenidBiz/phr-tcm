@@ -182,7 +182,7 @@ async fn steps_before_n_run_after_the_sign_in_and_the_trip_and_step_n_does_not()
     let (mut account, mut guarded, cancel) = (None, None, AtomicBool::new(false));
     let mut heard = vec![];
     let end = replay(&mut d, dir.path(), &req(3), &mut account, &mut guarded, &cancel, |k, of| heard.push((k, of))).await;
-    assert_eq!(end, ReplayEnd::Ready { case_id: ID, step: 3, notice: None, whole: None });
+    assert_eq!(end, ReplayEnd::Ready { case_id: ID, step: 3, notice: None, whole: None, cleanup: None });
     assert_eq!(end.sentence(), "replayed case 77 to step 3 - the browser is on the page before step 3 runs");
     let seen = log(&app);
     let at = |what: &str| seen.iter().position(|l| l == what).unwrap_or_else(|| panic!("no {what:?} in {seen:?}"));
@@ -204,12 +204,45 @@ async fn the_last_step_plus_1_replays_every_step() {
     let end = replay(&mut d, dir.path(), &req(4), &mut account, &mut guarded, &cancel, |k, of| heard.push((k, of))).await;
     // Past the last step: the whole case ran, said as such, never as a
     // replay that stopped partway.
-    assert_eq!(end, ReplayEnd::Ready { case_id: ID, step: 4, notice: None, whole: Some(3) });
+    assert_eq!(end, ReplayEnd::Ready { case_id: ID, step: 4, notice: None, whole: Some(3), cleanup: None });
     assert_eq!(end.sentence(), "replayed the whole of case 77 (all 3 steps) - the browser is on the page its last step left");
     for s in ["#s1", "#s2", "#s3"] {
         assert!(clicked(&app, s), "{s} did not run: {:?}", log(&app));
     }
     assert_eq!(heard, vec![(1, 3), (2, 3), (3, 3)]);
+}
+
+/// #54/#55: a replayed step's component that waited for a text (a toast)
+/// and found it files that text as seen in the case's area, as a probe
+/// would, so a script or component naming it then saves.
+#[tokio::test]
+async fn a_replayed_components_wait_for_files_the_text_it_found() {
+    let _l = crate::serial::account_leases();
+    let dir = tempfile::tempdir().unwrap();
+    let component: v2_lib::autorun::components::Component = serde_json::from_value(json!({
+        "name": "Save profile", "description": "d", "version": 1, "inputs": [],
+        "actions": [
+            click("#save"),
+            { "kind": "wait_for", "selector": { "text": "Profile saved" }, "timeout_ms": 500 }
+        ]
+    }))
+    .unwrap();
+    v2_lib::autorun::components::put(dir.path(), "acme", "Web", component).unwrap();
+    project(
+        dir.path(),
+        &script(json!([
+            { "step_number": 1, "actions": [{ "kind": "use_component", "component": "Save profile" }] },
+            { "step_number": 2, "actions": [click("#s2")] }
+        ])),
+    );
+    let (mut d, app) = app();
+    let (mut account, mut guarded, cancel) = (None, None, AtomicBool::new(false));
+    let end = replay(&mut d, dir.path(), &req(2), &mut account, &mut guarded, &cancel, |_, _| {}).await;
+    assert_eq!(end, ReplayEnd::Ready { case_id: ID, step: 2, notice: None, whole: None, cleanup: None }, "{:?}", log(&app));
+    let map = v2_lib::autorun::discovery_map::load_map(dir.path(), "acme", "Web").unwrap();
+    let area = map.areas.iter().find(|a| a.area == "Leave").expect("nothing filed under the case's area");
+    let key = v2_lib::browser::locator::SeenKey::Text("Profile saved".into());
+    assert!(area.sightings.iter().any(|s| s.key == key), "{:?}", area.sightings);
 }
 
 /// A replayed step that ran in a second tab carries that tab, as a live
@@ -251,11 +284,11 @@ async fn a_replayed_step_in_a_second_tab_carries_its_tab() {
         &mut Reuse::default(),
     )
     .await;
-    assert_eq!(end, ReplayEnd::Ready { case_id: ID, step: 4, notice: None, whole: None }, "{:?}", log(&app));
+    assert_eq!(end, ReplayEnd::Ready { case_id: ID, step: 4, notice: None, whole: None, cleanup: None }, "{:?}", log(&app));
     // Step 1 opened the tab from main, step 2 ran in it, step 3 went back.
     assert_eq!(tabs, vec![ReplayedTab { step: 2, tab: "report".into() }]);
     // The person's command answers with them beside the end.
-    let answer = ReplayAnswer::with_tabs(end, tabs);
+    let answer = ReplayAnswer::with_tabs(end, tabs, None);
     let json = serde_json::to_value(&answer).unwrap();
     assert_eq!(json["tabs"], json!([{ "step": 2, "tab": "report" }]));
 }
@@ -290,8 +323,9 @@ async fn a_stop_mid_replay_ends_it_before_the_next_step() {
     project(dir.path(), &script(three_steps()));
     let (mut d, app) = app();
     let (mut account, mut guarded, cancel) = (None, None, AtomicBool::new(false));
+    // Asked as step 2 is about to run: heard before its first action.
     let end = replay(&mut d, dir.path(), &req(4), &mut account, &mut guarded, &cancel, |k, _| {
-        if k == 1 {
+        if k == 2 {
             cancel.store(true, Ordering::SeqCst);
         }
     })
@@ -299,6 +333,114 @@ async fn a_stop_mid_replay_ends_it_before_the_next_step() {
     assert_eq!(end, ReplayEnd::Stopped { step: 2 });
     assert_eq!(end.sentence(), "the replay was stopped at step 2: it was asked to stop (Stop, Close browser or Release Auto Run browser)");
     assert!(clicked(&app, "#s1") && !clicked(&app, "#s2"), "{:?}", log(&app));
+}
+
+/// A browser that sets `cancel` once `what` has been clicked: a stop asked
+/// for while a step's action runs.
+struct StopsAfterClick {
+    inner: ScriptedDriver,
+    app: common::MenuApp,
+    what: &'static str,
+    cancel: Arc<AtomicBool>,
+}
+
+impl Driver for StopsAfterClick {
+    async fn call(&mut self, method: &str, params: Value) -> Result<Value, CdpError> {
+        let answer = self.inner.call(method, params).await;
+        if clicked(&self.app, self.what) {
+            self.cancel.store(true, Ordering::SeqCst);
+        }
+        answer
+    }
+    async fn wait_event(&mut self, method: &str, limit: Duration) -> Result<Event, CdpError> {
+        self.inner.wait_event(method, limit).await
+    }
+    fn forget_events(&mut self) {
+        self.inner.forget_events();
+    }
+    fn take_dialogs(&mut self) -> Vec<String> {
+        self.inner.take_dialogs()
+    }
+    fn set_deadline(&mut self, deadline: Option<std::time::Instant>) {
+        self.inner.set_deadline(deadline);
+    }
+}
+
+/// A stop asked for on the way to the case's area - after the last look
+/// before it - is heard where the steps start: step 1 never begins (its
+/// progress is never reported) and none of its actions runs.
+#[tokio::test]
+async fn a_stop_on_the_way_to_the_area_is_heard_before_step_1_begins() {
+    let _l = crate::serial::account_leases();
+    let dir = tempfile::tempdir().unwrap();
+    project(dir.path(), &script(three_steps()));
+    let (inner, app) = app();
+    let cancel = Arc::new(AtomicBool::new(false));
+    let watched = common::MenuApp { log: app.log.clone(), path: app.path.clone() };
+    let mut d = StopsAfterClick { inner, app: watched, what: "Leave", cancel: cancel.clone() };
+    let (mut account, mut guarded) = (None, None);
+    let began = std::cell::RefCell::new(Vec::new());
+    let end = replay(&mut d, dir.path(), &req(4), &mut account, &mut guarded, &cancel, |k, _| began.borrow_mut().push(k)).await;
+    assert_eq!(end, ReplayEnd::Stopped { step: 1 });
+    assert!(clicked(&app, "Leave"), "the trip to the area ran: {:?}", log(&app));
+    assert!(began.borrow().is_empty(), "step 1 began: {:?}", began.borrow());
+    assert!(!clicked(&app, "#s1"), "{:?}", log(&app));
+}
+
+/// Row 33: a stop asked for while a step's action runs ends the replay
+/// before that step's next action - never only once the whole step has
+/// run. The step's later actions are not carried out.
+#[tokio::test]
+async fn a_stop_during_an_action_ends_the_replay_before_the_steps_next_action() {
+    let _l = crate::serial::account_leases();
+    let dir = tempfile::tempdir().unwrap();
+    let steps = json!([
+        { "step_number": 1, "actions": [click("#s1")] },
+        { "step_number": 2, "actions": [click("#a"), click("#b"), click("#c")] },
+        { "step_number": 3, "actions": [click("#s3")] }
+    ]);
+    project(dir.path(), &script(steps));
+    let (inner, app) = app();
+    let cancel = Arc::new(AtomicBool::new(false));
+    let watched = common::MenuApp { log: app.log.clone(), path: app.path.clone() };
+    let mut d = StopsAfterClick { inner, app: watched, what: "#a", cancel: cancel.clone() };
+    let (mut account, mut guarded) = (None, None);
+    let end = replay(&mut d, dir.path(), &req(4), &mut account, &mut guarded, &cancel, |_, _| {}).await;
+    assert_eq!(end, ReplayEnd::Stopped { step: 2 });
+    assert!(clicked(&app, "#s1") && clicked(&app, "#a"), "{:?}", log(&app));
+    assert!(!clicked(&app, "#b") && !clicked(&app, "#c"), "the step ran on after the stop: {:?}", log(&app));
+    assert!(!clicked(&app, "#s3"), "{:?}", log(&app));
+}
+
+/// Row 33: a failed action ends the replay at once - the rest of its step
+/// is never carried out (so never waits out its timeouts), and no later
+/// step runs.
+#[tokio::test]
+async fn a_failed_action_ends_the_replay_at_once() {
+    use v2_lib::autorun::runner::AFTER_ACTION_FAILED;
+    let _l = crate::serial::account_leases();
+    let dir = tempfile::tempdir().unwrap();
+    let steps = json!([
+        { "step_number": 1, "actions": [click("#s1")] },
+        { "step_number": 2, "actions": [
+            { "kind": "check_text", "value": "no" },
+            { "kind": "expect_visible", "selector": { "css": "#never" }, "timeout_ms": 60000 },
+            click("#b")
+        ] },
+        { "step_number": 3, "actions": [click("#s3")] }
+    ]);
+    project(dir.path(), &script(steps));
+    let (mut d, app) = app();
+    let (mut account, mut guarded, cancel) = (None, None, AtomicBool::new(false));
+    let began = std::time::Instant::now();
+    let end = replay(&mut d, dir.path(), &req(4), &mut account, &mut guarded, &cancel, |_, _| {}).await;
+    let ReplayEnd::StoppedAt { phase, step, outcomes, .. } = &end else { panic!("{end:?}") };
+    assert_eq!((*phase, *step), (ReplayPhase::Step, 2));
+    assert!(!outcomes[0].ok, "{outcomes:?}");
+    assert_eq!(outcomes[1].detail, AFTER_ACTION_FAILED);
+    assert_eq!(outcomes[2].detail, AFTER_ACTION_FAILED);
+    assert!(began.elapsed() < Duration::from_secs(20), "a later action waited out its timeout");
+    assert!(!clicked(&app, "#b") && !clicked(&app, "#s3"), "{:?}", log(&app));
 }
 
 /// A browser that dies - the person closed its window - once `dead` is set.
@@ -446,7 +588,7 @@ async fn with_database_read_access_off_no_database_is_asked_and_the_notice_is_ca
         |_, _| {},
     )
     .await;
-    assert_eq!(end, ReplayEnd::Ready { case_id: ID, step: 2, notice: Some(NOT_CHECKED.into()), whole: None });
+    assert_eq!(end, ReplayEnd::Ready { case_id: ID, step: 2, notice: Some(NOT_CHECKED.into()), whole: None, cleanup: None });
     assert!(db.calls().is_empty(), "the database was asked: {:?}", db.calls());
     assert!(clicked(&app, "#s1"));
 }
@@ -854,7 +996,7 @@ fn a_stop_before_the_browser_opens_ends_the_replay_there() {
 /// The person's command answers with the sentence already said.
 #[test]
 fn the_answer_carries_the_finished_sentence() {
-    let answer: ReplayAnswer = ReplayEnd::Ready { case_id: ID, step: 3, notice: None, whole: None }.into();
+    let answer: ReplayAnswer = ReplayEnd::Ready { case_id: ID, step: 3, notice: None, whole: None, cleanup: None }.into();
     assert_eq!(answer.sentence, "replayed case 77 to step 3 - the browser is on the page before step 3 runs");
     let answer: ReplayAnswer = ReplayEnd::Refused(ALREADY_RUNNING.into()).into();
     assert_eq!(answer.sentence, ALREADY_RUNNING);
@@ -1082,7 +1224,7 @@ async fn a_replay_closes_the_tabs_left_from_before_and_recreates_the_cases_own()
     // A click opens a tab, as the case's link does.
     d.tabs.opens_on = Some("Input.dispatchMouseEvent".into());
     let end = replay(&mut d, dir.path(), &req(3), &mut account, &mut guarded, &cancel, |_, _| {}).await;
-    assert_eq!(end, ReplayEnd::Ready { case_id: ID, step: 3, notice: None, whole: None }, "{:?}", log(&app));
+    assert_eq!(end, ReplayEnd::Ready { case_id: ID, step: 3, notice: None, whole: None, cleanup: None }, "{:?}", log(&app));
     assert_eq!(d.tabs.closed_others, 1, "the tabs from before were not closed first");
     assert_eq!(d.tabs.open, ["report"], "the case's own tab was not opened again");
     assert_eq!(d.tab_name(), "report", "the replay leaves the browser where step 2 left it");
@@ -1161,12 +1303,12 @@ async fn a_replay_carries_on_from_where_the_last_one_stood() {
         |_, _| {},
     )
     .await;
-    assert_eq!(end, ReplayEnd::Ready { case_id: ID, step: 2, notice: None, whole: None });
+    assert_eq!(end, ReplayEnd::Ready { case_id: ID, step: 2, notice: None, whole: None, cleanup: None });
     assert_eq!(from_here(Some(&stand(&saved, 2)), &saved, 4), ReplayFrom::CarriedOn(2));
 
     let before = log(&app).len();
     let end = carry(&mut d, dir.path(), &req(4), 2, &mut account, &mut held, &mut guarded).await;
-    assert_eq!(end, ReplayEnd::Ready { case_id: ID, step: 4, notice: None, whole: Some(3) });
+    assert_eq!(end, ReplayEnd::Ready { case_id: ID, step: 4, notice: None, whole: Some(3), cleanup: None });
     let after: Vec<String> = log(&app)[before..].to_vec();
     assert!(after.contains(&"click #s2".to_string()) && after.contains(&"click #s3".to_string()), "{after:?}");
     for not_again in ["click #go", "click Leave", "click #s1"] {
@@ -1203,7 +1345,7 @@ fn a_replay_already_standing_before_the_step_runs_nothing() {
     assert_eq!(from_here(Some(&stand(&saved, 3)), &saved, 3), ReplayFrom::AlreadyThere);
     assert_eq!(
         ReplayFrom::AlreadyThere.said(ID, 3),
-        "The browser is already standing before step 3 of case 77: nothing ran."
+        "The browser is already standing before step 3 of case 77: nothing ran. To run it again from the beginning, call reset_autorun_browser first."
     );
 }
 
@@ -1419,11 +1561,14 @@ fn sign_ins(d: &ScriptedDriver) -> usize {
 /// The fake browser's cookies for the application's host, as (name, value).
 /// `now` is what it holds; `login` what a sign-in leaves - put in as the
 /// sign-in clears the site (`Storage.clearDataForOrigin`), which is before
-/// anything reads them. `expire_session` deletes them one by one.
+/// anything reads them. `expire_session` deletes them one by one. Every
+/// cookie is HttpOnly, as a server's sign-in cookie is, except those named
+/// in `by_script`: the page's own script wrote them.
 #[derive(Clone)]
 struct Jar {
     now: Arc<std::sync::Mutex<Vec<(String, String)>>>,
     login: Arc<std::sync::Mutex<Vec<(String, String)>>>,
+    by_script: Arc<std::sync::Mutex<Vec<String>>>,
 }
 
 impl Jar {
@@ -1435,17 +1580,33 @@ impl Jar {
     }
 }
 
-/// `app()` with a cookie jar: a sign-in leaves admin's two PeoplesHR cookies.
+/// The cookie PeoplesHR's page script writes as pages load (not HttpOnly).
+const TAB_COOKIE: &str = "my-application-browser-tab";
+
+/// `app()` with a cookie jar: a sign-in leaves admin's two PeoplesHR
+/// cookies (HttpOnly), and the page's script its tab cookie.
 fn jar_app() -> (ScriptedDriver, common::MenuApp, Jar) {
     let (d, app) = app();
-    let admin = vec![(".ASPXAUTH".to_string(), "auth-admin-1".to_string()), ("ehrm85".to_string(), "admin".to_string())];
-    let jar = Jar { now: Arc::new(std::sync::Mutex::new(vec![])), login: Arc::new(std::sync::Mutex::new(admin)) };
+    let admin = vec![
+        (".ASPXAUTH".to_string(), "auth-admin-1".to_string()),
+        ("ehrm85".to_string(), "admin".to_string()),
+        (TAB_COOKIE.to_string(), "tab-1".to_string()),
+    ];
+    let jar = Jar {
+        now: Arc::new(std::sync::Mutex::new(vec![])),
+        login: Arc::new(std::sync::Mutex::new(admin)),
+        by_script: Arc::new(std::sync::Mutex::new(vec![TAB_COOKIE.to_string()])),
+    };
     let j = jar.clone();
     let d = d.answering_first(move |method, params| {
+        let by_script = j.by_script.lock().unwrap().clone();
         let as_json = |cookies: &[(String, String)]| {
             let list: Vec<Value> = cookies
                 .iter()
-                .map(|(n, v)| json!({ "name": n, "value": v, "domain": "hr.example.internal", "path": "/", "session": true }))
+                .map(|(n, v)| {
+                    let http_only = !by_script.contains(n);
+                    json!({ "name": n, "value": v, "domain": "hr.example.internal", "path": "/", "httpOnly": http_only, "session": true })
+                })
                 .collect();
             Ok(json!({ "cookies": list }))
         };
@@ -1482,7 +1643,7 @@ async fn signed_in_once(
     held: &mut Held,
 ) {
     let (first, reused) = replay_kept(d, root, 3, account, held).await;
-    assert_eq!(first, ReplayEnd::Ready { case_id: ID, step: 3, notice: None, whole: None }, "{:?}", log(app));
+    assert_eq!(first, ReplayEnd::Ready { case_id: ID, step: 3, notice: None, whole: None, cleanup: None }, "{:?}", log(app));
     assert_eq!(reused, Reuse::default(), "a fresh browser signs in");
     assert_eq!(sign_ins(d), 1);
     assert_eq!(account.as_deref(), Some("admin"));
@@ -1512,7 +1673,7 @@ async fn a_replay_in_a_browser_signed_in_as_its_account_skips_the_sign_in() {
     signed_in_once(dir.path(), &mut d, &app, &mut account, &mut held).await;
 
     let (end, reused) = replay_kept(&mut d, dir.path(), 3, &mut account, &mut held).await;
-    assert_eq!(end, ReplayEnd::Ready { case_id: ID, step: 3, notice: None, whole: None }, "{:?}", log(&app));
+    assert_eq!(end, ReplayEnd::Ready { case_id: ID, step: 3, notice: None, whole: None, cleanup: None }, "{:?}", log(&app));
     assert_eq!(reused.went.as_deref(), Some("Leave"), "it went to the case's area without signing in");
     assert_eq!(reused.said().as_deref(), Some("Signed in already: went to Leave."));
     assert_eq!(signed_in_already_line("Leave"), "Signed in already: went to Leave.");
@@ -1543,6 +1704,25 @@ async fn a_cookie_the_page_added_since_the_sign_in_keeps_the_reuse() {
     let (end, reused) = replay_kept(&mut d, dir.path(), 3, &mut account, &mut held).await;
     assert!(matches!(end, ReplayEnd::Ready { .. }), "{end:?}");
     assert_eq!(reused.went.as_deref(), Some("Leave"));
+    assert_eq!(sign_ins(&d), 0, "{:?}", log(&app));
+}
+
+/// #64: the page's own script rewrote its tab cookie as the replay moved
+/// the page. That cookie is not HttpOnly - it says nothing about who is
+/// signed in - so the browser still holds the sign-in, and the next replay
+/// reuses it.
+#[tokio::test]
+async fn a_cookie_the_pages_script_rewrote_keeps_the_reuse() {
+    let _l = crate::serial::account_leases();
+    let dir = tempfile::tempdir().unwrap();
+    project(dir.path(), &script(three_steps()));
+    let (mut d, app, jar) = jar_app();
+    let (mut account, mut held) = (None, Held::supervised());
+    signed_in_once(dir.path(), &mut d, &app, &mut account, &mut held).await;
+    jar.set(TAB_COOKIE, "tab-2");
+    let (end, reused) = replay_kept(&mut d, dir.path(), 3, &mut account, &mut held).await;
+    assert!(matches!(end, ReplayEnd::Ready { .. }), "{end:?}");
+    assert_eq!(reused.went.as_deref(), Some("Leave"), "a script's cookie made the sign-in look changed: {:?}", log(&app));
     assert_eq!(sign_ins(&d), 0, "{:?}", log(&app));
 }
 
@@ -1897,7 +2077,7 @@ async fn an_expire_session_step_clears_the_sign_in() {
     let (mut d, app, _jar) = jar_app();
     let (mut account, mut held) = (None, Held::supervised());
     let (first, _) = replay_kept(&mut d, dir.path(), 3, &mut account, &mut held).await;
-    assert_eq!(first, ReplayEnd::Ready { case_id: ID, step: 3, notice: None, whole: None }, "{:?}", log(&app));
+    assert_eq!(first, ReplayEnd::Ready { case_id: ID, step: 3, notice: None, whole: None, cleanup: None }, "{:?}", log(&app));
     assert_eq!(account, None, "the ended session still names its account");
     assert!(held.sign_in_print().is_none(), "the ended session's print was kept");
     app.log.lock().unwrap().clear();
@@ -1946,7 +2126,7 @@ async fn a_save_stopped_on_the_reuse_trip_is_said_before_signing_in_again() {
     let sentence = v2_lib::browser::save_guard::blocked("POST", "https://hr.example.internal/api/leave/save");
     d.block_after = Some(("Accessibility.queryAXTree".into(), sentence.clone()));
     let (end, reused) = replay_kept(&mut d, dir.path(), 3, &mut account, &mut held).await;
-    assert_eq!(end, ReplayEnd::Ready { case_id: ID, step: 3, notice: None, whole: None }, "{:?}", log(&app));
+    assert_eq!(end, ReplayEnd::Ready { case_id: ID, step: 3, notice: None, whole: None, cleanup: None }, "{:?}", log(&app));
     assert_eq!(reused.went, None);
     assert_eq!(reused.save_stopped, Some(save_stopped_line("Leave", &sentence)));
     assert_eq!(
@@ -1982,7 +2162,7 @@ async fn a_failed_trip_signs_in_once_and_goes_again() {
 
     hidden.store(true, Ordering::SeqCst);
     let (end, reused) = replay_kept(&mut d, dir.path(), 3, &mut account, &mut held).await;
-    assert_eq!(end, ReplayEnd::Ready { case_id: ID, step: 3, notice: None, whole: None }, "{:?}", log(&app));
+    assert_eq!(end, ReplayEnd::Ready { case_id: ID, step: 3, notice: None, whole: None, cleanup: None }, "{:?}", log(&app));
     assert_eq!(reused, Reuse::default(), "it signed in after all");
     assert_eq!(sign_ins(&d), 1, "{:?}", log(&app));
     let seen = log(&app);
@@ -2074,6 +2254,32 @@ async fn a_reset_keeps_the_sign_in_and_goes_home() {
     let (end, reused) = replay_kept(&mut b.d, dir.path(), 3, &mut account, &mut held).await;
     assert!(matches!(end, ReplayEnd::Ready { .. }), "{end:?}");
     assert_eq!(reused.went.as_deref(), Some("Leave"), "the replay after a reset signed in again");
+}
+
+/// #64: between the sign-in and the reset the page's script rewrote its
+/// tab cookie (not HttpOnly): the reset still says the browser is signed in
+/// as admin - never that the sign-in has gone - and the next replay reuses
+/// it.
+#[tokio::test]
+async fn a_reset_after_the_pages_script_rewrote_its_cookie_keeps_the_sign_in() {
+    use v2_lib::commands::autorun::{reset_in_for_assistant, reset_sentence};
+    let _l = crate::serial::account_leases();
+    let dir = tempfile::tempdir().unwrap();
+    project(dir.path(), &script(three_steps()));
+    let (mut slot, app, jar) = left_by_a_replay(dir.path()).await;
+    jar.set(TAB_COOKIE, "tab-2");
+    let (status, said) = reset_in_for_assistant(&mut slot, dir.path(), "acme", "Web", &quick()).await;
+    assert_eq!((status, said.as_str()), (200, reset_sentence("admin").as_str()), "{:?}", log(&app));
+    let b = slot.as_ref().expect("the reset closed the browser");
+    assert_eq!((b.account.as_deref(), b.lease.account()), (Some("admin"), Some("admin")));
+    assert!(b.lease.sign_in_print().is_some(), "the sign-in's cookies were forgotten");
+
+    let mut b = slot.unwrap();
+    let (mut account, mut held) = (b.account.take(), b.lease);
+    let (end, reused) = replay_kept(&mut b.d, dir.path(), 3, &mut account, &mut held).await;
+    assert!(matches!(end, ReplayEnd::Ready { .. }), "{end:?}");
+    assert_eq!(reused.went.as_deref(), Some("Leave"), "the replay after a reset signed in again");
+    assert_eq!(sign_ins(&b.d), 0, "{:?}", log(&app));
 }
 
 /// A reset ends the assistant's discovery as end_autorun_discovery does -
@@ -2276,4 +2482,143 @@ async fn a_reset_whose_sign_in_has_gone_and_guard_stays_says_so_as_a_sentence() 
         log(&app)
     );
     assert_eq!(slot.as_ref().unwrap().account, None);
+}
+
+// ---- #46: the clean-up step ---------------------------------------------------
+
+fn three_steps_and_a_clean_up() -> Value {
+    json!([
+        { "step_number": 1, "actions": [click("#s1")] },
+        { "step_number": 2, "actions": [click("#s2")] },
+        { "step_number": 3, "actions": [click("#s3")] },
+        { "step_number": 4, "actions": [click("#tidy")], "cleanup": true, "unchecked": "removes what step 1 made" }
+    ])
+}
+
+#[tokio::test]
+async fn a_replay_to_the_clean_up_runs_the_whole_case_but_not_the_clean_up() {
+    let _l = crate::serial::account_leases();
+    let dir = tempfile::tempdir().unwrap();
+    project(dir.path(), &script(three_steps_and_a_clean_up()));
+    let (mut d, app) = app();
+    let (mut account, mut guarded, cancel) = (None, None, AtomicBool::new(false));
+    let end = replay(&mut d, dir.path(), &req(4), &mut account, &mut guarded, &cancel, |_, _| {}).await;
+    assert_eq!(end, ReplayEnd::Ready { case_id: ID, step: 4, notice: None, whole: Some(3), cleanup: Some(4) });
+    assert_eq!(
+        end.sentence(),
+        "replayed the whole of case 77 (all 3 steps; its clean-up did not run - replay to step 5 to run it too) - the browser is on the page its last step left"
+    );
+    assert!(clicked(&app, "#s3"), "{:?}", log(&app));
+    assert!(!clicked(&app, "#tidy"), "the clean-up ran: {:?}", log(&app));
+}
+
+#[tokio::test]
+async fn a_replay_past_the_clean_up_runs_it_last() {
+    let _l = crate::serial::account_leases();
+    let dir = tempfile::tempdir().unwrap();
+    project(dir.path(), &script(three_steps_and_a_clean_up()));
+    let (mut d, app) = app();
+    let (mut account, mut guarded, cancel) = (None, None, AtomicBool::new(false));
+    let end = replay(&mut d, dir.path(), &req(5), &mut account, &mut guarded, &cancel, |_, _| {}).await;
+    assert_eq!(end, ReplayEnd::Ready { case_id: ID, step: 5, notice: None, whole: Some(3), cleanup: Some(4) });
+    assert_eq!(
+        end.sentence(),
+        "replayed the whole of case 77 (all 3 steps and its clean-up) - the browser is on the page its clean-up left"
+    );
+    let seen = log(&app);
+    let at = |what: &str| seen.iter().position(|l| l == what).unwrap_or_else(|| panic!("no {what:?} in {seen:?}"));
+    assert!(at("click #s3") < at("click #tidy"), "{seen:?}");
+}
+
+/// A replay stopped as it reached the clean-up says "the clean-up", as the
+/// pane, the report and the hand-over name it - never "step 4" of a case
+/// that has three.
+#[tokio::test]
+async fn a_replay_stopped_at_the_clean_up_names_it() {
+    use v2_lib::autorun::replay_to::{cleanup_at, ASKED_TO_STOP};
+    let _l = crate::serial::account_leases();
+    let dir = tempfile::tempdir().unwrap();
+    project(dir.path(), &script(three_steps_and_a_clean_up()));
+    let (mut d, app) = app();
+    let (mut account, mut guarded, cancel) = (None, None, AtomicBool::new(false));
+    // Asked to stop as the clean-up begins: heard before its first action.
+    let end = replay(&mut d, dir.path(), &req(5), &mut account, &mut guarded, &cancel, |k, _| {
+        if k == 4 {
+            cancel.store(true, Ordering::SeqCst);
+        }
+    })
+    .await;
+    assert_eq!(end, ReplayEnd::Stopped { step: 4 });
+    assert_eq!(cleanup_at(), Some(4));
+    assert_eq!(end.sentence_in(cleanup_at()), format!("the replay was stopped at the clean-up: {ASKED_TO_STOP}"));
+    assert!(!clicked(&app, "#tidy"), "{:?}", log(&app));
+}
+
+/// Every stop and progress sentence of a replay names the clean-up as
+/// such; any other step keeps its number.
+#[test]
+fn the_replays_sentences_name_the_clean_up() {
+    use v2_lib::autorun::replay_to::{step_said, stopped_on_request, ReplayPhase};
+    assert_eq!(step_said(4, Some(4)), "the clean-up");
+    assert_eq!(step_said(3, Some(4)), "step 3");
+    assert_eq!(step_said(4, None), "step 4");
+    let failed = ReplayEnd::StoppedAt { phase: ReplayPhase::Step, step: 4, why: "no #tidy".into(), outcomes: vec![] };
+    assert_eq!(failed.sentence_in(Some(4)), "replay stopped at the clean-up: no #tidy");
+    assert_eq!(failed.sentence(), "replay stopped at step 4: no #tidy");
+    let gone = ReplayEnd::BrowserGone { step: 4, why: None, outcomes: vec![] };
+    assert!(gone.sentence_in(Some(4)).starts_with("replay stopped at the clean-up: "), "{}", gone.sentence_in(Some(4)));
+    assert_eq!(
+        stopped_on_request(77, 4, 1, false, Some(4)),
+        "the replay of case 77 was stopped on request after action 1 of the clean-up"
+    );
+    assert_eq!(
+        stopped_on_request(77, 4, 0, false, Some(4)),
+        "the replay of case 77 was stopped on request before the clean-up's first action"
+    );
+    assert_eq!(
+        stopped_on_request(77, 4, 1, true, Some(4)),
+        "the replay of case 77 was stopped on request at action 1 of the clean-up, inside its wait"
+    );
+    let on = v2_lib::autorun::runner::ActionNow::default();
+    let running = v2_lib::ai_bridge::replay_still_running_answer(77, 5, 4, 4, &on, Some(4));
+    assert_eq!(
+        running["sentence"],
+        "still running, now at the clean-up - call replay_autorun_to_step again with the same case (77) and step (5) to keep waiting"
+    );
+}
+
+#[tokio::test]
+async fn a_replay_to_an_earlier_step_runs_no_clean_up() {
+    let _l = crate::serial::account_leases();
+    let dir = tempfile::tempdir().unwrap();
+    project(dir.path(), &script(three_steps_and_a_clean_up()));
+    let (mut d, app) = app();
+    let (mut account, mut guarded, cancel) = (None, None, AtomicBool::new(false));
+    let end = replay(&mut d, dir.path(), &req(3), &mut account, &mut guarded, &cancel, |_, _| {}).await;
+    assert_eq!(end, ReplayEnd::Ready { case_id: ID, step: 3, notice: None, whole: None, cleanup: None });
+    assert!(!clicked(&app, "#tidy"), "{:?}", log(&app));
+}
+
+/// #46 review: the hint names the step past the clean-up, wherever the
+/// clean-up is numbered (the editor does not hold it to last + 1).
+#[tokio::test]
+async fn the_hint_names_the_step_past_the_clean_up_itself() {
+    let _l = crate::serial::account_leases();
+    let dir = tempfile::tempdir().unwrap();
+    project(
+        dir.path(),
+        &script(json!([
+            { "step_number": 1, "actions": [click("#s1")] },
+            { "step_number": 2, "actions": [click("#s2")] },
+            { "step_number": 6, "actions": [click("#tidy")], "cleanup": true, "unchecked": "tidy" }
+        ])),
+    );
+    let (mut d, app) = app();
+    let (mut account, mut guarded, cancel) = (None, None, AtomicBool::new(false));
+    let end = replay(&mut d, dir.path(), &req(3), &mut account, &mut guarded, &cancel, |_, _| {}).await;
+    assert_eq!(
+        end.sentence(),
+        "replayed the whole of case 77 (all 2 steps; its clean-up did not run - replay to step 7 to run it too) - the browser is on the page its last step left"
+    );
+    assert!(!clicked(&app, "#tidy"), "{:?}", log(&app));
 }

@@ -262,11 +262,12 @@ pub fn handover_for(input: &HandoverInput) -> Handover {
         h.from_tcm.push("Look-only: must not save anything.".to_string());
     }
     for e in step_effects(s) {
+        let at = step_name(s, e.step);
         let line = match e.kind {
-            EffectKind::Delete => format!("step {} appears to delete data (\"{}\")", e.step, e.control),
-            EffectKind::Save => format!("step {} appears to save data (\"{}\")", e.step, e.control),
+            EffectKind::Delete => format!("{at} appears to delete data (\"{}\")", e.control),
+            EffectKind::Save => format!("{at} appears to save data (\"{}\")", e.control),
             // Names no control, so two publish buttons in a step say it once.
-            EffectKind::Publish => format!("step {} appears to publish - irreversible; run on demand only", e.step),
+            EffectKind::Publish => format!("{at} appears to publish - irreversible; run on demand only"),
         };
         if !h.from_tcm.contains(&line) {
             h.from_tcm.push(line);
@@ -285,11 +286,22 @@ pub fn handover_for(input: &HandoverInput) -> Handover {
         ));
     }
     for (step, value) in created_then_deleted(s) {
-        h.cleanup.push(format!("step {step} deletes \"{value}\" it created"));
-        h.from_tcm.push(format!("relies on step {step} to put data back"));
+        let at = step_name(s, step);
+        h.cleanup.push(format!("{at} deletes \"{value}\" it created"));
+        h.from_tcm.push(format!("relies on {at} to put data back"));
     }
     h.warnings = script_warnings(s);
     h
+}
+
+/// How the hand-over names step `n` of `script`: `step N`, or `the clean-up`
+/// for its clean-up step, which the spec writes under `// Clean-up:` with no
+/// number.
+fn step_name(script: &CaseScript, n: i32) -> String {
+    match script.cleanup_step() {
+        Some(c) if c.step_number == n => "the clean-up".to_string(),
+        _ => format!("step {n}"),
+    }
 }
 
 /// Whether a locator chooses its element by position among several matches
@@ -330,17 +342,18 @@ pub fn script_warnings(script: &CaseScript) -> Vec<String> {
         }
     };
     for (step, a) in each_action(script) {
+        let at = step_name(script, step);
         match a {
             Action::RepeatWhileVisible { except, then, .. } if except.is_empty() && deletes_any(then) => {
-                add(format!("step {step} appears to delete every matching row (no protected rows listed)"))
+                add(format!("{at} appears to delete every matching row (no protected rows listed)"))
             }
             _ => {
                 if let Some((kind, _, target)) = click_effect(a) {
                     match kind {
                         EffectKind::Delete if picks_by_position(target) => {
-                            add(format!("step {step} appears to delete a row it did not name"))
+                            add(format!("{at} appears to delete a row it did not name"))
                         }
-                        EffectKind::Publish => add(format!("step {step} appears to publish - irreversible")),
+                        EffectKind::Publish => add(format!("{at} appears to publish - irreversible")),
                         _ => {}
                     }
                 }

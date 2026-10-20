@@ -154,6 +154,7 @@ pub const AUTORUN_TOOLS: &[&str] = &[
     "probe_autorun_locator",
     "try_autorun_action",
     "replay_autorun_to_step",
+    "stop_autorun_replay",
     "start_autorun_discovery",
     "discover_autorun_action",
     "discover_autorun_actions",
