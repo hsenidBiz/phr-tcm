@@ -143,6 +143,16 @@ pub const READ_TEXT_JS: &str = r#"function() {
   return norm(this.innerText);
 }"#;
 
+/// `this` is the element. Is it a password input? Asked only when a sentence
+/// would carry what the element holds, so that sentence can say
+/// [`A_PASSWORD_FIELD`] instead.
+pub const IS_PASSWORD_JS: &str =
+    "function() { return this instanceof HTMLInputElement && String(this.type).toLowerCase() === 'password'; }";
+
+/// What a sentence says in place of what a password input holds. Other
+/// fields keep showing their value: a typo is what the sentence is for.
+pub const A_PASSWORD_FIELD: &str = "(a password field)";
+
 /// `this` is the element. Argument: the attribute name. null when absent.
 pub const READ_ATTR_JS: &str = r#"function(name) { return this.getAttribute(name); }"#;
 
@@ -214,6 +224,26 @@ async fn visible<D: Driver>(d: &mut D, h: &Handle) -> Result<bool, CdpError> {
 /// scrolled there (`input::SHOWN_JS`).
 async fn shown<D: Driver>(d: &mut D, h: &Handle) -> Result<bool, CdpError> {
     Ok(page::call_value(d, h, SHOWN_JS, &[]).await?.as_bool().unwrap_or(false))
+}
+
+/// Is the element a password input? Asked only by a check that is about to
+/// put what the element holds into a sentence.
+pub(crate) async fn is_password<D: Driver>(d: &mut D, h: &Handle) -> Result<bool, CdpError> {
+    Ok(page::call_value(d, h, IS_PASSWORD_JS, &[]).await?.as_bool().unwrap_or(false))
+}
+
+/// Is `name` the attribute that holds what a field holds?
+pub(crate) fn is_value_attribute(name: &str) -> bool {
+    name.eq_ignore_ascii_case("value")
+}
+
+/// What a sentence says for a value read from the page.
+fn shown_value(value: &str, password: bool) -> String {
+    if password {
+        A_PASSWORD_FIELD.to_string()
+    } else {
+        format!("{value:?}")
+    }
 }
 
 fn only(handles: &[Handle]) -> Result<&Handle, String> {
@@ -348,7 +378,8 @@ async fn look_reading<D: Driver>(
                     // Not the text: it may be a field's, and passes are listed in the report.
                     Ok(format!("{what} matches {}", super::pattern::shown(pattern)))
                 } else {
-                    Err(format!("{EXPECTED_TEXT}to match {} but saw {got:?}", super::pattern::shown(pattern)))
+                    let password = is_password(d, h).await?;
+                    Err(format!("{EXPECTED_TEXT}to match {} but saw {}", super::pattern::shown(pattern), shown_value(&got, password)))
                 }
             }
         },
@@ -358,8 +389,15 @@ async fn look_reading<D: Driver>(
                 let got = page::call_value(d, h, READ_ATTR_JS, &[json!(name)]).await?;
                 match got.as_str() {
                     None => Err(format!("{HAS_NO}{name}{ATTRIBUTE_TAIL}")),
-                    Some(v) if re.is_match(v) => Ok(format!("{what} has {name}={v:?}, matching {}", super::pattern::shown(pattern))),
-                    Some(v) => Err(format!("expected {name}={} but saw {v:?}", super::pattern::shown(pattern))),
+                    Some(v) => {
+                        let password = is_value_attribute(name) && is_password(d, h).await?;
+                        let v_shown = shown_value(v, password);
+                        if re.is_match(v) {
+                            Ok(format!("{what} has {name}={v_shown}, matching {}", super::pattern::shown(pattern)))
+                        } else {
+                            Err(format!("expected {name}={} but saw {v_shown}", super::pattern::shown(pattern)))
+                        }
+                    }
                 }
             }
         },
@@ -368,10 +406,12 @@ async fn look_reading<D: Driver>(
             Ok(h) => {
                 let got = page::call_value(d, h, READ_TEXT_JS, &[]).await?;
                 let (got, want) = (collapse(got.as_str().unwrap_or("")), collapse(want));
+                let password = is_password(d, h).await?;
                 if got == want {
-                    Ok(format!("{what} says {want:?}"))
+                    // On a pass the wanted text IS what the field holds.
+                    Ok(format!("{what} says {}", shown_value(&want, password)))
                 } else {
-                    Err(format!("{EXPECTED_TEXT}{want:?} but saw {got:?}"))
+                    Err(format!("{EXPECTED_TEXT}{want:?} but saw {}", shown_value(&got, password)))
                 }
             }
         },
@@ -380,10 +420,12 @@ async fn look_reading<D: Driver>(
             Ok(h) => {
                 let got = page::call_value(d, h, READ_TEXT_JS, &[]).await?;
                 let (got, want) = (collapse(got.as_str().unwrap_or("")), collapse(want));
+                let password = is_password(d, h).await?;
                 if got.contains(&want) {
-                    Ok(format!("{what} contains {want:?}"))
+                    // On a pass the wanted text is part of what the field holds.
+                    Ok(format!("{what} contains {}", shown_value(&want, password)))
                 } else {
-                    Err(format!("{EXPECTED_TO_CONTAIN}{want:?} but saw {got:?}"))
+                    Err(format!("{EXPECTED_TO_CONTAIN}{want:?} but saw {}", shown_value(&got, password)))
                 }
             }
         },
@@ -393,8 +435,15 @@ async fn look_reading<D: Driver>(
                 let got = page::call_value(d, h, READ_ATTR_JS, &[json!(name)]).await?;
                 match got.as_str() {
                     None => Err(format!("{HAS_NO}{name}{ATTRIBUTE_TAIL}")),
-                    Some(v) if v == *equals => Ok(format!("{what} has {name}={equals:?}")),
-                    Some(v) => Err(format!("expected {name}={equals:?} but saw {v:?}")),
+                    Some(v) => {
+                        let password = is_value_attribute(name) && is_password(d, h).await?;
+                        if v == *equals {
+                            // On a pass the wanted value IS what the field holds.
+                            Ok(format!("{what} has {name}={}", shown_value(equals, password)))
+                        } else {
+                            Err(format!("expected {name}={equals:?} but saw {}", shown_value(v, password)))
+                        }
+                    }
                 }
             }
         },
@@ -404,7 +453,10 @@ async fn look_reading<D: Driver>(
                 let got = page::call_value(d, h, READ_ATTR_JS, &[json!(name)]).await?;
                 match got.as_str() {
                     None => Ok(format!("{what} {HAS_NO}{name}{ATTRIBUTE_TAIL}")),
-                    Some(v) => Err(format!("{HAS_ATTRIBUTE}{name}={v:?}")),
+                    Some(v) => {
+                        let password = is_value_attribute(name) && is_password(d, h).await?;
+                        Err(format!("{HAS_ATTRIBUTE}{name}={}", shown_value(v, password)))
+                    }
                 }
             }
         },

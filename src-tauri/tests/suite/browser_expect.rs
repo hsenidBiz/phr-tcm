@@ -661,6 +661,8 @@ struct ListPage {
     /// Elements that are an `<input>` or `<textarea>`: what they hold is
     /// never put in a message.
     fields: std::collections::HashSet<String>,
+    /// Elements that are an `<input type=password>`.
+    passwords: std::collections::HashSet<String>,
 }
 
 impl ListPage {
@@ -714,6 +716,9 @@ impl ListPage {
                 "Runtime.callFunctionOn" if f == CONNECTED_JS => {
                     let gone = self.detached.contains(&id) && looks.load(Ordering::SeqCst) <= self.detached_looks;
                     json!({ "result": { "value": !gone } })
+                }
+                "Runtime.callFunctionOn" if f == v2_lib::browser::expect::IS_PASSWORD_JS => {
+                    json!({ "result": { "value": self.passwords.contains(&id) } })
                 }
                 "Runtime.callFunctionOn" if f == IS_FIELD_JS => {
                     json!({ "result": { "value": self.fields.contains(&id) } })
@@ -1096,6 +1101,50 @@ async fn each_never_prints_what_a_field_holds() {
     let page = ListPage::default().list("div.card", 1).text("c1", "Draft one");
     let out = execute_with(&mut page.driver(Arc::default()), &each(json!({ "equals": "Open" })), &quick()).await;
     assert!(out.detail.ends_with("expected text \"Open\" but saw \"Draft one\""), "{}", out.detail);
+}
+
+/// `expect_each` on the `value` attribute of a password input shows
+/// `(a password field)`; another attribute, or another field, still shows it.
+#[tokio::test]
+async fn each_never_prints_a_password_fields_value_attribute() {
+    let mut page = ListPage::default().list("input.f", 1).attr("c1", "hunter2-Secret");
+    page.passwords.insert("c1".to_string());
+    for want in [
+        json!({ "equals": "other" }),
+        json!({ "contains": "other" }),
+        json!({ "matches": "^other" }),
+    ] {
+        let mut base = json!({ "kind": "expect_each", "selector": { "css": "input.f" }, "attribute": "value" });
+        for (k, v) in want.as_object().unwrap() {
+            base[k] = v.clone();
+        }
+        let out = execute_with(&mut page_driver(&page), &action(base), &quick()).await;
+        assert!(!out.ok);
+        assert!(!out.detail.contains("hunter2"), "{}", out.detail);
+        assert!(out.detail.contains("but saw (a password field)"), "{}", out.detail);
+    }
+    // An ordinary field's value attribute is still the evidence.
+    let page = ListPage::default().list("input.f", 1).attr("c1", "typo-value");
+    let out = execute_with(&mut page_driver(&page), &each_input(json!({ "attribute": "value", "equals": "other" })), &quick()).await;
+    assert!(out.detail.contains("but saw \"typo-value\""), "{}", out.detail);
+}
+
+fn page_driver(page: &ListPage) -> ScriptedDriver {
+    ListPage {
+        found: page.found.clone(),
+        attrs: page.attrs.clone(),
+        passwords: page.passwords.clone(),
+        ..ListPage::default()
+    }
+    .driver(Arc::default())
+}
+
+fn each_input(v: Value) -> Action {
+    let mut base = json!({ "kind": "expect_each", "selector": { "css": "input.f" } });
+    for (k, val) in v.as_object().unwrap() {
+        base[k] = val.clone();
+    }
+    action(base)
 }
 
 /// A child behind a frame this page cannot enter is not "not on the page".
@@ -1611,4 +1660,67 @@ fn order_judge_is_greedy_collapsed_and_cut() {
     // Ten items are shown, then the count of the rest.
     let many: Vec<String> = (0..12).map(|i| format!("i{i}")).collect();
     assert!(judge(&s(&["i1", "zz"]), &many).unwrap_err().ends_with("\"i9\" and 2 more"));
+}
+
+// ---- a password input's value is never put in a sentence ----------------
+
+const SECRET: &str = "hunter2-Secret";
+
+/// Runs `check` against one password input (or an ordinary text input when
+/// `password` is false) holding `SECRET`.
+async fn on_input(password: bool, attribute: Option<&'static str>, check: Value) -> v2_lib::browser::actions::ActionOutcome {
+    let mut d = FakePage { texts: vec![SECRET], attribute, password, ..FakePage::default() }.driver();
+    execute_with(&mut d, &action(check), &quick()).await
+}
+
+/// `expect_text`, `expect_contains_text`, `expect_text` with `matches` and
+/// `expect_attribute` on `value`, passing and failing, against a password
+/// input: `(a password field)` stands where the value would be.
+#[tokio::test]
+async fn no_check_shows_a_password_fields_value() {
+    let sel = json!({ "css": "#password" });
+    let checks = [
+        // Passing, then failing.
+        json!({ "kind": "expect_text", "selector": sel, "equals": SECRET }),
+        json!({ "kind": "expect_text", "selector": sel, "equals": "other" }),
+        json!({ "kind": "expect_contains_text", "selector": sel, "value": "hunter2" }),
+        json!({ "kind": "expect_contains_text", "selector": sel, "value": "nothing" }),
+        json!({ "kind": "expect_text", "selector": sel, "matches": "^h.+t" }),
+        json!({ "kind": "expect_text", "selector": sel, "matches": "^x.+t" }),
+        json!({ "kind": "expect_attribute", "selector": sel, "name": "value", "equals": SECRET }),
+        json!({ "kind": "expect_attribute", "selector": sel, "name": "value", "equals": "other" }),
+        json!({ "kind": "expect_attribute", "selector": sel, "name": "value", "matches": "^h.+t" }),
+        json!({ "kind": "expect_attribute", "selector": sel, "name": "value", "matches": "^x.+t" }),
+        json!({ "kind": "expect_attribute", "selector": sel, "name": "value", "absent": true }),
+    ];
+    for (i, check) in checks.iter().enumerate() {
+        let out = on_input(true, Some(SECRET), check.clone()).await;
+        assert_eq!(out.ok, i % 2 == 0 && i < 10, "{check}: {}", out.detail);
+        assert!(!out.detail.contains("hunter2"), "{check} showed the value: {}", out.detail);
+        // The passes that name the text say what stood in its place.
+        if out.ok && !matches!(check["matches"], Value::String(_)) {
+            assert!(out.detail.contains("(a password field)"), "{check}: {}", out.detail);
+        }
+    }
+    // The exact sentences.
+    let out = on_input(true, None, checks[0].clone()).await;
+    assert_eq!(out.detail, "#password says (a password field)");
+    let out = on_input(true, None, checks[1].clone()).await;
+    assert!(out.detail.ends_with("expected text \"other\" but saw (a password field)"), "{}", out.detail);
+}
+
+/// Another field, and another attribute of a password input, still show
+/// what they hold: a typo is what the sentence is for.
+#[tokio::test]
+async fn an_ordinary_field_still_shows_its_value() {
+    let sel = json!({ "css": "#name" });
+    let out = on_input(false, Some(SECRET), json!({ "kind": "expect_text", "selector": sel, "equals": "other" })).await;
+    assert!(!out.ok && out.detail.ends_with("expected text \"other\" but saw \"hunter2-Secret\""), "{}", out.detail);
+    let out = on_input(false, Some(SECRET), json!({ "kind": "expect_text", "selector": sel, "equals": SECRET })).await;
+    assert_eq!(out.detail, "#name says \"hunter2-Secret\"");
+    let out = on_input(false, Some(SECRET), json!({ "kind": "expect_attribute", "selector": sel, "name": "value", "equals": "other" })).await;
+    assert!(out.detail.ends_with("expected value=\"other\" but saw \"hunter2-Secret\""), "{}", out.detail);
+    // A password input's other attributes are not what it holds.
+    let out = on_input(true, Some("Your password"), json!({ "kind": "expect_attribute", "selector": sel, "name": "placeholder", "equals": "Pass" })).await;
+    assert!(out.detail.ends_with("but saw \"Your password\""), "{}", out.detail);
 }

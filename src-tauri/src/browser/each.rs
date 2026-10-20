@@ -14,7 +14,7 @@
 //! for ever.
 
 use super::cdp::{CdpError, Driver};
-use super::expect::{COUNTED, HIDDEN, NOT_ON_PAGE, READ_ATTR_JS, READ_TEXT_JS};
+use super::expect::{is_password, is_value_attribute, A_PASSWORD_FIELD, COUNTED, HIDDEN, NOT_ON_PAGE, READ_ATTR_JS, READ_TEXT_JS};
 use super::input::matched_many;
 use super::locator::{resolve_within, Target, VISIBLE_JS};
 use super::page::{self, Handle};
@@ -76,8 +76,8 @@ pub fn judge_value(want: &EachWant, attribute: Option<&str>, got: Option<&str>) 
 }
 
 /// [`judge_value`]; `field` says the text is a form field's, which a
-/// failure then does not show ([`A_FIELD`]). An attribute is never a field's
-/// value.
+/// failure then does not show ([`A_FIELD`]) - or, for an attribute, that it
+/// is a password input's `value`, shown as [`A_PASSWORD_FIELD`].
 fn judge(want: &EachWant, attribute: Option<&str>, got: Option<&str>, field: bool) -> Result<(), String> {
     match attribute {
         None => {
@@ -121,32 +121,33 @@ fn judge(want: &EachWant, attribute: Option<&str>, got: Option<&str>, field: boo
             let Some(v) = got else {
                 return Err(format!("{}{name}{}", super::expect::HAS_NO, super::expect::ATTRIBUTE_TAIL));
             };
+            let saw = if field { A_PASSWORD_FIELD.to_string() } else { format!("{v:?}") };
             match want {
                 EachWant::Visible => Ok(()),
                 EachWant::Equals(w) => {
                     if v == *w {
                         Ok(())
                     } else {
-                        Err(format!("expected {name}={w:?} but saw {v:?}"))
+                        Err(format!("expected {name}={w:?} but saw {saw}"))
                     }
                 }
                 EachWant::Contains(w) => {
                     if v.contains(w) {
                         Ok(())
                     } else {
-                        Err(format!("expected {name}={w:?} as part of it but saw {v:?}"))
+                        Err(format!("expected {name}={w:?} as part of it but saw {saw}"))
                     }
                 }
                 EachWant::Matches { pattern, re } => {
                     if re.is_match(v) {
                         Ok(())
                     } else {
-                        Err(format!("expected {name}={} but saw {v:?}", super::pattern::shown(pattern)))
+                        Err(format!("expected {name}={} but saw {saw}", super::pattern::shown(pattern)))
                     }
                 }
                 EachWant::NotEmpty => {
                     if v.trim().is_empty() {
-                        Err(format!("expected {name}=(not empty) but saw {v:?}"))
+                        Err(format!("expected {name}=(not empty) but saw {saw}"))
                     } else {
                         Ok(())
                     }
@@ -277,7 +278,13 @@ async fn read_items<D: Driver>(
             match attribute {
                 Some(name) => {
                     let got = page::call_value(d, &subject, READ_ATTR_JS, &[json!(name)]).await?;
-                    judge_value(want, Some(name), got.as_str())
+                    // Asked only when it fails: a password's value is not evidence.
+                    match judge(want, Some(name), got.as_str(), false) {
+                        Err(_) if got.as_str().is_some() && is_value_attribute(name) && is_password(d, &subject).await? => {
+                            judge(want, Some(name), got.as_str(), true)
+                        }
+                        other => other,
+                    }
                 }
                 None => {
                     let got = page::call_value(d, &subject, READ_TEXT_JS, &[]).await?;
