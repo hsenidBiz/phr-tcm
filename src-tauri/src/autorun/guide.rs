@@ -1137,12 +1137,12 @@ The publish example:
 - the case that publishes has `"changes": ["cycle published"]`;
 - each case that edits the draft cycle has `"needs_unchanged": ["cycle published"]`.
 
+    { "case_id": 503, "title": "...", "changes": ["cycle published"], "steps": [ ... ] }
+    { "case_id": 504, "title": "...", "needs_unchanged": ["cycle published"], "steps": [ ... ] }
+
 A case that flips shared state and flips it back should put the flip-back in
 its clean-up step, guarded, so a failure partway does not strand the state:
 see the example in "Checking thoroughly".
-
-    { "case_id": 503, "title": "...", "changes": ["cycle published"], "steps": [ ... ] }
-    { "case_id": 504, "title": "...", "needs_unchanged": ["cycle published"], "steps": [ ... ] }
 
 A name is a short phrase, for example "cycle published" or "appraisal
 submitted for A001". Reuse one name for one change across the set: names

@@ -2047,6 +2047,19 @@ fn the_saving_section_names_the_absence_refusal_and_the_notes() {
     assert!(pre.contains("names a test record and declares no"), "Preconditions never says the save notes it");
 }
 
+/// The publish example is its bullets and then its two-line block; the
+/// flip-back paragraph comes after the block, not between the two.
+#[test]
+fn the_shared_state_section_keeps_its_example_whole() {
+    use v2_lib::autorun::guide::guide_section;
+    let g = autorun_guide();
+    let section = guide_section(&g, "Shared state a case changes").expect("a Shared state section");
+    let example = section.find("The publish example:").expect("the publish example");
+    let second_line = section.find(r#"{ "case_id": 504"#).expect("the example's block");
+    let flip_back = section.find("A case that flips shared state").expect("the flip-back paragraph");
+    assert!(example < second_line && second_line < flip_back, "the flip-back paragraph splits the publish example");
+}
+
 /// The part about locators that may match many names every check that does.
 #[test]
 fn the_selectors_section_lists_every_check_happy_with_many() {
