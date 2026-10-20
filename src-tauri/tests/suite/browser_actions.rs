@@ -1135,6 +1135,24 @@ fn expect_each_is_validated() {
     };
     // The selector is checked first.
     assert!(bad(json!({ "kind": "expect_each", "selector": {}, "not_empty": true })).contains("role, text or css"));
+    // A selector string reaches only the first match, so it cannot be a list.
+    assert_eq!(
+        bad(json!({ "kind": "expect_each", "selector": "div.card", "not_empty": true })),
+        "expect_each needs a locator object for selector, not a selector string - a string reaches only the first match, and this reads every item"
+    );
+    assert_eq!(bad(json!({ "kind": "expect_each", "selector": " ", "not_empty": true })), "a selector is empty");
+    // The list must be seen holding still, which takes time.
+    for t in [0, 300, 1499] {
+        assert_eq!(
+            bad(base(json!({ "not_empty": true, "timeout_ms": t }))),
+            "expect_each: needs at least 1500 ms to see the list hold still",
+            "{t}"
+        );
+    }
+    for t in [1500, 5000] {
+        let a: Action = serde_json::from_value(base(json!({ "not_empty": true, "timeout_ms": t }))).unwrap();
+        assert_eq!(a.validate(), Ok(()), "{t}");
+    }
     // `min`.
     assert_eq!(
         bad(base(json!({ "not_empty": true, "min": 0 }))),
@@ -1202,7 +1220,7 @@ fn expect_each_is_validated() {
     for good in [
         json!({ "kind": "expect_each", "selector": { "css": "div[data-cycle-id]" }, "child": { "css": "h3" }, "matches": "^AUTOTEST " }),
         json!({ "kind": "expect_each", "selector": { "css": "li" }, "not_empty": true }),
-        json!({ "kind": "expect_each", "selector": { "css": "li" }, "min": 3, "equals": "a", "timeout_ms": 900 }),
+        json!({ "kind": "expect_each", "selector": { "css": "li" }, "min": 3, "equals": "a", "timeout_ms": 1500 }),
         json!({ "kind": "expect_each", "selector": { "css": "li" }, "child": [{ "css": "a" }, { "css": "i" }], "visible": true }),
         json!({ "kind": "expect_each", "selector": { "css": "li" }, "attribute": "href", "contains": "/x", "min": 200 }),
     ] {

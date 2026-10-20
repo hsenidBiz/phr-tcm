@@ -3990,6 +3990,10 @@ async fn expect_each_reads_every_item_of_a_real_list() {
         run(&mut live, each("div.card[data-cycle-id]", json!({ "attribute": "title", "not_empty": true }))).await,
         "item 1 of 3 (",
     );
+    // A control is named by its label, never by what was typed into it.
+    let out = run(&mut live, each("input.secret", json!({ "attribute": "data-x", "not_empty": true }))).await;
+    assert!(!out.ok && !out.detail.contains("hunter2"), "{}", out.detail);
+    assert!(out.detail.contains("item 1 of 1 (\"Secret\"): has no data-x attribute"), "{}", out.detail);
     // A list that is not there fails on its count, not on an item.
     refused(run(&mut live, each("div.gone", json!({ "not_empty": true }))).await, "expected at least 1, counted 0");
 }

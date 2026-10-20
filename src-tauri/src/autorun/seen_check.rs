@@ -269,6 +269,10 @@ pub const NEVER_COUNTED_NTH: &str = "was seen on the live app, but never counted
 /// placeholder's place counts for it (`same_link_filled`).
 pub const NEVER_COUNTED_FILLED: &str = "was seen on the live app, but never counted as matching exactly one element: probe the same locator with a real value in place of each {{...}} placeholder (and its nth, if it has one), then save again.";
 
+/// An `expect_each` child seen, link by link, but never as the chain: a
+/// list and an `h3` seen apart do not say there is an `h3` inside the list.
+pub const SEEN_ONLY_APART: &str = "was seen on the live app only piece by piece, and an expect_each child needs the whole of it seen inside its list: probe it written the same way, then save again.";
+
 /// Said of a locator whose whole name or text is one data placeholder
 /// (`button "{{setup.label}}"`): it would match any element of that role,
 /// so nothing seen, probed or not, counts for it.
@@ -290,7 +294,8 @@ fn named_only_by_placeholder(link: &LocatorStep) -> bool {
 /// never seen on the live app" (`never_seen`), rather than a clause after
 /// it?
 pub fn is_own_sentence(hint: &str) -> bool {
-    [SEEN_ONLY_IN_CHECKS, NEVER_COUNTED, NEVER_COUNTED_NTH, NEVER_COUNTED_FILLED, ONLY_A_PLACEHOLDER].contains(&hint)
+    [SEEN_ONLY_IN_CHECKS, NEVER_COUNTED, NEVER_COUNTED_NTH, NEVER_COUNTED_FILLED, ONLY_A_PLACEHOLDER, SEEN_ONLY_APART]
+        .contains(&hint)
         || hint.starts_with(SEEN_ONLY_MANY)
 }
 
@@ -511,6 +516,31 @@ fn whole_matched(map: &DiscoveryMap, areas: &[&str]) -> Vec<Vec<LocatorStep>> {
         .collect()
 }
 
+/// The chains seen whole, matching at least one element, in the named
+/// areas and in the bucket for no area, and the chains the named areas'
+/// saved `expect_each` scripts use: as their links.
+fn each_wholes_in(map: &DiscoveryMap, areas: &[&str]) -> Vec<Vec<LocatorStep>> {
+    let wanted: Vec<String> = areas.iter().map(|a| area_key(a)).collect();
+    map.areas
+        .iter()
+        .filter(|a| {
+            let key = area_key(&a.area);
+            key.is_empty() || wanted.contains(&key)
+        })
+        .flat_map(|a| {
+            let saved = if area_key(&a.area).is_empty() { Vec::new() } else { a.saved_each_wholes.clone() };
+            let elements = a
+                .pages
+                .iter()
+                .flat_map(|p| p.elements.iter())
+                .filter(|e| e.matched != 0 && !plain_target(&e.locator))
+                .map(|e| e.locator.links());
+            let wholes = a.wholes.iter().filter(|w| w.matched != 0).map(|w| w.locator.links());
+            elements.chain(wholes).chain(saved)
+        })
+        .collect()
+}
+
 /// The chains and narrowed locators seen whole in the named areas and in
 /// the bucket for no area whose count `keep` takes, as their links.
 fn wholes_in(map: &DiscoveryMap, areas: &[&str], keep: impl Fn(u32) -> bool) -> Vec<Vec<LocatorStep>> {
@@ -641,6 +671,10 @@ struct SeenBoth {
     /// The chains and narrowed locators seen whole matching several,
     /// counted: what `SEEN_ONLY_MANY` is said of, written that way.
     many_wholes: Vec<Vec<LocatorStep>>,
+    /// Every chain seen whole matching at least one element, and every
+    /// chain a saved `expect_each` used: what an `expect_each` child is
+    /// taken as.
+    each_wholes: Vec<Vec<LocatorStep>>,
 }
 
 impl SeenBoth {
@@ -652,6 +686,7 @@ impl SeenBoth {
         let none_wholes = wholes_in(map, areas, |_| true);
         let map = &present_only(map);
         let many_wholes = wholes_in(map, areas, |m| only_many(m) && counted(m));
+        let each_wholes = each_wholes_in(map, areas);
         let any = Sightings::new(map, areas);
         let mut one = Sightings::new_strict(&one_only(map, false), areas);
         one.whole = whole_matched(map, areas);
@@ -672,7 +707,14 @@ impl SeenBoth {
             many_legacy: counted_many(map, areas, true),
             none_wholes,
             many_wholes,
+            each_wholes,
         }
+    }
+
+    /// Is `chain`, an `expect_each` child inside its list, seen as that
+    /// chain, written the same way? Its links seen apart are not enough.
+    fn each_whole(&self, chain: &[LocatorStep]) -> bool {
+        self.each_wholes.iter().any(|w| w.len() == chain.len() && w.iter().zip(chain).all(|(a, b)| same_link_filled(a, b)))
     }
 
     /// Is `chain`, used where a run passes with nothing there (`none`),
@@ -1463,6 +1505,12 @@ pub fn add_saved_scripts(map: &mut DiscoveryMap, scripts: &[CaseScript], compone
                 }
                 continue;
             }
+            if class == SavedUse::Whole {
+                if links.len() == target.links().len() && !a.saved_each_wholes.contains(&links) {
+                    a.saved_each_wholes.push(links);
+                }
+                continue;
+            }
             let many = class == SavedUse::Many;
             // A plain one-link target outside a check that may match several
             // vouches by its key; a chain or a narrowed one only whole, its
@@ -1504,6 +1552,7 @@ fn input_use(components: &ComponentFile, component: &str, name: &str) -> Option<
         SavedUse::One => 2,
         SavedUse::Many => 1,
         SavedUse::None => 0,
+        SavedUse::Whole => 1,
     };
     let mut strictest: Option<SavedUse> = None;
     for top in &c.actions {
@@ -1541,6 +1590,9 @@ enum SavedUse {
     /// A use that passes with nothing there (`takes_none`), a
     /// `when_visible`'s own locator included.
     None,
+    /// An `expect_each` child inside its list: vouches for that chain as a
+    /// whole, never for its links alone.
+    Whole,
 }
 
 /// Every link `script` names as written, a component's target inputs
@@ -1573,7 +1625,7 @@ fn script_links(script: &CaseScript, components: &ComponentFile) -> Vec<(Target,
                 }
             }
         }
-        targets.extend(each_child_chain(action).map(|chain| (chain, SavedUse::Many)));
+        targets.extend(each_child_chain(action).map(|chain| (chain, SavedUse::Whole)));
         for (target, class) in targets {
             let links: Vec<LocatorStep> = target
                 .links()
@@ -1904,10 +1956,24 @@ fn own_targets(action: &Action) -> Vec<&Target> {
     }
 }
 
+/// Every target an action's save and run-time checks read: its own
+/// (`own_targets`) and an `expect_each`'s child chain (`each_child_chain`),
+/// each with whether it must be seen as that whole chain. The callers that
+/// walk a component's or a filled step's locators all take this, so the
+/// child is never left out of one.
+fn checked_targets(action: &Action) -> Vec<(Target, bool)> {
+    own_targets(action)
+        .into_iter()
+        .map(|t| (t.clone(), false))
+        .chain(each_child_chain(action).map(|chain| (chain, true)))
+        .collect()
+}
+
 /// An `expect_each`'s child as it is looked for: inside the list, so the
 /// list's links and then its own. The chain is what a save checks against
-/// the map (a child is seen in its list, not on its own), and what a saved
-/// script vouches for. `None` for any other action, and for an
+/// the map: seen whole, as that chain (`SeenBoth::each_whole`) - a list
+/// and a bare child seen apart do not say the child is inside the list -
+/// and what a saved script vouches for, as that chain only. `None` for any other action, and for an
 /// `expect_each` without a child.
 fn each_child_chain(action: &Action) -> Option<Target> {
     match action {
@@ -1954,6 +2020,9 @@ struct InputLocator {
     /// Whether it is a `when_visible`'s locator, checked against every
     /// area (see the module's notes).
     everywhere: bool,
+    /// Whether it must be seen as this whole chain (an `expect_each`
+    /// child inside its list), not link by link.
+    whole: bool,
 }
 
 /// Is `target`, used by `action` inside the top-level `top`, a
@@ -1977,14 +2046,14 @@ fn input_locators(c: &Component, expanded: &[Action]) -> Vec<InputLocator> {
     let mut typed_before: Vec<String> = Vec::new();
     for (written, ran) in c.actions.iter().zip(expanded) {
         for (w, r) in written.each().into_iter().zip(ran.each()) {
-            for (wt, rt) in own_targets(w).into_iter().zip(own_targets(r)) {
+            for ((wt, whole), (rt, _)) in checked_targets(w).into_iter().zip(checked_targets(r)) {
                 if wt == rt {
                     continue;
                 }
                 let fixed = wt.links();
                 let links: Vec<LocatorStep> = rt.links().into_iter().filter(|l| !fixed.contains(l)).collect();
                 out.push(InputLocator {
-                    target: rt.clone(),
+                    target: rt,
                     links,
                     check: is_check(r),
                     many: seen_many(r),
@@ -1992,6 +2061,7 @@ fn input_locators(c: &Component, expanded: &[Action]) -> Vec<InputLocator> {
                     typed_before: typed_before.clone(),
                     kind: r.kind(),
                     everywhere: false,
+                    whole,
                 });
             }
             push_typed(&mut typed_before, r);
@@ -2102,6 +2172,7 @@ fn scan(
                             typed_before: Vec::new(),
                             kind: action.kind(),
                             everywhere: guards(top, t),
+                            whole: false,
                         })
                     })
                     .collect();
@@ -2115,6 +2186,7 @@ fn scan(
                         typed_before: Vec::new(),
                         kind: action.kind(),
                         everywhere: false,
+                        whole: true,
                     });
                 }
                 if let Action::UseComponent { component, inputs } = action {
@@ -2156,6 +2228,25 @@ fn scan(
                     } else {
                         &both
                     };
+                    if n.whole {
+                        // A child is seen inside its list, as that chain.
+                        if seen.each_whole(&chain) {
+                            continue;
+                        }
+                        let hint = match first_unseen(&n.links, &chain, seen.for_use(n.many, legacy, n.none), &own) {
+                            Some(link) => {
+                                let page = area_page(map, here.as_deref());
+                                seen.hint(link, &n.links, n.many, legacy, n.none, page, &n.kind, n.everywhere)
+                            }
+                            None => Some(SEEN_ONLY_APART.to_string()),
+                        };
+                        unseen.push(Found {
+                            unseen: Unseen { step: step.step_number, locator: n.target.describe(), refused: None },
+                            hint,
+                            target: Some(n.target.clone()),
+                        });
+                        continue;
+                    }
                     if seen.whole(&chain, n.many) || seen.none_whole(&chain, n.none) {
                         continue;
                     }
@@ -2295,7 +2386,7 @@ fn component_unseen(map: &DiscoveryMap, area: Option<&str>, actions: &[Action]) 
             }
             let dates: Vec<Date> = typed.iter().filter_map(|v| parse_date(v)).collect();
             let own = Own { typed: &typed, case_text: &[], check: is_check(a), files: &[], sizes: &[], dates: &dates };
-            for written in own_targets(a) {
+            for (written, whole) in &checked_targets(a) {
                 let Some((checked, in_row)) = as_checked(action, a, written) else { continue };
                 let t = &checked;
                 let chain = t.links();
@@ -2308,6 +2399,21 @@ fn component_unseen(map: &DiscoveryMap, area: Option<&str>, actions: &[Action]) 
                 } else {
                     &both
                 };
+                // A child is seen inside its list, as that chain - unless an
+                // input fills part of it, which only a script knows.
+                if *whole && !chain.iter().any(input_link) {
+                    if seen.each_whole(&chain) {
+                        continue;
+                    }
+                    let hint = match first_unseen(&links, &chain, seen.for_use(many, t.is_legacy(), none), &own) {
+                        Some(link) => {
+                            seen.hint(link, &links, many, t.is_legacy(), none, area_page(map, area), &a.kind(), banner)
+                        }
+                        None => Some(SEEN_ONLY_APART.to_string()),
+                    };
+                    out.push((refused(i, &t.describe(), hint.as_deref()), Some(t.clone())));
+                    continue;
+                }
                 if seen.whole(&chain, many) || seen.none_whole(&chain, none) {
                     continue;
                 }
@@ -2352,8 +2458,8 @@ pub fn has_data_placeholders(steps: &[StepScript]) -> bool {
             .iter()
             .flat_map(|s| s.actions.iter())
             .flat_map(Action::each)
-            .flat_map(own_targets)
-            .any(|t| t.links().iter().any(link_holds_placeholder))
+            .flat_map(checked_targets)
+            .any(|(t, _)| t.links().iter().any(link_holds_placeholder))
 }
 
 /// The run-time half of the check for every locator that held a data
@@ -2414,7 +2520,7 @@ pub fn check_resolved_inputs_with(
                 let own = Own { typed, case_text: &[], check, files: &own_files, sizes: &sizes, dates: &dates };
                 !link_holds_placeholder(link) && (exempt(link, &own) || in_seen_date_picker(link, chain, seen))
             };
-            for (st, ft) in own_targets(sa).into_iter().zip(own_targets(fa)) {
+            for ((st, _), (ft, _)) in checked_targets(sa).into_iter().zip(checked_targets(fa)) {
                 let chain = ft.links();
                 // A placeholder chain or narrowed locator the save took as
                 // a whole (`SeenBoth::whole`) is fitted as a whole here too.
@@ -2456,7 +2562,7 @@ pub fn check_resolved_inputs_with(
                 // own actions typed before each of its locators.
                 let mut typed = so_far.typed.clone();
                 for (m, r) in as_saved.iter().flat_map(Action::each).zip(ran.iter().flat_map(Action::each)) {
-                    for (mt, rt) in own_targets(m).into_iter().zip(own_targets(r)) {
+                    for ((mt, _), (rt, _)) in checked_targets(m).into_iter().zip(checked_targets(r)) {
                         let chain = rt.links();
                         if both.whole_filled(&mt.links(), &chain, seen_many(r))
                             || both.none_whole_filled(&mt.links(), &chain, takes_none(r))

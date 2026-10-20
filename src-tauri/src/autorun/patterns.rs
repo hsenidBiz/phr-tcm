@@ -292,7 +292,7 @@ pub fn classify(detail: &str, target: Option<&str>) -> ErrorClass {
     // An `expect_each` failure names the item and its text first
     // (`item 2 of 3 ("Other B"): ...`): the reason is what follows, and the
     // item's text is the page's, never read for a class.
-    let t = item_reason(t).unwrap_or(t);
+    let t = item_reason(t, target.is_some()).unwrap_or(t);
     if let Some(class) = by_start(t) {
         return class;
     }
@@ -383,12 +383,19 @@ fn is_api_check(whole: &str) -> bool {
 /// What follows `item N of M ("label"): ` in an `expect_each` failure, found
 /// at the start of `t` or after the list's target. The label is Debug-quoted,
 /// so its end is the first quote no backslash escapes that is followed by
-/// `): `.
-fn item_reason(t: &str) -> Option<&str> {
+/// `): `. With `anchored` (the target is known and already off the front),
+/// only at the very start.
+fn item_reason(t: &str, anchored: bool) -> Option<&str> {
     let mut from = 0;
     while let Some(i) = t[from..].find("item ") {
         let at = from + i;
         from = at + "item ".len();
+        // With the list's target known it has been taken off the front, so
+        // the prefix is the start of the reason; anywhere else it is page
+        // text (an element's id, say) that only looks like one.
+        if anchored && at > 0 {
+            return None;
+        }
         if at > 0 && !t[..at].ends_with(' ') {
             continue;
         }
@@ -434,6 +441,7 @@ fn by_start(t: &str) -> Option<ErrorClass> {
         (inp::NOT_EDITABLE, ErrorClass::NotEditable),
         (inp::STILL_MOVING, ErrorClass::StillMoving),
         (crate::browser::each::LIST_CHANGED, ErrorClass::StillMoving),
+        (crate::browser::each::TOO_SLOW, ErrorClass::TimedOut),
         (inp::STILL_LOOKING, ErrorClass::TimedOut),
         (exp::STILL_VISIBLE, ErrorClass::StillVisible),
     ];
@@ -500,6 +508,7 @@ fn by_end(t: &str) -> Option<ErrorClass> {
         (inp::NOT_EDITABLE, ErrorClass::NotEditable),
         (inp::STILL_MOVING, ErrorClass::StillMoving),
         (crate::browser::each::LIST_CHANGED, ErrorClass::StillMoving),
+        (crate::browser::each::TOO_SLOW, ErrorClass::TimedOut),
         (inp::STILL_LOOKING, ErrorClass::TimedOut),
         (exp::STILL_VISIBLE, ErrorClass::StillVisible),
         (exp::ATTRIBUTE_TAIL, ErrorClass::AttributeMismatch),

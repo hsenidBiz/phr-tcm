@@ -1244,8 +1244,13 @@ impl Action {
                 }
                 selector.validate()
             }
-            Action::ExpectEach { selector, min, child, attribute, visible, equals, contains, matches, not_empty, .. } => {
+            Action::ExpectEach { selector, min, child, attribute, visible, equals, contains, matches, not_empty, timeout_ms } => {
                 selector.validate()?;
+                // A string reaches only the first match: that would be a
+                // list of one.
+                if selector.is_legacy() {
+                    return Err(EACH_SELECTOR_LEGACY.to_string());
+                }
                 match min {
                     Some(0) => return Err(EACH_MIN_ZERO.to_string()),
                     Some(n) if *n as usize > super::each::EACH_MAX => {
@@ -1280,6 +1285,10 @@ impl Action {
                         return Err(EACH_CHILD_INPUT.to_string());
                     }
                     child.validate().map_err(|why| format!("expect_each child: {why}"))?;
+                }
+                // The list passes only once it has held still, like `at_most`.
+                if timeout_ms.is_some_and(|t| t < AT_MOST_MIN_MS) {
+                    return Err(EACH_TIME.to_string());
                 }
                 Ok(())
             }
@@ -1641,6 +1650,12 @@ pub const ATTRIBUTE_EQUALS_OR_ABSENT: &str =
 pub const ATTRIBUTE_NEEDS_ONE: &str = "expect_attribute needs \"equals\" (the value it must have), \"matches\" (a pattern its value must match) or \"absent\": true (it must not be there)";
 /// `expect_attribute` given `matches` together with `equals` or `absent`.
 pub const ATTRIBUTE_ONE_OF: &str = "expect_attribute takes one of \"equals\", \"matches\" or \"absent\": true, not two";
+/// `expect_each` with a selector string, which reaches only one match.
+pub const EACH_SELECTOR_LEGACY: &str =
+    "expect_each needs a locator object for selector, not a selector string - a string reaches only the first match, and this reads every item";
+/// `expect_each` with a `timeout_ms` under `AT_MOST_MIN_MS`: the list must
+/// hold still for `table::SETTLE_MS`, and be seen to.
+pub const EACH_TIME: &str = "expect_each: needs at least 1500 ms to see the list hold still";
 /// `expect_each` given none or several of its five checks.
 pub const EACH_NEEDS_ONE: &str = "expect_each takes exactly one of \"visible\": true, \"equals\", \"contains\", \"matches\" or \"not_empty\": true";
 /// `expect_each` with a `min` of 0: a list of none would pass any check.

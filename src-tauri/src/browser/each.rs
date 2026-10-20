@@ -27,6 +27,24 @@ pub const LIST_CHANGED: &str = "the list changed while it was read";
 /// `this` is an item. Is it still in the page?
 pub const CONNECTED_JS: &str = "function() { return this.isConnected; }";
 
+/// A look ran out of time partway through a long list, after the list was
+/// found: the check's own failure, not a browser that stopped answering.
+pub const TOO_SLOW: &str = "could not read every item in time - narrow the list, or allow more time";
+
+/// `this` is an item. What a failure calls it: its text, but for a form
+/// control the name a person knows it by (its aria-label, its label, its
+/// placeholder or name, else its tag) - never the value typed into it, a
+/// password's included.
+pub const LABEL_JS: &str = r#"function() {
+  const norm = (s) => (s || '').replace(/\s+/g, ' ').trim();
+  if (this instanceof HTMLInputElement || this instanceof HTMLTextAreaElement || this instanceof HTMLSelectElement) {
+    const labelled = Array.from(this.labels || []).map((l) => norm(l.innerText)).filter(Boolean).join(' ');
+    return norm(this.getAttribute('aria-label')) || labelled || norm(this.getAttribute('placeholder')) ||
+      norm(this.getAttribute('name')) || this.tagName.toLowerCase();
+  }
+  return norm(this.innerText);
+}"#;
+
 /// What every item must be.
 pub enum EachWant<'a> {
     /// The child is visible (needs a child).
@@ -186,15 +204,17 @@ pub(crate) async fn look_each<D: Driver>(
         return Ok(Err(format!("expected at least {min}{COUNTED}{n}")));
     }
     for (i, item) in items.iter().enumerate() {
-        // What was read of this item, when that is also its label.
-        let mut read: Option<String> = None;
+        let mut subject = item.clone();
         let verdict: Result<(), String> = 'item: {
-            let mut subject = item.clone();
             if let Some(child) = child {
                 let found = resolve_within(d, item, child).await?;
                 match found.handles.as_slice() {
                     [one] => subject = one.clone(),
                     [] => {
+                        // A frame the page cannot enter is not "not on the page".
+                        if let Some(why) = found.unreachable_frame {
+                            break 'item Err(why);
+                        }
                         let why = if matches!(want, EachWant::Visible)
                             && !resolve_within(d, item, &child.including_hidden()).await?.handles.is_empty()
                         {
@@ -221,23 +241,21 @@ pub(crate) async fn look_each<D: Driver>(
                 }
                 None => {
                     let got = page::call_value(d, &subject, READ_TEXT_JS, &[]).await?;
-                    let got = collapse(got.as_str().unwrap_or(""));
-                    let verdict = judge_value(want, None, Some(&got));
-                    read = Some(got);
-                    verdict
+                    judge_value(want, None, Some(&collapse(got.as_str().unwrap_or(""))))
                 }
             }
         };
-        // An item gone from the page was read for nothing: whatever it
-        // said (or failed to have) is not the page's answer.
-        if !page::call_value(d, item, CONNECTED_JS, &[]).await?.as_bool().unwrap_or(false) {
-            return Ok(Err(LIST_CHANGED.to_string()));
+        // An element gone from the page was read for nothing: whatever it
+        // said (or failed to have) is not the page's answer. The element
+        // that was read, and the item it sits in - a child remounted inside
+        // a card that stays leaves the card connected.
+        for probed in std::iter::once(item).chain((subject != *item).then_some(&subject)) {
+            if !page::call_value(d, probed, CONNECTED_JS, &[]).await?.as_bool().unwrap_or(false) {
+                return Ok(Err(LIST_CHANGED.to_string()));
+            }
         }
         if let Err(why) = verdict {
-            let label = match (&read, child, attribute) {
-                (Some(text), None, None) => label_of(text),
-                _ => label_of(page::call_value(d, item, READ_TEXT_JS, &[]).await?.as_str().unwrap_or("")),
-            };
+            let label = label_of(page::call_value(d, item, LABEL_JS, &[]).await?.as_str().unwrap_or(""));
             return Ok(Err(format!("item {} of {n} ({label:?}): {why}", i + 1)));
         }
     }

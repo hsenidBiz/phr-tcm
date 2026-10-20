@@ -407,7 +407,13 @@ pub(crate) async fn look<D: Driver>(
             }
         },
         Check::Each { min, child, attribute, want } => {
-            return super::each::look_each(d, &what, &handles, *min, *child, *attribute, want).await;
+            // The list was found, so the browser is answering: a call that
+            // then runs out of time is a list too long for the time given,
+            // which is this check's failure, not a silent browser.
+            return match super::each::look_each(d, &what, &handles, *min, *child, *attribute, want).await {
+                Err(CdpError::Timeout { .. }) => Ok(Err(super::each::TOO_SLOW.to_string())),
+                other => other,
+            };
         }
         Check::Focused => match only(&handles) {
             Err(why) => Err(why),
@@ -458,7 +464,10 @@ async fn keep_looking<D: Driver>(
     // `at_most` passes on too few, so a page whose rows have not arrived
     // would pass it at once: it passes only once the same pass has held for
     // `table::SETTLE_MS`. The pass held so far, and since when.
-    let settling = matches!(check, Check::CountBound(super::table::RowCount::AtMost(_)));
+    // An `expect_each` is settled the same way: a list still filling in
+    // passes on the items drawn so far, so it passes only once its count
+    // and its items have held for the same time.
+    let settling = matches!(check, Check::CountBound(super::table::RowCount::AtMost(_)) | Check::Each { .. });
     let mut held: Option<(String, Instant)> = None;
     loop {
         page::release(d).await;

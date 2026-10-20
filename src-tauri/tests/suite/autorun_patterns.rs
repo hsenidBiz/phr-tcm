@@ -481,3 +481,11 @@ fn each_failures_fall_in_their_classes() {
     let each: Action = serde_json::from_value(serde_json::json!({ "kind": "expect_each", "selector": { "css": list }, "child": { "css": "h3" }, "not_empty": true })).unwrap();
     assert_eq!(action_target(&each).as_deref(), Some(list));
 }
+
+/// The item prefix is read only at the start of the reason: page text
+/// that merely looks like it, further along, decides nothing.
+#[test]
+fn an_item_prefix_inside_other_page_text_is_not_read() {
+    let detail = "waited 5000ms: button \"Save\" is covered by div#x item 1 of 2 (\"a\"): x is not on the page";
+    assert!(matches!(classify(detail, Some("button \"Save\"")), ErrorClass::CoveredBy(_)), "{:?}", classify(detail, Some("button \"Save\"")));
+}

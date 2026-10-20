@@ -2953,3 +2953,88 @@ fn a_saved_each_vouches_its_child_only_inside_its_list() {
     assert_eq!(check_seen(&map, &none(), &each_script(true), &[], None), Ok(()));
     assert!(check_seen(&map, &none(), &clicks(serde_json::json!({ "css": "h3" })), &[], None).is_err());
 }
+
+/// The list and a bare `h3` seen separately do not say there is an `h3`
+/// inside the list: the child is accepted only as the chain, seen whole.
+#[test]
+fn an_each_child_seen_apart_from_its_list_is_not_seen_inside_it() {
+    let apart = joined(sighted_matching("Cycles", css(LIST), 12), sighted_matching("Cycles", css("h3"), 12));
+    let refused = check_seen(&apart, &none(), &each_script(true), &[], None).unwrap_err();
+    assert!(refused.contains(&format!("h3 in {LIST} was never seen")) || refused.contains(&format!("h3 in {LIST} was seen")), "{refused}");
+    // Seen as the chain, it is.
+    let whole = filed(serde_json::json!([{ "css": LIST }, { "css": "h3" }]), 12);
+    assert_eq!(check_seen(&whole, &none(), &each_script(true), &[], None), Ok(()));
+}
+
+/// A saved `expect_each` vouches for its child only as the chain: a bare
+/// `h3` in a check that may match several is still never seen.
+#[test]
+fn a_saved_each_does_not_vouch_for_its_bare_child() {
+    let mut map = DiscoveryMap::default();
+    add_saved_scripts(&mut map, &[each_script(true)], &none());
+    assert_eq!(check_seen(&map, &none(), &each_script(true), &[], None), Ok(()));
+    let wait = one_step("Cycles", serde_json::json!([{ "kind": "wait_for", "selector": { "css": "h3" }, "timeout_ms": 500 }]));
+    assert!(check_seen(&map, &none(), &wait, &[], None).is_err(), "a saved expect_each vouched for a bare h3");
+    assert!(check_seen(&map, &none(), &clicks(serde_json::json!({ "css": "h3" })), &[], None).is_err());
+}
+
+fn each_actions() -> Vec<v2_lib::browser::actions::Action> {
+    serde_json::from_value(serde_json::json!([
+        { "kind": "expect_each", "selector": { "css": LIST }, "child": { "css": "h3x" }, "not_empty": true }
+    ]))
+    .unwrap()
+}
+
+/// A component's own save checks its `expect_each` child inside its list.
+#[test]
+fn a_components_each_child_is_checked_when_the_component_is_saved() {
+    let list_only = sighted_matching("Cycles", css(LIST), 12);
+    let refused = check_component_seen(&list_only, Some("Cycles"), &each_actions()).unwrap_err();
+    assert!(refused.contains(&format!("h3x in {LIST} was never seen")), "{refused}");
+    let whole = filed(serde_json::json!([{ "css": LIST }, { "css": "h3x" }]), 12);
+    assert_eq!(check_component_seen(&whole, Some("Cycles"), &each_actions()), Ok(()));
+}
+
+/// A script's use of a component whose `expect_each` list is an input: the
+/// locator the input made is checked with the child inside it.
+#[test]
+fn a_used_components_each_child_is_checked_inside_the_list_an_input_gave() {
+    let have = components(serde_json::json!([{
+        "name": "Check cards", "description": "d", "version": 1,
+        "inputs": [{ "name": "list", "kind": "target", "description": "" }],
+        "actions": [{ "kind": "expect_each", "selector": { "input": "list" }, "child": { "css": "h3" }, "not_empty": true }]
+    }]));
+    let uses = one_step(
+        "Cycles",
+        serde_json::json!([{ "kind": "use_component", "component": "Check cards", "inputs": { "list": { "css": LIST } } }]),
+    );
+    let whole = filed(serde_json::json!([{ "css": LIST }, { "css": "h3" }]), 12);
+    assert_eq!(check_seen(&whole, &have, &uses, &[], None), Ok(()));
+    // The list is seen, the child inside it is not.
+    let list_only = sighted_matching("Cycles", css(LIST), 12);
+    let all = check_seen_all(&list_only, &have, &uses, &[], None);
+    assert_eq!(all.iter().map(|u| u.locator.as_str()).collect::<Vec<_>>(), [format!("h3 in {LIST}")]);
+}
+
+/// A child holding a `{{x}}` placeholder is fitted against the map when the
+/// run has filled it in, as a step's own locator is.
+#[test]
+fn an_each_child_with_a_placeholder_is_checked_at_run_time() {
+    let chain = serde_json::json!([{ "css": LIST }, { "css": "h3[data-cycle-id=\"10066\"]" }]);
+    let map = filed(chain, 12);
+    let each = |child: &str| {
+        one_step(
+            "Cycles",
+            serde_json::json!([{ "kind": "expect_each", "selector": { "css": LIST }, "child": { "css": child }, "not_empty": true }]),
+        )
+    };
+    let saved = each("h3[data-cycle-id=\"{{setup.cycle_id}}\"]");
+    assert_eq!(check_seen(&map, &none(), &saved, &[], None), Ok(()));
+    assert!(has_data_placeholders(&saved.steps));
+    let run = |filled: &str| check_resolved_inputs(&map, &none(), &["Cycles"], &saved.steps, &each(filled).steps);
+    assert_eq!(run("h3[data-cycle-id=\"10071\"]"), Ok(()));
+    assert_eq!(
+        run("h3[data-cycle-id=\"draft-7\"]"),
+        Err(format!("Step 1: h3[data-cycle-id=\"draft-7\"] in {LIST}, as filled in, does not fit what was seen on the live app. Explore that screen again with discovery, or check the value the setup or fixture gives."))
+    );
+}

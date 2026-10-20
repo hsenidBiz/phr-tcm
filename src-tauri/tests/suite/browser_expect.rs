@@ -554,8 +554,20 @@ struct ListPage {
     found: std::collections::HashMap<(String, String), Vec<String>>,
     texts: std::collections::HashMap<String, String>,
     attrs: std::collections::HashMap<String, String>,
+    /// What a person calls an element (its label or name), when that is
+    /// not its text: how a form control is named without its value.
+    names: std::collections::HashMap<String, String>,
     detached: Vec<String>,
     detached_looks: usize,
+    /// In the page but not drawn: a locator that keeps only what is seen
+    /// leaves them out, and they are not visible.
+    hidden: std::collections::HashSet<String>,
+    /// What a frame element answers (`FRAME_JS`): "frame" or "unreachable".
+    frames: std::collections::HashMap<String, String>,
+    /// From this look on, `grown` replaces what `found` lists for a key:
+    /// a list still filling in.
+    grows_at: usize,
+    grown: std::collections::HashMap<(String, String), Vec<String>>,
 }
 
 impl ListPage {
@@ -584,7 +596,7 @@ impl ListPage {
         use v2_lib::browser::each::CONNECTED_JS;
         use v2_lib::browser::expect::{READ_ATTR_JS, READ_TEXT_JS};
         use v2_lib::browser::input::SHOWN_JS;
-        use v2_lib::browser::locator::VISIBLE_JS;
+        use v2_lib::browser::locator::{FRAME_JS, VISIBLE_JS};
         common::ScriptedDriver::new(move |method, params| {
             let f = params["functionDeclaration"].as_str().unwrap_or("");
             let id = params["objectId"].as_str().unwrap_or("").to_string();
@@ -593,10 +605,15 @@ impl ListPage {
                     looks.fetch_add(1, Ordering::SeqCst);
                     json!({ "result": { "objectId": "doc" } })
                 }
-                "Runtime.callFunctionOn" if f == VISIBLE_JS || f == SHOWN_JS => json!({ "result": { "value": true } }),
+                "Runtime.callFunctionOn" if f == VISIBLE_JS || f == SHOWN_JS => {
+                    json!({ "result": { "value": !self.hidden.contains(&id) } })
+                }
                 "Runtime.callFunctionOn" if f == CONNECTED_JS => {
                     let gone = self.detached.contains(&id) && looks.load(Ordering::SeqCst) <= self.detached_looks;
                     json!({ "result": { "value": !gone } })
+                }
+                "Runtime.callFunctionOn" if f == FRAME_JS => {
+                    json!({ "result": { "value": self.frames.get(&id).map_or("element", String::as_str) } })
                 }
                 "Runtime.callFunctionOn" if f == READ_TEXT_JS => {
                     json!({ "result": { "value": self.texts.get(&id).cloned().unwrap_or_default() } })
@@ -604,14 +621,25 @@ impl ListPage {
                 "Runtime.callFunctionOn" if f == READ_ATTR_JS => {
                     json!({ "result": { "value": self.attrs.get(&id) } })
                 }
+                // The label a failure names an item by: read from the
+                // element's labels, never its value.
+                "Runtime.callFunctionOn" if f.contains("this.labels") => {
+                    let said = self.names.get(&id).or_else(|| self.texts.get(&id)).cloned().unwrap_or_default();
+                    json!({ "result": { "value": said } })
+                }
                 "Runtime.callFunctionOn" => {
                     let css = params["arguments"][0]["value"].as_str().unwrap_or("");
-                    json!({ "result": { "objectId": format!("arr|{id}|{css}") } })
+                    let seen_only = params["arguments"][1]["value"].as_bool().unwrap_or(true);
+                    json!({ "result": { "objectId": format!("arr|{id}|{seen_only}|{css}") } })
                 }
                 "Runtime.getProperties" => {
-                    let mut parts = id.splitn(3, '|');
-                    let (_, root, css) = (parts.next(), parts.next().unwrap_or(""), parts.next().unwrap_or(""));
-                    let ids = self.found.get(&(root.to_string(), css.to_string())).cloned().unwrap_or_default();
+                    let mut parts = id.splitn(4, '|');
+                    let (_, root, seen_only, css) =
+                        (parts.next(), parts.next().unwrap_or(""), parts.next() == Some("true"), parts.next().unwrap_or(""));
+                    let key = (root.to_string(), css.to_string());
+                    let grown = looks.load(Ordering::SeqCst) >= self.grows_at && self.grown.contains_key(&key);
+                    let ids = if grown { self.grown.get(&key) } else { self.found.get(&key) }.cloned().unwrap_or_default();
+                    let ids: Vec<String> = ids.into_iter().filter(|e| !(seen_only && self.hidden.contains(e))).collect();
                     json!({ "result": ids.iter().enumerate()
                         .map(|(i, e)| json!({ "name": i.to_string(), "value": { "objectId": e } }))
                         .collect::<Vec<_>>() })
@@ -644,6 +672,9 @@ async fn each_passes_when_every_item_matches_and_names_the_count() {
     assert!(d.deadline_was_cleared());
 }
 
+/// The brief names a 300 ms wait; a list is only trusted once it has held
+/// still, so a wait under 1500 ms is refused and this one is the default
+/// (250 ms in these tests).
 #[tokio::test]
 async fn each_fails_naming_the_item_and_its_text() {
     let page = ListPage::default()
@@ -652,11 +683,11 @@ async fn each_fails_naming_the_item_and_its_text() {
         .text("c2", "Other B")
         .text("c3", "AUTOTEST C");
     let mut d = page.driver(Arc::default());
-    let out = execute_with(&mut d, &each(json!({ "matches": "^AUTOTEST ", "timeout_ms": 300 })), &quick()).await;
+    let out = execute_with(&mut d, &each(json!({ "matches": "^AUTOTEST " })), &quick()).await;
     assert!(!out.ok);
     assert_eq!(
         out.detail,
-        "waited 300ms: div.card item 2 of 3 (\"Other B\"): expected text to match /^AUTOTEST / but saw \"Other B\""
+        "waited 250ms: div.card item 2 of 3 (\"Other B\"): expected text to match /^AUTOTEST / but saw \"Other B\""
     );
 }
 
@@ -713,13 +744,38 @@ async fn each_looks_again_when_an_item_is_detached_mid_read() {
     assert!(out.ok, "{}", out.detail);
     assert!(looks.load(Ordering::SeqCst) >= 2, "a second look was made");
 
+    let out = execute_with(&mut build(usize::MAX).driver(Arc::default()), &each(json!({ "matches": "^AUTOTEST " })), &quick()).await;
+    assert!(!out.ok && out.detail.ends_with("the list changed while it was read"), "{}", out.detail);
+}
+
+/// A detached item that would also have failed is reported as the list
+/// changing, never as its stale text: the probe comes before the verdict.
+#[tokio::test]
+async fn a_failing_item_that_is_detached_reports_the_list_changing() {
+    let mut page = ListPage::default().list("div.card", 2).text("c1", "AUTOTEST A").text("c2", "Other B");
+    page.detached = vec!["c2".to_string()];
+    page.detached_looks = usize::MAX;
+    let out = execute_with(&mut page.driver(Arc::default()), &each(json!({ "matches": "^AUTOTEST " })), &quick()).await;
+    assert!(!out.ok);
+    assert!(out.detail.ends_with("the list changed while it was read"), "{}", out.detail);
+    assert!(!out.detail.contains("Other B"), "{}", out.detail);
+}
+
+/// The element that was read is the one probed: a child remounted inside a
+/// card that stays in the page leaves a stale text behind.
+#[tokio::test]
+async fn each_probes_the_child_it_read_not_only_the_item() {
+    let mut page = ListPage::default().list("div.card", 1).inside(1, "h3", 1).text("c1-h3-1", "AUTOTEST A");
+    page.detached = vec!["c1-h3-1".to_string()];
+    page.detached_looks = usize::MAX;
     let out = execute_with(
-        &mut build(usize::MAX).driver(Arc::default()),
-        &each(json!({ "matches": "^AUTOTEST ", "timeout_ms": 200 })),
+        &mut page.driver(Arc::default()),
+        &each(json!({ "child": { "css": "h3" }, "matches": "^AUTOTEST " })),
         &quick(),
     )
     .await;
-    assert!(!out.ok && out.detail.ends_with("the list changed while it was read"), "{}", out.detail);
+    assert!(!out.ok, "a child no longer in the page was read: {}", out.detail);
+    assert!(out.detail.ends_with("the list changed while it was read"), "{}", out.detail);
 }
 
 #[tokio::test]
@@ -772,8 +828,6 @@ async fn each_says_why_in_every_form() {
         for (k, a) in attrs {
             page = page.attr(k, a);
         }
-        let mut v = v;
-        v["timeout_ms"] = json!(150);
         execute_with(&mut page.driver(Arc::default()), &each(v), &quick()).await.detail
     };
     let t: &[(&str, &str)] = &[("c1", "Draft one"), ("c2", "Draft  two")];
@@ -796,15 +850,121 @@ async fn each_says_why_in_every_form() {
 async fn each_cuts_a_long_label_and_reads_the_item_for_a_child_failure() {
     let long = "x".repeat(80);
     let page = ListPage::default().list("div.card", 1).text("c1", &long);
-    let out = execute_with(&mut page.driver(Arc::default()), &each(json!({ "equals": "short", "timeout_ms": 150 })), &quick()).await;
+    let out = execute_with(&mut page.driver(Arc::default()), &each(json!({ "equals": "short" })), &quick()).await;
     assert!(out.detail.contains(&format!("(\"{}...\")", "x".repeat(60))), "{}", out.detail);
 
     let page = ListPage::default().list("div.card", 1).text("c1", "Card one").inside(1, "h3", 0);
     let out = execute_with(
         &mut page.driver(Arc::default()),
-        &each(json!({ "child": { "css": "h3" }, "visible": true, "timeout_ms": 150 })),
+        &each(json!({ "child": { "css": "h3" }, "visible": true })),
         &quick(),
     )
     .await;
     assert!(out.detail.ends_with("item 1 of 1 (\"Card one\"): h3 is not on the page"), "{}", out.detail);
+}
+
+/// The branch that tells a child that is there but not drawn from one that
+/// is missing: found only when the locator may match what cannot be seen,
+/// and, for a locator that already may, by its own visibility.
+#[tokio::test]
+async fn each_names_a_child_that_is_there_but_hidden() {
+    let hidden = |locator: Value| {
+        let mut page = ListPage::default().list("div.card", 1).text("c1", "Card one").inside(1, "h3", 1);
+        page.hidden.insert("c1-h3-1".to_string());
+        let each = each(json!({ "child": locator, "visible": true }));
+        async move { execute_with(&mut page.driver(Arc::default()), &each, &quick()).await }
+    };
+    let out = hidden(json!({ "css": "h3" })).await;
+    assert!(!out.ok && out.detail.ends_with("item 1 of 1 (\"Card one\"): h3 is there but cannot be seen"), "{}", out.detail);
+    // A locator written to match what is hidden finds it, and it is not visible.
+    let out = hidden(json!({ "css": "h3", "visible": false })).await;
+    assert!(!out.ok && out.detail.ends_with("item 1 of 1 (\"Card one\"): h3 is there but cannot be seen"), "{}", out.detail);
+}
+
+/// A list still filling in passes nothing on the items drawn so far: the
+/// third card arrives on the second look and fails.
+#[tokio::test]
+async fn each_does_not_pass_a_list_that_is_still_filling_in() {
+    let mut page = ListPage::default()
+        .list("div.card", 2)
+        .text("c1", "AUTOTEST A")
+        .text("c2", "AUTOTEST B")
+        .text("c3", "Other C");
+    page.grows_at = 2;
+    page.grown.insert(("doc".to_string(), "div.card".to_string()), vec!["c1".into(), "c2".into(), "c3".into()]);
+    let out = execute_with(
+        &mut page.driver(Arc::default()),
+        &each(json!({ "matches": "^AUTOTEST ", "timeout_ms": 2000 })),
+        &quick(),
+    )
+    .await;
+    assert!(!out.ok, "a list still filling in passed: {}", out.detail);
+    assert!(out.detail.contains("item 3 of 3 (\"Other C\")"), "{}", out.detail);
+}
+
+/// A stable passing list passes once it has held still, not on the first look.
+#[tokio::test]
+async fn each_passes_a_stable_list_only_after_it_has_held_still() {
+    let page = ListPage::default().list("div.card", 2).text("c1", "AUTOTEST A").text("c2", "AUTOTEST B");
+    let looks = Arc::new(AtomicUsize::new(0));
+    let started = std::time::Instant::now();
+    let out = execute_with(
+        &mut page.driver(looks.clone()),
+        &each(json!({ "matches": "^AUTOTEST ", "timeout_ms": 2000 })),
+        &quick(),
+    )
+    .await;
+    assert!(out.ok, "{}", out.detail);
+    assert_eq!(out.detail, "2 items of div.card each match /^AUTOTEST /");
+    assert!(looks.load(Ordering::SeqCst) >= 3, "passed on {} look(s)", looks.load(Ordering::SeqCst));
+    assert!(started.elapsed() >= Duration::from_millis(700), "passed after {:?}", started.elapsed());
+}
+
+/// A form control is never named by what was typed into it: not a
+/// password, not anything.
+#[tokio::test]
+async fn each_names_a_failing_control_by_its_label_not_its_value() {
+    let mut page = ListPage::default().list("input.secret", 1).text("c1", "hunter2");
+    page.names.insert("c1".to_string(), "Password".to_string());
+    let out = execute_with(
+        &mut page.driver(Arc::default()),
+        &action(json!({ "kind": "expect_each", "selector": { "css": "input.secret" }, "attribute": "data-x", "not_empty": true })),
+        &quick(),
+    )
+    .await;
+    assert!(!out.ok);
+    assert!(!out.detail.contains("hunter2"), "the typed value reached the failure: {}", out.detail);
+    assert!(out.detail.contains("item 1 of 1 (\"Password\"): has no data-x attribute"), "{}", out.detail);
+}
+
+/// A child behind a frame this page cannot enter is not "not on the page".
+#[tokio::test]
+async fn each_child_behind_an_unreachable_frame_says_so() {
+    let mut page = ListPage::default().list("div.card", 1).text("c1", "Card one").inside(1, "iframe", 1);
+    page.frames.insert("c1-iframe-1".to_string(), "unreachable".to_string());
+    let child = json!([{ "css": "iframe" }, { "css": "h3" }]);
+    let out = execute_with(&mut page.driver(Arc::default()), &each(json!({ "child": child, "not_empty": true })), &quick()).await;
+    assert!(!out.ok);
+    assert!(out.detail.contains("holds a page from another site (or has not loaded), which Auto Run cannot reach"), "{}", out.detail);
+    assert!(!out.detail.ends_with("is not on the page"), "{}", out.detail);
+    assert_eq!(v2_lib::autorun::patterns::classify(&out.detail, Some("div.card")), v2_lib::autorun::patterns::ErrorClass::FrameUnreachable);
+}
+
+/// A first look that runs out of time on a long list is the list check's
+/// own failure, not a browser that stopped answering.
+#[tokio::test]
+async fn each_overrunning_look_is_the_lists_own_failure() {
+    use v2_lib::browser::expect::READ_TEXT_JS;
+    let page = ListPage::default().list("div.card", 3).text("c1", "a").text("c2", "b").text("c3", "c");
+    let mut d = page.driver(Arc::default()).answering_first(|method, params| {
+        (method == "Runtime.callFunctionOn" && params["functionDeclaration"] == READ_TEXT_JS)
+            .then(|| Err(CdpError::Timeout { what: "Runtime.callFunctionOn".to_string(), ms: 50 }))
+    });
+    let out = execute_with(&mut d, &each(json!({ "not_empty": true })), &quick()).await;
+    assert!(!out.ok);
+    assert_eq!(out.detail, "waited 250ms: div.card could not read every item in time - narrow the list, or allow more time");
+    assert_eq!(
+        v2_lib::autorun::patterns::classify(&out.detail, Some("div.card")),
+        v2_lib::autorun::patterns::ErrorClass::TimedOut
+    );
 }

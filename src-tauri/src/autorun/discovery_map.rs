@@ -151,6 +151,12 @@ pub struct AreaMap {
     /// check, which takes them only written the same way, never saved.
     #[serde(skip)]
     pub saved_wholes: Vec<Vec<LocatorStep>>,
+    /// The chains (a list, then the child looked for inside it) the area's
+    /// saved `expect_each` scripts use, whole, as written: they vouch only
+    /// for the same chain, never for their links alone. Read in memory,
+    /// never saved.
+    #[serde(skip)]
+    pub saved_each_wholes: Vec<Vec<LocatorStep>>,
     /// Of `saved_links`, those a saved script wrote as a legacy string
     /// target: the only ones the seen check takes for a legacy use, as a
     /// structured css locator says nothing of its hidden matches. Read in
