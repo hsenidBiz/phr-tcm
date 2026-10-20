@@ -975,14 +975,15 @@ pub const STAND_FRESH_MS: u64 = 10 * 60 * 1000;
 /// `before`: its steps before `before`, and every script-level setting -
 /// `no_save`, the account, the area, the setup, the preconditions, the
 /// dialog and page-error choices. Only the bookkeeping a save or a run
-/// writes (repairs, the last repair, when it was saved, a suspected
-/// defect) is left out.
+/// writes (repairs, the last repair, the precondition repairs, when it
+/// was saved, a suspected defect) is left out.
 pub fn run_fingerprint(script: &CaseScript, before: i32) -> u64 {
     use std::hash::{Hash, Hasher};
     let mut shaped = script.clone();
     shaped.steps.retain(|s| s.step_number < before);
     shaped.repairs = 0;
     shaped.last_repair = None;
+    shaped.precondition_repairs = Vec::new();
     shaped.saved_at = None;
     shaped.suspected_defect = None;
     let mut h = std::collections::hash_map::DefaultHasher::new();

@@ -8,7 +8,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { toast } from "../../lib/toast";
-import { commands, type Action, type StepScript } from "../../bindings";
+import { commands, type Action, type Precondition, type StepScript } from "../../bindings";
 import { loadScript } from "../../lib/scriptBatch";
 import { Button } from "../../components/ui/button";
 import { Checkbox } from "../../components/ui/checkbox";
@@ -19,12 +19,13 @@ import { MODAL_LARGE } from "./modalWidths";
 import SharedStepLabel from "../../components/SharedStepLabel";
 import CaseText from "../../components/CaseText";
 import { unwrapStr } from "../../lib/ipc";
-import { IconAdd, IconBack, IconCancel, IconConfirm, IconEdit, IconRemove } from "../../lib/actionIcons";
+import { IconAdd, IconBack, IconCancel, IconConfirm, IconEdit, IconRemove, IconUndo } from "../../lib/actionIcons";
 import { cn } from "../../lib/cn";
 import { caseTextLine } from "../../lib/markdown";
 import { sameAreaName } from "../../lib/areaName";
 import { floorOf } from "./floor";
 import SetupSection from "./SetupSection";
+import { preconditionText, putBackPreconditions, repairText } from "./preconditionRepairs";
 import { describeAction, sentenceText, UNREADABLE, type Sentence } from "./describeAction";
 
 const PLACEHOLDER = `[
@@ -99,13 +100,17 @@ export default function ScriptEditor({
   const [pickedNoSave, setPickedNoSave] = useState<boolean | null>(null);
   const noSave = pickedNoSave ?? existing.data?.no_save ?? false;
 
-  // Preconditions are not edited here, only removed: by their place in the
-  // saved script, taking effect on Save. Removing is what gets a script
-  // whose flow or stage has since been deleted saved again.
-  const [removedPre, setRemovedPre] = useState<number[]>([]);
-  const preconditions = (existing.data?.preconditions ?? [])
+  // Preconditions are not edited here, only removed, taking effect on
+  // Save. Removing is what gets a script whose flow or stage has since been
+  // deleted saved again. What an assistant's repairs did to them can be
+  // put back (by its place in the list of those repairs), also on Save;
+  // the numbers are places in the list as put back.
+  const [removedPre, setRemovedPre] = useState<Precondition[]>([]);
+  const [putBack, setPutBack] = useState<number[]>([]);
+  const preconditionRepairs = existing.data?.precondition_repairs ?? [];
+  const preconditions = putBackPreconditions(existing.data?.preconditions ?? [], preconditionRepairs, putBack)
     .map((p, i) => ({ p, n: i + 1 }))
-    .filter(({ n }) => !removedPre.includes(n));
+    .filter(({ p }) => !removedPre.includes(p));
 
   // The shared state the case changes or needs unchanged, by name. null =
   // untouched, so the saved script's names show until the person edits a
@@ -313,6 +318,29 @@ export default function ScriptEditor({
             </p>
           )}
 
+          {preconditionRepairs.length > 0 && (
+            <div className="space-y-1">
+              <span className="text-xs font-medium text-muted">Precondition changes by an assistant</span>
+              <ul aria-label="Precondition changes by an assistant" className="space-y-1 text-xs">
+                {preconditionRepairs.map((r, i) => (
+                  <li key={i} className="flex items-center justify-between gap-2">
+                    <span className="min-w-0 break-words text-text">{`${repairText(r)} - ${r.reason}`}</span>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      aria-label={`Put back precondition change ${i + 1}`}
+                      disabled={putBack.includes(i)}
+                      onClick={() => setPutBack((b) => [...b, i])}
+                    >
+                      <IconUndo aria-hidden />
+                      {putBack.includes(i) ? "Put back on Save" : "Put back"}
+                    </Button>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
           {editing ? (
             <div ref={jsonView} className="space-y-1">
               <div className="flex items-center justify-between gap-2">
@@ -395,14 +423,12 @@ export default function ScriptEditor({
               <ul aria-label="Preconditions" className="space-y-1 text-xs">
                 {preconditions.map(({ p, n }) => (
                   <li key={n} className="flex items-center justify-between gap-2">
-                    <span className="id-mono min-w-0 break-words text-text">
-                      {`${p.flow} / ${p.stage}: ${typeof p.value === "string" ? p.value : JSON.stringify(p.value)}`}
-                    </span>
+                    <span className="id-mono min-w-0 break-words text-text">{preconditionText(p)}</span>
                     <Button
                       size="sm"
                       variant="ghost"
                       aria-label={`Remove precondition ${n}`}
-                      onClick={() => setRemovedPre((r) => [...r, n])}
+                      onClick={() => setRemovedPre((r) => [...r, p])}
                     >
                       <IconRemove aria-hidden />
                       Remove

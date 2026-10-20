@@ -134,6 +134,14 @@ pub struct CaseScript {
     /// Written only when there are any.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub preconditions: Vec<Precondition>,
+    /// Each precondition an assistant's repair added, removed or changed
+    /// since a person last saved the script from the editor, oldest first,
+    /// with its reason (`edits::PreconditionEdit`), so the editor can show
+    /// it and put it back. Set only by the assistant's save, whatever was
+    /// sent; cleared by the editor's save, as `repairs` is. Written only
+    /// when there are any.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub precondition_repairs: Vec<PreconditionRepair>,
     /// The draft this case makes for itself before it signs in: a fixture
     /// the run performs on every run of the case. Its outputs reach
     /// the steps as `{{setup.<output>}}` (`setup`). A repair can never
@@ -222,6 +230,28 @@ pub struct Precondition {
     /// sentence when the precondition is not met.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub why: Option<String>,
+}
+
+/// What a repair's precondition edit does to one precondition.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, specta::Type)]
+#[serde(rename_all = "lowercase")]
+pub enum PreconditionOp {
+    Add,
+    Remove,
+    Change,
+}
+
+/// One precondition an assistant's repair added, removed or changed, as
+/// the script keeps it for the editor: the precondition before (absent
+/// for an add) and after (absent for a remove), and the reason given.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, specta::Type)]
+pub struct PreconditionRepair {
+    pub op: PreconditionOp,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub before: Option<Precondition>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub after: Option<Precondition>,
+    pub reason: String,
 }
 
 /// A script's setup: the saved fixture whose run makes this case's own

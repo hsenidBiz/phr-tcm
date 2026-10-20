@@ -4,7 +4,8 @@
 //! Pure functions over `CaseScript` - no browser, no filesystem.
 
 use serde_json::json;
-use v2_lib::autorun::edits::{check_edits, Edit};
+use v2_lib::autorun::edits::{apply_precondition_edit, check_edits, Edit, PreconditionEdit};
+use v2_lib::autorun::{PreconditionOp, PreconditionRepair};
 use v2_lib::autorun::CaseScript;
 
 
@@ -13,7 +14,7 @@ fn script(json: serde_json::Value) -> CaseScript {
 }
 
 fn edit(steps: &[i32], why: &str) -> Edit {
-    Edit { case_id: 1, steps: steps.to_vec(), why: why.to_string(), quirk: None, area: false }
+    Edit { case_id: 1, steps: steps.to_vec(), why: why.to_string(), quirk: None, area: false, precondition: None }
 }
 
 #[test]
@@ -441,15 +442,15 @@ fn a_blank_area_or_one_in_another_case_is_no_change() {
     );
 }
 
-/// A repair keeps every precondition the saved script has, exactly, and
-/// may add new ones: dropping one, or changing its value or its reason,
-/// is refused, declared or not.
+/// A repair with no precondition edit keeps every precondition the saved
+/// script has, exactly, and may add new ones: dropping one, or changing
+/// its value or its reason, is refused.
 #[test]
 fn a_repair_may_add_preconditions_but_never_drop_or_change_one() {
     use v2_lib::autorun::edits::PRECONDITIONS_KEPT;
     assert_eq!(
         PRECONDITIONS_KEPT,
-        "a repair cannot change a script's preconditions - save the script itself to change them"
+        "a precondition was removed or changed but not declared - add one \"precondition\" edit ({ \"op\": \"remove\" or \"change\", \"flow\", \"stage\", \"to\" for a change, \"reason\" }) to the case's \"edits\" entry, or send every saved precondition back as it is"
     );
     let with = |pre: serde_json::Value| {
         script(json!({
@@ -500,4 +501,191 @@ fn turning_a_step_into_the_clean_up_is_a_change_to_that_step() {
     let (old, new) = (script(steps(false)), script(steps(true)));
     assert_eq!(check_edits(&old, &new, None), Err("case 1: step 2 was changed but not declared - name every step you change in \"edits\", or leave it as it was".to_string()));
     assert_eq!(check_edits(&old, &new, Some(&edit(&[2], "it tidies up"))), Ok(()));
+}
+
+// ------------------------------------------------ precondition edits (#28)
+
+fn pre(stage: &str, value: serde_json::Value) -> v2_lib::autorun::Precondition {
+    serde_json::from_value(json!({ "flow": "pms-performance-cycle", "stage": stage, "value": value })).unwrap()
+}
+
+fn with_pre(pre: Vec<v2_lib::autorun::Precondition>) -> CaseScript {
+    let mut s = script(json!({
+        "case_id": 1, "title": "t",
+        "steps": [{ "step_number": 1, "actions": [{ "kind": "click", "selector": "#old" }] }]
+    }));
+    s.preconditions = pre;
+    s
+}
+
+fn pre_edit(v: serde_json::Value) -> PreconditionEdit {
+    serde_json::from_value(v).unwrap()
+}
+
+/// The declaration of a precondition edit alone: no steps, no `why`.
+fn pre_only(v: serde_json::Value) -> Edit {
+    Edit { case_id: 1, steps: vec![], why: String::new(), quirk: None, area: false, precondition: Some(pre_edit(v)) }
+}
+
+/// Remove, add and change: each accepted with a reason, and each comes back
+/// as the record the script keeps.
+#[test]
+fn a_declared_precondition_edit_may_add_remove_or_change_one() {
+    let old = with_pre(vec![pre("publish", json!(274)), pre("rules", json!(274))]);
+
+    // Removed.
+    let remove = json!({ "op": "remove", "flow": "pms-performance-cycle", "stage": "publish", "reason": "step 1 now publishes the cycle itself" });
+    let (after, record) = apply_precondition_edit(&old.preconditions, &pre_edit(remove.clone())).unwrap();
+    assert_eq!(after, vec![pre("rules", json!(274))]);
+    assert_eq!(
+        record,
+        PreconditionRepair {
+            op: PreconditionOp::Remove,
+            before: Some(pre("publish", json!(274))),
+            after: None,
+            reason: "step 1 now publishes the cycle itself".into()
+        }
+    );
+    assert_eq!(check_edits(&old, &with_pre(after), Some(&pre_only(remove))), Ok(()));
+
+    // Added, at the end.
+    let add = json!({ "op": "add", "to": { "flow": "pms-performance-cycle", "stage": "participants", "value": 274 }, "reason": "the case opens a participant" });
+    let (after, record) = apply_precondition_edit(&old.preconditions, &pre_edit(add.clone())).unwrap();
+    assert_eq!(after.last(), Some(&pre("participants", json!(274))));
+    assert_eq!((record.op, record.before, record.after), (PreconditionOp::Add, None, Some(pre("participants", json!(274)))));
+    assert_eq!(check_edits(&old, &with_pre(after), Some(&pre_only(add))), Ok(()));
+
+    // Changed, in its place.
+    let change = json!({ "op": "change", "flow": "pms-performance-cycle", "stage": "publish", "to": { "flow": "pms-performance-cycle", "stage": "competencies", "value": 274 }, "reason": "the steps assign the profile themselves now" });
+    let (after, record) = apply_precondition_edit(&old.preconditions, &pre_edit(change.clone())).unwrap();
+    assert_eq!(after, vec![pre("competencies", json!(274)), pre("rules", json!(274))]);
+    assert_eq!(
+        (record.op, record.before, record.after),
+        (PreconditionOp::Change, Some(pre("publish", json!(274))), Some(pre("competencies", json!(274))))
+    );
+    assert_eq!(check_edits(&old, &with_pre(after.clone()), Some(&pre_only(change.clone()))), Ok(()));
+
+    // Beside a step edit, with its own `why`.
+    let mut fixed = with_pre(after);
+    fixed.steps[0] = serde_json::from_value(json!({ "step_number": 1, "actions": [{ "kind": "click", "selector": "#new" }] })).unwrap();
+    let both = Edit { precondition: Some(pre_edit(change)), ..edit(&[1], "the button moved") };
+    assert_eq!(check_edits(&old, &fixed, Some(&both)), Ok(()));
+}
+
+/// A removal - any precondition edit - says why in one line.
+#[test]
+fn a_precondition_edit_without_a_reason_is_refused() {
+    use v2_lib::autorun::edits::{PRECONDITION_NEEDS_REASON, PRECONDITION_REASON_LONG};
+    let saved = vec![pre("publish", json!(274))];
+    for reason in ["", "   "] {
+        let e = pre_edit(json!({ "op": "remove", "flow": "pms-performance-cycle", "stage": "publish", "reason": reason }));
+        assert_eq!(apply_precondition_edit(&saved, &e), Err(PRECONDITION_NEEDS_REASON.to_string()));
+    }
+    let e = pre_edit(json!({ "op": "remove", "flow": "pms-performance-cycle", "stage": "publish" }));
+    assert_eq!(apply_precondition_edit(&saved, &e), Err(PRECONDITION_NEEDS_REASON.to_string()));
+    assert_eq!(
+        check_edits(
+            &with_pre(saved.clone()),
+            &with_pre(vec![]),
+            Some(&pre_only(json!({ "op": "remove", "flow": "pms-performance-cycle", "stage": "publish" })))
+        ),
+        Err(PRECONDITION_NEEDS_REASON.to_string())
+    );
+    for reason in ["two\nlines".to_string(), "x".repeat(201)] {
+        let e = pre_edit(json!({ "op": "remove", "flow": "pms-performance-cycle", "stage": "publish", "reason": reason }));
+        assert_eq!(apply_precondition_edit(&saved, &e), Err(PRECONDITION_REASON_LONG.to_string()));
+    }
+    let e = pre_edit(json!({ "op": "remove", "flow": "pms-performance-cycle", "stage": "publish", "reason": "x".repeat(200) }));
+    assert!(apply_precondition_edit(&saved, &e).is_ok(), "200 characters is within the limit");
+    // A precondition edit's reason stands in for `why`, but a step edit
+    // still needs its own.
+    let mut fixed = with_pre(vec![]);
+    fixed.steps[0] = serde_json::from_value(json!({ "step_number": 1, "actions": [{ "kind": "click", "selector": "#new" }] })).unwrap();
+    let both = Edit {
+        precondition: Some(pre_edit(
+            json!({ "op": "remove", "flow": "pms-performance-cycle", "stage": "publish", "reason": "no longer needed" }),
+        )),
+        ..edit(&[1], " ")
+    };
+    assert_eq!(check_edits(&with_pre(saved), &fixed, Some(&both)), Err("an edit needs a reason".to_string()));
+}
+
+/// One precondition edit per save: a second change to the preconditions
+/// beside the declared one - another removal, an add, a value changed - is
+/// refused, as an undeclared step is.
+#[test]
+fn a_second_precondition_change_beside_the_declared_one_is_refused() {
+    use v2_lib::autorun::edits::PRECONDITIONS_UNDECLARED;
+    let old = with_pre(vec![pre("publish", json!(274)), pre("rules", json!(274))]);
+    let declared = pre_only(json!({ "op": "remove", "flow": "pms-performance-cycle", "stage": "publish", "reason": "the steps publish it" }));
+    for sent in [
+        vec![],
+        vec![pre("rules", json!(274)), pre("participants", json!(274))],
+        vec![pre("rules", json!(275))],
+        vec![pre("publish", json!(274)), pre("rules", json!(274))],
+    ] {
+        assert_eq!(
+            check_edits(&old, &with_pre(sent.clone()), Some(&declared)),
+            Err(PRECONDITIONS_UNDECLARED.to_string()),
+            "{sent:?}"
+        );
+    }
+    // Undeclared, a removal is refused as it always was.
+    assert_eq!(
+        check_edits(&old, &with_pre(vec![pre("rules", json!(274))]), None),
+        Err(v2_lib::autorun::edits::PRECONDITIONS_KEPT.to_string())
+    );
+}
+
+/// An edit that names nothing it can act on is refused in words that say
+/// what to send instead.
+#[test]
+fn a_precondition_edit_that_names_nothing_it_can_act_on_is_refused() {
+    let saved = vec![pre("publish", json!(274)), pre("publish", json!(275))];
+    let refused = |v: serde_json::Value| apply_precondition_edit(&saved, &pre_edit(v)).unwrap_err();
+    assert_eq!(
+        refused(json!({ "op": "remove", "flow": "pms-performance-cycle", "stage": "rules", "reason": "r" })),
+        "the script has no precondition pms-performance-cycle / rules"
+    );
+    assert_eq!(
+        refused(json!({ "op": "remove", "flow": "pms-performance-cycle", "stage": "publish", "reason": "r" })),
+        "the script has more than one precondition pms-performance-cycle / publish - name its \"value\" too"
+    );
+    let (after, _) = apply_precondition_edit(
+        &saved,
+        &pre_edit(json!({ "op": "remove", "flow": "pms-performance-cycle", "stage": "publish", "value": 275, "reason": "r" })),
+    )
+    .unwrap();
+    assert_eq!(after, vec![pre("publish", json!(274))], "the value picks one of two");
+    assert_eq!(
+        refused(json!({ "op": "remove", "stage": "publish", "reason": "r" })),
+        "a \"remove\" precondition edit names the saved precondition by its \"flow\" and \"stage\""
+    );
+    assert_eq!(
+        refused(json!({ "op": "remove", "flow": "pms-performance-cycle", "stage": "publish", "value": 274, "to": { "flow": "f", "stage": "s", "value": 1 }, "reason": "r" })),
+        "a \"remove\" precondition edit takes no \"to\""
+    );
+    assert_eq!(
+        refused(json!({ "op": "add", "reason": "r" })),
+        "an \"add\" precondition edit needs \"to\": the precondition to add, { flow, stage, value, why }"
+    );
+    assert_eq!(
+        refused(json!({ "op": "add", "flow": "pms-performance-cycle", "to": { "flow": "f", "stage": "s", "value": 1 }, "reason": "r" })),
+        "an \"add\" precondition edit takes the new precondition in \"to\" and names no saved one"
+    );
+    assert_eq!(
+        refused(json!({ "op": "add", "to": { "flow": "pms-performance-cycle", "stage": "publish", "value": 274 }, "reason": "r" })),
+        "the script already has that precondition"
+    );
+    assert_eq!(
+        refused(json!({ "op": "change", "flow": "pms-performance-cycle", "stage": "publish", "value": 274, "reason": "r" })),
+        "a \"change\" precondition edit needs \"to\": the precondition as it should be"
+    );
+    assert_eq!(
+        refused(json!({ "op": "change", "flow": "pms-performance-cycle", "stage": "publish", "value": 274, "to": { "flow": "pms-performance-cycle", "stage": "publish", "value": 274 }, "reason": "r" })),
+        "the precondition edit changes nothing - \"to\" is the precondition as it is"
+    );
+    // An unknown key, or op, is serde's refusal.
+    assert!(serde_json::from_value::<PreconditionEdit>(json!({ "op": "drop", "reason": "r" })).is_err());
+    assert!(serde_json::from_value::<PreconditionEdit>(json!({ "op": "add", "why": "r" })).is_err());
 }

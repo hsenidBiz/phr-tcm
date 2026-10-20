@@ -552,6 +552,15 @@ export const commands = {
 	 */
 	preconditions?: Precondition_Serialize[],
 	/**
+	 *  Each precondition an assistant's repair added, removed or changed
+	 *  since a person last saved the script from the editor, oldest first,
+	 *  with its reason (`edits::PreconditionEdit`), so the editor can show
+	 *  it and put it back. Set only by the assistant's save, whatever was
+	 *  sent; cleared by the editor's save, as `repairs` is. Written only
+	 *  when there are any.
+	 */
+	precondition_repairs?: PreconditionRepair_Serialize[],
+	/**
 	 *  The draft this case makes for itself before it signs in: a fixture
 	 *  the run performs on every run of the case. Its outputs reach
 	 *  the steps as `{{setup.<output>}}` (`setup`). A repair can never
@@ -2782,6 +2791,15 @@ export type CaseScript_Deserialize = {
 	 */
 	preconditions?: Precondition_Deserialize[],
 	/**
+	 *  Each precondition an assistant's repair added, removed or changed
+	 *  since a person last saved the script from the editor, oldest first,
+	 *  with its reason (`edits::PreconditionEdit`), so the editor can show
+	 *  it and put it back. Set only by the assistant's save, whatever was
+	 *  sent; cleared by the editor's save, as `repairs` is. Written only
+	 *  when there are any.
+	 */
+	precondition_repairs?: PreconditionRepair_Deserialize[],
+	/**
 	 *  The draft this case makes for itself before it signs in: a fixture
 	 *  the run performs on every run of the case. Its outputs reach
 	 *  the steps as `{{setup.<output>}}` (`setup`). A repair can never
@@ -2912,6 +2930,15 @@ export type CaseScript_Serialize = {
 	 *  Written only when there are any.
 	 */
 	preconditions?: Precondition_Serialize[],
+	/**
+	 *  Each precondition an assistant's repair added, removed or changed
+	 *  since a person last saved the script from the editor, oldest first,
+	 *  with its reason (`edits::PreconditionEdit`), so the editor can show
+	 *  it and put it back. Set only by the assistant's save, whatever was
+	 *  sent; cleared by the editor's save, as `repairs` is. Written only
+	 *  when there are any.
+	 */
+	precondition_repairs?: PreconditionRepair_Serialize[],
 	/**
 	 *  The draft this case makes for itself before it signs in: a fixture
 	 *  the run performs on every run of the case. Its outputs reach
@@ -4542,6 +4569,40 @@ export type PreconditionCheck = {
 	blocked: string | null,
 	/**  Said, and the case goes on (`NOT_CHECKED`). */
 	notice: string | null,
+};
+
+/**  What a repair's precondition edit does to one precondition. */
+export type PreconditionOp = "add" | "remove" | "change";
+
+/**
+ *  One precondition an assistant's repair added, removed or changed, as
+ *  the script keeps it for the editor: the precondition before (absent
+ *  for an add) and after (absent for a remove), and the reason given.
+ */
+export type PreconditionRepair = PreconditionRepair_Serialize | PreconditionRepair_Deserialize;
+
+/**
+ *  One precondition an assistant's repair added, removed or changed, as
+ *  the script keeps it for the editor: the precondition before (absent
+ *  for an add) and after (absent for a remove), and the reason given.
+ */
+export type PreconditionRepair_Deserialize = {
+	op: PreconditionOp,
+	before?: Precondition_Deserialize | null,
+	after?: Precondition_Deserialize | null,
+	reason: string,
+};
+
+/**
+ *  One precondition an assistant's repair added, removed or changed, as
+ *  the script keeps it for the editor: the precondition before (absent
+ *  for an add) and after (absent for a remove), and the reason given.
+ */
+export type PreconditionRepair_Serialize = {
+	op: PreconditionOp,
+	before?: Precondition_Serialize | null,
+	after?: Precondition_Serialize | null,
+	reason: string,
 };
 
 /**

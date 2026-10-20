@@ -335,6 +335,95 @@ test("removing every precondition saves the script without the key", async () =>
   expect(saved[0]).not.toHaveProperty("preconditions");
 });
 
+// ---- What an assistant's repairs did to the preconditions ----
+
+const PUBLISH = { flow: "pms-performance-cycle", stage: "publish", value: 274 };
+const RULES = { flow: "pms-performance-cycle", stage: "rules", value: 274 };
+const PARTICIPANTS = { flow: "pms-performance-cycle", stage: "participants", value: 274 };
+
+test("each precondition an assistant's repair changed is listed with its reason", async () => {
+  mountWith(
+    {
+      case_id: 7,
+      title: "t",
+      steps: ONE_STEP,
+      repairs: 2,
+      last_repair: "precondition removed: Publish for 274 (Performance cycle wizard) - step 1 publishes it",
+      preconditions: [PARTICIPANTS],
+      precondition_repairs: [
+        { op: "remove", before: PUBLISH, reason: "step 1 publishes it" },
+        { op: "change", before: RULES, after: PARTICIPANTS, reason: "the case needs a participant" },
+      ],
+    },
+    ACCOUNTS,
+    [],
+  );
+  const list = await screen.findByRole("list", { name: "Precondition changes by an assistant" });
+  expect(within(list).getAllByRole("listitem").map((r) => r.textContent)).toEqual([
+    "Removed pms-performance-cycle / publish: 274 - step 1 publishes itPut back",
+    "Changed pms-performance-cycle / rules: 274 to pms-performance-cycle / participants: 274 - the case needs a participantPut back",
+  ]);
+});
+
+test("Put back then Save sends the preconditions as they were before the repairs", async () => {
+  const saved: unknown[] = [];
+  mountWith(
+    {
+      case_id: 7,
+      title: "t",
+      steps: ONE_STEP,
+      repairs: 2,
+      preconditions: [PARTICIPANTS],
+      precondition_repairs: [
+        { op: "remove", before: PUBLISH, reason: "step 1 publishes it" },
+        { op: "change", before: RULES, after: PARTICIPANTS, reason: "the case needs a participant" },
+      ],
+    },
+    ACCOUNTS,
+    saved,
+  );
+  fireEvent.click(await screen.findByRole("button", { name: "Put back precondition change 1" }));
+  // Shown at once in the list, and the button says it waits for Save.
+  const shown = within(screen.getByRole("list", { name: "Preconditions" })).getAllByRole("listitem");
+  expect(shown.map((r) => r.textContent)).toEqual([
+    "pms-performance-cycle / participants: 274Remove",
+    "pms-performance-cycle / publish: 274Remove",
+  ]);
+  expect(screen.getByRole("button", { name: "Put back precondition change 1" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Put back precondition change 1" })).toHaveTextContent("Put back on Save");
+  fireEvent.click(screen.getByRole("button", { name: "Put back precondition change 2" }));
+  expect(saved).toHaveLength(0);
+  fireEvent.click(screen.getByRole("button", { name: "Save script" }));
+  await waitFor(() => expect(saved).toHaveLength(1));
+  expect((saved[0] as { preconditions?: unknown }).preconditions).toEqual([RULES, PUBLISH]);
+});
+
+test("putting back an added precondition takes it off the script", async () => {
+  const saved: unknown[] = [];
+  mountWith(
+    {
+      case_id: 7,
+      title: "t",
+      steps: ONE_STEP,
+      repairs: 1,
+      preconditions: [RULES, PUBLISH],
+      precondition_repairs: [{ op: "add", after: PUBLISH, reason: "the case opens a published cycle" }],
+    },
+    ACCOUNTS,
+    saved,
+  );
+  fireEvent.click(await screen.findByRole("button", { name: "Put back precondition change 1" }));
+  fireEvent.click(screen.getByRole("button", { name: "Save script" }));
+  await waitFor(() => expect(saved).toHaveLength(1));
+  expect((saved[0] as { preconditions?: unknown }).preconditions).toEqual([RULES]);
+});
+
+test("a script whose preconditions no repair changed lists no changes", async () => {
+  mountWith({ case_id: 7, title: "t", steps: ONE_STEP, preconditions: [PUBLISH] }, ACCOUNTS, []);
+  await screen.findByRole("list", { name: "Preconditions" });
+  expect(screen.queryByRole("list", { name: "Precondition changes by an assistant" })).toBeNull();
+});
+
 // ---- Marks: the shared state a case changes or needs unchanged ----
 
 test("a script's marks show as chips in the Changes and Needs unchanged rows", async () => {
