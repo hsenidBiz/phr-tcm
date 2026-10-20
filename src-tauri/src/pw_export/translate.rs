@@ -17,7 +17,7 @@ use crate::browser::actions::{Action, DropAt, TAB_WAIT_MS, WHEN_VISIBLE_FLOOR_MS
 use crate::browser::expect::READ_TEXT_JS;
 use crate::browser::keys;
 use crate::browser::locator::Target;
-use crate::browser::table::{self, RowCount, SortAs, SortKind, TableCheck};
+use crate::browser::table::{self, RowCount, SortAs, SortKind, TableCheck, SETTLE_MS, SETTLE_POLL_MS};
 use crate::browser::timing::Timing;
 use serde_json::Value;
 use std::collections::BTreeMap;
@@ -196,6 +196,9 @@ pub fn raw_spec(input: &RawSpecInput) -> Res<String> {
             em.out.push_str(&l);
             em.out.push('\n');
         }
+    }
+    if uses(input, &|a| matches!(a, Action::ExpectCount { at_most: Some(_), .. })) {
+        em.still_count();
     }
     if tabs {
         em.collector();
@@ -607,6 +610,39 @@ impl Em<'_> {
         }
     }
 
+    /// `expect_count` with `at_most` passes on too few, so it is not a poll:
+    /// the app's own loop (`expect::keep_looking`) - the count must stay at
+    /// or under the bound, the same, for `SETTLE_MS`, or time runs out on a
+    /// pass still held - written once as `stillCount`, which answers the
+    /// count the spec then compares.
+    fn still_count(&mut self) {
+        let poll = SETTLE_POLL_MS.to_string();
+        let settle = SETTLE_MS.to_string();
+        for l in [
+            "const stillCount = async (loc: ReturnType<typeof page.locator>, most: number, timeout: number): Promise<number> => {",
+            "  const end = Date.now() + timeout;",
+            "  let held = -1;",
+            "  let since = 0;",
+            "  for (;;) {",
+            "    const n = await loc.count();",
+            "    if (n > most) {",
+            "      held = -1;",
+            "    } else {",
+            "      if (n !== held) {",
+            "        held = n;",
+            "        since = Date.now();",
+            "      }",
+            "      if (Date.now() - since >= SETTLE) return n;",
+            "    }",
+            "    if (Date.now() >= end) return held === -1 ? n : held;",
+            "    await new Promise((r) => setTimeout(r, Math.min(POLL, Math.max(0, end - Date.now()))));",
+            "  }",
+            "};",
+        ] {
+            self.line(4, &l.replace("SETTLE", &settle).replace("POLL", &poll));
+        }
+    }
+
     /// The tabs the page opens, as they open, for `expect_tab` to claim.
     fn collector(&mut self) {
         for l in [
@@ -829,21 +865,22 @@ impl Em<'_> {
                             call("toHaveCount", &[n.to_string()], *timeout_ms)
                         ),
                     ),
-                    bound => {
-                        let (matcher, n) = match bound {
-                            table::RowCount::AtLeast(n) => ("toBeGreaterThanOrEqual", n),
-                            table::RowCount::AtMost(n) => ("toBeLessThanOrEqual", n),
-                            table::RowCount::Equals(n) => ("toBe", n),
-                        };
-                        self.line(
-                            indent,
-                            &format!(
-                                "await expect.poll(() => {}.count(){}).{matcher}({n});",
-                                locator("cur", selector),
-                                poll_opts(*timeout_ms)
-                            ),
-                        )
-                    }
+                    table::RowCount::AtMost(n) => self.line(
+                        indent,
+                        &format!(
+                            "expect(await stillCount({}, {n}, {})).toBeLessThanOrEqual({n});",
+                            locator("cur", selector),
+                            expect_timeout(*timeout_ms)
+                        ),
+                    ),
+                    table::RowCount::AtLeast(n) => self.line(
+                        indent,
+                        &format!(
+                            "await expect.poll(() => {}.count(){}).toBeGreaterThanOrEqual({n});",
+                            locator("cur", selector),
+                            poll_opts(*timeout_ms)
+                        ),
+                    ),
                 }
             }
             Action::ExpectAttribute { selector, name, matches: Some(p), timeout_ms, .. } => self.line(

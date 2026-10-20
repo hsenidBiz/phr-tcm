@@ -456,5 +456,88 @@ async fn at_most_waits_for_the_count_to_hold_still() {
     let began = std::time::Instant::now();
     let out = execute_with(&mut d, &check, &quick()).await;
     assert!(out.ok && out.detail.starts_with("counted 3:"), "{}", out.detail);
-    assert!(began.elapsed() >= Duration::from_millis(750), "{:?}", began.elapsed());
+    // The looks run at 0, 250 and 500 ms (the third sees 3 and restarts the
+    // hold), so it holds from 500 ms and passes at 1250: SETTLE_MS after the
+    // look that first saw 3, not after the empty ones.
+    assert!(began.elapsed() >= Duration::from_millis(1250), "{:?}", began.elapsed());
+}
+
+/// The export cannot carry these forms (JavaScript reads them as something
+/// else, or refuses them), so the app refuses them at save, each by name.
+#[test]
+fn a_pattern_in_a_form_javascript_reads_differently_is_refused() {
+    let check = |p: &str| v2_lib::browser::pattern::check_pattern("expect_text", p);
+    let carried = |what: &str| {
+        format!("expect_text: \"matches\" uses {what}, which a Playwright export cannot carry - write the pattern without it")
+    };
+    for (p, what) in [
+        ("\\x{41}", "\\x{...} or \\u{...}"),
+        ("\\u{41}", "\\x{...} or \\u{...}"),
+        ("\\U00000041", "\\U..."),
+        ("a\\b{start}", "\\b{...}"),
+        ("\\B{end}a", "\\b{...}"),
+        ("\\<word\\>", "\\< or \\>"),
+        ("word\\>", "\\< or \\>"),
+        ("\\a", "\\a"),
+        ("[]a]", "a class starting with ]"),
+        ("[^]a]", "a class starting with ]"),
+        ("[a[bc]]", "a class inside a class"),
+        ("[a-z&&[^aeiou]]", "a class set operation (&&, -- or ~~)"),
+        ("[a-z--b]", "a class set operation (&&, -- or ~~)"),
+        ("[a~~b]", "a class set operation (&&, -- or ~~)"),
+    ] {
+        assert_eq!(check(p).unwrap_err(), carried(what), "{p}");
+    }
+    // What JavaScript reads the same stays.
+    for ok in ["\\x41", "\\u0041", "[a-z-]", "[\\w-]", "a\\.b", "[a\\]b]", "\\(x\\)", "a&b", "a-b", "\\t\\n"] {
+        assert_eq!(check(ok), Ok(()), "{ok}");
+    }
+}
+
+/// `\w \d \s \b` are ASCII in JavaScript, so in a run too: an accented name
+/// is not a word there, and the export agrees. Literal text still matches
+/// itself, whatever the script.
+#[tokio::test]
+async fn the_perl_classes_are_ascii_as_in_javascript() {
+    let run = |text: &'static str, p: &str| {
+        let check = action(json!({ "kind": "expect_text", "selector": { "css": "#n" }, "matches": p }));
+        async move {
+            let mut d = FakePage { texts: vec![text], ..FakePage::default() }.driver();
+            execute_with(&mut d, &check, &quick()).await.ok
+        }
+    };
+    assert!(run("Jose Silva", "^\\w+ \\w+$").await);
+    assert!(!run("José Silva", "^\\w+ \\w+$").await);
+    assert!(run("José Silva", "^Jos\\W Silva$").await, "an accented letter is a non-word character");
+    assert!(run("José Silva", "^José \\w+$").await, "literal non-ASCII text matches itself");
+    assert!(!run("José Silva", "^[\\w ]+$").await);
+    assert!(run("Jose Silva", "^[\\w ]+$").await);
+    assert!(run("Jose Silva", "^[^\\W]+ \\S+$").await);
+    assert!(run("Ref 42", "\\bRef \\d+\\b").await);
+    assert!(!run("Ref ٤٢", "^Ref \\d+$").await, "an Arabic-Indic digit is no \\d in JavaScript");
+    assert!(run("Ref 42 x", "^Ref\\s\\d+\\s\\w$").await);
+    assert!(run("Ref 42", "^\\w+\\B\\w* \\d+$").await);
+    // The refusals use the same compile, so a bad rewrite shows at save.
+    assert_eq!(v2_lib::browser::pattern::check_pattern("expect_text", "^\\w+ \\d{2}$"), Ok(()));
+}
+
+#[test]
+fn at_most_needs_time_to_see_the_count_hold_still() {
+    use v2_lib::browser::actions::{AT_MOST_MIN_MS, COUNT_AT_MOST_TIME};
+    assert_eq!(COUNT_AT_MOST_TIME, "expect_count: at_most needs at least 1500 ms to see the count hold still");
+    assert_eq!(AT_MOST_MIN_MS, 1500);
+    let with = |timeout: serde_json::Value, bound: &str| {
+        let mut v = json!({ "kind": "expect_count", "selector": "li", bound: 2 });
+        if !timeout.is_null() {
+            v["timeout_ms"] = timeout;
+        }
+        action(v).validate()
+    };
+    assert_eq!(with(json!(300), "at_most"), Err(COUNT_AT_MOST_TIME.to_string()));
+    assert_eq!(with(json!(1499), "at_most"), Err(COUNT_AT_MOST_TIME.to_string()));
+    assert_eq!(with(json!(1500), "at_most"), Ok(()));
+    assert_eq!(with(serde_json::Value::Null, "at_most"), Ok(()));
+    // Only `at_most` settles, so only it is held to the time.
+    assert_eq!(with(json!(300), "at_least"), Ok(()));
+    assert_eq!(with(json!(300), "equals"), Ok(()));
 }

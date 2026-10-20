@@ -401,7 +401,7 @@ function describeKnown(a: Action): Sentence {
       const equals = optStr(a.equals);
       const matches = optStr(a.matches);
       if ((equals === undefined) === (matches === undefined)) throw new Unreadable();
-      const said = matches !== undefined ? ` matches /${matches}/` : ` reads "${withoutHosts(equals as string)}"`;
+      const said = matches !== undefined ? ` matches /${withoutHosts(matches)}/` : ` reads "${withoutHosts(equals as string)}"`;
       return [words("Check "), ...describeTarget(a.selector), words(`${said}${upTo(a.timeout_ms)}`)];
     }
     case "expect_contains_text":
@@ -435,7 +435,7 @@ function describeKnown(a: Action): Sentence {
         return [
           words("Check "),
           ...describeTarget(a.selector),
-          words(` has ${str(a.name)} matching /${optStr(a.matches)}/${upTo(a.timeout_ms)}`),
+          words(` has ${str(a.name)} matching /${withoutHosts(optStr(a.matches) as string)}/${upTo(a.timeout_ms)}`),
         ];
       return [
         words("Check "),

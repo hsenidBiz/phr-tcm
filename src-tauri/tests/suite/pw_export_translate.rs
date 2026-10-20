@@ -793,14 +793,21 @@ fn pattern_and_bound_checks_translate() {
         { "kind": "expect_text", "selector": { "css": "#n" }, "matches": "^Showing \\d+$" },
         { "kind": "expect_attribute", "selector": { "css": "#n" }, "name": "aria-label", "matches": "^View " },
         { "kind": "expect_count", "selector": { "css": "#n" }, "at_least": 2 },
-        { "kind": "expect_count", "selector": "li", "at_most": 4, "timeout_ms": 300 }
+        { "kind": "expect_count", "selector": "li", "at_most": 4, "timeout_ms": 3000 }
     ]))
     .run()
     .unwrap();
     assert!(got.contains("await expect.poll(() => cur.locator('#n').filter({ visible: true }).first().evaluate(readText), { timeout: 10000 }).toMatch(new RegExp('^Showing \\\\d+$'));"), "{got}");
     assert!(got.contains("await expect(cur.locator('#n').filter({ visible: true }).first()).toHaveAttribute('aria-label', new RegExp('^View '), { timeout: 10000 });"), "{got}");
     assert!(got.contains("await expect.poll(() => cur.locator('#n').filter({ visible: true }).count(), { timeout: 10000 }).toBeGreaterThanOrEqual(2);"), "{got}");
-    assert!(got.contains("await expect.poll(() => cur.locator('li').count(), { timeout: 300 }).toBeLessThanOrEqual(4);"), "{got}");
+    // `at_most` passes on too few, so it settles as the app does.
+    assert!(got.contains("expect(await stillCount(cur.locator('li'), 4, 3000)).toBeLessThanOrEqual(4);"), "{got}");
+    assert!(got.contains("const stillCount = async (loc: ReturnType<typeof page.locator>, most: number, timeout: number): Promise<number> => {"), "{got}");
+    assert!(got.contains("if (Date.now() - since >= 750) return n;"), "{got}");
+    assert!(got.contains("setTimeout(r, Math.min(250, Math.max(0, end - Date.now())))"), "{got}");
+    // Only a script that asks for one carries the helper.
+    let plain = one_step(json!([{ "kind": "expect_count", "selector": "li", "at_least": 1 }])).run().unwrap();
+    assert!(!plain.contains("stillCount"), "{plain}");
     let url = one_step(json!([{ "kind": "check_url", "contains": "/x", "timeout_ms": 5000 }])).run().unwrap();
     assert!(url.contains("toHaveURL(new RegExp('\\\\/x'), { timeout: 5000 });"), "{url}");
 }

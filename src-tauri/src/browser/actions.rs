@@ -1169,9 +1169,15 @@ impl Action {
                     _ => Err(TEXT_NEEDS_ONE.to_string()),
                 }
             }
-            Action::ExpectCount { selector, equals, at_least, at_most, .. } => {
+            Action::ExpectCount { selector, equals, at_least, at_most, timeout_ms } => {
                 selector.validate()?;
-                table::row_count(*equals, *at_least, *at_most).map(|_| ()).map_err(|_| COUNT_NEEDS_ONE.to_string())
+                table::row_count(*equals, *at_least, *at_most).map_err(|_| COUNT_NEEDS_ONE.to_string())?;
+                // An `at_most` passes only once the count has held still
+                // for `table::SETTLE_MS`: a shorter wait ends before it can.
+                if at_most.is_some() && timeout_ms.is_some_and(|t| t < AT_MOST_MIN_MS) {
+                    return Err(COUNT_AT_MOST_TIME.to_string());
+                }
+                Ok(())
             }
             Action::ExpectContainsText { selector, value, .. } => {
                 if value.trim().is_empty() {
@@ -1567,6 +1573,12 @@ pub const ATTRIBUTE_NEEDS_ONE: &str = "expect_attribute needs \"equals\" (the va
 pub const ATTRIBUTE_ONE_OF: &str = "expect_attribute takes one of \"equals\", \"matches\" or \"absent\": true, not two";
 /// `expect_text` given both `equals` and `matches`, or neither.
 pub const TEXT_NEEDS_ONE: &str = "expect_text takes exactly one of \"equals\" (the whole text) or \"matches\" (a pattern)";
+/// The shortest `timeout_ms` an `expect_count` with `at_most` may have: the
+/// count must hold still for `table::SETTLE_MS`, and be seen to, at the
+/// slowest poll.
+pub const AT_MOST_MIN_MS: u32 = 1500;
+/// `expect_count` with `at_most` and a `timeout_ms` under `AT_MOST_MIN_MS`.
+pub const COUNT_AT_MOST_TIME: &str = "expect_count: at_most needs at least 1500 ms to see the count hold still";
 /// `expect_count` given none, or more than one, of its bounds.
 pub const COUNT_NEEDS_ONE: &str = "expect_count takes one of equals, at_least or at_most";
 /// `expect_style` comparing with `currentcolor`.

@@ -1277,6 +1277,62 @@ fn the_new_check_options_are_validated() {
     ] {
         let a: Action = serde_json::from_value(old.clone()).unwrap();
         assert_eq!(a.validate(), Ok(()));
-        assert_eq!(serde_json::to_value(&a).unwrap(), old);
+        // The same bytes, key for key and in order, not just the same map.
+        assert_eq!(serde_json::to_string(&a).unwrap(), old.to_string());
     }
+}
+
+/// `check_url` waits for its own `timeout_ms`, not the default: the page
+/// turns after `quick()`'s 300 ms, and only a longer wait sees it.
+#[tokio::test]
+async fn check_url_waits_for_its_own_timeout() {
+    let began = std::time::Instant::now();
+    let mut d = ScriptedDriver::new(move |method, _| {
+        Ok(match method {
+            "Runtime.evaluate" => {
+                let late = began.elapsed() >= std::time::Duration::from_millis(450);
+                json!({ "result": { "value": if late { "https://app.example/home" } else { "https://app.example/login" } } })
+            }
+            _ => json!({}),
+        })
+    });
+    let out = execute_with(&mut d, &Action::CheckUrl { contains: "/home".into(), timeout_ms: Some(2000) }, &quick()).await;
+    assert!(out.ok, "{}", out.detail);
+    assert!(began.elapsed() >= std::time::Duration::from_millis(450), "{:?}", began.elapsed());
+
+    // The same page with the default wait gives up first.
+    let began = std::time::Instant::now();
+    let mut d = ScriptedDriver::new(move |method, _| {
+        Ok(match method {
+            "Runtime.evaluate" => {
+                let late = began.elapsed() >= std::time::Duration::from_millis(450);
+                json!({ "result": { "value": if late { "https://app.example/home" } else { "https://app.example/login" } } })
+            }
+            _ => json!({}),
+        })
+    });
+    let out = execute_with(&mut d, &Action::CheckUrl { contains: "/home".into(), timeout_ms: None }, &quick()).await;
+    assert!(!out.ok && out.detail == "url is https://app.example/login", "{}", out.detail);
+    assert!(began.elapsed() < std::time::Duration::from_millis(450), "{:?}", began.elapsed());
+}
+
+/// An address that never comes fails after about the wait asked for.
+#[tokio::test]
+async fn check_url_that_never_holds_fails_after_its_own_timeout() {
+    let mut d = FakePage::default().driver();
+    let began = std::time::Instant::now();
+    let out = execute_with(&mut d, &Action::CheckUrl { contains: "/login".into(), timeout_ms: Some(700) }, &quick()).await;
+    let took = began.elapsed();
+    assert!(!out.ok && out.detail == "url is https://app.example/home", "{}", out.detail);
+    assert!(took >= std::time::Duration::from_millis(700) && took < std::time::Duration::from_millis(1500), "{took:?}");
+}
+
+/// A browser that never answers is the harness's doing, said with the
+/// time waited and what for.
+#[tokio::test]
+async fn check_url_on_a_browser_that_never_answers_is_a_harness_failure() {
+    let mut d = ScriptedDriver::new(|method, _| Err(CdpError::Timeout { what: method.to_string(), ms: 50 }));
+    let out = execute_with(&mut d, &Action::CheckUrl { contains: "/home".into(), timeout_ms: Some(300) }, &quick()).await;
+    assert!(!out.ok && out.harness, "{}", out.detail);
+    assert!(out.detail.contains("the page address") && out.detail.contains("300ms"), "{}", out.detail);
 }

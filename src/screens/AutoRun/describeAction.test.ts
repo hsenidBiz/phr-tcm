@@ -412,6 +412,15 @@ describe("no host or query string in any sentence", () => {
     expect(say({ kind: "navigate", url: "//cdn.example.test/a/b?token=1" })).toBe("Go to /a/b");
   });
 
+  test("a pattern, like a text, loses the host of any address in it", () => {
+    expect(say({ kind: "expect_text", selector: { role: "alert" }, matches: "Open https://hr.example.test/a?b=1 now" })).toBe(
+      "Check the alert matches /Open /a now/",
+    );
+    expect(
+      say({ kind: "expect_attribute", selector: { role: "link", name: "Help" }, name: "href", matches: "https://hr.example.test/docs" }),
+    ).toBe('Check the "Help" link has href matching //docs/');
+  });
+
   test("check_text, with an address inside other words", () => {
     expect(say({ kind: "check_text", value: "Open https://hr.example.test/a?b=1 now" })).toBe(
       'Check the page shows "Open /a now"',

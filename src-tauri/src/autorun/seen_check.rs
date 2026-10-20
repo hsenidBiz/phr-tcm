@@ -396,8 +396,9 @@ pub fn takes_many(action: &Action) -> bool {
 }
 
 /// Can this action pass with its locator matching nothing on the page:
-/// `expect_hidden`, an `expect_count` of 0, and a `when_visible`, a guard
-/// that is skipped when its locator matches nothing? Such a use takes a
+/// `expect_hidden`, an `expect_count` of 0 (`equals: 0` or `at_most: 0`),
+/// and a `when_visible`, a guard that is skipped when its locator matches
+/// nothing? Such a use takes a
 /// locator a probe matched none of (`Sighting::matched` 0); every other
 /// use needs it seen present.
 pub fn takes_none(action: &Action) -> bool {
