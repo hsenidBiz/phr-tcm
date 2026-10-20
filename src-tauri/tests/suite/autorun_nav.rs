@@ -71,7 +71,13 @@ fn the_file_sits_beside_the_sign_in_recipe_and_round_trips() {
     let expected = dir.path().join("projects").join(format!("{}.nav.json", project_slug("Acme", "Web")));
     assert_eq!(nav_path(dir.path(), "Acme", "Web"), expected);
     assert!(expected.is_file());
-    assert!(!dir.path().join("projects").join(format!("{}.nav.json.tmp", project_slug("Acme", "Web"))).exists());
+    // Atomic: no temp file (`*.tcm-tmp-*`) is left beside it.
+    let leftovers: Vec<_> = std::fs::read_dir(dir.path().join("projects"))
+        .unwrap()
+        .flatten()
+        .filter(|e| e.file_name().to_string_lossy().contains("tcm-tmp"))
+        .collect();
+    assert!(leftovers.is_empty(), "{leftovers:?}");
     assert_eq!(load_nav(dir.path(), "Acme", "Web").unwrap(), nav);
 }
 

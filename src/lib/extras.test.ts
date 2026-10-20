@@ -1,7 +1,6 @@
 import { clearMocks, mockIPC } from "@tauri-apps/api/mocks";
 import { afterEach, expect, test, vi } from "vitest";
 import {
-  extrasHydratedSnapshot,
   extrasUnlockedSnapshot,
   hydrateExtras,
   resetExtrasStore,
@@ -65,31 +64,6 @@ test("a slow read that answers after a save does not undo it", async () => {
   answer(false);
   await read;
   expect(extrasUnlockedSnapshot()).toBe(true);
-});
-
-// `unlocked` starts false the same way a locked machine reads, so a caller
-// that must not act before Rust has answered reads the hydrated flag.
-test("hydration starts false and flips true once the read settles, success or not", async () => {
-  expect(extrasHydratedSnapshot()).toBe(false);
-  mockIPC((cmd) => (cmd === "get_extras_unlocked" ? true : undefined));
-  await hydrateExtras();
-  expect(extrasHydratedSnapshot()).toBe(true);
-});
-
-test("hydration flips true even when there is no IPC to answer it", async () => {
-  mockIPC(() => {
-    throw new Error("no IPC here");
-  });
-  await hydrateExtras();
-  expect(extrasHydratedSnapshot()).toBe(true);
-});
-
-test("resetting the store for tests also resets the hydrated flag", async () => {
-  mockIPC((cmd) => (cmd === "get_extras_unlocked" ? true : undefined));
-  await hydrateExtras();
-  expect(extrasHydratedSnapshot()).toBe(true);
-  resetExtrasStore();
-  expect(extrasHydratedSnapshot()).toBe(false);
 });
 
 // The Extras Easter egg gates no feature any more: unlocking it moves no

@@ -13,12 +13,6 @@ let unlocked = false;
 let generation = 0;
 const listeners = new Set<() => void>();
 
-/** True once `hydrateExtras` has settled at least once, success or not.
- * `unlocked` starts false the same way a locked machine would read, so
- * nothing that only checks its value can tell "locked" from "still
- * waiting on Rust's answer" - this is that third state. */
-let hydrated = false;
-
 function notify(): void {
   for (const l of [...listeners]) l();
 }
@@ -27,11 +21,6 @@ function publish(next: boolean): void {
   if (next === unlocked) return;
   unlocked = next;
   notify();
-}
-
-function publishHydrated(): void {
-  if (hydrated) return;
-  hydrated = true;
 }
 
 export function subscribeExtras(cb: () => void): () => void {
@@ -45,13 +34,8 @@ export function extrasUnlockedSnapshot(): boolean {
   return unlocked;
 }
 
-export function extrasHydratedSnapshot(): boolean {
-  return hydrated;
-}
-
 /** Ask Rust for the flag. Outside the app (a test without IPC, a browser
- * preview) the answer is simply "as it was" - off, from a fresh start.
- * Either way, `hydrated` flips once this settles. */
+ * preview) the answer is simply "as it was" - off, from a fresh start. */
 export async function hydrateExtras(): Promise<void> {
   const started = generation;
   try {
@@ -60,7 +44,6 @@ export async function hydrateExtras(): Promise<void> {
   } catch {
     // no IPC here
   }
-  if (started === generation) publishHydrated();
 }
 
 /** Save through Rust, then tell every screen. Throws - changing nothing -
@@ -77,9 +60,8 @@ export function useExtrasUnlocked(): boolean {
   return useSyncExternalStore(subscribeExtras, extrasUnlockedSnapshot);
 }
 
-/** Tests only: back to locked and un-hydrated, without telling anyone. */
+/** Tests only: back to locked, without telling anyone. */
 export function resetExtrasStore(): void {
   unlocked = false;
   generation = 0;
-  hydrated = false;
 }

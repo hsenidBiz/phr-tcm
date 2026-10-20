@@ -796,6 +796,51 @@ fn an_id_out_of_range_or_fractional_is_refused_not_rounded() {
     }
 }
 
+/// The JSON importer's three warnings about a case it still imports: a
+/// title Azure DevOps will reject, a comma in tags, and an automation
+/// status that is not one of the valid two (the case gets "Not Automated").
+#[test]
+fn the_importer_warns_about_a_long_title_a_comma_in_tags_and_a_bad_automation_status() {
+    use v2_lib::import_parser::parse_json_text;
+    use v2_lib::model::MAX_TITLE_LEN;
+    let steps = r#""steps": [{"action":"a","expected":"b"}]"#;
+    let parse = |case: String| parse_json_text(&format!("[{case}]")).unwrap();
+
+    let long = "t".repeat(MAX_TITLE_LEN + 1);
+    let out = parse(format!(r#"{{"title": "{long}", {steps}}}"#));
+    assert_eq!(out.cases.len(), 1, "the case is still imported");
+    assert!(
+        out.warnings.iter().any(|w| w.contains(&format!("has a title longer than {MAX_TITLE_LEN} characters"))),
+        "{:?}",
+        out.warnings
+    );
+    let at_limit = parse(format!(r#"{{"title": "{}", {steps}}}"#, "t".repeat(MAX_TITLE_LEN)));
+    assert!(at_limit.warnings.is_empty(), "{:?}", at_limit.warnings);
+
+    let out = parse(format!(r#"{{"title": "Tagged", "tags": "smoke, login", {steps}}}"#));
+    assert_eq!(out.cases.len(), 1);
+    assert!(
+        out.warnings.iter().any(|w| w.contains("('Tagged'): Tags contain a comma; separate tags with semicolons")),
+        "{:?}",
+        out.warnings
+    );
+    let semicolons = parse(format!(r#"{{"title": "Tagged", "tags": ["smoke", "login"], {steps}}}"#));
+    assert!(semicolons.warnings.is_empty(), "{:?}", semicolons.warnings);
+
+    let out = parse(format!(r#"{{"title": "Auto", "automation_status": "Automated", {steps}}}"#));
+    assert_eq!(out.cases[0].automation_status, "Not Automated");
+    assert!(
+        out.warnings
+            .iter()
+            .any(|w| w.contains("('Auto'): AutomationStatus 'Automated' is invalid. Defaulting to 'Not Automated'. Valid values: Not Automated, Planned")),
+        "{:?}",
+        out.warnings
+    );
+    let planned = parse(format!(r#"{{"title": "Auto", "automation_status": "Planned", {steps}}}"#));
+    assert_eq!(planned.cases[0].automation_status, "Planned");
+    assert!(planned.warnings.is_empty(), "{:?}", planned.warnings);
+}
+
 /// A step keeps its line breaks: step text is Markdown, and Azure DevOps
 /// holds a step's lines as `<BR/>` - a query on its own lines, a list.
 /// They used to be folded onto one line here, with a warning, when a step
