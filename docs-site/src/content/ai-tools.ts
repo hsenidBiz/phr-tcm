@@ -184,7 +184,7 @@ export const aiBridge: Screen = {
       id: "tool-count",
       shot: TAB,
       group: "tools",
-      locate: { text: "6 of 6 on" },
+      locate: { css: '[data-tour="ai-toolset"] > div > span.text-faint' },
       name: "Tools an assistant may use",
       does:
         "How many of the tools below are switched on. The tools every writing job needs (the writing guide, reading cases, checking a draft and similar) are always on and not listed. " +

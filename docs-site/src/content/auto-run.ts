@@ -26,6 +26,7 @@ const UNATTENDED = "auto-run-unattended";
 const RUNS = "auto-run-past-runs";
 const REVIEW = "auto-run-review";
 const SETUP = "auto-run-setup";
+const SETUP_END = "auto-run-setup-end";
 const SITE = "auto-run-site-address";
 const ACCOUNTS = "auto-run-accounts";
 
@@ -128,7 +129,12 @@ export const autoRun: Screen = {
       route: [...TO_RUNS, { click: { role: "button", name: "Review" } }, { waitFor: { role: "button", name: "Accept all" } }],
       alt: "Reviewing an unattended run before sending it to Azure DevOps",
     },
-    { id: SETUP, route: TO_SETUP, alt: "The Setup panel opened beside the cases: site address, sign-in, accounts, areas, test files and save words" },
+    { id: SETUP, route: TO_SETUP, alt: "The Setup panel opened beside the cases: the environment, site address, sign-in, accounts, areas, discovery and components" },
+    {
+      id: SETUP_END,
+      route: [...TO_SETUP, { scrollTo: { role: "button", name: "Edit save words" } }],
+      alt: "The bottom of the Setup panel, scrolled into view: test files and save words",
+    },
     {
       id: SITE,
       route: [...TO_SETUP, { click: { role: "button", name: "Edit site address" } }, { waitFor: { role: "textbox", name: "Start address" } }],
@@ -809,7 +815,7 @@ export const autoRun: Screen = {
     },
     {
       id: "manage-test-files",
-      shot: SETUP,
+      shot: SETUP_END,
       group: "setup",
       locate: { role: "button", name: "Manage test files" },
       name: "Manage (test files)",
@@ -817,7 +823,7 @@ export const autoRun: Screen = {
     },
     {
       id: "edit-save-words",
-      shot: SETUP,
+      shot: SETUP_END,
       group: "setup",
       locate: { role: "button", name: "Edit save words" },
       name: "Edit (save words)",
