@@ -328,6 +328,8 @@ pub fn move_bridge_to(
             .into_iter()
             .filter(|t| !crate::ai_tools::CORE_TOOLS.contains(&t.as_str()))
             .collect();
+        // The network tools likewise, until their own switch comes with it.
+        ctx.network_tools = false;
     }
     Ok(file)
 }

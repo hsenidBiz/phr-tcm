@@ -177,6 +177,22 @@ pub const AUTORUN_TOOLS: &[&str] = &[
     "autorun_cookies",
 ];
 
+/// The network tools: the Auto Run browser's captured requests, HAR files,
+/// test headers and cookies. Auto Run's (they are in `AUTORUN_TOOLS`, and
+/// ride in its row), and besides that behind the person's own Network
+/// tools switch on the AI Bridge tab, which each environment keeps and
+/// which is off until they turn it on (`BridgeContext::network_tools`):
+/// the proxy lists them only on the app's explicit yes, and the bridge
+/// refuses their routes without it (`ai_bridge::network_guard`).
+pub const NETWORK_TOOLS: &[&str] = &[
+    "search_autorun_requests",
+    "get_autorun_request",
+    "autorun_capture",
+    "autorun_har",
+    "set_autorun_headers",
+    "autorun_cookies",
+];
+
 /// The API template tools: the API Templates module's. A template runs in
 /// the same signed-in browser Auto Run drives, so the module hangs off Auto
 /// Run. Proving and running one also need the person's own switch

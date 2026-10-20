@@ -207,6 +207,8 @@ test("capture mode hides every mention of the Auto Run tools on the AI Tools tab
   expect(screen.queryByText(/^API templates:/)).not.toBeInTheDocument();
   expect(screen.getByRole("heading", { name: "API templates" })).toBeInTheDocument();
   expect(screen.getByRole("switch", { name: "API templates (create, edit and delete)" })).toBeInTheDocument();
+  // The Network tools card is about Auto Run's tools: hidden with them.
+  expect(screen.queryByRole("switch", { name: "Network tools" })).not.toBeInTheDocument();
   // Capture mode reports every module on, so the writing style card shows;
   // the old trial switch is gone.
   expect(screen.getByRole("heading", { name: "Writing style" })).toBeInTheDocument();
@@ -1288,6 +1290,22 @@ test("the API templates switch is off, and stored when turned on", async () => {
   expect(
     await screen.findByRole("switch", { name: "API templates (create, edit and delete)" }),
   ).toHaveAttribute("aria-checked", "true");
+});
+
+/// The Network tools switch is the active environment's own, off by
+/// default, shown while Auto Run is on, and the stored flag is what App
+/// pushes to the bridge as networkTools.
+test("the Network tools switch is off, and stored when turned on", async () => {
+  dbMocks();
+  renderBridge(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+
+  const network = await screen.findByRole("switch", { name: "Network tools" });
+  expect(network).toHaveAttribute("aria-checked", "false");
+  expect(localStorage.getItem("tcm-v2-network-tools")).toBeNull();
+
+  fireEvent.click(network);
+  expect(localStorage.getItem("tcm-v2-network-tools")).toBe("1");
+  expect(await screen.findByRole("switch", { name: "Network tools" })).toHaveAttribute("aria-checked", "true");
 });
 
 /// "Run changes without asking" means something only while writes can

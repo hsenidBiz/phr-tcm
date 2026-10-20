@@ -274,11 +274,37 @@ fn with_no_browser_a_live_read_is_404() {
 /// Through the real route, with no browser open in this test process.
 #[tokio::test]
 async fn the_route_answers_no_browser_is_open() {
-    let ctx = BridgeContext { org: "acme".into(), project: "Web".into(), ..BridgeContext::default() };
+    let ctx = BridgeContext { org: "acme".into(), project: "Web".into(), network_tools: true, ..BridgeContext::default() };
     let (status, out) = route(&ctx, None, "POST", "/autorun-requests", "{}", "1.0.0").await;
     assert_eq!((status, out.as_str()), (404, NO_BROWSER_OPEN));
     let (status, out) = route(&ctx, None, "GET", "/autorun-capture", "", "1.0.0").await;
     assert_eq!((status, out.as_str()), (404, NO_BROWSER_OPEN));
+}
+
+/// The network tools' routes answer only while the person's Network tools
+/// switch is on: off - the default - every one is refused with the switch's
+/// sentence before anything else is looked at, and `/tools` tells the proxy
+/// so. The routes the other Auto Run tools use are not touched.
+#[tokio::test]
+async fn the_network_routes_refuse_while_the_switch_is_off() {
+    use v2_lib::ai_bridge::{network_guard, NETWORK_ROUTES, NETWORK_TOOLS_OFF};
+    let off = BridgeContext { org: "acme".into(), project: "Web".into(), ..BridgeContext::default() };
+    assert!(!off.network_tools, "off by default");
+    for path in NETWORK_ROUTES {
+        for method in ["GET", "POST"] {
+            assert_eq!(route(&off, None, method, path, "{}", "1.0.0").await, (403, NETWORK_TOOLS_OFF.to_string()), "{method} {path}");
+        }
+        assert!(network_guard(path, true).is_none(), "{path}");
+    }
+    for path in ["/autorun-probe", "/autorun-inspect", "/autorun-page", "/autorun-network-wait", "/autorun-reset", "/autorun-release", "/tools"] {
+        assert!(network_guard(path, false).is_none(), "{path}");
+    }
+    let (_, tools) = route(&off, None, "GET", "/tools", "", "1.0.0").await;
+    assert_eq!(serde_json::from_str::<serde_json::Value>(&tools).unwrap()["network_tools"], false);
+    let on = BridgeContext { network_tools: true, ..off };
+    let (_, tools) = route(&on, None, "GET", "/tools", "", "1.0.0").await;
+    assert_eq!(serde_json::from_str::<serde_json::Value>(&tools).unwrap()["network_tools"], true);
+    assert_eq!(route(&on, None, "POST", "/autorun-requests", "{}", "1.0.0").await, (404, NO_BROWSER_OPEN.to_string()));
 }
 
 #[test]

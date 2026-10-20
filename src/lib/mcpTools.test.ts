@@ -8,6 +8,7 @@ import {
   CORE_TOOLS,
   CRYSTAL_TOOLS,
   DB_TOOLS,
+  NETWORK_TOOLS,
   RENAMED_TOOLS,
   dbReadAccessOn,
   disabledToolsSnapshot,
@@ -132,6 +133,9 @@ test("the core and per-module tool lists match the Rust side", () => {
   expect(extractList("API_TEMPLATE_TOOLS")).toEqual([...API_TEMPLATE_TOOLS]);
   expect(extractList("DB_TOOLS")).toEqual([...DB_TOOLS]);
   expect(extractList("CRYSTAL_TOOLS")).toEqual([...CRYSTAL_TOOLS]);
+  // The network tools are Auto Run's, behind their own switch besides.
+  expect(extractList("NETWORK_TOOLS")).toEqual([...NETWORK_TOOLS]);
+  for (const name of NETWORK_TOOLS) expect(AUTORUN_TOOLS as readonly string[]).toContain(name);
   for (const name of extractList("AUTORUN_TOOLS")) expect(moduleOfTool(name)).toBe("auto_run");
   for (const name of extractList("API_TEMPLATE_TOOLS")) expect(moduleOfTool(name)).toBe("api_templates");
   for (const name of extractList("DB_TOOLS")) expect(moduleOfTool(name)).toBe("db_access");

@@ -1353,8 +1353,13 @@ signs in.
 ## Network, cookies and elements
 
 Look under the page, and test an edge case, in the Auto Run browser. The
-reads and `autorun_capture` work in the person's browser too; the header and
-cookie changes need one you opened (a discovery or your replay).
+network tools (`search_autorun_requests`, `get_autorun_request`,
+`autorun_capture`, `autorun_har`, `set_autorun_headers`, `autorun_cookies`)
+are there only while the person has switched Network tools on, on the AI
+Bridge tab, for the active environment: it is off until they do, so ask them
+when you need it. The reads and `autorun_capture` work in the person's
+browser too; the header and cookie changes need one you opened (a discovery
+or your replay).
 
 - `search_autorun_requests` lists the requests the page made on the
   application's site, newest first and paged; with filters, only those that

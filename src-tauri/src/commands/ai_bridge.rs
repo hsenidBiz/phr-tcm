@@ -155,6 +155,9 @@ pub struct BridgeSwitches {
     pub db_writes: bool,
     /// Proving and running API templates (see `BridgeContext::api_writes`).
     pub api_writes: bool,
+    /// The network tools (see `BridgeContext::network_tools`).
+    #[serde(default)]
+    pub network_tools: bool,
     /// The environment these switches are the webview's for - each keeps
     /// its own. Empty while the webview does not know it yet. A push for any
     /// environment but the active one turns no write on
@@ -210,6 +213,9 @@ pub fn push_context_with(
     } else {
         next.db_writes = false;
         next.api_writes = false;
+        // Like the tool list: kept as the context's own environment has it,
+        // and never turned on by a push for any other.
+        next.network_tools = ctx.gate.env_id.is_some() && ctx.network_tools;
         if ctx.gate.env_id.is_some() {
             next.db_id = ctx.db_id.clone();
             next.disabled_tools = ctx.disabled_tools.clone();
@@ -299,6 +305,7 @@ pub fn set_bridge_context(
             db_secrets: Some(secrets),
             db_writes: switches.db_writes,
             api_writes: switches.api_writes,
+            network_tools: switches.network_tools,
             // Set from the active environment, never from the webview.
             db_no_ask: false,
             gate: Default::default(),

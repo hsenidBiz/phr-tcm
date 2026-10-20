@@ -307,6 +307,18 @@ export const AUTORUN_TOOLS = [
   "autorun_cookies",
 ] as const;
 
+/** The network tools: Auto Run's (in AUTORUN_TOOLS and its row), and
+ * besides that behind the Network tools switch (networkTools.ts), which Rust
+ * enforces - mirroring `ai_tools.rs`'s `NETWORK_TOOLS`. */
+export const NETWORK_TOOLS = [
+  "search_autorun_requests",
+  "get_autorun_request",
+  "autorun_capture",
+  "autorun_har",
+  "set_autorun_headers",
+  "autorun_cookies",
+] as const;
+
 export const API_TEMPLATE_TOOLS = [
   "list_api_templates",
   "prove_api_template",
@@ -385,7 +397,9 @@ export const TOOL_PAIRS: readonly (readonly string[])[] = [
   // learned. Half of them switched on is half a job, so they move
   // together. Offered only while the Auto Run module is on; see toolOffered.
   // The accounts a script runs as belong to the same job: proposing
-  // logins for the environment, and reading the keys a script names.
+  // logins for the environment, and reading the keys a script names. The
+  // network tools ride here too, and besides need the Network tools switch
+  // (networkTools.ts), which Rust enforces.
   // (The guide is Core's `get_guide`, refused by topic while the module is
   // off.)
   [

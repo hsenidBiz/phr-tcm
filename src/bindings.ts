@@ -2488,6 +2488,8 @@ export type BridgeSwitches = {
 	dbWrites: boolean,
 	/**  Proving and running API templates (see `BridgeContext::api_writes`). */
 	apiWrites: boolean,
+	/**  The network tools (see `BridgeContext::network_tools`). */
+	networkTools?: boolean,
 	/**
 	 *  The environment these switches are the webview's for - each keeps
 	 *  its own. Empty while the webview does not know it yet. A push for any

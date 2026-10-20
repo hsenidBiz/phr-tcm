@@ -94,10 +94,11 @@ fn tools_list_names_every_tool() {
         .map(|t| t["name"].as_str().unwrap())
         .collect();
     // This test binary is a development build (cargo test compiles with
-    // debug assertions on), so with nothing disabled the thirty-four dev-only
-    // tools (Auto Run's twenty-seven, then the API templates row's seven) are
-    // listed like any other switchable tool - between merge_case_files and
-    // db_lookup, where they sit in the source.
+    // debug assertions on), so with nothing disabled and the network tools'
+    // switch on the thirty-four dev-only tools (Auto Run's twenty-seven, then
+    // the API templates row's seven) are listed like any other switchable
+    // tool - between merge_case_files and db_lookup, where they sit in the
+    // source.
     assert_eq!(
         names,
         vec![
@@ -804,13 +805,13 @@ use v2_lib::mcp::tool_policy_from;
 fn the_proxy_takes_the_modules_from_the_app() {
     let (off, on) = tool_policy_from(Ok((
         200,
-        r#"{"disabled":["search_wiki"],"modules":["db_access","writing_style","auto_run","api_templates","playwright","crystal_reports"]}"#.into(),
+        r#"{"disabled":["search_wiki"],"modules":["db_access","writing_style","auto_run","api_templates","playwright","crystal_reports"],"network_tools":true}"#.into(),
     )));
     assert_eq!(on, Module::ALL.into_iter().collect());
     assert_eq!(off, vec!["search_wiki"]);
 
     let (off, on) =
-        tool_policy_from(Ok((200, r#"{"disabled":[],"modules":["db_access","auto_run","a_module_from_later"]}"#.into())));
+        tool_policy_from(Ok((200, r#"{"disabled":[],"modules":["db_access","auto_run","a_module_from_later"],"network_tools":true}"#.into())));
     assert_eq!(on, [Module::DbAccess, Module::AutoRun].into_iter().collect(), "an unknown name is ignored");
     // Crystal Reports is not named either, so its tools are off with them.
     let expected: Vec<String> = API_TOOLS.iter().chain(CRYSTAL_TOOLS).map(|s| s.to_string()).collect();
@@ -861,7 +862,7 @@ fn an_older_absent_or_confused_app_offers_no_module_tools() {
 #[test]
 fn each_module_off_removes_its_tools_from_the_list_and_refuses_them() {
     let names_for = |modules: &str| -> Vec<String> {
-        let answer = format!(r#"{{"disabled":[],"modules":{modules}}}"#);
+        let answer = format!(r#"{{"disabled":[],"modules":{modules},"network_tools":true}}"#);
         let call = move |_m: &str, path: &str, _b: &str| -> Result<(u16, String), String> {
             assert_eq!(path, "/tools");
             Ok((200, answer.clone()))
@@ -2364,6 +2365,111 @@ fn the_network_wait_tool_is_an_auto_run_read_of_its_own_route() {
     // Read only: the description says nothing can end the wait.
     let list = handle_message(r#"{"jsonrpc":"2.0","id":2,"method":"tools/list"}"#, "1.0.0", &call).unwrap();
     assert!(list.contains("nothing you call can"), "{list}");
+}
+
+/// The six network tools are Auto Run's, behind their own switch: listed
+/// only while the app says `network_tools: true` (a development app with
+/// every module on, in this file), refused as "not available" where Auto
+/// Run is not offered, and refused naming the Network tools switch where
+/// it is.
+#[test]
+fn the_network_tools_are_auto_run_tools_behind_their_own_switch() {
+    use v2_lib::ai_tools::NETWORK_TOOLS;
+    assert_eq!(
+        NETWORK_TOOLS,
+        ["search_autorun_requests", "get_autorun_request", "autorun_capture", "autorun_har", "set_autorun_headers", "autorun_cookies"]
+    );
+    let listed = listed_names(&stub(200, r#"{"disabled":[]}"#));
+    let (_, auto_run_off) = tool_policy_from(Ok((200, r#"{"disabled":[],"modules":["db_access","writing_style"]}"#.into())));
+    for tool in NETWORK_TOOLS {
+        assert!(module_of_tool(tool) == Some(Module::AutoRun), "{tool}");
+        assert!(AUTORUN_TOOLS.contains(tool), "{tool}");
+        assert!(listed.iter().any(|n| n == tool), "{tool} listed with the switch on");
+        assert!(v2_lib::mcp::refusal_text(tool, &auto_run_off).contains("not available"), "{tool}");
+        let said = v2_lib::mcp::refusal_text(tool, &Module::ALL.into_iter().collect());
+        assert!(said.contains("switched off") && said.contains("Network tools switch"), "{tool}: {said}");
+    }
+    for name in [
+        "list_autorun_requests",
+        "get_autorun_response",
+        "get_autorun_response_body",
+        "set_autorun_capture",
+        "get_autorun_capture",
+        "export_autorun_requests",
+        "import_autorun_requests",
+        "get_autorun_cookies",
+        "set_autorun_cookie",
+        "clear_autorun_cookies",
+    ] {
+        assert!(!listed.iter().any(|n| n == name), "{name} is gone");
+    }
+}
+
+/// With the switch off - the app says so, says nothing, or cannot be asked
+/// and the proxy falls back to the saved modules - the six are neither
+/// listed nor callable, while the rest of Auto Run is. Only an explicit
+/// `true` turns them on.
+#[test]
+fn the_network_tools_are_off_until_the_app_says_yes() {
+    use v2_lib::ai_tools::NETWORK_TOOLS;
+    let all: Vec<&str> = crate::common::ALL_MODULES.to_vec();
+    for answer in [
+        serde_json::json!({ "disabled": [], "modules": all, "network_tools": false }),
+        serde_json::json!({ "disabled": [], "modules": all }),
+        serde_json::json!({ "disabled": [], "modules": all, "network_tools": "yes" }),
+    ] {
+        let body = answer.to_string();
+        let call = |_m: &str, _p: &str, _b: &str| -> Result<(u16, String), String> { Ok((200, body.clone())) };
+        let resp = v2_lib::mcp::handle_message(r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#, "1.0.0", &call).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&resp).unwrap();
+        let names: Vec<&str> = v["result"]["tools"].as_array().unwrap().iter().map(|t| t["name"].as_str().unwrap()).collect();
+        for tool in NETWORK_TOOLS {
+            assert!(!names.contains(tool), "{tool} listed for {answer}");
+            let req = serde_json::json!({ "jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": { "name": tool, "arguments": {} } });
+            let resp = v2_lib::mcp::handle_message(&req.to_string(), "1.0.0", &call).unwrap();
+            let v: serde_json::Value = serde_json::from_str(&resp).unwrap();
+            assert_eq!(v["result"]["isError"], true, "{tool}: {v}");
+            assert!(v["result"]["content"][0]["text"].as_str().unwrap().contains("Network tools switch"), "{tool}: {v}");
+        }
+        assert!(names.contains(&"get_autorun_page") && names.contains(&"get_autorun_network_wait"), "{names:?}");
+        assert_eq!(names.len(), 52, "{names:?}");
+    }
+    // The proxy's own fallback when the app does not answer names no switch.
+    let saved = v2_lib::mcp::tools_reply_or_saved(Err("down".into()), Some(Module::ALL.into_iter().collect()));
+    let (off, on) = tool_policy_from(saved);
+    assert!(on.contains(&Module::AutoRun));
+    for tool in NETWORK_TOOLS {
+        assert!(off.iter().any(|o| o == tool), "{tool} offered on the saved modules: {off:?}");
+    }
+    let (off, _) = tool_policy_from(Ok((200, serde_json::json!({ "disabled": [], "modules": all, "network_tools": true }).to_string())));
+    for tool in NETWORK_TOOLS {
+        assert!(!off.iter().any(|o| o == tool), "{tool} off with the switch on: {off:?}");
+    }
+}
+
+/// Every route a network tool reaches is one the bridge refuses while the
+/// switch is off.
+#[test]
+fn every_route_a_network_tool_reaches_is_guarded_by_the_switch() {
+    use v2_lib::ai_bridge::NETWORK_ROUTES;
+    for (tool, args) in [
+        ("search_autorun_requests", serde_json::json!({})),
+        ("search_autorun_requests", serde_json::json!({ "path": "/api" })),
+        ("get_autorun_request", serde_json::json!({ "id": 1 })),
+        ("get_autorun_request", serde_json::json!({ "id": 1, "part": "response" })),
+        ("get_autorun_request", serde_json::json!({ "id": 1, "part": "body" })),
+        ("autorun_capture", serde_json::json!({})),
+        ("autorun_capture", serde_json::json!({ "include_types": [] })),
+        ("autorun_har", serde_json::json!({ "export": "a" })),
+        ("autorun_har", serde_json::json!({ "import": "a" })),
+        ("set_autorun_headers", serde_json::json!({ "headers": {} })),
+        ("autorun_cookies", serde_json::json!({ "action": "list" })),
+        ("autorun_cookies", serde_json::json!({ "action": "set", "name": "a", "value": "b" })),
+        ("autorun_cookies", serde_json::json!({ "action": "clear" })),
+    ] {
+        let (_, path, _) = reached(tool, args.clone());
+        assert!(NETWORK_ROUTES.contains(&path.as_str()), "{tool} {args} reached {path}, which the switch does not guard");
+    }
 }
 
 /// `search_autorun_requests` with no filter is the plain list's route, with

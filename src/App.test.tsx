@@ -513,7 +513,7 @@ test("signing in starts the AI bridge and pushes org/project context", async () 
     workingDir: "D:\\repo",
     // Off by default - never undefined, which the command would refuse.
     // The writing style is not a switch here: the guide reads it from disk.
-    switches: { dbWrites: false, apiWrites: false },
+    switches: { dbWrites: false, apiWrites: false, networkTools: false },
   });
   // The bridge must come up WITHOUT visiting the AI Bridge tab - an AI
   // tool connecting right after sign-in gets a live listener.
@@ -528,7 +528,7 @@ test("signing in starts the AI bridge and pushes org/project context", async () 
   );
   // No environment known in this test: the push says so, and Rust then
   // keeps every write off whatever the switches say.
-  expect(pushes[pushes.length - 1].switches).toEqual({ dbWrites: false, apiWrites: true, envId: "" });
+  expect(pushes[pushes.length - 1].switches).toEqual({ dbWrites: false, apiWrites: true, networkTools: false, envId: "" });
 });
 
 const ENV = (id: string, name: string) => ({
@@ -563,14 +563,14 @@ test("the bridge context carries the active environment's switches and names it"
   renderApp();
   await screen.findByText("a@b.com");
   await vi.waitFor(() =>
-    expect(pushes[pushes.length - 1]?.switches).toEqual({ dbWrites: false, apiWrites: true, envId: A.id }),
+    expect(pushes[pushes.length - 1]?.switches).toEqual({ dbWrites: false, apiWrites: true, networkTools: false, envId: A.id }),
   );
 
   // At once, not after the pause a burst of edits waits for (400ms): Rust
   // holds every write off from the switch until this push arrives.
   act(() => setActiveEnvId(B.id));
   await vi.waitFor(
-    () => expect(pushes[pushes.length - 1].switches).toEqual({ dbWrites: false, apiWrites: false, envId: B.id }),
+    () => expect(pushes[pushes.length - 1].switches).toEqual({ dbWrites: false, apiWrites: false, networkTools: false, envId: B.id }),
     { timeout: 300 },
   );
 });

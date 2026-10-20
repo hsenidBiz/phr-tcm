@@ -16,6 +16,7 @@ fn ctx() -> BridgeContext {
         db_secrets: None,
         db_writes: false,
         api_writes: false,
+        network_tools: false,
         db_no_ask: false,
         gate: Default::default(),
     }
@@ -1759,6 +1760,7 @@ async fn a_query_less_get_tags_is_capped_and_a_query_still_searches_everything()
         db_secrets: None,
         db_writes: false,
         api_writes: false,
+        network_tools: false,
         db_no_ask: false,
         gate: Default::default(),
     };

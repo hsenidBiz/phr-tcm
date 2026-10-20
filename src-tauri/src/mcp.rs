@@ -142,7 +142,10 @@ fn quirk_cases() -> serde_json::Value {
 /// module on". When the app does not answer at all, the proxy's `bridge_call`
 /// substitutes this machine's saved modules first (`tools_reply_or_saved`),
 /// so this function still only ever sees an answer. A development build
-/// adds nothing: its app says what it has on like any other.
+/// adds nothing: its app says what it has on like any other. The network
+/// tools are offered only when the answer says `network_tools: true` - the
+/// person's own switch, off by default - so a saved-modules answer, an older
+/// app or a garbled one never offers them.
 pub fn tool_policy_from(reply: Result<(u16, String), String>) -> (Vec<String>, BTreeSet<Module>) {
     let answer = match reply {
         Ok((200, body)) => serde_json::from_str::<serde_json::Value>(&body).ok(),
@@ -166,7 +169,16 @@ pub fn tool_policy_from(reply: Result<(u16, String), String>) -> (Vec<String>, B
                 .collect()
         })
         .unwrap_or_default();
-    (crate::ai_tools::effective_disabled_for(&list, &on), on)
+    let mut off = crate::ai_tools::effective_disabled_for(&list, &on);
+    let network_on = answer.as_ref().is_some_and(|v| v["network_tools"].as_bool() == Some(true));
+    if !network_on {
+        for t in crate::ai_tools::NETWORK_TOOLS {
+            if !off.iter().any(|o| o == t) {
+                off.push(t.to_string());
+            }
+        }
+    }
+    (off, on)
 }
 
 /// Whether the person has let database changes run without being asked:
@@ -922,11 +934,17 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
 /// is off has no switch on the AI Bridge tab to turn back on - it names
 /// the module instead; every other switched-off tool (including a module's
 /// tool whose module IS on and that the person switched off) gets the
-/// ordinary AI Bridge sentence. `on` is explicit so every branch is
-/// testable.
+/// ordinary AI Bridge sentence - a network tool's names the switch it also
+/// needs. `on` is explicit so every branch is testable.
 pub fn refusal_text(name: &str, on: &BTreeSet<Module>) -> String {
     if let Some(m) = crate::ai_tools::module_of_tool(name).filter(|m| !on.contains(m)) {
         format!("The `{name}` tool is not available: {}.", m.off_sentence())
+    } else if crate::ai_tools::NETWORK_TOOLS.contains(&name) {
+        format!(
+            "The `{name}` tool is switched off in Test Case Manager. It needs the Network tools switch \
+             on the app's AI Bridge tab (each environment keeps its own, off until the person turns it on), \
+             and the Auto Run scripts tools switched on."
+        )
     } else {
         format!(
             "The `{name}` tool is switched off in Test Case Manager. \

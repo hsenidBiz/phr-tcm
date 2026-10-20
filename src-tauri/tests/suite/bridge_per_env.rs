@@ -469,6 +469,37 @@ fn before_any_environment_a_push_brings_its_tools_but_no_write() {
     assert!(!c.db_writes && !c.api_writes);
 }
 
+/// The network tools' switch is the environment's own, like the tool list:
+/// the active environment's push brings it, a push for any other never
+/// turns it on (a stale one keeps the context's), and a switch of
+/// environment turns it off until the new environment's push.
+#[test]
+fn the_network_tools_switch_follows_the_active_environment() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let store = MemoryStore::default();
+    let (first, qa) = two_envs(root);
+    let ctx = Mutex::new(BridgeContext::default());
+    let on = || BridgeContext { network_tools: true, ..pushed() };
+
+    // Before any environment is the context's own, nothing turns it on.
+    push_context_with(&ctx, Some(root), on(), "");
+    assert!(!ctx.lock().unwrap().network_tools);
+    push_context_with(&ctx, Some(root), on(), &first);
+    assert!(ctx.lock().unwrap().network_tools, "the active environment's own push is honoured");
+
+    // A push for another environment keeps the context's: on stays on, off
+    // stays off.
+    push_context_with(&ctx, Some(root), BridgeContext { network_tools: false, ..pushed() }, &qa);
+    assert!(ctx.lock().unwrap().network_tools, "a stale push turned it off");
+    move_bridge_to(root, &store, &qa, Some(&ctx)).unwrap();
+    assert!(!ctx.lock().unwrap().network_tools, "a switch leaves it off until QA's push");
+    push_context_with(&ctx, Some(root), on(), &first);
+    assert!(!ctx.lock().unwrap().network_tools, "Default's push turned it on in QA");
+    push_context_with(&ctx, Some(root), on(), &qa);
+    assert!(ctx.lock().unwrap().network_tools, "QA's own push brings QA's");
+}
+
 // ------------------------------------------------- the allow files
 
 /// A machine where Claude Code is installed, our server registered for the

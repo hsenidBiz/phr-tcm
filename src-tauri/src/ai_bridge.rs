@@ -50,6 +50,12 @@ pub struct BridgeContext {
     /// running one writes to the application, so both are refused
     /// (`API_WRITES_OFF`) until they do. Off by default, like `db_writes`.
     pub api_writes: bool,
+    /// Whether the person has switched the network tools on (the captured
+    /// requests, HAR files, test headers and cookies of the Auto Run
+    /// browser): until they do, those tools are not listed and their routes
+    /// refuse (`NETWORK_TOOLS_OFF`). Each environment keeps its own; off by
+    /// default.
+    pub network_tools: bool,
     /// The active environment's "Run database changes without asking".
     /// Never the webview's to say: Rust sets it from the environment, on a
     /// push and on a switch (`commands::ai_bridge::push_context_with`,
@@ -150,6 +156,7 @@ impl std::fmt::Debug for BridgeContext {
             .field("db_secrets", &self.db_secrets.as_ref().map(|_| "(hidden)"))
             .field("db_writes", &self.db_writes)
             .field("api_writes", &self.api_writes)
+            .field("network_tools", &self.network_tools)
             .field("db_no_ask", &self.db_no_ask)
             .field("gate", &self.gate)
             .finish()
@@ -334,6 +341,9 @@ pub async fn route(
     // module is on, and the check runs ONCE here, by path, before the
     // router's match (`module_guard_for`).
     if let Some(refused) = module_guard(path, body, &crate::modules::current()) {
+        return refused;
+    }
+    if let Some(refused) = network_guard(path, ctx.network_tools) {
         return refused;
     }
     match (method, path) {
@@ -573,6 +583,8 @@ pub async fn route(
                 // Only while writes are on too: without them there is no
                 // change to run, asked about or not.
                 "db_no_ask": ctx.db_no_ask && ctx.db_writes,
+                // The proxy offers the network tools only on an explicit yes.
+                "network_tools": ctx.network_tools,
             })
             .to_string(),
         ),
@@ -671,6 +683,36 @@ pub fn module_guard(path: &str, body: &str, on: &std::collections::BTreeSet<crat
         }
     }
     None
+}
+
+/// The network tools' routes: the Auto Run browser's captured requests,
+/// HAR files, test headers and cookies. Answered only while the person's
+/// Network tools switch is on (`network_guard`).
+pub const NETWORK_ROUTES: [&str; 12] = [
+    "/autorun-requests",
+    "/autorun-requests-search",
+    "/autorun-request",
+    "/autorun-response",
+    "/autorun-response-body",
+    "/autorun-capture",
+    "/autorun-requests-export",
+    "/autorun-requests-import",
+    "/autorun-headers",
+    "/autorun-cookies",
+    "/autorun-cookie",
+    "/autorun-cookies-clear",
+];
+
+/// Said when a network tool's route is called while the person's Network
+/// tools switch is off.
+pub const NETWORK_TOOLS_OFF: &str =
+    "the network tools are switched off - the person turns them on under Network tools on the AI Bridge tab (each environment keeps its own)";
+
+/// The guard `route` runs after the module's: a network route is refused
+/// while the switch is off, before anything else about the call is looked
+/// at. `on` is explicit so both sides stay testable.
+pub fn network_guard(path: &str, on: bool) -> Option<(u16, String)> {
+    (!on && NETWORK_ROUTES.contains(&path)).then(|| (403, NETWORK_TOOLS_OFF.to_string()))
 }
 
 /// Said when a prove or a run arrives while the person's API templates

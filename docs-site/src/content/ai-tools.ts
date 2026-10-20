@@ -73,7 +73,9 @@ export const aiBridge: Screen = {
     {
       id: "environment",
       title: "Environment",
-      summary: "The site and database Auto Run and API Templates work against. Shown while the Auto Run module is on, in Settings, under General, on the **Modules** page.",
+      summary:
+        "The site and database Auto Run and API Templates work against. Shown while the Auto Run module is on, in Settings, under General, on the **Modules** page. " +
+        "So is the **Network tools** card: its switch, off until you turn it on, lets a connected assistant read the requests the Auto Run browser's page made, with secrets hidden, save and load them as HAR files, and set test headers and cookies in a browser it opened.",
     },
     {
       id: "api-templates",
@@ -209,7 +211,7 @@ export const aiBridge: Screen = {
       does:
         "The environment Auto Run and API Templates work in: a site address, the company database below, and its own accounts and saved sign-ins. " +
         "Switching moves the **Database** below with it, and the environment's name shows in the title bar. " +
-        "Each environment also keeps its own **Tools an assistant may use**, **Create, update and delete**, **Run changes without asking** and **API templates** switches. Switching shows the new environment's, and they apply to every call an assistant makes from then on; an assistant's own list of tools refreshes when it next asks for it, or when it is restarted. " +
+        "Each environment also keeps its own **Tools an assistant may use**, **Create, update and delete**, **Run changes without asking**, **API templates** and **Network tools** switches. Switching shows the new environment's, and they apply to every call an assistant makes from then on; an assistant's own list of tools refreshes when it next asks for it, or when it is restarted. " +
         "The working repositories, their AI tools switches and the list of databases are the same in every environment.",
     },
     {

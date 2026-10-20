@@ -1461,7 +1461,8 @@ fn the_guide_opens_with_the_quick_rules() {
 }
 
 /// The network tools and the probe's `show` are taught in one section:
-/// every tool by name, the template-building advice, what is hidden, when nothing is captured,
+/// every tool by name, that the network tools need the person's own switch,
+/// the template-building advice, what is hidden, when nothing is captured,
 /// how long test changes last, what is refused, and the capture-phase
 /// listener that makes a click do nothing. No retired tool is named.
 #[test]
@@ -1471,19 +1472,11 @@ fn the_guide_teaches_the_network_cookie_and_element_tools() {
     let g = autorun_guide();
     let at = g.find("\n## Network, cookies and elements\n").expect("the guide has no Network, cookies and elements section");
     let section = flat(g[at + 1..].split("\n## ").next().unwrap());
-    for tool in [
-        "search_autorun_requests",
-        "get_autorun_request",
-        "autorun_capture",
-        "autorun_har",
-        "set_autorun_headers",
-        "autorun_cookies",
-        "probe_autorun_locator",
-        "expect_style",
-    ] {
+    for tool in v2_lib::ai_tools::NETWORK_TOOLS.iter().chain(&["probe_autorun_locator", "expect_style"]) {
         assert!(section.contains(&format!("`{tool}`")), "the section never names `{tool}`: {section}");
     }
     for said in [
+        "are there only while the person has switched Network tools on, on the AI Bridge tab, for the active environment",
         "Build API templates from captured requests",
         "`get_autorun_request` (the request, then `part: \"body\"`)",
         "Passwords, tokens, session cookies and keys are hidden",
