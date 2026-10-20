@@ -1185,6 +1185,11 @@ pub const SHOW_IS_TRUE_OR_PARTS: &str =
 pub const PROPERTIES_GO_WITH_SHOW: &str =
     "`properties` goes with `show`: a plain probe reads no styles - send `show: [\"styles\"]` (or true) with them";
 
+/// Said when `probe_autorun_locator` is sent `show` without the element's
+/// `selector`, or with the retired inspect tool's `locator`.
+pub const SHOW_NEEDS_A_SELECTOR: &str =
+    "`show` looks at the element `selector` names - send it as `selector` (not `locator`): { \"selector\": \"#save\", \"show\": [\"styles\"] }";
+
 /// `probe_autorun_locator`: a probe through its own route, or with `show`
 /// the read-only look at one element (the inspect route, which takes the
 /// locator as `locator`; `show: true` is every part, the route's default).
@@ -1192,6 +1197,7 @@ fn probe_call(args: &serde_json::Value, call: BridgeCall) -> Result<(u16, String
     let show = match args.get("show") {
         None | Some(serde_json::Value::Null) | Some(serde_json::Value::Bool(false)) => None,
         Some(serde_json::Value::Bool(true)) => Some(None),
+        Some(serde_json::Value::Array(parts)) if parts.is_empty() => return Ok((400, SHOW_IS_TRUE_OR_PARTS.to_string())),
         Some(parts @ serde_json::Value::Array(_)) => Some(Some(parts.clone())),
         Some(_) => return Ok((400, SHOW_IS_TRUE_OR_PARTS.to_string())),
     };
@@ -1201,6 +1207,9 @@ fn probe_call(args: &serde_json::Value, call: BridgeCall) -> Result<(u16, String
         }
         return call("POST", "/autorun-probe", &args.to_string());
     };
+    if !given(args, "selector") || given(args, "locator") {
+        return Ok((400, SHOW_NEEDS_A_SELECTOR.to_string()));
+    }
     let mut body = serde_json::Map::new();
     body.insert("locator".to_string(), args["selector"].clone());
     if let Some(parts) = parts {
@@ -1237,6 +1246,10 @@ fn replay_call(args: &serde_json::Value, call: BridgeCall) -> Result<(u16, Strin
 /// `reset_autorun_browser`: a reset, or with `release: true` the release of
 /// a broken browser.
 fn reset_call(args: &serde_json::Value, call: BridgeCall) -> Result<(u16, String), String> {
+    let stray = others(args, &["release"]);
+    if !stray.is_empty() {
+        return Ok((400, format!("`reset_autorun_browser` takes only `release` (true, to let a broken browser go) - not {}", stray.join(", "))));
+    }
     match flag(args, "release") {
         Err(refused) => Ok((400, refused)),
         Ok(true) => call("POST", "/autorun-release", "{}"),
@@ -1296,6 +1309,10 @@ pub const CAPTURE_FILTER_FIELDS: [&str; 3] = ["include_types", "exclude_types", 
 /// `autorun_capture`: the filter read, or - with any filter field, even an
 /// empty one - the whole filter set from now on.
 fn capture_call(args: &serde_json::Value, call: BridgeCall) -> Result<(u16, String), String> {
+    let stray = others(args, &CAPTURE_FILTER_FIELDS);
+    if !stray.is_empty() {
+        return Ok((400, format!("`autorun_capture` takes only the filter fields ({}) - not {}; to read an imported set pass `from` to `get_autorun_request`", CAPTURE_FILTER_FIELDS.join(", "), stray.join(", "))));
+    }
     if CAPTURE_FILTER_FIELDS.iter().any(|k| given(args, k)) {
         call("POST", "/autorun-capture", &args.to_string())
     } else {
@@ -1310,6 +1327,10 @@ pub const HAR_EXPORT_OR_IMPORT: &str =
 /// `autorun_har`: the export or the import route, each with the file's
 /// name as its own `name`.
 fn har_call(args: &serde_json::Value, call: BridgeCall) -> Result<(u16, String), String> {
+    let stray = others(args, &["export", "import"]);
+    if !stray.is_empty() {
+        return Ok((400, format!("`autorun_har` takes only `export` or `import`, and the name is its value - not {}: {{ \"export\": \"my-capture\" }}", stray.join(", "))));
+    }
     let route = match (given(args, "export"), given(args, "import")) {
         (true, false) => ("/autorun-requests-export", &args["export"]),
         (false, true) => ("/autorun-requests-import", &args["import"]),

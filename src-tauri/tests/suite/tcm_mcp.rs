@@ -2142,6 +2142,23 @@ fn reset_autorun_browser_releases_with_release() {
     assert!(!names.iter().any(|n| n == "release_autorun_browser"), "{names:?}");
 }
 
+/// Arguments a merged network or reset tool would drop are refused by name,
+/// with the shape to send, before anything reaches the app.
+#[test]
+fn the_network_and_reset_tools_refuse_arguments_they_would_drop() {
+    refused_before_the_app("autorun_har", serde_json::json!({ "export": "a", "name": "b" }), "`autorun_har` takes only `export` or `import`, and the name is its value - not name");
+    refused_before_the_app("autorun_har", serde_json::json!({ "import": "a", "from": "b" }), "not from");
+    refused_before_the_app("autorun_capture", serde_json::json!({ "from": "x" }), "`autorun_capture` takes only the filter fields (include_types, exclude_types, path_contains) - not from");
+    refused_before_the_app("autorun_capture", serde_json::json!({ "path_contains": "/api", "name": "x" }), "not name");
+    refused_before_the_app("reset_autorun_browser", serde_json::json!({ "release": true, "case_id": 3 }), "`reset_autorun_browser` takes only `release` (true, to let a broken browser go) - not case_id");
+    // What they do take still goes through.
+    assert_eq!(
+        reached("autorun_har", serde_json::json!({ "export": "a", "import": null })),
+        ("POST".into(), "/autorun-requests-export".into(), serde_json::json!({ "name": "a" }))
+    );
+    assert_eq!(reached("autorun_capture", serde_json::json!({ "from": null })).0, "GET");
+}
+
 /// `probe_autorun_locator` with `show` looks deeper at one element through
 /// the inspect route (the old `inspect_autorun_element` is gone): the
 /// selector travels as the route's `locator`, `show: true` asks for every
@@ -2173,6 +2190,15 @@ fn probe_autorun_locator_shows_one_element_with_show() {
     assert_eq!(reached("probe_autorun_locator", serde_json::json!({ "selector": "#save", "show": false })).1, "/autorun-probe");
     refused_before_the_app("probe_autorun_locator", serde_json::json!({ "selector": "#save", "properties": ["color"] }), PROPERTIES_GO_WITH_SHOW);
     refused_before_the_app("probe_autorun_locator", serde_json::json!({ "selector": "#save", "show": "styles" }), SHOW_IS_TRUE_OR_PARTS);
+    // `show` is worded as the probe's own: the element is `selector`. The
+    // retired inspect shape ({ locator, show }), a `show` with no selector
+    // and an empty `show` list are each refused before the inspect route.
+    use v2_lib::mcp::SHOW_NEEDS_A_SELECTOR;
+    refused_before_the_app("probe_autorun_locator", serde_json::json!({ "show": ["styles"] }), SHOW_NEEDS_A_SELECTOR);
+    refused_before_the_app("probe_autorun_locator", serde_json::json!({ "show": true, "selector": null }), SHOW_NEEDS_A_SELECTOR);
+    refused_before_the_app("probe_autorun_locator", serde_json::json!({ "locator": "#save", "show": ["styles"] }), SHOW_NEEDS_A_SELECTOR);
+    refused_before_the_app("probe_autorun_locator", serde_json::json!({ "selector": "#save", "locator": "#save", "show": true }), SHOW_NEEDS_A_SELECTOR);
+    refused_before_the_app("probe_autorun_locator", serde_json::json!({ "selector": "#save", "show": [] }), SHOW_IS_TRUE_OR_PARTS);
 
     let resp = handle_message(r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#, "1.0.0", &stub(200, "{}")).unwrap();
     let v: serde_json::Value = serde_json::from_str(&resp).unwrap();
