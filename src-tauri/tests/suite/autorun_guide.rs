@@ -1553,13 +1553,17 @@ fn discovery_makes_an_api_template_from_the_request_it_saw() {
     }
     let network = part("Network, cookies and elements");
     assert!(network.contains("Fetch the template guide first (`get_guide` with topic `api_templates`"), "{network}");
+    assert!(network.contains("Build API templates from captured requests when the API template tools are on."), "{network}");
+    assert!(network.contains("When they are off, list the request under \"API templates to make\" in your summary instead."), "{network}");
     assert!(!network.contains("(see `get_guide`, topic `api_templates`)"), "the network section only pointed at the guide");
     let grids = part("Tables and grids");
     assert!(grids.contains("For a debounced search, an `expect_response` on the search request"), "{grids}");
     assert!(grids.contains("`get_autorun_network_wait`"), "{grids}");
 
     let quick = flat(&quick_rules());
-    assert!(quick.contains("template guide first, build it from the captured request, prove it"), "{quick}");
+    assert!(quick.contains("becomes an API template when the API template tools are on (template guide first, build it from the captured request, prove it)"), "{quick}");
+    assert!(quick.contains("when they are off, list it under \"API templates to make\" in your summary"), "{quick}");
+    assert!(quick_rules().lines().count() <= 45, "the quick rules run to {} lines", quick_rules().lines().count());
     assert!(!quick.contains("dry_run"), "the dry-run rule was the one replaced: {quick}");
 }
 
@@ -1592,7 +1596,7 @@ fn every_quick_rule_is_in_the_full_guide() {
             "Saving it",
         ),
         (
-            "A request discovery saw that makes a case's starting state becomes an API template: template guide first, build it from the captured request, prove it",
+            "A request discovery saw that makes a case's starting state becomes an API template",
             "Discovering the app",
         ),
         (

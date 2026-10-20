@@ -130,10 +130,9 @@ Not covered here: call `get_guide` (topic `autorun`) with a `section`, or `full`
 - Discover the live app; never read the application's code to write scripts.
   A save refuses any locator the app has not seen. During a discovery with
   an area, `get_autorun_page` records what it shows as seen under that area.
-- `discover_autorun_actions` with `actions` carries out up to 20 actions in
-  order and answers the page once. If any would be refused, none runs. It stops at the
-  first action that fails unless `stop_on_failure` is false, and ending the
-  discovery stops it before its next action.
+- `discover_autorun_actions` with `actions` carries out up to 20 actions in order and answers the
+  page once. If any would be refused, none runs. It stops at the first action that fails unless
+  `stop_on_failure` is false, and ending the discovery stops it before its next action.
 - Probe every final locator with `probe_autorun_locator`, exactly as it is
   written in the script, immediately before saving. Use full names, and
   probe `nth` locators exactly as written. Use `exact: true` when a name is
@@ -151,22 +150,22 @@ Not covered here: call `get_guide` (topic `autorun`) with a `section`, or `full`
 - A picture: open it directly with the file reader. Never search the disk
   for a picture. Set `"no_save": true` on any script that works on a shared
   draft and must not change it. A repair can turn `no_save` on, never off.
-- Replays, discovery and resets share one browser and its sign-in.
-  `end_autorun_discovery` keeps it; a replay to a failing step ends your own
-  discovery first, keeping what it mapped. When the sign-in fails, the session
-  expires or you reach a cap, stop and report to the person; never try again
-  in a loop. Name the `case_id` on every discovery call for a `no_save` case.
+- Replays, discovery and resets share one browser and its sign-in. `end_autorun_discovery` keeps it;
+  a replay to a failing step ends your own discovery first, keeping what it mapped. When the sign-in
+  fails, the session expires or you reach a cap, stop and report to the person; never try again in a
+  loop. Name the `case_id` on every discovery call for a `no_save` case.
 - `reset_autorun_browser` gives a clean page, sign-in kept. Use its
   `release: true` only for a broken browser (frozen, wrong account,
   session gone), never between replays. Never ask the person to restart the app.
 - Test headers and cookies stay until removed or reset; do that before proving a fix.
-- If a case creates, deletes, publishes or submits shared data, or needs the
-  site in a particular state, mark it `changes` or `needs_unchanged`,
-  reusing one name for one change across the PBI; a setting it needs at one
-  value goes in `needs_state`. Then call `set_autorun_order` if an order is
+- If a case creates, deletes, publishes or submits shared data, or needs the site in a particular
+  state, mark it `changes` or `needs_unchanged`, reusing one name for one change across the PBI; a
+  setting it needs at one value goes in `needs_state`. Then call `set_autorun_order` if an order is
   needed and report the order and any reset points. State needed before a run: a precondition.
 - A request discovery saw that makes a case's starting state becomes an API
-  template: template guide first, build it from the captured request, prove it.
+  template when the API template tools are on (template guide first, build it
+  from the captured request, prove it); when they are off, list it under
+  "API templates to make" in your summary.
 - `page_said` and "the app refused" are the app's own words; judge them against
   the case (see `## Known validation rules` and "Discovering the app").
 "##;
@@ -1376,11 +1375,13 @@ or your replay).
   out is gone: it cannot be brought back. `autorun_har` with `export` or
   `import` saves it as a HAR file in TCM's own captures folder and reads it
   back as a set, by name; read an imported set with `from`.
-- Build API templates from captured requests. Fetch the template guide
-  first (`get_guide` with topic `api_templates`, once per session, before
-  the first template), then read the real call with `get_autorun_request`
-  (the request, then `part: "body"`) instead of guessing its shape, and
-  prove it with `prove_api_template` (see "Discovering the app").
+- Build API templates from captured requests when the API template tools
+  are on. Fetch the template guide first (`get_guide` with topic
+  `api_templates`, once per session, before the first template), then read
+  the real call with `get_autorun_request` (the request, then
+  `part: "body"`) instead of guessing its shape, and prove it with
+  `prove_api_template` (see "Discovering the app"). When they are off, list
+  the request under "API templates to make" in your summary instead.
 - Passwords, tokens, session cookies and keys are hidden in everything these
   tools show, and headers are an allow-list: never cookies or authorization.
 - Nothing is captured until the app's site is confirmed by a sign-in: a
