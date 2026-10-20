@@ -1596,7 +1596,7 @@ fn every_quick_rule_is_in_the_full_guide() {
             "Saving it",
         ),
         (
-            "A request discovery saw that makes a case's starting state becomes an API template",
+            "A request discovery saw that makes a case's starting state becomes an API template when the API template tools are on (template guide first, build it from the captured request, prove it); when they are off, list it under \"API templates to make\" in your summary.",
             "Discovering the app",
         ),
         (

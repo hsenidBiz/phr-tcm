@@ -1660,8 +1660,9 @@ method and path; if one does, use it (in a fixture or setup) rather than
 scripting the screens again.
 
 A request discovery saw that makes a case's starting state becomes an API
-template: template guide first, build it from the captured request, prove
-it. When the API template tools are on:
+template when the API template tools are on (template guide first, build it
+from the captured request, prove it); when they are off, list it under
+"API templates to make" in your summary. When the API template tools are on:
 
 - call `get_guide` with topic `api_templates` once per session, before
   the first template, and follow it;

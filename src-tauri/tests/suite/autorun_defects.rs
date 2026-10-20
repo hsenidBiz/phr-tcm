@@ -234,6 +234,23 @@ fn the_note_is_stored_without_an_address_or_a_token() {
     assert!(got.note.starts_with("saved at "), "{}", got.note);
 }
 
+/// A host written without a scheme in a note is hidden too, as it is in
+/// every other note an assistant writes.
+#[test]
+fn the_note_is_stored_without_a_bare_host() {
+    let run = run_of("run-1", "1", vec![failed_at_3(501)]);
+    let got = check_mark(
+        Some(&run),
+        Some(&script(501)),
+        501,
+        3,
+        "the page moved to hr.example.com/leave/apply and 10.0.0.5:8080/hr, then Error 500",
+        NOW,
+    )
+    .unwrap();
+    assert_eq!(got.note, "the page moved to /leave/apply and /hr, then Error 500");
+}
+
 // ------------------------------------------------------------ the store
 
 fn raw(dir: &std::path::Path, case_id: i32) -> serde_json::Value {

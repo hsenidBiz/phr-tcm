@@ -2148,7 +2148,7 @@ fn reset_autorun_browser_releases_with_release() {
 fn the_network_and_reset_tools_refuse_arguments_they_would_drop() {
     refused_before_the_app("autorun_har", serde_json::json!({ "export": "a", "name": "b" }), "`autorun_har` takes only `export` or `import`, and the name is its value - not name");
     refused_before_the_app("autorun_har", serde_json::json!({ "import": "a", "from": "b" }), "not from");
-    refused_before_the_app("autorun_capture", serde_json::json!({ "from": "x" }), "`autorun_capture` takes only the filter fields (include_types, exclude_types, path_contains) - not from");
+    refused_before_the_app("autorun_capture", serde_json::json!({ "from": "x" }), "`autorun_capture` takes only the filter fields (include_types, exclude_types, path_contains) - not from; to read an imported set pass `from` to `search_autorun_requests` or `get_autorun_request`");
     refused_before_the_app("autorun_capture", serde_json::json!({ "path_contains": "/api", "name": "x" }), "not name");
     refused_before_the_app("reset_autorun_browser", serde_json::json!({ "release": true, "case_id": 3 }), "`reset_autorun_browser` takes only `release` (true, to let a broken browser go) - not case_id");
     // What they do take still goes through.

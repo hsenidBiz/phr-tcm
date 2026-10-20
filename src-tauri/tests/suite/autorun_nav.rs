@@ -1139,6 +1139,31 @@ fn bare_hosts_with_a_path_or_port_are_hidden_but_ordinary_words_are_not() {
     }
 }
 
+/// Code locations in the target app's own languages and four-part version
+/// numbers are words; an address is hidden when it has a port or a path, or
+/// is a bare 0-255 quad not written as a version.
+#[test]
+fn aspnet_file_names_and_version_numbers_are_left_alone() {
+    use v2_lib::autorun::mapping_summary::without_addresses as hide;
+    for w in [
+        "failed in Leave.aspx:40 today",
+        "see web.config:12 and App.vue:3",
+        "Default.aspx/GetData answered 500",
+        "Service.asmx/List and Main.kt:40 and App.swift:9",
+        "build version 1.0.0.0 shipped",
+        "Version 7.2.0.15.",
+        "running v7.2.0.15 and v1.0.0.0",
+        "ver 1.0.0.0",
+    ] {
+        assert_eq!(hide(w), w, "{w}");
+    }
+    assert_eq!(hide("hr.example.com/x"), "/x");
+    assert_eq!(hide("10.0.0.5:8080/hr"), "/hr");
+    assert_eq!(hide("on 10.0.0.5"), "on /");
+    assert_eq!(hide("on 999.0.0.5"), "on 999.0.0.5");
+    assert_eq!(hide("version 1.0.0.0:8080 and version 10.0.0.5/hr"), "version / and version /hr");
+}
+
 /// A repair is written to the areas file as it is after the browser trips:
 /// an area removed or changed meanwhile is refused and nothing is written;
 /// one as the trips found it is repaired, its note keeping the path it had.

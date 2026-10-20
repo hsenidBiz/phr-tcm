@@ -27,9 +27,10 @@ pub const LONG_NOTE: &str = "the note is longer than 300 characters";
 /// The note as it is kept: trimmed, then through the scrub API-check
 /// excerpts get - an address cut to its path, a query dropped, bearer
 /// tokens and JWTs hidden - so a note quoting what the page showed cannot
-/// carry a host or a token into a run's reason or a result comment.
+/// carry a host or a token into a run's reason or a result comment. A host
+/// written without a scheme goes too (`mapping_summary::without_addresses`).
 pub fn scrub_note(note: &str) -> String {
-    super::api_checks::shown_body(note.trim())
+    super::mapping_summary::without_addresses(&super::api_checks::shown_body(note.trim()))
 }
 
 /// Whether `step_number` of case `case_id` may be marked as a suspected

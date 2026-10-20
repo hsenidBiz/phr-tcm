@@ -1311,7 +1311,7 @@ pub const CAPTURE_FILTER_FIELDS: [&str; 3] = ["include_types", "exclude_types", 
 fn capture_call(args: &serde_json::Value, call: BridgeCall) -> Result<(u16, String), String> {
     let stray = others(args, &CAPTURE_FILTER_FIELDS);
     if !stray.is_empty() {
-        return Ok((400, format!("`autorun_capture` takes only the filter fields ({}) - not {}; to read an imported set pass `from` to `get_autorun_request`", CAPTURE_FILTER_FIELDS.join(", "), stray.join(", "))));
+        return Ok((400, format!("`autorun_capture` takes only the filter fields ({}) - not {}; to read an imported set pass `from` to `search_autorun_requests` or `get_autorun_request`", CAPTURE_FILTER_FIELDS.join(", "), stray.join(", "))));
     }
     if CAPTURE_FILTER_FIELDS.iter().any(|k| given(args, k)) {
         call("POST", "/autorun-capture", &args.to_string())
