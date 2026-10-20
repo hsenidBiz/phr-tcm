@@ -711,3 +711,37 @@ fn the_new_check_options_have_words() {
     assert_eq!(say(serde_json::json!({ "kind": "expect_count", "selector": sel, "at_most": 5 })), "expect at most 5 of #n");
     assert_eq!(say(serde_json::json!({ "kind": "expect_count", "selector": sel, "equals": 3 })), "expect 3 of #n");
 }
+
+#[test]
+fn an_each_check_has_words() {
+    let say = |v: serde_json::Value| action_words(&serde_json::from_value(v).unwrap());
+    let list = serde_json::json!({ "css": "div.card" });
+    let h3 = serde_json::json!({ "css": "h3" });
+    assert_eq!(
+        say(serde_json::json!({ "kind": "expect_each", "selector": list, "child": h3, "matches": "^AUTOTEST " })),
+        "expect h3 in each of div.card to match /^AUTOTEST /"
+    );
+    assert_eq!(
+        say(serde_json::json!({ "kind": "expect_each", "selector": list, "visible": true, "child": h3, "min": 2 })),
+        "expect h3 in each of div.card to be visible (at least 2)"
+    );
+    assert_eq!(say(serde_json::json!({ "kind": "expect_each", "selector": list, "equals": "Draft" })), "expect each of div.card to read \"Draft\"");
+    assert_eq!(say(serde_json::json!({ "kind": "expect_each", "selector": list, "contains": "Draft", "min": 1 })), "expect each of div.card to contain \"Draft\"");
+    assert_eq!(say(serde_json::json!({ "kind": "expect_each", "selector": list, "not_empty": true })), "expect each of div.card to have text");
+    assert_eq!(
+        say(serde_json::json!({ "kind": "expect_each", "selector": list, "attribute": "href", "equals": "/a" })),
+        "expect each of div.card to have href=\"/a\""
+    );
+    assert_eq!(
+        say(serde_json::json!({ "kind": "expect_each", "selector": list, "attribute": "href", "contains": "a" })),
+        "expect each of div.card to have href containing \"a\""
+    );
+    assert_eq!(
+        say(serde_json::json!({ "kind": "expect_each", "selector": list, "attribute": "aria-label", "matches": "^View " })),
+        "expect each of div.card to have aria-label matching /^View /"
+    );
+    assert_eq!(
+        say(serde_json::json!({ "kind": "expect_each", "selector": list, "attribute": "title", "not_empty": true })),
+        "expect each of div.card to have a title"
+    );
+}

@@ -353,9 +353,11 @@ pub fn wants(kind: &str, many: bool, everywhere: bool, none: bool) -> String {
 pub fn takes_many(action: &Action) -> bool {
     match action {
         // A loop's selector matches every row it works through.
-        Action::ExpectHidden { .. } | Action::ExpectCount { .. } | Action::WaitFor { .. } | Action::RepeatWhileVisible { .. } => {
-            true
-        }
+        Action::ExpectHidden { .. }
+        | Action::ExpectCount { .. }
+        | Action::ExpectEach { .. }
+        | Action::WaitFor { .. }
+        | Action::RepeatWhileVisible { .. } => true,
         Action::Click { .. }
         | Action::Fill { .. }
         | Action::Upload { .. }
@@ -795,6 +797,7 @@ fn is_check(action: &Action) -> bool {
             | Action::ExpectText { .. }
             | Action::ExpectContainsText { .. }
             | Action::ExpectCount { .. }
+            | Action::ExpectEach { .. }
             | Action::ExpectAttribute { .. }
             | Action::ExpectStyle { .. }
             | Action::ExpectEnabled { .. }
@@ -1570,6 +1573,7 @@ fn script_links(script: &CaseScript, components: &ComponentFile) -> Vec<(Target,
                 }
             }
         }
+        targets.extend(each_child_chain(action).map(|chain| (chain, SavedUse::Many)));
         for (target, class) in targets {
             let links: Vec<LocatorStep> = target
                 .links()
@@ -1893,8 +1897,24 @@ pub fn uses_components(script: &CaseScript) -> bool {
 /// selector only, as `each` lists its guarded actions after it.
 fn own_targets(action: &Action) -> Vec<&Target> {
     match action {
-        Action::WhenVisible { selector, .. } | Action::RepeatWhileVisible { selector, .. } => vec![selector],
+        Action::WhenVisible { selector, .. }
+        | Action::RepeatWhileVisible { selector, .. }
+        | Action::ExpectEach { selector, .. } => vec![selector],
         _ => action.targets(),
+    }
+}
+
+/// An `expect_each`'s child as it is looked for: inside the list, so the
+/// list's links and then its own. The chain is what a save checks against
+/// the map (a child is seen in its list, not on its own), and what a saved
+/// script vouches for. `None` for any other action, and for an
+/// `expect_each` without a child.
+fn each_child_chain(action: &Action) -> Option<Target> {
+    match action {
+        Action::ExpectEach { selector, child: Some(child), .. } => {
+            Some(Target::Chain(selector.links().into_iter().chain(child.links()).collect()))
+        }
+        _ => None,
     }
 }
 
@@ -2085,6 +2105,18 @@ fn scan(
                         })
                     })
                     .collect();
+                if let Some(chain) = each_child_chain(action) {
+                    named.push(InputLocator {
+                        links: chain.links(),
+                        target: chain,
+                        check: true,
+                        many: true,
+                        none: false,
+                        typed_before: Vec::new(),
+                        kind: action.kind(),
+                        everywhere: false,
+                    });
+                }
                 if let Action::UseComponent { component, inputs } = action {
                     let used = find(components, component)
                         .ok_or_else(|| not_saved(component))

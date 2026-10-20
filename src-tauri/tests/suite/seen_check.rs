@@ -91,7 +91,7 @@ fn refusal_as(step: i32, describe: &str, kind: &str) -> String {
             "Step {step}: {describe} was never seen on the live app. Find it on the page first with probe_autorun_locator or discover_autorun_actions, then save again."
         );
     }
-    let many = matches!(kind, "expect_hidden" | "expect_count" | "wait_for");
+    let many = matches!(kind, "expect_hidden" | "expect_count" | "expect_each" | "wait_for");
     // `expect_hidden` (and, as these tests write it, an `expect_count` of
     // 0) passes with nothing there: a probe of none counts.
     let none = matches!(kind, "expect_hidden" | "expect_count");
@@ -2900,4 +2900,56 @@ fn an_at_most_zero_count_takes_a_probe_of_none_like_equals_zero() {
     let at_least = one_step("Cycles", serde_json::json!([{ "kind": "expect_count", "selector": form.clone(), "at_least": 1 }]));
     let refused = check_seen(&map, &none(), &at_least, &[], None).unwrap_err();
     assert!(refused.contains("never seen"), "{refused}");
+}
+
+// ------------------------- expect_each: a list, and a child looked for in it
+
+/// The list an `expect_each` reads in these tests.
+const LIST: &str = "div[data-cycle-id]";
+
+fn each_script(with_child: bool) -> CaseScript {
+    let mut action = serde_json::json!({ "kind": "expect_each", "selector": { "css": LIST }, "not_empty": true });
+    if with_child {
+        action["child"] = serde_json::json!({ "css": "h3" });
+    }
+    one_step("Cycles", serde_json::json!([action]))
+}
+
+/// A list is read whole, so the locator may have been seen matching
+/// several elements; a click on the same one may not.
+#[test]
+fn an_each_check_takes_its_list_seen_matching_several() {
+    let map = sighted_matching("Cycles", css(LIST), 12);
+    assert_eq!(check_seen(&map, &none(), &each_script(false), &[], None), Ok(()));
+    // Not seen at all: refused as a check that takes any number.
+    let empty = DiscoveryMap::default();
+    assert_eq!(check_seen(&empty, &none(), &each_script(false), &[], None), Err(refusal_as(1, LIST, "expect_each")));
+    // A click on it needs one.
+    assert!(check_seen(&map, &none(), &clicks(serde_json::json!({ "css": LIST })), &[], None).is_err());
+}
+
+/// The child is checked inside its list: the chain list then child, filed
+/// as one, is what is looked for.
+#[test]
+fn an_each_child_is_checked_inside_its_list() {
+    let chain = serde_json::json!([{ "css": LIST }, { "css": "h3" }]);
+    let map = filed(chain, 12);
+    assert_eq!(check_seen(&map, &none(), &each_script(true), &[], None), Ok(()));
+    // The list alone is seen, the child inside it never is.
+    let list_only = filed(serde_json::json!({ "css": LIST }), 12);
+    let refused = check_seen(&list_only, &none(), &each_script(true), &[], None).unwrap_err();
+    assert!(refused.contains(&format!("h3 in {LIST} was never seen on the live app")), "{refused}");
+    // The same child, seen on its own elsewhere, is not seen inside the list.
+    let alone = sighted_matching("Cycles", css("h3"), 12);
+    assert!(check_seen(&alone, &none(), &each_script(true), &[], None).is_err());
+}
+
+/// What a saved `expect_each` saw vouches for its child only inside its
+/// list, never for the bare child.
+#[test]
+fn a_saved_each_vouches_its_child_only_inside_its_list() {
+    let mut map = DiscoveryMap::default();
+    add_saved_scripts(&mut map, &[each_script(true)], &none());
+    assert_eq!(check_seen(&map, &none(), &each_script(true), &[], None), Ok(()));
+    assert!(check_seen(&map, &none(), &clicks(serde_json::json!({ "css": "h3" })), &[], None).is_err());
 }

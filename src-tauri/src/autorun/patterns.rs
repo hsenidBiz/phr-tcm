@@ -289,6 +289,10 @@ pub fn classify(detail: &str, target: Option<&str>) -> ErrorClass {
         return ErrorClass::FrameUnreachable;
     }
     let t = tail(whole, target);
+    // An `expect_each` failure names the item and its text first
+    // (`item 2 of 3 ("Other B"): ...`): the reason is what follows, and the
+    // item's text is the page's, never read for a class.
+    let t = item_reason(t).unwrap_or(t);
     if let Some(class) = by_start(t) {
         return class;
     }
@@ -376,6 +380,37 @@ fn is_api_check(whole: &str) -> bool {
             || rest.contains(api::REDIRECTED))
 }
 
+/// What follows `item N of M ("label"): ` in an `expect_each` failure, found
+/// at the start of `t` or after the list's target. The label is Debug-quoted,
+/// so its end is the first quote no backslash escapes that is followed by
+/// `): `.
+fn item_reason(t: &str) -> Option<&str> {
+    let mut from = 0;
+    while let Some(i) = t[from..].find("item ") {
+        let at = from + i;
+        from = at + "item ".len();
+        if at > 0 && !t[..at].ends_with(' ') {
+            continue;
+        }
+        let rest = &t[from..];
+        let digits = |s: &str| s.bytes().take_while(u8::is_ascii_digit).count();
+        let a = digits(rest);
+        let Some(rest) = rest[a..].strip_prefix(" of ").filter(|_| a > 0) else { continue };
+        let b = digits(rest);
+        let Some(label) = rest[b..].strip_prefix(" (\"").filter(|_| b > 0) else { continue };
+        let mut escaped = false;
+        for (j, c) in label.char_indices() {
+            match c {
+                '\\' if !escaped => escaped = true,
+                '"' if !escaped => return label[j + 1..].strip_prefix("): "),
+                _ => escaped = false,
+            }
+        }
+        return None;
+    }
+    None
+}
+
 /// The reason words that a target-prefixed sentence starts with, once
 /// the target is gone.
 fn by_start(t: &str) -> Option<ErrorClass> {
@@ -398,6 +433,7 @@ fn by_start(t: &str) -> Option<ErrorClass> {
         (inp::DISABLED, ErrorClass::Disabled),
         (inp::NOT_EDITABLE, ErrorClass::NotEditable),
         (inp::STILL_MOVING, ErrorClass::StillMoving),
+        (crate::browser::each::LIST_CHANGED, ErrorClass::StillMoving),
         (inp::STILL_LOOKING, ErrorClass::TimedOut),
         (exp::STILL_VISIBLE, ErrorClass::StillVisible),
     ];
@@ -463,6 +499,7 @@ fn by_end(t: &str) -> Option<ErrorClass> {
         (inp::DISABLED, ErrorClass::Disabled),
         (inp::NOT_EDITABLE, ErrorClass::NotEditable),
         (inp::STILL_MOVING, ErrorClass::StillMoving),
+        (crate::browser::each::LIST_CHANGED, ErrorClass::StillMoving),
         (inp::STILL_LOOKING, ErrorClass::TimedOut),
         (exp::STILL_VISIBLE, ErrorClass::StillVisible),
         (exp::ATTRIBUTE_TAIL, ErrorClass::AttributeMismatch),
@@ -519,6 +556,7 @@ pub fn action_target(action: &Action) -> Option<String> {
         | Action::ExpectDisabled { selector, .. }
         | Action::ExpectChecked { selector, .. }
         | Action::ExpectFocused { selector, .. }
+        | Action::ExpectEach { selector, .. }
         | Action::Upload { selector, .. }
         | Action::WhenVisible { selector, .. }
         | Action::RepeatWhileVisible { selector, .. } => Some(selector.describe()),

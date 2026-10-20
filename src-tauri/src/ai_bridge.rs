@@ -3230,6 +3230,7 @@ fn matched_targets(action: &crate::browser::actions::Action) -> Vec<(&crate::bro
         }
         Action::ExpectHidden { .. }
         | Action::WaitFor { .. }
+        | Action::ExpectEach { .. }
         | Action::UseComponent { .. }
         | Action::ExpectNoRow { .. }
         | Action::WhenVisible { .. }
@@ -3760,6 +3761,7 @@ pub fn describe_action(action: &crate::browser::actions::Action) -> String {
         | Action::ExpectDisabled { selector, .. }
         | Action::ExpectChecked { selector, .. }
         | Action::ExpectFocused { selector, .. }
+        | Action::ExpectEach { selector, .. }
         | Action::Upload { selector, .. }
         | Action::WhenVisible { selector, .. }
         | Action::RepeatWhileVisible { selector, .. } => selector.describe(),

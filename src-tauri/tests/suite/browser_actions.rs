@@ -660,6 +660,7 @@ fn only_checks_and_expectations_are_checks() {
         serde_json::from_value(serde_json::json!({ "kind": "expect_no_row", "table": "t", "cells": { "A": "b" } })).unwrap(),
         serde_json::from_value(serde_json::json!({ "kind": "expect_sorted", "table": "t", "column": "A", "order": "ascending" })).unwrap(),
         serde_json::from_value(serde_json::json!({ "kind": "expect_row_count", "table": "t", "equals": 1 })).unwrap(),
+        serde_json::from_value(serde_json::json!({ "kind": "expect_each", "selector": "s", "not_empty": true })).unwrap(),
         Action::UseComponent { component: "c".into(), inputs: serde_json::Map::new() },
     ];
     assert_eq!(samples.len(), ACTION_KINDS.len(), "this list has drifted from ACTION_KINDS");
@@ -689,6 +690,7 @@ fn only_checks_and_expectations_are_checks() {
                 | "expect_no_row"
                 | "expect_sorted"
                 | "expect_row_count"
+                | "expect_each"
         )
     };
     for (action, kind) in samples.iter().zip(ACTION_KINDS.iter()) {
@@ -1116,6 +1118,102 @@ fn expect_style_takes_exactly_one_comparison_and_a_css_property_name() {
         // Only what was given is written back.
         assert_eq!(serde_json::to_value(&a).unwrap(), good);
     }
+}
+
+#[test]
+fn expect_each_is_validated() {
+    use v2_lib::browser::actions::EACH_NEEDS_ONE;
+    assert_eq!(
+        EACH_NEEDS_ONE,
+        "expect_each takes exactly one of \"visible\": true, \"equals\", \"contains\", \"matches\" or \"not_empty\": true"
+    );
+    let bad = |v: serde_json::Value| serde_json::from_value::<Action>(v).unwrap().validate().unwrap_err();
+    let base = |rest: serde_json::Value| {
+        let mut v = json!({ "kind": "expect_each", "selector": { "css": "li" } });
+        v.as_object_mut().unwrap().extend(rest.as_object().unwrap().clone());
+        v
+    };
+    // The selector is checked first.
+    assert!(bad(json!({ "kind": "expect_each", "selector": {}, "not_empty": true })).contains("role, text or css"));
+    // `min`.
+    assert_eq!(
+        bad(base(json!({ "not_empty": true, "min": 0 }))),
+        "expect_each needs \"min\" of 1 or more - a list of none would pass any check"
+    );
+    assert_eq!(
+        bad(base(json!({ "not_empty": true, "min": 201 }))),
+        "expect_each reads at most 200 items, so \"min\" cannot be 201"
+    );
+    // Exactly one of the five.
+    for rest in [
+        json!({}),
+        json!({ "equals": "a", "contains": "a" }),
+        json!({ "equals": "a", "matches": "a" }),
+        json!({ "not_empty": true, "equals": "a" }),
+        json!({ "visible": true, "child": { "css": "h3" }, "not_empty": true }),
+        json!({ "visible": false }),
+        json!({ "not_empty": false }),
+    ] {
+        assert_eq!(bad(base(rest.clone())), EACH_NEEDS_ONE, "{rest}");
+    }
+    assert_eq!(
+        bad(base(json!({ "visible": true }))),
+        "expect_each: \"visible\": true needs a \"child\" - every item of the list is already visible"
+    );
+    assert_eq!(
+        bad(base(json!({ "visible": true, "child": { "css": "h3" }, "attribute": "title" }))),
+        "expect_each: \"visible\" reads no attribute - leave \"attribute\" out"
+    );
+    assert_eq!(bad(base(json!({ "equals": "a", "attribute": " " }))), "expect_each has an empty attribute name");
+    assert_eq!(
+        bad(base(json!({ "contains": " " }))),
+        "expect_each has an empty contains - everything contains nothing"
+    );
+    // A pattern goes through the one check every `matches` has.
+    assert_eq!(
+        bad(base(json!({ "matches": "" }))),
+        v2_lib::browser::pattern::check_pattern("expect_each", "").unwrap_err()
+    );
+    assert!(bad(base(json!({ "matches": ".*" }))).starts_with("expect_each: \"matches\" fits any text"));
+    assert!(bad(base(json!({ "matches": "(?i)a" }))).starts_with("expect_each: "));
+    // The child.
+    assert_eq!(
+        bad(base(json!({ "not_empty": true, "child": "h3" }))),
+        "expect_each's child is a locator object or a list of them, not a selector string: it is looked for inside each item"
+    );
+    assert_eq!(
+        bad(base(json!({ "not_empty": true, "child": { "input": "title" } }))),
+        "expect_each's child cannot hold a component input - put the input in the list's locator"
+    );
+    assert_eq!(
+        bad(base(json!({ "not_empty": true, "child": [{ "css": "h3" }, { "input": "x" }] }))),
+        "expect_each's child cannot hold a component input - put the input in the list's locator"
+    );
+    assert_eq!(
+        bad(base(json!({ "not_empty": true, "child": { "role": "button", "css": "x" } }))),
+        "expect_each child: a locator takes only one of role, text or css"
+    );
+    // A component input in the LIST's locator is fine.
+    assert_eq!(
+        serde_json::from_value::<Action>(base(json!({ "not_empty": true, "selector": { "input": "list" } }))).unwrap().validate(),
+        Ok(())
+    );
+    // Valid shapes round trip exactly, and only what was given is written.
+    for good in [
+        json!({ "kind": "expect_each", "selector": { "css": "div[data-cycle-id]" }, "child": { "css": "h3" }, "matches": "^AUTOTEST " }),
+        json!({ "kind": "expect_each", "selector": { "css": "li" }, "not_empty": true }),
+        json!({ "kind": "expect_each", "selector": { "css": "li" }, "min": 3, "equals": "a", "timeout_ms": 900 }),
+        json!({ "kind": "expect_each", "selector": { "css": "li" }, "child": [{ "css": "a" }, { "css": "i" }], "visible": true }),
+        json!({ "kind": "expect_each", "selector": { "css": "li" }, "attribute": "href", "contains": "/x", "min": 200 }),
+    ] {
+        let a: Action = serde_json::from_value(good.clone()).unwrap();
+        assert_eq!(a.validate(), Ok(()), "{good}");
+        assert_eq!(serde_json::to_value(&a).unwrap(), good);
+    }
+    // A check, and its targets are the list then the child.
+    let a: Action = serde_json::from_value(json!({ "kind": "expect_each", "selector": { "css": "li" }, "child": { "css": "h3" }, "not_empty": true })).unwrap();
+    assert!(a.is_check());
+    assert_eq!(a.targets().len(), 2);
 }
 
 /// The colour rule on its own: the CSS basic colours and `transparent`,

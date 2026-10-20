@@ -551,6 +551,37 @@ function describeKnown(a: Action): Sentence {
       const [how, n] = given[0];
       return [words("Check "), ...describeTarget(a.table), words(` has ${how}${n} ${n === 1 ? "row" : "rows"}${upTo(a.timeout_ms)}`)];
     }
+    case "expect_each": {
+      const visible = a.visible === true;
+      const notEmpty = a.not_empty === true;
+      const equals = optStr(a.equals);
+      const contains = optStr(a.contains);
+      const matches = optStr(a.matches);
+      const given = [visible, equals !== undefined, contains !== undefined, matches !== undefined, notEmpty].filter(Boolean);
+      if (given.length !== 1) throw new Unreadable();
+      const name = optStr(a.attribute)?.trim();
+      const withName = name !== undefined && name !== "";
+      let verb: string;
+      if (visible) verb = "is showing";
+      else if (equals !== undefined)
+        verb = withName ? `has ${name} set to "${withoutHosts(equals)}"` : `reads "${withoutHosts(equals)}"`;
+      else if (contains !== undefined)
+        verb = withName ? `has ${name} containing "${withoutHosts(contains)}"` : `contains "${withoutHosts(contains)}"`;
+      else if (matches !== undefined)
+        verb = withName ? `has ${name} matching /${withoutHosts(matches)}/` : `matches /${withoutHosts(matches)}/`;
+      else verb = withName ? `has a ${name}` : "is not empty";
+      const min = optNum(a.min);
+      const atLeast = min !== undefined && min > 1 ? ` (at least ${min})` : "";
+      const tail = `${verb}${atLeast}${upTo(a.timeout_ms)}`;
+      if (a.child == null) return [words("Check each match of "), ...describeTarget(a.selector), words(`: it ${tail}`)];
+      return [
+        words("Check each match of "),
+        ...describeTarget(a.selector),
+        words(": "),
+        ...describeTarget(a.child),
+        words(` in it ${tail}`),
+      ];
+    }
     case "drag": {
       const position = optStr(a.position) ?? "onto";
       if (!["before", "after", "onto"].includes(position)) throw new Unreadable();

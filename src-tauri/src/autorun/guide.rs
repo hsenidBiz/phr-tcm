@@ -50,6 +50,7 @@ pub const ACTION_KINDS: &[&str] = &[
     "expect_no_row",
     "expect_sorted",
     "expect_row_count",
+    "expect_each",
     "use_component",
 ];
 
@@ -245,6 +246,7 @@ no script step for it, and do not renumber the steps that come after it.
 - `{ "kind": "expect_no_row", "table": ..., "cells": { "Name": "Ann" } }` - no row has them
 - `{ "kind": "expect_sorted", "table": ..., "column": "Joined", "order": "descending", "as": "date" }` - the column is in that order
 - `{ "kind": "expect_row_count", "table": ..., "at_least": 1 }` - the table has that many rows (`equals`, `at_least` or `at_most`)
+- `{ "kind": "expect_each", "selector": { "css": "div[data-cycle-id]" }, "child": { "css": "h3" }, "matches": "^AUTOTEST " }` - every match of the selector (a list) passes one check: `"visible": true` (needs `child`), `equals`, `contains`, `matches` or `"not_empty": true`; with `child`, the check reads the one element `child` finds inside each item, and with `attribute`, that attribute instead of the text; `min` (default 1) is the fewest items there may be; at most 200 items are read (see "Checking thoroughly")
 - `{ "kind": "drag", "from": ..., "to": ..., "position": "before" }` - pick `from` up and drop it on `to`: `before` it, `after` it, or `onto` it (the default); `within_ms` (default 10000) is optional (see "Dragging to reorder")
 - `{ "kind": "use_component", "component": "pick-date", "inputs": { "day": "5" } }` - runs a saved component with its inputs (see "Components")
 - `{ "kind": "expect_focused", "selector": ... }` - the focus is on this element, or on something inside it
@@ -1267,11 +1269,11 @@ the action fails and says how many: narrow it with a list, `"exact"`, or
 `"nth"` (zero-based: `{ "css": "tbody tr", "nth": 0 }` is the first row).
 `nth` picks from THAT entry's matches across everything the previous
 entry matched, taken in page order, not from the matches inside one of
-them. Only `expect_count`, `expect_hidden` and `wait_for` are happy with
-many.
+them. Only `expect_count`, `expect_each`, `expect_hidden` and `wait_for` are
+happy with many.
 
 Use full names, and probe `nth` locators exactly as written. A check that
-may match several (`expect_hidden`, `expect_count`, `wait_for`) may name
+may match several (`expect_hidden`, `expect_count`, `expect_each`, `wait_for`) may name
 a part of a seen name in the same role, of at least 3 characters, on a
 plain locator (one entry, no `nth`, no `"visible": false`, not `"exact"`):
 "Reviewer:" for the text "Reviewer: 30%", "Evaluators" for the

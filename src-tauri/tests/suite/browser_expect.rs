@@ -541,3 +541,270 @@ fn at_most_needs_time_to_see_the_count_hold_still() {
     assert_eq!(with(json!(300), "at_least"), Ok(()));
     assert_eq!(with(json!(300), "equals"), Ok(()));
 }
+
+// ---- expect_each: one check on every item of a list -------------------
+
+/// A page of lists, for the checks that read every item. An element is an
+/// object id; a css locator called on object `R` with selector `S` finds
+/// `found[(R, S)]`, and the page's document is `doc`. Text and attributes
+/// are answered by object id. An id in `detached` is out of the page until
+/// that many looks (loads of the document) have been made.
+#[derive(Default)]
+struct ListPage {
+    found: std::collections::HashMap<(String, String), Vec<String>>,
+    texts: std::collections::HashMap<String, String>,
+    attrs: std::collections::HashMap<String, String>,
+    detached: Vec<String>,
+    detached_looks: usize,
+}
+
+impl ListPage {
+    /// `n` items `c1..cn` matching `css` in the document.
+    fn list(mut self, css: &str, n: usize) -> Self {
+        let ids = (1..=n).map(|i| format!("c{i}")).collect();
+        self.found.insert(("doc".to_string(), css.to_string()), ids);
+        self
+    }
+    fn text(mut self, id: &str, text: &str) -> Self {
+        self.texts.insert(id.to_string(), text.to_string());
+        self
+    }
+    fn attr(mut self, id: &str, value: &str) -> Self {
+        self.attrs.insert(id.to_string(), value.to_string());
+        self
+    }
+    /// Item `c{item}` holds `n` elements matching `css`: `c{item}-{css}-1`...
+    fn inside(mut self, item: usize, css: &str, n: usize) -> Self {
+        let ids = (1..=n).map(|k| format!("c{item}-{css}-{k}")).collect();
+        self.found.insert((format!("c{item}"), css.to_string()), ids);
+        self
+    }
+    /// Answers as a browser would; the counter is how many looks were made.
+    fn driver(self, looks: Arc<AtomicUsize>) -> common::ScriptedDriver {
+        use v2_lib::browser::each::CONNECTED_JS;
+        use v2_lib::browser::expect::{READ_ATTR_JS, READ_TEXT_JS};
+        use v2_lib::browser::input::SHOWN_JS;
+        use v2_lib::browser::locator::VISIBLE_JS;
+        common::ScriptedDriver::new(move |method, params| {
+            let f = params["functionDeclaration"].as_str().unwrap_or("");
+            let id = params["objectId"].as_str().unwrap_or("").to_string();
+            Ok(match method {
+                "Runtime.evaluate" if params["expression"] == "document" => {
+                    looks.fetch_add(1, Ordering::SeqCst);
+                    json!({ "result": { "objectId": "doc" } })
+                }
+                "Runtime.callFunctionOn" if f == VISIBLE_JS || f == SHOWN_JS => json!({ "result": { "value": true } }),
+                "Runtime.callFunctionOn" if f == CONNECTED_JS => {
+                    let gone = self.detached.contains(&id) && looks.load(Ordering::SeqCst) <= self.detached_looks;
+                    json!({ "result": { "value": !gone } })
+                }
+                "Runtime.callFunctionOn" if f == READ_TEXT_JS => {
+                    json!({ "result": { "value": self.texts.get(&id).cloned().unwrap_or_default() } })
+                }
+                "Runtime.callFunctionOn" if f == READ_ATTR_JS => {
+                    json!({ "result": { "value": self.attrs.get(&id) } })
+                }
+                "Runtime.callFunctionOn" => {
+                    let css = params["arguments"][0]["value"].as_str().unwrap_or("");
+                    json!({ "result": { "objectId": format!("arr|{id}|{css}") } })
+                }
+                "Runtime.getProperties" => {
+                    let mut parts = id.splitn(3, '|');
+                    let (_, root, css) = (parts.next(), parts.next().unwrap_or(""), parts.next().unwrap_or(""));
+                    let ids = self.found.get(&(root.to_string(), css.to_string())).cloned().unwrap_or_default();
+                    json!({ "result": ids.iter().enumerate()
+                        .map(|(i, e)| json!({ "name": i.to_string(), "value": { "objectId": e } }))
+                        .collect::<Vec<_>>() })
+                }
+                _ => json!({}),
+            })
+        })
+    }
+}
+
+fn each(v: Value) -> Action {
+    let mut base = json!({ "kind": "expect_each", "selector": { "css": "div.card" } });
+    for (k, val) in v.as_object().unwrap() {
+        base[k] = val.clone();
+    }
+    action(base)
+}
+
+#[tokio::test]
+async fn each_passes_when_every_item_matches_and_names_the_count() {
+    let page = ListPage::default()
+        .list("div.card", 3)
+        .text("c1", "AUTOTEST A")
+        .text("c2", "AUTOTEST B")
+        .text("c3", "AUTOTEST C");
+    let mut d = page.driver(Arc::default());
+    let out = execute_with(&mut d, &each(json!({ "matches": "^AUTOTEST " })), &quick()).await;
+    assert!(out.ok, "{}", out.detail);
+    assert_eq!(out.detail, "3 items of div.card each match /^AUTOTEST /");
+    assert!(d.deadline_was_cleared());
+}
+
+#[tokio::test]
+async fn each_fails_naming_the_item_and_its_text() {
+    let page = ListPage::default()
+        .list("div.card", 3)
+        .text("c1", "AUTOTEST A")
+        .text("c2", "Other B")
+        .text("c3", "AUTOTEST C");
+    let mut d = page.driver(Arc::default());
+    let out = execute_with(&mut d, &each(json!({ "matches": "^AUTOTEST ", "timeout_ms": 300 })), &quick()).await;
+    assert!(!out.ok);
+    assert_eq!(
+        out.detail,
+        "waited 300ms: div.card item 2 of 3 (\"Other B\"): expected text to match /^AUTOTEST / but saw \"Other B\""
+    );
+}
+
+#[tokio::test]
+async fn each_needs_min_items() {
+    let mut d = ListPage::default().driver(Arc::default());
+    let out = execute_with(&mut d, &each(json!({ "not_empty": true })), &quick()).await;
+    assert!(!out.ok && out.detail.ends_with("expected at least 1, counted 0"), "{}", out.detail);
+
+    let page = ListPage::default().list("div.card", 2).text("c1", "a").text("c2", "b");
+    let mut d = page.driver(Arc::default());
+    let out = execute_with(&mut d, &each(json!({ "not_empty": true, "min": 3 })), &quick()).await;
+    assert!(!out.ok && out.detail.ends_with("expected at least 3, counted 2"), "{}", out.detail);
+    // Two is enough for a min of 2, and a single item is "1 item".
+    let page = ListPage::default().list("div.card", 2).text("c1", "a").text("c2", "b");
+    let out = execute_with(&mut page.driver(Arc::default()), &each(json!({ "not_empty": true, "min": 2 })), &quick()).await;
+    assert!(out.ok && out.detail == "2 items of div.card each have text", "{}", out.detail);
+    let page = ListPage::default().list("div.card", 1).text("c1", "a");
+    let out = execute_with(&mut page.driver(Arc::default()), &each(json!({ "equals": "a" })), &quick()).await;
+    assert_eq!(out.detail, "1 item of div.card each read \"a\"");
+}
+
+#[tokio::test]
+async fn each_reads_a_child_inside_each_item() {
+    let child = json!({ "css": "h3" });
+    let run = |counts: [usize; 3]| {
+        let mut page = ListPage::default().list("div.card", 3);
+        for (i, n) in counts.iter().enumerate() {
+            page = page.inside(i + 1, "h3", *n).text(&format!("c{}-h3-1", i + 1), "Title");
+        }
+        let child = child.clone();
+        async move { execute_with(&mut page.driver(Arc::default()), &each(json!({ "child": child, "not_empty": true })), &quick()).await }
+    };
+    let out = run([1, 0, 1]).await;
+    assert!(!out.ok);
+    assert!(out.detail.contains("item 2 of 3 (") && out.detail.ends_with("h3 is not on the page"), "{}", out.detail);
+    let out = run([1, 2, 1]).await;
+    assert!(!out.ok && out.detail.ends_with("h3 matched 2 elements - narrow it, or add nth"), "{}", out.detail);
+    let out = run([1, 1, 1]).await;
+    assert!(out.ok, "{}", out.detail);
+    assert_eq!(out.detail, "3 items of div.card, each with h3 that has text");
+}
+
+#[tokio::test]
+async fn each_looks_again_when_an_item_is_detached_mid_read() {
+    let build = |detached_looks: usize| {
+        let mut page = ListPage::default().list("div.card", 2).text("c1", "AUTOTEST A").text("c2", "AUTOTEST B");
+        page.detached = vec!["c1".to_string()];
+        page.detached_looks = detached_looks;
+        page
+    };
+    let looks = Arc::new(AtomicUsize::new(0));
+    let out = execute_with(&mut build(1).driver(looks.clone()), &each(json!({ "matches": "^AUTOTEST " })), &quick()).await;
+    assert!(out.ok, "{}", out.detail);
+    assert!(looks.load(Ordering::SeqCst) >= 2, "a second look was made");
+
+    let out = execute_with(
+        &mut build(usize::MAX).driver(Arc::default()),
+        &each(json!({ "matches": "^AUTOTEST ", "timeout_ms": 200 })),
+        &quick(),
+    )
+    .await;
+    assert!(!out.ok && out.detail.ends_with("the list changed while it was read"), "{}", out.detail);
+}
+
+#[tokio::test]
+async fn each_refuses_a_list_longer_than_it_reads() {
+    let page = ListPage::default().list("div.card", 201);
+    let out = execute_with(&mut page.driver(Arc::default()), &each(json!({ "not_empty": true })), &quick()).await;
+    assert!(
+        !out.ok && out.detail.ends_with("matched 201 items, more than the 200 expect_each reads - narrow the list"),
+        "{}",
+        out.detail
+    );
+}
+
+#[tokio::test]
+async fn each_attribute_checks_read_the_attribute_not_the_text() {
+    // The text would match; the attribute is what is asked.
+    let page = ListPage::default()
+        .list("div.card", 2)
+        .text("c1", "View A")
+        .text("c2", "View B")
+        .attr("c1", "View A");
+    let out = execute_with(
+        &mut page.driver(Arc::default()),
+        &each(json!({ "attribute": "aria-label", "matches": "^View " })),
+        &quick(),
+    )
+    .await;
+    assert!(!out.ok);
+    assert!(out.detail.contains("item 2 of 2 (") && out.detail.ends_with("has no aria-label attribute"), "{}", out.detail);
+
+    let page = ListPage::default().list("div.card", 2).attr("c1", "View A").attr("c2", "View B");
+    let out = execute_with(
+        &mut page.driver(Arc::default()),
+        &each(json!({ "attribute": "aria-label", "matches": "^View " })),
+        &quick(),
+    )
+    .await;
+    assert_eq!(out.detail, "2 items of div.card each have aria-label matching /^View /");
+}
+
+/// Every reason an item can fail, in the words a person reads, and the way
+/// each passes.
+#[tokio::test]
+async fn each_says_why_in_every_form() {
+    let run = |attrs: &'static [(&str, &str)], texts: &'static [(&str, &str)], v: Value| async move {
+        let mut page = ListPage::default().list("div.card", 2);
+        for (k, t) in texts {
+            page = page.text(k, t);
+        }
+        for (k, a) in attrs {
+            page = page.attr(k, a);
+        }
+        let mut v = v;
+        v["timeout_ms"] = json!(150);
+        execute_with(&mut page.driver(Arc::default()), &each(v), &quick()).await.detail
+    };
+    let t: &[(&str, &str)] = &[("c1", "Draft one"), ("c2", "Draft  two")];
+    assert!(run(&[], t, json!({ "equals": "Draft one" })).await.ends_with("item 2 of 2 (\"Draft two\"): expected text \"Draft one\" but saw \"Draft two\""));
+    assert!(run(&[], t, json!({ "contains": "one" })).await.ends_with("item 2 of 2 (\"Draft two\"): expected it to contain \"one\" but saw \"Draft two\""));
+    assert!(run(&[], &[("c1", "x")], json!({ "not_empty": true })).await.ends_with("item 2 of 2 (\"\"): expected text but saw \"\""));
+    assert_eq!(run(&[], t, json!({ "contains": "Draft" })).await, "2 items of div.card each contain \"Draft\"");
+    let a: &[(&str, &str)] = &[("c1", "/a"), ("c2", "/b")];
+    assert!(run(a, &[], json!({ "attribute": "href", "equals": "/a" })).await.ends_with("item 2 of 2 (\"\"): expected href=\"/a\" but saw \"/b\""));
+    assert!(run(a, &[], json!({ "attribute": "href", "contains": "a" })).await.ends_with("expected href=\"a\" as part of it but saw \"/b\""));
+    assert!(run(a, &[], json!({ "attribute": "href", "matches": "a$" })).await.ends_with("expected href=/a$/ but saw \"/b\""));
+    assert!(run(&[("c1", "/a"), ("c2", "")], &[], json!({ "attribute": "href", "not_empty": true })).await.ends_with("expected href=(not empty) but saw \"\""));
+    assert_eq!(run(a, &[], json!({ "attribute": "href", "not_empty": true })).await, "2 items of div.card each have a href");
+    assert_eq!(run(a, &[], json!({ "attribute": "href", "contains": "/" })).await, "2 items of div.card each have href containing \"/\"");
+}
+
+/// A long label is cut, and the item's own text is read when the check
+/// looked at something else.
+#[tokio::test]
+async fn each_cuts_a_long_label_and_reads_the_item_for_a_child_failure() {
+    let long = "x".repeat(80);
+    let page = ListPage::default().list("div.card", 1).text("c1", &long);
+    let out = execute_with(&mut page.driver(Arc::default()), &each(json!({ "equals": "short", "timeout_ms": 150 })), &quick()).await;
+    assert!(out.detail.contains(&format!("(\"{}...\")", "x".repeat(60))), "{}", out.detail);
+
+    let page = ListPage::default().list("div.card", 1).text("c1", "Card one").inside(1, "h3", 0);
+    let out = execute_with(
+        &mut page.driver(Arc::default()),
+        &each(json!({ "child": { "css": "h3" }, "visible": true, "timeout_ms": 150 })),
+        &quick(),
+    )
+    .await;
+    assert!(out.detail.ends_with("item 1 of 1 (\"Card one\"): h3 is not on the page"), "{}", out.detail);
+}

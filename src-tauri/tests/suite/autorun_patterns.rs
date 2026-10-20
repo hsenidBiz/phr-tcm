@@ -441,3 +441,43 @@ fn pattern_and_bound_failures_fall_in_their_classes() {
     assert_eq!(classify("waited 300ms: li expected at most 2, counted 3", Some("li")), ErrorClass::CountMismatch);
     assert_eq!(classify("waited 300ms: #n expected aria-label=/^View / but saw \"Edit\"", n), ErrorClass::AttributeMismatch);
 }
+
+/// An `expect_each` failure names the item and its text first; the class is
+/// the reason after them, never anything the item's text happens to say.
+#[test]
+fn each_failures_fall_in_their_classes() {
+    let list = "div.card";
+    let item = |label: &str, why: &str| format!("waited 300ms: {list} item 2 of 3 ({label:?}): {why}");
+    let class = |detail: String| classify(&detail, Some(list));
+    for (why, expected) in [
+        ("expected text to match /^AUTOTEST / but saw \"Other B\"", ErrorClass::TextMismatch),
+        ("expected text \"a\" but saw \"b\"", ErrorClass::TextMismatch),
+        ("expected it to contain \"a\" but saw \"b\"", ErrorClass::TextMismatch),
+        ("expected text but saw \"\"", ErrorClass::TextMismatch),
+        ("h3 is not on the page", ErrorClass::NotFound),
+        ("h3 is there but cannot be seen", ErrorClass::NotVisible),
+        ("h3 matched 2 elements - narrow it, or add nth", ErrorClass::MatchedMany),
+        ("has no aria-label attribute", ErrorClass::AttributeMismatch),
+        ("expected href=\"/a\" but saw \"/b\"", ErrorClass::AttributeMismatch),
+        ("expected href=/a$/ but saw \"/b\"", ErrorClass::AttributeMismatch),
+        ("expected href=(not empty) but saw \"\"", ErrorClass::AttributeMismatch),
+    ] {
+        assert_eq!(class(item("Other B", why)), expected, "{why}");
+    }
+    // Whatever the item says is the page's: a label that reads like a
+    // reason, or holds a quote and a closing bracket, decides nothing.
+    for label in ["Draft is not on the page", "has no x attribute", "a \"b\"): c", "x is still changing (1 so far)", "it is disabled"] {
+        assert_eq!(class(item(label, "expected text \"a\" but saw \"b\"")), ErrorClass::TextMismatch, "{label}");
+        assert_eq!(class(item(label, "h3 is not on the page")), ErrorClass::NotFound, "{label}");
+    }
+    // The list's own sentences.
+    assert_eq!(class(format!("waited 300ms: {list} expected at least 3, counted 2")), ErrorClass::CountMismatch);
+    assert_eq!(class(format!("waited 300ms: {list} the list changed while it was read")), ErrorClass::StillMoving);
+    // Without the script's target the sentence still reads the same way.
+    let bare = format!("waited 300ms: {list} item 1 of 2 (\"x is not on the page\"): expected text \"a\" but saw \"b\"");
+    assert_eq!(classify(&bare, None), ErrorClass::TextMismatch);
+    assert_eq!(classify(&format!("waited 300ms: {list} the list changed while it was read"), None), ErrorClass::StillMoving);
+    // And the list is what a pattern is about.
+    let each: Action = serde_json::from_value(serde_json::json!({ "kind": "expect_each", "selector": { "css": list }, "child": { "css": "h3" }, "not_empty": true })).unwrap();
+    assert_eq!(action_target(&each).as_deref(), Some(list));
+}

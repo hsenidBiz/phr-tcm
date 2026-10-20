@@ -158,6 +158,40 @@ pub fn action_words(action: &Action) -> String {
             Some(n) if *n > 1 => format!("press {} {n} times", key.trim()),
             _ => format!("press {}", key.trim()),
         },
+        Action::ExpectEach { selector, min, child, attribute, visible, equals, contains, matches, .. } => {
+            let name = attribute.as_deref().unwrap_or("").trim();
+            let to = if *visible {
+                "be visible".to_string()
+            } else if let Some(w) = equals {
+                match name {
+                    "" => format!("read \"{w}\""),
+                    _ => format!("have {name}=\"{w}\""),
+                }
+            } else if let Some(w) = contains {
+                match name {
+                    "" => format!("contain \"{w}\""),
+                    _ => format!("have {name} containing \"{w}\""),
+                }
+            } else if let Some(p) = matches {
+                let p = crate::browser::pattern::shown(p);
+                match name {
+                    "" => format!("match {p}"),
+                    _ => format!("have {name} matching {p}"),
+                }
+            } else if name.is_empty() {
+                "have text".to_string()
+            } else {
+                format!("have a {name}")
+            };
+            let at_least = match min {
+                Some(n) if *n > 1 => format!(" (at least {n})"),
+                _ => String::new(),
+            };
+            match child {
+                Some(c) => format!("expect {} in each of {} to {to}{at_least}", c.describe(), selector.describe()),
+                None => format!("expect each of {} to {to}{at_least}", selector.describe()),
+            }
+        }
         Action::ExpectDialog { text, contains, answer, prompt_text, .. } => {
             let said = match (text, contains) {
                 (Some(t), _) => format!(" saying \"{t}\""),

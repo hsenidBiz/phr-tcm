@@ -67,6 +67,7 @@ fn the_guide_names_every_action_the_executor_can_run() {
         serde_json::from_value(serde_json::json!({ "kind": "expect_no_row", "table": "t", "cells": { "A": "b" } })).unwrap(),
         serde_json::from_value(serde_json::json!({ "kind": "expect_sorted", "table": "t", "column": "A", "order": "ascending" })).unwrap(),
         serde_json::from_value(serde_json::json!({ "kind": "expect_row_count", "table": "t", "equals": 1 })).unwrap(),
+        serde_json::from_value(serde_json::json!({ "kind": "expect_each", "selector": "s", "not_empty": true })).unwrap(),
         serde_json::from_value(serde_json::json!({ "kind": "use_component", "component": "c" })).unwrap(),
     ];
     let emitted: Vec<String> = samples
@@ -1869,4 +1870,21 @@ fn the_guide_says_when_the_clean_up_runs_and_what_it_may_check() {
         assert!(flat.contains(said), "the guide does not say: {said}");
     }
     assert!(!flat.contains("It runs after the case's last step and also after a step that failed"), "the old, unqualified rule is still there");
+}
+
+/// `expect_each` is taught with a sample that is a real, valid action, and
+/// it is one of the checks that may match several.
+#[test]
+fn the_guide_teaches_expect_each() {
+    let g = autorun_guide();
+    let line = g.lines().find(|l| l.starts_with("- `{ \"kind\": \"expect_each\"")).expect("a vocabulary line for expect_each");
+    let sample = first_balanced(line, line.find('{').unwrap(), '{', '}');
+    let action: Action = serde_json::from_str(sample).expect("the sample parses");
+    assert_eq!(action.validate(), Ok(()));
+    assert!(matches!(action, Action::ExpectEach { .. }));
+    for word in ["`min` (default 1)", "at most 200 items", "`\"not_empty\": true`", "`child`", "`attribute`"] {
+        assert!(line.contains(word), "the line never says {word}");
+    }
+    assert!(g.contains("Only `expect_count`, `expect_each`, `expect_hidden` and `wait_for` are"), "the selectors section never names expect_each");
+    assert!(!line.contains('\u{2014}') && !line.contains('\u{2013}'));
 }

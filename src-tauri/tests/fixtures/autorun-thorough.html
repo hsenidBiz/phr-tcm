@@ -1,0 +1,29 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Auto Run thorough-checks fixture</title>
+<style>
+  body { margin: 0; font-family: Arial, sans-serif; }
+  #bar { width: 800px; height: 48px; position: relative; background: #eee; }
+  #new { position: absolute; right: 8px; top: 8px; width: 90px; height: 32px; }
+  .card { border: 1px solid #999; margin: 8px; padding: 8px; width: 300px; }
+  .card h3 { display: block; min-height: 1.2em; margin: 0 0 4px 0; }
+  .card i.fa-eye { display: inline-block; width: 14px; height: 14px; background: #369; }
+  ul#status { list-style: none; padding: 0; margin: 8px; }
+  ul#status li { display: block; padding: 2px 0; }
+</style>
+</head>
+<body>
+  <div id="bar"><button id="new">New</button></div>
+  <div class="card full" data-cycle-id="101"><h3>AUTOTEST Alpha</h3><i class="fa-eye"></i></div>
+  <div class="card full" data-cycle-id="102"><h3>AUTOTEST Beta</h3><i class="fa-eye"></i></div>
+  <div class="card blank" data-cycle-id="103"><h3></h3><i class="fa-eye"></i></div>
+  <ul id="status">
+    <li role="option">All (12)</li>
+    <li role="option">Draft (3)</li>
+    <li role="option">Published (5)</li>
+    <li role="option">Unpublished (4)</li>
+  </ul>
+</body>
+</html>

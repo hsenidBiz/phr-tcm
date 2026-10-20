@@ -55,6 +55,10 @@ pub enum Check<'a> {
     /// The one match's computed style `property`, by `READ_STYLE_JS`,
     /// judged by `style::judge`.
     Style { property: &'a str, want: super::style::Want<'a> },
+    /// Every match of the target is an item of a list, and each passes
+    /// `want` (`each::look_each`): the item's text, its `attribute`, or the
+    /// one element `child` finds inside it. At least `min` items.
+    Each { min: u32, child: Option<&'a Target>, attribute: Option<&'a str>, want: super::each::EachWant<'a> },
 }
 
 /// `this` is the element. Why it is disabled, in a few words, or `""` when
@@ -402,6 +406,9 @@ pub(crate) async fn look<D: Driver>(
                 }
             }
         },
+        Check::Each { min, child, attribute, want } => {
+            return super::each::look_each(d, &what, &handles, *min, *child, *attribute, want).await;
+        }
         Check::Focused => match only(&handles) {
             Err(why) => Err(why),
             Ok(h) => {

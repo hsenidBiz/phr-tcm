@@ -3959,3 +3959,37 @@ async fn expect_style_reads_the_computed_style() {
     // An endless animation never settles: its value is read as it is.
     must(run(&mut live, style("#pulse", "color", "contains", "rgb(")).await);
 }
+
+/// `expect_each` against a real page: a pattern on every full card, the
+/// blank title named by its item number, and a child's visibility.
+#[tokio::test]
+#[ignore = "starts a real headless Edge"]
+async fn expect_each_reads_every_item_of_a_real_list() {
+    let mut live = open().await;
+    let url = fixture_url().replace("autorun-live.html", "autorun-thorough.html");
+    must(run(&mut live, json!({ "kind": "navigate", "url": url })).await);
+    let each = |list: &str, rest: serde_json::Value| {
+        let mut v = json!({ "kind": "expect_each", "selector": { "css": list }, "timeout_ms": 1500 });
+        v.as_object_mut().unwrap().extend(rest.as_object().unwrap().clone());
+        v
+    };
+    // The full cards all start with AUTOTEST.
+    let out = run(&mut live, each("div.card.full[data-cycle-id]", json!({ "child": { "css": "h3" }, "matches": "^AUTOTEST " }))).await;
+    assert!(out.ok, "{}", out.detail);
+    assert_eq!(out.detail, "2 items of div.card.full[data-cycle-id], each with h3 that matches /^AUTOTEST /");
+    // The blank one is the third card, and is named so.
+    let out = run(&mut live, each("div.card[data-cycle-id]", json!({ "child": { "css": "h3" }, "not_empty": true }))).await;
+    refused(out, "item 3 of 3 (\"\"): expected text but saw \"\"");
+    let out = run(&mut live, each("div.card[data-cycle-id]", json!({ "child": { "css": "h3" }, "matches": "^AUTOTEST " }))).await;
+    refused(out, "item 3 of 3 (\"\"): expected text to match /^AUTOTEST / but saw \"\"");
+    // The eye icon is drawn on every card.
+    must(run(&mut live, each("div.card[data-cycle-id]", json!({ "child": { "css": "i.fa-eye" }, "visible": true }))).await);
+    // The cards themselves hold text, and the attribute is read, not the text.
+    must(run(&mut live, each("div.card[data-cycle-id]", json!({ "attribute": "data-cycle-id", "matches": "^10\\d$" }))).await);
+    refused(
+        run(&mut live, each("div.card[data-cycle-id]", json!({ "attribute": "title", "not_empty": true }))).await,
+        "item 1 of 3 (",
+    );
+    // A list that is not there fails on its count, not on an item.
+    refused(run(&mut live, each("div.gone", json!({ "not_empty": true }))).await, "expected at least 1, counted 0");
+}

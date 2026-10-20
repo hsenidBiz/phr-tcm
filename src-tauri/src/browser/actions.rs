@@ -6,6 +6,7 @@
 //! rather than guessing.
 
 use super::dialogs;
+use super::each;
 use super::table;
 use super::drag;
 use super::keys;
@@ -402,6 +403,33 @@ pub enum Action {
         at_least: Option<u32>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         at_most: Option<u32>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        timeout_ms: Option<u32>,
+    },
+    /// Every match of `selector` (a list) passes one check, exactly one of
+    /// `visible` (the `child`, which needs one), `equals`, `contains`,
+    /// `matches` or `not_empty`. With `child`, the check reads the one
+    /// element `child` finds inside each item; with `attribute`, that
+    /// attribute instead of the text. `min` (default 1) is the fewest items
+    /// there may be; at most `each::EACH_MAX` are read.
+    ExpectEach {
+        selector: Target,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        min: Option<u32>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        child: Option<Target>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        attribute: Option<String>,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        visible: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        equals: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        contains: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        matches: Option<String>,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        not_empty: bool,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         timeout_ms: Option<u32>,
     },
@@ -1216,6 +1244,45 @@ impl Action {
                 }
                 selector.validate()
             }
+            Action::ExpectEach { selector, min, child, attribute, visible, equals, contains, matches, not_empty, .. } => {
+                selector.validate()?;
+                match min {
+                    Some(0) => return Err(EACH_MIN_ZERO.to_string()),
+                    Some(n) if *n as usize > super::each::EACH_MAX => {
+                        return Err(format!("expect_each reads at most {} items, so \"min\" cannot be {n}", super::each::EACH_MAX));
+                    }
+                    _ => {}
+                }
+                let given = [*visible, equals.is_some(), contains.is_some(), matches.is_some(), *not_empty];
+                if given.iter().filter(|g| **g).count() != 1 {
+                    return Err(EACH_NEEDS_ONE.to_string());
+                }
+                if *visible && child.is_none() {
+                    return Err(EACH_VISIBLE_NEEDS_CHILD.to_string());
+                }
+                if *visible && attribute.is_some() {
+                    return Err(EACH_VISIBLE_NO_ATTRIBUTE.to_string());
+                }
+                if attribute.as_deref().is_some_and(|a| a.trim().is_empty()) {
+                    return Err("expect_each has an empty attribute name".to_string());
+                }
+                if contains.as_deref().is_some_and(|c| c.trim().is_empty()) {
+                    return Err("expect_each has an empty contains - everything contains nothing".to_string());
+                }
+                if let Some(p) = matches {
+                    super::pattern::check_pattern("expect_each", p)?;
+                }
+                if let Some(child) = child {
+                    if child.is_legacy() {
+                        return Err(EACH_CHILD_LEGACY.to_string());
+                    }
+                    if super::locator::has_input_placeholder(child) {
+                        return Err(EACH_CHILD_INPUT.to_string());
+                    }
+                    child.validate().map_err(|why| format!("expect_each child: {why}"))?;
+                }
+                Ok(())
+            }
             Action::CheckText { value } if value.trim().is_empty() => {
                 Err("check_text has an empty value".to_string())
             }
@@ -1438,6 +1505,7 @@ impl Action {
             | Action::ExpectChecked { selector, .. }
             | Action::Upload { selector, .. }
             | Action::ExpectFocused { selector, .. } => vec![selector],
+            Action::ExpectEach { selector, child, .. } => std::iter::once(selector).chain(child.as_ref()).collect(),
             Action::WhenVisible { selector, then, .. } | Action::RepeatWhileVisible { selector, then, .. } => {
                 std::iter::once(selector).chain(then.iter().flat_map(Action::targets)).collect()
             }
@@ -1486,6 +1554,7 @@ impl Action {
             | Action::ExpectChecked { selector, .. }
             | Action::Upload { selector, .. }
             | Action::ExpectFocused { selector, .. } => vec![selector],
+            Action::ExpectEach { selector, child, .. } => std::iter::once(selector).chain(child.as_mut()).collect(),
             Action::WhenVisible { selector, then, .. } | Action::RepeatWhileVisible { selector, then, .. } => {
                 std::iter::once(selector).chain(then.iter_mut().flat_map(Action::targets_mut)).collect()
             }
@@ -1560,6 +1629,7 @@ impl Action {
                 | Action::ExpectNoRow { .. }
                 | Action::ExpectSorted { .. }
                 | Action::ExpectRowCount { .. }
+                | Action::ExpectEach { .. }
         )
     }
 }
@@ -1571,6 +1641,21 @@ pub const ATTRIBUTE_EQUALS_OR_ABSENT: &str =
 pub const ATTRIBUTE_NEEDS_ONE: &str = "expect_attribute needs \"equals\" (the value it must have), \"matches\" (a pattern its value must match) or \"absent\": true (it must not be there)";
 /// `expect_attribute` given `matches` together with `equals` or `absent`.
 pub const ATTRIBUTE_ONE_OF: &str = "expect_attribute takes one of \"equals\", \"matches\" or \"absent\": true, not two";
+/// `expect_each` given none or several of its five checks.
+pub const EACH_NEEDS_ONE: &str = "expect_each takes exactly one of \"visible\": true, \"equals\", \"contains\", \"matches\" or \"not_empty\": true";
+/// `expect_each` with a `min` of 0: a list of none would pass any check.
+pub const EACH_MIN_ZERO: &str = "expect_each needs \"min\" of 1 or more - a list of none would pass any check";
+/// `expect_each` with `visible` and no `child`.
+pub const EACH_VISIBLE_NEEDS_CHILD: &str =
+    "expect_each: \"visible\": true needs a \"child\" - every item of the list is already visible";
+/// `expect_each` with `visible` and an `attribute`.
+pub const EACH_VISIBLE_NO_ATTRIBUTE: &str = "expect_each: \"visible\" reads no attribute - leave \"attribute\" out";
+/// `expect_each` with a child written as a selector string.
+pub const EACH_CHILD_LEGACY: &str =
+    "expect_each's child is a locator object or a list of them, not a selector string: it is looked for inside each item";
+/// `expect_each` with a child holding a component input.
+pub const EACH_CHILD_INPUT: &str =
+    "expect_each's child cannot hold a component input - put the input in the list's locator";
 /// `expect_text` given both `equals` and `matches`, or neither.
 pub const TEXT_NEEDS_ONE: &str = "expect_text takes exactly one of \"equals\" (the whole text) or \"matches\" (a pattern)";
 /// The shortest `timeout_ms` an `expect_count` with `at_most` may have: the
@@ -2041,6 +2126,26 @@ async fn run<D: Driver>(d: &mut D, action: &Action, timing: &Timing, policy: &Po
             let text = table::SortAs::Kind(table::SortKind::Text);
             let check = table::TableCheck::Sorted { column, order: *order, sort_as: sort_as.as_ref().unwrap_or(&text) };
             table::expect_table(d, table, check, wait(timeout_ms, timing), timing.poll_ms).await
+        }
+        Action::ExpectEach { selector, min, child, attribute, visible, equals, contains, matches, not_empty, timeout_ms } => {
+            // `validate` holds the five to exactly one.
+            let re;
+            let want = match (visible, equals, contains, matches, not_empty) {
+                (true, ..) => each::EachWant::Visible,
+                (_, Some(w), ..) => each::EachWant::Equals(w),
+                (_, _, Some(w), ..) => each::EachWant::Contains(w),
+                (_, _, _, Some(p), _) => {
+                    re = match super::pattern::compiled(p) {
+                        Ok(re) => re,
+                        Err(why) => return ActionOutcome::failed(why),
+                    };
+                    each::EachWant::Matches { pattern: p, re: &re }
+                }
+                (_, _, _, _, true) => each::EachWant::NotEmpty,
+                _ => return ActionOutcome::failed(EACH_NEEDS_ONE),
+            };
+            let check = Check::Each { min: min.unwrap_or(1), child: child.as_ref(), attribute: attribute.as_deref(), want };
+            expect::expect(d, selector, check, wait(timeout_ms, timing), timing.poll_ms).await
         }
         Action::ExpectRowCount { table, equals, at_least, at_most, timeout_ms } => match table::row_count(*equals, *at_least, *at_most) {
             Ok(want) => table::expect_table(d, table, table::TableCheck::Count(want), wait(timeout_ms, timing), timing.poll_ms).await,

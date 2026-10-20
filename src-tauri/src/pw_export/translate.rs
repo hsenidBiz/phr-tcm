@@ -81,6 +81,8 @@ fn check_action(a: &Action, origins: &[String]) -> Res<()> {
         | Action::SwitchTab { .. }
         | Action::ExpectTabClosed { .. } => Ok(()),
         Action::PressKey { key, .. } => key_name(key).map(|_| ()),
+        // The export of the list check is a later piece of this batch.
+        Action::ExpectEach { .. } => no("expect_each cannot be exported yet"),
         Action::Click { selector }
         | Action::Fill { selector, .. }
         | Action::WaitFor { selector, .. }
@@ -1124,7 +1126,11 @@ impl Em<'_> {
             }
             // Refused by `check_action` above; written out so that a new
             // action has to be decided here.
-            Action::SignIn { .. } | Action::UseComponent { .. } | Action::Upload { .. } | Action::ExpectDialog { .. } => {
+            Action::SignIn { .. }
+            | Action::UseComponent { .. }
+            | Action::Upload { .. }
+            | Action::ExpectDialog { .. }
+            | Action::ExpectEach { .. } => {
                 return check_action(a, self.input.origins)
             }
         }

@@ -126,6 +126,46 @@ describe("a sentence for every action kind", () => {
       'Check the element #people has a row with A "1", B "2" and C "3" (up to 5 s)',
     ],
     [
+      { kind: "expect_each", selector: { role: "row" }, matches: "^AUTOTEST " },
+      "Check each match of the row: it matches /^AUTOTEST /",
+    ],
+    [
+      { kind: "expect_each", selector: { role: "row" }, equals: "Active", timeout_ms: 5000 },
+      'Check each match of the row: it reads "Active" (up to 5 s)',
+    ],
+    [
+      { kind: "expect_each", selector: { role: "row" }, contains: "Draft", min: 2 },
+      'Check each match of the row: it contains "Draft" (at least 2)',
+    ],
+    [
+      { kind: "expect_each", selector: { role: "row" }, min: 1, not_empty: true },
+      "Check each match of the row: it is not empty",
+    ],
+    [
+      { kind: "expect_each", selector: { role: "article", name: "Cycle" }, child: { role: "heading", name: "Title" }, visible: true },
+      'Check each match of the "Cycle" card: the "Title" heading in it is showing',
+    ],
+    [
+      { kind: "expect_each", selector: { role: "row" }, child: { role: "link" }, attribute: "href", equals: "/cycles" },
+      'Check each match of the row: the link in it has href set to "/cycles"',
+    ],
+    [
+      { kind: "expect_each", selector: { role: "row" }, child: { role: "link" }, attribute: "href", contains: "cycle" },
+      'Check each match of the row: the link in it has href containing "cycle"',
+    ],
+    [
+      { kind: "expect_each", selector: { role: "row" }, attribute: "aria-label", matches: "^View " },
+      "Check each match of the row: it has aria-label matching /^View /",
+    ],
+    [
+      { kind: "expect_each", selector: { role: "row" }, attribute: "title", not_empty: true },
+      "Check each match of the row: it has a title",
+    ],
+    [
+      { kind: "expect_each", selector: { role: "row" }, child: { role: "heading" }, not_empty: true, min: 3, timeout_ms: 2500 },
+      "Check each match of the row: the heading in it is not empty (at least 3) (up to 2.5 s)",
+    ],
+    [
       { kind: "expect_sorted", table: { role: "grid", name: "Employees" }, column: "Joined", order: "descending", as: "date" },
       'Check the "Employees" table is sorted by Joined, descending, as dates',
     ],
@@ -238,6 +278,7 @@ describe("a sentence for every action kind", () => {
         "expect_response", "api_request", "when_visible", "reload", "expire_session", "return_to_area",
         "press_key", "expect_focused", "expect_download", "expect_tab", "open_tab", "switch_tab", "close_tab",
         "expect_tab_closed", "drag", "expect_dialog", "expect_row", "expect_no_row", "expect_sorted", "expect_row_count",
+        "expect_each",
       ].sort(),
     );
   });
@@ -391,6 +432,8 @@ describe("an action that is not the right shape reads as one plain line, never a
     ["a text check with both equals and matches", { kind: "expect_text", selector: "#a", equals: "x", matches: "y" }],
     ["a text check with neither", { kind: "expect_text", selector: "#a" }],
     ["a count with no bound", { kind: "expect_count", selector: "#a" }],
+    ["an each check with two checks", { kind: "expect_each", selector: { css: "li" }, equals: "a", not_empty: true }],
+    ["an each check with none", { kind: "expect_each", selector: { css: "li" } }],
     ["a row count with two counts", { kind: "expect_row_count", table: "#t", equals: 1, at_most: 2 }],
     ["a style check with two comparisons", { kind: "expect_style", selector: "#a", property: "color", equals: "red", contains: "r" }],
     ["a style check with no comparison", { kind: "expect_style", selector: "#a", property: "color" }],

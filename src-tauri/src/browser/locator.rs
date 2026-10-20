@@ -509,9 +509,23 @@ pub async fn resolve_explained<D: Driver>(d: &mut D, target: &Target) -> Result<
         let handles = page::call_elements(d, &doc, LEGACY_JS, &[json!(sel)]).await?;
         return Ok(Resolved { handles, unreachable_frame: None });
     }
-    let steps = target.steps();
+    walk(d, vec![doc], target.steps()).await
+}
+
+/// `resolve_explained` for a target looked for INSIDE `root` (an item of a
+/// list) rather than in the whole page. A legacy string has no place here
+/// (validation refuses it), so it finds nothing.
+pub async fn resolve_within<D: Driver>(d: &mut D, root: &Handle, target: &Target) -> Result<Resolved, CdpError> {
+    if target.is_legacy() {
+        return Ok(Resolved::default());
+    }
+    walk(d, vec![root.clone()], target.steps()).await
+}
+
+/// The chain's steps, one after another, from these roots.
+async fn walk<D: Driver>(d: &mut D, roots: Vec<Handle>, steps: &[LocatorStep]) -> Result<Resolved, CdpError> {
     let mut unreachable_frame = None;
-    let mut roots = vec![doc];
+    let mut roots = roots;
     for (i, step) in steps.iter().enumerate() {
         let mut next = vec![];
         for root in &roots {
