@@ -83,6 +83,11 @@ test("the best kept so far is sent into the frame once it loads", () => {
   expect(post).toHaveBeenCalledWith({ type: "breaker-best", best: 321 }, "*");
 });
 
+test("the hint says how to play, catching what falls included", () => {
+  render(<BreakerGameModal onClose={() => {}} />);
+  expect(screen.getByText(/Catch what falls from a brick/)).toBeTruthy();
+});
+
 test("the Close button closes it", () => {
   const onClose = vi.fn();
   render(<BreakerGameModal onClose={onClose} />);

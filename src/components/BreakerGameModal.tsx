@@ -23,7 +23,7 @@ export default function BreakerGameModal({ onClose }: { onClose: () => void }) {
   return (
     <GameFrameModal
       title="Brick game"
-      hint="Move with the mouse or Left and Right, Space or click to launch, P to pause. Esc closes the game."
+      hint="Move with the mouse or Left and Right, Space or click to launch, P to pause. Catch what falls from a brick for a boost. Esc closes the game."
       src={BREAKER_SRC}
       escapeType="breaker-escape"
       onClose={onClose}
