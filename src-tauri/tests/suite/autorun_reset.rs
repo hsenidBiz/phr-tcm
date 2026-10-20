@@ -14,7 +14,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use v2_lib::autorun::plan::Pause;
 use v2_lib::autorun::preconditions::{NoDb, PreconditionDb, NEED_DB};
-use v2_lib::autorun::replay::{stopped_at_pause, run_cases_planned, Browsers, CaseToRun, ResetGate, STOPPED_AT_PAUSE, STOPPED_AT_RESET};
+use v2_lib::autorun::replay::{stopped_at_pause, run_cases_planned, Browsers, CaseToRun, ResetGate, STOPPED_AT_PAUSE};
 use v2_lib::autorun::reset_wait::{AppGate, ResetWaits, NOT_WAITING};
 use v2_lib::autorun::{report, store, CaseScript, LocalRun, ResetRecord, RESET_CONTINUED, RESET_STOPPED};
 use v2_lib::browser::timing::Timing;
@@ -656,7 +656,7 @@ fn the_report_shows_batches_and_the_pauses_between_them() {
 }
 
 /// New runs name the batch they stopped before; the webview says the same
-/// words, and runs saved before batches keep their own.
+/// words.
 #[test]
 fn the_not_run_reason_names_the_batch_and_the_webview_agrees() {
     assert_eq!(stopped_at_pause(3), "not run: the run stopped at a pause before Batch 3");
@@ -666,5 +666,4 @@ fn the_not_run_reason_names_the_batch_and_the_webview_agrees() {
 ", "
 ");
     assert!(ts.contains(&format!("export const STOPPED_AT_PAUSE = \"{STOPPED_AT_PAUSE}\";")), "plan.ts disagrees");
-    assert!(ts.contains(&format!("export const STOPPED_AT_RESET = \"{STOPPED_AT_RESET}\";")), "plan.ts disagrees");
 }

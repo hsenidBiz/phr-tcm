@@ -108,11 +108,6 @@ pub trait Browsers {
     fn close(&mut self, d: Self::D) -> impl std::future::Future<Output = ()>;
 }
 
-/// The reason each case left was recorded with when a run ended at a reset
-/// point, before run batches. Runs saved then keep it; new runs say
-/// [`stopped_at_pause`].
-pub const STOPPED_AT_RESET: &str = "not run: the run stopped at a reset point";
-
 /// The words before the batch number in [`stopped_at_pause`]. The webview
 /// says the same (`src/screens/AutoRun/plan.ts`, `STOPPED_AT_PAUSE`).
 pub const STOPPED_AT_PAUSE: &str = "not run: the run stopped at a pause before Batch";
