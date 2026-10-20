@@ -157,6 +157,26 @@ test("the AI Tools Breakdown card names every MCP tool", async () => {
   expect(card.textContent).not.toMatch(/[a-z]+_[a-z]/);
 });
 
+test("the AI Tools Breakdown states the recommended way to write test cases once, before the tool list", async () => {
+  mockIPC((cmd) => {
+    if (cmd === "bridge_status") return { port: 51234, mcp_exe: "C:\apps\tcm\v2.exe" };
+    if (cmd === "detect_ai_tools") return [];
+  });
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  renderBridge(qc);
+
+  const card = (await screen.findByText("AI Tools Breakdown")).closest("section")!;
+  const text = card.textContent ?? "";
+  expect(text).toMatch(/The best way to write test cases: ask the assistant to read the writing guide/);
+  expect(text.match(/The best way to write test cases/g)).toHaveLength(1);
+  // Near the top: ahead of the first tool entry.
+  expect(text.indexOf("The best way to write test cases")).toBeLessThan(text.indexOf("Test Suites"));
+  // Plain words: none of the internal terms the old text used.
+  expect(text).not.toMatch(/(bridge|route|MCP|schema|lease|CDP|HAR|locator|endpoints?)/i);
+  // The fact that nothing writes to Azure DevOps is said once, not twice.
+  expect(text.match(/Azure DevOps/g)).toHaveLength(1);
+});
+
 // The AI Tools tab's own display gate, toolShown() (toolOffered() &&
 // !capture for the Auto Run and API template tools), hides every render
 // site - the switch row, the breakdown-card entry and the numbered-list
@@ -983,7 +1003,7 @@ test("the breakdown names the Crystal Reports tools only while that module is on
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   renderBridge(qc);
   await screen.findByText("Tools an assistant may use");
-  const entry = [...document.querySelectorAll("li")].find((li) => li.textContent?.startsWith("Crystal Reports:"));
+  const entry = [...document.querySelectorAll("li")].find((li) => li.textContent?.startsWith("Crystal Reports —"));
   expect(entry, "the breakdown has a Crystal Reports entry").toBeTruthy();
   expect(entry!.textContent).toMatch(/saved over the file at once/);
 });
@@ -997,7 +1017,7 @@ test("the API templates breakdown says the assistant maps a module's stages and 
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   renderBridge(qc);
   await screen.findByText("Tools an assistant may use");
-  const entry = [...document.querySelectorAll("li")].find((li) => li.textContent?.startsWith("API templates:"))!;
+  const entry = [...document.querySelectorAll("li")].find((li) => li.textContent?.startsWith("API templates —"))!;
   expect(entry, "the API templates breakdown entry").toBeTruthy();
   expect(entry.textContent).toMatch(/flow/i);
   expect(entry.textContent).toMatch(/stage/i);

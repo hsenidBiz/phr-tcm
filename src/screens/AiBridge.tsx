@@ -1038,108 +1038,56 @@ export default function AiBridge() {
       <section className="space-y-3 rounded-md border border-border bg-surface p-4">
         <h2 className="text-sm font-semibold text-text">AI Tools Breakdown</h2>
         <p className="text-sm text-muted">
+          The best way to write test cases: ask the assistant to read the
+          writing guide and a few example cases, then draft cases for your PBI
+          and build the run sheet. Import the result yourself on the Import
+          Test Cases tab. Keep the file watched, and any problems show up here
+          as it saves.
+        </p>
+        <p className="text-sm text-muted">
           {/* No count in the sentence: it went stale twice - the list
               below is the inventory. */}
-          Connected AI tools can call the tools this app exposes. All of them
-          read, reshape the AI's own draft, or save local files — none can
-          write to Azure DevOps. These are the ones you can switch above:
+          Connected assistants can read, tidy up their own draft and save files
+          on this computer. None of them can change anything in Azure DevOps.
+          Each tool below has a switch above:
         </p>
         <ul className="space-y-1.5 text-xs text-muted">
           <li>
-            <span className="font-medium text-text">Test Suites</span> — two tools under one switch: one finds a test suite by plan name, suite name or
-            PBI id, the other reads the cases in it, in the suite&apos;s own order, with an option to
-            include every suite beneath a folder. This is how an assistant reads a static or
-            query-based suite as a whole, without knowing its PBI or every case id. Reading
-            only — the same view as the Search Suites tab. Off, an assistant reaches cases through
-            a PBI or their own ids alone.
+            <span className="font-medium text-text">Test Suites</span> — find a test suite by plan name, suite name or PBI id, and read its cases in order. Read only. Off: it can reach cases only through a PBI or case ids.
           </li>
           <li>
-            <span className="font-medium text-text">Run results</span> — how this PBI&apos;s cases did the last time they were run: failed, blocked,
-            passed or not run yet, with a count of each and the tester&apos;s own comments.
-            The fastest way to turn a failed run into the cases that should have caught
-            it. Switch it off to keep run results away from an assistant.
+            <span className="font-medium text-text">Run results</span> — see how a PBI&apos;s cases did on their last run, with the testers&apos; comments. Off: the assistant sees no results.
           </li>
           <li>
-            <span className="font-medium text-text">Project tags</span> — the tag names this project already uses, so an assistant reuses yours instead of
-            inventing near-duplicates. Served from this app&apos;s cache, at no request
-            cost. Off, it will still tag cases — it just has to guess.
+            <span className="font-medium text-text">Project tags</span> — use the tags your project already has, so it does not invent new ones. Off: it has to guess.
           </li>
           <li>
-            <span className="font-medium text-text">Find a PBI</span> — searches this project&apos;s Product Backlog Items by title, so a job can start
-            from a name rather than an id you looked up yourself. Typing a number finds
-            that item directly. It matches Product Backlog Items only, never bugs or
-            tasks. Off, you supply the id.
+            <span className="font-medium text-text">Find a PBI</span> — look up a PBI by its title or number. PBIs only, never bugs or tasks. Off: you give it the id.
           </li>
           <li>
-            <span className="font-medium text-text">Project wiki</span> — searches your Azure DevOps wiki and reads the pages it finds, for the documentation
-            behind a requirement. A page opens from a search result, from its path, or
-            from the address in your browser. Searching and reading are one switch
-            because reading only works on a page the search found.
+            <span className="font-medium text-text">Project wiki</span> — search your wiki and read a page, for the background to a requirement. Searching and reading share one switch.
           </li>
           {dbOn && (
           <li>
-            <span className="font-medium text-text">Database Read Access</span>: two tools under one switch: one finds the tables and columns behind a
-            topic, the other runs a single statement on the connection you chose
-            under Database Read Access. It is how an assistant checks what a screen
-            actually reads, or what a value is today, instead of guessing. SELECT
-            only, unless you switch creating, updating and deleting on separately
-            beside that connection. Off, the assistant's database tools are
-            switched off.
+            <span className="font-medium text-text">Database Read Access</span> — find the tables behind a topic and check a value in the database you chose. It can only look, unless you allow changes beside that connection. Off: no database tools.
           </li>
           )}
           {toolShown("get_autorun_guide") && (
             <li>
-              <span className="font-medium text-text">Auto Run scripts</span>: everything an assistant needs to write one
-              browser script and keep it working. It reads the script guide, looks
-              at the page in the browser you opened, tries a locator or a single
-              action there, reads what failed in a run, saves the scripts back one
-              call for a whole PBI&apos;s cases, and notes what it learned about your
-              application. It never signs in, and the script editor shows how often
-              it has repaired a script since you last saved it. Off, Auto Run stays
-              something you drive by hand.
+              <span className="font-medium text-text">Auto Run scripts</span> — write and fix browser scripts for your test cases: read the script guide, look at the page you opened, try a step, then save the scripts. It never signs in. Off: you run Auto Run by hand.
             </li>
           )}
           {toolShown("get_api_template_guide") && (
             <li>
-              <span className="font-medium text-text">API templates</span>: everything an
-              assistant needs to build, prove and run a template that writes test data
-              through this application&apos;s own endpoints. It reads the template format
-              and this project&apos;s account keys and address, lists every saved template
-              with its params, outputs and last run, proves a draft by running it end to
-              end and saves it only if every step passed, and runs a saved template for
-              its outputs. It can also map a module&apos;s wizard as a flow of stages, each
-              with a check on the chosen company database, save that flow with a sample
-              record, and ask which stages are done for a record before every run, so
-              templates go in the order the application allows. Those stage checks read
-              the company database, so they need Database Read Access switched on;
-              while it is off, flows and the templates that depend on them are refused.
-              Proving and running also need the separate API templates switch above, off
-              by default. Off, template work stays something you drive by hand.
+              <span className="font-medium text-text">API templates</span> — build, test and run templates that create test data through the application itself. It can also map a module&apos;s steps as a flow of stages and check which stages are done before each run, so templates go in the order the application allows. Those checks read the company database, so they need Database Read Access switched on. Testing and running also need the API templates switch above, which is off by default. Off: you do template work by hand.
             </li>
           )}
           {toolShown("open_report") && (
             <li>
-              <span className="font-medium text-text">Crystal Reports</span>: everything an
-              assistant needs to work on a report file. It opens a .rpt and reads it as
-              a tree of areas, sections and objects, applies a batch of edits, compares
-              two reports, runs the offline load checks, draws a preview, creates a
-              blank report, and reads the guide to the edit vocabulary. Every edit it
-              makes is saved over the file at once, so keep the report in git to undo
-              one. Off, report work stays something you drive by hand.
+              <span className="font-medium text-text">Crystal Reports</span> — open a report file, read it, change it, compare two reports and draw a preview. Every change is saved over the file at once, so keep the report in git to undo it. Off: you do report work by hand.
             </li>
           )}
         </ul>
-        <p className="text-sm text-muted">
-          Recommended flow: ask the AI to read the writing guide and some
-          example cases, have it draft cases for your PBI, have it build the run
-          sheet, then import the result yourself via the Import Test Cases tab. Keep
-          the file watched and any problems appear here as it saves — the AI
-          never has to ask whether the draft is valid.
-        </p>
-        <p className="text-xs text-faint">
-          Tool is unable to create, update or delete in Azure DevOps, only
-          read data.
-        </p>
       </section>
       </div>
       </div>
