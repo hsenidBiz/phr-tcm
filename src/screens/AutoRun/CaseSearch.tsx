@@ -1,11 +1,13 @@
-// The search box above the Auto Run case list. It narrows the list by the
-// case id (with or without its "#") or by words in the title, together with
-// the result filters. Several searches can go in at once, separated by
-// commas: a case shows when it matches any of them. Escape empties it while
-// it has focus; so does the clear button beside it.
+// The search box for the Auto Run case list, at the top of the Setup panel.
+// It narrows the list by the case id (with or without its "#") or by words
+// in the title, together with the result filters. Several searches can go
+// in at once, separated by commas: a case shows when it matches any of
+// them. Escape empties it while it has focus; so does the clear button
+// beside it.
 
 import { Input } from "../../components/ui/input";
 import { IconClear } from "../../lib/actionIcons";
+import { cn } from "../../lib/cn";
 
 type Searchable = { id: number; title: string };
 
@@ -41,14 +43,23 @@ export function matchesSearch(c: Searchable, text: string): boolean {
   });
 }
 
-export default function CaseSearch({ value, onChange }: { value: string; onChange: (text: string) => void }) {
+export default function CaseSearch({
+  value,
+  onChange,
+  wide = false,
+}: {
+  value: string;
+  onChange: (text: string) => void;
+  /** The box takes its container's whole width (the Setup panel's). */
+  wide?: boolean;
+}) {
   return (
-    <span className="relative inline-flex items-center">
+    <span className={cn("relative items-center", wide ? "flex w-full" : "inline-flex")}>
       <Input
         aria-label="Search test cases"
-        className="w-56 py-1.5 pl-2 pr-8"
-        placeholder="Id or title, commas for several"
-        title="Search by case id or title. Separate several with commas, for example 135592, 135601"
+        className={cn("py-1.5 pl-2 pr-8", wide ? "w-full" : "w-56")}
+        placeholder="Search test cases by id or title"
+        title="Search the Test cases list by case id or title. Separate several with commas, for example 135592, 135601"
         value={value}
         onChange={(e) => onChange(e.target.value)}
         onKeyDown={(e) => {

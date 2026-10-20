@@ -5,7 +5,8 @@
 // sibling for the Auto Run case list: no All, any number pressed, none
 // pressed meaning no filter. `SuspectedDefectToggle` is one more pill of the
 // same kind for that list: only the cases an assistant marked as a
-// suspected application defect.
+// suspected application defect. `HasScriptToggle` is another: only the
+// cases that already have an Auto Run script.
 //
 // Every button is a pill at body text size, outlined in its result's colour
 // with its count in a badge, and filled with that colour while pressed. The
@@ -16,7 +17,7 @@ import { RESULT_BUCKETS, type ResultBucket, type ResultFilter } from "./verdicts
 
 /** Each filter's colours: outlined at rest, filled while pressed, and the
  * count badge's tint at rest. Tokens only, the ones `bucketTone` uses. */
-type PillName = ResultFilter | "Suspected defects";
+type PillName = ResultFilter | "Suspected defects" | "Has a script";
 
 const PILL_TONE: Record<PillName, { rest: string; on: string; badge: string }> = {
   All: { rest: "border-accent/60 text-accent", on: "border-accent bg-accent text-on-accent", badge: "bg-accent/15" },
@@ -26,6 +27,8 @@ const PILL_TONE: Record<PillName, { rest: string; on: string; badge: string }> =
   "Not run": { rest: "border-border-strong text-muted", on: "border-muted bg-muted text-on-status", badge: "bg-surface-2" },
   // The case row's Suspected defect badge is warning-toned; the pill matches it.
   "Suspected defects": { rest: "border-warning/60 text-warning", on: "border-warning bg-warning text-on-status", badge: "bg-warning/15" },
+  // Not a result: the screen's own accent, like All.
+  "Has a script": { rest: "border-accent/60 text-accent", on: "border-accent bg-accent text-on-accent", badge: "bg-accent/15" },
 };
 
 /** One pill: the filter's name, then its count in a badge when known. */
@@ -163,6 +166,29 @@ export function SuspectedDefectToggle({
       count={count}
       disabled={disabled}
       title="Only the cases marked as a suspected application defect"
+      onClick={onToggle}
+    />
+  );
+}
+
+/** Only the cases that already have an Auto Run script. Works with the
+ * other pills: a case shows when it passes all of them. */
+export function HasScriptToggle({
+  on,
+  count,
+  onToggle,
+}: {
+  on: boolean;
+  /** Left out until every case's script has been read. */
+  count?: number;
+  onToggle: () => void;
+}) {
+  return (
+    <Pill
+      filter="Has a script"
+      on={on}
+      count={count}
+      title="Only the cases that already have an Auto Run script"
       onClick={onToggle}
     />
   );

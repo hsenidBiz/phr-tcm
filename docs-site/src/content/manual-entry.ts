@@ -78,7 +78,7 @@ export const manualEntry: Screen = {
       id: "preconditions",
       shot: FORM,
       group: "describe",
-      locate: { role: "textbox", name: "Preconditions (optional)" },
+      locate: { role: "textbox", name: "Preconditions" },
       name: "Preconditions",
       does: "What must be true before the first step, for example an account that already exists.",
     },

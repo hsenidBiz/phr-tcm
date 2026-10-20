@@ -1,19 +1,20 @@
-// The setup a run needs, beside the Test cases list: the site address, the
-// sign-in, the accounts, the areas, the test files and the save words, with
-// the database the active environment points at.
+// The setup a run needs, beside the Test cases list: the environment runs
+// go to and its database, the site address, the sign-in, the accounts, the
+// areas, the test files and the save words. The search box for the case list
+// sits at its top, on both tabs.
 //
 // Collapsed, it is one line per item with a status dot. Expanded, it is the
 // full rows with their buttons, each opening its own dialog. The screen
 // decides once, when the setup has loaded, whether it starts expanded (see
 // `index.tsx`); after that only the person's toggle moves it.
 //
-// `useAutoRunSetup` reads everything the panel and the readiness strip say,
-// so the screen and the panel never read the same thing twice. Readiness
+// `useAutoRunSetup` reads everything the panel says, and whether a run has
+// what it needs, so the screen and the panel never read the same thing twice. Readiness
 // itself is `useAutoRunReadiness`'s, called once, here.
 
 import { useQuery } from "@tanstack/react-query";
 import { TriangleAlert } from "lucide-react";
-import { useId, useMemo, useState, type ReactNode, type Ref } from "react";
+import { useId, useMemo, useState, type ReactNode } from "react";
 import { commands, type CaseScript } from "../../bindings";
 import { Button } from "../../components/ui/button";
 import { cn } from "../../lib/cn";
@@ -38,6 +39,7 @@ import {
 import { useDiscoveryActive } from "../../lib/discoveryActive";
 import AccountsDialog from "./AccountsDialog";
 import AreasDialog from "./AreasDialog";
+import CaseSearch from "./CaseSearch";
 import ComponentsDialog, { componentsSummary, useComponents } from "./ComponentsDialog";
 import DiscoveryDialog, { discoverySummary, useDiscoveryMap } from "./DiscoveryDialog";
 import ProtectedRecordsDialog from "./ProtectedRecordsDialog";
@@ -50,7 +52,8 @@ import { useAutoRunReadiness } from "./useAutoRunReadiness";
 
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 
-/** Everything the Setup panel and the readiness strip report. All of it
+/** Everything the Setup panel reports, and what the screen needs to know
+ * about it. All of it
  * reads small local files, and each read shares its query key with the
  * dialog that edits it, so a save there updates the panel here. `?? null`
  * because "nothing saved yet" is an answer, not a missing one. */
@@ -146,17 +149,12 @@ export function useAutoRunSetup({
    * on its row and is never "missing" (see `useAutoRunReadiness`). */
   const essentialsSettled =
     !envs.isPending && !(setupReady && recipe.isPending) && !accounts.isPending;
-  /** Reads that failed, each as the sentence its row already says. The
-   * first three are what a run cannot go without; they also flag the
-   * panel. */
+  /** Reads that failed of the three a run cannot go without, each as the
+   * sentence its row already says. They flag the panel. */
   const essentialUnreadable = [
     ...(envs.isError ? ["The environments could not be read"] : []),
     ...(setupReady && recipe.isError ? ["The saved recipe could not be read"] : []),
     ...(accounts.isError ? ["The accounts could not be read"] : []),
-  ];
-  const unreadable = [
-    ...essentialUnreadable,
-    ...(setupReady && testFiles.isError ? ["The test files could not be read"] : []),
   ];
 
   /** The active environment's database. The same list, under the same
@@ -191,9 +189,10 @@ export function useAutoRunSetup({
     readiness,
     essentialsSettled,
     essentialUnreadable,
-    unreadable,
-    /** Something a run cannot go without is missing, or could not be read. */
-    attention: readiness.essentialMissing || essentialUnreadable.length > 0,
+    /** Something a run cannot go without is missing, or could not be read,
+     * or a script uploads a file the Test files folder does not hold. */
+    attention:
+      readiness.essentialMissing || essentialUnreadable.length > 0 || readiness.missingTestFiles.length > 0,
   };
 }
 
@@ -205,7 +204,7 @@ export type AutoRunSetup = ReturnType<typeof useAutoRunSetup>;
  * address or a list of words gets the whole width to wrap in. A labelled
  * group, so a screen reader hears the row's name with its state and its
  * buttons. */
-function SetupRow({ label, state, children }: { label: string; state: ReactNode; children: ReactNode }) {
+function SetupRow({ label, state, children }: { label: string; state: ReactNode; children?: ReactNode }) {
   return (
     <div
       role="group"
@@ -247,11 +246,45 @@ export function breakableUrl(url: string): ReactNode[] {
   return url.split(/(?<=[/.?&=])/).flatMap((part, i) => (i === 0 ? [part] : [<wbr key={i} />, part]));
 }
 
+/** How many names a summary line spells out before "and N more". */
+const NAMES_IN_SUMMARY = 3;
+
+/** `names` joined, the first few and then how many more. */
+function shortList(names: string[]): string {
+  const shown = names.slice(0, NAMES_IN_SUMMARY).join(", ");
+  const rest = names.length - NAMES_IN_SUMMARY;
+  return rest > 0 ? `${shown}, and ${rest} more` : shown;
+}
+
+/** The files a script uploads that the Test files folder does not hold:
+ * a run fails at that upload, so it is said as a warning, with the names. */
+function MissingFiles({ names, full = false }: { names: string[]; full?: boolean }) {
+  return (
+    <span className="inline-flex items-start gap-1 text-warning">
+      <TriangleAlert aria-hidden className="mt-0.5 size-3.5 shrink-0" />
+      <span className="min-w-0 break-words">
+        {plural(names.length, "file")} missing: {full ? names.join(", ") : shortList(names)}
+      </span>
+    </span>
+  );
+}
+
 /** The collapsed panel's lines: one per item, from the reads above, in
- * the full rows' own words. Not the readiness strip's, which sits beside
- * it: two places saying "2 accounts" read as two different things. */
-function summaryLines(s: AutoRunSetup): { label: string; status: Status; value: string }[] {
+ * the full rows' own words. `missing` is set on the Test files line when a
+ * script uploads a file the folder lacks: the line then names them. */
+function summaryLines(
+  s: AutoRunSetup,
+): { label: string; status: Status; value: string; missing?: string[] }[] {
   const pickProject = "Pick a project first";
+  // No environment is an answer, not a gap: runs then go to the saved
+  // recipe's address, which the Site address line says.
+  const env: [Status, string] = s.envs.isPending
+    ? ["quiet", "Loading…"]
+    : s.envs.isError
+      ? ["warning", "Could not be read"]
+      : s.activeEnv
+        ? ["ready", s.activeEnv.name]
+        : ["quiet", "None"];
   const site: [Status, string] = !s.setupReady
     ? ["missing", pickProject]
     : s.knownSiteUrl === undefined
@@ -312,7 +345,7 @@ function summaryLines(s: AutoRunSetup): { label: string; status: Status; value: 
     : s.testFiles.isError
       ? ["warning", "Could not be read"]
       : missingFiles > 0
-        ? ["missing", `${plural(missingFiles, "file")} missing`]
+        ? ["warning", `${plural(missingFiles, "file")} missing`]
         : s.testFileCount == null
           ? ["quiet", "Loading…"]
           : s.testFileCount === 0
@@ -330,13 +363,19 @@ function summaryLines(s: AutoRunSetup): { label: string; status: Status; value: 
             ? ["ready", s.activeDb.label]
             : ["warning", "Not set up yet"];
   return [
+    { label: "Environment", status: env[0], value: env[1] },
     { label: "Site address", status: site[0], value: site[1] },
     { label: "Sign-in", status: signIn[0], value: signIn[1] },
     { label: "Accounts", status: accounts[0], value: accounts[1] },
     { label: "Areas", status: areas[0], value: areas[1] },
     { label: "Discovery", status: discovery[0], value: discovery[1] },
     { label: "Components", status: components[0], value: components[1] },
-    { label: "Test files", status: files[0], value: files[1] },
+    {
+      label: "Test files",
+      status: files[0],
+      value: files[1],
+      missing: s.setupReady && !s.testFiles.isError && missingFiles > 0 ? s.readiness.missingTestFiles : undefined,
+    },
     { label: "Database", status: db[0], value: db[1] },
   ];
 }
@@ -348,8 +387,8 @@ export default function SetupPanel({
   caseModules,
   open,
   onToggle,
-  toggleRef,
-  panelRef,
+  search,
+  onSearch,
 }: {
   setup: AutoRunSetup;
   org: string;
@@ -358,8 +397,9 @@ export default function SetupPanel({
   caseModules: string[];
   open: boolean;
   onToggle: () => void;
-  toggleRef?: Ref<HTMLButtonElement>;
-  panelRef?: Ref<HTMLElement>;
+  /** What the case list's search box holds, and its change. */
+  search: string;
+  onSearch: (text: string) => void;
 }) {
   const headingId = useId();
   const bodyId = useId();
@@ -426,7 +466,6 @@ export default function SetupPanel({
 
   return (
     <section
-      ref={panelRef}
       aria-labelledby={headingId}
       className="space-y-3 rounded-md border border-border bg-surface p-4"
     >
@@ -443,7 +482,6 @@ export default function SetupPanel({
           </span>
         )}
         <Button
-          ref={toggleRef}
           size="sm"
           variant="ghost"
           className="ml-auto"
@@ -458,10 +496,13 @@ export default function SetupPanel({
         </Button>
       </div>
 
+      {/* Finding a case: open or shut, on either tab. */}
+      <CaseSearch value={search} onChange={onSearch} wide />
+
       <div id={bodyId}>
         {!open ? (
           <ul aria-label="Setup summary" className="space-y-1.5">
-            {summaryLines(s).map(({ label, status, value }) => (
+            {summaryLines(s).map(({ label, status, value, missing }) => (
               <li key={label} className="flex items-start gap-2 text-sm">
                 {/* One line tall and centred in it, so the dot sits beside
                     the label's first line even when the value wraps. */}
@@ -475,7 +516,13 @@ export default function SetupPanel({
                 <span
                   className="min-w-0 flex-1 break-words text-text"
                 >
-                  {label === "Site address" ? breakableUrl(value) : value}
+                  {missing ? (
+                    <MissingFiles names={missing} />
+                  ) : label === "Site address" ? (
+                    breakableUrl(value)
+                  ) : (
+                    value
+                  )}
                 </span>
                 {SPOKEN[status] && <span className="sr-only">{SPOKEN[status]}</span>}
               </li>
@@ -483,15 +530,29 @@ export default function SetupPanel({
           </ul>
         ) : (
           <div className="space-y-3">
-            {/* Read-only here: the environment and its database are chosen
-                on AI Bridge, which owns them. */}
-            {activeEnv && (
-              <p className="text-xs text-muted">
-                Environment <span className="font-medium text-text">{activeEnv.name}</span>, database{" "}
-                <span className="font-medium text-text">{dbLine}</span>. Both change on the AI Bridge tab.
-              </p>
-            )}
             <div className="space-y-3">
+              {/* Read-only here: the environment and its database are
+                  chosen on AI Bridge, which owns them - so no button. */}
+              <SetupRow
+                label="Environment"
+                state={
+                  envs.isError ? (
+                    <span className="text-danger">The environments could not be read</span>
+                  ) : envs.isPending ? (
+                    <span className="text-muted">Loading…</span>
+                  ) : activeEnv ? (
+                    <>
+                      <span className="font-medium">{activeEnv.name}</span>
+                      <span className="block text-xs text-muted">
+                        Database <span className="text-text">{dbLine}</span>. Both change on the AI Bridge tab.
+                      </span>
+                    </>
+                  ) : (
+                    <span className="text-muted">None. Environments are chosen on the AI Bridge tab.</span>
+                  )
+                }
+              />
+
               <SetupRow
                 label="Site address"
                 state={
@@ -726,10 +787,19 @@ export default function SetupPanel({
                     <span className="text-danger">The test files could not be read</span>
                   ) : testFiles.isPending || s.testFileCount == null ? (
                     <span className="text-muted">Loading…</span>
-                  ) : s.testFileCount === 0 ? (
-                    <span className="text-muted">None yet</span>
                   ) : (
-                    plural(s.testFileCount, "file")
+                    <>
+                      {s.testFileCount === 0 ? (
+                        <span className="text-muted">None yet</span>
+                      ) : (
+                        plural(s.testFileCount, "file")
+                      )}
+                      {s.readiness.missingTestFiles.length > 0 && (
+                        <span className="mt-1 block text-xs">
+                          <MissingFiles names={s.readiness.missingTestFiles} full />
+                        </span>
+                      )}
+                    </>
                   )
                 }
               >

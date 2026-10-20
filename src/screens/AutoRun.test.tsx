@@ -1313,6 +1313,12 @@ function mockReady(extra?: (cmd: string, args: unknown) => unknown) {
 /** The Setup panel beside the case list. */
 const setupPanel = () => screen.getByRole("region", { name: "Setup" });
 
+/** One line of the shut Setup panel's summary, by its label. */
+const summaryLine = (label: string) =>
+  within(within(setupPanel()).getByRole("list", { name: "Setup summary" }))
+    .getByText(label)
+    .closest("li")!;
+
 test("the two sections are one tab list, the screen opens on Test cases, and the Setup panel waits for the setup to load", async () => {
   let answerAccounts: (v: unknown) => void = () => {};
   mockReady((cmd) =>
@@ -1431,31 +1437,30 @@ test("a setup read that fails still lets the screen open, with the panel a summa
   renderAutoRun(null);
   expect(await screen.findByText("Valid login")).toBeInTheDocument();
   expect(tab("Test cases")).toHaveAttribute("aria-selected", "true");
-  await screen.findByRole("group", { name: "Readiness" });
+  await within(setupPanel()).findByText("Needs attention");
   expect(within(setupPanel()).getByRole("button", { name: "Show setup details" })).toBeInTheDocument();
 });
 
-/// ...but it must not vanish from what the screen shows. The strip opens
-/// degraded, says what could not be read, and the panel carries the flag.
-test("a failed accounts read shows on the Test cases strip and flags the Setup panel", async () => {
+/// ...but it must not vanish from what the screen shows. The panel's
+/// summary says what could not be read, and the panel carries the flag.
+test("a failed accounts read shows in the Setup summary and flags the panel", async () => {
   mockReady((cmd) => {
     if (cmd === "auto_run_list_accounts") throw new Error("disk read failed");
     return undefined;
   });
   renderAutoRun(null);
 
-  const strip = await screen.findByRole("group", { name: "Readiness" });
-  expect(within(strip).getByText("The accounts could not be read")).toBeInTheDocument();
+  await within(setupPanel()).findByText("Needs attention");
+  expect(summaryLine("Accounts")).toHaveTextContent("AccountsCould not be read, needs a look");
   // What is known is still said.
-  expect(within(strip).getByText("QA - qa.example.com")).toBeInTheDocument();
-  expect(within(strip).queryByText(/^No accounts/)).not.toBeInTheDocument();
-  expect(within(setupPanel()).getByText("Needs attention")).toBeInTheDocument();
+  expect(summaryLine("Environment")).toHaveTextContent("EnvironmentQA, ready");
+  expect(summaryLine("Site address")).toHaveTextContent("https://qa.example.com/");
   // Flagging is not opening: the panel is still a summary.
   expect(within(setupPanel()).getByRole("button", { name: "Show setup details" })).toBeInTheDocument();
   expect(tab("Test cases")).toHaveAttribute("aria-selected", "true");
 });
 
-test("a failed recipe read shows on the strip and flags the Setup panel", async () => {
+test("a failed recipe read shows in the Setup summary and flags the panel", async () => {
   mockReady((cmd) => {
     if (cmd === "env_list") return envWith("");
     if (cmd === "auto_run_load_recipe") throw new Error("bad recipe");
@@ -1463,41 +1468,40 @@ test("a failed recipe read shows on the strip and flags the Setup panel", async 
   });
   renderAutoRun(null);
 
-  const strip = await screen.findByRole("group", { name: "Readiness" });
-  expect(within(strip).getByText("The saved recipe could not be read")).toBeInTheDocument();
+  await within(setupPanel()).findByText("Needs attention");
+  expect(summaryLine("Sign-in")).toHaveTextContent("Could not be read");
   // An address that may live in the unreadable recipe is not "missing".
-  expect(within(strip).queryByText("no site set yet")).not.toBeInTheDocument();
-  expect(within(setupPanel()).getByText("Needs attention")).toBeInTheDocument();
+  expect(summaryLine("Site address")).toHaveTextContent("Could not be read");
+  expect(summaryLine("Site address")).not.toHaveTextContent("Not set up yet");
 });
 
-test("a failed environments read shows on the strip and flags the Setup panel", async () => {
+test("a failed environments read shows in the Setup summary and flags the panel", async () => {
   mockReady((cmd) => {
     if (cmd === "env_list") throw new Error("no environments");
     return undefined;
   });
   renderAutoRun(null);
 
-  const strip = await screen.findByRole("group", { name: "Readiness" });
-  expect(within(strip).getByText("The environments could not be read")).toBeInTheDocument();
-  expect(within(strip).queryByText("no site set yet")).not.toBeInTheDocument();
-  expect(within(setupPanel()).getByText("Needs attention")).toBeInTheDocument();
+  await within(setupPanel()).findByText("Needs attention");
+  expect(summaryLine("Environment")).toHaveTextContent("EnvironmentCould not be read, needs a look");
+  expect(summaryLine("Site address")).not.toHaveTextContent("Not set up yet");
 });
 
-test("a failed test files read shows on the strip", async () => {
+test("a failed test files read shows in the Setup summary", async () => {
   mockReady((cmd) => {
     if (cmd === "test_files_list") throw new Error("folder gone");
     return undefined;
   });
   renderAutoRun(null);
-  const strip = await screen.findByRole("group", { name: "Readiness" });
-  expect(await within(strip).findByText("The test files could not be read")).toBeInTheDocument();
+  await waitFor(() => expect(summaryLine("Test files")).toHaveTextContent("Could not be read, needs a look"));
 });
 
-test("while the setup is only loading the strip stays hidden", async () => {
+test("while the setup is only loading the Setup summary says so and flags nothing", async () => {
   mockReady((cmd) => (cmd === "auto_run_list_accounts" ? new Promise(() => {}) : undefined));
   renderAutoRun(null);
   await screen.findByRole("tab", { name: /^Past runs 0/ });
-  expect(screen.queryByRole("group", { name: "Readiness" })).not.toBeInTheDocument();
+  expect(summaryLine("Accounts")).toHaveTextContent("AccountsLoading…");
+  expect(within(setupPanel()).queryByText("Needs attention")).not.toBeInTheDocument();
 });
 
 test("a panel the person opens or shuts while the setup loads is never overridden by the opening rule", async () => {
@@ -1520,7 +1524,7 @@ test("the panel's starting state is decided once: setup that changes later does 
   let accounts: unknown = ONE_ACCOUNT;
   mockReady((cmd) => (cmd === "auto_run_list_accounts" ? accounts : undefined));
   const { qc } = renderAutoRun(null);
-  await screen.findByRole("group", { name: "Readiness" });
+  await waitFor(() => expect(summaryLine("Accounts")).toHaveTextContent(/, ready$/));
   expect(within(setupPanel()).getByRole("button", { name: "Show setup details" })).toBeInTheDocument();
 
   // The last account removed (from the Accounts dialog, say).
@@ -1621,7 +1625,7 @@ test("the Setup panel shows the environment and its database, all six rows, and 
   expect(within(panel).getByText("Built-in")).toBeInTheDocument();
 });
 
-// ---- Readiness strip and the More menu on the Test cases tab ----
+// ---- The Test cases tab's header, the Setup panel's search, and the More menu ----
 
 const uploadScript = (caseId: number, file: string) => ({
   case_id: caseId,
@@ -1629,7 +1633,7 @@ const uploadScript = (caseId: number, file: string) => ({
   steps: [{ step_number: 1, actions: [{ kind: "upload", selector: { css: "#f" }, file }] }],
 });
 
-test("Test cases opens with a readiness strip that replaces the old header line", async () => {
+test("Test cases opens on its filters, with no second title and no environment line; the Setup panel names the environment", async () => {
   mockReady((cmd, args) => {
     if (cmd === "auto_run_load_script") {
       return (args as { caseId: number }).caseId === 201 ? uploadScript(201, "cv.txt") : null;
@@ -1642,17 +1646,54 @@ test("Test cases opens with a readiness strip that replaces the old header line"
   });
   renderAutoRun(null);
 
-  const strip = await screen.findByRole("group", { name: "Readiness" });
-  expect(within(strip).getByText("QA - qa.example.com")).toBeInTheDocument();
-  // What is in place is the Setup panel's to say, not the strip's.
-  expect(within(strip).queryByText("Built-in")).not.toBeInTheDocument();
-  expect(within(strip).queryByText("1 account")).not.toBeInTheDocument();
-  expect(within(strip).queryByText(/area/)).not.toBeInTheDocument();
-  // The script uploads cv.txt, which the Test files folder does not hold.
-  expect(await within(strip).findByText("1 test file missing")).toBeInTheDocument();
+  await screen.findByText("Valid login");
+  // The tab's own label carries the count; no "Test cases (2)" under it.
+  expect(tab("Test cases")).toHaveAccessibleName("Test cases 2");
+  expect(screen.queryByRole("heading", { name: /^Test cases/ })).not.toBeInTheDocument();
+  expect(screen.queryByRole("group", { name: "Readiness" })).not.toBeInTheDocument();
+  // The environment, and the file a script uploads that the folder lacks,
+  // are the Setup panel's to say.
+  await waitFor(() => expect(summaryLine("Environment")).toHaveTextContent("EnvironmentQA, ready"));
+  await waitFor(() => expect(summaryLine("Test files")).toHaveTextContent("1 file missing: cv.txt, needs a look"));
+  // A run would fail at that upload: the panel says so in its header too,
+  // with the panel still shut.
+  expect(within(setupPanel()).getByText("Needs attention")).toBeInTheDocument();
+  expect(within(setupPanel()).getByRole("button", { name: "Show setup details" })).toBeInTheDocument();
   // The old line's "Project <name>" is gone.
   expect(screen.queryByText("Web")).not.toBeInTheDocument();
   expect(screen.queryByText(/^Project\b/)).not.toBeInTheDocument();
+});
+
+test("missing test files are named in the summary (the first few) and in the open Test files row (all of them)", async () => {
+  const files = ["a.txt", "b.txt", "c.txt", "d.txt", "e.txt"];
+  mockReady((cmd, args) => {
+    if (cmd === "auto_run_load_script") {
+      return (args as { caseId: number }).caseId === 201
+        ? {
+            case_id: 201,
+            title: "s",
+            steps: files.map((file, i) => ({
+              step_number: i + 1,
+              actions: [{ kind: "upload", selector: { css: "#f" }, file }],
+            })),
+          }
+        : null;
+    }
+    if (cmd === "test_files_list") return [{ name: "appraisal.pdf", size: 1, modified: "1" }];
+    return undefined;
+  });
+  renderAutoRun(null);
+
+  await waitFor(() =>
+    expect(summaryLine("Test files")).toHaveTextContent("5 files missing: a.txt, b.txt, c.txt, and 2 more"),
+  );
+  expect(within(setupPanel()).getByText("Needs attention")).toBeInTheDocument();
+
+  fireEvent.click(within(setupPanel()).getByRole("button", { name: "Show setup details" }));
+  const row = within(setupPanel()).getByRole("group", { name: "Test files" });
+  expect(row).toHaveTextContent("1 file");
+  expect(row).toHaveTextContent("5 files missing: a.txt, b.txt, c.txt, d.txt, e.txt");
+  expect(within(setupPanel()).getByText("Needs attention")).toBeInTheDocument();
 });
 
 test("a file the scripts upload that is in the Test files folder is not missing", async () => {
@@ -1664,42 +1705,57 @@ test("a file the scripts upload that is in the Test files folder is not missing"
     return undefined;
   });
   renderAutoRun(null);
-  const strip = await screen.findByRole("group", { name: "Readiness" });
-  await waitFor(() => expect(screen.getByText("Test files").closest("li")).toHaveTextContent("1 file"));
-  expect(within(strip).queryByText(/missing/)).not.toBeInTheDocument();
-  expect(within(strip).queryByText(/test file/)).not.toBeInTheDocument();
+  await waitFor(() => expect(summaryLine("Test files")).toHaveTextContent("1 file"));
+  expect(summaryLine("Test files")).not.toHaveTextContent(/missing/);
+  expect(within(setupPanel()).queryByText("Needs attention")).not.toBeInTheDocument();
 });
 
-test("Open setup in the strip opens the Setup panel's rows and moves focus to it", async () => {
-  // A script uploads a file the folder lacks: something to attend to, so the
-  // strip offers Open setup, while the panel itself starts shut.
-  mockReady((cmd, args) => {
-    if (cmd === "auto_run_load_script") {
-      return (args as { caseId: number }).caseId === 201 ? uploadScript(201, "cv.txt") : null;
-    }
-    if (cmd === "test_files_list") return [];
-    return undefined;
-  });
+test("the expanded Setup panel names the environment in a row of its own", async () => {
+  mockReady();
   renderAutoRun(null);
-  const strip = await screen.findByRole("group", { name: "Readiness" });
-  await within(strip).findByText("1 test file missing");
-  expect(within(setupPanel()).getByRole("button", { name: "Show setup details" })).toBeInTheDocument();
-  fireEvent.click(within(strip).getByRole("button", { name: "Open setup" }));
-  const hide = await within(setupPanel()).findByRole("button", { name: "Hide setup details" });
-  expect(within(setupPanel()).getByRole("button", { name: "Edit site address" })).toBeInTheDocument();
-  // The panel is beside the strip, which stays; the keyboard lands on the panel.
-  expect(screen.getByRole("group", { name: "Readiness" })).toBeInTheDocument();
-  await waitFor(() => expect(hide).toHaveFocus());
+  fireEvent.click(await within(setupPanel()).findByRole("button", { name: "Show setup details" }));
+  const env = within(setupPanel()).getByRole("group", { name: "Environment" });
+  expect(await within(env).findByText("QA HR: hrdb on sql01")).toBeInTheDocument();
+  expect(within(env).getByText("QA")).toBeInTheDocument();
+  // Chosen on AI Bridge: nothing to press here.
+  expect(within(env).queryByRole("button")).not.toBeInTheDocument();
 });
 
-test("the strip belongs to Test cases alone; the Setup panel is on both tabs", async () => {
+test("the Setup panel, with the search box, is on both tabs; searching on Past runs brings the cases back", async () => {
   mockReady();
   renderAutoRun("Past runs");
   await screen.findByRole("tabpanel", { name: /^Past runs/ });
-  expect(screen.queryByRole("group", { name: "Readiness" })).not.toBeInTheDocument();
-  // The panel sits beside the runs too; the strip is Test cases' alone.
-  expect(screen.getByRole("region", { name: "Setup" })).toBeInTheDocument();
+  // The panel sits beside the runs too.
+  const box = within(setupPanel()).getByRole("textbox", { name: "Search test cases" });
   expect(screen.queryByRole("tab", { name: /^Setup/ })).not.toBeInTheDocument();
+
+  box.focus();
+  fireEvent.change(box, { target: { value: "lock" } });
+  await waitFor(() => expect(tab("Test cases")).toHaveAttribute("aria-selected", "true"));
+  // The same box, still in the person's hands: the panel stayed put.
+  expect(within(setupPanel()).getByRole("textbox", { name: "Search test cases" })).toBe(box);
+  expect(box).toHaveFocus();
+  expect(await screen.findByText("Locked account")).toBeInTheDocument();
+  expect(screen.queryByText("Valid login")).not.toBeInTheDocument();
+  // The tab's count says how many of the cases show.
+  expect(tab("Test cases")).toHaveAccessibleName("Test cases 1 of 2");
+
+  // Going to Past runs by its tab empties the box: the search only ever
+  // narrows the case list, and left there it would read as filtering runs.
+  fireEvent.click(tab("Past runs"));
+  expect(tab("Past runs")).toHaveAttribute("aria-selected", "true");
+  expect(box).toHaveValue("");
+  expect(box).toHaveAttribute("placeholder", "Search test cases by id or title");
+  // The same by the keyboard: back to Test cases, search, then the arrow.
+  fireEvent.click(tab("Test cases"));
+  fireEvent.change(box, { target: { value: "lock" } });
+  fireEvent.keyDown(tab("Test cases"), { key: "ArrowRight" });
+  expect(tab("Past runs")).toHaveAttribute("aria-selected", "true");
+  expect(box).toHaveValue("");
+  // Back on Test cases every case shows again.
+  fireEvent.click(tab("Test cases"));
+  expect(await screen.findByText("Valid login")).toBeInTheDocument();
+  expect(tab("Test cases")).toHaveAccessibleName("Test cases 2");
 });
 
 test("More holds Import scripts, with its description, and Clear scripts; Group by title stays outside", async () => {

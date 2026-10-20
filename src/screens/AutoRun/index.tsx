@@ -47,7 +47,7 @@ import {
 } from "../../lib/backgroundRun";
 import { Modal } from "../../components/ui/modal";
 import CaseCard from "./CaseCard";
-import CaseSearch, { matchesSearch } from "./CaseSearch";
+import { matchesSearch } from "./CaseSearch";
 import ExecutionOrderDialog from "./ExecutionOrderDialog";
 import { requestPlaywrightExport } from "../../lib/playwrightExport";
 import { useModule } from "../../lib/modules";
@@ -55,13 +55,12 @@ import ResetNeededPanel from "./ResetNeededPanel";
 import NetworkWaitPanel from "./NetworkWaitPanel";
 import { fetchPlan, pauseHeading } from "./plan";
 import PastRuns from "./PastRuns";
-import ReadinessStrip from "./ReadinessStrip";
 import RunPane from "./RunPane";
 import RunReview from "./RunReview";
 import ScriptEditor from "./ScriptEditor";
 import SetupPanel, { useAutoRunSetup } from "./SetupPanel";
 import SetupColumn from "./SetupColumn";
-import { ResultToggleRow, SuspectedDefectToggle } from "./ResultFilterRow";
+import { HasScriptToggle, ResultToggleRow, SuspectedDefectToggle } from "./ResultFilterRow";
 import {
   RESULT_BUCKETS,
   lastRecords,
@@ -70,7 +69,6 @@ import {
   type ResultBucket,
   type ResultFilter,
 } from "./verdicts";
-import { siteHost } from "./SiteAddressDialog";
 import type { AutoRunTab } from "./useAutoRunReadiness";
 
 /** The screen's tabs, in order. The arrow keys walk this list. Setup is
@@ -121,13 +119,22 @@ export default function AutoRun({
   // `combine` hands back just each script, and TanStack keeps the array the
   // same object while no script has changed - the readiness check reads
   // it, and would otherwise redo its work on every render.
+  const scriptQueries = (cases.data ?? []).map((c) => ({
+    queryKey: ["autorun-script", c.id],
+    queryFn: () => loadScript(c.id),
+    retry: false,
+  }));
   const scripts = useQueries({
-    queries: (cases.data ?? []).map((c) => ({
-      queryKey: ["autorun-script", c.id],
-      queryFn: () => loadScript(c.id),
-      retry: false,
-    })),
+    queries: scriptQueries,
     combine: (results) => results.map((q) => q.data),
+  });
+  /** Whether every listed case's script lookup has answered (or failed).
+   * The same queries, so nothing is read twice; a boolean, so it only
+   * changes once. Until then a case without a script may just not be read
+   * yet. */
+  const scriptsRead = useQueries({
+    queries: scriptQueries,
+    combine: (results) => results.every((q) => !q.isPending),
   });
 
   const [editing, setEditing] = useState<number | null>(null);
@@ -138,10 +145,9 @@ export default function AutoRun({
   /** Whether the assistant's discovery holds the Auto Run browser. */
   const discovering = useDiscoveryActive();
 
-  /** What the Setup panel and the readiness strip report, and whether a
-   * run has what it needs. */
+  /** What the Setup panel reports, and whether a run has what it needs. */
   const setup = useAutoRunSetup({ org, project, scripts });
-  const { readiness, essentialsSettled, activeEnv, site, knownSiteUrl } = setup;
+  const { readiness, essentialsSettled } = setup;
 
   /** Which tab shows. The screen always opens on Test cases; after that
    * only the person's clicks, and a review closing, move it. */
@@ -154,9 +160,8 @@ export default function AutoRun({
 
   /** Whether the Setup panel shows its full rows. `null` until the screen
    * has decided, once: open when something a run cannot go without is
-   * missing, shut otherwise. After that only the person moves it (the
-   * toggle, or anything that asks to open the setup), so setup that
-   * changes later never springs it open under anyone. */
+   * missing, shut otherwise. After that only the person's toggle moves
+   * it, so setup that changes later never springs it open under anyone. */
   const [panelChoice, setPanelChoice] = useState<boolean | null>(null);
   useEffect(() => {
     if (panelChoice === null && essentialsSettled) setPanelChoice(readiness.essentialMissing);
@@ -164,22 +169,6 @@ export default function AutoRun({
   // The render that first knows the answer shows it, rather than one frame
   // of the other state before the effect stores it.
   const panelOpen = panelChoice ?? (essentialsSettled ? readiness.essentialMissing : false);
-  const panelRef = useRef<HTMLElement | null>(null);
-  const panelToggleRef = useRef<HTMLButtonElement | null>(null);
-  /** Set by anything that asks for the setup (the strip's Open setup):
-   * once the panel is open and drawn, it is scrolled to and its toggle
-   * takes the focus, so the keyboard lands where the rows are. */
-  const [focusPanel, setFocusPanel] = useState(false);
-  useEffect(() => {
-    if (!focusPanel) return;
-    panelRef.current?.scrollIntoView?.({ block: "nearest", behavior: "smooth" });
-    panelToggleRef.current?.focus();
-    setFocusPanel(false);
-  }, [focusPanel]);
-  const openSetup = () => {
-    setPanelChoice(true);
-    setFocusPanel(true);
-  };
 
   const tabIds = useId();
   const tabRefs = useRef<Partial<Record<AutoRunTab, HTMLButtonElement | null>>>({});
@@ -216,7 +205,7 @@ export default function AutoRun({
     if (next === null) return;
     e.preventDefault();
     const id = TABS[next].id;
-    setTab(id);
+    pickTab(id);
     tabRefs.current[id]?.focus();
   };
 
@@ -417,9 +406,27 @@ export default function AutoRun({
   const [lastFilter, setLastFilter] = useState<ReadonlySet<ResultBucket>>(new Set());
   /** Only the cases marked as a suspected defect. Kept like the filter above. */
   const [defectsOnly, setDefectsOnly] = useState(false);
+  /** Only the cases that already have a script. A view choice remembered
+   * per project (a project with no scripts yet has nothing to show under
+   * it), as the set of "org/project" keys it is on for. */
+  const [scriptedOnlyIn, toggleScriptedOnlyIn] = usePersistedStringSet("tcm-v2-autorun-scripted-only");
+  const projectKey = `${org}/${project}`;
+  const scriptedOnly = scriptedOnlyIn.has(projectKey);
   /** What the search box holds. Lives here for the same reason as the
-   * filter, and is not saved. */
+   * filter, and is not saved. The box is in the Setup panel, on both tabs:
+   * typing in it on Past runs brings the list it narrows into view. */
   const [search, setSearch] = useState("");
+  const onSearch = (text: string) => {
+    setSearch(text);
+    if (text.trim() !== "") setTab("cases");
+  };
+  /** A tab the person picks. Going to Past runs empties the search, which
+   * only ever narrows the case list: left there it would read as filtering
+   * runs it does not touch. */
+  const pickTab = (id: AutoRunTab) => {
+    if (id === "runs") setSearch("");
+    setTab(id);
+  };
   /** The open cards, per PBI, while the screen is mounted. Not saved: a
    * list that comes back half open on the next visit reads as clutter. */
   const [openCards, setOpenCards] = useState<Record<number, ReadonlySet<number>>>({});
@@ -463,8 +470,13 @@ export default function AutoRun({
    * Select all, the selection itself) reads this one list. */
   const hasDefect = (i: number) => Boolean(scripts[i]?.suspected_defect);
   const defectCount = rows.filter((_, i) => hasDefect(i)).length;
+  const hasScript = (i: number) => Boolean(scripts[i]);
+  const scriptedCount = rows.filter((_, i) => hasScript(i)).length;
   const shownIdx = rows.flatMap((c, i) =>
-    (activeFilter.size === 0 || activeFilter.has(lastOf(i))) && (!defectsOnly || hasDefect(i)) && matchesSearch(c, search)
+    (activeFilter.size === 0 || activeFilter.has(lastOf(i))) &&
+    (!defectsOnly || hasDefect(i)) &&
+    (!scriptedOnly || hasScript(i)) &&
+    matchesSearch(c, search)
       ? [i]
       : [],
   );
@@ -499,11 +511,10 @@ export default function AutoRun({
       caseModules={caseModules}
       open={panelOpen}
       onToggle={() => setPanelChoice(!panelOpen)}
-      toggleRef={panelToggleRef}
-      panelRef={panelRef}
+      search={search}
+      onSearch={onSearch}
     />
   );
-  const hasScript = (i: number) => Boolean(scripts[i]);
   /** Only scripted cases can be run, so only they can be ticked. */
   const runnableIn = (indices: number[]) =>
     indices.filter(hasScript).map((i) => rows[i].id);
@@ -674,7 +685,15 @@ export default function AutoRun({
     return <p className="max-w-prose text-sm text-muted">Pick a PBI in the bar above to auto-run its cases.</p>;
   }
 
-  const caseCount = cases.data ? rows.length : null;
+  /** The Test cases tab's count: every case, or "12 of 60" while the
+   * filters or the search hide some. With Has a script on, the plain total
+   * until every script is read, like the pill's own number, so it never
+   * counts up under the person. */
+  const caseCount = !cases.data
+    ? null
+    : shownIdx.length === rows.length || (scriptedOnly && !scriptsRead)
+      ? String(rows.length)
+      : `${shownIdx.length} of ${rows.length}`;
   const searched = search.trim();
   // Every open card counts, shown or not: a card a search or a filter hides
   // is still open, and Collapse all is how it gets shut.
@@ -710,7 +729,7 @@ export default function AutoRun({
                   "-mb-px border-b-2 px-3 py-1.5 text-sm font-medium transition-colors",
                   isOn ? "border-accent text-text" : "border-transparent text-muted hover:text-accent",
                 )}
-                onClick={() => setTab(id)}
+                onClick={() => pickTab(id)}
                 onKeyDown={(e) => onTabKey(e, TABS.findIndex((t) => t.id === id))}
               >
                 <span className="label-trim">
@@ -733,44 +752,24 @@ export default function AutoRun({
           aria-labelledby={`${tabIds}-${shown}-tab`}
           className="@container min-w-0"
         >
-          {shown === "cases" && (
-            // The list on the left and the Setup panel on the right, at a
-            // fixed readable width. Measured on this panel's own width, not
-            // the window's, so an open sidebar never squeezes the list: the
-            // panel goes beside the list only where the list keeps its full
-            // reading width (48rem, a 1rem gap, then 20rem). Narrower, the
-            // panel goes above the list at the list's width: it comes first
-            // in the page, and moves last only where there is room.
-            <div className={TWO_COLUMNS}>
-              <SetupColumn>{setupPanel}</SetupColumn>
+          {/* The tab's content on the left and the Setup panel on the
+              right, at a fixed readable width. Measured on this panel's own
+              width, not the window's, so an open sidebar never squeezes the
+              list: the panel goes beside the list only where the list keeps
+              its full reading width (48rem, a 1rem gap, then 20rem).
+              Narrower, the panel goes above the list at the list's width: it
+              comes first in the page, and moves last only where there is
+              room. One panel for both tabs, so a switch keeps it as it is -
+              the search box in it keeps its focus. */}
+          <div className={TWO_COLUMNS}>
+            <SetupColumn>{setupPanel}</SetupColumn>
 
+            {shown === "cases" && (
               <section className="min-w-0 space-y-2">
-                <h2 className="text-sm font-semibold text-text">
-                  Test cases
-                  {cases.data && <span className="ml-1.5 font-normal text-faint">({rows.length})</span>}
-                </h2>
-                {/* Where runs go and whether the setup is in place, in one
-                    line. Only once the three things a run cannot go without
-                    are known, so a slow read never shows as a warning. */}
-                {essentialsSettled && (
-                  <ReadinessStrip
-                    envName={activeEnv?.name ?? null}
-                    // undefined: the address could not be told (a read failed).
-                    siteHost={
-                      knownSiteUrl === undefined ? undefined : site.start_url ? siteHost(site.start_url) : null
-                    }
-                    signIn={setup.signIn}
-                    accountCount={setup.accountCount}
-                    missingTestFiles={readiness.missingTestFiles}
-                    unreadable={setup.unreadable}
-                    onOpenSetup={openSetup}
-                  />
-                )}
-
-                {/* Finding cases: the search, the last-result filters, and
-                    opening or closing every card shown. */}
+                {/* Narrowing the list: the last-result filters, the marked
+                    cases, and the cases with a script. The search is in the
+                    Setup panel. The tab's own label carries the count. */}
                 <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
-                  <CaseSearch value={search} onChange={setSearch} />
                   {rows.length > 0 &&
                     (runsFailed ? (
                       <span className="text-xs text-muted">Past results could not be read</span>
@@ -788,6 +787,15 @@ export default function AutoRun({
                       can always be let go of. */}
                   {(defectCount > 0 || defectsOnly) && (
                     <SuspectedDefectToggle on={defectsOnly} count={defectCount} onToggle={() => setDefectsOnly((v) => !v)} />
+                  )}
+                  {/* Its number once every script has been read, so it never
+                      counts up under the person. */}
+                  {rows.length > 0 && (
+                    <HasScriptToggle
+                      on={scriptedOnly}
+                      count={scriptsRead ? scriptedCount : undefined}
+                      onToggle={() => toggleScriptedOnlyIn(projectKey)}
+                    />
                   )}
                 </div>
 
@@ -881,7 +889,11 @@ export default function AutoRun({
 
                 {rows.length > 0 && shownIdx.length === 0 && (
                   <p className="text-xs text-muted">
-                    {searched ? `No test cases match "${searched}".` : "No cases match this filter."}
+                    {searched
+                      ? `No test cases match "${searched}".`
+                      : scriptedOnly && !scriptsRead
+                        ? "Reading scripts…"
+                        : "No cases match this filter."}
                   </p>
                 )}
                 {grouped ? (
@@ -989,13 +1001,9 @@ export default function AutoRun({
                   </ActionDock>
                 )}
               </section>
-            </div>
-          )}
+            )}
 
-          {shown === "runs" && (
-            // The same two columns as Test cases, around the same panel.
-            <div className={TWO_COLUMNS}>
-              <SetupColumn>{setupPanel}</SetupColumn>
+            {shown === "runs" && (
               <div className="min-w-0">
                 <PastRuns
                   org={org}
@@ -1008,8 +1016,8 @@ export default function AutoRun({
                   onFilterChange={setRunsFilter}
                 />
               </div>
-            </div>
-          )}
+            )}
+          </div>
         </div>
       </div>
 

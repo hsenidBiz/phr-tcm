@@ -4,8 +4,7 @@ import { memo, useEffect, useMemo, useRef, useState, useSyncExternalStore, type 
 import { createPortal } from "react-dom";
 import { toast } from "../../lib/toast";
 import { commands, type PbiHit, type TestCaseFull } from "../../bindings";
-import CountUp from "../../components/CountUp";
-import { isCaptureMode } from "../../dev/capture";
+import CountTo from "../../components/CountTo";
 import PickPbiEmpty from "../../components/PickPbiEmpty";
 import { Button } from "../../components/ui/button";
 import { Checkbox } from "../../components/ui/checkbox";
@@ -374,9 +373,9 @@ export default function ViewCases({
             `${visible.length} of ${list.length} Test Cases`
           ) : (
             <>
-              {/* Capture mode shows the plain number: a screenshot must not
-                  catch the count on its way there. */}
-              {isCaptureMode() ? list.length : <CountUp to={list.length} duration={0.8} />} Total Test Cases
+              {/* Counts up (CountTo): never in capture mode or under reduced
+                  motion, and a screen reader hears only the total. */}
+              <CountTo value={list.length} play /> Total Test Cases
             </>
           )}
         </h2>

@@ -135,7 +135,7 @@ pub fn suite_refused(base_url: &str, org: &str, project: &str, area: &str) -> St
 /// output, kept with the clone's fingerprint (durable tier, and the session
 /// tier so the disk copy is read once). Listing compiles every spec, so the
 /// tree is not listed again for each run or after a restart; a changed
-/// fingerprint, List again, or a run's dry count catches a stale listing.
+/// fingerprint, the Runner's Refresh, or a run's dry count catches a stale listing.
 pub const PW_LIST_TTL: Duration = Duration::from_secs(8 * 60 * 60);
 
 /// A kept listing this size (bytes, serialized) or larger stays in memory

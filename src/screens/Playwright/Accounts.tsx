@@ -139,9 +139,9 @@ export default function Accounts({
   const accounts = useQuery({
     queryKey: [ACCOUNTS_KEY, clone],
     queryFn: () => unwrapStr(commands.pwUsersList(clone)),
-    // A failed read is a file that could not be read: List again retries.
+    // A failed read is a file that could not be read: Refresh retries.
     retry: false,
-    // A change here sets the new list; List again and Refresh read it again.
+    // A change here sets the new list; this tab's Refresh and the header's read it again.
     staleTime: Infinity,
   });
   /** What uses each account: a repo command, asked for once the list is in. */
@@ -246,9 +246,16 @@ export default function Accounts({
           <IconAdd aria-hidden />
           Add account
         </Button>
-        <Button size="sm" variant="outline" disabled={active} onClick={() => void qc.invalidateQueries({ queryKey: [ACCOUNTS_KEY, clone] })}>
+        <Button
+          size="sm"
+          variant="outline"
+          disabled={active}
+          aria-label="Refresh accounts"
+          title="Read the accounts from the clone again"
+          onClick={() => void qc.invalidateQueries({ queryKey: [ACCOUNTS_KEY, clone] })}
+        >
           <IconRefresh aria-hidden />
-          List again
+          Refresh
         </Button>
         <Hint className="min-w-0 flex-1">
           Changed through the repo's npm run users, previewed first. Passwords stay hidden until you show one.

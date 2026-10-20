@@ -64,7 +64,7 @@ static PREPARING: Mutex<()> = Mutex::new(());
 /// The refusal for ticked tests the listing no longer has.
 pub fn missing_ticks(missing: usize) -> String {
     let what = if missing == 1 { "1 ticked test is".to_string() } else { format!("{missing} ticked tests are") };
-    format!("{what} no longer in the repo's list, so nothing was run. Use List again, then tick what to run.")
+    format!("{what} no longer in the repo's list, so nothing was run. Use Refresh above the list, then tick what to run.")
 }
 
 /// `asked` (the webview's clone path) if it is `configured` (the app's
@@ -803,7 +803,7 @@ pub fn explain_mismatch(expected: usize, matched: usize) -> String {
     } else {
         format!("{expected} selected, but Playwright matched {matched}. The run was stopped rather than silently running the wrong set.")
     };
-    format!("{refusal} If the specs changed, use List again, then run again.")
+    format!("{refusal} If the specs changed, use Refresh above the list, then run again.")
 }
 
 /// How many tests failed last time (`test-results/.last-run.json`).

@@ -29,6 +29,8 @@
       ball: "#1f2933",
       veil: "rgba(246, 247, 249, 0.82)",
       bricks: ["#e8590c", "#f08c00", "#2f9e44", "#1c7ed6", "#7048e8", "#c2255c", "#0c8599", "#5c940d"],
+      pickText: "#ffffff",
+      pick: { multi: "#1c7ed6", aim: "#0c8599", boom: "#e03131", wide: "#2f9e44", slow: "#7048e8" },
     },
     dark: {
       bg: "#14171c",
@@ -40,6 +42,8 @@
       ball: "#f1f3f5",
       veil: "rgba(20, 23, 28, 0.8)",
       bricks: ["#ff922b", "#fcc419", "#51cf66", "#4dabf7", "#9775fa", "#f06595", "#22b8cf", "#94d82d"],
+      pickText: "#14171c",
+      pick: { multi: "#4dabf7", aim: "#22b8cf", boom: "#ff6b6b", wide: "#51cf66", slow: "#9775fa" },
     },
   };
   var darkQuery = window.matchMedia ? window.matchMedia("(prefers-color-scheme: dark)") : null;
@@ -211,6 +215,70 @@
     }
   }
 
+  /** What each pick-up says, falling and in the indicator. */
+  var PICK_LABEL = { multi: "+2", aim: "Aim", boom: "Blast", wide: "Wide", slow: "Slow" };
+
+  function drawDrops() {
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.font = "700 10px " + FONT;
+    for (var i = 0; i < game.drops.length; i++) {
+      var d = game.drops[i];
+      ctx.fillStyle = theme.pick[d.kind];
+      roundRect(d.x, d.y, d.w, d.h, d.h / 2);
+      ctx.fill();
+      ctx.fillStyle = theme.pickText;
+      ctx.fillText(PICK_LABEL[d.kind], d.x + d.w / 2, d.y + d.h / 2 + 0.5);
+    }
+  }
+
+  /** The aim line: a dotted path ahead of each ball in flight. */
+  function drawAim() {
+    if (!(game.effects.aim > 0)) return;
+    ctx.save();
+    ctx.strokeStyle = theme.pick.aim;
+    ctx.lineWidth = 2;
+    ctx.lineCap = "round";
+    ctx.setLineDash([1, 7]);
+    for (var i = 0; i < game.balls.length; i++) {
+      var pts = L.aimPath(game, game.balls[i]);
+      if (pts.length < 2) continue;
+      ctx.beginPath();
+      ctx.moveTo(pts[0].x, pts[0].y);
+      for (var j = 1; j < pts.length; j++) ctx.lineTo(pts[j].x, pts[j].y);
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  /** What is on, just under the top bar: each with a bar of what is left. */
+  function drawEffects() {
+    var on = L.activeEffects(game);
+    var x = 14;
+    var y = L.TOP + 5;
+    var h = 17;
+    ctx.textBaseline = "middle";
+    ctx.textAlign = "left";
+    ctx.font = "600 10px " + FONT;
+    for (var i = 0; i < on.length; i++) {
+      var e = on[i];
+      var text = PICK_LABEL[e.kind] + " " + (e.kind === "boom" ? "x" + e.left : Math.ceil(e.left) + "s");
+      var w = ctx.measureText(text).width + 14;
+      ctx.fillStyle = theme.bar;
+      roundRect(x, y, w, h, h / 2);
+      ctx.fill();
+      ctx.strokeStyle = theme.pick[e.kind];
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+      // How much is left, as a line along the bottom of the pill.
+      ctx.fillStyle = theme.pick[e.kind];
+      ctx.fillRect(x + h / 2, y + h - 3, (w - h) * Math.max(0, Math.min(1, e.left / e.total)), 1.5);
+      ctx.fillStyle = theme.text;
+      ctx.fillText(text, x + 7, y + h / 2 - 1.5);
+      x += w + 6;
+    }
+  }
+
   function drawMessage(title, line) {
     ctx.fillStyle = theme.veil;
     ctx.fillRect(0, L.TOP, L.W, L.H - L.TOP);
@@ -236,19 +304,32 @@
     ctx.fillStyle = theme.bg;
     ctx.fillRect(0, 0, L.W, L.H);
     drawBricks();
+    drawAim();
+    drawDrops();
 
     var p = game.paddle;
     ctx.fillStyle = theme.paddle;
     roundRect(p.x, p.y, p.w, p.h, p.h / 2);
     ctx.fill();
 
-    var b = game.ball;
-    ctx.fillStyle = theme.ball;
-    ctx.beginPath();
-    ctx.arc(b.x, b.y, b.r, 0, Math.PI * 2);
-    ctx.fill();
+    // An explosive ball wears a ring in the blast colour.
+    for (var i = 0; i < game.balls.length; i++) {
+      var b = game.balls[i];
+      ctx.fillStyle = theme.ball;
+      ctx.beginPath();
+      ctx.arc(b.x, b.y, b.r, 0, Math.PI * 2);
+      ctx.fill();
+      if (game.boom > 0) {
+        ctx.strokeStyle = theme.pick.boom;
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(b.x, b.y, b.r + 2.5, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+    }
 
     drawBar();
+    if (game.mode === "play" || game.mode === "paused") drawEffects();
 
     if (game.mode === "over") {
       drawMessage("Game over", "Score " + game.score + ". Space or click to play again");

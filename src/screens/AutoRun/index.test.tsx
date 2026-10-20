@@ -810,6 +810,71 @@ test("no Suspected defect button while no case is marked", async () => {
   expect(screen.queryByRole("button", { name: /^Suspected defects/ })).not.toBeInTheDocument();
 });
 
+const testCasesTab = () => screen.getByRole("tab", { name: /^Test cases/ });
+
+test("Has a script shows only the cases with a script, with the filters, and the tab counts what shows", async () => {
+  mockFilterList();
+  renderScreen();
+  await screen.findByText("Login - alpha");
+  // Its number once every script is read: five of the six have one.
+  const pill = await screen.findByRole("button", { name: "Has a script (5)" });
+  expect(pill).toHaveAttribute("aria-pressed", "false");
+  expect(visibleTitles()).toHaveLength(6);
+  expect(testCasesTab()).toHaveAccessibleName("Test cases 6");
+
+  fireEvent.click(pill);
+  expect(pill).toHaveAttribute("aria-pressed", "true");
+  expect(visibleTitles()).toHaveLength(5);
+  expect(visibleTitles()).not.toContain("Login - charlie");
+  expect(testCasesTab()).toHaveAccessibleName("Test cases 5 of 6");
+
+  // Together with the result filters: a script AND failed last time.
+  await press("Failed (2)");
+  expect(visibleTitles()).toEqual(["Login - alpha"]);
+  expect(testCasesTab()).toHaveAccessibleName("Test cases 1 of 6");
+
+  fireEvent.click(pill);
+  expect(visibleTitles()).toEqual(["Login - alpha", "Login - charlie"]);
+});
+
+test("Has a script is remembered for the project, and only for it", async () => {
+  mockFilterList();
+  const first = renderScreen();
+  fireEvent.click(await screen.findByRole("button", { name: "Has a script (5)" }));
+  first.unmount();
+
+  const again = renderScreen();
+  expect(await screen.findByRole("button", { name: "Has a script (5)" })).toHaveAttribute("aria-pressed", "true");
+  await waitFor(() => expect(visibleTitles()).toHaveLength(5));
+  again.unmount();
+
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  render(
+    <QueryClientProvider client={qc}>
+      <AutoRun org="acme" project="other" pbi={pbi as never} />
+    </QueryClientProvider>,
+  );
+  expect(await screen.findByRole("button", { name: "Has a script (5)" })).toHaveAttribute("aria-pressed", "false");
+  expect(visibleTitles()).toHaveLength(6);
+});
+
+test("while the scripts are being read, Has a script has no number and the list says it is reading them", async () => {
+  localStorage.setItem("tcm-v2-autorun-scripted-only", JSON.stringify(["acme/proj"]));
+  mockIPC((cmd) => {
+    if (cmd === "pbi_test_cases_full") return [caseRow(1, "Login - alpha")];
+    if (cmd === "auto_run_load_script") return new Promise(() => {});
+    if (cmd === "auto_run_list_runs") return [];
+    if (cmd === "auto_run_list_accounts") return [];
+    return null;
+  });
+  renderScreen();
+  expect(await screen.findByText("Reading scripts…")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Has a script" })).toHaveAttribute("aria-pressed", "true");
+  expect(screen.queryByText("No cases match this filter.")).not.toBeInTheDocument();
+  // The tab waits too: the plain total, not "0 of 1" counting up.
+  expect(testCasesTab()).toHaveAccessibleName("Test cases 1");
+});
+
 test("the filter applies when grouped, and a group with nothing to show is hidden", async () => {
   mockFilterList();
   renderScreen();
@@ -1344,31 +1409,34 @@ function envList(start_url: string, allowed_origins: string[] = []) {
   };
 }
 
-test("the header names the active environment and the host of its address", async () => {
+test("the Setup card names the active environment, and its Site address row the environment's address", async () => {
   savedRecipe = RECIPE;
   mockList([caseRow(1, "Login - valid credentials")], [1], [], (cmd) =>
     cmd === "env_list" ? envList("https://qa.example.com/start", ["https://sso.qa.example.com"]) : undefined,
   );
   renderScreen();
-  expect(await screen.findByText("QA - qa.example.com")).toBeInTheDocument();
-  expect(screen.getByText("QA - qa.example.com").parentElement).toHaveTextContent("Environment QA - qa.example.com");
-  // The Setup card says the same address, not the recipe's.
+  await screen.findByText("Login - valid credentials");
+  // No environment line over the list: the Setup card says it.
+  expect(screen.queryByText(/^Environment QA/)).not.toBeInTheDocument();
   openSetup();
+  expect(await within(row("Environment")).findByText("QA")).toBeInTheDocument();
+  // The environment's address, not the recipe's.
   const site = row("Site address");
   expect(await within(site).findByText("https://qa.example.com/start")).toBeInTheDocument();
   expect(within(site).queryByText("https://hr.example.internal/login")).not.toBeInTheDocument();
   expect(within(site).getByText(/\+1 allowed site/)).toBeInTheDocument();
 });
 
-test("an environment with no address of its own shows the recipe's host", async () => {
+test("an environment with no address of its own shows the recipe's address", async () => {
   savedRecipe = RECIPE;
   mockList([caseRow(1, "Login - valid credentials")], [1], [], (cmd) =>
     cmd === "env_list" ? envList("") : undefined,
   );
   renderScreen();
-  expect(await screen.findByText("QA - hr.example.internal")).toBeInTheDocument();
+  await screen.findByText("Login - valid credentials");
   openSetup();
-  expect(within(row("Site address")).getByText("https://hr.example.internal/login")).toBeInTheDocument();
+  expect(await within(row("Environment")).findByText("QA")).toBeInTheDocument();
+  expect(await within(row("Site address")).findByText("https://hr.example.internal/login")).toBeInTheDocument();
 });
 
 
@@ -1408,8 +1476,6 @@ test("the Setup card shows each row's state for a project with nothing set up", 
   mockList([caseRow(1, "Alpha check")], [1]);
   renderScreen();
   await screen.findByText("Alpha check");
-  // The strip on Test cases says there is no address yet.
-  expect(await screen.findByText("no site set yet")).toBeInTheDocument();
   openSetup();
 
   expect(screen.getByRole("heading", { name: "Setup" })).toBeInTheDocument();
@@ -1437,8 +1503,8 @@ test("with no saved recipe the built-in signs in at the environment's address", 
   );
   renderScreen();
   await screen.findByText("Alpha check");
-  expect(await screen.findByText("QA - qa.example.com")).toBeInTheDocument();
   openSetup();
+  expect(await within(row("Environment")).findByText("QA")).toBeInTheDocument();
   expect(await within(row("Site address")).findByText("https://qa.example.com/start")).toBeInTheDocument();
   expect(within(row("Sign-in")).getByText("Built-in")).toBeInTheDocument();
   // Recording or editing saves the project's own recipe, which replaces it.
@@ -1446,16 +1512,11 @@ test("with no saved recipe the built-in signs in at the environment's address", 
   expect(within(row("Sign-in")).getByRole("button", { name: "Edit sign-in recipe" })).toBeEnabled();
 });
 
-test("the Setup card and the readiness strip read a project that is set up", async () => {
+test("the Setup card reads a project that is set up", async () => {
   mockSetUp();
   renderScreen();
   await screen.findByText("Alpha check");
 
-  // The strip on Test cases: the host the runs go to.
-  expect(await screen.findByText("hr.example.internal")).toBeInTheDocument();
-  // The counts are the Setup panel's, not the strip's.
-  expect(screen.queryByText("2 accounts")).not.toBeInTheDocument();
-  expect(screen.queryByText("1 area")).not.toBeInTheDocument();
   // The old header line's project name is gone.
   expect(screen.queryByText("proj")).not.toBeInTheDocument();
 
@@ -1473,14 +1534,14 @@ test("the Setup card and the readiness strip read a project that is set up", asy
 
 });
 
-test("saving a new site address writes it to the active environment, not the recipe, and updates the Setup row and the readiness strip", async () => {
+test("saving a new site address writes it to the active environment, not the recipe, and updates the Setup row", async () => {
   const saves = mockSetUp(envList(""));
   renderScreen();
   await screen.findByText("Alpha check");
-  // No address of its own yet: the strip shows the recipe's host.
-  expect(await screen.findByText("QA - hr.example.internal")).toBeInTheDocument();
 
   openSetup();
+  // No address of its own yet: the row shows the recipe's.
+  expect(await within(row("Site address")).findByText("https://hr.example.internal/login")).toBeInTheDocument();
   fireEvent.click(await screen.findByRole("button", { name: "Edit site address" }));
   expect(await screen.findByRole("heading", { name: "Site address" })).toBeInTheDocument();
   const start = screen.getByRole("textbox", { name: "Start address" }) as HTMLInputElement;
@@ -1506,8 +1567,6 @@ test("saving a new site address writes it to the active environment, not the rec
   );
   expect(await within(row("Site address")).findByText("https://people.example.org/")).toBeInTheDocument();
   expect(within(row("Site address")).getByText("+2 allowed sites")).toBeInTheDocument();
-  openTab("Test cases");
-  expect(await screen.findByText("QA - people.example.org")).toBeInTheDocument();
 });
 
 test("the selection's actions live in the shared dock, in place and as an aria-hidden floating copy", async () => {
@@ -1546,7 +1605,7 @@ test("Clear results lives in the Past runs section, and Clear scripts and Import
   renderScreen();
   await screen.findByText("Alpha check");
 
-  const testCases = screen.getByRole("heading", { name: /^Test cases/ }).closest("section")!;
+  const testCases = screen.getByRole("tabpanel", { name: /^Test cases/ });
   expect(within(testCases).getByRole("button", { name: "More" })).toBeInTheDocument();
   expect(moreItem("Clear scripts")).toBeInTheDocument();
   expect(screen.getByRole("menuitem", { name: "Import scripts" })).toBeInTheDocument();
@@ -1599,7 +1658,9 @@ test("the case list with its Setup panel, and Past runs, are one tab panel each,
     return panels[0];
   };
   const cases = only("Test cases");
-  expect(within(cases).getByRole("heading", { name: /^Test cases/ })).toBeInTheDocument();
+  expect(within(cases).getByText("Login - valid credentials")).toBeInTheDocument();
+  // The tab names the list: no second "Test cases" title inside it.
+  expect(within(cases).queryByRole("heading", { name: /^Test cases/ })).not.toBeInTheDocument();
   expect(within(cases).getByRole("region", { name: "Setup" })).toBeInTheDocument();
   expect(screen.queryByRole("tab", { name: /^Setup/ })).not.toBeInTheDocument();
   expect(screen.queryByRole("heading", { name: "Past runs" })).not.toBeInTheDocument();

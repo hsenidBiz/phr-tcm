@@ -6,6 +6,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { StrictMode } from "react";
 import { afterEach, expect, test, vi } from "vitest";
+import { COUNT_MS } from "../../components/CountTo";
 import type { RepoStructure } from "../../bindings";
 import { clearPlaywrightExportRequest, playwrightExportSnapshot, requestPlaywrightExport } from "../../lib/playwrightExport";
 import { HEALTH_LABEL, HEALTH_TEXT } from "./HealthLine";
@@ -18,7 +19,30 @@ afterEach(() => {
   clearPlaywrightExportRequest();
   clearMocks();
   vi.clearAllMocks();
+  vi.restoreAllMocks();
+  vi.unstubAllGlobals();
 });
+
+/** prefers-reduced-motion is on: the summary's numbers are there at once. */
+function reduceMotion() {
+  vi.spyOn(window, "matchMedia").mockImplementation(
+    (query: string) =>
+      ({
+        matches: query.includes("reduce"),
+        media: query,
+        onchange: null,
+        addListener: () => {},
+        removeListener: () => {},
+        addEventListener: () => {},
+        removeEventListener: () => {},
+        dispatchEvent: () => false,
+      }) as unknown as MediaQueryList,
+  );
+}
+
+/** The header's Refresh (the Runner and Accounts tabs have their own, named
+ * for what they read). */
+const headerRefresh = () => screen.getByRole("button", { name: "Refresh everything" });
 
 const HEALTHY: RepoStructure = {
   features: [
@@ -82,25 +106,167 @@ function mount(clone: string, structure: RepoStructure | (() => RepoStructure) =
 }
 
 test("a healthy clone shows one All good badge, and what it holds", async () => {
+  reduceMotion();
   const calls = mount("C:/repo");
   const health = await screen.findByRole("status", { name: "Repo health" });
   expect(await within(health).findByText("All good")).toBeInTheDocument();
   expect(screen.getByText("C:/repo")).toHaveAttribute("title", "C:/repo");
   const structure = screen.getByRole("region", { name: "Repo structure" });
-  const stat = (label: string) => within(structure).getByText(label).previousElementSibling?.textContent;
+  // The summary's tiles, not the tree's counts (which say "specs" too).
+  const stat = (label: string) =>
+    within(structure).getByText(label, { ignore: "ul *" }).previousElementSibling?.textContent;
   expect(stat("features")).toBe("3");
   expect(stat("specs")).toBe("4");
   expect(stat("test cases")).toBe("4");
   expect(stat("raw specs")).toBe("2");
   expect(stat("accounts")).toBe("2");
   expect(stat("navigation entries")).toBe("2");
-  const table = within(structure).getByRole("table", { name: "Features" });
-  expect(within(table).getByRole("row", { name: "sl / admin / performance rating-methods 1 3" })).toBeInTheDocument();
-  expect(within(table).getByRole("row", { name: "sl / self / smoke framework-smoke 2 0" })).toBeInTheDocument();
-  expect(
-    within(table).getByRole("row", { name: "sl / admin / performance / definition-wizard competencies 1 1" }),
-  ).toBeInTheDocument();
   expect(calls.find((c) => c.cmd === "pw_repo_structure")?.args).toEqual({ clone: "C:/repo" });
+});
+
+test("the features are a folder tree: each folder under its parent, each feature under its folder", async () => {
+  mount("C:/repo");
+  await screen.findByText("All good");
+  const tree = screen.getByRole("list", { name: "Features" });
+  /** The list item a name is the row of. */
+  const item = (name: string) => within(tree).getByText(name).closest("li") as HTMLElement;
+  /** The names of the items directly under one (or at the top). */
+  const under = (li: HTMLElement | null) =>
+    [...(li ? (li.querySelector(":scope > ul")?.children ?? []) : tree.children)].map(
+      (c) => c.querySelector(":scope > div span[title]")?.textContent,
+    );
+  expect(under(null)).toEqual(["sl"]);
+  expect(under(item("sl"))).toEqual(["admin", "self"]);
+  expect(under(item("admin"))).toEqual(["performance"]);
+  expect(under(item("performance"))).toEqual(["definition-wizard", "rating-methods"]);
+  expect(under(item("definition-wizard"))).toEqual(["competencies"]);
+  expect(under(item("self"))).toEqual(["smoke"]);
+  expect(under(item("smoke"))).toEqual(["framework-smoke"]);
+  expect(under(item("rating-methods"))).toEqual([]);
+  // Each row's counts, with what they count for a screen reader; a folder's
+  // are the totals under it.
+  const counts = (name: string) => item(name).querySelector(":scope > div")?.textContent?.replace(name, "");
+  expect(counts("rating-methods")).toBe("1 spec3 test cases");
+  expect(counts("framework-smoke")).toBe("2 specs0 test cases");
+  expect(counts("performance")).toBe("2 specs4 test cases");
+  expect(counts("sl")).toBe("4 specs4 test cases");
+  // The full path is on hover.
+  expect(within(tree).getByText("competencies")).toHaveAttribute("title", "sl/admin/performance/definition-wizard/competencies");
+
+  // A folder folds and unfolds: its button is named by its full path, and
+  // aria-expanded says whether it is open.
+  const fold = screen.getByRole("button", { name: "sl/admin/performance" });
+  expect(fold).toHaveAttribute("aria-expanded", "true");
+  fireEvent.click(fold);
+  expect(fold).toHaveAttribute("aria-expanded", "false");
+  expect(within(tree).queryByText("rating-methods")).not.toBeInTheDocument();
+  expect(within(tree).getByText("framework-smoke")).toBeInTheDocument();
+  fireEvent.click(fold);
+  expect(fold).toHaveAttribute("aria-expanded", "true");
+  expect(within(tree).getByText("rating-methods")).toBeInTheDocument();
+  // A feature on its own has nothing to fold.
+  expect(screen.queryByRole("button", { name: "sl/admin/performance/rating-methods" })).not.toBeInTheDocument();
+});
+
+test("the tree: a feature at the root, folders that share a name, a feature that holds features", async () => {
+  const feature = (path: string[], spec_count: number, case_count: number) => ({
+    path,
+    navigation_key: path.slice(-2).join("/"),
+    spec_count,
+    case_count,
+    case_ids: [],
+  });
+  mount("C:/repo", {
+    ...HEALTHY,
+    features: [
+      feature([], 1, 1),
+      feature(["sl", "admin", "performance"], 1, 2),
+      feature(["sl", "self", "performance"], 2, 1),
+      feature(["sl", "self", "performance", "goals"], 3, 4),
+    ],
+  });
+  await screen.findByText("All good");
+  const tree = screen.getByRole("list", { name: "Features" });
+  /** The row of a full path, and the names directly under it. */
+  const row = (path: string) => within(tree).getByTitle(path).closest("li") as HTMLElement;
+  const under = (li: HTMLElement | null) =>
+    [...(li ? (li.querySelector(":scope > ul")?.children ?? []) : tree.children)].map(
+      (c) => c.querySelector(":scope > div span[title]")?.getAttribute("title"),
+    );
+  const counts = (path: string) => {
+    const li = row(path);
+    const name = li.querySelector(":scope > div span[title]")?.textContent ?? "";
+    return li.querySelector(":scope > div")?.textContent?.replace(name, "");
+  };
+
+  // A feature that is suites itself is at the root, as "suites".
+  expect(under(null)).toEqual(["suites", "sl"]);
+  expect(row("suites")).toHaveTextContent("suites");
+  expect(counts("suites")).toBe("1 spec1 test case");
+  // Two folders called performance, each under its own parent.
+  expect(under(row("sl/admin"))).toEqual(["sl/admin/performance"]);
+  expect(under(row("sl/self"))).toEqual(["sl/self/performance"]);
+  // A feature that holds a feature shows the totals beneath it, and folds.
+  expect(under(row("sl/self/performance"))).toEqual(["sl/self/performance/goals"]);
+  expect(counts("sl/self/performance")).toBe("5 specs5 test cases");
+  expect(counts("sl/self/performance/goals")).toBe("3 specs4 test cases");
+  expect(counts("sl/admin/performance")).toBe("1 spec2 test cases");
+  expect(counts("sl")).toBe("6 specs7 test cases");
+  // Each fold button has its own name, though the folders share one.
+  expect(screen.queryByRole("button", { name: "sl/admin/performance" })).not.toBeInTheDocument();
+  const fold = screen.getByRole("button", { name: "sl/self/performance" });
+  fireEvent.click(fold);
+  expect(within(tree).queryByTitle("sl/self/performance/goals")).not.toBeInTheDocument();
+  expect(within(tree).getByTitle("sl/admin/performance")).toBeInTheDocument();
+});
+
+test("each Refresh is named for what it reads, and all of them read Refresh", async () => {
+  mount("C:/repo");
+  await screen.findByText("All good");
+  expect(headerRefresh()).toHaveTextContent(/^Refresh$/);
+  fireEvent.click(screen.getByRole("tab", { name: "Runner" }));
+  expect(await screen.findByRole("button", { name: "Refresh the test list" })).toHaveTextContent(/^Refresh$/);
+  fireEvent.click(screen.getByRole("tab", { name: "Accounts" }));
+  expect(await screen.findByRole("button", { name: "Refresh accounts" })).toHaveTextContent(/^Refresh$/);
+  fireEvent.click(screen.getByRole("tab", { name: "Overview" }));
+});
+
+test("the summary counts up from 0 when Overview opens, and again each time it is opened", async () => {
+  const frames = new Map<number, FrameRequestCallback>();
+  let id = 0;
+  vi.stubGlobal("requestAnimationFrame", (cb: FrameRequestCallback) => {
+    id += 1;
+    frames.set(id, cb);
+    return id;
+  });
+  vi.stubGlobal("cancelAnimationFrame", (n: number) => frames.delete(n));
+  const run = (at: number) =>
+    act(() => {
+      const now = [...frames.values()];
+      frames.clear();
+      for (const cb of now) cb(at);
+    });
+  mount("C:/repo");
+  await screen.findByText("All good");
+  const structure = await screen.findByRole("region", { name: "Repo structure" });
+  const value = () => within(structure).getByText("features").previousElementSibling as HTMLElement;
+  /** The digits on screen, and what a screen reader gets. */
+  const seen = () => value().querySelector("[aria-hidden]")?.textContent ?? value().textContent;
+  const heard = () => value().querySelector(".sr-only")?.textContent ?? value().textContent;
+  expect(seen()).toBe("0");
+  expect(heard()).toBe("3");
+  run(0);
+  run(COUNT_MS);
+  expect(value().textContent).toBe("3");
+
+  // Away and back: it counts again.
+  fireEvent.click(screen.getByRole("tab", { name: "Sync" }));
+  fireEvent.click(screen.getByRole("tab", { name: "Overview" }));
+  expect(seen()).toBe("0");
+  expect(heard()).toBe("3");
+  run(1000);
+  run(1000 + COUNT_MS);
+  expect(value().textContent).toBe("3");
 });
 
 test("the health badges name each issue, with what to do on hover", async () => {
@@ -126,7 +292,8 @@ test("the health badges name each issue, with what to do on hover", async () => 
 test("the four areas are tabs, and the tab last chosen is kept for the session", async () => {
   const view = mount("C:/repo");
   await screen.findByText("All good");
-  expect(screen.getAllByRole("tab").map((t) => t.textContent)).toEqual(["Overview", "Runner", "Accounts 2", "Sync"]);
+  // No count beside a tab's name.
+  expect(screen.getAllByRole("tab").map((t) => t.textContent)).toEqual(["Overview", "Runner", "Accounts", "Sync"]);
   expect(screen.getByRole("tab", { name: "Overview" })).toHaveAttribute("aria-selected", "true");
   fireEvent.click(screen.getByRole("tab", { name: "Sync" }));
   expect(screen.getByRole("tab", { name: "Sync" })).toHaveAttribute("aria-selected", "true");
@@ -195,7 +362,7 @@ test("a request left pending is cleared when the tab unmounts, so it cannot reop
 test("Refresh reads every Playwright query again; nothing is read again unasked", async () => {
   const calls = mount("C:/repo");
   await screen.findByText("All good");
-  for (const name of ["Runner", "Accounts 2", "Sync"]) fireEvent.click(screen.getByRole("tab", { name }));
+  for (const name of ["Runner", "Accounts", "Sync"]) fireEvent.click(screen.getByRole("tab", { name }));
   const PW = ["pw_repo_structure", "pw_list", "pw_reports", "pw_users_list", "pw_sync_states"];
   await waitFor(() => expect(PW.every((cmd) => calls.some((c) => c.cmd === cmd))).toBe(true));
   const count = (cmd: string) => calls.filter((c) => c.cmd === cmd).length;
@@ -207,8 +374,8 @@ test("Refresh reads every Playwright query again; nothing is read again unasked"
   for (const cmd of PW) expect(count(cmd)).toBe(before[cmd]);
 
   // Refresh waits for the Accounts tab's counts (a repo command) to end.
-  await waitFor(() => expect(screen.getByRole("button", { name: "Refresh" })).toBeEnabled());
-  fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+  await waitFor(() => expect(headerRefresh()).toBeEnabled());
+  fireEvent.click(headerRefresh());
   await waitFor(() => {
     for (const cmd of PW) expect(count(cmd)).toBeGreaterThan(before[cmd]);
   });
@@ -236,7 +403,7 @@ test("pointing at the Runner tab starts its listing; a clone that cannot run is 
   const calls = mount("C:/repo");
   await screen.findByText("All good");
   const listed = () => calls.filter((c) => c.cmd === "pw_list").length;
-  fireEvent.pointerEnter(screen.getByRole("tab", { name: "Accounts 2" }));
+  fireEvent.pointerEnter(screen.getByRole("tab", { name: "Accounts" }));
   fireEvent.focus(screen.getByRole("tab", { name: "Sync" }));
   expect(listed()).toBe(0);
   fireEvent.pointerEnter(screen.getByRole("tab", { name: "Runner" }));
@@ -281,10 +448,10 @@ test("Refresh waits while an account change or a Runner command is going", async
     return null;
   });
   await screen.findByText("All good");
-  const refresh = () => screen.getByRole("button", { name: "Refresh" });
+  const refresh = headerRefresh;
   expect(refresh()).toBeEnabled();
   // The Accounts tab's counts are a repo command: Refresh waits for it.
-  fireEvent.click(screen.getByRole("tab", { name: "Accounts 2" }));
+  fireEvent.click(screen.getByRole("tab", { name: "Accounts" }));
   await waitFor(() => expect(calls.some((c) => c.cmd === "pw_users_refs")).toBe(true));
   await waitFor(() => expect(refresh()).toBeDisabled());
   await act(async () => release());

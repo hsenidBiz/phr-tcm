@@ -42,7 +42,28 @@
 <body>
 <main>
   <h1>Test Case Manager backlog</h1>
-  <p class="sub">Updated 20 October 2026, after 2.2.3-beta.15 (fixes for the tool errors of 19 October). What is left is below.</p>
+  <p class="sub">Updated 20 October 2026, after 2.2.3-beta.16 (Playwright and Auto Run tidy-ups, plainer AI Tools text, a smaller app). What is left is below.</p>
+
+  <h2>Items 31-39 and the bundle check (2.2.3-beta.16, 20 October 2026)</h2>
+  <div class="item">
+    <div class="head"><span class="title">Hand checks owed</span><span class="status todo">Waiting on you</span></div>
+    <ul>
+      <li>Playwright Overview: the numbers count up when the tab opens, and the Folder area reads as a tree (nesting, indentation, the totals beside each folder). Neither could be looked at on this machine.</li>
+      <li>Playwright Runner and Accounts: Refresh works as List again did; no number beside Accounts.</li>
+      <li>Auto Run: the environment and the case search sit in Setup; typing a case id on Past runs switches to Test cases; Has a script lists only scripted cases and is remembered per project; a missing test file is named whether Setup is open or shut.</li>
+      <li>AI Bridge: the AI Tools Breakdown reads well at a glance.</li>
+      <li>The Settings extra plays as you wanted (speed, pick-ups).</li>
+      <li>The run window opens as before (it now loads the first time it is opened), and the installer is about 0.7 MB smaller.</li>
+    </ul>
+  </div>
+  <div class="item">
+    <div class="head"><span class="title">Not fully done</span><span class="status todo">Follow-ups</span></div>
+    <ul>
+      <li>The run window's dialog has no accessible name (it was like this before).</li>
+      <li>The new Setup row for protected records has no entry in How To Use yet.</li>
+      <li>The bundle check (docs/bundle-check-2026-10.md) found nothing else worth changing: most of the app is its Rust code, already built for size, and startup is mostly WebView2 starting and the sign-in check.</li>
+    </ul>
+  </div>
 
   <h2>The assistant's network, cookie and element tools (2.2.3-beta.14, 20 October 2026)</h2>
   <div class="item">
@@ -153,15 +174,6 @@
 
   <h2>Agreed, not built yet</h2>
   <div class="item"><div class="head"><span class="num">28</span><span class="title">Assistants can change a script's preconditions in a repair</span><span class="status todo">Agreed</span></div><p>Add, remove or change one precondition in a repair, with a reason; a removed one is replaced by steps that create that state.</p></div>
-  <div class="item"><div class="head"><span class="num">31</span><span class="title">Count-up animation on the Overview numbers</span><span class="status todo">Agreed</span></div><p>The numbers in the Playwright Overview's summary count up to their value when the tab opens, instead of appearing at once (not under reduced motion).</p></div>
-  <div class="item"><div class="head"><span class="num">32</span><span class="title">Overview folders drawn as a tree</span><span class="status todo">Agreed</span></div><p>In the Playwright Overview, the Folder area reads as a tree (folders nested under their parents, features beneath) rather than a row of separate records.</p></div>
-  <div class="item"><div class="head"><span class="num">33</span><span class="title">List again becomes Refresh</span><span class="status todo">Agreed</span></div><p>On the Playwright tab, the List again button is renamed Refresh (and its help text and accessible name follow).</p></div>
-  <div class="item"><div class="head"><span class="num">34</span><span class="title">No number beside the Accounts tab</span><span class="status todo">Agreed</span></div><p>Remove the count shown next to the Accounts tab on the Playwright screen.</p></div>
-  <div class="item"><div class="head"><span class="num">35</span><span class="title">Auto Run: Environment moves to Setup, with the search bar</span><span class="status todo">Agreed</span></div><p>Remove the Environment header from the Test cases tab and show the environment in Setup instead, and move the Search by ID bar there too.</p></div>
-  <div class="item"><div class="head"><span class="num">36</span><span class="title">Auto Run: the second Test cases title goes</span><span class="status todo">Agreed</span></div><p>Remove the second Test cases (60) title just above the Environment and Search by ID row; the tab's own label carries the information (the count already sits beside the tab name).</p></div>
-  <div class="item"><div class="head"><span class="num">37</span><span class="title">Auto Run: show only the test cases that have scripts</span><span class="status todo">Agreed</span></div><p>An option on the Test cases tab to list only the cases that already have an Auto Run script.</p></div>
-  <div class="item"><div class="head"><span class="num">38</span><span class="title">Simpler text in the AI Tools Breakdown</span><span class="status todo">Agreed</span></div><p>Rewrite the AI Tools Breakdown on the AI Bridge screen in plainer, shorter words, so what each tool does and the recommended way to have an assistant write test cases reads at a glance.</p></div>
-  <div class="item"><div class="head"><span class="num">39</span><span class="title">Brick game: one ball speed, and power-ups</span><span class="status todo">Agreed</span></div><p>The ball moves at the level 1 speed on every level. Some bricks drop a power-up that falls down for the player to catch: more balls at once, the ball's path shown ahead of it, a ball that explodes on contact, and others of the same kind.</p></div>
 
   <h2>Export to Playwright hand-over (2.2.3-beta.9, 18 October 2026)</h2>
   <div class="item">
@@ -246,7 +258,6 @@
 
   <h2>To investigate</h2>
   <div class="item"><div class="head"><span class="title">Edge stall after long role-lookup polling</span><span class="status todo">To investigate</span></div></div>
-  <div class="item"><div class="head"><span class="title">Bundle optimization</span><span class="status todo">To investigate</span></div><p>Find out whether the app can be made smaller or faster to start by optimizing what it ships (the frontend bundle, and the size and startup of the installed app). Avin is not sure this applies; if it does, he wants it done. First step: measure what the bundle and the installer hold today, then say what is worth changing and what is not.</p></div>
 
   <h2>On hold</h2>
 

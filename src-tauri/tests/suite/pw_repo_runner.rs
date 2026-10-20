@@ -461,7 +461,7 @@ fn every_action_plans_as_qa_would() {
     let gone = "[\"gone\"]".to_string();
     let e = plan(d.path(), &tree, &[gone.clone()], RunAction::Picked, BrowserMode::Hidden, &none).unwrap_err();
     assert_eq!(e, runner::missing_ticks(1));
-    assert!(e.starts_with("1 ticked test is no longer in the repo's list") && e.contains("Use List again"), "{e}");
+    assert!(e.starts_with("1 ticked test is no longer in the repo's list") && e.contains("Use Refresh above the list"), "{e}");
     let two = vec![gone, "[\"also gone\"]".to_string(), find(&tree, "the app shell loads").id.clone()];
     let e = plan(d.path(), &tree, &two, RunAction::Picked, BrowserMode::Hidden, &none).unwrap_err();
     assert!(e.starts_with("2 ticked tests are no longer"), "{e}");
@@ -744,8 +744,8 @@ fn only_the_chosen_clone_is_used() {
 
 #[test]
 fn a_mismatch_says_to_list_again() {
-    assert!(explain_mismatch(3, 2).ends_with("If the specs changed, use List again, then run again."));
-    assert!(explain_mismatch(3, 0).ends_with("If the specs changed, use List again, then run again."));
+    assert!(explain_mismatch(3, 2).ends_with("If the specs changed, use Refresh above the list, then run again."));
+    assert!(explain_mismatch(3, 0).ends_with("If the specs changed, use Refresh above the list, then run again."));
 }
 
 #[cfg(windows)]
@@ -951,7 +951,7 @@ fn a_listing_kept_on_disk_is_used_while_the_clone_is_unchanged() {
     // Read once from disk, then from memory.
     assert_eq!(runner::list(d.path(), false, &show, &never).unwrap().tests.len(), 5);
 
-    // List again (refresh) never uses it.
+    // The Runner's Refresh never uses it.
     let refused = |_: &[String]| -> Result<Launch, String> { Err("listed again".into()) };
     let d = clone();
     keep(d.path(), &json);
