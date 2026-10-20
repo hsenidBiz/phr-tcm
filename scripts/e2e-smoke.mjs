@@ -3,7 +3,7 @@
 // renders (sign-in view - tokens are memory-only so a fresh process is
 // always signed out), then exits cleanly.
 //
-// Usage: node scripts/e2e-smoke.mjs [path-to-exe]
+// Usage: npm run e2e:smoke [-- path-to-exe]
 // Default exe: src-tauri/target/release/v2.exe
 
 import { spawn } from "node:child_process";
