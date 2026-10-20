@@ -27,6 +27,18 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.2.3-beta.19",
+    date: "2026-10-20",
+    items: [
+      "Auto Run: scripts can check every item of a list (expect_each), for example that every card shows its name and dates, instead of only counting them.",
+      "Auto Run: new checks for the order of a list's items (expect_order) and where one element sits next to another (expect_position), plus patterns for text that varies (\"Showing 1-10 of\" any number) and at-least or at-most counts.",
+      "Auto Run: a check of the page address now waits like every other check, and a count, list, order or position check waits until the page has stopped changing.",
+      "Auto Run: when the assistant saves a script, a \"this is not here\" check that could never fail is refused until the script shows the thing does appear where it should, and loose record names or records without a precondition are pointed out.",
+      "Auto Run: no check ever shows the value typed in a password field.",
+      "Export to Playwright: the new checks export with the same rules, so the exported test passes and fails the same way.",
+    ],
+  },
+  {
     version: "2.2.3-beta.18",
     date: "2026-10-20",
     items: [
