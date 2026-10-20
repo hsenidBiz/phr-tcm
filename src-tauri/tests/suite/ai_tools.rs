@@ -559,7 +559,6 @@ fn each_tool_belongs_to_its_module() {
     assert_eq!(
         AUTORUN_TOOLS,
         [
-            "get_autorun_guide",
             "save_autorun_script",
             "get_autorun_script",
             "delete_autorun_script",
@@ -567,56 +566,38 @@ fn each_tool_belongs_to_its_module() {
             "probe_autorun_locator",
             "try_autorun_action",
             "replay_autorun_to_step",
-            "stop_autorun_replay",
             "start_autorun_discovery",
-            "discover_autorun_action",
             "discover_autorun_actions",
             "save_autorun_area",
             "end_autorun_discovery",
-            "release_autorun_browser",
             "reset_autorun_browser",
             "save_autorun_component",
-            "remove_autorun_component",
             "get_autorun_failures",
-            "record_autorun_quirk",
-            "retire_autorun_quirk",
+            "record_quirk",
             "record_validation_rule",
             "mark_autorun_suspected_defect",
             "set_autorun_order",
             "propose_accounts",
             "get_accounts",
-            "list_test_files",
             "get_autorun_network_wait",
-            "list_autorun_requests",
             "search_autorun_requests",
             "get_autorun_request",
-            "get_autorun_response",
-            "get_autorun_response_body",
-            "set_autorun_capture",
-            "get_autorun_capture",
-            "export_autorun_requests",
-            "import_autorun_requests",
+            "autorun_capture",
+            "autorun_har",
             "set_autorun_headers",
-            "get_autorun_cookies",
-            "set_autorun_cookie",
-            "clear_autorun_cookies",
-            "inspect_autorun_element"
+            "autorun_cookies"
         ]
     );
     assert_eq!(
         API_TEMPLATE_TOOLS,
         [
-            "get_api_template_guide",
             "list_api_templates",
             "prove_api_template",
             "run_api_template",
             "save_api_flow",
             "get_api_flow_progress",
             "save_api_fixture",
-            "run_api_fixture",
-            "list_api_fixtures",
-            "record_app_quirk",
-            "retire_app_quirk"
+            "run_api_fixture"
         ]
     );
     assert_eq!(DB_TOOLS, ["db_lookup", "db_query"]);
@@ -628,10 +609,8 @@ fn each_tool_belongs_to_its_module() {
             "edit_report",
             "compare_reports",
             "check_report",
-            "new_report",
             "preview_report",
-            "preview_report_live",
-            "get_report_guide"
+            "preview_report_live"
         ]
     );
     for t in AUTORUN_TOOLS {
@@ -710,7 +689,7 @@ fn the_effective_disabled_set_follows_the_modules_and_protects_the_core() {
         CORE_TOOLS,
         [
             "begin_test_case_writing",
-            "get_writing_guide",
+            "get_guide",
             "get_test_cases",
             "check_spec_coverage",
             "transform_cases",
@@ -731,7 +710,7 @@ fn the_effective_disabled_set_follows_the_modules_and_protects_the_core() {
         "the three that finish a draft cannot be switched off"
     );
     let got = effective_disabled_for(
-        &["begin_test_case_writing".into(), "search_wiki".into(), "get_autorun_guide".into()],
+        &["begin_test_case_writing".into(), "search_wiki".into(), "save_autorun_script".into()],
         &none,
     );
     let mut expected = module_tools.clone();
@@ -771,7 +750,7 @@ fn the_heal_command_is_an_auto_run_routine_offered_only_with_auto_run() {
     let body = c.body.join("\n");
     let mcp = include_str!("../../src/mcp.rs");
     for tool in [
-        "get_autorun_guide",
+        "get_guide",
         "get_autorun_failures",
         "get_autorun_page",
         "probe_autorun_locator",
@@ -800,6 +779,17 @@ fn the_heal_command_is_an_auto_run_routine_offered_only_with_auto_run() {
     assert!(flat.contains("refused unless that step failed in the case's newest run"), "{flat}");
     assert!(flat.contains("refused when the failure is one of the `STOP:` lines"), "{flat}");
     assert!(flat.contains("is one of the `STOP:` lines is reported as it is"), "{flat}");
+    // A run that cannot reach an area: the assistant repairs the area's
+    // path itself (owner decision 2026-10-20), never the script.
+    assert!(flat.contains("repair the AREA's path yourself instead of asking the person"), "{flat}");
+    assert!(flat.contains("`save_autorun_area` with the area's name"), "{flat}");
+    // The skill quotes the unreached STOP line's own words, apart from the
+    // setup line, which goes to the person.
+    assert!(flat.contains("except the line \"the run could not reach this case's area\""), "{flat}");
+    assert!(flat.contains("(\"the run could not take this case to its module screen\": no Module, no account, no path, an area never recorded) goes to the person"), "{flat}");
+    assert!(!flat.contains("Could not reach module"), "the skill quotes the run's wording, not the STOP line: {flat}");
+    assert!(mcp.contains("a case that could not reach its area: repair the area with save_autorun_area"), "the failures tool leaves out the area repair");
+    assert!(flat.contains("put the old path back"), "{flat}");
     assert!(!flat.to_lowercase().contains("three"), "the routine must not count the STOP lines: {flat}");
     assert!(mcp.contains("could not reach its module screen"), "the failures tool leaves out the module-path stop");
     assert!(body.contains("Choosing a model for the work"), "the routine points at the guide's model section");
@@ -813,7 +803,9 @@ fn the_heal_command_is_an_auto_run_routine_offered_only_with_auto_run() {
 #[test]
 fn the_setup_command_is_an_auto_run_routine_offered_only_with_auto_run() {
     let c = COMMANDS.iter().find(|c| c.stem == "setup").expect("a setup command");
-    assert_eq!(c.tool, "get_autorun_guide");
+    // An Auto Run tool: the guide is Core's now, and the skill must still
+    // be written only where Auto Run is.
+    assert_eq!(c.tool, "start_autorun_discovery");
     assert_eq!(
         c.desc,
         "Set the app up for testing: environment, accounts, module, areas, test files and preconditions"
@@ -833,13 +825,12 @@ fn the_setup_command_is_an_auto_run_routine_offered_only_with_auto_run() {
     let mcp = include_str!("../../src/mcp.rs");
     let is_tool = |name: &str| mcp.contains(&format!("\"name\": \"{name}\""));
     for tool in [
-        "get_autorun_guide",
+        "get_guide",
         "db_lookup",
         "db_query",
         "propose_accounts",
-        "list_test_files",
+        "get_accounts",
         "list_api_templates",
-        "get_api_template_guide",
     ] {
         assert!(body.contains(&format!("`{tool}`")), "the setup routine never names `{tool}`");
         assert!(is_tool(tool), "`{tool}` is not in the bridge's tool list");
@@ -1723,7 +1714,7 @@ fn the_discover_command_writes_a_script_from_the_live_app() {
         "get_test_cases",
         "start_autorun_discovery",
         "save_autorun_area",
-        "discover_autorun_action",
+        "discover_autorun_actions",
         "save_autorun_script",
         // Optional, after the save: never part of writing the script.
         "replay_autorun_to_step",
@@ -1750,7 +1741,7 @@ fn the_discover_command_writes_a_script_from_the_live_app() {
     );
     let flat = body.split_whitespace().collect::<Vec<_>>().join(" ");
     for said in [
-        "carrying each step's actions out live with `discover_autorun_action` as you write them",
+        "carrying each step's actions out live with `discover_autorun_actions` as you write them",
         "Only once every step has been carried out, save it",
         "Any fix after the save is a repair, declared in `edits`.",
         "ask the person to record the area in Auto Run",
@@ -1758,7 +1749,7 @@ fn the_discover_command_writes_a_script_from_the_live_app() {
         "delete only records carrying that prefix",
         "never read the application's code to write scripts",
         "Choosing a model for the work",
-        "`discover_autorun_actions` carries out up to 20 in one call",
+        "send them as `actions`: up to 20 in one call",
     ] {
         assert!(flat.contains(said), "/tcm:discover never says {said:?}: {flat}");
     }
@@ -1786,7 +1777,7 @@ fn the_map_menus_command_walks_the_menus_and_never_submits() {
     assert!(body.contains("$ARGUMENTS"), "{body}");
     let mcp = include_str!("../../src/mcp.rs");
     let is_tool = |name: &str| mcp.contains(&format!("\"name\": \"{name}\""));
-    let order = ["start_autorun_discovery", "discover_autorun_action", "save_autorun_area", "end_autorun_discovery"];
+    let order = ["start_autorun_discovery", "discover_autorun_actions", "save_autorun_area", "end_autorun_discovery"];
     let mut from = 0;
     for tool in order {
         let at = body[from..]
@@ -1843,7 +1834,7 @@ fn heal_explores_a_stale_area_first_and_setup_names_discover() {
 /// Final review, finding 1: a discovery that names no area files
 /// everything in the bucket for no area. `/tcm:discover` and `/tcm:heal`
 /// both say to pass `area` to `start_autorun_discovery`, how to reach a
-/// listed area (click its menu path with `discover_autorun_action`), and to
+/// listed area (click its menu path with `discover_autorun_actions`), and to
 /// pass `area` when moving to another one; discover also says to save an
 /// unlisted screen with `save_autorun_area` as soon as it is found.
 #[test]
@@ -1856,7 +1847,7 @@ fn discover_and_heal_say_to_pass_the_area_to_discovery() {
             assert!(flat.contains(said), "/tcm:{stem} never says {said:?}: {flat}");
         }
         assert!(
-            flat.contains("`area` on `discover_autorun_action`"),
+            flat.contains("`area` on `discover_autorun_actions`"),
             "/tcm:{stem} never says to pass `area` when moving: {flat}"
         );
     }
@@ -1920,12 +1911,12 @@ fn the_commands_point_at_the_quick_guide() {
         let c = COMMANDS.iter().find(|c| c.stem == stem).unwrap();
         let flat = c.body.join("\n").split_whitespace().collect::<Vec<_>>().join(" ");
         for said in [
-            "Call `get_autorun_guide` with `quick` true first and follow it.",
+            "Call `get_guide` with topic autorun and `quick` true first and follow it.",
             "Call it again with `section` (or `full` true for the full guide) when something the quick rules do not cover comes up",
         ] {
             assert!(flat.contains(said), "/tcm:{stem} never says {said:?}: {flat}");
         }
-        let quick = flat.find("`get_autorun_guide` with `quick` true").unwrap();
+        let quick = flat.find("`get_guide` with topic autorun and `quick` true").unwrap();
         let first_tool = ["get_test_cases", "start_autorun_discovery", "get_autorun_failures"]
             .iter()
             .filter_map(|t| flat.find(&format!("`{t}`")))

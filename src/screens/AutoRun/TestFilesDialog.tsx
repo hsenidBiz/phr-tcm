@@ -14,6 +14,7 @@ import { Button } from "../../components/ui/button";
 import { Modal } from "../../components/ui/modal";
 import { MODAL_LARGE } from "./modalWidths";
 import { IconAddFiles, IconBrowse, IconCancel, IconConfirm, IconRemove } from "../../lib/actionIcons";
+import { fileName } from "../../lib/fileSync";
 import { unwrapStr } from "../../lib/ipc";
 
 /** The query key every view of a project's Test files shares. */
@@ -37,11 +38,6 @@ export function fileSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} bytes`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-}
-
-/** The file name at the end of a picked path. */
-function baseName(path: string): string {
-  return path.split(/[\\/]/).pop() ?? path;
 }
 
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
@@ -88,7 +84,7 @@ export default function TestFilesDialog({
     const asking: { path: string; name: string }[] = [];
     const failed: string[] = [];
     for (const path of paths) {
-      const name = baseName(path);
+      const name = fileName(path);
       if (have.has(name.toLowerCase())) {
         asking.push({ path, name });
         continue;

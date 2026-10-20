@@ -241,7 +241,7 @@ pub fn never_seen(what: &str, hint: Option<&str>) -> String {
 
 fn refusal(step: i32, what: &str, hint: Option<&str>) -> String {
     format!(
-        "Step {step}: {} Find it on the page first with probe_autorun_locator or discover_autorun_action, then save again.",
+        "Step {step}: {} Find it on the page first with probe_autorun_locator or discover_autorun_actions, then save again.",
         never_seen(what, hint)
     )
 }
@@ -2239,7 +2239,7 @@ fn component_unseen(map: &DiscoveryMap, area: Option<&str>, actions: &[Action]) 
     let paths = seen_paths(map);
     let refused = |i: usize, what: &str, hint: Option<&str>| {
         format!(
-            "Action {}: {} Find it on the page first with probe_autorun_locator or discover_autorun_action, then save again.",
+            "Action {}: {} Find it on the page first with probe_autorun_locator or discover_autorun_actions, then save again.",
             i + 1,
             never_seen(what, hint)
         )

@@ -207,6 +207,8 @@ test("capture mode hides every mention of the Auto Run tools on the AI Tools tab
   expect(screen.queryByText(/^API templates:/)).not.toBeInTheDocument();
   expect(screen.getByRole("heading", { name: "API templates" })).toBeInTheDocument();
   expect(screen.getByRole("switch", { name: "API templates (create, edit and delete)" })).toBeInTheDocument();
+  // The Network tools card is about Auto Run's tools: hidden with them.
+  expect(screen.queryByRole("switch", { name: "Network tools" })).not.toBeInTheDocument();
   // Capture mode reports every module on, so the writing style card shows;
   // the old trial switch is gone.
   expect(screen.getByRole("heading", { name: "Writing style" })).toBeInTheDocument();
@@ -1026,6 +1028,8 @@ test("the API templates breakdown says the assistant maps a module's stages and 
   expect(entry.textContent).not.toMatch(/[a-z]+_[a-z]/);
 });
 
+/// Every tool name but the quirk tool: it rides in the API templates row
+/// too, which is still on, so it stays offered.
 test("switching the Auto Run scripts row off sends every tool name in the disabled list", async () => {
   let seen: unknown;
   mockIPC((cmd, args) => {
@@ -1052,47 +1056,31 @@ test("switching the Auto Run scripts row off sends every tool name in the disabl
   );
   const disabledTools = (seen as { disabledTools: string[] }).disabledTools;
   expect([...disabledTools].sort()).toEqual([
-    "clear_autorun_cookies",
+    "autorun_capture",
+    "autorun_cookies",
+    "autorun_har",
     "delete_autorun_script",
-    "discover_autorun_action",
     "discover_autorun_actions",
     "end_autorun_discovery",
-    "export_autorun_requests",
     "get_accounts",
-    "get_autorun_capture",
-    "get_autorun_cookies",
     "get_autorun_failures",
-    "get_autorun_guide",
     "get_autorun_network_wait",
     "get_autorun_page",
     "get_autorun_request",
-    "get_autorun_response",
-    "get_autorun_response_body",
     "get_autorun_script",
-    "import_autorun_requests",
-    "inspect_autorun_element",
-    "list_autorun_requests",
-    "list_test_files",
     "mark_autorun_suspected_defect",
     "probe_autorun_locator",
     "propose_accounts",
-    "record_autorun_quirk",
     "record_validation_rule",
-    "release_autorun_browser",
-    "remove_autorun_component",
     "replay_autorun_to_step",
     "reset_autorun_browser",
-    "retire_autorun_quirk",
     "save_autorun_area",
     "save_autorun_component",
     "save_autorun_script",
     "search_autorun_requests",
-    "set_autorun_capture",
-    "set_autorun_cookie",
     "set_autorun_headers",
     "set_autorun_order",
     "start_autorun_discovery",
-    "stop_autorun_replay",
     "try_autorun_action",
   ]);
 });
@@ -1302,6 +1290,22 @@ test("the API templates switch is off, and stored when turned on", async () => {
   expect(
     await screen.findByRole("switch", { name: "API templates (create, edit and delete)" }),
   ).toHaveAttribute("aria-checked", "true");
+});
+
+/// The Network tools switch is the active environment's own, off by
+/// default, shown while Auto Run is on, and the stored flag is what App
+/// pushes to the bridge as networkTools.
+test("the Network tools switch is off, and stored when turned on", async () => {
+  dbMocks();
+  renderBridge(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+
+  const network = await screen.findByRole("switch", { name: "Network tools" });
+  expect(network).toHaveAttribute("aria-checked", "false");
+  expect(localStorage.getItem("tcm-v2-network-tools")).toBeNull();
+
+  fireEvent.click(network);
+  expect(localStorage.getItem("tcm-v2-network-tools")).toBe("1");
+  expect(await screen.findByRole("switch", { name: "Network tools" })).toHaveAttribute("aria-checked", "true");
 });
 
 /// "Run changes without asking" means something only while writes can

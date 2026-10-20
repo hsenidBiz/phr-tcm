@@ -37,12 +37,12 @@ import {
   IconShowSecret,
 } from "../../lib/actionIcons";
 import { unwrapStr } from "../../lib/ipc";
+import { plural } from "../../lib/plural";
 import { MODAL_SHORT } from "../AutoRun/modalWidths";
 import { Hint } from "./parts";
 
 const fieldLabel = "flex flex-col gap-1 text-xs text-muted";
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
-const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 
 /** The query key of the clone's accounts; the folder is part of it. */
 export const ACCOUNTS_KEY = "pw-accounts";

@@ -2,7 +2,7 @@
 //! runner uses to feed it.
 
 use crate::state::get_fresh_token;
-use crate::{ado, capture};
+use crate::ado;
 
 pub mod work_bug {
     #[derive(serde::Serialize, specta::Type)]
@@ -102,14 +102,6 @@ pub async fn file_bug(
         screenshots_failed: failed,
         screenshots_total: screenshots_b64.len() as i32,
     })
-}
-
-#[tauri::command]
-#[specta::specta]
-pub async fn capture_screens() -> Result<Vec<capture::ScreenShot>, String> {
-    tauri::async_runtime::spawn_blocking(capture::capture_all_monitors)
-        .await
-        .map_err(|e| e.to_string())?
 }
 
 /// Read any file for attaching to a result (name + base64 bytes).

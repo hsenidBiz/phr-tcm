@@ -737,7 +737,7 @@ pub fn find_patterns_with(run: &LocalRun, scripts: &[CaseScript], components: &C
 }
 
 /// What an assistant is told to do with a pattern - one line, once.
-pub const PATTERN_ADVICE: &str = "If this is how the application behaves, put the same quirk on the edit of EVERY case you repair for it, so later runs can tell whether it helped - or record it once with record_autorun_quirk and `cases` naming those cases and steps. Either way the next script avoids it.";
+pub const PATTERN_ADVICE: &str = "If this is how the application behaves, put the same quirk on the edit of EVERY case you repair for it, so later runs can tell whether it helped - or record it once with record_quirk and `cases` naming those cases and steps. Either way the next script avoids it.";
 
 /// The `## Patterns across cases` section, or nothing when there is none.
 pub fn patterns_section(patterns: &[Pattern]) -> String {

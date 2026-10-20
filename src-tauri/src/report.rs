@@ -5,6 +5,7 @@
 //! The stylesheet is `src-tauri/web/report-page.css`.
 
 use crate::ado_testplan::TestPoint;
+use crate::html_escape::esc;
 use crate::webtheme::PagePalette;
 use std::collections::HashMap;
 
@@ -62,13 +63,6 @@ pub fn format_epoch_utc(secs: u64) -> String {
     }
     let (hh, mm) = ((secs % 86_400) / 3600, (secs % 3600) / 60);
     format!("{y:04}-{m:02}-{d:02} {hh:02}:{mm:02} UTC")
-}
-
-fn esc(text: &str) -> String {
-    text.replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-        .replace('"', "&quot;")
 }
 
 /// An outcome as a CSS class suffix: letters and digits only. The outcome

@@ -98,15 +98,10 @@ pub fn note(root: &Path, case_id: i32, title: &str, to_step: i32, end: &ReplayEn
     // Written beside its place and renamed into it, as the other stores
     // write: a reader never meets half a file.
     let path = file(root, case_id);
-    let tmp = path.with_extension("json.tmp");
     let written = std::fs::create_dir_all(dir(root))
         .map_err(|e| e.to_string())
         .and_then(|()| serde_json::to_string_pretty(&record).map_err(|e| e.to_string()))
-        .and_then(|json| std::fs::write(&tmp, json).map_err(|e| e.to_string()))
-        .and_then(|()| std::fs::rename(&tmp, &path).map_err(|e| e.to_string()));
-    if written.is_err() {
-        let _ = std::fs::remove_file(&tmp);
-    }
+        .and_then(|json| crate::ai_tools::atomic_write(&path, &json));
     if written.is_err() {
         crate::applog::warn(format!("Auto Run: the replay failure of case {case_id} could not be kept"));
     }

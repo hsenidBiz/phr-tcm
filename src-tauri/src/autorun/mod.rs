@@ -8,6 +8,7 @@
 
 pub mod accounts;
 pub mod api_checks;
+pub mod area_repair;
 pub mod capture_redact;
 pub mod capture_tools;
 pub mod cleanup;

@@ -1,15 +1,11 @@
-//! Spreadsheet import/export, ported from v1 app/utils/import_parser.py
-//! against tests/test_import_parser.py as golden vectors.
+//! Draft import/export, ported from v1 app/utils/import_parser.py against
+//! tests/test_import_parser.py as golden vectors. JSON is the only format:
+//! a populated case id flags the case as an UPDATE of that exact work item;
+//! a blank id creates a new one.
 //!
-//! Canonical 9-column format: TestCaseID, TestCaseName, StepNumber,
-//! StepAction, StepExpected, Tags, AutomationStatus, ModuleValue,
-//! Preconditions. One row per step; per-case fields sit only on each case's
-//! first step row. A populated TestCaseID flags the case as an UPDATE of that
-//! exact work item; a blank ID creates a new one.
-//!
-//! Layout: this file owns parsing (Excel/CSV/JSON -> TestCase); `export`
-//! owns the Excel/JSON writers and the template; `html` owns the standalone
-//! HTML report and its autosaving note boxes.
+//! Layout: this file owns parsing (JSON -> TestCase); `export` owns the
+//! JSON writers; `html` owns the standalone HTML report and its autosaving
+//! note boxes.
 
 pub mod area_groups;
 pub mod comments;
@@ -24,11 +20,10 @@ pub use html::{
     export_queue_page, export_queue_page_in, export_queue_to_html, CommentCtx, DraftFile, DraftNoteCtx, NoteCtx,
     PageLayout,
 };
-pub(crate) use html::{esc, script_json};
+pub(crate) use html::script_json;
 
 use crate::model::{TestCase, MAX_TITLE_LEN, VALID_STATUSES};
 use crate::steps_xml::Step;
-use std::collections::HashMap;
 use std::path::Path;
 
 /// Spellings accepted for the reviewer's own scratchpad.
@@ -84,22 +79,6 @@ pub fn normalise_area(raw: &str) -> String {
         .collect::<Vec<_>>()
         .join(" / ")
 }
-
-pub const EXCEL_HEADERS: [&str; 9] = [
-    "TestCaseID",
-    "TestCaseName",
-    "StepNumber",
-    "StepAction",
-    "StepExpected",
-    "Tags",
-    "AutomationStatus",
-    "ModuleValue",
-    "Preconditions",
-];
-
-const REQUIRED_COLUMNS: [&str; 3] = ["TestCaseName", "StepNumber", "StepAction"];
-
-pub type Row = (u32, HashMap<String, String>);
 
 /// What a file parses to: the cases, the warnings, and the `specs` list
 /// (file paths or wiki URLs the review page shows beside the cases).
@@ -342,199 +321,6 @@ fn step_lines(s: &str) -> String {
     s.replace("\r\n", "\n").replace('\r', "\n")
 }
 
-fn step_sort_key(item: &Row) -> (i64, u32) {
-    let (row_num, row) = item;
-    let num = row
-        .get("StepNumber")
-        .map(|s| s.as_str())
-        .filter(|s| !s.is_empty())
-        .unwrap_or("0")
-        .parse::<i64>()
-        .unwrap_or(0);
-    (num, *row_num)
-}
-
-/// First non-empty value of `col` across a block's rows (per-case fields sit
-/// on whichever row carries them, usually the first step row).
-fn block_value(block_rows: &[Row], col: &str) -> String {
-    for (_n, row) in block_rows {
-        if let Some(v) = row.get(col) {
-            if !v.trim().is_empty() {
-                return v.trim().to_string();
-            }
-        }
-    }
-    String::new()
-}
-
-struct Block {
-    raw_id: String,
-    name: String,
-    row: u32,
-    rows: Vec<Row>,
-}
-
-/// Parse (sheet_row_number, row_map) pairs into test cases. Warnings
-/// reference the original sheet row so users can jump straight to it.
-pub fn parse_rows(rows: &[Row], headers: &[String]) -> Result<(Vec<TestCase>, Vec<String>), String> {
-    let mut warnings: Vec<String> = vec![];
-
-    let missing: Vec<&str> = REQUIRED_COLUMNS
-        .iter()
-        .filter(|c| !headers.iter().any(|h| h == *c))
-        .cloned()
-        .collect();
-    if !missing.is_empty() {
-        let mut sorted_missing = missing.clone();
-        sorted_missing.sort();
-        let mut all = EXCEL_HEADERS.to_vec();
-        all.sort();
-        return Err(format!(
-            "Missing required columns: {}.\nExpected columns: {}",
-            sorted_missing.join(", "),
-            all.join(", ")
-        ));
-    }
-
-    // Group rows into test-case blocks: a row starts a new block when it
-    // carries a TestCaseID (keyed by that ID) or a TestCaseName different
-    // from the current block; rows blank in both are continuation steps.
-    let mut blocks: Vec<Block> = vec![];
-    let mut current: Option<usize> = None;
-    for (row_num, row) in rows {
-        let raw_id = row.get("TestCaseID").map(|s| s.trim()).unwrap_or("").to_string();
-        let name = row.get("TestCaseName").map(|s| s.trim()).unwrap_or("").to_string();
-
-        if !raw_id.is_empty() {
-            let differs = current
-                .map(|i| blocks[i].raw_id != raw_id)
-                .unwrap_or(true);
-            if differs {
-                blocks.push(Block { raw_id: raw_id.clone(), name: name.clone(), row: *row_num, rows: vec![] });
-                current = Some(blocks.len() - 1);
-            }
-        } else if !name.is_empty() {
-            let differs = current.map(|i| blocks[i].name != name).unwrap_or(true);
-            if differs {
-                blocks.push(Block { raw_id: String::new(), name: name.clone(), row: *row_num, rows: vec![] });
-                current = Some(blocks.len() - 1);
-            }
-        } else if current.is_none() {
-            warnings.push(format!(
-                "Row {row_num}: skipped - no TestCaseName/TestCaseID and no open test case."
-            ));
-            continue;
-        }
-        blocks[current.unwrap()].rows.push((*row_num, row.clone()));
-    }
-
-    let mut test_cases: Vec<TestCase> = vec![];
-    for block in &blocks {
-        let mut group = block.rows.clone();
-        group.sort_by_key(step_sort_key);
-        let first_row = block.row;
-        let name = if !block.name.is_empty() {
-            block.name.clone()
-        } else {
-            block_value(&group, "TestCaseName")
-        };
-        if name.is_empty() {
-            warnings.push(format!(
-                "Row {first_row}: group of rows skipped - no TestCaseName found."
-            ));
-            continue;
-        }
-
-        if name.chars().count() > MAX_TITLE_LEN {
-            let head: String = name.chars().take(60).collect();
-            warnings.push(format!(
-                "Row {first_row}: test case '{head}...' has a title longer than {MAX_TITLE_LEN} characters - Azure DevOps will reject it."
-            ));
-        }
-
-        let mut update_id: Option<i32> = None;
-        let raw_id = if !block.raw_id.is_empty() {
-            block.raw_id.clone()
-        } else {
-            block_value(&group, "TestCaseID")
-        };
-        if !raw_id.is_empty() {
-            match work_item_id(&raw_id) {
-                Some(id) => update_id = Some(id),
-                None => warnings.push(format!(
-                    "Row {first_row}: test case '{name}' - TestCaseID '{raw_id}' is not a valid work item ID; it will be created as a new test case instead of updating."
-                )),
-            }
-        }
-
-        let tags = block_value(&group, "Tags");
-        if tags.contains(',') {
-            warnings.push(format!(
-                "Row {first_row}: test case '{name}' - Tags contain a comma; separate tags with semicolons (Azure DevOps does not allow commas in tag names)."
-            ));
-        }
-        let mut automation_status = block_value(&group, "AutomationStatus");
-        let module_value = block_value(&group, "ModuleValue");
-        let preconditions = block_value(&group, "Preconditions");
-
-        if automation_status.is_empty() {
-            automation_status = "Not Automated".into();
-        } else if !VALID_STATUSES.contains(&automation_status.as_str()) {
-            let mut valid = VALID_STATUSES.to_vec();
-            valid.sort();
-            warnings.push(format!(
-                "Row {first_row}: test case '{name}' - AutomationStatus '{automation_status}' is invalid. Defaulting to 'Not Automated'. Valid values: {}",
-                valid.join(", ")
-            ));
-            automation_status = "Not Automated".into();
-        }
-
-        let mut steps: Vec<Step> = vec![];
-        for (row_num, row) in &group {
-            let action = row.get("StepAction").map(|s| s.trim()).unwrap_or("");
-            let expected = row.get("StepExpected").map(|s| s.trim()).unwrap_or("");
-            if action.is_empty() {
-                if !expected.is_empty() {
-                    warnings.push(format!(
-                        "Row {row_num}: StepExpected is filled but StepAction is empty - step skipped."
-                    ));
-                }
-                continue;
-            }
-            steps.push(Step { action: step_lines(action), expected: step_lines(expected), shared: None });
-        }
-
-        if steps.is_empty() {
-            warnings.push(format!(
-                "Row {first_row}: test case '{name}' has no rows with a StepAction - skipped."
-            ));
-            continue;
-        }
-
-        test_cases.push(TestCase {
-            title: name,
-            steps,
-            tags,
-            automation_status,
-            module_value,
-            preconditions,
-            update_id,
-            priority: None,
-            // The spreadsheet format carries none of the app-only fields -
-            // the notes and both sort orders are JSON only.
-            comment: String::new(),
-            reviewer_notes: String::new(),
-            area: String::new(),
-            spec_order: None,
-            tester_order: None,
-            findings: vec![],
-            source: Default::default(),
-        });
-    }
-
-    Ok((test_cases, warnings))
-}
-
 pub(crate) fn json_value<'a>(d: &'a serde_json::Value, keys: &[&str]) -> Option<&'a serde_json::Value> {
     for k in keys {
         match d.get(k) {
@@ -556,7 +342,7 @@ pub(crate) fn value_to_string(v: &serde_json::Value) -> String {
 
 /// Parse the AI round-trip JSON format (wrapper {"test_cases": [...]} or a
 /// bare list) from its text. A kept `id` flags the case as an UPDATE - same
-/// contract as the TestCaseID column. Ported from v1 _parse_json.
+/// contract as the v1 TestCaseID column. Ported from v1 _parse_json.
 pub fn parse_json_text(content: &str) -> Result<ParsedFile, String> {
     let content = strip_bom(content);
     let data: serde_json::Value =

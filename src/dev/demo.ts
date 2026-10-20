@@ -508,8 +508,8 @@ let environments: EnvListView = {
 let autoRunNav: NavView = {
   direct_urls: false,
   modules: [
-    { area: "Sign-in", module: "Login", clicks: ['link "Sign in"'], arrived: `${SITE}/login`, recorded: at(2026, 9, 24, 11) },
-    { area: "Profile", module: "Profile", clicks: ['button "Account"', 'link "Profile"'], arrived: `${SITE}/profile`, recorded: at(2026, 9, 24, 11, 5) },
+    { area: "Sign-in", module: "Login", clicks: ['link "Sign in"'], arrived: `${SITE}/login`, recorded: at(2026, 9, 24, 11), repaired_by_assistant: null },
+    { area: "Profile", module: "Profile", clicks: ['button "Account"', 'link "Profile"'], arrived: `${SITE}/profile`, recorded: at(2026, 9, 24, 11, 5), repaired_by_assistant: null },
   ],
   save_words: ["confirm"],
   built_in_save_words: ["save", "update", "delete", "submit", "approve", "publish", "assign", "add", "create", "insert"],

@@ -18,7 +18,7 @@ pub const DEFAULT_LIMIT: usize = 300;
 
 /// The line count an assistant's page read stops at unless it asks for
 /// more: `get_autorun_page`, the page a replay answers once it stands
-/// before its step, the page `discover_autorun_action` answers after its
+/// before its step, the page `discover_autorun_actions` answers after its
 /// action, and the page `discover_autorun_actions` answers after its last. A whole page's tree runs to thousands of tokens on
 /// every read; the rest is one call away (`more_lines`), with a larger
 /// `limit` or a `within` that lists one part of the page.

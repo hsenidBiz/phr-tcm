@@ -36,7 +36,6 @@ pub mod backup;
 pub mod cache;
 pub mod case_format;
 pub mod case_markdown;
-pub mod capture;
 pub mod commands;
 pub mod crystal;
 pub mod events;
@@ -45,6 +44,7 @@ pub mod modules;
 pub mod filewatch;
 pub mod guide;
 pub mod help;
+pub mod html_escape;
 pub mod import_parser;
 pub mod intake;
 pub mod markdown;
@@ -75,12 +75,6 @@ pub mod writing_style;
 use std::sync::Mutex;
 use tauri_specta::{collect_commands, collect_events, Builder};
 
-// Pre-reorg public paths, kept resolving for tests and any external callers.
-pub use commands::auth::AuthStatus;
-pub use commands::bugs::{work_bug, RunAttachmentOut};
-pub use commands::queue::{ImportResult, SubmitItemResult};
-pub use commands::runs::{PointOutcome, ResultFailureDetail, RunAttachment};
-pub use events::{CaseNoteSaved, SubmitProgress, SuiteScanProgress};
 pub use state::SubmitCancel;
 
 pub fn specta_builder() -> Builder<tauri::Wry> {
@@ -171,7 +165,6 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             queue::export_queue_json,
             testplan::list_plans_with_suites,
             runs::get_result_detail,
-            bugs::capture_screens,
             bugs::file_bug,
             board::list_teams,
             board::list_team_members,
@@ -258,6 +251,7 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             autorun::auto_run_set_save_words,
             autorun::auto_run_set_protected,
             autorun::auto_run_remove_module_path,
+            autorun::auto_run_put_old_area_path_back,
             autorun::auto_run_sign_in,
             autorun::auto_run_forget_session,
             autorun::auto_run_clear_scripts,
@@ -278,7 +272,6 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             autorun_record_signin::auto_run_record_sign_in_stop,
             autorun_record_signin::auto_run_record_sign_in_save,
             autorun_publish::auto_run_publish,
-            queue::export_queue_html,
             discovery::list_project_tags,
             runs::result_screenshots,
             queue::view_queue_html,
@@ -326,7 +319,6 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             ai_tools::unregister_ai_tool,
             ai_tools::retire_global_registrations,
             ai_tools::remove_legacy_db_server,
-            workspace::ensure_cases_dir,
             workspace::copy_into_cases,
             run_order::get_run_order,
             run_order::save_run_order,

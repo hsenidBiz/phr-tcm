@@ -7,10 +7,11 @@ use serde_json::json;
 use v2_lib::autorun::nav::{
     check_areas, check_no_addresses, find_area, find_path, go_home, go_to_module, guide_section, is_setup_problem, load_nav,
     module_key, nav_path, no_address, no_default_area, no_path, path_of, put_path, remove_path, route_for, same_page, save_nav,
-    set_direct_urls, view, MadeBy, ModulePath, NavFile, PathFailure, Route, TripFrom, Where, NO_ACCOUNT, NO_MODULE,
+    set_direct_urls, view, AssistantRepair, MadeBy, ModulePath, NavFile, PathFailure, Route, TripFrom, Where, NO_ACCOUNT, NO_MODULE,
 };
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
+use v2_lib::autorun::area_repair::{check_reason, put_old_path_back, save_repair, MAX_REASON};
 use v2_lib::autorun::recipe::project_slug;
 use v2_lib::browser::actions::HIGHLIGHT_JS;
 use v2_lib::browser::cdp::{CdpError, Event};
@@ -70,7 +71,13 @@ fn the_file_sits_beside_the_sign_in_recipe_and_round_trips() {
     let expected = dir.path().join("projects").join(format!("{}.nav.json", project_slug("Acme", "Web")));
     assert_eq!(nav_path(dir.path(), "Acme", "Web"), expected);
     assert!(expected.is_file());
-    assert!(!dir.path().join("projects").join(format!("{}.nav.json.tmp", project_slug("Acme", "Web"))).exists());
+    // Atomic: no temp file (`*.tcm-tmp-*`) is left beside it.
+    let leftovers: Vec<_> = std::fs::read_dir(dir.path().join("projects"))
+        .unwrap()
+        .flatten()
+        .filter(|e| e.file_name().to_string_lossy().contains("tcm-tmp"))
+        .collect();
+    assert!(leftovers.is_empty(), "{leftovers:?}");
     assert_eq!(load_nav(dir.path(), "Acme", "Web").unwrap(), nav);
 }
 
@@ -985,7 +992,7 @@ fn a_dropped_duplicate_area_is_logged_once_per_file() {
 
 /// Final review, finding 1: a discovery reaches a listed area by clicking
 /// its menu path, so each area line gives that path, click by click, and
-/// the section says to carry it out with `discover_autorun_action`.
+/// the section says to carry it out with `discover_autorun_actions`.
 #[test]
 fn the_areas_section_gives_each_areas_menu_path() {
     let text = guide_section(&pms_and_leave());
@@ -995,5 +1002,215 @@ fn the_areas_section_gives_each_areas_menu_path() {
         path("Leave", "/x").clicks[1].describe()
     );
     assert!(text.contains(&menu), "missing {menu:?}: {text}");
-    assert!(text.contains("`discover_autorun_action`"), "{text}");
+    assert!(text.contains("`discover_autorun_actions`"), "{text}");
+}
+
+// ------------------------------------------- an assistant's repair
+
+/// An area an assistant repaired: its clicks now `#new`, its old path
+/// `Leave › Apply Leave` from `/old-start` to `/hr/leave/old`.
+fn repaired_leave() -> ModulePath {
+    let mut p = area("Leave Apply", "Leave", "/hr/leave/apply");
+    p.clicks = vec![serde_json::from_value(json!({ "css": "#new" })).unwrap()];
+    p.start = "/".into();
+    p.repaired_by_assistant = Some(AssistantRepair {
+        previous_clicks: path("Leave", "/x").clicks,
+        previous_arrived: "/hr/leave/old".into(),
+        previous_start: "/old-start".into(),
+        reason: "The Leave menu moved under Self Service".into(),
+        at: "2026-10-20T09:00:00Z".into(),
+    });
+    p
+}
+
+/// A file from before repairs loads with no note, and an area never
+/// repaired writes none: its file reads exactly as it did.
+#[test]
+fn an_old_area_file_loads_with_no_repair_note_and_writes_none() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(dir.path().join("projects")).unwrap();
+    let old = json!({ "modules": [
+        { "area": "Leave Apply", "module": "Leave", "clicks": [{ "role": "link", "name": "Leave" }],
+          "arrived": "/hr/leave", "recorded": "2026-09-24T10:00:00Z", "made_by": "person" }
+    ] });
+    std::fs::write(nav_path(dir.path(), "Acme", "Web"), old.to_string()).unwrap();
+    let nav = load_nav(dir.path(), "Acme", "Web").unwrap();
+    assert_eq!(find_area(&nav, "Leave Apply").unwrap().repaired_by_assistant, None);
+    save_nav(dir.path(), "Acme", "Web", &nav).unwrap();
+    let file = std::fs::read_to_string(nav_path(dir.path(), "Acme", "Web")).unwrap();
+    assert!(!file.contains("repaired_by_assistant"), "{file}");
+}
+
+/// A repaired area keeps its note through a save and a load, and the Areas
+/// dialog's view shows the reason and when - never the old clicks.
+#[test]
+fn a_repair_note_is_kept_and_shown() {
+    let dir = tempfile::tempdir().unwrap();
+    put_path(dir.path(), "Acme", "Web", repaired_leave()).unwrap();
+    let nav = load_nav(dir.path(), "Acme", "Web").unwrap();
+    assert_eq!(find_area(&nav, "Leave Apply"), Some(&repaired_leave()));
+    let shown = view(&nav).modules.remove(0);
+    let note = shown.repaired_by_assistant.expect("the view lost the note");
+    assert_eq!(note.reason, "The Leave menu moved under Self Service");
+    assert_eq!(note.at, "2026-10-20T09:00:00Z");
+}
+
+/// Put old path back restores the clicks, where they arrive and the page
+/// they begin on, and clears the note; the rest of the area is unchanged.
+/// An area with nothing to put back, or no such area, is refused.
+#[test]
+fn put_old_path_back_restores_the_old_path_and_clears_the_note() {
+    let dir = tempfile::tempdir().unwrap();
+    put_path(dir.path(), "Acme", "Web", repaired_leave()).unwrap();
+    let nav = put_old_path_back(dir.path(), "Acme", "Web", " leave APPLY ").unwrap();
+    let back = find_area(&nav, "Leave Apply").unwrap();
+    assert_eq!(back.clicks, path("Leave", "/x").clicks);
+    assert_eq!(back.arrived, "/hr/leave/old");
+    assert_eq!(back.start, "/old-start");
+    assert_eq!(back.repaired_by_assistant, None);
+    assert_eq!(back.module, "Leave");
+    assert_eq!(back.made_by, MadeBy::Person);
+    assert_eq!(load_nav(dir.path(), "Acme", "Web").unwrap(), nav, "it was not saved");
+
+    let again = put_old_path_back(dir.path(), "Acme", "Web", "Leave Apply").unwrap_err();
+    assert!(again.contains("no repaired path"), "{again}");
+    let none = put_old_path_back(dir.path(), "Acme", "Web", "Payroll").unwrap_err();
+    assert!(none.contains("no area named"), "{none}");
+}
+
+/// A person's re-record writes a fresh area, and the note goes with the
+/// path it repaired.
+#[test]
+fn a_persons_re_record_clears_the_repair_note() {
+    let dir = tempfile::tempdir().unwrap();
+    put_path(dir.path(), "Acme", "Web", repaired_leave()).unwrap();
+    let recorded = v2_lib::autorun::recorder::finish(
+        "Leave",
+        "Leave Apply",
+        v2_lib::autorun::recorder::Captured {
+            clicks: path("Leave", "/x").clicks,
+            ended: v2_lib::autorun::recorder::Ended::Stopped { href: "https://hr.example.com/hr/leave/apply".into() },
+        },
+        "2026-10-21T00:00:00Z",
+    )
+    .unwrap();
+    let nav = put_path(dir.path(), "Acme", "Web", recorded).unwrap();
+    assert_eq!(find_area(&nav, "Leave Apply").unwrap().repaired_by_assistant, None);
+}
+
+/// The reason is one line of at most 200 characters, in words.
+#[test]
+fn a_repair_reason_is_one_short_line_in_words() {
+    assert_eq!(check_reason("  The menu moved  ").unwrap(), "The menu moved");
+    assert!(check_reason(&"x".repeat(MAX_REASON)).is_ok());
+    for bad in ["", " ", "a\nb", "a\rb"] {
+        assert!(check_reason(bad).is_err(), "{bad:?}");
+    }
+    assert!(check_reason(&"x".repeat(MAX_REASON + 1)).is_err());
+    // Addresses keep only their path, with or without a scheme.
+    let kept = check_reason("moved: see https://hr.example.com/self/leave?t=1 or www.hr.example.com/x").unwrap();
+    assert!(!kept.contains("hr.example.com") && !kept.contains("t=1"), "{kept}");
+    assert!(kept.contains("/self/leave"), "{kept}");
+}
+
+/// `without_addresses` (every note an assistant writes goes through it) also
+/// hides a host written without a scheme: a name that ends like a domain
+/// with a path or a port after it, or an IPv4 address - and leaves ordinary
+/// words with dots in them alone.
+#[test]
+fn bare_hosts_with_a_path_or_port_are_hidden_but_ordinary_words_are_not() {
+    use v2_lib::autorun::mapping_summary::without_addresses as hide;
+    assert_eq!(hide("moved to hr.example.com/leave/apply?x=1 today"), "moved to /leave/apply today");
+    assert_eq!(hide("see (hr.example.com/x)."), "see (/x).");
+    assert_eq!(hide("tried hr.example.com:8080 first"), "tried / first");
+    assert_eq!(hide("on 10.0.0.5:8080/hr then"), "on /hr then");
+    assert_eq!(hide("on 10.0.0.5, again"), "on /, again");
+    assert_eq!(hide("on 10.0.0.5."), "on /.");
+    assert_eq!(hide("got hr-test.example.co.uk/a#frag"), "got /a");
+    let words = [
+        "v2.2.3 shipped, e.g. the menu, i.e. the old one",
+        "see cv.txt and notes.md, or Index.cshtml.cs:40 and main.rs:12",
+        "Leave > Apply at 12.30 on 3.5 of 4",
+        "the Save & Continue button (Pages/Leave/Index.cshtml.cs:95)",
+        "version 1.2.3 of example.com", // no path or port: a word
+    ];
+    for w in words {
+        assert_eq!(hide(w), w, "{w}");
+    }
+}
+
+/// Code locations in the target app's own languages and four-part version
+/// numbers are words; an address is hidden when it has a port or a path, or
+/// is a bare 0-255 quad not written as a version.
+#[test]
+fn aspnet_file_names_and_version_numbers_are_left_alone() {
+    use v2_lib::autorun::mapping_summary::without_addresses as hide;
+    for w in [
+        "failed in Leave.aspx:40 today",
+        "see web.config:12 and App.vue:3",
+        "Default.aspx/GetData answered 500",
+        "Service.asmx/List and Main.kt:40 and App.swift:9",
+        "build version 1.0.0.0 shipped",
+        "Version 7.2.0.15.",
+        "running v7.2.0.15 and v1.0.0.0",
+        "ver 1.0.0.0",
+    ] {
+        assert_eq!(hide(w), w, "{w}");
+    }
+    assert_eq!(hide("hr.example.com/x"), "/x");
+    assert_eq!(hide("10.0.0.5:8080/hr"), "/hr");
+    assert_eq!(hide("on 10.0.0.5"), "on /");
+    assert_eq!(hide("on 999.0.0.5"), "on 999.0.0.5");
+    assert_eq!(hide("version 1.0.0.0:8080 and version 10.0.0.5/hr"), "version / and version /hr");
+}
+
+/// A repair is written to the areas file as it is after the browser trips:
+/// an area removed or changed meanwhile is refused and nothing is written;
+/// one as the trips found it is repaired, its note keeping the path it had.
+#[test]
+fn a_repair_is_saved_only_to_the_area_as_the_trips_found_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let tried = area("Leave Apply", "Leave", "/hr/leave/apply");
+    let new_clicks = || -> Vec<v2_lib::browser::locator::Target> { vec![serde_json::from_value(json!({ "css": "#new" })).unwrap()] };
+    let save = |dir: &std::path::Path| {
+        save_repair(
+            dir,
+            "Acme",
+            "Web",
+            &tried,
+            new_clicks(),
+            "/hr/self/leave".into(),
+            "/".into(),
+            "Moved".into(),
+            "2026-10-20T09:00:00Z".into(),
+        )
+    };
+    let file = |dir: &std::path::Path| std::fs::read(nav_path(dir, "Acme", "Web")).unwrap();
+
+    // Removed meanwhile.
+    put_path(dir.path(), "Acme", "Web", area("Payroll", "Payroll", "/hr/payroll")).unwrap();
+    let before = file(dir.path());
+    let why = save(dir.path()).unwrap_err();
+    assert!(why.contains("was removed while it was being repaired"), "{why}");
+    assert_eq!(file(dir.path()), before);
+
+    // Changed meanwhile (put back, or recorded again).
+    let mut changed = tried.clone();
+    changed.arrived = "/hr/leave/other".into();
+    put_path(dir.path(), "Acme", "Web", changed).unwrap();
+    let before = file(dir.path());
+    let why = save(dir.path()).unwrap_err();
+    assert!(why.contains("changed while it was being repaired"), "{why}");
+    assert_eq!(file(dir.path()), before);
+
+    // As the trips found it.
+    put_path(dir.path(), "Acme", "Web", tried.clone()).unwrap();
+    let nav = save(dir.path()).unwrap();
+    let saved = find_area(&nav, "Leave Apply").unwrap();
+    assert_eq!(saved.clicks, new_clicks());
+    assert_eq!(saved.arrived, "/hr/self/leave");
+    let note = saved.repaired_by_assistant.as_ref().unwrap();
+    assert_eq!(note.previous_clicks, tried.clicks);
+    assert_eq!(note.previous_arrived, "/hr/leave/apply");
+    assert!(find_area(&nav, "Payroll").is_some(), "another area was lost");
 }

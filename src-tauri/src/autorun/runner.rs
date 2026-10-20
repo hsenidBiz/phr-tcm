@@ -423,7 +423,7 @@ pub struct InRun<'a> {
     pub cancel: Option<&'a AtomicBool>,
     /// The Stop is heard before each action too, not only inside the
     /// step's waits: a replay to a step, which the person's Stop and the
-    /// assistant's `stop_autorun_replay` end before the step's next action.
+    /// assistant's replay `stop` end before the step's next action.
     /// An unattended run hears its Stop between steps and in its waits.
     pub stop_before_each_action: bool,
     /// Set by the step: the moment it began, as its `expect_download` takes

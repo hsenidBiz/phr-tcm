@@ -20,6 +20,7 @@ use super::components::{ran_actions, ComponentFile, Ran};
 use super::replay::{MODULE_STEP, SIGN_IN_STEP};
 use super::{CaseRecord, CaseScript, LocalRun, ResetRecord, StepRecord};
 use crate::browser::actions::{Action, ActionOutcome, DialogAnswer};
+use crate::html_escape::esc_attr;
 
 /// The result buckets, in the order the report (and the Auto Run screen's
 /// filter row) lists them.
@@ -230,22 +231,6 @@ pub fn scrub_urls(text: &str) -> String {
     out
 }
 
-/// Text into HTML, element content or a quoted attribute alike.
-pub fn esc(text: &str) -> String {
-    let mut out = String::with_capacity(text.len());
-    for ch in text.chars() {
-        match ch {
-            '&' => out.push_str("&amp;"),
-            '<' => out.push_str("&lt;"),
-            '>' => out.push_str("&gt;"),
-            '"' => out.push_str("&quot;"),
-            '\'' => out.push_str("&#39;"),
-            c => out.push(c),
-        }
-    }
-    out
-}
-
 /// `started_at` (epoch milliseconds as a string) as a UTC time - only for
 /// when the webview sent no local time to print instead.
 fn utc_time(started_at: &str) -> String {
@@ -323,20 +308,20 @@ fn picture(name: &str, alt: &str, exists: &dyn Fn(&str) -> bool) -> String {
     if !super::store::safe_shot_name(name) {
         return format!(
             "<p class=\"note\">A picture was skipped: {} is not a screenshot name.</p>",
-            esc(name)
+            esc_attr(name)
         );
     }
     if !exists(name) {
         return format!(
             "<p class=\"note\">The picture {} was not found - it is no longer on this machine.</p>",
-            esc(name)
+            esc_attr(name)
         );
     }
     format!(
         "<figure><img loading=\"lazy\" src=\"../shots/{}\" alt=\"{}\"><figcaption>{}</figcaption></figure>",
-        esc(name),
-        esc(alt),
-        esc(name)
+        esc_attr(name),
+        esc_attr(alt),
+        esc_attr(name)
     )
 }
 
@@ -346,17 +331,17 @@ fn picture(name: &str, alt: &str, exists: &dyn Fn(&str) -> bool) -> String {
 fn stopped_summary(case: &CaseRecord, script: Option<&CaseScript>, components: &ComponentFile) -> String {
     let mut h = String::new();
     if !case.reason.is_empty() {
-        h.push_str(&format!("<p><strong>Why:</strong> {}</p>", esc(&scrub_urls(&case.reason))));
+        h.push_str(&format!("<p><strong>Why:</strong> {}</p>", esc_attr(&scrub_urls(&case.reason))));
     }
     match stopping_point(case) {
         Some((step, index, outcome)) => {
             h.push_str("<dl>");
-            h.push_str(&format!("<dt>Stopped at</dt><dd>{}</dd>", esc(&step_label(step.step_number))));
+            h.push_str(&format!("<dt>Stopped at</dt><dd>{}</dd>", esc_attr(&step_label(step.step_number))));
             h.push_str(&format!(
                 "<dt>Action</dt><dd>{}</dd>",
-                esc(&stopped_action(case, step, index, script, components))
+                esc_attr(&stopped_action(case, step, index, script, components))
             ));
-            h.push_str(&format!("<dt>Message</dt><dd>{}</dd>", esc(&scrub_urls(&outcome.detail))));
+            h.push_str(&format!("<dt>Message</dt><dd>{}</dd>", esc_attr(&scrub_urls(&outcome.detail))));
             h.push_str("</dl>");
         }
         None => h.push_str(
@@ -387,7 +372,7 @@ fn steps_block(case: &CaseRecord, exists: &dyn Fn(&str) -> bool) -> String {
         h.push_str("<div class=\"step\">");
         // How long the step took, when the run timed it.
         let took = step.duration_ms.map(|ms| format!(" <span class=\"took\">{}</span>", seconds(ms))).unwrap_or_default();
-        h.push_str(&format!("<h4>{}{took}</h4>", esc(&label)));
+        h.push_str(&format!("<h4>{}{took}</h4>", esc_attr(&label)));
         if step.outcomes.is_empty() {
             h.push_str("<p class=\"note\">No actions were recorded for this step.</p>");
         } else {
@@ -395,8 +380,8 @@ fn steps_block(case: &CaseRecord, exists: &dyn Fn(&str) -> bool) -> String {
             for o in &step.outcomes {
                 let (class, mark) = if o.ok { ("ok", "\u{2713}") } else { ("bad", "\u{2717}") };
                 // An action a component ran says which component.
-                let from = o.component.as_deref().map(|c| format!("{}: ", esc(c))).unwrap_or_default();
-                h.push_str(&format!("<li class=\"{class}\">{mark} {from}{}</li>", esc(&scrub_urls(&o.detail))));
+                let from = o.component.as_deref().map(|c| format!("{}: ", esc_attr(c))).unwrap_or_default();
+                h.push_str(&format!("<li class=\"{class}\">{mark} {from}{}</li>", esc_attr(&scrub_urls(&o.detail))));
             }
             h.push_str("</ul>");
         }
@@ -435,7 +420,7 @@ fn downloads_line(case: &CaseRecord, size_of: &dyn Fn(&str) -> Option<u64>) -> S
         .iter()
         .map(|n| {
             let size = size_of(n).map_or_else(|| "no longer on this machine".to_string(), crate::test_files::human_size);
-            format!("{} ({size})", esc(n))
+            format!("{} ({size})", esc_attr(n))
         })
         .collect();
     format!("<p><strong>Downloads:</strong> {}</p>", each.join(", "))
@@ -465,31 +450,31 @@ fn case_section(
     h.push_str(&format!(
         "<summary><span class=\"id\">#{}</span> {} <span class=\"b-{}\">{b}</span>{retried}{flagged}</summary>",
         case.case_id,
-        esc(&case.title),
+        esc_attr(&case.title),
         css_key(b)
     ));
     if matches!(b, "Failed" | "Blocked") {
         h.push_str(&stopped_summary(case, script, components));
     } else if !case.reason.is_empty() {
-        h.push_str(&format!("<p><strong>Why:</strong> {}</p>", esc(&scrub_urls(&case.reason))));
+        h.push_str(&format!("<p><strong>Why:</strong> {}</p>", esc_attr(&scrub_urls(&case.reason))));
     }
     if let Some(first) = &case.retried {
-        h.push_str(&format!("<p><strong>Retried:</strong> the first try failed: {}</p>", esc(&scrub_urls(first))));
+        h.push_str(&format!("<p><strong>Retried:</strong> the first try failed: {}</p>", esc_attr(&scrub_urls(first))));
     }
     // Something the run skipped for this case, and the case went on.
     if let Some(notice) = &case.notice {
-        h.push_str(&format!("<p><strong>Notice:</strong> {}</p>", esc(notice)));
+        h.push_str(&format!("<p><strong>Notice:</strong> {}</p>", esc_attr(notice)));
     }
     // A clean-up that failed, whatever the case's own verdict.
     if let Some(line) = case.cleanup_line() {
         let what = line.strip_prefix("clean-up: ").unwrap_or(&line);
-        h.push_str(&format!("<p><strong>Clean-up:</strong> {}</p>", esc(&scrub_urls(what))));
+        h.push_str(&format!("<p><strong>Clean-up:</strong> {}</p>", esc_attr(&scrub_urls(what))));
     }
     if !case.note.is_empty() {
-        h.push_str(&format!("<p><strong>Note:</strong> {}</p>", esc(&case.note)));
+        h.push_str(&format!("<p><strong>Note:</strong> {}</p>", esc_attr(&case.note)));
     }
     if let Some(phases) = &case.phases {
-        h.push_str(&format!("<p class=\"took\">{}</p>", esc(&phases.line())));
+        h.push_str(&format!("<p class=\"took\">{}</p>", esc_attr(&phases.line())));
     }
     h.push_str(&downloads_line(case, size_of));
     h.push_str(&steps_block(case, exists));
@@ -538,7 +523,7 @@ pub fn batch_heading(run: &LocalRun, case_id: i32) -> Option<String> {
 
 /// The pause lines due before case `case_id`, escaped.
 fn resets_before(run: &LocalRun, case_id: i32) -> Vec<String> {
-    run.resets.iter().filter(|r| r.before_case_id == case_id).flat_map(reset_lines).map(|l| esc(&l)).collect()
+    run.resets.iter().filter(|r| r.before_case_id == case_id).flat_map(reset_lines).map(|l| esc_attr(&l)).collect()
 }
 
 /// A bucket as a CSS class suffix.
@@ -555,9 +540,9 @@ fn css_key(bucket: &str) -> &'static str {
 fn web_link(url: &str) -> String {
     let lower = url.trim().to_ascii_lowercase();
     if lower.starts_with("https://") || lower.starts_with("http://") {
-        format!("<a href=\"{}\">{}</a>", esc(url.trim()), esc(url.trim()))
+        format!("<a href=\"{}\">{}</a>", esc_attr(url.trim()), esc_attr(url.trim()))
     } else {
-        esc(url)
+        esc_attr(url)
     }
 }
 
@@ -638,10 +623,10 @@ pub fn build_with_components(
     h.push_str(&format!("<title>Auto Run report - PBI #{}</title>", run.pbi_id));
     h.push_str(&format!("<style>{STYLE}</style></head><body>"));
     h.push_str("<h1>Auto Run report</h1><dl>");
-    h.push_str(&format!("<dt>Ran</dt><dd>{}</dd>", esc(&when)));
+    h.push_str(&format!("<dt>Ran</dt><dd>{}</dd>", esc_attr(&when)));
     h.push_str(&format!("<dt>Mode</dt><dd>{mode}</dd>"));
     if let Some(env) = run.environment.as_deref().filter(|e| !e.trim().is_empty()) {
-        h.push_str(&format!("<dt>Environment</dt><dd>{}</dd>", esc(env)));
+        h.push_str(&format!("<dt>Environment</dt><dd>{}</dd>", esc_attr(env)));
     }
     h.push_str(&format!("<dt>PBI</dt><dd>#{}</dd>", run.pbi_id));
     match &run.published {
@@ -668,7 +653,7 @@ pub fn build_with_components(
     h.push_str("<h2>Cases</h2><table class=\"cases\"><thead><tr><th>ID</th><th>Title</th><th>Result</th><th>Decided by</th><th>Account</th><th>Area</th></tr></thead><tbody>");
     for case in &run.cases {
         if let Some(heading) = batch_heading(run, case.case_id) {
-            h.push_str(&format!("<tr class=\"batch\"><th colspan=\"6\">{}</th></tr>", esc(&heading)));
+            h.push_str(&format!("<tr class=\"batch\"><th colspan=\"6\">{}</th></tr>", esc_attr(&heading)));
         }
         for line in resets_before(run, case.case_id) {
             h.push_str(&format!("<tr class=\"reset\"><td colspan=\"6\">{line}</td></tr>"));
@@ -685,10 +670,10 @@ pub fn build_with_components(
         h.push_str(&format!(
             "<tr><td class=\"id\">#{}</td><td>{}</td><td class=\"b-{}\">{b}</td><td>{decided}</td><td>{}</td><td>{}</td></tr>",
             case.case_id,
-            esc(&case.title),
+            esc_attr(&case.title),
             css_key(b),
-            esc(case.account.as_deref().unwrap_or("")),
-            esc(area)
+            esc_attr(case.account.as_deref().unwrap_or("")),
+            esc_attr(area)
         ));
     }
     h.push_str("</tbody></table>");
@@ -697,7 +682,7 @@ pub fn build_with_components(
         h.push_str("<h2>Cases in detail</h2>");
         for case in &run.cases {
             if let Some(heading) = batch_heading(run, case.case_id) {
-                h.push_str(&format!("<h3 class=\"batch\">{}</h3>", esc(&heading)));
+                h.push_str(&format!("<h3 class=\"batch\">{}</h3>", esc_attr(&heading)));
             }
             for line in resets_before(run, case.case_id) {
                 h.push_str(&format!("<p class=\"reset\">{line}</p>"));

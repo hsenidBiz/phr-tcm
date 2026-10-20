@@ -12,6 +12,7 @@ import { IconCollapseAll, IconExpandAll, IconExport, IconImport, IconRemove, Ico
 import { cn } from "../../lib/cn";
 import { usePersistedStringSet } from "../../lib/collapsedGroups";
 import { unwrapStr } from "../../lib/ipc";
+import { plural } from "../../lib/plural";
 import { pagePalette } from "../../lib/reportTheme";
 import { sidebarCollapsedSnapshot, stickyLeftPx, subscribeSidebar } from "../../lib/sidebarState";
 import { toast } from "../../lib/toast";
@@ -57,8 +58,6 @@ function exportFileName(project: string): string {
     .replace(/^-+|-+$/g, "");
   return `api-templates-${slug || "project"}.json`;
 }
-
-const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
 
 /** The toast after an export: what went into the file, and - when a saved
  * file could not be read - that it was left out. */

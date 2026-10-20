@@ -192,27 +192,30 @@ pub fn log_line(summary: &MappingSummary) -> String {
 pub fn without_addresses(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     let mut word = String::new();
-    let flush = |word: &mut String, out: &mut String| {
+    // The word before, lower-cased, for `bare_host_path`: `version 1.0.0.0`.
+    let mut before = String::new();
+    let flush = |word: &mut String, before: &mut String, out: &mut String| {
         if !word.is_empty() {
-            out.push_str(&clean_word(word));
+            out.push_str(&clean_word(word, before));
+            *before = word.trim_matches(|c: char| !c.is_alphanumeric()).to_ascii_lowercase();
             word.clear();
         }
     };
     for c in text.chars() {
         if c.is_whitespace() {
-            flush(&mut word, &mut out);
+            flush(&mut word, &mut before, &mut out);
             out.push(c);
         } else {
             word.push(c);
         }
     }
-    flush(&mut word, &mut out);
+    flush(&mut word, &mut before, &mut out);
     out
 }
 
 /// One word of `without_addresses`, with the quotes or brackets around an
-/// address kept.
-fn clean_word(word: &str) -> String {
+/// address kept. `before` is the word ahead of it, lower-cased.
+fn clean_word(word: &str, before: &str) -> String {
     const AROUND: &[char] = &['"', '\'', '(', ')', '[', ']', '<', '>', '{', '}', ',', ';', '.', ':', '!'];
     let lead = word.len() - word.trim_start_matches(AROUND).len();
     let core = word.trim_start_matches(AROUND).trim_end_matches(AROUND);
@@ -233,8 +236,58 @@ fn clean_word(word: &str) -> String {
         }
     } else if core.starts_with('/') {
         core.split(['?', '#']).next().unwrap_or("").to_string()
+    } else if let Some(path) = bare_host_path(core, before) {
+        path
     } else {
         core.to_string()
     };
     format!("{}{cleaned}{tail}", &word[..lead])
+}
+
+/// Last labels that name a file far more often than a site, so a word such
+/// as `Index.cshtml.cs:40` (a code location) or `report.pdf/` is left alone.
+const FILE_EXTENSIONS: &[&str] = &[
+    "cs", "rs", "ts", "tsx", "js", "jsx", "mjs", "json", "py", "rb", "go", "java", "php", "cpp", "sh", "md", "txt", "log",
+    "html", "htm", "css", "scss", "xml", "yml", "yaml", "toml", "ini", "sql", "csv", "cshtml", "razor", "pdf", "png", "jpg",
+    "jpeg", "gif", "svg", "docx", "xlsx", "zip", "rpt", "aspx", "ascx", "ashx", "asmx", "axd", "master", "config", "vb", "kt",
+    "vue", "swift", "dart",
+];
+
+/// The path of a host written without a scheme or `www.`, or `None` when
+/// `core` is not one. It is one only when it is an IPv4 address, or a
+/// dot-separated name whose last label looks like a top-level domain (two
+/// to 24 letters) AND which is followed by a `/` path or a `:port`. So
+/// `hr.example.com/x`, `hr.example.com:8080` and `10.0.0.5:8080/hr` are
+/// hidden, while a version (`v2.2.3`), an abbreviation (`e.g.`), a file
+/// name (`cv.txt`) and a code location (`Index.cshtml.cs:40`) are words.
+///
+/// Four numbers with dots are an IPv4 address when they carry a `:port` or a
+/// `/path`, or when each is 0-255 and the word before is not `version`, `ver`
+/// or `v` (so `version 1.0.0.0` stays; `v7.2.0.15` is no address at all).
+fn bare_host_path(core: &str, before: &str) -> Option<String> {
+    let (authority, rest) = match core.find('/') {
+        Some(i) => (&core[..i], Some(&core[i..])),
+        None => (core, None),
+    };
+    let (host, has_port) = match authority.rsplit_once(':') {
+        Some((h, port)) if !port.is_empty() && port.len() <= 5 && port.bytes().all(|b| b.is_ascii_digit()) => (h, true),
+        Some(_) => return None,
+        None => (authority, false),
+    };
+    let labels: Vec<&str> = host.split('.').collect();
+    if labels.len() < 2 || labels.iter().any(|l| l.is_empty() || !l.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')) {
+        return None;
+    }
+    let ipv4 = labels.len() == 4
+        && labels.iter().all(|l| (1..=3).contains(&l.len()) && l.bytes().all(|b| b.is_ascii_digit()))
+        && (rest.is_some() || has_port || (labels.iter().all(|l| l.parse::<u16>().is_ok_and(|n| n <= 255)) && !matches!(before, "version" | "ver" | "v")));
+    let last = labels[labels.len() - 1];
+    let tld = (2..=24).contains(&last.len())
+        && last.bytes().all(|b| b.is_ascii_alphabetic())
+        && !FILE_EXTENSIONS.contains(&last.to_ascii_lowercase().as_str());
+    if !(ipv4 || (tld && (rest.is_some() || has_port))) {
+        return None;
+    }
+    let path = rest.unwrap_or("/").split(['?', '#']).next().unwrap_or("");
+    Some(if path.is_empty() { "/".to_string() } else { path.to_string() })
 }

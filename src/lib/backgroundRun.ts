@@ -30,7 +30,7 @@ import {
   type StepRecord,
 } from "../bindings";
 import { announce } from "./assignedAlerts";
-import { DISCOVERY_BUSY, discoveryIsActive, useDiscoveryActiveNow } from "./discoveryActive";
+import { DISCOVERY_BUSY, discoveryIsActive } from "./discoveryActive";
 
 /** A case's written step, as the script editor shows it. */
 export type WrittenStep = { action: string; expected: string; shared?: number | null };
@@ -186,10 +186,6 @@ export function unattendedRunGoing(s: BackgroundRunState = state): boolean {
  * discovery holding it. Every Run button waits, and no run starts. */
 export function runIsGoing(s: BackgroundRunState = state, discovering: boolean = discoveryIsActive()): boolean {
   return unattendedRunGoing(s) || discovering;
-}
-
-export function useRunGoing(): boolean {
-  return runIsGoing(useBackgroundRun(), useDiscoveryActiveNow());
 }
 
 /** What a Run button that waits for the run says. */

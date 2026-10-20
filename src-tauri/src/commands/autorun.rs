@@ -25,7 +25,7 @@ static SESSION: tokio::sync::Mutex<Option<Session>> = tokio::sync::Mutex::const_
 static IMPORTING: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 /// The capture sets the assistant imported from HAR files
-/// (`import_autorun_requests`), by name: read-only, never replayed into a
+/// (`autorun_har`'s import), by name: read-only, never replayed into a
 /// browser. Kept in the Rust cache's memory-only tier
 /// (`cache::keys::imported_captures`), not in the session, so a set is read
 /// with no browser open; the cache drops them when a different account
@@ -1221,7 +1221,7 @@ pub const BROWSER_BUSY: &str = "the Auto Run browser is busy - press Release Aut
 
 /// Whether the supervised browser open now is one the assistant opened,
 /// with no discovery in it, holding the account `key`: what a template
-/// refused that account names `release_autorun_browser` for. Asked without
+/// refused that account names the release (`reset_autorun_browser`) for. Asked without
 /// waiting on a replay or a step holding the lock: a busy browser answers
 /// no.
 pub async fn assistant_browser_holds(key: &str) -> bool {
@@ -1291,7 +1291,7 @@ pub async fn auto_run_release_browser() -> Result<String, String> {
     release_autorun_browsers().await
 }
 
-/// `/autorun-release`, the assistant's `release_autorun_browser`: the
+/// `/autorun-release`, the assistant's reset with `release`: the
 /// repair for a broken browser, and the only call of the assistant's that
 /// closes one. Only what is truly gone, or the assistant's own: a held
 /// browser that has gone is let go (`forget_gone_browser`); a live
@@ -1525,12 +1525,12 @@ fn with_changes_left(said: String, left: &[String]) -> String {
         return said;
     }
     format!(
-        "{said} These test changes could not be removed yet: {}. Call reset_autorun_browser again, or release_autorun_browser.",
+        "{said} These test changes could not be removed yet: {}. Call reset_autorun_browser again, or with release: true.",
         left.join("; ")
     )
 }
 
-/// `/autorun-cookies-clear`, the assistant's `clear_autorun_cookies`: a
+/// `/autorun-cookies-clear`, the assistant's `autorun_cookies` clear: a
 /// real sign-out in its own browser (`clear_cookies_in_for_assistant`).
 /// Refused while a replay runs; the browser's lock is waited for 5 s at
 /// most. The panes hear that nobody is signed in now, as they hear the
@@ -1550,7 +1550,7 @@ pub async fn clear_cookies_for_assistant() -> (u16, String) {
     answer
 }
 
-/// `clear_autorun_cookies` over `slot`: a real sign-out. Every cookie of
+/// `autorun_cookies`' clear over `slot`: a real sign-out. Every cookie of
 /// the app's confirmed site (`overrides::confirmed_origin`, never whatever
 /// page shows - an identity provider's cookies are never touched) is
 /// deleted, its host's and its parent domains' alike, the sign-in's too;
@@ -1637,7 +1637,7 @@ pub const GUARD_STILL_ON_SENTENCE: &str = "The guard is still on (it would not l
 /// open (`detail`, from `nav::load_home`): what it did first, then why not.
 pub fn reset_failed_sentence(guard: &str, detail: &str) -> String {
     format!(
-        "Reset: other tabs closed, dialogs cleared, {guard}, but the home page did not open: {detail}. Try reset_autorun_browser again, or release_autorun_browser if the browser is stuck."
+        "Reset: other tabs closed, dialogs cleared, {guard}, but the home page did not open: {detail}. Try reset_autorun_browser again, or with release: true if the browser is stuck."
     )
 }
 
@@ -1942,7 +1942,7 @@ pub(crate) async fn replay_supervised(
     use crate::autorun::replay_to::{self, OneReplay, ReplayEnd, ReplayFrom};
     use tauri_specta::Event;
     const BEGINNING: ReplayFrom = ReplayFrom::Beginning;
-    // Whose it is: `stop_autorun_replay` stops the assistant's only.
+    // Whose it is: the replay tool's `stop` stops the assistant's only.
     let claimed = match by {
         ReplayBy::Assistant => OneReplay::claim_for_assistant(),
         ReplayBy::Person => OneReplay::claim(),
@@ -3395,6 +3395,21 @@ pub fn auto_run_remove_module_path(
 ) -> Result<crate::autorun::nav::NavView, String> {
     let nav = crate::autorun::nav::remove_path(&root(&app)?, &organization, &project, &area)?;
     crate::applog::info("Auto-run area removed");
+    Ok(crate::autorun::nav::view(&nav))
+}
+
+/// Put back the path an assistant's repair replaced, and clear its note
+/// (`area_repair::put_old_path_back`). Nothing is replayed: Try checks it.
+#[tauri::command]
+#[specta::specta]
+pub fn auto_run_put_old_area_path_back(
+    app: tauri::AppHandle,
+    organization: String,
+    project: String,
+    area: String,
+) -> Result<crate::autorun::nav::NavView, String> {
+    let nav = crate::autorun::area_repair::put_old_path_back(&root(&app)?, &organization, &project, &area)?;
+    crate::applog::info("Auto-run: an area's path from before an assistant's repair was put back");
     Ok(crate::autorun::nav::view(&nav))
 }
 

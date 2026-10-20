@@ -1311,20 +1311,22 @@ pub fn every_file(root: &std::path::Path) -> std::collections::BTreeMap<std::pat
 pub const ALL_MODULES: [&str; 6] =
     ["db_access", "writing_style", "auto_run", "api_templates", "playwright", "crystal_reports"];
 
-/// A `/tools` answer from a development app with every module on and
-/// nothing switched off.
+/// A `/tools` answer from a development app with every module on, the
+/// network tools' switch on, and nothing switched off.
 pub fn all_modules_on() -> String {
-    json!({ "disabled": [], "modules": ALL_MODULES }).to_string()
+    json!({ "disabled": [], "modules": ALL_MODULES, "network_tools": true }).to_string()
 }
 
 /// `body` as a development app's `/tools` answer: a JSON object without a
-/// `modules` key gains every module; anything that is not a JSON object
-/// (a mock that answers every path with the same text) becomes
-/// `all_modules_on`. An object that names its modules keeps them.
+/// `modules` key gains every module, and one without `network_tools` the
+/// network tools' switch on; anything that is not a JSON object (a mock
+/// that answers every path with the same text) becomes `all_modules_on`.
+/// An object that names its modules, or says the switch, keeps them.
 pub fn with_all_modules(body: &str) -> String {
     match serde_json::from_str::<Value>(body) {
         Ok(Value::Object(mut o)) => {
             o.entry("modules").or_insert(json!(ALL_MODULES));
+            o.entry("network_tools").or_insert(json!(true));
             Value::Object(o).to_string()
         }
         _ => all_modules_on(),

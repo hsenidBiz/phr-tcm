@@ -16,6 +16,7 @@ fn ctx() -> BridgeContext {
         db_secrets: None,
         db_writes: false,
         api_writes: false,
+        network_tools: false,
         db_no_ask: false,
         gate: Default::default(),
     }
@@ -1759,6 +1760,7 @@ async fn a_query_less_get_tags_is_capped_and_a_query_still_searches_everything()
         db_secrets: None,
         db_writes: false,
         api_writes: false,
+        network_tools: false,
         db_no_ask: false,
         gate: Default::default(),
     };
@@ -2891,6 +2893,62 @@ fn parse_http_reads_the_proxys_version() {
         Parsed::Complete { proxy_version, .. } => assert_eq!(proxy_version, None),
         _ => panic!("expected a complete request"),
     }
+}
+
+/// Every MCP tool call writes ONE app-log line: the tool's name and how the
+/// call ended (ok, refused, or the HTTP status of a tool error) - and
+/// nothing of its arguments, its answer, an id or a path. Driven end to end:
+/// the proxy's dispatcher, its real transport and a listener of the test's
+/// own.
+#[test]
+fn a_tool_call_writes_one_log_line_with_its_name_and_status_only() {
+    let _log = crate::serial::log_tail();
+    let mut context = ctx();
+    context.disabled_tools = vec!["get_tags".into()];
+    let shared = v2_lib::ai_bridge::BridgeState::new(context, "0.0.0-test".into());
+    let (port, token) =
+        tauri::async_runtime::block_on(v2_lib::ai_bridge::start_listener(Arc::clone(&shared), None, None)).unwrap();
+    let send = |m: &str, p: &str, b: &str| v2_lib::mcp::send_to_bridge(port, &token, m, p, b);
+    let lines = |tool: &str| -> Vec<String> {
+        let mark = format!("AI tool {tool}:");
+        v2_lib::applog::recent(6000).into_iter().map(|l| l.message).filter(|m| m.starts_with(&mark)).collect()
+    };
+    let call = |tool: &str, args: serde_json::Value| -> serde_json::Value {
+        let before = lines(tool).len();
+        let msg = serde_json::json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+            "params": { "name": tool, "arguments": args } });
+        let resp = v2_lib::mcp::handle_message(&msg.to_string(), "0.0.0-test", &send).unwrap();
+        let after = lines(tool);
+        assert_eq!(after.len(), before + 1, "{tool}: one line per call: {after:?}");
+        let v: serde_json::Value = serde_json::from_str(&resp).unwrap();
+        serde_json::json!({ "line": after.last().unwrap(), "result": v["result"] })
+    };
+    const SECRET: &str = "Zebra-Marker-4711";
+
+    // An answered call: ok.
+    let ok = call("validate_cases", serde_json::json!({ "json": format!("[{{\"title\":\"{SECRET}\",\"steps\":[]}}]") }));
+    assert_eq!(ok["line"], "AI tool validate_cases: ok", "{ok}");
+    assert!(ok["result"]["isError"].is_null(), "{ok}");
+
+    // A switched-off tool: refused on the `/tools` read, no route reached.
+    let refused = call("get_tags", serde_json::json!({ "query": SECRET }));
+    assert_eq!(refused["line"], "AI tool get_tags: refused", "{refused}");
+    assert_eq!(refused["result"]["isError"], true, "{refused}");
+
+    // A route that answers an error: its HTTP status, never its path or ids.
+    let failed = call("get_test_cases", serde_json::json!({ "case_ids": [987654321], "pbi_id": 987654322 }));
+    assert_eq!(failed["line"], "AI tool get_test_cases: tool error, HTTP 503", "{failed}");
+
+    for m in v2_lib::applog::recent(6000).into_iter().map(|l| l.message) {
+        assert!(!m.contains(SECRET) && !m.contains("98765432"), "an argument reached the log: {m}");
+    }
+    // The call is over: nothing names a tool any more.
+    assert_eq!(v2_lib::mcp::calling_tool(), None);
+    // A request that is not a tool call, or names no tool this server
+    // offers, is not logged.
+    assert_eq!(v2_lib::ai_bridge::tool_call_line(None, "/validate", 200, ""), None);
+    assert_eq!(v2_lib::ai_bridge::tool_call_line(Some("no_such_tool"), "/validate", 200, ""), None);
+    assert_eq!(v2_lib::ai_bridge::tool_call_line(Some("get_tags"), "/tools", 200, r#"{"disabled":[]}"#), None);
 }
 
 /// The four API template routes - design doc "API templates" §7 and §9.

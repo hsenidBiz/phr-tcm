@@ -25,7 +25,7 @@ export const MCP_TOOLS: McpToolInfo[] = [
     label: "Start a writing job",
     summary: "Asks you how the set should be written, before anything is.",
   },
-  { name: "get_writing_guide", label: "Writing guide", summary: "Format rules and your org's allowed Module values." },
+  { name: "get_guide", label: "Guides", summary: "The live guide for the job at hand: format rules and your org's allowed Module values for writing cases." },
   { name: "get_test_cases", label: "Cases by PBI or id", summary: "The cases on a PBI, or specific cases by their ids - style, and what is covered." },
   { name: "search_test_suites", label: "Find a test suite", summary: "The plans and suites in this project, by plan name, suite name or PBI id." },
   { name: "get_suite_test_cases", label: "Cases in a test suite", summary: "The cases in one suite, in the suite's own order." },
@@ -36,11 +36,6 @@ export const MCP_TOOLS: McpToolInfo[] = [
   },
   { name: "check_spec_coverage", label: "Specification coverage", summary: "Which spec sections have no case yet - findings to account for, not errors." },
   { name: "merge_case_files", label: "Merge slice files", summary: "Merge fan-out slice files into one draft through the real importer." },
-  {
-    name: "get_autorun_guide",
-    label: "Auto Run guide",
-    summary: "How to write an Auto Run browser script, and where assertions may come from.",
-  },
   {
     name: "save_autorun_script",
     label: "Save Auto Run scripts",
@@ -64,7 +59,7 @@ export const MCP_TOOLS: McpToolInfo[] = [
   {
     name: "probe_autorun_locator",
     label: "Try a locator",
-    summary: "What a locator matches on the open page right now, and whether it is visible.",
+    summary: "What a locator matches on the open page right now, and whether it is visible - or one element's styles, listeners, animations and structure, read without touching the page.",
   },
   {
     name: "try_autorun_action",
@@ -74,12 +69,7 @@ export const MCP_TOOLS: McpToolInfo[] = [
   {
     name: "replay_autorun_to_step",
     label: "Replay to a step",
-    summary: "Replay a case's saved steps up to the failing one, asking you first when its script must not save.",
-  },
-  {
-    name: "stop_autorun_replay",
-    label: "Stop a replay",
-    summary: "Stop the assistant's replay that is still going, before its next action, and say where it stopped.",
+    summary: "Replay a case's saved steps up to the failing one, asking you first when its script must not save - or stop the assistant's replay that is still going.",
   },
   {
     name: "start_autorun_discovery",
@@ -87,14 +77,9 @@ export const MCP_TOOLS: McpToolInfo[] = [
     summary: "Open the Auto Run browser and sign in as a saved account, so the assistant can explore the live app.",
   },
   {
-    name: "discover_autorun_action",
-    label: "Explore one action",
-    summary: "Carry out one action while exploring, and see what it did and what it wrote.",
-  },
-  {
     name: "discover_autorun_actions",
-    label: "Explore several actions",
-    summary: "Carry out up to 20 actions in order while exploring, and see how each went and the page they led to.",
+    label: "Explore",
+    summary: "Carry out one action, or up to 20 in order, while exploring, and see what each did and the page they led to.",
   },
   {
     name: "save_autorun_area",
@@ -107,24 +92,14 @@ export const MCP_TOOLS: McpToolInfo[] = [
     summary: "Close the browser the assistant was exploring in.",
   },
   {
-    name: "release_autorun_browser",
-    label: "Release the Auto Run browser",
-    summary: "Let go of an Auto Run browser the app still holds after it closed, and close the app's own browsers.",
-  },
-  {
     name: "reset_autorun_browser",
     label: "Reset the Auto Run browser",
-    summary: "Give the assistant's Auto Run browser a clean page - other tabs closed, back at the home page - without signing out.",
+    summary: "Give the assistant's Auto Run browser a clean page - other tabs closed, back at the home page - without signing out, or let go of a broken one.",
   },
   {
     name: "save_autorun_component",
     label: "Save a component",
-    summary: "Save a widget or short flow, once tried live, as a component any script can use.",
-  },
-  {
-    name: "remove_autorun_component",
-    label: "Remove a component",
-    summary: "Remove a component no saved script uses.",
+    summary: "Save a widget or short flow, once tried live, as a component any script can use - or remove one no saved script uses.",
   },
   {
     name: "get_autorun_network_wait",
@@ -132,49 +107,24 @@ export const MCP_TOOLS: McpToolInfo[] = [
     summary: "Whether an unattended run is paused because the company network is unreachable, and when it gives up.",
   },
   {
-    name: "list_autorun_requests",
-    label: "Captured requests",
-    summary: "The requests the page in the Auto Run browser made, newest first, with secrets hidden.",
-  },
-  {
     name: "search_autorun_requests",
-    label: "Search captured requests",
-    summary: "Find captured requests by path, method, status, type or body text.",
+    label: "Captured requests",
+    summary: "The requests the page in the Auto Run browser made, newest first, with secrets hidden - all, or found by path, method, status, type or body text.",
   },
   {
     name: "get_autorun_request",
     label: "A captured request",
-    summary: "One captured request's headers and body, with secrets hidden.",
+    summary: "One captured request's headers and body, or its response's status, headers, timing and body, with secrets hidden.",
   },
   {
-    name: "get_autorun_response",
-    label: "A captured response",
-    summary: "One captured response's status, headers, size and timing.",
-  },
-  {
-    name: "get_autorun_response_body",
-    label: "A captured response body",
-    summary: "One captured response's body, with secrets hidden, in pages.",
-  },
-  {
-    name: "set_autorun_capture",
-    label: "Set the capture filter",
-    summary: "Which requests the Auto Run browser's capture keeps from now on.",
-  },
-  {
-    name: "get_autorun_capture",
+    name: "autorun_capture",
     label: "The capture filter",
-    summary: "The capture's filter, how many requests it keeps, and the imported sets.",
+    summary: "Which requests the Auto Run browser's capture keeps from now on, how many it keeps, and the imported sets.",
   },
   {
-    name: "export_autorun_requests",
-    label: "Export captured requests",
-    summary: "Save the capture, secrets hidden, as a HAR file in the app's own captures folder.",
-  },
-  {
-    name: "import_autorun_requests",
-    label: "Import captured requests",
-    summary: "Load a HAR file from the app's captures folder as a read-only set.",
+    name: "autorun_har",
+    label: "HAR files",
+    summary: "Save the capture, secrets hidden, as a HAR file in the app's own captures folder, or load one from there as a read-only set.",
   },
   {
     name: "set_autorun_headers",
@@ -182,24 +132,9 @@ export const MCP_TOOLS: McpToolInfo[] = [
     summary: "Extra request headers for the assistant's Auto Run browser, to test an edge case; named in every answer until reset.",
   },
   {
-    name: "get_autorun_cookies",
-    label: "Read cookies",
-    summary: "The Auto Run browser's cookies for the application's own site (the one TCM's sign-in confirmed), with the sign-in's values hidden.",
-  },
-  {
-    name: "set_autorun_cookie",
-    label: "Set a test cookie",
-    summary: "One cookie that is not the sign-in's, on the application's own site (the one TCM's sign-in confirmed) in the assistant's Auto Run browser.",
-  },
-  {
-    name: "clear_autorun_cookies",
-    label: "Sign out by clearing cookies",
-    summary: "Delete the application's own site's cookies in the assistant's Auto Run browser: a real sign-out.",
-  },
-  {
-    name: "inspect_autorun_element",
-    label: "Inspect an element",
-    summary: "One element's styles, listeners, animations and structure in the Auto Run browser, read without touching the page.",
+    name: "autorun_cookies",
+    label: "Cookies",
+    summary: "The Auto Run browser's cookies for the application's own site (the one TCM's sign-in confirmed), with the sign-in's values hidden; set one that is not the sign-in's, or clear them all: a real sign-out.",
   },
   {
     name: "get_autorun_failures",
@@ -207,14 +142,9 @@ export const MCP_TOOLS: McpToolInfo[] = [
     summary: "What failed in a run on this machine, and when the script must be left alone.",
   },
   {
-    name: "record_autorun_quirk",
+    name: "record_quirk",
     label: "Record a quirk",
-    summary: "One line about how this application behaves, kept for the next script.",
-  },
-  {
-    name: "retire_autorun_quirk",
-    label: "Retire a quirk",
-    summary: "Retire one of the assistant's own quirks that no longer helps, optionally with a better one.",
+    summary: "One line about how this application behaves, kept for the next script or template - or retire one that no longer helps.",
   },
   {
     name: "record_validation_rule",
@@ -239,23 +169,13 @@ export const MCP_TOOLS: McpToolInfo[] = [
   {
     name: "get_accounts",
     label: "Read the accounts",
-    summary: "The active environment's account keys and usernames - with passwords only in a test environment.",
-  },
-  {
-    name: "list_test_files",
-    label: "List test files",
-    summary: "This project's Test files a case can upload, by name and size.",
-  },
-  {
-    name: "get_api_template_guide",
-    label: "API template guide",
-    summary: "The template format, the authoring workflow, and this project's account keys and address.",
+    summary: "The active environment's account keys and usernames - with passwords only in a test environment - and this project's Test files a case can upload.",
   },
   {
     name: "list_api_templates",
     label: "List API templates",
     summary:
-      "This project's saved templates, filtered by module, search, flow or id and paged: in full when one page holds them, otherwise a compact index.",
+      "This project's saved templates, filtered by module, search, flow or id and paged: in full when one page holds them, otherwise a compact index. Or its fixtures, with their current outputs and last run.",
   },
   {
     name: "prove_api_template",
@@ -288,21 +208,6 @@ export const MCP_TOOLS: McpToolInfo[] = [
     summary: "Run or rebuild a fixture and return its outputs, what it made and any warnings.",
   },
   {
-    name: "list_api_fixtures",
-    label: "List fixtures",
-    summary: "This project's fixtures, with their current outputs and last run.",
-  },
-  {
-    name: "record_app_quirk",
-    label: "Record a quirk (API)",
-    summary: "One line about how this application behaves, learned building API templates.",
-  },
-  {
-    name: "retire_app_quirk",
-    label: "Retire a quirk (API)",
-    summary: "Retire one of the assistant's own quirks that no longer helps.",
-  },
-  {
     name: "db_lookup",
     label: "Find a table",
     summary: "The tables and columns behind a topic, or one table's whole column list.",
@@ -315,7 +220,7 @@ export const MCP_TOOLS: McpToolInfo[] = [
   {
     name: "open_report",
     label: "Open a report",
-    summary: "Open a Crystal Reports .rpt file and read it as a tree of areas, sections and objects.",
+    summary: "Open a Crystal Reports .rpt file and read it as a tree of areas, sections and objects - or create a blank one and open it.",
   },
   {
     name: "read_report",
@@ -338,11 +243,6 @@ export const MCP_TOOLS: McpToolInfo[] = [
     summary: "Run the offline load checks on a report: what the engine would refuse, and what it would only warn about.",
   },
   {
-    name: "new_report",
-    label: "Create a blank report",
-    summary: "Create a blank .rpt at a path with no file yet, and open it.",
-  },
-  {
     name: "preview_report",
     label: "Preview the open report",
     summary: "Draw the open report to a PDF from its saved data, with the page count and the renderer's notes.",
@@ -352,11 +252,6 @@ export const MCP_TOOLS: McpToolInfo[] = [
     label: "Preview with live data",
     summary:
       "Draw the open report from fresh rows: run its stored procedure on the chosen database. Needs writes switched on and the Dev login.",
-  },
-  {
-    name: "get_report_guide",
-    label: "Report guide",
-    summary: "The units, the edit ops, the layout plan and the limits for working with reports.",
   },
   { name: "validate_cases", label: "Check a draft", summary: "Check a draft with the app's real importer." },
   { name: "get_tags", label: "Project tags", summary: "Tag names this project already uses." },
@@ -372,7 +267,7 @@ export const MCP_TOOLS: McpToolInfo[] = [
 ];
 
 /** Mirrors ai_tools.rs - the Rust side is the one that enforces both. */
-export const CORE_TOOLS = ["begin_test_case_writing", "get_writing_guide", "get_test_cases", "check_spec_coverage", "transform_cases",
+export const CORE_TOOLS = ["begin_test_case_writing", "get_guide", "get_test_cases", "check_spec_coverage", "transform_cases",
   // Finishing a draft is part of writing one: a set that cannot be
   // checked, ordered into a run sheet, or merged back from its slices
   // is a set nobody can ship.
@@ -383,7 +278,6 @@ export const CORE_TOOLS = ["begin_test_case_writing", "get_writing_guide", "get_
  * compares). A tool whose module is off is absent entirely - not listed, no
  * switch, no skill file - and Rust refuses a direct call. */
 export const AUTORUN_TOOLS = [
-  "get_autorun_guide",
   "save_autorun_script",
   "get_autorun_script",
   "delete_autorun_script",
@@ -391,44 +285,41 @@ export const AUTORUN_TOOLS = [
   "probe_autorun_locator",
   "try_autorun_action",
   "replay_autorun_to_step",
-  "stop_autorun_replay",
   "start_autorun_discovery",
-  "discover_autorun_action",
   "discover_autorun_actions",
   "save_autorun_area",
   "end_autorun_discovery",
-  "release_autorun_browser",
   "reset_autorun_browser",
   "save_autorun_component",
-  "remove_autorun_component",
   "get_autorun_failures",
-  "record_autorun_quirk",
-  "retire_autorun_quirk",
+  "record_quirk",
   "record_validation_rule",
   "mark_autorun_suspected_defect",
   "set_autorun_order",
   "propose_accounts",
   "get_accounts",
-  "list_test_files",
   "get_autorun_network_wait",
-  "list_autorun_requests",
   "search_autorun_requests",
   "get_autorun_request",
-  "get_autorun_response",
-  "get_autorun_response_body",
-  "set_autorun_capture",
-  "get_autorun_capture",
-  "export_autorun_requests",
-  "import_autorun_requests",
+  "autorun_capture",
+  "autorun_har",
   "set_autorun_headers",
-  "get_autorun_cookies",
-  "set_autorun_cookie",
-  "clear_autorun_cookies",
-  "inspect_autorun_element",
+  "autorun_cookies",
+] as const;
+
+/** The network tools: Auto Run's (in AUTORUN_TOOLS and its row), and
+ * besides that behind the Network tools switch (networkTools.ts), which Rust
+ * enforces - mirroring `ai_tools.rs`'s `NETWORK_TOOLS`. */
+export const NETWORK_TOOLS = [
+  "search_autorun_requests",
+  "get_autorun_request",
+  "autorun_capture",
+  "autorun_har",
+  "set_autorun_headers",
+  "autorun_cookies",
 ] as const;
 
 export const API_TEMPLATE_TOOLS = [
-  "get_api_template_guide",
   "list_api_templates",
   "prove_api_template",
   "run_api_template",
@@ -436,9 +327,6 @@ export const API_TEMPLATE_TOOLS = [
   "get_api_flow_progress",
   "save_api_fixture",
   "run_api_fixture",
-  "list_api_fixtures",
-  "record_app_quirk",
-  "retire_app_quirk",
 ] as const;
 
 export const DB_TOOLS = ["db_lookup", "db_query"] as const;
@@ -449,10 +337,8 @@ export const CRYSTAL_TOOLS = [
   "edit_report",
   "compare_reports",
   "check_report",
-  "new_report",
   "preview_report",
   "preview_report_live",
-  "get_report_guide",
 ] as const;
 
 /** The module a tool belongs to; null for a tool that is part of Core.
@@ -511,9 +397,12 @@ export const TOOL_PAIRS: readonly (readonly string[])[] = [
   // learned. Half of them switched on is half a job, so they move
   // together. Offered only while the Auto Run module is on; see toolOffered.
   // The accounts a script runs as belong to the same job: proposing
-  // logins for the environment, and reading the keys a script names.
+  // logins for the environment, and reading the keys a script names. The
+  // network tools ride here too, and besides need the Network tools switch
+  // (networkTools.ts), which Rust enforces.
+  // (The guide is Core's `get_guide`, refused by topic while the module is
+  // off.)
   [
-    "get_autorun_guide",
     "save_autorun_script",
     "get_autorun_script",
     "delete_autorun_script",
@@ -521,40 +410,26 @@ export const TOOL_PAIRS: readonly (readonly string[])[] = [
     "probe_autorun_locator",
     "try_autorun_action",
     "replay_autorun_to_step",
-    "stop_autorun_replay",
     "start_autorun_discovery",
-    "discover_autorun_action",
     "discover_autorun_actions",
     "save_autorun_area",
     "end_autorun_discovery",
-    "release_autorun_browser",
     "reset_autorun_browser",
     "save_autorun_component",
-    "remove_autorun_component",
     "get_autorun_failures",
-    "record_autorun_quirk",
-    "retire_autorun_quirk",
+    "record_quirk",
     "record_validation_rule",
     "mark_autorun_suspected_defect",
     "set_autorun_order",
     "propose_accounts",
     "get_accounts",
-    "list_test_files",
     "get_autorun_network_wait",
-    "list_autorun_requests",
     "search_autorun_requests",
     "get_autorun_request",
-    "get_autorun_response",
-    "get_autorun_response_body",
-    "set_autorun_capture",
-    "get_autorun_capture",
-    "export_autorun_requests",
-    "import_autorun_requests",
+    "autorun_capture",
+    "autorun_har",
     "set_autorun_headers",
-    "get_autorun_cookies",
-    "set_autorun_cookie",
-    "clear_autorun_cookies",
-    "inspect_autorun_element",
+    "autorun_cookies",
   ],
   // Building an API template is one job too: read the format, see what
   // is saved, prove a draft, run it. A list with no way to run what it
@@ -565,7 +440,6 @@ export const TOOL_PAIRS: readonly (readonly string[])[] = [
   // template that writes to a stage is only as good as the order the
   // application allows, and that order is what the flow tools hold.
   [
-    "get_api_template_guide",
     "list_api_templates",
     "prove_api_template",
     "run_api_template",
@@ -574,12 +448,11 @@ export const TOOL_PAIRS: readonly (readonly string[])[] = [
     // A fixture is built from the proven templates, and run like one.
     "save_api_fixture",
     "run_api_fixture",
-    "list_api_fixtures",
     // What a template's author learns about the application goes on the
-    // project's one quirks list - the Auto Run row's tools under this
-    // row's own names, so switching Auto Run off does not take them away.
-    "record_app_quirk",
-    "retire_app_quirk",
+    // project's one quirks list, through the Auto Run row's own tool: it
+    // rides in both rows (SHARED_TOOLS), so switching Auto Run off does not
+    // take it away.
+    "record_quirk",
   ],
   // Reading the company database is one choice: finding the table and
   // reading it are two halves of the same question, and a lookup whose
@@ -588,19 +461,17 @@ export const TOOL_PAIRS: readonly (readonly string[])[] = [
   // is a different decision, and it is off until someone makes it.
   ["db_lookup", "db_query"],
   // Working on a report is one job: open it, read it, change it, check it,
-  // see it, and the guide that says how. An edit tool without the guide, or
-  // a preview with nothing to open, is half a job. Offered only while the
-  // Crystal Reports module is on.
+  // see it. A preview with nothing to open is half a job. Offered only while
+  // the Crystal Reports module is on; its guide is Core's `get_guide`,
+  // refused by topic while the module is off.
   [
     "open_report",
     "read_report",
     "edit_report",
     "compare_reports",
     "check_report",
-    "new_report",
     "preview_report",
     "preview_report_live",
-    "get_report_guide",
   ],
 ];
 
@@ -611,12 +482,12 @@ const PAIR_ROWS: Record<string, { label: string; summary: string }> = {
     label: "Test Suites",
     summary: "Find a test suite by plan, name or PBI, and read the cases in it.",
   },
-  get_autorun_guide: {
+  save_autorun_script: {
     label: "Auto Run scripts",
     summary:
       "Read the script guide, see the page in the open browser, try a locator or an action, replay a case to its failing step, read a run's failures, save, read, repair and delete scripts, set Auto Run's order for a PBI, and propose and read the environment's test logins.",
   },
-  get_api_template_guide: {
+  list_api_templates: {
     label: "API templates",
     summary:
       "Map a module's stages, then build, prove and run templates that write test data through the application's own endpoints, in the order the application allows.",
@@ -698,7 +569,66 @@ export function visibleTools(): McpToolInfo[] {
  *  too, or a rename would quietly hand an assistant a tool they refused. */
 export const RENAMED_TOOLS: Readonly<Record<string, string>> = {
   get_run_failures: "get_run_results",
+  // Merged into one quirk tool that records and retires.
+  record_autorun_quirk: "record_quirk",
+  retire_autorun_quirk: "record_quirk",
+  record_app_quirk: "record_quirk",
+  retire_app_quirk: "record_quirk",
+  // The four guides became Core's one `get_guide`: the name is then dropped
+  // as Core's, rather than carried forever as a name that matches nothing.
+  get_writing_guide: "get_guide",
+  get_autorun_guide: "get_guide",
+  get_api_template_guide: "get_guide",
+  get_report_guide: "get_guide",
+  // Folded into a sibling as an argument or part of its answer.
+  list_test_files: "get_accounts",
+  list_api_fixtures: "list_api_templates",
+  new_report: "open_report",
+  remove_autorun_component: "save_autorun_component",
+  discover_autorun_action: "discover_autorun_actions",
+  inspect_autorun_element: "probe_autorun_locator",
+  stop_autorun_replay: "replay_autorun_to_step",
+  release_autorun_browser: "reset_autorun_browser",
+  list_autorun_requests: "search_autorun_requests",
+  get_autorun_response: "get_autorun_request",
+  get_autorun_response_body: "get_autorun_request",
+  set_autorun_capture: "autorun_capture",
+  get_autorun_capture: "autorun_capture",
+  export_autorun_requests: "autorun_har",
+  import_autorun_requests: "autorun_har",
+  get_autorun_cookies: "autorun_cookies",
+  set_autorun_cookie: "autorun_cookies",
+  clear_autorun_cookies: "autorun_cookies",
 };
+
+/** Tools that ride in more than one row. Such a tool is off only while
+ * every row carrying it is off - a row whose module is off counts as off -
+ * so switching one row off never takes it from the job another row is on
+ * for. `loadDisabledTools` settles it; the screen and Rust read that. */
+export const SHARED_TOOLS: readonly string[] = [
+  ...new Set(TOOL_PAIRS.flat().filter((n, i, all) => all.indexOf(n) !== i)),
+];
+
+function isShared(name: string): boolean {
+  return SHARED_TOOLS.includes(name);
+}
+
+/** A row is on while any of its own (not shared) tools is offered and not
+ * in `disabled`. */
+function rowOn(pair: readonly string[], disabled: readonly string[]): boolean {
+  return pair.some((n) => !isShared(n) && toolOffered(n) && !disabled.includes(n));
+}
+
+/** `disabled` with each shared tool off exactly when no row carrying it is
+ * on. */
+function settleShared(disabled: string[]): string[] {
+  const out = disabled.filter((n) => !isShared(n));
+  for (const name of SHARED_TOOLS) {
+    const on = TOOL_PAIRS.filter((p) => p.includes(name)).some((p) => rowOn(p, out));
+    if (!on && toolOffered(name)) out.push(name);
+  }
+  return out;
+}
 
 /** Whether Database Read Access is switched on: the Database Access module
  * is on and the reading pair's `db_query` is not among the disabled tools.
@@ -727,13 +657,14 @@ export function loadDisabledTools(): string[] {
     );
     // A list saved before the pairing can name one half of a pair. Complete
     // it toward OFF: the pair is one switch now, and the alternative would
-    // silently hand an assistant a tool this list says is off.
+    // silently hand an assistant a tool this list says is off. A shared
+    // tool says nothing about any one row: it is settled after.
     for (const pair of TOOL_PAIRS) {
-      if (pair.some((n) => kept.includes(n))) {
-        for (const n of pair) if (!kept.includes(n)) kept.push(n);
+      if (pair.some((n) => !isShared(n) && kept.includes(n))) {
+        for (const n of pair) if (!isShared(n) && !kept.includes(n)) kept.push(n);
       }
     }
-    return kept;
+    return settleShared(kept);
   } catch {
     return [];
   }

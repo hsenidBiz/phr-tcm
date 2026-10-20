@@ -142,24 +142,11 @@ pub const MAX_RETIRED: usize = 40;
 /// One quirk is one line, read at a glance.
 pub const MAX_QUIRK_CHARS: usize = 300;
 
-/// The MCP tool that retires an assistant's quirk - named in the cap's
-/// refusal and in both guides.
-pub const RETIRE_TOOL: &str = "retire_autorun_quirk";
-
-/// The same two tools as the API templates assistant has them: in the API
-/// templates tool row, so a person who switches Auto Run's row off still
-/// leaves that assistant able to file and retire what it learns.
-pub const RECORD_APP_TOOL: &str = "record_app_quirk";
-pub const RETIRE_APP_TOOL: &str = "retire_app_quirk";
-
-/// The retire tool an assistant working from `from` has.
-pub fn retire_tool_for(from: &str) -> &'static str {
-    if from == FROM_API {
-        RETIRE_APP_TOOL
-    } else {
-        RETIRE_TOOL
-    }
-}
+/// The MCP tool that records and, with `retire`, retires an assistant's
+/// quirk - named in the cap's refusal and in both guides. One tool for both
+/// assistants: it rides in the Auto Run row and the API templates row
+/// alike, so either switch on leaves it offered.
+pub const RETIRE_TOOL: &str = "record_quirk";
 
 /// What the retire tool answers about a person's note.
 pub const PERSON_NOTE: &str = "that note was written by a person - ask them to remove it";
@@ -290,12 +277,7 @@ pub fn save_quirks(root: &Path, org: &str, project: &str, quirks: &[Quirk]) -> R
     let path = quirks_path(root, org, project);
     std::fs::create_dir_all(path.parent().expect("projects folder")).map_err(|e| e.to_string())?;
     let json = serde_json::to_string_pretty(&list).map_err(|e| e.to_string())?;
-    let tmp = path.with_extension("json.tmp");
-    std::fs::write(&tmp, json).map_err(|e| e.to_string())?;
-    if let Err(e) = std::fs::rename(&tmp, &path) {
-        let _ = std::fs::remove_file(&tmp);
-        return Err(e.to_string());
-    }
+    crate::ai_tools::atomic_write(&path, &json)?;
     Ok(())
 }
 
@@ -371,7 +353,7 @@ pub fn cap_refusal(list: &[Quirk], retire_tool: Option<&str>) -> String {
     let candidates = retire_candidates(list);
     let mut out = if let Some(tool) = retire_tool {
         format!(
-            "this project already has {MAX_QUIRKS} active quirks - retire one with {tool} {{ id, reason, replacement? }} before adding another."
+            "this project already has {MAX_QUIRKS} active quirks - retire one with {tool} {{ retire: id, reason, replacement? }} before adding another."
         )
     } else {
         format!("This project already has {MAX_QUIRKS} active notes - retire one before adding another.")
@@ -479,7 +461,7 @@ pub fn record_in(
     if trimmed.is_empty() {
         return Err("a quirk needs some text".to_string());
     }
-    let tool = (by == "assistant").then(|| retire_tool_for(from));
+    let tool = (by == "assistant").then_some(RETIRE_TOOL);
     if let Some(i) = list.iter().position(|q| normalized(&q.text) == normalized(trimmed)) {
         if list[i].is_active() {
             for s in sources {
@@ -873,7 +855,7 @@ pub fn quirks_section(quirks: &[Quirk]) -> String {
     }
     let mut out = String::from("## Known quirks of this application\n\n");
     out.push_str(&format!(
-        "Each line starts with the note's id, for {RETIRE_TOOL} ({RETIRE_APP_TOOL} when you build API templates). \"confirmed\" counts runs since in which the steps it was filed about passed; \"did not help\" counts runs in which they failed the same way again.\n\n"
+        "Each line starts with the note's id, for {RETIRE_TOOL}'s `retire`. \"confirmed\" counts runs since in which the steps it was filed about passed; \"did not help\" counts runs in which they failed the same way again.\n\n"
     ));
     for q in active {
         out.push_str(&format!("- [{}] ({}) {}\n", q.id, attribution(q), q.text));

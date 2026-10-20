@@ -10,7 +10,7 @@
 
 // The startup helpers live in their own module so App can use them without
 // loading the entries below; re-exported so imports from here keep working.
-import { compareVersions, isBetaVersion, updatedFrom } from "./changelogSeen";
+import { compareVersions, isBetaVersion } from "./changelogSeen";
 export {
   compareVersions,
   isBetaVersion,
@@ -2428,12 +2428,4 @@ export function entriesSince(seen: string, current: string): ChangelogEntry[] {
   return changelogFor(current).filter(
     (e) => compareVersions(e.version, seen) > 0 && compareVersions(e.version, current) <= 0,
   );
-}
-
-/** What the post-update check should show for this launch: the entries
- * since the version last seen, when this launch follows an update (see
- * `updatedFrom` for the rules), and nothing otherwise. */
-export function pendingChangelog(current: string): ChangelogEntry[] {
-  const seen = updatedFrom(current);
-  return seen ? entriesSince(seen, current) : [];
 }

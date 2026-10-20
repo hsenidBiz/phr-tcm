@@ -2432,7 +2432,7 @@ async fn a_reset_whose_home_page_does_not_open_says_what_it_did() {
     assert_eq!((status, said.clone()), (502, reset_failed_sentence("guard lifted", "the home page did not load")), "{:?}", log(&app));
     assert_eq!(
         said,
-        "Reset: other tabs closed, dialogs cleared, guard lifted, but the home page did not open: the home page did not load. Try reset_autorun_browser again, or release_autorun_browser if the browser is stuck."
+        "Reset: other tabs closed, dialogs cleared, guard lifted, but the home page did not open: the home page did not load. Try reset_autorun_browser again, or with release: true if the browser is stuck."
     );
     let b = slot.as_ref().unwrap();
     assert_eq!(b.d.tabs.closed_others, 1);

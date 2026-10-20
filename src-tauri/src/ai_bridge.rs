@@ -50,6 +50,12 @@ pub struct BridgeContext {
     /// running one writes to the application, so both are refused
     /// (`API_WRITES_OFF`) until they do. Off by default, like `db_writes`.
     pub api_writes: bool,
+    /// Whether the person has switched the network tools on (the captured
+    /// requests, HAR files, test headers and cookies of the Auto Run
+    /// browser): until they do, those tools are not listed and their routes
+    /// refuse (`NETWORK_TOOLS_OFF`). Each environment keeps its own; off by
+    /// default.
+    pub network_tools: bool,
     /// The active environment's "Run database changes without asking".
     /// Never the webview's to say: Rust sets it from the environment, on a
     /// push and on a switch (`commands::ai_bridge::push_context_with`,
@@ -150,6 +156,7 @@ impl std::fmt::Debug for BridgeContext {
             .field("db_secrets", &self.db_secrets.as_ref().map(|_| "(hidden)"))
             .field("db_writes", &self.db_writes)
             .field("api_writes", &self.api_writes)
+            .field("network_tools", &self.network_tools)
             .field("db_no_ask", &self.db_no_ask)
             .field("gate", &self.gate)
             .finish()
@@ -336,6 +343,9 @@ pub async fn route(
     if let Some(refused) = module_guard(path, body, &crate::modules::current()) {
         return refused;
     }
+    if let Some(refused) = network_guard(path, ctx.network_tools) {
+        return refused;
+    }
     match (method, path) {
         ("GET", "/ping") => (
             200,
@@ -486,9 +496,9 @@ pub async fn route(
         // (never passwords) for a person to add, and reads the ones there -
         // passwords included only in an environment marked as a test one.
         ("POST", "/accounts-propose") => accounts_propose(body),
+        // With the project's Test files beside them, by name and size: what
+        // a case uploads.
         ("GET", "/accounts") => accounts_read(ctx),
-        // The project's Test files, by name and size: what a case uploads.
-        ("GET", "/autorun-test-files") => autorun_test_files(ctx),
         // The API template routes: gated with the Auto Run ones by the
         // guard above. Proving and running write to the application, so
         // both also need the person's own switch (`ctx.api_writes`); the
@@ -573,6 +583,8 @@ pub async fn route(
                 // Only while writes are on too: without them there is no
                 // change to run, asked about or not.
                 "db_no_ask": ctx.db_no_ask && ctx.db_writes,
+                // The proxy offers the network tools only on an explicit yes.
+                "network_tools": ctx.network_tools,
             })
             .to_string(),
         ),
@@ -654,9 +666,9 @@ pub fn module_guard_for(path: &str, on: &std::collections::BTreeSet<crate::modul
 }
 
 /// `module_guard_for`, plus the one route shared by two modules: the quirk
-/// routes are Auto Run's, but a quirk sent `from: "api"` (the
-/// `record_app_quirk` / `retire_app_quirk` tools) is API Templates' too, so
-/// it is refused with that module's sentence while API Templates is off.
+/// routes are Auto Run's, but a quirk sent `from: "api"` (`record_quirk`
+/// from an assistant building API templates) is API Templates' too, so it
+/// is refused with that module's sentence while API Templates is off.
 pub fn module_guard(path: &str, body: &str, on: &std::collections::BTreeSet<crate::modules::Module>) -> Option<(u16, String)> {
     use crate::modules::Module;
     if let Some(refused) = module_guard_for(path, on) {
@@ -671,6 +683,36 @@ pub fn module_guard(path: &str, body: &str, on: &std::collections::BTreeSet<crat
         }
     }
     None
+}
+
+/// The network tools' routes: the Auto Run browser's captured requests,
+/// HAR files, test headers and cookies. Answered only while the person's
+/// Network tools switch is on (`network_guard`).
+pub const NETWORK_ROUTES: [&str; 12] = [
+    "/autorun-requests",
+    "/autorun-requests-search",
+    "/autorun-request",
+    "/autorun-response",
+    "/autorun-response-body",
+    "/autorun-capture",
+    "/autorun-requests-export",
+    "/autorun-requests-import",
+    "/autorun-headers",
+    "/autorun-cookies",
+    "/autorun-cookie",
+    "/autorun-cookies-clear",
+];
+
+/// Said when a network tool's route is called while the person's Network
+/// tools switch is off.
+pub const NETWORK_TOOLS_OFF: &str =
+    "the network tools are switched off - the person turns them on under Network tools on the AI Bridge tab (each environment keeps its own)";
+
+/// The guard `route` runs after the module's: a network route is refused
+/// while the switch is off, before anything else about the call is looked
+/// at. `on` is explicit so both sides stay testable.
+pub fn network_guard(path: &str, on: bool) -> Option<(u16, String)> {
+    (!on && NETWORK_ROUTES.contains(&path)).then(|| (403, NETWORK_TOOLS_OFF.to_string()))
 }
 
 /// Said when a prove or a run arrives while the person's API templates
@@ -740,28 +782,24 @@ fn project_test_files(root: &std::path::Path, ctx: &BridgeContext) -> Vec<crate:
     crate::test_files::list(&crate::test_files::folder(root, &ctx.org, &ctx.project)).unwrap_or_default()
 }
 
-/// Said by `list_test_files` with no project open: Test files belong to one.
-const TEST_FILES_NEED_A_PROJECT: &str = "open a project in the app first - Test files belong to a project";
+/// Said in `get_accounts`' answer, in place of the Test files, with no
+/// project open: Test files belong to one.
+pub const TEST_FILES_NEED_A_PROJECT: &str = "open a project in the app first - Test files belong to a project";
 
-/// `GET /autorun-test-files`: this project's Test files, each by name and
-/// human size and nothing else - never a path or a date.
-fn autorun_test_files(ctx: &BridgeContext) -> (u16, String) {
-    let root = match autorun_root() {
-        Ok(r) => r,
-        Err(refused) => return refused,
-    };
+/// This project's Test files for `get_accounts`' answer, each by name and
+/// human size and nothing else - never a path or a date. `Err` is the
+/// sentence said in their place: no project open, or a folder that could
+/// not be read.
+fn test_files_answer(root: &std::path::Path, ctx: &BridgeContext) -> Result<Vec<serde_json::Value>, String> {
     if ctx.org.trim().is_empty() || ctx.project.trim().is_empty() {
-        return (409, TEST_FILES_NEED_A_PROJECT.to_string());
+        return Err(TEST_FILES_NEED_A_PROJECT.to_string());
     }
-    let files = match crate::test_files::list(&crate::test_files::folder(&root, &ctx.org, &ctx.project)) {
-        Ok(f) => f,
-        Err(e) => return (500, e),
-    };
-    let rows: Vec<serde_json::Value> = files
+    // `list`'s own sentence already says what failed and where to look.
+    let files = crate::test_files::list(&crate::test_files::folder(root, &ctx.org, &ctx.project))?;
+    Ok(files
         .into_iter()
         .map(|f| serde_json::json!({ "name": f.name, "size": crate::test_files::human_size(u64::from(f.size)) }))
-        .collect();
-    (200, serde_json::json!({ "test_files": rows }).to_string())
+        .collect())
 }
 
 /// Said on every answer of a discovery that must not save
@@ -842,7 +880,7 @@ pub fn page_wanted(body: &str) -> bool {
 
 /// `answer` with its `page` dump left out when the call's body sent
 /// `"page": false` (`page_wanted`): start_autorun_discovery,
-/// discover_autorun_action and replay_autorun_to_step answer the whole
+/// discover_autorun_actions and replay_autorun_to_step answer the whole
 /// page, which a caller that only wants the outcome can do without. The
 /// page is still read, so what it shows is still recorded as seen;
 /// `page_left_out` says where to read it. Any other body, an answer that
@@ -1119,7 +1157,7 @@ fn template_call(v: &serde_json::Value, shape: &str) -> Result<TemplateCall, (u1
             return Err((
                 400,
                 format!(
-                    "this call needs an \"account\" - one of the account keys get_api_template_guide lists. Expected {shape}."
+                    "this call needs an \"account\" - one of the account keys get_guide (topic api_templates) lists. Expected {shape}."
                 ),
             ))
         }
@@ -1172,7 +1210,7 @@ pub async fn api_template_prove<B: crate::api_templates::held::Keeps, D: crate::
     };
     let template: ApiTemplate = match serde_json::from_value(draft) {
         Ok(t) => t,
-        Err(e) => return (400, format!("that is not a template: {e} - call get_api_template_guide for the format")),
+        Err(e) => return (400, format!("that is not a template: {e} - call get_guide (topic api_templates) for the format")),
     };
     let call = match template_call(&v, PROVE_SHAPE) {
         Ok(c) => c,
@@ -1505,7 +1543,7 @@ async fn run_api_template_request<B: crate::api_templates::held::Keeps, D: crate
 /// Said beside a template run refused its account because the Auto Run
 /// browser holds it, when the assistant's replay opened that browser.
 pub const FREE_IT_WITH_RELEASE: &str =
-    "The Auto Run browser your replay left open holds this account: close it with release_autorun_browser, then run the template again.";
+    "The Auto Run browser your replay left open holds this account: close it with reset_autorun_browser and `release: true`, then run the template again.";
 
 /// Does a template run's report say its account `key` was refused because
 /// the Auto Run browser holds it (the lease's own sentence,
@@ -1547,7 +1585,7 @@ fn browser_arg(v: &serde_json::Value) -> Result<crate::browser::launch::Browser,
 
 /// Said beside a summary list of fixtures: how to read one in full.
 pub const FIXTURES_IN_SHORT: &str =
-    "each fixture in short - call list_api_fixtures with id for one in full (its steps, current outputs and last run), or full: true for all";
+    "each fixture in short - call list_api_templates with kind fixtures and id for one in full (its steps, current outputs and last run), or full: true for all";
 
 /// `GET /api-template-fixtures`: the project's saved fixtures. By default a
 /// summary of each - its id, name, output names, what it creates (kind and
@@ -1643,7 +1681,7 @@ pub fn api_fixture_save(ctx: &BridgeContext, body: &str) -> (u16, String) {
         Ok(f) => f,
         Err(e) => {
             let said = crate::api_templates::fixture::shape_problem(&raw, &e);
-            return (400, format!("that is not a fixture: {said} - call get_api_template_guide for the format"));
+            return (400, format!("that is not a fixture: {said} - call get_guide (topic api_templates) for the format"));
         }
     };
     let existed = matches!(fixture_store::load(&root, &ctx.org, &ctx.project, &fixture.id), Ok(Some(_)));
@@ -2187,11 +2225,11 @@ fn with_overrides_seen(
 pub enum OverrideTool {
     /// `set_autorun_headers`
     SetHeaders,
-    /// `get_autorun_cookies`: a read, in any supervised browser.
+    /// `autorun_cookies`' list: a read, in any supervised browser.
     Cookies,
-    /// `set_autorun_cookie`
+    /// `autorun_cookies`' set
     SetCookie,
-    /// `clear_autorun_cookies`: a real sign-out.
+    /// `autorun_cookies`' clear: a real sign-out.
     ClearCookies,
 }
 
@@ -2297,7 +2335,7 @@ pub(crate) fn overrides_answer(said: String, o: &crate::autorun::overrides::Over
 }
 
 /// What a set of test headers or a cookie lasts for, said once it is set.
-const LASTS_UNTIL: &str = "Every try, discovery and replay answer names it until you remove it, or reset_autorun_browser, clear_autorun_cookies or a release takes it away.";
+const LASTS_UNTIL: &str = "Every try, discovery and replay answer names it until you remove it, or reset_autorun_browser, autorun_cookies' clear or a release takes it away.";
 
 /// `set_autorun_headers` over `slot`: the headers asked for merged into the
 /// set in place (a `null` removes one), sent on every tab and on any tab
@@ -2346,7 +2384,7 @@ pub async fn set_headers_in<B: DiscoveryBrowser>(slot: &mut Option<B>, args: &se
     overrides_answer(said, o)
 }
 
-/// `get_autorun_cookies` over `slot`: every cookie the browser holds for
+/// `autorun_cookies`' list over `slot`: every cookie the browser holds for
 /// the app's site - the one TCM's sign-in confirmed (`overrides::confirmed_origin`),
 /// never whatever page shows, which may be the identity provider's - whatever
 /// its path, as `overrides::shown_cookie` shows it (the sign-in's values
@@ -2398,12 +2436,12 @@ pub async fn cookies_in<B: DiscoveryBrowser>(slot: &mut Option<B>, args: &serde_
         "total": cookies.len(),
         "returned": shown.len(),
         "cookies": shown,
-        "note": "The sign-in's cookies (HttpOnly, the sign-in and anti-forgery cookies, names like a secret) show their value as (hidden), and are never set by set_autorun_cookie.",
+        "note": "The sign-in's cookies (HttpOnly, the sign-in and anti-forgery cookies, names like a secret) show their value as (hidden), and are never set by autorun_cookies.",
     });
     (200, answer.to_string())
 }
 
-/// `set_autorun_cookie` over `slot`: one cookie on the app's own site - the
+/// `autorun_cookies`' set over `slot`: one cookie on the app's own site - the
 /// one TCM's sign-in confirmed (`overrides::confirmed_origin`), never
 /// whatever page shows - on its host only, `path` `/` unless asked;
 /// recorded exactly (`SetCookie`) so a reset deletes it only while it is
@@ -2716,7 +2754,7 @@ pub async fn supervised_page_within(
 
 /// Said at the end of a page read during a discovery that has no area yet:
 /// nothing was recorded.
-pub const READ_WITH_NO_AREA: &str = "Recorded nothing as seen: this discovery has no area yet. Save the area with save_autorun_area, or name it with \"area\" on discover_autorun_action, then read the page again.";
+pub const READ_WITH_NO_AREA: &str = "Recorded nothing as seen: this discovery has no area yet. Save the area with save_autorun_area, or name it with \"area\" on discover_autorun_actions, then read the page again.";
 
 /// Said at the end of a page read during a discovery when the page is not
 /// on the application's own origins: nothing was recorded.
@@ -3528,7 +3566,7 @@ fn call_the_replay_going() -> String {
 /// Said, with 409, to the assistant's release while a replay holds the
 /// browser: a release never stops a replay, so it says how to wait for it.
 pub fn replay_going_for_a_release() -> String {
-    let stop = if assistant_replay_going() { ", or stop_autorun_replay to stop it" } else { "" };
+    let stop = if assistant_replay_going() { ", or replay_autorun_to_step with stop: true to stop it" } else { "" };
     format!(
         "a replay is going and holds the browser, and a release never stops one - {} to wait for it{stop}, then release",
         call_the_replay_going()
@@ -3536,19 +3574,19 @@ pub fn replay_going_for_a_release() -> String {
 }
 
 /// Whether the replay going is the assistant's own: its call's slot holds
-/// no answer yet. Only then does a refusal point at `stop_autorun_replay`,
+/// no answer yet. Only then does a refusal point at the replay tool's `stop`,
 /// which never stops the person's.
 pub fn assistant_replay_going() -> bool {
     assistant_run().as_ref().is_some_and(|r| r.answer.borrow().is_none())
 }
 
 /// `commands::autorun::REPLAY_RUNNING_AT_RESET`, as the assistant's reset,
-/// cookie and header tools say it: naming `stop_autorun_replay` when the
+/// cookie and header tools say it: naming the replay tool's `stop` when the
 /// replay going is the assistant's own.
 pub fn replay_running_refusal() -> String {
     let said = crate::commands::autorun::REPLAY_RUNNING_AT_RESET;
     if assistant_replay_going() {
-        format!("{said} Or stop it first with stop_autorun_replay.")
+        format!("{said} Or stop it first with replay_autorun_to_step and stop: true.")
     } else {
         said.to_string()
     }
@@ -3606,7 +3644,7 @@ fn inspect_ask(body: &str) -> Result<(crate::browser::locator::Target, crate::br
     Ok((target, ask))
 }
 
-/// `inspect_autorun_element` on the page `d` shows: the body read
+/// `probe_autorun_locator` with `show` on the page `d` shows: the body read
 /// (`inspect_ask`), then the one element its locator matches inspected
 /// (`browser::inspect`). Read only.
 pub async fn inspect_page<D: crate::browser::cdp::Driver>(d: &mut D, body: &str) -> (u16, String) {
@@ -3781,7 +3819,7 @@ async fn autorun_try(
         Err(e) => {
             return (
                 400,
-                format!("that is not an action: {e} - call get_autorun_guide for the vocabulary."),
+                format!("that is not an action: {e} - call get_guide (topic autorun) for the vocabulary."),
             )
         }
     };
@@ -5586,7 +5624,8 @@ fn person_area_kept(name: &str) -> String {
 /// session has gone), so a saved area is one a run can take. Clicks that
 /// do not arrive save nothing, and the refusal says where they stopped and
 /// what the page showed. A name already taken is refused before the
-/// browser is touched: the person replaces an area, never the assistant.
+/// browser is touched: the person replaces an area, never the assistant -
+/// except to repair a path a run cannot take (`repair_area_in`).
 ///
 /// In a mapping run (spec 2026-10-09 section 2) the area is saved as the
 /// run's own (`MadeBy::Mapping`), and every save is counted on the run:
@@ -5610,12 +5649,97 @@ pub async fn discover_area_in<B: DiscoveryBrowser>(
     clicks: Vec<crate::browser::locator::Target>,
     timing: &crate::browser::timing::Timing,
 ) -> (u16, String) {
-    let answer = save_discovered_area(slot, root, organization, project, name, module, clicks, timing).await;
+    let answer = save_discovered_area(slot, root, organization, project, name, module, clicks, None, timing).await;
     if let Some(browser) = slot.as_mut() {
         let p = browser.parts();
         count_blocked_writes(p.driver, p.discovery.as_mut(), &[]);
     }
     answer
+}
+
+/// An assistant's repair of an existing area's menu path
+/// (`save_autorun_area` with `repair: { reason }`, owner decision
+/// 2026-10-20). The name must be an area the project has - whoever made
+/// it, a person included - and the repair keeps it under its own module
+/// (`module` may be blank; another one is refused), and new clicks equal
+/// to the saved ones are refused (`area_repair::SAME_PATH`). It is allowed
+/// only while the area is failing to be reached, decided live every time:
+/// the area's saved path is replayed from a fresh home as a run takes it
+/// (`nav::reach_module`, two tries with a reload between) before anything
+/// is written, and the repair is refused while it still arrives
+/// (`area_repair::NOTHING_TO_REPAIR`) or when the browser stops answering
+/// during that check. The new clicks are then replayed from a fresh home
+/// exactly as a new area's are, and must arrive where the discovery browser
+/// stands. The change is written to the areas file as it is after those
+/// trips (`area_repair::save_repair`), so a Remove or a put-back made
+/// meanwhile is never overwritten. Only the clicks, where they arrive and
+/// the page they begin on change; the area keeps its name, module and
+/// maker, and records the path it replaced with the scrubbed reason
+/// (`repaired_by_assistant`) so the person can put it back.
+#[allow(clippy::too_many_arguments)]
+pub async fn repair_area_in<B: DiscoveryBrowser>(
+    slot: &mut Option<B>,
+    root: &std::path::Path,
+    organization: &str,
+    project: &str,
+    name: &str,
+    module: &str,
+    clicks: Vec<crate::browser::locator::Target>,
+    reason: &str,
+    timing: &crate::browser::timing::Timing,
+) -> (u16, String) {
+    let answer =
+        save_discovered_area(slot, root, organization, project, name, module, clicks, Some(reason), timing).await;
+    if let Some(browser) = slot.as_mut() {
+        let p = browser.parts();
+        count_blocked_writes(p.driver, p.discovery.as_mut(), &[]);
+    }
+    answer
+}
+
+/// A fresh home page for an area's replay, never where the page stands:
+/// PeoplesHR's menu remembers whether a person left it open, so the clicks
+/// would otherwise depend on it (spec 2026-10-09, mapped areas).
+/// `load_home` runs `after_sign_in` once, on the fresh load. A session that
+/// has gone is signed in again as `account`; a sign-in ends on a fresh,
+/// signed-in page with `after_sign_in` run, so that is the start: loading
+/// home again would run it a second time, and a toggle run twice closes the
+/// menu it opened. The outcome says whether home was reached; `Err` is the
+/// answer to give instead.
+#[allow(clippy::too_many_arguments)]
+async fn fresh_home_for_area<D: crate::browser::cdp::Driver>(
+    d: &mut D,
+    home: &crate::autorun::nav::Home,
+    timing: &crate::browser::timing::Timing,
+    root: &std::path::Path,
+    organization: &str,
+    project: &str,
+    account: Option<&str>,
+    lease: &mut crate::autorun::lease::Held,
+    signed_in: &mut Option<String>,
+) -> Result<crate::browser::actions::ActionOutcome, (u16, String)> {
+    let went = crate::autorun::nav::load_home(d, home, timing).await;
+    let signed = went.ok
+        && crate::browser::expect::expect(
+            d,
+            &home.signed_in,
+            crate::browser::expect::Check::Visible,
+            timing.nav_ms,
+            timing.poll_ms,
+        )
+        .await
+        .ok;
+    if signed {
+        return Ok(went);
+    }
+    let Some(key) = account else {
+        return Err((409, "the discovery has no account to sign in again with - start it again".to_string()));
+    };
+    match crate::autorun::signin::sign_in_leased(d, root, organization, project, key, lease, signed_in, timing).await {
+        Err(why) => Err((409, why)),
+        Ok(out) if !out.ok => Err((409, out.detail)),
+        Ok(_) => Ok(crate::browser::actions::ActionOutcome::passed("signed in again")),
+    }
 }
 
 /// Where a discovery stands once the area `kept` is saved or found as it
@@ -5645,7 +5769,8 @@ async fn stand_in_saved_area<D: crate::browser::cdp::Driver>(
     }
 }
 
-/// `discover_area_in`, before the blocked saves are counted.
+/// `discover_area_in` and `repair_area_in`, before the blocked saves are
+/// counted. `repair` is the repair's reason, as the assistant sent it.
 #[allow(clippy::too_many_arguments)]
 async fn save_discovered_area<B: DiscoveryBrowser>(
     slot: &mut Option<B>,
@@ -5655,9 +5780,10 @@ async fn save_discovered_area<B: DiscoveryBrowser>(
     name: &str,
     module: &str,
     clicks: Vec<crate::browser::locator::Target>,
+    repair: Option<&str>,
     timing: &crate::browser::timing::Timing,
 ) -> (u16, String) {
-    use crate::autorun::nav;
+    use crate::autorun::{area_repair, nav};
     let Some(browser) = slot.as_mut() else {
         return (409, NO_DISCOVERY.to_string());
     };
@@ -5666,7 +5792,13 @@ async fn save_discovered_area<B: DiscoveryBrowser>(
         return (409, NO_DISCOVERY.to_string());
     };
     let (name, module) = (name.trim().to_string(), module.trim().to_string());
-    if name.is_empty() || module.is_empty() || clicks.is_empty() {
+    let reason = match repair.map(area_repair::check_reason) {
+        None => None,
+        Some(Ok(reason)) => Some(reason),
+        Some(Err(why)) => return (400, why),
+    };
+    // A repair may leave the module out: it keeps the area's own.
+    if name.is_empty() || (module.is_empty() && reason.is_none()) || clicks.is_empty() {
         return (400, "an area needs a name, the module it belongs to and at least one click".to_string());
     }
     let saved_this_run = state.mapping.as_ref().map(|run| run.added.len() + run.updated.len());
@@ -5678,8 +5810,25 @@ async fn save_discovered_area<B: DiscoveryBrowser>(
         Ok(n) => n,
         Err(why) => return (409, why),
     };
+    // The area a repair replaces the path of: one the project has, under
+    // the module it already has.
+    let repairing = match &reason {
+        None => None,
+        Some(_) => match nav::find_area(&navfile, &name) {
+            None => return (409, area_repair::no_area_to_repair(&name)),
+            Some(found) if !module.is_empty() && nav::module_key(&module) != nav::module_key(&found.module) => {
+                return (409, area_repair::other_module(found))
+            }
+            Some(found) => Some(found.clone()),
+        },
+    };
+    if repairing.as_ref().is_some_and(|old| old.clicks == clicks) {
+        return (409, area_repair::SAME_PATH.to_string());
+    }
+    let module = repairing.as_ref().map_or(module, |old| old.module.clone());
     // The run's own area of this name, which this save may update.
     let existing = match nav::find_area(&navfile, &name) {
+        _ if repairing.is_some() => None,
         None => None,
         Some(found) if mapping && found.made_by == nav::MadeBy::Mapping => {
             if let Err(why) = nav::check_area_free(&navfile, &name, &module) {
@@ -5721,7 +5870,8 @@ async fn save_discovered_area<B: DiscoveryBrowser>(
     let account = state.account.clone().or_else(|| p.signed_in.clone());
     let d = p.driver;
     // Where the clicks must arrive: where the assistant clicked its way to,
-    // read as a run's trip reads it.
+    // read as a run's trip reads it - and read before a repair's try of the
+    // saved path moves the page.
     let href = crate::browser::page::eval_value(d, "location.href").await;
     let href = href.ok().and_then(|v| v.as_str().map(str::to_string)).unwrap_or_default();
     let arrived = if href.trim().is_empty() { String::new() } else { nav::path_of(&href) };
@@ -5730,54 +5880,90 @@ async fn save_discovered_area<B: DiscoveryBrowser>(
     }
     // Where the screen is, for a mapping run's summary, however this ends.
     let screen = crate::commands::autorun::MappingScreen { arrived: Some(arrived.clone()), menu: nav::menu_path(&clicks) };
-    // The check starts from a fresh home page, never from where the page
-    // stands: PeoplesHR's menu remembers whether a person left it open, so
-    // the clicks would otherwise depend on it (spec 2026-10-09, mapped
-    // areas). `load_home` runs `after_sign_in` once, on the fresh load.
     let home = nav::Home::of(&recipe);
-    let mut went = nav::load_home(d, &home, timing).await;
-    let signed_in = went.ok
-        && crate::browser::expect::expect(
+    // A repair first takes the area's saved path from a fresh home, as a
+    // run would, and goes no further when it still arrives.
+    if let Some(old) = repairing.as_ref() {
+        let went = match fresh_home_for_area(
             d,
-            &home.signed_in,
-            crate::browser::expect::Check::Visible,
-            timing.nav_ms,
-            timing.poll_ms,
+            &home,
+            timing,
+            root,
+            organization,
+            project,
+            account.as_deref(),
+            p.lease,
+            p.signed_in,
         )
         .await
-        .ok;
-    if !signed_in {
-        // The saved session has gone: sign in again as the discovery's
-        // account. A sign-in ends on a fresh, signed-in page with
-        // `after_sign_in` run, so that is the start: loading home again
-        // would run it a second time, and a toggle run twice closes the
-        // menu it opened.
-        let Some(key) = account else {
-            return (409, "the discovery has no account to sign in again with - start it again".to_string());
-        };
-        match crate::autorun::signin::sign_in_leased(d, root, organization, project, &key, p.lease, p.signed_in, timing)
-            .await
         {
-            Err(why) => return (409, why),
-            Ok(out) if !out.ok => return (409, out.detail),
-            Ok(_) => {}
+            Ok(went) => went,
+            Err(refused) => return refused,
+        };
+        if !went.ok {
+            return (409, format!("the area's saved path could not be tried: {}", went.detail));
         }
-        went = crate::browser::actions::ActionOutcome::passed("signed in again");
+        let route = nav::Route::new(&recipe, old.clone());
+        let tried = nav::reach_module(d, &route, nav::TripFrom::SignIn, timing, "Auto Run area repair").await;
+        if tried.ok {
+            return (409, area_repair::NOTHING_TO_REPAIR.to_string());
+        }
+        if tried.harness {
+            return (
+                409,
+                format!(
+                    "the browser stopped answering while the area's saved path was tried, so nothing was saved: {}",
+                    tried.detail
+                ),
+            );
+        }
     }
+    // The check starts from a fresh home page, never from where the page
+    // stands (`fresh_home_for_area`).
+    let went = match fresh_home_for_area(
+        d,
+        &home,
+        timing,
+        root,
+        organization,
+        project,
+        account.as_deref(),
+        p.lease,
+        p.signed_in,
+    )
+    .await
+    {
+        Ok(went) => went,
+        Err(refused) => return refused,
+    };
     let reached = if went.ok {
         let start = match crate::browser::page::eval_value(d, "location.href").await {
             Ok(v) => nav::path_of(v.as_str().unwrap_or("")),
             Err(_) => String::new(),
         };
-        let path = nav::ModulePath {
-            // An update keeps the area's name as it was saved.
-            area: existing.as_ref().map_or_else(|| name.clone(), |old| old.name().to_string()),
-            module,
-            clicks,
-            arrived,
-            recorded: crate::commands::autorun_record::now_iso(),
-            start,
-            made_by: if mapping { nav::MadeBy::Mapping } else { nav::MadeBy::Person },
+        let path = match (&repairing, &reason) {
+            (Some(old), Some(reason)) => area_repair::repaired(
+                old,
+                clicks,
+                arrived,
+                start,
+                reason.clone(),
+                crate::commands::autorun_record::now_iso(),
+            ),
+            _ => nav::ModulePath {
+                // An update keeps the area's name as it was saved.
+                area: existing.as_ref().map_or_else(|| name.clone(), |old| old.name().to_string()),
+                module,
+                clicks,
+                arrived,
+                recorded: crate::commands::autorun_record::now_iso(),
+                start,
+                made_by: if mapping { nav::MadeBy::Mapping } else { nav::MadeBy::Person },
+                // A mapping run writes its own area again only when the path
+                // changed, and an assistant's repair note describes the path
+                // it replaced: it goes with that path.
+                repaired_by_assistant: None,
+            },
         };
         let route = nav::Route::new(&recipe, path);
         nav::go_to_module(d, &route, nav::TripFrom::SignIn, timing).await.map(|at| (at, route.path))
@@ -5816,23 +6002,48 @@ async fn save_discovered_area<B: DiscoveryBrowser>(
     }
     let saved = path.clicks.len();
     let new_menu = nav::menu_path(&path.clicks);
-    if let Err(why) = nav::put_path(root, organization, project, path) {
+    let written = match (&repairing, path.repaired_by_assistant.as_ref()) {
+        // A repair goes to the file as it is now (`area_repair::save_repair`).
+        (Some(old), Some(note)) => area_repair::save_repair(
+            root,
+            organization,
+            project,
+            old,
+            path.clicks.clone(),
+            path.arrived.clone(),
+            path.start.clone(),
+            note.reason.clone(),
+            note.at.clone(),
+        ),
+        _ => nav::put_path(root, organization, project, path),
+    };
+    if let Err(why) = written {
         return (409, why);
     }
+    // The area whose path this save replaced, if any.
+    let replaced = existing.as_ref().or(repairing.as_ref());
     if let Some(state) = p.discovery.as_mut() {
         if let Some(run) = state.mapping.as_mut() {
-            match &existing {
+            match replaced {
                 Some(old) => run.record_updated(old.name().to_string(), nav::menu_path(&old.clicks), new_menu),
                 None => run.record_added(name.clone()),
             }
             run.locate_last(screen);
         }
     }
-    let kept = match &existing {
+    let kept = match replaced {
         Some(old) => old.name().to_string(),
         None => name,
     };
-    stand_in_saved_area(d, p.discovery, p.signed_in.as_deref(), root, organization, project, kept).await;
+    stand_in_saved_area(d, p.discovery, p.signed_in.as_deref(), root, organization, project, kept.clone()).await;
+    if let Some(reason) = reason {
+        crate::applog::info(format!("AI repaired area {kept}: {reason}"));
+        let message = area_repair::repaired_answer(&kept, &reason);
+        return (
+            200,
+            serde_json::json!({ "saved": true, "repaired": true, "arrived": at, "message": message }).to_string(),
+        );
+    }
     crate::applog::info(format!("Auto Run discovery saved an area ({saved} clicks)"));
     (200, serde_json::json!({ "saved": true, "arrived": at }).to_string())
 }
@@ -6033,7 +6244,7 @@ async fn autorun_discover_action(
         Err(e) => {
             return (
                 400,
-                format!("that is not an action: {e} - call get_autorun_guide for the vocabulary."),
+                format!("that is not an action: {e} - call get_guide (topic autorun) for the vocabulary."),
             )
         }
     };
@@ -6110,7 +6321,7 @@ async fn autorun_discover_actions(
             Err(e) => {
                 return (
                     400,
-                    format!("action {} is not an action: {e} - call get_autorun_guide for the vocabulary.", i + 1),
+                    format!("action {} is not an action: {e} - call get_guide (topic autorun) for the vocabulary.", i + 1),
                 )
             }
         }
@@ -6520,7 +6731,7 @@ fn refuse_outside_the_recipe(
 /// `/autorun-discover-area`: save the clicks a discovery found as an area
 /// (`discover_area_in`), once a replay of them arrives.
 async fn autorun_discover_area(ctx: &BridgeContext, body: &str) -> (u16, String) {
-    const SHAPE: &str = "{ \"name\": <the area's name>, \"module\": <the test-case Module it belongs to>, \"clicks\": [<a script's click selector>, ...] }";
+    const SHAPE: &str = "{ \"name\": <the area's name>, \"module\": <the test-case Module it belongs to>, \"clicks\": [<a script's click selector>, ...], \"repair\": <optional: { \"reason\": <one line> } to replace an existing area's path> }";
     let v: serde_json::Value = match serde_json::from_str(body) {
         Ok(v) => v,
         Err(e) => return (400, format!("that is not readable JSON: {e}. Expected {SHAPE}.")),
@@ -6528,8 +6739,18 @@ async fn autorun_discover_area(ctx: &BridgeContext, body: &str) -> (u16, String)
     let Some(name) = named(v.get("name").and_then(|a| a.as_str())) else {
         return (400, format!("this call needs a \"name\" for the area. Expected {SHAPE}."));
     };
-    let Some(module) = named(v.get("module").and_then(|a| a.as_str())) else {
-        return (400, format!("this call needs the \"module\" the area belongs to. Expected {SHAPE}."));
+    let repair = match v.get("repair") {
+        None | Some(serde_json::Value::Null) => None,
+        Some(r) => match r.get("reason").and_then(|a| a.as_str()) {
+            Some(reason) => Some(reason.to_string()),
+            None => return (400, format!("\"repair\" is {{ \"reason\": <one line> }}. Expected {SHAPE}.")),
+        },
+    };
+    // A repair keeps the area's own module, so it may leave it out.
+    let module = match named(v.get("module").and_then(|a| a.as_str())) {
+        Some(module) => module,
+        None if repair.is_some() => String::new(),
+        None => return (400, format!("this call needs the \"module\" the area belongs to. Expected {SHAPE}.")),
     };
     let clicks: Vec<crate::browser::locator::Target> = match v.get("clicks").cloned().map(serde_json::from_value) {
         Some(Ok(clicks)) => clicks,
@@ -6552,6 +6773,20 @@ async fn autorun_discover_area(ctx: &BridgeContext, body: &str) -> (u16, String)
         Err(refused) => return refused,
     };
     let mut slot = crate::commands::autorun::supervised().lock().await;
+    if let Some(reason) = repair {
+        return repair_area_in(
+            &mut slot,
+            &root,
+            &ctx.org,
+            &ctx.project,
+            &name,
+            &module,
+            clicks,
+            &reason,
+            &crate::browser::timing::Timing::supervised(),
+        )
+        .await;
+    }
     discover_area_in(
         &mut slot,
         &root,
@@ -6645,7 +6880,7 @@ struct AssistantRun {
     saved_at: Option<String>,
     answer: tokio::sync::watch::Receiver<Option<ReplayDone>>,
     /// Whether the call that started it wanted the page (`page_wanted`): an
-    /// answer `stop_autorun_replay` collects honours it too.
+    /// answer the replay tool's `stop` collects honours it too.
     page: bool,
 }
 
@@ -6943,14 +7178,14 @@ async fn replay_answer_with(
     wait_for_replay(answer, id, case_id, step, wait).await
 }
 
-/// Said by `stop_autorun_replay` when no replay is going.
+/// Said by the replay tool's `stop` when no replay is going.
 pub const NO_REPLAY_RUNNING: &str = "no replay is running - there is nothing to stop";
 
-/// Said by `stop_autorun_replay` while the replay going is the person's own.
+/// Said by the replay tool's `stop` while the replay going is the person's own.
 pub const PERSONS_REPLAY_GOING: &str =
     "the replay going is the person's own - only they can stop it, with Stop in the Auto Run pane";
 
-/// Said by `stop_autorun_replay` when the assistant's last replay has
+/// Said by the replay tool's `stop` when the assistant's last replay has
 /// already ended, its answer not yet collected.
 pub fn replay_already_ended(case_id: i32, step: i32) -> String {
     format!(
@@ -6958,7 +7193,7 @@ pub fn replay_already_ended(case_id: i32, step: i32) -> String {
     )
 }
 
-/// The 202 `stop_autorun_replay` answers when the replay has not ended
+/// The 202 the replay tool's `stop` answers when the replay has not ended
 /// within the call's wait: it was asked to stop, and hears it once the
 /// action it is on finishes (an action's own wait for the page runs out
 /// first).
@@ -6970,23 +7205,23 @@ pub fn replay_stopping_answer(case_id: i32, step: i32) -> serde_json::Value {
         now.push_str(&format!(", on action {} of {}", action.index, action.of));
     }
     let sentence = format!(
-        "asked to stop: the replay of case {case_id} to step {step} ends once the action it is on finishes ({now}) - call stop_autorun_replay again to wait for it"
+        "asked to stop: the replay of case {case_id} to step {step} ends once the action it is on finishes ({now}) - send replay_autorun_to_step stop: true again to wait for it"
     );
     serde_json::json!({ "status": "stopping", "sentence": sentence, "step": at, "of": of })
 }
 
-/// The 202 `stop_autorun_replay` answers when the assistant's replay was
+/// The 202 the replay tool's `stop` answers when the assistant's replay was
 /// running no step to stop - it had not yet started, or had ended and its
 /// answer was still being made ready - and no answer came within the wait.
 /// Nothing was asked to stop.
 pub fn replay_not_asked_answer(case_id: i32, step: i32) -> serde_json::Value {
     let sentence = format!(
-        "not asked to stop: the replay of case {case_id} to step {step} was not running a step (it was starting, or had ended and its answer was being made ready) - call stop_autorun_replay again to stop it, or replay_autorun_to_step with case {case_id} and step {step} for its answer"
+        "not asked to stop: the replay of case {case_id} to step {step} was not running a step (it was starting, or had ended and its answer was being made ready) - send replay_autorun_to_step stop: true again to stop it, or replay_autorun_to_step with case {case_id} and step {step} for its answer"
     );
     serde_json::json!({ "status": "not_stopped", "sentence": sentence })
 }
 
-/// `/autorun-replay-stop`, the assistant's `stop_autorun_replay`, waiting
+/// `/autorun-replay-stop`, the assistant's `replay_autorun_to_step` with `stop`, waiting
 /// up to `wait` for the replay to end. Its replay still going is asked to
 /// stop through the replay's own stop (`replay_to::stop_on_request`, the
 /// one the person's Stop sets), which every replay hears before each
@@ -7056,7 +7291,7 @@ async fn run_assistant_replay(
     // already there (then nothing ran, and that is all there is to say).
     // A browser signed in already says so next, where a sign-in would be.
     let reused = reuse.said().map(|line| format!("{line} ")).unwrap_or_default();
-    // Stopped by stop_autorun_replay: said as stopped on request, after the
+    // Stopped by the replay tool's `stop`: said as stopped on request, after the
     // last action to begin of the step it was on.
     let on_request = matches!(end, ReplayEnd::Stopped { .. }) && crate::autorun::replay_to::stop_was_requested();
     // The case's clean-up is said as such, never as a step number.
@@ -8038,7 +8273,9 @@ pub const GET_ACCOUNTS_OFF: &str =
 /// `GET /accounts`: the active environment's accounts - key, label and
 /// username, and the password ONLY when the environment is marked as a
 /// test environment. The one place a password leaves the app; it is never
-/// logged, and the log line says only how many were read.
+/// logged, and the log line says only how many were read. Beside them, the
+/// project's Test files (`test_files_answer`), or `test_files_note` saying
+/// why there are none to show.
 ///
 /// Refused while the person has switched `get_accounts` off on the AI
 /// Bridge tab. The MCP proxy already hides a switched-off tool; this route
@@ -8052,15 +8289,25 @@ fn accounts_read(ctx: &BridgeContext) -> (u16, String) {
         Ok(r) => r,
         Err(refused) => return refused,
     };
+    let files = test_files_answer(&root, ctx);
+    // The Test files do not hang on the environment: when its accounts
+    // cannot be read they are still answered, with why the accounts are
+    // not. Only when neither can be read is the call a failure.
+    let accounts_failed = |e: String| -> (u16, String) {
+        match &files {
+            Ok(rows) => (200, serde_json::json!({ "accounts_note": e, "test_files": rows }).to_string()),
+            Err(_) => (500, e),
+        }
+    };
     let env = match crate::environments::active(&root) {
         Ok(e) => e,
-        Err(e) => return (500, e),
+        Err(e) => return accounts_failed(e),
     };
     // Read by the id just read, so the accounts and the test-environment
     // mark are the same environment's even if a switch lands in between.
     let accounts = match crate::autorun::accounts::load_accounts_for(&root, &env.id) {
         Ok(a) => a,
-        Err(e) => return (500, e),
+        Err(e) => return accounts_failed(e),
     };
     let shown = env.test_environment;
     let list: Vec<serde_json::Value> = accounts
@@ -8078,6 +8325,10 @@ fn accounts_read(ctx: &BridgeContext) -> (u16, String) {
         "test_environment": shown,
         "accounts": list,
     });
+    match files {
+        Ok(files) => out["test_files"] = serde_json::Value::Array(files),
+        Err(why) => out["test_files_note"] = serde_json::Value::String(why),
+    }
     if !shown {
         out["note"] = serde_json::Value::String(format!(
             "{} is not marked as a test environment, so no password is shown - scripts and templates name an account by its key",
@@ -8599,7 +8850,7 @@ struct SaveRequest {
 
 fn bad_scripts(e: serde_json::Error) -> String {
     format!(
-        "that is not a list of action scripts: {e}. Expected an array of {{ case_id, title, steps: [{{ step_number, actions }}] }} - call get_autorun_guide for the format."
+        "that is not a list of action scripts: {e}. Expected an array of {{ case_id, title, steps: [{{ step_number, actions }}] }} - call get_guide (topic autorun) for the format."
     )
 }
 
@@ -10063,7 +10314,7 @@ async fn validate_json(
                         if !m.is_empty() && !known.iter().any(|a| a.eq_ignore_ascii_case(m)) {
                             warnings.push(format!(
                                 "Test case {} ('{}'): Module '{}' is not an allowed value in \
-                                 this organization - pick one from get_writing_guide.",
+                                 this organization - pick one from get_guide (topic writing).",
                                 i + 1,
                                 tc.title,
                                 m
@@ -10406,20 +10657,8 @@ fn merge_cases_route(body: &str, ctx: &BridgeContext) -> (u16, String) {
     // place. A crash or error partway through a plain `fs::write` would
     // leave `output_path` existing but truncated, which is worse than the
     // merge never having run at all - the caller would find a file, not
-    // know it was cut short, and hand a half-draft to the next step. There
-    // is no existing atomic-write helper on this branch (the autorun
-    // store's version lives on an unmerged sibling), so it is inlined
-    // here rather than borrowed from elsewhere.
-    let tmp_path = format!("{}.tmp", req.output_path);
-    if let Err(e) = std::fs::write(&tmp_path, &text) {
-        let _ = std::fs::remove_file(&tmp_path);
-        return (
-            400,
-            serde_json::json!({ "error": format!("could not write {}: {e}", req.output_path) }).to_string(),
-        );
-    }
-    if let Err(e) = std::fs::rename(&tmp_path, &req.output_path) {
-        let _ = std::fs::remove_file(&tmp_path);
+    // know it was cut short, and hand a half-draft to the next step.
+    if let Err(e) = crate::ai_tools::atomic_write(std::path::Path::new(&req.output_path), &text) {
         return (
             400,
             serde_json::json!({ "error": format!("could not write {}: {e}", req.output_path) }).to_string(),
@@ -10899,6 +11138,7 @@ async fn guide(ctx: &BridgeContext, client: &crate::ado::AdoClient) -> String {
         Reuse these wherever one fits - a near-duplicate ('smoke-test' next to\n\
         an existing 'smoke') fragments the project's tags. A genuinely new tag\n\
         is allowed when nothing here matches.\n\n{tag_lines}\n\n\
+        {transform_ops}\n\
         ## Workflow\n\
         0. Call `begin_test_case_writing` FIRST and put its questions to the\n\
         developer. What the file is called (it lives in the repository's\n\
@@ -10923,6 +11163,22 @@ async fn guide(ctx: &BridgeContext, client: &crate::ado::AdoClient) -> String {
         grouped run sequence). Keep those two fields exactly as it set them -\n\
         do not renumber them by hand, and do not strip them; the app uses\n\
         them to flip the queue between the two readings.\n\
+        Its options: `dry_run: true` answers only the report (run it first and\n\
+        read `expected_rewritten`, every expected result it would shorten,\n\
+        before and after). `entry` is the first step of every preamble\n\
+        (default \"Launch the application.\"); a non-launch entry, such as\n\
+        opening a module, goes after the sign-in step. `reorder: false` keeps a\n\
+        set meant to be read against the specification in document order -\n\
+        navigation and expected results are still cleaned up. `trim_expected:\n\
+        false` leaves every expected result exactly as written and still does\n\
+        the navigation, ordering and dedupe work: use it when the value of the\n\
+        set is in what each expected result ASSERTS (arithmetic, formulas,\n\
+        quoted messages), or when a dry run reports that reordering saved 0\n\
+        environment switches. For a large draft pass `path`, and `in_place:\n\
+        true` to write the result back to that file (atomic) and get only the\n\
+        report; an in-place write keeps the file's other fields (`specs`,\n\
+        `comments`), and without it the response carries the file's `specs`\n\
+        for you to write back.\n\
         4. Call `validate_cases` and fix every warning. For a large draft,\n\
         pass a local file via its `path` argument instead of inlining the\n\
         JSON.\n\
@@ -10930,6 +11186,7 @@ async fn guide(ctx: &BridgeContext, client: &crate::ado::AdoClient) -> String {
         `transform_cases` instead of rewriting the file yourself.\n",
         org = ctx.org,
         project = ctx.project,
+        transform_ops = crate::transform::ops_reference(),
         granularity = custom.as_deref().unwrap_or(GRANULARITY),
         edge_cases = if custom.is_some() { "" } else { EDGE_CASES },
         scenario_step = if custom.is_some() { CUSTOM_STYLE_STEP } else { "" },
@@ -11651,8 +11908,8 @@ pub async fn start_listener(
                     if n == 0 { return; }
                     used += n;
                     match parse_http(&buf[..used]) {
-                        Parsed::Complete { method, target, token, body, proxy_version } => {
-                            break (method, target, token, body, proxy_version)
+                        Parsed::Complete { method, target, token, body, proxy_version, tool } => {
+                            break (method, target, token, body, proxy_version, tool)
                         }
                         // Answer rather than close in silence: the proxy on
                         // the other end is waiting on a response, and "the
@@ -11673,7 +11930,7 @@ pub async fn start_listener(
                         return;
                     }
                 };
-                let (method, target, tok, body, proxy_version) = parsed;
+                let (method, target, tok, body, proxy_version, tool) = parsed;
                 let (status, payload) = if tok.as_deref() != Some(state.token.as_str()) {
                     (401, String::new())
                 } else {
@@ -11683,7 +11940,12 @@ pub async fn start_listener(
                         Some(f) => f().await,
                         None => None,
                     };
-                    route(&ctx, client.as_ref(), &method, &target, &body, &state.version).await
+                    let (status, payload) =
+                        route(&ctx, client.as_ref(), &method, &target, &body, &state.version).await;
+                    if let Some(line) = tool_call_line(tool.as_deref(), &target, status, &payload) {
+                        crate::applog::debug(line);
+                    }
+                    (status, payload)
                 };
                 let reason = match status {
                     200 => "OK",
@@ -11724,6 +11986,9 @@ pub enum Parsed {
         /// The `x-tcm-proxy-version` header: the build of the MCP proxy that
         /// sent this. None from a proxy older than the header.
         proxy_version: Option<String>,
+        /// The `x-tcm-tool` header: the MCP tool this request was made for
+        /// (`mcp::TOOL_HEADER`). None outside a tool call.
+        tool: Option<String>,
     },
     Incomplete,
     Malformed,
@@ -11754,6 +12019,7 @@ pub fn parse_http(raw: &[u8]) -> Parsed {
     };
     let mut token = None;
     let mut proxy_version = None;
+    let mut tool = None;
     let mut content_len = 0usize;
     for line in lines {
         // A header we cannot read is not a reason to reject the request -
@@ -11766,6 +12032,9 @@ pub fn parse_http(raw: &[u8]) -> Parsed {
         }
         if k.eq_ignore_ascii_case(crate::mcp::PROXY_VERSION_HEADER) {
             proxy_version = Some(v.to_string());
+        }
+        if k.eq_ignore_ascii_case(crate::mcp::TOOL_HEADER) {
+            tool = Some(v.to_string());
         }
         if k.eq_ignore_ascii_case("content-length") {
             match v.parse() {
@@ -11784,7 +12053,45 @@ pub fn parse_http(raw: &[u8]) -> Parsed {
         token,
         body: String::from_utf8_lossy(&raw[body_start..end]).to_string(),
         proxy_version,
+        tool,
     }
+}
+
+/// The app-log line for one MCP tool call, or None for a request that is
+/// not one to log. The proxy names the tool (`mcp::TOOL_HEADER`) on every
+/// request it makes for a call: first the `/tools` read that decides
+/// whether the tool is offered, then - unless that refused it - the tool's
+/// own route. So a call that reaches the app is logged once: "refused" on
+/// the `/tools` read when this very answer switches the tool off (decided
+/// as the proxy decides it, `mcp::tool_policy_from`), otherwise "ok" or the
+/// HTTP status of the route's answer. Only the tool's name and that outcome
+/// - never an argument, the answer's text, an id or a path - and only for a
+/// name this server offers.
+///
+/// What is NOT logged is what the proxy refuses before it asks the app
+/// anything, because the app never sees those calls and there is no
+/// channel for them: an argument-shape refusal (a mix of arguments, a
+/// `get_guide` part sent with another topic, a quirk or cookie shape), a
+/// `get_guide` topic the proxy refuses, and a call to a retired tool name.
+pub fn tool_call_line(tool: Option<&str>, target: &str, status: u16, payload: &str) -> Option<String> {
+    static NAMES: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
+    let tool = tool?;
+    if !NAMES.get_or_init(crate::mcp::all_tool_names).iter().any(|t| t == tool) {
+        return None;
+    }
+    let path = target.split_once('?').map_or(target, |(p, _)| p);
+    let outcome = if path == "/tools" {
+        let (off, _) = crate::mcp::tool_policy_from(Ok((status, payload.to_string())));
+        if !off.iter().any(|o| o == tool) {
+            return None;
+        }
+        "refused".to_string()
+    } else if status < 400 {
+        "ok".to_string()
+    } else {
+        format!("tool error, HTTP {status}")
+    };
+    Some(format!("AI tool {tool}: {outcome}"))
 }
 
 /// Logs - once per proxy version, not once per call - an MCP proxy that is

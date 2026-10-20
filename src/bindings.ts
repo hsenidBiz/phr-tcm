@@ -240,7 +240,6 @@ export const commands = {
 	exportQueueJson: (path: string, queue: TestCase_Deserialize[]) => typedError<null, string>(__TAURI_INVOKE("export_queue_json", { path, queue })),
 	listPlansWithSuites: (organization: string, project: string) => typedError<PlanWithSuites[], AdoError>(__TAURI_INVOKE("list_plans_with_suites", { organization, project })),
 	getResultDetail: (organization: string, project: string, runId: number, resultId: number) => typedError<ResultDetail, AdoError>(__TAURI_INVOKE("get_result_detail", { organization, project, runId, resultId })),
-	captureScreens: () => typedError<ScreenShot[], string>(__TAURI_INVOKE("capture_screens")),
 	/**
 	 *  File a Bug (or Issue on Basic-process projects) for a failed case:
 	 *  Related links to the test case + PBI, screenshots attached. POST only.
@@ -854,6 +853,11 @@ export const commands = {
 	 */
 	autoRunRemoveModulePath: (organization: string, project: string, area: string) => typedError<NavView, string>(__TAURI_INVOKE("auto_run_remove_module_path", { organization, project, area })),
 	/**
+	 *  Put back the path an assistant's repair replaced, and clear its note
+	 *  (`area_repair::put_old_path_back`). Nothing is replayed: Try checks it.
+	 */
+	autoRunPutOldAreaPathBack: (organization: string, project: string, area: string) => typedError<NavView, string>(__TAURI_INVOKE("auto_run_put_old_area_path_back", { organization, project, area })),
+	/**
 	 *  Sign the named account in, in the open browser. Used before a case's
 	 *  first step, and by the `sign_in` action in the middle of one. An account
 	 *  anything else holds (`autorun::lease`) is refused at once, with the
@@ -987,7 +991,6 @@ export const commands = {
 	 */
 	autoRunRecordSignInSave: (organization: string, project: string, account: string, browserName: string, fields: FieldChoice[]) => typedError<SignInSaveResult, string>(__TAURI_INVOKE("auto_run_record_sign_in_save", { organization, project, account, browserName, fields })),
 	autoRunPublish: (organization: string, project: string, pbiId: number, runId: string, runName: string, cases: PublishCase[]) => typedError<PublishResult, AdoError>(__TAURI_INVOKE("auto_run_publish", { organization, project, pbiId, runId, runName, cases })),
-	exportQueueHtml: (path: string, queue: TestCase_Deserialize[], subtitle: string) => typedError<null, string>(__TAURI_INVOKE("export_queue_html", { path, queue, subtitle })),
 	/**
 	 *  The project's tag names, served from the shared reference cache.
 	 * 
@@ -1256,8 +1259,6 @@ export const commands = {
 	 *  stall the window.
 	 */
 	removeLegacyDbServer: (id: string, workingDir: string | null, global: boolean) => typedError<null, string>(__TAURI_INVOKE("remove_legacy_db_server", { id, workingDir, global })),
-	/**  Create `<root>/.test-cases` if needed and return its path. */
-	ensureCasesDir: (root: string) => typedError<string, string>(__TAURI_INVOKE("ensure_cases_dir", { root })),
 	/**
 	 *  Copy a picked JSON file into `<root>/.test-cases` (a file already there
 	 *  is returned as is) and return the path the app should import from. A
@@ -2487,6 +2488,8 @@ export type BridgeSwitches = {
 	dbWrites: boolean,
 	/**  Proving and running API templates (see `BridgeContext::api_writes`). */
 	apiWrites: boolean,
+	/**  The network tools (see `BridgeContext::network_tools`). */
+	networkTools?: boolean,
 	/**
 	 *  The environment these switches are the webview's for - each keeps
 	 *  its own. Empty while the webview does not know it yet. A push for any
@@ -4157,6 +4160,11 @@ export type ModuleView = {
 	clicks: string[],
 	arrived: string,
 	recorded: string,
+	/**
+	 *  The note an assistant's repair left, until the person puts the old
+	 *  path back or records the area again.
+	 */
+	repaired_by_assistant: RepairNote | null,
 };
 
 export type NavView = {
@@ -5120,6 +5128,15 @@ export type RelinkOutcome = {
 };
 
 /**
+ *  An assistant's repair as the Areas dialog shows it: why, and when. The
+ *  old path itself stays in the file for Put old path back.
+ */
+export type RepairNote = {
+	reason: string,
+	at: string,
+};
+
+/**
  *  A replay's end with the sentence that says it, as the person's command
  *  answers: the pane shows `sentence` as it is, and `tabs` beside the
  *  steps the replay ran outside `main`.
@@ -5676,12 +5693,6 @@ export type SavedTemplate_Deserialize = {
 export type SavedTemplate_Serialize = {
 	template: ApiTemplate_Serialize,
 	runs: RunRecord[],
-};
-
-export type ScreenShot = {
-	name: string,
-	/**  PNG, base64 (no data: prefix) - the shape add_result_attachment wants. */
-	b64_png: string,
 };
 
 /**

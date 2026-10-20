@@ -259,7 +259,7 @@ fn describe_failures_has_no_patterns_section_when_nothing_repeats() {
     ]);
     let text = describe_failures(&r, &[script(11, 2, click("Save")), script(12, 4, click("Other"))]);
     assert!(!text.contains("Patterns across cases"), "{text}");
-    assert!(!text.contains("record_autorun_quirk"), "{text}");
+    assert!(!text.contains("record_quirk"), "{text}");
 }
 
 /// An overlay whose later classes change as it animates is one overlay:

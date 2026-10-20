@@ -62,6 +62,29 @@ pub struct ModulePath {
     /// such an area is a person's, and a mapping run never changes it.
     #[serde(default)]
     pub made_by: MadeBy,
+    /// Set when an assistant repaired the area's menu path (`save_autorun_area`
+    /// with `repair`): the path it replaced and why. Only the latest repair is
+    /// kept. A person's re-record writes a fresh area without it, and Put old
+    /// path back restores the path it holds and clears it. Absent in a file
+    /// written before repairs existed, and in every area never repaired.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repaired_by_assistant: Option<AssistantRepair>,
+}
+
+/// An assistant's repair of an area's path: what the area held before, so
+/// the person can put it back, the assistant's one-line reason, and when.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct AssistantRepair {
+    pub previous_clicks: Vec<Target>,
+    /// Where the previous clicks arrived, and the page they began on: put
+    /// back with them, since a moved menu can move the screen's address too.
+    #[serde(default)]
+    pub previous_arrived: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub previous_start: String,
+    pub reason: String,
+    /// When, UTC, `YYYY-MM-DDTHH:MM:SSZ`.
+    pub at: String,
 }
 
 /// Who made an area: a person (recorded in Areas, or saved by an ordinary
@@ -169,6 +192,17 @@ pub struct ModuleView {
     pub clicks: Vec<String>,
     pub arrived: String,
     pub recorded: String,
+    /// The note an assistant's repair left, until the person puts the old
+    /// path back or records the area again.
+    pub repaired_by_assistant: Option<RepairNote>,
+}
+
+/// An assistant's repair as the Areas dialog shows it: why, and when. The
+/// old path itself stays in the file for Put old path back.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, specta::Type)]
+pub struct RepairNote {
+    pub reason: String,
+    pub at: String,
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, specta::Type)]
@@ -195,6 +229,10 @@ pub fn view(nav: &NavFile) -> NavView {
                 clicks: m.clicks.iter().map(Target::describe).collect(),
                 arrived: m.arrived.clone(),
                 recorded: m.recorded.clone(),
+                repaired_by_assistant: m
+                    .repaired_by_assistant
+                    .as_ref()
+                    .map(|r| RepairNote { reason: r.reason.clone(), at: r.at.clone() }),
             })
             .collect(),
         save_words: nav.save_words.clone(),
@@ -331,12 +369,7 @@ pub fn save_nav(root: &Path, org: &str, project: &str, nav: &NavFile) -> Result<
     let path = nav_path(root, org, project);
     std::fs::create_dir_all(path.parent().expect("projects folder")).map_err(|e| e.to_string())?;
     let json = serde_json::to_string_pretty(nav).map_err(|e| e.to_string())?;
-    let tmp = path.with_extension("json.tmp");
-    std::fs::write(&tmp, json).map_err(|e| e.to_string())?;
-    if let Err(e) = std::fs::rename(&tmp, &path) {
-        let _ = std::fs::remove_file(&tmp);
-        return Err(e.to_string());
-    }
+    crate::ai_tools::atomic_write(&path, &json)?;
     Ok(())
 }
 
@@ -1062,7 +1095,7 @@ fn areas_section(nav: &NavFile) -> String {
          Before step 1 a run signs in and goes to an area by the menu path recorded for it in the app. \
          Each line is one area: its name, the test case Module it belongs to, the address path it lands on, \
          and its menu path: the clicks from the home page, in order. In a discovery, reach a listed area by \
-         carrying out those clicks with `discover_autorun_action`.\n\n",
+         carrying out those clicks with `discover_autorun_actions`.\n\n",
     );
     for m in &nav.modules {
         let menu = menu_path(&m.clicks);

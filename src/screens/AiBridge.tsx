@@ -24,6 +24,8 @@ import {
   subscribeDbSettings,
 } from "../lib/dbServer";
 import { apiWritesSnapshot, saveApiWrites, subscribeApiWrites } from "../lib/apiTemplates";
+import { networkToolsSnapshot, saveNetworkTools, subscribeNetworkTools } from "../lib/networkTools";
+import { isCaptureMode } from "../dev/capture";
 import {
   activeDbMissing,
   envKeys,
@@ -275,6 +277,10 @@ export default function AiBridge() {
   // create/update/delete switch. Offered only where Auto Run is.
   const apiWrites = useSyncExternalStore(subscribeApiWrites, apiWritesSnapshot);
   const setApiWrites = (on: boolean) => saveApiWrites(on);
+  // Whether an assistant gets the network tools at all - the Auto Run
+  // browser's captured requests, HAR files, test headers and cookies. Off
+  // until switched on, per environment, like the API templates switch.
+  const networkTools = useSyncExternalStore(subscribeNetworkTools, networkToolsSnapshot);
   // "Run database changes without asking": kept by Rust on the environment
   // (it writes each registered tool's own "always allow" for db_query while
   // that environment is active, and re-applies it on a switch and to a tool
@@ -1031,6 +1037,29 @@ export default function AiBridge() {
         </section>
       )}
 
+      {/* Whether an assistant gets the network tools at all: until this is
+          on, Rust neither lists them nor answers their routes. They also
+          ride in the Auto Run scripts row, so that row off takes them too.
+          Shown while Auto Run is on, but not in capture mode, which hides
+          the Auto Run tools from the help site's shots (toolShown). */}
+      {autoRunOn && !isCaptureMode() && (
+        <section className="space-y-3 rounded-md border border-border bg-surface p-4">
+          <h2 className="text-sm font-semibold text-text">Network tools</h2>
+          <div className="space-y-1 rounded-md border border-border/60 p-2">
+            {envScope}
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-xs font-medium text-muted">Network tools</span>
+              <Switch ariaLabel="Network tools" checked={networkTools} onCheckedChange={saveNetworkTools} />
+            </div>
+            <p className="text-[11px] text-faint">
+              Off by default. Lets an assistant read the requests the Auto Run browser&apos;s
+              page made, with secrets hidden, save and load them as HAR files, and set test
+              headers and cookies in a browser it opened.
+            </p>
+          </div>
+        </section>
+      )}
+
       </div>
       )}
 
@@ -1072,12 +1101,12 @@ export default function AiBridge() {
             <span className="font-medium text-text">Database Read Access</span> — find the tables behind a topic and check a value in the database you chose. It can only look, unless you allow changes beside that connection. Off: no database tools.
           </li>
           )}
-          {toolShown("get_autorun_guide") && (
+          {toolShown("save_autorun_script") && (
             <li>
-              <span className="font-medium text-text">Auto Run scripts</span> — write and fix browser scripts for your test cases: read the script guide, look at the page you opened, try a step, then save the scripts. It never signs in. Off: you run Auto Run by hand.
+              <span className="font-medium text-text">Auto Run scripts</span> — write and fix browser scripts for your test cases: read the script guide, look at the page you opened, try a step, then save the scripts. It never signs in. Reading the page&apos;s requests and setting test headers and cookies also needs the Network tools switch, which is off by default. Off: you run Auto Run by hand.
             </li>
           )}
-          {toolShown("get_api_template_guide") && (
+          {toolShown("list_api_templates") && (
             <li>
               <span className="font-medium text-text">API templates</span> — build, test and run templates that create test data through the application itself. It can also map a module&apos;s steps as a flow of stages and check which stages are done before each run, so templates go in the order the application allows. Those checks read the company database, so they need Database Read Access switched on. Testing and running also need the API templates switch above, which is off by default. Off: you do template work by hand.
             </li>

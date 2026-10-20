@@ -17,7 +17,7 @@ import { useActiveEnvironmentName, useEnvironments } from "./lib/environments";
 import { activeEnvIdSnapshot, subscribeActiveEnv } from "./lib/activeEnv";
 import { Toaster } from "./components/ui/toaster";
 import { commands, events, type PbiHit, type PlanWithSuites } from "./bindings";
-import { loadWatches, saveWatches, upsertWatch } from "./lib/fileSync";
+import { fileName, loadWatches, saveWatches, upsertWatch } from "./lib/fileSync";
 import { applyRateLevel } from "./lib/adoRate";
 import { formatByteProgress } from "./lib/bytes";
 import { onlineSnapshot, subscribeOnline } from "./lib/network";
@@ -47,6 +47,7 @@ import {
   subscribeDbSettings,
 } from "./lib/dbServer";
 import { apiWritesSnapshot, subscribeApiWrites } from "./lib/apiTemplates";
+import { networkToolsSnapshot, subscribeNetworkTools } from "./lib/networkTools";
 import { migrateOldTrialSwitch, WRITING_STYLE_QUERY } from "./lib/writingStyle";
 import {
   clearTourRepositories,
@@ -785,7 +786,9 @@ export default function App() {
   // tab's own switch, pushed the moment it changes for the same reason the
   // database write switch is.
   const apiWrites = useSyncExternalStore(subscribeApiWrites, apiWritesSnapshot);
-  // The three switches above are the ACTIVE environment's, and every push
+  // Whether an assistant gets the network tools - pushed the same way.
+  const networkTools = useSyncExternalStore(subscribeNetworkTools, networkToolsSnapshot);
+  // The switches above are the ACTIVE environment's, and every push
   // says which environment that is: Rust allows no write from a push for
   // any other one, so a push still on its way when the environment changes
   // can never carry one environment's writes into the next. The list is
@@ -853,7 +856,7 @@ export default function App() {
             disabledTools,
             workingDir || null,
             dbId || null,
-            { dbWrites: dbWrites && devLogin, apiWrites, envId },
+            { dbWrites: dbWrites && devLogin, apiWrites, networkTools, envId },
           ),
         )
         .catch(() => {});
@@ -880,6 +883,7 @@ export default function App() {
     dbWrites,
     devLogin,
     apiWrites,
+    networkTools,
     envId,
     tourOpen,
     dbMigrated,
@@ -1058,7 +1062,7 @@ export default function App() {
         // the next edit read as though the whole file were new.
         if (list.some((w) => w.path === path)) return;
         saveWatches(org, pbiId, upsertWatch(list, { path, stamp: "", snapshot: [] }));
-        toast.info(`Watching ${path.split(/[\\/]/).pop()} - it will import itself when written.`);
+        toast.info(`Watching ${fileName(path)} - it will import itself when written.`);
       })
       .then((f) => {
         if (live) unlisten = f;

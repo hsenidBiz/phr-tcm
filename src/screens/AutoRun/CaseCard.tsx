@@ -16,12 +16,11 @@ import SharedStepLabel from "../../components/SharedStepLabel";
 import { IconAdd, IconBug, IconEdit, IconHideDetails, IconRun, IconShowDetails } from "../../lib/actionIcons";
 import { cn } from "../../lib/cn";
 import { caseTextLine } from "../../lib/markdown";
+import { plural } from "../../lib/plural";
 import RunDownloads from "./RunDownloads";
 import { loadSetupView, setupViewKey } from "./setupView";
 import { ClearConfirm, SuspectedDefectBadge } from "./SuspectedDefectMark";
 import { bucketTone, type ResultBucket } from "./verdicts";
-
-const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 
 /** Every action of a script, the ones nested in a `when_visible` too. */
 function allActions(script: CaseScript): Action[] {

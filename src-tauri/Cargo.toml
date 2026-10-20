@@ -62,8 +62,6 @@ regex = "1.13.0"
 semver = "1"
 tauri-plugin-dialog = "2.7.1"
 velopack = "1.2.158"
-xcap = "0.9.6"
-image = { version = "0.25.10", default-features = false, features = ["png"] }
 futures = { version = "0.3.32", default-features = false, features = ["std", "async-await"] }
 # The DevTools Protocol is WebSocket-only. Five commands is the whole
 # surface this app needs, so a full automation framework (and the Node

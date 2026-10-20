@@ -499,7 +499,7 @@ pub fn ran_actions(actions: &[Action], outcomes: &[ActionOutcome], file: &Compon
 
 /// Said when a component is saved that the open discovery has not seen
 /// work, exactly as it is sent.
-pub const TRY_IT_FIRST: &str = "Try the component live in discovery first: run a use_component of it with discover_autorun_action, sending this component as its draft, and save it once that works, unchanged.";
+pub const TRY_IT_FIRST: &str = "Try the component live in discovery first: run a use_component of it with discover_autorun_actions, sending this component as its draft, and save it once that works, unchanged.";
 
 /// The open discovery, as a component save reads it: its area, and the
 /// `draft_fingerprint`s of the components it tried that worked.

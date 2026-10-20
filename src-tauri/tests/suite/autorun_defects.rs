@@ -148,7 +148,7 @@ fn a_step_the_script_does_not_have_is_refused() {
     assert_eq!(err, "step 9 is not in the script");
 }
 
-/// The same rule, and the same sentence, `record_autorun_quirk` uses for
+/// The same rule, and the same sentence, `record_quirk` uses for
 /// its `cases`: only a step that failed in the case's newest run.
 #[test]
 fn a_step_that_did_not_fail_in_the_newest_run_is_refused_with_the_quirk_sentence() {
@@ -232,6 +232,23 @@ fn the_note_is_stored_without_an_address_or_a_token() {
     assert!(!got.note.contains("token=abc"), "{}", got.note);
     assert!(!got.note.contains("eyJ"), "{}", got.note);
     assert!(got.note.starts_with("saved at "), "{}", got.note);
+}
+
+/// A host written without a scheme in a note is hidden too, as it is in
+/// every other note an assistant writes.
+#[test]
+fn the_note_is_stored_without_a_bare_host() {
+    let run = run_of("run-1", "1", vec![failed_at_3(501)]);
+    let got = check_mark(
+        Some(&run),
+        Some(&script(501)),
+        501,
+        3,
+        "the page moved to hr.example.com/leave/apply and 10.0.0.5:8080/hr, then Error 500",
+        NOW,
+    )
+    .unwrap();
+    assert_eq!(got.note, "the page moved to /leave/apply and /hr, then Error 500");
 }
 
 // ------------------------------------------------------------ the store
@@ -485,7 +502,7 @@ async fn the_route_stores_the_mark_or_refuses_with_the_sentence() {
     assert_eq!((stored.repairs, stored.last_repair.as_deref()), (2, Some("the edit button moved")));
 }
 
-/// Offered only where Auto Run is, like `record_autorun_quirk`.
+/// Offered only where Auto Run is, like `record_quirk`.
 #[test]
 fn the_route_is_refused_where_auto_run_is_not_offered() {
     let (status, body) = module_guard_for("/autorun-defect", &Default::default()).expect("refused outside Auto Run");

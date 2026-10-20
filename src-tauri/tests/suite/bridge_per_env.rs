@@ -469,6 +469,70 @@ fn before_any_environment_a_push_brings_its_tools_but_no_write() {
     assert!(!c.db_writes && !c.api_writes);
 }
 
+/// The network tools' switch is the environment's own, like the tool list:
+/// the active environment's push brings it, a push for any other never
+/// turns it on (a stale one keeps the context's), and a switch of
+/// environment turns it off until the new environment's push.
+#[test]
+fn the_network_tools_switch_follows_the_active_environment() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let store = MemoryStore::default();
+    let (first, qa) = two_envs(root);
+    let ctx = Mutex::new(BridgeContext::default());
+    let on = || BridgeContext { network_tools: true, ..pushed() };
+
+    // Before any environment is the context's own, nothing turns it on.
+    push_context_with(&ctx, Some(root), on(), "");
+    assert!(!ctx.lock().unwrap().network_tools);
+    push_context_with(&ctx, Some(root), on(), &first);
+    assert!(ctx.lock().unwrap().network_tools, "the active environment's own push is honoured");
+
+    // A push for another environment keeps the context's: on stays on, off
+    // stays off.
+    push_context_with(&ctx, Some(root), BridgeContext { network_tools: false, ..pushed() }, &qa);
+    assert!(ctx.lock().unwrap().network_tools, "a stale push turned it off");
+    move_bridge_to(root, &store, &qa, Some(&ctx)).unwrap();
+    assert!(!ctx.lock().unwrap().network_tools, "a switch leaves it off until QA's push");
+    push_context_with(&ctx, Some(root), on(), &first);
+    assert!(!ctx.lock().unwrap().network_tools, "Default's push turned it on in QA");
+    push_context_with(&ctx, Some(root), on(), &qa);
+    assert!(ctx.lock().unwrap().network_tools, "QA's own push brings QA's");
+}
+
+/// Fail closed: while the active environment cannot be read, a push that
+/// turns the network tools OFF for the environment the context already
+/// holds is still honoured; nothing there turns them on, and a push for
+/// another environment changes nothing.
+#[test]
+fn an_off_push_for_the_held_environment_is_honoured_when_the_file_cannot_be_read() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let (first, qa) = two_envs(root);
+    let ctx = Mutex::new(BridgeContext::default());
+    let on = || BridgeContext { network_tools: true, ..pushed() };
+    let off = || BridgeContext { network_tools: false, ..pushed() };
+    push_context_with(&ctx, Some(root), on(), &first);
+    assert!(ctx.lock().unwrap().network_tools);
+
+    // The file is now unreadable (corrupt after a crash).
+    std::fs::write(root.join("environments.json"), "{ not json").unwrap();
+    assert!(v2_lib::environments::read_active(root).is_err());
+
+    // Another environment's push, on or off, changes nothing.
+    push_context_with(&ctx, Some(root), off(), &qa);
+    assert!(ctx.lock().unwrap().network_tools, "a stale push turned it off");
+    // An ON push is not brought in by this path, and it keeps what was on.
+    push_context_with(&ctx, Some(root), on(), &first);
+    assert!(ctx.lock().unwrap().network_tools);
+    // The held environment's OFF push is honoured.
+    push_context_with(&ctx, Some(root), off(), &first);
+    assert!(!ctx.lock().unwrap().network_tools, "the person's OFF was ignored");
+    // And an ON push cannot turn it back on while the file is unreadable.
+    push_context_with(&ctx, Some(root), on(), &first);
+    assert!(!ctx.lock().unwrap().network_tools, "an ON push was believed without the environment");
+}
+
 // ------------------------------------------------- the allow files
 
 /// A machine where Claude Code is installed, our server registered for the

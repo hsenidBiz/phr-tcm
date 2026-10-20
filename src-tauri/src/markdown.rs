@@ -24,17 +24,10 @@ use pulldown_cmark::{Event, Options, Parser, Tag, TagEnd};
 use std::ops::Range;
 
 use crate::case_markdown::{Field, CASE_MARKDOWN_OPTIONS};
+use crate::html_escape::esc;
 
 /// What a Markdown list item becomes in a step, which has no lists.
 const BULLET: &str = "\u{2022} ";
-
-/// Escape for HTML text content and attribute values.
-fn esc(text: &str) -> String {
-    text.replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-        .replace('"', "&quot;")
-}
 
 /// Render CommonMark (plus tables, strikethrough and task lists) to HTML,
 /// with any HTML in the SOURCE discarded.

@@ -12,6 +12,7 @@ import { CACHE, cacheKeys, persistentQuery } from "../../lib/cache";
 import { unwrap, unwrapStr } from "../../lib/ipc";
 import { useOnScreen } from "../../hooks/useOnScreen";
 import { usePersistedStringSet } from "../../lib/collapsedGroups";
+import { fileName } from "../../lib/fileSync";
 import { orderByGroups, orderGroupsAZ, sameOrder, sectionsOf, type SuiteCase } from "../../lib/suiteOrder";
 import CaseOrderList, { sectionLabel } from "./CaseOrderList";
 import FileOrderDialog, { type OrderFile } from "./FileOrderDialog";
@@ -139,7 +140,7 @@ export default function SuiteCases({
       const out: OrderFile[] = [];
       for (const path of paths) {
         const parsed = await unwrapStr(commands.parseImportFile(path));
-        out.push({ path, name: path.split(/[\\/]/).pop() ?? path, cases: parsed.cases });
+        out.push({ path, name: fileName(path), cases: parsed.cases });
       }
       return out;
     },

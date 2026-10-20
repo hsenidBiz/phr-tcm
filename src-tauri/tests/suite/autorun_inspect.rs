@@ -1,4 +1,4 @@
-//! `inspect_autorun_element`: one element's computed styles, event
+//! `probe_autorun_locator` with `show`: one element's computed styles, event
 //! listeners, animations and structure, read without touching the page
 //! (`browser::inspect`, the `/autorun-inspect` route).
 //!

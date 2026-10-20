@@ -776,7 +776,7 @@ export const autoRun: Screen = {
       locate: { role: "button", name: "Edit areas" },
       name: "Edit (areas)",
       does:
-        "The areas of the site a case can start in. Record one by clicking through the site's menu once in a browser the app opens; the app then finds its way there before step 1. **Try** checks a recorded area in a fresh browser.",
+        "The areas of the site a case can start in. Record one by clicking through the site's menu once in a browser the app opens; the app then finds its way there before step 1. **Try** checks a recorded area in a fresh browser. When a run can no longer reach an area because the site's menu moved, your assistant can repair its path; the area then reads **Path repaired by an assistant** with its reason, and **Put old path back** restores the path it had before.",
     },
     {
       id: "view-discovery",
@@ -906,7 +906,7 @@ export const autoRun: Screen = {
     "Every case starts in a fresh browser with a clean profile, so a result never depends on the case before it.",
     "Scripts, runs, accounts and test files are kept on this computer. Each tester keeps their own accounts; scripts name them by key.",
     "An assistant connected on the AI Bridge tab can write scripts for a whole Product Backlog Item, repair one that broke, and walk you through the setup.",
-    "When a step fails and the reason is not on the page, your assistant can also look at the requests the page made, try a header or cookie of its own, and inspect one element; passwords, tokens and session cookies are always hidden from it.",
+    "When a step fails and the reason is not on the page, your assistant can inspect one element and, once you switch **Network tools** on, on the AI Bridge tab, look at the requests the page made and try a header or cookie of its own; passwords, tokens and session cookies are always hidden from it. Each environment keeps its own Network tools switch, off until you turn it on.",
   ],
   howTo: [
     {

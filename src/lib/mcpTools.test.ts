@@ -8,10 +8,13 @@ import {
   CORE_TOOLS,
   CRYSTAL_TOOLS,
   DB_TOOLS,
+  NETWORK_TOOLS,
+  RENAMED_TOOLS,
   dbReadAccessOn,
   disabledToolsSnapshot,
   loadDisabledTools,
   saveDisabledTools,
+  SHARED_TOOLS,
   MCP_TOOLS,
   moduleOfTool,
   subscribeDisabledTools,
@@ -70,7 +73,7 @@ test("every tool carries a summary the settings screen can show", () => {
 test("the template list's summary describes its filters and paging", () => {
   const list = MCP_TOOLS.find((t) => t.name === "list_api_templates");
   expect(list?.summary).toBe(
-    "This project's saved templates, filtered by module, search, flow or id and paged: in full when one page holds them, otherwise a compact index.",
+    "This project's saved templates, filtered by module, search, flow or id and paged: in full when one page holds them, otherwise a compact index. Or its fixtures, with their current outputs and last run.",
   );
 });
 
@@ -130,6 +133,9 @@ test("the core and per-module tool lists match the Rust side", () => {
   expect(extractList("API_TEMPLATE_TOOLS")).toEqual([...API_TEMPLATE_TOOLS]);
   expect(extractList("DB_TOOLS")).toEqual([...DB_TOOLS]);
   expect(extractList("CRYSTAL_TOOLS")).toEqual([...CRYSTAL_TOOLS]);
+  // The network tools are Auto Run's, behind their own switch besides.
+  expect(extractList("NETWORK_TOOLS")).toEqual([...NETWORK_TOOLS]);
+  for (const name of NETWORK_TOOLS) expect(AUTORUN_TOOLS as readonly string[]).toContain(name);
   for (const name of extractList("AUTORUN_TOOLS")) expect(moduleOfTool(name)).toBe("auto_run");
   for (const name of extractList("API_TEMPLATE_TOOLS")) expect(moduleOfTool(name)).toBe("api_templates");
   for (const name of extractList("DB_TOOLS")) expect(moduleOfTool(name)).toBe("db_access");
@@ -187,6 +193,111 @@ test("a tool switched off under its old name stays off under its new one", () =>
   localStorage.clear();
 });
 
+/// The quirk tool records and retires for both the Auto Run and the API
+/// templates assistant, so it rides in both rows and is off only while
+/// every row carrying it is off - a row whose module is off counts as off.
+test("the quirk tool rides in both rows and is off only while both are off", () => {
+  expect(SHARED_TOOLS).toEqual(["record_quirk"]);
+  const autorun = visibleRows().find((r) => r.label === "Auto Run scripts")!.names;
+  const api = visibleRows().find((r) => r.label === "API templates")!.names;
+  expect(autorun).toContain("record_quirk");
+  expect(api).toContain("record_quirk");
+
+  // A click on a row, as the screen makes it: on the list as loaded.
+  const click = (names: string[]) => saveDisabledTools(toggleRow(loadDisabledTools(), names));
+
+  // The Auto Run row off, the API templates row on: still offered.
+  click(autorun);
+  expect(loadDisabledTools()).not.toContain("record_quirk");
+  // Both rows off: off.
+  click(api);
+  expect(loadDisabledTools()).toContain("record_quirk");
+  // The API templates row on again: offered again.
+  click(api);
+  expect(loadDisabledTools()).not.toContain("record_quirk");
+  // The Auto Run row on again: both on, and every Auto Run tool with it.
+  click(autorun);
+  expect(loadDisabledTools()).toEqual([]);
+
+  // With API Templates off its row counts as off: the Auto Run row decides.
+  setModulesForTest(["db_access", "auto_run"]);
+  click(autorun);
+  expect(loadDisabledTools()).toContain("record_quirk");
+  click(autorun);
+  expect(loadDisabledTools()).not.toContain("record_quirk");
+  localStorage.clear();
+});
+
+/// The Auto Run tools merged into one with an argument: a row switched off
+/// under the old names stays off under the new ones, and every old name maps
+/// to a tool that is still there.
+test("the merged Auto Run tools' old names switched off carry over", () => {
+  setModulesForTest(["db_access", "auto_run"]);
+  const merged: Record<string, string> = {
+    discover_autorun_action: "discover_autorun_actions",
+    inspect_autorun_element: "probe_autorun_locator",
+    stop_autorun_replay: "replay_autorun_to_step",
+    release_autorun_browser: "reset_autorun_browser",
+    list_autorun_requests: "search_autorun_requests",
+    get_autorun_response: "get_autorun_request",
+    get_autorun_response_body: "get_autorun_request",
+    set_autorun_capture: "autorun_capture",
+    get_autorun_capture: "autorun_capture",
+    export_autorun_requests: "autorun_har",
+    import_autorun_requests: "autorun_har",
+    get_autorun_cookies: "autorun_cookies",
+    set_autorun_cookie: "autorun_cookies",
+    clear_autorun_cookies: "autorun_cookies",
+  };
+  for (const [old, now] of Object.entries(merged)) {
+    expect(RENAMED_TOOLS[old]).toBe(now);
+    localStorage.setItem("tcm-v2-mcp-disabled", JSON.stringify([old]));
+    const loaded = loadDisabledTools();
+    expect(loaded).toContain(now);
+    expect(loaded).not.toContain(old);
+  }
+  for (const now of Object.values(RENAMED_TOOLS)) expect(MCP_TOOLS.map((t) => t.name)).toContain(now);
+  localStorage.clear();
+});
+
+/// The four quirk tools became one. A row switched off under the old names
+/// stays off under the new one.
+test("the old quirk tools' names switched off carry over to the one quirk tool", () => {
+  setModulesForTest(["db_access", "auto_run"]);
+  const own = AUTORUN_TOOLS.filter((n) => n !== "record_quirk");
+  localStorage.setItem("tcm-v2-mcp-disabled", JSON.stringify([...own, "record_autorun_quirk", "retire_autorun_quirk"]));
+  const loaded = loadDisabledTools();
+  expect(loaded).toContain("record_quirk");
+  for (const old of ["record_autorun_quirk", "retire_autorun_quirk", "record_app_quirk", "retire_app_quirk"]) {
+    expect(loaded).not.toContain(old);
+  }
+  localStorage.clear();
+});
+
+/// The API templates row switched off under the old names, with the Auto Run
+/// row on: the old `record_app_quirk` / `retire_app_quirk` become
+/// `record_quirk`, which the Auto Run row still carries - so it stays ON.
+test("API row off via old names, Auto Run row on: record_quirk stays on", () => {
+  // The row's own tools: the quirk tool is Auto Run's, shared with this row.
+  const apiOwn: string[] = [...API_TEMPLATE_TOOLS];
+  localStorage.setItem("tcm-v2-mcp-disabled", JSON.stringify([...apiOwn, "record_app_quirk", "retire_app_quirk"]));
+  const loaded = loadDisabledTools();
+  expect(loaded).not.toContain("record_quirk");
+  expect([...loaded].sort()).toEqual([...apiOwn].sort());
+  localStorage.clear();
+});
+
+/// The four guide tools became Core's get_guide: a saved list naming them
+/// drops them as Core, rather than sending names that match nothing.
+test("the old guide tools' names are dropped from a saved list", () => {
+  localStorage.setItem(
+    "tcm-v2-mcp-disabled",
+    JSON.stringify(["get_writing_guide", "get_autorun_guide", "get_api_template_guide", "get_report_guide", "get_tags"]),
+  );
+  expect(loadDisabledTools()).toEqual(["get_tags"]);
+  localStorage.clear();
+});
+
 /// The three that finish a draft - validate, optimise, merge - are as much
 /// part of writing a set as the guide is, and a half-set with them switched
 /// off is a set nobody can ship. They joined the always-on group, which
@@ -205,17 +316,17 @@ test("only the switchable tools are left, as nine rows with every module on", ()
   expect(visibleRows().map((r) => r.key)).toEqual([
     "search_test_suites+get_suite_test_cases",
     "get_run_results",
-    "get_autorun_guide+save_autorun_script+get_autorun_script+delete_autorun_script+get_autorun_page+probe_autorun_locator+try_autorun_action+replay_autorun_to_step+stop_autorun_replay+start_autorun_discovery+discover_autorun_action+discover_autorun_actions+save_autorun_area+end_autorun_discovery+release_autorun_browser+reset_autorun_browser+save_autorun_component+remove_autorun_component+get_autorun_failures+record_autorun_quirk+retire_autorun_quirk+record_validation_rule+mark_autorun_suspected_defect+set_autorun_order+propose_accounts+get_accounts+list_test_files+get_autorun_network_wait+list_autorun_requests+search_autorun_requests+get_autorun_request+get_autorun_response+get_autorun_response_body+set_autorun_capture+get_autorun_capture+export_autorun_requests+import_autorun_requests+set_autorun_headers+get_autorun_cookies+set_autorun_cookie+clear_autorun_cookies+inspect_autorun_element",
-    "get_api_template_guide+list_api_templates+prove_api_template+run_api_template+save_api_flow+get_api_flow_progress+save_api_fixture+run_api_fixture+list_api_fixtures+record_app_quirk+retire_app_quirk",
+    "save_autorun_script+get_autorun_script+delete_autorun_script+get_autorun_page+probe_autorun_locator+try_autorun_action+replay_autorun_to_step+start_autorun_discovery+discover_autorun_actions+save_autorun_area+end_autorun_discovery+reset_autorun_browser+save_autorun_component+get_autorun_failures+record_quirk+record_validation_rule+mark_autorun_suspected_defect+set_autorun_order+propose_accounts+get_accounts+get_autorun_network_wait+search_autorun_requests+get_autorun_request+autorun_capture+autorun_har+set_autorun_headers+autorun_cookies",
+    "list_api_templates+prove_api_template+run_api_template+save_api_flow+get_api_flow_progress+save_api_fixture+run_api_fixture+record_quirk",
     "db_lookup+db_query",
-    "open_report+read_report+edit_report+compare_reports+check_report+new_report+preview_report+preview_report_live+get_report_guide",
+    "open_report+read_report+edit_report+compare_reports+check_report+preview_report+preview_report_live",
     "get_tags",
     "search_pbis",
     "search_wiki+get_wiki_page",
   ]);
   const suites = visibleRows().find((r) => r.key.startsWith("search_test_suites"));
   expect(suites?.label).toBe("Test Suites");
-  const autorun = visibleRows().find((r) => r.key.startsWith("get_autorun_guide"));
+  const autorun = visibleRows().find((r) => r.key.startsWith("save_autorun_script"));
   expect(autorun?.label).toBe("Auto Run scripts");
 });
 
@@ -243,11 +354,10 @@ test("the two database tools are one switchable row, there while Database Access
 
 /// With Auto Run on, its group is offered as one row and its switch moves
 /// every tool in it together, the same as any other pair.
-test("the Auto Run scripts row carries all forty-two tools", () => {
+test("the Auto Run scripts row carries all twenty-seven tools", () => {
   const row = visibleRows().find((r) => r.label === "Auto Run scripts");
   expect(row, "the Auto Run scripts row exists").toBeTruthy();
   expect(row!.names).toEqual([
-    "get_autorun_guide",
     "save_autorun_script",
     "get_autorun_script",
     "delete_autorun_script",
@@ -255,40 +365,26 @@ test("the Auto Run scripts row carries all forty-two tools", () => {
     "probe_autorun_locator",
     "try_autorun_action",
     "replay_autorun_to_step",
-    "stop_autorun_replay",
     "start_autorun_discovery",
-    "discover_autorun_action",
     "discover_autorun_actions",
     "save_autorun_area",
     "end_autorun_discovery",
-    "release_autorun_browser",
     "reset_autorun_browser",
     "save_autorun_component",
-    "remove_autorun_component",
     "get_autorun_failures",
-    "record_autorun_quirk",
-    "retire_autorun_quirk",
+    "record_quirk",
     "record_validation_rule",
     "mark_autorun_suspected_defect",
     "set_autorun_order",
     "propose_accounts",
     "get_accounts",
-    "list_test_files",
     "get_autorun_network_wait",
-    "list_autorun_requests",
     "search_autorun_requests",
     "get_autorun_request",
-    "get_autorun_response",
-    "get_autorun_response_body",
-    "set_autorun_capture",
-    "get_autorun_capture",
-    "export_autorun_requests",
-    "import_autorun_requests",
+    "autorun_capture",
+    "autorun_har",
     "set_autorun_headers",
-    "get_autorun_cookies",
-    "set_autorun_cookie",
-    "clear_autorun_cookies",
-    "inspect_autorun_element",
+    "autorun_cookies",
   ]);
   for (const name of row!.names) expect(AUTORUN_TOOLS as readonly string[]).toContain(name);
 
@@ -298,12 +394,12 @@ test("the Auto Run scripts row carries all forty-two tools", () => {
 });
 
 /// Building an API template is one job - guide, list, prove, run, the
-/// flow it belongs to and the fixtures built from it - and the quirks it learns - so its eleven tools are one row with one switch, offered while API Templates is on.
-test("the API templates row carries all eleven tools and switches them together", () => {
+/// flow it belongs to and the fixtures built from it - and the quirks it learns - so its eight tools are one row with one switch, offered while API Templates is on.
+/// The quirk tool is Auto Run's, shared with this row: off only while both rows are.
+test("the API templates row carries all eight tools and switches them together", () => {
   const row = visibleRows().find((r) => r.label === "API templates");
   expect(row, "the API templates row exists").toBeTruthy();
   expect(row!.names).toEqual([
-    "get_api_template_guide",
     "list_api_templates",
     "prove_api_template",
     "run_api_template",
@@ -311,29 +407,28 @@ test("the API templates row carries all eleven tools and switches them together"
     "get_api_flow_progress",
     "save_api_fixture",
     "run_api_fixture",
-    "list_api_fixtures",
-    "record_app_quirk",
-    "retire_app_quirk",
+    "record_quirk",
   ]);
   expect(row!.summary).toBe(
     "Map a module's stages, then build, prove and run templates that write test data through the application's own endpoints, in the order the application allows.",
   );
-  for (const name of row!.names) expect(API_TEMPLATE_TOOLS as readonly string[]).toContain(name);
+  for (const name of row!.names) expect([...API_TEMPLATE_TOOLS, ...SHARED_TOOLS]).toContain(name);
 
   const off = toggleRow([], row!.names);
   expect([...off].sort()).toEqual([...row!.names].sort());
   expect(toggleRow(off, row!.names)).toEqual([]);
 
-  // A list naming one half completes toward OFF, like every other group.
+  // A list naming one half completes toward OFF, like every other group -
+  // all but the quirk tool, which the Auto Run row (on) still carries.
   localStorage.setItem("tcm-v2-mcp-disabled", JSON.stringify(["prove_api_template"]));
-  expect([...loadDisabledTools()].sort()).toEqual([...row!.names].sort());
+  expect([...loadDisabledTools()].sort()).toEqual([...API_TEMPLATE_TOOLS].sort());
   localStorage.clear();
 });
 
 /// Working on a report is one job - open it, read it, change it, check it,
-/// see it - so its nine tools are one row with one switch, offered while
-/// Crystal Reports is on.
-test("the Crystal Reports row carries all nine tools and follows its module", () => {
+/// see it - so its seven tools are one row with one switch, offered while
+/// Crystal Reports is on. Its guide is Core's get_guide.
+test("the Crystal Reports row carries all seven tools and follows its module", () => {
   const row = visibleRows().find((r) => r.label === "Crystal Reports");
   expect(row, "the Crystal Reports row exists").toBeTruthy();
   expect(row!.names).toEqual([
@@ -342,10 +437,8 @@ test("the Crystal Reports row carries all nine tools and follows its module", ()
     "edit_report",
     "compare_reports",
     "check_report",
-    "new_report",
     "preview_report",
     "preview_report_live",
-    "get_report_guide",
   ]);
   for (const name of row!.names) {
     expect(CRYSTAL_TOOLS as readonly string[]).toContain(name);
@@ -440,8 +533,8 @@ test("every row label is human, with no identifier in it", () => {
 test("capture mode hides the Auto Run and API template rows and tools, everything on", () => {
   localStorage.setItem("tcm-v2-dev-capture", "on");
 
-  expect(toolShown("get_autorun_guide")).toBe(false);
-  expect(toolShown("get_api_template_guide")).toBe(false);
+  expect(toolShown("save_autorun_script")).toBe(false);
+  expect(toolShown("list_api_templates")).toBe(false);
   expect(visibleRows().some((r) => r.label === "Auto Run scripts")).toBe(false);
   expect(visibleRows().some((r) => r.label === "API templates")).toBe(false);
   expect(visibleTools().some((t) => moduleOfTool(t.name) === "auto_run" || moduleOfTool(t.name) === "api_templates")).toBe(false);
@@ -449,7 +542,7 @@ test("capture mode hides the Auto Run and API template rows and tools, everythin
   expect(visibleRows().some((r) => r.label === "Database Read Access")).toBe(true);
 
   localStorage.removeItem("tcm-v2-dev-capture");
-  expect(toolShown("get_autorun_guide")).toBe(true);
+  expect(toolShown("save_autorun_script")).toBe(true);
   expect(visibleRows().some((r) => r.label === "Auto Run scripts")).toBe(true);
 });
 
@@ -462,9 +555,10 @@ test("capture mode does not narrow toolOffered() or what loadDisabledTools() kee
   localStorage.setItem("tcm-v2-mcp-disabled", JSON.stringify([...AUTORUN_TOOLS, "get_tags"]));
   localStorage.setItem("tcm-v2-dev-capture", "on");
 
-  expect(toolOffered("get_autorun_guide")).toBe(true);
-  expect(toolShown("get_autorun_guide")).toBe(false);
-  expect(loadDisabledTools().sort()).toEqual([...AUTORUN_TOOLS, "get_tags"].sort());
+  expect(toolOffered("save_autorun_script")).toBe(true);
+  expect(toolShown("save_autorun_script")).toBe(false);
+  // All but the quirk tool, which the API templates row (on) still carries.
+  expect(loadDisabledTools().sort()).toEqual([...AUTORUN_TOOLS.filter((n) => n !== "record_quirk"), "get_tags"].sort());
 
   localStorage.removeItem("tcm-v2-mcp-disabled");
 });
@@ -475,14 +569,14 @@ test("switching a module re-fires the subscription and changes which saved names
   setModulesForTest([]);
   mockIPC((cmd) => (cmd === "modules_set" ? ["db_access", "auto_run"] : null));
 
-  expect(toolOffered("get_autorun_guide")).toBe(false);
+  expect(toolOffered("save_autorun_script")).toBe(false);
   expect(visibleRows().some((r) => r.label === "Auto Run scripts")).toBe(false);
 
   const fired = vi.fn();
   const off = subscribeDisabledTools(fired);
   await setModule("auto_run", true);
   expect(fired).toHaveBeenCalled();
-  expect(toolOffered("get_autorun_guide")).toBe(true);
+  expect(toolOffered("save_autorun_script")).toBe(true);
   expect(visibleRows().some((r) => r.label === "Auto Run scripts")).toBe(true);
 
   localStorage.setItem("tcm-v2-mcp-disabled", JSON.stringify([...AUTORUN_TOOLS]));
@@ -522,7 +616,7 @@ test("in capture mode with no module really on, toolOffered is false and saved n
   setModulesForTest([]);
   localStorage.setItem("tcm-v2-dev-capture", "on");
   localStorage.setItem("tcm-v2-mcp-disabled", JSON.stringify([...AUTORUN_TOOLS, "get_tags"]));
-  expect(toolOffered("get_autorun_guide")).toBe(false);
+  expect(toolOffered("save_autorun_script")).toBe(false);
   expect(loadDisabledTools()).toEqual(["get_tags"]);
   // The screen's display view is the capture one: database row shown.
   expect(visibleRows().some((r) => r.label === "Database Read Access")).toBe(true);

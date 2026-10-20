@@ -1,12 +1,12 @@
 // Which environment the AI Bridge tab's switches belong to.
 //
-// Three of the switches are kept per environment in this webview: the tools
-// an assistant may use (mcpTools.ts), database writes (dbServer.ts) and API
-// template writes (apiTemplates.ts). Each is stored under `<key>:<env id>`
-// and read for the ACTIVE environment, which this file remembers - so the
-// stores answer synchronously at start, before the list has loaded. The
-// fourth, "Run database changes without asking", is Rust's, on the
-// environment record.
+// Four of the switches are kept per environment in this webview: the tools
+// an assistant may use (mcpTools.ts), database writes (dbServer.ts), API
+// template writes (apiTemplates.ts) and the network tools (networkTools.ts).
+// Each is stored under `<key>:<env id>` and read for the ACTIVE
+// environment, which this file remembers - so the stores answer
+// synchronously at start, before the list has loaded. The fifth, "Run
+// database changes without asking", is Rust's, on the environment record.
 //
 // Rust is the authority on which environment is active. Every bridge push
 // says which environment its switches are for, and Rust allows no write from
@@ -23,6 +23,7 @@ export const BRIDGE_SWITCH_KEYS = {
   tools: "tcm-v2-mcp-disabled",
   dbWrites: "tcm-v2-db-writes",
   apiWrites: "tcm-v2-api-writes",
+  networkTools: "tcm-v2-network-tools",
 } as const;
 
 const ACTIVE_KEY = "tcm-v2-active-env";
@@ -107,7 +108,7 @@ export function migrateBridgeSwitches(view: EnvListView): void {
       if (get(key) === null) set(key, tools);
     }
   }
-  for (const base of [BRIDGE_SWITCH_KEYS.dbWrites, BRIDGE_SWITCH_KEYS.apiWrites]) {
+  for (const base of [BRIDGE_SWITCH_KEYS.dbWrites, BRIDGE_SWITCH_KEYS.apiWrites, BRIDGE_SWITCH_KEYS.networkTools]) {
     if (get(base) === "1") set(`${base}:${view.active}`, "1");
   }
   for (const base of Object.values(BRIDGE_SWITCH_KEYS)) remove(base);

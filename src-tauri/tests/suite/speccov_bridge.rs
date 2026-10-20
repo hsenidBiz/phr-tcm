@@ -371,8 +371,17 @@ async fn a_failed_write_leaves_no_file_at_output_path() {
     let (status, out) = route(&ctx(), None, "POST", "/merge-cases", &body, "1.0.0").await;
     assert_eq!(status, 400, "{out}");
     assert!(!output_path.exists(), "a failed write must leave nothing at output_path: {out}");
-    let tmp_path = dir.path().join("no-such-subdir").join("merged.json.tmp");
-    assert!(!tmp_path.exists(), "no stray temp file should remain either: {out}");
+    // No `*.tcm-tmp-*` anywhere under the test folder.
+    let mut stack = vec![dir.path().to_path_buf()];
+    while let Some(folder) = stack.pop() {
+        for entry in std::fs::read_dir(&folder).unwrap().flatten() {
+            let name = entry.file_name().to_string_lossy().to_string();
+            assert!(!name.contains("tcm-tmp"), "no stray temp file should remain either: {name}: {out}");
+            if entry.path().is_dir() {
+                stack.push(entry.path());
+            }
+        }
+    }
 }
 
 /// Round 6 §4: a fan-out makes title collisions likely because no slice

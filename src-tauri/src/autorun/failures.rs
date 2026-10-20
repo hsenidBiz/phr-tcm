@@ -17,6 +17,10 @@ use super::{store, CaseRecord, CaseScript, LocalRun, StepRecord};
 use crate::browser::actions::Action;
 use std::path::Path;
 
+/// The `STOP:` line for a case the run could not take to its area
+/// ("Could not reach module ...").
+pub const UNREACHED_STOP: &str = "the run could not reach this case's area - repair the area's path with save_autorun_area and its repair argument (the guide's areas section), not the script";
+
 /// Why an assistant must not try to repair this case. Checked in this
 /// order because a case can match more than one at once (a Blocked case
 /// whose sign-in also failed, say) and the sign-in / browser reasons are
@@ -41,6 +45,11 @@ pub fn stop_reason(case: &CaseRecord) -> Option<String> {
     // lease's own sentence, exactly.
     if super::lease::is_in_use(&case.reason) {
         return Some("the account was in use elsewhere - rerun the case once it is free, and leave the script alone".to_string());
+    }
+    // A trip that could not reach the area: its menu path may have moved,
+    // and the assistant repairs the area (`area_repair`), never the script.
+    if case.reason.starts_with(nav::UNREACHED_PREFIX) {
+        return Some(UNREACHED_STOP.to_string());
     }
     if nav::is_setup_problem(&case.reason) {
         return Some(

@@ -3864,7 +3864,7 @@ async fn text_lines_resolve_and_the_probe_says_the_reads_name() {
     assert!(said.contains(" - page read: button \"Edit AUTOTEST Preview 2027\""), "{said}");
 }
 
-/// `inspect_autorun_element` against a real page: every part reads, the
+/// `probe_autorun_locator` with `show` against a real page: every part reads, the
 /// listeners name where they were written and never their source, a
 /// password's value never shows, the page is not scrolled, and a cover the
 /// page puts over a button is named with its own listener.

@@ -523,6 +523,9 @@ pub fn finish(module: &str, area: &str, captured: Captured, recorded: &str) -> R
                 start: String::new(),
                 // Recorded in Areas: the person's own.
                 made_by: nav::MadeBy::Person,
+                // A person's recording: whatever an assistant's repair
+                // left is gone with the path it repaired.
+                repaired_by_assistant: None,
             })
         }
     }

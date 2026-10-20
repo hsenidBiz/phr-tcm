@@ -22,13 +22,6 @@ document.head.appendChild(favicon);
 async function boot() {
   let content: SiteContent = { screens, recipes, intro, positions: positions as Positions, available };
 
-  // Design preview while there is no content yet: `vite dev` + ?sample.
-  // import.meta.env.DEV is false in a build, so this branch and the sample
-  // module are dropped from the shipped page.
-  if (import.meta.env.DEV && new URLSearchParams(location.search).has("sample")) {
-    content = (await import("./dev/sample")).sample;
-  }
-
   // Only what the app shows: the app says in the address which modules are
   // on, and a guide opened without them hides those parts.
   content = forModules(content, modulesFrom(location.search));

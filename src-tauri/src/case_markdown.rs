@@ -45,9 +45,9 @@
 use pulldown_cmark::{Event, Options, Parser, Tag, TagEnd};
 use std::ops::Range;
 
+use crate::html_escape::esc as escape_html;
 use crate::steps_xml::{
-    collapse_ws, contains_html_markup, escape_html, html_tag_end, html_to_text, strip_tags,
-    unescape_html,
+    collapse_ws, contains_html_markup, html_tag_end, html_to_text, strip_tags, unescape_html,
 };
 
 /// What a Markdown list item becomes in a step, which has no lists.

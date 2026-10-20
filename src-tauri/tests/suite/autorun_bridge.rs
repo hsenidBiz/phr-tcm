@@ -2605,7 +2605,10 @@ async fn the_api_template_guide_ends_with_the_same_quirks_section() {
     assert!(api.contains("## Known quirks of this application\n\n") && api.contains(&line), "{api}");
     let (_, autorun) = route(&ctx(), None, "GET", "/autorun-guide", "", "1.0.0").await;
     assert!(autorun.contains(&line), "the same line in the Auto Run guide: {autorun}");
-    assert!(api.contains("`record_app_quirk") && api.contains("`retire_app_quirk"), "the guide names its own tools: {api}");
+    assert!(
+        api.contains("`record_quirk { text, from: \"api\" }`") && api.contains("`record_quirk { retire: id"),
+        "the guide names the quirk tool, recording and retiring: {api}"
+    );
 }
 
 /// Names the active environment `name` (a test environment or not) in the
@@ -2677,7 +2680,7 @@ async fn a_full_list_refuses_through_the_bridge_with_candidates() {
     let body = serde_json::json!({ "text": "one more" }).to_string();
     let (status, out) = route(&ctx(), None, "POST", "/autorun-quirk", &body, "1.0.0").await;
     assert_eq!(status, 400, "{out}");
-    assert!(out.contains("retire_autorun_quirk"), "{out}");
+    assert!(out.contains("record_quirk { retire: id"), "{out}");
     assert!(out.contains("\"note 0\"") && out.contains("\"note 1\"") && out.contains("\"note 2\""), "{out}");
     let (candidates, others) = out.split_once("Oldest of the others").expect("no oldest others");
     assert!(!candidates.contains("\"note 3\""), "{out}");
@@ -3024,10 +3027,13 @@ async fn a_repair_that_leaves_the_area_out_does_not_erase_it() {
     assert_eq!(load_script(dir.path(), 7).unwrap().unwrap().area.as_deref(), Some("Manage Cycle"));
 }
 
-/// `list_test_files`: the project's Test files by name and human size, and
-/// nothing else - no path, no date. Gated with the other Auto Run routes.
+/// `get_accounts` carries the project's Test files: by name and human size,
+/// and nothing else - no path, no date. With no project open there is no
+/// folder to read, and a note says so in their place; the accounts still
+/// come. Gated with the other Auto Run routes.
 #[tokio::test]
-async fn list_test_files_gives_names_and_sizes_only() {
+async fn get_accounts_gives_the_test_files_by_name_and_size_only() {
+    use v2_lib::ai_bridge::TEST_FILES_NEED_A_PROJECT;
     let dir = TempDir::new();
     let _root = crate::serial::autorun();
     set_root(dir.path().to_path_buf());
@@ -3036,27 +3042,47 @@ async fn list_test_files_gives_names_and_sizes_only() {
     std::fs::write(folder.join("appraisal.pdf"), vec![0u8; 1536]).unwrap();
     std::fs::write(folder.join("note.txt"), b"hello").unwrap();
 
-    let (status, body) = route(&ctx(), None, "GET", "/autorun-test-files", "", "1.0.0").await;
+    let (status, body) = route(&ctx(), None, "GET", "/accounts", "", "1.0.0").await;
     assert_eq!(status, 200, "{body}");
     let v: serde_json::Value = serde_json::from_str(&body).unwrap();
     assert_eq!(
-        v,
-        serde_json::json!({ "test_files": [
+        v["test_files"],
+        serde_json::json!([
             { "name": "appraisal.pdf", "size": "1.5 KB" },
             { "name": "note.txt", "size": "5 bytes" },
-        ] })
+        ])
     );
+    assert!(v.get("test_files_note").is_none(), "{body}");
     let shown = folder.display().to_string();
     assert!(!body.contains(&shown) && !body.contains("modified"), "{body}");
 
     // No project open: there is no Test files folder to read.
-    let (status, body) = route(&BridgeContext::default(), None, "GET", "/autorun-test-files", "", "1.0.0").await;
-    assert_eq!(status, 409, "{body}");
-    assert!(body.contains("project"), "{body}");
+    let (status, body) = route(&BridgeContext::default(), None, "GET", "/accounts", "", "1.0.0").await;
+    assert_eq!(status, 200, "{body}");
+    let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert!(v.get("test_files").is_none(), "{body}");
+    assert_eq!(v["test_files_note"], TEST_FILES_NEED_A_PROJECT);
+    assert!(v["accounts"].is_array(), "{body}");
 
-    let (status, body) = module_guard_for("/autorun-test-files", &Default::default()).expect("refused outside Auto Run");
-    assert_eq!((status, body.as_str()), (404, "Auto Run is switched off in Modules"));
-    assert!(module_guard_for("/autorun-test-files", &v2_lib::modules::Module::ALL.into_iter().collect()).is_none());
+    // The old route is gone.
+    let (status, _) = route(&ctx(), None, "GET", "/autorun-test-files", "", "1.0.0").await;
+    assert_eq!(status, 404);
+
+    // Accounts that cannot be read do not take the Test files with them: the
+    // files still come, with why the accounts did not.
+    let env = v2_lib::environments::active(dir.path()).unwrap();
+    let accounts = v2_lib::autorun::accounts::accounts_path_for(dir.path(), &env.id);
+    std::fs::create_dir_all(accounts.parent().unwrap()).unwrap();
+    std::fs::write(&accounts, "not json").unwrap();
+    let (status, body) = route(&ctx(), None, "GET", "/accounts", "", "1.0.0").await;
+    assert_eq!(status, 200, "{body}");
+    let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(v["test_files"].as_array().map(Vec::len), Some(2), "{body}");
+    assert!(v["accounts_note"].as_str().unwrap().contains("accounts file is not readable"), "{body}");
+    assert!(v.get("accounts").is_none(), "{body}");
+    // Neither readable: the accounts' failure, as before.
+    let (status, body) = route(&BridgeContext::default(), None, "GET", "/accounts", "", "1.0.0").await;
+    assert_eq!(status, 500, "{body}");
 }
 
 /// "The active environment" names its database as a person reads it - the
@@ -3426,7 +3452,7 @@ fn see_scripts(root: &std::path::Path, body: &str) {
 /// `kind` names: with what that use needs (`seen_check::wants`).
 fn never_seen_as(step: i32, what: &str, kind: &str) -> String {
     format!(
-        "Step {step}: {what} was never seen on the live app; {} Find it on the page first with probe_autorun_locator or discover_autorun_action, then save again.",
+        "Step {step}: {what} was never seen on the live app; {} Find it on the page first with probe_autorun_locator or discover_autorun_actions, then save again.",
         v2_lib::autorun::seen_check::wants(kind, false, false, false)
     )
 }
@@ -3625,6 +3651,7 @@ async fn a_bridge_saved_script_vouches_for_its_locators() {
             recorded: "2026-10-10T10:00:00Z".to_string(),
             start: String::new(),
             made_by: v2_lib::autorun::nav::MadeBy::Person,
+            repaired_by_assistant: None,
         },
     )
     .unwrap();
@@ -3681,6 +3708,7 @@ async fn resave_a_legacy_script(another_project_has_areas: bool) -> CaseScript {
                 recorded: "2026-10-10T10:00:00Z".to_string(),
                 start: String::new(),
                 made_by: v2_lib::autorun::nav::MadeBy::Person,
+                repaired_by_assistant: None,
             },
         )
         .unwrap()
@@ -3985,6 +4013,7 @@ fn record_area(root: &std::path::Path, name: &str) {
         recorded: "2026-10-01T00:00:00Z".into(),
         start: String::new(),
         made_by: v2_lib::autorun::nav::MadeBy::Person,
+        repaired_by_assistant: None,
     };
     v2_lib::autorun::nav::put_path(root, "acme", "Web", path).unwrap();
 }

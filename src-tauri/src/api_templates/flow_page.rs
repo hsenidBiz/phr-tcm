@@ -17,7 +17,7 @@ use std::collections::HashMap;
 use crate::api_templates::flow::{Flow, Stage};
 use crate::api_templates::store::SavedTemplate;
 use crate::api_templates::{ApiTemplate, Effect};
-use crate::import_parser::esc;
+use crate::html_escape::esc;
 use crate::webtheme::PagePalette;
 
 /// A column's width, and the gaps between columns and between the boxes

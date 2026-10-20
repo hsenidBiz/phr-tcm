@@ -26,9 +26,6 @@ use serde_json::json;
 /// pass is working on.
 pub const ROW_SCOPE: &str = "[data-autorun-row]";
 
-/// The attribute the pass's row carries.
-pub const ROW_ATTR: &str = "data-autorun-row";
-
 /// The rule's own words, for a sentence and the guide.
 pub const ROW_RULE: &str =
     "a list row: the nearest tr, [role=row] or li holding the match (the match itself included), else the nearest element above it with a data-*-id attribute";
