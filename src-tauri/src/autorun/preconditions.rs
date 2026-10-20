@@ -17,7 +17,7 @@
 //! No sentence here carries SQL, a server name or a connection detail: the
 //! activity log the gate writes is the one place those go.
 
-use super::{CaseScript, Precondition};
+use super::{CaseScript, Precondition, PreconditionOp, PreconditionRepair};
 use crate::api_templates::flow::{Flow, Subject, SubjectType};
 use crate::api_templates::flow_store;
 use crate::api_templates::gate::{self, CheckFor, SqlcmdStageDb, StageDb, StageState};
@@ -92,6 +92,30 @@ pub fn check_saved(root: &Path, org: &str, project: &str, scripts: &[CaseScript]
         Ok(())
     } else {
         Err(refused.join("; "))
+    }
+}
+
+/// A precondition as a person reads it: "<stage> for <value> (<flow>)",
+/// by their titles when the project has them, by their ids otherwise.
+pub fn describe(flows: &[Flow], p: &Precondition) -> String {
+    let flow = flows.iter().find(|f| f.id == p.flow);
+    let stage = flow
+        .and_then(|f| f.stages.iter().find(|s| s.id == p.stage))
+        .map_or(p.stage.as_str(), |s| s.title.as_str());
+    let flow_title = flow.map_or(p.flow.as_str(), |f| f.title.as_str());
+    format!("{stage} for {} ({flow_title})", gate::shown(&p.value))
+}
+
+/// What a repair's precondition edit did, in one line: the save's answer,
+/// the script's last repair and the activity log all say it this way.
+pub fn repair_line(flows: &[Flow], r: &PreconditionRepair) -> String {
+    let said = |p: &Option<Precondition>| p.as_ref().map(|p| describe(flows, p)).unwrap_or_default();
+    match r.op {
+        PreconditionOp::Add => format!("precondition added: {} - {}", said(&r.after), r.reason),
+        PreconditionOp::Remove => format!("precondition removed: {} - {}", said(&r.before), r.reason),
+        PreconditionOp::Change => {
+            format!("precondition changed: {} to {} - {}", said(&r.before), said(&r.after), r.reason)
+        }
     }
 }
 

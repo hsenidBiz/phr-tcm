@@ -89,6 +89,7 @@ fn script(case_id: i32, actions: Vec<Action>) -> CaseScript {
         suspected_defect: None,
         no_save: false,
         preconditions: vec![],
+        precondition_repairs: vec![],
         setup: None,
         changes: vec![],
         needs_unchanged: vec![],
@@ -964,6 +965,7 @@ fn old_script_and_component_files_with_counts_still_load() {
         why: "the step only saves".into(),
         quirk: None,
         area: false,
+        precondition: None,
     };
     assert_eq!(v2_lib::autorun::edits::check_edits(&old, &repaired, Some(&declared)), Ok(()));
 

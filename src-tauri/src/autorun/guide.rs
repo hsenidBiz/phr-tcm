@@ -1062,7 +1062,10 @@ A check that could not be run (the database did not answer, say over a
 VPN that dropped) is tried once more after 3 seconds before it blocks.
 
 A case Blocked by a precondition has nothing to repair: build the record,
-or tell the person it is missing.
+or tell the person it is missing. Only when the precondition itself is
+wrong - the steps now create that state themselves, or the case no longer
+needs it - change it with a precondition edit (see "Repairing a script
+that failed").
 
 Every save checks each precondition and names what is missing, one
 sentence per problem, counting preconditions from 1:
@@ -1073,8 +1076,8 @@ sentence per problem, counting preconditions from 1:
 
 A repair keeps every precondition the script has, and may add new ones.
 Send each existing precondition back exactly as it is: a repair that
-leaves one out or changes it is refused, and only a person can drop or
-change one, in the app.
+leaves one out or changes it is refused, unless the case's `edits` entry
+declares it as a precondition edit, one per save, with its reason.
 
 ## Drafts a case needs: fixtures and setups
 
@@ -2071,6 +2074,36 @@ brings it back rather than adding a copy - unless a person wrote it or
 retired it, which is refused: ask them to restore it. A quirk a person
 wrote cannot be retired by you - ask them to remove it. Nothing about a
 quirk ever changes a script or runs anything on its own.
+
+### Changing a precondition
+
+A repair may add, remove or change ONE of the script's preconditions per
+save, declared as `precondition` in the case's `edits` entry, beside its
+steps or on its own:
+
+{
+  "scripts": [{ "case_id": 135057, "patch_steps": [] }],
+  "edits": [
+    {
+      "case_id": 135057,
+      "precondition": {
+        "op": "remove",
+        "flow": "pms-performance-cycle",
+        "stage": "publish",
+        "reason": "step 4 now publishes the cycle itself"
+      }
+    }
+  ]
+}
+
+- `op` is `add`, `remove` or `change`. `remove` and `change` name the saved precondition by its `flow` and `stage`, and its `value` too when two share them. `add` and `change` give the precondition as it should be in `to`: `{ "flow", "stage", "value", "why" }`.
+- `reason` is one line, at most 200 characters. For a removal it says which steps now create that state, or why the case no longer needs it: a removed precondition is a state the case still relies on unless the steps make it.
+- Send the script with its preconditions as saved (`"patch_steps": []` keeps every step as saved, and so the preconditions) and the save makes the change; or send them with the change already made. Any other difference is refused.
+- An added or changed precondition is checked like any save's (`precondition 1: no flow ...`).
+- With only a precondition edit, the entry needs no `steps` or `why`: its `reason` is the reason.
+- The save answers with a line such as `case 135057: precondition removed: Publish for 274 (Performance cycle wizard) - step 4 now publishes the cycle itself`. It counts as a repair, it is the script's last repair, and the person sees it in the script editor and can put it back.
+
+Refused: `a precondition edit needs a "reason"`; `a precondition edit's "reason" is one line of at most 200 characters`; `a repair changes at most one precondition per save` (a list of precondition edits); `the preconditions changed in more ways than the case's "precondition" edit declares`; `a precondition was removed or changed but not declared` (no precondition edit); `the script has no precondition <flow> / <stage>`.
 
 ### When the application is wrong
 

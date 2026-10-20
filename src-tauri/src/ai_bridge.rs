@@ -8605,7 +8605,7 @@ fn bad_scripts(e: serde_json::Error) -> String {
 
 fn bad_edits(e: serde_json::Error) -> String {
     format!(
-        "that is not a list of declared edits: {e}. Each is {{ case_id, steps: [number], why, area (optional: true when the area changed), quirk (optional) }}."
+        "that is not a list of declared edits: {e}. Each is {{ case_id, steps: [number], why, area (optional: true when the area changed), quirk (optional), precondition (optional: {{ op: \"add\" | \"remove\" | \"change\", flow, stage, value (only when two share the flow and stage), to (for add and change), reason }}) }}."
     )
 }
 
@@ -8700,12 +8700,24 @@ fn parse_save_request(
             }
         }
     }
-    let scripts = serde_json::from_value(scripts_value).map_err(bad_scripts)?;
+    let mut scripts: Vec<crate::autorun::CaseScript> = serde_json::from_value(scripts_value).map_err(bad_scripts)?;
     // The same declaration sent twice (nested and at the top) is one; two
     // DIFFERENT declarations for one case are refused, since the gate
     // could only ever read one of them.
     let mut edits: Vec<crate::autorun::edits::Edit> = Vec::with_capacity(edit_values.len());
-    for value in edit_values {
+    for mut value in edit_values {
+        // A precondition edit is one object: a list of them, or anything
+        // else, is refused in words rather than serde's.
+        if let Some(fields) = value.as_object_mut() {
+            let case = fields.get("case_id").map(|c| format!("case {c}: ")).unwrap_or_default();
+            match fields.get("precondition") {
+                None | Some(serde_json::Value::Null | serde_json::Value::Object(_)) => {}
+                Some(serde_json::Value::Array(list)) if list.len() > 1 => {
+                    return Err(format!("{case}{}", crate::autorun::edits::ONE_PRECONDITION_EDIT))
+                }
+                Some(_) => return Err(format!("{case}{}", crate::autorun::edits::PRECONDITION_ONE_OBJECT)),
+            }
+        }
         let edit: crate::autorun::edits::Edit = serde_json::from_value(value).map_err(bad_edits)?;
         if edits.contains(&edit) {
             continue;
@@ -8717,6 +8729,21 @@ fn parse_save_request(
             ));
         }
         edits.push(edit);
+    }
+    // A precondition edit for a script sent with its preconditions as
+    // saved - whole, or through `patch_steps` - is applied here, so every
+    // gate below reads the script as it will be saved. A script sent with
+    // the change already made is left as it is, and the gate checks it is
+    // exactly the declared change.
+    for edit in &edits {
+        let Some(precondition) = edit.precondition.as_ref() else { continue };
+        let Some(script) = scripts.iter_mut().find(|s| s.case_id == edit.case_id) else { continue };
+        let Some(saved) = load(edit.case_id)? else { continue };
+        if crate::autorun::edits::same_preconditions(&script.preconditions, &saved.preconditions) {
+            let (applied, _) = crate::autorun::edits::apply_precondition_edit(&saved.preconditions, precondition)
+                .map_err(|why| format!("case {}: {why}", edit.case_id))?;
+            script.preconditions = applied;
+        }
     }
     Ok(SaveRequest { scripts, edits, dry_run })
 }
@@ -8950,6 +8977,15 @@ async fn save_autorun_scripts(
     // Every case's refusal from this gate, said together: a bundle with two
     // bad repairs is told about both in one answer.
     let mut refused: Vec<String> = Vec::new();
+    // What each repair's precondition edit did, one line per case, said
+    // after the save's first line. The flows name the stages, read only
+    // when a precondition edit is declared; without them the ids are said.
+    let mut precondition_lines: Vec<String> = Vec::new();
+    let flows = if edits.iter().any(|e| e.precondition.is_some()) {
+        crate::api_templates::flow_store::list(&root, &ctx.org, &ctx.project).unwrap_or_default()
+    } else {
+        Vec::new()
+    };
     for sent in &scripts {
         let existing = match crate::autorun::store::load_script(&root, sent.case_id) {
             Ok(v) => v,
@@ -8982,6 +9018,7 @@ async fn save_autorun_scripts(
                 }
                 script.repairs = old.repairs;
                 script.last_repair = old.last_repair.clone();
+                script.precondition_repairs = old.precondition_repairs.clone();
                 let marks_changed = old.changes != sent.changes
                     || old.needs_unchanged != sent.needs_unchanged
                     || old.needs_state != sent.needs_state;
@@ -9014,15 +9051,39 @@ async fn save_autorun_scripts(
                 // there is no path where a script actually differs from
                 // disk and this branch is reached with nothing declared.
                 seen_scope.push((sent.case_id, crate::autorun::seen_check::steps_to_check(declared)));
+                script.precondition_repairs = old.precondition_repairs.clone();
                 if let Some(e) = declared {
                     let why = e.why.trim();
+                    // `check_edits` above applied the same edit to the same
+                    // saved preconditions, so it applies here too.
+                    let precondition_line = e
+                        .precondition
+                        .as_ref()
+                        .and_then(|p| crate::autorun::edits::apply_precondition_edit(&old.preconditions, p).ok())
+                        .map(|(_, record)| {
+                            let line = crate::autorun::preconditions::repair_line(&flows, &record);
+                            script.precondition_repairs.push(record);
+                            line
+                        });
                     if !dry_run {
-                        crate::applog::info(format!(
-                            "AI repaired case {} steps {:?}: {why}",
-                            script.case_id, e.steps
-                        ));
+                        if !why.is_empty() {
+                            crate::applog::info(format!(
+                                "AI repaired case {} steps {:?}: {why}",
+                                script.case_id, e.steps
+                            ));
+                        }
+                        if let Some(line) = &precondition_line {
+                            crate::applog::info(format!("AI repaired case {}: {line}", script.case_id));
+                        }
                     }
-                    script.last_repair = Some(why.to_string());
+                    script.last_repair = Some(match &precondition_line {
+                        Some(line) if why.is_empty() => line.clone(),
+                        Some(line) => format!("{why}; {line}"),
+                        None => why.to_string(),
+                    });
+                    if let Some(line) = precondition_line {
+                        precondition_lines.push(format!("case {}: {line}", script.case_id));
+                    }
                     if let Some(d) = old.suspected_defect.as_ref().filter(|d| e.steps.contains(&d.step_number)) {
                         repaired_marks.push((script.case_id, d.step_number));
                     }
@@ -9044,6 +9105,7 @@ async fn save_autorun_scripts(
                 }
                 script.repairs = 0;
                 script.last_repair = None;
+                script.precondition_repairs = Vec::new();
                 seen_scope.push((sent.case_id, None));
                 lines.push(format!("case {} (new)", script.case_id));
             }
@@ -9228,11 +9290,13 @@ async fn save_autorun_scripts(
         return answer(refused.said());
     }
     if dry_run {
-        return (200, dry_run_answer(prepared.len(), &lines));
+        let said = std::iter::once(dry_run_answer(prepared.len(), &lines)).chain(precondition_lines);
+        return (200, said.collect::<Vec<_>>().join("\n"));
     }
     crate::applog::info(format!("AI saved {} auto-run script(s)", prepared.len()));
 
     let mut report = vec![format!("saved {} script(s): {}", prepared.len(), lines.join(", "))];
+    report.extend(precondition_lines);
     for (case_id, step) in &repaired_marks {
         match crate::autorun::store::clear_suspected_defect_at(&root, *case_id, *step) {
             Ok(true) => {

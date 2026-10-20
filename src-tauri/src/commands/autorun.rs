@@ -2536,6 +2536,7 @@ pub fn save_script_from_editor(
     // for the last one is no longer relevant once a person has looked.
     script.repairs = 0;
     script.last_repair = None;
+    script.precondition_repairs = Vec::new();
     // The editor owns what it shows: the steps, title, account, area, Must
     // not save, preconditions and the shared-state marks. Everything else
     // is the stored script's, whatever the editor sent - so a setting the
@@ -2553,6 +2554,7 @@ pub fn save_script_from_editor(
         suspected_defect: None,
         no_save: false,
         preconditions: Vec::new(),
+        precondition_repairs: Vec::new(),
         setup: None,
         changes: Vec::new(),
         needs_unchanged: Vec::new(),
@@ -2580,6 +2582,7 @@ pub fn save_script_from_editor(
         // Reset above: a person's save starts the repair count afresh.
         repairs: _,
         last_repair: _,
+        precondition_repairs: _,
         // The store keeps the mark on disk whatever a save sends
         // (`store::save_scripts_atomically`).
         suspected_defect: _,

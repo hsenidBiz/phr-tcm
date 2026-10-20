@@ -109,7 +109,7 @@ fn case_7(selector: &str, value: &str) -> serde_json::Value {
 
 /// Through the assistant's save, a repair may add a precondition to a
 /// saved script - validated like any save, and counted as a repair - but
-/// never drop or change one it has.
+/// never drop or change one it has without declaring it (#28, below).
 #[tokio::test]
 async fn an_assistant_repair_may_add_preconditions_but_never_drop_or_change_one() {
     let dir = TempDir::new();
@@ -157,8 +157,13 @@ async fn an_assistant_repair_may_add_preconditions_but_never_drop_or_change_one(
     assert_eq!(status, 200, "{out}");
     assert_eq!(out.lines().next().unwrap(), "saved 1 script(s): case 7 (repaired)");
 
-    // Dropped, or changed: refused, and the saved script keeps both.
-    let kept = v2_lib::autorun::edits::PRECONDITIONS_KEPT;
+    // Dropped, or changed, undeclared: refused, and the saved script keeps
+    // both.
+    let kept = format!(
+        "case 7 already has a script, so this save is a repair, and \"edits\" is missing. {}",
+        v2_lib::autorun::edits::PRECONDITIONS_KEPT
+    );
+    let kept = kept.as_str();
     see_scripts(dir.path(), &send(serde_json::json!([rules])));
     let (status, out) =
         route(&ctx(), Some(&client), "POST", "/autorun-script", &send(serde_json::json!([rules])), "1.0.0").await;
@@ -178,6 +183,269 @@ async fn an_assistant_repair_may_add_preconditions_but_never_drop_or_change_one(
     let saved = load_script(dir.path(), 7).unwrap().unwrap();
     assert_eq!(saved.preconditions.len(), 2);
     assert_eq!(saved.repairs, 2);
+}
+
+/// Case 7 saved with two preconditions on the cycle flow (`publish` and
+/// `rules` for cycle 274), its flow saved and its locators seen.
+async fn case_7_with_preconditions(dir: &TempDir) -> (MockServer, AdoClient) {
+    set_root(dir.path().to_path_buf());
+    let flow: v2_lib::api_templates::flow::Flow =
+        serde_json::from_value(crate::common::cycle_flow_json()).unwrap();
+    v2_lib::api_templates::flow_store::save(dir.path(), "acme", "Web", &flow).unwrap();
+    let (server, client) = client_with_cases(&[(7, "Save a rating", &["", "A toast says Saved"])]).await;
+    let mut body = case_7("#toast", "Saved");
+    body[0]["preconditions"] = serde_json::json!([cycle_pre("publish"), cycle_pre("rules")]);
+    let body = body.to_string();
+    see_scripts(dir.path(), &body);
+    let (status, out) = route(&ctx(), Some(&client), "POST", "/autorun-script", &body, "1.0.0").await;
+    assert_eq!(status, 200, "{out}");
+    (server, client)
+}
+
+/// One precondition of the cycle flow, for cycle 274.
+fn cycle_pre(stage: &str) -> serde_json::Value {
+    serde_json::json!({ "flow": "pms-performance-cycle", "stage": stage, "value": 274 })
+}
+
+/// A save of case 7 as it is saved (`patch_steps: []` keeps every step),
+/// declaring only `precondition`.
+fn precondition_repair(precondition: serde_json::Value) -> String {
+    serde_json::json!({
+        "scripts": [{ "case_id": 7, "patch_steps": [] }],
+        "edits": [{ "case_id": 7, "precondition": precondition }]
+    })
+    .to_string()
+}
+
+/// #28: a repair changes one precondition with a declared, reasoned edit.
+/// Sent as saved, the edit is applied; sent already changed, it is checked.
+/// Either way it is validated like any save, counted as a repair, named
+/// in the answer, and kept on the script where the editor shows it.
+#[tokio::test]
+async fn a_repair_may_remove_change_or_add_one_precondition_with_a_reason() {
+    let dir = TempDir::new();
+    let _root = crate::serial::autorun();
+    let (_server, client) = case_7_with_preconditions(&dir).await;
+    let save = |body: String| {
+        let client = &client;
+        async move { route(&ctx(), Some(client), "POST", "/autorun-script", &body, "1.0.0").await }
+    };
+
+    // Removed, the script sent as saved.
+    let removed = "precondition removed: Publish for 274 (Performance cycle wizard) - step 1 publishes the cycle itself now";
+    let (status, out) = save(precondition_repair(serde_json::json!({
+        "op": "remove", "flow": "pms-performance-cycle", "stage": "publish",
+        "reason": "step 1 publishes the cycle itself now"
+    })))
+    .await;
+    assert_eq!(status, 200, "{out}");
+    assert_eq!(out, format!("saved 1 script(s): case 7 (repaired)\ncase 7: {removed}"));
+    let saved = load_script(dir.path(), 7).unwrap().unwrap();
+    assert_eq!(serde_json::to_value(&saved.preconditions).unwrap(), serde_json::json!([cycle_pre("rules")]));
+    assert_eq!(saved.repairs, 1, "a precondition edit is counted as a repair");
+    assert_eq!(saved.last_repair.as_deref(), Some(removed));
+    assert_eq!(
+        serde_json::to_value(&saved.precondition_repairs).unwrap(),
+        serde_json::json!([{ "op": "remove", "before": cycle_pre("publish"), "reason": "step 1 publishes the cycle itself now" }])
+    );
+
+    // Changed beside a step edit, the whole script sent already changed.
+    let mut whole = case_7(".toast", "Saved");
+    whole[0]["preconditions"] = serde_json::json!([cycle_pre("participants")]);
+    let body = serde_json::json!({
+        "scripts": whole,
+        "edits": [{
+            "case_id": 7, "steps": [2], "why": "the toast has no id, only a class",
+            "precondition": {
+                "op": "change", "flow": "pms-performance-cycle", "stage": "rules",
+                "to": cycle_pre("participants"), "reason": "the case needs a participant, not just the rules"
+            }
+        }]
+    })
+    .to_string();
+    see_scripts(dir.path(), &body);
+    let (status, out) = save(body).await;
+    assert_eq!(status, 200, "{out}");
+    let changed = "precondition changed: Evaluation rules for 274 (Performance cycle wizard) to Participants for 274 (Performance cycle wizard) - the case needs a participant, not just the rules";
+    assert_eq!(out, format!("saved 1 script(s): case 7 (repaired)\ncase 7: {changed}"));
+    let saved = load_script(dir.path(), 7).unwrap().unwrap();
+    assert_eq!(serde_json::to_value(&saved.preconditions).unwrap(), serde_json::json!([cycle_pre("participants")]));
+    assert_eq!(saved.repairs, 2);
+    assert_eq!(saved.last_repair, Some(format!("the toast has no id, only a class; {changed}")));
+    assert_eq!(saved.precondition_repairs.len(), 2, "every precondition repair since a person saved is kept");
+
+    // Added: refused with the save's own message when the project has no
+    // such stage, saved when it has.
+    let (status, out) = save(precondition_repair(serde_json::json!({
+        "op": "add", "to": cycle_pre("published"), "reason": "the case opens a published cycle"
+    })))
+    .await;
+    assert_eq!((status, out.as_str()), (400, "case 7: precondition 2: flow Performance cycle wizard has no stage published"));
+    let (status, out) = save(precondition_repair(serde_json::json!({
+        "op": "add", "to": cycle_pre("publish"), "reason": "the case opens a published cycle"
+    })))
+    .await;
+    assert_eq!(status, 200, "{out}");
+    assert_eq!(
+        out,
+        "saved 1 script(s): case 7 (repaired)\ncase 7: precondition added: Publish for 274 (Performance cycle wizard) - the case opens a published cycle"
+    );
+    let saved = load_script(dir.path(), 7).unwrap().unwrap();
+    assert_eq!(saved.preconditions.len(), 2);
+    assert_eq!(saved.repairs, 3);
+    assert_eq!(saved.precondition_repairs.len(), 3);
+
+    // A person's save from the editor starts afresh: the count and the
+    // precondition repairs both go, whatever the editor sent.
+    v2_lib::commands::autorun::save_script_from_editor(dir.path(), "acme", "Web", saved).unwrap();
+    let after = load_script(dir.path(), 7).unwrap().unwrap();
+    assert_eq!((after.repairs, after.last_repair, after.precondition_repairs.len()), (0, None, 0));
+}
+
+/// #28's refusals through the save: a removal with no reason, two
+/// precondition edits for one case, and an undeclared removal beside a
+/// declared step edit. Nothing is written.
+#[tokio::test]
+async fn a_precondition_edit_is_refused_without_a_reason_twice_or_undeclared() {
+    let dir = TempDir::new();
+    let _root = crate::serial::autorun();
+    let (_server, client) = case_7_with_preconditions(&dir).await;
+    let save = |body: String| {
+        let client = &client;
+        async move { route(&ctx(), Some(client), "POST", "/autorun-script", &body, "1.0.0").await }
+    };
+
+    let (status, out) = save(precondition_repair(serde_json::json!({
+        "op": "remove", "flow": "pms-performance-cycle", "stage": "publish"
+    })))
+    .await;
+    assert_eq!(
+        (status, out),
+        (400, format!("case 7: {}", v2_lib::autorun::edits::PRECONDITION_NEEDS_REASON))
+    );
+
+    let (status, out) = save(precondition_repair(serde_json::json!([
+        { "op": "remove", "flow": "pms-performance-cycle", "stage": "publish", "reason": "the steps publish it" },
+        { "op": "remove", "flow": "pms-performance-cycle", "stage": "rules", "reason": "the steps set the rules" }
+    ])))
+    .await;
+    assert_eq!((status, out), (400, format!("case 7: {}", v2_lib::autorun::edits::ONE_PRECONDITION_EDIT)));
+
+    let mut whole = case_7(".toast", "Saved");
+    whole[0]["preconditions"] = serde_json::json!([cycle_pre("rules")]);
+    let body = serde_json::json!({ "scripts": whole, "edits": [edit_step_2("the toast has no id, only a class")] }).to_string();
+    see_scripts(dir.path(), &body);
+    let (status, out) = save(body).await;
+    assert_eq!((status, out.as_str()), (400, v2_lib::autorun::edits::PRECONDITIONS_KEPT));
+
+    let saved = load_script(dir.path(), 7).unwrap().unwrap();
+    assert_eq!(saved.preconditions.len(), 2, "nothing was written");
+    assert_eq!(saved.repairs, 0);
+}
+
+/// A dry run checks a precondition edit as the save would and says what it
+/// would do, writing nothing.
+#[tokio::test]
+async fn a_dry_run_checks_a_precondition_edit_and_writes_nothing() {
+    let dir = TempDir::new();
+    let _root = crate::serial::autorun();
+    let (_server, client) = case_7_with_preconditions(&dir).await;
+    let dry = |precondition: serde_json::Value| {
+        serde_json::json!({
+            "scripts": [{ "case_id": 7, "patch_steps": [] }],
+            "edits": [{ "case_id": 7, "precondition": precondition }],
+            "dry_run": true
+        })
+        .to_string()
+    };
+    let (status, out) = route(
+        &ctx(),
+        Some(&client),
+        "POST",
+        "/autorun-script",
+        &dry(serde_json::json!({ "op": "remove", "flow": "pms-performance-cycle", "stage": "publish", "reason": "the steps publish it" })),
+        "1.0.0",
+    )
+    .await;
+    assert_eq!(status, 200, "{out}");
+    assert_eq!(
+        out,
+        format!(
+            "{} It would save 1 script(s): case 7 (repaired)\ncase 7: precondition removed: Publish for 274 (Performance cycle wizard) - the steps publish it",
+            v2_lib::ai_bridge::DRY_RUN_NOTHING_SAVED
+        )
+    );
+    let (status, out) = route(
+        &ctx(),
+        Some(&client),
+        "POST",
+        "/autorun-script",
+        &dry(serde_json::json!({ "op": "add", "to": cycle_pre("published"), "reason": "the case opens a published cycle" })),
+        "1.0.0",
+    )
+    .await;
+    assert_eq!((status, out.as_str()), (400, "case 7: precondition 3: flow Performance cycle wizard has no stage published"));
+    let saved = load_script(dir.path(), 7).unwrap().unwrap();
+    assert_eq!((saved.preconditions.len(), saved.repairs), (2, 0), "a dry run writes nothing");
+    assert!(saved.precondition_repairs.is_empty());
+}
+
+/// A `precondition` that is not one object - an empty list, a word - is
+/// refused in a sentence, and nothing is written.
+#[tokio::test]
+async fn a_precondition_edit_that_is_not_one_object_is_refused() {
+    let dir = TempDir::new();
+    let _root = crate::serial::autorun();
+    let (_server, client) = case_7_with_preconditions(&dir).await;
+    for precondition in [serde_json::json!([]), serde_json::json!("remove publish"), serde_json::json!(1)] {
+        let (status, out) =
+            route(&ctx(), Some(&client), "POST", "/autorun-script", &precondition_repair(precondition.clone()), "1.0.0").await;
+        assert_eq!(
+            (status, out),
+            (400, format!("case 7: {}", v2_lib::autorun::edits::PRECONDITION_ONE_OBJECT)),
+            "{precondition}"
+        );
+    }
+    assert_eq!(load_script(dir.path(), 7).unwrap().unwrap().preconditions.len(), 2);
+}
+
+/// A script sent with the declared change already made, its preconditions
+/// in another order, is that change. And `precondition_repairs` is never
+/// the sender's: whatever the body carries - a forged record, or none - the
+/// save keeps the server's own.
+#[tokio::test]
+async fn a_reordered_change_is_accepted_and_the_record_is_the_servers() {
+    let dir = TempDir::new();
+    let _root = crate::serial::autorun();
+    let (_server, client) = case_7_with_preconditions(&dir).await;
+    let mut whole = case_7("#toast", "Saved");
+    // Saved: [publish, rules]. Rules changed to participants, sent first.
+    whole[0]["preconditions"] = serde_json::json!([cycle_pre("participants"), cycle_pre("publish")]);
+    whole[0]["precondition_repairs"] =
+        serde_json::json!([{ "op": "add", "after": cycle_pre("setup"), "reason": "forged" }]);
+    let body = serde_json::json!({
+        "scripts": whole,
+        "edits": [{ "case_id": 7, "precondition": {
+            "op": "change", "flow": "pms-performance-cycle", "stage": "rules",
+            "to": cycle_pre("participants"), "reason": "the case needs a participant"
+        } }]
+    })
+    .to_string();
+    let (status, out) = route(&ctx(), Some(&client), "POST", "/autorun-script", &body, "1.0.0").await;
+    assert_eq!(status, 200, "{out}");
+    let saved = load_script(dir.path(), 7).unwrap().unwrap();
+    assert_eq!(
+        serde_json::to_value(&saved.precondition_repairs).unwrap(),
+        serde_json::json!([{ "op": "change", "before": cycle_pre("rules"), "after": cycle_pre("participants"), "reason": "the case needs a participant" }]),
+        "the forged record is not kept"
+    );
+
+    // An unchanged re-send that carries no record keeps the saved one.
+    let mut resend = case_7("#toast", "Saved");
+    resend[0]["preconditions"] = serde_json::to_value(&saved.preconditions).unwrap();
+    let (status, out) = route(&ctx(), Some(&client), "POST", "/autorun-script", &resend.to_string(), "1.0.0").await;
+    assert_eq!(status, 200, "{out}");
+    assert_eq!(load_script(dir.path(), 7).unwrap().unwrap().precondition_repairs, saved.precondition_repairs);
 }
 
 /// The declaration that goes with a change to case 7's step 2.
@@ -3016,6 +3284,7 @@ fn scripted(case_id: i32) -> CaseScript {
         suspected_defect: None,
         no_save: false,
         preconditions: vec![],
+        precondition_repairs: vec![],
         setup: None,
         changes: vec![],
         needs_unchanged: vec![],

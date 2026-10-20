@@ -185,7 +185,7 @@ information in the slots the Playwright pipeline already reads; it never overrid
 
 ## Assistants can change a script's preconditions (agreed 2026-10-18)
 
-28. **Let `save_autorun_script` edit preconditions.** A repair (`edits`) can change steps but not a
+28. **Let `save_autorun_script` edit preconditions.** *Built in 2.2.3-beta.17.* A repair (`edits`) can change steps but not a
     script's preconditions, so when the data model changed (Playwright leaves Definition Wizard
     profile assignments empty; scripts now assign a temporary Step 4 profile themselves) the
     precondition "A profile has a competency assigned" blocked 135057, 135621 and 135581 before

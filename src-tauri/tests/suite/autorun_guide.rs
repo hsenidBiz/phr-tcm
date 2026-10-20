@@ -327,6 +327,51 @@ fn the_guide_teaches_the_floor_the_gate_and_the_page_tools() {
     );
 }
 
+/// #28: the repair section shows a precondition edit as the save reads it,
+/// says a removal's reason names what now creates that state, and lists
+/// the refusals in the gate's own words.
+#[test]
+fn the_guide_teaches_a_precondition_edit() {
+    use v2_lib::autorun::edits::{
+        Edit, ONE_PRECONDITION_EDIT, PRECONDITIONS_KEPT, PRECONDITIONS_UNDECLARED, PRECONDITION_NEEDS_REASON,
+        PRECONDITION_REASON_LONG,
+    };
+    let g = autorun_guide();
+    let repair = &g[g.find("## Repairing a script that failed").unwrap()..];
+    let start = repair.find("### Changing a precondition").expect("the subsection is missing");
+    let section = &repair[start..repair[start + 4..].find("\n#").map_or(repair.len(), |e| start + 4 + e)];
+    #[derive(serde::Deserialize)]
+    struct Body {
+        scripts: Vec<serde_json::Value>,
+        edits: Vec<Edit>,
+    }
+    let example: Body = serde_json::from_str(first_balanced(section, 0, '{', '}')).expect("not a save body");
+    assert_eq!(example.scripts[0]["patch_steps"], serde_json::json!([]));
+    let edit = example.edits[0].precondition.as_ref().expect("the example declares no precondition edit");
+    assert!(!edit.reason.is_empty());
+    let flat = section.split_whitespace().collect::<Vec<_>>().join(" ");
+    for said in [
+        "ONE of the script's preconditions per save",
+        "which steps now create that state, or why the case no longer needs it",
+        "counts as a repair",
+        "can put it back",
+        "case 135057: precondition removed: Publish for 274 (Performance cycle wizard) - step 4 now publishes the cycle itself",
+    ] {
+        assert!(flat.contains(said), "the section never says {said:?}");
+    }
+    for refusal in [
+        PRECONDITION_NEEDS_REASON,
+        PRECONDITION_REASON_LONG,
+        ONE_PRECONDITION_EDIT,
+        PRECONDITIONS_UNDECLARED,
+        PRECONDITIONS_KEPT,
+    ] {
+        let opening = refusal.split(" - ").next().unwrap().split(':').next().unwrap();
+        assert!(flat.contains(opening), "the section never lists {opening:?}");
+    }
+    assert!(!section.contains('\u{2014}'), "no em dashes in text an assistant reads");
+}
+
 /// `check_edits` can refuse a save for six distinct reasons; the guide's
 /// "Repairing a script that failed" section used to list only three of
 /// them. Every sentence here is taken verbatim from `edits.rs` / the gate

@@ -7,17 +7,21 @@
 //! dropped included, and an undeclared one stays exactly as it was.
 
 use super::nav::module_key;
-use super::{CaseScript, StepScript};
+use super::{CaseScript, Precondition, PreconditionOp, PreconditionRepair, StepScript};
 use std::collections::{BTreeMap, BTreeSet};
 
 /// What an assistant declares before it may change an existing script.
-#[derive(Debug, Clone, PartialEq, serde::Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Edit {
     pub case_id: i32,
-    /// Every step whose actions change, are added or are removed.
+    /// Every step whose actions change, are added or are removed. Absent
+    /// reads as none: an edit of a precondition alone names no step.
+    #[serde(default)]
     pub steps: Vec<i32>,
-    /// One sentence: what was wrong and what this changes.
+    /// One sentence: what was wrong and what this changes. An edit of a
+    /// precondition alone may leave it out: its `reason` says why.
+    #[serde(default)]
     pub why: String,
     /// Something learned about the application that the next script needs
     /// to know. Recorded as a project quirk.
@@ -28,15 +32,168 @@ pub struct Edit {
     /// is part of the script, so this is declared like a changed step.
     #[serde(default)]
     pub area: bool,
+    /// The one precondition this repair adds, removes or changes, with its
+    /// reason. At most one per case per save.
+    #[serde(default)]
+    pub precondition: Option<PreconditionEdit>,
+}
+
+/// One precondition a repair adds, removes or changes. A saved one is
+/// named by its `flow` and `stage` (and its `value` when two share them);
+/// `to` is the precondition as it should be, for an add or a change.
+#[derive(Debug, Clone, PartialEq, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PreconditionEdit {
+    pub op: PreconditionOp,
+    #[serde(default)]
+    pub flow: Option<String>,
+    #[serde(default)]
+    pub stage: Option<String>,
+    #[serde(default)]
+    pub value: Option<serde_json::Value>,
+    #[serde(default)]
+    pub to: Option<Precondition>,
+    /// One line: for a removal, which steps now create that state, or why
+    /// the case no longer needs it.
+    #[serde(default)]
+    pub reason: String,
 }
 
 /// Said when a repair would turn `no_save` off.
 pub const NO_SAVE_KEPT: &str =
     "this script is marked Must not save, and a repair cannot turn that off - send \"no_save\": true, or ask a person to change it in the app";
 
-/// Said when a repair would change a script's preconditions.
-pub const PRECONDITIONS_KEPT: &str =
-    "a repair cannot change a script's preconditions - save the script itself to change them";
+/// Said when a repair drops or changes a precondition it did not declare.
+pub const PRECONDITIONS_KEPT: &str = "a precondition was removed or changed but not declared - add one \"precondition\" edit ({ \"op\": \"remove\" or \"change\", \"flow\", \"stage\", \"to\" for a change, \"reason\" }) to the case's \"edits\" entry, or send every saved precondition back as it is";
+
+/// Said when the preconditions sent differ from the saved ones by more
+/// than the one precondition edit declared.
+pub const PRECONDITIONS_UNDECLARED: &str = "the preconditions changed in more ways than the case's \"precondition\" edit declares - a repair changes one precondition per save; send the others as saved";
+
+/// Said when a precondition edit has no reason.
+pub const PRECONDITION_NEEDS_REASON: &str = "a precondition edit needs a \"reason\": for a removal, say which steps now create that state, or why the case no longer needs it";
+
+/// The longest reason a precondition edit may give, in characters.
+pub const PRECONDITION_REASON_MAX: usize = 200;
+
+/// Said when a precondition edit's reason is more than one short line.
+pub const PRECONDITION_REASON_LONG: &str = "a precondition edit's \"reason\" is one line of at most 200 characters";
+
+/// Said when one case's entry carries more than one precondition edit.
+pub const ONE_PRECONDITION_EDIT: &str = "a repair changes at most one precondition per save - send one \"precondition\" edit now and the next in a later save";
+
+/// Said when an entry's `precondition` is not one object.
+pub const PRECONDITION_ONE_OBJECT: &str = "\"precondition\" is one object per \"edits\" entry: { \"op\", \"flow\", \"stage\", \"value\" (optional), \"to\", \"reason\" }";
+
+/// The saved preconditions with `edit` applied, and the record the script
+/// keeps of it. Refused: no reason, or one longer than a line; a saved
+/// precondition that is not there, or not the only one named; an add or a
+/// change with no `to`; an add of one the script has, or a change into
+/// one; a change to the same precondition. Validating the precondition itself against the
+/// project's flows is the save's (`preconditions::check_saved`), as for
+/// any save.
+pub fn apply_precondition_edit(
+    saved: &[Precondition],
+    edit: &PreconditionEdit,
+) -> Result<(Vec<Precondition>, PreconditionRepair), String> {
+    let reason = edit.reason.trim();
+    if reason.is_empty() {
+        return Err(PRECONDITION_NEEDS_REASON.to_string());
+    }
+    if reason.contains(['\n', '\r']) || reason.chars().count() > PRECONDITION_REASON_MAX {
+        return Err(PRECONDITION_REASON_LONG.to_string());
+    }
+    let names_one = edit.flow.is_some() || edit.stage.is_some() || edit.value.is_some();
+    let record = |before: Option<Precondition>, after: Option<Precondition>| PreconditionRepair {
+        op: edit.op,
+        before,
+        after,
+        reason: reason.to_string(),
+    };
+    if edit.op == PreconditionOp::Add {
+        if names_one {
+            return Err(
+                "an \"add\" precondition edit takes the new precondition in \"to\" and names no saved one".to_string(),
+            );
+        }
+        let Some(to) = edit.to.clone() else {
+            return Err(
+                "an \"add\" precondition edit needs \"to\": the precondition to add, { flow, stage, value, why }"
+                    .to_string(),
+            );
+        };
+        if saved.iter().any(|p| same_record(p, &to)) {
+            return Err(ALREADY_HAS.to_string());
+        }
+        let mut after = saved.to_vec();
+        after.push(to.clone());
+        return Ok((after, record(None, Some(to))));
+    }
+    let op = if edit.op == PreconditionOp::Remove { "remove" } else { "change" };
+    let (Some(flow), Some(stage)) = (edit.flow.as_deref(), edit.stage.as_deref()) else {
+        return Err(format!(
+            "a \"{op}\" precondition edit names the saved precondition by its \"flow\" and \"stage\""
+        ));
+    };
+    let named: Vec<usize> = saved
+        .iter()
+        .enumerate()
+        .filter(|(_, p)| p.flow == flow && p.stage == stage && edit.value.as_ref().is_none_or(|v| &p.value == v))
+        .map(|(i, _)| i)
+        .collect();
+    let at = match named.as_slice() {
+        [one] => *one,
+        [] => {
+            let value = edit.value.as_ref().map(|v| format!(" for {}", crate::api_templates::gate::shown(v)));
+            return Err(format!("the script has no precondition {flow} / {stage}{}", value.unwrap_or_default()));
+        }
+        _ => {
+            return Err(format!(
+                "the script has more than one precondition {flow} / {stage} - name its \"value\" too"
+            ))
+        }
+    };
+    let mut after = saved.to_vec();
+    let before = after[at].clone();
+    if edit.op == PreconditionOp::Remove {
+        if edit.to.is_some() {
+            return Err("a \"remove\" precondition edit takes no \"to\"".to_string());
+        }
+        after.remove(at);
+        return Ok((after, record(Some(before), None)));
+    }
+    let Some(to) = edit.to.clone() else {
+        return Err("a \"change\" precondition edit needs \"to\": the precondition as it should be".to_string());
+    };
+    if to == before {
+        return Err("the precondition edit changes nothing - \"to\" is the precondition as it is".to_string());
+    }
+    // Changed into one the script already has, besides the one changed:
+    // refused as an add of it is.
+    if saved.iter().enumerate().any(|(i, p)| i != at && same_record(p, &to)) {
+        return Err(ALREADY_HAS.to_string());
+    }
+    after[at] = to.clone();
+    Ok((after, record(Some(before), Some(to))))
+}
+
+/// Said when an add or a change would give the script a precondition it
+/// already has.
+const ALREADY_HAS: &str = "the script already has that precondition";
+
+/// Two preconditions ask for the same record: the same stage of the same
+/// flow for the same value (their `why` aside).
+fn same_record(a: &Precondition, b: &Precondition) -> bool {
+    a.flow == b.flow && a.stage == b.stage && a.value == b.value
+}
+
+/// The same preconditions, in any order: each side's every entry is on
+/// the other, as often. A script's preconditions are checked one by one
+/// before step 1, so their order is not part of what a repair changes.
+pub fn same_preconditions(a: &[Precondition], b: &[Precondition]) -> bool {
+    let count = |list: &[Precondition], p: &Precondition| list.iter().filter(|q| *q == p).count();
+    a.len() == b.len() && a.iter().all(|p| count(a, p) == count(b, p))
+}
 
 /// Said when a repair would add, change or remove a script's setup.
 pub const SETUP_KEPT: &str =
@@ -118,9 +275,11 @@ pub fn check_edits(old: &CaseScript, new: &CaseScript, declared: Option<&Edit>) 
     }
 
     // Rule 7: a declaration with no reason is refused before anything else
-    // about it is even looked at.
+    // about it is even looked at. An edit of a precondition alone gives
+    // its reason in the precondition edit itself (rule 12).
     if let Some(e) = declared {
-        if e.why.trim().is_empty() {
+        let precondition_only = e.precondition.is_some() && e.steps.is_empty() && !e.area;
+        if e.why.trim().is_empty() && !precondition_only {
             return Err("an edit needs a reason".to_string());
         }
     }
@@ -142,14 +301,26 @@ pub fn check_edits(old: &CaseScript, new: &CaseScript, declared: Option<&Edit>) 
     }
 
     // Rule 12: the records a case relies on are part of what the case
-    // means, not something a repair tunes until the case runs. A repair
-    // keeps every precondition the saved script has, exactly (flow, stage,
-    // value and why), and may add new ones: adding only blocks a case
-    // earlier, dropping or changing one weakens it. Only the editor or an
-    // import can drop or change one. An added one is validated like any
-    // save (`nav::check_project_rules`).
-    if old.preconditions.iter().any(|p| !new.preconditions.contains(p)) {
-        return Err(PRECONDITIONS_KEPT.to_string());
+    // means, not something a repair tunes until the case runs. Without a
+    // precondition edit a repair keeps every precondition the saved script
+    // has, exactly (flow, stage, value and why), and may add new ones:
+    // adding only blocks a case earlier, dropping or changing one weakens
+    // it. With one, declared with its reason, the preconditions are the
+    // saved ones with exactly that one add, removal or change - the reason
+    // is what tells a person reading the editor why. Either way an added
+    // or changed one is validated like any save (`nav::check_project_rules`).
+    match declared.and_then(|e| e.precondition.as_ref()) {
+        Some(edit) => {
+            let (expected, _) = apply_precondition_edit(&old.preconditions, edit)?;
+            if !same_preconditions(&new.preconditions, &expected) {
+                return Err(PRECONDITIONS_UNDECLARED.to_string());
+            }
+        }
+        None => {
+            if old.preconditions.iter().any(|p| !new.preconditions.contains(p)) {
+                return Err(PRECONDITIONS_KEPT.to_string());
+            }
+        }
     }
 
     // Rule 13: a setup writes data in the application on every run of its
