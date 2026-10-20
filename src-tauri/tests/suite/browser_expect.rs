@@ -533,6 +533,76 @@ async fn the_perl_classes_are_ascii_as_in_javascript() {
     assert_eq!(v2_lib::browser::pattern::check_pattern("expect_text", "^\\w+ \\d{2}$"), Ok(()));
 }
 
+/// An attribute is matched raw, not collapsed, so a pattern meets the spaces
+/// and line ends JavaScript's `\s` and `.` do: a no-break space is a space,
+/// and a carriage return is no `.`.
+#[tokio::test]
+async fn an_attribute_pattern_reads_unicode_spaces_and_line_ends_as_javascript_does() {
+    let run = |value: &'static str, p: &str| {
+        let check = action(json!({ "kind": "expect_attribute", "selector": { "css": "#b" }, "name": "aria-label", "matches": p }));
+        async move {
+            let mut d = FakePage { attribute: Some(value), ..FakePage::default() }.driver();
+            execute_with(&mut d, &check, &quick()).await.ok
+        }
+    };
+    assert!(run("View\u{a0}A", "^View\\sA$").await, "a no-break space is a \\s");
+    assert!(run("View\u{3000}A", "^View\\sA$").await);
+    assert!(run("View\u{feff}A", "^View\\sA$").await);
+    assert!(!run("View\u{85}A", "^View\\sA$").await, "U+0085 is no \\s in JavaScript");
+    assert!(!run("View\u{200b}A", "^View\\sA$").await, "a zero-width space is no \\s in JavaScript");
+    assert!(run("View\u{a0}A", "^View\\S?\\sA$").await);
+    assert!(!run("View\u{a0}A", "^View\\SA$").await);
+    assert!(!run("A\rB", "^A.B$").await, "a carriage return is no . in JavaScript");
+    assert!(!run("A\u{2028}B", "^A.B$").await);
+    assert!(run("A\u{85}B", "^A.B$").await, "U+0085 is a . in JavaScript");
+    assert!(run("A\rB", "^A[.\\r]B$").await, "a . inside a class is a dot");
+    let each = action(json!({ "kind": "expect_each", "selector": { "css": "div.card" }, "attribute": "aria-label", "matches": "^View\\sA$" }));
+    let page = ListPage::default().list("div.card", 1).attr("c1", "View\u{a0}A");
+    let out = execute_with(&mut page.driver(Arc::default()), &each, &quick()).await;
+    assert!(out.ok, "{}", out.detail);
+}
+
+/// The run's `\s`, `\S` and `.` are exactly JavaScript's, which is what the
+/// exported spec runs: asked of node for every character of the Basic
+/// Multilingual Plane, the same set matches here.
+#[test]
+fn the_run_and_the_export_agree_on_s_and_dot_for_every_character() {
+    let patterns = ["^\\s$", "^\\S$", "^[\\s]$", "^[^\\s]$", "^.$", "^[.]$", "^\\w$", "^\\d$", "^\\W$"];
+    let dir = tempfile::tempdir().unwrap();
+    let (list, script, out) = (dir.path().join("patterns.json"), dir.path().join("hits.js"), dir.path().join("out.json"));
+    std::fs::write(&list, serde_json::to_string(&patterns).unwrap()).unwrap();
+    std::fs::write(
+        &script,
+        "const fs = require('node:fs');\n\
+         const patterns = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));\n\
+         const hits = patterns.map((p) => {\n\
+           const re = new RegExp(p);\n\
+           const at = [];\n\
+           for (let c = 0; c <= 0xffff; c++) {\n\
+             if (c >= 0xd800 && c <= 0xdfff) continue;\n\
+             if (re.test(String.fromCharCode(c))) at.push(c);\n\
+           }\n\
+           return at;\n\
+         });\n\
+         fs.writeFileSync(process.argv[3], JSON.stringify(hits));\n",
+    )
+    .unwrap();
+    let run = std::process::Command::new("node").arg("--no-warnings").arg(&script).arg(&list).arg(&out).output().expect("node is needed for this test");
+    assert!(run.status.success(), "node failed: {}", String::from_utf8_lossy(&run.stderr));
+    let theirs: Vec<Vec<u32>> = serde_json::from_str(&std::fs::read_to_string(&out).unwrap()).unwrap();
+    for (p, js) in patterns.iter().zip(theirs) {
+        let re = v2_lib::browser::pattern::compiled(p).unwrap();
+        let ours: Vec<u32> = (0..=0xffffu32)
+            .filter_map(|c| char::from_u32(c).map(|ch| (c, ch)))
+            .filter(|(_, ch)| re.is_match(&ch.to_string()))
+            .map(|(c, _)| c)
+            .collect();
+        let extra: Vec<String> = ours.iter().filter(|c| !js.contains(c)).map(|c| format!("{c:04X}")).collect();
+        let missing: Vec<String> = js.iter().filter(|c| !ours.contains(c)).map(|c| format!("{c:04X}")).collect();
+        assert!(extra.is_empty() && missing.is_empty(), "{p}: the run also matches {extra:?} and lacks {missing:?}");
+    }
+}
+
 #[test]
 fn at_most_needs_time_to_see_the_count_hold_still() {
     use v2_lib::browser::actions::{AT_MOST_MIN_MS, COUNT_AT_MOST_TIME};

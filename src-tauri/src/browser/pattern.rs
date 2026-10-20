@@ -5,15 +5,20 @@
 //! `[[:alpha:]]` in the same form), one that is too long to read, and one
 //! that fits any text at all, which can never fail.
 //!
-//! The run follows what the export can do. JavaScript's `\w \d \s \b` (and
+//! The run follows what the export can do. JavaScript's `\w \d \b` (and
 //! their negations) are ASCII-only, Rust's are Unicode, so a pattern is
 //! compiled with them rewritten to their ASCII meaning (`ascii_classes`):
 //! `^\w+ \w+$` does not match "Jose Silva" with an accent, in a run or in the
-//! export. Literal non-ASCII text in a pattern still matches itself.
+//! export. JavaScript's `\s` is its own set (the ASCII spaces, the no-break
+//! and Unicode spaces, the line and paragraph separators, the byte order
+//! mark) and its `.` leaves out `\n`, `\r` and the two separators, where
+//! Rust's leaves out `\n` only: both are written out the same way. Literal
+//! non-ASCII text in a pattern still matches itself.
 //!
 //! Matching is `Regex::is_match`: not anchored unless the writer writes `^`
-//! or `$`, case-sensitive, on the text with its whitespace collapsed (so no
-//! newline is left for a pattern to cross).
+//! or `$`, case-sensitive. Text is matched with its whitespace collapsed (so
+//! no newline is left for a pattern to cross); an attribute is matched raw,
+//! so it can hold any of the spaces and line ends above.
 
 /// The longest `matches` value saved.
 pub const MAX_PATTERN: usize = 500;
@@ -76,16 +81,24 @@ fn unportable(p: &str) -> Option<&'static str> {
     None
 }
 
-/// The ASCII whitespace JavaScript's `\s` and Rust's agree on for a pattern
-/// run on collapsed text, as the body of a class.
-const ASCII_SPACE: &str = "\\t\\n\\x0B\\x0C\\r ";
+/// Exactly JavaScript's `\s`, as the body of a class: tab, line feed,
+/// vertical tab, form feed, carriage return, space, no-break space, the
+/// Ogham space mark, U+2000 to U+200A, the line and paragraph separators,
+/// the narrow no-break space, the medium mathematical space, the ideographic
+/// space and the byte order mark. (Rust's own `\s` has U+0085 besides, and
+/// lacks U+FEFF.)
+const JS_SPACE: &str =
+    "\\t\\n\\x0B\\x0C\\r \\x{A0}\\x{1680}\\x{2000}-\\x{200A}\\x{2028}\\x{2029}\\x{202F}\\x{205F}\\x{3000}\\x{FEFF}";
+/// JavaScript's `.` outside a class: anything but a line end (`\n`, `\r`,
+/// U+2028, U+2029). Rust's leaves out `\n` only.
+const JS_DOT: &str = "[^\\n\\r\\x{2028}\\x{2029}]";
 const ASCII_WORD: &str = "0-9A-Za-z_";
 
-/// `p` with `\d \w \s \b` and their negations given their ASCII meaning,
-/// as JavaScript has them: a class written out, so a negation still
-/// matches any non-ASCII character, and `(?-u:\b)` for a boundary. Every
-/// other escape is copied as written. Only run on a pattern `unportable`
-/// let through.
+/// `p` with `\d \w \b` and their negations given their ASCII meaning, and
+/// `\s` and `.` given JavaScript's, as JavaScript has them: a class written
+/// out, so a negation still matches any non-ASCII character, and `(?-u:\b)`
+/// for a boundary. Every other escape is copied as written. Only run on a
+/// pattern `unportable` let through.
 fn ascii_classes(p: &str) -> String {
     let cs: Vec<char> = p.chars().collect();
     let mut out = String::with_capacity(p.len() + 16);
@@ -106,8 +119,8 @@ fn ascii_classes(p: &str) -> String {
                 'D' => ("0-9".to_string(), true),
                 'w' => (ASCII_WORD.to_string(), false),
                 'W' => (ASCII_WORD.to_string(), true),
-                's' => (ASCII_SPACE.to_string(), false),
-                'S' => (ASCII_SPACE.to_string(), true),
+                's' => (JS_SPACE.to_string(), false),
+                'S' => (JS_SPACE.to_string(), true),
                 'b' if !in_class => {
                     out.push_str("(?-u:\\b)");
                     continue;
@@ -129,8 +142,13 @@ fn ascii_classes(p: &str) -> String {
             }
             continue;
         }
-        out.push(c);
         i += 1;
+        if c == '.' && !in_class {
+            out.push_str(JS_DOT);
+            class_start = false;
+            continue;
+        }
+        out.push(c);
         if c == '[' && !in_class {
             in_class = true;
             class_start = true;
