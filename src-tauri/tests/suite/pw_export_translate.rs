@@ -811,3 +811,189 @@ fn pattern_and_bound_checks_translate() {
     let url = one_step(json!([{ "kind": "check_url", "contains": "/x", "timeout_ms": 5000 }])).run().unwrap();
     assert!(url.contains("toHaveURL(new RegExp('\\\\/x'), { timeout: 5000 });"), "{url}");
 }
+
+/// `expect_each` is the app's own loop (`expect::keep_looking`): the list
+/// and every item judged, passing only once the same pass has held for
+/// 750 ms - written as `settle`, with the item count as what must hold.
+#[test]
+fn an_each_check_translates_to_a_settled_look_over_every_item() {
+    let got = one_step(json!([
+        { "kind": "expect_each", "selector": { "css": "div.card" }, "child": { "css": "h3" }, "matches": "^AUTOTEST " },
+        { "kind": "expect_each", "selector": { "css": "div.card" }, "contains": "AUTO   TEST", "min": 3, "timeout_ms": 4000 }
+    ]))
+    .run()
+    .unwrap();
+    for want in [
+        "expect(await settle(async () => {",
+        "const items = cur.locator('div.card').filter({ visible: true });",
+        "const n = await items.count();",
+        "if (n > 200) return `matched ${n} items, more than the 200 expect_each reads`;",
+        "if (n < 1) return `expected at least 1, counted ${n}`;",
+        "if (n < 3) return `expected at least 3, counted ${n}`;",
+        "const item = items.nth(i);",
+        "const el = item.locator('h3').filter({ visible: true });",
+        "const found = await el.count();",
+        "if (found !== 1) return `item ${i + 1} of ${n}: found ${found} of ` + 'h3';",
+        "const el = item;",
+        "const got = await el.evaluate(readText, undefined, { timeout: 2000 });",
+        "if (got === null || !new RegExp('^AUTOTEST ').test(got)) return `item ${i + 1} of ${n}: saw ${await saw(el, got)}`;",
+        // The text is collapsed, as the app collapses both sides.
+        "if (got === null || !got.includes('AUTO TEST')) return",
+        "if ((await items.count()) !== n) return 'the list changed while it was read';",
+        "return { read: String(n) };",
+        "}, 10000)).toBeNull();",
+        "}, 4000)).toBeNull();",
+    ] {
+        assert!(got.contains(want), "missing {want}\n{got}");
+    }
+    // Each helper once, however many checks.
+    for once in ["const readText = ", "const settle = async (", "const saw = async ("] {
+        assert_eq!(got.matches(once).count(), 1, "{once}\n{got}");
+    }
+    assert!(!got.contains("const placed") && !got.contains("const readBox"), "{got}");
+}
+
+#[test]
+fn an_each_check_reads_what_the_run_reads() {
+    let got = one_step(json!([
+        { "kind": "expect_each", "selector": { "css": "a.row" }, "attribute": "href", "equals": "/x" },
+        { "kind": "expect_each", "selector": { "css": "a.row" }, "attribute": "href", "not_empty": true },
+        { "kind": "expect_each", "selector": { "css": "a.row" }, "attribute": "title", "contains": "Open" },
+        { "kind": "expect_each", "selector": { "css": "li" }, "equals": "  A   B " },
+        { "kind": "expect_each", "selector": { "css": "li" }, "not_empty": true },
+        { "kind": "expect_each", "selector": { "css": "li" }, "child": { "css": "b" }, "visible": true },
+        { "kind": "expect_each", "selector": { "css": "li" }, "child": { "css": "i", "visible": false }, "visible": true }
+    ]))
+    .run()
+    .unwrap();
+    for want in [
+        // An attribute is read raw, and missing is not the empty string.
+        "const got = await el.getAttribute('href', { timeout: 2000 });",
+        "if (got !== '/x') return `item ${i + 1} of ${n}: saw ${JSON.stringify(got)}`;",
+        "if (!got || !got.trim()) return `item ${i + 1} of ${n}: saw ${JSON.stringify(got)}`;",
+        "if (got === null || !got.includes('Open')) return `item ${i + 1} of ${n}: saw ${JSON.stringify(got)}`;",
+        // Text is read as the app reads it, and both sides are collapsed.
+        "if (got !== 'A B') return `item ${i + 1} of ${n}: saw ${await saw(el, got)}`;",
+        "if (!got || !got.trim()) return `item ${i + 1} of ${n}: saw ${await saw(el, got)}`;",
+        // "Visible" stops at the child; a child written to match hidden ones is asked.
+        "const el = item.locator('b').filter({ visible: true });",
+        "const el = item.locator('i');",
+        "if (!(await el.isVisible())) return `item ${i + 1} of ${n}: ` + ",
+    ] {
+        assert!(got.contains(want), "missing {want}\n{got}");
+    }
+    // A form control's value is never in a message.
+    assert!(got.contains("? '(a field)' : JSON.stringify(got)"), "{got}");
+}
+
+#[test]
+fn the_settling_helper_holds_a_pass_as_the_app_does() {
+    let got = one_step(json!([
+        { "kind": "expect_each", "selector": { "css": "li" }, "not_empty": true }
+    ]))
+    .run()
+    .unwrap();
+    // A pass counts once it has held 750 ms, polled every 250 ms; a pass
+    // still held at the deadline passes; a look that failed starts over.
+    for want in [
+        "if (Date.now() - since >= 750) return null;",
+        "if (Date.now() >= end) return held === null ? last : null;",
+        "setTimeout(r, Math.min(250, Math.max(0, end - Date.now())))",
+        "Math.abs(v - boxes[i]) <= 1",
+    ] {
+        assert!(got.contains(want), "missing {want}\n{got}");
+    }
+    // A look that throws (an item re-rendered under it) is looked at again.
+    assert!(got.contains(".catch("), "{got}");
+}
+
+#[test]
+fn an_order_check_translates_to_a_settled_read_of_every_item() {
+    let got = one_step(json!([
+        { "kind": "expect_order", "selector": { "role": "option" }, "texts": ["All", " Draft  ", "Published"] }
+    ]))
+    .run()
+    .unwrap();
+    for want in [
+        "expect(await settle(async () => {",
+        "const items = cur.getByRole('option').filter({ visible: true });",
+        "if (n === 0) return 'is not on the page';",
+        "if (n > 200) return `matched ${n} items, more than the 200 expect_order reads`;",
+        "texts.push(await items.nth(i).evaluate(readText, undefined, { timeout: 2000 }));",
+        "const order = ['All', 'Draft', 'Published'];",
+        "const at = texts.findIndex((t, i) => i >= from && t.includes(want));",
+        "from = at + 1;",
+        // The texts read are what must hold still.
+        "return { read: texts.join('\\u001f') };",
+        "}, 10000)).toBeNull();",
+    ] {
+        assert!(got.contains(want), "missing {want}\n{got}");
+    }
+    // A failure names what was wanted, never what a field holds.
+    assert!(!got.contains("JSON.stringify(texts"), "{got}");
+    assert_eq!(got.matches("const settle = async (").count(), 1, "{got}");
+    assert!(!got.contains("const saw = ") && !got.contains("const placed"), "{got}");
+}
+
+#[test]
+fn a_position_check_translates_to_the_apps_own_boxes_and_rule() {
+    let got = one_step(json!([
+        { "kind": "expect_position", "selector": { "css": "#a" }, "relative_to": { "css": "#bar" }, "relation": "right_of" },
+        { "kind": "expect_position", "selector": { "css": "#a" }, "relative_to": { "css": "#bar" }, "relation": "in_top_right", "timeout_ms": 3000 }
+    ]))
+    .run()
+    .unwrap();
+    for want in [
+        "expect(await settle(() => placed(cur.locator('#a').filter({ visible: true }), cur.locator('#bar').filter({ visible: true }), 'right_of'), 10000)).toBeNull();",
+        "'in_top_right'), 3000)).toBeNull();",
+    ] {
+        assert!(got.contains(want), "missing {want}\n{got}");
+    }
+    for once in ["const placed = async (", "const readBox = ", "const settle = async ("] {
+        assert_eq!(got.matches(once).count(), 1, "{once}\n{got}");
+    }
+    // The box is the app's own measurement, frame offsets included.
+    assert!(got.contains("const f = frame.getBoundingClientRect();"), "{got}");
+    assert!(got.contains("(frame.clientLeft || 0) + (parseFloat(cs.paddingLeft) || 0)"), "{got}");
+    assert!(!got.contains("const readText") && !got.contains("const saw"), "{got}");
+}
+
+#[test]
+fn the_exported_position_rule_names_every_relation() {
+    use v2_lib::browser::position::Relation;
+    use v2_lib::pw_export::translate::PLACED_TS;
+    assert!(PLACED_TS.contains("const t = 1;"), "{PLACED_TS}");
+    for r in [
+        Relation::LeftOf,
+        Relation::RightOf,
+        Relation::Above,
+        Relation::Below,
+        Relation::Inside,
+        Relation::InTopLeft,
+        Relation::InTopRight,
+        Relation::InBottomLeft,
+        Relation::InBottomRight,
+    ] {
+        let name = serde_json::to_value(r).unwrap();
+        let want = format!("case '{}':", name.as_str().unwrap());
+        assert!(PLACED_TS.contains(&want), "{want} missing from\n{PLACED_TS}");
+    }
+    // A box of no size is nowhere, and an element is exactly one.
+    assert!(PLACED_TS.contains("box.w <= 0 || box.h <= 0"), "{PLACED_TS}");
+    assert!(PLACED_TS.contains("n > 1"), "{PLACED_TS}");
+}
+
+#[test]
+fn list_order_and_position_checks_are_no_longer_refused() {
+    let s = script(json!([{ "step_number": 1, "actions": [
+        { "kind": "expect_each", "selector": { "css": "li" }, "not_empty": true },
+        { "kind": "expect_order", "selector": { "css": "li" }, "texts": ["a", "b"] },
+        { "kind": "expect_position", "selector": { "css": "#a" }, "relative_to": { "css": "#b" }, "relation": "above" }
+    ] }]));
+    check(&s, &origins()).unwrap();
+    // The checks that need a target still refuse an empty chain.
+    let bad = script(json!([{ "step_number": 1, "actions": [
+        { "kind": "expect_order", "selector": [], "texts": ["a", "b"] }
+    ] }]));
+    assert!(check(&bad, &origins()).is_err());
+}
