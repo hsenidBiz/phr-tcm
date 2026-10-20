@@ -22,8 +22,9 @@ pub const PROXY_VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const PROXY_VERSION_HEADER: &str = "x-tcm-proxy-version";
 
 /// The header every bridge request made for a tool call carries the tool's
-/// name in, so the app can log one line per call
-/// (`ai_bridge::tool_call_line`). Only the name: never an argument.
+/// name in, so the app can log one line per call that reaches it
+/// (`ai_bridge::tool_call_line`; a call the proxy refuses on its own is not
+/// logged). Only the name: never an argument.
 pub const TOOL_HEADER: &str = "x-tcm-tool";
 
 thread_local! {

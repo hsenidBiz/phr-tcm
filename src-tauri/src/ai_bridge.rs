@@ -12061,12 +12061,18 @@ pub fn parse_http(raw: &[u8]) -> Parsed {
 /// not one to log. The proxy names the tool (`mcp::TOOL_HEADER`) on every
 /// request it makes for a call: first the `/tools` read that decides
 /// whether the tool is offered, then - unless that refused it - the tool's
-/// own route. So a call is logged once: "refused" on the `/tools` read when
-/// this very answer switches the tool off (decided as the proxy decides it,
-/// `mcp::tool_policy_from`), otherwise "ok" or the HTTP status of the
-/// route's answer. Only the tool's name and that outcome - never an
-/// argument, the answer's text, an id or a path - and only for a name this
-/// server offers.
+/// own route. So a call that reaches the app is logged once: "refused" on
+/// the `/tools` read when this very answer switches the tool off (decided
+/// as the proxy decides it, `mcp::tool_policy_from`), otherwise "ok" or the
+/// HTTP status of the route's answer. Only the tool's name and that outcome
+/// - never an argument, the answer's text, an id or a path - and only for a
+/// name this server offers.
+///
+/// What is NOT logged is what the proxy refuses before it asks the app
+/// anything, because the app never sees those calls and there is no
+/// channel for them: an argument-shape refusal (a mix of arguments, a
+/// `get_guide` part sent with another topic, a quirk or cookie shape), a
+/// `get_guide` topic the proxy refuses, and a call to a retired tool name.
 pub fn tool_call_line(tool: Option<&str>, target: &str, status: u16, payload: &str) -> Option<String> {
     static NAMES: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
     let tool = tool?;
