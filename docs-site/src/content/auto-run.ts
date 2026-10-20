@@ -176,7 +176,7 @@ export const autoRun: Screen = {
       does:
         "What a run needs before it can start, one line each: the environment runs go to, the site address, the sign-in, the accounts, the areas, what discovery has mapped, the test files and the database. " +
         "A green dot means that part is ready, a red one that it is missing, and an amber one that it is worth a look. " +
-        "The panel opens by itself when something a run needs is missing, and says **Needs attention**.",
+        "The panel opens by itself when something a run needs is missing, and says **Needs attention**. It says that too when a script uploads a file the Test files folder does not hold, and names the file.",
     },
     {
       id: "setup-details",
@@ -194,7 +194,7 @@ export const autoRun: Screen = {
       name: "Search",
       does:
         "At the top of the Setup panel, on both tabs. Shows only the cases whose id or title holds what you type, with or without the **#** before an id. It works together with the result filters. " +
-        "Typing in it on Past runs takes you to Test cases. Press [[Escape]] or the clear button to show every case again.",
+        "Typing in it on Past runs takes you to Test cases, and going to Past runs by its tab empties it. Press [[Escape]] or the clear button to show every case again.",
     },
     {
       id: "expand-all",

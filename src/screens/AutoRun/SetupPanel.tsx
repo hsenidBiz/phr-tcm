@@ -189,8 +189,10 @@ export function useAutoRunSetup({
     readiness,
     essentialsSettled,
     essentialUnreadable,
-    /** Something a run cannot go without is missing, or could not be read. */
-    attention: readiness.essentialMissing || essentialUnreadable.length > 0,
+    /** Something a run cannot go without is missing, or could not be read,
+     * or a script uploads a file the Test files folder does not hold. */
+    attention:
+      readiness.essentialMissing || essentialUnreadable.length > 0 || readiness.missingTestFiles.length > 0,
   };
 }
 
@@ -244,9 +246,35 @@ export function breakableUrl(url: string): ReactNode[] {
   return url.split(/(?<=[/.?&=])/).flatMap((part, i) => (i === 0 ? [part] : [<wbr key={i} />, part]));
 }
 
+/** How many names a summary line spells out before "and N more". */
+const NAMES_IN_SUMMARY = 3;
+
+/** `names` joined, the first few and then how many more. */
+function shortList(names: string[]): string {
+  const shown = names.slice(0, NAMES_IN_SUMMARY).join(", ");
+  const rest = names.length - NAMES_IN_SUMMARY;
+  return rest > 0 ? `${shown}, and ${rest} more` : shown;
+}
+
+/** The files a script uploads that the Test files folder does not hold:
+ * a run fails at that upload, so it is said as a warning, with the names. */
+function MissingFiles({ names, full = false }: { names: string[]; full?: boolean }) {
+  return (
+    <span className="inline-flex items-start gap-1 text-warning">
+      <TriangleAlert aria-hidden className="mt-0.5 size-3.5 shrink-0" />
+      <span className="min-w-0 break-words">
+        {plural(names.length, "file")} missing: {full ? names.join(", ") : shortList(names)}
+      </span>
+    </span>
+  );
+}
+
 /** The collapsed panel's lines: one per item, from the reads above, in
- * the full rows' own words. */
-function summaryLines(s: AutoRunSetup): { label: string; status: Status; value: string }[] {
+ * the full rows' own words. `missing` is set on the Test files line when a
+ * script uploads a file the folder lacks: the line then names them. */
+function summaryLines(
+  s: AutoRunSetup,
+): { label: string; status: Status; value: string; missing?: string[] }[] {
   const pickProject = "Pick a project first";
   // No environment is an answer, not a gap: runs then go to the saved
   // recipe's address, which the Site address line says.
@@ -317,7 +345,7 @@ function summaryLines(s: AutoRunSetup): { label: string; status: Status; value: 
     : s.testFiles.isError
       ? ["warning", "Could not be read"]
       : missingFiles > 0
-        ? ["missing", `${plural(missingFiles, "file")} missing`]
+        ? ["warning", `${plural(missingFiles, "file")} missing`]
         : s.testFileCount == null
           ? ["quiet", "Loading…"]
           : s.testFileCount === 0
@@ -342,7 +370,12 @@ function summaryLines(s: AutoRunSetup): { label: string; status: Status; value: 
     { label: "Areas", status: areas[0], value: areas[1] },
     { label: "Discovery", status: discovery[0], value: discovery[1] },
     { label: "Components", status: components[0], value: components[1] },
-    { label: "Test files", status: files[0], value: files[1] },
+    {
+      label: "Test files",
+      status: files[0],
+      value: files[1],
+      missing: s.setupReady && !s.testFiles.isError && missingFiles > 0 ? s.readiness.missingTestFiles : undefined,
+    },
     { label: "Database", status: db[0], value: db[1] },
   ];
 }
@@ -469,7 +502,7 @@ export default function SetupPanel({
       <div id={bodyId}>
         {!open ? (
           <ul aria-label="Setup summary" className="space-y-1.5">
-            {summaryLines(s).map(({ label, status, value }) => (
+            {summaryLines(s).map(({ label, status, value, missing }) => (
               <li key={label} className="flex items-start gap-2 text-sm">
                 {/* One line tall and centred in it, so the dot sits beside
                     the label's first line even when the value wraps. */}
@@ -483,7 +516,13 @@ export default function SetupPanel({
                 <span
                   className="min-w-0 flex-1 break-words text-text"
                 >
-                  {label === "Site address" ? breakableUrl(value) : value}
+                  {missing ? (
+                    <MissingFiles names={missing} />
+                  ) : label === "Site address" ? (
+                    breakableUrl(value)
+                  ) : (
+                    value
+                  )}
                 </span>
                 {SPOKEN[status] && <span className="sr-only">{SPOKEN[status]}</span>}
               </li>
@@ -748,10 +787,19 @@ export default function SetupPanel({
                     <span className="text-danger">The test files could not be read</span>
                   ) : testFiles.isPending || s.testFileCount == null ? (
                     <span className="text-muted">Loading…</span>
-                  ) : s.testFileCount === 0 ? (
-                    <span className="text-muted">None yet</span>
                   ) : (
-                    plural(s.testFileCount, "file")
+                    <>
+                      {s.testFileCount === 0 ? (
+                        <span className="text-muted">None yet</span>
+                      ) : (
+                        plural(s.testFileCount, "file")
+                      )}
+                      {s.readiness.missingTestFiles.length > 0 && (
+                        <span className="mt-1 block text-xs">
+                          <MissingFiles names={s.readiness.missingTestFiles} full />
+                        </span>
+                      )}
+                    </>
                   )
                 }
               >

@@ -871,6 +871,8 @@ test("while the scripts are being read, Has a script has no number and the list 
   expect(await screen.findByText("Reading scripts…")).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Has a script" })).toHaveAttribute("aria-pressed", "true");
   expect(screen.queryByText("No cases match this filter.")).not.toBeInTheDocument();
+  // The tab waits too: the plain total, not "0 of 1" counting up.
+  expect(testCasesTab()).toHaveAccessibleName("Test cases 1");
 });
 
 test("the filter applies when grouped, and a group with nothing to show is hidden", async () => {

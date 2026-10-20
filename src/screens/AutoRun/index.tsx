@@ -160,9 +160,8 @@ export default function AutoRun({
 
   /** Whether the Setup panel shows its full rows. `null` until the screen
    * has decided, once: open when something a run cannot go without is
-   * missing, shut otherwise. After that only the person moves it (the
-   * toggle, or anything that asks to open the setup), so setup that
-   * changes later never springs it open under anyone. */
+   * missing, shut otherwise. After that only the person's toggle moves
+   * it, so setup that changes later never springs it open under anyone. */
   const [panelChoice, setPanelChoice] = useState<boolean | null>(null);
   useEffect(() => {
     if (panelChoice === null && essentialsSettled) setPanelChoice(readiness.essentialMissing);
@@ -206,7 +205,7 @@ export default function AutoRun({
     if (next === null) return;
     e.preventDefault();
     const id = TABS[next].id;
-    setTab(id);
+    pickTab(id);
     tabRefs.current[id]?.focus();
   };
 
@@ -420,6 +419,13 @@ export default function AutoRun({
   const onSearch = (text: string) => {
     setSearch(text);
     if (text.trim() !== "") setTab("cases");
+  };
+  /** A tab the person picks. Going to Past runs empties the search, which
+   * only ever narrows the case list: left there it would read as filtering
+   * runs it does not touch. */
+  const pickTab = (id: AutoRunTab) => {
+    if (id === "runs") setSearch("");
+    setTab(id);
   };
   /** The open cards, per PBI, while the screen is mounted. Not saved: a
    * list that comes back half open on the next visit reads as clutter. */
@@ -680,10 +686,12 @@ export default function AutoRun({
   }
 
   /** The Test cases tab's count: every case, or "12 of 60" while the
-   * filters or the search hide some. */
+   * filters or the search hide some. With Has a script on, the plain total
+   * until every script is read, like the pill's own number, so it never
+   * counts up under the person. */
   const caseCount = !cases.data
     ? null
-    : shownIdx.length === rows.length
+    : shownIdx.length === rows.length || (scriptedOnly && !scriptsRead)
       ? String(rows.length)
       : `${shownIdx.length} of ${rows.length}`;
   const searched = search.trim();
@@ -721,7 +729,7 @@ export default function AutoRun({
                   "-mb-px border-b-2 px-3 py-1.5 text-sm font-medium transition-colors",
                   isOn ? "border-accent text-text" : "border-transparent text-muted hover:text-accent",
                 )}
-                onClick={() => setTab(id)}
+                onClick={() => pickTab(id)}
                 onKeyDown={(e) => onTabKey(e, TABS.findIndex((t) => t.id === id))}
               >
                 <span className="label-trim">

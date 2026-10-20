@@ -58,8 +58,8 @@ export default function CaseSearch({
       <Input
         aria-label="Search test cases"
         className={cn("py-1.5 pl-2 pr-8", wide ? "w-full" : "w-56")}
-        placeholder="Id or title, commas for several"
-        title="Search by case id or title. Separate several with commas, for example 135592, 135601"
+        placeholder="Search test cases by id or title"
+        title="Search the Test cases list by case id or title. Separate several with commas, for example 135592, 135601"
         value={value}
         onChange={(e) => onChange(e.target.value)}
         onKeyDown={(e) => {

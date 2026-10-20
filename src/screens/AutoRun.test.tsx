@@ -1654,10 +1654,46 @@ test("Test cases opens on its filters, with no second title and no environment l
   // The environment, and the file a script uploads that the folder lacks,
   // are the Setup panel's to say.
   await waitFor(() => expect(summaryLine("Environment")).toHaveTextContent("EnvironmentQA, ready"));
-  await waitFor(() => expect(summaryLine("Test files")).toHaveTextContent("1 file missing"));
+  await waitFor(() => expect(summaryLine("Test files")).toHaveTextContent("1 file missing: cv.txt, needs a look"));
+  // A run would fail at that upload: the panel says so in its header too,
+  // with the panel still shut.
+  expect(within(setupPanel()).getByText("Needs attention")).toBeInTheDocument();
+  expect(within(setupPanel()).getByRole("button", { name: "Show setup details" })).toBeInTheDocument();
   // The old line's "Project <name>" is gone.
   expect(screen.queryByText("Web")).not.toBeInTheDocument();
   expect(screen.queryByText(/^Project\b/)).not.toBeInTheDocument();
+});
+
+test("missing test files are named in the summary (the first few) and in the open Test files row (all of them)", async () => {
+  const files = ["a.txt", "b.txt", "c.txt", "d.txt", "e.txt"];
+  mockReady((cmd, args) => {
+    if (cmd === "auto_run_load_script") {
+      return (args as { caseId: number }).caseId === 201
+        ? {
+            case_id: 201,
+            title: "s",
+            steps: files.map((file, i) => ({
+              step_number: i + 1,
+              actions: [{ kind: "upload", selector: { css: "#f" }, file }],
+            })),
+          }
+        : null;
+    }
+    if (cmd === "test_files_list") return [{ name: "appraisal.pdf", size: 1, modified: "1" }];
+    return undefined;
+  });
+  renderAutoRun(null);
+
+  await waitFor(() =>
+    expect(summaryLine("Test files")).toHaveTextContent("5 files missing: a.txt, b.txt, c.txt, and 2 more"),
+  );
+  expect(within(setupPanel()).getByText("Needs attention")).toBeInTheDocument();
+
+  fireEvent.click(within(setupPanel()).getByRole("button", { name: "Show setup details" }));
+  const row = within(setupPanel()).getByRole("group", { name: "Test files" });
+  expect(row).toHaveTextContent("1 file");
+  expect(row).toHaveTextContent("5 files missing: a.txt, b.txt, c.txt, d.txt, e.txt");
+  expect(within(setupPanel()).getByText("Needs attention")).toBeInTheDocument();
 });
 
 test("a file the scripts upload that is in the Test files folder is not missing", async () => {
@@ -1671,6 +1707,7 @@ test("a file the scripts upload that is in the Test files folder is not missing"
   renderAutoRun(null);
   await waitFor(() => expect(summaryLine("Test files")).toHaveTextContent("1 file"));
   expect(summaryLine("Test files")).not.toHaveTextContent(/missing/);
+  expect(within(setupPanel()).queryByText("Needs attention")).not.toBeInTheDocument();
 });
 
 test("the expanded Setup panel names the environment in a row of its own", async () => {
@@ -1703,10 +1740,22 @@ test("the Setup panel, with the search box, is on both tabs; searching on Past r
   // The tab's count says how many of the cases show.
   expect(tab("Test cases")).toHaveAccessibleName("Test cases 1 of 2");
 
-  // Emptying it on Past runs does not move the person.
+  // Going to Past runs by its tab empties the box: the search only ever
+  // narrows the case list, and left there it would read as filtering runs.
   fireEvent.click(tab("Past runs"));
-  fireEvent.change(box, { target: { value: "" } });
   expect(tab("Past runs")).toHaveAttribute("aria-selected", "true");
+  expect(box).toHaveValue("");
+  expect(box).toHaveAttribute("placeholder", "Search test cases by id or title");
+  // The same by the keyboard: back to Test cases, search, then the arrow.
+  fireEvent.click(tab("Test cases"));
+  fireEvent.change(box, { target: { value: "lock" } });
+  fireEvent.keyDown(tab("Test cases"), { key: "ArrowRight" });
+  expect(tab("Past runs")).toHaveAttribute("aria-selected", "true");
+  expect(box).toHaveValue("");
+  // Back on Test cases every case shows again.
+  fireEvent.click(tab("Test cases"));
+  expect(await screen.findByText("Valid login")).toBeInTheDocument();
+  expect(tab("Test cases")).toHaveAccessibleName("Test cases 2");
 });
 
 test("More holds Import scripts, with its description, and Clear scripts; Group by title stays outside", async () => {
