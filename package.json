@@ -15,7 +15,6 @@
   },
   "dependencies": {
     "@astryxdesign/core": "^0.1.7",
-    "@astryxdesign/theme-neutral": "^0.1.7",
     "@fontsource/fira-code": "^5.2.7",
     "@fontsource/fira-sans": "^5.2.7",
     "@gsap/react": "^2.1.2",
