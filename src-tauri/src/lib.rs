@@ -44,6 +44,7 @@ pub mod modules;
 pub mod filewatch;
 pub mod guide;
 pub mod help;
+pub mod html_escape;
 pub mod import_parser;
 pub mod intake;
 pub mod markdown;

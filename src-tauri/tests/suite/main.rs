@@ -146,6 +146,7 @@ mod filewatch;
 mod guide;
 mod har;
 mod help;
+mod html_escape;
 mod import_parser;
 mod intake;
 mod markdown;

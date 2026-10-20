@@ -54,21 +54,16 @@ fn escape_xml(text: &str) -> String {
         .replace('>', "&gt;")
 }
 
-/// The HTML layer. Azure DevOps renders a step's `parameterizedString` as
-/// HTML, so plain text written without this is read as markup: a typed
-/// `<cycleId>` vanished from ADO's own view, and a typed `&lt;` came back as
-/// `<`. The parser already undoes both layers, and it reads older
-/// single-escaped steps the same as before.
-pub(crate) fn escape_html(text: &str) -> String {
-    text.replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-        .replace('"', "&quot;")
-}
-
 /// A step's Markdown as it goes into the XML: the step HTML Azure DevOps
 /// shows (escaped text, `<B>`, `<I>`, `<BR/>`), then XML-escaped. Plain
 /// text is written exactly as before: HTML-escaped and nothing else.
+///
+/// The HTML layer (`html_escape::esc`, applied in `case_markdown`) matters:
+/// Azure DevOps renders a step's `parameterizedString` as HTML, so plain
+/// text written without it is read as markup - a typed `<cycleId>` vanished
+/// from ADO's own view, and a typed `&lt;` came back as `<`. The parser
+/// already undoes both layers, and it reads older single-escaped steps the
+/// same as before.
 fn step_text(text: &str) -> String {
     escape_xml(&crate::case_markdown::step_md_to_html(text))
 }

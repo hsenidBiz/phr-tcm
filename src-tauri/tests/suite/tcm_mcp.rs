@@ -380,6 +380,48 @@ fn get_wiki_page_percent_encodes_wiki_id_and_path() {
     assert_eq!(last.1, "/wiki-page?wiki=wiki-1&path=%2FDocs%2FAPI%20Guide");
 }
 
+/// A tool's free text is percent-encoded exactly as RFC 3986 unreserved
+/// allows: ALPHA / DIGIT / `-._~` kept, every other UTF-8 byte as `%XX`
+/// in upper case. Pinned against the encoder the bridge used to carry, over
+/// every ASCII character and some multi-byte ones.
+#[test]
+fn free_text_is_percent_encoded_byte_for_byte_as_before() {
+    fn reference(s: &str) -> String {
+        let mut out = String::with_capacity(s.len());
+        for b in s.bytes() {
+            if b.is_ascii_alphanumeric() || matches!(b, b'-' | b'.' | b'_' | b'~') {
+                out.push(b as char);
+            } else {
+                out.push_str(&format!("%{b:02X}"));
+            }
+        }
+        out
+    }
+    let mut texts: Vec<String> = (1u8..0x80).map(|b| (b as char).to_string()).collect();
+    texts.push((1u8..0x80).map(|b| b as char).collect());
+    texts.push("caf\u{e9} \u{2022} \u{1f600} a+b=c&d%e/f?g#h".to_string());
+    for text in texts {
+        let req = serde_json::json!({
+            "jsonrpc": "2.0", "id": 8, "method": "tools/call",
+            "params": { "name": "search_wiki", "arguments": { "query": text } }
+        })
+        .to_string();
+        let calls = std::cell::RefCell::new(vec![]);
+        let call = |method: &str, path: &str, body: &str| {
+            calls.borrow_mut().push((method.to_string(), path.to_string(), body.to_string()));
+            Ok((200, r#"{"results":[]}"#.to_string()))
+        };
+        handle_message(&req, "1.10.3", &call).unwrap();
+        let last = calls.borrow().last().unwrap().1.clone();
+        assert_eq!(last, format!("/search-wiki?q={}", reference(&text)), "{text:?}");
+    }
+    assert_eq!(
+        reference("caf\u{e9} ~a-b.c_d"),
+        "caf%C3%A9%20~a-b.c_d",
+        "the reference itself: upper-case hex, unreserved kept"
+    );
+}
+
 /// A switched-off tool disappears from tools/list.
 #[test]
 fn disabled_tools_are_hidden_from_the_list() {

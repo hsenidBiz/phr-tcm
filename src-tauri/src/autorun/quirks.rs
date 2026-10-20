@@ -289,12 +289,7 @@ pub fn save_quirks(root: &Path, org: &str, project: &str, quirks: &[Quirk]) -> R
     let path = quirks_path(root, org, project);
     std::fs::create_dir_all(path.parent().expect("projects folder")).map_err(|e| e.to_string())?;
     let json = serde_json::to_string_pretty(&list).map_err(|e| e.to_string())?;
-    let tmp = path.with_extension("json.tmp");
-    std::fs::write(&tmp, json).map_err(|e| e.to_string())?;
-    if let Err(e) = std::fs::rename(&tmp, &path) {
-        let _ = std::fs::remove_file(&tmp);
-        return Err(e.to_string());
-    }
+    crate::ai_tools::atomic_write(&path, &json)?;
     Ok(())
 }
 

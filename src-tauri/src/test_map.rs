@@ -7,7 +7,8 @@
 //! light/dark switch - but static: no revision poll, no comment boxes.
 //! Opening it again rewrites the file.
 
-use crate::import_parser::{esc, script_json};
+use crate::html_escape::esc;
+use crate::import_parser::script_json;
 use crate::steps_xml::Step;
 use crate::webtheme::PagePalette;
 

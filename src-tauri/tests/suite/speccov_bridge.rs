@@ -371,7 +371,7 @@ async fn a_failed_write_leaves_no_file_at_output_path() {
     let (status, out) = route(&ctx(), None, "POST", "/merge-cases", &body, "1.0.0").await;
     assert_eq!(status, 400, "{out}");
     assert!(!output_path.exists(), "a failed write must leave nothing at output_path: {out}");
-    let tmp_path = dir.path().join("no-such-subdir").join("merged.json.tmp");
+    let tmp_path = dir.path().join("no-such-subdir").join(format!("merged.json.tcm-tmp-{}", std::process::id()));
     assert!(!tmp_path.exists(), "no stray temp file should remain either: {out}");
 }
 

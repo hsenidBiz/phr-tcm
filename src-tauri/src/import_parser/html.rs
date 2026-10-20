@@ -6,6 +6,7 @@
 //! around the data: escaping, grouping, and the markup for each case.
 
 use crate::case_markdown::Field;
+use crate::html_escape::{esc, esc_attr};
 use crate::model::TestCase;
 
 /// Written entirely against the theme variables `webtheme` emits, so the
@@ -49,20 +50,6 @@ pub(crate) fn script_json<T: serde::Serialize>(value: &T, fallback: &str) -> Str
     serde_json::to_string(value)
         .map(|s| s.replace('<', "\\u003c"))
         .unwrap_or_else(|_| fallback.to_string())
-}
-
-pub(crate) fn esc(text: &str) -> String {
-    text.replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-        .replace('"', "&quot;")
-}
-
-/// `esc`, plus the single quote - for a value going into a `'`-quoted
-/// attribute (`esc` alone leaves a raw `'` that would close the attribute
-/// early and let the rest of the value run as markup).
-pub(crate) fn esc_attr(text: &str) -> String {
-    esc(text).replace('\'', "&#39;")
 }
 
 /// One piece of test case text - a step's action or expected result, or

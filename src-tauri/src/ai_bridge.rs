@@ -10581,20 +10581,8 @@ fn merge_cases_route(body: &str, ctx: &BridgeContext) -> (u16, String) {
     // place. A crash or error partway through a plain `fs::write` would
     // leave `output_path` existing but truncated, which is worse than the
     // merge never having run at all - the caller would find a file, not
-    // know it was cut short, and hand a half-draft to the next step. There
-    // is no existing atomic-write helper on this branch (the autorun
-    // store's version lives on an unmerged sibling), so it is inlined
-    // here rather than borrowed from elsewhere.
-    let tmp_path = format!("{}.tmp", req.output_path);
-    if let Err(e) = std::fs::write(&tmp_path, &text) {
-        let _ = std::fs::remove_file(&tmp_path);
-        return (
-            400,
-            serde_json::json!({ "error": format!("could not write {}: {e}", req.output_path) }).to_string(),
-        );
-    }
-    if let Err(e) = std::fs::rename(&tmp_path, &req.output_path) {
-        let _ = std::fs::remove_file(&tmp_path);
+    // know it was cut short, and hand a half-draft to the next step.
+    if let Err(e) = crate::ai_tools::atomic_write(std::path::Path::new(&req.output_path), &text) {
         return (
             400,
             serde_json::json!({ "error": format!("could not write {}: {e}", req.output_path) }).to_string(),

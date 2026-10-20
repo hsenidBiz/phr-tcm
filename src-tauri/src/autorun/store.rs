@@ -270,8 +270,8 @@ fn check_cleanup(sc: &CaseScript) -> Result<(), String> {
 ///    nothing written - this is what keeps an EARLIER entry from landing
 ///    just because it happened to be processed before a later one that
 ///    cannot be written (e.g. its filename is already a directory).
-/// 3. Write each entry to a `.tmp` sibling and `fs::rename` it into
-///    place. Each rename is a single filesystem operation - no reader
+/// 3. Write each entry to a temp sibling and rename it into place
+///    (`ai_tools::atomic_write`). Each rename is a single filesystem operation - no reader
 ///    ever sees a half-written case file - and by the time we reach it,
 ///    pass 2 has already ruled out the one failure mode this bundle
 ///    format can detect ahead of time.
@@ -326,12 +326,7 @@ pub fn save_scripts_atomically(root: &Path, scripts: &[CaseScript]) -> Result<()
 
     // Pass 3: stage then commit.
     for (path, json) in &entries {
-        let tmp = path.with_extension("json.tmp");
-        std::fs::write(&tmp, json).map_err(|e| SaveScriptsError::Io(e.to_string()))?;
-        if let Err(e) = std::fs::rename(&tmp, path) {
-            let _ = std::fs::remove_file(&tmp);
-            return Err(SaveScriptsError::Io(e.to_string()));
-        }
+        crate::ai_tools::atomic_write(path, json).map_err(SaveScriptsError::Io)?;
     }
     let ids: Vec<i32> = scripts.iter().map(|s| s.case_id).collect();
     scripts_changed(root, &ids);
@@ -342,7 +337,7 @@ pub fn save_scripts_atomically(root: &Path, scripts: &[CaseScript]) -> Result<()
 /// nothing else: the script's steps, repairs and last repair are written
 /// back exactly as they were read. The one way a mark changes - the
 /// assistant's `mark_autorun_suspected_defect`, its repair of the marked
-/// step, and a person's Clear all come through here. Written to a `.tmp`
+/// step, and a person's Clear all come through here. Written to a temp
 /// sibling and renamed into place, like a bundle save. Refused for a case
 /// with no script on this machine.
 pub fn set_suspected_defect(root: &Path, case_id: i32, mark: Option<SuspectedDefect>) -> Result<(), String> {
@@ -386,17 +381,12 @@ fn clear_mark(root: &Path, case_id: i32, step_number: Option<i32>) -> Result<boo
     Ok(true)
 }
 
-/// Write one script by a `.tmp` sibling and a rename. The caller holds the
+/// Write one script by a temp sibling and a rename. The caller holds the
 /// scripts lock.
 fn write_script(root: &Path, script: &CaseScript) -> Result<(), String> {
     let json = serde_json::to_string_pretty(script).map_err(|e| e.to_string())?;
     let path = scripts_dir(root).join(format!("case-{}.json", script.case_id));
-    let tmp = path.with_extension("json.tmp");
-    std::fs::write(&tmp, json).map_err(|e| e.to_string())?;
-    if let Err(e) = std::fs::rename(&tmp, &path) {
-        let _ = std::fs::remove_file(&tmp);
-        return Err(e.to_string());
-    }
+    crate::ai_tools::atomic_write(&path, &json)?;
     scripts_changed(root, &[script.case_id]);
     Ok(())
 }

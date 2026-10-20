@@ -590,7 +590,7 @@ fn a_report_of_a_component_step_lines_up() {
     .unwrap();
     let html = build_with_components(&run, &[component_script(7)], &pick_a_date_file(), "x", &no_shots, &|_| None);
     assert!(
-        html.contains(&format!("<dt>Action</dt><dd>Pick a date: {}</dd>", v2_lib::autorun::report::esc(&action_words(&typed[1])))),
+        html.contains(&format!("<dt>Action</dt><dd>Pick a date: {}</dd>", v2_lib::html_escape::esc_attr(&action_words(&typed[1])))),
         "{html}"
     );
     // Every outcome is listed, those the component ran named by it.
@@ -634,7 +634,7 @@ fn the_report_reads_the_components_of_its_own_project() {
     )
     .unwrap();
     assert!(
-        html.contains(&format!("<dd>Pick a date: {}</dd>", v2_lib::autorun::report::esc(&action_words(&typed[1])))),
+        html.contains(&format!("<dd>Pick a date: {}</dd>", v2_lib::html_escape::esc_attr(&action_words(&typed[1])))),
         "{html}"
     );
     assert!(!html.contains("has changed since the run"), "{html}");

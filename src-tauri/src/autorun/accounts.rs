@@ -177,12 +177,7 @@ pub fn save_accounts_for(root: &Path, env_id: &str, accounts: &[Account]) -> Res
     let path = accounts_path_for(root, &env_id);
     std::fs::create_dir_all(path.parent().expect("accounts folder")).map_err(|e| e.to_string())?;
     let json = serde_json::to_string_pretty(accounts).map_err(|e| e.to_string())?;
-    let tmp = path.with_extension("json.tmp");
-    std::fs::write(&tmp, json).map_err(|e| e.to_string())?;
-    if let Err(e) = std::fs::rename(&tmp, &path) {
-        let _ = std::fs::remove_file(&tmp);
-        return Err(e.to_string());
-    }
+    crate::ai_tools::atomic_write(&path, &json)?;
 
     let mut dropped = vec![];
     for old in &before {

@@ -107,22 +107,6 @@ pub fn handle_message(msg: &str, version: &str, call: BridgeCall) -> Option<Stri
     Some(serde_json::json!({ "jsonrpc": "2.0", "id": id, "result": result }).to_string())
 }
 
-/// RFC 3986 percent-encoding for query values: keep ALPHA / DIGIT / `-._~`,
-/// escape everything else (spaces, `&`, `%`, unicode bytes, ...). Used for
-/// free-text search so ai_bridge::q's naive `&`/`=` splitter can't be
-/// confused by separator characters embedded in the search text itself.
-fn percent_encode(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
-    for b in s.bytes() {
-        if b.is_ascii_alphanumeric() || matches!(b, b'-' | b'.' | b'_' | b'~') {
-            out.push(b as char);
-        } else {
-            out.push_str(&format!("%{b:02X}"));
-        }
-    }
-    out
-}
-
 fn schema(props: serde_json::Value, required: &[&str]) -> serde_json::Value {
     serde_json::json!({ "type": "object", "properties": props, "required": required })
 }
@@ -1180,7 +1164,7 @@ fn tools_call(params: &serde_json::Value, call: BridgeCall) -> serde_json::Value
             let target = if feature.is_empty() {
                 "/begin".to_string()
             } else {
-                format!("/begin?feature={}", percent_encode(feature))
+                format!("/begin?feature={}", urlencoding::encode(feature))
             };
             // Everything except `feature` is an answer. With none of them
             // present this is phase 1 (the questions); with any of them it
@@ -1221,7 +1205,7 @@ fn tools_call(params: &serde_json::Value, call: BridgeCall) -> serde_json::Value
                 _ => vec![],
             };
             if !ids.is_empty() {
-                params.push(format!("ids={}", ids.iter().map(|i| percent_encode(i)).collect::<Vec<_>>().join(",")));
+                params.push(format!("ids={}", ids.iter().map(|i| urlencoding::encode(i)).collect::<Vec<_>>().join(",")));
             }
             params.push(format!("limit={limit}&offset={offset}"));
             let mut target = format!("/test-cases?{}", params.join("&"));
@@ -1233,7 +1217,7 @@ fn tools_call(params: &serde_json::Value, call: BridgeCall) -> serde_json::Value
         "search_test_suites" => {
             let mut params: Vec<String> = vec![];
             if let Some(f) = args["query"].as_str().filter(|f| !f.trim().is_empty()) {
-                params.push(format!("q={}", percent_encode(f)));
+                params.push(format!("q={}", urlencoding::encode(f)));
             }
             if args["refresh"].as_bool().unwrap_or(false) {
                 params.push("refresh=true".to_string());
@@ -1282,7 +1266,7 @@ fn tools_call(params: &serde_json::Value, call: BridgeCall) -> serde_json::Value
         // same pattern as `check_spec_coverage` above.
         "merge_case_files" => call("POST", "/merge-cases", &args.to_string()),
         "get_autorun_guide" => match args["section"].as_str().map(str::trim).filter(|s| !s.is_empty()) {
-            Some(section) => call("GET", &format!("/autorun-guide?section={}", percent_encode(section)), ""),
+            Some(section) => call("GET", &format!("/autorun-guide?section={}", urlencoding::encode(section)), ""),
             None if args["quick"].as_bool().unwrap_or(false) => call("GET", "/autorun-guide?quick=true", ""),
             None if args["full"].as_bool().unwrap_or(false) => call("GET", "/autorun-guide", ""),
             // The whole guide is too long for one answer: the Quick rules,
@@ -1353,7 +1337,7 @@ fn tools_call(params: &serde_json::Value, call: BridgeCall) -> serde_json::Value
                 serde_json::Value::String(s) => s.trim().to_string(),
                 _ => String::new(),
             };
-            call("GET", &format!("/autorun-script?case_id={}", percent_encode(&id)), "")
+            call("GET", &format!("/autorun-script?case_id={}", urlencoding::encode(&id)), "")
         }
         "delete_autorun_script" => call("POST", "/autorun-script-delete", &args.to_string()),
         "get_autorun_network_wait" => call("GET", "/autorun-network-wait", ""),
@@ -1384,15 +1368,15 @@ fn tools_call(params: &serde_json::Value, call: BridgeCall) -> serde_json::Value
             // A locator travels as its JSON text; a css string as itself.
             match &args["within"] {
                 serde_json::Value::Null => {}
-                serde_json::Value::String(s) => params.push(format!("within={}", percent_encode(s))),
-                other => params.push(format!("within={}", percent_encode(&other.to_string()))),
+                serde_json::Value::String(s) => params.push(format!("within={}", urlencoding::encode(s))),
+                other => params.push(format!("within={}", urlencoding::encode(&other.to_string()))),
             }
             // Forwarded as written, so the route names what is wrong with it.
             match &args["nth"] {
                 serde_json::Value::Null => {}
                 serde_json::Value::Number(n) => params.push(format!("nth={n}")),
-                serde_json::Value::String(s) => params.push(format!("nth={}", percent_encode(s))),
-                other => params.push(format!("nth={}", percent_encode(&other.to_string()))),
+                serde_json::Value::String(s) => params.push(format!("nth={}", urlencoding::encode(s))),
+                other => params.push(format!("nth={}", urlencoding::encode(&other.to_string()))),
             }
             let target = if params.is_empty() { "/autorun-page".to_string() } else { format!("/autorun-page?{}", params.join("&")) };
             call("GET", &target, "")
@@ -1422,7 +1406,7 @@ fn tools_call(params: &serde_json::Value, call: BridgeCall) -> serde_json::Value
                 params.push(format!("case_id={id}"));
             }
             if let Some(id) = args["run_id"].as_str().filter(|s| !s.trim().is_empty()) {
-                params.push(format!("run_id={}", percent_encode(id.trim())));
+                params.push(format!("run_id={}", urlencoding::encode(id.trim())));
             }
             let target = if params.is_empty() {
                 "/autorun-failures".to_string()
@@ -1461,7 +1445,7 @@ fn tools_call(params: &serde_json::Value, call: BridgeCall) -> serde_json::Value
                     other if paging => other.to_string(),
                     _ => continue,
                 };
-                params.push(format!("{key}={}", percent_encode(&value)));
+                params.push(format!("{key}={}", urlencoding::encode(&value)));
             }
             let target = if params.is_empty() {
                 "/api-templates".to_string()
@@ -1482,7 +1466,7 @@ fn tools_call(params: &serde_json::Value, call: BridgeCall) -> serde_json::Value
         "save_api_fixture" => call("POST", "/api-template-fixture-save", &args.to_string()),
         "run_api_fixture" => call("POST", "/api-template-fixture-run", &args.to_string()),
         "list_api_fixtures" => match args["id"].as_str().map(str::trim).filter(|s| !s.is_empty()) {
-            Some(id) => call("GET", &format!("/api-template-fixtures?id={}", percent_encode(id)), ""),
+            Some(id) => call("GET", &format!("/api-template-fixtures?id={}", urlencoding::encode(id)), ""),
             None if args["full"].as_bool().unwrap_or(false) => call("GET", "/api-template-fixtures?full=true", ""),
             None => call("GET", "/api-template-fixtures", ""),
         },
@@ -1514,7 +1498,7 @@ fn tools_call(params: &serde_json::Value, call: BridgeCall) -> serde_json::Value
             let entry = args["entry"].as_str().unwrap_or("");
             let mut params: Vec<String> = vec![];
             if !entry.is_empty() {
-                params.push(format!("entry={}", percent_encode(entry)));
+                params.push(format!("entry={}", urlencoding::encode(entry)));
             }
             if args["dry_run"].as_bool().unwrap_or(false) {
                 params.push("dry_run=true".to_string());
@@ -1532,7 +1516,7 @@ fn tools_call(params: &serde_json::Value, call: BridgeCall) -> serde_json::Value
             // the route can refuse path+json as two sources rather than
             // silently preferring one.
             if let Some(p) = args["path"].as_str().filter(|p| !p.trim().is_empty()) {
-                params.push(format!("path={}", percent_encode(p)));
+                params.push(format!("path={}", urlencoding::encode(p)));
             }
             if args["in_place"].as_bool().unwrap_or(false) {
                 params.push("in_place=true".to_string());
@@ -1546,7 +1530,7 @@ fn tools_call(params: &serde_json::Value, call: BridgeCall) -> serde_json::Value
         }
         "validate_cases" => {
             let target = match args["path"].as_str().filter(|p| !p.trim().is_empty()) {
-                Some(p) => format!("/validate?path={}", percent_encode(p)),
+                Some(p) => format!("/validate?path={}", urlencoding::encode(p)),
                 None => "/validate".to_string(),
             };
             call("POST", &target, args["json"].as_str().unwrap_or(""))
@@ -1574,18 +1558,18 @@ fn tools_call(params: &serde_json::Value, call: BridgeCall) -> serde_json::Value
         }
         "get_tags" => {
             let target = match args["query"].as_str().filter(|f| !f.trim().is_empty()) {
-                Some(f) => format!("/tags?query={}", percent_encode(f)),
+                Some(f) => format!("/tags?query={}", urlencoding::encode(f)),
                 None => "/tags".to_string(),
             };
             call("GET", &target, "")
         }
         "search_pbis" => {
             let q = args["query"].as_str().unwrap_or("");
-            call("GET", &format!("/search-pbis?q={}", percent_encode(q)), "")
+            call("GET", &format!("/search-pbis?q={}", urlencoding::encode(q)), "")
         }
         "search_wiki" => {
             let q = args["query"].as_str().unwrap_or("");
-            call("GET", &format!("/search-wiki?q={}", percent_encode(q)), "")
+            call("GET", &format!("/search-wiki?q={}", urlencoding::encode(q)), "")
         }
         "get_wiki_page" => {
             let wiki_id = args["wiki_id"].as_str().unwrap_or("");
@@ -1594,8 +1578,8 @@ fn tools_call(params: &serde_json::Value, call: BridgeCall) -> serde_json::Value
                 "GET",
                 &format!(
                     "/wiki-page?wiki={}&path={}",
-                    percent_encode(wiki_id),
-                    percent_encode(path)
+                    urlencoding::encode(wiki_id),
+                    urlencoding::encode(path)
                 ),
                 "",
             )

@@ -7,12 +7,8 @@ use super::accounts::{session_path, valid_key};
 use crate::browser::session::SavedSession;
 use std::path::Path;
 
-pub fn now_ms() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_millis() as u64)
-        .unwrap_or_default()
-}
+/// Epoch milliseconds - the one clock reading the cache uses too.
+pub use crate::cache::now_ms;
 
 pub fn save_session(root: &Path, key: &str, s: &SavedSession) -> Result<(), String> {
     if !valid_key(key) {
@@ -21,13 +17,7 @@ pub fn save_session(root: &Path, key: &str, s: &SavedSession) -> Result<(), Stri
     let path = session_path(root, key)?;
     std::fs::create_dir_all(path.parent().expect("sessions folder")).map_err(|e| e.to_string())?;
     let json = serde_json::to_string(s).map_err(|e| e.to_string())?;
-    let tmp = path.with_extension("json.tmp");
-    std::fs::write(&tmp, json).map_err(|e| e.to_string())?;
-    if let Err(e) = std::fs::rename(&tmp, &path) {
-        let _ = std::fs::remove_file(&tmp);
-        return Err(e.to_string());
-    }
-    Ok(())
+    crate::ai_tools::atomic_write(&path, &json)
 }
 
 /// The saved session, if there is one and it is younger than

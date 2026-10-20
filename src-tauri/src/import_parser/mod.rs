@@ -20,7 +20,7 @@ pub use html::{
     export_queue_page, export_queue_page_in, export_queue_to_html, CommentCtx, DraftFile, DraftNoteCtx, NoteCtx,
     PageLayout,
 };
-pub(crate) use html::{esc, script_json};
+pub(crate) use html::script_json;
 
 use crate::model::{TestCase, MAX_TITLE_LEN, VALID_STATUSES};
 use crate::steps_xml::Step;
