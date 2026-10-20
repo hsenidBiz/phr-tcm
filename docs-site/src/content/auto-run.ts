@@ -420,6 +420,7 @@ export const autoRun: Screen = {
         "Drag: a script can drag one item before, after or onto another, for example **Drag the \"Grade C\" row before the \"Grade A\" row**. It is followed by a check of the new order.",
         "Dialogs: a script can check what a browser dialog says, then press OK or Cancel, or type into it first: **Expect a dialog containing \"saved\" and press OK**. A dialog the script does not expect is accepted, and the step says so.",
         "Tables: a script can check that a table or grid has a row, has no such row, is sorted by a column, or has a number of rows: **Check the \"Employees\" table has a row with Status \"Active\"**. Only the rows on screen are read, so filter first.",
+        "Thorough checks: a script can check every item of a list (**Check each match of the row: it matches /^AUTOTEST /**), a text by pattern, a count with a lower or upper bound, that a list shows its items in a given order, and where one element sits against another (**Check the \"New Cycle\" button is in the top-right of the element #bar**).",
         "Page errors: a script can fail a step when the page has a script error or a server error, or only count them. A case that counted some shows **page errors seen** and the number.",
         "PDF downloads: a download check can look for text in a PDF, its number of pages, or text on one page, for example **with the text \"Total\", 2 pages**. A PDF that is locked, scanned or damaged fails the check.",
       ],

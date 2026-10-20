@@ -1949,3 +1949,114 @@ fn the_guide_teaches_expect_position() {
         assert_eq!(a.validate(), Ok(()), "{relation}");
     }
 }
+
+/// "Checking thoroughly" is the section every pointer to it names, and it
+/// teaches each thorough check, the absence rule and the clean-up flip-back
+/// with a clean-up example that is a real step.
+#[test]
+fn the_guide_teaches_thorough_checks() {
+    use v2_lib::autorun::guide::guide_section;
+    use v2_lib::autorun::{CaseScript, StepScript};
+    let g = autorun_guide();
+    let section = guide_section(&g, "Checking thoroughly").expect("a Checking thoroughly section");
+    let flat = section.split_whitespace().collect::<Vec<_>>().join(" ");
+    for term in [
+        "`expect_each`",
+        "`min`",
+        "`matches`",
+        "`at_least`",
+        "`at_most`",
+        "`expect_order`",
+        "`expect_position`",
+        "no pixel",
+        "positive control",
+        "\"exact\": true",
+        "`preconditions`",
+        "clean-up step",
+        "debounced",
+    ] {
+        assert!(flat.contains(term), "Checking thoroughly never says {term}");
+    }
+    assert!(!section.contains('\u{2014}') && !section.contains('\u{2013}'), "no em or en dashes");
+
+    // The clean-up example is a real step, and a real script holding it saves.
+    let at = section.find("{ \"step_number\": 7").expect("the clean-up example");
+    let sample = first_balanced(&section, at, '{', '}');
+    let cleanup: StepScript = serde_json::from_str(sample).expect("the clean-up example parses");
+    assert!(cleanup.cleanup);
+    let case: CaseScript = serde_json::from_value(serde_json::json!({
+        "case_id": 9001,
+        "title": "Publish and put back",
+        "steps": [
+            { "step_number": 1, "actions": [ { "kind": "expect_visible", "selector": { "css": "#a" } } ] },
+            serde_json::from_str::<serde_json::Value>(sample).unwrap()
+        ]
+    }))
+    .unwrap();
+    assert_eq!(v2_lib::autorun::store::check_scripts(&[case]), Ok(()));
+
+    // Every pointer to the section lands on it, and the section is where the
+    // vocabulary lines send the reader.
+    let mut pointers = 0;
+    for line in g.lines() {
+        if line.contains("Checking thoroughly") && !line.starts_with("## ") {
+            pointers += 1;
+        }
+    }
+    assert!(pointers >= 4, "only {pointers} lines point at Checking thoroughly");
+    assert!(g.contains("## Checking thoroughly"));
+    assert_eq!(g.matches("\n## Checking thoroughly").count(), 1);
+    // And the section does what its pointers say it does: the vocabulary lines
+    // that send a reader there are about checks it teaches.
+    for line in g.lines().filter(|l| l.starts_with("- `{ \"kind\"") && l.contains("(see \"Checking thoroughly\")")) {
+        assert!(
+            ["expect_each", "expect_order", "expect_position"].iter().any(|k| line.contains(k)),
+            "an unexpected line points at Checking thoroughly: {line}"
+        );
+    }
+}
+
+/// The quick rules stay a short list; the new section does not grow them.
+#[test]
+fn the_quick_rules_do_not_grow_for_thorough_checks() {
+    assert!(v2_lib::autorun::guide::quick_rules().lines().count() <= 45);
+    assert!(!v2_lib::autorun::guide::quick_rules().contains("Checking thoroughly"));
+}
+
+/// "Saving it" says, before its example, what the save refuses for an
+/// absence check and that its notes never refuse.
+#[test]
+fn the_saving_section_names_the_absence_refusal_and_the_notes() {
+    use v2_lib::autorun::guide::guide_section;
+    let g = autorun_guide();
+    let section = guide_section(&g, "Saving it").expect("a Saving it section");
+    let before_example = section.split("For the case above").next().unwrap();
+    let flat = before_example.split_whitespace().collect::<Vec<_>>().join(" ");
+    for term in ["only ever seen matching nothing", "note:", "never refuse"] {
+        assert!(flat.contains(term), "Saving it never says {term}");
+    }
+    // The first clause is the save's own.
+    assert!(
+        v2_lib::autorun::seen_check::ABSENCE_UNPROVEN.contains("was only ever seen matching nothing on the live app"),
+        "the guide quotes a sentence the save no longer says"
+    );
+    // The shared-state and precondition sections point at what they need.
+    let shared = guide_section(&g, "Shared state a case changes").unwrap();
+    assert!(shared.contains("clean-up step") && shared.contains("Checking thoroughly"));
+    let pre = guide_section(&g, "Preconditions").unwrap();
+    assert!(pre.contains("names a test record and declares no"), "Preconditions never says the save notes it");
+}
+
+/// The part about locators that may match many names every check that does.
+#[test]
+fn the_selectors_section_lists_every_check_happy_with_many() {
+    use v2_lib::autorun::guide::guide_section;
+    let g = autorun_guide();
+    let section = guide_section(&g, "Selectors").expect("a Selectors section");
+    let flat = section.split_whitespace().collect::<Vec<_>>().join(" ");
+    let at = flat.find("are happy with many").expect("the happy-with-many sentence");
+    let sentence = &flat[at.saturating_sub(120)..at + 20];
+    for kind in ["expect_count", "expect_hidden", "wait_for", "expect_each", "expect_order"] {
+        assert!(sentence.contains(kind), "the happy-with-many sentence never names {kind}: {sentence}");
+    }
+}
