@@ -37,6 +37,7 @@ import {
   IconTestFiles,
 } from "../../lib/actionIcons";
 import { useDiscoveryActive } from "../../lib/discoveryActive";
+import { plural } from "../../lib/plural";
 import AccountsDialog from "./AccountsDialog";
 import AreasDialog from "./AreasDialog";
 import CaseSearch from "./CaseSearch";
@@ -49,8 +50,6 @@ import SaveWordsDialog, { BUILT_IN_SAVE_WORDS } from "./SaveWordsDialog";
 import SiteAddressDialog from "./SiteAddressDialog";
 import TestFilesDialog, { useTestFiles } from "./TestFilesDialog";
 import { useAutoRunReadiness } from "./useAutoRunReadiness";
-
-const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 
 /** Everything the Setup panel reports, and what the screen needs to know
  * about it. All of it

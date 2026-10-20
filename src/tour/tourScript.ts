@@ -208,9 +208,6 @@ export const TOUR_STEPS: TourStep[] = [
   },
 ];
 
-/** Where the app is right now, in the same shape a stop declares. */
-export type TourAt = TourWhere;
-
 /** Two locations are the same place. */
 export function sameTourWhere(a: TourWhere | undefined, b: TourWhere | undefined): boolean {
   if (!a || !b) return a === b;

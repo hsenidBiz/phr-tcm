@@ -31,6 +31,12 @@ const EMPTY: ReportPalette = {
   dark: false,
 };
 
+/**
+ * The palette in effect on the root right now. Any token that can't be
+ * read comes back empty and Rust substitutes its own default, so a partial
+ * read degrades to the page's original styling instead of an unreadable
+ * page.
+ */
 function readRoot(dark: boolean): ReportPalette {
   const style = getComputedStyle(document.documentElement);
   return {
@@ -50,19 +56,6 @@ function readRoot(dark: boolean): ReportPalette {
     warning: read(style, "warning"),
     dark,
   };
-}
-
-/**
- * The current palette. Any token that can't be read comes back empty and
- * Rust substitutes its own default, so a partial read degrades to the
- * page's original styling instead of an unreadable page.
- */
-export function reportPalette(): ReportPalette {
-  if (typeof document === "undefined") return EMPTY;
-  // The app marks dark themes with this class; it drives `color-scheme`
-  // in the page so the browser's own scrollbars and form controls follow
-  // rather than staying stubbornly light.
-  return readRoot(document.documentElement.classList.contains("dark"));
 }
 
 /**

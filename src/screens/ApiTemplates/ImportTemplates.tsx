@@ -4,13 +4,9 @@ import { commands, type TemplatesImportResult } from "../../bindings";
 import { Button } from "../../components/ui/button";
 import { Modal } from "../../components/ui/modal";
 import { IconCancel, IconConfirm, IconImport } from "../../lib/actionIcons";
+import { fileName } from "../../lib/fileSync";
 import { unwrapStr } from "../../lib/ipc";
 import { toast } from "../../lib/toast";
-
-/** The name of the file a person picked - never the folder it is in. */
-function fileNameOf(path: string): string {
-  return path.split(/[\\/]/).pop() || path;
-}
 
 /** One titled list of the result, left out when it is empty. */
 function ResultList({ title, lines, tone }: { title: string; lines: string[]; tone?: string }) {
@@ -77,7 +73,7 @@ export default function ImportTemplates({
   onImported: () => void;
 }) {
   const headingId = useId();
-  const name = fileNameOf(path);
+  const name = fileName(path);
   const run = useMutation({
     mutationFn: () => unwrapStr(commands.apiTemplatesImport(org, project, path)),
     onSuccess: () => onImported(),

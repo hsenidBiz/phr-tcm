@@ -18,9 +18,8 @@ import { Button } from "../../components/ui/button";
 import { Modal } from "../../components/ui/modal";
 import { IconCancel, IconClear } from "../../lib/actionIcons";
 import { unwrapStr } from "../../lib/ipc";
+import { plural } from "../../lib/plural";
 import { MODAL_LARGE } from "./modalWidths";
-
-const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
 

@@ -18,7 +18,6 @@ const listeners = new Set<() => void>();
  * nothing that only checks its value can tell "locked" from "still
  * waiting on Rust's answer" - this is that third state. */
 let hydrated = false;
-const hydratedListeners = new Set<() => void>();
 
 function notify(): void {
   for (const l of [...listeners]) l();
@@ -33,20 +32,12 @@ function publish(next: boolean): void {
 function publishHydrated(): void {
   if (hydrated) return;
   hydrated = true;
-  for (const l of [...hydratedListeners]) l();
 }
 
 export function subscribeExtras(cb: () => void): () => void {
   listeners.add(cb);
   return () => {
     listeners.delete(cb);
-  };
-}
-
-export function subscribeExtrasHydrated(cb: () => void): () => void {
-  hydratedListeners.add(cb);
-  return () => {
-    hydratedListeners.delete(cb);
   };
 }
 
@@ -84,10 +75,6 @@ export async function setExtrasUnlocked(on: boolean): Promise<void> {
 /** The hidden extras switch - for what belongs to it (the Extras card). */
 export function useExtrasUnlocked(): boolean {
   return useSyncExternalStore(subscribeExtras, extrasUnlockedSnapshot);
-}
-
-export function useExtrasHydrated(): boolean {
-  return useSyncExternalStore(subscribeExtrasHydrated, extrasHydratedSnapshot);
 }
 
 /** Tests only: back to locked and un-hydrated, without telling anyone. */

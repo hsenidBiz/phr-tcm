@@ -163,10 +163,6 @@ export function batchHeadingBefore(
   return run.cases[0]?.case_id === caseId ? "Batch 1" : null;
 }
 
-/** The sentence every case left was recorded with when a run stopped at a
- * reset point, before batches. Runs saved then keep it. */
-export const STOPPED_AT_RESET = "not run: the run stopped at a reset point";
-
 /** The words before the batch number in `stoppedAtPause` - the same as the
  * unattended run's (`autorun::replay::STOPPED_AT_PAUSE`). */
 export const STOPPED_AT_PAUSE = "not run: the run stopped at a pause before Batch";

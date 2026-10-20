@@ -17,7 +17,7 @@ import { useActiveEnvironmentName, useEnvironments } from "./lib/environments";
 import { activeEnvIdSnapshot, subscribeActiveEnv } from "./lib/activeEnv";
 import { Toaster } from "./components/ui/toaster";
 import { commands, events, type PbiHit, type PlanWithSuites } from "./bindings";
-import { loadWatches, saveWatches, upsertWatch } from "./lib/fileSync";
+import { fileName, loadWatches, saveWatches, upsertWatch } from "./lib/fileSync";
 import { applyRateLevel } from "./lib/adoRate";
 import { formatByteProgress } from "./lib/bytes";
 import { onlineSnapshot, subscribeOnline } from "./lib/network";
@@ -1058,7 +1058,7 @@ export default function App() {
         // the next edit read as though the whole file were new.
         if (list.some((w) => w.path === path)) return;
         saveWatches(org, pbiId, upsertWatch(list, { path, stamp: "", snapshot: [] }));
-        toast.info(`Watching ${path.split(/[\\/]/).pop()} - it will import itself when written.`);
+        toast.info(`Watching ${fileName(path)} - it will import itself when written.`);
       })
       .then((f) => {
         if (live) unlisten = f;

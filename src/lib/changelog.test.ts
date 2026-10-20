@@ -6,11 +6,18 @@ import {
   entriesSince,
   isBetaVersion,
   markChangelogSeen,
-  pendingChangelog,
   type ChangelogEntry,
+  updatedFrom,
 } from "./changelog";
 
 afterEach(() => localStorage.clear());
+
+/** What App shows after sign-in: `updatedFrom` decides whether this launch
+ * follows an update, then the entries since the version last seen. */
+function pendingChangelog(current: string): ChangelogEntry[] {
+  const seen = updatedFrom(current);
+  return seen ? entriesSince(seen, current) : [];
+}
 
 test("compareVersions orders numerically, not lexically", () => {
   expect(compareVersions("1.9.0", "1.10.0")).toBe(-1); // lexical would say >

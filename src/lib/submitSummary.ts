@@ -9,6 +9,7 @@
  * cannot delete the duplicate that would make.
  */
 import type { SubmitItemResult } from "../bindings";
+import { plural } from "./plural";
 
 export type SubmitSummary = {
   created: number;
@@ -18,8 +19,6 @@ export type SubmitSummary = {
   unknown: number;
   headline: string;
 };
-
-const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
 
 export function summariseSubmit(results: SubmitItemResult[]): SubmitSummary {
   const created = results.filter((r) => r.action === "created").length;
