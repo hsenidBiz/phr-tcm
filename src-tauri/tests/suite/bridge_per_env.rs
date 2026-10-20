@@ -500,6 +500,39 @@ fn the_network_tools_switch_follows_the_active_environment() {
     assert!(ctx.lock().unwrap().network_tools, "QA's own push brings QA's");
 }
 
+/// Fail closed: while the active environment cannot be read, a push that
+/// turns the network tools OFF for the environment the context already
+/// holds is still honoured; nothing there turns them on, and a push for
+/// another environment changes nothing.
+#[test]
+fn an_off_push_for_the_held_environment_is_honoured_when_the_file_cannot_be_read() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let (first, qa) = two_envs(root);
+    let ctx = Mutex::new(BridgeContext::default());
+    let on = || BridgeContext { network_tools: true, ..pushed() };
+    let off = || BridgeContext { network_tools: false, ..pushed() };
+    push_context_with(&ctx, Some(root), on(), &first);
+    assert!(ctx.lock().unwrap().network_tools);
+
+    // The file is now unreadable (corrupt after a crash).
+    std::fs::write(root.join("environments.json"), "{ not json").unwrap();
+    assert!(v2_lib::environments::read_active(root).is_err());
+
+    // Another environment's push, on or off, changes nothing.
+    push_context_with(&ctx, Some(root), off(), &qa);
+    assert!(ctx.lock().unwrap().network_tools, "a stale push turned it off");
+    // An ON push is not brought in by this path, and it keeps what was on.
+    push_context_with(&ctx, Some(root), on(), &first);
+    assert!(ctx.lock().unwrap().network_tools);
+    // The held environment's OFF push is honoured.
+    push_context_with(&ctx, Some(root), off(), &first);
+    assert!(!ctx.lock().unwrap().network_tools, "the person's OFF was ignored");
+    // And an ON push cannot turn it back on while the file is unreadable.
+    push_context_with(&ctx, Some(root), on(), &first);
+    assert!(!ctx.lock().unwrap().network_tools, "an ON push was believed without the environment");
+}
+
 // ------------------------------------------------- the allow files
 
 /// A machine where Claude Code is installed, our server registered for the

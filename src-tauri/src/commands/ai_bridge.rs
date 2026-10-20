@@ -214,8 +214,12 @@ pub fn push_context_with(
         next.db_writes = false;
         next.api_writes = false;
         // Like the tool list: kept as the context's own environment has it,
-        // and never turned on by a push for any other.
-        next.network_tools = ctx.gate.env_id.is_some() && ctx.network_tools;
+        // and never turned on here. Fail closed, though: an OFF push for the
+        // environment the context already holds is always honoured, even
+        // when the environments file cannot be read right now.
+        let held = ctx.gate.env_id.as_deref();
+        let off_for_held = held.is_some() && held == Some(env_id) && !next.network_tools;
+        next.network_tools = held.is_some() && ctx.network_tools && !off_for_held;
         if ctx.gate.env_id.is_some() {
             next.db_id = ctx.db_id.clone();
             next.disabled_tools = ctx.disabled_tools.clone();
