@@ -229,12 +229,7 @@ export const MCP_TOOLS: McpToolInfo[] = [
   {
     name: "get_accounts",
     label: "Read the accounts",
-    summary: "The active environment's account keys and usernames - with passwords only in a test environment.",
-  },
-  {
-    name: "list_test_files",
-    label: "List test files",
-    summary: "This project's Test files a case can upload, by name and size.",
+    summary: "The active environment's account keys and usernames - with passwords only in a test environment - and this project's Test files a case can upload.",
   },
   {
     name: "list_api_templates",
@@ -377,7 +372,6 @@ export const AUTORUN_TOOLS = [
   "set_autorun_order",
   "propose_accounts",
   "get_accounts",
-  "list_test_files",
   "get_autorun_network_wait",
   "list_autorun_requests",
   "search_autorun_requests",
@@ -503,7 +497,6 @@ export const TOOL_PAIRS: readonly (readonly string[])[] = [
     "set_autorun_order",
     "propose_accounts",
     "get_accounts",
-    "list_test_files",
     "get_autorun_network_wait",
     "list_autorun_requests",
     "search_autorun_requests",
@@ -665,6 +658,8 @@ export const RENAMED_TOOLS: Readonly<Record<string, string>> = {
   retire_autorun_quirk: "record_quirk",
   record_app_quirk: "record_quirk",
   retire_app_quirk: "record_quirk",
+  // Folded into a sibling as an argument or part of its answer.
+  list_test_files: "get_accounts",
 };
 
 /** Tools that ride in more than one row. Such a tool is off only while

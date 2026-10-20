@@ -616,12 +616,7 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
         },
         {
             "name": "get_accounts",
-            "description": "The app's active environment and its accounts: key, label and username - the keys are what a script's `account` or a template run names. Passwords are included only when a person has marked the environment as a test environment; otherwise a note says so. Never write a username or password into a script or template.",
-            "inputSchema": schema(serde_json::json!({}), &[]),
-        },
-        {
-            "name": "list_test_files",
-            "description": "The current project's Test files - the documents a case's upload step sends - each by name and size, and nothing else. Read-only. A file a case uploads that is not here is one the person adds in the app (Auto Run, Setup, Test files); you cannot add one.",
+            "description": "The app's active environment and its accounts: key, label and username - the keys are what a script's `account` or a template run names. Passwords are included only when a person has marked the environment as a test environment; otherwise a note says so. Never write a username or password into a script or template. Also the project's `test_files` (name and size), the only files a case's upload step can send; one that is missing is for the person to add in Auto Run, Setup, Test files - you cannot.",
             "inputSchema": schema(serde_json::json!({}), &[]),
         },
         {
@@ -1457,7 +1452,6 @@ fn tools_call(params: &serde_json::Value, call: BridgeCall) -> serde_json::Value
         "set_autorun_order" => call("POST", "/autorun-order", &args.to_string()),
         "propose_accounts" => call("POST", "/accounts-propose", &args.to_string()),
         "get_accounts" => call("GET", "/accounts", ""),
-        "list_test_files" => call("GET", "/autorun-test-files", ""),
         "list_api_templates" => {
             // Text filters pass through percent-encoded. Offset and limit
             // may arrive as numbers or as numeric strings; anything else

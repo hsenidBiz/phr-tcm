@@ -133,7 +133,6 @@ fn tools_list_names_every_tool() {
             "set_autorun_order",
             "propose_accounts",
             "get_accounts",
-            "list_test_files",
             "get_autorun_network_wait",
             "list_autorun_requests",
             "search_autorun_requests",
@@ -1548,34 +1547,18 @@ fn the_save_tool_documents_a_scripts_area() {
     assert!(props["edits"]["description"].as_str().unwrap().contains("area?"), "{props}");
 }
 
-/// `list_test_files` belongs to the Auto Run row: listed where Auto Run is
-/// offered, "not available" where it is not, and a plain read of its own
-/// route.
+/// The project's Test files come with `get_accounts` (the old
+/// `list_test_files` is gone): its description says so, and it is still a
+/// plain read of `/accounts`.
 #[test]
-fn list_test_files_is_an_auto_run_read_of_its_own_route() {
-    assert!(module_of_tool("list_test_files") == Some(Module::AutoRun));
-    let names = listed_names(&stub(200, r#"{"disabled":[]}"#));
-    assert!(names.iter().any(|n| n == "list_test_files"), "{names:?}");
-
-    let (off, on) = tool_policy_from(Ok((200, r#"{"disabled":[],"modules":["db_access","writing_style"]}"#.into())));
-    assert!(!on.contains(&Module::AutoRun));
-    assert!(off.iter().any(|n| n == "list_test_files"), "not disabled with its module off: {off:?}");
-    assert!(v2_lib::mcp::refusal_text("list_test_files", &on).contains("not available"));
-
-    let calls = std::cell::RefCell::new(vec![]);
-    let call = |method: &str, path: &str, body: &str| {
-        calls.borrow_mut().push((method.to_string(), path.to_string(), body.to_string()));
-        Ok((200, "{}".to_string()))
-    };
-    let req = serde_json::json!({
-        "jsonrpc": "2.0", "id": 1, "method": "tools/call",
-        "params": { "name": "list_test_files", "arguments": {} },
-    });
-    let resp = handle_message(&req.to_string(), "1.0.0", &call).unwrap();
+fn get_accounts_also_gives_the_test_files() {
+    let resp = handle_message(r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#, "1.0.0", &stub(200, "{}")).unwrap();
     let v: serde_json::Value = serde_json::from_str(&resp).unwrap();
-    assert_ne!(v["result"]["isError"], serde_json::json!(true), "{resp}");
-    let (m, p, _) = calls.borrow().last().unwrap().clone();
-    assert_eq!((m.as_str(), p.as_str()), ("GET", "/autorun-test-files"));
+    let tools = v["result"]["tools"].as_array().unwrap();
+    assert!(tools.iter().all(|t| t["name"] != "list_test_files"), "list_test_files is gone");
+    let d = tools.iter().find(|t| t["name"] == "get_accounts").unwrap()["description"].as_str().unwrap();
+    assert!(d.contains("`test_files`") && d.contains("you cannot"), "{d}");
+    assert!(d.contains("Never write a username or password into a script"), "{d}");
 }
 
 /// `replay_autorun_to_step` is one of the Auto Run tools: listed with them

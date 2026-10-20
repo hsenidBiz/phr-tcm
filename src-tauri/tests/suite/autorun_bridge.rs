@@ -3027,10 +3027,13 @@ async fn a_repair_that_leaves_the_area_out_does_not_erase_it() {
     assert_eq!(load_script(dir.path(), 7).unwrap().unwrap().area.as_deref(), Some("Manage Cycle"));
 }
 
-/// `list_test_files`: the project's Test files by name and human size, and
-/// nothing else - no path, no date. Gated with the other Auto Run routes.
+/// `get_accounts` carries the project's Test files: by name and human size,
+/// and nothing else - no path, no date. With no project open there is no
+/// folder to read, and a note says so in their place; the accounts still
+/// come. Gated with the other Auto Run routes.
 #[tokio::test]
-async fn list_test_files_gives_names_and_sizes_only() {
+async fn get_accounts_gives_the_test_files_by_name_and_size_only() {
+    use v2_lib::ai_bridge::TEST_FILES_NEED_A_PROJECT;
     let dir = TempDir::new();
     let _root = crate::serial::autorun();
     set_root(dir.path().to_path_buf());
@@ -3039,27 +3042,31 @@ async fn list_test_files_gives_names_and_sizes_only() {
     std::fs::write(folder.join("appraisal.pdf"), vec![0u8; 1536]).unwrap();
     std::fs::write(folder.join("note.txt"), b"hello").unwrap();
 
-    let (status, body) = route(&ctx(), None, "GET", "/autorun-test-files", "", "1.0.0").await;
+    let (status, body) = route(&ctx(), None, "GET", "/accounts", "", "1.0.0").await;
     assert_eq!(status, 200, "{body}");
     let v: serde_json::Value = serde_json::from_str(&body).unwrap();
     assert_eq!(
-        v,
-        serde_json::json!({ "test_files": [
+        v["test_files"],
+        serde_json::json!([
             { "name": "appraisal.pdf", "size": "1.5 KB" },
             { "name": "note.txt", "size": "5 bytes" },
-        ] })
+        ])
     );
+    assert!(v.get("test_files_note").is_none(), "{body}");
     let shown = folder.display().to_string();
     assert!(!body.contains(&shown) && !body.contains("modified"), "{body}");
 
     // No project open: there is no Test files folder to read.
-    let (status, body) = route(&BridgeContext::default(), None, "GET", "/autorun-test-files", "", "1.0.0").await;
-    assert_eq!(status, 409, "{body}");
-    assert!(body.contains("project"), "{body}");
+    let (status, body) = route(&BridgeContext::default(), None, "GET", "/accounts", "", "1.0.0").await;
+    assert_eq!(status, 200, "{body}");
+    let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert!(v.get("test_files").is_none(), "{body}");
+    assert_eq!(v["test_files_note"], TEST_FILES_NEED_A_PROJECT);
+    assert!(v["accounts"].is_array(), "{body}");
 
-    let (status, body) = module_guard_for("/autorun-test-files", &Default::default()).expect("refused outside Auto Run");
-    assert_eq!((status, body.as_str()), (404, "Auto Run is switched off in Modules"));
-    assert!(module_guard_for("/autorun-test-files", &v2_lib::modules::Module::ALL.into_iter().collect()).is_none());
+    // The old route is gone.
+    let (status, _) = route(&ctx(), None, "GET", "/autorun-test-files", "", "1.0.0").await;
+    assert_eq!(status, 404);
 }
 
 /// "The active environment" names its database as a person reads it - the

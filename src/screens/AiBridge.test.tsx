@@ -1073,7 +1073,6 @@ test("switching the Auto Run scripts row off sends every tool name in the disabl
     "import_autorun_requests",
     "inspect_autorun_element",
     "list_autorun_requests",
-    "list_test_files",
     "mark_autorun_suspected_defect",
     "probe_autorun_locator",
     "propose_accounts",

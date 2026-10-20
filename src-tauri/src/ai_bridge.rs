@@ -486,9 +486,9 @@ pub async fn route(
         // (never passwords) for a person to add, and reads the ones there -
         // passwords included only in an environment marked as a test one.
         ("POST", "/accounts-propose") => accounts_propose(body),
+        // With the project's Test files beside them, by name and size: what
+        // a case uploads.
         ("GET", "/accounts") => accounts_read(ctx),
-        // The project's Test files, by name and size: what a case uploads.
-        ("GET", "/autorun-test-files") => autorun_test_files(ctx),
         // The API template routes: gated with the Auto Run ones by the
         // guard above. Proving and running write to the application, so
         // both also need the person's own switch (`ctx.api_writes`); the
@@ -740,28 +740,24 @@ fn project_test_files(root: &std::path::Path, ctx: &BridgeContext) -> Vec<crate:
     crate::test_files::list(&crate::test_files::folder(root, &ctx.org, &ctx.project)).unwrap_or_default()
 }
 
-/// Said by `list_test_files` with no project open: Test files belong to one.
-const TEST_FILES_NEED_A_PROJECT: &str = "open a project in the app first - Test files belong to a project";
+/// Said in `get_accounts`' answer, in place of the Test files, with no
+/// project open: Test files belong to one.
+pub const TEST_FILES_NEED_A_PROJECT: &str = "open a project in the app first - Test files belong to a project";
 
-/// `GET /autorun-test-files`: this project's Test files, each by name and
-/// human size and nothing else - never a path or a date.
-fn autorun_test_files(ctx: &BridgeContext) -> (u16, String) {
-    let root = match autorun_root() {
-        Ok(r) => r,
-        Err(refused) => return refused,
-    };
+/// This project's Test files for `get_accounts`' answer, each by name and
+/// human size and nothing else - never a path or a date. `Err` is the
+/// sentence said in their place: no project open, or a folder that could
+/// not be read.
+fn test_files_answer(root: &std::path::Path, ctx: &BridgeContext) -> Result<Vec<serde_json::Value>, String> {
     if ctx.org.trim().is_empty() || ctx.project.trim().is_empty() {
-        return (409, TEST_FILES_NEED_A_PROJECT.to_string());
+        return Err(TEST_FILES_NEED_A_PROJECT.to_string());
     }
-    let files = match crate::test_files::list(&crate::test_files::folder(&root, &ctx.org, &ctx.project)) {
-        Ok(f) => f,
-        Err(e) => return (500, e),
-    };
-    let rows: Vec<serde_json::Value> = files
+    let files = crate::test_files::list(&crate::test_files::folder(root, &ctx.org, &ctx.project))
+        .map_err(|e| format!("the Test files could not be read: {e}"))?;
+    Ok(files
         .into_iter()
         .map(|f| serde_json::json!({ "name": f.name, "size": crate::test_files::human_size(u64::from(f.size)) }))
-        .collect();
-    (200, serde_json::json!({ "test_files": rows }).to_string())
+        .collect())
 }
 
 /// Said on every answer of a discovery that must not save
@@ -8235,7 +8231,9 @@ pub const GET_ACCOUNTS_OFF: &str =
 /// `GET /accounts`: the active environment's accounts - key, label and
 /// username, and the password ONLY when the environment is marked as a
 /// test environment. The one place a password leaves the app; it is never
-/// logged, and the log line says only how many were read.
+/// logged, and the log line says only how many were read. Beside them, the
+/// project's Test files (`test_files_answer`), or `test_files_note` saying
+/// why there are none to show.
 ///
 /// Refused while the person has switched `get_accounts` off on the AI
 /// Bridge tab. The MCP proxy already hides a switched-off tool; this route
@@ -8275,6 +8273,10 @@ fn accounts_read(ctx: &BridgeContext) -> (u16, String) {
         "test_environment": shown,
         "accounts": list,
     });
+    match test_files_answer(&root, ctx) {
+        Ok(files) => out["test_files"] = serde_json::Value::Array(files),
+        Err(why) => out["test_files_note"] = serde_json::Value::String(why),
+    }
     if !shown {
         out["note"] = serde_json::Value::String(format!(
             "{} is not marked as a test environment, so no password is shown - scripts and templates name an account by its key",

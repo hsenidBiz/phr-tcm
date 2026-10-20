@@ -583,7 +583,6 @@ fn each_tool_belongs_to_its_module() {
             "set_autorun_order",
             "propose_accounts",
             "get_accounts",
-            "list_test_files",
             "get_autorun_network_wait",
             "list_autorun_requests",
             "search_autorun_requests",
@@ -838,7 +837,7 @@ fn the_setup_command_is_an_auto_run_routine_offered_only_with_auto_run() {
         "db_lookup",
         "db_query",
         "propose_accounts",
-        "list_test_files",
+        "get_accounts",
         "list_api_templates",
     ] {
         assert!(body.contains(&format!("`{tool}`")), "the setup routine never names `{tool}`");
