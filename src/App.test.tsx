@@ -10,6 +10,7 @@ import { getThemeChoice, setThemeChoice } from "./lib/theme";
 import { commands } from "./bindings";
 import { saveDbWrites, saveSelectedDb } from "./lib/dbServer";
 import { saveApiWrites } from "./lib/apiTemplates";
+import { saveNetworkTools } from "./lib/networkTools";
 import { setActiveEnvId } from "./lib/activeEnv";
 import { claimCacheFor } from "./lib/cache";
 import { resetForTests as resetNotifications } from "./lib/notifications";
@@ -529,6 +530,18 @@ test("signing in starts the AI bridge and pushes org/project context", async () 
   // No environment known in this test: the push says so, and Rust then
   // keeps every write off whatever the switches say.
   expect(pushes[pushes.length - 1].switches).toEqual({ dbWrites: false, apiWrites: true, networkTools: false, envId: "" });
+
+  // The Network tools switch reaches the push as true too: dropping it from
+  // the effect or the switches object would leave every assertion above
+  // green and the tools off for good.
+  act(() => saveNetworkTools(true));
+  await vi.waitFor(() =>
+    expect(pushes[pushes.length - 1].switches).toEqual({ dbWrites: false, apiWrites: true, networkTools: true, envId: "" }),
+  );
+  act(() => saveNetworkTools(false));
+  await vi.waitFor(() =>
+    expect(pushes[pushes.length - 1].switches).toEqual({ dbWrites: false, apiWrites: true, networkTools: false, envId: "" }),
+  );
 });
 
 const ENV = (id: string, name: string) => ({
