@@ -1119,7 +1119,7 @@ fn template_call(v: &serde_json::Value, shape: &str) -> Result<TemplateCall, (u1
             return Err((
                 400,
                 format!(
-                    "this call needs an \"account\" - one of the account keys get_api_template_guide lists. Expected {shape}."
+                    "this call needs an \"account\" - one of the account keys get_guide (topic api_templates) lists. Expected {shape}."
                 ),
             ))
         }
@@ -1172,7 +1172,7 @@ pub async fn api_template_prove<B: crate::api_templates::held::Keeps, D: crate::
     };
     let template: ApiTemplate = match serde_json::from_value(draft) {
         Ok(t) => t,
-        Err(e) => return (400, format!("that is not a template: {e} - call get_api_template_guide for the format")),
+        Err(e) => return (400, format!("that is not a template: {e} - call get_guide (topic api_templates) for the format")),
     };
     let call = match template_call(&v, PROVE_SHAPE) {
         Ok(c) => c,
@@ -1643,7 +1643,7 @@ pub fn api_fixture_save(ctx: &BridgeContext, body: &str) -> (u16, String) {
         Ok(f) => f,
         Err(e) => {
             let said = crate::api_templates::fixture::shape_problem(&raw, &e);
-            return (400, format!("that is not a fixture: {said} - call get_api_template_guide for the format"));
+            return (400, format!("that is not a fixture: {said} - call get_guide (topic api_templates) for the format"));
         }
     };
     let existed = matches!(fixture_store::load(&root, &ctx.org, &ctx.project, &fixture.id), Ok(Some(_)));
@@ -3781,7 +3781,7 @@ async fn autorun_try(
         Err(e) => {
             return (
                 400,
-                format!("that is not an action: {e} - call get_autorun_guide for the vocabulary."),
+                format!("that is not an action: {e} - call get_guide (topic autorun) for the vocabulary."),
             )
         }
     };
@@ -6206,7 +6206,7 @@ async fn autorun_discover_action(
         Err(e) => {
             return (
                 400,
-                format!("that is not an action: {e} - call get_autorun_guide for the vocabulary."),
+                format!("that is not an action: {e} - call get_guide (topic autorun) for the vocabulary."),
             )
         }
     };
@@ -6283,7 +6283,7 @@ async fn autorun_discover_actions(
             Err(e) => {
                 return (
                     400,
-                    format!("action {} is not an action: {e} - call get_autorun_guide for the vocabulary.", i + 1),
+                    format!("action {} is not an action: {e} - call get_guide (topic autorun) for the vocabulary.", i + 1),
                 )
             }
         }
@@ -8796,7 +8796,7 @@ struct SaveRequest {
 
 fn bad_scripts(e: serde_json::Error) -> String {
     format!(
-        "that is not a list of action scripts: {e}. Expected an array of {{ case_id, title, steps: [{{ step_number, actions }}] }} - call get_autorun_guide for the format."
+        "that is not a list of action scripts: {e}. Expected an array of {{ case_id, title, steps: [{{ step_number, actions }}] }} - call get_guide (topic autorun) for the format."
     )
 }
 
@@ -10260,7 +10260,7 @@ async fn validate_json(
                         if !m.is_empty() && !known.iter().any(|a| a.eq_ignore_ascii_case(m)) {
                             warnings.push(format!(
                                 "Test case {} ('{}'): Module '{}' is not an allowed value in \
-                                 this organization - pick one from get_writing_guide.",
+                                 this organization - pick one from get_guide (topic writing).",
                                 i + 1,
                                 tc.title,
                                 m

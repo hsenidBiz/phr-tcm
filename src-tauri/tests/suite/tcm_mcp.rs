@@ -94,22 +94,21 @@ fn tools_list_names_every_tool() {
         .map(|t| t["name"].as_str().unwrap())
         .collect();
     // This test binary is a development build (cargo test compiles with
-    // debug assertions on), so with nothing disabled the forty-nine dev-only
-    // tools (Auto Run's forty, then the API templates row's nine) are listed
+    // debug assertions on), so with nothing disabled the forty-seven dev-only
+    // tools (Auto Run's thirty-nine, then the API templates row's eight) are listed
     // like any other switchable tool - between merge_case_files and
     // db_lookup, where they sit in the source.
     assert_eq!(
         names,
         vec![
             "begin_test_case_writing",
-            "get_writing_guide",
+            "get_guide",
             "get_test_cases",
             "search_test_suites",
             "get_suite_test_cases",
             "get_run_results",
             "check_spec_coverage",
             "merge_case_files",
-            "get_autorun_guide",
             "save_autorun_script",
             "get_autorun_script",
             "delete_autorun_script",
@@ -150,7 +149,6 @@ fn tools_list_names_every_tool() {
             "set_autorun_cookie",
             "clear_autorun_cookies",
             "inspect_autorun_element",
-            "get_api_template_guide",
             "list_api_templates",
             "prove_api_template",
             "run_api_template",
@@ -169,7 +167,6 @@ fn tools_list_names_every_tool() {
             "new_report",
             "preview_report",
             "preview_report_live",
-            "get_report_guide",
             "optimize_cases",
             "transform_cases",
             "validate_cases",
@@ -319,7 +316,7 @@ fn get_test_cases_requires_neither_a_pbi_nor_ids_in_its_schema() {
 
 #[test]
 fn bridge_errors_surface_as_tool_errors_not_crashes() {
-    let req = r#"{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"get_writing_guide","arguments":{}}}"#;
+    let req = r#"{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"get_guide","arguments":{"topic":"writing"}}}"#;
     let down = |_: &str, _: &str, _: &str| Err("connection refused".to_string());
     let resp = handle_message(req, "1.10.3", &down).unwrap();
     let v: serde_json::Value = serde_json::from_str(&resp).unwrap();
@@ -690,7 +687,7 @@ fn a_failed_tool_call_says_which_kind_of_failure_it_was() {
 
     // 3. A REAL transport failure still says so - the fix must not have
     //    swapped one blanket message for another.
-    let req = r#"{"jsonrpc":"2.0","id":9,"method":"tools/call","params":{"name":"get_writing_guide","arguments":{}}}"#;
+    let req = r#"{"jsonrpc":"2.0","id":9,"method":"tools/call","params":{"name":"get_guide","arguments":{"topic":"writing"}}}"#;
     let down = |_m: &str, _p: &str, _b: &str| -> Result<(u16, String), String> {
         Err("handshake file missing - is the app running?".into())
     };
@@ -720,7 +717,7 @@ fn core_tools_survive_a_disabled_list_and_autorun_tools_are_switchable_in_a_dev_
     let names: Vec<&str> = v["result"]["tools"].as_array().unwrap().iter().map(|t| t["name"].as_str().unwrap()).collect();
     assert!(names.contains(&"begin_test_case_writing") && names.contains(&"transform_cases"), "{names:?}");
     assert!(
-        names.contains(&"get_autorun_guide")
+        names.contains(&"start_autorun_discovery")
             && names.contains(&"save_autorun_script")
             && names.contains(&"get_autorun_page"),
         "none was named as disabled, and this is a development build: {names:?}"
@@ -751,7 +748,7 @@ fn autorun_tools_named_disabled_in_a_dev_build_are_absent_and_refused_the_ordina
         if path == "/tools" {
             return Ok((
                 200,
-                r#"{"disabled":["get_autorun_guide","save_autorun_script","get_autorun_script","delete_autorun_script","get_autorun_network_wait","get_autorun_page","probe_autorun_locator","try_autorun_action","replay_autorun_to_step","stop_autorun_replay","start_autorun_discovery","discover_autorun_action","discover_autorun_actions","save_autorun_area","end_autorun_discovery","release_autorun_browser","reset_autorun_browser","save_autorun_component","remove_autorun_component","get_autorun_failures","record_autorun_quirk","retire_autorun_quirk","record_validation_rule","mark_autorun_suspected_defect","set_autorun_order","list_autorun_requests","search_autorun_requests","get_autorun_request","get_autorun_response","get_autorun_response_body","set_autorun_capture","get_autorun_capture","export_autorun_requests","import_autorun_requests","set_autorun_headers","get_autorun_cookies","set_autorun_cookie","clear_autorun_cookies","inspect_autorun_element"]}"#.into(),
+                r#"{"disabled":["save_autorun_script","get_autorun_script","delete_autorun_script","get_autorun_network_wait","get_autorun_page","probe_autorun_locator","try_autorun_action","replay_autorun_to_step","stop_autorun_replay","start_autorun_discovery","discover_autorun_action","discover_autorun_actions","save_autorun_area","end_autorun_discovery","release_autorun_browser","reset_autorun_browser","save_autorun_component","remove_autorun_component","get_autorun_failures","record_autorun_quirk","retire_autorun_quirk","record_validation_rule","mark_autorun_suspected_defect","set_autorun_order","list_autorun_requests","search_autorun_requests","get_autorun_request","get_autorun_response","get_autorun_response_body","set_autorun_capture","get_autorun_capture","export_autorun_requests","import_autorun_requests","set_autorun_headers","get_autorun_cookies","set_autorun_cookie","clear_autorun_cookies","inspect_autorun_element"]}"#.into(),
             ));
         }
         Ok((200, "{}".into()))
@@ -1112,8 +1109,7 @@ fn db_no_ask_needs_an_explicit_yes() {
     assert!(!db_no_ask_from(&Err("the app is closed".into())));
 }
 
-const API_TEMPLATE_TOOLS: [&str; 9] = [
-    "get_api_template_guide",
+const API_TEMPLATE_TOOLS: [&str; 8] = [
     "list_api_templates",
     "prove_api_template",
     "run_api_template",
@@ -1155,7 +1151,7 @@ fn the_api_template_tools_are_listed_where_auto_run_is_offered_and_absent_where_
         if path == "/tools" {
             return Ok((
                 200,
-                r#"{"disabled":["get_api_template_guide","list_api_templates","prove_api_template","run_api_template","save_api_flow","get_api_flow_progress","save_api_fixture","run_api_fixture","list_api_fixtures"]}"#
+                r#"{"disabled":["list_api_templates","prove_api_template","run_api_template","save_api_flow","get_api_flow_progress","save_api_fixture","run_api_fixture","list_api_fixtures"]}"#
                     .into(),
             ));
         }
@@ -1188,7 +1184,7 @@ fn the_api_template_tools_call_their_routes() {
     let fixture_args = serde_json::json!({ "fixture": { "id": "draft-cycle", "steps": [] } });
     let run_fixture_args = serde_json::json!({ "id": "draft-cycle", "browser": "chrome" });
     let cases = [
-        ("get_api_template_guide", serde_json::json!({}), "GET", "/api-template-guide", None),
+        ("get_guide", serde_json::json!({ "topic": "api_templates" }), "GET", "/api-template-guide", None),
         ("list_api_templates", serde_json::json!({}), "GET", "/api-templates", None),
         ("prove_api_template", prove_args.clone(), "POST", "/api-template-prove", Some(prove_args)),
         ("run_api_template", run_args.clone(), "POST", "/api-template-run", Some(run_args)),
@@ -1437,7 +1433,7 @@ fn with_auto_run_off_and_api_templates_on_the_quirk_tool_stays() {
         if path == "/tools" {
             return Ok((
                 200,
-                r#"{"disabled":["get_autorun_guide","save_autorun_script","get_autorun_script","delete_autorun_script","get_autorun_network_wait","get_autorun_page","probe_autorun_locator","try_autorun_action","replay_autorun_to_step","stop_autorun_replay","start_autorun_discovery","discover_autorun_action","discover_autorun_actions","save_autorun_area","end_autorun_discovery","release_autorun_browser","reset_autorun_browser","save_autorun_component","remove_autorun_component","get_autorun_failures","record_validation_rule","mark_autorun_suspected_defect","set_autorun_order","list_autorun_requests","search_autorun_requests","get_autorun_request","get_autorun_response","get_autorun_response_body","set_autorun_capture","get_autorun_capture","export_autorun_requests","import_autorun_requests","set_autorun_headers","get_autorun_cookies","set_autorun_cookie","clear_autorun_cookies","inspect_autorun_element"]}"#.into(),
+                r#"{"disabled":["save_autorun_script","get_autorun_script","delete_autorun_script","get_autorun_network_wait","get_autorun_page","probe_autorun_locator","try_autorun_action","replay_autorun_to_step","stop_autorun_replay","start_autorun_discovery","discover_autorun_action","discover_autorun_actions","save_autorun_area","end_autorun_discovery","release_autorun_browser","reset_autorun_browser","save_autorun_component","remove_autorun_component","get_autorun_failures","record_validation_rule","mark_autorun_suspected_defect","set_autorun_order","list_autorun_requests","search_autorun_requests","get_autorun_request","get_autorun_response","get_autorun_response_body","set_autorun_capture","get_autorun_capture","export_autorun_requests","import_autorun_requests","set_autorun_headers","get_autorun_cookies","set_autorun_cookie","clear_autorun_cookies","inspect_autorun_element"]}"#.into(),
             ));
         }
         Ok((200, "ok".into()))
@@ -1466,7 +1462,7 @@ fn the_account_tools_are_listed_only_with_the_auto_run_row_where_auto_run_is_off
         if path == "/tools" {
             return Ok((
                 200,
-                r#"{"disabled":["get_autorun_guide","save_autorun_script","get_autorun_script","delete_autorun_script","get_autorun_network_wait","get_autorun_page","probe_autorun_locator","try_autorun_action","replay_autorun_to_step","stop_autorun_replay","start_autorun_discovery","discover_autorun_action","discover_autorun_actions","save_autorun_area","end_autorun_discovery","release_autorun_browser","reset_autorun_browser","save_autorun_component","remove_autorun_component","get_autorun_failures","record_autorun_quirk","retire_autorun_quirk","record_validation_rule","mark_autorun_suspected_defect","set_autorun_order","propose_accounts","get_accounts","list_autorun_requests","search_autorun_requests","get_autorun_request","get_autorun_response","get_autorun_response_body","set_autorun_capture","get_autorun_capture","export_autorun_requests","import_autorun_requests","set_autorun_headers","get_autorun_cookies","set_autorun_cookie","clear_autorun_cookies","inspect_autorun_element"]}"#.into(),
+                r#"{"disabled":["save_autorun_script","get_autorun_script","delete_autorun_script","get_autorun_network_wait","get_autorun_page","probe_autorun_locator","try_autorun_action","replay_autorun_to_step","stop_autorun_replay","start_autorun_discovery","discover_autorun_action","discover_autorun_actions","save_autorun_area","end_autorun_discovery","release_autorun_browser","reset_autorun_browser","save_autorun_component","remove_autorun_component","get_autorun_failures","record_autorun_quirk","retire_autorun_quirk","record_validation_rule","mark_autorun_suspected_defect","set_autorun_order","propose_accounts","get_accounts","list_autorun_requests","search_autorun_requests","get_autorun_request","get_autorun_response","get_autorun_response_body","set_autorun_capture","get_autorun_capture","export_autorun_requests","import_autorun_requests","set_autorun_headers","get_autorun_cookies","set_autorun_cookie","clear_autorun_cookies","inspect_autorun_element"]}"#.into(),
             ));
         }
         Ok((200, "{}".into()))
@@ -1593,7 +1589,7 @@ fn the_replay_tool_rides_with_the_auto_run_tools() {
     assert!(module_of_tool(NAME) == Some(Module::AutoRun));
     assert!(listed_names(&stub(200, r#"{"disabled":[]}"#)).iter().any(|n| n == NAME));
 
-    let row_off = stub(200, r#"{"disabled":["get_autorun_guide","replay_autorun_to_step"]}"#);
+    let row_off = stub(200, r#"{"disabled":["replay_autorun_to_step"]}"#);
     assert!(!listed_names(&row_off).iter().any(|n| n == NAME));
     let req = r#"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"replay_autorun_to_step","arguments":{"case_id":7,"step":3}}}"#;
     let v: serde_json::Value = serde_json::from_str(&handle_message(req, "1.0.0", &row_off).unwrap()).unwrap();
@@ -1730,7 +1726,7 @@ fn the_order_tool_rides_with_the_auto_run_tools() {
     assert!(module_of_tool(NAME) == Some(Module::AutoRun));
     assert!(listed_names(&stub(200, r#"{"disabled":[]}"#)).iter().any(|n| n == NAME));
 
-    let row_off = stub(200, r#"{"disabled":["get_autorun_guide","set_autorun_order"]}"#);
+    let row_off = stub(200, r#"{"disabled":["set_autorun_order"]}"#);
     assert!(!listed_names(&row_off).iter().any(|n| n == NAME));
     let req = r#"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"set_autorun_order","arguments":{"pbi_id":100,"case_ids":[503,501]}}}"#;
     let v: serde_json::Value = serde_json::from_str(&handle_message(req, "1.0.0", &row_off).unwrap()).unwrap();
@@ -1973,37 +1969,42 @@ fn the_save_tools_name_no_cap_and_let_a_check_go() {
     }
 }
 
-/// `get_autorun_guide` no longer sends the assistant to the source: the
-/// live app is where locators come from now.
+/// The guide tool no longer sends the assistant to the source: the live
+/// app is where locators come from now.
 #[test]
 fn the_guide_tool_no_longer_points_at_the_source() {
     let resp = handle_message(r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#, "1.0.0", &stub(200, "{}")).unwrap();
     let v: serde_json::Value = serde_json::from_str(&resp).unwrap();
-    let tool = v["result"]["tools"].as_array().unwrap().iter().find(|t| t["name"] == "get_autorun_guide").unwrap();
+    let tool = v["result"]["tools"].as_array().unwrap().iter().find(|t| t["name"] == "get_guide").unwrap();
     let d = tool["description"].as_str().unwrap();
     assert!(!d.contains("You may read the application's source for SELECTORS"), "{d}");
-    assert!(d.contains("every assertion comes from the test case's own expected result"), "{d}");
+    assert!(d.contains("every assertion from the case's own expected result, never from what the code does"), "{d}");
 }
 
-/// `get_autorun_guide` takes `quick`, says what it answers, and forwards it
-/// to the bridge as `?quick=true`; with no arguments it asks for the
-/// overview (the Quick rules and the section titles), and for the whole
-/// guide only with `full` true.
+/// `get_guide` with topic autorun takes `quick`, says what it answers, and
+/// forwards it to the bridge as `?quick=true`; with no other arguments it
+/// asks for the overview (the Quick rules and the section titles), and for
+/// the whole guide only with `full` true.
 #[test]
 fn the_guide_tool_takes_quick() {
     let resp = handle_message(r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#, "1.0.0", &stub(200, "{}")).unwrap();
     let v: serde_json::Value = serde_json::from_str(&resp).unwrap();
-    let tool = v["result"]["tools"].as_array().unwrap().iter().find(|t| t["name"] == "get_autorun_guide").unwrap();
+    let tool = v["result"]["tools"].as_array().unwrap().iter().find(|t| t["name"] == "get_guide").unwrap();
     assert_eq!(tool["inputSchema"]["properties"]["quick"]["type"], "boolean", "{tool}");
     assert_eq!(tool["inputSchema"]["properties"]["full"]["type"], "boolean", "{tool}");
     assert!(tool["description"].as_str().unwrap().contains("Quick rules"), "{tool}");
 
     for (args, want) in [
-        (r#"{"quick":true}"#, "/autorun-guide?quick=true"),
-        (r#"{"quick":false}"#, "/autorun-guide?overview=true"),
-        ("{}", "/autorun-guide?overview=true"),
-        (r#"{"full":true}"#, "/autorun-guide"),
-        (r#"{"full":false}"#, "/autorun-guide?overview=true"),
+        (r#"{"topic":"autorun","quick":true}"#, "/autorun-guide?quick=true"),
+        (r#"{"topic":"autorun","quick":false}"#, "/autorun-guide?overview=true"),
+        (r#"{"topic":"autorun"}"#, "/autorun-guide?overview=true"),
+        (r#"{"topic":" autorun "}"#, "/autorun-guide?overview=true"),
+        (r#"{"topic":"autorun","full":true}"#, "/autorun-guide"),
+        (r#"{"topic":"autorun","full":false}"#, "/autorun-guide?overview=true"),
+        (r#"{"topic":"writing"}"#, "/guide"),
+        (r#"{"topic":"writing","full":true}"#, "/guide"),
+        (r#"{"topic":"api_templates"}"#, "/api-template-guide"),
+        (r#"{"topic":"reports"}"#, "/crystal-guide"),
     ] {
         let calls = std::cell::RefCell::new(vec![]);
         let call = |method: &str, path: &str, _body: &str| {
@@ -2011,7 +2012,7 @@ fn the_guide_tool_takes_quick() {
             Ok((200, "{}".to_string()))
         };
         let req = format!(
-            r#"{{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{{"name":"get_autorun_guide","arguments":{args}}}}}"#
+            r#"{{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{{"name":"get_guide","arguments":{args}}}}}"#
         );
         handle_message(&req, "1.0.0", &call).unwrap();
         let recorded = calls.borrow();
@@ -2019,7 +2020,87 @@ fn the_guide_tool_takes_quick() {
     }
 }
 
-/// `get_autorun_guide` takes `section` and forwards it percent-encoded
+/// `get_guide` is Core - listed whatever is on - but a topic whose module
+/// is off is refused before anything reaches the app, in the words the
+/// topic's own guide tool was refused in while it was the module's. The
+/// writing guide is always answered.
+#[test]
+fn the_guide_tool_refuses_a_topic_whose_module_is_off() {
+    let calls = std::cell::RefCell::new(Vec::<String>::new());
+    let call = |_m: &str, path: &str, _b: &str| -> Result<(u16, String), String> {
+        if path == "/tools" {
+            return Ok((200, r#"{"disabled":[],"modules":["db_access","writing_style"]}"#.into()));
+        }
+        calls.borrow_mut().push(path.to_string());
+        Ok((200, "the guide".into()))
+    };
+    let ask = |topic: &str| -> serde_json::Value {
+        let req = serde_json::json!({
+            "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+            "params": { "name": "get_guide", "arguments": { "topic": topic } },
+        });
+        serde_json::from_str(&v2_lib::mcp::handle_message(&req.to_string(), "1.0.0", &call).unwrap()).unwrap()
+    };
+    for (topic, module) in
+        [("autorun", Module::AutoRun), ("api_templates", Module::ApiTemplates), ("reports", Module::CrystalReports)]
+    {
+        let v = ask(topic);
+        assert_eq!(v["result"]["isError"], true, "{topic}: {v}");
+        assert_eq!(
+            v["result"]["content"][0]["text"],
+            format!("The `{topic}` guide is not available: {}.", module.off_sentence()),
+            "{topic}"
+        );
+    }
+    assert!(calls.borrow().is_empty(), "nothing reached the app: {:?}", calls.borrow());
+
+    let v = ask("writing");
+    assert_ne!(v["result"]["isError"], true, "{v}");
+    assert_eq!(v["result"]["content"][0]["text"], "the guide");
+    assert_eq!(*calls.borrow(), vec!["/guide".to_string()]);
+
+    let list = v2_lib::mcp::handle_message(r#"{"jsonrpc":"2.0","id":2,"method":"tools/list"}"#, "1.0.0", &call).unwrap();
+    assert!(list.contains("\"name\":\"get_guide\""), "get_guide is Core: {list}");
+    assert!(module_of_tool("get_guide").is_none());
+}
+
+/// No topic, an empty one or one there is no guide for is refused before
+/// anything reaches the app, naming the four topics. Each topic belongs to
+/// the module its old guide tool did.
+#[test]
+fn the_guide_tool_refuses_a_missing_or_unknown_topic() {
+    use v2_lib::mcp::{guide_refusal, guide_topic_module, GUIDE_TOPICS};
+    let posted = std::cell::Cell::new(0);
+    let call = |_m: &str, path: &str, _b: &str| -> Result<(u16, String), String> {
+        if path != "/tools" {
+            posted.set(posted.get() + 1);
+        }
+        Ok((200, "{}".into()))
+    };
+    for args in ["{}", r#"{"topic":""}"#, r#"{"topic":"selectors"}"#, r#"{"topic":7}"#, r#"{"section":"Selectors"}"#] {
+        let req = format!(r#"{{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{{"name":"get_guide","arguments":{args}}}}}"#);
+        let v: serde_json::Value = serde_json::from_str(&handle_message(&req, "1.0.0", &call).unwrap()).unwrap();
+        assert_eq!(v["result"]["isError"], true, "{args}: {v}");
+        let text = v["result"]["content"][0]["text"].as_str().unwrap();
+        for topic in GUIDE_TOPICS {
+            assert!(text.contains(&format!("\"{topic}\"")), "{args}: names {topic}: {text}");
+        }
+    }
+    assert_eq!(posted.get(), 0, "nothing reached the app");
+
+    assert_eq!(GUIDE_TOPICS, ["writing", "autorun", "api_templates", "reports"]);
+    assert_eq!(guide_topic_module("writing"), Ok(None));
+    assert_eq!(guide_topic_module("autorun"), Ok(Some(Module::AutoRun)));
+    assert_eq!(guide_topic_module("api_templates"), Ok(Some(Module::ApiTemplates)));
+    assert_eq!(guide_topic_module("reports"), Ok(Some(Module::CrystalReports)));
+    assert_eq!(guide_topic_module("Autorun"), Err(()));
+    let all: BTreeSet<Module> = Module::ALL.into_iter().collect();
+    for topic in GUIDE_TOPICS {
+        assert_eq!(guide_refusal(Some(topic), &all), None, "{topic}");
+    }
+}
+
+/// `get_guide` (topic autorun) takes `section` and forwards it percent-encoded
 /// (it wins over `quick`); `get_autorun_page` takes `limit` and `within`,
 /// a locator forwarded as its JSON text (a css string as itself), and says
 /// it answers 120 lines by default.
@@ -2028,7 +2109,7 @@ fn the_guide_takes_a_section_and_the_page_takes_within() {
     let resp = handle_message(r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#, "1.0.0", &stub(200, "{}")).unwrap();
     let v: serde_json::Value = serde_json::from_str(&resp).unwrap();
     let tools = v["result"]["tools"].as_array().unwrap();
-    let guide = tools.iter().find(|t| t["name"] == "get_autorun_guide").unwrap();
+    let guide = tools.iter().find(|t| t["name"] == "get_guide").unwrap();
     assert_eq!(guide["inputSchema"]["properties"]["section"]["type"], "string", "{guide}");
     let page = tools.iter().find(|t| t["name"] == "get_autorun_page").unwrap();
     assert!(page["inputSchema"]["properties"]["within"].is_object(), "{page}");
@@ -2036,9 +2117,9 @@ fn the_guide_takes_a_section_and_the_page_takes_within() {
     assert!(d.contains("first 120 lines") && d.contains("`within`"), "{d}");
 
     for (tool, args, want) in [
-        ("get_autorun_guide", r#"{"section":"Saving it"}"#, "/autorun-guide?section=Saving%20it"),
-        ("get_autorun_guide", r#"{"section":"Selectors","quick":true}"#, "/autorun-guide?section=Selectors"),
-        ("get_autorun_guide", r#"{"section":"  ","quick":true}"#, "/autorun-guide?quick=true"),
+        ("get_guide", r#"{"topic":"autorun","section":"Saving it"}"#, "/autorun-guide?section=Saving%20it"),
+        ("get_guide", r#"{"topic":"autorun","section":"Selectors","quick":true}"#, "/autorun-guide?section=Selectors"),
+        ("get_guide", r#"{"topic":"autorun","section":"  ","quick":true}"#, "/autorun-guide?quick=true"),
         ("get_autorun_page", "{}", "/autorun-page"),
         ("get_autorun_page", r#"{"limit":40}"#, "/autorun-page?limit=40"),
         ("get_autorun_page", r##"{"within":"#form"}"##, "/autorun-page?within=%23form"),
@@ -2220,7 +2301,7 @@ fn the_crystal_tools_reach_their_routes() {
             "POST",
             "/crystal-preview-live",
         ),
-        ("get_report_guide", serde_json::json!({}), "GET", "/crystal-guide"),
+        ("get_guide", serde_json::json!({ "topic": "reports" }), "GET", "/crystal-guide"),
     ] {
         calls.borrow_mut().clear();
         let req = serde_json::json!({
@@ -2263,7 +2344,7 @@ fn the_crystal_tool_descriptions_guide_the_assistant() {
     }
     for name in ["open_report", "read_report", "edit_report", "new_report"] {
         let text = find(name)["description"].as_str().unwrap();
-        assert!(text.contains("get_report_guide"), "{name} points at the guide: {text}");
+        assert!(text.contains("get_guide (topic reports)"), "{name} points at the guide: {text}");
     }
     let edit = find("edit_report")["description"].as_str().unwrap();
     assert!(edit.contains("saved over the file"), "{edit}");

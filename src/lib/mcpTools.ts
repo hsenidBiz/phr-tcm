@@ -25,7 +25,7 @@ export const MCP_TOOLS: McpToolInfo[] = [
     label: "Start a writing job",
     summary: "Asks you how the set should be written, before anything is.",
   },
-  { name: "get_writing_guide", label: "Writing guide", summary: "Format rules and your org's allowed Module values." },
+  { name: "get_guide", label: "Guides", summary: "The live guide for the job at hand: format rules and your org's allowed Module values for writing cases." },
   { name: "get_test_cases", label: "Cases by PBI or id", summary: "The cases on a PBI, or specific cases by their ids - style, and what is covered." },
   { name: "search_test_suites", label: "Find a test suite", summary: "The plans and suites in this project, by plan name, suite name or PBI id." },
   { name: "get_suite_test_cases", label: "Cases in a test suite", summary: "The cases in one suite, in the suite's own order." },
@@ -36,11 +36,6 @@ export const MCP_TOOLS: McpToolInfo[] = [
   },
   { name: "check_spec_coverage", label: "Specification coverage", summary: "Which spec sections have no case yet - findings to account for, not errors." },
   { name: "merge_case_files", label: "Merge slice files", summary: "Merge fan-out slice files into one draft through the real importer." },
-  {
-    name: "get_autorun_guide",
-    label: "Auto Run guide",
-    summary: "How to write an Auto Run browser script, and where assertions may come from.",
-  },
   {
     name: "save_autorun_script",
     label: "Save Auto Run scripts",
@@ -242,11 +237,6 @@ export const MCP_TOOLS: McpToolInfo[] = [
     summary: "This project's Test files a case can upload, by name and size.",
   },
   {
-    name: "get_api_template_guide",
-    label: "API template guide",
-    summary: "The template format, the authoring workflow, and this project's account keys and address.",
-  },
-  {
     name: "list_api_templates",
     label: "List API templates",
     summary:
@@ -338,11 +328,6 @@ export const MCP_TOOLS: McpToolInfo[] = [
     summary:
       "Draw the open report from fresh rows: run its stored procedure on the chosen database. Needs writes switched on and the Dev login.",
   },
-  {
-    name: "get_report_guide",
-    label: "Report guide",
-    summary: "The units, the edit ops, the layout plan and the limits for working with reports.",
-  },
   { name: "validate_cases", label: "Check a draft", summary: "Check a draft with the app's real importer." },
   { name: "get_tags", label: "Project tags", summary: "Tag names this project already uses." },
   { name: "optimize_cases", label: "Build the run sheet", summary: "Reorganise a draft into a tester-ready run sheet." },
@@ -357,7 +342,7 @@ export const MCP_TOOLS: McpToolInfo[] = [
 ];
 
 /** Mirrors ai_tools.rs - the Rust side is the one that enforces both. */
-export const CORE_TOOLS = ["begin_test_case_writing", "get_writing_guide", "get_test_cases", "check_spec_coverage", "transform_cases",
+export const CORE_TOOLS = ["begin_test_case_writing", "get_guide", "get_test_cases", "check_spec_coverage", "transform_cases",
   // Finishing a draft is part of writing one: a set that cannot be
   // checked, ordered into a run sheet, or merged back from its slices
   // is a set nobody can ship.
@@ -368,7 +353,6 @@ export const CORE_TOOLS = ["begin_test_case_writing", "get_writing_guide", "get_
  * compares). A tool whose module is off is absent entirely - not listed, no
  * switch, no skill file - and Rust refuses a direct call. */
 export const AUTORUN_TOOLS = [
-  "get_autorun_guide",
   "save_autorun_script",
   "get_autorun_script",
   "delete_autorun_script",
@@ -412,7 +396,6 @@ export const AUTORUN_TOOLS = [
 ] as const;
 
 export const API_TEMPLATE_TOOLS = [
-  "get_api_template_guide",
   "list_api_templates",
   "prove_api_template",
   "run_api_template",
@@ -434,7 +417,6 @@ export const CRYSTAL_TOOLS = [
   "new_report",
   "preview_report",
   "preview_report_live",
-  "get_report_guide",
 ] as const;
 
 /** The module a tool belongs to; null for a tool that is part of Core.
@@ -494,8 +476,9 @@ export const TOOL_PAIRS: readonly (readonly string[])[] = [
   // together. Offered only while the Auto Run module is on; see toolOffered.
   // The accounts a script runs as belong to the same job: proposing
   // logins for the environment, and reading the keys a script names.
+  // (The guide is Core's `get_guide`, refused by topic while the module is
+  // off.)
   [
-    "get_autorun_guide",
     "save_autorun_script",
     "get_autorun_script",
     "delete_autorun_script",
@@ -546,7 +529,6 @@ export const TOOL_PAIRS: readonly (readonly string[])[] = [
   // template that writes to a stage is only as good as the order the
   // application allows, and that order is what the flow tools hold.
   [
-    "get_api_template_guide",
     "list_api_templates",
     "prove_api_template",
     "run_api_template",
@@ -569,9 +551,9 @@ export const TOOL_PAIRS: readonly (readonly string[])[] = [
   // is a different decision, and it is off until someone makes it.
   ["db_lookup", "db_query"],
   // Working on a report is one job: open it, read it, change it, check it,
-  // see it, and the guide that says how. An edit tool without the guide, or
-  // a preview with nothing to open, is half a job. Offered only while the
-  // Crystal Reports module is on.
+  // see it. A preview with nothing to open is half a job. Offered only while
+  // the Crystal Reports module is on; its guide is Core's `get_guide`,
+  // refused by topic while the module is off.
   [
     "open_report",
     "read_report",
@@ -581,7 +563,6 @@ export const TOOL_PAIRS: readonly (readonly string[])[] = [
     "new_report",
     "preview_report",
     "preview_report_live",
-    "get_report_guide",
   ],
 ];
 
@@ -592,12 +573,12 @@ const PAIR_ROWS: Record<string, { label: string; summary: string }> = {
     label: "Test Suites",
     summary: "Find a test suite by plan, name or PBI, and read the cases in it.",
   },
-  get_autorun_guide: {
+  save_autorun_script: {
     label: "Auto Run scripts",
     summary:
       "Read the script guide, see the page in the open browser, try a locator or an action, replay a case to its failing step, read a run's failures, save, read, repair and delete scripts, set Auto Run's order for a PBI, and propose and read the environment's test logins.",
   },
-  get_api_template_guide: {
+  list_api_templates: {
     label: "API templates",
     summary:
       "Map a module's stages, then build, prove and run templates that write test data through the application's own endpoints, in the order the application allows.",

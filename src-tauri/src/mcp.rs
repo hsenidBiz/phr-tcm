@@ -255,9 +255,14 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
             }), &[]),
         },
         {
-            "name": "get_writing_guide",
-            "description": "The live guide for writing Test Case Manager import JSON: format rules, the org's allowed Module values, and the recommended workflow. Call this first.",
-            "inputSchema": schema(serde_json::json!({}), &[]),
+            "name": "get_guide",
+            "description": "The live guide for one job, by `topic`. \"writing\": Test Case Manager import JSON - format rules, the org's allowed Module values and the workflow; call it first. \"autorun\": writing an Auto Run action script - the actions and checks the runner understands (the application's own API requests included), pointing at an element by role and name, and which source decides what: locators come from the live app, every assertion from the case's own expected result, never from what the code does; read it before writing a script. \"api_templates\": building an API template - the format, placeholders and captures, the workflow, this project's account keys and sign-in origin; read it before your first prove_api_template. \"reports\": working with Crystal Reports - the IR, units (twips), edit ops, the layout plan and the limits; read it before your first edit_report. A topic whose module is off is refused. The autorun guide is too long for one answer: alone it answers the Quick rules, this project's live sections and every section title; `section` adds one section, `quick` answers only the Quick rules and live sections, `full` the whole guide.",
+            "inputSchema": schema(serde_json::json!({
+                "topic": { "type": "string", "enum": GUIDE_TOPICS, "description": "Which guide." },
+                "quick": { "type": "boolean", "description": "autorun only. true: only the Quick rules and the live sections - the active environment, whether get_accounts gives passwords, this project's areas, areas to explore, components and quirks." },
+                "section": { "type": "string", "description": "autorun only. One section's title, e.g. \"Selectors\" or \"Saving it\" (case ignored): the Quick rules and that section. An unknown title answers the list of titles." },
+                "full": { "type": "boolean", "description": "autorun only. true: every section - over 100,000 characters; prefer `section`." },
+            }), &["topic"]),
         },
         {
             "name": "get_test_cases",
@@ -328,26 +333,17 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
             }), &["paths", "output_path"]),
         },
         {
-            "name": "get_autorun_guide",
-            "description": "How to write an Auto Run action script: the browser actions and expectations the runner understands (including checks of the application's own API requests), how to point at an element by its role and name, and - the part that matters - which source is allowed to decide what. Read this before writing a script. Locators come from what you saw on the live app, through discovery; every assertion comes from the test case's own expected result, never from what the code happens to do. The full guide is too long for one answer: with no arguments this answers the Quick rules, this project's live sections and the title of every section; with `section` it answers the Quick rules and that one section; with `quick` true only the Quick rules and the live sections; the whole guide only with `full` true.",
-            "inputSchema": schema(serde_json::json!({
-                "quick": { "type": "boolean", "description": "true: answer only the Quick rules (the short form of the guide's rules) and the live sections: the active environment and whether get_accounts gives passwords, and this project's areas, areas to explore, components and quirks. Ask for a section, or the full guide, when something comes up that the quick rules do not cover." },
-                "section": { "type": "string", "description": "The title of one section of the guide, such as \"Selectors\" or \"Saving it\" (case ignored): answers the Quick rules and that section, down to the next one. An unknown title answers the list of section titles." },
-                "full": { "type": "boolean", "description": "true: the whole guide, every section. It is long (over 100,000 characters); prefer `section`." },
-            }), &[]),
-        },
-        {
             "name": "save_autorun_script",
-            "description": format!("Save action scripts so the app can drive those test cases through a real browser. Takes a LIST, so one call can cover a whole PBI. Each entry is {{ case_id, title, account (optional: the KEY of the account the case runs as, never a username or password), area (the recorded area the run takes the case to before step 1, by its name from get_autorun_guide. {}), steps: [{{ step_number, actions }}] }}. Every script is checked against its OWN test case before anything is written: a step whose expected result nothing asserts is refused unless that step says why in `unchecked`. CHANGING a script that already exists is a repair and needs `edits` - one entry per case, {{ case_id, steps: [every step number you changed], why, area (optional: true when you changed the script's area, including leaving out one it had), quirk (optional: something you learned about the application), precondition (optional: ONE precondition to add, remove or change, {{ op: \"add\" | \"remove\" | \"change\", flow, stage (the saved one, for remove and change), to (the new one, for add and change), reason (one line: for a removal, which steps now create that state or why the case no longer needs it) }}) }}. Steps you leave out of `edits` must stay exactly as they were; a declared step may change in any way, removing a check included. A precondition removed or changed without a precondition edit is refused; send the preconditions as saved and the save makes the declared change. Every locator must have been seen on the live app: an action needs one seen matching exactly one element, while a check that can pass with several matches (expect_hidden, expect_count, wait_for) may use one seen matching several. For those checks that may match several, a part (at least 3 characters) of a seen name in the same role counts too; every other use needs the full name as seen. A when_visible's own locator may have been seen in any area. A refusal says what each use needs. All or nothing: one bad action, locator, case id or undeclared change rejects the whole batch. Call get_autorun_guide first for the action vocabulary: whether a control can be used is expect_enabled or expect_disabled (the disabled property, aria-disabled on it or around it, and a disabled fieldset around a form control), and an attribute that must not be there is expect_attribute with \"absent\": true in place of equals.", crate::autorun::nav::SET_AREA_RULE),
+            "description": format!("Save action scripts so the app can drive those test cases through a real browser. Takes a LIST, so one call can cover a whole PBI. Each entry is {{ case_id, title, account (optional: the KEY of the account the case runs as, never a username or password), area (the recorded area the run takes the case to before step 1, by its name from get_guide (topic autorun). {}), steps: [{{ step_number, actions }}] }}. Every script is checked against its OWN test case before anything is written: a step whose expected result nothing asserts is refused unless that step says why in `unchecked`. CHANGING a script that already exists is a repair and needs `edits` - one entry per case, {{ case_id, steps: [every step number you changed], why, area (optional: true when you changed the script's area, including leaving out one it had), quirk (optional: something you learned about the application), precondition (optional: ONE precondition to add, remove or change, {{ op: \"add\" | \"remove\" | \"change\", flow, stage (the saved one, for remove and change), to (the new one, for add and change), reason (one line: for a removal, which steps now create that state or why the case no longer needs it) }}) }}. Steps you leave out of `edits` must stay exactly as they were; a declared step may change in any way, removing a check included. A precondition removed or changed without a precondition edit is refused; send the preconditions as saved and the save makes the declared change. Every locator must have been seen on the live app: an action needs one seen matching exactly one element, while a check that can pass with several matches (expect_hidden, expect_count, wait_for) may use one seen matching several. For those checks that may match several, a part (at least 3 characters) of a seen name in the same role counts too; every other use needs the full name as seen. A when_visible's own locator may have been seen in any area. A refusal says what each use needs. All or nothing: one bad action, locator, case id or undeclared change rejects the whole batch. Call get_guide (topic autorun) first for the action vocabulary: whether a control can be used is expect_enabled or expect_disabled (the disabled property, aria-disabled on it or around it, and a disabled fieldset around a form control), and an attribute that must not be there is expect_attribute with \"absent\": true in place of equals.", crate::autorun::nav::SET_AREA_RULE),
             "inputSchema": schema(serde_json::json!({
                 "scripts": {
                     "type": "array",
-                    "description": "One entry per test case: { case_id, title, account?, area, steps, changes?, needs_unchanged?, needs_state? }. needs_state maps each setting the case needs to its value, e.g. { \"Approval workflow\": \"ON\" }; see get_autorun_guide. A repair may send { case_id, patch_steps: [{ step, actions }] } in place of the whole script: each listed step's actions replace that step of the saved script, every other step is kept, and `edits` must still declare each patched step.",
+                    "description": "One entry per test case: { case_id, title, account?, area, steps, changes?, needs_unchanged?, needs_state? }. needs_state maps each setting the case needs to its value, e.g. { \"Approval workflow\": \"ON\" }; see get_guide (topic autorun). A repair may send { case_id, patch_steps: [{ step, actions }] } in place of the whole script: each listed step's actions replace that step of the saved script, every other step is kept, and `edits` must still declare each patched step.",
                     "items": { "type": "object" },
                 },
                 "edits": {
                     "type": "array",
-                    "description": "Only when a script already exists: one entry per case you are changing, { case_id, steps, why, area?, quirk?, precondition? }. precondition is { op: add | remove | change, flow, stage, value?, to?, reason }: at most one per case per save, see get_autorun_guide, Repairing a script that failed.",
+                    "description": "Only when a script already exists: one entry per case you are changing, { case_id, steps, why, area?, quirk?, precondition? }. precondition is { op: add | remove | change, flow, stage, value?, to?, reason }: at most one per case per save, see get_guide (topic autorun), Repairing a script that failed.",
                     "items": { "type": "object" },
                 },
                 "dry_run": { "type": "boolean", "description": DRY_RUN_SCRIPT },
@@ -397,7 +393,7 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
             "inputSchema": schema(serde_json::json!({
                 "action": {
                     "type": "object",
-                    "description": "One action in the script vocabulary, e.g. { \"kind\": \"click\", \"selector\": ... } - call get_autorun_guide for all of them.",
+                    "description": "One action in the script vocabulary, e.g. { \"kind\": \"click\", \"selector\": ... } - call get_guide (topic autorun) for all of them.",
                 },
                 "case_id": {
                     "type": "number",
@@ -439,7 +435,7 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
             "inputSchema": schema(serde_json::json!({
                 "action": {
                     "type": "object",
-                    "description": "One action in the script vocabulary, e.g. { \"kind\": \"click\", \"selector\": ... } - call get_autorun_guide for all of them.",
+                    "description": "One action in the script vocabulary, e.g. { \"kind\": \"click\", \"selector\": ... } - call get_guide (topic autorun) for all of them.",
                 },
                 "area": { "type": "string", "description": "Optional: the area this exploring belongs to, by name; what is seen from now on is filed under it." },
                 "case_id": { "type": "number", "description": "Optional: the case this call is for. When its saved script is marked no_save, every save the page tries is BLOCKED (not only reported) for this call only, and the answer names the blocked request in `blocked_writes`; so name it on every call for a case marked no_save. A discovery started guarded stays guarded until it ends." },
@@ -457,7 +453,7 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
             "inputSchema": schema(serde_json::json!({
                 "actions": {
                     "type": "array",
-                    "description": "The actions, in order, each one action in the script vocabulary - call get_autorun_guide for all of them. At most 20.",
+                    "description": "The actions, in order, each one action in the script vocabulary - call get_guide (topic autorun) for all of them. At most 20.",
                     "items": { "type": "object" },
                 },
                 "stop_on_failure": { "type": "boolean", "description": "Optional: false carries on past a failed action. True when left out." },
@@ -528,7 +524,7 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
                 },
                 "actions": {
                     "type": "array",
-                    "description": "Its actions, in the script vocabulary - call get_autorun_guide for them.",
+                    "description": "Its actions, in the script vocabulary - call get_guide (topic autorun) for them.",
                     "items": { "type": "object" },
                 },
                 "why": { "type": "string", "description": "Only when changing a saved component: one sentence on why it changes." },
@@ -764,11 +760,6 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
             }), &["locator"]),
         },
         {
-            "name": "get_api_template_guide",
-            "description": "How to build an API template - a saved, proven sequence of the application's own requests that writes test data (creates a cycle, moves a record to a state) far faster than clicking through the screens. Returns the format and its rules, the placeholder and capture syntax, and the workflow: read the module's code for each request, find real values with db_query, then prove. Also names this project's account keys and the sign-in recipe's origin, so you never guess an account or a host. Read it before your first prove_api_template.",
-            "inputSchema": schema(serde_json::json!({}), &[]),
-        },
-        {
             "name": "list_api_templates",
             "description": "The API templates saved for the current project, filtered and paged. When at most `limit` templates match, each comes in full: id, title, module, effect (create, edit or delete), params with their types and descriptions, outputs, the flow stage it performs, whether it is proven on this site (one imported from another machine is not: prove it before relying on it), and the newest run - with the project's flows (only the ones those templates are on, when `module` or `search` narrowed the list), each with its stages and the templates on them, and its Test files (names and sizes), the only files a step's `files` may name. When more match, the answer is a compact index (per template the id, title, module, effect, proven state and stage; per flow the id, title and stage count): narrow it with `module`, `search` or `flow`, or pass `id` for one template in full. With `id`, the other filters and the paging are ignored. Every answer has `paging` { total, offset, returned, next_offset }: while `next_offset` is there, call again with `offset` set to it for the next page. Check here before building a template - the one you need may already exist. Also the reference for real endpoints, paths and response fields when a script checks the API (never run from a script).",
             "inputSchema": schema(serde_json::json!({
@@ -782,9 +773,9 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
         },
         {
             "name": "prove_api_template",
-            "description": "Run a draft API template in a fresh signed-in browser and save it only if every step passed. Every problem with the draft, the values or the account comes back together before anything runs. The first failing step stops the run and nothing is rolled back: the answer says which step failed, with the start of the response, and what had already been created. Proving an id that is already saved replaces it only with replace: true and a why. Refused while the API templates switch on the AI Bridge tab is off. Call get_api_template_guide first for the format.",
+            "description": "Run a draft API template in a fresh signed-in browser and save it only if every step passed. Every problem with the draft, the values or the account comes back together before anything runs. The first failing step stops the run and nothing is rolled back: the answer says which step failed, with the start of the response, and what had already been created. Proving an id that is already saved replaces it only with replace: true and a why. Refused while the API templates switch on the AI Bridge tab is off. Call get_guide (topic api_templates) first for the format.",
             "inputSchema": schema(serde_json::json!({
-                "template": { "type": "object", "description": "The draft, in the format get_api_template_guide describes - without `proven`, which the app writes." },
+                "template": { "type": "object", "description": "The draft, in the format get_guide (topic api_templates) describes - without `proven`, which the app writes." },
                 "account": { "type": "string", "description": "The KEY of the account to sign in as - one the guide lists, never a username or password." },
                 "values": { "type": "object", "description": "One value per param, by name, of its declared type." },
                 "replace": { "type": "boolean", "description": "Only when a template with this id is already saved: true to replace it." },
@@ -804,9 +795,9 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
         },
         {
             "name": "save_api_flow",
-            "description": "Save a flow - a module's wizard mapped as stages, each with a database check that says whether that stage is done for one record - after checking it and running every stage's check once on a sample record. Map the WHOLE wizard as one large flow per kind of record, and place every template you have discovered or built for that record on a stage: call list_api_templates first, and add stages no template performs yet so the gaps show. The answer says each stage's result for the sample, and lists `not_on_a_flow` - saved templates no flow places yet; place each one on a stage (re-proving it with its stage set) until that list is empty. Needs a database chosen on the AI Bridge tab; does not need the API templates switch. Saving an id that is already saved replaces it only with replace: true and a why. Call get_api_template_guide first for the format.",
+            "description": "Save a flow - a module's wizard mapped as stages, each with a database check that says whether that stage is done for one record - after checking it and running every stage's check once on a sample record. Map the WHOLE wizard as one large flow per kind of record, and place every template you have discovered or built for that record on a stage: call list_api_templates first, and add stages no template performs yet so the gaps show. The answer says each stage's result for the sample, and lists `not_on_a_flow` - saved templates no flow places yet; place each one on a stage (re-proving it with its stage set) until that list is empty. Needs a database chosen on the AI Bridge tab; does not need the API templates switch. Saving an id that is already saved replaces it only with replace: true and a why. Call get_guide (topic api_templates) first for the format.",
             "inputSchema": schema(serde_json::json!({
-                "flow": { "type": "object", "description": "The flow, in the format get_api_template_guide describes - without `saved`, which the app writes." },
+                "flow": { "type": "object", "description": "The flow, in the format get_guide (topic api_templates) describes - without `saved`, which the app writes." },
                 "sample": { "description": "The subject of a real record, found with db_query - every stage's check is run on it once.", "type": ["string", "number"] },
                 "replace": { "type": "boolean", "description": "Only when a flow with this id is already saved: true to replace it." },
                 "why": { "type": "string", "description": "With replace: why the saved flow is being changed. Logged." },
@@ -822,9 +813,9 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
         },
         {
             "name": "save_api_fixture",
-            "description": "Save a fixture: an ordered list of proven API templates that makes a draft the same way every time, so a test can have a fresh one in seconds. Each step names a template and its params as text, which may hold {{steps.<n>.<output>}} (an earlier step's declared output, n from 1), {{now:yyyyMMdd}} (the run's start time; the letters yyyy MM dd HH mm ss) and {{prefix}} (the environment's test name prefix). `outputs` maps a name to one {{steps.<n>.<output>}}, or to what a step sent: {{steps.<n>.params.<param>}} or the exact text of one step's param as written (resolved once per run to the text that step sent, so a script can open its draft by a unique name); `creates` lists what the fixture makes as { kind, id, name } placeholders, recorded as test-made so Clean up can remove it - a name may be the creating step's own param in the same way, and must then start with {{prefix}}. Every problem comes back together, one sentence each, and nothing is saved: a template that is not proven, one that deletes, a placeholder no earlier step gives, or creates without {{prefix}} in a step's params. Refused while the API templates switch on the AI Bridge tab is off. Call get_api_template_guide first.",
+            "description": "Save a fixture: an ordered list of proven API templates that makes a draft the same way every time, so a test can have a fresh one in seconds. Each step names a template and its params as text, which may hold {{steps.<n>.<output>}} (an earlier step's declared output, n from 1), {{now:yyyyMMdd}} (the run's start time; the letters yyyy MM dd HH mm ss) and {{prefix}} (the environment's test name prefix). `outputs` maps a name to one {{steps.<n>.<output>}}, or to what a step sent: {{steps.<n>.params.<param>}} or the exact text of one step's param as written (resolved once per run to the text that step sent, so a script can open its draft by a unique name); `creates` lists what the fixture makes as { kind, id, name } placeholders, recorded as test-made so Clean up can remove it - a name may be the creating step's own param in the same way, and must then start with {{prefix}}. Every problem comes back together, one sentence each, and nothing is saved: a template that is not proven, one that deletes, a placeholder no earlier step gives, or creates without {{prefix}} in a step's params. Refused while the API templates switch on the AI Bridge tab is off. Call get_guide (topic api_templates) first.",
             "inputSchema": schema(serde_json::json!({
-                "fixture": { "type": "object", "description": "{ id, name, account, steps: [{ template, params }], outputs?, creates?, skip_stages? }, as get_api_template_guide describes. skip_stages names flow stages (by title, by id, or as <flow id>/<stage id> when a title is in two flows) that the record this fixture makes does not include, such as [\"Competencies\"] for a cycle with Competencies off: the flow gate does not ask an earlier step to perform them, and the answer echoes them as skipped_stages." },
+                "fixture": { "type": "object", "description": "{ id, name, account, steps: [{ template, params }], outputs?, creates?, skip_stages? }, as get_guide (topic api_templates) describes. skip_stages names flow stages (by title, by id, or as <flow id>/<stage id> when a title is in two flows) that the record this fixture makes does not include, such as [\"Competencies\"] for a cycle with Competencies off: the flow gate does not ask an earlier step to perform them, and the answer echoes them as skipped_stages." },
             }), &["fixture"]),
         },
         {
@@ -873,14 +864,14 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
         },
         {
             "name": "open_report",
-            "description": "Open a Crystal Reports .rpt file and read it: you get the report as an IR (format crpt-ir/1), a JSON tree of its areas, sections and objects, each with an id and its position, size, font and text. Take ids from the latest IR a report tool returned: an edit can change them. One report is open at a time; opening another replaces it, and every other report tool works on the open one. Read get_report_guide before your first edit for the units, the edit ops, the layout plan and the limits. The path must be the full path to a .rpt file on this machine.",
+            "description": "Open a Crystal Reports .rpt file and read it: you get the report as an IR (format crpt-ir/1), a JSON tree of its areas, sections and objects, each with an id and its position, size, font and text. Take ids from the latest IR a report tool returned: an edit can change them. One report is open at a time; opening another replaces it, and every other report tool works on the open one. Read get_guide (topic reports) before your first edit for the units, the edit ops, the layout plan and the limits. The path must be the full path to a .rpt file on this machine.",
             "inputSchema": schema(serde_json::json!({
                 "path": { "type": "string", "description": "The full path to the .rpt file" },
             }), &["path"]),
         },
         {
             "name": "read_report",
-            "description": "Read the open report again, or only part of it: one section by name, or one object by its IR id or designer name. The ids in the answer are the ones edit_report takes. Narrowing saves reading a large report whole; with no arguments you get all of it. Open a report first with open_report; get_report_guide describes the IR.",
+            "description": "Read the open report again, or only part of it: one section by name, or one object by its IR id or designer name. The ids in the answer are the ones edit_report takes. Narrowing saves reading a large report whole; with no arguments you get all of it. Open a report first with open_report; get_guide (topic reports) describes the IR.",
             "inputSchema": schema(serde_json::json!({
                 "section": { "type": "string", "description": "A section's name, e.g. \"Details\": only that section and its objects" },
                 "object": { "type": "string", "description": "An object's IR id or designer name: only that object" },
@@ -888,10 +879,10 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
         },
         {
             "name": "edit_report",
-            "description": "Change the open report with one batch of edits: either `ops` (the native edit ops) or `plan` (a layout plan, which is lowered to ops), never both. Every batch the report accepts is saved over the file at once, before this answers, and the answer is the new IR - git is the undo, so work on a file that is committed. A batch is all or nothing: if any edit is refused nothing is saved, and the answer is the refusal followed by the report as it now stands. Take ids and designer names from the latest IR you were given (this call's answer, open_report or read_report), since an edit can move or renumber objects. The ops, the plan's vocabulary, the units (twips) and what cannot be edited are in get_report_guide: read it before the first edit. Check the result with check_report and preview_report.",
+            "description": "Change the open report with one batch of edits: either `ops` (the native edit ops) or `plan` (a layout plan, which is lowered to ops), never both. Every batch the report accepts is saved over the file at once, before this answers, and the answer is the new IR - git is the undo, so work on a file that is committed. A batch is all or nothing: if any edit is refused nothing is saved, and the answer is the refusal followed by the report as it now stands. Take ids and designer names from the latest IR you were given (this call's answer, open_report or read_report), since an edit can move or renumber objects. The ops, the plan's vocabulary, the units (twips) and what cannot be edited are in get_guide (topic reports): read it before the first edit. Check the result with check_report and preview_report.",
             "inputSchema": schema(serde_json::json!({
-                "ops": { "type": "array", "description": "Native edit ops, applied in order as one batch. See get_report_guide for each op and its fields.", "items": { "type": "object" } },
-                "plan": { "type": "object", "description": "A layout plan ({ \"planVersion\": 1, \"operations\": [...] }), the other way to describe a batch. See get_report_guide." },
+                "ops": { "type": "array", "description": "Native edit ops, applied in order as one batch. See get_guide (topic reports) for each op and its fields.", "items": { "type": "object" } },
+                "plan": { "type": "object", "description": "A layout plan ({ \"planVersion\": 1, \"operations\": [...] }), the other way to describe a batch. See get_guide (topic reports)." },
             }), &[]),
         },
         {
@@ -911,7 +902,7 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
         },
         {
             "name": "new_report",
-            "description": "Create a blank report at a path that has no file yet and open it. It never writes over an existing file: choose another path, or open that one. The title, author and comments fill the report's summary information. Build it up with edit_report; get_report_guide describes how.",
+            "description": "Create a blank report at a path that has no file yet and open it. It never writes over an existing file: choose another path, or open that one. The title, author and comments fill the report's summary information. Build it up with edit_report; get_guide (topic reports) describes how.",
             "inputSchema": schema(serde_json::json!({
                 "path": { "type": "string", "description": "Where to create it: the full path, ending in .rpt, to a file that does not exist" },
                 "title": { "type": "string", "description": "The report's title" },
@@ -930,11 +921,6 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
             "inputSchema": schema(serde_json::json!({
                 "params": { "type": "object", "description": "The report's parameters, name to value, e.g. { \"performance_cycle_id\": \"42\" }. Dates as YYYY-MM-DD, times as HH:MM:SS, true/false for yes-or-no parameters." },
             }), &[]),
-        },
-        {
-            "name": "get_report_guide",
-            "description": "How to work with reports through these tools: the IR, the units (twips), every edit op and the layout plan, how objects are named and found, what the renderer draws, and what cannot be done. Read it before your first edit_report.",
-            "inputSchema": schema(serde_json::json!({}), &[]),
         },
         {
             "name": "optimize_cases",
@@ -1045,6 +1031,39 @@ pub fn refusal_text(name: &str, on: &BTreeSet<Module>) -> String {
     }
 }
 
+/// The topics `get_guide` answers, in the order its description gives them.
+pub const GUIDE_TOPICS: [&str; 4] = ["writing", "autorun", "api_templates", "reports"];
+
+/// The module a guide topic belongs to - the module its own guide tool had
+/// before the four became `get_guide` - or None for Core's writing guide.
+/// `Err` for a topic there is no guide for.
+pub fn guide_topic_module(topic: &str) -> Result<Option<Module>, ()> {
+    match topic {
+        "writing" => Ok(None),
+        "autorun" => Ok(Some(Module::AutoRun)),
+        "api_templates" => Ok(Some(Module::ApiTemplates)),
+        "reports" => Ok(Some(Module::CrystalReports)),
+        _ => Err(()),
+    }
+}
+
+/// Why `get_guide` cannot answer `topic`, or None when it can: no topic or
+/// an unknown one names the topics; a topic whose module is off is refused
+/// in the words the tool it replaced was refused in (`refusal_text`), so a
+/// module switched off still takes its guide with it. `on` is explicit so
+/// every branch is testable.
+pub fn guide_refusal(topic: Option<&str>, on: &BTreeSet<Module>) -> Option<String> {
+    let topics = GUIDE_TOPICS.map(|t| format!("\"{t}\"")).join(", ");
+    let Some(topic) = topic.map(str::trim).filter(|t| !t.is_empty()) else {
+        return Some(format!("get_guide needs a `topic`: one of {topics}."));
+    };
+    match guide_topic_module(topic) {
+        Err(()) => Some(format!("There is no `{topic}` guide: `topic` is one of {topics}.")),
+        Ok(Some(m)) if !on.contains(&m) => Some(format!("The `{topic}` guide is not available: {}.", m.off_sentence())),
+        Ok(_) => None,
+    }
+}
+
 /// Why a `{ scripts, edits }` bundle sent as `scripts` cannot take the
 /// `edits` sent beside it: its own `edits` is neither a list nor one entry.
 pub const BUNDLE_EDITS_NOT_A_LIST: &str = "the bundle sent as \"scripts\" has an \"edits\" that is not a list, and more \"edits\" were sent beside it - send one \"edits\" list beside \"scripts\", one entry per case";
@@ -1152,8 +1171,14 @@ fn tools_call(params: &serde_json::Value, call: BridgeCall) -> serde_json::Value
     // Checked again here, not just in tools/list: a client may be working
     // from a list it cached before the tool was switched off.
     let (off, on) = tool_policy(call);
-    if off.iter().any(|d| d == name) {
-        let text = refusal_text(name, &on);
+    let refused = if off.iter().any(|d| d == name) {
+        Some(refusal_text(name, &on))
+    } else if name == "get_guide" {
+        guide_refusal(args["topic"].as_str(), &on)
+    } else {
+        None
+    };
+    if let Some(text) = refused {
         return serde_json::json!({
             "content": [{
                 "type": "text",
@@ -1189,7 +1214,22 @@ fn tools_call(params: &serde_json::Value, call: BridgeCall) -> serde_json::Value
             };
             call("POST", &target, &body)
         }
-        "get_writing_guide" => call("GET", "/guide", ""),
+        "get_guide" => match args["topic"].as_str().map(str::trim).unwrap_or_default() {
+            "writing" => call("GET", "/guide", ""),
+            "autorun" => match args["section"].as_str().map(str::trim).filter(|s| !s.is_empty()) {
+                Some(section) => call("GET", &format!("/autorun-guide?section={}", urlencoding::encode(section)), ""),
+                None if args["quick"].as_bool().unwrap_or(false) => call("GET", "/autorun-guide?quick=true", ""),
+                None if args["full"].as_bool().unwrap_or(false) => call("GET", "/autorun-guide", ""),
+                // The whole guide is too long for one answer: the Quick rules,
+                // the live sections and the section titles.
+                None => call("GET", "/autorun-guide?overview=true", ""),
+            },
+            "api_templates" => call("GET", "/api-template-guide", ""),
+            "reports" => call("GET", "/crystal-guide", ""),
+            // Refused before the match by `guide_refusal`; said again here
+            // rather than trusted.
+            _ => Ok((400, guide_refusal(args["topic"].as_str(), &on).unwrap_or_default())),
+        },
         "get_test_cases" => {
             let limit = args["limit"].as_i64().unwrap_or(5);
             let offset = args["offset"].as_i64().unwrap_or(0);
@@ -1269,14 +1309,6 @@ fn tools_call(params: &serde_json::Value, call: BridgeCall) -> serde_json::Value
         // is structurally unable to drop `paths` or `output_path` - the
         // same pattern as `check_spec_coverage` above.
         "merge_case_files" => call("POST", "/merge-cases", &args.to_string()),
-        "get_autorun_guide" => match args["section"].as_str().map(str::trim).filter(|s| !s.is_empty()) {
-            Some(section) => call("GET", &format!("/autorun-guide?section={}", urlencoding::encode(section)), ""),
-            None if args["quick"].as_bool().unwrap_or(false) => call("GET", "/autorun-guide?quick=true", ""),
-            None if args["full"].as_bool().unwrap_or(false) => call("GET", "/autorun-guide", ""),
-            // The whole guide is too long for one answer: the Quick rules,
-            // the live sections and the section titles.
-            None => call("GET", "/autorun-guide?overview=true", ""),
-        },
         "save_autorun_script" => {
             // The bridge takes the bare array, so a caller that wrapped it
             // in {scripts: [...]} and one that sent the list directly both
@@ -1426,7 +1458,6 @@ fn tools_call(params: &serde_json::Value, call: BridgeCall) -> serde_json::Value
         "propose_accounts" => call("POST", "/accounts-propose", &args.to_string()),
         "get_accounts" => call("GET", "/accounts", ""),
         "list_test_files" => call("GET", "/autorun-test-files", ""),
-        "get_api_template_guide" => call("GET", "/api-template-guide", ""),
         "list_api_templates" => {
             // Text filters pass through percent-encoded. Offset and limit
             // may arrive as numbers or as numeric strings; anything else
@@ -1488,7 +1519,6 @@ fn tools_call(params: &serde_json::Value, call: BridgeCall) -> serde_json::Value
         "new_report" => call("POST", "/crystal-new", &args.to_string()),
         "preview_report" => call("POST", "/crystal-preview", &args.to_string()),
         "preview_report_live" => call("POST", "/crystal-preview-live", &args.to_string()),
-        "get_report_guide" => call("GET", "/crystal-guide", ""),
         "optimize_cases" => {
             let entry = args["entry"].as_str().unwrap_or("");
             let mut params: Vec<String> = vec![];

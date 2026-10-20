@@ -57,7 +57,7 @@ pub const ACTION_KINDS: &[&str] = &[
 /// unlike the test-case writing guide it needs no Azure DevOps client and
 /// works before anyone has signed in.
 ///
-/// This is the constant an assistant gets from `get_autorun_guide` and
+/// This is the constant an assistant gets from `get_guide` (topic autorun) and
 /// `GET /autorun-guide`. The route (`ai_bridge::autorun_guide_with_quirks`)
 /// appends a real `## Known quirks of this application` section when the
 /// project has any on file - this constant only mentions that it will, so
@@ -65,7 +65,7 @@ pub const ACTION_KINDS: &[&str] = &[
 /// live project's quirks.
 ///
 /// It opens with the Quick rules (`quick_rules`), the same text
-/// `get_autorun_guide` with `quick: true` answers on its own.
+/// `get_guide` (topic autorun) with `quick: true` answers on its own.
 pub fn autorun_guide() -> String {
     let mut out = String::from("# Writing an Auto Run action script\n\n");
     out.push_str(QUICK_RULES);
@@ -80,7 +80,7 @@ pub fn section_titles(guide: &str) -> Vec<&str> {
     guide.lines().filter_map(|l| l.strip_prefix("## ")).map(str::trim).collect()
 }
 
-/// What `get_autorun_guide` with `section` answers: the Quick rules, then
+/// What `get_guide` (topic autorun) with `section` answers: the Quick rules, then
 /// the one `##` section of `guide` whose title is `title` (case and the
 /// space around it ignored), down to the next `##` heading, its `###`
 /// parts included. The Quick rules asked for by name come once. An
@@ -102,7 +102,7 @@ pub fn guide_section(guide: &str, title: &str) -> Result<String, String> {
     Ok(format!("{}\n\n{}\n", quick.trim_end(), section.trim_end()))
 }
 
-/// What `get_autorun_guide` answers with no arguments: `quick` (the Quick
+/// What `get_guide` (topic autorun) answers with no other arguments: `quick` (the Quick
 /// rules and the project's live sections, as `quick: true` answers them),
 /// then every `##` section title of `full` (the live guide) and how to ask
 /// for one. The whole guide is too long for one answer, so it is sent only
@@ -116,7 +116,7 @@ pub fn guide_overview(quick: &str, full: &str) -> String {
     )
 }
 
-/// The Quick rules section alone: what `get_autorun_guide` with
+/// The Quick rules section alone: what `get_guide` (topic autorun) with
 /// `quick: true` answers before the project's live sections. Every rule
 /// here is also in the full guide, in the section it belongs to;
 /// `tests/suite/autorun_guide.rs` holds the two together.
@@ -126,7 +126,7 @@ pub fn quick_rules() -> String {
 
 const QUICK_RULES: &str = r##"## Quick rules
 
-Not covered here: call `get_autorun_guide` with a `section`, or `full` true.
+Not covered here: call `get_guide` (topic `autorun`) with a `section`, or `full` true.
 - Discover the live app; never read the application's code to write scripts.
   A save refuses any locator the app has not seen. During a discovery with
   an area, `get_autorun_page` records what it shows as seen under that area.
@@ -1082,7 +1082,7 @@ declares it as a precondition edit, one per save, with its reason.
 ## Drafts a case needs: fixtures and setups
 
 A fixture is a saved list of API templates that makes a draft the same way
-every time (see `get_api_template_guide`). A script reaches one in two ways.
+every time (see `get_guide`, topic `api_templates`). A script reaches one in two ways.
 
 A shared draft: a step's value may hold `{{fixture.<id>.<output>}}`. When
 the case starts it is replaced with that fixture's current output, the one
@@ -1370,7 +1370,7 @@ discovery or your replay).
   `name`; read an imported set with `from`.
 - Build API templates from captured requests: read the real call with
   `get_autorun_request` / `get_autorun_response_body` instead of guessing its
-  shape (see `get_api_template_guide`).
+  shape (see `get_guide`, topic `api_templates`).
 - Passwords, tokens, session cookies and keys are hidden in everything these
   tools show, and headers are an allow-list: never cookies or authorization.
 - Nothing is captured until the app's site is confirmed by a sign-in: a
@@ -1653,7 +1653,7 @@ instead of clicking through the screens. For each one:
   case and step that sent it, and what it made.
 
 End your discovery summary with that list under "API templates to make",
-so they can be made with the API template tools (`get_api_template_guide`
+so they can be made with the API template tools (`get_guide`, topic `api_templates`,
 says how) and reused by every case that needs the same state. Never make
 one from a request you only guessed: only from a request discovery saw.
 

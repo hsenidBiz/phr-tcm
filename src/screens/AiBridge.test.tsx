@@ -1064,7 +1064,6 @@ test("switching the Auto Run scripts row off sends every tool name in the disabl
     "get_autorun_capture",
     "get_autorun_cookies",
     "get_autorun_failures",
-    "get_autorun_guide",
     "get_autorun_network_wait",
     "get_autorun_page",
     "get_autorun_request",

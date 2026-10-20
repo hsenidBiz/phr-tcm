@@ -1457,7 +1457,7 @@ fn the_guide_opens_with_the_quick_rules() {
         let re = regex::Regex::new(&format!("(?i){hidden}")).unwrap();
         assert!(!re.is_match(&quick), "the quick rules name {hidden:?}");
     }
-    assert!(quick.contains("call `get_autorun_guide` with a `section`, or `full` true."), "{quick}");
+    assert!(quick.contains("call `get_guide` (topic `autorun`) with a `section`, or `full` true."), "{quick}");
 }
 
 /// The capture, header, cookie and inspect tools are taught in one section:
@@ -1629,7 +1629,7 @@ fn the_quick_rules_prompt_marks_and_the_run_order() {
     }
 }
 
-/// `get_autorun_guide` with `section`: the Quick rules, then the one `##`
+/// `get_guide` (topic autorun) with `section`: the Quick rules, then the one `##`
 /// section asked for (case and space ignored), down to the next one and
 /// with its `###` parts; the Quick rules asked for by name come once; an
 /// unknown title lists every title.
@@ -1680,7 +1680,7 @@ fn a_page_reads_limit_and_within_are_read_from_the_query() {
     assert!(within_target(r#"{"name":"Edit"}"#).unwrap_err().starts_with("within is not a locator"));
 }
 
-/// With no arguments `get_autorun_guide` answers the overview: the Quick
+/// With no other arguments `get_guide` (topic autorun) answers the overview: the Quick
 /// rules, then every section title of the full guide and how to ask for
 /// one. The whole guide is far too long for one answer.
 #[test]

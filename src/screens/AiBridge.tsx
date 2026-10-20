@@ -1072,12 +1072,12 @@ export default function AiBridge() {
             <span className="font-medium text-text">Database Read Access</span> — find the tables behind a topic and check a value in the database you chose. It can only look, unless you allow changes beside that connection. Off: no database tools.
           </li>
           )}
-          {toolShown("get_autorun_guide") && (
+          {toolShown("save_autorun_script") && (
             <li>
               <span className="font-medium text-text">Auto Run scripts</span> — write and fix browser scripts for your test cases: read the script guide, look at the page you opened, try a step, then save the scripts. It never signs in. Off: you run Auto Run by hand.
             </li>
           )}
-          {toolShown("get_api_template_guide") && (
+          {toolShown("list_api_templates") && (
             <li>
               <span className="font-medium text-text">API templates</span> — build, test and run templates that create test data through the application itself. It can also map a module&apos;s steps as a flow of stages and check which stages are done before each run, so templates go in the order the application allows. Those checks read the company database, so they need Database Read Access switched on. Testing and running also need the API templates switch above, which is off by default. Off: you do template work by hand.
             </li>

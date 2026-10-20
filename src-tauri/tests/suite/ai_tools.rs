@@ -559,7 +559,6 @@ fn each_tool_belongs_to_its_module() {
     assert_eq!(
         AUTORUN_TOOLS,
         [
-            "get_autorun_guide",
             "save_autorun_script",
             "get_autorun_script",
             "delete_autorun_script",
@@ -605,7 +604,6 @@ fn each_tool_belongs_to_its_module() {
     assert_eq!(
         API_TEMPLATE_TOOLS,
         [
-            "get_api_template_guide",
             "list_api_templates",
             "prove_api_template",
             "run_api_template",
@@ -627,8 +625,7 @@ fn each_tool_belongs_to_its_module() {
             "check_report",
             "new_report",
             "preview_report",
-            "preview_report_live",
-            "get_report_guide"
+            "preview_report_live"
         ]
     );
     for t in AUTORUN_TOOLS {
@@ -707,7 +704,7 @@ fn the_effective_disabled_set_follows_the_modules_and_protects_the_core() {
         CORE_TOOLS,
         [
             "begin_test_case_writing",
-            "get_writing_guide",
+            "get_guide",
             "get_test_cases",
             "check_spec_coverage",
             "transform_cases",
@@ -728,7 +725,7 @@ fn the_effective_disabled_set_follows_the_modules_and_protects_the_core() {
         "the three that finish a draft cannot be switched off"
     );
     let got = effective_disabled_for(
-        &["begin_test_case_writing".into(), "search_wiki".into(), "get_autorun_guide".into()],
+        &["begin_test_case_writing".into(), "search_wiki".into(), "save_autorun_script".into()],
         &none,
     );
     let mut expected = module_tools.clone();
@@ -768,7 +765,7 @@ fn the_heal_command_is_an_auto_run_routine_offered_only_with_auto_run() {
     let body = c.body.join("\n");
     let mcp = include_str!("../../src/mcp.rs");
     for tool in [
-        "get_autorun_guide",
+        "get_guide",
         "get_autorun_failures",
         "get_autorun_page",
         "probe_autorun_locator",
@@ -815,7 +812,9 @@ fn the_heal_command_is_an_auto_run_routine_offered_only_with_auto_run() {
 #[test]
 fn the_setup_command_is_an_auto_run_routine_offered_only_with_auto_run() {
     let c = COMMANDS.iter().find(|c| c.stem == "setup").expect("a setup command");
-    assert_eq!(c.tool, "get_autorun_guide");
+    // An Auto Run tool: the guide is Core's now, and the skill must still
+    // be written only where Auto Run is.
+    assert_eq!(c.tool, "start_autorun_discovery");
     assert_eq!(
         c.desc,
         "Set the app up for testing: environment, accounts, module, areas, test files and preconditions"
@@ -835,13 +834,12 @@ fn the_setup_command_is_an_auto_run_routine_offered_only_with_auto_run() {
     let mcp = include_str!("../../src/mcp.rs");
     let is_tool = |name: &str| mcp.contains(&format!("\"name\": \"{name}\""));
     for tool in [
-        "get_autorun_guide",
+        "get_guide",
         "db_lookup",
         "db_query",
         "propose_accounts",
         "list_test_files",
         "list_api_templates",
-        "get_api_template_guide",
     ] {
         assert!(body.contains(&format!("`{tool}`")), "the setup routine never names `{tool}`");
         assert!(is_tool(tool), "`{tool}` is not in the bridge's tool list");
@@ -1922,12 +1920,12 @@ fn the_commands_point_at_the_quick_guide() {
         let c = COMMANDS.iter().find(|c| c.stem == stem).unwrap();
         let flat = c.body.join("\n").split_whitespace().collect::<Vec<_>>().join(" ");
         for said in [
-            "Call `get_autorun_guide` with `quick` true first and follow it.",
+            "Call `get_guide` with topic autorun and `quick` true first and follow it.",
             "Call it again with `section` (or `full` true for the full guide) when something the quick rules do not cover comes up",
         ] {
             assert!(flat.contains(said), "/tcm:{stem} never says {said:?}: {flat}");
         }
-        let quick = flat.find("`get_autorun_guide` with `quick` true").unwrap();
+        let quick = flat.find("`get_guide` with topic autorun and `quick` true").unwrap();
         let first_tool = ["get_test_cases", "start_autorun_discovery", "get_autorun_failures"]
             .iter()
             .filter_map(|t| flat.find(&format!("`{t}`")))

@@ -381,7 +381,7 @@ pub fn close() {
     *state() = None;
 }
 
-/// How to work with reports through the tools, for `get_report_guide`.
+/// How to work with reports through the tools, for `get_guide` (topic reports).
 pub fn guide() -> &'static str {
     guide::GUIDE
 }

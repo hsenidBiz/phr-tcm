@@ -1,4 +1,4 @@
-//! What `get_api_template_guide` hands the assistant - design doc "API
+//! What `get_guide` (topic api_templates) hands the assistant - design doc "API
 //! templates" §4 (the format) and §7 (the tool). The format and the
 //! authoring workflow are fixed text; the project's account KEYS and the
 //! sign-in recipe's origin are added at the end, so the assistant never
@@ -303,7 +303,7 @@ The app has one active environment at a time, which the person switches in
 the app. A prove or a run uses that environment's address, its accounts
 and its database, and a proof records the environment's name. Account keys
 belong to an environment: `get_accounts` lists the active one's. When it
-has none for what you need, the Auto Run guide (`get_autorun_guide`) says
+has none for what you need, the Auto Run guide (`get_guide`, topic `autorun`) says
 how to find test users with the read-only database tools and offer them
 with `propose_accounts`. Never invent a password.
 
