@@ -193,7 +193,7 @@ export default function Playwright({ org, project }: { org: string; project: str
           </div>
           <div className="flex items-center gap-2">
             <Button size="sm" variant="outline" disabled={busy || !clone || structure.isFetching || runnerBusy || accountsBusy}
-              title="Read everything in the clone again" onClick={refreshAll}>
+              aria-label="Refresh everything" title="Read everything in the clone again" onClick={refreshAll}>
               <IconRefresh aria-hidden />
               Refresh
             </Button>

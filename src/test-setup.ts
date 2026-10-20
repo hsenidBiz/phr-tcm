@@ -40,7 +40,8 @@ if (!Element.prototype.getAnimations) {
   Element.prototype.getAnimations = () => [];
 }
 
-// jsdom has no IntersectionObserver; motion's useInView (CountUp) needs one.
+// jsdom has no IntersectionObserver; the app's on-screen checks (ElectricLogo,
+// Threads, hooks/useOnScreen) need one.
 if (typeof globalThis.IntersectionObserver === "undefined") {
   globalThis.IntersectionObserver = class {
     observe() {}

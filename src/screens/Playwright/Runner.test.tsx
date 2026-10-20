@@ -246,7 +246,7 @@ test("a run sends the ticks and the mode, and every action waits while it runs",
   const run = calls.find((c) => c.cmd === "pw_run")!;
   expect(run.args).toEqual({ clone: "C:/repo", picked: [CREATE.id, DELETE.id], action: "Picked", mode: "Shown", confirm: false });
 
-  for (const name of [/^Run picked/, "Run all", "Re-run failures", "Preview", "Refresh"]) {
+  for (const name of [/^Run picked/, "Run all", "Re-run failures", "Preview", "Refresh the test list"]) {
     await waitFor(() => expect(button(name)).toBeDisabled());
   }
   expect(button("Stop")).toBeEnabled();
@@ -312,7 +312,7 @@ test("a run started before the tab was opened is still this Runner's", async () 
   const calls = mount({ running: { run: 12, label: "npx playwright test", brief: false } });
   await screen.findByText("User can create a new rating method");
   await waitFor(() => expect(button("Stop")).toBeEnabled());
-  for (const name of [/^Run picked/, "Run all", "Re-run failures", "Preview", "Refresh"]) expect(button(name)).toBeDisabled();
+  for (const name of [/^Run picked/, "Run all", "Re-run failures", "Preview", "Refresh the test list"]) expect(button(name)).toBeDisabled();
   expect(screen.getByRole("combobox", { name: "Browser" })).toBeDisabled();
 
   // Its lines arrive; another run's do not.

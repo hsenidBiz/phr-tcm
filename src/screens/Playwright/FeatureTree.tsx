@@ -1,10 +1,12 @@
 // The Overview's folder tree: what sits under the clone's suites folder, one
 // level per folder (any depth), each feature beneath its folder with its
-// spec and test case counts. A folder shows the totals of everything under
-// it, and folds like a branch of the Runner's tree; each level hangs from the
+// spec and test case counts. Anything with something under it (a folder, or
+// a feature that holds features) shows the totals of everything under it,
+// and folds like a branch of the Runner's tree; each level hangs from the
 // same guide line (RunnerTree's NESTED). A nested list, as the Runner's is:
 // a screen reader hears each level, and the fold buttons are in the Tab
-// order.
+// order, each named by its folder's full path (two folders can share a
+// name) with aria-expanded saying whether it is open.
 
 import { useState } from "react";
 import type { RepoStructure } from "../../bindings";
@@ -14,8 +16,12 @@ import { NESTED } from "./RunnerTree";
 
 type Feature = RepoStructure["features"][number];
 
+/** What a feature that is the suites folder itself (no folders under
+ * suites) is called, at the root. */
+export const SUITES = "suites";
+
 export type FolderNode = {
-  /** The path under suites, `/`-joined. */
+  /** The path under suites, `/`-joined ("" for suites itself). */
   id: string;
   name: string;
   /** Set when this folder is a feature. */
@@ -30,6 +36,10 @@ export type FolderNode = {
 export function buildFolders(features: Feature[]): FolderNode[] {
   const root: FolderNode = { id: "", name: "", feature: null, children: [], specs: 0, cases: 0 };
   for (const f of features) {
+    if (f.path.length === 0) {
+      root.children.push({ id: "", name: SUITES, feature: f, children: [], specs: f.spec_count, cases: f.case_count });
+      continue;
+    }
     let at = root;
     f.path.forEach((name, i) => {
       const id = f.path.slice(0, i + 1).join("/");
@@ -71,8 +81,10 @@ export default function FeatureTree({ features }: { features: Feature[] }) {
 
   const row = (n: FolderNode) => {
     const shut = folded.has(n.id);
-    const f = n.feature;
-    const isFeature = f !== null;
+    const isFeature = n.feature !== null;
+    /** A feature on its own shows its counts; anything with something under
+     * it shows the totals, faint. */
+    const leaf = isFeature && n.children.length === 0;
     const Glyph = isFeature ? IconRepoFeature : IconRepoFolder;
     return (
       <li key={n.id}>
@@ -81,7 +93,7 @@ export default function FeatureTree({ features }: { features: Feature[] }) {
             <button
               type="button"
               className="flex size-5 shrink-0 items-center justify-center text-muted transition-colors hover:text-accent [&_svg]:size-3.5"
-              aria-label={`${shut ? "Unfold" : "Fold"} ${n.name}`}
+              aria-label={n.id}
               aria-expanded={!shut}
               title={shut ? "Unfold" : "Fold"}
               onClick={() => toggle(n.id)}
@@ -94,26 +106,17 @@ export default function FeatureTree({ features }: { features: Feature[] }) {
           <Glyph aria-hidden className={cn("size-4 shrink-0", isFeature ? "text-accent" : "text-muted")} />
           <span
             className={cn("min-w-0 flex-1 truncate text-sm text-text", isFeature && "font-medium")}
-            title={n.id}
+            title={n.id || SUITES}
           >
             {n.name}
           </span>
-          {f ? (
-            <>
-              <Count n={f.spec_count} one="spec" many="specs" className="text-text" />
-              <Count
-                n={f.case_count}
-                one="test case"
-                many="test cases"
-                className={f.case_count ? "text-text" : "text-faint"}
-              />
-            </>
-          ) : (
-            <>
-              <Count n={n.specs} one="spec" many="specs" className="text-faint" />
-              <Count n={n.cases} one="test case" many="test cases" className="text-faint" />
-            </>
-          )}
+          <Count n={n.specs} one="spec" many="specs" className={leaf ? "text-text" : "text-faint"} />
+          <Count
+            n={n.cases}
+            one="test case"
+            many="test cases"
+            className={leaf && n.cases ? "text-text" : "text-faint"}
+          />
         </div>
         {n.children.length > 0 && !shut && <ul className={NESTED}>{n.children.map(row)}</ul>}
       </li>

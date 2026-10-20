@@ -157,3 +157,59 @@ test("0 needs no count", () => {
   expect(el().textContent).toBe("0");
   expect(frames.size).toBe(0);
 });
+
+test("unmounting mid-count cancels the frame it asked for", () => {
+  const view = render(<CountTo value={50} play />);
+  frame(0);
+  frame(COUNT_MS / 3);
+  expect(frames.size).toBe(1);
+  view.unmount();
+  expect(frames.size).toBe(0);
+});
+
+test("a value changed mid-count counts on from the number on screen, once", () => {
+  const { el, rerender } = mount(100);
+  frame(0);
+  frame(COUNT_MS / 2);
+  const mid = Number(painted(el()));
+  rerender(10);
+  expect(frames.size).toBe(1);
+  expect(painted(el())).toBe(String(mid));
+  frame(2000);
+  frame(2000 + COUNT_MS);
+  expect(el().textContent).toBe("10");
+  expect(frames.size).toBe(0);
+});
+
+test("reduced motion switched on mid-count shows the value at once", () => {
+  let reduce = false;
+  const listeners = new Set<(e: MediaQueryListEvent) => void>();
+  vi.spyOn(window, "matchMedia").mockImplementation(
+    (query: string) =>
+      ({
+        get matches() {
+          return query.includes("reduce") && reduce;
+        },
+        media: query,
+        onchange: null,
+        addListener: () => {},
+        removeListener: () => {},
+        addEventListener: (_: string, cb: (e: MediaQueryListEvent) => void) => listeners.add(cb),
+        removeEventListener: (_: string, cb: (e: MediaQueryListEvent) => void) => listeners.delete(cb),
+        dispatchEvent: () => false,
+      }) as unknown as MediaQueryList,
+  );
+  const { el } = mount(80);
+  frame(0);
+  frame(COUNT_MS / 4);
+  expect(painted(el())).not.toBe("80");
+  reduce = true;
+  act(() => {
+    for (const cb of [...listeners]) cb({ matches: true } as MediaQueryListEvent);
+  });
+  expect(el().textContent).toBe("80");
+  expect(el().querySelector("[aria-hidden]")).toBeNull();
+  expect(frames.size).toBe(0);
+  // The count is over: nothing listens any more.
+  expect(listeners.size).toBe(0);
+});

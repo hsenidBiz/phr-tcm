@@ -453,6 +453,7 @@ export default function Runner({ clone, onBusy }: { clone: string; onBusy?: (bus
                 size="sm"
                 variant="ghost"
                 disabled={active || tests.isFetching}
+                aria-label="Refresh the test list"
                 title="List the tests in the clone again"
                 onClick={() => void refresh()}
               >

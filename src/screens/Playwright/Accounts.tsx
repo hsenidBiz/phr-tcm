@@ -250,6 +250,7 @@ export default function Accounts({
           size="sm"
           variant="outline"
           disabled={active}
+          aria-label="Refresh accounts"
           title="Read the accounts from the clone again"
           onClick={() => void qc.invalidateQueries({ queryKey: [ACCOUNTS_KEY, clone] })}
         >

@@ -4,13 +4,11 @@
 // with the same value starts nothing.
 //
 // Nothing moves under prefers-reduced-motion, or in the docs' screenshot
-// capture: the value is simply there. A screen reader never hears the
-// counting - while it runs, the moving digits are aria-hidden and the final
-// value is in visually hidden text beside them; at rest there is only the
-// value.
-//
-// (components/CountUp.jsx is the vendored React Bits spring counter the
-// Total Test Cases lines use; this one is the app's own.)
+// capture: the value is simply there - and a count already going when
+// reduced motion is switched on jumps to its value. A screen reader never
+// hears the counting - while it runs, the moving digits are aria-hidden and
+// the final value is in visually hidden text beside them; at rest there is
+// only the value. The app's one counter: every count-up uses it.
 
 import { useLayoutEffect, useRef, useState } from "react";
 import { isCaptureMode } from "../dev/capture";
@@ -18,8 +16,9 @@ import { isCaptureMode } from "../dev/capture";
 /** How long a count takes, in ms. */
 export const COUNT_MS = 700;
 
-const still = () =>
-  isCaptureMode() || (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false);
+const REDUCE = "(prefers-reduced-motion: reduce)";
+
+const still = () => isCaptureMode() || (window.matchMedia?.(REDUCE).matches ?? false);
 
 /** Ease-out: quick at first, settling onto the value. */
 const easeOut = (t: number) => 1 - (1 - t) ** 3;
@@ -57,14 +56,28 @@ export function useCountUp(value: number, play: boolean, ms = COUNT_MS): number 
     put(from);
     let frame = 0;
     let start: number | null = null;
+    // Reduced motion switched on mid-count: the value, at once.
+    const query = window.matchMedia?.(REDUCE);
+    /** The count is over: no frame waits, nothing listens. */
+    const stop = () => {
+      cancelAnimationFrame(frame);
+      query?.removeEventListener?.("change", onChange);
+    };
+    const onChange = (e: MediaQueryListEvent) => {
+      if (!e.matches) return;
+      stop();
+      put(value);
+    };
     const step = (now: number) => {
       if (start === null) start = now;
       const t = Math.min(1, (now - start) / ms);
       put(t === 1 ? value : Math.round(from + (value - from) * easeOut(t)));
       if (t < 1) frame = requestAnimationFrame(step);
+      else stop();
     };
     frame = requestAnimationFrame(step);
-    return () => cancelAnimationFrame(frame);
+    query?.addEventListener?.("change", onChange);
+    return stop;
   }, [value, play, ms]);
 
   return play ? shown : value;

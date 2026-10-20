@@ -40,9 +40,9 @@ function reduceMotion() {
   );
 }
 
-/** The header's Refresh (the Runner and Accounts tabs have their own). */
-const headerRefresh = () =>
-  screen.getAllByRole("button", { name: "Refresh" }).find((b) => !b.closest('[role="tabpanel"]')) as HTMLElement;
+/** The header's Refresh (the Runner and Accounts tabs have their own, named
+ * for what they read). */
+const headerRefresh = () => screen.getByRole("button", { name: "Refresh everything" });
 
 const HEALTHY: RepoStructure = {
   features: [
@@ -153,16 +153,82 @@ test("the features are a folder tree: each folder under its parent, each feature
   // The full path is on hover.
   expect(within(tree).getByText("competencies")).toHaveAttribute("title", "sl/admin/performance/definition-wizard/competencies");
 
-  // A folder folds and unfolds.
-  const fold = screen.getByRole("button", { name: "Fold performance" });
+  // A folder folds and unfolds: its button is named by its full path, and
+  // aria-expanded says whether it is open.
+  const fold = screen.getByRole("button", { name: "sl/admin/performance" });
   expect(fold).toHaveAttribute("aria-expanded", "true");
   fireEvent.click(fold);
+  expect(fold).toHaveAttribute("aria-expanded", "false");
   expect(within(tree).queryByText("rating-methods")).not.toBeInTheDocument();
   expect(within(tree).getByText("framework-smoke")).toBeInTheDocument();
-  fireEvent.click(screen.getByRole("button", { name: "Unfold performance" }));
+  fireEvent.click(fold);
+  expect(fold).toHaveAttribute("aria-expanded", "true");
   expect(within(tree).getByText("rating-methods")).toBeInTheDocument();
-  // A feature has nothing to fold.
-  expect(screen.queryByRole("button", { name: "Fold rating-methods" })).not.toBeInTheDocument();
+  // A feature on its own has nothing to fold.
+  expect(screen.queryByRole("button", { name: "sl/admin/performance/rating-methods" })).not.toBeInTheDocument();
+});
+
+test("the tree: a feature at the root, folders that share a name, a feature that holds features", async () => {
+  const feature = (path: string[], spec_count: number, case_count: number) => ({
+    path,
+    navigation_key: path.slice(-2).join("/"),
+    spec_count,
+    case_count,
+    case_ids: [],
+  });
+  mount("C:/repo", {
+    ...HEALTHY,
+    features: [
+      feature([], 1, 1),
+      feature(["sl", "admin", "performance"], 1, 2),
+      feature(["sl", "self", "performance"], 2, 1),
+      feature(["sl", "self", "performance", "goals"], 3, 4),
+    ],
+  });
+  await screen.findByText("All good");
+  const tree = screen.getByRole("list", { name: "Features" });
+  /** The row of a full path, and the names directly under it. */
+  const row = (path: string) => within(tree).getByTitle(path).closest("li") as HTMLElement;
+  const under = (li: HTMLElement | null) =>
+    [...(li ? (li.querySelector(":scope > ul")?.children ?? []) : tree.children)].map(
+      (c) => c.querySelector(":scope > div span[title]")?.getAttribute("title"),
+    );
+  const counts = (path: string) => {
+    const li = row(path);
+    const name = li.querySelector(":scope > div span[title]")?.textContent ?? "";
+    return li.querySelector(":scope > div")?.textContent?.replace(name, "");
+  };
+
+  // A feature that is suites itself is at the root, as "suites".
+  expect(under(null)).toEqual(["suites", "sl"]);
+  expect(row("suites")).toHaveTextContent("suites");
+  expect(counts("suites")).toBe("1 spec1 test case");
+  // Two folders called performance, each under its own parent.
+  expect(under(row("sl/admin"))).toEqual(["sl/admin/performance"]);
+  expect(under(row("sl/self"))).toEqual(["sl/self/performance"]);
+  // A feature that holds a feature shows the totals beneath it, and folds.
+  expect(under(row("sl/self/performance"))).toEqual(["sl/self/performance/goals"]);
+  expect(counts("sl/self/performance")).toBe("5 specs5 test cases");
+  expect(counts("sl/self/performance/goals")).toBe("3 specs4 test cases");
+  expect(counts("sl/admin/performance")).toBe("1 spec2 test cases");
+  expect(counts("sl")).toBe("6 specs7 test cases");
+  // Each fold button has its own name, though the folders share one.
+  expect(screen.queryByRole("button", { name: "sl/admin/performance" })).not.toBeInTheDocument();
+  const fold = screen.getByRole("button", { name: "sl/self/performance" });
+  fireEvent.click(fold);
+  expect(within(tree).queryByTitle("sl/self/performance/goals")).not.toBeInTheDocument();
+  expect(within(tree).getByTitle("sl/admin/performance")).toBeInTheDocument();
+});
+
+test("each Refresh is named for what it reads, and all of them read Refresh", async () => {
+  mount("C:/repo");
+  await screen.findByText("All good");
+  expect(headerRefresh()).toHaveTextContent(/^Refresh$/);
+  fireEvent.click(screen.getByRole("tab", { name: "Runner" }));
+  expect(await screen.findByRole("button", { name: "Refresh the test list" })).toHaveTextContent(/^Refresh$/);
+  fireEvent.click(screen.getByRole("tab", { name: "Accounts" }));
+  expect(await screen.findByRole("button", { name: "Refresh accounts" })).toHaveTextContent(/^Refresh$/);
+  fireEvent.click(screen.getByRole("tab", { name: "Overview" }));
 });
 
 test("the summary counts up from 0 when Overview opens, and again each time it is opened", async () => {
