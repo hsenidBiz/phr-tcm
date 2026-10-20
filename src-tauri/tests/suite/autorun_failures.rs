@@ -566,11 +566,19 @@ fn a_case_the_run_could_not_take_to_its_module_is_not_a_script_defect() {
         steps: vec![StepRecord { step_number: MODULE_STEP, outcomes: vec![ActionOutcome::failed(unreached)], screenshot: None, downloads: vec![], tab: None, dialog: None, components: Vec::new(), duration_ms: None }],
         ..empty_case()
     };
+    // Deliberately reworded 2026-10-20: the assistant repairs the area's
+    // path itself (`save_autorun_area` with `repair`), never the script.
     let expected = Some(
-        "the run could not take this case to its module screen - fix the module path or the case's Module in the app, not the script"
+        "the run could not reach this case's area - repair the area's path with save_autorun_area and its repair argument (the guide's areas section), not the script"
             .to_string(),
     );
     assert_eq!(stop_reason(&case), expected);
+    // The other setup problems keep the line that sends the person to the app.
+    let no_module = CaseRecord { reason: v2_lib::autorun::nav::NO_MODULE.to_string(), steps: vec![], ..case.clone() };
+    assert_eq!(
+        stop_reason(&no_module).as_deref(),
+        Some("the run could not take this case to its module screen - fix the module path or the case's Module in the app, not the script")
+    );
     let run = LocalRun {
         id: "run-1".into(),
         pbi_id: 1,
@@ -587,7 +595,10 @@ fn a_case_the_run_could_not_take_to_its_module_is_not_a_script_defect() {
     assert!(!out.contains("step -1"), "{out}");
 
     let no_path_case = CaseRecord { proposed: "Blocked".to_string(), reason: no_path("Payroll"), ..empty_case() };
-    assert_eq!(stop_reason(&no_path_case), expected);
+    assert_eq!(
+        stop_reason(&no_path_case).as_deref(),
+        Some("the run could not take this case to its module screen - fix the module path or the case's Module in the app, not the script")
+    );
 }
 
 /// Review I1: a page failure whose words read like the runner's sentence is

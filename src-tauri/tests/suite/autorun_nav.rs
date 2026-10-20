@@ -11,7 +11,7 @@ use v2_lib::autorun::nav::{
 };
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
-use v2_lib::autorun::area_repair::{check_reason, put_old_path_back, MAX_REASON};
+use v2_lib::autorun::area_repair::{check_reason, put_old_path_back, save_repair, MAX_REASON};
 use v2_lib::autorun::recipe::project_slug;
 use v2_lib::browser::actions::HIGHLIGHT_JS;
 use v2_lib::browser::cdp::{CdpError, Event};
@@ -1097,8 +1097,63 @@ fn a_persons_re_record_clears_the_repair_note() {
 fn a_repair_reason_is_one_short_line_in_words() {
     assert_eq!(check_reason("  The menu moved  ").unwrap(), "The menu moved");
     assert!(check_reason(&"x".repeat(MAX_REASON)).is_ok());
-    for bad in ["", " ", "a\nb", "a\rb", "see https://hr.example.com"] {
+    for bad in ["", " ", "a\nb", "a\rb"] {
         assert!(check_reason(bad).is_err(), "{bad:?}");
     }
     assert!(check_reason(&"x".repeat(MAX_REASON + 1)).is_err());
+    // Addresses keep only their path, with or without a scheme.
+    let kept = check_reason("moved: see https://hr.example.com/self/leave?t=1 or www.hr.example.com/x").unwrap();
+    assert!(!kept.contains("hr.example.com") && !kept.contains("t=1"), "{kept}");
+    assert!(kept.contains("/self/leave"), "{kept}");
+}
+
+/// A repair is written to the areas file as it is after the browser trips:
+/// an area removed or changed meanwhile is refused and nothing is written;
+/// one as the trips found it is repaired, its note keeping the path it had.
+#[test]
+fn a_repair_is_saved_only_to_the_area_as_the_trips_found_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let tried = area("Leave Apply", "Leave", "/hr/leave/apply");
+    let new_clicks = || -> Vec<v2_lib::browser::locator::Target> { vec![serde_json::from_value(json!({ "css": "#new" })).unwrap()] };
+    let save = |dir: &std::path::Path| {
+        save_repair(
+            dir,
+            "Acme",
+            "Web",
+            &tried,
+            new_clicks(),
+            "/hr/self/leave".into(),
+            "/".into(),
+            "Moved".into(),
+            "2026-10-20T09:00:00Z".into(),
+        )
+    };
+    let file = |dir: &std::path::Path| std::fs::read(nav_path(dir, "Acme", "Web")).unwrap();
+
+    // Removed meanwhile.
+    put_path(dir.path(), "Acme", "Web", area("Payroll", "Payroll", "/hr/payroll")).unwrap();
+    let before = file(dir.path());
+    let why = save(dir.path()).unwrap_err();
+    assert!(why.contains("was removed while it was being repaired"), "{why}");
+    assert_eq!(file(dir.path()), before);
+
+    // Changed meanwhile (put back, or recorded again).
+    let mut changed = tried.clone();
+    changed.arrived = "/hr/leave/other".into();
+    put_path(dir.path(), "Acme", "Web", changed).unwrap();
+    let before = file(dir.path());
+    let why = save(dir.path()).unwrap_err();
+    assert!(why.contains("changed while it was being repaired"), "{why}");
+    assert_eq!(file(dir.path()), before);
+
+    // As the trips found it.
+    put_path(dir.path(), "Acme", "Web", tried.clone()).unwrap();
+    let nav = save(dir.path()).unwrap();
+    let saved = find_area(&nav, "Leave Apply").unwrap();
+    assert_eq!(saved.clicks, new_clicks());
+    assert_eq!(saved.arrived, "/hr/self/leave");
+    let note = saved.repaired_by_assistant.as_ref().unwrap();
+    assert_eq!(note.previous_clicks, tried.clicks);
+    assert_eq!(note.previous_arrived, "/hr/leave/apply");
+    assert!(find_area(&nav, "Payroll").is_some(), "another area was lost");
 }

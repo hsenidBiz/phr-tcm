@@ -430,6 +430,7 @@ fn the_guide_lists_every_stop_line_and_gives_no_count() {
     for line in [
         "the sign-in failed - fix the account or the recipe in the app, not the script",
         "the browser stopped answering - rerun before changing anything",
+        "the run could not reach this case's area - repair the area's path with save_autorun_area and its repair argument (the guide's areas section), not the script",
         "the run could not take this case to its module screen - fix the module path or the case's Module in the app, not the script",
         "the person marked this case Blocked - a missing precondition is not a script defect",
     ] {

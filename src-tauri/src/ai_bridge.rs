@@ -5623,17 +5623,21 @@ pub async fn discover_area_in<B: DiscoveryBrowser>(
 /// (`save_autorun_area` with `repair: { reason }`, owner decision
 /// 2026-10-20). The name must be an area the project has - whoever made
 /// it, a person included - and the repair keeps it under its own module
-/// (`module` may be blank; another one is refused). It is allowed only
-/// while the area is failing to be reached: the latest trip a saved run or
-/// replay made to it since its path was saved could not reach it
-/// (`area_repair::last_trip_unreached`), or - with no such record - its
-/// saved clicks, replayed from a fresh home before anything is written, do
-/// not arrive now (`area_repair::NOTHING_TO_REPAIR` when they do). The new
-/// clicks are then replayed from a fresh home exactly as a new area's are,
-/// and must arrive where the discovery browser stands. Only the clicks,
-/// where they arrive and the page they begin on change; the area keeps its
-/// name, module and maker, and records the path it replaced with the
-/// reason (`repaired_by_assistant`) so the person can put it back.
+/// (`module` may be blank; another one is refused), and new clicks equal
+/// to the saved ones are refused (`area_repair::SAME_PATH`). It is allowed
+/// only while the area is failing to be reached, decided live every time:
+/// the area's saved path is replayed from a fresh home as a run takes it
+/// (`nav::reach_module`, two tries with a reload between) before anything
+/// is written, and the repair is refused while it still arrives
+/// (`area_repair::NOTHING_TO_REPAIR`) or when the browser stops answering
+/// during that check. The new clicks are then replayed from a fresh home
+/// exactly as a new area's are, and must arrive where the discovery browser
+/// stands. The change is written to the areas file as it is after those
+/// trips (`area_repair::save_repair`), so a Remove or a put-back made
+/// meanwhile is never overwritten. Only the clicks, where they arrive and
+/// the page they begin on change; the area keeps its name, module and
+/// maker, and records the path it replaced with the scrubbed reason
+/// (`repaired_by_assistant`) so the person can put it back.
 #[allow(clippy::too_many_arguments)]
 pub async fn repair_area_in<B: DiscoveryBrowser>(
     slot: &mut Option<B>,
@@ -5780,6 +5784,9 @@ async fn save_discovered_area<B: DiscoveryBrowser>(
             Some(found) => Some(found.clone()),
         },
     };
+    if repairing.as_ref().is_some_and(|old| old.clicks == clicks) {
+        return (409, area_repair::SAME_PATH.to_string());
+    }
     let module = repairing.as_ref().map_or(module, |old| old.module.clone());
     // The run's own area of this name, which this save may update.
     let existing = match nav::find_area(&navfile, &name) {
@@ -5836,13 +5843,9 @@ async fn save_discovered_area<B: DiscoveryBrowser>(
     // Where the screen is, for a mapping run's summary, however this ends.
     let screen = crate::commands::autorun::MappingScreen { arrived: Some(arrived.clone()), menu: nav::menu_path(&clicks) };
     let home = nav::Home::of(&recipe);
-    // A repair with no run's record of the area failing to be reached tries
-    // the area's saved path first, from a fresh home, and goes no further
-    // when it still arrives.
-    let tried_first = repairing
-        .as_ref()
-        .filter(|old| !area_repair::last_trip_unreached(&crate::autorun::store::list_runs(root), old));
-    if let Some(old) = tried_first {
+    // A repair first takes the area's saved path from a fresh home, as a
+    // run would, and goes no further when it still arrives.
+    if let Some(old) = repairing.as_ref() {
         let went = match fresh_home_for_area(
             d,
             &home,
@@ -5863,15 +5866,18 @@ async fn save_discovered_area<B: DiscoveryBrowser>(
             return (409, format!("the area's saved path could not be tried: {}", went.detail));
         }
         let route = nav::Route::new(&recipe, old.clone());
-        match nav::go_to_module(d, &route, nav::TripFrom::SignIn, timing).await {
-            Ok(_) => return (409, area_repair::NOTHING_TO_REPAIR.to_string()),
-            Err(failure) if failure.harness => {
-                return (
-                    409,
-                    format!("the browser stopped answering while the area's saved path was tried: {}", failure.reason),
-                )
-            }
-            Err(_) => {}
+        let tried = nav::reach_module(d, &route, nav::TripFrom::SignIn, timing, "Auto Run area repair").await;
+        if tried.ok {
+            return (409, area_repair::NOTHING_TO_REPAIR.to_string());
+        }
+        if tried.harness {
+            return (
+                409,
+                format!(
+                    "the browser stopped answering while the area's saved path was tried, so nothing was saved: {}",
+                    tried.detail
+                ),
+            );
         }
     }
     // The check starts from a fresh home page, never from where the page
@@ -5915,9 +5921,10 @@ async fn save_discovered_area<B: DiscoveryBrowser>(
                 recorded: crate::commands::autorun_record::now_iso(),
                 start,
                 made_by: if mapping { nav::MadeBy::Mapping } else { nav::MadeBy::Person },
-                // A mapping run's update keeps an assistant's earlier
-                // repair note: only the person clears it.
-                repaired_by_assistant: existing.as_ref().and_then(|old| old.repaired_by_assistant.clone()),
+                // A mapping run writes its own area again only when the path
+                // changed, and an assistant's repair note describes the path
+                // it replaced: it goes with that path.
+                repaired_by_assistant: None,
             },
         };
         let route = nav::Route::new(&recipe, path);
@@ -5957,7 +5964,22 @@ async fn save_discovered_area<B: DiscoveryBrowser>(
     }
     let saved = path.clicks.len();
     let new_menu = nav::menu_path(&path.clicks);
-    if let Err(why) = nav::put_path(root, organization, project, path) {
+    let written = match (&repairing, path.repaired_by_assistant.as_ref()) {
+        // A repair goes to the file as it is now (`area_repair::save_repair`).
+        (Some(old), Some(note)) => area_repair::save_repair(
+            root,
+            organization,
+            project,
+            old,
+            path.clicks.clone(),
+            path.arrived.clone(),
+            path.start.clone(),
+            note.reason.clone(),
+            note.at.clone(),
+        ),
+        _ => nav::put_path(root, organization, project, path),
+    };
+    if let Err(why) = written {
         return (409, why);
     }
     // The area whose path this save replaced, if any.
