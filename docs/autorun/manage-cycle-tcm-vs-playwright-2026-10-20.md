@@ -5,28 +5,30 @@ Focus: (1) locators, (2) what each tool checks to decide the expected outcome ha
 
 ## 1. Summary
 
-**What exists today.** The TCM side has all 37 in-scope scripts (`case-141698` to `case-142514`). The Playwright
-repo, after Avin moved the old suite out, currently has **only 5 of the 37 cases regenerated**: 141698, 141699,
-141700, 141701 and 141702 (spec, page object, data and test-cases md under
+**What exists today (updated after a second batch).** The TCM side has all 37 in-scope scripts (`case-141698` to
+`case-142514`). The Playwright repo, after Avin moved the old suite out, currently has **10 of the 37 cases
+regenerated**: batch 1 = 141698, 141699, 141700, 141701, 141702; batch 2 (added 15:00-15:17 on 2026-10-20) = 141703,
+141704, 141706, 141708, 141720 (spec, page object, data and test-cases md under
 `suites/sl/admin/performance/PC-manage-cycle`, raw specs in `suites/_generated/manage-performance-cycles-*.spec.ts`).
-`suites/_generated/index.json` maps exactly those 5 ids. The new md lists only those 5 headings. So the like-for-like
-comparison is 5 cases; for the other 32 the only Playwright counterpart is the superseded backup in
+`suites/_generated/index.json` and the `// ADO <id>` comments map exactly those 10 ids. So the like-for-like
+comparison is 10 cases; for the other 27 the only Playwright counterpart is the superseded backup in
 `D:\PHR-PLAYWRIGHT-AUTOMATION-backups\manage-cycle-2026-10-20`, compared in section 4 as an indicative secondary result.
 
 **Verdict counts**
 
 | Basis | Equivalent | TCM stronger | Playwright stronger | Different | Total |
 |-------|-----------:|-------------:|--------------------:|----------:|------:|
-| Current Playwright (5 cases present in both) | 0 | 0 | 4 | 1 | 5 |
-| Superseded backup Playwright (the other 32, indicative) | 23 | 6 | 0 | 3 | 32 |
-| Cases with no Playwright counterpart now | | | | | 32 |
+| Current Playwright (10 cases present in both) | 1 | 0 | 8 | 1 | 10 |
+| Superseded backup Playwright (the other 27, indicative) | 19 | 5 | 0 | 3 | 27 |
+| Cases with no Playwright counterpart now | | | | | 27 |
 
 **Headline findings**
 
-1. On the 5 cases both tools cover, the new Playwright specs are stronger: they loop over every card, check the
-   Plus icon and the top-right position, read subtitle and footer text in a pattern, and check two known cycles'
-   exact subtitle and dates. TCM's versions are thinner (counts, first card only, `nth 0`).
-2. The 5 new Playwright specs hard-code `FY2026 Annual Performance Review` and `FY2025 Annual Performance Review`
+1. On the 10 cases both tools cover, the Playwright specs are stronger in 8: they loop over every card, check the
+   Plus icon and position, the eye/pencil/trash glyph classes, subtitle and footer text in a pattern, the dropdown's
+   option order and format, and two known cycles' exact subtitle and dates. TCM's versions are thinner (counts, first
+   card only, `nth 0`, loose names). Only 141704 is equivalent and 141702 differs (target choice).
+2. The Playwright specs hard-code `FY2026 Annual Performance Review` and `FY2025 Annual Performance Review`
    plus expected subtitle/date strings that the data file marks `assumed`/`derived`. They declare no preconditions.
    TCM scripts for the same cycles declare `pms-performance-cycle` preconditions (10750, 10763); TCM 141701 uses a
    different cycle (FY2027 ... (Oct), 11171) and declares nothing.
@@ -34,6 +36,9 @@ comparison is 5 cases; for the other 32 the only Playwright counterpart is the s
    CSS, same positional option picks). Where it differed, it was usually weaker: the "no publish switch" checks used a
    visible filter on a switch input that is 0x0 and never visible, so they pass whether the switch exists or not.
    TCM's runner treats a 0x0 switch as seen when its label is visible, so TCM's version of that check is real.
+   **The regenerated 141708 fixed this**: it counts switches with no visibility filter and adds a positive control
+   on a Published card, which is now stronger than TCM's check. The same trap remains in the backup's 141733,
+   141748 and 142514 and must not be carried into the remaining regeneration.
 4. TCM gets the cookie banner and the `#ehrmLoader` spinner handled once, in the runner. Playwright handles the
    cookie banner by hand in the few actions that need it and has no loader wait in these pages.
 5. The brief said Playwright also covers the 23 non-To-Be-Automated cases. Neither the current suite nor the backup
@@ -54,7 +59,7 @@ comparison is 5 cases; for the other 32 the only Playwright counterpart is the s
 | Steps 1 and 2 of every case | step 1: search textbox visible; step 2: heading visible. | step 1: `main#phr-content` visible (30 s) + heading; step 2: heading + search box + New Cycle visible. Equivalent. |
 | Data set-up | Script `preconditions` (flow + stage + value + why) and `changes` / `needs_unchanged` for cases that flip state; `no_save` flag. | None declared; names are in `data/PC-manage-cycle.json` with provenance tags. Raw specs carry the names inline. |
 
-## 3. Per-case comparison: the 5 cases present in both
+## 3. Per-case comparison: the 10 cases present in both
 
 Cell shorthand: `nth` = positional; "role+name" = accessibility locator; PW = Playwright.
 
@@ -67,6 +72,11 @@ Cell shorthand: `nth` = positional; "role+name" = accessibility locator; PW = Pl
 | 141700 Card subtitle shows method and participant count | CSS `div[data-cycle-id] p` (count) and `{css:..., nth:0}` for text. | `card.locator('p')` on each card; `po.card(name)` exact "Open <name>" then `locator('p')`. | `p` count = 10; **first card only** contains "Evaluation · " and " participants". No year check, no number check, no method check, no per-cycle check. | Every card on page: `toHaveText(/^(?!.*\b(19\|20)\d{2}\b).+ · \d+ participants?$/)` (format, number present, no 4-digit year). FY2026 and FY2025: exact text `180° Evaluation · 1 participants`. | **Playwright stronger.** Over-strict edges: exact "1 participants" locks in the app's missing singular; the year lookahead would reject "2000 participants"; expected subtitle is marked `assumed`. |
 | 141701 Card footer shows Duration and period dates | CSS `div[data-cycle-id]` chained to `{text:"Duration"}` (count 10; first card visible); search "FY2027 Annual Performance Review (Oct)"; `Open <name>` button chained to text "Duration" and to text "Oct 01, 2026 - Sep 30, 2027". | `po.cardText(card,'Duration')` exact; `card.getByText(/^[A-Z][a-z]{2} \d{2}, \d{4} - [A-Z][a-z]{2} \d{2}, \d{4}$/)`; `po.card(name)` exact + `getByText(dates,{exact:true})`. | Duration label on all 10 cards (count) and on one card by name; that one card contains the literal period text (the follow-up `contains " - "` is redundant once the text matched). Dates of other cards are not read. Hidden dependency: cycle 11171 is never declared as a precondition on this case. | Duration label **and** date-shaped period on every card on the page (hyphen included in the regex); FY2026 and FY2025 exact period strings. | **Playwright stronger.** Neither independently reads Start/End Date from the cycle, so "dates match" is only checked against hard-coded strings. PW's `Jan 01 - Dec 31` strings are `assumed`/`derived`; TCM's Oct dates were confirmed live. |
 | 141702 Draft cycle card shows 'Draft' label | role textbox "Search cycles..." filled with `AUTOTEST Annual Performance Review FY2026`; role button "2 page"; `Open AUTOTEST Annual Performance Review FY2026` chained to `{text:"Draft", exact}`. | `cards.filter({has: page.getByText('Draft',{exact:true})}).first()`; `getByText('Draft',{exact:true})` inside it. No search. | Searches the fixture draft; waits for the pager to shrink (`expect_hidden` "2 page" acts as the wait); that card shows exact "Draft". | First card on the **current page** that contains an exact "Draft"; then that label visible. | **Different.** Same assertion on different targets. PW is looser and can false-fail if page 1 has no Draft card; TCM is deterministic but depends on a unique fixture draft and a loose-name match that must hit exactly one card. |
+| 141703 Published label (batch 2) | Find-card component (fill, `Showing 1-1 of 1`, Open button), chain `Open FY2026 ...` > text "Published" exact. Precondition 10750. | `searchCycle(name)` (waits for the search response and for other headings to go); `contentText('Showing 1-1 of 1')`; `po.card(name)` exact "Open FY2026 Annual Performance Review"; `cardText(card,'Published')` exact visible; `cardText(card,'Unpublished')` `toHaveCount(0)`. | Card (loose name) shows exact text "Published". | Same label check on an exact-name card, plus a negative: the card carries no "Unpublished" label. | **Playwright stronger** (negative check, exact card name, response-aware wait). Hard-coded cycle, no precondition declared. |
+| 141704 Unpublished label (batch 2) | Same component with FY2025; chain to text "Unpublished" exact. Precondition 10763. | Same pattern as 141703 with FY2025 and the "Unpublished" label. | Card shows exact "Unpublished". | Same, exact-name card, response-aware wait. No negative check, but exact matching already excludes "Published". | **Equivalent** |
+| 141706 Card action icons (batch 2) | Buttons `View <name>`, `Edit <name>`, `Delete <name>` (loose names); `expect_text equals ""`; absent icons via chain to `css button[aria-label^="Delete "]` / `View `. Published, Unpublished, and draft `AUTOTEST Draft First Incomplete 2027` (named). | `card.getByRole('button',{name:'View <name>',exact:true})`; `button.locator('i.fa-eye')` / `i.fa-edit` / `i.fa-trash-can` `toBeAttached`; `toHaveText('')`; `card.getByRole('button',{name:/^Delete /})` `toHaveCount(0)`; draft = `clearSearch()` then wait `Showing 1-10 of \d+` then **first Draft card on page 1**. | Button present with the right name, no text; absent action absent. The eye/pencil/trash glyph is not checked. | Same, plus the glyph class on each button. Draft step uses "any Draft card on page 1". | **Playwright stronger** (glyph classes, exact names, `toHaveCount(0)` for absence). Weaker target on the Draft step, same fragility as 141702. Icon classes `fa-edit`, `fa-trash-can` are version-dependent Font Awesome names. |
+| 141708 No toggle on Draft (batch 2) | Find card by exact name `AUTOTEST Annual Performance Review FY2026`; chain to "Draft" exact; `expect_hidden` chain `role=switch` (TCM treats the 0x0 input as seen via its label, so this is a real check). | First Draft card on page 1 (`firstCardWithLabel`); `cardText(draft,'Draft')`; `card.getByRole('switch')` and `card.locator('input[type=checkbox], [role=switch], label.phr-switch-item')` both `toHaveCount(0)` with **no visibility filter**; positive control on the Published card (`getByRole('switch')` count 1, control `toBeAttached`). | Draft label; no switch in the card (visible-by-label rule). No proof that the locator can find a switch. | Draft label; no switch, checkbox or switch label in the card; plus a positive control that the same locators find the switch on a Published card. | **Playwright stronger** (positive control, wider control set; fixes the backup's vacuous check). Target is "first Draft on page 1", not the named fixture draft. |
+| 141720 Status dropdown options (batch 2) | click button "All (" (loose); `expect_count role=option = 4`; options "All (", "Draft (", "Published (" nth 0, "Unpublished (" nth 0 (the last two satisfied by "Unpublished (" alone). | `statusLabel()` ("Status:") visible; `statusFilter('All')` = button name `/^All \(\d+\)$/` visible; click; `aria-expanded` true; `content.getByRole('listbox').getByRole('option')` count 4 and `nth(0..3)` `toHaveAccessibleName(/^<Label> \(\d+\)$/)` (All, Draft, Published, Unpublished in that order); Escape; `aria-expanded` false; filter button visible again. | Four options present; Published/Unpublished only loosely told apart; counts and order not checked. | Four options in the stated order, each named "<label> (<number>)"; open and close state via `aria-expanded`; dropdown closed without choosing. | **Playwright stronger** (order, exact format, state attributes; fixes the Published/Unpublished substring problem). Positional `nth` is intentional here because order is part of the case. |
 
 ### 3.2 Notes behind the table
 
@@ -87,27 +97,22 @@ Cell shorthand: `nth` = positional; "role+name" = accessibility locator; PW = Pl
   robust form (the quirk "a late debounced search paints the list over the wizard" is documented there).
 - **Data.** TCM (141698-141700, 141702): whichever cards are on page 1, plus the shared draft by name; 141701:
   FY2027 (Oct) [11171]; preconditions declared for the Published/Unpublished cards in 141703+ only.
-  Playwright: FY2026 [published] and FY2025 [unpublished] by name in four of five specs; page-1 cards otherwise.
-  Both are look-only, no `Save`, no toggle, no restore needed. TCM marks all five `no_save: true`.
+  Playwright: FY2026 [published] and FY2025 [unpublished] by name in most specs (batch 2 uses them for 141703, 141704, 141706, 141708); page-1 cards otherwise.
+  Both are look-only, no `Save`, no toggle, no restore needed. TCM marks all of them `no_save: true`.
 
-## 4. The other 32 cases (TCM only now)
+## 4. The other 27 cases (TCM only now)
 
 Compared with the superseded backup suite (its page object and spec were read) so the lessons carry over. "Old PW" below
 means the backup, not anything that runs today. Verdict = TCM script vs old PW.
 
 | Case | TCM locator(s) and checks | Old PW locator(s) and checks | Verdict |
 |------|---------------------------|------------------------------|---------|
-| 141703 Published label | Find card by exact name (fill, `Showing 1-1 of 1`, Open button), card chain to text "Published" exact. Precondition 10750. | `searchSingleCycle` then `card.getByText('Published',{exact})`. | Equivalent |
-| 141704 Unpublished label | Same with FY2025 and "Unpublished" (10763). | Same pattern. | Equivalent |
-| 141706 Action icons | role button `View <name>` / `Edit <name>` / `Delete <name>`; `expect_text equals ""` (icon only); absent icon via chain to `css button[aria-label^="Delete "]` / `View `. Published, Unpublished, draft `AUTOTEST Draft First Incomplete 2027`. | `viewButton`/`editButton`/`deleteButton` (substring role+name, `shown()`); `toHaveText('')`; `cardDeleteIcon`/`cardViewIcon` CSS. | Equivalent. Neither checks the glyph (eye, pencil, trash), only name and empty text. |
-| 141708 Draft has no toggle | Card chain to "Draft" exact; `expect_hidden` chain `role=switch` inside the card. | `cardVisibleSwitch` = `.filter({visible:true})` on the switch, `toBeHidden`. | **TCM stronger.** Old PW check is vacuous: the switch input is 0x0 so it is never visible, so the check passes even when a switch exists. |
 | 141709 Toggle on Published | Card chain to "Published" and `expect_visible` role=switch (label counted as seen). | `cardSwitch(...).toBeAttached()` plus label. | **TCM stronger** (visible vs present in DOM). |
 | 141710 Toggle on Unpublished | Same with "Unpublished". | Same as 141709. | **TCM stronger** |
 | 141711 Toggle Published OFF | `expect_checked` true, label Published; click role=switch in card; `expect_hidden role=dialog`; `wait_for` toast text 8 s; `expect_checked` false; label Unpublished; click again; toast; checked true; label Published. `changes`/`needs_unchanged: "FY2026 publish state"`. | `cardSwitch` `toBeChecked`; click `label.phr-switch-item`; `anyDialog` hidden; `waitForToast` 8 s; `not.toBeChecked` and `not aria-checked=mixed`; restore with same toast waits. `@publishes` tag. | Equivalent. See pattern 5.4 for restore behaviour. |
 | 141712 Toggle Unpublished ON | Mirror image (FY2025 / 10763). | Mirror image. | Equivalent |
 | 141714 New Cycle opens wizard | click button "New Cycle"; heading "Create Performance Cycle"; progressbar name contains "Cycle Setup"; component "Exit wizard without saving". | `clickNewCycle`; `createHeading`; `cycleSetupProgress` (progressbar "Cycle Setup", substring); `exitWizard`. | Equivalent. Neither reads "Step 1" explicitly. |
 | 141717 Search filters | Fill "Annual"; first card with `[aria-label^="Open "][aria-label*="annual" i]` visible and `expect_count` of non-matching = 0; fill full name, `press_key Enter`; "2 page" hidden; card visible; non-matching count 0. | `cardsMatching`/`cardsNotMatching` same CSS; `keyboard.press('Enter')`; "2 page" hidden. | Equivalent. Neither checks "no page reload" or the 800 ms pause or that Enter beats the pause. |
-| 141720 Status dropdown options | click button "All (" (loose); `expect_count role=option = 4`; options "All (", "Draft (", "Published (" nth 0, "Unpublished (" nth 0. | `openStatusFilter`; `toHaveCount(4)`; `statusOption()` = substring + `.first()`. | Equivalent. Both: "Published (" is a substring of "Unpublished (", so the Published check is satisfied by the Unpublished option alone; only the count of 4 and the other options guard it. |
 | 141721 Draft filter | click "All (", click option "Draft ("; button "Draft (" visible; cards = 10; cards chained to exact "Draft" = 10. | Same, with `pageSize` 10. | Equivalent. Both over-strict: needs 10 or more Draft cycles on the environment. |
 | 141722 Published filter | click "All (", option **nth 2**; `wait_for` text "Published" exact; `expect_hidden` "Draft" / "Unpublished" text; search "Annual Performance Review"; wait for FY2026 card; FY2025 and AUTOTEST cards hidden. Preconditions 10750, 10763. | `chooseStatusAt(2)` (comment explains substring problem); same hidden checks. | Equivalent. Positional option pick in both; nothing proves the dropdown now reads "Published (". |
 | 141723 Unpublished filter | option nth 3; mirror checks. | `chooseStatusAt(3)`. | Equivalent |
@@ -141,8 +146,13 @@ means the backup, not anything that runs today. Verdict = TCM script vs old PW.
   The class sits at the bottom of a deep inheritance chain; the new specs call inherited members
   (`manageHeading`, `searchCycles`, `newCycleButton`, `searchCycle`).
 - Positional: TCM uses `nth` for the status options (2, 3, 1, 0), `Published (`/`Unpublished (` and the spinbutton /
-  slider / checkbox / Edit-row checks. The old PW used the same indexes. The new 5 specs use `.nth(i)` only as a loop
-  index over a full list and `.first()` once (Draft card).
+  slider / checkbox / Edit-row checks. The old PW used the same indexes. The regenerated specs use `.nth(i)` as a loop
+  index over a full list, `.nth(0..3)` on the dropdown options (141720, where order is part of the case), and
+  `.first()` for "any Draft card" (141702, 141706, 141708).
+- Batch 2 added page-object members that are exact and strict: `cardAction` (`View <name>` exact), `anyCardAction`
+  (`/^Delete /`), `statusFilter` / `optionWithCount` (`/^All \(\d+\)$/`), `statusOptions` (`listbox` > `option`), and icon
+  members by Font Awesome class (`i.fa-eye`, `i.fa-edit`, `i.fa-trash-can`). TCM reaches the same buttons by loose
+  role+name and never inspects the icon.
 - Different elements for the same thing: the card (TCM `div[data-cycle-id]`, PW role=button "Open ..."); a switch
   (TCM role=switch seen via its label, PW input `getByRole('switch')` without visibility, clicked via
   `label.phr-switch-item`); the locked cards on Evaluation Rules (both CSS ids, different disabled semantics).
@@ -151,14 +161,16 @@ means the backup, not anything that runs today. Verdict = TCM script vs old PW.
 - TCM prefers presence/absence and counts; it never uses regex or geometry. Exact-text checks are the toast, the banner
   and the `Showing` count. Many "each card" expectations are reduced to a count.
 - Playwright reads content: the new specs assert shapes by regex on every card and exact strings for two named
-  cycles. Setup waits are explicit and long (30/20/15 s) and use network-aware waits for the debounced search.
+  cycles, state attributes (`aria-expanded` on the open dropdown), glyph classes, and counts that tolerate live data
+  (`Showing 1-10 of \d+`, `^Draft \(\d+\)$`) instead of hard-coded totals. Absence is asserted as `toHaveCount(0)`,
+  and 141708 adds a positive control that its absence locator can find a switch on a Published card. Setup waits are explicit and long (30/20/15 s) and use network-aware waits for the debounced search.
 
 ### 5.3 Cookie banner, loader, "Exit wizard?" dialog
 | Concern | TCM | Playwright |
 |---------|-----|------------|
-| Cookie banner (`#cookieBanner`, close `#btnCookieClose`) | Runner closes it before every click/fill/drag/upload via the sign-in recipe's `close_when_shown` (never Accept All). Scripts carry no guard. | Hand-rolled in specific actions (`nextPage`, `selectRatingMethod`), a 1-2 s `waitFor` then close. `performLogin` clicks **Accept All** on the login page. The 5 new specs never click anything the banner could cover. |
+| Cookie banner (`#cookieBanner`, close `#btnCookieClose`) | Runner closes it before every click/fill/drag/upload via the sign-in recipe's `close_when_shown` (never Accept All). Scripts carry no guard. | Hand-rolled in specific actions (`nextPage`, `selectRatingMethod`), a 1-2 s `waitFor` then close. `performLogin` clicks **Accept All** on the login page. The 10 regenerated specs click nothing the banner could cover (the dropdown open in 141720 and the search `fill` in the others are not at the foot of the page). |
 | `#ehrmLoader` spinner | Runner waits (up to 90 s) before every click/fill/wait_for. No script needs a long first wait. | No loader wait found in `src/` or in the manage-cycle page; relies on web-first timeouts (e.g. `content` visible 30 s). |
-| "Exit wizard?" dialog | Components "Exit wizard without saving" (Exit, wait dialog, Continue exact, wait heading) and "Close View mode without saving". Dialog located by `role=dialog name`, button Continue exact. | `exitWizard()` / `closeView()` / `confirmExitDialog()` in the backup page object, same steps. Not used by the 5 look-only specs. |
+| "Exit wizard?" dialog | Components "Exit wizard without saving" (Exit, wait dialog, Continue exact, wait heading) and "Close View mode without saving". Dialog located by `role=dialog name`, button Continue exact. | `exitWizard()` / `closeView()` / `confirmExitDialog()` in the backup page object, same steps. Not used by the 10 look-only specs. |
 | Wizard exit on Competencies | Closes the designation chip footer first (`.phr-select-chip-footer`). | Same logic. |
 
 ### 5.4 Publish toggle
@@ -170,7 +182,8 @@ means the backup, not anything that runs today. Verdict = TCM script vs old PW.
   first toggle leaves the shared cycle in the wrong state and poisons the next run's opening assertion. TCM at least
   declares `changes` / `needs_unchanged` on the script so the runner and precondition engine know the case moves that state;
   Playwright only tags the tests `@publishes`.
-- Absence of a switch: only TCM checks it correctly (see 5.5).
+- Absence of a switch: TCM checks it correctly by rule; the backup Playwright did not; the regenerated 141708 does (no visibility filter,
+  `toHaveCount(0)`, plus a positive control). See 5.5.
 
 ### 5.5 Where a tool would PASS with the app wrong (weak checks)
 TCM
@@ -182,19 +195,20 @@ TCM
 6. 141734: the case's "no warning banner" is not asserted.
 7. 141744 / 141747: only two of each input type / three checkboxes / two Edit-row buttons.
 8. 141749: the address is compared with a constant substring, not with the noted address; `check_url` looks once.
-9. 141720: Published option is satisfied by Unpublished; 141722 / 141723 / 141724 pick the option by index and never confirm
+9. 141720: Published option is satisfied by Unpublished (the regenerated Playwright version pins order and format);
+   141706: the eye/pencil/trash glyph is never inspected; 141722 / 141723 / 141724 pick the option by index and never confirm
    the dropdown label.
 10. `expect_hidden` passes for a missing element. A renamed Previous/Exit/Save button leaves 141731 / 141748 / 142514 green.
 
 Playwright (new)
-1. 141698: icon only `toBeAttached`.
+1. 141698: icon only `toBeAttached` (also true of the glyph checks in 141706).
 2. 141699: the card's name is only checked against its own heading, plus two named cycles; no count of expected cycles.
 3. 141701: dates of the two named cycles are hard-coded; "dates match Start/End" never compared with the cycle's own fields.
-4. All five: no precondition declared, so a missing FY2025/FY2026 cycle shows up as a failed assertion, not a clear set-up error.
+4. All ten: no precondition declared, so a missing FY2025/FY2026 cycle shows up as a failed assertion, not a clear set-up error.
 
 Playwright (backup, same class of bug can come back in regeneration)
-1. "No switch" checks via `.filter({visible:true})` (141708, 141733, 141748, 142514) can never fail.
-2. 141709 / 141710 used `toBeAttached`.
+1. "No switch" checks via `.filter({visible:true})` (141733, 141748, 142514) can never fail. 141708 had the same bug in the backup and was fixed in the regeneration.
+2. 141709 / 141710 used `toBeAttached` (not yet regenerated).
 
 ### 5.6 Where a tool would FAIL with the app right (over-strict)
 TCM
@@ -209,7 +223,9 @@ Playwright (new)
 - 141698: geometry thresholds (40 px flush, 300 px) are guesses.
 - 141700: exact "180° Evaluation · 1 participants" for both named cycles (assumed) and the year lookahead rejects "2000 participants".
 - 141701: `Jan 01, 2026 - Dec 31, 2026` and `Jan 01, 2025 - Dec 31, 2025` marked `assumed`/`derived`.
-- 141702: needs a Draft card on page 1 of the unsearched list; with 10 or more newer non-draft cycles it fails.
+- 141702, 141706 (step 5) and 141708: need a Draft card on page 1 of the unsearched list; with 10 or more newer non-draft cycles they fail. 141706 and 141708 then draw their Draft conclusions from whichever card comes first.
+- 141706: `i.fa-edit` / `i.fa-trash-can` / `i.fa-eye` are Font Awesome class names that change with a version upgrade (false fail on a cosmetic change).
+- 141708: the positive control requires exactly one switch on the Published card (`toHaveCount(1)`); a second switch-role element would fail it.
 - `headerButton('New Cycle')` is a substring match inside `main#phr-content`; a cycle named "New Cycle ..." would trip strict mode.
 
 ## 6. Recommendations
@@ -225,6 +241,9 @@ Playwright (new)
 4. 141734: add `expect_hidden role=alert` after the wizard opens, as the case says.
 5. 141744 / 141747 / 141741: replace the first-n positional disabled checks with a count that proves none are enabled
    (`expect_count` of `input:not([disabled])` inside the step container equals 0) where possible.
+5a. 141706: add a glyph check by chaining `{role:button,name:View <name>}` > `{css:"i.fa-eye"}` (and `i.fa-edit`, `i.fa-trash-can`).
+5b. 141720: after the four option checks add `{role:option,nth:N}` `expect_contains_text` for N = 0..3 so order is checked and
+    Published cannot be satisfied by Unpublished (Playwright now does this).
 6. 141749: store the address after step 3 is not possible; accept as unchecked or compare against the full URL, not a substring.
 7. 141738: replace the long file-drop name with the stable fragment ("Drop your files here"), as Playwright does.
 8. Keep an eye on `check_url` "once" semantics and on loose names that can match a second cycle; use `exact` on every `Open <name>`.
@@ -234,21 +253,20 @@ Playwright (new)
 ### Playwright suite
 1. Declare preconditions or fixtures for FY2026/FY2025 (cycles 10750 and 10763 in TCM) so a missing cycle reports as
    set-up, not as a failed assertion; confirm the assumed subtitle and dates against the live cards.
-2. 141702: search the named fixture draft (as TCM does) or assert the category across the whole filtered list
-   (Status filter = Draft) rather than "first Draft on page 1".
+2. 141702, 141706 (step 5), 141708: search the named fixture draft (as TCM does) or apply Status = Draft and assert across that list,
+   rather than "first Draft on page 1".
 3. 141698: keep the Plus icon and position checks but assert the icon `toBeVisible`, and compute the thresholds from the
    header's own padding; drop the hard 40 px.
-4. Never assert a switch's absence through a visible filter (0x0 input). Use `toHaveCount(0)` on `card.getByRole('switch')`
-   and `toBeVisible` on `label.phr-switch-item` for presence. Port TCM's "visible via label" stance when the other 32 are
-   regenerated, and do not carry `cardVisibleSwitch` / `anyVisibleSwitch` forward.
+4. 141708 now does this right (`toHaveCount(0)` with no visibility filter, plus a positive control). Keep that pattern for 141733, 141748 and
+   142514 when the other 27 are regenerated; do not carry `cardVisibleSwitch` / `anyVisibleSwitch` forward from the backup.
 5. Move the cookie-banner close and the `#ehrmLoader` wait into the shared base page or the `page` fixture instead of
    per-action copies, so every new spec gets them. The manage-cycle page object does not call any of it today.
-6. Add the case-level checks TCM has and the new specs lack when they are generated: `Showing 1-10 of` / disabled
-   Previous / `aria-current` (141727), `expect_count` 4 options (141720), the full banner text equality (141737),
-   `aria-pressed` states (141739).
+6. Add the case-level checks TCM has and the specs lack when they are generated: `Showing 1-10 of` / disabled
+   Previous / `aria-current` (141727), the full banner text equality (141737), `aria-pressed` states (141739). (The 141720 option count
+   is now covered.)
 7. Restore shared state in `test.afterEach` or a `finally` (publish toggles), not only in the test body; a failed first
    toggle currently strands the cycle.
-8. When the remaining 32 cases are generated, compare each to the TCM script on this table: any case where the
+8. When the remaining 27 cases are generated, compare each to the TCM script on this table: any case where the
    generated version has fewer checks than the TCM one (section 4 verdict "TCM stronger") should be raised, not shipped.
 9. The data file's `_provenance` marks FY2026/FY2025 names, dates and subtitle as `assumed`/`derived`; promote them to
    `verified` once checked live.
