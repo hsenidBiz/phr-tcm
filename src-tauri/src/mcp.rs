@@ -505,7 +505,7 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
         },
         {
             "name": "save_autorun_component",
-            "description": "Save a component: a widget or short flow worked out once on the live app, that any script then runs with one use_component action. Make one the first time a widget or short flow will be needed more than once; use a saved one instead of repeating its actions. Try it first with discover_autorun_action, a use_component of it with this component as its `draft`, and save it unchanged once that works; anything else is refused. Every fixed locator in it must have been seen: an action needs one seen matching exactly one element, while a check that can pass with several matches may use one seen matching several; every input it declares must be used, and every one it uses declared; it cannot sign in, type a username or password, use another component, or build an address from an input. Saving a name already saved is a change: it needs `why` and is tried live again first. `remove: true` with only the `name` removes a saved component instead, refused while a saved script uses it: the refusal names the cases, so change those scripts first.",
+            "description": "Save a component: a widget or short flow worked out once on the live app, that any script then runs with one use_component action. Make one when a widget or flow is needed more than once; reuse a saved one rather than repeat its actions. Try it first with discover_autorun_action, a use_component of it with this component as its `draft`, and save it unchanged once that works; anything else is refused. Every fixed locator in it must have been seen: an action needs one seen matching exactly one element, while a check that can pass with several matches may use one seen matching several; every input it declares must be used, and every one it uses declared; it cannot sign in, type a username or password, use another component, or build an address from an input. Saving a name already saved is a change: it needs `why` and is tried live again first. `remove: true` and only the `name` removes a saved one instead, refused while a script uses it (the refusal names the cases).",
             "inputSchema": schema(serde_json::json!({
                 "name": { "type": "string", "description": "Its name, unique in this project, e.g. \"Pick a date\"." },
                 "description": { "type": "string", "description": "One line: what it does and when to use it." },
@@ -529,7 +529,7 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
                 },
                 "why": { "type": "string", "description": "Only when changing a saved component: one sentence on why it changes." },
                 "dry_run": { "type": "boolean", "description": DRY_RUN_COMPONENT },
-                "remove": { "type": "boolean", "description": "true: remove the saved component `name` instead; send nothing else." },
+                "remove": { "type": "boolean", "description": "true: remove the saved component `name`; send nothing else." },
             }), &["name"]),
         },
         {
