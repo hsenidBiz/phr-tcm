@@ -18,6 +18,8 @@
 //! activity log the gate writes is the one place those go.
 
 use super::{CaseScript, Precondition, PreconditionOp, PreconditionRepair};
+use crate::browser::actions::Action;
+use crate::browser::locator::Target;
 use crate::api_templates::flow::{Flow, Subject, SubjectType};
 use crate::api_templates::flow_store;
 use crate::api_templates::gate::{self, CheckFor, SqlcmdStageDb, StageDb, StageState};
@@ -93,6 +95,73 @@ pub fn check_saved(root: &Path, org: &str, project: &str, scripts: &[CaseScript]
     } else {
         Err(refused.join("; "))
     }
+}
+
+/// What the assistant's save adds, after "names {records} (from step {n})",
+/// when a script relies on a record it declares no precondition for. A note,
+/// never a refusal.
+pub const UNDECLARED_RECORD: &str = "but declares no precondition: on an environment without that record the case fails as a wrong result instead of being Blocked before step 1 - declare each record it relies on in \"preconditions\" (see \"Preconditions\" in the guide).";
+
+/// The most records the note names before saying how many more.
+const RECORDS_SHOWN: usize = 3;
+
+/// A literal numeric id in a css attribute: `[data-cycle-id="11171"]`.
+const RECORD_ID_CSS: &str = r#"(?i)\[data-[a-z0-9_-]*id\s*=\s*["']?[0-9]+["']?\s*\]"#;
+
+/// One note, or none, for a script with no preconditions and no setup whose
+/// checked steps (`only_steps`, else all) name a record by hand: a name or
+/// a text holding the environment's `test_prefix` as a whole word (and not
+/// typed by the script itself), or a css attribute holding a literal record
+/// id. "names {list} (from step {n}) {UNDECLARED_RECORD}", `n` being the
+/// first one's step. Anything with a `{{` placeholder is not a record.
+pub fn undeclared_record_note(script: &CaseScript, only_steps: Option<&[i32]>, test_prefix: &str) -> Option<String> {
+    use crate::browser::locator::fold_name;
+    if !script.preconditions.is_empty() || script.setup.is_some() {
+        return None;
+    }
+    let prefix = fold_name(test_prefix);
+    let id_css = regex::Regex::new(RECORD_ID_CSS).ok()?;
+    // What the script types it made itself.
+    let typed: Vec<String> = script
+        .steps
+        .iter()
+        .flat_map(|s| s.actions.iter())
+        .flat_map(Action::each)
+        .filter_map(|a| a.typed_value())
+        .map(fold_name)
+        .filter(|v| v.chars().count() >= 3)
+        .collect();
+    let mut records: Vec<(i32, String)> = Vec::new();
+    for step in script.steps.iter().filter(|s| only_steps.is_none_or(|only| only.contains(&s.step_number))) {
+        for action in step.actions.iter().flat_map(Action::each) {
+            for link in action.targets().into_iter().flat_map(Target::links) {
+                let words = match (&link.role, &link.name, &link.text) {
+                    (Some(_), Some(n), _) => Some(n),
+                    (None, _, Some(t)) => Some(t),
+                    _ => None,
+                };
+                let found = match (words, &link.css) {
+                    (Some(w), _) if !prefix.is_empty() && !w.contains("{{") => {
+                        let folded = fold_name(w);
+                        (crate::autorun::seen_check::has_phrase(&folded, &prefix) && !typed.iter().any(|t| folded.contains(t.as_str())))
+                            .then(|| w.clone())
+                    }
+                    (None, Some(c)) if !c.contains("{{") && id_css.is_match(c) => Some(c.clone()),
+                    _ => None,
+                };
+                if let Some(record) = found {
+                    if !records.iter().any(|(_, r)| *r == record) {
+                        records.push((step.step_number, record));
+                    }
+                }
+            }
+        }
+    }
+    let first = records.first()?.0;
+    let shown: Vec<String> = records.iter().take(RECORDS_SHOWN).map(|(_, r)| format!("{r:?}")).collect();
+    let more = records.len().saturating_sub(RECORDS_SHOWN);
+    let more = if more > 0 { format!(" and {more} more") } else { String::new() };
+    Some(format!("names {}{more} (from step {first}) {UNDECLARED_RECORD}", shown.join(", ")))
 }
 
 /// A precondition as a person reads it: "<stage> for <value> (<flow>)",

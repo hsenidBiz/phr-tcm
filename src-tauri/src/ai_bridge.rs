@@ -9439,7 +9439,14 @@ async fn save_autorun_scripts(
     // The saved scripts, read once for every check of this save.
     let saved_scripts =
         if seen_scope.is_empty() { Vec::new() } else { crate::autorun::store::list_scripts(&root) };
-    let check_and_save = || -> Result<(), SaveRefusal> {
+    // The environment's test name prefix, for the note on a record a script
+    // relies on without declaring it.
+    let test_prefix = crate::environments::active(&root)
+        .map(|e| e.test_prefix)
+        .unwrap_or_else(|_| crate::environments::default_test_prefix());
+    let check_and_save = || -> Result<Vec<String>, SaveRefusal> {
+        // What the save noticed without refusing: said after its answer.
+        let mut notes: Vec<String> = Vec::new();
         if !seen_scope.is_empty() {
             let (map, components, files) = seen_check_inputs(&root, ctx, uses_components, &saved_scripts)
                 .map_err(|e| SaveRefusal::Other(400, e))?;
@@ -9447,6 +9454,10 @@ async fn save_autorun_scripts(
             // of them is named at once; a refusal of any other kind is
             // answered alone, as it always was.
             let mut unseen: Vec<(i32, Vec<String>)> = Vec::new();
+            // Locators only ever seen matching nothing, used to check that
+            // something is absent: refused after the unseen ones, which a
+            // discovery in progress may still record.
+            let mut unproven: Vec<(i32, Vec<String>)> = Vec::new();
             for (case_id, only) in &seen_scope {
                 let (Some(script), Some(case)) = (
                     prepared.iter().find(|s| s.case_id == *case_id),
@@ -9466,7 +9477,12 @@ async fn save_autorun_scripts(
                     only.as_deref(),
                     &files,
                 ) {
-                    SeenVerdict::Passed => {}
+                    SeenVerdict::Passed => {
+                        let lines = crate::autorun::seen_check::absence_refusals(&map, script, only.as_deref());
+                        if !lines.is_empty() {
+                            unproven.push((*case_id, lines));
+                        }
+                    }
                     SeenVerdict::Other(why) => return Err(SaveRefusal::Unseen(why)),
                     SeenVerdict::Unseen(lines) => unseen.push((*case_id, lines)),
                 }
@@ -9474,14 +9490,27 @@ async fn save_autorun_scripts(
             if !unseen.is_empty() {
                 return Err(SaveRefusal::Unseen(unseen_in_bundle(&unseen)));
             }
+            if !unproven.is_empty() {
+                return Err(SaveRefusal::Other(400, unseen_in_bundle(&unproven)));
+            }
+            // Everything is seen. Notes, for the new and changed steps only.
+            for (case_id, only) in &seen_scope {
+                let Some(script) = prepared.iter().find(|s| s.case_id == *case_id) else { continue };
+                let sentences = crate::autorun::seen_check::loose_name_notes(&map, &components, script, only.as_deref())
+                    .into_iter()
+                    .chain(crate::autorun::preconditions::undeclared_record_note(script, only.as_deref(), &test_prefix));
+                notes.extend(sentences.map(|n| format!("case {case_id}: note: {n}")));
+            }
         }
         // Everything has passed. A dry run checks the bundle as the write
         // would and stops there; a save writes it.
         if dry_run {
-            return crate::autorun::store::check_scripts(&prepared).map_err(|e| SaveRefusal::Other(400, e));
+            return crate::autorun::store::check_scripts(&prepared)
+                .map(|()| notes)
+                .map_err(|e| SaveRefusal::Other(400, e));
         }
         match crate::autorun::store::save_scripts_atomically(&root, &prepared) {
-            Ok(()) => Ok(()),
+            Ok(()) => Ok(notes),
             Err(crate::autorun::store::SaveScriptsError::Invalid(e)) => Err(SaveRefusal::Other(400, e)),
             Err(crate::autorun::store::SaveScriptsError::Io(e)) => {
                 Err(SaveRefusal::Other(500, format!("could not save the bundle: {e}")))
@@ -9542,17 +9571,19 @@ async fn save_autorun_scripts(
         Some(found) => after_recording(found, said),
         None => said,
     };
-    if let Err(refused) = checked {
-        return answer(refused.said());
-    }
+    let notes = match checked {
+        Ok(notes) => notes,
+        Err(refused) => return answer(refused.said()),
+    };
     if dry_run {
-        let said = std::iter::once(dry_run_answer(prepared.len(), &lines)).chain(precondition_lines);
+        let said = std::iter::once(dry_run_answer(prepared.len(), &lines)).chain(precondition_lines).chain(notes);
         return (200, said.collect::<Vec<_>>().join("\n"));
     }
     crate::applog::info(format!("AI saved {} auto-run script(s)", prepared.len()));
 
     let mut report = vec![format!("saved {} script(s): {}", prepared.len(), lines.join(", "))];
     report.extend(precondition_lines);
+    report.extend(notes);
     for (case_id, step) in &repaired_marks {
         match crate::autorun::store::clear_suspected_defect_at(&root, *case_id, *step) {
             Ok(true) => {

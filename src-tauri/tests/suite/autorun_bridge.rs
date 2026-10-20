@@ -4212,3 +4212,189 @@ async fn record_validation_rule_keeps_a_long_message_at_300_characters() {
     assert_eq!(rules[0].message.chars().count(), 300);
     assert_eq!(rules[0].message, format!("{} {}", "a".repeat(200), "b".repeat(99)));
 }
+
+// ------------------------- the save's own rules: absence controls and notes
+
+use v2_lib::autorun::preconditions::UNDECLARED_RECORD;
+use v2_lib::autorun::seen_check::ABSENCE_UNPROVEN;
+
+/// Case 7 as `case_7` writes it, with a third step that checks the
+/// dropdown toggle is gone.
+fn case_7_with_absence(toast: &str) -> serde_json::Value {
+    serde_json::json!([{
+        "case_id": 7,
+        "title": "Save a rating",
+        "steps": [
+            { "step_number": 1, "actions": [{ "kind": "navigate", "url": "https://app.example/ratings" }] },
+            { "step_number": 2, "actions": [
+                { "kind": "click", "selector": "#save" },
+                { "kind": "expect_contains_text", "selector": toast, "value": "Saved" }
+            ]},
+            { "step_number": 3, "actions": [{ "kind": "expect_hidden", "selector": ".phr-dropdown-toggle" }] }
+        ]
+    }])
+}
+
+/// Step 3 moved into step 2, as the floor's two steps have it.
+fn case_7_hiding_in_step_2() -> serde_json::Value {
+    serde_json::json!([{
+        "case_id": 7,
+        "title": "Save a rating",
+        "steps": [
+            { "step_number": 1, "actions": [{ "kind": "navigate", "url": "https://app.example/ratings" }] },
+            { "step_number": 2, "actions": [
+                { "kind": "click", "selector": "#save" },
+                { "kind": "expect_contains_text", "selector": ".toast", "value": "Saved" },
+                { "kind": "expect_hidden", "selector": ".phr-dropdown-toggle" }
+            ]}
+        ]
+    }])
+}
+
+fn probed(root: &std::path::Path, css: &str, matched: usize, at: u64) {
+    let target: v2_lib::browser::locator::Target = serde_json::from_value(serde_json::json!(css)).unwrap();
+    v2_lib::autorun::discovery_map::record_matched_count(root, "acme", "Web", None, "/", &target, matched, at).unwrap();
+}
+
+/// An absence check on a locator the app only ever showed matching nothing
+/// could pass with the locator wrong: a new script is refused until it is
+/// seen present somewhere.
+#[tokio::test]
+async fn a_new_absence_check_on_a_locator_only_ever_probed_as_none_is_refused() {
+    let dir = TempDir::new();
+    let _root = crate::serial::autorun();
+    set_root(dir.path().to_path_buf());
+    let (_server, client) = client_with_cases(&[(7, "Save a rating", &["", "A toast says Saved"])]).await;
+    let body = case_7_hiding_in_step_2().to_string();
+    let now = v2_lib::autorun::sessions::now_ms();
+    // Everything but the hidden locator was seen present.
+    see_scripts(dir.path(), &case_7(".toast", "Saved").to_string());
+    probed(dir.path(), ".phr-dropdown-toggle", 0, now);
+
+    let (status, out) = route(&ctx(), Some(&client), "POST", "/autorun-script", &body, "1.0.0").await;
+    assert_eq!((status, out), (400, format!("Step 2: .phr-dropdown-toggle {ABSENCE_UNPROVEN}")));
+    assert_eq!(load_script(dir.path(), 7).unwrap(), None);
+
+    // A dry run refuses it the same way.
+    let dry = tool_body(serde_json::json!({ "scripts": case_7_hiding_in_step_2(), "dry_run": true }));
+    let (status, out) = route(&ctx(), Some(&client), "POST", "/autorun-script", &dry, "1.0.0").await;
+    assert_eq!((status, out), (400, format!("Step 2: .phr-dropdown-toggle {ABSENCE_UNPROVEN}")));
+
+    // Once a probe found it matching one, the same save goes through.
+    probed(dir.path(), ".phr-dropdown-toggle", 1, now + 1000);
+    let (status, out) = route(&ctx(), Some(&client), "POST", "/autorun-script", &body, "1.0.0").await;
+    assert_eq!(status, 200, "{out}");
+    assert!(load_script(dir.path(), 7).unwrap().is_some());
+}
+
+/// A script saved before the rule keeps going through when it is sent
+/// again unchanged: the rule judges only what a save changes.
+#[tokio::test]
+async fn an_unchanged_resave_keeps_an_absence_check_saved_before_the_rule() {
+    let dir = TempDir::new();
+    let _root = crate::serial::autorun();
+    set_root(dir.path().to_path_buf());
+    let (_server, client) =
+        client_with_cases(&[(7, "Save a rating", &["", "A toast says Saved", "The toggle is gone"])]).await;
+    let body = case_7_with_absence(".toast");
+    let old: Vec<CaseScript> = serde_json::from_value(body.clone()).unwrap();
+    save_scripts_atomically(dir.path(), &old).unwrap();
+    probed(dir.path(), ".phr-dropdown-toggle", 0, v2_lib::autorun::sessions::now_ms());
+
+    let (status, out) = route(&ctx(), Some(&client), "POST", "/autorun-script", &body.to_string(), "1.0.0").await;
+    assert_eq!((status, out.as_str()), (200, "saved 1 script(s): case 7 (unchanged)"));
+}
+
+/// A repair of one step is held to the rule for that step alone: the
+/// absence check in a step it does not declare stays as it was saved.
+#[tokio::test]
+async fn a_repair_that_does_not_touch_the_absence_step_saves() {
+    let dir = TempDir::new();
+    let _root = crate::serial::autorun();
+    set_root(dir.path().to_path_buf());
+    let (_server, client) =
+        client_with_cases(&[(7, "Save a rating", &["", "A toast says Saved", "The toggle is gone"])]).await;
+    let old: Vec<CaseScript> = serde_json::from_value(case_7_with_absence("#toast")).unwrap();
+    save_scripts_atomically(dir.path(), &old).unwrap();
+    probed(dir.path(), ".phr-dropdown-toggle", 0, v2_lib::autorun::sessions::now_ms());
+    see_scripts(dir.path(), &case_7(".toast", "Saved").to_string());
+
+    let repair = serde_json::json!({ "scripts": case_7_with_absence(".toast"), "edits": [edit_step_2("the toast moved")] })
+        .to_string();
+    let (status, out) = route(&ctx(), Some(&client), "POST", "/autorun-script", &repair, "1.0.0").await;
+    assert_eq!(status, 200, "{out}");
+    assert_eq!(load_script(dir.path(), 7).unwrap().unwrap().repairs, 1);
+
+    // A repair that does declare the absence step is held to the rule.
+    let again = serde_json::json!({
+        "scripts": case_7_with_absence(".toast"),
+        "edits": [serde_json::json!({ "case_id": 7, "steps": [3], "why": "looked at the wrong control" })]
+    });
+    let mut changed = again["scripts"].clone();
+    changed[0]["steps"][2]["actions"][0]["selector"] = serde_json::json!(".phr-dropdown-other");
+    probed(dir.path(), ".phr-dropdown-other", 0, v2_lib::autorun::sessions::now_ms());
+    let body = serde_json::json!({ "scripts": changed, "edits": again["edits"] }).to_string();
+    let (status, out) = route(&ctx(), Some(&client), "POST", "/autorun-script", &body, "1.0.0").await;
+    assert_eq!((status, out), (400, format!("Step 3: .phr-dropdown-other {ABSENCE_UNPROVEN}")));
+}
+
+/// The save says, without refusing, what it noticed: a record name that
+/// would match a longer one too, and a script naming a record it does not
+/// declare. Both after the save's first line, and in a dry run after its.
+#[tokio::test]
+async fn a_save_notes_a_loose_record_name_and_an_undeclared_record_without_refusing() {
+    let dir = TempDir::new();
+    let _root = crate::serial::autorun();
+    set_root(dir.path().to_path_buf());
+    let (_server, client) = client_with_cases(&[(7, "Open a review", &["", "A toast says Saved"])]).await;
+    let review = "Open AUTOTEST Review FY2026";
+    let body = serde_json::json!([{
+        "case_id": 7,
+        "title": "Open a review",
+        "steps": [
+            { "step_number": 1, "actions": [{ "kind": "navigate", "url": "https://app.example/ratings" }] },
+            { "step_number": 2, "actions": [
+                { "kind": "click", "selector": { "role": "button", "name": review } },
+                { "kind": "expect_contains_text", "selector": ".toast", "value": "Saved" }
+            ]}
+        ]
+    }]);
+    see_scripts(dir.path(), &body.to_string());
+    let longer: v2_lib::browser::locator::Target =
+        serde_json::from_value(serde_json::json!({ "role": "button", "name": format!("{review} Copy") })).unwrap();
+    v2_lib::autorun::discovery_map::record_matched(
+        dir.path(),
+        "acme",
+        "Web",
+        None,
+        "/",
+        &longer,
+        v2_lib::autorun::sessions::now_ms(),
+    )
+    .unwrap();
+    let notes = [
+        format!(
+            "case 7: note: step 2: button \"{review}\" matches loosely, and the live app also showed button \"{review} Copy\", which it would match too when both are on the page: add \"exact\": true."
+        ),
+        format!("case 7: note: names \"{review}\" (from step 2) {UNDECLARED_RECORD}"),
+    ];
+
+    let dry = tool_body(serde_json::json!({ "scripts": body, "dry_run": true }));
+    let (status, out) = route(&ctx(), Some(&client), "POST", "/autorun-script", &dry, "1.0.0").await;
+    assert_eq!(status, 200, "{out}");
+    let lines: Vec<&str> = out.lines().collect();
+    assert_eq!(lines[0], "Dry run: nothing was saved. It would save 1 script(s): case 7 (new)");
+    assert_eq!(lines[1..], notes[..], "{out}");
+    assert_eq!(load_script(dir.path(), 7).unwrap(), None);
+
+    let (status, out) = route(&ctx(), Some(&client), "POST", "/autorun-script", &body.to_string(), "1.0.0").await;
+    assert_eq!(status, 200, "{out}");
+    let lines: Vec<&str> = out.lines().collect();
+    assert_eq!(lines[0], "saved 1 script(s): case 7 (new)");
+    assert_eq!(lines[1..], notes[..], "{out}");
+    assert!(load_script(dir.path(), 7).unwrap().is_some());
+
+    // Saved again unchanged, it is not read for notes.
+    let (status, out) = route(&ctx(), Some(&client), "POST", "/autorun-script", &body.to_string(), "1.0.0").await;
+    assert_eq!((status, out.as_str()), (200, "saved 1 script(s): case 7 (unchanged)"));
+}

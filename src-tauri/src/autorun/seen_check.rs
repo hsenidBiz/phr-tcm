@@ -220,7 +220,7 @@ pub fn steps_to_check(declared: Option<&Edit>) -> Option<Vec<i32>> {
 
 /// Is `phrase` in `text` as whole words: bounded on each side by a
 /// character that is not a letter or digit, or by an end of the text?
-fn has_phrase(text: &str, phrase: &str) -> bool {
+pub(crate) fn has_phrase(text: &str, phrase: &str) -> bool {
     text.match_indices(phrase).any(|(i, _)| {
         let before = text[..i].chars().next_back();
         let after = text[i + phrase.len()..].chars().next();
@@ -1947,6 +1947,139 @@ pub fn uses_components(script: &CaseScript) -> bool {
         .flat_map(|s| s.actions.iter())
         .flat_map(Action::each)
         .any(|a| matches!(a, Action::UseComponent { .. }))
+}
+
+// ---- the assistant's save: rules for what a save changes ----
+//
+// These three run only in the assistant's save (`ai_bridge::save_autorun_
+// scripts`), on the steps it checks (a new script's, a repair's declared
+// ones), after the seen check passed. Nothing else calls them: not an
+// import, a component save, a load or a run, so no script saved before is
+// ever judged by them.
+
+/// Said of an absence check whose locator was only ever seen matching
+/// nothing: the one rule of the three that refuses.
+pub const ABSENCE_UNPROVEN: &str = "was only ever seen matching nothing on the live app, so this check that it is absent could pass with the locator wrong: probe it where it is shown (in any area), or check it present elsewhere in this script with the same last part, then save again. If the app never shows it anywhere, leave the check out, and when the step then checks nothing, say why in its \"unchecked\".";
+
+/// Is this a check that passes when its locator matches nothing:
+/// `expect_hidden`, an `expect_count` of 0 (`equals` or `at_most`)? A
+/// `when_visible` guard, skipped when its locator is absent, is not.
+fn is_absence_check(action: &Action) -> bool {
+    takes_none(action) && !matches!(action, Action::WhenVisible { .. })
+}
+
+/// Every absence check of `script`'s checked steps (`only_steps`, else all)
+/// whose locator could be wrong without the check ever failing, one line
+/// each in step order: "Step {n}: {locator} {ABSENCE_UNPROVEN}". The last
+/// part of its locator (the chain's last link) must have been shown: seen
+/// matching something in any area, or a chain ending in it seen whole
+/// matching something, or used by the script itself in an action that needs
+/// it present.
+pub fn absence_refusals(map: &DiscoveryMap, script: &CaseScript, only_steps: Option<&[i32]>) -> Vec<String> {
+    let areas = every_area(map);
+    let shown = present_only(map);
+    let present = Sightings::new(&shown, &areas);
+    let wholes = each_wholes_in(map, &areas);
+    // What the script itself needs present: any step, checked or not.
+    let mut used: Vec<LocatorStep> = Vec::new();
+    for action in script.steps.iter().flat_map(|s| s.actions.iter()).flat_map(Action::each) {
+        if takes_none(action) {
+            continue;
+        }
+        used.extend(checked_targets(action).into_iter().filter_map(|(t, _)| t.links().pop()));
+    }
+    let mut out = Vec::new();
+    for step in script.steps.iter().filter(|s| only_steps.is_none_or(|only| only.contains(&s.step_number))) {
+        for action in step.actions.iter().flat_map(Action::each).filter(|a| is_absence_check(a)) {
+            for target in own_targets(action) {
+                let Some(last) = target.links().pop() else { continue };
+                let proven = present.has(&last, true)
+                    || wholes.iter().any(|w| w.last().is_some_and(|l| same_link_filled(l, &last)))
+                    || used.iter().any(|u| same_link(u, &last));
+                if !proven {
+                    out.push(format!("Step {}: {} {ABSENCE_UNPROVEN}", step.step_number, target.describe()));
+                }
+            }
+        }
+    }
+    out
+}
+
+/// The most loose names one case's notes list before saying how many more.
+const MAX_LOOSE_NOTES: usize = 5;
+
+/// Notes, never refusals: a name in a click or another use that needs one
+/// element which matches loosely (a run matches a name as a part of the
+/// page's, ignoring case), when the live app also showed a longer name that
+/// holds it, so the use would be ambiguous whenever both are on the page.
+/// Only names that read like a record (three words or more, or a digit),
+/// not `exact`, with no `nth` or `visible`, one note per name in step
+/// order, `MAX_LOOSE_NOTES` of them and then "and {k} more loose names like
+/// these".
+pub fn loose_name_notes(
+    map: &DiscoveryMap,
+    components: &ComponentFile,
+    script: &CaseScript,
+    only_steps: Option<&[i32]>,
+) -> Vec<String> {
+    let areas = script_areas(components, script.area_name(), &script.steps);
+    let areas: Vec<&str> = areas.iter().map(String::as_str).collect();
+    let seen = Sightings::new(&present_only(map), &areas);
+    let mut named: Vec<(String, String)> = Vec::new();
+    let mut notes: Vec<String> = Vec::new();
+    for step in script.steps.iter().filter(|s| only_steps.is_none_or(|only| only.contains(&s.step_number))) {
+        for top in &step.actions {
+            for action in top.each() {
+                // A loop's own work runs once per row: not one element.
+                let in_loop = matches!(top, Action::RepeatWhileVisible { .. }) && !std::ptr::eq(top, action);
+                if in_loop || seen_many(action) {
+                    continue;
+                }
+                for link in own_targets(action).into_iter().flat_map(Target::links) {
+                    let (kind, raw, role) = match (&link.role, &link.name, &link.text) {
+                        (Some(r), Some(n), _) => (fold_name(r), n.as_str(), Some(r.as_str())),
+                        (None, _, Some(t)) => ("text".to_string(), t.as_str(), None),
+                        _ => continue,
+                    };
+                    if link.exact || link.nth.is_some() || link.visible.is_some() || link.input.is_some() || raw.contains("{{") {
+                        continue;
+                    }
+                    let want = norm_name(raw);
+                    if want.split(' ').count() < 3 && !want.chars().any(|c| c.is_ascii_digit()) {
+                        continue;
+                    }
+                    if named.iter().any(|(k, n)| *k == kind && *n == want) {
+                        continue;
+                    }
+                    let Some(longer) = seen
+                        .holders(&link)
+                        .into_iter()
+                        .find(|h| norm_name(h.name.as_deref().or(h.text.as_deref()).unwrap_or("")) != want)
+                    else {
+                        continue;
+                    };
+                    named.push((kind, want));
+                    let (what, longer_what) = match role {
+                        Some(r) => (
+                            format!("{r} \"{raw}\""),
+                            format!("{r} \"{}\"", longer.name.as_deref().unwrap_or("")),
+                        ),
+                        None => (format!("text \"{raw}\""), format!("text \"{}\"", longer.text.as_deref().unwrap_or(""))),
+                    };
+                    notes.push(format!(
+                        "step {}: {what} matches loosely, and the live app also showed {longer_what}, which it would match too when both are on the page: add \"exact\": true.",
+                        step.step_number
+                    ));
+                }
+            }
+        }
+    }
+    if notes.len() > MAX_LOOSE_NOTES {
+        let more = notes.len() - MAX_LOOSE_NOTES;
+        notes.truncate(MAX_LOOSE_NOTES);
+        notes.push(format!("and {more} more loose names like these"));
+    }
+    notes
 }
 
 /// The targets an action's own check reads: a `when_visible`'s own
