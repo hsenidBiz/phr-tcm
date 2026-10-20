@@ -238,7 +238,7 @@ Fonts are listed in the tables above, not here.
 | `collapse-CJJpN-ak.js` | 3.40 | 1.47 |
 | `history-CwALbZ_G.js` | 2.77 | 1.22 |
 | `index-BUY4Bq8A.js` | 2.31 | 0.85 |
-| (sign-in screen helper) | 2.02 | 1.12 |
+| (one small chunk) | 2.02 | 1.12 |
 | `PickPbiEmpty-D5-L_nHZ.js` | 2.01 | 0.86 |
 | `grouping-D6xZ2_SQ.js` | 1.92 | 0.94 |
 | `Tooltip-L-rbnOBF.js` | 1.78 | 0.80 |
@@ -342,7 +342,7 @@ Fonts are listed in the tables above, not here.
 | `collapse-DQeAX0BU.js` | 3.40 | 1.47 |
 | `history-CwALbZ_G.js` | 2.77 | 1.22 |
 | `index-Dk2UU8AU.js` | 2.31 | 0.85 |
-| (sign-in screen helper) | 2.02 | 1.12 |
+| (one small chunk) | 2.02 | 1.12 |
 | `PickPbiEmpty-DW5JgE8h.js` | 2.01 | 0.86 |
 | `grouping-D6xZ2_SQ.js` | 1.92 | 0.94 |
 | `Tooltip-D_G01LdU.js` | 1.78 | 0.80 |
