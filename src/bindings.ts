@@ -854,6 +854,11 @@ export const commands = {
 	 */
 	autoRunRemoveModulePath: (organization: string, project: string, area: string) => typedError<NavView, string>(__TAURI_INVOKE("auto_run_remove_module_path", { organization, project, area })),
 	/**
+	 *  Put back the path an assistant's repair replaced, and clear its note
+	 *  (`area_repair::put_old_path_back`). Nothing is replayed: Try checks it.
+	 */
+	autoRunPutOldAreaPathBack: (organization: string, project: string, area: string) => typedError<NavView, string>(__TAURI_INVOKE("auto_run_put_old_area_path_back", { organization, project, area })),
+	/**
 	 *  Sign the named account in, in the open browser. Used before a case's
 	 *  first step, and by the `sign_in` action in the middle of one. An account
 	 *  anything else holds (`autorun::lease`) is refused at once, with the
@@ -4157,6 +4162,11 @@ export type ModuleView = {
 	clicks: string[],
 	arrived: string,
 	recorded: string,
+	/**
+	 *  The note an assistant's repair left, until the person puts the old
+	 *  path back or records the area again.
+	 */
+	repaired_by_assistant: RepairNote | null,
 };
 
 export type NavView = {
@@ -5117,6 +5127,15 @@ export type RelinkOutcome = {
 	 *  frontend's describeAdoError can lift Azure DevOps' own sentence.
 	 */
 	error: AdoError | null,
+};
+
+/**
+ *  An assistant's repair as the Areas dialog shows it: why, and when. The
+ *  old path itself stays in the file for Put old path back.
+ */
+export type RepairNote = {
+	reason: string,
+	at: string,
 };
 
 /**

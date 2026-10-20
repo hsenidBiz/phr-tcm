@@ -345,6 +345,7 @@ fn recorded_area(root: &std::path::Path, name: &str, module: &str) {
             recorded: "2026-10-08T10:00:00Z".to_string(),
             start: String::new(),
             made_by: v2_lib::autorun::nav::MadeBy::Person,
+            repaired_by_assistant: None,
         },
     )
     .unwrap();

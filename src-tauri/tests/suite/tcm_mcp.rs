@@ -285,6 +285,24 @@ fn get_test_cases_passes_case_ids_with_or_without_a_pbi() {
     assert_eq!(calls.borrow().last().unwrap().1, "/test-cases?pbi=42&ids=201&limit=5&offset=0");
 }
 
+/// `save_autorun_area` takes an optional `repair: { reason }` (owner
+/// decision 2026-10-20): the reason is required inside it, and the tool
+/// still needs a name, a module and clicks.
+#[test]
+fn save_autorun_area_takes_an_optional_repair_with_a_reason() {
+    let req = r#"{"jsonrpc":"2.0","id":7,"method":"tools/list"}"#;
+    let call = |_: &str, _: &str, _: &str| Ok((200, r#"{"disabled":[]}"#.to_string()));
+    let v: serde_json::Value = serde_json::from_str(&handle_message(req, "1.10.3", &call).unwrap()).unwrap();
+    let tool = v["result"]["tools"].as_array().unwrap().iter().find(|t| t["name"] == "save_autorun_area").unwrap();
+    assert_eq!(tool["inputSchema"]["required"], serde_json::json!(["name", "module", "clicks"]));
+    let repair = &tool["inputSchema"]["properties"]["repair"];
+    assert_eq!(repair["type"], "object");
+    assert_eq!(repair["required"], serde_json::json!(["reason"]));
+    assert_eq!(repair["properties"]["reason"]["type"], "string");
+    let said = tool["description"].as_str().unwrap();
+    assert!(said.contains("put the old path back"), "{said}");
+}
+
 #[test]
 fn get_test_cases_requires_neither_a_pbi_nor_ids_in_its_schema() {
     let req = r#"{"jsonrpc":"2.0","id":7,"method":"tools/list"}"#;

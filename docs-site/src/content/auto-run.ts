@@ -776,7 +776,7 @@ export const autoRun: Screen = {
       locate: { role: "button", name: "Edit areas" },
       name: "Edit (areas)",
       does:
-        "The areas of the site a case can start in. Record one by clicking through the site's menu once in a browser the app opens; the app then finds its way there before step 1. **Try** checks a recorded area in a fresh browser.",
+        "The areas of the site a case can start in. Record one by clicking through the site's menu once in a browser the app opens; the app then finds its way there before step 1. **Try** checks a recorded area in a fresh browser. When a run can no longer reach an area because the site's menu moved, your assistant can repair its path; the area then reads **Path repaired by an assistant** with its reason, and **Put old path back** restores the path it had before.",
     },
     {
       id: "view-discovery",

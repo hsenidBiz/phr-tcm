@@ -1442,6 +1442,17 @@ You open and drive a browser of your own to find what a script needs:
   The app replays the clicks from the home page and saves the area only
   if they arrive where you are. If you cannot reach a screen through the
   menus, ask the person to record the area in Auto Run.
+- When a run cannot reach an area ("Could not reach module ..."), repair
+  its path yourself instead of asking the person: find the screen through
+  the menus, then call `save_autorun_area` with the area's name, its
+  module, the new clicks and `repair: { "reason": "..." }` - one line of
+  at most 200 characters saying what changed in the menu, with no
+  address. Any area can be repaired, a person's too. The app tries the
+  saved path first and refuses with "the area's path still works: nothing
+  to repair" while it arrives, unless a run since it was saved could not
+  reach it. The new clicks must arrive where you are, as for a new area.
+  The area keeps its name and module, so its scripts are unchanged; tell
+  the person what you repaired and that they can put the old path back.
 - `end_autorun_discovery` ends your discovery and keeps the browser: what it
   mapped is kept, and the browser stays open and signed in for your next
   replay or discovery; only the person's End discovery button closes it.
@@ -1953,7 +1964,10 @@ all:
 - `STOP: the run could not take this case to its module screen - fix the module path or the case's Module in the app, not the script`
 - `STOP: the person marked this case Blocked - a missing precondition is not a script defect`
 
-None of those is a script defect.
+None of those is a script defect. When the module screen one's failure
+reads "Could not reach module ...", the area's menu path may have moved:
+repair the area, not the script, with `save_autorun_area` and `repair`
+(see the areas section above) instead of asking the person.
 
 Saving a change to a script that already exists is a repair, and it
 needs a declaration alongside the plain "scripts" list "Saving it" above

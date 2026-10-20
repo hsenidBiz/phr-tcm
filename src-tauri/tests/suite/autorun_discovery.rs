@@ -14,8 +14,10 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use v2_lib::ai_bridge::{
     close_browser_in, discover_action_in, discover_area_in, discover_start_in, discovery_sighting, end_discovery_in,
-    read_page, refuse_while_discovering, route, BridgeContext, DiscoveryBrowser, DiscoveryParts, NO_DISCOVERY,
+    read_page, refuse_while_discovering, repair_area_in, route, BridgeContext, DiscoveryBrowser, DiscoveryParts,
+    NO_DISCOVERY,
 };
+use v2_lib::autorun::area_repair::NOTHING_TO_REPAIR;
 use v2_lib::autorun::accounts::save_accounts;
 use v2_lib::autorun::components::{draft_fingerprint, put, Component};
 use v2_lib::autorun::discovery_map::{load_map, map_path, AreaMap};
@@ -1480,6 +1482,7 @@ async fn an_existing_area_name_is_refused() {
         recorded: "2026-10-01T00:00:00Z".into(),
         start: String::new(),
         made_by: MadeBy::Person,
+        repaired_by_assistant: None,
     };
     put_path(dir.path(), ORG, PROJECT, existing.clone()).unwrap();
     let (mut browser, _) = slot(menu_app(true, "/hr/leave/apply"), exploring("Leave"));
@@ -1495,6 +1498,278 @@ async fn an_existing_area_name_is_refused() {
     assert!(browser.as_ref().unwrap().d.calls_to("Page.navigate").is_empty(), "the browser was touched");
     let nav = load_nav(dir.path(), ORG, PROJECT).unwrap();
     assert_eq!(find_area(&nav, "Leave Apply"), Some(&existing), "the existing area was changed");
+}
+
+// ------------------------------------------- an assistant's repair
+
+const MOVED: &str = "The Leave menu moved under Self Service";
+
+/// A person's area "Leave Apply" under Leave, recorded with `clicks`.
+fn persons_leave_apply(clicks: Vec<Target>) -> ModulePath {
+    ModulePath {
+        area: "Leave Apply".into(),
+        module: "Leave".into(),
+        clicks,
+        arrived: "/hr/leave/apply".into(),
+        recorded: "2026-10-01T00:00:00Z".into(),
+        start: "/".into(),
+        made_by: MadeBy::Person,
+        repaired_by_assistant: None,
+    }
+}
+
+/// An ordinary discovery standing on `/hr/leave/apply`, signed in.
+fn discovery_on_leave_apply() -> Option<FakeBrowser> {
+    let (mut browser, _) = slot(menu_app(true, "/hr/leave/apply"), exploring("Leave"));
+    browser.as_mut().unwrap().account = Some("admin".into());
+    browser
+}
+
+/// A saved run whose one case went to `area` and got `detail` (`ok` or not).
+fn save_trip(root: &std::path::Path, id: &str, started_ms: u64, ok: bool, detail: &str) {
+    let run: v2_lib::autorun::LocalRun = serde_json::from_value(json!({
+        "id": id,
+        "pbi_id": 1,
+        "started_at": started_ms.to_string(),
+        "mode": "unattended",
+        "cases": [{
+            "case_id": 7, "title": "Apply leave", "verdict": "", "note": "",
+            "steps": [{ "step_number": v2_lib::autorun::replay::MODULE_STEP, "outcomes": [{ "ok": ok, "detail": detail }] }]
+        }]
+    }))
+    .unwrap();
+    v2_lib::autorun::store::save_run(root, &run).unwrap();
+}
+
+fn now_ms() -> u64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as u64
+}
+
+/// A person's area whose saved clicks no longer arrive is repaired: the new
+/// clicks replace them, the area keeps its name, module, maker and when it
+/// was recorded, and the note keeps the old path and the reason. The answer
+/// says so, and that the person can put the old path back.
+#[tokio::test]
+async fn a_repair_replaces_a_path_that_no_longer_arrives_and_is_marked() {
+    let dir = root_with_recipe_and_account();
+    put_path(dir.path(), ORG, PROJECT, persons_leave_apply(vec![css("#missing")])).unwrap();
+    let mut browser = discovery_on_leave_apply();
+
+    let clicks = vec![css("#leave"), css("#apply")];
+    let (status, body) =
+        repair_area_in(&mut browser, dir.path(), ORG, PROJECT, "leave apply", "", clicks.clone(), MOVED, &quick())
+            .await;
+    assert_eq!(status, 200, "{body}");
+    let v = parsed(&body);
+    assert_eq!(v["saved"], true, "{body}");
+    assert_eq!(v["repaired"], true, "{body}");
+    let message = v["message"].as_str().unwrap();
+    assert!(message.starts_with(&format!("area \"Leave Apply\" repaired: {MOVED}")), "{message}");
+    assert!(message.contains("put the old path back"), "{message}");
+
+    let nav = load_nav(dir.path(), ORG, PROJECT).unwrap();
+    assert_eq!(nav.modules.len(), 1, "{:?}", nav.modules);
+    let saved = find_area(&nav, "Leave Apply").unwrap();
+    assert_eq!(saved.area, "Leave Apply");
+    assert_eq!(saved.module, "Leave", "a repair moved the area");
+    assert_eq!(saved.made_by, MadeBy::Person);
+    assert_eq!(saved.recorded, "2026-10-01T00:00:00Z");
+    assert_eq!(saved.clicks, clicks);
+    assert_eq!(saved.arrived, "/hr/leave/apply");
+    let note = saved.repaired_by_assistant.as_ref().expect("the repair was not recorded");
+    assert_eq!(note.previous_clicks, vec![css("#missing")]);
+    assert_eq!(note.previous_arrived, "/hr/leave/apply");
+    assert_eq!(note.reason, MOVED);
+    assert_eq!(note.at.len(), 20, "{}", note.at);
+    let state = browser.as_ref().unwrap().discovery.as_ref().unwrap();
+    assert_eq!(state.area.as_deref(), Some("Leave Apply"));
+}
+
+/// The area's saved path is tried first; when it still arrives there is
+/// nothing to repair and nothing is written.
+#[tokio::test]
+async fn a_repair_is_refused_when_the_old_path_still_works() {
+    let dir = root_with_recipe_and_account();
+    put_path(dir.path(), ORG, PROJECT, persons_leave_apply(vec![css("#leave"), css("#apply")])).unwrap();
+    let before = file_state(dir.path());
+    let mut browser = discovery_on_leave_apply();
+
+    let (status, out) =
+        repair_area_in(&mut browser, dir.path(), ORG, PROJECT, "Leave Apply", "Leave", vec![css("#apply")], MOVED, &quick())
+            .await;
+    assert_eq!((status, out.as_str()), (409, NOTHING_TO_REPAIR));
+    assert_eq!(file_state(dir.path()), before, "the areas file was written");
+}
+
+/// A repair needs a reason: one line of at most 200 characters, in words.
+/// Each refusal comes before the browser is touched.
+#[tokio::test]
+async fn a_repair_without_a_proper_reason_is_refused() {
+    let dir = root_with_recipe_and_account();
+    put_path(dir.path(), ORG, PROJECT, persons_leave_apply(vec![css("#missing")])).unwrap();
+    let before = file_state(dir.path());
+    let long = "x".repeat(201);
+    for reason in ["", "   ", "two\nlines", long.as_str(), "it moved to https://hr.example.com/leave"] {
+        let mut browser = discovery_on_leave_apply();
+        let (status, out) = repair_area_in(
+            &mut browser,
+            dir.path(),
+            ORG,
+            PROJECT,
+            "Leave Apply",
+            "Leave",
+            vec![css("#apply")],
+            reason,
+            &quick(),
+        )
+        .await;
+        assert_eq!(status, 400, "{reason:?}: {out}");
+        assert!(browser.as_ref().unwrap().d.calls_to("Page.navigate").is_empty(), "{reason:?}: the browser was touched");
+    }
+    let mut browser = discovery_on_leave_apply();
+    let (status, out) =
+        repair_area_in(&mut browser, dir.path(), ORG, PROJECT, "Leave Apply", "Leave", vec![css("#apply")], &"y".repeat(200), &quick())
+            .await;
+    assert_ne!(status, 400, "a 200-character reason was refused: {out}");
+    let _ = before;
+}
+
+/// A repair names an area the project has, under its own module.
+#[tokio::test]
+async fn a_repair_of_an_unknown_area_or_into_another_module_is_refused() {
+    let dir = root_with_recipe_and_account();
+    put_path(dir.path(), ORG, PROJECT, persons_leave_apply(vec![css("#missing")])).unwrap();
+    let before = file_state(dir.path());
+
+    let mut browser = discovery_on_leave_apply();
+    let (status, out) =
+        repair_area_in(&mut browser, dir.path(), ORG, PROJECT, "Leave Balance", "Leave", vec![css("#apply")], MOVED, &quick())
+            .await;
+    assert_eq!(status, 409, "{out}");
+    assert!(out.contains("no area named 'Leave Balance'"), "{out}");
+    assert!(browser.as_ref().unwrap().d.calls_to("Page.navigate").is_empty(), "the browser was touched");
+
+    let mut browser = discovery_on_leave_apply();
+    let (status, out) =
+        repair_area_in(&mut browser, dir.path(), ORG, PROJECT, "Leave Apply", "Payroll", vec![css("#apply")], MOVED, &quick())
+            .await;
+    assert_eq!(status, 409, "{out}");
+    assert!(out.contains("under Leave"), "{out}");
+    assert!(browser.as_ref().unwrap().d.calls_to("Page.navigate").is_empty(), "the browser was touched");
+    assert_eq!(file_state(dir.path()), before, "the areas file was written");
+}
+
+/// New clicks that do not arrive repair nothing: the refusal says where
+/// they stopped, and the file is as it was.
+#[tokio::test]
+async fn a_repair_whose_new_clicks_do_not_arrive_writes_nothing() {
+    let dir = root_with_recipe_and_account();
+    put_path(dir.path(), ORG, PROJECT, persons_leave_apply(vec![css("#missing")])).unwrap();
+    let before = file_state(dir.path());
+    let mut browser = discovery_on_leave_apply();
+
+    let (status, out) = repair_area_in(
+        &mut browser,
+        dir.path(),
+        ORG,
+        PROJECT,
+        "Leave Apply",
+        "Leave",
+        vec![css("#leave"), css("#missing")],
+        MOVED,
+        &quick(),
+    )
+    .await;
+    assert_eq!(status, 409, "{out}");
+    assert!(out.starts_with("The clicks did not arrive: click 2"), "{out}");
+    assert_eq!(file_state(dir.path()), before, "the areas file was written");
+}
+
+/// A run's own record of the area failing to be reached since its path was
+/// saved is enough: the saved path is not tried again. A later trip that
+/// reached it, or a failure from before the path was saved, is not.
+#[tokio::test]
+async fn a_runs_record_of_the_area_unreached_allows_the_repair() {
+    let unreached = "Could not reach module \"Leave Apply\": click 1, css \"#apply\" - nothing matched.";
+    // The saved path still arrives in this fake, so only the record can
+    // let the repair through.
+    let old = || persons_leave_apply(vec![css("#apply")]);
+    let new_clicks = || vec![css("#leave"), css("#apply")];
+
+    // Unreached since the path was saved: repaired.
+    let dir = root_with_recipe_and_account();
+    put_path(dir.path(), ORG, PROJECT, old()).unwrap();
+    save_trip(dir.path(), "r1", now_ms(), false, unreached);
+    let mut browser = discovery_on_leave_apply();
+    let (status, body) =
+        repair_area_in(&mut browser, dir.path(), ORG, PROJECT, "Leave Apply", "Leave", new_clicks(), MOVED, &quick())
+            .await;
+    assert_eq!(status, 200, "{body}");
+    assert!(find_area(&load_nav(dir.path(), ORG, PROJECT).unwrap(), "Leave Apply").unwrap().repaired_by_assistant.is_some());
+
+    // A later run reached it: the saved path is tried, and still works.
+    let dir = root_with_recipe_and_account();
+    put_path(dir.path(), ORG, PROJECT, old()).unwrap();
+    save_trip(dir.path(), "r1", now_ms() - 60_000, false, unreached);
+    save_trip(dir.path(), "r2", now_ms(), true, "Go to Leave Apply");
+    let mut browser = discovery_on_leave_apply();
+    let (status, out) =
+        repair_area_in(&mut browser, dir.path(), ORG, PROJECT, "Leave Apply", "Leave", new_clicks(), MOVED, &quick())
+            .await;
+    assert_eq!((status, out.as_str()), (409, NOTHING_TO_REPAIR));
+
+    // The failure came before the path was recorded: it says nothing of it.
+    let dir = root_with_recipe_and_account();
+    put_path(dir.path(), ORG, PROJECT, ModulePath { recorded: "2999-01-01T00:00:00Z".into(), ..old() }).unwrap();
+    save_trip(dir.path(), "r1", now_ms(), false, unreached);
+    let mut browser = discovery_on_leave_apply();
+    let (status, out) =
+        repair_area_in(&mut browser, dir.path(), ORG, PROJECT, "Leave Apply", "Leave", new_clicks(), MOVED, &quick())
+            .await;
+    assert_eq!((status, out.as_str()), (409, NOTHING_TO_REPAIR));
+}
+
+/// A mapping run can repair a person's area too: it stays the person's,
+/// and the run counts it as updated.
+#[tokio::test]
+async fn a_mapping_run_repair_keeps_the_maker_and_counts_an_update() {
+    let dir = root_with_recipe_and_account();
+    put_path(dir.path(), ORG, PROJECT, persons_leave_apply(vec![css("#missing")])).unwrap();
+    let mut browser = mapping_browser();
+
+    let clicks = vec![css("#leave"), css("#apply")];
+    let (status, body) =
+        repair_area_in(&mut browser, dir.path(), ORG, PROJECT, "Leave Apply", "Leave", clicks.clone(), MOVED, &quick())
+            .await;
+    assert_eq!(status, 200, "{body}");
+    let nav = load_nav(dir.path(), ORG, PROJECT).unwrap();
+    let saved = find_area(&nav, "Leave Apply").unwrap();
+    assert_eq!(saved.made_by, MadeBy::Person);
+    assert_eq!(saved.clicks, clicks);
+    let run = the_run(&browser);
+    assert_eq!(run.updated.len(), 1, "{run:?}");
+    assert!(run.added.is_empty(), "{run:?}");
+}
+
+/// The route takes `repair` as `{ "reason": ... }`, and a repair may leave
+/// the module out; anything else is refused before the browser is asked.
+#[tokio::test]
+async fn the_area_route_reads_a_repair() {
+    let dir = root_with_recipe_and_account();
+    let _g = crate::serial::autorun();
+    set_root(dir.path().to_path_buf());
+    for bad in [
+        json!({ "name": "Leave Apply", "module": "Leave", "clicks": [{ "css": "#leave" }], "repair": "moved" }),
+        json!({ "name": "Leave Apply", "module": "Leave", "clicks": [{ "css": "#leave" }], "repair": {} }),
+    ] {
+        let (status, out) = route(&ctx(), None, "POST", "/autorun-discover-area", &bad.to_string(), "1.0.0").await;
+        assert_eq!(status, 400, "{bad}: {out}");
+        assert!(out.contains("\"repair\" is"), "{bad}: {out}");
+    }
+    let body = json!({ "name": "Leave Apply", "clicks": [{ "css": "#leave" }], "repair": { "reason": MOVED } }).to_string();
+    let (status, out) = route(&ctx(), None, "POST", "/autorun-discover-area", &body, "1.0.0").await;
+    assert_eq!(status, 409, "{out}");
+    assert!(out.contains("start_autorun_discovery"), "{out}");
 }
 
 // ------------------------------------------- saving in a mapping run
@@ -1521,6 +1796,7 @@ fn leave_apply(made_by: MadeBy, clicks: Vec<Target>, arrived: &str) -> ModulePat
         recorded: "2026-10-01T00:00:00Z".into(),
         start: "/".into(),
         made_by,
+        repaired_by_assistant: None,
     }
 }
 
@@ -2318,6 +2594,7 @@ fn recorded(dir: &std::path::Path, name: &str) {
             recorded: "2026-10-01T00:00:00Z".into(),
             start: String::new(),
             made_by: MadeBy::Person,
+            repaired_by_assistant: None,
         },
     )
     .unwrap();

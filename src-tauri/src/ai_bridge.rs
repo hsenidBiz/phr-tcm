@@ -5586,7 +5586,8 @@ fn person_area_kept(name: &str) -> String {
 /// session has gone), so a saved area is one a run can take. Clicks that
 /// do not arrive save nothing, and the refusal says where they stopped and
 /// what the page showed. A name already taken is refused before the
-/// browser is touched: the person replaces an area, never the assistant.
+/// browser is touched: the person replaces an area, never the assistant -
+/// except to repair a path a run cannot take (`repair_area_in`).
 ///
 /// In a mapping run (spec 2026-10-09 section 2) the area is saved as the
 /// run's own (`MadeBy::Mapping`), and every save is counted on the run:
@@ -5610,12 +5611,93 @@ pub async fn discover_area_in<B: DiscoveryBrowser>(
     clicks: Vec<crate::browser::locator::Target>,
     timing: &crate::browser::timing::Timing,
 ) -> (u16, String) {
-    let answer = save_discovered_area(slot, root, organization, project, name, module, clicks, timing).await;
+    let answer = save_discovered_area(slot, root, organization, project, name, module, clicks, None, timing).await;
     if let Some(browser) = slot.as_mut() {
         let p = browser.parts();
         count_blocked_writes(p.driver, p.discovery.as_mut(), &[]);
     }
     answer
+}
+
+/// An assistant's repair of an existing area's menu path
+/// (`save_autorun_area` with `repair: { reason }`, owner decision
+/// 2026-10-20). The name must be an area the project has - whoever made
+/// it, a person included - and the repair keeps it under its own module
+/// (`module` may be blank; another one is refused). It is allowed only
+/// while the area is failing to be reached: the latest trip a saved run or
+/// replay made to it since its path was saved could not reach it
+/// (`area_repair::last_trip_unreached`), or - with no such record - its
+/// saved clicks, replayed from a fresh home before anything is written, do
+/// not arrive now (`area_repair::NOTHING_TO_REPAIR` when they do). The new
+/// clicks are then replayed from a fresh home exactly as a new area's are,
+/// and must arrive where the discovery browser stands. Only the clicks,
+/// where they arrive and the page they begin on change; the area keeps its
+/// name, module and maker, and records the path it replaced with the
+/// reason (`repaired_by_assistant`) so the person can put it back.
+#[allow(clippy::too_many_arguments)]
+pub async fn repair_area_in<B: DiscoveryBrowser>(
+    slot: &mut Option<B>,
+    root: &std::path::Path,
+    organization: &str,
+    project: &str,
+    name: &str,
+    module: &str,
+    clicks: Vec<crate::browser::locator::Target>,
+    reason: &str,
+    timing: &crate::browser::timing::Timing,
+) -> (u16, String) {
+    let answer =
+        save_discovered_area(slot, root, organization, project, name, module, clicks, Some(reason), timing).await;
+    if let Some(browser) = slot.as_mut() {
+        let p = browser.parts();
+        count_blocked_writes(p.driver, p.discovery.as_mut(), &[]);
+    }
+    answer
+}
+
+/// A fresh home page for an area's replay, never where the page stands:
+/// PeoplesHR's menu remembers whether a person left it open, so the clicks
+/// would otherwise depend on it (spec 2026-10-09, mapped areas).
+/// `load_home` runs `after_sign_in` once, on the fresh load. A session that
+/// has gone is signed in again as `account`; a sign-in ends on a fresh,
+/// signed-in page with `after_sign_in` run, so that is the start: loading
+/// home again would run it a second time, and a toggle run twice closes the
+/// menu it opened. The outcome says whether home was reached; `Err` is the
+/// answer to give instead.
+#[allow(clippy::too_many_arguments)]
+async fn fresh_home_for_area<D: crate::browser::cdp::Driver>(
+    d: &mut D,
+    home: &crate::autorun::nav::Home,
+    timing: &crate::browser::timing::Timing,
+    root: &std::path::Path,
+    organization: &str,
+    project: &str,
+    account: Option<&str>,
+    lease: &mut crate::autorun::lease::Held,
+    signed_in: &mut Option<String>,
+) -> Result<crate::browser::actions::ActionOutcome, (u16, String)> {
+    let went = crate::autorun::nav::load_home(d, home, timing).await;
+    let signed = went.ok
+        && crate::browser::expect::expect(
+            d,
+            &home.signed_in,
+            crate::browser::expect::Check::Visible,
+            timing.nav_ms,
+            timing.poll_ms,
+        )
+        .await
+        .ok;
+    if signed {
+        return Ok(went);
+    }
+    let Some(key) = account else {
+        return Err((409, "the discovery has no account to sign in again with - start it again".to_string()));
+    };
+    match crate::autorun::signin::sign_in_leased(d, root, organization, project, key, lease, signed_in, timing).await {
+        Err(why) => Err((409, why)),
+        Ok(out) if !out.ok => Err((409, out.detail)),
+        Ok(_) => Ok(crate::browser::actions::ActionOutcome::passed("signed in again")),
+    }
 }
 
 /// Where a discovery stands once the area `kept` is saved or found as it
@@ -5645,7 +5727,8 @@ async fn stand_in_saved_area<D: crate::browser::cdp::Driver>(
     }
 }
 
-/// `discover_area_in`, before the blocked saves are counted.
+/// `discover_area_in` and `repair_area_in`, before the blocked saves are
+/// counted. `repair` is the repair's reason, as the assistant sent it.
 #[allow(clippy::too_many_arguments)]
 async fn save_discovered_area<B: DiscoveryBrowser>(
     slot: &mut Option<B>,
@@ -5655,9 +5738,10 @@ async fn save_discovered_area<B: DiscoveryBrowser>(
     name: &str,
     module: &str,
     clicks: Vec<crate::browser::locator::Target>,
+    repair: Option<&str>,
     timing: &crate::browser::timing::Timing,
 ) -> (u16, String) {
-    use crate::autorun::nav;
+    use crate::autorun::{area_repair, nav};
     let Some(browser) = slot.as_mut() else {
         return (409, NO_DISCOVERY.to_string());
     };
@@ -5666,7 +5750,13 @@ async fn save_discovered_area<B: DiscoveryBrowser>(
         return (409, NO_DISCOVERY.to_string());
     };
     let (name, module) = (name.trim().to_string(), module.trim().to_string());
-    if name.is_empty() || module.is_empty() || clicks.is_empty() {
+    let reason = match repair.map(area_repair::check_reason) {
+        None => None,
+        Some(Ok(reason)) => Some(reason),
+        Some(Err(why)) => return (400, why),
+    };
+    // A repair may leave the module out: it keeps the area's own.
+    if name.is_empty() || (module.is_empty() && reason.is_none()) || clicks.is_empty() {
         return (400, "an area needs a name, the module it belongs to and at least one click".to_string());
     }
     let saved_this_run = state.mapping.as_ref().map(|run| run.added.len() + run.updated.len());
@@ -5678,8 +5768,22 @@ async fn save_discovered_area<B: DiscoveryBrowser>(
         Ok(n) => n,
         Err(why) => return (409, why),
     };
+    // The area a repair replaces the path of: one the project has, under
+    // the module it already has.
+    let repairing = match &reason {
+        None => None,
+        Some(_) => match nav::find_area(&navfile, &name) {
+            None => return (409, area_repair::no_area_to_repair(&name)),
+            Some(found) if !module.is_empty() && nav::module_key(&module) != nav::module_key(&found.module) => {
+                return (409, area_repair::other_module(found))
+            }
+            Some(found) => Some(found.clone()),
+        },
+    };
+    let module = repairing.as_ref().map_or(module, |old| old.module.clone());
     // The run's own area of this name, which this save may update.
     let existing = match nav::find_area(&navfile, &name) {
+        _ if repairing.is_some() => None,
         None => None,
         Some(found) if mapping && found.made_by == nav::MadeBy::Mapping => {
             if let Err(why) = nav::check_area_free(&navfile, &name, &module) {
@@ -5721,7 +5825,8 @@ async fn save_discovered_area<B: DiscoveryBrowser>(
     let account = state.account.clone().or_else(|| p.signed_in.clone());
     let d = p.driver;
     // Where the clicks must arrive: where the assistant clicked its way to,
-    // read as a run's trip reads it.
+    // read as a run's trip reads it - and read before a repair's try of the
+    // saved path moves the page.
     let href = crate::browser::page::eval_value(d, "location.href").await;
     let href = href.ok().and_then(|v| v.as_str().map(str::to_string)).unwrap_or_default();
     let arrived = if href.trim().is_empty() { String::new() } else { nav::path_of(&href) };
@@ -5730,54 +5835,90 @@ async fn save_discovered_area<B: DiscoveryBrowser>(
     }
     // Where the screen is, for a mapping run's summary, however this ends.
     let screen = crate::commands::autorun::MappingScreen { arrived: Some(arrived.clone()), menu: nav::menu_path(&clicks) };
-    // The check starts from a fresh home page, never from where the page
-    // stands: PeoplesHR's menu remembers whether a person left it open, so
-    // the clicks would otherwise depend on it (spec 2026-10-09, mapped
-    // areas). `load_home` runs `after_sign_in` once, on the fresh load.
     let home = nav::Home::of(&recipe);
-    let mut went = nav::load_home(d, &home, timing).await;
-    let signed_in = went.ok
-        && crate::browser::expect::expect(
+    // A repair with no run's record of the area failing to be reached tries
+    // the area's saved path first, from a fresh home, and goes no further
+    // when it still arrives.
+    let tried_first = repairing
+        .as_ref()
+        .filter(|old| !area_repair::last_trip_unreached(&crate::autorun::store::list_runs(root), old));
+    if let Some(old) = tried_first {
+        let went = match fresh_home_for_area(
             d,
-            &home.signed_in,
-            crate::browser::expect::Check::Visible,
-            timing.nav_ms,
-            timing.poll_ms,
+            &home,
+            timing,
+            root,
+            organization,
+            project,
+            account.as_deref(),
+            p.lease,
+            p.signed_in,
         )
         .await
-        .ok;
-    if !signed_in {
-        // The saved session has gone: sign in again as the discovery's
-        // account. A sign-in ends on a fresh, signed-in page with
-        // `after_sign_in` run, so that is the start: loading home again
-        // would run it a second time, and a toggle run twice closes the
-        // menu it opened.
-        let Some(key) = account else {
-            return (409, "the discovery has no account to sign in again with - start it again".to_string());
-        };
-        match crate::autorun::signin::sign_in_leased(d, root, organization, project, &key, p.lease, p.signed_in, timing)
-            .await
         {
-            Err(why) => return (409, why),
-            Ok(out) if !out.ok => return (409, out.detail),
-            Ok(_) => {}
+            Ok(went) => went,
+            Err(refused) => return refused,
+        };
+        if !went.ok {
+            return (409, format!("the area's saved path could not be tried: {}", went.detail));
         }
-        went = crate::browser::actions::ActionOutcome::passed("signed in again");
+        let route = nav::Route::new(&recipe, old.clone());
+        match nav::go_to_module(d, &route, nav::TripFrom::SignIn, timing).await {
+            Ok(_) => return (409, area_repair::NOTHING_TO_REPAIR.to_string()),
+            Err(failure) if failure.harness => {
+                return (
+                    409,
+                    format!("the browser stopped answering while the area's saved path was tried: {}", failure.reason),
+                )
+            }
+            Err(_) => {}
+        }
     }
+    // The check starts from a fresh home page, never from where the page
+    // stands (`fresh_home_for_area`).
+    let went = match fresh_home_for_area(
+        d,
+        &home,
+        timing,
+        root,
+        organization,
+        project,
+        account.as_deref(),
+        p.lease,
+        p.signed_in,
+    )
+    .await
+    {
+        Ok(went) => went,
+        Err(refused) => return refused,
+    };
     let reached = if went.ok {
         let start = match crate::browser::page::eval_value(d, "location.href").await {
             Ok(v) => nav::path_of(v.as_str().unwrap_or("")),
             Err(_) => String::new(),
         };
-        let path = nav::ModulePath {
-            // An update keeps the area's name as it was saved.
-            area: existing.as_ref().map_or_else(|| name.clone(), |old| old.name().to_string()),
-            module,
-            clicks,
-            arrived,
-            recorded: crate::commands::autorun_record::now_iso(),
-            start,
-            made_by: if mapping { nav::MadeBy::Mapping } else { nav::MadeBy::Person },
+        let path = match (&repairing, &reason) {
+            (Some(old), Some(reason)) => area_repair::repaired(
+                old,
+                clicks,
+                arrived,
+                start,
+                reason.clone(),
+                crate::commands::autorun_record::now_iso(),
+            ),
+            _ => nav::ModulePath {
+                // An update keeps the area's name as it was saved.
+                area: existing.as_ref().map_or_else(|| name.clone(), |old| old.name().to_string()),
+                module,
+                clicks,
+                arrived,
+                recorded: crate::commands::autorun_record::now_iso(),
+                start,
+                made_by: if mapping { nav::MadeBy::Mapping } else { nav::MadeBy::Person },
+                // A mapping run's update keeps an assistant's earlier
+                // repair note: only the person clears it.
+                repaired_by_assistant: existing.as_ref().and_then(|old| old.repaired_by_assistant.clone()),
+            },
         };
         let route = nav::Route::new(&recipe, path);
         nav::go_to_module(d, &route, nav::TripFrom::SignIn, timing).await.map(|at| (at, route.path))
@@ -5819,20 +5960,30 @@ async fn save_discovered_area<B: DiscoveryBrowser>(
     if let Err(why) = nav::put_path(root, organization, project, path) {
         return (409, why);
     }
+    // The area whose path this save replaced, if any.
+    let replaced = existing.as_ref().or(repairing.as_ref());
     if let Some(state) = p.discovery.as_mut() {
         if let Some(run) = state.mapping.as_mut() {
-            match &existing {
+            match replaced {
                 Some(old) => run.record_updated(old.name().to_string(), nav::menu_path(&old.clicks), new_menu),
                 None => run.record_added(name.clone()),
             }
             run.locate_last(screen);
         }
     }
-    let kept = match &existing {
+    let kept = match replaced {
         Some(old) => old.name().to_string(),
         None => name,
     };
-    stand_in_saved_area(d, p.discovery, p.signed_in.as_deref(), root, organization, project, kept).await;
+    stand_in_saved_area(d, p.discovery, p.signed_in.as_deref(), root, organization, project, kept.clone()).await;
+    if let Some(reason) = reason {
+        crate::applog::info(format!("AI repaired area {kept}: {reason}"));
+        let message = area_repair::repaired_answer(&kept, &reason);
+        return (
+            200,
+            serde_json::json!({ "saved": true, "repaired": true, "arrived": at, "message": message }).to_string(),
+        );
+    }
     crate::applog::info(format!("Auto Run discovery saved an area ({saved} clicks)"));
     (200, serde_json::json!({ "saved": true, "arrived": at }).to_string())
 }
@@ -6520,7 +6671,7 @@ fn refuse_outside_the_recipe(
 /// `/autorun-discover-area`: save the clicks a discovery found as an area
 /// (`discover_area_in`), once a replay of them arrives.
 async fn autorun_discover_area(ctx: &BridgeContext, body: &str) -> (u16, String) {
-    const SHAPE: &str = "{ \"name\": <the area's name>, \"module\": <the test-case Module it belongs to>, \"clicks\": [<a script's click selector>, ...] }";
+    const SHAPE: &str = "{ \"name\": <the area's name>, \"module\": <the test-case Module it belongs to>, \"clicks\": [<a script's click selector>, ...], \"repair\": <optional: { \"reason\": <one line> } to replace an existing area's path> }";
     let v: serde_json::Value = match serde_json::from_str(body) {
         Ok(v) => v,
         Err(e) => return (400, format!("that is not readable JSON: {e}. Expected {SHAPE}.")),
@@ -6528,8 +6679,18 @@ async fn autorun_discover_area(ctx: &BridgeContext, body: &str) -> (u16, String)
     let Some(name) = named(v.get("name").and_then(|a| a.as_str())) else {
         return (400, format!("this call needs a \"name\" for the area. Expected {SHAPE}."));
     };
-    let Some(module) = named(v.get("module").and_then(|a| a.as_str())) else {
-        return (400, format!("this call needs the \"module\" the area belongs to. Expected {SHAPE}."));
+    let repair = match v.get("repair") {
+        None | Some(serde_json::Value::Null) => None,
+        Some(r) => match r.get("reason").and_then(|a| a.as_str()) {
+            Some(reason) => Some(reason.to_string()),
+            None => return (400, format!("\"repair\" is {{ \"reason\": <one line> }}. Expected {SHAPE}.")),
+        },
+    };
+    // A repair keeps the area's own module, so it may leave it out.
+    let module = match named(v.get("module").and_then(|a| a.as_str())) {
+        Some(module) => module,
+        None if repair.is_some() => String::new(),
+        None => return (400, format!("this call needs the \"module\" the area belongs to. Expected {SHAPE}.")),
     };
     let clicks: Vec<crate::browser::locator::Target> = match v.get("clicks").cloned().map(serde_json::from_value) {
         Some(Ok(clicks)) => clicks,
@@ -6552,6 +6713,20 @@ async fn autorun_discover_area(ctx: &BridgeContext, body: &str) -> (u16, String)
         Err(refused) => return refused,
     };
     let mut slot = crate::commands::autorun::supervised().lock().await;
+    if let Some(reason) = repair {
+        return repair_area_in(
+            &mut slot,
+            &root,
+            &ctx.org,
+            &ctx.project,
+            &name,
+            &module,
+            clicks,
+            &reason,
+            &crate::browser::timing::Timing::supervised(),
+        )
+        .await;
+    }
     discover_area_in(
         &mut slot,
         &root,

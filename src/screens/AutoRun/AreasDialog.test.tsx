@@ -686,3 +686,40 @@ test("Record an area stays disabled until the areas have loaded, and when they c
   expect(await screen.findByText(/the areas file is not readable/)).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Record an area…" })).toBeDisabled();
 });
+
+test("an area an assistant repaired says why, and Put old path back restores it", async () => {
+  const repaired = {
+    ...LEAVE,
+    clicks: ['link "Self Service"', 'link "Apply Leave"'],
+    repaired_by_assistant: { reason: "The Leave menu moved under Self Service", at: "2026-10-20T09:00:00Z" },
+  };
+  const calls: unknown[] = [];
+  mount((cmd, args) => {
+    if (cmd === "auto_run_load_nav") return { direct_urls: true, modules: [repaired, MANAGE_CYCLE] };
+    if (cmd === "auto_run_put_old_area_path_back") {
+      calls.push(args);
+      return { direct_urls: true, modules: [{ ...LEAVE, repaired_by_assistant: null }, MANAGE_CYCLE] };
+    }
+  });
+  expect(
+    await screen.findByText("Path repaired by an assistant: The Leave menu moved under Self Service"),
+  ).toBeInTheDocument();
+  // Only the repaired area offers it.
+  expect(screen.queryByRole("button", { name: "Put old path back for Manage Cycle" })).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Put old path back for Leave" }));
+  await waitFor(() => expect(calls).toEqual([{ organization: "acme", project: "Web", area: "Leave" }]));
+  expect(await screen.findByText('link "Leave" › link "Apply Leave"')).toBeInTheDocument();
+  expect(screen.queryByText(/Path repaired by an assistant/)).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /Put old path back/ })).not.toBeInTheDocument();
+});
+
+test("Put old path back that is refused says why and keeps the note", async () => {
+  const repaired = { ...LEAVE, repaired_by_assistant: { reason: "Moved", at: "2026-10-20T09:00:00Z" } };
+  mount((cmd) => {
+    if (cmd === "auto_run_load_nav") return { direct_urls: true, modules: [repaired] };
+    if (cmd === "auto_run_put_old_area_path_back") throw new Error('area "Leave" has no repaired path to put back');
+  });
+  fireEvent.click(await screen.findByRole("button", { name: "Put old path back for Leave" }));
+  expect(await screen.findByText(/has no repaired path to put back/)).toBeInTheDocument();
+  expect(screen.getByText("Path repaired by an assistant: Moved")).toBeInTheDocument();
+});

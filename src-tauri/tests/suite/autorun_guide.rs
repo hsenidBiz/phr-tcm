@@ -973,6 +973,27 @@ fn the_guide_explains_mapping_the_menus() {
     assert!(!section.contains('\u{2014}') && !section.contains('\u{2013}'), "no em or en dashes");
 }
 
+/// A run that cannot reach an area: the guide's areas part tells the
+/// assistant to repair the area's path with `repair: { reason }`, any
+/// area, and that the person can put the old path back - outside the quick
+/// rules.
+#[test]
+fn the_guide_says_how_to_repair_an_area_a_run_cannot_reach() {
+    let g = autorun_guide();
+    let flat = g.split_whitespace().collect::<Vec<_>>().join(" ");
+    for said in [
+        "repair its path yourself instead of asking the person",
+        "`repair: { \"reason\": \"...\" }`",
+        "at most 200 characters",
+        "a person's too",
+        "the area's path still works: nothing to repair",
+        "they can put the old path back",
+        "repair the area, not the script",
+    ] {
+        assert!(flat.contains(said), "the guide never says {said}: {flat}");
+    }
+}
+
 /// The guide teaches discovery: its four tools, the save check, the three
 /// kinds of locator the check lets through unseen, what to do when a save
 /// is refused, the script's `area`, and the test name prefix.

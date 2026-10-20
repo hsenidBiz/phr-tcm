@@ -800,6 +800,11 @@ fn the_heal_command_is_an_auto_run_routine_offered_only_with_auto_run() {
     assert!(flat.contains("refused unless that step failed in the case's newest run"), "{flat}");
     assert!(flat.contains("refused when the failure is one of the `STOP:` lines"), "{flat}");
     assert!(flat.contains("is one of the `STOP:` lines is reported as it is"), "{flat}");
+    // A run that cannot reach an area: the assistant repairs the area's
+    // path itself (owner decision 2026-10-20), never the script.
+    assert!(flat.contains("repair the AREA's path yourself instead of asking the person"), "{flat}");
+    assert!(flat.contains("`save_autorun_area` with the area's name"), "{flat}");
+    assert!(flat.contains("put the old path back"), "{flat}");
     assert!(!flat.to_lowercase().contains("three"), "the routine must not count the STOP lines: {flat}");
     assert!(mcp.contains("could not reach its module screen"), "the failures tool leaves out the module-path stop");
     assert!(body.contains("Choosing a model for the work"), "the routine points at the guide's model section");

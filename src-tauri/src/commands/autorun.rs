@@ -3398,6 +3398,21 @@ pub fn auto_run_remove_module_path(
     Ok(crate::autorun::nav::view(&nav))
 }
 
+/// Put back the path an assistant's repair replaced, and clear its note
+/// (`area_repair::put_old_path_back`). Nothing is replayed: Try checks it.
+#[tauri::command]
+#[specta::specta]
+pub fn auto_run_put_old_area_path_back(
+    app: tauri::AppHandle,
+    organization: String,
+    project: String,
+    area: String,
+) -> Result<crate::autorun::nav::NavView, String> {
+    let nav = crate::autorun::area_repair::put_old_path_back(&root(&app)?, &organization, &project, &area)?;
+    crate::applog::info("Auto-run: an area's path from before an assistant's repair was put back");
+    Ok(crate::autorun::nav::view(&nav))
+}
+
 /// Sign the named account in, in the open browser. Used before a case's
 /// first step, and by the `sign_in` action in the middle of one. An account
 /// anything else holds (`autorun::lease`) is refused at once, with the

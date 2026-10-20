@@ -19,7 +19,7 @@ import { Modal } from "../../components/ui/modal";
 import { MODAL_LARGE } from "./modalWidths";
 import { Select } from "../../components/ui/select";
 import { Switch } from "../../components/ui/switch";
-import { IconBack, IconCancel, IconRecord, IconRemove, IconRun, IconStop } from "../../lib/actionIcons";
+import { IconBack, IconCancel, IconRecord, IconRemove, IconRun, IconStop, IconUndo } from "../../lib/actionIcons";
 import { cn } from "../../lib/cn";
 import { unwrapStr } from "../../lib/ipc";
 import { toast } from "../../lib/toast";
@@ -289,6 +289,21 @@ export default function AreasDialog({
     onError: (e) => setProblem(message(e)),
   });
 
+  /** Put back the path an assistant's repair replaced; the note goes with it. */
+  const putBack = useMutation({
+    mutationFn: (area: string) => unwrapStr(commands.autoRunPutOldAreaPathBack(org, project, area)),
+    onSuccess: (view, area) => {
+      qc.setQueryData(navKey, view);
+      setTried((t) => {
+        const next = { ...t };
+        delete next[area];
+        return next;
+      });
+      toast.success(`The old path of ${area} is back.`);
+    },
+    onError: (e) => setProblem(message(e)),
+  });
+
   const setDirect = useMutation({
     mutationFn: (allowed: boolean) => unwrapStr(commands.autoRunSetDirectUrls(org, project, allowed)),
     onSuccess: (view) => qc.setQueryData(navKey, view),
@@ -419,6 +434,23 @@ export default function AreasDialog({
                         <span className="min-w-0 flex-1 truncate text-muted">{m.clicks.join(" › ")}</span>
                       </div>
                       <p className="mt-1 text-faint">ends on {m.arrived}</p>
+                      {m.repaired_by_assistant && (
+                        <div className="mt-1 flex items-center gap-2">
+                          <p className="min-w-0 flex-1 text-warning">
+                            {`Path repaired by an assistant: ${m.repaired_by_assistant.reason}`}
+                          </p>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            aria-label={`Put old path back for ${m.area}`}
+                            disabled={busy || putBack.isPending}
+                            onClick={() => putBack.mutate(m.area)}
+                          >
+                            <IconUndo aria-hidden />
+                            Put old path back
+                          </Button>
+                        </div>
+                      )}
                       {tried[m.area] && (
                         <p className={cn("mt-1", tried[m.area].ok ? "text-success" : "text-danger")}>
                           {tried[m.area].detail}

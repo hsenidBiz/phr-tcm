@@ -489,10 +489,18 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
         },
         {
             "name": "save_autorun_area",
-            "description": "Save a screen you found through the menus during discovery as an area, so runs can reach it before step 1. The app checks it first: from the home page, signed in, it replays your clicks and saves the area only if they arrive where the discovery browser is now. A refusal says what the page showed. A name already taken is refused; pick another or ask the person. Set each script's `area` to this name. If you cannot find the screen through the menus, ask the person to record the area in Auto Run instead.",
+            "description": "Save a screen you found through the menus during discovery as an area, so runs can reach it before step 1. The app checks it first: from the home page, signed in, it replays your clicks and saves the area only if they arrive where the discovery browser is now. A refusal says what the page showed. A name already taken is refused; pick another or ask the person - except a repair: when a run cannot reach an existing area (its menu moved), find the screen through the menus and send that area's name, its module, the new clicks and `repair: { reason }`. The area's saved path is tried first and the repair refused while it still arrives, unless a run since it was saved could not reach it; the area keeps its name, module and scripts, only its clicks change, and the person can put the old path back. Set each script's `area` to this name. If you cannot find the screen through the menus, ask the person to record the area in Auto Run instead.",
             "inputSchema": schema(serde_json::json!({
-                "name": { "type": "string", "description": "The new area's name, unique in this project." },
-                "module": { "type": "string", "description": "The test case Module the area belongs to." },
+                "name": { "type": "string", "description": "The new area's name, unique in this project; with `repair`, the existing area's name." },
+                "module": { "type": "string", "description": "The test case Module the area belongs to; with `repair`, the area's own module (a repair never moves an area)." },
+                "repair": {
+                    "type": "object",
+                    "description": "Optional: replace the menu path of an EXISTING area a run cannot reach (whoever made it, a person included) instead of saving a new one.",
+                    "properties": {
+                        "reason": { "type": "string", "description": "One line, at most 200 characters, in words with no address: what changed in the menu. The person sees it beside the area." },
+                    },
+                    "required": ["reason"],
+                },
                 "clicks": {
                     "type": "array",
                     "description": "In order, the locators clicked from the home page to reach the screen, each as a snapshot line's locator.",
