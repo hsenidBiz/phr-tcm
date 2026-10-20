@@ -27,6 +27,14 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.2.3-beta.17",
+    date: "2026-10-20",
+    items: [
+      "Auto Run: when a script's precondition no longer fits, the assistant can add, remove or change it in a repair, with a one-line reason that the save answer shows.",
+      "Auto Run: the script editor lists the precondition changes an assistant made, with their reasons, and can put each one back.",
+    ],
+  },
+  {
     version: "2.2.3-beta.16",
     date: "2026-10-20",
     items: [
