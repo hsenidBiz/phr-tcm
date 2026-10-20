@@ -94,8 +94,8 @@ fn tools_list_names_every_tool() {
         .map(|t| t["name"].as_str().unwrap())
         .collect();
     // This test binary is a development build (cargo test compiles with
-    // debug assertions on), so with nothing disabled the fifty-two dev-only
-    // tools (Auto Run's forty-one, then the API templates row's eleven) are listed
+    // debug assertions on), so with nothing disabled the forty-nine dev-only
+    // tools (Auto Run's forty, then the API templates row's nine) are listed
     // like any other switchable tool - between merge_case_files and
     // db_lookup, where they sit in the source.
     assert_eq!(
@@ -128,8 +128,7 @@ fn tools_list_names_every_tool() {
             "save_autorun_component",
             "remove_autorun_component",
             "get_autorun_failures",
-            "record_autorun_quirk",
-            "retire_autorun_quirk",
+            "record_quirk",
             "record_validation_rule",
             "mark_autorun_suspected_defect",
             "set_autorun_order",
@@ -160,8 +159,6 @@ fn tools_list_names_every_tool() {
             "save_api_fixture",
             "run_api_fixture",
             "list_api_fixtures",
-            "record_app_quirk",
-            "retire_app_quirk",
             "db_lookup",
             "db_query",
             "open_report",
@@ -1115,7 +1112,7 @@ fn db_no_ask_needs_an_explicit_yes() {
     assert!(!db_no_ask_from(&Err("the app is closed".into())));
 }
 
-const API_TEMPLATE_TOOLS: [&str; 11] = [
+const API_TEMPLATE_TOOLS: [&str; 9] = [
     "get_api_template_guide",
     "list_api_templates",
     "prove_api_template",
@@ -1125,8 +1122,6 @@ const API_TEMPLATE_TOOLS: [&str; 11] = [
     "save_api_fixture",
     "run_api_fixture",
     "list_api_fixtures",
-    "record_app_quirk",
-    "retire_app_quirk",
 ];
 
 fn listed_names(call: &dyn Fn(&str, &str, &str) -> Result<(u16, String), String>) -> Vec<String> {
@@ -1160,7 +1155,7 @@ fn the_api_template_tools_are_listed_where_auto_run_is_offered_and_absent_where_
         if path == "/tools" {
             return Ok((
                 200,
-                r#"{"disabled":["get_api_template_guide","list_api_templates","prove_api_template","run_api_template","save_api_flow","get_api_flow_progress","save_api_fixture","run_api_fixture","list_api_fixtures","record_app_quirk","retire_app_quirk"]}"#
+                r#"{"disabled":["get_api_template_guide","list_api_templates","prove_api_template","run_api_template","save_api_flow","get_api_flow_progress","save_api_fixture","run_api_fixture","list_api_fixtures"]}"#
                     .into(),
             ));
         }
@@ -1315,46 +1310,87 @@ fn a_failed_api_template_run_is_a_tool_error_with_the_report() {
     assert!(text.contains("Evaluation rules") && text.contains("274"), "{text}");
 }
 
-/// The retire tool: listed with a schema that asks for the id and a
-/// reason (a replacement is optional), and a call forwards its arguments
-/// whole to the bridge's retire route. `record_autorun_quirk` says which
-/// assistant filed a note with an optional `from`.
+/// One quirk tool records and retires: listed with `text`, `cases` and
+/// `from` to record, `retire`, `reason` and `replacement` to retire, none of
+/// them required by the schema - the call says which it is. A record goes to
+/// the record route whole; a retire goes to the retire route with the id as
+/// that route's own `id`.
 #[test]
-fn the_quirk_tools_carry_the_schemas_an_assistant_needs() {
+fn the_quirk_tool_records_and_retires_through_their_routes() {
     let resp = handle_message(r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#, "1.0.0", &stub(200, "{}")).unwrap();
     let v: serde_json::Value = serde_json::from_str(&resp).unwrap();
     let tools = v["result"]["tools"].as_array().unwrap();
-    let retire = tools.iter().find(|t| t["name"] == "retire_autorun_quirk").expect("the retire tool is listed");
-    let schema = &retire["inputSchema"];
+    let quirk = tools.iter().find(|t| t["name"] == "record_quirk").expect("the quirk tool is listed");
+    let schema = &quirk["inputSchema"];
     assert_eq!(schema["type"], "object");
-    for prop in ["id", "reason", "replacement"] {
+    for prop in ["text", "retire", "reason", "replacement"] {
         assert_eq!(schema["properties"][prop]["type"], "string", "{prop}: {schema}");
     }
-    let mut required: Vec<&str> = schema["required"].as_array().unwrap().iter().map(|r| r.as_str().unwrap()).collect();
-    required.sort_unstable();
-    assert_eq!(required, vec!["id", "reason"]);
-    assert!(retire["description"].as_str().unwrap().contains("person"), "says a person's note is refused");
-
-    let record = tools.iter().find(|t| t["name"] == "record_autorun_quirk").unwrap();
-    assert_eq!(record["inputSchema"]["properties"]["from"]["enum"], serde_json::json!(["autorun", "api"]));
-    assert_eq!(record["inputSchema"]["required"], serde_json::json!(["text"]));
+    assert_eq!(schema["properties"]["from"]["enum"], serde_json::json!(["autorun", "api"]));
+    assert_eq!(schema["properties"]["cases"]["items"]["required"], serde_json::json!(["case_id", "steps"]));
+    assert_eq!(schema["required"], serde_json::json!([]));
+    let desc = quirk["description"].as_str().unwrap();
+    assert!(desc.contains("person"), "says a person's note is refused: {desc}");
+    assert!(desc.contains("60 active quirks"), "{desc}");
+    for old in ["record_autorun_quirk", "retire_autorun_quirk", "record_app_quirk", "retire_app_quirk"] {
+        assert!(tools.iter().all(|t| t["name"] != old), "{old} is gone");
+    }
 
     let calls = std::cell::RefCell::new(vec![]);
     let call = |method: &str, path: &str, body: &str| {
         calls.borrow_mut().push((method.to_string(), path.to_string(), body.to_string()));
-        Ok((200, "retired q1a2b3c".to_string()))
+        Ok((200, "done".to_string()))
     };
-    let req = r#"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"retire_autorun_quirk","arguments":{"id":"q1a2b3c","reason":"never helped"}}}"#;
-    let resp = handle_message(req, "1.0.0", &call).unwrap();
-    let v: serde_json::Value = serde_json::from_str(&resp).unwrap();
-    assert_eq!(v["result"]["content"][0]["text"], "retired q1a2b3c");
-    let recorded = calls.borrow();
-    let last = recorded.last().unwrap();
-    assert_eq!((last.0.as_str(), last.1.as_str()), ("POST", "/autorun-quirk-retire"));
+    let send = |args: &str| -> serde_json::Value {
+        let req = format!(r#"{{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{{"name":"record_quirk","arguments":{args}}}}}"#);
+        serde_json::from_str(&handle_message(&req, "1.0.0", &call).unwrap()).unwrap()
+    };
+    let last = || calls.borrow().iter().rev().find(|c| c.1 != "/tools").cloned().unwrap();
+
+    send(r#"{"text":"the grid pages at 25","from":"api","cases":[{"case_id":7,"steps":[2]}]}"#);
+    let (method, path, body) = last();
+    assert_eq!((method.as_str(), path.as_str()), ("POST", "/autorun-quirk"));
     assert_eq!(
-        serde_json::from_str::<serde_json::Value>(&last.2).unwrap(),
-        serde_json::json!({ "id": "q1a2b3c", "reason": "never helped" })
+        serde_json::from_str::<serde_json::Value>(&body).unwrap(),
+        serde_json::json!({ "text": "the grid pages at 25", "from": "api", "cases": [{ "case_id": 7, "steps": [2] }] })
     );
+
+    let v = send(r#"{"retire":"q1a2b3c","reason":"never helped","from":"api"}"#);
+    assert_eq!(v["result"]["content"][0]["text"], "done");
+    let (method, path, body) = last();
+    assert_eq!((method.as_str(), path.as_str()), ("POST", "/autorun-quirk-retire"));
+    // `from` travels on, so the bridge's guard still refuses an API
+    // assistant's retire while API Templates is off.
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&body).unwrap(),
+        serde_json::json!({ "id": "q1a2b3c", "reason": "never helped", "from": "api" })
+    );
+}
+
+/// A call that says both "record this" and "retire that" is refused before
+/// anything reaches the app, and so is a retire that gives no reason - the
+/// reason the old retire tool's schema required.
+#[test]
+fn the_quirk_tool_refuses_a_record_and_a_retire_at_once_and_a_retire_without_a_reason() {
+    use v2_lib::mcp::{QUIRK_RECORD_OR_RETIRE, QUIRK_RETIRE_NEEDS_REASON};
+    let posted = std::cell::Cell::new(false);
+    let call = |method: &str, _path: &str, _body: &str| {
+        if method == "POST" {
+            posted.set(true);
+        }
+        Ok((200, "{}".to_string()))
+    };
+    for (args, said) in [
+        (r#"{"text":"a line","retire":"q1","reason":"why"}"#, QUIRK_RECORD_OR_RETIRE),
+        (r#"{"retire":"q1"}"#, QUIRK_RETIRE_NEEDS_REASON),
+        (r#"{"retire":"q1","reason":null}"#, QUIRK_RETIRE_NEEDS_REASON),
+    ] {
+        let req = format!(r#"{{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{{"name":"record_quirk","arguments":{args}}}}}"#);
+        let v: serde_json::Value = serde_json::from_str(&handle_message(&req, "1.0.0", &call).unwrap()).unwrap();
+        assert_eq!(v["result"]["isError"], true, "{args}: {v}");
+        assert!(v["result"]["content"][0]["text"].as_str().unwrap().contains(said), "{args}: {v}");
+    }
+    assert!(!posted.get(), "nothing reached the app");
 }
 
 /// The validation-rule tool: listed with a `message` always required, the
@@ -1392,59 +1428,26 @@ fn the_validation_rule_tool_asks_for_the_message_and_reaches_its_route() {
     );
 }
 
-/// With the Auto Run row switched off and the API templates row on, the
-/// API templates assistant still has its quirk tools - under that row's
-/// own names - and each reaches the same route with `from` set to "api"
-/// here, whatever the caller sent.
+/// With the Auto Run row switched off and the API templates row on, the app
+/// leaves `record_quirk` out of the disabled list (the tool rides in both
+/// rows), so the API templates assistant still has it.
 #[test]
-fn with_auto_run_off_and_api_templates_on_the_app_quirk_tools_stay() {
-    let calls = std::cell::RefCell::new(vec![]);
-    let call = |method: &str, path: &str, body: &str| -> Result<(u16, String), String> {
+fn with_auto_run_off_and_api_templates_on_the_quirk_tool_stays() {
+    let call = |_method: &str, path: &str, _body: &str| -> Result<(u16, String), String> {
         if path == "/tools" {
             return Ok((
                 200,
-                r#"{"disabled":["get_autorun_guide","save_autorun_script","get_autorun_script","delete_autorun_script","get_autorun_network_wait","get_autorun_page","probe_autorun_locator","try_autorun_action","replay_autorun_to_step","stop_autorun_replay","start_autorun_discovery","discover_autorun_action","discover_autorun_actions","save_autorun_area","end_autorun_discovery","release_autorun_browser","reset_autorun_browser","save_autorun_component","remove_autorun_component","get_autorun_failures","record_autorun_quirk","retire_autorun_quirk","record_validation_rule","mark_autorun_suspected_defect","set_autorun_order","list_autorun_requests","search_autorun_requests","get_autorun_request","get_autorun_response","get_autorun_response_body","set_autorun_capture","get_autorun_capture","export_autorun_requests","import_autorun_requests","set_autorun_headers","get_autorun_cookies","set_autorun_cookie","clear_autorun_cookies","inspect_autorun_element"]}"#.into(),
+                r#"{"disabled":["get_autorun_guide","save_autorun_script","get_autorun_script","delete_autorun_script","get_autorun_network_wait","get_autorun_page","probe_autorun_locator","try_autorun_action","replay_autorun_to_step","stop_autorun_replay","start_autorun_discovery","discover_autorun_action","discover_autorun_actions","save_autorun_area","end_autorun_discovery","release_autorun_browser","reset_autorun_browser","save_autorun_component","remove_autorun_component","get_autorun_failures","record_validation_rule","mark_autorun_suspected_defect","set_autorun_order","list_autorun_requests","search_autorun_requests","get_autorun_request","get_autorun_response","get_autorun_response_body","set_autorun_capture","get_autorun_capture","export_autorun_requests","import_autorun_requests","set_autorun_headers","get_autorun_cookies","set_autorun_cookie","clear_autorun_cookies","inspect_autorun_element"]}"#.into(),
             ));
         }
-        calls.borrow_mut().push((method.to_string(), path.to_string(), body.to_string()));
         Ok((200, "ok".into()))
     };
     let names = listed_names(&call);
     assert!(names.iter().all(|n| !n.contains("autorun")), "{names:?}");
-    for name in ["record_app_quirk", "retire_app_quirk", "get_api_template_guide"] {
+    for name in ["record_quirk", "list_api_templates"] {
         assert!(names.iter().any(|n| n == name), "{name} missing from {names:?}");
     }
-
-    let record = r#"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"record_app_quirk","arguments":{"text":"the handler wants a CSRF header","from":"autorun","cases":[{"case_id":7,"steps":[2]}]}}}"#;
-    let v: serde_json::Value = serde_json::from_str(&handle_message(record, "1.0.0", &call).unwrap()).unwrap();
-    assert_ne!(v["result"]["isError"], serde_json::json!(true), "{v}");
-    let retire = r#"{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"retire_app_quirk","arguments":{"id":"q1a2b3c","reason":"never helped"}}}"#;
-    handle_message(retire, "1.0.0", &call).unwrap();
-
-    let recorded = calls.borrow();
-    let posts: Vec<&(String, String, String)> = recorded.iter().filter(|c| c.0 == "POST").collect();
-    assert_eq!(posts.len(), 2, "{recorded:?}");
-    assert_eq!(posts[0].1, "/autorun-quirk");
-    assert_eq!(
-        serde_json::from_str::<serde_json::Value>(&posts[0].2).unwrap(),
-        serde_json::json!({ "text": "the handler wants a CSRF header", "from": "api", "cases": [{ "case_id": 7, "steps": [2] }] })
-    );
-    assert_eq!(posts[1].1, "/autorun-quirk-retire");
-    assert_eq!(
-        serde_json::from_str::<serde_json::Value>(&posts[1].2).unwrap(),
-        serde_json::json!({ "id": "q1a2b3c", "reason": "never helped", "from": "api" })
-    );
-
-    // Both record tools take the same optional `cases`.
-    let resp = handle_message(r#"{"jsonrpc":"2.0","id":4,"method":"tools/list"}"#, "1.0.0", &stub(200, "{}")).unwrap();
-    let v: serde_json::Value = serde_json::from_str(&resp).unwrap();
-    for name in ["record_autorun_quirk", "record_app_quirk"] {
-        let t = v["result"]["tools"].as_array().unwrap().iter().find(|t| t["name"] == name).unwrap();
-        let cases = &t["inputSchema"]["properties"]["cases"];
-        assert_eq!(cases["type"], "array", "{name}");
-        assert_eq!(cases["items"]["required"], serde_json::json!(["case_id", "steps"]), "{name}");
-        assert_eq!(t["inputSchema"]["required"], serde_json::json!(["text"]), "{name}");
-    }
+    assert!(module_of_tool("record_quirk") == Some(Module::AutoRun));
 }
 
 /// The two account tools belong to the Auto Run row: listed while that row

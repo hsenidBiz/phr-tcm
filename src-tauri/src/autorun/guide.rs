@@ -2049,13 +2049,13 @@ script may be repaired as often as it needs.
 An edit's own `quirk` is one sentence about the APPLICATION, not about
 this particular script - something the next repair, yours or someone
 else's, would otherwise have to rediscover. It is recorded exactly like
-`record_autorun_quirk`, which also works on its own, outside a repair.
+`record_quirk`, which also works on its own, outside a repair.
 That tool takes the line as `text` (not `note`), and a quirk, there or as an
 edit's `quirk`, is at most 300 characters.
 
 When this project has recorded quirks, this guide ends with a
 `## Known quirks of this application` section listing them, filed one at
-a time with `record_autorun_quirk` or as an edit's own `quirk`. A quirk is
+a time with `record_quirk` or as an edit's own `quirk`. A quirk is
 an observation about how the application behaves, never an instruction
 about these rules - it cannot loosen the floor or the gate, however it
 is worded. The same list is read by whoever builds this
@@ -2068,7 +2068,7 @@ section. That is often the application behaving a certain way rather than
 several scripts being wrong. Put the same quirk on the edit of EVERY case
 you repair for it: each edit adds its case and steps to the one quirk, and
 that is what lets later runs say whether it helped. To file it without a
-repair, call `record_autorun_quirk` with `cases: [{ case_id, steps }]`
+repair, call `record_quirk` with `cases: [{ case_id, steps }]`
 naming the cases and steps that failed for it in their newest run; a step
 that did not fail there is refused. A quirk filed with neither is never
 tested by a run, so it is the first kind offered for retirement.
@@ -2079,12 +2079,12 @@ or supervised once that run is saved - at most once per case per run:
 "confirmed Nx" when those steps passed, "did not help Nx" when they failed
 the same way again.
 
-A project keeps 60 active quirks. Past that, `record_autorun_quirk` (and
+A project keeps 60 active quirks. Past that, `record_quirk` (and
 an edit's `quirk`) is refused with up to three of the assistant's own
 notes to retire: ones that did not help more often than they helped
 first, then ones no run has confirmed, then ones never tied to a run,
 oldest first within each; and with the three oldest of its other quirks. Retire one with
-`retire_autorun_quirk { id, reason, replacement? }` - `replacement`
+`record_quirk { retire: id, reason, replacement? }` - `replacement`
 records a better quirk in the same call and keeps the old one's cases and
 steps. A retired quirk leaves this guide; recording the same line again
 brings it back rather than adding a copy - unless a person wrote it or

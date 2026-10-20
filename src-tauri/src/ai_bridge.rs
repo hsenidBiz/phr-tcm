@@ -654,9 +654,9 @@ pub fn module_guard_for(path: &str, on: &std::collections::BTreeSet<crate::modul
 }
 
 /// `module_guard_for`, plus the one route shared by two modules: the quirk
-/// routes are Auto Run's, but a quirk sent `from: "api"` (the
-/// `record_app_quirk` / `retire_app_quirk` tools) is API Templates' too, so
-/// it is refused with that module's sentence while API Templates is off.
+/// routes are Auto Run's, but a quirk sent `from: "api"` (`record_quirk`
+/// from an assistant building API templates) is API Templates' too, so it
+/// is refused with that module's sentence while API Templates is off.
 pub fn module_guard(path: &str, body: &str, on: &std::collections::BTreeSet<crate::modules::Module>) -> Option<(u16, String)> {
     use crate::modules::Module;
     if let Some(refused) = module_guard_for(path, on) {

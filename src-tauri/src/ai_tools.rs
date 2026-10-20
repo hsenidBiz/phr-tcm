@@ -165,8 +165,7 @@ pub const AUTORUN_TOOLS: &[&str] = &[
     "save_autorun_component",
     "remove_autorun_component",
     "get_autorun_failures",
-    "record_autorun_quirk",
-    "retire_autorun_quirk",
+    "record_quirk",
     "record_validation_rule",
     "mark_autorun_suspected_defect",
     "set_autorun_order",
@@ -204,8 +203,6 @@ pub const API_TEMPLATE_TOOLS: &[&str] = &[
     "save_api_fixture",
     "run_api_fixture",
     "list_api_fixtures",
-    "record_app_quirk",
-    "retire_app_quirk",
 ];
 
 /// The database tools: the Database Access module's. What they may do is

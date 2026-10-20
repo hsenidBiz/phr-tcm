@@ -207,14 +207,9 @@ export const MCP_TOOLS: McpToolInfo[] = [
     summary: "What failed in a run on this machine, and when the script must be left alone.",
   },
   {
-    name: "record_autorun_quirk",
+    name: "record_quirk",
     label: "Record a quirk",
-    summary: "One line about how this application behaves, kept for the next script.",
-  },
-  {
-    name: "retire_autorun_quirk",
-    label: "Retire a quirk",
-    summary: "Retire one of the assistant's own quirks that no longer helps, optionally with a better one.",
+    summary: "One line about how this application behaves, kept for the next script or template - or retire one that no longer helps.",
   },
   {
     name: "record_validation_rule",
@@ -291,16 +286,6 @@ export const MCP_TOOLS: McpToolInfo[] = [
     name: "list_api_fixtures",
     label: "List fixtures",
     summary: "This project's fixtures, with their current outputs and last run.",
-  },
-  {
-    name: "record_app_quirk",
-    label: "Record a quirk (API)",
-    summary: "One line about how this application behaves, learned building API templates.",
-  },
-  {
-    name: "retire_app_quirk",
-    label: "Retire a quirk (API)",
-    summary: "Retire one of the assistant's own quirks that no longer helps.",
   },
   {
     name: "db_lookup",
@@ -402,8 +387,7 @@ export const AUTORUN_TOOLS = [
   "save_autorun_component",
   "remove_autorun_component",
   "get_autorun_failures",
-  "record_autorun_quirk",
-  "retire_autorun_quirk",
+  "record_quirk",
   "record_validation_rule",
   "mark_autorun_suspected_defect",
   "set_autorun_order",
@@ -437,8 +421,6 @@ export const API_TEMPLATE_TOOLS = [
   "save_api_fixture",
   "run_api_fixture",
   "list_api_fixtures",
-  "record_app_quirk",
-  "retire_app_quirk",
 ] as const;
 
 export const DB_TOOLS = ["db_lookup", "db_query"] as const;
@@ -532,8 +514,7 @@ export const TOOL_PAIRS: readonly (readonly string[])[] = [
     "save_autorun_component",
     "remove_autorun_component",
     "get_autorun_failures",
-    "record_autorun_quirk",
-    "retire_autorun_quirk",
+    "record_quirk",
     "record_validation_rule",
     "mark_autorun_suspected_defect",
     "set_autorun_order",
@@ -576,10 +557,10 @@ export const TOOL_PAIRS: readonly (readonly string[])[] = [
     "run_api_fixture",
     "list_api_fixtures",
     // What a template's author learns about the application goes on the
-    // project's one quirks list - the Auto Run row's tools under this
-    // row's own names, so switching Auto Run off does not take them away.
-    "record_app_quirk",
-    "retire_app_quirk",
+    // project's one quirks list, through the Auto Run row's own tool: it
+    // rides in both rows (SHARED_TOOLS), so switching Auto Run off does not
+    // take it away.
+    "record_quirk",
   ],
   // Reading the company database is one choice: finding the table and
   // reading it are two halves of the same question, and a lookup whose
@@ -698,7 +679,41 @@ export function visibleTools(): McpToolInfo[] {
  *  too, or a rename would quietly hand an assistant a tool they refused. */
 export const RENAMED_TOOLS: Readonly<Record<string, string>> = {
   get_run_failures: "get_run_results",
+  // Merged into one quirk tool that records and retires.
+  record_autorun_quirk: "record_quirk",
+  retire_autorun_quirk: "record_quirk",
+  record_app_quirk: "record_quirk",
+  retire_app_quirk: "record_quirk",
 };
+
+/** Tools that ride in more than one row. Such a tool is off only while
+ * every row carrying it is off - a row whose module is off counts as off -
+ * so switching one row off never takes it from the job another row is on
+ * for. `loadDisabledTools` settles it; the screen and Rust read that. */
+export const SHARED_TOOLS: readonly string[] = [
+  ...new Set(TOOL_PAIRS.flat().filter((n, i, all) => all.indexOf(n) !== i)),
+];
+
+function isShared(name: string): boolean {
+  return SHARED_TOOLS.includes(name);
+}
+
+/** A row is on while any of its own (not shared) tools is offered and not
+ * in `disabled`. */
+function rowOn(pair: readonly string[], disabled: readonly string[]): boolean {
+  return pair.some((n) => !isShared(n) && toolOffered(n) && !disabled.includes(n));
+}
+
+/** `disabled` with each shared tool off exactly when no row carrying it is
+ * on. */
+function settleShared(disabled: string[]): string[] {
+  const out = disabled.filter((n) => !isShared(n));
+  for (const name of SHARED_TOOLS) {
+    const on = TOOL_PAIRS.filter((p) => p.includes(name)).some((p) => rowOn(p, out));
+    if (!on && toolOffered(name)) out.push(name);
+  }
+  return out;
+}
 
 /** Whether Database Read Access is switched on: the Database Access module
  * is on and the reading pair's `db_query` is not among the disabled tools.
@@ -727,13 +742,14 @@ export function loadDisabledTools(): string[] {
     );
     // A list saved before the pairing can name one half of a pair. Complete
     // it toward OFF: the pair is one switch now, and the alternative would
-    // silently hand an assistant a tool this list says is off.
+    // silently hand an assistant a tool this list says is off. A shared
+    // tool says nothing about any one row: it is settled after.
     for (const pair of TOOL_PAIRS) {
-      if (pair.some((n) => kept.includes(n))) {
-        for (const n of pair) if (!kept.includes(n)) kept.push(n);
+      if (pair.some((n) => !isShared(n) && kept.includes(n))) {
+        for (const n of pair) if (!isShared(n) && !kept.includes(n)) kept.push(n);
       }
     }
-    return kept;
+    return settleShared(kept);
   } catch {
     return [];
   }

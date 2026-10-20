@@ -2605,7 +2605,10 @@ async fn the_api_template_guide_ends_with_the_same_quirks_section() {
     assert!(api.contains("## Known quirks of this application\n\n") && api.contains(&line), "{api}");
     let (_, autorun) = route(&ctx(), None, "GET", "/autorun-guide", "", "1.0.0").await;
     assert!(autorun.contains(&line), "the same line in the Auto Run guide: {autorun}");
-    assert!(api.contains("`record_app_quirk") && api.contains("`retire_app_quirk"), "the guide names its own tools: {api}");
+    assert!(
+        api.contains("`record_quirk { text, from: \"api\" }`") && api.contains("`record_quirk { retire: id"),
+        "the guide names the quirk tool, recording and retiring: {api}"
+    );
 }
 
 /// Names the active environment `name` (a test environment or not) in the
@@ -2677,7 +2680,7 @@ async fn a_full_list_refuses_through_the_bridge_with_candidates() {
     let body = serde_json::json!({ "text": "one more" }).to_string();
     let (status, out) = route(&ctx(), None, "POST", "/autorun-quirk", &body, "1.0.0").await;
     assert_eq!(status, 400, "{out}");
-    assert!(out.contains("retire_autorun_quirk"), "{out}");
+    assert!(out.contains("record_quirk { retire: id"), "{out}");
     assert!(out.contains("\"note 0\"") && out.contains("\"note 1\"") && out.contains("\"note 2\""), "{out}");
     let (candidates, others) = out.split_once("Oldest of the others").expect("no oldest others");
     assert!(!candidates.contains("\"note 3\""), "{out}");

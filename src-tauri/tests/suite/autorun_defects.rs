@@ -148,7 +148,7 @@ fn a_step_the_script_does_not_have_is_refused() {
     assert_eq!(err, "step 9 is not in the script");
 }
 
-/// The same rule, and the same sentence, `record_autorun_quirk` uses for
+/// The same rule, and the same sentence, `record_quirk` uses for
 /// its `cases`: only a step that failed in the case's newest run.
 #[test]
 fn a_step_that_did_not_fail_in_the_newest_run_is_refused_with_the_quirk_sentence() {
@@ -485,7 +485,7 @@ async fn the_route_stores_the_mark_or_refuses_with_the_sentence() {
     assert_eq!((stored.repairs, stored.last_repair.as_deref()), (2, Some("the edit button moved")));
 }
 
-/// Offered only where Auto Run is, like `record_autorun_quirk`.
+/// Offered only where Auto Run is, like `record_quirk`.
 #[test]
 fn the_route_is_refused_where_auto_run_is_not_offered() {
     let (status, body) = module_guard_for("/autorun-defect", &Default::default()).expect("refused outside Auto Run");

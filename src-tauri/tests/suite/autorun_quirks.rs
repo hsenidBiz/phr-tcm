@@ -5,7 +5,7 @@
 
 use v2_lib::autorun::quirks::{
     add_quirk, apply_run_evidence, cap_refusal, delete_in, edit_in, load_quirks, quirks_path, quirks_section,
-    record_in, record_run_evidence, restore_in, retire_candidates, retire_in, save_quirks, source_for_repair, source_from_run, count_saved_run, person_retired, RETIRE_APP_TOOL,
+    record_in, record_run_evidence, restore_in, retire_candidates, retire_in, save_quirks, source_for_repair, source_from_run, count_saved_run, person_retired,
     Quirk, QuirkSource, Recorded, MAX_QUIRKS, MAX_QUIRK_CHARS, MAX_RETIRED, PERSON_NOTE, RETIRE_TOOL,
 };
 use v2_lib::autorun::recipe::project_slug;
@@ -578,12 +578,13 @@ fn the_assistant_never_brings_back_a_note_a_person_retired_or_wrote() {
     assert!(list[0].is_active() && list[0].retired_by.is_none());
 }
 
-/// An API caller's refusal names the retire tool it has.
+/// An API caller's refusal names the same tool: one quirk tool records and
+/// retires for both assistants, with `retire` and the note's id.
 #[test]
-fn a_full_list_names_the_api_retire_tool_to_an_api_caller() {
+fn a_full_list_names_the_one_quirk_tool_to_an_api_caller() {
     let mut list = full_list();
     let err = record_in(&mut list, "one more", "assistant", "api", vec![], 9999).unwrap_err();
-    assert!(err.contains(RETIRE_APP_TOOL), "{err}");
+    assert!(err.contains("record_quirk { retire: id, reason, replacement? }"), "{err}");
 }
 
 /// Candidates: runs say it did not help, then filed with a repair and

@@ -113,7 +113,7 @@ fn schema(props: serde_json::Value, required: &[&str]) -> serde_json::Value {
 
 /// The `cases` a quirk can be tied to when it is recorded on its own: the
 /// cases and steps it explains, each step one that failed in its case's
-/// newest run. Shared by both record tools.
+/// newest run.
 fn quirk_cases() -> serde_json::Value {
     serde_json::json!({
         "type": "array",
@@ -551,22 +551,16 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
             }), &[]),
         },
         {
-            "name": "record_autorun_quirk",
-            "description": "Record one line (at most 300 characters) about how this application behaves, so the next script or API template - yours or the person's - does not rediscover it the hard way. Saved against the current project and attributed to the assistant; one list per project, read by both the Auto Run guide and the API template guide. A line already on the list is not written twice, and one you retired comes back rather than being copied (one a person wrote or retired is refused - ask them). Name the cases and steps it explains in `cases` - each step must have failed in its case's newest run - so later runs can count whether it helped; or put it on the edit of every case you repair for it. A project keeps 60 active quirks: past that, this is refused with the best candidates to retire and the oldest of the others.",
+            "name": "record_quirk",
+            "description": "Record one line (`text`, at most 300 characters) about how this application behaves, so the next script or API template does not rediscover it. One list per project, read by the Auto Run and API template guides, attributed to the assistant. A line already on the list is not written twice; one you retired comes back; one a person wrote or retired is refused - ask them. Name the cases and steps it explains in `cases` (each step must have failed in its case's newest run), or put it on the edit of every case you repair for it. A project keeps 60 active quirks: past that, this is refused with the best candidates to retire. To retire one of your own that no longer helps (never confirmed by a run, or more often unhelpful), send `retire` with its id and a `reason` instead of `text`: it leaves every guide but stays in the app, where a person can restore it; `replacement` records a better line that keeps its cases and steps. A note a person wrote is refused - ask them to remove it.",
             "inputSchema": schema(serde_json::json!({
-                "text": { "type": "string", "description": "One line, at most 300 characters, e.g. \"the results grid paginates at 25 rows\"." },
+                "text": { "type": "string", "description": "To record: one line, e.g. \"the results grid paginates at 25 rows\"." },
                 "cases": quirk_cases(),
                 "from": { "type": "string", "enum": ["autorun", "api"], "description": "\"api\" when you learned it building API templates; \"autorun\" (the default) for Auto Run scripts." },
-            }), &["text"]),
-        },
-        {
-            "name": "retire_autorun_quirk",
-            "description": "Retire one of the assistant's own quirks that no longer helps - one never confirmed by a run, or more often unhelpful than helpful, is the usual candidate. It leaves every guide but stays in the app, where a person can restore it. Give the id the guide shows (e.g. q1a2b3c) and one sentence of why. With `replacement`, a better note is recorded in the same call and keeps the old one's cases and steps. A note a person wrote is refused - ask them to remove it.",
-            "inputSchema": schema(serde_json::json!({
-                "id": { "type": "string", "description": "The quirk's id, as the Known quirks section shows it." },
-                "reason": { "type": "string", "description": "One sentence: why the note no longer helps." },
-                "replacement": { "type": "string", "description": "Optional: one line to record in its place, at most 300 characters." },
-            }), &["id", "reason"]),
+                "retire": { "type": "string", "description": "To retire: the quirk's id, as the Known quirks section shows it (e.g. q1a2b3c)." },
+                "reason": { "type": "string", "description": "With retire: one sentence on why the note no longer helps." },
+                "replacement": { "type": "string", "description": "With retire, optional: one line to record in its place." },
+            }), &[]),
         },
         {
             "name": "record_validation_rule",
@@ -850,23 +844,6 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
             }), &[]),
         },
         {
-            "name": "record_app_quirk",
-            "description": "Record one line (at most 300 characters) about how this application behaves that you learned building API templates (a handler that needs a header the screen sends, an id the response returns as text), so the next template or script does not rediscover it. The project's one list, shared with whoever writes its Auto Run scripts, and shown as (assistant, API). A line already on the list is not written twice; one a person wrote or retired is refused - ask them. A project keeps 60 active quirks: past that, this is refused with the best candidates to retire and the oldest of the others.",
-            "inputSchema": schema(serde_json::json!({
-                "text": { "type": "string", "description": "One line, at most 300 characters." },
-                "cases": quirk_cases(),
-            }), &["text"]),
-        },
-        {
-            "name": "retire_app_quirk",
-            "description": "Retire one of the assistant's own quirks that no longer helps. It leaves every guide but stays in the app, where a person can restore it. Give the id the guide shows and one sentence of why; with `replacement`, a better note is recorded in the same call and keeps the old one's cases and steps. A note a person wrote is refused - ask them to remove it.",
-            "inputSchema": schema(serde_json::json!({
-                "id": { "type": "string", "description": "The quirk's id, as the Known quirks section shows it." },
-                "reason": { "type": "string", "description": "One sentence: why the note no longer helps." },
-                "replacement": { "type": "string", "description": "Optional: one line to record in its place, at most 300 characters." },
-            }), &["id", "reason"]),
-        },
-        {
             "name": "db_lookup",
             "description": "Find the tables and columns behind a topic in the company database: table and column names, types, foreign keys, ranked by how well they match the words. Use it before writing a query, and to check which table a screen reads from. A bare table name (`dbo.LeaveRequest`, or `LeaveRequest`) comes back as that table's whole column list instead of the ranked match.",
             "inputSchema": schema(serde_json::json!({
@@ -1081,6 +1058,33 @@ const DRY_RUN_SCRIPT: &str = "true: run every check a save makes, the seen check
 
 /// What `dry_run` does on `save_autorun_component`.
 const DRY_RUN_COMPONENT: &str = "true: run every rule a save makes and answer would_save or the refusal, writing nothing and recording nothing. It is not a try of the component.";
+
+/// Said when `record_quirk` is sent a line to record and a quirk to retire
+/// at once: one call does one of them.
+pub const QUIRK_RECORD_OR_RETIRE: &str = "send `text` to record a quirk, or `retire` with a quirk's id to retire one - not both (a better line goes in `replacement`)";
+
+/// Said when `record_quirk` retires a quirk without saying why.
+pub const QUIRK_RETIRE_NEEDS_REASON: &str = "retiring a quirk needs a `reason`: one sentence on why the note no longer helps";
+
+/// `record_quirk`: with `retire`, the retire route, the id carried as the
+/// route's own `id`; otherwise the record route. Either way the arguments
+/// travel whole, `from` included, so the bridge still refuses a quirk sent
+/// `from: "api"` while API Templates is off (`ai_bridge::module_guard`).
+fn quirk_call(args: &serde_json::Value, call: BridgeCall) -> Result<(u16, String), String> {
+    let Some(id) = args.get("retire").filter(|v| !v.is_null()) else {
+        return call("POST", "/autorun-quirk", &args.to_string());
+    };
+    if args.get("text").is_some_and(|t| !t.is_null()) {
+        return Ok((400, QUIRK_RECORD_OR_RETIRE.to_string()));
+    }
+    if args.get("reason").is_none_or(|r| r.is_null()) {
+        return Ok((400, QUIRK_RETIRE_NEEDS_REASON.to_string()));
+    }
+    let mut body = args.as_object().cloned().unwrap_or_default();
+    body.remove("retire");
+    body.insert("id".to_string(), id.clone());
+    call("POST", "/autorun-quirk-retire", &serde_json::Value::Object(body).to_string())
+}
 
 /// The script save's body with the tool's `dry_run` carried into it: the
 /// bare array becomes `{ "scripts": [...], "dry_run": ... }`, and an object
@@ -1415,8 +1419,7 @@ fn tools_call(params: &serde_json::Value, call: BridgeCall) -> serde_json::Value
             };
             call("GET", &target, "")
         }
-        "record_autorun_quirk" => call("POST", "/autorun-quirk", &args.to_string()),
-        "retire_autorun_quirk" => call("POST", "/autorun-quirk-retire", &args.to_string()),
+        "record_quirk" => quirk_call(args, call),
         "record_validation_rule" => call("POST", "/autorun-validation-rule", &args.to_string()),
         "mark_autorun_suspected_defect" => call("POST", "/autorun-defect", &args.to_string()),
         "set_autorun_order" => call("POST", "/autorun-order", &args.to_string()),
@@ -1470,14 +1473,6 @@ fn tools_call(params: &serde_json::Value, call: BridgeCall) -> serde_json::Value
             None if args["full"].as_bool().unwrap_or(false) => call("GET", "/api-template-fixtures?full=true", ""),
             None => call("GET", "/api-template-fixtures", ""),
         },
-        // The API templates row's own names for the quirk tools: the same
-        // routes, with `from` set here rather than trusted to the caller.
-        "record_app_quirk" | "retire_app_quirk" => {
-            let mut body = if args.is_object() { args.clone() } else { serde_json::json!({}) };
-            body["from"] = serde_json::json!("api");
-            let path = if name == "record_app_quirk" { "/autorun-quirk" } else { "/autorun-quirk-retire" };
-            call("POST", path, &body.to_string())
-        }
         // Both bridge routes read their fields out of the body, so
         // forwarding the raw arguments object is structurally unable to
         // drop one - the same pattern as `check_spec_coverage`.

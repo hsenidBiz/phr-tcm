@@ -578,8 +578,7 @@ fn each_tool_belongs_to_its_module() {
             "save_autorun_component",
             "remove_autorun_component",
             "get_autorun_failures",
-            "record_autorun_quirk",
-            "retire_autorun_quirk",
+            "record_quirk",
             "record_validation_rule",
             "mark_autorun_suspected_defect",
             "set_autorun_order",
@@ -614,9 +613,7 @@ fn each_tool_belongs_to_its_module() {
             "get_api_flow_progress",
             "save_api_fixture",
             "run_api_fixture",
-            "list_api_fixtures",
-            "record_app_quirk",
-            "retire_app_quirk"
+            "list_api_fixtures"
         ]
     );
     assert_eq!(DB_TOOLS, ["db_lookup", "db_query"]);

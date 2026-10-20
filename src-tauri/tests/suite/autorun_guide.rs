@@ -293,8 +293,8 @@ fn the_guide_teaches_the_floor_the_gate_and_the_page_tools() {
         "try_autorun_action",
         "replay_autorun_to_step",
         "get_autorun_failures",
-        "record_autorun_quirk",
-        "retire_autorun_quirk",
+        "record_quirk",
+        "retire: id",
         "Patterns across cases",
         "unchecked",
         "edits",
@@ -1799,7 +1799,7 @@ fn the_guide_teaches_the_quirk_field_the_last_step_replay_and_the_banner_on_a_ch
     );
     assert!(!popups.contains("a click could reach it"), "the guard does not check what covers an element: {popups}");
 
-    for term in ["record_autorun_quirk", "replay_autorun_to_step", "last step number + 1"] {
+    for term in ["record_quirk", "replay_autorun_to_step", "last step number + 1"] {
         assert!(!quick.contains(term), "the quick rules are at their cap, and {term:?} does not belong there");
     }
 }

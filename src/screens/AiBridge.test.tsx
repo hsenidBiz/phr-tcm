@@ -1026,6 +1026,8 @@ test("the API templates breakdown says the assistant maps a module's stages and 
   expect(entry.textContent).not.toMatch(/[a-z]+_[a-z]/);
 });
 
+/// Every tool name but the quirk tool: it rides in the API templates row
+/// too, which is still on, so it stays offered.
 test("switching the Auto Run scripts row off sends every tool name in the disabled list", async () => {
   let seen: unknown;
   mockIPC((cmd, args) => {
@@ -1076,13 +1078,11 @@ test("switching the Auto Run scripts row off sends every tool name in the disabl
     "mark_autorun_suspected_defect",
     "probe_autorun_locator",
     "propose_accounts",
-    "record_autorun_quirk",
     "record_validation_rule",
     "release_autorun_browser",
     "remove_autorun_component",
     "replay_autorun_to_step",
     "reset_autorun_browser",
-    "retire_autorun_quirk",
     "save_autorun_area",
     "save_autorun_component",
     "save_autorun_script",
