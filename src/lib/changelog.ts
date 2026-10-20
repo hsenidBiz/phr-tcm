@@ -27,6 +27,18 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.2.3-beta.16",
+    date: "2026-10-20",
+    items: [
+      "Playwright: the Overview's numbers count up when the tab opens (not when reduced motion is on), and its folders are shown as a tree.",
+      "Playwright: List again is now Refresh, and the Accounts tab no longer shows a number.",
+      "Auto Run: the environment and the search by ID now sit in Setup, the second Test cases title is gone, and Has a script lists only the cases that already have a script.",
+      "Auto Run: a test file a script needs but the folder lacks is named in Setup, open or shut.",
+      "AI Bridge: the AI Tools Breakdown is shorter and plainer, and starts with the best way to have an assistant write test cases.",
+      "The app is a little smaller and opens its first screen a little sooner.",
+    ],
+  },
+  {
     version: "2.2.3-beta.15",
     date: "2026-10-20",
     items: [
