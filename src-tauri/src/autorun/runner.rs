@@ -1137,6 +1137,7 @@ async fn run_expanded<D: Driver>(
         loaders,
         cancel: run.cancel,
         stop_each: run.stop_before_each_action,
+        stopped_between: AtomicBool::new(false),
     };
     let mut out = Vec::with_capacity(step.actions.len());
     let mut blocked: Option<&'static str> = None;
@@ -1483,10 +1484,15 @@ async fn run_expanded<D: Driver>(
                 d.net_unmark(old.mark);
             }
         }
+        // A guard that heard the Stop between its own actions was cut
+        // there, not inside a wait.
+        let between = here.stopped_between.swap(false, Ordering::SeqCst);
         if let Some(p) = run.progress {
             // A Stop heard inside the action is no failure of it.
             if outcome.detail == AFTER_STOP {
-                p.stopped_inside();
+                if !between {
+                    p.stopped_inside();
+                }
             } else {
                 p.ended(outcome.ok);
             }
@@ -1633,6 +1639,10 @@ struct Here<'a> {
     /// `InRun::stop_before_each_action`: the Stop is heard before each
     /// action a guard runs too (`stop_heard`).
     stop_each: bool,
+    /// Set when a guard heard the Stop between its own actions or passes
+    /// (`stop_heard`): its outcome is the Stop, but nothing was cut inside
+    /// a wait, so the replay says it stopped after that action.
+    stopped_between: AtomicBool,
 }
 
 impl Here<'_> {
@@ -1640,7 +1650,11 @@ impl Here<'_> {
     /// actions and between a `repeat_while_visible`'s passes, as between a
     /// step's own actions.
     fn stop_heard(&self) -> bool {
-        self.stop_each && self.cancel.is_some_and(|c| c.load(Ordering::SeqCst))
+        let heard = self.stop_each && self.cancel.is_some_and(|c| c.load(Ordering::SeqCst));
+        if heard {
+            self.stopped_between.store(true, Ordering::SeqCst);
+        }
+        heard
     }
 }
 

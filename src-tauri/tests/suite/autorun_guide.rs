@@ -1736,3 +1736,21 @@ fn the_guide_teaches_the_quirk_field_the_last_step_replay_and_the_banner_on_a_ch
         assert!(!quick.contains(term), "the quick rules are at their cap, and {term:?} does not belong there");
     }
 }
+
+/// The clean-up as the How To Use page teaches it: an unattended run plays
+/// it even after a failed step, a replay stops at a failed step without it
+/// and runs it only when replayed past it, and an `expect_dialog` for its
+/// own Delete's confirm is the one check it may hold.
+#[test]
+fn the_guide_says_when_the_clean_up_runs_and_what_it_may_check() {
+    let flat = autorun_guide().split_whitespace().collect::<Vec<_>>().join(" ");
+    for said in [
+        "In an unattended run it runs after the case's last step and also after a step that failed",
+        "in a watched run the person presses Run clean-up",
+        "A replay stops at a failed step without running it, and runs it only when replayed past it",
+        "but for an `expect_dialog` answering the confirm its own Delete opens, the one check it may hold",
+    ] {
+        assert!(flat.contains(said), "the guide does not say: {said}");
+    }
+    assert!(!flat.contains("It runs after the case's last step and also after a step that failed"), "the old, unqualified rule is still there");
+}

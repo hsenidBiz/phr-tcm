@@ -2721,6 +2721,25 @@ async fn a_failed_clean_up_never_fails_a_passed_case_and_is_said_on_its_own_line
     assert!(!line.contains("not run"), "{line}");
 }
 
+/// Ruling: a clean-up may hold an `expect_dialog` for its own Delete's
+/// confirm; one that fails (no dialog came) fails the clean-up only - a
+/// passed case stays passed, the failure said on the clean-up's own line.
+#[tokio::test]
+async fn a_failed_expect_dialog_in_the_clean_up_fails_only_the_clean_up() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut case = with_cleanup(["yes", "yes", "yes"], "yes");
+    case.steps[3].actions =
+        vec![serde_json::from_value(serde_json::json!({ "kind": "expect_dialog", "answer": "accept", "within_ms": 50 })).unwrap()];
+    v2_lib::autorun::store::check_scripts(std::slice::from_ref(&case)).expect("a clean-up may hold an expect_dialog");
+    let (run, _) = run_alone(dir.path(), &case).await;
+    let rec = &run.cases[0];
+    assert_eq!(rec.proposed, "Passed");
+    assert_eq!(rec.reason, "every action of 3 steps passed, but its clean-up failed");
+    let tidy = rec.cleanup.as_ref().expect("the clean-up is recorded on its own");
+    assert!(!tidy.outcomes[0].ok, "{:?}", tidy.outcomes);
+    assert!(rec.cleanup_line().is_some_and(|l| l.starts_with("clean-up: ")), "{:?}", rec.cleanup_line());
+}
+
 #[tokio::test]
 async fn a_failed_clean_up_after_a_failed_step_leaves_the_failure_as_it_was() {
     let dir = tempfile::tempdir().unwrap();

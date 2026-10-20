@@ -293,12 +293,17 @@ why in one sentence, and never to skip a check you could write.
 A script may end with one clean-up step that removes what the case made:
 `{ "step_number": <the case's last step + 1>, "cleanup": true, "unchecked": "<what it removes>", "actions": [ ... ] }`.
 It is no step of the case: it is the script's last, numbered right after
-the case's last step, and checks nothing. It runs after the case's last
-step and also after a step that failed (the steps between still do not
-run), never when the run was stopped. Its failure is said on its own line,
-`clean-up: ...`, and never fails the case. A replay runs it only when
-asked for a step past it. Its locators must have been seen like any
-step's, and every other run rule (Must not save included) applies to it.
+the case's last step, and checks nothing - but for an `expect_dialog`
+answering the confirm its own Delete opens, the one check it may hold. In
+an unattended run it runs after the case's last step and also after a step
+that failed (the steps between still do not run), never when the run was
+stopped; in a watched run the person presses Run clean-up. A replay stops
+at a failed step without running it, and runs it only when replayed past
+it with every step before it passed: after healing by replay, do not
+assume what the case made was removed. Its failure, a failed
+`expect_dialog` included, is said on its own line, `clean-up: ...`, and
+never fails the case. Its locators must have been seen like any step's,
+and every other run rule (Must not save included) applies to it.
 
 Every `expect_` action looks again until it holds, for up to 10 seconds
 (add `"timeout_ms"` to change that), and a failure says what it actually

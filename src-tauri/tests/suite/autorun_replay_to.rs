@@ -288,7 +288,7 @@ async fn a_replayed_step_in_a_second_tab_carries_its_tab() {
     // Step 1 opened the tab from main, step 2 ran in it, step 3 went back.
     assert_eq!(tabs, vec![ReplayedTab { step: 2, tab: "report".into() }]);
     // The person's command answers with them beside the end.
-    let answer = ReplayAnswer::with_tabs(end, tabs);
+    let answer = ReplayAnswer::with_tabs(end, tabs, None);
     let json = serde_json::to_value(&answer).unwrap();
     assert_eq!(json["tabs"], json!([{ "step": 2, "tab": "report" }]));
 }
@@ -2528,6 +2528,63 @@ async fn a_replay_past_the_clean_up_runs_it_last() {
     let seen = log(&app);
     let at = |what: &str| seen.iter().position(|l| l == what).unwrap_or_else(|| panic!("no {what:?} in {seen:?}"));
     assert!(at("click #s3") < at("click #tidy"), "{seen:?}");
+}
+
+/// A replay stopped as it reached the clean-up says "the clean-up", as the
+/// pane, the report and the hand-over name it - never "step 4" of a case
+/// that has three.
+#[tokio::test]
+async fn a_replay_stopped_at_the_clean_up_names_it() {
+    use v2_lib::autorun::replay_to::{cleanup_at, ASKED_TO_STOP};
+    let _l = crate::serial::account_leases();
+    let dir = tempfile::tempdir().unwrap();
+    project(dir.path(), &script(three_steps_and_a_clean_up()));
+    let (mut d, app) = app();
+    let (mut account, mut guarded, cancel) = (None, None, AtomicBool::new(false));
+    // Asked to stop as the clean-up begins: heard before its first action.
+    let end = replay(&mut d, dir.path(), &req(5), &mut account, &mut guarded, &cancel, |k, _| {
+        if k == 4 {
+            cancel.store(true, Ordering::SeqCst);
+        }
+    })
+    .await;
+    assert_eq!(end, ReplayEnd::Stopped { step: 4 });
+    assert_eq!(cleanup_at(), Some(4));
+    assert_eq!(end.sentence_in(cleanup_at()), format!("the replay was stopped at the clean-up: {ASKED_TO_STOP}"));
+    assert!(!clicked(&app, "#tidy"), "{:?}", log(&app));
+}
+
+/// Every stop and progress sentence of a replay names the clean-up as
+/// such; any other step keeps its number.
+#[test]
+fn the_replays_sentences_name_the_clean_up() {
+    use v2_lib::autorun::replay_to::{step_said, stopped_on_request, ReplayPhase};
+    assert_eq!(step_said(4, Some(4)), "the clean-up");
+    assert_eq!(step_said(3, Some(4)), "step 3");
+    assert_eq!(step_said(4, None), "step 4");
+    let failed = ReplayEnd::StoppedAt { phase: ReplayPhase::Step, step: 4, why: "no #tidy".into(), outcomes: vec![] };
+    assert_eq!(failed.sentence_in(Some(4)), "replay stopped at the clean-up: no #tidy");
+    assert_eq!(failed.sentence(), "replay stopped at step 4: no #tidy");
+    let gone = ReplayEnd::BrowserGone { step: 4, why: None, outcomes: vec![] };
+    assert!(gone.sentence_in(Some(4)).starts_with("replay stopped at the clean-up: "), "{}", gone.sentence_in(Some(4)));
+    assert_eq!(
+        stopped_on_request(77, 4, 1, false, Some(4)),
+        "the replay of case 77 was stopped on request after action 1 of the clean-up"
+    );
+    assert_eq!(
+        stopped_on_request(77, 4, 0, false, Some(4)),
+        "the replay of case 77 was stopped on request before the clean-up's first action"
+    );
+    assert_eq!(
+        stopped_on_request(77, 4, 1, true, Some(4)),
+        "the replay of case 77 was stopped on request at action 1 of the clean-up, inside its wait"
+    );
+    let on = v2_lib::autorun::runner::ActionNow::default();
+    let running = v2_lib::ai_bridge::replay_still_running_answer(77, 5, 4, 4, &on, Some(4));
+    assert_eq!(
+        running["sentence"],
+        "still running, now at the clean-up - call replay_autorun_to_step again with the same case (77) and step (5) to keep waiting"
+    );
 }
 
 #[tokio::test]

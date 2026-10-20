@@ -255,6 +255,27 @@ fn a_clean_up_step_right_after_the_last_case_step_holds() {
     assert!(out.is_empty(), "{out:?}");
 }
 
+/// A clean-up's `expect_dialog` answers its own Delete's confirm: it is no
+/// check that contradicts its `unchecked`.
+#[test]
+fn a_clean_up_answering_its_deletes_confirm_is_still_unchecked() {
+    let sc = script(serde_json::json!([
+        { "step_number": 1, "actions": [{ "kind": "check_text", "value": "Saved" }] },
+        { "step_number": 2, "actions": [{ "kind": "check_text", "value": "Listed" }] },
+        { "step_number": 3, "actions": [
+            { "kind": "expect_dialog", "answer": "accept" },
+            { "kind": "click", "selector": { "role": "button", "name": "Delete" } }
+          ], "cleanup": true, "unchecked": "removes the record step 1 made" }
+    ]));
+    let out = check_floor(&sc, &case(&["Saved", "Listed"]));
+    assert!(out.is_empty(), "{out:?}");
+    // A case step is held to it as before.
+    let sc = script(serde_json::json!([
+        { "step_number": 1, "actions": [{ "kind": "expect_dialog", "answer": "accept" }], "unchecked": "x" }
+    ]));
+    assert_eq!(check_floor(&sc, &case(&["Saved"])), vec!["step 1 says it is unchecked but has a check - drop one or the other".to_string()]);
+}
+
 #[test]
 fn a_clean_up_step_numbered_anywhere_else_is_refused() {
     let out = check_floor(&with_cleanup_at(4), &case(&["Saved", "Listed"]));

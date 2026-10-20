@@ -92,9 +92,12 @@ fn refusal_as(step: i32, describe: &str, kind: &str) -> String {
         );
     }
     let many = matches!(kind, "expect_hidden" | "expect_count" | "wait_for");
+    // `expect_hidden` (and, as these tests write it, an `expect_count` of
+    // 0) passes with nothing there: a probe of none counts.
+    let none = matches!(kind, "expect_hidden" | "expect_count");
     format!(
         "Step {step}: {describe} was never seen on the live app; {} Find it on the page first with probe_autorun_locator or discover_autorun_action, then save again.",
-        v2_lib::autorun::seen_check::wants(kind, many, false)
+        v2_lib::autorun::seen_check::wants(kind, many, false, none)
     )
 }
 
@@ -692,7 +695,7 @@ fn refusal_hinted(step: i32, describe: &str, hint: &str) -> String {
 /// A refusal with a "did you mean" `hint`, for the action `kind`: what
 /// that use needs follows the hint.
 fn refusal_hinted_as(step: i32, describe: &str, hint: &str, kind: &str) -> String {
-    let needs = v2_lib::autorun::seen_check::wants(kind, false, false);
+    let needs = v2_lib::autorun::seen_check::wants(kind, false, false, false);
     format!(
         "Step {step}: {describe} was never seen on the live app; {hint} {}{} Find it on the page first with probe_autorun_locator or discover_autorun_action, then save again.",
         needs[..1].to_uppercase(),
@@ -2302,12 +2305,17 @@ fn an_nth_locator_never_counted_is_told_to_probe_it_with_its_nth() {
 #[test]
 fn a_refusal_says_what_the_use_needs() {
     use v2_lib::autorun::seen_check::wants;
-    assert_eq!(wants("click", false, false), "this click needs one seen matching exactly one element.");
+    assert_eq!(wants("click", false, false, false), "this click needs one seen matching exactly one element.");
     assert_eq!(
-        wants("expect_hidden", true, false),
-        "this expect_hidden needs it seen on the live app at least once, matching any number of elements."
+        wants("wait_for", true, false, false),
+        "this wait_for needs it seen on the live app at least once, matching any number of elements."
     );
-    assert_eq!(wants("when_visible", false, true), "this when_visible needs one seen matching exactly one element, in any area.");
+    // A use that passes with nothing there takes a probe that matched none.
+    assert_eq!(
+        wants("expect_hidden", true, false, true),
+        "this expect_hidden needs it seen on the live app at least once, matching any number of elements (or a probe that matched none)."
+    );
+    assert_eq!(wants("when_visible", false, true, false), "this when_visible needs one seen matching exactly one element, in any area.");
     let map = map_with("Cycles", "/cycles", &[]);
     for (action, kind) in [
         (click(serde_json::json!({ "css": "#go" })), "click"),
@@ -2353,7 +2361,7 @@ fn a_when_visible_banner_seen_in_another_area_saves() {
     let nowhere = map_with("Cycles", "/cycles", &[]);
     let refused = check_seen(&nowhere, &none(), &s, &[], None).unwrap_err();
     assert!(
-        refused.contains("this when_visible needs it seen on the live app at least once, matching any number of elements, in any area."),
+        refused.contains("this when_visible needs it seen on the live app at least once, matching any number of elements (or a probe that matched none), in any area."),
         "{refused}"
     );
     assert!(refused.contains("this click needs one seen matching exactly one element, in any area."), "{refused}");

@@ -208,11 +208,13 @@ impl v2_lib::browser::cdp::Driver for StopsAfterClicks {
 
 /// A replay's stop asked while a guard's `then` runs is heard before the
 /// guard's next action, as between a step's own actions: the guard ends
-/// as stopped. An unattended run (no stop before each action) runs the
-/// guard to its end, as it always has.
+/// as stopped - cut between two clicks, not inside a wait, so the replay
+/// says it stopped after that action (`stopped_inside` stays false). An
+/// unattended run (no stop before each action) runs the guard to its end,
+/// as it always has.
 #[tokio::test]
 async fn a_replays_stop_is_heard_between_a_guards_then_actions() {
-    use v2_lib::autorun::runner::{run_step_in_run, AreaRoute, InRun, AFTER_STOP, NEEDS_SCRIPT_AREA};
+    use v2_lib::autorun::runner::{run_step_in_run, AreaRoute, InRun, StepProgress, AFTER_STOP, NEEDS_SCRIPT_AREA};
     use v2_lib::autorun::lease::Held;
     let guard = || {
         action(json!({ "kind": "when_visible", "selector": { "css": "#banner" }, "within_ms": 200,
@@ -225,13 +227,21 @@ async fn a_replays_stop_is_heard_between_a_guards_then_actions() {
         let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         let mut d = StopsAfterClicks { inner, clicks: state.clicks.clone(), after: 1, cancel: cancel.clone() };
         let (mut acc, mut held) = (None, Held::supervised());
-        let mut run = InRun { cancel: Some(&cancel), stop_before_each_action: replay, ..Default::default() };
+        let progress = StepProgress::new();
+        let mut run = InRun { cancel: Some(&cancel), stop_before_each_action: replay, progress: Some(&progress), ..Default::default() };
         let out = run_step_in_run(&mut d, dir.path(), "Acme", "Web", &step(vec![guard()]), &quick(), &mut acc, &mut held, None, AreaRoute::Unknown(NEEDS_SCRIPT_AREA), &mut run)
             .await
             .unwrap();
         assert_eq!(state.clicks.load(Ordering::SeqCst), clicks, "replay: {replay}");
         if replay {
             assert_eq!(out[0].detail, AFTER_STOP, "{:?}", out[0]);
+            let now = progress.now();
+            assert!(!now.stopped_inside, "a stop between the guard's clicks was said as inside its wait");
+            assert_eq!(now.failed, 0, "a stop is no failure");
+            assert_eq!(
+                v2_lib::autorun::replay_to::stopped_on_request(77, 1, now.index, now.stopped_inside, None),
+                "the replay of case 77 was stopped on request after action 1 of step 1"
+            );
         } else {
             assert!(out[0].ok, "{:?}", out[0]);
         }

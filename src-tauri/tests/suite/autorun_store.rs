@@ -1339,7 +1339,30 @@ fn a_clean_up_step_must_be_unchecked_and_check_nothing() {
     ]));
     assert_eq!(
         v2_lib::autorun::store::check_scripts(&[sc]).unwrap_err(),
-        "case 46 step 2: a clean-up step checks nothing - its failures never fail the case, so move the check to a case step"
+        "case 46 step 2: a clean-up step checks nothing - its failures never fail the case, so move the check to a case step (an expect_dialog answering a confirm its own Delete opens is the one it may hold)"
+    );
+}
+
+/// Ruling: an `expect_dialog` is the one check a clean-up may hold - it
+/// answers the confirm the clean-up's own Delete opens and asserts nothing
+/// the case expects - inside a guard too. Any other check beside it is
+/// still refused.
+#[test]
+fn a_clean_up_may_answer_its_own_deletes_confirm() {
+    let confirm = serde_json::json!({ "kind": "expect_dialog", "contains": "delete", "answer": "accept" });
+    let delete = serde_json::json!({ "kind": "click", "selector": { "role": "button", "name": "Delete" } });
+    let sc = cleanup_script(serde_json::json!([
+        { "step_number": 1, "actions": [{ "kind": "check_text", "value": "a" }] },
+        { "step_number": 2, "actions": [confirm.clone(), delete.clone()], "cleanup": true, "unchecked": "removes what step 1 made" }
+    ]));
+    assert_eq!(v2_lib::autorun::store::check_scripts(&[sc]), Ok(()));
+    let sc = cleanup_script(serde_json::json!([
+        { "step_number": 1, "actions": [{ "kind": "check_text", "value": "a" }] },
+        { "step_number": 2, "actions": [confirm, delete, { "kind": "check_text", "value": "gone" }], "cleanup": true, "unchecked": "tidy" }
+    ]));
+    assert!(
+        v2_lib::autorun::store::check_scripts(&[sc]).unwrap_err().starts_with("case 46 step 2: a clean-up step checks nothing"),
+        "a check_text beside the expect_dialog slipped through"
     );
 }
 

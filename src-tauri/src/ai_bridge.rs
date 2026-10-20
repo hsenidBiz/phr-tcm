@@ -6700,26 +6700,34 @@ pub fn replay_running_elsewhere(case_id: i32, step: i32) -> String {
 /// Said, with 202, when the replay has not reached its stop point within
 /// the call's wait: where it is, and how to keep waiting.
 pub fn replay_still_running(case_id: i32, step: i32, at: i32, of: i32) -> String {
-    replay_still_running_on(case_id, step, at, of, None)
+    replay_still_running_on(case_id, step, at, of, None, None)
+}
+
+/// Where a replay is, as its 202s say it: step `at` of `of` - the case's
+/// clean-up (step `cleanup`) by that name - or, before step 1, signing in
+/// and going to the area.
+fn replay_now(at: i32, of: i32, cleanup: Option<i32>) -> String {
+    match at {
+        at if at > 0 && cleanup == Some(at) => "now at the clean-up".to_string(),
+        at if at > 0 => format!("now at step {at} of {of}"),
+        _ => "now signing in and going to the case's area".to_string(),
+    }
 }
 
 /// `replay_still_running`, saying too which action of the step it is on
 /// (`runner::ActionNow`), for how long, and whether one of the step's
 /// actions failed. A replay never tries an action again: a failed one is
 /// pictured, the rest of its step is not run, and the replay ends at that
-/// step.
+/// step. The case's clean-up (step `cleanup`) is said by that name.
 pub fn replay_still_running_on(
     case_id: i32,
     step: i32,
     at: i32,
     of: i32,
     action: Option<&crate::autorun::runner::ActionNow>,
+    cleanup: Option<i32>,
 ) -> String {
-    let mut now = if at > 0 {
-        format!("now at step {at} of {of}")
-    } else {
-        "now signing in and going to the case's area".to_string()
-    };
+    let mut now = replay_now(at, of, cleanup);
     if let Some(a) = action.filter(|a| at > 0 && a.index > 0) {
         let what = if a.target.is_empty() { a.kind.clone() } else { format!("{} {}", a.kind, a.target) };
         let secs = a.since.map_or(0, |s| s.elapsed().as_secs());
@@ -6746,8 +6754,9 @@ pub fn replay_still_running_answer(
     at: i32,
     of: i32,
     action: &crate::autorun::runner::ActionNow,
+    cleanup: Option<i32>,
 ) -> serde_json::Value {
-    let sentence = replay_still_running_on(case_id, step, at, of, Some(action));
+    let sentence = replay_still_running_on(case_id, step, at, of, Some(action), cleanup);
     let mut v = serde_json::json!({ "status": "running", "sentence": sentence, "step": at, "of": of });
     if at > 0 && action.index > 0 {
         v["action"] = serde_json::json!({
@@ -6793,7 +6802,8 @@ async fn wait_for_replay(
         Err(_) => {
             let (at, of) = crate::autorun::replay_to::progress();
             let action = crate::autorun::replay_to::action_now();
-            (202, replay_still_running_answer(case_id, step, at, of, &action).to_string())
+            let cleanup = crate::autorun::replay_to::cleanup_at();
+            (202, replay_still_running_answer(case_id, step, at, of, &action, cleanup).to_string())
         }
     }
 }
@@ -6955,11 +6965,7 @@ pub fn replay_already_ended(case_id: i32, step: i32) -> String {
 pub fn replay_stopping_answer(case_id: i32, step: i32) -> serde_json::Value {
     let (at, of) = crate::autorun::replay_to::progress();
     let action = crate::autorun::replay_to::action_now();
-    let mut now = if at > 0 {
-        format!("now at step {at} of {of}")
-    } else {
-        "now signing in and going to the case's area".to_string()
-    };
+    let mut now = replay_now(at, of, crate::autorun::replay_to::cleanup_at());
     if at > 0 && action.index > 0 {
         now.push_str(&format!(", on action {} of {}", action.index, action.of));
     }
@@ -6969,6 +6975,17 @@ pub fn replay_stopping_answer(case_id: i32, step: i32) -> serde_json::Value {
     serde_json::json!({ "status": "stopping", "sentence": sentence, "step": at, "of": of })
 }
 
+/// The 202 `stop_autorun_replay` answers when the assistant's replay was
+/// running no step to stop - it had not yet started, or had ended and its
+/// answer was still being made ready - and no answer came within the wait.
+/// Nothing was asked to stop.
+pub fn replay_not_asked_answer(case_id: i32, step: i32) -> serde_json::Value {
+    let sentence = format!(
+        "not asked to stop: the replay of case {case_id} to step {step} was not running a step (it was starting, or had ended and its answer was being made ready) - call stop_autorun_replay again to stop it, or replay_autorun_to_step with case {case_id} and step {step} for its answer"
+    );
+    serde_json::json!({ "status": "not_stopped", "sentence": sentence })
+}
+
 /// `/autorun-replay-stop`, the assistant's `stop_autorun_replay`, waiting
 /// up to `wait` for the replay to end. Its replay still going is asked to
 /// stop through the replay's own stop (`replay_to::stop_on_request`, the
@@ -6976,17 +6993,29 @@ pub fn replay_stopping_answer(case_id: i32, step: i32) -> serde_json::Value {
 /// action, before each step and inside its waits; the answer is then the
 /// replay's own, taken as `replay_autorun_to_step` takes it: stopped on
 /// request, after which action of which step, with no page - or, had it
-/// already stopped at a failing step, that failure with its page. Not
-/// ended within `wait`: 202 (`replay_stopping_answer`). No replay going:
-/// 404; the person's own: 409, never stopped.
+/// already stopped at a failing step, that failure with its page, or had
+/// it already reached its step, that finished answer with its page. Not
+/// ended within `wait`: 202 (`replay_stopping_answer`). Only the
+/// assistant's replay running is asked to stop: between its end and its
+/// answer the call only waits (202 `replay_not_asked_answer` past the
+/// wait). No replay going: 404; the person's own: 409, never stopped.
 pub async fn autorun_replay_stop_with(wait: std::time::Duration) -> (u16, String) {
     let mine = assistant_run().as_ref().map(|r| (r.answer.clone(), r.id, r.case_id, r.step, r.page));
     match mine {
         Some((answer, id, case_id, step, page)) if answer.borrow().is_none() => {
-            crate::autorun::replay_to::stop_on_request();
-            crate::applog::info(format!("Auto Run replay of case {case_id} to step {step}: the assistant asked it to stop"));
+            // Only the assistant's own replay going is asked to stop. Its
+            // slot is freed before its answer is sent (the page is read in
+            // between), and a replay the person starts in that gap clears
+            // the stop and must never hear this one: with nothing of the
+            // assistant's running, the call only waits for its answer.
+            let asked = crate::autorun::replay_to::assistants_replay_running();
+            if asked {
+                crate::autorun::replay_to::stop_on_request();
+                crate::applog::info(format!("Auto Run replay of case {case_id} to step {step}: the assistant asked it to stop"));
+            }
             match wait_for_replay(answer, id, case_id, step, wait).await {
-                (202, _) => (202, replay_stopping_answer(case_id, step).to_string()),
+                (202, _) if asked => (202, replay_stopping_answer(case_id, step).to_string()),
+                (202, _) => (202, replay_not_asked_answer(case_id, step).to_string()),
                 // As the replay call that started it asked: `page: false`
                 // leaves the page out here too.
                 done if !page => without_page(done, r#"{"page":false}"#),
@@ -7030,12 +7059,14 @@ async fn run_assistant_replay(
     // Stopped by stop_autorun_replay: said as stopped on request, after the
     // last action to begin of the step it was on.
     let on_request = matches!(end, ReplayEnd::Stopped { .. }) && crate::autorun::replay_to::stop_was_requested();
+    // The case's clean-up is said as such, never as a step number.
+    let cleanup = crate::autorun::replay_to::cleanup_at();
     let ended = if on_request {
         let (at, _) = crate::autorun::replay_to::progress();
         let action = crate::autorun::replay_to::action_now();
-        crate::autorun::replay_to::stopped_on_request(case_id, at, action.index, action.stopped_inside)
+        crate::autorun::replay_to::stopped_on_request(case_id, at, action.index, action.stopped_inside, cleanup)
     } else {
-        end.sentence()
+        end.sentence_in(cleanup)
     };
     let said = match (&end, from) {
         (ReplayEnd::Refused(_) | ReplayEnd::Blocked(_), _) => end.sentence(),

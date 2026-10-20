@@ -248,6 +248,14 @@ pub struct SuspectedDefect {
 /// What a clean-up step is called wherever a step's number would be.
 pub const CLEANUP_LABEL: &str = "Clean-up";
 
+/// Whether `action` is a check a clean-up step may not hold: every check
+/// but `expect_dialog`, which answers the confirm the clean-up's own Delete
+/// opens and asserts nothing the case expects. A failing one still fails
+/// only the clean-up, never the case.
+pub fn checks_in_cleanup(action: &Action) -> bool {
+    action.is_check() && !matches!(action, Action::ExpectDialog { .. })
+}
+
 impl CaseRecord {
     /// `clean-up: <what failed>` when the case's clean-up ran and failed;
     /// `None` when it passed, did not run, or the script has none.

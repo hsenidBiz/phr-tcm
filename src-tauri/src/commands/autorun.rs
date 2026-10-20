@@ -1857,7 +1857,9 @@ pub async fn auto_run_replay_to_step(
     // The person's own replay, as their own step: it may lift an earlier
     // case's guard. The tabs its steps ran in go to the pane beside them.
     let (end, tabs, _, _, _, _, _) = replay_supervised(&app, &organization, &project, req, ReplayBy::Person).await?;
-    Ok(crate::autorun::replay_to::ReplayAnswer::with_tabs(end, tabs))
+    // The clean-up named as such: noted by this replay's steps.
+    let cleanup = crate::autorun::replay_to::cleanup_at();
+    Ok(crate::autorun::replay_to::ReplayAnswer::with_tabs(end, tabs, cleanup))
 }
 
 /// Who asked for a replay to a step, which decides two rules.
@@ -1940,7 +1942,12 @@ pub(crate) async fn replay_supervised(
     use crate::autorun::replay_to::{self, OneReplay, ReplayEnd, ReplayFrom};
     use tauri_specta::Event;
     const BEGINNING: ReplayFrom = ReplayFrom::Beginning;
-    let _one = match OneReplay::claim() {
+    // Whose it is: `stop_autorun_replay` stops the assistant's only.
+    let claimed = match by {
+        ReplayBy::Assistant => OneReplay::claim_for_assistant(),
+        ReplayBy::Person => OneReplay::claim(),
+    };
+    let _one = match claimed {
         Ok(one) => one,
         Err(why) => return Ok((ReplayEnd::Refused(why), Vec::new(), DiscoveryEnded::default(), None, BEGINNING, Default::default(), overrides_now())),
     };

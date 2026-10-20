@@ -3158,7 +3158,7 @@ fn see_scripts(root: &std::path::Path, body: &str) {
 fn never_seen_as(step: i32, what: &str, kind: &str) -> String {
     format!(
         "Step {step}: {what} was never seen on the live app; {} Find it on the page first with probe_autorun_locator or discover_autorun_action, then save again.",
-        v2_lib::autorun::seen_check::wants(kind, false, false)
+        v2_lib::autorun::seen_check::wants(kind, false, false, false)
     )
 }
 

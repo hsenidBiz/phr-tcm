@@ -331,11 +331,13 @@ pub fn use_full_name(seen: &LocatorStep) -> String {
 /// What a use of a locator needs, in one clause, for a refusal of one never
 /// seen: `kind` is the action's own word, `many` whether it may match
 /// several (`takes_many`), `everywhere` whether it is a `when_visible`'s
-/// locator, checked against every area.
-pub fn wants(kind: &str, many: bool, everywhere: bool) -> String {
+/// locator, checked against every area, and `none` whether it also takes a
+/// probe that matched nothing (`takes_none`: a guard, `expect_hidden`).
+pub fn wants(kind: &str, many: bool, everywhere: bool, none: bool) -> String {
     let anywhere = if everywhere { ", in any area" } else { "" };
+    let or_none = if none { " (or a probe that matched none)" } else { "" };
     if many {
-        format!("this {kind} needs it seen on the live app at least once, matching any number of elements{anywhere}.")
+        format!("this {kind} needs it seen on the live app at least once, matching any number of elements{or_none}{anywhere}.")
     } else {
         format!("this {kind} needs one seen matching exactly one element{anywhere}.")
     }
@@ -767,7 +769,7 @@ impl SeenBoth {
             }
             return Some(NEVER_COUNTED.to_string());
         }
-        let needs = wants(kind, many, everywhere);
+        let needs = wants(kind, many, everywhere, none);
         let full = if many { None } else { self.any.holders(link).first().map(|l| use_full_name(l)) };
         Some(match full.or_else(|| self.for_use(many, legacy, none).closest(link, page)) {
             Some(closest) => format!("{closest} {}{}", needs[..1].to_uppercase(), &needs[1..]),

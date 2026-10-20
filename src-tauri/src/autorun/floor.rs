@@ -92,7 +92,12 @@ pub fn check_floor(script: &CaseScript, expected: &[Expected]) -> Vec<String> {
             continue;
         }
         let n = step.step_number;
-        let has_check = step.actions.iter().any(|a| a.is_check());
+        // A clean-up's `expect_dialog` answers its own Delete's confirm and
+        // checks nothing the case expects (`checks_in_cleanup`).
+        let has_check = match step.cleanup {
+            true => step.actions.iter().any(super::checks_in_cleanup),
+            false => step.actions.iter().any(|a| a.is_check()),
+        };
         if has_check {
             out.push((n, format!("step {n} says it is unchecked but has a check - drop one or the other")));
             continue;

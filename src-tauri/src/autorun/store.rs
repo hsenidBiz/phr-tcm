@@ -214,8 +214,10 @@ pub fn check_scripts(scripts: &[CaseScript]) -> Result<(), String> {
 /// A script's clean-up step, if it has one: at most one, the script's last
 /// and numbered after every other step, after at least one step of the
 /// case, `unchecked` with the reason and checking nothing - its failures
-/// never fail the case. That it comes right after the case's last step is
-/// the floor's (`floor::check_floor`), which knows the case.
+/// never fail the case - but for an `expect_dialog` answering its own
+/// Delete's confirm (`checks_in_cleanup`). That it comes right after the
+/// case's last step is the floor's (`floor::check_floor`), which knows the
+/// case.
 fn check_cleanup(sc: &CaseScript) -> Result<(), String> {
     let marked: Vec<i32> = sc.steps.iter().filter(|s| s.cleanup).map(|s| s.step_number).collect();
     if let [first, second, ..] = marked[..] {
@@ -244,9 +246,9 @@ fn check_cleanup(sc: &CaseScript) -> Result<(), String> {
             "case {id} step {n}: a clean-up step checks nothing, so it needs \"unchecked\" with the reason (what it removes)"
         ));
     }
-    if step.actions.iter().any(|a| a.each().iter().any(|e| e.is_check())) {
+    if step.actions.iter().any(|a| a.each().iter().any(|e| super::checks_in_cleanup(e))) {
         return Err(format!(
-            "case {id} step {n}: a clean-up step checks nothing - its failures never fail the case, so move the check to a case step"
+            "case {id} step {n}: a clean-up step checks nothing - its failures never fail the case, so move the check to a case step (an expect_dialog answering a confirm its own Delete opens is the one it may hold)"
         ));
     }
     Ok(())
