@@ -855,7 +855,7 @@ pub fn quirks_section(quirks: &[Quirk]) -> String {
     }
     let mut out = String::from("## Known quirks of this application\n\n");
     out.push_str(&format!(
-        "Each line starts with the note's id, for {RETIRE_TOOL}'s `retire`.\"confirmed\" counts runs since in which the steps it was filed about passed; \"did not help\" counts runs in which they failed the same way again.\n\n"
+        "Each line starts with the note's id, for {RETIRE_TOOL}'s `retire`. \"confirmed\" counts runs since in which the steps it was filed about passed; \"did not help\" counts runs in which they failed the same way again.\n\n"
     ));
     for q in active {
         out.push_str(&format!("- [{}] ({}) {}\n", q.id, attribution(q), q.text));

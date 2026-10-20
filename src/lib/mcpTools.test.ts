@@ -274,6 +274,30 @@ test("the old quirk tools' names switched off carry over to the one quirk tool",
   localStorage.clear();
 });
 
+/// The API templates row switched off under the old names, with the Auto Run
+/// row on: the old `record_app_quirk` / `retire_app_quirk` become
+/// `record_quirk`, which the Auto Run row still carries - so it stays ON.
+test("API row off via old names, Auto Run row on: record_quirk stays on", () => {
+  // The row's own tools: the quirk tool is Auto Run's, shared with this row.
+  const apiOwn: string[] = [...API_TEMPLATE_TOOLS];
+  localStorage.setItem("tcm-v2-mcp-disabled", JSON.stringify([...apiOwn, "record_app_quirk", "retire_app_quirk"]));
+  const loaded = loadDisabledTools();
+  expect(loaded).not.toContain("record_quirk");
+  expect([...loaded].sort()).toEqual([...apiOwn].sort());
+  localStorage.clear();
+});
+
+/// The four guide tools became Core's get_guide: a saved list naming them
+/// drops them as Core, rather than sending names that match nothing.
+test("the old guide tools' names are dropped from a saved list", () => {
+  localStorage.setItem(
+    "tcm-v2-mcp-disabled",
+    JSON.stringify(["get_writing_guide", "get_autorun_guide", "get_api_template_guide", "get_report_guide", "get_tags"]),
+  );
+  expect(loadDisabledTools()).toEqual(["get_tags"]);
+  localStorage.clear();
+});
+
 /// The three that finish a draft - validate, optimise, merge - are as much
 /// part of writing a set as the guide is, and a half-set with them switched
 /// off is a set nobody can ship. They joined the always-on group, which

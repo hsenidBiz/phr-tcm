@@ -794,8 +794,8 @@ fn test_files_answer(root: &std::path::Path, ctx: &BridgeContext) -> Result<Vec<
     if ctx.org.trim().is_empty() || ctx.project.trim().is_empty() {
         return Err(TEST_FILES_NEED_A_PROJECT.to_string());
     }
-    let files = crate::test_files::list(&crate::test_files::folder(root, &ctx.org, &ctx.project))
-        .map_err(|e| format!("the Test files could not be read: {e}"))?;
+    // `list`'s own sentence already says what failed and where to look.
+    let files = crate::test_files::list(&crate::test_files::folder(root, &ctx.org, &ctx.project))?;
     Ok(files
         .into_iter()
         .map(|f| serde_json::json!({ "name": f.name, "size": crate::test_files::human_size(u64::from(f.size)) }))
@@ -8289,15 +8289,25 @@ fn accounts_read(ctx: &BridgeContext) -> (u16, String) {
         Ok(r) => r,
         Err(refused) => return refused,
     };
+    let files = test_files_answer(&root, ctx);
+    // The Test files do not hang on the environment: when its accounts
+    // cannot be read they are still answered, with why the accounts are
+    // not. Only when neither can be read is the call a failure.
+    let accounts_failed = |e: String| -> (u16, String) {
+        match &files {
+            Ok(rows) => (200, serde_json::json!({ "accounts_note": e, "test_files": rows }).to_string()),
+            Err(_) => (500, e),
+        }
+    };
     let env = match crate::environments::active(&root) {
         Ok(e) => e,
-        Err(e) => return (500, e),
+        Err(e) => return accounts_failed(e),
     };
     // Read by the id just read, so the accounts and the test-environment
     // mark are the same environment's even if a switch lands in between.
     let accounts = match crate::autorun::accounts::load_accounts_for(&root, &env.id) {
         Ok(a) => a,
-        Err(e) => return (500, e),
+        Err(e) => return accounts_failed(e),
     };
     let shown = env.test_environment;
     let list: Vec<serde_json::Value> = accounts
@@ -8315,7 +8325,7 @@ fn accounts_read(ctx: &BridgeContext) -> (u16, String) {
         "test_environment": shown,
         "accounts": list,
     });
-    match test_files_answer(&root, ctx) {
+    match files {
         Ok(files) => out["test_files"] = serde_json::Value::Array(files),
         Err(why) => out["test_files_note"] = serde_json::Value::String(why),
     }

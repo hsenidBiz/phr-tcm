@@ -266,16 +266,7 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
                 "notes": { "type": "string", "description": "House rules, naming, granularity - the developer's own conventions" },
             }), &[]),
         },
-        {
-            "name": "get_guide",
-            "description": "The live guide for one job, by `topic`. \"writing\": Test Case Manager import JSON - format rules, the org's allowed Module values and the workflow; call it first. \"autorun\": writing an Auto Run action script - the actions and checks the runner understands (the application's own API requests included), pointing at an element by role and name, and which source decides what: locators come from the live app, every assertion from the case's own expected result, never from what the code does; read it before writing a script. \"api_templates\": building an API template - the format, placeholders and captures, the workflow, this project's account keys and sign-in origin; read it before your first prove_api_template. \"reports\": working with Crystal Reports - the IR, units (twips), edit ops, the layout plan and the limits; read it before your first edit_report. A topic whose module is off is refused. The autorun guide is too long for one answer: alone it answers the Quick rules, this project's live sections and every section title; `section` adds one section, `quick` answers only the Quick rules and live sections, `full` the whole guide.",
-            "inputSchema": schema(serde_json::json!({
-                "topic": { "type": "string", "enum": GUIDE_TOPICS, "description": "Which guide." },
-                "quick": { "type": "boolean", "description": "autorun only. true: only the Quick rules and the live sections - the active environment, whether get_accounts gives passwords, this project's areas, areas to explore, components and quirks." },
-                "section": { "type": "string", "description": "autorun only. One section's title, e.g. \"Selectors\" or \"Saving it\" (case ignored): the Quick rules and that section. An unknown title answers the list of titles." },
-                "full": { "type": "boolean", "description": "autorun only. true: every section - over 100,000 characters; prefer `section`." },
-            }), &["topic"]),
-        },
+        guide_tool(&disabled),
         {
             "name": "get_test_cases",
             "description": "Test cases in the exact import JSON shape. Pass `pbi_id` for the cases a PBI is tested by, `case_ids` to read specific cases by their own ids without knowing their PBI, or both to narrow a PBI's cases to those ids (any id the PBI is not tested by is listed in `not_on_pbi`). Use them to copy the house style, to check what is already covered before writing more, or to read a case someone named by its id.",
@@ -969,21 +960,100 @@ pub fn guide_topic_module(topic: &str) -> Result<Option<Module>, ()> {
     }
 }
 
-/// Why `get_guide` cannot answer `topic`, or None when it can: no topic or
-/// an unknown one names the topics; a topic whose module is off is refused
-/// in the words the tool it replaced was refused in (`refusal_text`), so a
-/// module switched off still takes its guide with it. `on` is explicit so
-/// every branch is testable.
-pub fn guide_refusal(topic: Option<&str>, on: &BTreeSet<Module>) -> Option<String> {
-    let topics = GUIDE_TOPICS.map(|t| format!("\"{t}\"")).join(", ");
+/// The tools whose switch decides a topic's guide: the row its old guide
+/// tool rode in, less the tools another switch decides (the quirk tool,
+/// which two rows share, and the network tools). Empty for Core's writing
+/// guide, which nothing switches off.
+fn guide_row(topic: &str) -> Vec<&'static str> {
+    use crate::ai_tools::{API_TEMPLATE_TOOLS, AUTORUN_TOOLS, CRYSTAL_TOOLS, NETWORK_TOOLS};
+    let own = |tools: &'static [&'static str]| -> Vec<&'static str> {
+        tools.iter().copied().filter(|t| *t != "record_quirk" && !NETWORK_TOOLS.contains(t)).collect()
+    };
+    match topic {
+        "autorun" => own(AUTORUN_TOOLS),
+        "api_templates" => own(API_TEMPLATE_TOOLS),
+        "reports" => own(CRYSTAL_TOOLS),
+        _ => Vec::new(),
+    }
+}
+
+/// Whether `get_guide` offers `topic` while `off` is the disabled set as
+/// applied (`tool_policy_from`): the writing guide always; another only
+/// while its row's own tools are not all off - which a module that is off
+/// makes them. Exactly when the topic's old guide tool was offered.
+pub fn guide_offered(topic: &str, off: &[String]) -> bool {
+    match topic {
+        "writing" => true,
+        _ => guide_row(topic).iter().any(|t| !off.iter().any(|o| o == t)),
+    }
+}
+
+/// The topics `get_guide` offers while `off` is disabled, in order.
+pub fn offered_topics(off: &[String]) -> Vec<&'static str> {
+    GUIDE_TOPICS.into_iter().filter(|t| guide_offered(t, off)).collect()
+}
+
+/// What `get_guide`'s description says about each topic.
+fn guide_sentence(topic: &str) -> &'static str {
+    match topic {
+        "writing" => "\"writing\": Test Case Manager import JSON - format rules, the org's allowed Module values and the workflow; call it first.",
+        "autorun" => "\"autorun\": writing an Auto Run action script - the actions and checks the runner understands (the application's own API requests included), pointing at an element by role and name, and which source decides what: locators come from the live app, every assertion from the case's own expected result, never from what the code does; read it before writing a script. It is too long for one answer: alone it answers the Quick rules, this project's live sections and every section title; `section` adds one section, `quick` answers only the Quick rules and live sections, `full` the whole guide.",
+        "api_templates" => "\"api_templates\": building an API template - the format, placeholders and captures, the workflow, this project's account keys and sign-in origin; read it before your first prove_api_template.",
+        "reports" => "\"reports\": working with Crystal Reports - the IR, units (twips), edit ops, the layout plan and the limits; read it before your first edit_report.",
+        _ => "",
+    }
+}
+
+/// `get_guide` as `tools/list` offers it: its `topic` enum and its
+/// sentences name only the topics offered, and the autorun guide's own
+/// arguments come only with that topic - a guide that is not there is not
+/// described, as its old tool was not listed.
+fn guide_tool(off: &[String]) -> serde_json::Value {
+    let topics = offered_topics(off);
+    let mut description = String::from("The live guide for one job, by `topic`.");
+    for t in &topics {
+        description.push(' ');
+        description.push_str(guide_sentence(t));
+    }
+    let mut props = serde_json::json!({
+        "topic": { "type": "string", "enum": topics, "description": "Which guide." },
+    });
+    if topics.contains(&"autorun") {
+        props["quick"] = serde_json::json!({ "type": "boolean", "description": "autorun only. true: only the Quick rules and the live sections - the active environment, whether get_accounts gives passwords, this project's areas, areas to explore, components and quirks." });
+        props["section"] = serde_json::json!({ "type": "string", "description": "autorun only. One section's title, e.g. \"Selectors\" or \"Saving it\" (case ignored): the Quick rules and that section. An unknown title answers the list of titles." });
+        props["full"] = serde_json::json!({ "type": "boolean", "description": "autorun only. true: every section - over 100,000 characters; prefer `section`." });
+    }
+    serde_json::json!({ "name": "get_guide", "description": description, "inputSchema": schema(props, &["topic"]) })
+}
+
+/// Why `get_guide` cannot answer `topic`, or None when it can. No topic or
+/// an unknown one names the topics offered. A topic not offered is refused
+/// in the words its old guide tool was (`refusal_text`): its module off
+/// names the module; its row switched off says so.
+pub fn guide_refusal(topic: Option<&str>, off: &[String], on: &BTreeSet<Module>) -> Option<String> {
+    let topics = offered_topics(off).iter().map(|t| format!("\"{t}\"")).collect::<Vec<_>>().join(", ");
     let Some(topic) = topic.map(str::trim).filter(|t| !t.is_empty()) else {
         return Some(format!("get_guide needs a `topic`: one of {topics}."));
     };
     match guide_topic_module(topic) {
         Err(()) => Some(format!("There is no `{topic}` guide: `topic` is one of {topics}.")),
         Ok(Some(m)) if !on.contains(&m) => Some(format!("The `{topic}` guide is not available: {}.", m.off_sentence())),
+        Ok(_) if !guide_offered(topic, off) => Some(format!(
+            "The `{topic}` guide is switched off in Test Case Manager. \
+             Turn it back on in the app's AI Bridge tab if you need it."
+        )),
         Ok(_) => None,
     }
+}
+
+/// Said when `section`, `quick` or `full` comes with a topic other than
+/// autorun: only that guide is long enough to be read in parts.
+pub const GUIDE_PARTS_AUTORUN_ONLY: &str = "`section`, `quick` and `full` are for topic \"autorun\" only - send the other topics with `topic` alone";
+
+/// Whether an optional argument says anything: absent, null, false and ""
+/// all say nothing.
+fn says(v: &serde_json::Value) -> bool {
+    !matches!(v, serde_json::Value::Null | serde_json::Value::Bool(false)) && v.as_str() != Some("")
 }
 
 /// Why a `{ scripts, edits }` bundle sent as `scripts` cannot take the
@@ -1265,9 +1335,20 @@ fn cookies_call(args: &serde_json::Value, call: BridgeCall) -> Result<(u16, Stri
     call("POST", route, &body.to_string())
 }
 
+/// Said when `open_report` is sent a new report's summary fields beside
+/// `create` rather than in it - the old `new_report`'s shape.
+pub const SUMMARY_GOES_IN_CREATE: &str = "title, author and comments go inside `create`: { \"path\": ..., \"create\": { \"title\", \"author\", \"comments\" } }";
+
 /// Said when `open_report` is sent a `create` that is neither a yes nor the
 /// new report's summary information.
 pub const CREATE_REFUSED: &str = "`create` is true, or the new report's { title, author, comments }";
+
+/// Said when the fixtures list is sent a template filter.
+pub const FIXTURES_TAKE_ID_OR_FULL: &str = "with kind \"fixtures\" only `id` and `full` apply - module, search, flow, offset and limit filter templates";
+
+/// Said when the template list is sent `full`, which only the fixtures list
+/// reads.
+pub const FULL_IS_FOR_FIXTURES: &str = "`full` is for kind \"fixtures\" - a template list pages with offset and limit, or answers one template in full by `id`";
 
 /// Said when `list_api_templates` is sent a `kind` it does not list.
 pub const LIST_KIND_REFUSED: &str = "`kind` is \"templates\" (the default) or \"fixtures\"";
@@ -1275,6 +1356,23 @@ pub const LIST_KIND_REFUSED: &str = "`kind` is \"templates\" (the default) or \"
 /// Said when `record_quirk` is sent a line to record and a quirk to retire
 /// at once: one call does one of them.
 pub const QUIRK_RECORD_OR_RETIRE: &str = "send `text` to record a quirk, or `retire` with a quirk's id to retire one - not both (a better line goes in `replacement`)";
+
+/// Said when `record_quirk` is sent an `id` without `retire`: the old retire
+/// tool's shape.
+pub const QUIRK_ID_WITHOUT_RETIRE: &str = "to retire a quirk, send `retire: <its id>` with a `reason` - `id` is not an argument here; to record one, send `text`";
+
+/// `record_quirk`'s arguments with `from: "api"` filled in when the caller
+/// left `from` out and the Auto Run row's own tools are all off: then the
+/// API templates row is the only reason the tool is offered, so the note is
+/// an API templates assistant's - what the old `record_app_quirk` said for
+/// it. A `from` the caller gave is never changed.
+fn with_inferred_from(args: &serde_json::Value, off: &[String]) -> serde_json::Value {
+    let mut args = args.clone();
+    if !says(&args["from"]) && args.is_object() && !guide_offered("autorun", off) {
+        args["from"] = serde_json::json!(crate::autorun::quirks::FROM_API);
+    }
+    args
+}
 
 /// Said when `record_quirk` retires a quirk without saying why.
 pub const QUIRK_RETIRE_NEEDS_REASON: &str = "retiring a quirk needs a `reason`: one sentence on why the note no longer helps";
@@ -1285,6 +1383,9 @@ pub const QUIRK_RETIRE_NEEDS_REASON: &str = "retiring a quirk needs a `reason`: 
 /// `from: "api"` while API Templates is off (`ai_bridge::module_guard`).
 fn quirk_call(args: &serde_json::Value, call: BridgeCall) -> Result<(u16, String), String> {
     let Some(id) = args.get("retire").filter(|v| !v.is_null()) else {
+        if says(&args["id"]) {
+            return Ok((400, QUIRK_ID_WITHOUT_RETIRE.to_string()));
+        }
         return call("POST", "/autorun-quirk", &args.to_string());
     };
     if args.get("text").is_some_and(|t| !t.is_null()) {
@@ -1368,7 +1469,7 @@ fn tools_call(params: &serde_json::Value, call: BridgeCall) -> serde_json::Value
     let refused = if off.iter().any(|d| d == name) {
         Some(refusal_text(name, &on))
     } else if name == "get_guide" {
-        guide_refusal(args["topic"].as_str(), &on)
+        guide_refusal(args["topic"].as_str(), &off, &on)
     } else {
         None
     };
@@ -1408,6 +1509,12 @@ fn tools_call(params: &serde_json::Value, call: BridgeCall) -> serde_json::Value
             };
             call("POST", &target, &body)
         }
+        "get_guide"
+            if args["topic"].as_str().map(str::trim) != Some("autorun")
+                && ["section", "quick", "full"].iter().any(|k| says(&args[*k])) =>
+        {
+            Ok((400, GUIDE_PARTS_AUTORUN_ONLY.to_string()))
+        }
         "get_guide" => match args["topic"].as_str().map(str::trim).unwrap_or_default() {
             "writing" => call("GET", "/guide", ""),
             "autorun" => match args["section"].as_str().map(str::trim).filter(|s| !s.is_empty()) {
@@ -1422,7 +1529,7 @@ fn tools_call(params: &serde_json::Value, call: BridgeCall) -> serde_json::Value
             "reports" => call("GET", "/crystal-guide", ""),
             // Refused before the match by `guide_refusal`; said again here
             // rather than trusted.
-            _ => Ok((400, guide_refusal(args["topic"].as_str(), &on).unwrap_or_default())),
+            _ => Ok((400, guide_refusal(args["topic"].as_str(), &off, &on).unwrap_or_default())),
         },
         "get_test_cases" => {
             let limit = args["limit"].as_i64().unwrap_or(5);
@@ -1631,12 +1738,21 @@ fn tools_call(params: &serde_json::Value, call: BridgeCall) -> serde_json::Value
             };
             call("GET", &target, "")
         }
-        "record_quirk" => quirk_call(args, call),
+        "record_quirk" => quirk_call(&with_inferred_from(args, &off), call),
         "record_validation_rule" => call("POST", "/autorun-validation-rule", &args.to_string()),
         "mark_autorun_suspected_defect" => call("POST", "/autorun-defect", &args.to_string()),
         "set_autorun_order" => call("POST", "/autorun-order", &args.to_string()),
         "propose_accounts" => call("POST", "/accounts-propose", &args.to_string()),
         "get_accounts" => call("GET", "/accounts", ""),
+        "list_api_templates"
+            if args["kind"].as_str() == Some("fixtures")
+                && ["module", "search", "flow", "offset", "limit"].iter().any(|k| says(&args[*k])) =>
+        {
+            Ok((400, FIXTURES_TAKE_ID_OR_FULL.to_string()))
+        }
+        "list_api_templates" if args["kind"].as_str() != Some("fixtures") && says(&args["full"]) => {
+            Ok((400, FULL_IS_FOR_FIXTURES.to_string()))
+        }
         "list_api_templates" if args["kind"].as_str() == Some("fixtures") => {
             match args["id"].as_str().map(str::trim).filter(|s| !s.is_empty()) {
                 Some(id) => call("GET", &format!("/api-template-fixtures?id={}", urlencoding::encode(id)), ""),
@@ -1698,6 +1814,9 @@ fn tools_call(params: &serde_json::Value, call: BridgeCall) -> serde_json::Value
         // the arguments object travels whole, like the database tools'.
         // `create` makes a blank report first: the new route takes the path
         // and the summary fields side by side.
+        "open_report" if ["title", "author", "comments"].iter().any(|k| says(&args[*k])) => {
+            Ok((400, SUMMARY_GOES_IN_CREATE.to_string()))
+        }
         "open_report" => match args.get("create") {
             None | Some(serde_json::Value::Null) | Some(serde_json::Value::Bool(false)) => {
                 call("POST", "/crystal-open", &args.to_string())

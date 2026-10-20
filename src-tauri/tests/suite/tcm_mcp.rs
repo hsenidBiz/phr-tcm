@@ -734,7 +734,7 @@ fn autorun_tools_named_disabled_in_a_dev_build_are_absent_and_refused_the_ordina
         if path == "/tools" {
             return Ok((
                 200,
-                r#"{"disabled":["save_autorun_script","get_autorun_script","delete_autorun_script","get_autorun_network_wait","get_autorun_page","probe_autorun_locator","try_autorun_action","replay_autorun_to_step","start_autorun_discovery","discover_autorun_actions","save_autorun_area","end_autorun_discovery","reset_autorun_browser","save_autorun_component","get_autorun_failures","record_autorun_quirk","retire_autorun_quirk","record_validation_rule","mark_autorun_suspected_defect","set_autorun_order","search_autorun_requests","get_autorun_request","autorun_capture","autorun_har","set_autorun_headers","autorun_cookies"]}"#.into(),
+                r#"{"disabled":["save_autorun_script","get_autorun_script","delete_autorun_script","get_autorun_network_wait","get_autorun_page","probe_autorun_locator","try_autorun_action","replay_autorun_to_step","start_autorun_discovery","discover_autorun_actions","save_autorun_area","end_autorun_discovery","reset_autorun_browser","save_autorun_component","get_autorun_failures","record_quirk","record_validation_rule","mark_autorun_suspected_defect","set_autorun_order","search_autorun_requests","get_autorun_request","autorun_capture","autorun_har","set_autorun_headers","autorun_cookies"]}"#.into(),
             ));
         }
         Ok((200, "{}".into()))
@@ -1209,8 +1209,6 @@ fn the_api_template_tools_call_their_routes() {
         ("list_api_templates", serde_json::json!({ "kind": "fixtures" }), "GET", "/api-template-fixtures", None),
         ("list_api_templates", serde_json::json!({ "kind": "fixtures", "id": "draft cycle" }), "GET", "/api-template-fixtures?id=draft%20cycle", None),
         ("list_api_templates", serde_json::json!({ "kind": "fixtures", "full": true }), "GET", "/api-template-fixtures?full=true", None),
-        // A template filter means nothing to the fixtures list.
-        ("list_api_templates", serde_json::json!({ "kind": "fixtures", "module": "PMS" }), "GET", "/api-template-fixtures", None),
     ];
     for (name, args, method, path, body) in cases {
         let req = serde_json::json!({
@@ -1464,6 +1462,153 @@ fn with_auto_run_off_and_api_templates_on_the_quirk_tool_stays() {
     assert!(module_of_tool("record_quirk") == Some(Module::AutoRun));
 }
 
+/// With only the API templates row on, the API templates row is the one
+/// reason `record_quirk` is offered, so a quirk sent without `from` is that
+/// assistant's: `from: "api"` is filled in, as `record_app_quirk` did. A
+/// `from` the caller sent is kept, and with the Auto Run row on nothing is
+/// filled in.
+#[test]
+fn with_only_the_api_templates_row_on_a_quirk_without_from_is_the_api_assistants() {
+    const AUTORUN_ROW_OFF: &str = r#"{"disabled":["save_autorun_script","get_autorun_script","delete_autorun_script","get_autorun_network_wait","get_autorun_page","probe_autorun_locator","try_autorun_action","replay_autorun_to_step","start_autorun_discovery","discover_autorun_actions","save_autorun_area","end_autorun_discovery","reset_autorun_browser","save_autorun_component","get_autorun_failures","record_validation_rule","mark_autorun_suspected_defect","set_autorun_order","propose_accounts","get_accounts","search_autorun_requests","get_autorun_request","autorun_capture","autorun_har","set_autorun_headers","autorun_cookies"]}"#;
+    let posted = |tools: &'static str, args: &str| -> (String, serde_json::Value) {
+        let calls = std::cell::RefCell::new(vec![]);
+        let call = |_m: &str, path: &str, body: &str| -> Result<(u16, String), String> {
+            if path == "/tools" {
+                return Ok((200, tools.to_string()));
+            }
+            calls.borrow_mut().push((path.to_string(), body.to_string()));
+            Ok((200, "ok".into()))
+        };
+        let req = format!(r#"{{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{{"name":"record_quirk","arguments":{args}}}}}"#);
+        let v: serde_json::Value = serde_json::from_str(&handle_message(&req, "1.0.0", &call).unwrap()).unwrap();
+        assert_ne!(v["result"]["isError"], true, "{args}: {v}");
+        let (path, body) = calls.borrow().last().unwrap().clone();
+        (path, serde_json::from_str(&body).unwrap())
+    };
+
+    let (path, body) = posted(AUTORUN_ROW_OFF, r#"{"text":"the handler wants a CSRF header"}"#);
+    assert_eq!(path, "/autorun-quirk");
+    assert_eq!(body, serde_json::json!({ "text": "the handler wants a CSRF header", "from": "api" }));
+    let (path, body) = posted(AUTORUN_ROW_OFF, r#"{"retire":"q1a2b3c","reason":"never helped"}"#);
+    assert_eq!(path, "/autorun-quirk-retire");
+    assert_eq!(body, serde_json::json!({ "id": "q1a2b3c", "reason": "never helped", "from": "api" }));
+    let (_, body) = posted(AUTORUN_ROW_OFF, r#"{"text":"a line","from":"autorun"}"#);
+    assert_eq!(body["from"], "autorun", "a `from` the caller sent is kept");
+    let (_, body) = posted(r#"{"disabled":[]}"#, r#"{"text":"a line"}"#);
+    assert!(body.get("from").is_none(), "nothing filled in while the Auto Run row is on: {body}");
+}
+
+/// `get_guide` follows the row switches as well as the modules, as the old
+/// guide tools did: a topic whose row's own tools are all off is not in the
+/// enum, gets no sentence, and a call is refused as "switched off". Its
+/// module off, it is refused naming the module.
+#[test]
+fn the_guide_tool_offers_a_topic_only_while_its_row_is_on() {
+    use v2_lib::mcp::{guide_offered, offered_topics};
+    let guide_of = |tools: &'static str| -> serde_json::Value {
+        let call = move |_m: &str, _p: &str, _b: &str| -> Result<(u16, String), String> { Ok((200, tools.to_string())) };
+        let v: serde_json::Value = serde_json::from_str(
+            &v2_lib::mcp::handle_message(r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#, "1.0.0", &call).unwrap(),
+        )
+        .unwrap();
+        v["result"]["tools"].as_array().unwrap().iter().find(|t| t["name"] == "get_guide").unwrap().clone()
+    };
+
+    // A Core-only install: the writing guide alone, and nothing said about
+    // the others.
+    let core = guide_of(r#"{"disabled":[],"modules":["writing_style"]}"#);
+    assert_eq!(core["inputSchema"]["properties"]["topic"]["enum"], serde_json::json!(["writing"]));
+    let d = core["description"].as_str().unwrap();
+    for gone in ["autorun", "api_templates", "reports", "Auto Run", "Crystal", "Quick rules"] {
+        assert!(!d.contains(gone), "a Core-only description names {gone:?}: {d}");
+    }
+    for part in ["quick", "section", "full"] {
+        assert!(core["inputSchema"]["properties"].get(part).is_none(), "{part}: {core}");
+    }
+    // Crystal Reports on: its guide comes with it.
+    let reports = guide_of(r#"{"disabled":[],"modules":["writing_style","crystal_reports"]}"#);
+    assert_eq!(reports["inputSchema"]["properties"]["topic"]["enum"], serde_json::json!(["writing", "reports"]));
+
+    // Every module on, the Auto Run row switched off: no autorun topic, its
+    // parts gone, the others there.
+    const ROW_OFF: &str = r#"{"disabled":["save_autorun_script","get_autorun_script","delete_autorun_script","get_autorun_page","probe_autorun_locator","try_autorun_action","replay_autorun_to_step","start_autorun_discovery","discover_autorun_actions","save_autorun_area","end_autorun_discovery","reset_autorun_browser","save_autorun_component","get_autorun_failures","record_validation_rule","mark_autorun_suspected_defect","set_autorun_order","propose_accounts","get_accounts","get_autorun_network_wait"],"modules":["writing_style","auto_run","api_templates","crystal_reports","db_access","playwright"]}"#;
+    let g = guide_of(ROW_OFF);
+    assert_eq!(g["inputSchema"]["properties"]["topic"]["enum"], serde_json::json!(["writing", "api_templates", "reports"]));
+    assert!(g["inputSchema"]["properties"].get("quick").is_none(), "{g}");
+    assert!(!g["description"].as_str().unwrap().contains("\"autorun\""), "{g}");
+
+    let ask = |tools: &'static str, topic: &str| -> String {
+        let call = move |_m: &str, path: &str, _b: &str| -> Result<(u16, String), String> {
+            assert_eq!(path, "/tools", "nothing past /tools for a refused topic");
+            Ok((200, tools.to_string()))
+        };
+        let req = format!(r#"{{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{{"name":"get_guide","arguments":{{"topic":"{topic}"}}}}}}"#);
+        let v: serde_json::Value = serde_json::from_str(&v2_lib::mcp::handle_message(&req, "1.0.0", &call).unwrap()).unwrap();
+        assert_eq!(v["result"]["isError"], true, "{topic}: {v}");
+        v["result"]["content"][0]["text"].as_str().unwrap().to_string()
+    };
+    assert_eq!(
+        ask(ROW_OFF, "autorun"),
+        "The `autorun` guide is switched off in Test Case Manager. Turn it back on in the app's AI Bridge tab if you need it."
+    );
+    let said = ask(r#"{"disabled":[],"modules":["writing_style"]}"#, "reports");
+    assert_eq!(said, format!("The `reports` guide is not available: {}.", Module::CrystalReports.off_sentence()));
+    // An unknown topic names only the topics offered.
+    let said = ask(r#"{"disabled":[],"modules":["writing_style"]}"#, "selectors");
+    assert!(said.contains("\"writing\"") && !said.contains("autorun"), "{said}");
+
+    // The quirk tool and the network tools decide nothing about a guide.
+    let only_shared: Vec<String> =
+        ["record_quirk", "search_autorun_requests", "autorun_cookies"].iter().map(|s| s.to_string()).collect();
+    assert!(guide_offered("autorun", &only_shared));
+    assert_eq!(offered_topics(&[]), vec!["writing", "autorun", "api_templates", "reports"]);
+}
+
+/// The argument mixes that used to be dropped without a word are refused
+/// with the shape to send, before anything reaches the app: the autorun
+/// guide's parts on another topic, a template filter on the fixtures list
+/// (and `full` on the template list), the old new_report's summary fields
+/// beside `create`, and the old retire tool's `id`.
+#[test]
+fn the_merged_tools_refuse_the_mixes_they_used_to_ignore() {
+    use v2_lib::mcp::{
+        FIXTURES_TAKE_ID_OR_FULL, FULL_IS_FOR_FIXTURES, GUIDE_PARTS_AUTORUN_ONLY, QUIRK_ID_WITHOUT_RETIRE,
+        SUMMARY_GOES_IN_CREATE,
+    };
+    let posted = std::cell::Cell::new(0);
+    let call = |_m: &str, path: &str, _b: &str| -> Result<(u16, String), String> {
+        if path != "/tools" {
+            posted.set(posted.get() + 1);
+        }
+        Ok((200, "{}".into()))
+    };
+    for (tool, args, said) in [
+        ("get_guide", r#"{"topic":"writing","full":true}"#, GUIDE_PARTS_AUTORUN_ONLY),
+        ("get_guide", r#"{"topic":"reports","section":"Ids"}"#, GUIDE_PARTS_AUTORUN_ONLY),
+        ("get_guide", r#"{"topic":"api_templates","quick":true}"#, GUIDE_PARTS_AUTORUN_ONLY),
+        ("list_api_templates", r#"{"kind":"fixtures","module":"PMS"}"#, FIXTURES_TAKE_ID_OR_FULL),
+        ("list_api_templates", r#"{"kind":"fixtures","offset":25}"#, FIXTURES_TAKE_ID_OR_FULL),
+        ("list_api_templates", r#"{"full":true}"#, FULL_IS_FOR_FIXTURES),
+        ("list_api_templates", r#"{"kind":"templates","full":true}"#, FULL_IS_FOR_FIXTURES),
+        ("open_report", r#"{"path":"C:/r/n.rpt","title":"T","create":true}"#, SUMMARY_GOES_IN_CREATE),
+        ("open_report", r#"{"path":"C:/r/n.rpt","author":"A"}"#, SUMMARY_GOES_IN_CREATE),
+        ("record_quirk", r#"{"id":"q1a2b3c","reason":"never helped"}"#, QUIRK_ID_WITHOUT_RETIRE),
+    ] {
+        let req = format!(r#"{{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{{"name":"{tool}","arguments":{args}}}}}"#);
+        let v: serde_json::Value = serde_json::from_str(&handle_message(&req, "1.0.0", &call).unwrap()).unwrap();
+        assert_eq!(v["result"]["isError"], true, "{tool} {args}: {v}");
+        assert!(v["result"]["content"][0]["text"].as_str().unwrap().contains(said), "{tool} {args}: {v}");
+    }
+    assert_eq!(posted.get(), 0, "nothing reached the app");
+
+    // An empty or false part is no part: still answered.
+    for args in [r#"{"topic":"writing","quick":false}"#, r#"{"topic":"writing","section":""}"#] {
+        let req = format!(r#"{{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{{"name":"get_guide","arguments":{args}}}}}"#);
+        let v: serde_json::Value = serde_json::from_str(&handle_message(&req, "1.0.0", &call).unwrap()).unwrap();
+        assert_ne!(v["result"]["isError"], true, "{args}: {v}");
+    }
+}
+
 /// The two account tools belong to the Auto Run row: listed while that row
 /// is on and Auto Run is offered, gone when the row is switched off, and
 /// "not available" where Auto Run is not offered at all.
@@ -1480,7 +1625,7 @@ fn the_account_tools_are_listed_only_with_the_auto_run_row_where_auto_run_is_off
         if path == "/tools" {
             return Ok((
                 200,
-                r#"{"disabled":["save_autorun_script","get_autorun_script","delete_autorun_script","get_autorun_network_wait","get_autorun_page","probe_autorun_locator","try_autorun_action","replay_autorun_to_step","start_autorun_discovery","discover_autorun_actions","save_autorun_area","end_autorun_discovery","reset_autorun_browser","save_autorun_component","get_autorun_failures","record_autorun_quirk","retire_autorun_quirk","record_validation_rule","mark_autorun_suspected_defect","set_autorun_order","propose_accounts","get_accounts","search_autorun_requests","get_autorun_request","autorun_capture","autorun_har","set_autorun_headers","autorun_cookies"]}"#.into(),
+                r#"{"disabled":["save_autorun_script","get_autorun_script","delete_autorun_script","get_autorun_network_wait","get_autorun_page","probe_autorun_locator","try_autorun_action","replay_autorun_to_step","start_autorun_discovery","discover_autorun_actions","save_autorun_area","end_autorun_discovery","reset_autorun_browser","save_autorun_component","get_autorun_failures","record_quirk","record_validation_rule","mark_autorun_suspected_defect","set_autorun_order","propose_accounts","get_accounts","search_autorun_requests","get_autorun_request","autorun_capture","autorun_har","set_autorun_headers","autorun_cookies"]}"#.into(),
             ));
         }
         Ok((200, "{}".into()))
@@ -2194,7 +2339,7 @@ fn the_guide_tool_takes_quick() {
         (r#"{"topic":"autorun","full":true}"#, "/autorun-guide"),
         (r#"{"topic":"autorun","full":false}"#, "/autorun-guide?overview=true"),
         (r#"{"topic":"writing"}"#, "/guide"),
-        (r#"{"topic":"writing","full":true}"#, "/guide"),
+        (r#"{"topic":"writing","full":false}"#, "/guide"),
         (r#"{"topic":"api_templates"}"#, "/api-template-guide"),
         (r#"{"topic":"reports"}"#, "/crystal-guide"),
     ] {
@@ -2288,7 +2433,7 @@ fn the_guide_tool_refuses_a_missing_or_unknown_topic() {
     assert_eq!(guide_topic_module("Autorun"), Err(()));
     let all: BTreeSet<Module> = Module::ALL.into_iter().collect();
     for topic in GUIDE_TOPICS {
-        assert_eq!(guide_refusal(Some(topic), &all), None, "{topic}");
+        assert_eq!(guide_refusal(Some(topic), &[], &all), None, "{topic}");
     }
 }
 

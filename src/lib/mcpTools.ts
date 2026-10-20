@@ -574,6 +574,12 @@ export const RENAMED_TOOLS: Readonly<Record<string, string>> = {
   retire_autorun_quirk: "record_quirk",
   record_app_quirk: "record_quirk",
   retire_app_quirk: "record_quirk",
+  // The four guides became Core's one `get_guide`: the name is then dropped
+  // as Core's, rather than carried forever as a name that matches nothing.
+  get_writing_guide: "get_guide",
+  get_autorun_guide: "get_guide",
+  get_api_template_guide: "get_guide",
+  get_report_guide: "get_guide",
   // Folded into a sibling as an argument or part of its answer.
   list_test_files: "get_accounts",
   list_api_fixtures: "list_api_templates",

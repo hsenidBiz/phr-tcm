@@ -3067,6 +3067,22 @@ async fn get_accounts_gives_the_test_files_by_name_and_size_only() {
     // The old route is gone.
     let (status, _) = route(&ctx(), None, "GET", "/autorun-test-files", "", "1.0.0").await;
     assert_eq!(status, 404);
+
+    // Accounts that cannot be read do not take the Test files with them: the
+    // files still come, with why the accounts did not.
+    let env = v2_lib::environments::active(dir.path()).unwrap();
+    let accounts = v2_lib::autorun::accounts::accounts_path_for(dir.path(), &env.id);
+    std::fs::create_dir_all(accounts.parent().unwrap()).unwrap();
+    std::fs::write(&accounts, "not json").unwrap();
+    let (status, body) = route(&ctx(), None, "GET", "/accounts", "", "1.0.0").await;
+    assert_eq!(status, 200, "{body}");
+    let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(v["test_files"].as_array().map(Vec::len), Some(2), "{body}");
+    assert!(v["accounts_note"].as_str().unwrap().contains("accounts file is not readable"), "{body}");
+    assert!(v.get("accounts").is_none(), "{body}");
+    // Neither readable: the accounts' failure, as before.
+    let (status, body) = route(&BridgeContext::default(), None, "GET", "/accounts", "", "1.0.0").await;
+    assert_eq!(status, 500, "{body}");
 }
 
 /// "The active environment" names its database as a person reads it - the
