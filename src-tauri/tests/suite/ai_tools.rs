@@ -783,6 +783,12 @@ fn the_heal_command_is_an_auto_run_routine_offered_only_with_auto_run() {
     // path itself (owner decision 2026-10-20), never the script.
     assert!(flat.contains("repair the AREA's path yourself instead of asking the person"), "{flat}");
     assert!(flat.contains("`save_autorun_area` with the area's name"), "{flat}");
+    // The skill quotes the unreached STOP line's own words, apart from the
+    // setup line, which goes to the person.
+    assert!(flat.contains("except the line \"the run could not reach this case's area\""), "{flat}");
+    assert!(flat.contains("(\"the run could not take this case to its module screen\": no Module, no account, no path, an area never recorded) goes to the person"), "{flat}");
+    assert!(!flat.contains("Could not reach module"), "the skill quotes the run's wording, not the STOP line: {flat}");
+    assert!(mcp.contains("a case that could not reach its area: repair the area with save_autorun_area"), "the failures tool leaves out the area repair");
     assert!(flat.contains("put the old path back"), "{flat}");
     assert!(!flat.to_lowercase().contains("three"), "the routine must not count the STOP lines: {flat}");
     assert!(mcp.contains("could not reach its module screen"), "the failures tool leaves out the module-path stop");
