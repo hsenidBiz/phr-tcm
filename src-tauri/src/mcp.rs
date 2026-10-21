@@ -1127,6 +1127,10 @@ fn given(args: &serde_json::Value, key: &str) -> bool {
     args.get(key).is_some_and(|v| !v.is_null())
 }
 
+/// The top-level keys `save_autorun_script` reads: any other is refused
+/// rather than dropped.
+pub const SAVE_SCRIPT_KEYS: [&str; 3] = ["scripts", "edits", "dry_run"];
+
 /// The arguments' keys with a value, other than `allowed`.
 fn others<'a>(args: &'a serde_json::Value, allowed: &[&str]) -> Vec<&'a str> {
     args.as_object()
@@ -1537,7 +1541,100 @@ pub const RETIRED_TOOLS: &[(&str, &str)] = &[
 /// What a call to a retired tool is told, or `None` for any other name.
 pub fn retired_tool_answer(name: &str) -> Option<String> {
     let (_, now) = RETIRED_TOOLS.iter().find(|(old, _)| *old == name)?;
-    Some(format!("`{name}` is now {now}"))
+    Some(format!("`{name}` is now {now} {STALE_TOOL_LIST}"))
+}
+
+/// Said after a retired tool's answer: a client keeps the tool list it got
+/// when its session began, so a tool the app added or renamed since is
+/// missing from it until a new session.
+pub const STALE_TOOL_LIST: &str = "Your session's tool list is older than this app, so the tool named here may be missing from it: start a new session to get the current tools.";
+
+/// Each tool's `inputSchema.properties`, from this build's own tool list.
+fn tool_properties(name: &str) -> Option<&'static serde_json::Map<String, serde_json::Value>> {
+    static TOOL_PROPS: std::sync::OnceLock<std::collections::HashMap<String, serde_json::Map<String, serde_json::Value>>> =
+        std::sync::OnceLock::new();
+    TOOL_PROPS
+        .get_or_init(|| {
+            tools_list(vec![], false)["tools"]
+                .as_array()
+                .map(|tools| {
+                    tools
+                        .iter()
+                        .filter_map(|t| {
+                            let name = t["name"].as_str()?.to_string();
+                            let props = t["inputSchema"]["properties"].as_object()?.clone();
+                            Some((name, props))
+                        })
+                        .collect()
+                })
+                .unwrap_or_default()
+        })
+        .get(name)
+}
+
+/// The kinds a property's `type` declares: a string or an array of strings.
+/// Empty for a property with no `type` (an `anyOf` one), which is left alone.
+fn declared_types(property: &serde_json::Value) -> Vec<&str> {
+    match &property["type"] {
+        serde_json::Value::String(t) => vec![t.as_str()],
+        serde_json::Value::Array(ts) => ts.iter().filter_map(|t| t.as_str()).collect(),
+        _ => vec![],
+    }
+}
+
+/// `args` read against `name`'s current schema, for a client whose tool
+/// list is older than this app: a boolean sent as text is the boolean, and
+/// an object or list sent as JSON text (or a list's items sent as JSON text)
+/// is that object or list. Only where the schema's `type` leaves text out -
+/// a parameter that also takes a string (a flow id, a css selector) is
+/// never read as anything else - and only when the text really is one: any
+/// other text is left as it was, so the route names what is wrong with it.
+pub fn coerce_args(name: &str, args: &serde_json::Value) -> serde_json::Value {
+    let (Some(props), Some(given)) = (tool_properties(name), args.as_object()) else {
+        return args.clone();
+    };
+    let mut out = given.clone();
+    for (key, value) in out.iter_mut() {
+        let Some(property) = props.get(key) else { continue };
+        let types = declared_types(property);
+        if types.is_empty() || types.contains(&"string") {
+            continue;
+        }
+        if let serde_json::Value::String(text) = value {
+            if types.contains(&"boolean") {
+                match text.trim().to_ascii_lowercase().as_str() {
+                    "true" => *value = serde_json::Value::Bool(true),
+                    "false" => *value = serde_json::Value::Bool(false),
+                    _ => {}
+                }
+            } else if types.contains(&"object") || types.contains(&"array") {
+                if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(text) {
+                    let kind = if parsed.is_object() {
+                        "object"
+                    } else if parsed.is_array() {
+                        "array"
+                    } else {
+                        ""
+                    };
+                    if types.contains(&kind) {
+                        *value = parsed;
+                    }
+                }
+            }
+        }
+        if types.contains(&"array") && property["items"]["type"] == "object" {
+            if let serde_json::Value::Array(items) = value {
+                for item in items.iter_mut() {
+                    if let serde_json::Value::String(text) = item {
+                        if let Ok(parsed @ serde_json::Value::Object(_)) = serde_json::from_str::<serde_json::Value>(text) {
+                            *item = parsed;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    serde_json::Value::Object(out)
 }
 
 fn tools_call(params: &serde_json::Value, call: BridgeCall) -> serde_json::Value {
@@ -1551,6 +1648,10 @@ fn tools_call(params: &serde_json::Value, call: BridgeCall) -> serde_json::Value
     if let Some(text) = retired_tool_answer(name) {
         return serde_json::json!({ "content": [{ "type": "text", "text": text }], "isError": true });
     }
+    // A client's tool list may be older than this app: read its arguments
+    // against the schema this build offers.
+    let coerced = coerce_args(name, args);
+    let args = &coerced;
     // Checked again here, not just in tools/list: a client may be working
     // from a list it cached before the tool was switched off.
     let (off, on) = tool_policy(call);
@@ -1698,6 +1799,17 @@ fn tools_call(params: &serde_json::Value, call: BridgeCall) -> serde_json::Value
         // is structurally unable to drop `paths` or `output_path` - the
         // same pattern as `check_spec_coverage` above.
         "merge_case_files" => call("POST", "/merge-cases", &args.to_string()),
+        // Any other top-level key is one this dispatch would drop without a
+        // word - a declaration under a near name (`edit`, `declarations`,
+        // `repair`) never reaches the route, which would then only say
+        // "edits" is missing.
+        "save_autorun_script" if !others(args, &SAVE_SCRIPT_KEYS).is_empty() => Ok((
+            400,
+            format!(
+                "`save_autorun_script` takes scripts, edits and dry_run - not {}: a repair's declarations go in \"edits\", beside \"scripts\"",
+                others(args, &SAVE_SCRIPT_KEYS).join(", ")
+            ),
+        )),
         "save_autorun_script" => {
             // The bridge takes the bare array, so a caller that wrapped it
             // in {scripts: [...]} and one that sent the list directly both
@@ -1748,7 +1860,18 @@ fn tools_call(params: &serde_json::Value, call: BridgeCall) -> serde_json::Value
                 (None, _) => Ok(args.to_string()),
             };
             match body {
-                Ok(body) => call("POST", "/autorun-script", &with_dry_run(body, args.get("dry_run"))),
+                Ok(body) => match call("POST", "/autorun-script", &with_dry_run(body, args.get("dry_run"))) {
+                    // A repair refused for its missing `edits` says what the
+                    // call carried, so the next report is conclusive.
+                    Ok((400, text)) if text.contains("\"edits\" is missing") => {
+                        let carried: Vec<&str> = args
+                            .as_object()
+                            .map(|o| o.iter().filter(|(_, v)| !v.is_null()).map(|(k, _)| k.as_str()).collect())
+                            .unwrap_or_default();
+                        Ok((400, format!("{text} (This call carried: {}.)", carried.join(", "))))
+                    }
+                    other => other,
+                },
                 // Refused here, before anything reaches the app, in the
                 // same shape as a refusal from the route.
                 Err(refused) => Ok((400, refused)),

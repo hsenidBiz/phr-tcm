@@ -360,6 +360,7 @@ const NOT_CACHES: &[(&str, &str, &str)] = &[
     ("autorun/lease.rs", "TABLE", "process coordination: who holds each account's sign-in right now"),
     ("autorun/lease.rs", "GENERATIONS", "process coordination: how many times each account was taken"),
     ("api_templates/held.rs", "STORE", "live browser processes kept signed in, closed on drain"),
+    ("mcp.rs", "TOOL_PROPS", "this build's own tool schema, derived once from code: nothing fetched, so nothing to go stale"),
 ];
 
 /// Every static in `text` whose type holds a `HashMap` or `BTreeMap`,

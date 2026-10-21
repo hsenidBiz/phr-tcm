@@ -676,6 +676,10 @@ fn a_call_to_a_retired_tool_says_where_it_went() {
     assert!(stop.contains("`stop_autorun_replay` is now `replay_autorun_to_step` with `stop` true"), "{stop}");
     let (cookie, _) = call_tool("set_autorun_cookie");
     assert!(cookie.contains("`autorun_cookies` with `action` \"set\""), "{cookie}");
+    // Each says why the name may be missing from the client's own list.
+    for answer in [&removed, &stop, &cookie] {
+        assert!(answer.ends_with(v2_lib::mcp::STALE_TOOL_LIST), "{answer}");
+    }
 }
 
 /// The Rust table of retired names is the webview's `RENAMED_TOOLS`, name
@@ -3016,4 +3020,143 @@ fn get_autorun_page_forwards_within_and_its_nth() {
     let req = r#"{"jsonrpc":"2.0","id":9,"method":"tools/call","params":{"name":"get_autorun_page","arguments":{"within":"main","nth":1}}}"#;
     handle_message(req, "1.0.0", &call).unwrap();
     assert_eq!(calls.borrow().last().unwrap().1, "/autorun-page?within=main&nth=1");
+}
+
+/// One `tools/call` through the dispatcher: the tool's text and whether it is
+/// an error, with every bridge request it made as (method, path, body).
+fn call_with_arguments(
+    name: &str,
+    arguments: serde_json::Value,
+    answer: (u16, &str),
+) -> (String, bool, Vec<(String, String, String)>) {
+    let calls = std::cell::RefCell::new(vec![]);
+    let call = |method: &str, path: &str, body: &str| {
+        calls.borrow_mut().push((method.to_string(), path.to_string(), body.to_string()));
+        if path == "/tools" {
+            return Ok((200, "{}".to_string()));
+        }
+        Ok((answer.0, answer.1.to_string()))
+    };
+    let req = serde_json::json!({
+        "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+        "params": { "name": name, "arguments": arguments },
+    });
+    let resp = handle_message(&req.to_string(), "1.0.0", &call).unwrap();
+    let v: serde_json::Value = serde_json::from_str(&resp).unwrap();
+    let text = v["result"]["content"][0]["text"].as_str().unwrap().to_string();
+    let is_error = v["result"]["isError"] == true;
+    let made = calls.borrow().clone();
+    (text, is_error, made)
+}
+
+/// The paths of the requests a call made, leaving out the app's `/tools`
+/// read that every call starts with.
+fn paths_of(made: &[(String, String, String)]) -> Vec<String> {
+    made.iter().filter(|(_, p, _)| p != "/tools").map(|(_, p, _)| p.clone()).collect()
+}
+
+/// A client whose tool list is older than this app may send a boolean as
+/// text; it is read as the boolean. Text that is neither true nor false is
+/// still refused by name.
+#[test]
+fn a_stale_client_sending_release_as_text_is_read_as_a_boolean() {
+    let (_, _, made) = call_with_arguments("reset_autorun_browser", serde_json::json!({ "release": "true" }), (200, "ok"));
+    assert_eq!(paths_of(&made), vec!["/autorun-release".to_string()]);
+
+    let (_, _, made) = call_with_arguments("reset_autorun_browser", serde_json::json!({ "release": " False " }), (200, "ok"));
+    assert_eq!(paths_of(&made), vec!["/autorun-reset".to_string()]);
+
+    let (text, is_error, made) =
+        call_with_arguments("reset_autorun_browser", serde_json::json!({ "release": "yes" }), (200, "ok"));
+    assert!(is_error);
+    assert!(text.contains("`release` is true or false"), "{text}");
+    assert!(paths_of(&made).is_empty(), "{made:?}");
+}
+
+/// An object or array parameter sent as JSON text is parsed.
+#[test]
+fn an_object_or_array_param_sent_as_json_text_is_parsed() {
+    let (_, _, made) = call_with_arguments(
+        "discover_autorun_actions",
+        serde_json::json!({ "action": "{\"kind\":\"click\",\"selector\":\"#a\"}" }),
+        (200, "ok"),
+    );
+    assert_eq!(paths_of(&made), vec!["/autorun-discover-action".to_string()]);
+    let body: serde_json::Value = serde_json::from_str(&made.last().unwrap().2).unwrap();
+    assert!(body["action"].is_object(), "{body}");
+    assert_eq!(body["action"]["kind"], "click");
+
+    let (_, _, made) = call_with_arguments(
+        "discover_autorun_actions",
+        serde_json::json!({ "actions": "[{\"kind\":\"click\",\"selector\":\"#a\"}]" }),
+        (200, "ok"),
+    );
+    assert_eq!(paths_of(&made), vec!["/autorun-discover-actions".to_string()]);
+    let body: serde_json::Value = serde_json::from_str(&made.last().unwrap().2).unwrap();
+    assert_eq!(body["actions"][0]["kind"], "click", "{body}");
+}
+
+/// A parameter whose type takes text is never read as anything else.
+#[test]
+fn a_param_that_also_takes_text_is_never_coerced() {
+    let (_, _, made) = call_with_arguments("list_api_templates", serde_json::json!({ "flow": "false" }), (200, "{}"));
+    let paths = paths_of(&made);
+    assert_eq!(paths.len(), 1, "{paths:?}");
+    assert!(paths[0].contains("flow=false"), "{}", paths[0]);
+    assert!(!paths[0].contains("with_flow=false"), "{}", paths[0]);
+}
+
+/// A list's items sent as JSON text are parsed to objects.
+#[test]
+fn array_items_sent_as_json_text_are_parsed() {
+    let (_, _, made) = call_with_arguments(
+        "save_autorun_script",
+        serde_json::json!({
+            "scripts": [{ "case_id": 7, "title": "t", "steps": [] }],
+            "edits": ["{\"case_id\":7,\"steps\":[1],\"why\":\"w\"}"],
+        }),
+        (200, "saved"),
+    );
+    assert_eq!(paths_of(&made), vec!["/autorun-script".to_string()]);
+    let body: serde_json::Value = serde_json::from_str(&made.last().unwrap().2).unwrap();
+    assert!(body["edits"][0].is_object(), "{body}");
+    assert_eq!(body["edits"][0]["case_id"], 7);
+}
+
+/// A save with a key the dispatch would drop is refused before the app.
+#[test]
+fn save_autorun_script_refuses_keys_it_would_drop() {
+    let never = |_m: &str, p: &str, _b: &str| -> Result<(u16, String), String> {
+        if p == "/tools" {
+            return Ok((200, "{}".to_string()));
+        }
+        panic!("a save with a stray key reached the bridge: {p}");
+    };
+    let req = serde_json::json!({
+        "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+        "params": { "name": "save_autorun_script", "arguments": {
+            "scripts": [{ "case_id": 7, "title": "t", "steps": [] }],
+            "edit": [{ "case_id": 7, "steps": [1], "why": "w" }],
+        } },
+    });
+    let resp = handle_message(&req.to_string(), "1.0.0", &never).unwrap();
+    let v: serde_json::Value = serde_json::from_str(&resp).unwrap();
+    assert_eq!(v["result"]["isError"], true);
+    let text = v["result"]["content"][0]["text"].as_str().unwrap();
+    assert!(text.contains("400"), "{text}");
+    assert!(text.contains("not edit"), "{text}");
+    assert!(text.contains("\"edits\""), "{text}");
+}
+
+/// A repair the route refuses for its missing `edits` says what the call
+/// carried, so the report that follows is conclusive.
+#[test]
+fn a_repair_refused_for_missing_edits_says_what_the_call_carried() {
+    let (text, is_error, _) = call_with_arguments(
+        "save_autorun_script",
+        serde_json::json!({ "scripts": [{ "case_id": 7, "title": "t", "steps": [] }] }),
+        (400, "case 7 already has a script, so this save is a repair, and \"edits\" is missing. x"),
+    );
+    assert!(is_error);
+    assert!(text.ends_with("(This call carried: scripts.)"), "{text}");
 }
