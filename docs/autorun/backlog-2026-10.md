@@ -298,13 +298,6 @@ information in the slots the Playwright pipeline already reads; it never overrid
       once and the next sign-in finds it set; a Self Service area under an admin account
       switches mode first; an Admin area after a Self Service one switches back.
 
-    Related, in the run window: **Sign in as** overrides every script's account and is
-    remembered per project, so a run picked as Automation01 once keeps signing in the BSC
-    cases (scripted for `gabriel`) as Automation01. Show, before Start, how many selected
-    cases name a different account ("6 cases name gabriel: they will sign in as
-    automation"), and default to "Each script's own account" when the selection mixes
-    accounts.
-
 ## Smaller
 
 - `save_autorun_script` through MCP drops `edits`, so repairs had to go through
