@@ -3723,6 +3723,7 @@ async fn a_bridge_saved_script_vouches_for_its_locators() {
             start: String::new(),
             made_by: v2_lib::autorun::nav::MadeBy::Person,
             repaired_by_assistant: None,
+            preferences: Default::default(),
         },
     )
     .unwrap();
@@ -3780,6 +3781,7 @@ async fn resave_a_legacy_script(another_project_has_areas: bool) -> CaseScript {
                 start: String::new(),
                 made_by: v2_lib::autorun::nav::MadeBy::Person,
                 repaired_by_assistant: None,
+                preferences: Default::default(),
             },
         )
         .unwrap()
@@ -4088,6 +4090,7 @@ fn record_area(root: &std::path::Path, name: &str) {
         start: String::new(),
         made_by: v2_lib::autorun::nav::MadeBy::Person,
         repaired_by_assistant: None,
+        preferences: Default::default(),
     };
     v2_lib::autorun::nav::put_path(root, "acme", "Web", path).unwrap();
 }

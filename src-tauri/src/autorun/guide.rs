@@ -1616,6 +1616,11 @@ You open and drive a browser of your own to find what a script needs:
   refused too. The new clicks must arrive where you are, as for a new area.
   The area keeps its name and module, so its scripts are unchanged; tell
   the person what you repaired and that they can put the old path back.
+- A project's recipe may name its menu preferences (`menu_preferences`: how
+  to open the dialog, each setting's control and the value its areas need).
+  An area records the values in force when it was saved; after each sign-in
+  the app sets them, only where they differ, before walking the area's path,
+  and the answer says what it changed.
 - `end_autorun_discovery` ends your discovery and keeps the browser: what it
   mapped is kept, and the browser stays open and signed in for your next
   replay or discovery; only the person's End discovery button closes it.

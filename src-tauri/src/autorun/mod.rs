@@ -28,6 +28,7 @@ pub mod har;
 pub mod lease;
 pub mod mapping_summary;
 pub mod marks;
+pub mod menu_setup;
 pub mod nav;
 pub mod proven;
 pub mod roles;

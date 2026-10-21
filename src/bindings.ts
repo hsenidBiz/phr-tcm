@@ -800,6 +800,13 @@ export const commands = {
 	 */
 	after_sign_in?: RecipeStep_Serialize[],
 	/**
+	 *  The application's own menu preferences the project's areas depend
+	 *  on: how to open the dialog, each setting's control, and the value
+	 *  the areas need. After a sign-in the app sets each one that differs
+	 *  from what the area recorded (`menu_setup`).
+	 */
+	menu_preferences?: MenuPreferences_Serialize | null,
+	/**
 	 *  Pop-ups the runner closes by itself: before every action that
 	 *  touches the page (a click, a fill, a drag, an upload) it looks
 	 *  once, without waiting, for each, and clicks the close control of one
@@ -4347,6 +4354,65 @@ export type Mention = {
 	created_date: string,
 };
 
+/**  One setting in the dialog. */
+export type MenuPreference = MenuPreference_Serialize | MenuPreference_Deserialize;
+
+/**  One setting in the dialog. */
+export type MenuPreference_Deserialize = {
+	/**  How answers and the area file name it: "Group Menu Items". */
+	name: string,
+	/**
+	 *  A checkbox or switch, readable while the dialog is open: checked (or
+	 *  aria-checked="true") is on.
+	 */
+	control: Target_Deserialize,
+	/**  What the project's areas need when an area recorded no value for it. */
+	on: boolean,
+};
+
+/**  One setting in the dialog. */
+export type MenuPreference_Serialize = {
+	/**  How answers and the area file name it: "Group Menu Items". */
+	name: string,
+	/**
+	 *  A checkbox or switch, readable while the dialog is open: checked (or
+	 *  aria-checked="true") is on.
+	 */
+	control: Target_Serialize,
+	/**  What the project's areas need when an area recorded no value for it. */
+	on: boolean,
+};
+
+/**
+ *  The application's menu-preferences dialog, as far as the project's areas
+ *  need it.
+ */
+export type MenuPreferences = MenuPreferences_Serialize | MenuPreferences_Deserialize;
+
+/**
+ *  The application's menu-preferences dialog, as far as the project's areas
+ *  need it.
+ */
+export type MenuPreferences_Deserialize = {
+	/**  From a signed-in page, the clicks that open the preferences dialog, in order. */
+	open: Target_Deserialize[],
+	/**  The control that closes it. */
+	close: Target_Deserialize,
+	settings: MenuPreference_Deserialize[],
+};
+
+/**
+ *  The application's menu-preferences dialog, as far as the project's areas
+ *  need it.
+ */
+export type MenuPreferences_Serialize = {
+	/**  From a signed-in page, the clicks that open the preferences dialog, in order. */
+	open: Target_Serialize[],
+	/**  The control that closes it. */
+	close: Target_Serialize,
+	settings: MenuPreference_Serialize[],
+};
+
 export type Method = "GET" | "POST";
 
 export type Module = "db_access" | "writing_style" | "auto_run" | "api_templates" | "playwright" | "crystal_reports";
@@ -6064,6 +6130,13 @@ export type SignInRecipe_Deserialize = {
 	 */
 	after_sign_in?: RecipeStep_Deserialize[],
 	/**
+	 *  The application's own menu preferences the project's areas depend
+	 *  on: how to open the dialog, each setting's control, and the value
+	 *  the areas need. After a sign-in the app sets each one that differs
+	 *  from what the area recorded (`menu_setup`).
+	 */
+	menu_preferences?: MenuPreferences_Deserialize | null,
+	/**
 	 *  Pop-ups the runner closes by itself: before every action that
 	 *  touches the page (a click, a fill, a drag, an upload) it looks
 	 *  once, without waiting, for each, and clicks the close control of one
@@ -6104,6 +6177,13 @@ export type SignInRecipe_Serialize = {
 	 *  page". No login is filled in here: a placeholder is refused.
 	 */
 	after_sign_in?: RecipeStep_Serialize[],
+	/**
+	 *  The application's own menu preferences the project's areas depend
+	 *  on: how to open the dialog, each setting's control, and the value
+	 *  the areas need. After a sign-in the app sets each one that differs
+	 *  from what the area recorded (`menu_setup`).
+	 */
+	menu_preferences?: MenuPreferences_Serialize | null,
 	/**
 	 *  Pop-ups the runner closes by itself: before every action that
 	 *  touches the page (a click, a fill, a drag, an upload) it looks

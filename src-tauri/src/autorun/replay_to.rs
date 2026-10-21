@@ -675,7 +675,11 @@ pub async fn replay_to_traced<D: Driver, P: StageDb, B: Browsers>(
             false
         };
         if reused {
-            let went = replay::trip_to_module(d, root, &route, TripFrom::Elsewhere, timing, &who(id)).await;
+            let (went, menu) = replay::trip_to_module_noted(d, root, &route, TripFrom::Elsewhere, timing, &who(id)).await;
+            if !menu.is_empty() {
+                reuse.menu.extend(menu);
+                reuse.account = Some(key.to_string());
+            }
             if closed(&went) {
                 return ReplayEnd::BrowserGone { step: 1, why: None, outcomes: Vec::new() };
             }
@@ -734,7 +738,13 @@ pub async fn replay_to_traced<D: Driver, P: StageDb, B: Browsers>(
     }
     if reuse.went.is_none() {
         let from = if signed_now { TripFrom::SignIn } else { TripFrom::Elsewhere };
-        let went = replay::trip_to_module(d, root, &route, from, timing, &who(id)).await;
+        let (went, menu) = replay::trip_to_module_noted(d, root, &route, from, timing, &who(id)).await;
+        if !menu.is_empty() {
+            reuse.menu.extend(menu);
+            if reuse.account.is_none() {
+                reuse.account = script.account.clone();
+            }
+        }
         if closed(&went) {
             return ReplayEnd::BrowserGone { step: 1, why: None, outcomes: Vec::new() };
         }
@@ -940,17 +950,35 @@ pub struct Reuse {
     /// A save the no-save guard stopped while it went there, said as
     /// `save_stopped_line`: the case then signed in again and went once more.
     pub save_stopped: Option<String>,
+    /// What the trips set up in the application's menu preferences on the
+    /// way to the area (`menu_setup`): one note for each setting changed,
+    /// or for a dialog that could not be checked.
+    pub menu: Vec<String>,
+    /// The case's account, whose menu `menu` is about.
+    pub account: Option<String>,
 }
 
 impl Reuse {
     /// Said after where the replay started, in place of a sign-in; nothing
-    /// when the browser signed in as it always did.
-    pub fn said(&self) -> Option<String> {
-        match (&self.went, &self.save_stopped) {
+    /// when the browser signed in as it always did and set nothing up.
+    /// `key` is the account the menu was set up for.
+    pub fn said(&self, key: Option<&str>) -> Option<String> {
+        let first = match (&self.went, &self.save_stopped) {
             (Some(area), _) => Some(signed_in_already_line(area)),
             (None, Some(line)) => Some(line.clone()),
             (None, None) => None,
+        };
+        if self.menu.is_empty() {
+            return first;
         }
+        let menu = match key {
+            Some(key) => format!("Menu set up for {key}: {}.", self.menu.join("; ")),
+            None => format!("Menu set up: {}.", self.menu.join("; ")),
+        };
+        Some(match first {
+            Some(first) => format!("{first} {menu}"),
+            None => menu,
+        })
     }
 }
 

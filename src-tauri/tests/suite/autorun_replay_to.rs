@@ -1701,7 +1701,7 @@ async fn a_replay_in_a_browser_signed_in_as_its_account_skips_the_sign_in() {
     let (end, reused) = replay_kept(&mut d, dir.path(), 3, &mut account, &mut held).await;
     assert_eq!(end, ReplayEnd::Ready { case_id: ID, step: 3, notice: None, whole: None, cleanup: None }, "{:?}", log(&app));
     assert_eq!(reused.went.as_deref(), Some("Leave"), "it went to the case's area without signing in");
-    assert_eq!(reused.said().as_deref(), Some("Signed in already: went to Leave."));
+    assert_eq!(reused.said(None).as_deref(), Some("Signed in already: went to Leave."));
     assert_eq!(signed_in_already_line("Leave"), "Signed in already: went to Leave.");
     // No sign-in at all: nothing cleared, no login page, no login clicked.
     assert_eq!(sign_ins(&d), 0, "{:?}", log(&app));
@@ -2156,7 +2156,7 @@ async fn a_save_stopped_on_the_reuse_trip_is_said_before_signing_in_again() {
     assert_eq!(reused.went, None);
     assert_eq!(reused.save_stopped, Some(save_stopped_line("Leave", &sentence)));
     assert_eq!(
-        reused.said().unwrap(),
+        reused.said(None).unwrap(),
         format!("Signed in already, but on the way to Leave: {sentence}. Signed in again and went once more.")
     );
     assert_eq!(sign_ins(&d), 1, "{:?}", log(&app));

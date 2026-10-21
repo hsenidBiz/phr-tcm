@@ -150,6 +150,20 @@ struct Recording {
 
 static CURRENT: tokio::sync::Mutex<Option<Recording>> = tokio::sync::Mutex::const_new(None);
 
+/// The menu preferences the recording browser had in force when the person
+/// stopped (`menu_setup::read_preferences`), left by its listening task for
+/// Stop to save with the area, as (setting name, on) pairs. One recording
+/// runs at a time.
+static RECORDED_PREFERENCES: std::sync::Mutex<Vec<(String, bool)>> = std::sync::Mutex::new(Vec::new());
+
+fn set_recorded_preferences(read: Option<std::collections::BTreeMap<String, bool>>) {
+    *RECORDED_PREFERENCES.lock().unwrap_or_else(|e| e.into_inner()) = read.map(|m| m.into_iter().collect()).unwrap_or_default();
+}
+
+fn take_recorded_preferences() -> std::collections::BTreeMap<String, bool> {
+    std::mem::take(&mut *RECORDED_PREFERENCES.lock().unwrap_or_else(|e| e.into_inner())).into_iter().collect()
+}
+
 /// Whether a recording has been opened and not yet stopped or cancelled
 /// (its browser may have been closed since).
 pub async fn recording_is_open() -> bool {
@@ -396,6 +410,7 @@ pub async fn auto_run_record_start(
     let which = Browser::from_name(&browser_name);
     let (mut cdp, browser) = open_browser(which, true).await?;
     let start = prepare_to_record(&mut cdp, &root, &recipe, &who, &Timing::supervised(), &mut lease).await?;
+    set_recorded_preferences(None);
 
     let about = RecordingFor { organization, project, module, area, account, which, start };
     open_the_recording(claim, about, move |claim, stop, cancel| {
@@ -404,6 +419,15 @@ pub async fn auto_run_record_start(
                 let _ = ev.emit(&app);
             })
             .await;
+            // The browser is still open: the menu preferences in force are
+            // what the area was recorded with (a project whose recipe names
+            // them). A dialog that cannot be read leaves them out.
+            if let (Some(prefs), Some(_)) = (recipe.menu_preferences.as_ref(), out.1.as_ref()) {
+                match crate::autorun::menu_setup::read_preferences(&mut cdp, prefs, &Timing::supervised()).await {
+                    Ok(read) => set_recorded_preferences(Some(read)),
+                    Err(why) => crate::applog::warn(format!("module recording: the menu preferences could not be read: {why}")),
+                }
+            }
             drop(cdp);
             drop(browser);
             drop(lease);
@@ -443,6 +467,7 @@ pub async fn auto_run_record_stop(app: tauri::AppHandle) -> Result<ModuleRecordR
     let path = match recorder::finish(&module, &area, captured, &now_iso()) {
         Ok(mut p) => {
             p.start = start;
+            p.preferences = take_recorded_preferences();
             p
         }
         Err(failure) => return Ok(ModuleRecordResult { saved: false, module, area, failure }),

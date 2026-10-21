@@ -69,6 +69,18 @@ pub struct ScriptedDriver {
     /// guards saves (`is_guarding_saves`), as a guarded browser stops them;
     /// otherwise they go through and nothing is noted.
     pub saves_on_call: Vec<(String, String, String)>,
+    /// Saves the page sends when a call this says yes to is made: (says,
+    /// request method, address). Each is sent once, and is stopped on the
+    /// same terms as `saves_on_call`.
+    pub saves_when: Vec<(SaysYes, String, String)>,
+    /// A hold asked for with `hold_saves(true)` lets the guard's saves
+    /// through, as a real browser's does. Off by default: the fake guards
+    /// as it always did, whatever is asked of it.
+    pub honour_hold: bool,
+    /// Whether a hold is on now (only while `honour_hold`).
+    pub hold: bool,
+    /// Every `hold_saves` this driver was asked, in order.
+    pub holds: Vec<bool>,
     /// What `take_saves_stopped` hands over: (method, path).
     pub saves_stopped: Vec<(String, String)>,
     /// Every folder `enable_downloads` was handed, in order.
@@ -212,6 +224,10 @@ impl ScriptedDriver {
             block_after: None,
             save_blocked: None,
             saves_on_call: vec![],
+            saves_when: vec![],
+            honour_hold: false,
+            hold: false,
+            holds: vec![],
             saves_stopped: vec![],
             download_dirs: vec![],
             downloads: vec![],
@@ -304,6 +320,10 @@ impl Driver for ScriptedDriver {
     fn confirm_capture_site(&mut self) {
         self.capture_notes.push("confirm");
     }
+    fn hold_saves(&mut self, hold: bool) {
+        self.holds.push(hold);
+        self.hold = hold;
+    }
     fn note_capture_login_site(&mut self) {
         self.capture_notes.push("login");
     }
@@ -336,8 +356,19 @@ impl Driver for ScriptedDriver {
         if self.block_when.as_mut().is_some_and(|(says, _)| says(method, &params)) {
             self.save_blocked = self.block_when.take().map(|(_, s)| s);
         }
-        if self.is_guarding_saves() {
+        if self.is_guarding_saves() && !(self.honour_hold && self.hold) {
             let mut saves = vec![];
+            let mut sent = vec![];
+            let mut i = 0;
+            while i < self.saves_when.len() {
+                if (self.saves_when[i].0)(method, &params) {
+                    let (_, verb, url) = self.saves_when.remove(i);
+                    sent.push((verb, url));
+                } else {
+                    i += 1;
+                }
+            }
+            saves.extend(sent);
             self.saves_on_call.retain(|(m, verb, url)| {
                 if m == method {
                     saves.push((verb.clone(), url.clone()));

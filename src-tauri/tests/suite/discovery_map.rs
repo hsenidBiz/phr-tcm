@@ -347,6 +347,7 @@ fn recorded_area(root: &std::path::Path, name: &str, module: &str) {
             start: String::new(),
             made_by: v2_lib::autorun::nav::MadeBy::Person,
             repaired_by_assistant: None,
+            preferences: Default::default(),
         },
     )
     .unwrap();

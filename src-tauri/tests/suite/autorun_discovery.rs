@@ -1576,6 +1576,7 @@ async fn an_existing_area_name_is_refused() {
         start: String::new(),
         made_by: MadeBy::Person,
         repaired_by_assistant: None,
+        preferences: Default::default(),
     };
     put_path(dir.path(), ORG, PROJECT, existing.clone()).unwrap();
     let (mut browser, _) = slot(menu_app(true, "/hr/leave/apply"), exploring("Leave"));
@@ -1896,6 +1897,7 @@ async fn a_pin_refusal_is_reported_at_its_click() {
         start: "/hr/objectives".into(),
         made_by: MadeBy::Person,
         repaired_by_assistant: None,
+        preferences: Default::default(),
     };
     let recipe = v2_lib::autorun::recipe::load_effective_recipe(dir.path(), ORG, PROJECT).unwrap();
     let route = Route { home: Home::of(&recipe), path };
@@ -1915,6 +1917,7 @@ fn older_objectives(made_by: MadeBy, arrived: &str) -> ModulePath {
         start: "/".into(),
         made_by,
         repaired_by_assistant: None,
+        preferences: Default::default(),
     }
 }
 
@@ -2005,6 +2008,7 @@ fn persons_leave_apply(clicks: Vec<Target>) -> ModulePath {
         start: "/".into(),
         made_by: MadeBy::Person,
         repaired_by_assistant: None,
+        preferences: Default::default(),
     }
 }
 
@@ -2323,6 +2327,7 @@ fn leave_apply(made_by: MadeBy, clicks: Vec<Target>, arrived: &str) -> ModulePat
         start: "/".into(),
         made_by,
         repaired_by_assistant: None,
+        preferences: Default::default(),
     }
 }
 
@@ -3121,6 +3126,7 @@ fn recorded(dir: &std::path::Path, name: &str) {
             start: String::new(),
             made_by: MadeBy::Person,
             repaired_by_assistant: None,
+            preferences: Default::default(),
         },
     )
     .unwrap();

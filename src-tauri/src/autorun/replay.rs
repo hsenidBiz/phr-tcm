@@ -66,13 +66,26 @@ pub async fn trip_to_module<D: Driver>(
     timing: &Timing,
     who: &str,
 ) -> ActionOutcome {
+    trip_to_module_noted(d, root, route, from, timing, who).await.0
+}
+
+/// `trip_to_module`, with what the trip did on the way besides click the
+/// path - the menu preferences it set - as well (`nav::go_to_module_noted`).
+pub async fn trip_to_module_noted<D: Driver>(
+    d: &mut D,
+    root: &Path,
+    route: &Route,
+    from: nav::TripFrom,
+    timing: &Timing,
+    who: &str,
+) -> (ActionOutcome, Vec<String>) {
     // The application's site for a supervised browser's capture, from the
     // route's own start page: a browser signed in by hand never ran the
     // sign-in that would have named it.
     if !route.home.start_url.trim().is_empty() {
         d.set_capture_site(Some(&route.home.start_url));
     }
-    let mut out = nav::reach_module(d, route, from, timing, who).await;
+    let (mut out, notes) = nav::reach_module_noted(d, route, from, timing, who).await;
     // A save the module's page sent as it opened fails the case here,
     // before step 1 acts on it.
     if let Some(sentence) = d.take_save_blocked() {
@@ -91,7 +104,7 @@ pub async fn trip_to_module<D: Driver>(
             None => log_the_page(d, who, &mut out),
         }
     }
-    out
+    (out, notes)
 }
 
 /// How the application log names a case of an unattended run.

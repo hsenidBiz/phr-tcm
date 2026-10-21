@@ -6168,7 +6168,21 @@ async fn save_discovered_area<B: DiscoveryBrowser>(
             Ok(v) => nav::path_of(v.as_str().unwrap_or("")),
             Err(_) => String::new(),
         };
-        let path = match (&repairing, &reason) {
+        // The menu preferences in force, which the area's clicks are for: a
+        // project whose recipe names them records them with the area. A
+        // dialog that cannot be read leaves them out; the area is saved
+        // without.
+        let preferences = match recipe.menu_preferences.as_ref() {
+            Some(prefs) => match crate::autorun::menu_setup::read_preferences(d, prefs, timing).await {
+                Ok(read) => Some(read),
+                Err(why) => {
+                    crate::applog::warn(format!("area {name}: the menu preferences could not be read: {why}"));
+                    None
+                }
+            },
+            None => None,
+        };
+        let mut path = match (&repairing, &reason) {
             (Some(old), Some(reason)) => area_repair::repaired(
                 old,
                 clicks,
@@ -6190,8 +6204,12 @@ async fn save_discovered_area<B: DiscoveryBrowser>(
                 // changed, and an assistant's repair note describes the path
                 // it replaced: it goes with that path.
                 repaired_by_assistant: None,
+                preferences: Default::default(),
             },
         };
+        if let Some(read) = preferences {
+            path.preferences = read;
+        }
         // The clicks are saved as the trip made them: each finds exactly
         // one element on the page (`nav::go_to_module_pinning`).
         let mut route = nav::Route::new(&recipe, path);
@@ -6249,6 +6267,7 @@ async fn save_discovered_area<B: DiscoveryBrowser>(
         return (200, serde_json::json!({ "saved": false, "unchanged": true, "arrived": at }).to_string());
     }
     let saved = path.clicks.len();
+    let preferences = path.preferences.clone();
     let new_menu = nav::menu_path(&path.clicks);
     let written = match (&repairing, path.repaired_by_assistant.as_ref()) {
         // A repair goes to the file as it is now (`area_repair::save_repair`).
@@ -6297,6 +6316,9 @@ async fn save_discovered_area<B: DiscoveryBrowser>(
     let mut answer = serde_json::json!({ "saved": true, "arrived": at });
     if !pinned.is_empty() {
         answer["pinned"] = serde_json::json!(pinned);
+    }
+    if !preferences.is_empty() {
+        answer["preferences"] = serde_json::json!(preferences);
     }
     (200, answer.to_string())
 }
@@ -7552,7 +7574,7 @@ async fn run_assistant_replay(
     // Where it started, said first: carried on, from the beginning, or
     // already there (then nothing ran, and that is all there is to say).
     // A browser signed in already says so next, where a sign-in would be.
-    let reused = reuse.said().map(|line| format!("{line} ")).unwrap_or_default();
+    let reused = reuse.said(reuse.account.as_deref()).map(|line| format!("{line} ")).unwrap_or_default();
     // Stopped by the replay tool's `stop`: said as stopped on request, after the
     // last action to begin of the step it was on.
     let on_request = matches!(end, ReplayEnd::Stopped { .. }) && crate::autorun::replay_to::stop_was_requested();

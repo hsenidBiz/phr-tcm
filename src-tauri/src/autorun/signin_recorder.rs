@@ -703,6 +703,7 @@ impl Draft {
             start_url: self.start_url.clone(),
             steps,
             after_sign_in: existing.map(|r| r.after_sign_in.clone()).unwrap_or_default(),
+            menu_preferences: existing.and_then(|r| r.menu_preferences.clone()),
             close_when_shown: existing.map(|r| r.close_when_shown.clone()).unwrap_or_default(),
             wait_while_shown: existing.map(|r| r.wait_while_shown.clone()).unwrap_or_default(),
             signed_in,
