@@ -39,6 +39,8 @@ const FORBIDDEN = [
   /risk-tiered/i,
   /Test design rules/i,
   /get_api_flow_progress/i,
+  /crystal[ _]?reports?/i,
+  /\brpt\b/i,
   // Auto Run and API Templates are finished features, never "in development".
   /in dev(elopment)?\b/i,
 ];

@@ -594,7 +594,9 @@ impl Runner for ReadsTheFile {
 async fn a_long_object_body_goes_through_a_file() {
     // Reads the process-wide module choice: the dev login only makes
     // objects with Crystal Reports and Database Access on, which a
-    // development build (this test binary) has before setup.
+    // development build (this test binary) has before setup, and the
+    // held-back module needs the machine unlocked.
+    let _on = crate::serial::crystal_on();
     let _m = crate::serial::modules();
     let head = "CREATE OR ALTER PROCEDURE dbo.rpt_Long AS\n-- é ü 中\n";
     let line = "SELECT 1 AS n;\n";

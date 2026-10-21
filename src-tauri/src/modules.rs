@@ -256,9 +256,39 @@ pub fn on(m: Module) -> bool {
     current().contains(&m)
 }
 
+/// The module only a machine that unlocked it in Settings is offered.
+pub const HIDDEN_UNTIL_UNLOCKED: Module = Module::CrystalReports;
+
+/// What is offered: the saved choice, less the module that is held back
+/// while this machine has not unlocked it. The saved choice itself is never
+/// touched, so it comes back the moment the machine unlocks.
+pub fn effective(saved: &BTreeSet<Module>, unlocked: bool) -> BTreeSet<Module> {
+    let mut on = saved.clone();
+    if !unlocked {
+        on.remove(&HIDDEN_UNTIL_UNLOCKED);
+    }
+    on
+}
+
+/// The sentence for switching on a module this machine is not offered.
+pub const NOT_AVAILABLE: &str = "That module is not available on this machine.";
+
+/// `Err(NOT_AVAILABLE)` for switching the held-back module on while locked.
+pub fn refuse_if_locked(m: Module, want: bool, unlocked: bool) -> Result<(), String> {
+    if want && !unlocked && m == HIDDEN_UNTIL_UNLOCKED {
+        return Err(NOT_AVAILABLE.to_string());
+    }
+    Ok(())
+}
+
+/// The saved choice in this process, before the unlock rule.
+fn saved_now() -> BTreeSet<Module> {
+    state().clone().unwrap_or_else(|| before_setup(crate::ai_tools::dev_build()))
+}
+
 /// The modules on in this process.
 pub fn current() -> BTreeSet<Module> {
-    state().clone().unwrap_or_else(|| before_setup(crate::ai_tools::dev_build()))
+    effective(&saved_now(), crate::extras::unlocked())
 }
 
 /// `Err(m.off_sentence())` unless `on`: the refusal an IPC command gives
@@ -284,10 +314,12 @@ pub fn set_in(state: &mut BTreeSet<Module>, dir: &Path, m: Module, want: bool) -
 
 /// Save first, then publish, like `extras::set_unlocked` (`set_in`).
 pub fn set(m: Module, want: bool) -> Result<BTreeSet<Module>, String> {
+    let unlocked = crate::extras::unlocked();
+    refuse_if_locked(m, want, unlocked)?;
     let dir = DIR.get().ok_or_else(|| "could not save: setup has not finished yet".to_string())?;
     let mut guard = state();
     let mut now = guard.clone().unwrap_or_else(|| before_setup(crate::ai_tools::dev_build()));
     let next = set_in(&mut now, dir, m, want)?;
     *guard = Some(next.clone());
-    Ok(next)
+    Ok(effective(&next, unlocked))
 }

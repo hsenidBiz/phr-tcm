@@ -4329,6 +4329,7 @@ mod crystal_routes {
 
     #[tokio::test]
     async fn the_routes_open_read_edit_check_compare_and_preview_a_report() {
+        let _on = crate::serial::crystal_on();
         let _lock = crate::serial::crystal();
         let dir = tempfile::tempdir().unwrap();
         let path = copy_sample(dir.path());
@@ -4383,6 +4384,7 @@ mod crystal_routes {
 
     #[tokio::test]
     async fn a_new_report_is_created_and_an_existing_file_is_refused() {
+        let _on = crate::serial::crystal_on();
         let _lock = crate::serial::crystal();
         let dir = tempfile::tempdir().unwrap();
         let existing = copy_sample(dir.path());
@@ -4401,6 +4403,7 @@ mod crystal_routes {
 
     #[tokio::test]
     async fn a_refused_edit_answers_400_with_the_sentence_and_the_current_ir() {
+        let _on = crate::serial::crystal_on();
         let _lock = crate::serial::crystal();
         let dir = tempfile::tempdir().unwrap();
         let path = copy_sample(dir.path());
@@ -4434,6 +4437,7 @@ mod crystal_routes {
 
     #[tokio::test]
     async fn bad_bodies_are_400_sentences() {
+        let _on = crate::serial::crystal_on();
         let _lock = crate::serial::crystal();
         v2_lib::crystal::close();
         for (path, body) in [
@@ -4498,6 +4502,7 @@ mod crystal_routes {
     async fn live_preview_needs_the_dev_login_and_writes() {
         use v2_lib::db::query::{NO_CONNECTION, WRITES_OFF};
         use v2_lib::db::READ_ONLY_SENTENCE;
+        let _on = crate::serial::crystal_on();
         let _lock = crate::serial::crystal();
         let dir = tempfile::tempdir().unwrap();
         let path = copy_sample(dir.path());
@@ -4541,6 +4546,7 @@ mod crystal_routes {
         use std::sync::atomic::{AtomicUsize, Ordering};
         use std::sync::Arc;
         use v2_lib::ai_bridge::crystal_preview_live;
+        let _on = crate::serial::crystal_on();
         let _lock = crate::serial::crystal();
         let dir = tempfile::tempdir().unwrap();
         let path = copy_sample(dir.path());
@@ -4598,6 +4604,7 @@ mod crystal_routes {
     #[tokio::test]
     async fn the_screen_is_told_when_the_report_it_shows_changes() {
         use v2_lib::ai_bridge::crystal_preview_live;
+        let _on = crate::serial::crystal_on();
         let _lock = crate::serial::crystal();
         let told = told();
         let dir = tempfile::tempdir().unwrap();

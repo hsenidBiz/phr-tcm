@@ -1,6 +1,7 @@
 import { clearMocks, mockIPC } from "@tauri-apps/api/mocks";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
+import { resetExtrasStore, setExtrasForTest } from "../../lib/extras";
 import { resetModulesStore, setModulesForTest, type Module } from "../../lib/modules";
 import { isNewNav, resetNewNavForTest } from "../../lib/newNav";
 import Modules from "./index";
@@ -42,14 +43,18 @@ const edges = (mods: Module[]) =>
 afterEach(() => {
   clearMocks();
   resetModulesStore();
+  resetExtrasStore();
   localStorage.clear();
   resetNewNavForTest();
   vi.useRealTimers();
   vi.unstubAllGlobals();
 });
 
-function show(on: Module[], onBack = vi.fn()) {
-  act(() => setModulesForTest(on));
+function show(on: Module[], onBack = vi.fn(), unlocked = true) {
+  act(() => {
+    setExtrasForTest(unlocked);
+    setModulesForTest(on);
+  });
   return { onBack, ...render(<Modules onBack={onBack} />) };
 }
 
@@ -591,4 +596,22 @@ test("switching off while it lights up stops the light-up and only drains", asyn
   // The light-up's own timers must not light it again after it went off.
   expect(document.querySelector('[data-module="playwright"]')).toHaveAttribute("data-lit", "false");
   expect(document.querySelector('[data-draining="playwright"]')).toBeNull();
+});
+
+// --- the module offered only on a machine that unlocked it -----------------
+
+test("a locked machine has no card and no line for it", () => {
+  show(["db_access", "crystal_reports"], vi.fn(), false);
+  expect(screen.getAllByRole("switch")).toHaveLength(5);
+  expect(screen.queryByRole("switch", { name: /^Crystal Reports/ })).not.toBeInTheDocument();
+  expect(document.querySelector('[data-module="crystal_reports"]')).toBeNull();
+  expect(document.querySelector('[data-edge-line="crystal_reports"]')).toBeNull();
+  expect(screen.queryByText(/Crystal Reports/)).not.toBeInTheDocument();
+});
+
+test("an unlocked machine shows it", () => {
+  show(["db_access", "crystal_reports"], vi.fn(), true);
+  expect(screen.getAllByRole("switch")).toHaveLength(6);
+  expect(sw(/^Crystal Reports/)).toBeInTheDocument();
+  expect(document.querySelector('[data-edge-line="crystal_reports"]')).not.toBeNull();
 });

@@ -76,10 +76,22 @@ test("a read that answers after a save does not undo it", async () => {
   expect([...modulesSnapshot()]).toEqual(["db_access"]);
 });
 
-test("capture mode reports every module on, hydrated, whatever Rust says", () => {
+test("capture mode reports every module on but the held-back one, hydrated, whatever Rust says", () => {
   localStorage.setItem("tcm-v2-dev-capture", "on");
-  expect([...modulesSnapshot()].sort()).toEqual([...ALL_MODULES].sort());
+  expect([...modulesSnapshot()].sort()).toEqual(ALL_MODULES.filter((m) => m !== "crystal_reports").sort());
+  expect(modulesSnapshot().has("crystal_reports")).toBe(false);
   expect(modulesHydratedSnapshot()).toBe(true);
+});
+
+// Rust's answer is the effective set: a module saved on but held back on a
+// machine that has not unlocked it is simply absent, so no section shows.
+test("a held-back module saved on shows no section while Rust leaves it out", async () => {
+  mockIPC((cmd) => (cmd === "modules_get" ? ["db_access"] : undefined));
+  await hydrateModules();
+  expect(sectionShown("crystal-reports")).toBe(false);
+  mockIPC((cmd) => (cmd === "modules_get" ? ["db_access", "crystal_reports"] : undefined));
+  await hydrateModules();
+  expect(sectionShown("crystal-reports")).toBe(true);
 });
 
 test("each section belongs to its module", () => {

@@ -66,12 +66,28 @@ test("a slow read that answers after a save does not undo it", async () => {
   expect(extrasUnlockedSnapshot()).toBe(true);
 });
 
-// The Extras Easter egg gates no feature any more: unlocking it moves no
-// module (lib/modules.ts) - the card it reveals is the only thing it shows.
-test("unlocking the extras does not touch the modules store", async () => {
+// What is offered follows the switch, and Rust holds a module back while it
+// is off: the module store asks Rust again whenever the switch changes.
+test("changing the switch makes the modules store ask Rust again", async () => {
   const { modulesSnapshot, resetModulesStore } = await import("./modules");
   resetModulesStore();
-  mockIPC(() => null);
+  let offered = ["db_access"];
+  const asked = vi.fn();
+  mockIPC((cmd) => {
+    if (cmd === "modules_get") {
+      asked();
+      return offered;
+    }
+    return null;
+  });
   await setExtrasUnlocked(true);
-  expect(modulesSnapshot().size).toBe(0);
+  await vi.waitFor(() => expect(asked).toHaveBeenCalledTimes(1));
+  await vi.waitFor(() => expect([...modulesSnapshot()]).toEqual(["db_access"]));
+  offered = ["db_access", "crystal_reports"];
+  await setExtrasUnlocked(false);
+  await vi.waitFor(() => expect(asked).toHaveBeenCalledTimes(2));
+  await vi.waitFor(() => expect([...modulesSnapshot()]).toEqual(["db_access", "crystal_reports"]));
+  // A save that changes nothing does not ask again.
+  await setExtrasUnlocked(false);
+  expect(asked).toHaveBeenCalledTimes(2);
 });

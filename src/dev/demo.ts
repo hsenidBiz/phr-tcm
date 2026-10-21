@@ -43,10 +43,12 @@ import {
 import { describeAction, sentenceText } from "../screens/AutoRun/describeAction";
 import { isCaptureMode } from "./capture";
 import { playwrightPatches } from "./demoPlaywright";
-import { ALL_MODULES } from "../lib/modules";
+import { ALL_MODULES, UNLOCK_ONLY_MODULE } from "../lib/modules";
 
 const DEMO_KEY = "tcm-v2-dev-demo";
 const PREFS_KEY = "tcm-v2-prefs";
+/** The sample app's modules: all on, but the one only an unlocked machine is offered. */
+const DEMO_MODULES = ALL_MODULES.filter((m) => m !== UNLOCK_ONLY_MODULE);
 const PREFS_BACKUP_KEY = "tcm-v2-dev-demo-prefs-backup";
 
 export function isDemoMode(): boolean {
@@ -951,11 +953,12 @@ function applyPatches() {
   const patches = {
     // The Playwright tab: a made-up clone of the team's repo (dev/demoPlaywright).
     ...playwrightPatches({ getAppSettings: realGetAppSettings }),
-    // Every module on, so the sample app shows everything (and the help
+    // Every module on but the one held back (see DEMO_MODULES), so the
+    // sample app shows everything (and the help
     // site documents it); a click on a module is answered here and never
     // saved to this machine's modules.json.
-    modulesGet: () => Promise.resolve([...ALL_MODULES]),
-    modulesSet: () => ok([...ALL_MODULES]),
+    modulesGet: () => Promise.resolve(DEMO_MODULES),
+    modulesSet: () => ok(DEMO_MODULES),
     authStatus: () => Promise.resolve(auth),
     resumeSession: () => Promise.resolve(auth),
     signIn: () => ok(auth),

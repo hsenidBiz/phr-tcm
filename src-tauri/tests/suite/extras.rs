@@ -111,16 +111,22 @@ fn the_switch_is_read_at_start_and_written_through() {
     assert!(unlocked());
     assert!(load(dir.path()));
 
-    // Neither flag gates anything any more: the modules decide.
+    // Neither flag gates anything but the one module held back until the
+    // machine is unlocked: every other module stays where it was.
     set_unlocked(false).unwrap();
-    assert_eq!(v2_lib::modules::current(), modules_before, "the extras switch moves no module");
+    assert_eq!(v2_lib::modules::current(), modules_before, "locked is how this test started");
     save_advanced(dir.path(), true).unwrap();
     assert!(load_advanced(dir.path()), "advanced is written to disk");
     assert!(!load(dir.path()), "without turning the extras switch back on");
     assert_eq!(v2_lib::modules::current(), modules_before, "Enable Advanced Features moves no module");
     set_unlocked(true).unwrap();
     assert!(load_advanced(dir.path()), "saving the extras switch kept advanced");
-    assert_eq!(v2_lib::modules::current(), modules_before, "nor do both");
+    let now = v2_lib::modules::current();
+    assert!(modules_before.is_subset(&now), "unlocking takes no module away");
+    assert!(
+        now.difference(&modules_before).all(|m| *m == v2_lib::modules::Module::CrystalReports),
+        "and adds nothing but the held-back one"
+    );
 
     // Leave the process as it started.
     save_advanced(dir.path(), false).unwrap();

@@ -69,6 +69,7 @@ fn the_dev_login_makes_objects_only_with_both_modules_on() {
 
 #[tokio::test]
 async fn an_object_change_needs_the_writes_switch_and_the_dev_login() {
+    let _on = crate::serial::crystal_on();
     let _m = crate::serial::modules();
     let _act = crate::serial::activity_log();
     let fake = FakeRunner::default();

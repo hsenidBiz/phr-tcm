@@ -113,7 +113,6 @@ export const settings: Screen = {
         "**Auto Run**: Script a test case once, then run it in a browser, watched or unattended, and review the results before they go to Azure DevOps. Includes environments, accounts, areas and test files. It needs Database Access, and adds Auto Run to the sidebar under Run Tests and the Environment card on the AI Bridge tab.",
         "**API Templates**: Create the test data a case needs, such as cycles, drafts and settings, through the app's own pages before the case runs, so every run starts from a known state. It needs Auto Run, and adds API Templates at the end of the sidebar.",
         "**Playwright**: Export passing Auto Run scripts into the team's Playwright repo, run its tests, manage its test accounts and keep exported cases in sync. It needs Auto Run, and adds Playwright to the sidebar under Auto Run.",
-        "**Crystal Reports**: Lets your AI assistant open, format and preview Crystal Reports files, and change the stored procedures behind them on the Dev login. It needs nothing else, and adds Crystal Reports to the sidebar.",
         "With Auto Run on, the sidebar's shortcuts run from [[Ctrl+1]] to [[Ctrl+9]]: Auto Run takes [[Ctrl+6]] and the screens after it move down one.",
       ],
     },

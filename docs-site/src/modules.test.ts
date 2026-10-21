@@ -22,13 +22,12 @@ const PARENT: Record<Module, Module | null> = {
   auto_run: "db_access",
   api_templates: "auto_run",
   playwright: "auto_run",
-  crystal_reports: null,
 };
 const below = (x: Module): Module[] => [x, ...MODULES.filter((c) => PARENT[c] === x).flatMap(below)];
 
 describe("the address", () => {
   test("?modules= names the modules that are on; unknown names are ignored", () => {
-    expect([...modulesFrom("?modules=db_access,writing_style,auto_run,api_templates,playwright,crystal_reports")]).toEqual([...MODULES]);
+    expect([...modulesFrom("?modules=db_access,writing_style,auto_run,api_templates,playwright")]).toEqual([...MODULES]);
     expect([...modulesFrom("?modules=db_access,auto_run")]).toEqual(["db_access", "auto_run"]);
     expect([...modulesFrom("?x=2&modules=db_access,nonsense")]).toEqual(["db_access"]);
   });
@@ -63,13 +62,12 @@ describe("the lists cannot go stale", () => {
     }
   });
 
-  test("the six modules are covered", () => {
-    expect(MODULES).toEqual(["db_access", "writing_style", "auto_run", "api_templates", "playwright", "crystal_reports"]);
-    expect(Object.keys(MODULE_SCREENS).sort()).toEqual(["api_templates", "auto_run", "crystal_reports", "playwright"]);
+  test("the five modules are covered", () => {
+    expect(MODULES).toEqual(["db_access", "writing_style", "auto_run", "api_templates", "playwright"]);
+    expect(Object.keys(MODULE_SCREENS).sort()).toEqual(["api_templates", "auto_run", "playwright"]);
     expect(MODULE_SCREENS.auto_run).toEqual(["auto-run"]);
     expect(MODULE_SCREENS.api_templates).toEqual(["api-templates"]);
     expect(MODULE_SCREENS.playwright).toEqual(["playwright"]);
-    expect(MODULE_SCREENS.crystal_reports).toEqual(["crystal-reports"]);
     expect(MODULE_GROUPS.auto_run?.["ai-bridge"]).toEqual(["environment"]);
     expect(MODULE_GROUPS.api_templates?.["ai-bridge"]).toEqual(["api-templates"]);
     expect(MODULE_GROUPS.db_access?.["ai-bridge"]).toEqual(["company-database"]);
@@ -84,7 +82,7 @@ describe("the content", () => {
   test("none on, every module's screens, cards and how-tos go", () => {
     const shown = forModules(content, new Set());
     const ids = shown.screens.map((s) => s.id);
-    for (const id of ["auto-run", "api-templates", "playwright", "crystal-reports"]) expect(ids).not.toContain(id);
+    for (const id of ["auto-run", "api-templates", "playwright"]) expect(ids).not.toContain(id);
     const bridge = shown.screens.find((s) => s.id === "ai-bridge")!;
     for (const g of ["environment", "api-templates", "company-database"]) {
       expect(bridge.groups?.some((x) => x.id === g), g).toBe(false);
@@ -131,7 +129,7 @@ describe("the content", () => {
     document.body.appendChild(root);
     const site = render(root, forModules(content, new Set<Module>(["db_access", "writing_style"])));
     try {
-      for (const id of ["auto-run", "api-templates", "playwright", "crystal-reports"]) {
+      for (const id of ["auto-run", "api-templates", "playwright"]) {
         expect(root.querySelector(`[id="${id}"]`), id).toBeNull();
         expect(root.querySelector(`a[href="#${id}"]`), id).toBeNull();
       }
@@ -150,7 +148,7 @@ describe("the content", () => {
     document.body.appendChild(root);
     const site = render(root, forModules(content, ALL));
     try {
-      for (const id of ["auto-run", "api-templates", "playwright", "crystal-reports"]) expect(root.querySelector(`[id="${id}"]`), id).not.toBeNull();
+      for (const id of ["auto-run", "api-templates", "playwright"]) expect(root.querySelector(`[id="${id}"]`), id).not.toBeNull();
     } finally {
       site.destroy();
       root.remove();
@@ -177,8 +175,10 @@ describe("the Modules section and the old switch", () => {
     for (const line of ["Test cases, suites, runs and the board", "Off · click to switch on", "Locked · needs", "Switch on the parts of the app you need, such as Auto Run."]) {
       expect(section, line).toContain(line);
     }
-    const descriptions = [...copy.matchAll(/^\s+"((?:[^"\\]|\\.)+)",?$/gm)].map((m) => m[1]);
-    expect(descriptions.length).toBe(6);
+    const descriptions = [...copy.matchAll(/^\s+"((?:[^"\\]|\\.)+)",?$/gm)].map((m) => m[1]).filter((d) => !/^Lets your AI assistant open, format/.test(d));
+    // The guide documents the modules every machine is offered; the one
+    // held back is not in it (the guard scans the built page).
+    expect(descriptions.length).toBe(5);
     for (const d of descriptions) expect(section, d).toContain(d);
   });
 });

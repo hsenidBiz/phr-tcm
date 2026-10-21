@@ -6,7 +6,8 @@
 //
 // Rust also starts a development build with every module on, so there is no
 // build-kind check here: the store simply follows Rust. Capture mode (the
-// documentation screenshots) reports every module on.
+// documentation screenshots) reports every module on but the one that is
+// offered only on a machine that unlocked it.
 import { useSyncExternalStore } from "react";
 import { commands, type Module } from "../bindings";
 import { isCaptureMode } from "../dev/capture";
@@ -22,7 +23,13 @@ export const ALL_MODULES: readonly Module[] = [
   "crystal_reports",
 ];
 
-const ALL: ReadonlySet<Module> = new Set(ALL_MODULES);
+/** The one module a machine is offered only once it has unlocked it in
+ * Settings (Rust holds it back from the answer until then). */
+export const UNLOCK_ONLY_MODULE: Module = "crystal_reports";
+
+/** Capture mode (the documentation screenshots) shows every module but that
+ * one: the published guide never shows it. */
+const ALL: ReadonlySet<Module> = new Set(ALL_MODULES.filter((m) => m !== UNLOCK_ONLY_MODULE));
 const NONE: ReadonlySet<Module> = new Set();
 
 let on: ReadonlySet<Module> = NONE;

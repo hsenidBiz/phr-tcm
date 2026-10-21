@@ -2,10 +2,11 @@
 // (src-tauri/src/extras.rs: saved in the app data dir); this mirrors it for
 // the screens. Turned on by a key sequence on the Settings screen
 // (lib/extrasSequence.ts), off by that section's Reset to default. It shows
-// the Extras card (games) and nothing else: which features are shown is the
-// modules' decision (lib/modules.ts).
+// the Extras card and what is held back until a machine unlocks it; a change
+// makes the module store ask Rust again (lib/modules.ts).
 import { useSyncExternalStore } from "react";
 import { commands } from "../bindings";
+import { hydrateModules } from "./modules";
 
 let unlocked = false;
 /** Bumped by every save, so a read that started before it cannot put the
@@ -21,6 +22,8 @@ function publish(next: boolean): void {
   if (next === unlocked) return;
   unlocked = next;
   notify();
+  // What is offered follows the switch (Rust answers the modules with it).
+  void hydrateModules();
 }
 
 export function subscribeExtras(cb: () => void): () => void {
@@ -58,6 +61,13 @@ export async function setExtrasUnlocked(on: boolean): Promise<void> {
 /** The hidden extras switch - for what belongs to it (the Extras card). */
 export function useExtrasUnlocked(): boolean {
   return useSyncExternalStore(subscribeExtras, extrasUnlockedSnapshot);
+}
+
+/** Tests only: set the flag without Rust and without the modules store
+ * asking again. */
+export function setExtrasForTest(next: boolean): void {
+  unlocked = next;
+  notify();
 }
 
 /** Tests only: back to locked, without telling anyone. */
