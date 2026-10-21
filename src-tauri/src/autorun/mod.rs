@@ -28,6 +28,7 @@ pub mod lease;
 pub mod mapping_summary;
 pub mod marks;
 pub mod nav;
+pub mod proven;
 pub mod network;
 pub mod one_browser;
 pub mod overrides;
@@ -240,7 +241,9 @@ pub struct CaseScript {
     /// app (the assistant's save and an import), so its own locators count
     /// as seen in its area (`seen_check::load_checked_map`). A save from
     /// the editor clears it. Set by the save, whatever was sent; written
-    /// only when true.
+    /// only when true. Cleared when a run or replay of the case fails or is Blocked (`proven`), and
+    /// set again by a pass of the whole case; never set while a divergence of the case waits for a
+    /// ruling. A script that is not checked does not vouch for its locators.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub checked: bool,
     /// The script's number of checks (`case_values::check_count`), stamped by every save: the floor a

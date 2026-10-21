@@ -9422,6 +9422,8 @@ async fn save_autorun_scripts(
     // after the save's first line. The flows name the stages, read only
     // when a precondition edit is declared; without them the ids are said.
     let mut precondition_lines: Vec<String> = Vec::new();
+    // Cases kept unchecked because a divergence of theirs waits for a ruling, said after those.
+    let mut unchecked_lines: Vec<String> = Vec::new();
     let flows = if edits.iter().any(|e| e.precondition.is_some()) {
         crate::api_templates::flow_store::list(&root, &ctx.org, &ctx.project).unwrap_or_default()
     } else {
@@ -9443,7 +9445,14 @@ async fn save_autorun_scripts(
             .is_none_or(|old| crate::autorun::seen_check::vouch_carries_over(old, &ctx.org, &ctx.project, legacy));
         script.organization = Some(ctx.org.trim().to_string());
         script.project = Some(ctx.project.trim().to_string());
-        script.checked = vouched;
+        let may_check = crate::autorun::proven::may_be_checked(&root, &ctx.org, &ctx.project, sent.case_id);
+        script.checked = vouched && may_check;
+        if vouched && !may_check {
+            unchecked_lines.push(format!(
+                "case {}: not marked checked: a divergence of the case waits for a person's ruling, and the script counts as checked once a run passes after the ruling",
+                sent.case_id
+            ));
+        }
         match existing {
             // A re-send that changes nothing is not a repair. The count
             // is of changes made without a person looking, so an
@@ -9839,6 +9848,7 @@ async fn save_autorun_scripts(
         let blocked = blocked_by_divergence_lines(&root, ctx, &prepared);
         let said = std::iter::once(dry_run_answer(prepared.len(), &lines))
             .chain(precondition_lines)
+            .chain(unchecked_lines)
             .chain(given_up_lines)
             .chain(value_listed)
             .chain(notes)
@@ -9849,6 +9859,7 @@ async fn save_autorun_scripts(
 
     let mut report = vec![format!("saved {} script(s): {}", prepared.len(), lines.join(", "))];
     report.extend(precondition_lines);
+    report.extend(unchecked_lines);
     report.extend(given_up_lines);
     report.extend(value_listed);
     report.extend(notes);

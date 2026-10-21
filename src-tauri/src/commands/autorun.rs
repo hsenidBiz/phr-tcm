@@ -2212,6 +2212,9 @@ pub(crate) async fn replay_supervised(
     let title = store::load_script(&root, case_id).ok().flatten().map(|s| s.title).unwrap_or_default();
     let ran_as = slot.as_ref().and_then(|s| s.lease.account().map(str::to_string));
     crate::autorun::replay_record::note(&root, case_id, &title, step, &end, ran_as, crate::autorun::sessions::now_ms());
+    if let Some(o) = crate::autorun::proven::outcome_of_replay(&end) {
+        crate::autorun::proven::note_outcome(&root, case_id, o);
+    }
     // The browser the replay leaves open, if it does, and whose it is.
     let left_open = slot.as_ref().map(|s| replay_to::LeftOpen {
         account: s.lease.account().map(str::to_string),
@@ -2913,7 +2916,7 @@ fn import_scripts(
         // vouches for its locators once it lands.
         sc.organization = Some(organization.trim().to_string());
         sc.project = Some(project.trim().to_string());
-        sc.checked = true;
+        sc.checked = crate::autorun::proven::may_be_checked(root, organization, project, sc.case_id);
         sc.checks = crate::autorun::case_values::check_count(sc) as u32;
     }
     // With a component in use, the check and the write hold the components
@@ -3036,6 +3039,11 @@ pub fn save_run_at(root: &std::path::Path, mut run: LocalRun) -> Result<(), Stri
     // taken: the shots folder is pruned then. A later save (the Review
     // screen's) adds no pictures, so it does not read every run to prune.
     if first {
+        for record in &run.cases {
+            if let Some(o) = crate::autorun::proven::outcome_of_record(record) {
+                crate::autorun::proven::note_outcome(root, record.case_id, o);
+            }
+        }
         store::prune_old_shots(root);
     }
     Ok(())

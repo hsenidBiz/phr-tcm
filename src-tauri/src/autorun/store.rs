@@ -358,6 +358,20 @@ pub fn set_suspected_defect(root: &Path, case_id: i32, mark: Option<SuspectedDef
     write_script(root, &script)
 }
 
+/// Set whether a case's script counts as checked (`proven`). Does nothing for a case with no script
+/// or a flag that already has that value; touches nothing else, `saved_at` least of all.
+pub fn set_checked(root: &Path, case_id: i32, checked: bool) -> Result<(), String> {
+    let _held = scripts_lock();
+    let Some(mut script) = load_script(root, case_id)? else {
+        return Ok(());
+    };
+    if script.checked == checked {
+        return Ok(());
+    }
+    script.checked = checked;
+    write_script(root, &script)
+}
+
 /// Remove a case's mark, but only when the mark on disk is on
 /// `step_number`, and say whether it was removed. The check and the write
 /// happen together under the scripts lock, so a mark that moved to another

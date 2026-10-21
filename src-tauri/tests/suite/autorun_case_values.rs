@@ -449,6 +449,53 @@ async fn an_unchanged_resave_is_not_value_checked() {
     assert!(out.contains("(unchanged)"), "{out}");
 }
 
+#[tokio::test]
+async fn a_save_of_a_case_waiting_for_a_ruling_is_not_checked() {
+    let dir = TempDir::new();
+    let _root = crate::serial::autorun();
+    set_root(dir.path().to_path_buf());
+    let case = case_of(7, "Save a rating", &[("Open", ""), ("Save", "A confirmation appears")], "");
+    let (_server, client) = client_with(&case).await;
+    v2_lib::autorun::divergences::update(dir.path(), "acme", "Web", |list| {
+        v2_lib::autorun::divergences::report_in(
+            list,
+            7,
+            2,
+            "A confirmation appears",
+            "nothing appeared",
+            v2_lib::autorun::divergences::DivergenceKind::Data,
+            1_786_000_000_000,
+        )
+    })
+    .unwrap();
+    let action = json!({ "kind": "expect_contains_text", "selector": "#toast", "value": "confirmation" });
+    let body = bundle(7, "Save a rating", action, json!([]));
+    see(dir.path(), &body);
+    let (status, out) = route(&ctx(), Some(&client), "POST", "/autorun-script", &body, "1.0.0").await;
+    assert_eq!(status, 200, "{out}");
+    assert!(
+        out.lines().any(|l| l == "case 7: not marked checked: a divergence of the case waits for a person's ruling, and the script counts as checked once a run passes after the ruling"),
+        "{out}"
+    );
+    assert!(!v2_lib::autorun::store::load_script(dir.path(), 7).unwrap().unwrap().checked);
+}
+
+#[tokio::test]
+async fn a_new_script_with_no_divergence_is_checked() {
+    let dir = TempDir::new();
+    let _root = crate::serial::autorun();
+    set_root(dir.path().to_path_buf());
+    let case = case_of(7, "Save a rating", &[("Open", ""), ("Save", "A confirmation appears")], "");
+    let (_server, client) = client_with(&case).await;
+    let action = json!({ "kind": "expect_contains_text", "selector": "#toast", "value": "confirmation" });
+    let body = bundle(7, "Save a rating", action, json!([]));
+    see(dir.path(), &body);
+    let (status, out) = route(&ctx(), Some(&client), "POST", "/autorun-script", &body, "1.0.0").await;
+    assert_eq!(status, 200, "{out}");
+    assert!(!out.contains("not marked checked"), "{out}");
+    assert!(v2_lib::autorun::store::load_script(dir.path(), 7).unwrap().unwrap().checked);
+}
+
 // ------------------------------------------------------- review fixes
 
 fn pre_case(pre: &str) -> v2_lib::ado::TestCaseFull {

@@ -1321,6 +1321,9 @@ pub async fn run_cases_planned<B: Browsers, P: StageDb, G: ResetGate>(
             break record;
         };
         let proposed = record.proposed.clone();
+        if let Some(o) = super::proven::outcome_of_record(&record) {
+            super::proven::note_outcome(root, case_id, o);
+        }
         run.cases.push(record);
         if let Err(e) = store::save_run(root, run) {
             save_error.get_or_insert(e);

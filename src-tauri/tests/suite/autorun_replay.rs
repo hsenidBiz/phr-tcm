@@ -2925,3 +2925,45 @@ async fn a_case_waiting_for_a_repair_is_blocked_with_that_sentence() {
     assert!(rec.reason.starts_with("waits for a repair: step 2:"), "{}", rec.reason);
     assert!(d.calls_to("Runtime.callFunctionOn").is_empty(), "{:?}", d.calls);
 }
+
+/// A script stored as checked and stamped, for the checked-flag tests.
+fn stamped_checked(case_id: i32, value: &str, checked: bool) -> CaseScript {
+    let mut s = in_a_tab(case_id, value);
+    s.organization = Some("Acme".into());
+    s.project = Some("Web".into());
+    s.checked = checked;
+    s
+}
+
+#[tokio::test]
+async fn an_unattended_run_that_fails_clears_checked() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    store::save_script(root, &stamped_checked(1, "no", true)).unwrap();
+    let before = store::load_script(root, 1).unwrap().unwrap();
+    let mut browsers = FakeBrowsers { queue: [Some(tabbed(checking_driver()))].into(), opened: 0, closed: 0, returned: vec![] };
+    let mut run = new_run("run-clears-checked");
+    let cancel = AtomicBool::new(false);
+    run_cases(&mut browsers, root, "Acme", "Web", &mut run, &[to_run(1, None)], None, false, &quick(), &cancel, &mut |_| {})
+        .await
+        .unwrap();
+    assert_eq!(run.cases[0].proposed, "Failed", "{:?}", run.cases[0]);
+    let after = store::load_script(root, 1).unwrap().unwrap();
+    assert!(!after.checked);
+    assert_eq!(after.saved_at, before.saved_at);
+}
+
+#[tokio::test]
+async fn a_passing_run_sets_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    store::save_script(root, &stamped_checked(1, "yes", false)).unwrap();
+    let mut browsers = FakeBrowsers { queue: [Some(tabbed(checking_driver()))].into(), opened: 0, closed: 0, returned: vec![] };
+    let mut run = new_run("run-sets-checked");
+    let cancel = AtomicBool::new(false);
+    run_cases(&mut browsers, root, "Acme", "Web", &mut run, &[to_run(1, None)], None, false, &quick(), &cancel, &mut |_| {})
+        .await
+        .unwrap();
+    assert_eq!(run.cases[0].proposed, "Passed", "{:?}", run.cases[0]);
+    assert!(store::load_script(root, 1).unwrap().unwrap().checked);
+}
