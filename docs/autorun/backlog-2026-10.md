@@ -412,6 +412,54 @@ information in the slots the Playwright pipeline already reads; it never overrid
       rule, the proof counts and the divergence rule (a test on the body text, like the
       other generated skills).
 
+    **Added after the Strategic Objectives comparison (2026-10-21,
+    `strategic-objectives-tcm-vs-playwright-2026-10-21.md`):**
+    - **Provenance on every check value.** Each check's expected value is saved as
+      `from_case`, `assumed` or `invented` (Playwright: `_provenance` in the data JSON,
+      `test-refactorer.md` "Provenance"). The save answer and the script view list every
+      `assumed` / `invented` value, and the assistant's report repeats them before it says
+      the work is done (`gen-test.md` step 7). Example: both tools counted 2 BSC cards where
+      the case names 4 perspectives; Playwright at least tagged it `assumed`.
+    - **A check floor.** Each script stores its number of checks. A repair or re-save that
+      lowers it is refused unless the edit names each check given up and why, and the person
+      sees it (`test-refactorer.md` "Preserve every expect( call", `spec-editor.md`
+      "Assertions given up", the `assertion-count` lint).
+    - **Never "checked" while red or unmet.** A script whose last replay failed, or with an
+      open divergence or an unmet precondition, cannot be marked checked (`gen-test.md`
+      step 5: never refactor a fixme'd spec). Today all 20 Strategic Objectives scripts are
+      `checked: true`, 147556 included.
+    - **Protection must not rely on a failure.** Playwright's rules fire only when a run is
+      red, so its fitted 2-card checks passed. TCM's save check (above) compares values with
+      the case at save time, before any run.
+
+## The rules travel with the work, not only in the guide (agreed 2026-10-21)
+
+35. **Per-role instruction files, enforced whatever tools the assistant has.** The
+    Playwright repo's scripts come out disciplined because each agent role has its own
+    instruction file (`.claude/agents/playwright-test-generator.md`,
+    `playwright-test-healer.md`, `playwright-test-planner.md`, `spec-editor.md`,
+    `test-refactorer.md`, `doc-drift-auditor.md`) and the pipeline
+    (`.claude/commands/gen-test.md`) pastes a bounds block verbatim into every dispatch.
+    TCM keeps its rules in one long guide that an agent may skim, and when its tool list is
+    stale (rows 72 and 74) it reaches the guide only through the bridge. Avin: TCM must
+    follow the same rules regardless of the tools available.
+    - **One generated file per role**, beside the skills in `src-tauri/src/ai_tools.rs`:
+      writer (discover / script-pbi), healer, case rewriter, auditor. Each holds that role's
+      rules in full, short enough to be read whole: the source of truth for checks (item
+      33), stop conditions, forbidden fixes, proof counts, the report it must end with
+      (including assumed/invented values, divergences and product-bug quirks).
+    - **The rules ride in the answers too.** `start_autorun_discovery`, `save_autorun_script`
+      (with `edits`), `get_autorun_failures` and `replay_autorun_to_step` end with the
+      two or three rules that apply at that moment (e.g. a failure answer: "a missing
+      precondition or an app defect is reported, never healed"), so an agent that never
+      read the guide still sees them.
+    - **The app enforces what it can** (item 33's save check, check floor, never-checked-
+      while-red); the files and answers cover the judgement calls it cannot.
+    - **Briefs shrink to the task.** A skill or role file carries the rules; a brief only
+      names the PBI, cases and data.
+    - Tests: each role file is generated with the marker; each named tool answer carries its
+      rule lines; a repair that lowers the check floor is refused.
+
 ## Smaller
 
 - `save_autorun_script` through MCP drops `edits`, so repairs had to go through
