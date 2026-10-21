@@ -270,6 +270,12 @@ impl NetRecord {
         NetQuiet { in_flight, since_change: last.map(|at| now.saturating_duration_since(at)) }
     }
 
+    /// Did the record drop a request that started at or after `mark`? Then
+    /// `since(mark)` is not all of what came: the oldest are gone.
+    pub fn lost_since(&self, mark: u64) -> bool {
+        self.entries.front().is_some_and(|first| first.seq > mark)
+    }
+
     /// The requests that started at or after `mark`, oldest first, as they
     /// stand now.
     pub fn since(&self, mark: u64) -> Vec<NetEntry> {

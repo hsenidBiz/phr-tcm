@@ -17,7 +17,7 @@ use v2_lib::autorun::preconditions::{PreconditionDb, NEED_DB, NOT_CHECKED};
 use v2_lib::autorun::recipe::save_recipe;
 use v2_lib::autorun::replay_to::{
     guarding_other_case, opened_event, replay_to, replay_to_checked, signed_in_event, stopped_before_opening, OneReplay,
-    ReplayAnswer, ReplayEnd, ReplayPhase, ReplayRequest, Reuse, ALREADY_RUNNING, CANCEL,
+    Marks, ReplayAnswer, ReplayEnd, ReplayPhase, ReplayRequest, Reuse, ALREADY_RUNNING, CANCEL,
 };
 use v2_lib::ai_bridge::{DiscoveryBrowser, DiscoveryParts};
 use v2_lib::commands::autorun::{
@@ -282,7 +282,7 @@ async fn a_replayed_step_in_a_second_tab_carries_its_tab() {
         |_, _| {},
         &mut tabs,
         &mut Reuse::default(),
-        &mut Vec::new(),
+        &mut Marks::default(),
     )
     .await;
     assert_eq!(end, ReplayEnd::Ready { case_id: ID, step: 4, notice: None, whole: None, cleanup: None }, "{:?}", log(&app));
@@ -1273,7 +1273,7 @@ async fn carry(
     guarded: &mut Option<i32>,
 ) -> ReplayEnd {
     let cancel = AtomicBool::new(false);
-    carry_on(d, root, "acme", "Web", r, from, account, held, guarded, &quick(), &cancel, |_, _| {}, &mut Vec::new(), false, &mut Vec::new())
+    carry_on(d, root, "acme", "Web", r, from, account, held, guarded, &quick(), &cancel, |_, _| {}, &mut Vec::new(), false, &mut Marks::default())
         .await
 }
 
@@ -1571,7 +1571,7 @@ async fn replay_guarded(
         |_, _| {},
         &mut Vec::new(),
         &mut reuse,
-        &mut Vec::new(),
+        &mut Marks::default(),
     )
     .await;
     (end, reuse)
@@ -3112,9 +3112,9 @@ async fn whole_replay(
     account: &mut Option<String>,
     held: &mut Held,
     guarded: &mut Option<i32>,
-) -> (ReplayEnd, Vec<Checkpoint>) {
+) -> (ReplayEnd, Marks) {
     let cancel = AtomicBool::new(false);
-    let mut marks = Vec::new();
+    let mut marks = Marks::default();
     let r = ReplayRequest { case_id: case.case_id, step: 5, db_read_access: false };
     let end = replay_to_traced(
         d,
@@ -3153,11 +3153,15 @@ async fn a_second_case_carries_on_from_the_first_cases_checkpoint() {
 
     let (end, marks) = whole_replay(&mut d, dir.path(), &a, &mut account, &mut held, &mut guarded).await;
     assert!(matches!(end, ReplayEnd::Ready { whole: Some(4), .. }), "{end:?} {:?}", log(&app));
-    assert_eq!(marks.iter().map(|c| (c.k, c.wrote)).collect::<Vec<_>>(), vec![(1, false), (2, false), (3, false), (4, false)]);
-    assert!(marks.iter().all(|c| c.path == HERE && c.tab == "main" && c.dialogs == 0), "{marks:?}");
+    assert_eq!(
+        marks.checkpoints.iter().map(|c| (c.k, c.wrote)).collect::<Vec<_>>(),
+        vec![(1, false), (2, false), (3, false), (4, false)]
+    );
+    assert!(marks.checkpoints.iter().all(|c| c.path == HERE && c.tab == "main" && c.dialogs == 0), "{marks:?}");
+    assert_eq!(marks.unclean, None, "a run that saved nothing and opened no tab is clean");
 
     let now = page_state(&mut d).await;
-    let stand = ReplayStand::of(&a, 5, &now.0, AT, marks);
+    let stand = ReplayStand::of(&a, 5, &now.0, AT, marks.checkpoints.clone()).with_unclean(marks.unclean);
     let from = carry_across(Some(&stand), &b, 5, &now, AT + 1);
     assert_eq!(from, ReplayFrom::CarriedOnFrom { case_id: 77, k: 3 });
     assert_eq!(from.said(78, 5), "Carried on from step 3 of case 77 (the same first 3 steps).");
@@ -3165,7 +3169,7 @@ async fn a_second_case_carries_on_from_the_first_cases_checkpoint() {
     let before = log(&app).len();
     let r = ReplayRequest { case_id: 78, step: 5, db_read_access: false };
     let cancel = AtomicBool::new(false);
-    let mut marks_b = Vec::new();
+    let mut marks_b = Marks::default();
     let end = carry_on(
         &mut d, dir.path(), "acme", "Web", &r, 4, &mut account, &mut held, &mut guarded, &quick(), &cancel, |_, _| {},
         &mut Vec::new(), false, &mut marks_b,
@@ -3177,10 +3181,10 @@ async fn a_second_case_carries_on_from_the_first_cases_checkpoint() {
     for not_again in ["click #s1", "click #s2", "click #s3", "click #go", "click Leave"] {
         assert!(!after.contains(&not_again.to_string()), "{not_again} ran again: {after:?}");
     }
-    assert_eq!(marks_b.iter().map(|c| c.k).collect::<Vec<_>>(), vec![4]);
+    assert_eq!(marks_b.checkpoints.iter().map(|c| c.k).collect::<Vec<_>>(), vec![4]);
     // The new stand holds the first case's checkpoints up to 3 and its own 4.
     let mut kept = checkpoints_kept(from, Some(&stand));
-    kept.append(&mut marks_b);
+    kept.append(&mut marks_b.checkpoints);
     assert_eq!(kept.iter().map(|c| c.k).collect::<Vec<_>>(), vec![1, 2, 3, 4]);
     assert_eq!(kept[3].prefix, steps_fingerprint(&b, 4));
 }
@@ -3201,13 +3205,13 @@ async fn a_case_that_ends_off_the_checkpoint_loses_it_for_the_next() {
 
     let (_, marks) = whole_replay(&mut d, dir.path(), &a, &mut account, &mut held, &mut guarded).await;
     let now = page_state(&mut d).await;
-    let stand_a = ReplayStand::of(&a, 5, &now.0, AT, marks);
+    let stand_a = ReplayStand::of(&a, 5, &now.0, AT, marks.checkpoints);
     let from = carry_across(Some(&stand_a), &b, 5, &now, AT + 1);
     assert_eq!(from, ReplayFrom::CarriedOnFrom { case_id: 77, k: 3 });
 
     let r = ReplayRequest { case_id: 78, step: 5, db_read_access: false };
     let cancel = AtomicBool::new(false);
-    let mut marks_b = Vec::new();
+    let mut marks_b = Marks::default();
     let end = carry_on(
         &mut d, dir.path(), "acme", "Web", &r, 4, &mut account, &mut held, &mut guarded, &quick(), &cancel, |_, _| {},
         &mut Vec::new(), false, &mut marks_b,
@@ -3215,7 +3219,7 @@ async fn a_case_that_ends_off_the_checkpoint_loses_it_for_the_next() {
     .await;
     assert!(matches!(end, ReplayEnd::Ready { .. }), "{end:?} {:?}", log(&app));
     let mut kept = checkpoints_kept(from, Some(&stand_a));
-    kept.append(&mut marks_b);
+    kept.append(&mut marks_b.checkpoints);
     let now_b = page_state(&mut d).await;
     assert_ne!(now_b.0, HERE, "the fourth step of case 78 never left the page");
     let stand_b = ReplayStand::of(&b, 5, &now_b.0, AT, kept);
@@ -3224,4 +3228,152 @@ async fn a_case_that_ends_off_the_checkpoint_loses_it_for_the_next() {
     let from_c = carry_across(Some(&stand_b), &c, 5, &now_b, AT + 1);
     assert_eq!(from_c, ReplayFrom::Beginning);
     assert_eq!(from_c.said(79, 5), "Started from the beginning.");
+}
+
+// ---- carrying across only over a replay that changed nothing ----------------
+
+use v2_lib::autorun::replay_to::{carry_across_why, Unclean};
+
+fn post_after_clicking(app: &common::MenuApp, what: &'static str) -> Box<dyn FnMut(&str, &Value) -> bool + Send> {
+    let log = app.log.clone();
+    Box::new(move |_, _| log.lock().unwrap().contains(&format!("click {what}")))
+}
+
+fn a_post() -> Event {
+    Event {
+        method: "Network.requestWillBeSent".into(),
+        params: json!({ "requestId": "p1", "type": "XHR", "documentURL": "https://hr.example/hr/page",
+                        "request": { "url": "https://hr.example/hr/save", "method": "POST" } }),
+    }
+}
+
+/// A stand whose replay did `unclean`.
+fn stand_with(a: &CaseScript, unclean: Option<Unclean>, wrote_at_4: bool) -> ReplayStand {
+    let cps = (1..=4).map(|k| cp(a, k, HERE, wrote_at_4 && k == 4)).collect();
+    ReplayStand::of(a, 5, HERE, AT, cps).with_unclean(unclean)
+}
+
+#[test]
+fn a_stand_whose_replay_did_anything_is_never_carried_across_and_the_answer_says_why() {
+    let a = case_with_fourth(77, &["#open"]);
+    let b = case_with_fourth(78, &["#b4"]);
+    let why = |u: Option<Unclean>, wrote_at_4: bool| {
+        carry_across_why(Some(&stand_with(&a, u, wrote_at_4)), &b, 5, &page(HERE), AT + 1)
+    };
+    assert_eq!(why(None, false), (ReplayFrom::CarriedOnFrom { case_id: 77, k: 3 }, None));
+    // Saved after the shared steps (the best shared checkpoint, 3, saved nothing).
+    assert_eq!(
+        why(Some(Unclean::Saved), true),
+        (ReplayFrom::Beginning, Some("case 77 saved something after the shared steps.".to_string()))
+    );
+    // Saved inside them.
+    let mut early = stand_with(&a, Some(Unclean::Saved), false);
+    early.checkpoints[2].wrote = true;
+    assert_eq!(
+        carry_across_why(Some(&early), &b, 5, &page(HERE), AT + 1),
+        (ReplayFrom::Beginning, Some("case 77 saved something in the shared steps.".to_string()))
+    );
+    assert_eq!(
+        why(Some(Unclean::Unrecorded), false),
+        (ReplayFrom::Beginning, Some("case 77 ran without a network record, so a save could not be ruled out.".to_string()))
+    );
+    assert_eq!(why(Some(Unclean::Tabs), false), (ReplayFrom::Beginning, Some("case 77 opened another tab.".to_string())));
+    // Nothing shared, nothing to say: the plain start.
+    assert_eq!(
+        carry_across_why(Some(&stand_with(&a, Some(Unclean::Saved), false)), &b, 5, &page("/hr/other"), AT + 1),
+        (ReplayFrom::Beginning, None)
+    );
+}
+
+/// The unclean flag a carried-on replay's stand inherits.
+#[test]
+fn a_carried_on_stand_keeps_what_the_earlier_replay_did() {
+    use v2_lib::autorun::replay_to::unclean_kept;
+    let a = case_with_fourth(77, &["#open"]);
+    let stand = stand_with(&a, Some(Unclean::Tabs), false);
+    assert_eq!(unclean_kept(ReplayFrom::Beginning, Some(&stand)), None);
+    assert_eq!(unclean_kept(ReplayFrom::CarriedOn(3), Some(&stand)), Some(Unclean::Tabs));
+    assert_eq!(unclean_kept(ReplayFrom::AlreadyThere, Some(&stand)), Some(Unclean::Tabs));
+    assert_eq!(unclean_kept(ReplayFrom::CarriedOn(3), None), None);
+}
+
+#[tokio::test]
+async fn a_save_after_the_shared_steps_leaves_a_stand_that_is_not_carried_across() {
+    let _l = crate::serial::account_leases();
+    let dir = tempfile::tempdir().unwrap();
+    // Case A's fourth step saves ("#open" is the click that posts) and goes back to the same page.
+    let a = case_with_fourth(77, &["#open"]);
+    let b = case_with_fourth(78, &["#b4"]);
+    project(dir.path(), &a);
+    store::save_script(dir.path(), &b).unwrap();
+    let (d, app) = app();
+    let mut d = d.with_net_record();
+    d.events_when = Some((post_after_clicking(&app, "#open"), vec![a_post()]));
+    let (mut account, mut held, mut guarded) = (None, Held::supervised(), None);
+
+    let (end, marks) = whole_replay(&mut d, dir.path(), &a, &mut account, &mut held, &mut guarded).await;
+    assert!(matches!(end, ReplayEnd::Ready { .. }), "{end:?} {:?}", log(&app));
+    assert_eq!(marks.unclean, Some(Unclean::Saved));
+    assert_eq!(marks.checkpoints.iter().map(|c| c.wrote).collect::<Vec<_>>(), vec![false, false, false, true]);
+    let now = page_state(&mut d).await;
+    let stand = ReplayStand::of(&a, 5, &now.0, AT, marks.checkpoints.clone()).with_unclean(marks.unclean);
+    let (from, why) = carry_across_why(Some(&stand), &b, 5, &now, AT + 1);
+    assert_eq!(from, ReplayFrom::Beginning);
+    assert_eq!(why.as_deref(), Some("case 77 saved something after the shared steps."));
+}
+
+#[tokio::test]
+async fn a_replay_with_no_network_record_cannot_rule_a_save_out() {
+    let _l = crate::serial::account_leases();
+    let dir = tempfile::tempdir().unwrap();
+    let a = case_with_fourth(77, &["#open"]);
+    project(dir.path(), &a);
+    let (mut d, _app) = app();
+    d.no_record = true;
+    let (mut account, mut held, mut guarded) = (None, Held::supervised(), None);
+    let (end, marks) = whole_replay(&mut d, dir.path(), &a, &mut account, &mut held, &mut guarded).await;
+    assert!(matches!(end, ReplayEnd::Ready { .. }), "{end:?}");
+    assert_eq!(marks.unclean, Some(Unclean::Unrecorded));
+}
+
+#[tokio::test]
+async fn a_replay_that_opened_another_tab_even_one_it_closed_is_not_carried_across() {
+    let _l = crate::serial::account_leases();
+    let dir = tempfile::tempdir().unwrap();
+    // Step 4's click opens a second tab; it is closed again before the replay ends, so only the
+    // count of tabs ever opened can tell.
+    let a = case_with_fourth(77, &["#open"]);
+    project(dir.path(), &a);
+    let (mut d, app) = app();
+    let seen = d.tabs_seen.clone();
+    let app_log = app.log.clone();
+    d.events_when = Some((
+        Box::new(move |_, _| {
+            if app_log.lock().unwrap().contains(&"click #open".to_string()) {
+                seen.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            }
+            false
+        }),
+        vec![],
+    ));
+    let (mut account, mut held, mut guarded) = (None, Held::supervised(), None);
+    let (end, marks) = whole_replay(&mut d, dir.path(), &a, &mut account, &mut held, &mut guarded).await;
+    assert!(matches!(end, ReplayEnd::Ready { .. }), "{end:?} {:?}", log(&app));
+    assert_eq!(marks.unclean, Some(Unclean::Tabs));
+}
+
+/// Once a save is seen it stays seen, even if the record later loses it.
+#[tokio::test]
+async fn a_save_once_seen_stays_seen_at_every_later_checkpoint() {
+    let _l = crate::serial::account_leases();
+    let dir = tempfile::tempdir().unwrap();
+    let a = case_with_fourth(77, &["#open"]);
+    project(dir.path(), &a);
+    let (d, app) = app();
+    let mut d = d.with_net_record();
+    d.events_when = Some((post_after_clicking(&app, "#s2"), vec![a_post()]));
+    let (mut account, mut held, mut guarded) = (None, Held::supervised(), None);
+    let (_, marks) = whole_replay(&mut d, dir.path(), &a, &mut account, &mut held, &mut guarded).await;
+    let wrote: Vec<bool> = marks.checkpoints.iter().map(|c| c.wrote).collect();
+    assert_eq!(wrote, vec![false, true, true, true], "{wrote:?}");
 }

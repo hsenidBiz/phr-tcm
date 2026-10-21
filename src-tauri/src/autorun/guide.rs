@@ -2234,10 +2234,13 @@ the answer says so; start a new one to explore again.
   beginning". Already standing before the step, nothing runs.
 - A replay of another case carries on from where your last replay left the
   browser when its first K steps are the same in every action, its account,
-  area, preconditions and save mode are the same, it has no setup, those K
-  steps saved nothing, and the page is back where step K left it (same
-  address, nothing still open): the answer says "Carried on from step K of
-  case N (the same first K steps)". A person's run still plays every case
+  area, preconditions and save mode are the same, it has no setup, the
+  last replay saved nothing at all (after step K and in its clean-up too),
+  had the network record on and opened no other tab, and the page is back
+  where step K left it (same address, nothing still open): the answer says "Carried on from step K of
+  case N (the same first K steps)". When it does not, the answer says why
+  in one sentence ("Started from the beginning: case N saved something
+  after the shared steps."). A person's run still plays every case
   from its sign-in, so every case keeps its end-to-end proof.
 - To prove a case's last step, replay to one past it, its last step number
   + 1: the answer says "replayed the whole of case N (all M steps)", and

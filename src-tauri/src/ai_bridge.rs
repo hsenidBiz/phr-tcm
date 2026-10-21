@@ -7601,10 +7601,15 @@ async fn run_assistant_replay(
     } else {
         end.sentence_in(cleanup)
     };
+    // From the beginning for a reason another case's stand gave, it says so.
+    let started = match (&reuse.not_carried, from) {
+        (Some(why), ReplayFrom::Beginning) => format!("Started from the beginning: {why}"),
+        _ => from.said(case_id, step),
+    };
     let said = match (&end, from) {
         (ReplayEnd::Refused(_) | ReplayEnd::Blocked(_), _) => end.sentence(),
         (_, ReplayFrom::AlreadyThere) => from.said(case_id, step),
-        _ => format!("{} {reused}{}", from.said(case_id, step), capitalised(&ended)),
+        _ => format!("{started} {reused}{}", capitalised(&ended)),
     };
     // Said before that when the replay ended the assistant's own discovery,
     // with the guard a no_save one leaves on.

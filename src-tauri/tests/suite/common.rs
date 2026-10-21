@@ -142,6 +142,12 @@ pub struct ScriptedDriver {
     /// (mark, record position), at most `MAX_NET_MARKS`, the oldest let go
     /// first; a mark let go reads from the start of the record.
     pub mark_ring: Option<Mutex<(u64, VecDeque<(u64, u64)>)>>,
+    /// How many tabs this browser has ever opened beyond `main`
+    /// (`tabs_opened`): grows on `open_tab` and `expect_tab`.
+    pub tabs_seen: Arc<std::sync::atomic::AtomicU64>,
+    /// The network record is not on (`net_recording` says no), as in a
+    /// browser `page_log::watch` never reached.
+    pub no_record: bool,
     /// What the sign-in told the capture about the current page, in order:
     /// `login` (the account name or password was typed on it,
     /// `note_capture_login_site`) and `confirm` (the signed-in marker
@@ -247,6 +253,8 @@ impl ScriptedDriver {
             on_idle_after_call: vec![],
             arriving: vec![],
             mark_ring: None,
+            tabs_seen: Default::default(),
+            no_record: false,
             capture_notes: vec![],
             capture: None,
         }
@@ -544,6 +552,14 @@ impl Driver for ScriptedDriver {
         }
     }
 
+    fn net_recording(&self) -> bool {
+        !self.no_record
+    }
+
+    fn tabs_opened(&self) -> u64 {
+        self.tabs_seen.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
     fn set_deadline(&mut self, deadline: Option<Instant>) {
         self.deadlines.push(deadline);
     }
@@ -588,6 +604,7 @@ impl Driver for ScriptedDriver {
             return Err(CdpError::Tab(no_new_tab(within)));
         }
         self.tabs.unnamed -= 1;
+        self.tabs_seen.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         self.tabs.open.push(name.to_string());
         Ok("https://hr.example/report".to_string())
     }
@@ -595,6 +612,7 @@ impl Driver for ScriptedDriver {
         if self.tabs.knows(name) {
             return Err(CdpError::Tab(tab_taken(name)));
         }
+        self.tabs_seen.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         self.tabs.open.push(name.to_string());
         self.tabs.current = name.to_string();
         self.tabs.gone = None;

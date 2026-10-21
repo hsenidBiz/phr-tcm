@@ -631,6 +631,12 @@ pub struct Cdp<T: Transport = WsTransport> {
     /// Each network mark handed out on the whole browser (`net_mark`), with
     /// every tab's own mark at that moment, newest last. Bounded.
     net_marks: std::sync::Mutex<(u64, VecDeque<(u64, HashMap<String, u64>)>)>,
+    /// `page_log::watch` switched the Network domain on, so the network
+    /// record sees every request (`note_net_recording`).
+    net_recording: bool,
+    /// How many tabs this connection has ever had, the first included
+    /// (`tabs_opened`): it grows when a tab opens, and never when one closes.
+    tabs_seen: u64,
     /// Driving the whole browser over its own socket (`connect`), so a tab
     /// the page opens is attached, paused until it is set up.
     whole_browser: bool,
@@ -867,6 +873,8 @@ impl<T: Transport> Cdp<T> {
             step_marks: (None, None),
             created: Instant::now(),
             net_marks: std::sync::Mutex::new((0, VecDeque::new())),
+            net_recording: false,
+            tabs_seen: 1,
             whole_browser: false,
             deadline: None,
             armed: None,
@@ -919,6 +927,7 @@ impl<T: Transport> Cdp<T> {
             });
         }
         self.tabs = vec![Tab::new(session.clone(), target.to_string(), Some("main".to_string()), url)];
+        self.tabs_seen += 1;
         self.main = session.clone();
         self.current = session;
         self.whole_browser = true;
@@ -1723,6 +1732,7 @@ impl<T: Transport> Cdp<T> {
             tab.held = waiting;
         }
         self.tabs.push(tab);
+        self.tabs_seen += 1;
         let s = session.as_str();
         if armed.is_some() {
             self.queue(s, "Network.setBypassServiceWorker", serde_json::json!({ "bypass": true }), Some(SetupStep::Bypass));
@@ -2555,6 +2565,47 @@ impl<T: Transport> Cdp<T> {
         id
     }
 
+    /// Did any open tab send a save the guard did not stop since `mark`? It
+    /// says yes whenever it cannot tell: the mark is no longer held, or a
+    /// tab's record has dropped requests that started after it
+    /// (`NetRecord::lost_since`), or the Network domain was never switched
+    /// on (`net_recording`). A tab that has since closed is not seen here;
+    /// `tabs_opened` is what tells that one existed.
+    pub fn net_wrote_since(&self, mark: u64) -> bool {
+        if !self.net_recording {
+            return true;
+        }
+        let marks = self.net_marks.lock().unwrap_or_else(|e| e.into_inner());
+        let each = if self.whole_browser {
+            match marks.1.iter().find(|(id, _)| *id == mark) {
+                Some((_, each)) => Some(each),
+                None => return true,
+            }
+        } else {
+            None
+        };
+        self.tabs.iter().any(|t| {
+            let from = each.map_or(mark, |each| each.get(&t.session_id).copied().unwrap_or(0));
+            t.net_record.lost_since(from) || super::save_guard::sent_a_save(&t.net_record.since(from))
+        })
+    }
+
+    /// The Network domain is on: the record sees every request from now.
+    pub fn note_net_recording(&mut self) {
+        self.net_recording = true;
+    }
+
+    /// Whether the record sees every request (`note_net_recording`).
+    pub fn net_recording(&self) -> bool {
+        self.net_recording
+    }
+
+    /// How many tabs this connection has ever had. A run that sees it grow
+    /// had a second tab, however briefly.
+    pub fn tabs_opened(&self) -> u64 {
+        self.tabs_seen
+    }
+
     /// Let go of a mark `net_mark` gave: nothing will ask what came since it
     /// again. A mark it no longer holds is nothing to let go.
     pub fn net_unmark(&self, mark: u64) {
@@ -2797,6 +2848,28 @@ pub trait Driver {
     /// Let go of a mark (`Cdp::net_unmark`). Nothing for a driver whose
     /// marks are not kept.
     fn net_unmark(&self, _mark: u64) {}
+    /// Did a save the guard did not stop go out since `mark`, in any open
+    /// tab? `true` whenever that cannot be told (`Cdp::net_wrote_since`).
+    /// The default reads what `net_since_held` gives.
+    fn net_wrote_since(&self, mark: u64) -> bool {
+        match self.net_since_held(mark) {
+            None => true,
+            Some(sent) => super::save_guard::sent_a_save(&sent),
+        }
+    }
+    /// Whether the network record sees every request
+    /// (`Cdp::net_recording`). A driver that keeps none (a test's fake) is
+    /// taken to.
+    fn net_recording(&self) -> bool {
+        true
+    }
+    /// The Network domain was switched on (`Cdp::note_net_recording`).
+    fn note_net_recording(&mut self) {}
+    /// How many tabs the browser has ever had (`Cdp::tabs_opened`). A driver
+    /// with one tab of its own never has another.
+    fn tabs_opened(&self) -> u64 {
+        0
+    }
     /// How busy the page's requests are (`Cdp::net_quiet`). `None` for a
     /// driver that keeps no record: nothing is ever waited on.
     fn net_quiet(&self) -> Option<super::net_record::NetQuiet> {
@@ -3036,6 +3109,18 @@ impl<T: Transport> Driver for Cdp<T> {
     }
     fn net_unmark(&self, mark: u64) {
         Cdp::net_unmark(self, mark)
+    }
+    fn net_wrote_since(&self, mark: u64) -> bool {
+        Cdp::net_wrote_since(self, mark)
+    }
+    fn net_recording(&self) -> bool {
+        Cdp::net_recording(self)
+    }
+    fn note_net_recording(&mut self) {
+        Cdp::note_net_recording(self)
+    }
+    fn tabs_opened(&self) -> u64 {
+        Cdp::tabs_opened(self)
     }
     fn net_quiet(&self) -> Option<super::net_record::NetQuiet> {
         Cdp::net_quiet(self)

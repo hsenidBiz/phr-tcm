@@ -544,7 +544,7 @@ pub async fn replay_to_checked<D: Driver, P: StageDb, B: Browsers>(
         progress,
         &mut tabs,
         &mut Reuse::default(),
-        &mut Vec::new(),
+        &mut Marks::default(),
     )
     .await
 }
@@ -585,7 +585,7 @@ pub async fn replay_to_traced<D: Driver, P: StageDb, B: Browsers>(
     mut progress: impl FnMut(i32, i32),
     tabs: &mut Vec<ReplayedTab>,
     reuse: &mut Reuse,
-    marks: &mut Vec<Checkpoint>,
+    marks: &mut Marks,
 ) -> ReplayEnd {
     *reuse = Reuse::default();
     marks.clear();
@@ -956,6 +956,10 @@ pub struct Reuse {
     pub menu: Vec<String>,
     /// The case's account, whose menu `menu` is about.
     pub account: Option<String>,
+    /// Why a replay of another case did not carry on from the one the
+    /// browser last ran (`carry_across_why`): said in place of "Started
+    /// from the beginning.".
+    pub not_carried: Option<String>,
 }
 
 impl Reuse {
@@ -1037,15 +1041,16 @@ async fn run_steps<D: Driver>(
     progress: &mut impl FnMut(i32, i32),
     tabs: &mut Vec<ReplayedTab>,
     guarding_other: Option<i32>,
-    marks: &mut Vec<Checkpoint>,
+    marks: &mut Marks,
     wrote_before: bool,
 ) -> Option<ReplayEnd> {
     // One mark of the network record for the whole run, let go on every way
-    // out.
+    // out; and how many tabs the browser had had by then.
     let mark = d.net_mark();
+    let tabs_before = d.tabs_opened();
     let ended = run_steps_marked(
         d, root, organization, project, script, route, from, n, account, lease, timing, cancel, progress, tabs,
-        guarding_other, marks, wrote_before, mark,
+        guarding_other, marks, wrote_before, mark, tabs_before,
     )
     .await;
     d.net_unmark(mark);
@@ -1069,9 +1074,10 @@ async fn run_steps_marked<D: Driver>(
     progress: &mut impl FnMut(i32, i32),
     tabs: &mut Vec<ReplayedTab>,
     guarding_other: Option<i32>,
-    marks: &mut Vec<Checkpoint>,
+    marks: &mut Marks,
     wrote_before: bool,
     mark: u64,
+    tabs_before: u64,
 ) -> Option<ReplayEnd> {
     let stopped = || cancel.load(Ordering::SeqCst);
     let in_range = |k: i32| k >= from && k < n;
@@ -1174,21 +1180,72 @@ async fn run_steps_marked<D: Driver>(
         // The clean-up is no step of the case: nothing is carried on from
         // after it.
         if !step.cleanup {
-            let wrote = wrote_before || wrote_since(d, mark);
+            // Once a save is seen it stays seen: a record that later drops
+            // the request must not turn it back into "nothing saved".
+            let wrote = wrote_before
+                || marks.checkpoints.last().is_some_and(|c| c.wrote)
+                || d.net_wrote_since(mark);
             let (path, tab, dialogs) = page_state(d).await;
-            marks.push(Checkpoint { k, prefix: steps_fingerprint(script, k), path, tab, dialogs, wrote });
+            marks.checkpoints.push(Checkpoint { k, prefix: steps_fingerprint(script, k), path, tab, dialogs, wrote });
         }
     }
+    // Every step passed, the clean-up too: what the whole run did.
+    marks.unclean = if !d.net_recording() {
+        Some(Unclean::Unrecorded)
+    } else if wrote_before || d.net_wrote_since(mark) {
+        Some(Unclean::Saved)
+    } else if d.tabs_opened() > tabs_before {
+        Some(Unclean::Tabs)
+    } else {
+        None
+    };
     None
 }
 
-/// Did the page send a save since `mark` that the guard did not stop? A
-/// mark the browser no longer holds cannot tell, so it says yes.
-fn wrote_since<D: Driver>(d: &D, mark: u64) -> bool {
-    use crate::browser::save_guard::{stopped_by_guard, SAVE_METHODS};
-    match d.net_since_held(mark) {
-        None => true,
-        Some(sent) => sent.iter().any(|e| SAVE_METHODS.contains(&e.method.as_str()) && !stopped_by_guard(e)),
+/// Why a finished replay's browser cannot be carried on from by another
+/// case: something the replay did could have changed the state that case's
+/// own first steps would leave.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Unclean {
+    /// A save went out (or the record can no longer rule one out): in the
+    /// steps, after the shared ones, or in the clean-up.
+    Saved,
+    /// The network record was not on, so no save could have been seen.
+    Unrecorded,
+    /// A second tab was open at some point.
+    Tabs,
+}
+
+impl Unclean {
+    /// The one sentence an answer gives for starting from the beginning.
+    /// `in_shared` is whether the save was already there at the shared
+    /// steps (the best checkpoint's `wrote`).
+    pub fn why(self, case_id: i32, in_shared: bool) -> String {
+        match self {
+            Unclean::Saved if in_shared => format!("case {case_id} saved something in the shared steps."),
+            Unclean::Saved => format!("case {case_id} saved something after the shared steps."),
+            Unclean::Unrecorded => {
+                format!("case {case_id} ran without a network record, so a save could not be ruled out.")
+            }
+            Unclean::Tabs => format!("case {case_id} opened another tab."),
+        }
+    }
+}
+
+/// What a replay learns back about the browser it left, for the stand
+/// (`ReplayStand`): where the page stood after each case step that passed,
+/// and, once every step passed, whether anything the whole run did could
+/// have changed state (`Unclean`).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Marks {
+    pub checkpoints: Vec<Checkpoint>,
+    /// `None` until the run finishes, and for a run that changed nothing.
+    pub unclean: Option<Unclean>,
+}
+
+impl Marks {
+    pub fn clear(&mut self) {
+        *self = Marks::default();
     }
 }
 
@@ -1243,6 +1300,9 @@ pub struct ReplayStand {
     pub settings: u64,
     /// Where the page stood after each case step that passed.
     pub checkpoints: Vec<Checkpoint>,
+    /// What the whole replay did that another case could not carry on over;
+    /// `None` when it did nothing of the kind.
+    pub unclean: Option<Unclean>,
 }
 
 impl ReplayStand {
@@ -1258,7 +1318,14 @@ impl ReplayStand {
             at_ms,
             settings: settings_fingerprint(script),
             checkpoints,
+            unclean: None,
         }
+    }
+
+    /// The same stand with what its whole replay did (`Marks::unclean`).
+    pub fn with_unclean(mut self, unclean: Option<Unclean>) -> Self {
+        self.unclean = unclean;
+        self
     }
 }
 
@@ -1388,7 +1455,9 @@ pub fn carry_from(stand: Option<&ReplayStand>, script: &CaseScript, step: i32, h
 /// in every action, that saved nothing and left the page as it is now
 /// (`now` is `page_state`); otherwise from the beginning. The two cases
 /// must have the same settings (`settings_fingerprint`), the new one no
-/// setup, and the stand be younger than `STAND_FRESH_MS`.
+/// setup, and the stand be younger than `STAND_FRESH_MS`. The stand's whole
+/// replay must also have changed nothing a carried-on case could meet
+/// (`ReplayStand::unclean`).
 pub fn carry_across(
     stand: Option<&ReplayStand>,
     script: &CaseScript,
@@ -1396,27 +1465,58 @@ pub fn carry_across(
     now: &(String, String, u32),
     now_ms: u64,
 ) -> ReplayFrom {
+    carry_across_why(stand, script, step, now, now_ms).0
+}
+
+/// `carry_across`, and, when the first steps matched and the page is as it
+/// was but the stand's replay did something that could have changed state,
+/// the sentence that says why the new replay starts from the beginning.
+pub fn carry_across_why(
+    stand: Option<&ReplayStand>,
+    script: &CaseScript,
+    step: i32,
+    now: &(String, String, u32),
+    now_ms: u64,
+) -> (ReplayFrom, Option<String>) {
     let Some(s) = stand else {
-        return ReplayFrom::Beginning;
+        return (ReplayFrom::Beginning, None);
     };
     if s.case_id == script.case_id
         || script.setup.is_some()
         || s.settings != settings_fingerprint(script)
         || now_ms.saturating_sub(s.at_ms) >= STAND_FRESH_MS
     {
-        return ReplayFrom::Beginning;
+        return (ReplayFrom::Beginning, None);
     }
-    s.checkpoints
+    let matching: Vec<&Checkpoint> = s
+        .checkpoints
         .iter()
         .filter(|cp| {
-            !cp.wrote
-                && cp.k < step
+            cp.k < step
                 && cp.prefix == steps_fingerprint(script, cp.k)
                 && (cp.path.as_str(), cp.tab.as_str(), cp.dialogs) == (now.0.as_str(), now.1.as_str(), now.2)
         })
+        .collect();
+    if let (Some(why), Some(best)) = (s.unclean, matching.iter().max_by_key(|cp| cp.k)) {
+        return (ReplayFrom::Beginning, Some(why.why(s.case_id, best.wrote)));
+    }
+    let from = matching
+        .iter()
+        .filter(|cp| !cp.wrote)
         .map(|cp| cp.k)
         .max()
-        .map_or(ReplayFrom::Beginning, |k| ReplayFrom::CarriedOnFrom { case_id: s.case_id, k })
+        .map_or(ReplayFrom::Beginning, |k| ReplayFrom::CarriedOnFrom { case_id: s.case_id, k });
+    (from, None)
+}
+
+/// What a new stand inherits of the old one's `unclean`, for a replay that
+/// started `from`: nothing from the beginning; everything otherwise (a
+/// carry-on still has the earlier steps behind it).
+pub fn unclean_kept(from: ReplayFrom, old: Option<&ReplayStand>) -> Option<Unclean> {
+    match from {
+        ReplayFrom::Beginning => None,
+        _ => old.and_then(|s| s.unclean),
+    }
 }
 
 /// The checkpoints of the old stand a replay that started `from` keeps for
@@ -1472,7 +1572,7 @@ pub async fn carry_on<D: Driver>(
     mut progress: impl FnMut(i32, i32),
     tabs: &mut Vec<ReplayedTab>,
     wrote_before: bool,
-    marks: &mut Vec<Checkpoint>,
+    marks: &mut Marks,
 ) -> ReplayEnd {
     marks.clear();
     let Checked { script, route } = match check(root, organization, project, req) {
