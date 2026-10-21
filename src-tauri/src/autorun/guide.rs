@@ -512,6 +512,8 @@ For anything NOT on that list, guard the click with `when_visible`:
   or none (a probe that matched nothing); a `then` click on that same
   locator still needs one seen matching exactly one element.
 
+In a repair, a new guard needs the edit's `quirk` and `quirk_class` ("Repairing a script that failed").
+
 ## Resetting a list to a known state
 
 A case that adds rows must be able to run again: a goal group it created
@@ -2300,6 +2302,13 @@ says `"area": true`. This gate can refuse a save for any of these reasons:
 - a repair that leaves out or turns off `"no_save": true` - `this script is marked Must not save, and a repair cannot turn that off`
 
 A repair may change the steps it declares: the locator, the waiting, the navigation, or how a check is made. It keeps the script's number of checks (the save stores it) unless its edit names each check it gives up, with why, in `gives_up`: `"gives_up": [{ "step": 3, "kind": "expect_count", "why": "step 4 already counts the same rows" }]`. Give one up only when the case no longer asks for it or another check already proves the same, never because the app fails it: that is a divergence to report. The person sees every check given up on the case, and the save answer names each one (`case N: check given up: step S kind - why`): name them in your report. A repair never changes a check's value away from the case. "the repair lowers the script's checks from N to M" and "step N: the repair drops "4", which the case gives" are refused. A person removes or changes a check in the script editor. Every step it does not declare stays exactly as it was, it never changes the order the steps run in, and the save still checks every step against the case's expected results. A script may be repaired as often as it needs; a repaired script is checked again once a run passes or a replay runs the whole case.
+
+A repair may not let the page decide whether a failure counts, either. A check never goes inside a
+guard. A new `when_visible` or `repeat_while_visible`, or a phrase added to `ignore_page_errors`, needs
+the case's edit to carry a `quirk` saying what the page does and a `quirk_class` of `app quirk` or
+`environment flake`; for a `product bug` it is refused, because a real bug must surface as a failure.
+A repair never loosens `page_errors` and never turns `fail_on_unexpected_dialog` off: those are a
+person's choice in the script editor.
 
 An edit's own `quirk` is one sentence about the APPLICATION, not about
 this particular script - something the next repair, yours or someone

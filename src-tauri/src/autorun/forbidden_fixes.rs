@@ -77,3 +77,65 @@ pub fn forbidden_in(v: &serde_json::Value) -> Option<String> {
         _ => None,
     }
 }
+
+/// What a repair from `old` to `new` adds that would let a failure pass unseen. `edit` is the case's
+/// declared edit. Empty when it adds nothing of the kind. Each line once, in this order.
+pub fn check_repair_absorbs(
+    old: &crate::autorun::CaseScript,
+    new: &crate::autorun::CaseScript,
+    edit: Option<&crate::autorun::edits::Edit>,
+) -> Vec<String> {
+    use crate::autorun::quirks::QuirkClass;
+    use crate::autorun::PageErrors;
+    use crate::browser::actions::Action;
+    let quirk_given = edit.is_some_and(|e| e.quirk.as_deref().is_some_and(|q| !q.trim().is_empty()));
+    let class = edit.and_then(|e| e.quirk_class);
+    let is_guard = |a: &&Action| matches!(a, Action::WhenVisible { .. } | Action::RepeatWhileVisible { .. });
+    let mut out: Vec<String> = Vec::new();
+
+    // 1. A new guard, per step (the clean-up is free).
+    for step in new.steps.iter().filter(|s| !s.cleanup) {
+        let now = step.actions.iter().filter(is_guard).count();
+        let before = old
+            .steps
+            .iter()
+            .find(|s| s.step_number == step.step_number)
+            .map_or(0, |s| s.actions.iter().filter(is_guard).count());
+        if now <= before {
+            continue;
+        }
+        let n = step.step_number;
+        let kind = step.actions.iter().filter(is_guard).nth(before).map(|a| a.kind()).unwrap_or_default();
+        if class == Some(QuirkClass::ProductBug) {
+            out.push(format!("step {n}: the repair adds a {kind} around a product bug - a real bug must surface as a failure: leave the step failing and mark it with mark_autorun_suspected_defect"));
+        } else if !quirk_given || class.is_none() {
+            out.push(format!("step {n}: the repair adds a {kind} - a guard runs or not as the page decides, which is how a failure gets absorbed: give the case's edit a quirk saying what the page does, with quirk_class \"app quirk\" or \"environment flake\""));
+        }
+    }
+
+    // 2. A new ignored page error.
+    for phrase in &new.ignore_page_errors {
+        if old.ignore_page_errors.iter().any(|p| p.to_lowercase() == phrase.to_lowercase()) {
+            continue;
+        }
+        if class == Some(QuirkClass::ProductBug) {
+            out.push(format!("the repair ignores \"{phrase}\", a product bug - a real bug must surface as a failure: leave it failing and tell the person"));
+        } else if !quirk_given || class.is_none() {
+            out.push(format!("the repair adds \"{phrase}\" to ignore_page_errors - a page error that fails the case is the application's: give the case's edit a quirk saying what the error is, with quirk_class \"app quirk\" or \"environment flake\", or leave it failing and tell the person"));
+        }
+    }
+
+    // 3. Looser page errors.
+    if matches!(
+        (old.page_errors, new.page_errors),
+        (Some(PageErrors::Fail), Some(PageErrors::Flag) | None) | (Some(PageErrors::Flag), None)
+    ) {
+        out.push("the repair loosens page_errors - what fails the case is a person's choice, in the script editor".to_string());
+    }
+
+    // 4. A dialog that no longer fails.
+    if old.fail_on_unexpected_dialog && !new.fail_on_unexpected_dialog {
+        out.push("the repair stops an unexpected dialog failing the case - that is a person's choice, in the script editor".to_string());
+    }
+    out
+}

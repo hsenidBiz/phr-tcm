@@ -9739,6 +9739,12 @@ async fn save_autorun_scripts(
                     .into_iter()
                     .map(|r| format!("case {case_id}: {r}")),
             );
+            // And it never lets the page decide whether a failure counts.
+            value_refusals.extend(
+                crate::autorun::forbidden_fixes::check_repair_absorbs(old, script, Some(edit))
+                    .into_iter()
+                    .map(|r| format!("case {case_id}: {r}")),
+            );
         }
         let found = crate::autorun::case_values::check_case_values(script, &text, only.as_deref(), &test_prefix);
         value_refusals.extend(found.refusals.into_iter().map(|r| format!("case {case_id}: {r}")));

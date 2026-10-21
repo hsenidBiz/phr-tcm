@@ -2270,3 +2270,16 @@ fn the_guide_says_no_action_runs_page_script_waits_or_retries() {
     assert!(flat.contains("Wait for what the step needs with `wait_for` or a check's `timeout_ms`"));
     assert!(!flat.contains('\u{2014}') && !flat.contains('\u{2013}'));
 }
+
+#[test]
+fn the_repair_section_says_a_repair_cannot_let_the_page_decide() {
+    let g = autorun_guide();
+    let repair = flat_guide(g.split_once("## Repairing a script that failed").unwrap().1.split("\n## ").next().unwrap());
+    assert!(
+        repair.contains("A repair may not let the page decide whether a failure counts, either. A check never goes inside a guard."),
+        "{repair}"
+    );
+    assert!(repair.contains("for a `product bug` it is refused"), "{repair}");
+    let dismissing = flat_guide(g.split_once("## Dismissing what may not show up").unwrap().1.split("\n## ").next().unwrap());
+    assert!(dismissing.contains("In a repair, a new guard needs the edit's `quirk` and `quirk_class`"), "{dismissing}");
+}
