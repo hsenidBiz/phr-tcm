@@ -6,6 +6,7 @@
 //! it open; steps run against it one at a time, driven by the human
 //! clicking through.
 
+use crate::autorun::replay_to::NotSignedIn;
 use crate::autorun::store;
 use crate::autorun::{CaseScript, LocalRun, StepScript};
 use crate::browser::actions::ActionOutcome;
@@ -1428,7 +1429,16 @@ pub async fn reset_for_assistant(organization: &str, project: &str) -> (u16, Str
 /// replay would reuse it (`replay_to::signed_in_here`: the lease, the
 /// sign-in's cookies, a session not refused, the signed-in marker);
 /// otherwise - a home page whose marker never shows included - the account
-/// and its cookies' print are forgotten, so the next replay signs in again.
+/// and its cookies' print are forgotten, so the next replay signs in again,
+/// and the app log says which condition failed (`NotSignedIn`).
+///
+/// The order matters: the sign-in's cookies are judged BEFORE the home load
+/// (`replay_to::sign_in_stands`, on the page the replay left, as a replay's
+/// own reuse check judges them), because the home page - the login page on
+/// PeoplesHR - may re-issue a session cookie of the very same sign-in. Only
+/// the app's own home load runs between that check and the cookie print
+/// taken again after it, so a sign-in that stood still stands; the marker
+/// and the refusal are looked at after the load.
 /// A home page that does not open answers 502 (503 when the browser did not
 /// answer), still saying what was cleaned first.
 pub async fn reset_in_for_assistant<B: crate::ai_bridge::DiscoveryBrowser>(
@@ -1483,6 +1493,14 @@ pub async fn reset_in_for_assistant<B: crate::ai_bridge::DiscoveryBrowser>(
     b.taken_over();
     let guard = if lifted { "guard lifted" } else { GUARD_STILL_ON_AT_RESET };
     let p = b.parts();
+    // The sign-in's cookies, judged before the home load re-issues any.
+    let account = p.signed_in.clone();
+    let stands = match account.as_deref() {
+        Some(key) => {
+            crate::autorun::replay_to::sign_in_stands(p.driver, root, organization, project, key, &account, &*p.lease).await
+        }
+        None => Err(NotSignedIn::NoAccount),
+    };
     let home = crate::autorun::nav::load_home(p.driver, &crate::autorun::nav::Home::of(&recipe), timing).await;
     // The home page loaded, but its signed-in marker never showed: the
     // sign-in has gone. Neither the page failing to load nor the browser
@@ -1495,17 +1513,40 @@ pub async fn reset_in_for_assistant<B: crate::ai_bridge::DiscoveryBrowser>(
         let status = if home.harness { 503 } else { 502 };
         return said_at_reset(status, summary, with_changes_left(reset_failed_sentence(guard, &home.detail), &left));
     }
-    let account = p.signed_in.clone();
-    let still = match account.as_deref() {
-        Some(key) if !marker_gone => {
-            crate::autorun::replay_to::signed_in_here(p.driver, root, organization, project, key, &account, &*p.lease, timing)
-                .await
+    let verdict: Result<(), NotSignedIn> = match (stands, account.as_deref()) {
+        (Err(why), _) => Err(why),
+        _ if marker_gone => Err(NotSignedIn::HomeNeverSignedIn),
+        (Ok(_), None) => Err(NotSignedIn::NoAccount),
+        (Ok(recipe), Some(key)) => {
+            // `load_home` waits for the marker itself only when the recipe
+            // has `after_sign_in` steps; otherwise it is looked for here.
+            let looked = if recipe.after_sign_in.is_empty() {
+                crate::autorun::signin::already_signed_in_why(p.driver, &recipe, Some(key), key, timing, timing.nav_ms).await
+            } else if crate::autorun::signin::session_refused(p.driver).await.is_some() {
+                Err(NotSignedIn::SessionRefused)
+            } else {
+                Ok(())
+            };
+            match looked {
+                // Only the app's own home load ran since the cookies were
+                // judged: what it re-issued belongs to the same sign-in.
+                Ok(()) => match crate::browser::session::cookie_print(p.driver, &recipe.origins()).await {
+                    Some(print) => {
+                        p.lease.note_sign_in(Some(print));
+                        Ok(())
+                    }
+                    None => Err(NotSignedIn::NoCookiesAfterHome),
+                },
+                Err(why) => Err(why),
+            }
         }
-        _ => false,
     };
-    let said = match (still, account) {
-        (true, Some(key)) => reset_sentence(&key).replace("guard lifted", guard),
-        _ => {
+    let said = match (verdict, account) {
+        (Ok(()), Some(key)) => reset_sentence(&key).replace("guard lifted", guard),
+        (verdict, _) => {
+            if let Err(why) = verdict {
+                crate::applog::info(format!("Auto Run: the assistant's reset found the sign-in gone: {}", why.reason()));
+            }
             *p.signed_in = None;
             p.lease.forget_sign_in();
             if lifted {

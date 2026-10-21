@@ -2414,6 +2414,128 @@ async fn a_reset_whose_home_never_shows_the_marker_says_the_sign_in_has_gone() {
     assert_eq!(sign_ins(&b.d), 0, "the reset signed in itself");
 }
 
+/// True when the app log's tail holds a line with `needle`.
+fn applog_has(needle: &str) -> bool {
+    v2_lib::applog::recent(6000).iter().any(|l| l.message.contains(needle))
+}
+
+/// Row 76: the home page the reset loads re-issues a session cookie of the
+/// sign-in (the login page does on PeoplesHR). The cookies were judged
+/// before that load, on the page the replay left, so the sign-in stands, and
+/// the print is taken again after it: the next replay reuses it.
+#[tokio::test]
+async fn a_reset_keeps_the_sign_in_when_its_home_load_reissues_a_session_cookie() {
+    use v2_lib::commands::autorun::{reset_in_for_assistant, reset_sentence};
+    let _l = crate::serial::account_leases();
+    let dir = tempfile::tempdir().unwrap();
+    project(dir.path(), &script(three_steps()));
+    let (mut slot, app, jar) = left_by_a_replay(dir.path()).await;
+    let j = jar.clone();
+    answering_first(slot.as_mut().unwrap(), move |method, _| {
+        if method == "Page.navigate" {
+            j.set(".ASPXAUTH", "auth-admin-2");
+        }
+        None
+    });
+    let (status, said) = reset_in_for_assistant(&mut slot, dir.path(), "acme", "Web", &quick()).await;
+    assert_eq!((status, said.as_str()), (200, reset_sentence("admin").as_str()), "{:?}", log(&app));
+    let b = slot.as_ref().expect("the reset closed the browser");
+    assert_eq!((b.account.as_deref(), b.lease.account()), (Some("admin"), Some("admin")));
+    assert!(b.lease.sign_in_print().is_some(), "the sign-in's cookies were forgotten");
+
+    let mut b = slot.unwrap();
+    let (mut account, mut held) = (b.account.take(), b.lease);
+    let (end, reused) = replay_kept(&mut b.d, dir.path(), 3, &mut account, &mut held).await;
+    assert!(matches!(end, ReplayEnd::Ready { .. }), "{end:?}");
+    assert_eq!(reused.went.as_deref(), Some("Leave"), "the replay after a reset signed in again");
+    assert_eq!(sign_ins(&b.d), 0, "{:?}", log(&app));
+}
+
+/// A sign-in cookie that changed before the reset is a different sign-in:
+/// the reset says it has gone, and the app log says which condition failed.
+#[tokio::test]
+async fn a_reset_after_the_sign_in_cookie_changed_says_gone_and_logs_why() {
+    use v2_lib::commands::autorun::{reset_in_for_assistant, SIGN_IN_GONE_AT_RESET};
+    let _l = crate::serial::account_leases();
+    let _log = crate::serial::log_tail();
+    let dir = tempfile::tempdir().unwrap();
+    project(dir.path(), &script(three_steps()));
+    let (mut slot, app, jar) = left_by_a_replay(dir.path()).await;
+    jar.set(".ASPXAUTH", "auth-other");
+    let (status, said) = reset_in_for_assistant(&mut slot, dir.path(), "acme", "Web", &quick()).await;
+    assert_eq!((status, said.as_str()), (200, SIGN_IN_GONE_AT_RESET), "{:?}", log(&app));
+    assert!(applog_has("the sign-in's cookies changed: .ASPXAUTH (changed)"), "the cookie was not named");
+    assert!(
+        applog_has("found the sign-in gone: the sign-in's HttpOnly cookies changed"),
+        "the reset did not say why"
+    );
+    assert!(!applog_has("auth-other") && !applog_has("auth-admin-1"), "a cookie value reached the log");
+    let b = slot.as_ref().expect("the reset closed the browser");
+    assert_eq!(b.account, None);
+    assert!(b.lease.sign_in_print().is_none());
+}
+
+/// Each other condition that drops the sign-in at a reset says which in the
+/// app log.
+#[tokio::test]
+async fn a_reset_logs_each_condition_that_drops_the_sign_in() {
+    use v2_lib::commands::autorun::{reset_in_for_assistant, SIGN_IN_GONE_AT_RESET};
+    let _l = crate::serial::account_leases();
+    let _log = crate::serial::log_tail();
+    let dir = tempfile::tempdir().unwrap();
+    project(dir.path(), &script(three_steps()));
+
+    // No account is signed in in this browser.
+    let (mut slot, app, _jar) = left_by_a_replay(dir.path()).await;
+    slot.as_mut().unwrap().account = None;
+    let (status, said) = reset_in_for_assistant(&mut slot, dir.path(), "acme", "Web", &quick()).await;
+    assert_eq!((status, said.as_str()), (200, SIGN_IN_GONE_AT_RESET), "{:?}", log(&app));
+    assert!(applog_has("found the sign-in gone: no account is signed in in this browser"));
+    drop(slot);
+
+    // The app's last sign-in left no print.
+    let (mut slot, app, _jar) = left_by_a_replay(dir.path()).await;
+    slot.as_mut().unwrap().lease.forget_sign_in();
+    let (status, said) = reset_in_for_assistant(&mut slot, dir.path(), "acme", "Web", &quick()).await;
+    assert_eq!((status, said.as_str()), (200, SIGN_IN_GONE_AT_RESET), "{:?}", log(&app));
+    assert!(applog_has("found the sign-in gone: the app's last sign-in left no print"));
+    drop(slot);
+
+    // The home page opens but never shows the signed-in marker.
+    with_after_sign_in(dir.path());
+    let (mut slot, app, _jar) = left_by_a_replay(dir.path()).await;
+    answering_first(slot.as_mut().unwrap(), |method, params| match method {
+        "Runtime.callFunctionOn" if params["arguments"][0]["value"] == "#marker" => {
+            Some(Ok(json!({ "result": { "objectId": "no-marker" } })))
+        }
+        "Runtime.getProperties" if params["objectId"] == "no-marker" => Some(Ok(json!({ "result": [] }))),
+        _ => None,
+    });
+    let (status, said) = reset_in_for_assistant(&mut slot, dir.path(), "acme", "Web", &quick()).await;
+    assert_eq!((status, said.as_str()), (200, SIGN_IN_GONE_AT_RESET), "{:?}", log(&app));
+    assert!(applog_has("found the sign-in gone: the home page opened but never showed it was signed in"));
+}
+
+/// A replay that cannot reuse the browser's sign-in says why in the app log
+/// before it signs in again.
+#[tokio::test]
+async fn a_replay_that_cannot_reuse_the_sign_in_logs_why() {
+    let _l = crate::serial::account_leases();
+    let _log = crate::serial::log_tail();
+    let dir = tempfile::tempdir().unwrap();
+    project(dir.path(), &script(three_steps()));
+    let (mut d, app, _jar) = jar_app();
+    let (mut account, mut held) = (None, Held::supervised());
+    signed_in_once(dir.path(), &mut d, &app, &mut account, &mut held).await;
+    held.forget_sign_in();
+    let (end, reused) = replay_kept(&mut d, dir.path(), 3, &mut account, &mut held).await;
+    signed_in_again(&end, &reused, &d, &app);
+    assert!(
+        applog_has("not signed in already as admin: the app's last sign-in left no print"),
+        "the replay did not say why it signed in again"
+    );
+}
+
 /// A home page that does not open - 502, or 503 when the browser does not
 /// answer - still says what the reset cleaned first, after the
 /// discovery-ended line when it ended one; the sign-in is not judged.

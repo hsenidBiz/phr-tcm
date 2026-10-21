@@ -183,19 +183,36 @@ pub async fn already_signed_in<D: Driver>(
     wanted: &str,
     timing: &Timing,
 ) -> bool {
-    if signed_in_as != Some(wanted) {
-        return false;
+    already_signed_in_why(d, recipe, signed_in_as, wanted, timing, timing.expect_ms.min(SIGNED_IN_LOOK_MS)).await.is_ok()
+}
+
+/// `already_signed_in`, saying why not (`NotSignedIn`), and looking for the
+/// marker for `look_ms` at most.
+pub async fn already_signed_in_why<D: Driver>(
+    d: &mut D,
+    recipe: &SignInRecipe,
+    signed_in_as: Option<&str>,
+    wanted: &str,
+    timing: &Timing,
+    look_ms: u64,
+) -> Result<(), super::replay_to::NotSignedIn> {
+    use super::replay_to::NotSignedIn;
+    match signed_in_as {
+        None => return Err(NotSignedIn::NoAccount),
+        Some(a) if a != wanted => return Err(NotSignedIn::OtherAccount),
+        Some(_) => {}
     }
     if session_refused(d).await.is_some() {
-        return false;
+        return Err(NotSignedIn::SessionRefused);
     }
-    let look = timing.expect_ms.min(SIGNED_IN_LOOK_MS);
-    let seen = expect(d, &recipe.signed_in, Check::Visible, look, timing.poll_ms).await.ok;
+    let seen = expect(d, &recipe.signed_in, Check::Visible, look_ms, timing.poll_ms).await.ok;
     if seen {
         // Signed in, on the application's own page.
         d.confirm_capture_site();
+        Ok(())
+    } else {
+        Err(NotSignedIn::MarkerNotShown(look_ms))
     }
-    seen
 }
 
 /// Said when the application refused an account's session again after a
