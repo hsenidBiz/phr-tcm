@@ -9407,6 +9407,12 @@ async fn save_autorun_scripts(
     // for a new script (all of them), its declared steps for a repair. An
     // unchanged resave is not listed: it was checked when it was saved.
     let mut seen_scope: Vec<(i32, Option<Vec<i32>>)> = Vec::new();
+    // The saved script of each repair, for the check floor and the values a
+    // repair may not move away from the case (`case_values::check_repair_values`).
+    let mut repair_olds: Vec<(i32, crate::autorun::CaseScript)> = Vec::new();
+    // One line per check this save's repairs give up, said after the save's
+    // first line (outside the notes cap).
+    let mut given_up_lines: Vec<String> = Vec::new();
     // Whether scripts saved before they were stamped count here, read once.
     let legacy = crate::autorun::seen_check::legacy_scripts_count(&root, &ctx.org, &ctx.project);
     // Every case's refusal from this gate, said together: a bundle with two
@@ -9454,6 +9460,7 @@ async fn save_autorun_scripts(
                 script.repairs = old.repairs;
                 script.last_repair = old.last_repair.clone();
                 script.precondition_repairs = old.precondition_repairs.clone();
+                script.given_up = old.given_up.clone();
                 let marks_changed = old.changes != sent.changes
                     || old.needs_unchanged != sent.needs_unchanged
                     || old.needs_state != sent.needs_state;
@@ -9481,6 +9488,26 @@ async fn save_autorun_scripts(
                     continue;
                 }
                 script.repairs = old.repairs.saturating_add(1);
+                // What was given up before stays; this repair's own entries
+                // are added from its edit, never from what was sent.
+                script.given_up = old.given_up.clone();
+                if let Some(e) = declared {
+                    let at = crate::applog::iso_stamp();
+                    for g in &e.gives_up {
+                        let entry = crate::autorun::GivenUp {
+                            step: g.step,
+                            kind: g.kind.trim().to_lowercase(),
+                            why: g.why.trim().to_string(),
+                            at: at.clone(),
+                        };
+                        given_up_lines.push(format!(
+                            "case {}: check given up: step {} {} - {}. The person sees it on the case; name it in your report.",
+                            script.case_id, entry.step, entry.kind, entry.why
+                        ));
+                        script.given_up.push(entry);
+                    }
+                }
+                repair_olds.push((sent.case_id, old.clone()));
                 // `check_edits` above only returns Ok when a real change
                 // was fully declared, so `declared` is always Some here -
                 // there is no path where a script actually differs from
@@ -9541,10 +9568,12 @@ async fn save_autorun_scripts(
                 script.repairs = 0;
                 script.last_repair = None;
                 script.precondition_repairs = Vec::new();
+                script.given_up = Vec::new();
                 seen_scope.push((sent.case_id, None));
                 lines.push(format!("case {} (new)", script.case_id));
             }
         }
+        script.checks = crate::autorun::case_values::check_count(&script) as u32;
         prepared.push(script);
     }
     if !refused.is_empty() {
@@ -9625,12 +9654,18 @@ async fn save_autorun_scripts(
         else {
             continue;
         };
-        let found = crate::autorun::case_values::check_case_values(
-            script,
-            &crate::autorun::case_text::CaseText::from_case(case),
-            only.as_deref(),
-            &test_prefix,
-        );
+        let text = crate::autorun::case_text::CaseText::from_case(case);
+        // A repair also keeps its checks and the case's values.
+        if let (Some((_, old)), Some(edit)) =
+            (repair_olds.iter().find(|(id, _)| id == case_id), edits.iter().find(|e| e.case_id == *case_id))
+        {
+            value_refusals.extend(
+                crate::autorun::case_values::check_repair_values(old, script, &text, &edit.steps, &edit.gives_up, &test_prefix)
+                    .into_iter()
+                    .map(|r| format!("case {case_id}: {r}")),
+            );
+        }
+        let found = crate::autorun::case_values::check_case_values(script, &text, only.as_deref(), &test_prefix);
         value_refusals.extend(found.refusals.into_iter().map(|r| format!("case {case_id}: {r}")));
         value_listed.extend(found.listed.into_iter().map(|l| format!("case {case_id}: value not in the case: {l}")));
         value_notes.extend(found.notes.into_iter().map(|n| format!("case {case_id}: note: {n}")));
@@ -9800,6 +9835,7 @@ async fn save_autorun_scripts(
         let blocked = blocked_by_divergence_lines(&root, ctx, &prepared);
         let said = std::iter::once(dry_run_answer(prepared.len(), &lines))
             .chain(precondition_lines)
+            .chain(given_up_lines)
             .chain(value_listed)
             .chain(notes)
             .chain(blocked);
@@ -9809,6 +9845,7 @@ async fn save_autorun_scripts(
 
     let mut report = vec![format!("saved {} script(s): {}", prepared.len(), lines.join(", "))];
     report.extend(precondition_lines);
+    report.extend(given_up_lines);
     report.extend(value_listed);
     report.extend(notes);
     for (case_id, step) in &repaired_marks {

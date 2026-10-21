@@ -628,6 +628,13 @@ export const commands = {
 	 *  only when true.
 	 */
 	checked?: boolean,
+	/**
+	 *  The script's number of checks (`case_values::check_count`), stamped by every save: the floor a
+	 *  repair may not go under unless its edit names each check it gives up. 0 = not stamped yet.
+	 */
+	checks?: number,
+	/**  Every check a repair gave up, oldest first. Set by the save from the edits, never from what was sent. */
+	given_up?: GivenUp[],
 } | null, string>(__TAURI_INVOKE("auto_run_load_script", { caseId })),
 	/**
 	 *  Every listed case's script in one call - what the Auto Run screen asks
@@ -2958,6 +2965,13 @@ export type CaseScript_Deserialize = {
 	 *  only when true.
 	 */
 	checked?: boolean,
+	/**
+	 *  The script's number of checks (`case_values::check_count`), stamped by every save: the floor a
+	 *  repair may not go under unless its edit names each check it gives up. 0 = not stamped yet.
+	 */
+	checks?: number,
+	/**  Every check a repair gave up, oldest first. Set by the save from the edits, never from what was sent. */
+	given_up?: GivenUp[],
 };
 
 /**
@@ -3098,6 +3112,13 @@ export type CaseScript_Serialize = {
 	 *  only when true.
 	 */
 	checked?: boolean,
+	/**
+	 *  The script's number of checks (`case_values::check_count`), stamped by every save: the floor a
+	 *  repair may not go under unless its edit names each check it gives up. 0 = not stamped yet.
+	 */
+	checks?: number,
+	/**  Every check a repair gave up, oldest first. Set by the save from the edits, never from what was sent. */
+	given_up?: GivenUp[],
 };
 
 export type CellMatch = "exact" | "contains";
@@ -3887,6 +3908,17 @@ export type Flow_Serialize = {
 	sources: string[],
 	stages: Stage[],
 	saved?: FlowSaved | null,
+};
+
+/**
+ *  A check a repair gave up, with why: shown to the person on the case. The person's own save in
+ *  the script editor clears the list (their save is the acceptance).
+ */
+export type GivenUp = {
+	step: number,
+	kind: string,
+	why: string,
+	at: string,
 };
 
 /**

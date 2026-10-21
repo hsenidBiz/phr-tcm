@@ -2612,6 +2612,8 @@ pub fn save_script_from_editor(
         organization: None,
         project: None,
         checked: false,
+        checks: 0,
+        given_up: Vec::new(),
     });
     let CaseScript {
         // The editor's own.
@@ -2638,6 +2640,9 @@ pub fn save_script_from_editor(
         organization: _,
         project: _,
         checked: _,
+        // Stamped below: the person's save is the acceptance of what was given up.
+        checks: _,
+        given_up: _,
         // The stored script's. Only the assistant writes a setup, so the
         // webview can never change a fixture or write an old one back.
         setup,
@@ -2654,6 +2659,10 @@ pub fn save_script_from_editor(
     script.organization = Some(organization.trim().to_string());
     script.project = Some(project.trim().to_string());
     script.checked = false;
+    // The person's save is the accepted path: it stamps the checks it leaves
+    // and accepts whatever an assistant gave up.
+    script.checks = crate::autorun::case_values::check_count(&script) as u32;
+    script.given_up = Vec::new();
     // The project's rules - no address while that is switched off, only
     // recorded areas - the same ones the import and the assistant's save
     // apply.
@@ -2905,6 +2914,7 @@ fn import_scripts(
         sc.organization = Some(organization.trim().to_string());
         sc.project = Some(project.trim().to_string());
         sc.checked = true;
+        sc.checks = crate::autorun::case_values::check_count(sc) as u32;
     }
     // With a component in use, the check and the write hold the components
     // lock, so a component save cannot slip between them.

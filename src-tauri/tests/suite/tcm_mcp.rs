@@ -2419,7 +2419,7 @@ fn the_save_tools_name_no_cap_and_let_a_check_go() {
     };
     let script = description("save_autorun_script");
     assert!(script.contains("Steps you leave out of `edits` must stay exactly as they were"), "{script}");
-    assert!(script.contains("removing a check included"), "{script}");
+    assert!(script.contains("must name each one it gives up in `gives_up`"), "{script}");
     let component = description("save_autorun_component");
     for d in [&script, &component] {
         for gone in ["three repairs", "never removed or weakened", "cap_reached", "may not remove a check", "accepted changes"] {

@@ -97,7 +97,7 @@ fn script(case_id: i32, actions: Vec<Action>) -> CaseScript {
         saved_at: None,
         fail_on_unexpected_dialog: false,
         page_errors: None,
-        ignore_page_errors: vec![], organization: None, project: None, checked: false,
+        ignore_page_errors: vec![], organization: None, project: None, checked: false, checks: 0, given_up: Vec::new(),
     }
 }
 
@@ -966,6 +966,7 @@ fn old_script_and_component_files_with_counts_still_load() {
         quirk: None,
         area: false,
         precondition: None,
+        gives_up: Vec::new(),
     };
     assert_eq!(v2_lib::autorun::edits::check_edits(&old, &repaired, Some(&declared)), Ok(()));
 

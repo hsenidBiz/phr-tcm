@@ -71,7 +71,7 @@ fn script() -> CaseScript {
         needs_state: Default::default(),
         saved_at: None,
         fail_on_unexpected_dialog: false,
-        page_errors: None, ignore_page_errors: vec![], organization: None, project: None, checked: false,
+        page_errors: None, ignore_page_errors: vec![], organization: None, project: None, checked: false, checks: 0, given_up: Vec::new(),
     }
 }
 
@@ -226,7 +226,7 @@ fn one_step_script(case_id: i32, title: &str) -> CaseScript {
         needs_state: Default::default(),
         saved_at: None,
         fail_on_unexpected_dialog: false,
-        page_errors: None, ignore_page_errors: vec![], organization: None, project: None, checked: false,
+        page_errors: None, ignore_page_errors: vec![], organization: None, project: None, checked: false, checks: 0, given_up: Vec::new(),
     }
 }
 
@@ -273,7 +273,7 @@ fn a_duplicate_case_id_within_one_bundle_is_rejected() {
 #[test]
 fn a_script_with_no_steps_is_rejected() {
     let dir = TempDir::new();
-    let bundle = vec![CaseScript { case_id: 9, title: "Empty".to_string(), account: None, area: None, steps: vec![], repairs: 0, last_repair: None, suspected_defect: None, no_save: false, preconditions: vec![], precondition_repairs: vec![], setup: None, changes: vec![], needs_unchanged: vec![], needs_state: Default::default(), saved_at: None, fail_on_unexpected_dialog: false, page_errors: None, ignore_page_errors: vec![], organization: None, project: None, checked: false }];
+    let bundle = vec![CaseScript { case_id: 9, title: "Empty".to_string(), account: None, area: None, steps: vec![], repairs: 0, last_repair: None, suspected_defect: None, no_save: false, preconditions: vec![], precondition_repairs: vec![], setup: None, changes: vec![], needs_unchanged: vec![], needs_state: Default::default(), saved_at: None, fail_on_unexpected_dialog: false, page_errors: None, ignore_page_errors: vec![], organization: None, project: None, checked: false, checks: 0, given_up: Vec::new() }];
     let err = save_scripts_atomically(dir.path(), &bundle).expect_err("empty steps were accepted");
     assert!(matches!(err, SaveScriptsError::Invalid(_)));
 }
@@ -306,7 +306,7 @@ fn a_duplicate_step_number_within_one_script_is_rejected() {
         needs_state: Default::default(),
         saved_at: None,
         fail_on_unexpected_dialog: false,
-        page_errors: None, ignore_page_errors: vec![], organization: None, project: None, checked: false,
+        page_errors: None, ignore_page_errors: vec![], organization: None, project: None, checked: false, checks: 0, given_up: Vec::new(),
     }];
     let err = save_scripts_atomically(dir.path(), &bundle).expect_err("duplicate step number was accepted");
     assert!(matches!(err, SaveScriptsError::Invalid(_)));
@@ -341,7 +341,7 @@ fn a_step_with_no_actions_is_still_accepted() {
         needs_state: Default::default(),
         saved_at: None,
         fail_on_unexpected_dialog: false,
-        page_errors: None, ignore_page_errors: vec![], organization: None, project: None, checked: false,
+        page_errors: None, ignore_page_errors: vec![], organization: None, project: None, checked: false, checks: 0, given_up: Vec::new(),
     }];
     save_scripts_atomically(dir.path(), &bundle).unwrap();
     assert!(load_script(dir.path(), 60).unwrap().is_some());

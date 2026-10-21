@@ -270,6 +270,19 @@ test("the card lists values not in the case", () => {
   expect(screen.getByText("step 2: 6 (one row per DEF level the precondition lists)")).toBeInTheDocument();
 });
 
+test("the card lists checks given up", () => {
+  const script = {
+    ...BARE,
+    given_up: [{ step: 3, kind: "expect_count", why: "step 4 already counts the same rows", at: "2026-10-21T09:30:00Z" }],
+  } as CaseScript;
+  const line = "step 3 expect_count: step 4 already counts the same rows (2026-10-21)";
+  expect(scriptFacts(script)).toContainEqual({ label: "Checks given up", value: line });
+  expect(scriptFacts(BARE).some((f) => f.label === "Checks given up")).toBe(false);
+  renderCard({ open: true, script });
+  expect(screen.getByText("Checks given up")).toBeInTheDocument();
+  expect(screen.getByText(line)).toBeInTheDocument();
+});
+
 test("the search matches the id with or without #, and the title, ignoring case", () => {
   const c = { id: 4321, title: "Login - Locked Account" };
   expect(matchesSearch(c, "")).toBe(true);

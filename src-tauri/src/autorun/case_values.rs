@@ -9,6 +9,7 @@ use std::collections::BTreeSet;
 
 use super::case_text::{fold, stated_counts, CaseText};
 use super::seen_check::has_phrase;
+use super::edits::GiveUp;
 use super::{Because, CaseScript, StepScript};
 use crate::browser::actions::Action;
 
@@ -249,7 +250,8 @@ const APP_SOURCE_START: [&str; 8] = [
 /// ... and one that says any of these anywhere does too.
 const APP_SOURCE_ANYWHERE: [&str; 3] = ["the app shows", "the page shows", "what is on the page"];
 
-fn names_the_app(why: &str) -> bool {
+/// Whether a because's, or a gives_up's, why names the app as its source.
+pub fn names_the_app(why: &str) -> bool {
     let why = fold(why);
     let opening = why.strip_prefix("the ").unwrap_or(&why);
     APP_SOURCE_START.iter().any(|p| opening.starts_with(p)) || APP_SOURCE_ANYWHERE.iter().any(|p| why.contains(p))
@@ -469,4 +471,175 @@ pub fn check_count(script: &CaseScript) -> usize {
         });
     }
     n
+}
+
+/// The kind of every check of a step (nested ones included, exactly the
+/// actions `check_count` counts), as `Action` serializes its `kind`.
+pub fn check_kinds_of_step(step: &StepScript) -> Vec<String> {
+    let mut kinds = Vec::new();
+    walk(&step.actions, &mut |a| {
+        if a.is_check() {
+            kinds.push(kind_of(a));
+        }
+    });
+    kinds
+}
+
+fn kind_of(a: &Action) -> String {
+    serde_json::to_value(a)
+        .ok()
+        .and_then(|v| v.get("kind").and_then(|k| k.as_str().map(str::to_string)))
+        .unwrap_or_default()
+}
+
+fn old_step(script: &CaseScript, n: i32) -> Option<&StepScript> {
+    script.case_steps().find(|s| s.step_number == n)
+}
+
+fn gives_up_kind(g: &GiveUp) -> String {
+    g.kind.trim().to_lowercase()
+}
+
+/// The `gives_up` entries of a repair that are well formed and honest: the
+/// ones `check_repair_values` does not refuse for themselves.
+pub fn valid_gives_up<'a>(old: &CaseScript, declared_steps: &[i32], gives_up: &'a [GiveUp]) -> Vec<&'a GiveUp> {
+    gives_up.iter().filter(|g| gives_up_refusal(old, declared_steps, g).is_none()).collect()
+}
+
+fn gives_up_format_ok(g: &GiveUp) -> bool {
+    !(g.kind.trim().is_empty() || g.why.trim().is_empty() || g.why.chars().count() > 200 || g.why.contains('\n'))
+}
+
+/// Why one entry is refused, if it is (the shape's sentence is the same for
+/// every entry, so the caller says it once).
+fn gives_up_refusal(old: &CaseScript, declared_steps: &[i32], g: &GiveUp) -> Option<String> {
+    if !gives_up_format_ok(g) {
+        return Some(GIVES_UP_SHAPE.to_string());
+    }
+    let n = g.step;
+    if names_the_app(&g.why) {
+        return Some(format!(
+            "step {n}: a check is never given up because of what the app shows - keep it as the case says and call report_case_divergence"
+        ));
+    }
+    let kind = gives_up_kind(g);
+    let has = declared_steps.contains(&n)
+        && old_step(old, n).is_some_and(|s| check_kinds_of_step(s).iter().any(|k| *k == kind));
+    (!has).then(|| {
+        format!("step {n}: gives_up names a {kind} check, and the old step {n} has none - name the kind of a check the repair removes")
+    })
+}
+
+const GIVES_UP_SHAPE: &str =
+    "the edit's gives_up entries are { \"step\", \"kind\", \"why\" }, the why one line of at most 200 characters";
+
+/// What a repair may not do to the checks: go under the script's floor
+/// without naming each check it gives up (with why), or move a value away
+/// from the case. `declared_steps` are the steps the edit declares.
+pub fn check_repair_values(
+    old: &CaseScript,
+    new: &CaseScript,
+    case: &CaseText,
+    declared_steps: &[i32],
+    gives_up: &[GiveUp],
+    test_prefix: &str,
+) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    let push = |out: &mut Vec<String>, s: String| {
+        if !out.contains(&s) {
+            out.push(s);
+        }
+    };
+    // 1. Each entry on its own.
+    let mut valid: Vec<&GiveUp> = Vec::new();
+    for g in gives_up {
+        match gives_up_refusal(old, declared_steps, g) {
+            Some(r) => push(&mut out, r),
+            None => valid.push(g),
+        }
+    }
+    // 2. The floor.
+    let floor = if old.checks > 0 { old.checks as usize } else { check_count(old) };
+    let kept = check_count(new);
+    if kept + valid.len() < floor {
+        push(
+            &mut out,
+            format!(
+                "the repair lowers the script's checks from {floor} to {kept} - a repair keeps every check unless its edit names each one it gives up, with why, in gives_up, and the person sees it; a check the app fails is a divergence to report with report_case_divergence"
+            ),
+        );
+    }
+    // 3. Each declared step against the checks it lost.
+    let mut steps: Vec<i32> = declared_steps.to_vec();
+    steps.sort_unstable();
+    steps.dedup();
+    for &n in &steps {
+        let Some(o) = old_step(old, n) else { continue };
+        let before = check_kinds_of_step(o).len();
+        let after = new.case_steps().find(|s| s.step_number == n).map_or(0, |s| check_kinds_of_step(s).len());
+        let lost = before.saturating_sub(after);
+        let given = valid.iter().filter(|g| g.step == n).count();
+        if given < lost {
+            push(
+                &mut out,
+                format!(
+                    "step {n}: the repair removes {lost} of its checks and gives_up names {given} - add {{ \"step\": {n}, \"kind\": \"<the check's kind>\", \"why\": \"...\" }} for each one, or keep it"
+                ),
+            );
+        } else if given > lost {
+            push(
+                &mut out,
+                format!("step {n}: gives_up names {given} checks but the repair removes {lost} there - name only the checks it removes"),
+            );
+        }
+    }
+    // 4. Values the case gives are kept.
+    let ex = exemptions(old, test_prefix);
+    let numbers = case.case_numbers();
+    for &n in &steps {
+        let Some(o) = old_step(old, n) else { continue };
+        let new_values = new.case_steps().find(|s| s.step_number == n).map(values_of_step).unwrap_or_default();
+        for v in values_of_step(o) {
+            if exempt(&v, &ex) {
+                continue;
+            }
+            let in_case = match v.kind {
+                ValueKind::Count => v.value.parse::<u32>().is_ok_and(|c| numbers.contains(&c)),
+                ValueKind::Text => case.holds(&v.value),
+            };
+            if !in_case {
+                continue;
+            }
+            let kept = match v.kind {
+                ValueKind::Count => new_values.iter().any(|w| w.kind == ValueKind::Count && w.value == v.value),
+                ValueKind::Text => {
+                    let old_fold = fold(&v.value);
+                    new_values.iter().any(|w| {
+                        w.kind == ValueKind::Text && {
+                            let new_fold = fold(&w.value);
+                            new_fold == old_fold || has_phrase(&new_fold, &old_fold)
+                        }
+                    })
+                }
+            };
+            if kept {
+                continue;
+            }
+            let held_by = serde_json::from_str::<serde_json::Value>(&v.action_json)
+                .ok()
+                .and_then(|j| j.get("kind").and_then(|k| k.as_str().map(str::to_string)))
+                .unwrap_or_default();
+            if valid.iter().any(|g| g.step == n && gives_up_kind(g) == held_by) {
+                continue;
+            }
+            push(
+                &mut out,
+                format!(
+                    "step {n}: the repair drops \"{}\", which the case gives - a repair keeps the case's values; if the app shows otherwise, call report_case_divergence, or ask a person to rewrite the case first",
+                    v.value
+                ),
+            );
+        }
+    }
+    out
 }

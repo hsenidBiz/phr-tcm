@@ -453,6 +453,15 @@ fn edit_step_2(why: &str) -> serde_json::Value {
     serde_json::json!({ "case_id": 7, "steps": [2], "why": why })
 }
 
+/// A repair that drops step 2's toast check names it: the floor refuses a
+/// lowered check count unless the edit gives each check up, with why.
+fn edit_step_2_giving_up_the_toast(why: &str) -> serde_json::Value {
+    serde_json::json!({
+        "case_id": 7, "steps": [2], "why": why,
+        "gives_up": [{ "step": 2, "kind": "expect_contains_text", "why": "the toast is not part of the case any more" }],
+    })
+}
+
 /// The guide is format documentation, not org data - it must answer
 /// before anyone signs in, or an assistant cannot even learn the shape.
 #[tokio::test]
@@ -832,7 +841,7 @@ async fn an_edit_must_be_declared_and_may_drop_a_check() {
                     step_2
                 ]
             }],
-            "edits": [edit_step_2("the toast never appears in my run")],
+            "edits": [edit_step_2_giving_up_the_toast("the toast never appears in my run")],
         })
         .to_string()
     };
@@ -3246,7 +3255,7 @@ async fn a_repair_may_follow_what_the_case_itself_changed() {
                 { "step_number": 2, "actions": [{ "kind": "click", "selector": "#save" }] }
             ]
         }],
-        "edits": [edit_step_2("the case no longer expects a toast at step 2")],
+        "edits": [edit_step_2_giving_up_the_toast("the case no longer expects a toast at step 2")],
     })
     .to_string();
     see_scripts(dir.path(), &following);
@@ -3373,7 +3382,7 @@ fn scripted(case_id: i32) -> CaseScript {
         needs_state: Default::default(),
         saved_at: None,
         fail_on_unexpected_dialog: false,
-        page_errors: None, ignore_page_errors: vec![], organization: None, project: None, checked: false,
+        page_errors: None, ignore_page_errors: vec![], organization: None, project: None, checked: false, checks: 0, given_up: Vec::new(),
     }
 }
 

@@ -218,6 +218,23 @@ pub struct CaseScript {
     /// only when true.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub checked: bool,
+    /// The script's number of checks (`case_values::check_count`), stamped by every save: the floor a
+    /// repair may not go under unless its edit names each check it gives up. 0 = not stamped yet.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub checks: u32,
+    /// Every check a repair gave up, oldest first. Set by the save from the edits, never from what was sent.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub given_up: Vec<GivenUp>,
+}
+
+/// A check a repair gave up, with why: shown to the person on the case. The person's own save in
+/// the script editor clears the list (their save is the acceptance).
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, specta::Type)]
+pub struct GivenUp {
+    pub step: i32,
+    pub kind: String,
+    pub why: String,
+    pub at: String,
 }
 
 /// What a script does with the page's own errors.

@@ -72,6 +72,12 @@ export function scriptFacts(script: CaseScript): { label: string; value: string 
         .flatMap((s) => (s.because ?? []).map((b) => `step ${s.step_number}: ${b.value} (${b.why})`))
         .join("; "),
     },
+    {
+      label: "Checks given up",
+      value: (script.given_up ?? [])
+        .map((g) => `step ${g.step} ${g.kind}: ${g.why} (${g.at.slice(0, 10)})`)
+        .join("; "),
+    },
   ];
   return facts.flatMap(({ label, value }) => (value ? [{ label, value }] : []));
 }

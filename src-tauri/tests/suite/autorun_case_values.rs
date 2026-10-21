@@ -7,7 +7,8 @@ use serde_json::{json, Value};
 use v2_lib::ado::AdoClient;
 use v2_lib::ai_bridge::{route, BridgeContext};
 use v2_lib::autorun::case_text::{numbers, range_members, stated_counts, CaseText};
-use v2_lib::autorun::case_values::{check_case_values, check_count, values_of_step, ValueKind};
+use v2_lib::autorun::case_values::{check_case_values, check_count, check_repair_values, values_of_step, ValueKind};
+use v2_lib::autorun::edits::GiveUp;
 use v2_lib::autorun::store::set_root;
 use v2_lib::autorun::CaseScript;
 use v2_lib::steps_xml::{build_steps_xml, Step};
@@ -690,4 +691,317 @@ fn the_step_text_names_the_noun_only_when_the_check_names_none_of_its_own() {
     let r = check(&case, &two_steps(button, json!([{ "value": "3", "why": "the three buttons step 1 names" }])), None);
     assert!(r.refusals.is_empty(), "{:?}", r.refusals);
     assert_eq!(r.listed.len(), 1);
+}
+
+// ------------------------------------------------------- the check floor
+
+fn give(step: i32, kind: &str, why: &str) -> GiveUp {
+    GiveUp { step, kind: kind.into(), why: why.into() }
+}
+
+fn two_step_script(first: Value, second: Value) -> CaseScript {
+    script(json!([
+        { "step_number": 1, "actions": first },
+        { "step_number": 2, "actions": second },
+    ]))
+}
+
+fn act(v: Value) -> v2_lib::browser::actions::Action {
+    serde_json::from_value(v).unwrap()
+}
+
+/// Three checks: one in step 1, an `expect_visible` and an `expect_count`
+/// of 4 (the case's count) in step 2.
+fn three_checks() -> CaseScript {
+    two_step_script(
+        json!([{ "kind": "click", "selector": "#a" }, { "kind": "expect_visible", "selector": "#a" }]),
+        json!([
+            { "kind": "expect_visible", "selector": "#b" },
+            { "kind": "expect_count", "selector": level_selector(), "equals": 4 },
+        ]),
+    )
+}
+
+fn repair(old: &CaseScript, new: &CaseScript, gives_up: &[GiveUp]) -> Vec<String> {
+    check_repair_values(old, new, &text_of(&case_147556()), &[2], gives_up, "AUTOTEST")
+}
+
+fn without_the_visible_check() -> CaseScript {
+    two_step_script(
+        json!([{ "kind": "click", "selector": "#a" }, { "kind": "expect_visible", "selector": "#a" }]),
+        json!([{ "kind": "expect_count", "selector": level_selector(), "equals": 4 }]),
+    )
+}
+
+#[test]
+fn a_repair_that_changes_an_expected_count_to_a_value_not_in_the_case_is_refused() {
+    let old = two_step_script(json!([{ "kind": "click", "selector": "#a" }]), json!([{ "kind": "expect_count", "selector": level_selector(), "equals": 4 }]));
+    let new = two_step_script(json!([{ "kind": "click", "selector": "#a" }]), json!([{ "kind": "expect_count", "selector": level_selector(), "equals": 6 }]));
+    let r = repair(&old, &new, &[]);
+    assert_eq!(r.len(), 1, "{r:?}");
+    assert!(r[0].starts_with("step 2: the repair drops \"4\", which the case gives - a repair keeps the case's values;"), "{r:?}");
+    // And the value check of the new script says the count contradicts the case.
+    let found = check_case_values(&new, &text_of(&case_147556()), Some(&[2]), "AUTOTEST");
+    assert!(found.refusals.iter().any(|r| r.contains("the check counts 6 but the case says 4")), "{:?}", found.refusals);
+}
+
+#[test]
+fn a_repair_that_removes_a_check_is_refused() {
+    let r = repair(&three_checks(), &without_the_visible_check(), &[]);
+    assert_eq!(r.len(), 2, "{r:?}");
+    assert!(r[0].starts_with("the repair lowers the script's checks from 3 to 2 - a repair keeps every check unless"), "{r:?}");
+    assert!(
+        r[1].starts_with("step 2: the repair removes 1 of its checks and gives_up names 0 - add { \"step\": 2, \"kind\": \"<the check's kind>\", \"why\": \"...\" } for each one, or keep it"),
+        "{r:?}"
+    );
+}
+
+#[test]
+fn a_repair_that_names_the_check_it_gives_up_passes() {
+    let r = repair(&three_checks(), &without_the_visible_check(), &[give(2, " Expect_Visible ", "step 4 already counts the same rows")]);
+    assert!(r.is_empty(), "{r:?}");
+}
+
+#[test]
+fn a_given_up_check_takes_its_value_with_it() {
+    let old = without_the_visible_check();
+    let new = two_step_script(json!([{ "kind": "click", "selector": "#a" }, { "kind": "expect_visible", "selector": "#a" }]), json!([]));
+    let r = repair(&old, &new, &[]);
+    assert!(r.iter().any(|l| l.contains("the repair drops \"4\"")), "{r:?}");
+    let r = repair(&old, &new, &[give(2, "expect_count", "step 4 already counts the same rows")]);
+    assert!(r.is_empty(), "{r:?}");
+}
+
+#[test]
+fn giving_up_a_check_because_of_the_app_is_refused() {
+    let r = repair(&three_checks(), &without_the_visible_check(), &[give(2, "expect_visible", "the app shows no icon")]);
+    assert!(
+        r.contains(&"step 2: a check is never given up because of what the app shows - keep it as the case says and call report_case_divergence".to_string()),
+        "{r:?}"
+    );
+    // The refused entry does not count: the floor still fails.
+    assert!(r.iter().any(|l| l.starts_with("the repair lowers the script's checks from 3 to 2")), "{r:?}");
+}
+
+#[test]
+fn gives_up_naming_more_than_the_repair_removes_is_refused() {
+    let r = repair(&three_checks(), &three_checks(), &[give(2, "expect_visible", "step 4 already proves it")]);
+    assert_eq!(
+        r,
+        vec!["step 2: gives_up names 1 checks but the repair removes 0 there - name only the checks it removes".to_string()]
+    );
+}
+
+#[test]
+fn a_kind_the_old_step_never_had_is_refused() {
+    let r = repair(
+        &three_checks(),
+        &three_checks(),
+        &[give(2, "expect_text", "step 4 already proves it"), give(9, "expect_visible", "step 4 already proves it")],
+    );
+    assert!(r.contains(&"step 2: gives_up names a expect_text check, and the old step 2 has none - name the kind of a check the repair removes".to_string()), "{r:?}");
+    assert!(r.iter().any(|l| l.starts_with("step 9: gives_up names a expect_visible check")), "{r:?}");
+}
+
+#[test]
+fn a_malformed_gives_up_entry_is_refused_once() {
+    let r = repair(&three_checks(), &three_checks(), &[give(2, "", "x"), give(2, "expect_visible", ""), give(2, "expect_visible", "a\nb")]);
+    let shape = "the edit's gives_up entries are { \"step\", \"kind\", \"why\" }, the why one line of at most 200 characters";
+    assert_eq!(r.iter().filter(|l| *l == shape).count(), 1, "{r:?}");
+}
+
+#[test]
+fn a_repair_that_turns_a_checked_step_unchecked_is_refused() {
+    let mut new = two_step_script(
+        json!([{ "kind": "click", "selector": "#a" }, { "kind": "expect_visible", "selector": "#a" }]),
+        json!([]),
+    );
+    new.steps[1].unchecked = Some("a person checks the levels".into());
+    let r = repair(&three_checks(), &new, &[]);
+    assert!(r.iter().any(|l| l.starts_with("the repair lowers the script's checks from 3 to 1 - ")), "{r:?}");
+    assert!(r.iter().any(|l| l.starts_with("step 2: the repair removes 2 of its checks and gives_up names 0 - ")), "{r:?}");
+}
+
+#[test]
+fn the_floor_is_the_stored_count() {
+    let mut old = three_checks();
+    old.checks = 5;
+    let r = repair(&old, &three_checks(), &[]);
+    assert_eq!(r.len(), 1, "{r:?}");
+    assert!(r[0].starts_with("the repair lowers the script's checks from 5 to 3 - "), "{r:?}");
+}
+
+#[test]
+fn a_locator_repair_keeps_values_and_passes() {
+    let mut new = three_checks();
+    new.steps[1].actions = vec![
+        act(json!({ "kind": "expect_visible", "selector": "#b2" })),
+        act(json!({ "kind": "expect_count", "selector": { "role": "option", "name": "Level" }, "equals": 4 })),
+    ];
+    assert!(repair(&three_checks(), &new, &[]).is_empty());
+}
+
+#[test]
+fn a_repair_may_widen_a_check_that_keeps_the_case_words() {
+    let case = case_of(7, "Save", &[("Open", ""), ("Save", "Saved appears")], "");
+    let old = two_step_script(json!([{ "kind": "click", "selector": "#a" }]), json!([{ "kind": "expect_text", "selector": "#t", "equals": "Saved" }]));
+    let new = two_step_script(json!([{ "kind": "click", "selector": "#a" }]), json!([{ "kind": "expect_contains_text", "selector": "#t", "value": "Saved successfully" }]));
+    let r = check_repair_values(&old, &new, &text_of(&case), &[2], &[], "AUTOTEST");
+    assert!(r.is_empty(), "{r:?}");
+    // Another word does not keep it.
+    let other = two_step_script(json!([{ "kind": "click", "selector": "#a" }]), json!([{ "kind": "expect_text", "selector": "#t", "equals": "Done" }]));
+    let r = check_repair_values(&old, &other, &text_of(&case), &[2], &[], "AUTOTEST");
+    assert!(r.iter().any(|l| l.contains("the repair drops \"Saved\"")), "{r:?}");
+}
+
+#[test]
+fn a_value_the_rewritten_case_no_longer_holds_may_change() {
+    let case = case_of(
+        1,
+        "DEF levels",
+        &[("Open", ""), ("Open the level dropdown", "The dropdown lists exactly 6 levels")],
+        "The DEF table holds exactly 6 levels",
+    );
+    let old = two_step_script(json!([{ "kind": "click", "selector": "#a" }]), json!([{ "kind": "expect_count", "selector": level_selector(), "equals": 4 }]));
+    let new = two_step_script(json!([{ "kind": "click", "selector": "#a" }]), json!([{ "kind": "expect_count", "selector": level_selector(), "equals": 6 }]));
+    assert!(check_repair_values(&old, &new, &text_of(&case), &[2], &[], "AUTOTEST").is_empty());
+}
+
+fn repair_case() -> v2_lib::ado::TestCaseFull {
+    case_of(7, "Save a rating", &[("Open", ""), ("Save", "A confirmation appears")], "")
+}
+
+fn two_check_body(second: Value) -> String {
+    json!([{
+        "case_id": 7, "title": "Save a rating",
+        "steps": [
+            { "step_number": 1, "actions": [{ "kind": "click", "selector": "#a" }] },
+            { "step_number": 2, "actions": second },
+        ]
+    }])
+    .to_string()
+}
+
+/// Step 2 holds a visible check and a count of one row.
+fn old_two_checks() -> Value {
+    json!([
+        { "kind": "expect_visible", "selector": "#t" },
+        { "kind": "expect_count", "selector": "#rows", "equals": 1 },
+    ])
+}
+
+fn store_old(root: &std::path::Path, second: Value) {
+    let mut saved: CaseScript = serde_json::from_value(serde_json::from_str::<Value>(&two_check_body(second)).unwrap()[0].clone()).unwrap();
+    saved.organization = Some("acme".into());
+    saved.project = Some("Web".into());
+    v2_lib::autorun::store::save_script(root, &saved).unwrap();
+}
+
+#[tokio::test]
+async fn a_repair_lowering_the_checks_is_refused_through_the_save() {
+    let dir = TempDir::new();
+    let _root = crate::serial::autorun();
+    set_root(dir.path().to_path_buf());
+    let (_server, client) = client_with(&repair_case()).await;
+    store_old(dir.path(), old_two_checks());
+    let body = json!({
+        "scripts": serde_json::from_str::<Value>(&two_check_body(json!([{ "kind": "expect_visible", "selector": "#t" }]))).unwrap(),
+        "edits": [{ "case_id": 7, "steps": [2], "why": "the rows moved" }],
+    })
+    .to_string();
+    see(dir.path(), &body);
+    let (status, out) = route(&ctx(), Some(&client), "POST", "/autorun-script", &body, "1.0.0").await;
+    assert_eq!(status, 400, "{out}");
+    assert!(out.starts_with("case 7: the repair lowers the script's checks from 2 to 1 - "), "{out}");
+    assert_eq!(check_count(&v2_lib::autorun::store::load_script(dir.path(), 7).unwrap().unwrap()), 2, "nothing is written");
+}
+
+#[tokio::test]
+async fn a_named_check_given_up_is_saved_and_said() {
+    let dir = TempDir::new();
+    let _root = crate::serial::autorun();
+    set_root(dir.path().to_path_buf());
+    let (_server, client) = client_with(&repair_case()).await;
+    store_old(dir.path(), old_two_checks());
+    let body = json!({
+        "scripts": serde_json::from_str::<Value>(&two_check_body(json!([{ "kind": "expect_visible", "selector": "#t" }]))).unwrap(),
+        "edits": [{ "case_id": 7, "steps": [2], "why": "the rows moved", "gives_up": [
+            { "step": 2, "kind": "expect_count", "why": "step 4 already counts the same rows" }
+        ] }],
+    })
+    .to_string();
+    see(dir.path(), &body);
+    let (status, out) = route(&ctx(), Some(&client), "POST", "/autorun-script", &body, "1.0.0").await;
+    assert_eq!(status, 200, "{out}");
+    let lines: Vec<&str> = out.lines().collect();
+    assert_eq!(
+        lines[1],
+        "case 7: check given up: step 2 expect_count - step 4 already counts the same rows. The person sees it on the case; name it in your report."
+    );
+    let saved = v2_lib::autorun::store::load_script(dir.path(), 7).unwrap().unwrap();
+    assert_eq!(saved.checks, 1);
+    assert_eq!(saved.given_up.len(), 1);
+    assert_eq!((saved.given_up[0].step, saved.given_up[0].kind.as_str()), (2, "expect_count"));
+    assert!(!saved.given_up[0].at.is_empty());
+}
+
+#[tokio::test]
+async fn every_save_stamps_the_number_of_checks() {
+    let dir = TempDir::new();
+    let _root = crate::serial::autorun();
+    set_root(dir.path().to_path_buf());
+    let (_server, client) = client_with(&repair_case()).await;
+    let body = two_check_body(old_two_checks());
+    see(dir.path(), &body);
+    let (status, out) = route(&ctx(), Some(&client), "POST", "/autorun-script", &body, "1.0.0").await;
+    assert_eq!(status, 200, "{out}");
+    let saved = v2_lib::autorun::store::load_script(dir.path(), 7).unwrap().unwrap();
+    assert_eq!(saved.checks as usize, check_count(&saved));
+    assert_eq!(saved.checks, 2);
+    assert!(saved.given_up.is_empty());
+}
+
+#[tokio::test]
+async fn an_unchanged_resave_keeps_its_given_up_and_stays_unchanged() {
+    let dir = TempDir::new();
+    let _root = crate::serial::autorun();
+    set_root(dir.path().to_path_buf());
+    let (_server, client) = client_with(&repair_case()).await;
+    let body = two_check_body(old_two_checks());
+    see(dir.path(), &body);
+    let mut saved: CaseScript = serde_json::from_value(serde_json::from_str::<Value>(&body).unwrap()[0].clone()).unwrap();
+    saved.organization = Some("acme".into());
+    saved.project = Some("Web".into());
+    saved.given_up = vec![v2_lib::autorun::GivenUp {
+        step: 2,
+        kind: "expect_text".into(),
+        why: "step 4 proves it".into(),
+        at: "2026-10-21T10:00:00Z".into(),
+    }];
+    v2_lib::autorun::store::save_script(dir.path(), &saved).unwrap();
+    assert_eq!(v2_lib::autorun::store::load_script(dir.path(), 7).unwrap().unwrap().checks, 0, "an old script has no stored floor");
+    let (status, out) = route(&ctx(), Some(&client), "POST", "/autorun-script", &body, "1.0.0").await;
+    assert_eq!(status, 200, "{out}");
+    assert!(out.contains("(unchanged)"), "{out}");
+    let after = v2_lib::autorun::store::load_script(dir.path(), 7).unwrap().unwrap();
+    assert_eq!(after.given_up, saved.given_up);
+    assert_eq!(after.checks, 2, "stamped on the next save");
+}
+
+#[test]
+fn the_persons_save_stamps_the_checks_and_clears_what_was_given_up() {
+    let dir = TempDir::new();
+    let mut s = three_checks();
+    s.case_id = 7;
+    s.checks = 9;
+    s.given_up = vec![v2_lib::autorun::GivenUp {
+        step: 2,
+        kind: "expect_text".into(),
+        why: "step 4 proves it".into(),
+        at: "2026-10-21T10:00:00Z".into(),
+    }];
+    v2_lib::commands::autorun::save_script_from_editor(dir.path(), "acme", "Web", s).unwrap();
+    let after = v2_lib::autorun::store::load_script(dir.path(), 7).unwrap().unwrap();
+    assert_eq!(after.checks, 3);
+    assert!(after.given_up.is_empty());
 }
