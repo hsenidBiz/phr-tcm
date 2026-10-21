@@ -1017,6 +1017,9 @@ pub fn stalling_menu_app(
                 }
                 json!({ "result": { "value": format!("https://hr.example.internal{}", path.lock().unwrap()) } })
             }
+            "Runtime.evaluate" if params["expression"] == v2_lib::autorun::replay_to::OPEN_DIALOGS_JS => {
+                json!({ "result": { "value": 0 } })
+            }
             "Runtime.evaluate" => json!({ "result": { "value": null } }),
             "Accessibility.queryAXTree" => {
                 let role = params["role"].as_str().unwrap_or("");

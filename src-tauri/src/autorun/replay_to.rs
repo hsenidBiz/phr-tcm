@@ -544,6 +544,7 @@ pub async fn replay_to_checked<D: Driver, P: StageDb, B: Browsers>(
         progress,
         &mut tabs,
         &mut Reuse::default(),
+        &mut Vec::new(),
     )
     .await
 }
@@ -562,6 +563,10 @@ pub async fn replay_to_checked<D: Driver, P: StageDb, B: Browsers>(
 /// If that trip fails, the case is signed in as it always is and goes
 /// again, once; a save the guard stopped on that trip is kept for the
 /// answer. Any other browser signs in first.
+///
+/// `marks` learns back where the page stood after each case step that
+/// passed (`Checkpoint`), for the stand a replay that reaches its step
+/// leaves.
 #[allow(clippy::too_many_arguments)]
 pub async fn replay_to_traced<D: Driver, P: StageDb, B: Browsers>(
     d: &mut D,
@@ -580,8 +585,10 @@ pub async fn replay_to_traced<D: Driver, P: StageDb, B: Browsers>(
     mut progress: impl FnMut(i32, i32),
     tabs: &mut Vec<ReplayedTab>,
     reuse: &mut Reuse,
+    marks: &mut Vec<Checkpoint>,
 ) -> ReplayEnd {
     *reuse = Reuse::default();
+    marks.clear();
     let Checked { script, route } = match check(root, organization, project, req) {
         Ok(c) => c,
         Err(why) => return ReplayEnd::Refused(why),
@@ -738,7 +745,7 @@ pub async fn replay_to_traced<D: Driver, P: StageDb, B: Browsers>(
 
     // Steps 1 to N-1, in the script's order.
     if let Some(stopped) =
-        run_steps(d, root, organization, project, &script, &route, 1, n, account, lease, timing, cancel, &mut progress, tabs, guarding_other)
+        run_steps(d, root, organization, project, &script, &route, 1, n, account, lease, timing, cancel, &mut progress, tabs, guarding_other, marks, false)
             .await
     {
         return stopped;
@@ -982,7 +989,9 @@ pub fn cleanup_ran(script: &CaseScript, step: i32) -> Option<i32> {
 /// Run case `script`'s steps `from` to `n` - 1, in its order, in the
 /// browser `d`, as a replay runs them: `Some` is where it stopped, `None`
 /// that every one passed. `guarding_other` is a no-save guard held for
-/// another case (`guarding_other_case`).
+/// another case (`guarding_other_case`). After each case step that passes,
+/// where the page stands is pushed to `marks` (`Checkpoint`), `wrote_before`
+/// being whether anything before `from` already saved.
 #[allow(clippy::too_many_arguments)]
 async fn run_steps<D: Driver>(
     d: &mut D,
@@ -1000,6 +1009,41 @@ async fn run_steps<D: Driver>(
     progress: &mut impl FnMut(i32, i32),
     tabs: &mut Vec<ReplayedTab>,
     guarding_other: Option<i32>,
+    marks: &mut Vec<Checkpoint>,
+    wrote_before: bool,
+) -> Option<ReplayEnd> {
+    // One mark of the network record for the whole run, let go on every way
+    // out.
+    let mark = d.net_mark();
+    let ended = run_steps_marked(
+        d, root, organization, project, script, route, from, n, account, lease, timing, cancel, progress, tabs,
+        guarding_other, marks, wrote_before, mark,
+    )
+    .await;
+    d.net_unmark(mark);
+    ended
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn run_steps_marked<D: Driver>(
+    d: &mut D,
+    root: &Path,
+    organization: &str,
+    project: &str,
+    script: &CaseScript,
+    route: &Route,
+    from: i32,
+    n: i32,
+    account: &mut Option<String>,
+    lease: &mut Held,
+    timing: &Timing,
+    cancel: &AtomicBool,
+    progress: &mut impl FnMut(i32, i32),
+    tabs: &mut Vec<ReplayedTab>,
+    guarding_other: Option<i32>,
+    marks: &mut Vec<Checkpoint>,
+    wrote_before: bool,
+    mark: u64,
 ) -> Option<ReplayEnd> {
     let stopped = || cancel.load(Ordering::SeqCst);
     let in_range = |k: i32| k >= from && k < n;
@@ -1099,8 +1143,58 @@ async fn run_steps<D: Driver>(
             }
             return Some(ReplayEnd::StoppedAt { phase: ReplayPhase::Step, step: k, why, outcomes });
         }
+        // The clean-up is no step of the case: nothing is carried on from
+        // after it.
+        if !step.cleanup {
+            let wrote = wrote_before || wrote_since(d, mark);
+            let (path, tab, dialogs) = page_state(d).await;
+            marks.push(Checkpoint { k, prefix: steps_fingerprint(script, k), path, tab, dialogs, wrote });
+        }
     }
     None
+}
+
+/// Did the page send a save since `mark` that the guard did not stop? A
+/// mark the browser no longer holds cannot tell, so it says yes.
+fn wrote_since<D: Driver>(d: &D, mark: u64) -> bool {
+    use crate::browser::save_guard::{stopped_by_guard, SAVE_METHODS};
+    match d.net_since_held(mark) {
+        None => true,
+        Some(sent) => sent.iter().any(|e| SAVE_METHODS.contains(&e.method.as_str()) && !stopped_by_guard(e)),
+    }
+}
+
+/// Where the page stood after case step `k` of a replay passed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Checkpoint {
+    pub k: i32,
+    /// `steps_fingerprint(script, k)`.
+    pub prefix: u64,
+    /// The address path then.
+    pub path: String,
+    /// `Driver::tab_name()` then.
+    pub tab: String,
+    /// `OPEN_DIALOGS_JS` then.
+    pub dialogs: u32,
+    /// Any write sent from the replay's start to here.
+    pub wrote: bool,
+}
+
+/// Counts the visible dialogs on the page. An expression with no input in it.
+pub const OPEN_DIALOGS_JS: &str = "Array.from(document.querySelectorAll('dialog[open], [role=dialog], [role=alertdialog], .modal.show')).filter(function (e) { var r = e.getBoundingClientRect(); var s = getComputedStyle(e); return r.width > 0 && r.height > 0 && s.visibility !== 'hidden' && s.display !== 'none'; }).length";
+
+/// The address path, the current tab's name and how many dialogs are open.
+/// A count that cannot be read is `u32::MAX`, which never matches.
+pub async fn page_state<D: Driver>(d: &mut D) -> (String, String, u32) {
+    let (path, _) = crate::ai_bridge::current_page(d).await;
+    let tab = d.tab_name();
+    let dialogs = crate::browser::page::eval_value(d, OPEN_DIALOGS_JS)
+        .await
+        .ok()
+        .and_then(|v| v.as_u64())
+        .and_then(|n| u32::try_from(n).ok())
+        .unwrap_or(u32::MAX);
+    (path, tab, dialogs)
 }
 
 /// Where an assistant's replay left its own browser: on the page whose
@@ -1117,18 +1211,25 @@ pub struct ReplayStand {
     pub script: u64,
     pub path: String,
     pub at_ms: u64,
+    /// `settings_fingerprint` of the script that ran.
+    pub settings: u64,
+    /// Where the page stood after each case step that passed.
+    pub checkpoints: Vec<Checkpoint>,
 }
 
 impl ReplayStand {
     /// The stand of a replay of `script` (the copy that ran) that reached
-    /// step `before`, on the page at `path`, at `at_ms`.
-    pub fn of(script: &CaseScript, before: i32, path: &str, at_ms: u64) -> Self {
+    /// step `before`, on the page at `path`, at `at_ms`, with the
+    /// `checkpoints` it passed.
+    pub fn of(script: &CaseScript, before: i32, path: &str, at_ms: u64, checkpoints: Vec<Checkpoint>) -> Self {
         ReplayStand {
             case_id: script.case_id,
             before,
             script: run_fingerprint(script, before),
             path: path.to_string(),
             at_ms,
+            settings: settings_fingerprint(script),
+            checkpoints,
         }
     }
 }
@@ -1157,6 +1258,37 @@ pub fn run_fingerprint(script: &CaseScript, before: i32) -> u64 {
     h.finish()
 }
 
+/// A fingerprint of the script-level settings alone, whatever the case: its
+/// account, area, save mode, preconditions, setup, and the dialog and
+/// page-error choices. The case, its title and its steps are left out, as
+/// is the bookkeeping `run_fingerprint` leaves out.
+pub fn settings_fingerprint(script: &CaseScript) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut shaped = script.clone();
+    shaped.case_id = 0;
+    shaped.title = String::new();
+    shaped.steps = Vec::new();
+    shaped.repairs = 0;
+    shaped.last_repair = None;
+    shaped.precondition_repairs = Vec::new();
+    shaped.saved_at = None;
+    shaped.suspected_defect = None;
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    serde_json::to_string(&shaped).unwrap_or_default().hash(&mut h);
+    h.finish()
+}
+
+/// A fingerprint of the actions of the case's steps up to `k`, in run
+/// order. Actions only: never a step's expected text.
+pub fn steps_fingerprint(script: &CaseScript, k: i32) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let steps: Vec<(i32, &Vec<crate::browser::actions::Action>)> =
+        script.case_steps().filter(|s| s.step_number <= k).map(|s| (s.step_number, &s.actions)).collect();
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    serde_json::to_string(&steps).unwrap_or_default().hash(&mut h);
+    h.finish()
+}
+
 /// Where an assistant's replay starts.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReplayFrom {
@@ -1168,6 +1300,10 @@ pub enum ReplayFrom {
     CarriedOn(i32),
     /// The browser already stands before the step asked for: nothing runs.
     AlreadyThere,
+    /// From step `k` of another case, `case_id`, whose first `k` steps are
+    /// this case's too: the browser stood after them, so only steps `k + 1`
+    /// to N - 1 run.
+    CarriedOnFrom { case_id: i32, k: i32 },
 }
 
 impl ReplayFrom {
@@ -1176,6 +1312,9 @@ impl ReplayFrom {
         match self {
             ReplayFrom::Beginning => "Started from the beginning.".to_string(),
             ReplayFrom::CarriedOn(k) => format!("Carried on from step {k}."),
+            ReplayFrom::CarriedOnFrom { case_id, k } => {
+                format!("Carried on from step {k} of case {case_id} (the same first {k} steps).")
+            }
             // A reset takes the browser over (`DiscoveryBrowser::taken_over`
             // in `commands::autorun::reset_in_for_assistant`), which drops
             // the stand, so the next replay starts from the beginning.
@@ -1216,6 +1355,70 @@ pub fn carry_from(stand: Option<&ReplayStand>, script: &CaseScript, step: i32, h
     }
 }
 
+/// Where a replay of another case than the stand's starts: carried on from
+/// the last checkpoint of the stand's replay whose first steps are the same
+/// in every action, that saved nothing and left the page as it is now
+/// (`now` is `page_state`); otherwise from the beginning. The two cases
+/// must have the same settings (`settings_fingerprint`), the new one no
+/// setup, and the stand be younger than `STAND_FRESH_MS`.
+pub fn carry_across(
+    stand: Option<&ReplayStand>,
+    script: &CaseScript,
+    step: i32,
+    now: &(String, String, u32),
+    now_ms: u64,
+) -> ReplayFrom {
+    let Some(s) = stand else {
+        return ReplayFrom::Beginning;
+    };
+    if s.case_id == script.case_id
+        || script.setup.is_some()
+        || s.settings != settings_fingerprint(script)
+        || now_ms.saturating_sub(s.at_ms) >= STAND_FRESH_MS
+    {
+        return ReplayFrom::Beginning;
+    }
+    s.checkpoints
+        .iter()
+        .filter(|cp| {
+            !cp.wrote
+                && cp.k < step
+                && cp.prefix == steps_fingerprint(script, cp.k)
+                && (cp.path.as_str(), cp.tab.as_str(), cp.dialogs) == (now.0.as_str(), now.1.as_str(), now.2)
+        })
+        .map(|cp| cp.k)
+        .max()
+        .map_or(ReplayFrom::Beginning, |k| ReplayFrom::CarriedOnFrom { case_id: s.case_id, k })
+}
+
+/// The checkpoints of the old stand a replay that started `from` keeps for
+/// its own new stand, before the ones it marked itself: none from the
+/// beginning; those before K for a same-case carry from K; all of them when
+/// nothing ran; those up to `k` for a carry across (their prefix is the new
+/// case's too).
+pub fn checkpoints_kept(from: ReplayFrom, old: Option<&ReplayStand>) -> Vec<Checkpoint> {
+    let Some(s) = old else {
+        return Vec::new();
+    };
+    match from {
+        ReplayFrom::Beginning => Vec::new(),
+        ReplayFrom::CarriedOn(k) => s.checkpoints.iter().filter(|c| c.k < k).cloned().collect(),
+        ReplayFrom::AlreadyThere => s.checkpoints.clone(),
+        ReplayFrom::CarriedOnFrom { k, .. } => s.checkpoints.iter().filter(|c| c.k <= k).cloned().collect(),
+    }
+}
+
+/// Whether anything before step `from` of a same-case carry-on saved: the
+/// last checkpoint the old stand has before it says. A first step has
+/// nothing before it; a missing checkpoint anywhere else cannot tell, so it
+/// says yes.
+pub fn wrote_before(old: Option<&ReplayStand>, from: i32) -> bool {
+    match old.and_then(|s| s.checkpoints.iter().filter(|c| c.k < from).max_by_key(|c| c.k)) {
+        Some(c) => c.wrote,
+        None => from > 1,
+    }
+}
+
 /// Carry case `req.case_id` on in `d` from the page before step `from`,
 /// where its last replay left it, to the page before step `req.step`: only
 /// steps `from` to `req.step` - 1 run, each with its fixture values filled
@@ -1223,6 +1426,8 @@ pub fn carry_from(stand: Option<&ReplayStand>, script: &CaseScript, step: i32, h
 /// guard is armed first, as at the start of every replay (`guard_for_case`,
 /// never lifting one held for another case). No preconditions,
 /// setup, sign-in or trip to the area: the browser is already past them.
+/// `wrote_before` is whether anything before `from` saved, and `marks`
+/// learns back the checkpoints of the steps it ran (`run_steps`).
 #[allow(clippy::too_many_arguments)]
 pub async fn carry_on<D: Driver>(
     d: &mut D,
@@ -1238,7 +1443,10 @@ pub async fn carry_on<D: Driver>(
     cancel: &AtomicBool,
     mut progress: impl FnMut(i32, i32),
     tabs: &mut Vec<ReplayedTab>,
+    wrote_before: bool,
+    marks: &mut Vec<Checkpoint>,
 ) -> ReplayEnd {
+    marks.clear();
     let Checked { script, route } = match check(root, organization, project, req) {
         Ok(c) => c,
         Err(why) => return ReplayEnd::Refused(why),
@@ -1275,6 +1483,8 @@ pub async fn carry_on<D: Driver>(
         &mut progress,
         tabs,
         guarding_other,
+        marks,
+        wrote_before,
     )
     .await
     {
