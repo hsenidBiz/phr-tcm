@@ -696,6 +696,7 @@ mod the_screen {
 
     #[test]
     fn the_screen_commands_are_refused_while_the_module_is_off() {
+        let _e = serial::extras();
         let _lock = serial::crystal();
         let dir = tempfile::tempdir().unwrap();
         crystal::open(&copy_sample(dir.path(), SAMPLE)).unwrap();

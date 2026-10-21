@@ -1047,12 +1047,15 @@ async fn no_configuration_disables_nothing() {
 /// names, and no longer says anything about `autorun`.
 #[tokio::test]
 async fn the_bridge_lists_the_modules_that_are_on() {
+    let _e = crate::serial::extras();
     let _g = crate::serial::modules();
     let (status, body) = route(&ctx(), None, "GET", "/tools", "", "1.0.0").await;
     assert_eq!(status, 200);
     let v: serde_json::Value = serde_json::from_str(&body).unwrap();
     let want: Vec<&str> = v2_lib::modules::current().iter().map(|m| m.key()).collect();
     assert_eq!(v["modules"], serde_json::json!(want));
+    // The proxy words a refusal by the unlock state, which it cannot read.
+    assert_eq!(v["unlocked"], serde_json::json!(v2_lib::extras::unlocked()), "{body}");
     // Transitional, for one release: a proxy from before modules reads it.
     assert_eq!(v["autorun"], serde_json::json!(v2_lib::modules::on(v2_lib::modules::Module::AutoRun)), "{body}");
 }
@@ -4306,6 +4309,7 @@ mod crystal_routes {
 
     #[test]
     fn the_crystal_routes_are_404_while_the_module_is_off() {
+        let _e = crate::serial::extras();
         let mut off: std::collections::BTreeSet<Module> = Module::ALL.into_iter().collect();
         off.remove(&Module::CrystalReports);
         for path in PATHS.iter().chain(&["/crystal-guide"]) {

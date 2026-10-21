@@ -613,6 +613,9 @@ pub async fn route(
             serde_json::json!({
                 "disabled": ctx.disabled_tools,
                 "modules": crate::modules::current().iter().map(|m| m.key()).collect::<Vec<_>>(),
+                // The proxy words its refusals by this: it cannot read the
+                // switch itself.
+                "unlocked": crate::extras::unlocked(),
                 "autorun": crate::modules::on(crate::modules::Module::AutoRun),
                 // Only while writes are on too: without them there is no
                 // change to run, asked about or not.

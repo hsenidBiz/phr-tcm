@@ -194,9 +194,19 @@ pub fn data_dir_in(roaming: Option<std::ffi::OsString>) -> Option<PathBuf> {
     roaming.filter(|r| !r.is_empty()).map(|r| PathBuf::from(r).join(APP_IDENTIFIER))
 }
 
-/// The modules saved on this machine, for the `--mcp` proxy (see `saved`).
-pub fn saved_on_this_machine() -> Option<BTreeSet<Module>> {
-    saved(&data_dir_in(std::env::var_os("APPDATA"))?)
+/// The modules this machine offers, for the `--mcp` proxy when the app is
+/// closed, with whether the held-back module is unlocked: the saved set
+/// less what the lock holds back, by the same rule as the app
+/// (`effective`), reading `extras.json` from the same folder. The proxy
+/// never runs setup, so `extras::unlocked()` is always false there.
+pub fn effective_in(dir: &Path) -> Option<(BTreeSet<Module>, bool)> {
+    let unlocked = crate::extras::load(dir);
+    saved(dir).map(|s| (effective(&s, unlocked), unlocked))
+}
+
+/// `effective_in` for this machine's app data folder.
+pub fn saved_on_this_machine() -> Option<(BTreeSet<Module>, bool)> {
+    effective_in(&data_dir_in(std::env::var_os("APPDATA"))?)
 }
 
 /// Whether `dir` holds any app data from an earlier launch. A person who

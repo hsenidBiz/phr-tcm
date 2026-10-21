@@ -137,7 +137,8 @@ pub fn handle_message_in(msg: &str, version: &str, call: BridgeCall, session: &m
         "tools/list" => {
             let reply = call("GET", "/tools", "");
             let no_ask = db_no_ask_from(&reply);
-            tools_list(tool_policy_from(reply).0, no_ask)
+            let unlocked = unlocked_from(&reply);
+            tools_list(tool_policy_from(reply).0, no_ask, unlocked)
         }
         "tools/call" => {
             let params = &v["params"];
@@ -260,6 +261,20 @@ pub fn db_no_ask_from(reply: &Result<(u16, String), String>) -> bool {
     }
 }
 
+/// Whether the machine has unlocked the held-back module, as the `/tools`
+/// answer says (the app's own answer, or the saved one the proxy builds when
+/// the app is closed). Anything short of an explicit `true` is locked, so a
+/// sentence only ever loses a name, never gains one by accident.
+pub fn unlocked_from(reply: &Result<(u16, String), String>) -> bool {
+    match reply {
+        Ok((200, body)) => serde_json::from_str::<serde_json::Value>(body)
+            .ok()
+            .and_then(|v| v["unlocked"].as_bool())
+            .unwrap_or(false),
+        _ => false,
+    }
+}
+
 /// Said to the assistant, at the end of `db_query`'s description, while the
 /// person has switched on running database changes without being asked.
 pub const DB_NO_ASK: &str = " The person has allowed database changes without confirmation: do not stop to ask before running INSERT, UPDATE, DELETE or a procedure through this tool - run the batch with dry_run first, read the row counts, then run it for real, and tell them what changed afterwards.";
@@ -268,19 +283,31 @@ pub const DB_NO_ASK: &str = " The person has allowed database changes without co
 /// and no dry run, so `DB_NO_ASK`'s advice means nothing there.
 pub const PREVIEW_LIVE_NO_ASK: &str = " The person has allowed database changes without confirmation, so this runs the report's stored procedure without a prompt: check the parameter values first, since the procedure runs with exactly those, and tell them what ran afterwards.";
 
-fn tool_policy(call: BridgeCall) -> (Vec<String>, BTreeSet<Module>) {
-    tool_policy_from(call("GET", "/tools", ""))
+/// The proxy's view of `/tools` for one call: what is switched off, which
+/// modules are on, and whether the held-back module is unlocked (which
+/// decides the words of a refusal).
+fn tool_policy(call: BridgeCall) -> (Vec<String>, BTreeSet<Module>, bool) {
+    let reply = call("GET", "/tools", "");
+    let unlocked = unlocked_from(&reply);
+    let (off, on) = tool_policy_from(reply);
+    (off, on, unlocked)
 }
 
 /// Every tool this server offers, by name.
 pub fn all_tool_names() -> Vec<String> {
-    tools_list(vec![], false)["tools"]
+    tools_list(vec![], false, true)["tools"]
         .as_array()
         .map(|tools| tools.iter().filter_map(|t| t["name"].as_str().map(str::to_string)).collect())
         .unwrap_or_default()
 }
 
-fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
+/// What `db_query`'s description says about creating objects while the
+/// machine has unlocked the held-back module. Locked, it is dropped: no
+/// sentence an assistant reads names that module.
+const DB_QUERY_CREATE_UNLOCKED: &str = " CREATE, ALTER and CREATE OR ALTER are refused too, except on the Dev - dev login with Crystal Reports and Database Access on and writes switched on: there it may create or alter one procedure, view or function per call (still never DROP).";
+const DB_QUERY_CREATE_LOCKED: &str = " CREATE, ALTER and CREATE OR ALTER are refused too.";
+
+fn tools_list(disabled: Vec<String>, db_no_ask: bool, unlocked: bool) -> serde_json::Value {
     let ops = crate::transform::SUPPORTED_OPS.join(", ");
     let transform_ops_desc = format!(
         "Ops applied in order, each with an optional `where` (title_contains, has_tag, module_is, area_is, at_index). \
@@ -971,6 +998,10 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
             !disabled.iter().any(|d| d == name)
         })
         .map(|mut t| {
+            if !unlocked && t["name"].as_str() == Some("db_query") {
+                let said = t["description"].as_str().unwrap_or_default().replace(DB_QUERY_CREATE_UNLOCKED, DB_QUERY_CREATE_LOCKED);
+                t["description"] = serde_json::Value::String(said);
+            }
             // The live report preview runs a procedure, so the same switch covers
             // it - with its own sentence, as it has no batch to dry-run.
             let tail = match t["name"].as_str() {
@@ -995,8 +1026,15 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
 /// ordinary AI Bridge sentence - a network tool's names the switch it also
 /// needs. `on` is explicit so every branch is testable.
 pub fn refusal_text(name: &str, on: &BTreeSet<Module>) -> String {
+    refusal_text_for(name, on, crate::extras::unlocked())
+}
+
+/// `refusal_text` with the unlock state passed in: the `--mcp` proxy never
+/// runs setup, so `extras::unlocked()` is always false there and the state
+/// comes from the `/tools` answer instead.
+pub fn refusal_text_for(name: &str, on: &BTreeSet<Module>, unlocked: bool) -> String {
     if let Some(m) = crate::ai_tools::module_of_tool(name).filter(|m| !on.contains(m)) {
-        format!("The `{name}` tool is not available: {}.", m.off_sentence().trim_end_matches('.'))
+        format!("The `{name}` tool is not available: {}.", m.off_sentence_for(unlocked).trim_end_matches('.'))
     } else if crate::ai_tools::NETWORK_TOOLS.contains(&name) {
         format!(
             "The `{name}` tool is switched off in Test Case Manager. It needs the Network tools switch \
@@ -1099,13 +1137,18 @@ fn guide_tool(off: &[String]) -> serde_json::Value {
 /// in the words its old guide tool was (`refusal_text`): its module off
 /// names the module; its row switched off says so.
 pub fn guide_refusal(topic: Option<&str>, off: &[String], on: &BTreeSet<Module>) -> Option<String> {
+    guide_refusal_for(topic, off, on, crate::extras::unlocked())
+}
+
+/// `guide_refusal` with the unlock state passed in (see `refusal_text_for`).
+pub fn guide_refusal_for(topic: Option<&str>, off: &[String], on: &BTreeSet<Module>, unlocked: bool) -> Option<String> {
     let topics = offered_topics(off).iter().map(|t| format!("\"{t}\"")).collect::<Vec<_>>().join(", ");
     let Some(topic) = topic.map(str::trim).filter(|t| !t.is_empty()) else {
         return Some(format!("get_guide needs a `topic`: one of {topics}."));
     };
     match guide_topic_module(topic) {
         Err(()) => Some(format!("There is no `{topic}` guide: `topic` is one of {topics}.")),
-        Ok(Some(m)) if !on.contains(&m) => Some(format!("The `{topic}` guide is not available: {}.", m.off_sentence().trim_end_matches('.'))),
+        Ok(Some(m)) if !on.contains(&m) => Some(format!("The `{topic}` guide is not available: {}.", m.off_sentence_for(unlocked).trim_end_matches('.'))),
         Ok(_) if !guide_offered(topic, off) => Some(format!(
             "The `{topic}` guide is switched off in Test Case Manager. \
              Turn it back on in the app's AI Bridge tab if you need it."
@@ -1640,7 +1683,7 @@ fn tool_properties(name: &str) -> Option<&'static serde_json::Map<String, serde_
         std::sync::OnceLock::new();
     TOOL_PROPS
         .get_or_init(|| {
-            tools_list(vec![], false)["tools"]
+            tools_list(vec![], false, true)["tools"]
                 .as_array()
                 .map(|tools| {
                     tools
@@ -1740,11 +1783,11 @@ fn tools_call_outcome(params: &serde_json::Value, call: BridgeCall) -> (serde_js
     let args = &coerced;
     // Checked again here, not just in tools/list: a client may be working
     // from a list it cached before the tool was switched off.
-    let (off, on) = tool_policy(call);
+    let (off, on, unlocked) = tool_policy(call);
     let refused = if off.iter().any(|d| d == name) {
-        Some(refusal_text(name, &on))
+        Some(refusal_text_for(name, &on, unlocked))
     } else if name == "get_guide" {
-        guide_refusal(args["topic"].as_str(), &off, &on)
+        guide_refusal_for(args["topic"].as_str(), &off, &on, unlocked)
     } else {
         None
     };
@@ -1803,7 +1846,7 @@ fn tools_call_outcome(params: &serde_json::Value, call: BridgeCall) -> (serde_js
             "reports" => call("GET", "/crystal-guide", ""),
             // Refused before the match by `guide_refusal`; said again here
             // rather than trusted.
-            _ => Ok((400, guide_refusal(args["topic"].as_str(), &off, &on).unwrap_or_default())),
+            _ => Ok((400, guide_refusal_for(args["topic"].as_str(), &off, &on, unlocked).unwrap_or_default())),
         },
         "get_test_cases" => {
             let limit = args["limit"].as_i64().unwrap_or(5);
@@ -2300,13 +2343,13 @@ impl ToolError {
 /// tools are offered. The saved set is mended by `tool_policy_from`.
 pub fn tools_reply_or_saved(
     reply: Result<(u16, String), String>,
-    saved: Option<BTreeSet<Module>>,
+    saved: Option<(BTreeSet<Module>, bool)>,
 ) -> Result<(u16, String), String> {
     match (&reply, saved) {
         (Ok((200, _)), _) | (_, None) => reply,
-        (_, Some(on)) => {
+        (_, Some((on, unlocked))) => {
             let names: Vec<&str> = Module::ALL.into_iter().filter(|m| on.contains(m)).map(Module::key).collect();
-            Ok((200, serde_json::json!({ "disabled": [], "modules": names }).to_string()))
+            Ok((200, serde_json::json!({ "disabled": [], "modules": names, "unlocked": unlocked }).to_string()))
         }
     }
 }
