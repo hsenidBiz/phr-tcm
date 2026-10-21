@@ -676,6 +676,15 @@ pub async fn replay_to_traced<D: Driver, P: StageDb, B: Browsers>(
             if went.ok {
                 crate::applog::info(format!("{}: signed in already as {key}, went to {area}", who(id)));
                 reuse.went = Some(area.to_string());
+                // The trip may have reloaded the home page, which can re-issue
+                // a cookie of this same sign-in: the print is taken again.
+                if let Err(r) = retake_sign_in_for(d, root, organization, project, lease, "the trip to the area").await {
+                    crate::applog::info(format!(
+                        "{}: the sign-in's cookies could not be taken again after the trip: {}",
+                        who(id),
+                        r.reason()
+                    ));
+                }
             } else {
                 crate::applog::info(format!(
                     "{}: signed in already as {key}, but the trip to {area} failed - signing in again",
@@ -821,6 +830,59 @@ impl NotSignedIn {
             NotSignedIn::MarkerNotShown(ms) => format!("the signed-in marker did not show within {ms} ms"),
             NotSignedIn::HomeNeverSignedIn => crate::autorun::nav::HOME_NEVER_SIGNED_IN.to_string(),
             NotSignedIn::NoCookiesAfterHome => "no HttpOnly cookies could be read after the home page loaded".to_string(),
+        }
+    }
+}
+
+/// A sign-in that stood is taken again after the app's own home load or
+/// trip ran: a page the app serves (its login page, on PeoplesHR) may
+/// re-issue an HttpOnly cookie of that very sign-in, and the print taken
+/// before would call it changed from then on. Callers have judged the
+/// cookies just before (`sign_in_stands`), and only the app's own page
+/// loads and menu clicks ran since. The cookies the load re-issued are
+/// named in the app log (names only, never a value; `by` says what
+/// loaded). When no cookie can be read the sign-in is forgotten
+/// (`NoCookiesAfterHome`), so nothing is trusted that cannot be checked.
+pub async fn retake_sign_in<D: Driver>(
+    d: &mut D,
+    origins: &[String],
+    lease: &mut Held,
+    by: &str,
+) -> Result<(), NotSignedIn> {
+    if let Some(old) = lease.sign_in_print() {
+        if let Some(changed) = crate::browser::session::changed_cookies(d, origins, old, lease.ignored_in_print()).await {
+            if !changed.is_empty() {
+                crate::applog::info(format!("Auto Run: {by} re-issued the sign-in's cookies: {}", changed.join(", ")));
+            }
+        }
+    }
+    match crate::browser::session::cookie_print(d, origins).await {
+        Some(print) => {
+            lease.note_sign_in(Some(print));
+            Ok(())
+        }
+        None => {
+            lease.forget_sign_in();
+            Err(NotSignedIn::NoCookiesAfterHome)
+        }
+    }
+}
+
+/// `retake_sign_in` for the cookies of `root`'s project recipe (read again;
+/// one that cannot be read forgets the sign-in).
+pub async fn retake_sign_in_for<D: Driver>(
+    d: &mut D,
+    root: &Path,
+    organization: &str,
+    project: &str,
+    lease: &mut Held,
+    by: &str,
+) -> Result<(), NotSignedIn> {
+    match super::recipe::load_effective_recipe(root, organization, project) {
+        Ok(recipe) => retake_sign_in(d, &recipe.origins(), lease, by).await,
+        Err(_) => {
+            lease.forget_sign_in();
+            Err(NotSignedIn::NoRecipe)
         }
     }
 }

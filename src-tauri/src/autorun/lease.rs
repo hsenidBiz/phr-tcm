@@ -245,13 +245,6 @@ pub async fn acquire(env: &str, key: &str, holder: Holder, wait: Duration) -> Re
     }
 }
 
-/// The lease one browser holds for the account it is signed in as.
-///
-/// A sign-in asks `hold` first and goes ahead only when it is `Ok`. From
-/// then on the account is this browser's, whichever way the sign-in went,
-/// and the account held before it is let go. Dropping this - the case's
-/// browser closes, the supervised browser or a setup browser closes - lets
-/// the account go.
 /// What `Held::check_sign_in` made of the browser's cookies against the
 /// app's last sign-in.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -266,6 +259,13 @@ pub enum CookieCheck {
     Unread,
 }
 
+/// The lease one browser holds for the account it is signed in as.
+///
+/// A sign-in asks `hold` first and goes ahead only when it is `Ok`. From
+/// then on the account is this browser's, whichever way the sign-in went,
+/// and the account held before it is let go. Dropping this - the case's
+/// browser closes, the supervised browser or a setup browser closes - lets
+/// the account go.
 #[derive(Debug)]
 pub struct Held {
     holder: Holder,

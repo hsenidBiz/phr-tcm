@@ -4282,7 +4282,11 @@ pub async fn discover_start_in<B: DiscoveryBrowser>(
             timing,
         )
         .await
-            && went_home(p.driver, root, organization, project, timing).await;
+            && went_home(p.driver, root, organization, project, timing).await
+            // Going home may have re-issued a cookie of the same sign-in.
+            && crate::autorun::replay_to::retake_sign_in_for(p.driver, root, organization, project, p.lease, "the home page")
+                .await
+                .is_ok();
         lift_a_calls_guard(p.driver, p.guarded_case, p.guard_owner).await;
         let signed = if kept {
             crate::applog::info(format!("Auto Run discovery as {key}: signed in already, the sign-in is kept"));

@@ -1426,8 +1426,9 @@ pub async fn reset_for_assistant(organization: &str, project: &str) -> (u16, Str
 /// in play to keep one; the replay's stand and last page change are
 /// forgotten (`DiscoveryBrowser::taken_over`); and the home page is loaded
 /// (`nav::load_home`), cookies kept. The sign-in still stands only when a
-/// replay would reuse it (`replay_to::signed_in_here`: the lease, the
-/// sign-in's cookies, a session not refused, the signed-in marker);
+/// replay would have reused it before that load (`replay_to::sign_in_stands`:
+/// the account, the lease, the sign-in's cookies) and the home page then
+/// shows it (the signed-in marker, a session not refused);
 /// otherwise - a home page whose marker never shows included - the account
 /// and its cookies' print are forgotten, so the next replay signs in again,
 /// and the app log says which condition failed (`NotSignedIn`).
@@ -1510,6 +1511,14 @@ pub async fn reset_in_for_assistant<B: crate::ai_bridge::DiscoveryBrowser>(
     // browser is home, signed in, and the sign-in is judged below.
     let loaded = home.ok || (!home.harness && home.detail.starts_with(crate::autorun::nav::AFTER_SIGN_IN_STOPPED_AT_HOME));
     if !loaded && !marker_gone {
+        // The sign-in is left as it was (the next replay's own check judges
+        // it), but a reason found before the load is not lost.
+        if let Err(why) = &stands {
+            crate::applog::info(format!(
+                "Auto Run: the assistant's reset found the sign-in in doubt before the home page failed to open: {}",
+                why.reason()
+            ));
+        }
         let status = if home.harness { 503 } else { 502 };
         return said_at_reset(status, summary, with_changes_left(reset_failed_sentence(guard, &home.detail), &left));
     }
@@ -1530,13 +1539,9 @@ pub async fn reset_in_for_assistant<B: crate::ai_bridge::DiscoveryBrowser>(
             match looked {
                 // Only the app's own home load ran since the cookies were
                 // judged: what it re-issued belongs to the same sign-in.
-                Ok(()) => match crate::browser::session::cookie_print(p.driver, &recipe.origins()).await {
-                    Some(print) => {
-                        p.lease.note_sign_in(Some(print));
-                        Ok(())
-                    }
-                    None => Err(NotSignedIn::NoCookiesAfterHome),
-                },
+                Ok(()) => {
+                    crate::autorun::replay_to::retake_sign_in(p.driver, &recipe.origins(), &mut *p.lease, "the home page").await
+                }
                 Err(why) => Err(why),
             }
         }
