@@ -24,6 +24,25 @@ pub const UNREACHED_STOP: &str = "the run could not reach this case's area - rep
 /// The `STOP:` line for a case that needs a person's ruling on a divergence.
 pub const NEEDS_RULING_STOP: &str = "the case waits for a person's ruling on a divergence - leave the script as the case says";
 
+/// How a failure is classified before anything is changed. The guide repeats
+/// it word for word (a test holds the two together).
+pub const CLASSIFY_FIRST: &str = "Classify each failure before you change anything: the locator, timing, the environment, data or a missing precondition, or the application not doing what the case expects.";
+
+/// The bounds of a repair, ending the failures answer when a case failed or
+/// was Blocked, and repeated word for word (less its heading) in the guide.
+/// Guidance for the assistant: the app refuses none of the cycle limits, only
+/// the check floor and the case's values at the save.
+pub const REPAIR_BOUNDS: &str = "## Bounds of a repair
+
+Classify each failure before you change anything: the locator, timing, the environment, data or a missing precondition, or the application not doing what the case expects. A check whose value differs from what the page shows is data, a missing precondition or the application, never a script fix: call report_case_divergence and keep the case's value. A missing precondition is reported, never repaired: a healer pointed at a missing precondition will keep rewriting assertions and locators until an empty or disabled page satisfies them, which produces a script that passes and proves nothing.
+
+- At most 3 fix-run cycles per case: a fix, then a replay or run of it.
+- Stop at cycle 2 when the failure is identical to cycle 1's: the same step, the same action, the same words.
+- Stop at once on a login page, a missing precondition or a product defect: a real bug must surface as a failure.
+- A pass after a change that changed nothing is run 2 more times: 2 green of 3 is a flake, not a fix. Report it as a flake.
+- A repair keeps the script's number of checks unless its edit names each check given up and why in gives_up, and never changes a check's value away from the case; the save refuses both otherwise.
+";
+
 /// Why an assistant must not try to repair this case. Checked in this
 /// order because a case can match more than one at once (a Blocked case
 /// whose sign-in also failed, say) and the sign-in / browser reasons are

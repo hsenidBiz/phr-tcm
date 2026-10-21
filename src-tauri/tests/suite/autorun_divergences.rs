@@ -568,7 +568,9 @@ async fn the_failures_answer_lists_the_cases_divergences() {
     let day = v2_lib::autorun::quirks::day_of(&v2_lib::autorun::sessions::now_ms().to_string());
     let (status, out) = route(&ctx(), None, "GET", "/autorun-failures?case_id=7", "", "1.0.0").await;
     assert_eq!(status, 200, "{out}");
+    // The bounds of a repair end the answer; they are not part of the section.
     let section = out.split("## Divergences").nth(1).expect("a Divergences section");
+    let section = section.split("## Bounds of a repair").next().unwrap();
     let lines: Vec<&str> = section.lines().filter(|l| l.starts_with("- ")).collect();
     assert_eq!(
         lines,

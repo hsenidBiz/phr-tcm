@@ -169,8 +169,9 @@ Not covered here: call `get_guide` (topic `autorun`) with a `section`, or `full`
   template when the API template tools are on (template guide first, build it
   from the captured request, prove it); when they are off, list it under
   "API templates to make" in your summary.
-- `page_said` and "the app refused" are the app's own words; judge them against
-  the case (see `## Known validation rules` and "Discovering the app").
+- Every check's value (count, text, order, state) is the case's own, as written; never fit one to the
+  page. If the app or its data differs, `report_case_divergence` and keep the case's value. `page_said`
+  and "the app refused" are the app's own words; judge them against the case (`## Known validation rules`).
 "##;
 
 const GUIDE_BODY: &str = r##"An action script drives ONE test case through a real, visible browser -
@@ -1275,13 +1276,32 @@ held for 750 ms, so give it a `timeout_ms` of at least 1500.
 for each item it names. Others may sit between. Each text only has to be part
 of an item, and case matters, so "Published" is not found in "Unpublished"
 but "Draft" is found in "Draft (3)": write enough of the text to tell items
-apart. Give it a `timeout_ms` of at least 1500.
+apart. Give it a `timeout_ms` of at least 1500. When the case gives the whole list ("Level 1 to Level 4",
+"only these options"), add an `expect_count` of the items with the case's number, so an extra item fails:
+`expect_order` alone lets others sit between.
 
 **Position.** When the case says where something is ("on the right", "at the
 top", "below the title"), use `expect_position` with a relation. Relations
 only, no pixel sizes or distances: a layout moves a few pixels without being
 wrong. A corner puts the element's centre in that quarter of the other element.
 Give it a `timeout_ms` of at least 1500.
+
+**Everything the expected result names.** Each thing a step's expected result names is checked: a
+message, a state, a column, and an icon too. An icon has no accessible name, so reach it by css
+inside the element it belongs to: `[ { "role": "row", "name": "Group" }, { "css": "i.fa-sitemap" } ]`.
+Having no name is no reason to leave it out; when it truly cannot be reached, say so in your report.
+
+**The place the case names.** When the case says where a thing is (in that row, in the dialog,
+under Target), chain the check inside that place:
+`[ { "role": "row", "name": "Common Automation" }, { "role": "cell", "name": "Pending", "exact": true } ]`.
+A page-wide match proves only that it is somewhere. `nth` counts the matches as the page is now, so
+`nth: 0` of a button whose caption changes once it is used points at the next row after the first
+change: when the case works on one row after another, reach each row by what stays (its name, its
+id), not by `nth`.
+
+**An action the page does not allow.** When a step asks for something the page does not allow
+(choosing an option that is disabled), check that as the fact (the option is disabled, or not in
+the list) and name it in your report. Never put another action in its place without saying so.
 
 **A check that something is absent needs a positive control.** `expect_hidden`
 and `expect_count` of 0 pass when the locator matches nothing, so a locator
@@ -1640,6 +1660,10 @@ it as "the app refused: ...". Neither is TCM's verdict: `page_said` and
   the state it assumes). Report it to the user with the message, and do
   not bend the script until it passes.
 
+The same holds for anything the page shows that the case does not say: a count, a list or a state that
+differs from the case is never written into a check. Keep the case's value and call
+`report_case_divergence` ("When the case and the app disagree").
+
 TCM keeps what the application refused, area by area, and the live guide
 lists it under `## Known validation rules` with the action that caused
 each: read it before you write the steps of a case in that area. When a
@@ -1914,6 +1938,46 @@ This is the important part, and the one that goes wrong quietly.
 If you find yourself writing an assertion because "that is what the code
 does", stop. You are about to automate the bug.
 
+## When the case and the app disagree
+
+Every check's value - a count, a text, an order, a state - is the case's own, as written in its
+expected result or its preconditions: never fit one to the page. If the app or its data differs,
+`report_case_divergence` and keep the case's value, so the run fails or is Blocked until a person rules.
+
+What never to do: a case says the table holds exactly 4 levels and the dropdown lists Level 1 to
+Level 4, and the environment has 6. A script written to check 6 options, Level 1 to Level 6, passes,
+and then the case and its script disagree and nobody was asked. A passing script must mean the case's
+own expected result was seen. The save refuses that script: "step 2: the check counts 6 but the case
+says 4 ("exactly 4 levels")".
+
+`report_case_divergence { case_id, step, case_says, app_shows, kind }` stores what you found for the
+person and never changes the script:
+
+- `case_says` quotes the case's own words (that step, another expected result or the preconditions), at
+  most 300 characters; words the case does not hold are refused. `app_shows` is what the page showed.
+- `kind` is `data` when the environment does not meet the case's precondition (6 levels where the case
+  needs 4), `app` when the application does not do what the case expects, and `wording` when the case is
+  unclear or out of date.
+- A `data` or `wording` divergence marks the case as needing a ruling: its runs are Blocked with
+  `needs a ruling: step N: the case says "..." but the app shows "..." (data) - a person rules on it in
+  Auto Run`, and never count as passed, until the person rules.
+- An `app` divergence does not block. The check stays as the case says, so the run fails at that step:
+  a real bug must surface as a failure. After that run, mark it with `mark_autorun_suspected_defect`.
+- Either way, save the script as the case says and name every divergence in your report.
+
+The person rules on the case in Auto Run:
+
+- The case is right: the script keeps the case's value and the case runs again. A failure there is the
+  data's or the application's; reporting the same divergence again is refused.
+- Data fixed (a `data` divergence): the person changed the environment, and the case runs again.
+- Rewrite the case: the person changes the case in Azure DevOps, and the case waits for a repair
+  (`waits for a repair: step N: ...`). Repair that step's checks to the case as it now reads; the repair
+  closes the divergence.
+
+A missing precondition is the same: a healer pointed at a missing precondition will keep rewriting
+assertions and locators until an empty or disabled page satisfies them, which produces a script that
+passes and proves nothing. Report it; never repair it.
+
 ## A worked example
 
 For a case that runs as the "manager" account, whose step 1 is "Open the
@@ -1972,6 +2036,31 @@ Before every save:
   run: nothing was saved." with what it would save, or the refusal a
   save would give (every locator never seen, listed at once). Only an
   answer starting "saved" saved.
+- Every check's literal value is compared with the case's steps, expected results and preconditions:
+  the numbers of `expect_count` and `expect_row_count` (`equals`, `at_least`, `at_most`) and
+  `expect_each` (`min`), how many `texts` an `expect_order` lists, and the text of `check_text`,
+  `expect_text` (`equals`), `expect_contains_text`, `expect_order`'s `texts`, `expect_each` (`equals`,
+  `contains`), `expect_dialog` and each cell value of `expect_row` and `expect_no_row`. A pattern
+  (`matches`), an attribute, a style, an address and a response are not compared. Exempt: 0 and 1, text
+  under 3 characters, anything holding a `{{placeholder}}`, text starting with the environment's test
+  name prefix, a value the script types or uploads, and a precondition's value. A range the case gives
+  ("Level 1 to Level 4") counts each of its members.
+  A value the case does not contain needs a `because` on its step saying where it comes from, one
+  line of at most 200 characters, never what the app shows, with its `provenance`: `assumed` (the
+  default: the case defines it indirectly,
+  `"because": [{ "value": "6", "why": "one row per DEF level the precondition lists" }]`) or
+  `invented` (you chose it where the case leaves it free,
+  `{ "value": "USD", "why": "one currency the case leaves free", "provenance": "invented" }`). A
+  value the case holds is `from_case`, which the save works out; a value the script types or uploads
+  is invented by the script. The save answer gives each case's sources (`case N: check values: 5 from
+  the case, 1 assumed, 1 invented, 2 exempt`) and lists every assumed and invented value
+  (`case N: assumed: step S "6" - ...`): repeat them in your report before you say the work is done.
+  A count the case states differently is refused naming both, and no `because` lifts it.
+  A value chosen by clicking an option is not typed, so a check on it needs a `because` unless the case states it.
+- A script is checked (`checked` in its JSON) only while it is proven: a run or replay of the case
+  that fails or is Blocked clears it, a pass of the whole case sets it again, and a save of a case
+  with a divergence waiting for a ruling leaves it off. A script that is not checked does not vouch
+  for its locators. A case is done only when its script is checked.
 - A save refused during a discovery only because some locators were never
   seen checks those locators on the discovery's current page once, on its
   own: each one found there visible is recorded with how many elements it
@@ -1995,10 +2084,11 @@ Before every save:
   true when you changed the script's area, leaving out one it had
   included; `quirk` is something you learned about the application; and
   `precondition` adds, removes or changes ONE precondition (`{ op, flow,
-  stage, to, reason }`). Steps you leave out of `edits` must stay exactly
-  as they were; a declared step may change in any way, removing a check
-  included. A precondition removed or changed without a precondition edit
-  is refused. A repair may send `patch_steps` in place of `steps`.
+  stage, to, reason }`), and `gives_up` names each check the repair drops.
+  Steps you leave out of `edits` must stay exactly as they were; a declared
+  step keeps the script's checks unless `gives_up` names each one dropped,
+  and never moves a check's value away from the case. A precondition removed
+  or changed without a precondition edit is refused. A repair may send `patch_steps` in place of `steps`.
   "Repairing a script that failed" has the shapes and every refusal.
 
 An absence check (`expect_hidden`, or `expect_count` of 0) whose locator was
@@ -2130,6 +2220,7 @@ all:
 - `STOP: the run could not reach this case's area - repair the area's path with save_autorun_area and its repair argument (the guide's areas section), not the script`
 - `STOP: the run could not take this case to its module screen - fix the module path or the case's Module in the app, not the script`
 - `STOP: the person marked this case Blocked - a missing precondition is not a script defect`
+- `STOP: the case waits for a person's ruling on a divergence - leave the script as the case says`
 
 None of those is a script defect. For the one that could not reach the
 case's area, the area's menu path may have moved: repair the area, not
@@ -2203,19 +2294,14 @@ says `"area": true`. This gate can refuse a save for any of these reasons:
 - the same steps, only reordered - `the steps are in a different order - a repair does not reorder a script`
 - a repair that leaves out or turns off `"no_save": true` - `this script is marked Must not save, and a repair cannot turn that off`
 
-A repair may change anything in the steps it declares: the locator, the
-waiting, the navigation, or a check, removing one or turning it into an
-action that checks nothing included. Every step it does not declare stays
-exactly as it was, it never changes the order the steps run in, and the
-save still checks every step against the case's expected results. A
-script may be repaired as often as it needs.
+A repair may change the steps it declares: the locator, the waiting, the navigation, or how a check is made. It keeps the script's number of checks (the save stores it) unless its edit names each check it gives up, with why, in `gives_up`: `"gives_up": [{ "step": 3, "kind": "expect_count", "why": "step 4 already counts the same rows" }]`. Give one up only when the case no longer asks for it or another check already proves the same, never because the app fails it: that is a divergence to report. The person sees every check given up on the case, and the save answer names each one (`case N: check given up: step S kind - why`): name them in your report. A repair never changes a check's value away from the case. "the repair lowers the script's checks from N to M" and "step N: the repair drops "4", which the case gives" are refused. A person removes or changes a check in the script editor. Every step it does not declare stays exactly as it was, it never changes the order the steps run in, and the save still checks every step against the case's expected results. A script may be repaired as often as it needs; a repaired script is checked again once a run passes or a replay runs the whole case.
 
 An edit's own `quirk` is one sentence about the APPLICATION, not about
 this particular script - something the next repair, yours or someone
 else's, would otherwise have to rediscover. It is recorded exactly like
 `record_quirk`, which also works on its own, outside a repair.
 That tool takes the line as `text` (not `note`), and a quirk, there or as an
-edit's `quirk`, is at most 300 characters.
+edit's `quirk`, is at most 300 characters. Give a quirk its `class` (`app quirk`, `environment flake` or `product bug`; an edit's `quirk_class`): a product bug is shown on every result of the cases it names and at the top of the run report, so a case that works around one is never buried in a green run.
 
 When this project has recorded quirks, this guide ends with a
 `## Known quirks of this application` section listing them, filed one at
@@ -2255,6 +2341,18 @@ brings it back rather than adding a copy - unless a person wrote it or
 retired it, which is refused: ask them to restore it. A quirk a person
 wrote cannot be retired by you - ask them to remove it. Nothing about a
 quirk ever changes a script or runs anything on its own.
+
+### Bounds of a repair
+
+Classify each failure before you change anything: the locator, timing, the environment, data or a missing precondition, or the application not doing what the case expects. A check whose value differs from what the page shows is data, a missing precondition or the application, never a script fix: call report_case_divergence and keep the case's value. A missing precondition is reported, never repaired: a healer pointed at a missing precondition will keep rewriting assertions and locators until an empty or disabled page satisfies them, which produces a script that passes and proves nothing.
+
+- At most 3 fix-run cycles per case: a fix, then a replay or run of it.
+- Stop at cycle 2 when the failure is identical to cycle 1's: the same step, the same action, the same words.
+- Stop at once on a login page, a missing precondition or a product defect: a real bug must surface as a failure.
+- A pass after a change that changed nothing is run 2 more times: 2 green of 3 is a flake, not a fix. Report it as a flake.
+- A repair keeps the script's number of checks unless its edit names each check given up and why in gives_up, and never changes a check's value away from the case; the save refuses both otherwise.
+
+These limits are guidance for you, and the app refuses none of the cycle limits: what the save refuses is a lower number of checks without `gives_up` and a value moved away from the case.
 
 ### Changing a precondition
 
@@ -2306,6 +2404,7 @@ plain sentence about what you saw, and leave the script alone.
   stopped on a failure counts as the newest run when it is newer, or when
   no run on this machine has the case; `get_autorun_failures` then says
   the failure is "from a replay to step N".
+- While you write a script, a case the application gets wrong is reported with `report_case_divergence` and kind `app` instead; the mark comes after the run fails there.
 - It is not a way around a check you could not make pass. If the locator,
   the waiting, the navigation, the data or the environment could explain
   the failure, fix that first. Never mark a case to avoid repairing it.

@@ -794,6 +794,23 @@ fn the_heal_command_is_an_auto_run_routine_offered_only_with_auto_run() {
     assert!(!flat.to_lowercase().contains("three"), "the routine must not count the STOP lines: {flat}");
     assert!(mcp.contains("could not reach its module screen"), "the failures tool leaves out the module-path stop");
     assert!(body.contains("Choosing a model for the work"), "the routine points at the guide's model section");
+    let lower = flat.to_lowercase();
+    for bound in [
+        "at most 3 fix-run cycles",
+        "stop at cycle 2 when the failure is identical to cycle 1's",
+        "stop at once on a login page, a missing precondition or a product defect",
+        "a real bug must surface as a failure",
+        "2 green of 3 is a flake, not a fix",
+        "report_case_divergence",
+        "a healer pointed at a missing precondition will keep rewriting assertions and locators until an empty or disabled page satisfies them, which produces a script that passes and proves nothing",
+        "needs a ruling",
+        "gives_up",
+        "every assumed and invented value a save listed",
+        "every check given up",
+        "a check whose value differs from what the page shows is never fixed by changing the value",
+    ] {
+        assert!(lower.contains(bound), "the heal routine never says {bound:?}: {flat}");
+    }
 }
 
 /// `/tcm:setup` walks an assistant through getting the app ready to run a
@@ -1756,6 +1773,15 @@ fn the_discover_command_writes_a_script_from_the_live_app() {
     }
     assert!(flat.contains("`area`"), "the script's area must be named: {flat}");
     assert!(!body.contains('\u{2014}') && !body.contains('\u{2013}'), "no em or en dashes");
+    for said in [
+        "never fit the check to the page",
+        "call `report_case_divergence` and keep the case's value",
+        "assumed (the case defines it indirectly",
+        "invented (you chose it where the case leaves it free",
+        "Repeat each assumed and invented value the save lists in your report before you say the work is done",
+    ] {
+        assert!(flat.contains(said), "/tcm:discover never says {said:?}: {flat}");
+    }
 }
 
 /// `/tcm:map-menus` walks the named modules' menus and saves each screen as

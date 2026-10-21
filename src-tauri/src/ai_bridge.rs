@@ -7848,7 +7848,17 @@ fn autorun_failures(ctx: &BridgeContext, target: &str) -> (u16, String) {
             said.push_str(&section);
         }
     }
+    // The bounds of a repair end the answer whenever a case failed or was
+    // Blocked, so an assistant that reads only this still sees them.
+    let bounds = if said.starts_with("no failed case") {
+        None
+    } else {
+        Some(format!("\n\n{}", crate::autorun::failures::REPAIR_BOUNDS))
+    };
     if case_id.is_some() || q(target, "run_id").is_some() {
+        if let Some(b) = &bounds {
+            said.push_str(b);
+        }
         return (200, said);
     }
     // Asked of no case and no run: say which run that was, and name the
@@ -7862,6 +7872,9 @@ fn autorun_failures(ctx: &BridgeContext, target: &str) -> (u16, String) {
     if let Some(others) = others {
         out.push_str("\n\n");
         out.push_str(&others);
+    }
+    if let Some(b) = &bounds {
+        out.push_str(b);
     }
     (200, out)
 }

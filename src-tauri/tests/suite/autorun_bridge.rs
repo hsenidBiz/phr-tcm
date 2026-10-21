@@ -4712,3 +4712,37 @@ async fn a_bad_class_is_refused_naming_the_three() {
     assert!(out.contains("already known"), "{out}");
     assert!(out.contains("(kept its class: product bug)"), "{out}");
 }
+
+/// The failures answer ends with the bounds of a repair, so an assistant that
+/// reads only the answer still sees them.
+#[tokio::test]
+async fn the_failures_answer_ends_with_the_repair_bounds() {
+    use v2_lib::autorun::failures::REPAIR_BOUNDS;
+    let dir = TempDir::new();
+    let _root = crate::serial::autorun();
+    set_root(dir.path().to_path_buf());
+    save_run(dir.path(), &failed_run("run-1700000000000", 7)).unwrap();
+    for target in ["/autorun-failures?case_id=7", "/autorun-failures?run_id=run-1700000000000", "/autorun-failures"] {
+        let (status, out) = route(&ctx(), None, "GET", target, "", "1.0.0").await;
+        assert_eq!(status, 200, "{out}");
+        assert!(out.ends_with(REPAIR_BOUNDS), "{target}: {out}");
+        assert!(out.contains("At most 3 fix-run cycles per case"), "{out}");
+        assert_eq!(out.matches("## Bounds of a repair").count(), 1, "{out}");
+    }
+}
+
+/// A run with nothing failed or blocked carries no bounds.
+#[tokio::test]
+async fn no_bounds_when_nothing_failed() {
+    let dir = TempDir::new();
+    let _root = crate::serial::autorun();
+    set_root(dir.path().to_path_buf());
+    let mut run = failed_run("run-1700000000001", 8);
+    run.cases[0].verdict = "Passed".to_string();
+    run.cases[0].steps.clear();
+    save_run(dir.path(), &run).unwrap();
+    let (status, out) = route(&ctx(), None, "GET", "/autorun-failures?case_id=8", "", "1.0.0").await;
+    assert_eq!(status, 200, "{out}");
+    assert!(out.starts_with("no failed case in run"), "{out}");
+    assert!(!out.contains("Bounds of a repair"), "{out}");
+}
