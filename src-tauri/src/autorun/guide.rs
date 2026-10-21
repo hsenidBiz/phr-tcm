@@ -205,7 +205,7 @@ These are examples, not a rule:
 Scripting here is done in four roles, each with its own short rules:
 
 - writer: choosing what to script and writing it from the live app. Its rules come with your
-  first `start_autorun_discovery` of a session (a mapping run aside); /tcm:discover points at them.
+  first `start_autorun_discovery` of a session (a mapping run aside); /tcm:script-pbi reads the writer's rules first.
 - healer: diagnosing and repairing a failed case. Its rules come with your first
   `get_autorun_failures` of a session.
 - case rewriter: changing a saved script or component, a repair or a rewritten case. Its rules

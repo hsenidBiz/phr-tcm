@@ -2306,6 +2306,7 @@ fn the_guide_names_every_role_and_how_its_rules_arrive() {
         "tcm-<role>.md",
         "whatever tools",
         "20 minutes",
+        "/tcm:script-pbi reads the writer's rules first",
     ] {
         assert!(section.contains(needle), "the Roles section lacks {needle:?}");
     }
