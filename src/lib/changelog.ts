@@ -27,6 +27,17 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.2.3-beta.21",
+    date: "2026-10-21",
+    items: [
+      "Auto Run: after signing in, the app sets each account's menu preferences to what the area was recorded with, changing only what differs, once you fill in the Preferences dialog's controls in the sign-in recipe.",
+      "Auto Run: each area remembers whether it was recorded in Admin or Self Service mode, and every trip to it switches to that mode first. Re-mapping a module records this for areas you already have.",
+      "Auto Run: when two cases start with the same steps, the assistant's replay carries on into the second case instead of starting again, but only when the first case saved nothing and stayed in one tab; otherwise it says why it started over.",
+      "Auto Run: in a discovery that must not save, a save that was stopped is now reported as blocked, not as written.",
+      "Modules: one module is now offered only on machines where it has been switched on.",
+    ],
+  },
+  {
     version: "2.2.3-beta.20",
     date: "2026-10-21",
     items: [
