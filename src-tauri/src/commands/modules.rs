@@ -39,7 +39,7 @@ fn in_order(on: &BTreeSet<Module>) -> Vec<Module> {
 #[tauri::command]
 #[specta::specta]
 pub fn modules_set(app: tauri::AppHandle, module: Module, on: bool) -> Result<Vec<Module>, String> {
-    use tauri::Manager;
+    modules::refuse_if_locked(module, on, crate::extras::unlocked())?;
     let before = modules::current();
     refuse_if_busy(
         &before,
@@ -56,16 +56,24 @@ pub fn modules_set(app: tauri::AppHandle, module: Module, on: bool) -> Result<Ve
     // A module off takes its slash commands with it (`effective_disabled`);
     // re-sync from the bridge's last-known toggles so they vanish/appear now.
     if next != before {
-        let handle = app.state::<crate::commands::ai_bridge::BridgeHandle>();
-        // The save has worked: a poisoned bridge lock must not turn that into
-        // a failure, so recover the guards.
-        let guard = handle.running.lock().unwrap_or_else(|e| e.into_inner());
-        if let Some((shared, _)) = guard.as_ref() {
-            let ctx = shared.ctx.lock().unwrap_or_else(|e| e.into_inner());
-            crate::commands::ai_tools::sync_commands(&ctx.disabled_tools, ctx.working_dir.as_deref());
-        }
+        resync_commands(&app);
     }
     Ok(in_order(&next))
+}
+
+/// Re-sync the assistant's slash commands from the bridge's last-known
+/// toggles, so a module's commands vanish or appear now - after a module
+/// switch and after the machine's unlock changes what is offered.
+pub fn resync_commands(app: &tauri::AppHandle) {
+    use tauri::Manager;
+    let handle = app.state::<crate::commands::ai_bridge::BridgeHandle>();
+    // The save has worked: a poisoned bridge lock must not turn that into
+    // a failure, so recover the guards.
+    let guard = handle.running.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some((shared, _)) = guard.as_ref() {
+        let ctx = shared.ctx.lock().unwrap_or_else(|e| e.into_inner());
+        crate::commands::ai_tools::sync_commands(&ctx.disabled_tools, ctx.working_dir.as_deref());
+    }
 }
 
 /// The testable half: the busy refusals, then `modules::set_in` on a state and

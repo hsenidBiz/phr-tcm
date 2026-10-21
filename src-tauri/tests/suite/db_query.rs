@@ -69,6 +69,7 @@ fn the_dev_login_makes_objects_only_with_both_modules_on() {
 
 #[tokio::test]
 async fn an_object_change_needs_the_writes_switch_and_the_dev_login() {
+    let _on = crate::serial::crystal_on();
     let _m = crate::serial::modules();
     let _act = crate::serial::activity_log();
     let fake = FakeRunner::default();
@@ -98,7 +99,7 @@ fn the_module_sentence_is_what_the_dev_login_hears_without_crystal_reports() {
         assert!(why.contains(OBJECT_ON_ITS_OWN), "{access:?}: {why}");
     }
     assert!(OBJECT_ON_ITS_OWN.contains("send a procedure, view or function on its own"));
-    assert_eq!(v2_lib::db::allowed(PROC, Access::DevWrites).unwrap_err(), OBJECTS_NEED_MODULE);
+    assert_eq!(v2_lib::db::allowed_with(PROC, Access::DevWrites, true).unwrap_err(), OBJECTS_NEED_MODULE);
 }
 
 #[tokio::test]

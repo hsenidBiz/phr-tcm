@@ -613,6 +613,9 @@ pub async fn route(
             serde_json::json!({
                 "disabled": ctx.disabled_tools,
                 "modules": crate::modules::current().iter().map(|m| m.key()).collect::<Vec<_>>(),
+                // The proxy words its refusals by this: it cannot read the
+                // switch itself.
+                "unlocked": crate::extras::unlocked(),
                 "autorun": crate::modules::on(crate::modules::Module::AutoRun),
                 // Only while writes are on too: without them there is no
                 // change to run, asked about or not.
@@ -4658,6 +4661,8 @@ struct Discovered {
     outcome: crate::browser::actions::ActionOutcome,
     dialogs: Vec<String>,
     writes: Vec<serde_json::Value>,
+    /// Saves the guard stopped, each `METHOD /path`: not writes.
+    blocked: Vec<String>,
     after: String,
 }
 
@@ -4972,6 +4977,9 @@ async fn discover_action_heard<B: DiscoveryBrowser>(
             "detail": ran.outcome.detail,
         }));
         writes.extend(ran.writes);
+        if reports_blocks {
+            blocked_writes.extend(ran.blocked);
+        }
         dialogs.extend(ran.dialogs);
         after = ran.after;
         let failed = !ran.outcome.ok;
@@ -4999,6 +5007,10 @@ async fn discover_action_heard<B: DiscoveryBrowser>(
     let mut blocked = count_blocked_writes(d, p.discovery.as_mut(), &runs);
     if reports_blocks {
         blocked_writes.extend(take_no_save_blocks(d, &runs));
+        // A save seen both ways (in the request record and as a stop) is
+        // said once, in the order it was first seen.
+        let mut seen = std::collections::HashSet::new();
+        blocked_writes.retain(|w| seen.insert(w.clone()));
         blocked = Some(blocked_writes.len());
     }
     let mut answer = serde_json::json!({
@@ -5529,11 +5541,18 @@ async fn discover_one<D: crate::browser::cdp::Driver>(
     let what = describe_action(action);
     let now = crate::autorun::sessions::now_ms();
     let mut writes = Vec::new();
+    let mut blocked = Vec::new();
     for sent in sent {
         if !crate::browser::save_guard::SAVE_METHODS.contains(&sent.method.as_str()) {
             continue;
         }
         let path = without_typed(&crate::autorun::discovery_map::path_only(&sent.path_query), action);
+        // A save the guard failed in the browser never reached the server:
+        // it is blocked, not written, and the map does not log it.
+        if crate::browser::save_guard::stopped_by_guard(&sent) {
+            blocked.push(format!("{} {path}", sent.method));
+            continue;
+        }
         if recording {
             let entry = crate::autorun::discovery_map::WriteEntry {
                 method: sent.method.clone(),
@@ -5563,7 +5582,7 @@ async fn discover_one<D: crate::browser::cdp::Driver>(
             unrecorded(&why);
         }
     }
-    Ok(Discovered { outcome: tried.outcome, dialogs, writes, after })
+    Ok(Discovered { outcome: tried.outcome, dialogs, writes, blocked, after })
 }
 
 /// Said by `end_autorun_discovery` once the discovery is over and its
@@ -6152,7 +6171,24 @@ async fn save_discovered_area<B: DiscoveryBrowser>(
             Ok(v) => nav::path_of(v.as_str().unwrap_or("")),
             Err(_) => String::new(),
         };
-        let path = match (&repairing, &reason) {
+        // The menu preferences in force, which the area's clicks are for: a
+        // project whose recipe names them records them with the area. A
+        // dialog that cannot be read leaves them out; the area is saved
+        // without.
+        let preferences = match recipe.menu_preferences.as_ref() {
+            Some(prefs) => match crate::autorun::menu_setup::read_preferences(d, prefs, timing).await {
+                Ok(read) => Some(read),
+                Err(why) => {
+                    crate::applog::warn(format!("area {name}: the menu preferences could not be read: {why}"));
+                    None
+                }
+            },
+            None => None,
+        };
+        // The mode the account is in (a project whose recipe names modes):
+        // the area is for that one.
+        let mode = crate::autorun::menu_setup::read_mode(d, &recipe.modes, timing).await;
+        let mut path = match (&repairing, &reason) {
             (Some(old), Some(reason)) => area_repair::repaired(
                 old,
                 clicks,
@@ -6174,8 +6210,17 @@ async fn save_discovered_area<B: DiscoveryBrowser>(
                 // changed, and an assistant's repair note describes the path
                 // it replaced: it goes with that path.
                 repaired_by_assistant: None,
+                // What an area already saved keeps when a read fails below.
+                preferences: existing.as_ref().map(|old| old.preferences.clone()).unwrap_or_default(),
+                mode: existing.as_ref().and_then(|old| old.mode.clone()),
             },
         };
+        if let Some(read) = preferences {
+            path.preferences = read;
+        }
+        if mode.is_some() {
+            path.mode = mode;
+        }
         // The clicks are saved as the trip made them: each finds exactly
         // one element on the page (`nav::go_to_module_pinning`).
         let mut route = nav::Route::new(&recipe, path);
@@ -6228,15 +6273,39 @@ async fn save_discovered_area<B: DiscoveryBrowser>(
                 run.locate_last(screen);
             }
         }
+        // The same clicks, but the mode or the menu preferences read now are
+        // not what the area holds (an area saved before they were kept, or
+        // one recorded in another state): only those are written, the saved
+        // clicks stay as they are.
+        let (mode_differs, prefs_differ) = (old.mode != path.mode, old.preferences != path.preferences);
+        if mode_differs || prefs_differ {
+            let mut updated = old.clone();
+            updated.preferences = path.preferences.clone();
+            updated.mode = path.mode.clone();
+            if let Err(why) = nav::put_path(root, organization, project, updated) {
+                return (409, why);
+            }
+            stand_in_saved_area(d, p.discovery, p.signed_in.as_deref(), root, organization, project, kept.clone()).await;
+            let what = match (mode_differs, prefs_differ) {
+                (true, true) => "mode/menu preferences",
+                (true, false) => "mode",
+                _ => "menu preferences",
+            };
+            crate::applog::info(format!("Auto Run area {kept}: recorded its {what}"));
+            let message = format!("unchanged path; recorded its {what}");
+            return (200, serde_json::json!({ "saved": true, "arrived": at, "message": message }).to_string());
+        }
         stand_in_saved_area(d, p.discovery, p.signed_in.as_deref(), root, organization, project, kept).await;
         crate::applog::info("Auto Run mapping run found an area unchanged");
         return (200, serde_json::json!({ "saved": false, "unchanged": true, "arrived": at }).to_string());
     }
     let saved = path.clicks.len();
+    let preferences = path.preferences.clone();
+    let mode = path.mode.clone();
     let new_menu = nav::menu_path(&path.clicks);
     let written = match (&repairing, path.repaired_by_assistant.as_ref()) {
         // A repair goes to the file as it is now (`area_repair::save_repair`).
-        (Some(old), Some(note)) => area_repair::save_repair(
+        (Some(old), Some(note)) => area_repair::save_repair_recording(
             root,
             organization,
             project,
@@ -6246,6 +6315,7 @@ async fn save_discovered_area<B: DiscoveryBrowser>(
             path.start.clone(),
             note.reason.clone(),
             note.at.clone(),
+            Some((path.preferences.clone(), path.mode.clone())),
         ),
         _ => nav::put_path(root, organization, project, path),
     };
@@ -6281,6 +6351,12 @@ async fn save_discovered_area<B: DiscoveryBrowser>(
     let mut answer = serde_json::json!({ "saved": true, "arrived": at });
     if !pinned.is_empty() {
         answer["pinned"] = serde_json::json!(pinned);
+    }
+    if !preferences.is_empty() {
+        answer["preferences"] = serde_json::json!(preferences);
+    }
+    if let Some(mode) = mode {
+        answer["mode"] = serde_json::json!(mode);
     }
     (200, answer.to_string())
 }
@@ -7536,7 +7612,7 @@ async fn run_assistant_replay(
     // Where it started, said first: carried on, from the beginning, or
     // already there (then nothing ran, and that is all there is to say).
     // A browser signed in already says so next, where a sign-in would be.
-    let reused = reuse.said().map(|line| format!("{line} ")).unwrap_or_default();
+    let reused = reuse.said(reuse.account.as_deref()).map(|line| format!("{line} ")).unwrap_or_default();
     // Stopped by the replay tool's `stop`: said as stopped on request, after the
     // last action to begin of the step it was on.
     let on_request = matches!(end, ReplayEnd::Stopped { .. }) && crate::autorun::replay_to::stop_was_requested();
@@ -7549,10 +7625,15 @@ async fn run_assistant_replay(
     } else {
         end.sentence_in(cleanup)
     };
+    // From the beginning for a reason another case's stand gave, it says so.
+    let started = match (&reuse.not_carried, from) {
+        (Some(why), ReplayFrom::Beginning) => format!("Started from the beginning: {why}"),
+        _ => from.said(case_id, step),
+    };
     let said = match (&end, from) {
         (ReplayEnd::Refused(_) | ReplayEnd::Blocked(_), _) => end.sentence(),
         (_, ReplayFrom::AlreadyThere) => from.said(case_id, step),
-        _ => format!("{} {reused}{}", from.said(case_id, step), capitalised(&ended)),
+        _ => format!("{started} {reused}{}", capitalised(&ended)),
     };
     // Said before that when the replay ended the assistant's own discovery,
     // with the guard a no_save one leaves on.

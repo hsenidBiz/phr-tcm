@@ -784,6 +784,89 @@ async fn a_discovery_for_a_no_save_case_blocks_a_save_a_click_sends() {
     assert!(browser.as_ref().unwrap().d.is_guarding_saves(), "the guard was not put back on");
 }
 
+/// A save the guard failed inside the browser never reached the server: the
+/// record shows it as a failed request, and the answer lists it as blocked,
+/// never as a write (the batch line says "blocked", not "wrote").
+#[tokio::test]
+async fn a_save_the_guard_blocked_is_listed_as_blocked_not_written() {
+    let dir = root_with_recipe_and_account();
+    save_case_77(dir.path(), true);
+    let mut d = leave_page("Input.dispatchMouseEvent", "https://hr.example.internal/hr/leave/list");
+    d.on_call_events.push((
+        "Input.dispatchMouseEvent".into(),
+        sent("1", "POST", "https://hr.example.internal/hr/Home/SetUserPreferences?x=1"),
+    ));
+    d.on_call_events.push((
+        "Input.dispatchMouseEvent".into(),
+        Event {
+            method: "Network.loadingFailed".into(),
+            params: json!({ "requestId": "1", "errorText": "net::ERR_BLOCKED_BY_CLIENT" }),
+        },
+    ));
+    let (mut browser, _) = slot(d, for_case(exploring("Leave"), 77));
+    let save = Action::Click { selector: "#save".into() };
+
+    let (status, body) = discover_action_in(&mut browser, dir.path(), ORG, PROJECT, &save, None, None).await;
+    assert_eq!(status, 200, "{body}");
+    let v = parsed(&body);
+    assert_eq!(v["writes"], json!([]), "{body}");
+    assert_eq!(v["blocked_writes"], json!(["POST /hr/Home/SetUserPreferences"]), "{body}");
+
+    let batch = vec![save.clone()];
+    let stop = AtomicBool::new(false);
+    let mut again = browser;
+    again.as_mut().unwrap().d.on_call_events.push((
+        "Input.dispatchMouseEvent".into(),
+        sent("2", "POST", "https://hr.example.internal/hr/Home/SetUserPreferences"),
+    ));
+    again.as_mut().unwrap().d.on_call_events.push((
+        "Input.dispatchMouseEvent".into(),
+        Event {
+            method: "Network.loadingFailed".into(),
+            params: json!({ "requestId": "2", "errorText": "net::ERR_BLOCKED_BY_CLIENT" }),
+        },
+    ));
+    use v2_lib::ai_bridge::discover_actions_in;
+    let (status, text) = discover_actions_in(&mut again, dir.path(), ORG, PROJECT, &batch, None, None, true, &stop).await;
+    assert_eq!(status, 200, "{text}");
+    assert!(text.contains("; blocked POST /hr/Home/SetUserPreferences"), "{text}");
+    assert!(!text.contains("wrote"), "{text}");
+}
+
+/// A save the guard stopped that is seen both ways - as a failed request in
+/// the record and as a stop the guard counted - is listed once.
+#[tokio::test]
+async fn a_blocked_save_seen_both_ways_is_listed_once() {
+    let dir = root_with_recipe_and_account();
+    save_case_77(dir.path(), true);
+    let mut d = leave_page("Input.dispatchMouseEvent", "https://hr.example.internal/hr/leave/list");
+    d.on_call_events.push((
+        "Input.dispatchMouseEvent".into(),
+        sent("1", "POST", "https://hr.example.internal/hr/Home/SetUserPreferences"),
+    ));
+    d.on_call_events.push((
+        "Input.dispatchMouseEvent".into(),
+        Event {
+            method: "Network.loadingFailed".into(),
+            params: json!({ "requestId": "1", "errorText": "net::ERR_BLOCKED_BY_CLIENT" }),
+        },
+    ));
+    d.saves_on_call.push((
+        "Input.dispatchMouseEvent".into(),
+        "POST".into(),
+        "https://hr.example.internal/hr/Home/SetUserPreferences".into(),
+    ));
+    let (mut browser, _) = slot(d, for_case(exploring("Leave"), 77));
+    let save = Action::Click { selector: "#save".into() };
+
+    let (status, body) = discover_action_in(&mut browser, dir.path(), ORG, PROJECT, &save, None, None).await;
+    assert_eq!(status, 200, "{body}");
+    let v = parsed(&body);
+    assert_eq!(v["writes"], json!([]), "{body}");
+    assert_eq!(v["blocked_writes"], json!(["POST /hr/Home/SetUserPreferences"]), "{body}");
+    assert_eq!(v["blocked"], 1, "{body}");
+}
+
 /// A discovery STARTED with `no_save: true` (`open_for_discovery` puts the
 /// start's mark on it) guards with no case named, and the mark is never
 /// taken off by a later call that does not say it: the guard is the
@@ -1493,6 +1576,8 @@ async fn an_existing_area_name_is_refused() {
         start: String::new(),
         made_by: MadeBy::Person,
         repaired_by_assistant: None,
+        preferences: Default::default(),
+        mode: None,
     };
     put_path(dir.path(), ORG, PROJECT, existing.clone()).unwrap();
     let (mut browser, _) = slot(menu_app(true, "/hr/leave/apply"), exploring("Leave"));
@@ -1813,6 +1898,8 @@ async fn a_pin_refusal_is_reported_at_its_click() {
         start: "/hr/objectives".into(),
         made_by: MadeBy::Person,
         repaired_by_assistant: None,
+        preferences: Default::default(),
+        mode: None,
     };
     let recipe = v2_lib::autorun::recipe::load_effective_recipe(dir.path(), ORG, PROJECT).unwrap();
     let route = Route { home: Home::of(&recipe), path };
@@ -1832,6 +1919,8 @@ fn older_objectives(made_by: MadeBy, arrived: &str) -> ModulePath {
         start: "/".into(),
         made_by,
         repaired_by_assistant: None,
+        preferences: Default::default(),
+        mode: None,
     }
 }
 
@@ -1922,6 +2011,8 @@ fn persons_leave_apply(clicks: Vec<Target>) -> ModulePath {
         start: "/".into(),
         made_by: MadeBy::Person,
         repaired_by_assistant: None,
+        preferences: Default::default(),
+        mode: None,
     }
 }
 
@@ -2240,6 +2331,8 @@ fn leave_apply(made_by: MadeBy, clicks: Vec<Target>, arrived: &str) -> ModulePat
         start: "/".into(),
         made_by,
         repaired_by_assistant: None,
+        preferences: Default::default(),
+        mode: None,
     }
 }
 
@@ -3038,6 +3131,8 @@ fn recorded(dir: &std::path::Path, name: &str) {
             start: String::new(),
             made_by: MadeBy::Person,
             repaired_by_assistant: None,
+            preferences: Default::default(),
+            mode: None,
         },
     )
     .unwrap();

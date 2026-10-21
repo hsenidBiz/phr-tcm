@@ -135,6 +135,18 @@ pub fn blocked(method: &str, url: &str) -> String {
     format!("{BLOCKED_START}{} {}{BLOCKED_END}", method.trim().to_ascii_uppercase(), path_of(url))
 }
 
+/// Did the guard stop this request? The guard fails a request with
+/// `errorReason: "BlockedByClient"`, which Chrome reports as
+/// `net::ERR_BLOCKED_BY_CLIENT`.
+pub fn stopped_by_guard(e: &crate::browser::net_record::NetEntry) -> bool {
+    matches!(&e.state, crate::browser::net_record::NetState::Failed(r) if r.contains("ERR_BLOCKED_BY_CLIENT"))
+}
+
+/// Did any of these requests write, and get past the guard?
+pub fn sent_a_save(sent: &[crate::browser::net_record::NetEntry]) -> bool {
+    sent.iter().any(|e| SAVE_METHODS.contains(&e.method.as_str()) && !stopped_by_guard(e))
+}
+
 /// Is this one of `blocked`'s sentences?
 pub fn is_blocked(detail: &str) -> bool {
     detail.starts_with(BLOCKED_START) && detail.ends_with(BLOCKED_END)

@@ -7,7 +7,6 @@ import { aiBridge } from "./ai-tools";
 import { apiTemplates } from "./api-templates";
 import { autoRun } from "./auto-run";
 import { board } from "./board";
-import { crystalReports } from "./crystal-reports";
 import { gettingStarted } from "./getting-started";
 import { importFile } from "./import-file";
 import { manualEntry } from "./manual-entry";
@@ -41,7 +40,6 @@ export const screens: Screen[] = [
   newWorkItem,
   aiBridge,
   apiTemplates,
-  crystalReports,
   settings,
 ];
 

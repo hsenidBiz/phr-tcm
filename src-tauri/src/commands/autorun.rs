@@ -2060,10 +2060,22 @@ pub(crate) async fn replay_supervised(
     // The script as it is now, loaded once: what this replay runs, what
     // decides whether it carries on, and what its stand is stamped with.
     let saved = store::load_script(&root, case_id).ok().flatten();
+    let mut not_carried: Option<String> = None;
     let from = match (by, had_browser, session.opened_by, &stand, &saved) {
         (ReplayBy::Assistant, true, OpenedBy::Assistant, Some(stand), Some(saved)) => {
             let (here, _) = crate::ai_bridge::current_page(&mut session.cdp).await;
-            replay_to::carry_from(Some(stand), saved, step, &here, crate::autorun::sessions::now_ms())
+            let now_ms = crate::autorun::sessions::now_ms();
+            match replay_to::carry_from(Some(stand), saved, step, &here, now_ms) {
+                // Not the same case's carry: another case's first steps,
+                // when they are the same and left the page as it is.
+                ReplayFrom::Beginning => {
+                    let now = replay_to::page_state(&mut session.cdp).await;
+                    let (from, why) = replay_to::carry_across_why(Some(stand), saved, step, &now, now_ms);
+                    not_carried = why;
+                    from
+                }
+                same_case => same_case,
+            }
         }
         _ => BEGINNING,
     };
@@ -2078,6 +2090,8 @@ pub(crate) async fn replay_supervised(
     );
     let mut tabs = Vec::new();
     let mut reuse = replay_to::Reuse::default();
+    // Where the page stood after each case step this replay ran.
+    let mut marks = replay_to::Marks::default();
     // The guard as its owner needs it, before anything runs: a no_save
     // discovery this replay ended keeps its guard on (`guard_before_replay`),
     // and whether this replay may lift a guard is decided by whose it is.
@@ -2117,6 +2131,31 @@ pub(crate) async fn replay_supervised(
                     let _ = crate::events::AutorunReplayProgress { case_id, step: k, of }.emit(app);
                 },
                 &mut tabs,
+                replay_to::wrote_before(stand.as_ref(), k),
+                &mut marks,
+            )
+            .await
+        }
+        (Ok(_), ReplayFrom::CarriedOnFrom { k, .. }) => {
+            // The checkpoint it carries on from saved nothing.
+            replay_to::carry_on(
+                &mut session.cdp,
+                &root,
+                organization,
+                project,
+                &req,
+                k + 1,
+                &mut session.account,
+                &mut session.lease,
+                &mut session.guarded_case,
+                &crate::browser::timing::Timing::supervised(),
+                &replay_to::CANCEL,
+                |k, of| {
+                    let _ = crate::events::AutorunReplayProgress { case_id, step: k, of }.emit(app);
+                },
+                &mut tabs,
+                false,
+                &mut marks,
             )
             .await
         }
@@ -2140,6 +2179,7 @@ pub(crate) async fn replay_supervised(
                 },
                 &mut tabs,
                 &mut reuse,
+                &mut marks,
             )
             .await
         }
@@ -2149,10 +2189,18 @@ pub(crate) async fn replay_supervised(
     session.replay_stand = match (&end, &saved) {
         (ReplayEnd::Ready { .. }, Some(saved)) if by == ReplayBy::Assistant => {
             let (here, _) = crate::ai_bridge::current_page(&mut session.cdp).await;
-            Some(replay_to::ReplayStand::of(saved, step, &here, crate::autorun::sessions::now_ms()))
+            // What the old stand's checkpoints still hold, then this run's own.
+            let mut checkpoints = replay_to::checkpoints_kept(from, stand.as_ref());
+            checkpoints.append(&mut marks.checkpoints);
+            // What an earlier segment of this replay did stays with it.
+            let unclean = replay_to::unclean_kept(from, stand.as_ref()).or(marks.unclean);
+            Some(replay_to::ReplayStand::of(saved, step, &here, crate::autorun::sessions::now_ms(), checkpoints).with_unclean(unclean))
         }
         _ => None,
     };
+    if from == ReplayFrom::Beginning {
+        reuse.not_carried = not_carried;
+    }
     if let Some(changed) = replay_to::signed_in_event(&account_before, &session.account) {
         let _ = changed.emit(app);
     }
@@ -2191,6 +2239,9 @@ pub(crate) async fn replay_supervised(
             ReplayFrom::Beginning if reuse.went.is_some() => "ready, signed in already".to_string(),
             ReplayFrom::Beginning => "ready".to_string(),
             ReplayFrom::CarriedOn(k) => format!("ready, carried on from step {k}"),
+            ReplayFrom::CarriedOnFrom { case_id: other, k } => {
+                format!("ready, carried on from step {k} of case {other}")
+            }
             ReplayFrom::AlreadyThere => "already there, nothing ran".to_string(),
         },
         ReplayEnd::StoppedAt { phase: replay_to::ReplayPhase::SignIn, .. } => "stopped while signing in".to_string(),

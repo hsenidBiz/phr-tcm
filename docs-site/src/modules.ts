@@ -7,7 +7,7 @@
 
 import type { SiteContent } from "./types";
 
-export type Module = "db_access" | "writing_style" | "auto_run" | "api_templates" | "playwright" | "crystal_reports";
+export type Module = "db_access" | "writing_style" | "auto_run" | "api_templates" | "playwright";
 
 // The shipped page must not contain the assistant-tool spelling of API
 // Templates (the guard in guard.test.ts scans the built page for it), yet the
@@ -21,7 +21,6 @@ export const MODULES: readonly Module[] = [
   "auto_run",
   API_TEMPLATES,
   "playwright",
-  "crystal_reports",
 ];
 
 /** The module each one needs; null hangs off Core, which is always on. */
@@ -31,7 +30,6 @@ const PARENT: Record<string, Module | null> = {
   auto_run: "db_access",
   [API_TEMPLATES]: "auto_run",
   playwright: "auto_run",
-  crystal_reports: null,
 };
 
 /** Per module, the screens shown only while it is on. */
@@ -39,7 +37,6 @@ export const MODULE_SCREENS: Partial<Record<Module, readonly string[]>> = {
   auto_run: ["auto-run"],
   [API_TEMPLATES]: ["api-templates"],
   playwright: ["playwright"],
-  crystal_reports: ["crystal-reports"],
 };
 
 /** Per module, per screen, the groups (cards) shown only while it is on. */

@@ -199,6 +199,7 @@ impl PageLog {
 /// effort for the caller: a page that refuses only loses the report.
 pub async fn watch<D: Driver>(d: &mut D) -> Result<(), CdpError> {
     d.call("Network.enable", json!({})).await?;
+    d.note_net_recording();
     d.call("Runtime.enable", json!({})).await?;
     Ok(())
 }

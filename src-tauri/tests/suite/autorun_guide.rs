@@ -776,6 +776,7 @@ fn the_guide_teaches_replaying_to_the_failing_step() {
     assert!(flat.contains("The replay leaves the Auto Run browser open on that step"), "{flat}");
     assert!(flat.contains("carries on from where your last replay of it stood"), "{flat}");
     assert!(flat.contains("\"Carried on from step K\" or \"Started from the beginning\""), "{flat}");
+    assert!(flat.contains("(the same first K steps)"), "{flat}");
     assert!(flat.contains("Do not release the browser between replays"), "{flat}");
     assert!(flat.contains("`start_autorun_discovery` takes it over (its other tabs closed, then home)"), "{flat}");
     assert!(!flat.contains("takes it over as it is"), "{flat}");
@@ -2312,4 +2313,10 @@ fn the_guide_names_every_role_and_how_its_rules_arrive() {
         assert!(section.contains(needle), "the Roles section lacks {needle:?}");
     }
     assert!(!section.contains('\u{2014}') && !section.contains('\u{2013}'));
+}
+
+#[test]
+fn the_guide_says_a_delete_dialog_read_may_be_refused_in_auto_mode() {
+    let g = autorun_guide();
+    assert!(g.contains("can be refused as a deletion"), "the guide never says a delete-dialog read may be refused");
 }

@@ -9,7 +9,8 @@ import {
   IconReport,
 } from "../../lib/actionIcons";
 import { cn } from "../../lib/cn";
-import type { Module } from "../../lib/modules";
+import { useExtrasUnlocked } from "../../lib/extras";
+import { UNLOCK_ONLY_MODULE, type Module } from "../../lib/modules";
 import { MODULE_INFO, STATUS_OFF, STATUS_ON, infoOf, statusLocked } from "./modulesCopy";
 import PowerCore from "./PowerCore";
 
@@ -337,6 +338,10 @@ export default function ModuleTree({
   /** Ask to switch `m` on or off. A locked module never reaches this. */
   onToggle: (m: Module, next: boolean) => void;
 }) {
+  // The module only an unlocked machine is offered has no card and no line
+  // while this one is locked.
+  const unlocked = useExtrasUnlocked();
+  const offered = useMemo(() => MODULE_INFO.filter((i) => unlocked || i.module !== UNLOCK_ONLY_MODULE), [unlocked]);
   const { lit, running, flashing, draining } = useLit(modules, hydrated);
   const { height, refFor } = useHeights();
   const { frame, scale } = useFit();
@@ -345,9 +350,9 @@ export default function ModuleTree({
   // picture changes only when that set (or a card's height) does, and the
   // layer morphs from the old picture to the new one.
   const electric = useMemo(() => {
-    const mods = MODULE_INFO.map((i) => i.module).filter((m) => lit.has(m) && !draining.has(m));
+    const mods = offered.map((i) => i.module).filter((m) => lit.has(m) && !draining.has(m));
     return mods.length > 0 ? electricSrc(mods, height) : null;
-  }, [lit, draining, height]);
+  }, [offered, lit, draining, height]);
   // When the last lit path switches off, the layer stays for the drain,
   // still showing the paths it last traced, and fades out with it; it goes
   // once the drain is over. A path lit again meanwhile fades it back in.
@@ -387,7 +392,7 @@ export default function ModuleTree({
             height={BOARD.h}
             viewBox={`0 0 ${BOARD.w} ${BOARD.h}`}
           >
-            {MODULE_INFO.map(({ module: m }) => (
+            {offered.map(({ module: m }) => (
               <g key={m}>
                 <path
                   d={pathFor(m, height)}
@@ -457,7 +462,7 @@ export default function ModuleTree({
             <PowerCore />
           </div>
 
-          {MODULE_INFO.map(({ module: m, name, parent, description }) => {
+          {offered.map(({ module: m, name, parent, description }) => {
             const on = modules.has(m);
             const locked = !on && parent !== null && !modules.has(parent);
             const status = on ? STATUS_ON : locked ? statusLocked(parent!) : STATUS_OFF;

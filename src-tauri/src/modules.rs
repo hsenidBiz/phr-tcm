@@ -81,6 +81,15 @@ impl Module {
 
     /// What every gate says when it refuses because this module is off.
     pub fn off_sentence(self) -> String {
+        self.off_sentence_for(crate::extras::unlocked())
+    }
+
+    /// `off_sentence` with the unlock state passed in. While the held-back
+    /// module is locked, nothing an assistant or person can read names it.
+    pub fn off_sentence_for(self, unlocked: bool) -> String {
+        if !unlocked && self == HIDDEN_UNTIL_UNLOCKED {
+            return NOT_AVAILABLE.to_string();
+        }
         format!("{} is switched off in Modules", self.name())
     }
 
@@ -185,9 +194,19 @@ pub fn data_dir_in(roaming: Option<std::ffi::OsString>) -> Option<PathBuf> {
     roaming.filter(|r| !r.is_empty()).map(|r| PathBuf::from(r).join(APP_IDENTIFIER))
 }
 
-/// The modules saved on this machine, for the `--mcp` proxy (see `saved`).
-pub fn saved_on_this_machine() -> Option<BTreeSet<Module>> {
-    saved(&data_dir_in(std::env::var_os("APPDATA"))?)
+/// The modules this machine offers, for the `--mcp` proxy when the app is
+/// closed, with whether the held-back module is unlocked: the saved set
+/// less what the lock holds back, by the same rule as the app
+/// (`effective`), reading `extras.json` from the same folder. The proxy
+/// never runs setup, so `extras::unlocked()` is always false there.
+pub fn effective_in(dir: &Path) -> Option<(BTreeSet<Module>, bool)> {
+    let unlocked = crate::extras::load(dir);
+    saved(dir).map(|s| (effective(&s, unlocked), unlocked))
+}
+
+/// `effective_in` for this machine's app data folder.
+pub fn saved_on_this_machine() -> Option<(BTreeSet<Module>, bool)> {
+    effective_in(&data_dir_in(std::env::var_os("APPDATA"))?)
 }
 
 /// Whether `dir` holds any app data from an earlier launch. A person who
@@ -256,9 +275,39 @@ pub fn on(m: Module) -> bool {
     current().contains(&m)
 }
 
+/// The module only a machine that unlocked it in Settings is offered.
+pub const HIDDEN_UNTIL_UNLOCKED: Module = Module::CrystalReports;
+
+/// What is offered: the saved choice, less the module that is held back
+/// while this machine has not unlocked it. The saved choice itself is never
+/// touched, so it comes back the moment the machine unlocks.
+pub fn effective(saved: &BTreeSet<Module>, unlocked: bool) -> BTreeSet<Module> {
+    let mut on = saved.clone();
+    if !unlocked {
+        on.remove(&HIDDEN_UNTIL_UNLOCKED);
+    }
+    on
+}
+
+/// The sentence for switching on a module this machine is not offered.
+pub const NOT_AVAILABLE: &str = "That module is not available on this machine.";
+
+/// `Err(NOT_AVAILABLE)` for switching the held-back module on while locked.
+pub fn refuse_if_locked(m: Module, want: bool, unlocked: bool) -> Result<(), String> {
+    if want && !unlocked && m == HIDDEN_UNTIL_UNLOCKED {
+        return Err(NOT_AVAILABLE.to_string());
+    }
+    Ok(())
+}
+
+/// The saved choice in this process, before the unlock rule.
+fn saved_now() -> BTreeSet<Module> {
+    state().clone().unwrap_or_else(|| before_setup(crate::ai_tools::dev_build()))
+}
+
 /// The modules on in this process.
 pub fn current() -> BTreeSet<Module> {
-    state().clone().unwrap_or_else(|| before_setup(crate::ai_tools::dev_build()))
+    effective(&saved_now(), crate::extras::unlocked())
 }
 
 /// `Err(m.off_sentence())` unless `on`: the refusal an IPC command gives
@@ -284,10 +333,12 @@ pub fn set_in(state: &mut BTreeSet<Module>, dir: &Path, m: Module, want: bool) -
 
 /// Save first, then publish, like `extras::set_unlocked` (`set_in`).
 pub fn set(m: Module, want: bool) -> Result<BTreeSet<Module>, String> {
+    let unlocked = crate::extras::unlocked();
+    refuse_if_locked(m, want, unlocked)?;
     let dir = DIR.get().ok_or_else(|| "could not save: setup has not finished yet".to_string())?;
     let mut guard = state();
     let mut now = guard.clone().unwrap_or_else(|| before_setup(crate::ai_tools::dev_build()));
     let next = set_in(&mut now, dir, m, want)?;
     *guard = Some(next.clone());
-    Ok(next)
+    Ok(effective(&next, unlocked))
 }

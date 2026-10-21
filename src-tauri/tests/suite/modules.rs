@@ -220,13 +220,27 @@ fn the_refusal_names_the_module() {
         (Module::AutoRun, "Auto Run is switched off in Modules"),
         (Module::ApiTemplates, "API Templates is switched off in Modules"),
         (Module::Playwright, "Playwright is switched off in Modules"),
-        (Module::CrystalReports, "Crystal Reports is switched off in Modules"),
     ] {
         assert_eq!(m.off_sentence(), said);
         assert_eq!(v2_lib::modules::require(m, false).unwrap_err(), said);
         assert!(v2_lib::modules::require(m, true).is_ok());
     }
     assert_eq!(v2_lib::pw_repo::NOT_OFFERED, Module::Playwright.off_sentence());
+}
+
+/// While the held-back module is locked no sentence names it; unlocked it
+/// is refused like any other module. Every other module reads the same
+/// either way.
+#[test]
+fn the_held_back_module_is_not_named_while_locked() {
+    let m = Module::CrystalReports;
+    assert_eq!(m.off_sentence_for(false), "That module is not available on this machine.");
+    assert_eq!(m.off_sentence_for(false), v2_lib::modules::NOT_AVAILABLE);
+    assert!(!m.off_sentence_for(false).contains("Crystal"));
+    assert_eq!(m.off_sentence_for(true), "Crystal Reports is switched off in Modules");
+    for other in Module::ALL.into_iter().filter(|o| *o != m) {
+        assert_eq!(other.off_sentence_for(false), other.off_sentence_for(true));
+    }
 }
 
 /// Each IPC command group refuses while its module is off, with that
@@ -421,4 +435,51 @@ mod commands {
         let err = modules_set_with(&mut st, &file, Module::Playwright, true, false, false, false).unwrap_err();
         assert!(err.contains("needs"), "{err}");
     }
+}
+
+// ---- the module held back until this machine unlocks it -------------------
+
+#[test]
+fn a_locked_machine_is_not_offered_the_held_back_module_and_nothing_else_changes() {
+    use v2_lib::modules::effective;
+    let all: BTreeSet<Module> = Module::ALL.into_iter().collect();
+    let locked = effective(&all, true);
+    assert_eq!(locked, all, "unlocked keeps every module");
+    let mut expect = all.clone();
+    expect.remove(&Module::CrystalReports);
+    assert_eq!(effective(&all, false), expect, "locked drops only that module");
+    let others = set(&[Module::DbAccess, Module::AutoRun]);
+    assert_eq!(effective(&others, false), others);
+    assert!(effective(&BTreeSet::new(), false).is_empty());
+}
+
+#[test]
+fn switching_the_held_back_module_on_while_locked_is_refused_and_saves_nothing() {
+    use v2_lib::modules::{refuse_if_locked, set_in};
+    let d = tempfile::tempdir().unwrap();
+    let mut state = set(&[Module::DbAccess]);
+    save(d.path(), &state).unwrap();
+    let before = std::fs::read_to_string(d.path().join("modules.json")).unwrap();
+    // The refusal comes before any save, as `set` orders it.
+    let err = refuse_if_locked(Module::CrystalReports, true, false).unwrap_err();
+    assert_eq!(err, "That module is not available on this machine.");
+    assert_eq!(std::fs::read_to_string(d.path().join("modules.json")).unwrap(), before);
+    assert_eq!(state, set(&[Module::DbAccess]));
+    // Unlocked, or switching it off, or any other module: not refused.
+    assert!(refuse_if_locked(Module::CrystalReports, true, true).is_ok());
+    assert!(refuse_if_locked(Module::CrystalReports, false, false).is_ok());
+    assert!(refuse_if_locked(Module::AutoRun, true, false).is_ok());
+    assert!(set_in(&mut state, d.path(), Module::CrystalReports, true).is_ok());
+}
+
+#[test]
+fn a_saved_on_choice_survives_locking_and_unlocking() {
+    use v2_lib::modules::effective;
+    let d = tempfile::tempdir().unwrap();
+    let saved_on = set(&[Module::DbAccess, Module::CrystalReports]);
+    save(d.path(), &saved_on).unwrap();
+    let on_disk = load_or_create(d.path(), false);
+    assert!(!effective(&on_disk, false).contains(&Module::CrystalReports));
+    assert_eq!(load_or_create(d.path(), false), saved_on, "the saved choice is untouched while locked");
+    assert!(effective(&on_disk, true).contains(&Module::CrystalReports));
 }

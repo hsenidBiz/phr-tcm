@@ -148,6 +148,111 @@ fn default_minutes() -> u32 {
     480
 }
 
+/// The application's menu-preferences dialog, as far as the project's areas
+/// need it.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, specta::Type)]
+#[serde(deny_unknown_fields)]
+pub struct MenuPreferences {
+    /// From a signed-in page, the clicks that open the preferences dialog, in order.
+    pub open: Vec<Target>,
+    /// The control that closes it.
+    pub close: Target,
+    pub settings: Vec<MenuPreference>,
+}
+
+/// One setting in the dialog.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, specta::Type)]
+#[serde(deny_unknown_fields)]
+pub struct MenuPreference {
+    /// How answers and the area file name it: "Group Menu Items".
+    pub name: String,
+    /// A checkbox or switch, readable while the dialog is open: checked (or
+    /// aria-checked="true") is on.
+    pub control: Target,
+    /// What the project's areas need when an area recorded no value for it.
+    pub on: bool,
+}
+
+/// One of the application's modes (Admin, Self Service): the same screens
+/// drawn for a different role, switched between by a control.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, specta::Type)]
+#[serde(deny_unknown_fields)]
+pub struct MenuMode {
+    /// How areas and answers name it: "Admin", "Self Service".
+    pub name: String,
+    /// Visible while the account is in this mode.
+    pub shown: Target,
+    /// Clicked, from another mode, to switch to this one.
+    pub switch: Target,
+}
+
+/// Why a recipe's modes cannot be used, or `Ok`.
+fn check_modes(modes: &[MenuMode]) -> Result<(), String> {
+    if modes.is_empty() {
+        return Ok(());
+    }
+    if modes.len() < 2 {
+        return Err("modes: name every mode the application has - one mode is nothing to switch between".to_string());
+    }
+    let mut seen: Vec<String> = Vec::new();
+    for (i, m) in modes.iter().enumerate() {
+        let n = i + 1;
+        let name = m.name.trim();
+        if name.is_empty() {
+            return Err(format!("modes: mode {n} needs a name"));
+        }
+        let lower = name.to_lowercase();
+        if seen.contains(&lower) {
+            return Err(format!("modes: mode {n}: the name \"{name}\" is used twice"));
+        }
+        seen.push(lower);
+        m.shown.validate().map_err(|e| format!("modes: mode {n} ({name}): shown: {e}"))?;
+        m.switch.validate().map_err(|e| format!("modes: mode {n} ({name}): switch: {e}"))?;
+    }
+    if serde_json::to_value(modes).is_ok_and(|v| has_placeholder_anywhere(&v)) {
+        return Err(
+            "modes: {{username}} and {{password}} are filled in for the recipe's own steps only - here they would be used as they are"
+                .to_string(),
+        );
+    }
+    Ok(())
+}
+
+/// Why a recipe's menu preferences cannot be used, or `Ok`.
+fn check_menu_preferences(prefs: &MenuPreferences) -> Result<(), String> {
+    if prefs.open.is_empty() {
+        return Err("menu_preferences: \"open\" needs at least one click".to_string());
+    }
+    if prefs.settings.is_empty() {
+        return Err("menu_preferences: \"settings\" needs at least one setting".to_string());
+    }
+    for (i, t) in prefs.open.iter().enumerate() {
+        t.validate().map_err(|e| format!("menu_preferences: open {}: {e}", i + 1))?;
+    }
+    prefs.close.validate().map_err(|e| format!("menu_preferences: close: {e}"))?;
+    let mut seen: Vec<String> = Vec::new();
+    for (i, s) in prefs.settings.iter().enumerate() {
+        let n = i + 1;
+        let name = s.name.trim();
+        if name.is_empty() {
+            return Err(format!("menu_preferences: setting {n} needs a name"));
+        }
+        let lower = name.to_lowercase();
+        if seen.contains(&lower) {
+            return Err(format!("menu_preferences: setting {n}: the name \"{name}\" is used twice"));
+        }
+        seen.push(lower);
+        s.control.validate().map_err(|e| format!("menu_preferences: setting {n} ({name}): {e}"))?;
+    }
+    if serde_json::to_value(prefs).is_ok_and(|v| has_placeholder_anywhere(&v)) {
+        return Err(
+            "menu_preferences: {{username}} and {{password}} are filled in for the recipe's own steps only - here they would be used as they are"
+                .to_string(),
+        );
+    }
+    Ok(())
+}
+
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, specta::Type)]
 #[serde(deny_unknown_fields)]
 pub struct SignInRecipe {
@@ -164,6 +269,18 @@ pub struct SignInRecipe {
     /// page". No login is filled in here: a placeholder is refused.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub after_sign_in: Vec<RecipeStep>,
+    /// The application's own menu preferences the project's areas depend
+    /// on: how to open the dialog, each setting's control, and the value
+    /// the areas need. After a sign-in the app sets each one that differs
+    /// from what the area recorded (`menu_setup`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub menu_preferences: Option<MenuPreferences>,
+    /// The application's modes (Admin, Self Service), when it has them: what
+    /// shows in each and the control that switches to it. An area records
+    /// the mode it was saved in, and every trip to it switches to that mode
+    /// first (`menu_setup::match_mode`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub modes: Vec<MenuMode>,
     /// Pop-ups the runner closes by itself: before every action that
     /// touches the page (a click, a fill, a drag, an upload) it looks
     /// once, without waiting, for each, and clicks the close control of one
@@ -434,6 +551,10 @@ impl SignInRecipe {
         }
         check_steps(&self.steps, "step", true)?;
         check_steps(&self.after_sign_in, "after_sign_in step", false)?;
+        if let Some(p) = &self.menu_preferences {
+            check_menu_preferences(p)?;
+        }
+        check_modes(&self.modes)?;
         check_popups(&self.close_when_shown)?;
         check_loaders(&self.wait_while_shown)?;
         self.signed_in.validate().map_err(|e| format!("signed_in: {e}"))?;

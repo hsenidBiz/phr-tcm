@@ -69,6 +69,19 @@ pub struct ModulePath {
     /// written before repairs existed, and in every area never repaired.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub repaired_by_assistant: Option<AssistantRepair>,
+    /// The menu preferences in force when the area was recorded (the
+    /// recipe's `menu_preferences`, by name). After a sign-in the app sets
+    /// the account's to these, where they differ, before walking the path.
+    /// Absent in a file written before this was kept, and where the
+    /// project's recipe names none.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub preferences: std::collections::BTreeMap<String, bool>,
+    /// The application's mode (by the recipe's `modes` name) the area was
+    /// recorded in: every trip to it switches the account to that mode
+    /// first. Absent in a file written before this was kept, and where the
+    /// project's recipe names no modes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mode: Option<String>,
 }
 
 /// An assistant's repair of an area's path: what the area held before, so
@@ -419,6 +432,20 @@ pub fn check_area_free(nav: &NavFile, area: &str, module: &str) -> Result<(), St
     }
 }
 
+/// A re-recorded area whose menu preferences or mode could not be read keeps
+/// what the area already saved had: a read that failed never drops recorded
+/// values. Nothing is changed when the project has no such area yet.
+pub fn keep_recorded_values(root: &Path, org: &str, project: &str, path: &mut ModulePath) {
+    let Ok(nav) = load_nav(root, org, project) else { return };
+    let Some(old) = find_area(&nav, path.name()) else { return };
+    if path.preferences.is_empty() {
+        path.preferences = old.preferences.clone();
+    }
+    if path.mode.is_none() {
+        path.mode = old.mode.clone();
+    }
+}
+
 /// Add an area, or replace the one already recorded under the same name
 /// and module, in any case (Re-record). A new area whose name is taken by
 /// one under ANOTHER module is refused: names are unique per project. An
@@ -545,6 +572,12 @@ pub struct Home {
     pub origins: Vec<String>,
     pub signed_in: Target,
     pub after_sign_in: Vec<RecipeStep>,
+    /// The recipe's menu preferences, which `go_to_module` sets after a
+    /// sign-in (`menu_setup`).
+    pub menu_preferences: Option<super::recipe::MenuPreferences>,
+    /// The recipe's modes, which `go_to_module` switches between
+    /// (`menu_setup::match_mode`).
+    pub modes: Vec<super::recipe::MenuMode>,
 }
 
 impl Home {
@@ -554,6 +587,8 @@ impl Home {
             origins: recipe.origins(),
             signed_in: recipe.signed_in.clone(),
             after_sign_in: recipe.after_sign_in.clone(),
+            menu_preferences: recipe.menu_preferences.clone(),
+            modes: recipe.modes.clone(),
         }
     }
 }
@@ -968,6 +1003,44 @@ pub async fn go_to_module<D: Driver>(
     from: TripFrom,
     timing: &Timing,
 ) -> Result<String, PathFailure> {
+    let mut notes = Vec::new();
+    let out = go_to_module_noted(d, route, from, timing, &mut notes).await;
+    for note in &notes {
+        crate::applog::info(note.clone());
+    }
+    out
+}
+
+/// `go_to_module`, with what the trip did besides click the path added to
+/// `notes`. Right after a sign-in it first sets the account's menu
+/// preferences to what the area was recorded with (`menu_setup`), where they
+/// differ: the area's clicks are for that menu. A dialog that cannot be read
+/// is a note, and the trip walks on - the path's own click then fails with
+/// its own sentence, if the menu really is not the one it knows.
+pub async fn go_to_module_noted<D: Driver>(
+    d: &mut D,
+    route: &Route,
+    from: TripFrom,
+    timing: &Timing,
+    notes: &mut Vec<String>,
+) -> Result<String, PathFailure> {
+    if from == TripFrom::SignIn && route.home.menu_preferences.is_some() {
+        match super::menu_setup::match_preferences(d, &route.home, &route.path.preferences, timing).await {
+            Ok(done) => notes.extend(done),
+            Err(why) => notes.push(format!("menu preferences could not be checked: {why}")),
+        }
+    }
+    // The mode the area was recorded in, on every trip. A switch changes the
+    // page, so the walk starts as if from elsewhere.
+    let mut from = from;
+    match super::menu_setup::match_mode(d, &route.home, route.path.mode.as_deref(), timing).await {
+        Ok(Some(note)) => {
+            notes.push(note);
+            from = TripFrom::Elsewhere;
+        }
+        Ok(None) => {}
+        Err(reason) => return Err(PathFailure { at: Where::Home, reason, harness: false }),
+    }
     if from == TripFrom::Elsewhere && page_on_home_origin(d, route).await.is_some() {
         let quick = Timing {
             action_ms: timing.action_ms.min(QUICK_TRY_MS),
@@ -1146,7 +1219,14 @@ async fn click_path<D: Driver>(
 
 /// A trip to a module as the one outcome the run's "Go to X" line shows.
 pub fn reached(module: &str, result: Result<String, PathFailure>) -> ActionOutcome {
+    reached_noted(module, result, &[])
+}
+
+/// `reached`, with what the trip did on the way (`go_to_module_noted`) said
+/// beside the module: "Go to Leave (Group Menu Items turned off)".
+pub fn reached_noted(module: &str, result: Result<String, PathFailure>, notes: &[String]) -> ActionOutcome {
     match result {
+        Ok(_) if !notes.is_empty() => ActionOutcome::passed(format!("Go to {} ({})", module.trim(), notes.join("; "))),
         Ok(_) => ActionOutcome::passed(format!("Go to {}", module.trim())),
         Err(f) => {
             let mut out = ActionOutcome::failed(f.for_run(module));
@@ -1191,24 +1271,48 @@ pub async fn reach_module<D: Driver>(
     timing: &Timing,
     who: &str,
 ) -> ActionOutcome {
+    reach_module_noted(d, route, from, timing, who).await.0
+}
+
+/// `reach_module`, with the notes the trip made (`go_to_module_noted`) as
+/// well: they are already in a passed outcome's words, and the replay to a
+/// step says them in its own answer.
+pub async fn reach_module_noted<D: Driver>(
+    d: &mut D,
+    route: &Route,
+    from: TripFrom,
+    timing: &Timing,
+    who: &str,
+) -> (ActionOutcome, Vec<String>) {
     let module = route.path.name();
-    let first = reached(module, go_to_module(d, route, from, timing).await);
+    let mut notes = Vec::new();
+    let went = go_to_module_noted(d, route, from, timing, &mut notes).await;
+    let first = reached_noted(module, went, &notes);
     if first.ok || first.harness {
-        return first;
+        log_notes(&notes);
+        return (first, notes);
     }
     log_page(d, &format!("{who}, first try"), &first.detail);
     let reload = load_home(d, &route.home, timing).await;
     let mut second = if reload.ok {
         // Right after a fresh load the browser sits where a sign-in leaves
         // it: on the path's own first page, there is no going home again.
-        reached(module, go_to_module(d, route, TripFrom::SignIn, timing).await)
+        let went = go_to_module_noted(d, route, TripFrom::SignIn, timing, &mut notes).await;
+        reached_noted(module, went, &notes)
     } else {
         reached(module, Err(PathFailure { at: Where::Home, reason: reload.detail, harness: reload.harness }))
     };
     if !second.ok {
         second.detail.push_str(TRIED_TWICE);
     }
-    second
+    log_notes(&notes);
+    (second, notes)
+}
+
+fn log_notes(notes: &[String]) {
+    for note in notes {
+        crate::applog::info(note.clone());
+    }
 }
 
 /// How a mid-script `sign_in`'s one outcome joins the sign-in to the trip

@@ -1616,6 +1616,15 @@ You open and drive a browser of your own to find what a script needs:
   refused too. The new clicks must arrive where you are, as for a new area.
   The area keeps its name and module, so its scripts are unchanged; tell
   the person what you repaired and that they can put the old path back.
+- A project's recipe may name its menu preferences (`menu_preferences`: how
+  to open the dialog, each setting's control and the value its areas need).
+  An area records the values in force when it was saved; after each sign-in
+  the app sets them, only where they differ, before walking the area's path,
+  and the answer says what it changed.
+- A recipe may name the application's modes (`modes`: what shows in each, and
+  the control that switches to it). An area records the mode it was saved in,
+  and every trip to it switches to that mode first (and back for an area of
+  the other), skipping an account that has only one.
 - `end_autorun_discovery` ends your discovery and keeps the browser: what it
   mapped is kept, and the browser stays open and signed in for your next
   replay or discovery; only the person's End discovery button closes it.
@@ -1705,6 +1714,8 @@ it) and, when the browser is not on the page it belongs to, `area`,
 `page` and `step`. Call it with `remove: true` and the message to take
 out a rule that no longer holds. Never record words you did not see on
 the page.
+
+In Claude's auto mode, reading a delete confirmation (`get_autorun_page`) can be refused as a deletion. A no_save discovery cannot delete anything: ask the person to approve that read rather than working around it.
 
 ### Mapping the menus
 
@@ -2221,6 +2232,16 @@ the answer says so; start a new one to explore again.
   try, a discovery action or another replay) has used it since; the
   answer starts with "Carried on from step K" or "Started from the
   beginning". Already standing before the step, nothing runs.
+- A replay of another case carries on from where your last replay left the
+  browser when its first K steps are the same in every action, its account,
+  area, preconditions and save mode are the same, it has no setup, the
+  last replay saved nothing at all (after step K and in its clean-up too),
+  had the network record on and opened no other tab, and the page is back
+  where step K left it (same address, nothing still open): the answer says "Carried on from step K of
+  case N (the same first K steps)". When it does not, the answer says why
+  in one sentence ("Started from the beginning: case N saved something
+  after the shared steps."). A person's run still plays every case
+  from its sign-in, so every case keeps its end-to-end proof.
 - To prove a case's last step, replay to one past it, its last step number
   + 1: the answer says "replayed the whole of case N (all M steps)", and
   the browser stands on the page that last step left.

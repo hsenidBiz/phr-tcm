@@ -543,7 +543,7 @@ fn an_unreachable_bridge_disables_nothing() {
 fn an_unreachable_bridge_falls_back_to_the_saved_modules() {
     use v2_lib::mcp::tools_reply_or_saved;
     let names_with = |saved: Option<BTreeSet<Module>>| -> Vec<String> {
-        let call = move |_m: &str, _p: &str, _b: &str| tools_reply_or_saved(Err("connection refused".into()), saved.clone());
+        let call = move |_m: &str, _p: &str, _b: &str| tools_reply_or_saved(Err("connection refused".into()), saved.clone().map(|s| (s, false)));
         let resp =
             v2_lib::mcp::handle_message(r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#, "1.0.0", &call).unwrap();
         let v: serde_json::Value = serde_json::from_str(&resp).unwrap();
@@ -557,13 +557,13 @@ fn an_unreachable_bridge_falls_back_to_the_saved_modules() {
     assert!(none.iter().all(|n| module_of_tool(n).is_none()), "{none:?}");
     // a 503 from a bridge that is up but unwell reads the file too
     let (_, on) = v2_lib::mcp::tool_policy_from(
-        tools_reply_or_saved(Ok((503, String::new())), Some([Module::DbAccess].into_iter().collect())),
+        tools_reply_or_saved(Ok((503, String::new())), Some(([Module::DbAccess].into_iter().collect(), false))),
     );
     assert_eq!(on, [Module::DbAccess].into_iter().collect());
     // but a real answer is never overridden by the file
     let (_, on) = v2_lib::mcp::tool_policy_from(tools_reply_or_saved(
         Ok((200, r#"{"disabled":[],"modules":[]}"#.into())),
-        Some([Module::DbAccess].into_iter().collect()),
+        Some(([Module::DbAccess].into_iter().collect(), false)),
     ));
     assert!(on.is_empty());
 }
@@ -973,7 +973,7 @@ fn each_module_off_removes_its_tools_from_the_list_and_refuses_them() {
         let gone: Vec<&String> = all.iter().filter(|n| !names.contains(n)).collect();
         assert!(gone.iter().all(|n| module_of_tool(n).is_some()), "{module}: a Core tool went: {gone:?}");
 
-        let answer = format!(r#"{{"disabled":[],"modules":{on_list}}}"#);
+        let answer = format!(r#"{{"disabled":[],"modules":{on_list},"unlocked":true}}"#);
         let call = move |_m: &str, path: &str, _b: &str| -> Result<(u16, String), String> {
             assert_eq!(path, "/tools", "a tool of an off module must never reach the bridge");
             Ok((200, answer.clone()))
@@ -987,7 +987,8 @@ fn each_module_off_removes_its_tools_from_the_list_and_refuses_them() {
             let v: serde_json::Value = serde_json::from_str(&resp).unwrap();
             assert_eq!(v["result"]["isError"], true, "{t}");
             let text = v["result"]["content"][0]["text"].as_str().unwrap();
-            assert!(text.contains("is switched off in Modules"), "{t}: {text}");
+            let m = Module::from_key(module).unwrap();
+            assert!(text.contains(&m.off_sentence_for(true)), "{t}: {text}");
         }
     }
     // Writing Style and Playwright have no tools: switching them off leaves the list as it is.
@@ -1100,7 +1101,8 @@ fn the_live_preview_says_not_to_ask_only_when_the_app_says_so() {
 /// alter, what is still never allowed, and how large a request may be.
 #[test]
 fn db_query_describes_the_object_allowance_and_the_size_cap() {
-    let resp = handle_message(r#"{"jsonrpc":"2.0","id":2,"method":"tools/list"}"#, "1.0.0", &stub(200, "")).unwrap();
+    // On a machine that unlocked the held-back module: locked, the allowance is not described.
+    let resp = handle_message(r#"{"jsonrpc":"2.0","id":2,"method":"tools/list"}"#, "1.0.0", &stub(200, r#"{"unlocked":true}"#)).unwrap();
     let v: serde_json::Value = serde_json::from_str(&resp).unwrap();
     let text = v["result"]["tools"]
         .as_array()
@@ -1633,7 +1635,7 @@ fn the_guide_tool_offers_a_topic_only_while_its_row_is_on() {
         "The `autorun` guide is switched off in Test Case Manager. Turn it back on in the app's AI Bridge tab if you need it."
     );
     let said = ask(r#"{"disabled":[],"modules":["writing_style"]}"#, "reports");
-    assert_eq!(said, format!("The `reports` guide is not available: {}.", Module::CrystalReports.off_sentence()));
+    assert_eq!(said, format!("The `reports` guide is not available: {}.", Module::CrystalReports.off_sentence_for(false).trim_end_matches('.')));
     // An unknown topic names only the topics offered.
     let said = ask(r#"{"disabled":[],"modules":["writing_style"]}"#, "selectors");
     assert!(said.contains("\"writing\"") && !said.contains("autorun"), "{said}");
@@ -2553,7 +2555,7 @@ fn the_guide_tool_refuses_a_topic_whose_module_is_off() {
         assert_eq!(v["result"]["isError"], true, "{topic}: {v}");
         assert_eq!(
             v["result"]["content"][0]["text"],
-            format!("The `{topic}` guide is not available: {}.", module.off_sentence()),
+            format!("The `{topic}` guide is not available: {}.", module.off_sentence_for(false).trim_end_matches('.')),
             "{topic}"
         );
     }
@@ -2748,7 +2750,7 @@ fn the_network_tools_are_off_until_the_app_says_yes() {
         assert_eq!(names.len(), 54, "{names:?}");
     }
     // The proxy's own fallback when the app does not answer names no switch.
-    let saved = v2_lib::mcp::tools_reply_or_saved(Err("down".into()), Some(Module::ALL.into_iter().collect()));
+    let saved = v2_lib::mcp::tools_reply_or_saved(Err("down".into()), Some((Module::ALL.into_iter().collect(), true)));
     let (off, on) = tool_policy_from(saved);
     assert!(on.contains(&Module::AutoRun));
     for tool in NETWORK_TOOLS {
@@ -3342,4 +3344,96 @@ fn get_guide_offers_role_with_the_autorun_topic() {
     assert!(on["description"].as_str().unwrap().contains("`role` gives one role's rules."), "{on}");
     let off = guide_of(r#"{"disabled":[],"modules":["writing_style"]}"#);
     assert!(off["inputSchema"]["properties"].get("role").is_none(), "{off}");
+}
+
+/// What the `--mcp` proxy lists when the app is closed and `dir` is the data
+/// folder: the saved modules less what the lock holds back, read the way the
+/// app reads them.
+fn tools_list_from_saved_dir(dir: &std::path::Path) -> serde_json::Value {
+    let saved = v2_lib::modules::effective_in(dir);
+    let call = move |_m: &str, _p: &str, _b: &str| v2_lib::mcp::tools_reply_or_saved(Err("connection refused".into()), saved.clone());
+    let resp = v2_lib::mcp::handle_message(r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#, "1.0.0", &call).unwrap();
+    serde_json::from_str::<serde_json::Value>(&resp).unwrap()["result"].clone()
+}
+
+/// The app is closed, the person switched the held-back module on before it
+/// was held back, and this machine has not unlocked it: the proxy lists none
+/// of its tools and its guide topic, and no description names it. Unlocked,
+/// they are all there.
+#[test]
+fn a_closed_app_offers_the_held_back_module_only_when_the_machine_unlocked_it() {
+    let dir = tempfile::tempdir().unwrap();
+    v2_lib::modules::save(dir.path(), &Module::ALL.into_iter().collect()).unwrap();
+    v2_lib::extras::save(dir.path(), false).unwrap();
+
+    let locked = tools_list_from_saved_dir(dir.path());
+    let names: Vec<&str> = locked["tools"].as_array().unwrap().iter().map(|t| t["name"].as_str().unwrap()).collect();
+    for t in CRYSTAL_TOOLS {
+        assert!(!names.contains(t), "{t} listed on a locked machine: {names:?}");
+    }
+    assert!(names.contains(&"db_query") && names.contains(&"save_autorun_script"), "the other modules stay: {names:?}");
+    let said = locked.to_string().to_lowercase();
+    assert!(!said.contains("crystal"), "a locked list names the module");
+    let guide = locked["tools"].as_array().unwrap().iter().find(|t| t["name"] == "get_guide").unwrap().to_string();
+    assert!(!guide.contains("reports"), "the guide offers the hidden topic: {guide}");
+
+    v2_lib::extras::save(dir.path(), true).unwrap();
+    let open = tools_list_from_saved_dir(dir.path());
+    let names: Vec<&str> = open["tools"].as_array().unwrap().iter().map(|t| t["name"].as_str().unwrap()).collect();
+    for t in CRYSTAL_TOOLS {
+        assert!(names.contains(t), "{t} missing on an unlocked machine");
+    }
+    let guide = open["tools"].as_array().unwrap().iter().find(|t| t["name"] == "get_guide").unwrap().to_string();
+    assert!(guide.contains("reports"), "{guide}");
+}
+
+/// A closed app words its refusals by the same unlock state: locked, the
+/// module is never named; unlocked and switched off, it is told where to
+/// switch it on.
+#[test]
+fn a_closed_apps_refusals_follow_the_unlock_state_of_the_data_folder() {
+    let dir = tempfile::tempdir().unwrap();
+    v2_lib::modules::save(dir.path(), &[Module::DbAccess].into_iter().collect()).unwrap();
+    let ask = |what: serde_json::Value| -> String {
+        let saved = v2_lib::modules::effective_in(dir.path());
+        let call = move |_m: &str, _p: &str, _b: &str| v2_lib::mcp::tools_reply_or_saved(Err("down".into()), saved.clone());
+        let req = serde_json::json!({ "jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": what });
+        let v: serde_json::Value = serde_json::from_str(&v2_lib::mcp::handle_message(&req.to_string(), "1.0.0", &call).unwrap()).unwrap();
+        assert_eq!(v["result"]["isError"], true, "{v}");
+        v["result"]["content"][0]["text"].as_str().unwrap().to_string()
+    };
+    let tool = serde_json::json!({ "name": "open_report", "arguments": {} });
+    let guide = serde_json::json!({ "name": "get_guide", "arguments": { "topic": "reports" } });
+
+    v2_lib::extras::save(dir.path(), false).unwrap();
+    let said = ask(tool.clone());
+    assert_eq!(said, format!("The `open_report` tool is not available: {}.", v2_lib::modules::NOT_AVAILABLE.trim_end_matches('.')));
+    assert!(!said.contains("Crystal"), "{said}");
+    let said = ask(guide.clone());
+    assert_eq!(said, format!("The `reports` guide is not available: {}.", v2_lib::modules::NOT_AVAILABLE.trim_end_matches('.')));
+
+    v2_lib::extras::save(dir.path(), true).unwrap();
+    assert_eq!(ask(tool), "The `open_report` tool is not available: Crystal Reports is switched off in Modules.");
+    assert_eq!(ask(guide), "The `reports` guide is not available: Crystal Reports is switched off in Modules.");
+}
+
+/// `db_query`'s description is sent to every assistant whenever Database
+/// Access is on, so while the module is held back it never names it.
+#[test]
+fn db_querys_description_names_the_held_back_module_only_when_unlocked() {
+    let desc = |tools_answer: &str| -> String {
+        let a = tools_answer.to_string();
+        let call = move |_m: &str, _p: &str, _b: &str| -> Result<(u16, String), String> { Ok((200, a.clone())) };
+        let resp = v2_lib::mcp::handle_message(r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#, "1.0.0", &call).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&resp).unwrap();
+        v["result"]["tools"].as_array().unwrap().iter().find(|t| t["name"] == "db_query").unwrap()["description"].as_str().unwrap().to_string()
+    };
+    let locked = desc(r#"{"disabled":[],"modules":["db_access"]}"#);
+    assert!(!locked.to_lowercase().contains("crystal"), "{locked}");
+    assert!(locked.contains("CREATE, ALTER and CREATE OR ALTER are refused too."), "{locked}");
+    let locked_all = desc(r#"{"disabled":[],"modules":["db_access","crystal_reports"],"unlocked":false}"#);
+    assert_eq!(locked, locked_all);
+
+    let open = desc(r#"{"disabled":[],"modules":["db_access","crystal_reports"],"unlocked":true}"#);
+    assert!(open.contains("except on the Dev - dev login with Crystal Reports and Database Access on and writes switched on"), "{open}");
 }

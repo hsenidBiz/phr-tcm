@@ -421,3 +421,41 @@ fn the_type_site_and_poll_of_a_request_are_kept() {
     assert!(all[3].polling);
     assert!(!all[1].polling);
 }
+
+// ---- a request-heavy page, and a record that is not on ----------------------
+
+#[test]
+fn a_record_that_dropped_requests_since_a_mark_says_so() {
+    let mut rec = NetRecord::default();
+    rec.observe(&sent("0", "POST", "https://hr.example/hr/save"));
+    assert!(!rec.lost_since(0));
+    for i in 1..=MAX_REQUESTS {
+        rec.observe(&sent(&format!("g{i}"), "GET", "https://hr.example/hr/x"));
+    }
+    assert!(rec.lost_since(0), "the POST is gone");
+    assert!(!rec.lost_since(rec.mark()), "nothing after a fresh mark has been dropped");
+    assert!(!rec.since(0).iter().any(|e| e.method == "POST"), "and since() cannot show it");
+}
+
+/// A write that scrolled out of the record, or a record that was never on,
+/// counts as a write.
+#[tokio::test]
+async fn the_browser_counts_what_it_cannot_see_as_a_write() {
+    let mut frames: VecDeque<String> = VecDeque::new();
+    frames.push_back(frame_of(&sent("0", "POST", "https://hr.example/hr/save")));
+    for i in 1..=MAX_REQUESTS {
+        frames.push_back(frame_of(&sent(&format!("g{i}"), "GET", "https://hr.example/hr/x")));
+    }
+    frames.push_back(r#"{"id":1,"result":{}}"#.into());
+    let mut cdp = Cdp::over(Frames(frames));
+    let start = Driver::net_mark(&cdp);
+    assert!(Driver::net_wrote_since(&cdp, start), "the record is not on yet");
+    Driver::note_net_recording(&mut cdp);
+    assert!(Driver::net_recording(&cdp));
+    assert!(!Driver::net_wrote_since(&cdp, start), "nothing yet");
+    cdp.call("Runtime.evaluate", json!({ "expression": "1" })).await.unwrap();
+    assert!(Driver::net_wrote_since(&cdp, start), "the POST scrolled out of the record");
+    let after = Driver::net_mark(&cdp);
+    assert!(!Driver::net_wrote_since(&cdp, after), "only GETs since a fresh mark");
+    assert_eq!(Driver::tabs_opened(&cdp), 1, "one tab, ever");
+}

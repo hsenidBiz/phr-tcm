@@ -92,6 +92,12 @@ pub fn unlocked() -> bool {
     UNLOCKED.load(Ordering::SeqCst)
 }
 
+/// Publish the switch without saving it - for a test that needs this process
+/// to read as unlocked (or locked again) and has no folder to save into.
+pub fn set_unlocked_in_memory(on: bool) {
+    UNLOCKED.store(on, Ordering::SeqCst);
+}
+
 /// Save first, then publish: a switch that could not be saved is not
 /// reported as on, only to come back off at the next launch. `init` has to
 /// have run first - without it there is nowhere to save, and reporting

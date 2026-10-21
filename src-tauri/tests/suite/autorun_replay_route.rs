@@ -1201,3 +1201,24 @@ async fn a_replay_that_passes_with_test_changes_says_so_and_after_a_reset_is_pla
     let v: Value = serde_json::from_str(&text).unwrap();
     assert_eq!(v["sentence"], "Started from the beginning. Replayed case 77 to step 1 - the browser is on the page before step 1 runs");
 }
+
+/// A replay that starts from the beginning because the browser's last
+/// replay was another case's and did something carrying on could not
+/// trust says why, in one sentence.
+#[tokio::test]
+async fn the_answer_says_why_it_did_not_carry_on_from_another_case() {
+    use v2_lib::autorun::replay_to::{ReplayFrom, Reuse};
+    let _a = crate::serial::autorun();
+    let dir = tempfile::tempdir().unwrap();
+    store::set_root(dir.path().to_path_buf());
+    project(dir.path(), &script(false));
+    let reuse = Reuse { not_carried: Some("case 12 saved something after the shared steps.".into()), ..Reuse::default() };
+    let host = leak(FakeHost { from: ReplayFrom::Beginning, reuse, ..FakeHost::ready() });
+    let (status, text) = autorun_replay_with(&ctx(), &body(3), host, WAIT).await;
+    assert_eq!(status, 200, "{text}");
+    let v: Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(
+        v["sentence"],
+        "Started from the beginning: case 12 saved something after the shared steps. Replayed case 77 to step 3 - the browser is on the page before step 3 runs"
+    );
+}

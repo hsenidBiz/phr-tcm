@@ -526,6 +526,8 @@ pub fn finish(module: &str, area: &str, captured: Captured, recorded: &str) -> R
                 // A person's recording: whatever an assistant's repair
                 // left is gone with the path it repaired.
                 repaired_by_assistant: None,
+                preferences: Default::default(),
+                mode: None,
             })
         }
     }

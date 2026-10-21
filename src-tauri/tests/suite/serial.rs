@@ -126,6 +126,25 @@ pub fn extras() -> MutexGuard<'static, ()> {
     hold(&L)
 }
 
+/// The machine reads as unlocked while this is held: the extras lock is
+/// taken (so the extras test, which needs it locked, waits) and the switch
+/// is published in memory, then put back on drop. A test that needs the
+/// held-back module takes this FIRST - before `modules()` or `crystal()` -
+/// since the extras test takes the extras lock before the modules one.
+pub struct Unlocked(#[allow(dead_code)] MutexGuard<'static, ()>);
+
+pub fn crystal_on() -> Unlocked {
+    let guard = extras();
+    v2_lib::extras::set_unlocked_in_memory(true);
+    Unlocked(guard)
+}
+
+impl Drop for Unlocked {
+    fn drop(&mut self) {
+        v2_lib::extras::set_unlocked_in_memory(false);
+    }
+}
+
 /// Where the writing style lives (`writing_style::set_dir`). Every test that
 /// reads the writing guide takes it: a style one test switches on would
 /// otherwise replace the standard sections another test is looking for.

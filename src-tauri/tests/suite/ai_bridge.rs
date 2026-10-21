@@ -1047,12 +1047,15 @@ async fn no_configuration_disables_nothing() {
 /// names, and no longer says anything about `autorun`.
 #[tokio::test]
 async fn the_bridge_lists_the_modules_that_are_on() {
+    let _e = crate::serial::extras();
     let _g = crate::serial::modules();
     let (status, body) = route(&ctx(), None, "GET", "/tools", "", "1.0.0").await;
     assert_eq!(status, 200);
     let v: serde_json::Value = serde_json::from_str(&body).unwrap();
     let want: Vec<&str> = v2_lib::modules::current().iter().map(|m| m.key()).collect();
     assert_eq!(v["modules"], serde_json::json!(want));
+    // The proxy words a refusal by the unlock state, which it cannot read.
+    assert_eq!(v["unlocked"], serde_json::json!(v2_lib::extras::unlocked()), "{body}");
     // Transitional, for one release: a proxy from before modules reads it.
     assert_eq!(v["autorun"], serde_json::json!(v2_lib::modules::on(v2_lib::modules::Module::AutoRun)), "{body}");
 }
@@ -4306,12 +4309,13 @@ mod crystal_routes {
 
     #[test]
     fn the_crystal_routes_are_404_while_the_module_is_off() {
+        let _e = crate::serial::extras();
         let mut off: std::collections::BTreeSet<Module> = Module::ALL.into_iter().collect();
         off.remove(&Module::CrystalReports);
         for path in PATHS.iter().chain(&["/crystal-guide"]) {
             let (status, body) = module_guard_for(path, &off).unwrap_or_else(|| panic!("{path} was not refused"));
             assert_eq!(status, 404, "{path}");
-            assert_eq!(body, "Crystal Reports is switched off in Modules", "{path}");
+            assert_eq!(body, Module::CrystalReports.off_sentence(), "{path}");
             assert!(module_guard_for(path, &Module::ALL.into_iter().collect()).is_none(), "{path}");
         }
         // The module hangs off Core: nothing else being off refuses it.
@@ -4329,6 +4333,7 @@ mod crystal_routes {
 
     #[tokio::test]
     async fn the_routes_open_read_edit_check_compare_and_preview_a_report() {
+        let _on = crate::serial::crystal_on();
         let _lock = crate::serial::crystal();
         let dir = tempfile::tempdir().unwrap();
         let path = copy_sample(dir.path());
@@ -4383,6 +4388,7 @@ mod crystal_routes {
 
     #[tokio::test]
     async fn a_new_report_is_created_and_an_existing_file_is_refused() {
+        let _on = crate::serial::crystal_on();
         let _lock = crate::serial::crystal();
         let dir = tempfile::tempdir().unwrap();
         let existing = copy_sample(dir.path());
@@ -4401,6 +4407,7 @@ mod crystal_routes {
 
     #[tokio::test]
     async fn a_refused_edit_answers_400_with_the_sentence_and_the_current_ir() {
+        let _on = crate::serial::crystal_on();
         let _lock = crate::serial::crystal();
         let dir = tempfile::tempdir().unwrap();
         let path = copy_sample(dir.path());
@@ -4434,6 +4441,7 @@ mod crystal_routes {
 
     #[tokio::test]
     async fn bad_bodies_are_400_sentences() {
+        let _on = crate::serial::crystal_on();
         let _lock = crate::serial::crystal();
         v2_lib::crystal::close();
         for (path, body) in [
@@ -4498,6 +4506,7 @@ mod crystal_routes {
     async fn live_preview_needs_the_dev_login_and_writes() {
         use v2_lib::db::query::{NO_CONNECTION, WRITES_OFF};
         use v2_lib::db::READ_ONLY_SENTENCE;
+        let _on = crate::serial::crystal_on();
         let _lock = crate::serial::crystal();
         let dir = tempfile::tempdir().unwrap();
         let path = copy_sample(dir.path());
@@ -4541,6 +4550,7 @@ mod crystal_routes {
         use std::sync::atomic::{AtomicUsize, Ordering};
         use std::sync::Arc;
         use v2_lib::ai_bridge::crystal_preview_live;
+        let _on = crate::serial::crystal_on();
         let _lock = crate::serial::crystal();
         let dir = tempfile::tempdir().unwrap();
         let path = copy_sample(dir.path());
@@ -4598,6 +4608,7 @@ mod crystal_routes {
     #[tokio::test]
     async fn the_screen_is_told_when_the_report_it_shows_changes() {
         use v2_lib::ai_bridge::crystal_preview_live;
+        let _on = crate::serial::crystal_on();
         let _lock = crate::serial::crystal();
         let told = told();
         let dir = tempfile::tempdir().unwrap();

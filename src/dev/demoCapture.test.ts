@@ -288,12 +288,12 @@ test("Auto Run and API Templates answer from the sample data, with no password a
     return r.data;
   };
 
-  // Every module reads on in a capture, and a click on one is answered
+  // Every module but the held-back one reads on in a capture, and a click on one is answered
   // without saving anything to this machine.
-  expect(await commands.modulesGet()).toEqual(["db_access", "writing_style", "auto_run", "api_templates", "playwright", "crystal_reports"]);
+  expect(await commands.modulesGet()).toEqual(["db_access", "writing_style", "auto_run", "api_templates", "playwright"]);
   expect(await commands.modulesSet("auto_run", false)).toEqual({
     status: "ok",
-    data: ["db_access", "writing_style", "auto_run", "api_templates", "playwright", "crystal_reports"],
+    data: ["db_access", "writing_style", "auto_run", "api_templates", "playwright"],
   });
 
   type Script = { no_save?: boolean; preconditions?: unknown[]; steps: unknown[] } | null;
@@ -346,5 +346,13 @@ test("sample data refuses what would open a real browser or read a picked file",
     await commands.testFilesAdd("DemoOrg", "Demo Project", "C:\photo.png", false),
   ]) {
     expect(res).toMatchObject({ status: "error" });
+  }
+});
+
+test("demo and capture mode read the extras switch as locked, whatever the machine holds", async () => {
+  for (const capture of [true, false]) {
+    const { commands } = await boot({ demo: true, capture });
+    expect(await commands.getExtrasUnlocked()).toBe(false);
+    vi.resetModules();
   }
 });

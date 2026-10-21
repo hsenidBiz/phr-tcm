@@ -69,6 +69,18 @@ pub struct ScriptedDriver {
     /// guards saves (`is_guarding_saves`), as a guarded browser stops them;
     /// otherwise they go through and nothing is noted.
     pub saves_on_call: Vec<(String, String, String)>,
+    /// Saves the page sends when a call this says yes to is made: (says,
+    /// request method, address). Each is sent once, and is stopped on the
+    /// same terms as `saves_on_call`.
+    pub saves_when: Vec<(SaysYes, String, String)>,
+    /// A hold asked for with `hold_saves(true)` lets the guard's saves
+    /// through, as a real browser's does. Off by default: the fake guards
+    /// as it always did, whatever is asked of it.
+    pub honour_hold: bool,
+    /// Whether a hold is on now (only while `honour_hold`).
+    pub hold: bool,
+    /// Every `hold_saves` this driver was asked, in order.
+    pub holds: Vec<bool>,
     /// What `take_saves_stopped` hands over: (method, path).
     pub saves_stopped: Vec<(String, String)>,
     /// Every folder `enable_downloads` was handed, in order.
@@ -130,6 +142,12 @@ pub struct ScriptedDriver {
     /// (mark, record position), at most `MAX_NET_MARKS`, the oldest let go
     /// first; a mark let go reads from the start of the record.
     pub mark_ring: Option<Mutex<(u64, VecDeque<(u64, u64)>)>>,
+    /// How many tabs this browser has ever opened beyond `main`
+    /// (`tabs_opened`): grows on `open_tab` and `expect_tab`.
+    pub tabs_seen: Arc<std::sync::atomic::AtomicU64>,
+    /// The network record is not on (`net_recording` says no), as in a
+    /// browser `page_log::watch` never reached.
+    pub no_record: bool,
     /// What the sign-in told the capture about the current page, in order:
     /// `login` (the account name or password was typed on it,
     /// `note_capture_login_site`) and `confirm` (the signed-in marker
@@ -212,6 +230,10 @@ impl ScriptedDriver {
             block_after: None,
             save_blocked: None,
             saves_on_call: vec![],
+            saves_when: vec![],
+            honour_hold: false,
+            hold: false,
+            holds: vec![],
             saves_stopped: vec![],
             download_dirs: vec![],
             downloads: vec![],
@@ -231,6 +253,8 @@ impl ScriptedDriver {
             on_idle_after_call: vec![],
             arriving: vec![],
             mark_ring: None,
+            tabs_seen: Default::default(),
+            no_record: false,
             capture_notes: vec![],
             capture: None,
         }
@@ -304,6 +328,10 @@ impl Driver for ScriptedDriver {
     fn confirm_capture_site(&mut self) {
         self.capture_notes.push("confirm");
     }
+    fn hold_saves(&mut self, hold: bool) {
+        self.holds.push(hold);
+        self.hold = hold;
+    }
     fn note_capture_login_site(&mut self) {
         self.capture_notes.push("login");
     }
@@ -336,8 +364,19 @@ impl Driver for ScriptedDriver {
         if self.block_when.as_mut().is_some_and(|(says, _)| says(method, &params)) {
             self.save_blocked = self.block_when.take().map(|(_, s)| s);
         }
-        if self.is_guarding_saves() {
+        if self.is_guarding_saves() && !(self.honour_hold && self.hold) {
             let mut saves = vec![];
+            let mut sent = vec![];
+            let mut i = 0;
+            while i < self.saves_when.len() {
+                if (self.saves_when[i].0)(method, &params) {
+                    let (_, verb, url) = self.saves_when.remove(i);
+                    sent.push((verb, url));
+                } else {
+                    i += 1;
+                }
+            }
+            saves.extend(sent);
             self.saves_on_call.retain(|(m, verb, url)| {
                 if m == method {
                     saves.push((verb.clone(), url.clone()));
@@ -513,6 +552,14 @@ impl Driver for ScriptedDriver {
         }
     }
 
+    fn net_recording(&self) -> bool {
+        !self.no_record
+    }
+
+    fn tabs_opened(&self) -> u64 {
+        self.tabs_seen.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
     fn set_deadline(&mut self, deadline: Option<Instant>) {
         self.deadlines.push(deadline);
     }
@@ -557,6 +604,7 @@ impl Driver for ScriptedDriver {
             return Err(CdpError::Tab(no_new_tab(within)));
         }
         self.tabs.unnamed -= 1;
+        self.tabs_seen.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         self.tabs.open.push(name.to_string());
         Ok("https://hr.example/report".to_string())
     }
@@ -564,6 +612,7 @@ impl Driver for ScriptedDriver {
         if self.tabs.knows(name) {
             return Err(CdpError::Tab(tab_taken(name)));
         }
+        self.tabs_seen.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         self.tabs.open.push(name.to_string());
         self.tabs.current = name.to_string();
         self.tabs.gone = None;
@@ -1016,6 +1065,9 @@ pub fn stalling_menu_app(
                     }
                 }
                 json!({ "result": { "value": format!("https://hr.example.internal{}", path.lock().unwrap()) } })
+            }
+            "Runtime.evaluate" if params["expression"] == v2_lib::autorun::replay_to::OPEN_DIALOGS_JS => {
+                json!({ "result": { "value": 0 } })
             }
             "Runtime.evaluate" => json!({ "result": { "value": null } }),
             "Accessibility.queryAXTree" => {
