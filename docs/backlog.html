@@ -42,17 +42,43 @@
 <body>
 <main>
   <h1>Test Case Manager backlog</h1>
-  <p class="sub">Updated 21 October 2026, after 2.2.3-beta.20 (the Playwright pipeline's rules in TCM, tool errors 72-79, assistant test files). What is left is below.</p>
+  <p class="sub">Updated 21 October 2026, after 2.2.3-beta.21 (menu preferences, Admin or Self Service mode, replays that carry on, the hidden module). What is left is below.</p>
 
-  <h2>Next beta (2.2.3-beta.21), agreed, not built yet</h2>
+  <h2>Agreed, not built yet</h2>
   <div class="item">
-    <div class="head"><span class="title">Left from the tool-errors round</span><span class="status todo">Next</span></div>
+    <div class="head"><span class="title">Next builds</span><span class="status todo">Next</span></div>
     <ul>
-      <li>Tool error row 79 ("blocked").</li>
-      <li>Carry a replay on from where it stopped.</li>
-      <li>The app sets menu preferences itself. Needs the controls of your Preferences dialog to write the steps.</li>
-      <li>Admin and Self Service mode.</li>
-      <li>The module change agreed on 21 October (partly built; saved aside, and finished in this beta).</li>
+      <li>All projects as one (spec approved, 22 tasks, shipped as several betas).</li>
+      <li>Several agents with their own browsers (spec approved; built last).</li>
+    </ul>
+  </div>
+
+  <h2>Menu preferences, Admin or Self Service mode, replays that carry on (2.2.3-beta.21, 21 October 2026)</h2>
+  <div class="item">
+    <div class="head"><span class="title">Before these work: fill in the sign-in recipe</span><span class="status todo">Waiting on you</span></div>
+    <p>In Settings' sign-in recipe, set the menu preferences (the clicks that open the Preferences dialog, its close button, and the Group Menu Items checkbox) and the two modes (how the page shows the current mode, and the control that switches to each). Nothing changes until they are filled in.</p>
+  </div>
+  <div class="item">
+    <div class="head"><span class="title">Hand checks owed</span><span class="status todo">Waiting on you</span></div>
+    <ul>
+      <li>Does switching to Self Service (or back to Admin) save anything on the server? It is allowed through a must-not-save case either way, but worth knowing.</li>
+      <li>An account with Group Menu Items on: the first trip turns it off, the side menu opens again, and the next sign-in changes nothing.</li>
+      <li>Record an area that starts in Admin and clicks Switch to Self Service: it saves, and records Admin.</li>
+      <li>Re-map an existing module: its areas pick up their mode and menu preferences.</li>
+      <li>Two cases with the same first steps replayed one after the other: the second carries on when the first saved nothing, and starts over (saying why) when it saved something or opened a pop-up tab.</li>
+      <li>A must-not-save discovery whose save is stopped: the answer calls it blocked, not written.</li>
+      <li>With the code entered, the hidden module shows in Modules and the sidebar; after Reset to default it is gone again, and so are its assistant tools, even with the app closed.</li>
+    </ul>
+  </div>
+  <div class="item">
+    <div class="head"><span class="title">Not fully done</span><span class="status todo">Follow-ups</span></div>
+    <ul>
+      <li>Menu preferences are matched only after a sign-in, not on a trip from an already signed-in page.</li>
+      <li>Reading the current mode can take up to 2 seconds per trip for an account whose page shows no mode at all.</li>
+      <li>A blocked save's typed text is cleaned two slightly different ways (single action and batch).</li>
+      <li>An older version of the app cannot read a sign-in recipe saved with the new fields.</li>
+      <li>"Saved something" is also said when the save record was too full to be sure, which can overclaim.</li>
+      <li>An assistant's area repair does not re-read the mode or menu preferences; it keeps what the area had.</li>
     </ul>
   </div>
 
