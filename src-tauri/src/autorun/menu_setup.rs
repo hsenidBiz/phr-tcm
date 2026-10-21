@@ -244,6 +244,23 @@ pub async fn match_mode<D: Driver>(
     if from.eq_ignore_ascii_case(&target.name) {
         return Ok(None);
     }
+    // The switch may save the mode on the server, so a case that must save
+    // nothing would have it stopped by the guard: the click and the wait for
+    // the new mode are the app's own requests, held for exactly that stretch
+    // and given back on every way out.
+    d.hold_saves(true);
+    let switched = switch_and_wait(d, target, &from, timing).await;
+    d.hold_saves(false);
+    switched?;
+    Ok(Some(format!("switched from {from} to {} mode", target.name)))
+}
+
+async fn switch_and_wait<D: Driver>(
+    d: &mut D,
+    target: &super::recipe::MenuMode,
+    from: &str,
+    timing: &Timing,
+) -> Result<(), String> {
     let out = click(d, &target.switch, timing).await;
     if !out.ok {
         return Err(format!("could not switch from {from} to {} mode ({})", target.name, out.detail));
@@ -252,5 +269,5 @@ pub async fn match_mode<D: Driver>(
     if !shown.ok {
         return Err(format!("the page did not show {} mode after switching from {from}", target.name));
     }
-    Ok(Some(format!("switched from {from} to {} mode", target.name)))
+    Ok(())
 }

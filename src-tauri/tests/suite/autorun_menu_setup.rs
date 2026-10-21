@@ -557,3 +557,39 @@ fn a_recipe_without_preferences_reads_and_writes_as_before() {
     assert!(leave(json!({})).preferences.is_empty());
     assert!(!serde_json::to_string(&leave(json!({}))).unwrap().contains("preferences"));
 }
+
+/// The mode switch may save the mode on the server: a case that must save
+/// nothing still reaches its area, the hold taken for exactly the switch.
+#[tokio::test]
+async fn a_no_save_case_whose_area_needs_the_other_mode_still_reaches_it() {
+    let (mut d, app) = app(false);
+    *app.mode.lock().unwrap() = "Admin".to_string();
+    d.honour_hold = true;
+    d.call("Fetch.enable", json!({})).await.unwrap();
+    let probed = app.probed.clone();
+    d.saves_when.push((
+        Box::new(move |method, params| {
+            method == "Input.dispatchMouseEvent"
+                && params["type"] == "mouseReleased"
+                && *probed.lock().unwrap() == "css:#to-ss"
+        }),
+        "POST".to_string(),
+        "https://hr.example.internal/Home/SetMode".to_string(),
+    ));
+    let (out, notes) = trip_in_mode(&mut d, Some("Self Service")).await;
+    assert_eq!(out, Ok("/hr/leave".to_string()), "the switch was stopped by the guard");
+    assert_eq!(notes, vec!["switched from Admin to Self Service mode".to_string()]);
+    assert_eq!(d.take_save_blocked(), None);
+    assert!(d.take_saves_stopped().is_empty());
+    assert_eq!(d.holds, vec![true, false], "held for the switch only, then given back");
+    assert!(d.is_guarding_saves(), "the guard stands afterwards");
+}
+
+#[tokio::test]
+async fn no_save_hold_is_taken_when_the_account_is_already_in_the_areas_mode() {
+    let (mut d, app) = app(false);
+    *app.mode.lock().unwrap() = "Self Service".to_string();
+    let (out, notes) = trip_in_mode(&mut d, Some("Self Service")).await;
+    assert!(out.is_ok() && notes.is_empty(), "{out:?} {notes:?}");
+    assert!(d.holds.is_empty(), "{:?}", d.holds);
+}
