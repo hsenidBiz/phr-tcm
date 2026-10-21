@@ -348,3 +348,11 @@ test("sample data refuses what would open a real browser or read a picked file",
     expect(res).toMatchObject({ status: "error" });
   }
 });
+
+test("demo and capture mode read the extras switch as locked, whatever the machine holds", async () => {
+  for (const capture of [true, false]) {
+    const { commands } = await boot({ demo: true, capture });
+    expect(await commands.getExtrasUnlocked()).toBe(false);
+    vi.resetModules();
+  }
+});

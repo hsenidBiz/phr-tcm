@@ -959,6 +959,10 @@ function applyPatches() {
     // saved to this machine's modules.json.
     modulesGet: () => Promise.resolve(DEMO_MODULES),
     modulesSet: () => ok(DEMO_MODULES),
+    // The extras switch reads locked whatever this machine holds, so the
+    // sample app and the guide's shots never show the module held back
+    // behind it.
+    getExtrasUnlocked: () => Promise.resolve(false),
     authStatus: () => Promise.resolve(auth),
     resumeSession: () => Promise.resolve(auth),
     signIn: () => ok(auth),
