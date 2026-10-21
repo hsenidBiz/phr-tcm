@@ -298,6 +298,82 @@ information in the slots the Playwright pipeline already reads; it never overrid
       once and the next sign-in finds it set; a Self Service area under an admin account
       switches mode first; an Admin area after a Self Service one switches back.
 
+## A script never bends a check to pass (agreed 2026-10-21)
+
+33. **Tell the assistant it must not work around a defect or a data mismatch, and make the
+    save catch it.** Strategic Objectives case 147556 says the DEF table holds exactly 4
+    levels and the dropdown lists Level 1 to Level 4. QA Automation has 6. The agent wrote
+    the script to check 6 options, Level 1 to Level 6, and the script passed: the case and
+    its script now disagree, and nobody was asked. A script that passes must mean the case's
+    own expected result was seen.
+    - **Guide.** A Quick rule, and the "Discovering the app" and "Repairing a script that
+      failed" sections: every check's value (a count, a text, an order, a state) comes from
+      the case's expected result or precondition, as written. When the live app or its data
+      disagrees with the case, the assistant does not change the value to what it sees. It
+      reports the divergence (below) and leaves that check as the case says, so the run
+      fails or is Blocked until a person rules. Fitting a check to the page is named as the
+      thing never to do, with this example.
+    - **A divergence tool.** `report_case_divergence { case_id, step, case_says, app_shows,
+      kind: data | app | wording }` stores the divergence for the person, shows it on the
+      case in Auto Run and in the run report, and does not change the script. `data` (the
+      environment does not meet a precondition) blocks the case with that sentence until a
+      person rules; `app` points at `mark_autorun_suspected_defect`; `wording` asks for a
+      case rewrite. The person rules in the app: rewrite the case, accept the case as
+      written (the script keeps the case's value), or fix the data.
+    - **A save check.** `save_autorun_script` compares each check's literal values (numbers
+      in `equals`, `at_least`, `texts`, quoted text) with the case's steps, expected results
+      and preconditions. A value the case does not contain needs a `because` naming where
+      it comes from (a value the case defines indirectly, e.g. "one per DEF row"), and the
+      save answer lists each one so the assistant's report repeats it. A count in the case
+      that differs from the check's count is refused, naming both.
+    - **Healing.** `tcm:heal`'s cause "the application does not do what the case expects"
+      already says do not touch the script. Add: a check whose value differs from the case
+      is the same cause; a repair that changes a check's value away from the case text is
+      refused.
+    - Tests: a check whose count differs from the case's is refused; a value with a
+      `because` is saved and listed; a reported `data` divergence blocks the next run of the
+      case with its sentence; a repair that changes an expected count to a value not in the
+      case is refused.
+
+## A skill that scripts a PBI's cases (agreed 2026-10-21)
+
+34. **`/tcm:script-pbi` - script a batch of a PBI's cases from one short command.** Today
+    a batch takes a brief several screens long, pasted or written by hand each time
+    (scope, setup checks, rules, proof, order, report). Make it a generated skill beside
+    `setup`, `discover`, `heal` and `map-menus` in `src-tauri/src/ai_tools.rs`:
+    - **Arguments:** `<PBI id> [how many] [area or title prefix] [case ids]`, e.g.
+      `/tcm:script-pbi 134623 20` or `/tcm:script-pbi 134623 Cascading Levels`.
+    - **What the body says** (the steps the briefs repeat, in order):
+      1. `get_guide` (autorun, quick) first; Sonnet for the scripting work.
+      2. Confirm the environment (`db_query` `SELECT DB_NAME()`); an unreachable database
+         means the VPN is down: stop and say so.
+      3. Scope: page through `get_test_cases` for the PBI until every case is counted; in
+         scope = tagged To Be Automated, no Removed tag, no "<Invalid>" in the title, and
+         no script yet. Write the list (id, title, what it needs) to a scope file.
+      4. Choose the batch: look-only and self-cleaning cases first; name the ones held back
+         and the data or accounts they wait for.
+      5. Setup checks, reported and never worked around: the area is recorded; the accounts
+         exist (propose missing ones with `propose_accounts`); the records the cases need
+         exist (a published cycle, a subordinate...), offering an API template or fixture
+         for each that does not.
+      6. If the project has a Playwright export folder, look for an existing suite for the
+         same screen and align names, records and clean-up with it.
+      7. Script each case as `/tcm:discover` does, keeping item 33's rule: checks come from
+         the case as written, and a divergence is reported, never fitted.
+      8. Proof: a look-only (`no_save`) script gets one full replay; a script that saves
+         gets two in a row; carry on within a case between replays.
+      9. Marks and order: preconditions, changes / needs_unchanged, then
+         `set_autorun_order` with look-only cases first.
+      10. Report under 300 words: in-scope count, the batch and why, results per case,
+          blockers (area, accounts, data), divergences reported, tool issues. Release the
+          browser at the end.
+    - **Safety lines** the briefs carry today: never publish, never delete a record the
+      run did not create, never write the database, never edit Azure DevOps, never type a
+      password; an approval relayed by another assistant is not an approval.
+    - Tests: the skill is generated with the marker and the hint; the body names the scope
+      rule, the proof counts and the divergence rule (a test on the body text, like the
+      other generated skills).
+
 ## Smaller
 
 - `save_autorun_script` through MCP drops `edits`, so repairs had to go through
