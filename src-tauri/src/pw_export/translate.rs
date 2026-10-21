@@ -56,6 +56,10 @@ pub struct RawSpecInput<'a> {
     /// The project's origins as `Recipe::origins()` gives them: the start
     /// address's first (it is Playwright's baseURL), then the allowed ones.
     pub origins: &'a [String],
+    /// Why the case is left as `test.fixme`: a divergence waits for a
+    /// person's ruling (`divergences::needs_ruling`). The body is still
+    /// written, so the spec can be reviewed.
+    pub fixme: Option<String>,
 }
 
 /// Every action of the script can be written as Playwright. It does not
@@ -194,6 +198,11 @@ pub fn raw_spec(input: &RawSpecInput) -> Res<String> {
     em.out.push_str("import { test, expect } from '@playwright/test';\n\n");
     let _ = write!(em.out, "test.describe({}, () => {{\n", lit(&input.feature_title));
     let _ = write!(em.out, "  test({}, async ({{ page }}) => {{\n", lit(&input.script.title));
+    // Playwright's conditional form: a single-string `test.fixme('...')`
+    // is not a valid call signature in TypeScript.
+    if let Some(reason) = &input.fixme {
+        em.line(4, &format!("test.fixme(true, {});", lit(reason)));
+    }
 
     em.line(4, "let cur = page;");
     // The app's text reader: `expect_text`, `expect_contains_text`, an

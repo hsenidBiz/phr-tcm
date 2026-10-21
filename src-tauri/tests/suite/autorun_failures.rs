@@ -988,3 +988,29 @@ fn a_passed_case_whose_clean_up_failed_is_listed_for_its_clean_up() {
         .join("\n")
     );
 }
+
+#[test]
+fn a_needs_a_ruling_case_is_a_stop() {
+    use v2_lib::autorun::failures::NEEDS_RULING_STOP;
+    let case = CaseRecord {
+        proposed: "Blocked".to_string(),
+        reason: "needs a ruling: step 2: the case says \"exactly 4 levels\" but the app shows \"6 levels\" (data) - a person rules on it in Auto Run".to_string(),
+        ..empty_case()
+    };
+    assert_eq!(stop_reason(&case), Some(NEEDS_RULING_STOP.to_string()));
+    assert_eq!(
+        NEEDS_RULING_STOP,
+        "the case waits for a person's ruling on a divergence - leave the script as the case says"
+    );
+}
+
+#[test]
+fn a_case_waiting_for_a_repair_is_not_a_stop() {
+    let case = CaseRecord {
+        proposed: "Blocked".to_string(),
+        reason: "waits for a repair: step 2: the person is rewriting the case - repair the script to the case as it now reads"
+            .to_string(),
+        ..empty_case()
+    };
+    assert_eq!(stop_reason(&case), None);
+}

@@ -24,7 +24,7 @@ fn script(steps: serde_json::Value, extra: serde_json::Value) -> CaseScript {
 }
 
 fn of(s: &CaseScript) -> Handover {
-    handover_for(&HandoverInput { script: s, shared_drafts: &[], protected: &[] })
+    handover_for(&HandoverInput { script: s, shared_drafts: &[], protected: &[], needs_ruling: None })
 }
 
 fn button(name: &str) -> serde_json::Value {
@@ -45,7 +45,7 @@ fn preconditions_come_from_the_script() {
         }),
     );
     let drafts = [SharedDraft { fixture: "f2".into(), name: "FY26 Draft".into() }];
-    let h = handover_for(&HandoverInput { script: &s, shared_drafts: &drafts, protected: &[] });
+    let h = handover_for(&HandoverInput { script: &s, shared_drafts: &drafts, protected: &[], needs_ruling: None });
     assert_eq!(
         h.preconditions,
         vec![
@@ -225,7 +225,7 @@ fn a_protected_baseline_adds_one_line_after_the_changes() {
         json!({ "no_save": true, "changes": ["the cycle"], "suspected_defect": { "step_number": 1, "note": "n", "marked_at": "1760828399000" } }),
     );
     let protected = [ProtectedRecord { kind: ProtectedKind::Cycle, name: "FY2026".into() }];
-    let h = handover_for(&HandoverInput { script: &s, shared_drafts: &[], protected: &protected });
+    let h = handover_for(&HandoverInput { script: &s, shared_drafts: &[], protected: &protected, needs_ruling: None });
     assert_eq!(
         h.from_tcm,
         vec![
@@ -356,4 +356,18 @@ fn the_clean_up_step_is_named_the_clean_up() {
         ]
     );
     assert_eq!(h.warnings, vec!["the clean-up appears to delete a row it did not name"]);
+}
+
+#[test]
+fn a_case_that_needs_a_ruling_says_it_is_left_as_fixme() {
+    let s = script(json!([[]]), json!({}));
+    let reason = "needs a ruling: step 2: the case says \"a\" but the app shows \"b\" (data) - a person rules on it in Auto Run";
+    let h = handover_for(&HandoverInput {
+        script: &s,
+        shared_drafts: &[],
+        protected: &[],
+        needs_ruling: Some(reason.to_string()),
+    });
+    assert_eq!(h.from_tcm, vec![format!("left as test.fixme: {reason}")]);
+    assert!(of(&s).from_tcm.is_empty());
 }

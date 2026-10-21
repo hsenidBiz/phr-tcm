@@ -43,6 +43,9 @@ pub struct HandoverInput<'a> {
     /// The project's protected baseline, which the repo keeps in
     /// `docs/tcm-protected-baseline.md` (`baseline_doc`).
     pub protected: &'a [ProtectedRecord],
+    /// The sentence that blocks the case's runs while a divergence waits for
+    /// a person (`divergences::needs_ruling`): the spec is `test.fixme`.
+    pub needs_ruling: Option<String>,
 }
 
 /// Where the protected baseline lives in the Playwright repo.
@@ -260,6 +263,9 @@ pub fn handover_for(input: &HandoverInput) -> Handover {
 
     if s.no_save {
         h.from_tcm.push("Look-only: must not save anything.".to_string());
+    }
+    if let Some(reason) = &input.needs_ruling {
+        h.from_tcm.push(format!("left as test.fixme: {reason}"));
     }
     for e in step_effects(s) {
         let at = step_name(s, e.step);

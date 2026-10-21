@@ -395,6 +395,17 @@ async fn run_case_in<D: Driver>(
         None
     };
 
+    // A case with an open data or wording divergence (or one waiting for
+    // its repair) never runs: it is Blocked with the sentence, before it
+    // signs in, and so never counts as passed.
+    if skip.is_none() {
+        if let Some(why) = super::divergences::needs_ruling(root, organization, project, script.case_id) {
+            let mut record = blocked_before_start(script, account, why);
+            record.duration_ms = i32::try_from(began.elapsed().as_millis()).ok();
+            return record;
+        }
+    }
+
     // A no-save script never runs unguarded: the guard goes on before
     // anything happens in the browser, or the case does not run at all.
     if skip.is_none() && script.no_save {

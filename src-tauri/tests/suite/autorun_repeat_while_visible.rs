@@ -460,6 +460,7 @@ fn export(actions: Value) -> Result<String, String> {
         area_clicks_by_name: &by_name,
         step_texts: &texts,
         origins: &origins,
+        fixme: None,
     })
     .map_err(|e| e.0)
 }

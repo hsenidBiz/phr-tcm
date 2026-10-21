@@ -320,6 +320,64 @@ pub fn open_for(list: &[Divergence], case_id: i32) -> Vec<&Divergence> {
     out
 }
 
+/// The failures answer's "Divergences" lines for these failed or blocked
+/// cases (given in the order the run holds them), one per entry:
+/// - open: waiting for a person's ruling;
+/// - awaiting its repair: the person is rewriting the case;
+/// - ruled "the case stands" in the last 90 days: leave the check alone.
+///
+/// Empty when none of the cases has such an entry.
+pub fn failures_lines(list: &[Divergence], case_ids: &[i32], now_ms: u64) -> Vec<String> {
+    let mut out = vec![];
+    let mut seen: Vec<i32> = vec![];
+    for &case_id in case_ids {
+        if seen.contains(&case_id) {
+            continue;
+        }
+        seen.push(case_id);
+        let mut mine: Vec<&Divergence> = list.iter().filter(|d| d.case_id == case_id).collect();
+        mine.sort_by_key(|d| (d.step, ms_of(&d.reported_at)));
+        for d in mine {
+            match (d.status, d.ruling) {
+                (DivergenceStatus::Open, _) => out.push(format!(
+                    "- case {case_id} step {} ({}, {}): needs a ruling - the case says \"{}\", the app shows \"{}\". Leave the script as the case says; the person rules in Auto Run.",
+                    d.step,
+                    d.kind.word(),
+                    d.id,
+                    d.case_says,
+                    d.app_shows
+                )),
+                (DivergenceStatus::AwaitingRepair, _) => out.push(format!(
+                    "- case {case_id} step {} (rewrite, {}): the person is rewriting the case - repair that step's checks to the case as it now reads, declared in edits; the repair closes it.",
+                    d.step, d.id
+                )),
+                (DivergenceStatus::Ruled, Some(Ruling::CaseStands))
+                    if now_ms.saturating_sub(d.ruled_at.as_deref().map(ms_of).unwrap_or(0)) <= KEEP_RULED_MS =>
+                {
+                    out.push(format!(
+                        "- case {case_id} step {} ({}): a person ruled on {} that the case stands - leave the check as it is; a failure there is the data's or the application's (mark_autorun_suspected_defect, or tell the person).",
+                        d.step,
+                        d.id,
+                        day_of(d.ruled_at.as_deref().unwrap_or("0"))
+                    ));
+                }
+                _ => {}
+            }
+        }
+    }
+    out
+}
+
+/// The full "## Divergences" section, or none when there is nothing to say.
+pub fn failures_section(list: &[Divergence], case_ids: &[i32], now_ms: u64) -> Option<String> {
+    let lines = failures_lines(list, case_ids, now_ms);
+    if lines.is_empty() {
+        None
+    } else {
+        Some(format!("## Divergences\n\n{}", lines.join("\n")))
+    }
+}
+
 /// What `report_case_divergence` answers.
 pub fn tool_answer(case_id: i32, d: &Divergence, updated: bool) -> String {
     let verb = if updated { "Updated" } else { "Reported" };

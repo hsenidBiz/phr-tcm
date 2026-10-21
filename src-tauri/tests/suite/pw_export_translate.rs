@@ -69,6 +69,7 @@ impl Fx {
             area_clicks_by_name: &self.by_name,
             step_texts: &self.texts,
             origins: &origins(),
+            fixme: None,
         })
         .map_err(|e| e.0)
     }
@@ -104,6 +105,7 @@ fn a_sibling_script_becomes_the_golden_raw_spec() {
         area_clicks_by_name: &by_name,
         step_texts: &texts,
         origins: &origins(),
+        fixme: None,
     })
     .unwrap();
     golden("raw-135560.spec.ts.golden", &got);
@@ -1092,4 +1094,28 @@ fn list_order_and_position_checks_are_no_longer_refused() {
         { "kind": "expect_order", "selector": [], "texts": ["a", "b"] }
     ] }]));
     assert!(check(&bad, &origins()).is_err());
+}
+
+#[test]
+fn a_case_that_needs_a_ruling_exports_as_fixme_with_its_reason() {
+    let reason = "needs a ruling: step 2: the case says \"exactly 4 levels\" but the app shows \"6 levels\" (data) - a person rules on it in Auto Run";
+    let fx = one_step(json!([{ "kind": "click", "selector": "#save" }]));
+    let with = raw_spec(&RawSpecInput {
+        script: &fx.script,
+        md_path: "suites/sl/admin/m/f/test-cases/f.md".into(),
+        feature_title: "F".into(),
+        after_sign_in: &fx.signin,
+        area_clicks: &fx.area,
+        area_clicks_by_name: &fx.by_name,
+        step_texts: &fx.texts,
+        origins: &origins(),
+        fixme: Some(reason.to_string()),
+    })
+    .unwrap();
+    let lines: Vec<&str> = with.lines().collect();
+    let at = lines.iter().position(|l| l.starts_with("  test(")).expect("the test line");
+    assert_eq!(lines[at + 1], format!("    test.fixme(true, '{reason}');"), "{with}");
+    assert!(with.contains("#save"), "the body is still written: {with}");
+    let without = fx.run().unwrap();
+    assert!(!without.contains("test.fixme"), "{without}");
 }

@@ -7835,7 +7835,19 @@ fn autorun_failures(ctx: &BridgeContext, target: &str) -> (u16, String) {
     // expands. A file that does not read leaves those actions named by
     // their component only.
     let components = crate::autorun::components::load_components(&root, &ctx.org, &ctx.project).unwrap_or_default();
-    let said = crate::autorun::failures::describe_failures_in(Some(&root), &run, &scripts, &components);
+    let mut said = crate::autorun::failures::describe_failures_in(Some(&root), &run, &scripts, &components);
+    // The divergences reported for the run's failed or blocked cases: what
+    // a person has yet to rule on, what waits for a repair, what was ruled.
+    let stopped: Vec<i32> =
+        run.cases.iter().filter(|c| crate::autorun::failures::is_failed(c)).map(|c| c.case_id).collect();
+    if let Ok(list) = crate::autorun::divergences::load(&root, &ctx.org, &ctx.project) {
+        if let Some(section) =
+            crate::autorun::divergences::failures_section(&list, &stopped, crate::autorun::sessions::now_ms())
+        {
+            said.push_str("\n\n");
+            said.push_str(&section);
+        }
+    }
     if case_id.is_some() || q(target, "run_id").is_some() {
         return (200, said);
     }
@@ -9755,7 +9767,11 @@ async fn save_autorun_scripts(
         Err(refused) => return answer(refused.said()),
     };
     if dry_run {
-        let said = std::iter::once(dry_run_answer(prepared.len(), &lines)).chain(precondition_lines).chain(notes);
+        let blocked = blocked_by_divergence_lines(&root, ctx, &prepared);
+        let said = std::iter::once(dry_run_answer(prepared.len(), &lines))
+            .chain(precondition_lines)
+            .chain(notes)
+            .chain(blocked);
         return (200, said.collect::<Vec<_>>().join("\n"));
     }
     crate::applog::info(format!("AI saved {} auto-run script(s)", prepared.len()));
@@ -9781,6 +9797,44 @@ async fn save_autorun_scripts(
             )),
         }
     }
+    // A repair declared for the steps of a case the person is rewriting
+    // closes the divergence at those steps: the script now follows the
+    // rewritten case. A failure to close is said, never a refusal: the
+    // scripts are already down.
+    for edit in edits.iter().filter(|e| !e.steps.is_empty()) {
+        let now = crate::autorun::sessions::now_ms();
+        let closed = crate::autorun::divergences::update(&root, &ctx.org, &ctx.project, |list| {
+            Ok(crate::autorun::divergences::close_repaired(list, edit.case_id, &edit.steps, now))
+        });
+        match closed {
+            Ok(steps) => report.extend(steps.into_iter().map(|s| {
+                format!(
+                    "case {}: the divergence at step {s} is closed - the script now follows the rewritten case",
+                    edit.case_id
+                )
+            })),
+            Err(e) => {
+                // Said only when something was waiting on this repair.
+                let waiting = crate::autorun::divergences::load(&root, &ctx.org, &ctx.project)
+                    .map(|l| {
+                        l.iter().any(|d| {
+                            d.case_id == edit.case_id
+                                && d.status == crate::autorun::divergences::DivergenceStatus::AwaitingRepair
+                                && edit.steps.contains(&d.step)
+                        })
+                    })
+                    .unwrap_or(false);
+                if waiting {
+                    let at = edit.steps.iter().map(|s| s.to_string()).collect::<Vec<_>>().join(", ");
+                    report.push(format!(
+                        "case {}: the divergence at step {at} could not be closed: {e}",
+                        edit.case_id
+                    ));
+                }
+            }
+        }
+    }
+    report.extend(blocked_by_divergence_lines(&root, ctx, &prepared));
     // The quirks come last, after the scripts are safely down: a quirk
     // the list will not take (too long, or the fortieth) is worth saying
     // so about, but it is not worth losing a good repair over.
@@ -9815,6 +9869,30 @@ async fn save_autorun_scripts(
         }
     }
     answer((200, report.join("\n")))
+}
+
+/// One line for each saved case that a divergence keeps from running: its
+/// runs are Blocked until a person rules (or the repair lands). Read only;
+/// a divergences file that cannot be read says nothing.
+fn blocked_by_divergence_lines(
+    root: &std::path::Path,
+    ctx: &BridgeContext,
+    saved: &[crate::autorun::CaseScript],
+) -> Vec<String> {
+    let Ok(list) = crate::autorun::divergences::load(root, &ctx.org, &ctx.project) else {
+        return Vec::new();
+    };
+    saved
+        .iter()
+        .filter_map(|s| {
+            let d = crate::autorun::divergences::blocking(&list, s.case_id)?;
+            Some(format!(
+                "case {}: {} - runs are Blocked until then",
+                s.case_id,
+                crate::autorun::divergences::run_sentence(d)
+            ))
+        })
+        .collect()
 }
 
 /// The most notes one save answers with before saying how many more.

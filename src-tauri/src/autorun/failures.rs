@@ -21,6 +21,9 @@ use std::path::Path;
 /// ("Could not reach module ...").
 pub const UNREACHED_STOP: &str = "the run could not reach this case's area - repair the area's path with save_autorun_area and its repair argument (the guide's areas section), not the script";
 
+/// The `STOP:` line for a case that needs a person's ruling on a divergence.
+pub const NEEDS_RULING_STOP: &str = "the case waits for a person's ruling on a divergence - leave the script as the case says";
+
 /// Why an assistant must not try to repair this case. Checked in this
 /// order because a case can match more than one at once (a Blocked case
 /// whose sign-in also failed, say) and the sign-in / browser reasons are
@@ -56,6 +59,12 @@ pub fn stop_reason(case: &CaseRecord) -> Option<String> {
             "the run could not take this case to its module screen - fix the module path or the case's Module in the app, not the script"
                 .to_string(),
         );
+    }
+    // A divergence a person has not ruled on: the script stays as the case
+    // says. A `waits for a repair:` reason is not a stop - it is the
+    // signal to repair.
+    if case.reason.starts_with(super::divergences::NEEDS_RULING_PREFIX) {
+        return Some(NEEDS_RULING_STOP.to_string());
     }
     if case.verdict == "Blocked" {
         return Some(

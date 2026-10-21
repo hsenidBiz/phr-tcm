@@ -2833,3 +2833,95 @@ async fn progress_counts_the_cases_steps_and_names_the_clean_up_apart() {
         heard.iter().filter(|(p, _, _)| p == "step" || p == "cleanup").map(|(p, n, _)| (p.as_str(), *n)).collect();
     assert_eq!(ran, vec![("step", 1), ("step", 2), ("step", 3), ("cleanup", 4)]);
 }
+
+// ---------------------------------------------- a case that needs a ruling
+
+fn two_yes_steps(case_id: i32) -> CaseScript {
+    script(case_id, Some("admin"), serde_json::json!([
+        { "step_number": 1, "actions": [{ "kind": "check_text", "value": "yes" }] },
+        { "step_number": 2, "actions": [{ "kind": "check_text", "value": "yes" }] }
+    ]))
+}
+
+fn store_divergence(root: &Path, case_id: i32, kind: v2_lib::autorun::divergences::DivergenceKind) {
+    use v2_lib::autorun::divergences::{report_in, update};
+    update(root, "Acme", "Web", |list| {
+        report_in(list, case_id, 2, "exactly 4 levels", "6 levels", kind, 1_700_000_000_000).map(|_| ())
+    })
+    .unwrap();
+}
+
+#[tokio::test]
+async fn a_case_that_needs_a_ruling_is_blocked_before_it_signs_in() {
+    use v2_lib::autorun::divergences::DivergenceKind;
+    use v2_lib::autorun::replay::run_case;
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    save_recipe(root, "Acme", "Web", &common::recipe()).unwrap();
+    save_accounts(root, &[common::account()]).unwrap();
+    store_divergence(root, 7, DivergenceKind::Data);
+    let (mut d, _state) = common::stateful_app(false, None);
+    let cancel = AtomicBool::new(false);
+    let rec = run_case(&mut d, root, "Acme", "Web", &two_yes_steps(7), &quick(), &cancel, &mut |_| {}).await;
+    assert_eq!(rec.proposed, "Blocked", "{rec:?}");
+    assert!(rec.reason.starts_with("needs a ruling: step 2:"), "{}", rec.reason);
+    assert!(d.calls_to("Page.navigate").is_empty(), "no sign-in and no navigation: {:?}", d.calls);
+    assert!(d.calls_to("Runtime.callFunctionOn").is_empty(), "{:?}", d.calls);
+    assert_eq!(rec.steps.len(), 2);
+    for step in &rec.steps {
+        assert!(
+            step.outcomes.iter().all(|o| !o.ok && o.detail.starts_with("not run: needs a ruling")),
+            "{:?}",
+            step.outcomes
+        );
+    }
+}
+
+#[tokio::test]
+async fn an_app_divergence_lets_the_case_run() {
+    use v2_lib::autorun::divergences::DivergenceKind;
+    use v2_lib::autorun::replay::run_case;
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    store_divergence(root, 7, DivergenceKind::App);
+    let mut case = two_yes_steps(7);
+    case.account = None;
+    let mut d = checking_driver();
+    let cancel = AtomicBool::new(false);
+    let rec = run_case(&mut d, root, "Acme", "Web", &case, &quick(), &cancel, &mut |_| {}).await;
+    assert_eq!(rec.proposed, "Passed", "{rec:?}");
+}
+
+#[tokio::test]
+async fn a_ruled_divergence_no_longer_blocks_the_case() {
+    use v2_lib::autorun::divergences::{rule_in, update, DivergenceKind, Ruling};
+    use v2_lib::autorun::replay::run_case;
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    store_divergence(root, 7, DivergenceKind::Data);
+    update(root, "Acme", "Web", |list| rule_in(list, "d1", Ruling::CaseStands, 1_700_000_001_000).map(|_| ())).unwrap();
+    let mut case = two_yes_steps(7);
+    case.account = None;
+    let mut d = checking_driver();
+    let cancel = AtomicBool::new(false);
+    let rec = run_case(&mut d, root, "Acme", "Web", &case, &quick(), &cancel, &mut |_| {}).await;
+    assert_eq!(rec.proposed, "Passed", "{rec:?}");
+}
+
+#[tokio::test]
+async fn a_case_waiting_for_a_repair_is_blocked_with_that_sentence() {
+    use v2_lib::autorun::divergences::{rule_in, update, DivergenceKind, Ruling};
+    use v2_lib::autorun::replay::run_case;
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    store_divergence(root, 7, DivergenceKind::Wording);
+    update(root, "Acme", "Web", |list| rule_in(list, "d1", Ruling::Rewrite, 1_700_000_001_000).map(|_| ())).unwrap();
+    let mut case = two_yes_steps(7);
+    case.account = None;
+    let mut d = checking_driver();
+    let cancel = AtomicBool::new(false);
+    let rec = run_case(&mut d, root, "Acme", "Web", &case, &quick(), &cancel, &mut |_| {}).await;
+    assert_eq!(rec.proposed, "Blocked", "{rec:?}");
+    assert!(rec.reason.starts_with("waits for a repair: step 2:"), "{}", rec.reason);
+    assert!(d.calls_to("Runtime.callFunctionOn").is_empty(), "{:?}", d.calls);
+}

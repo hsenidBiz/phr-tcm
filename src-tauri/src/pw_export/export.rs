@@ -18,6 +18,7 @@ use super::handover::{
 use super::mapping::{self, ExportMap, Placement};
 use super::test_case::{self, AdoRows, CaseDoc};
 use super::translate::{self, RawSpecInput};
+use crate::autorun::divergences;
 use crate::autorun::nav::{self, NavFile};
 use crate::autorun::quirks::{self, Quirk};
 use crate::autorun::recipe::{self, SignInRecipe};
@@ -471,7 +472,8 @@ impl Fingerprinter {
         });
         let (steps, title, handover) = match expanded {
             Ok(Some((s, drafts, used))) => {
-                let handover = self.handover_text(id, &s, &drafts, &used);
+                let needs_ruling = divergences::needs_ruling(root, org, project, id);
+                let handover = self.handover_text(id, &s, &drafts, &used, needs_ruling);
                 (serde_json::to_value(&s.steps).unwrap_or_default(), s.title, handover)
             }
             Ok(None) => return Ok(None),
@@ -495,8 +497,15 @@ impl Fingerprinter {
     /// (`used` is the TCM components it uses). Warnings are not part of it:
     /// they are said before a write and never written. Empty when there is
     /// none, which is what a script with nothing to hand over fingerprints as.
-    fn handover_text(&self, id: i32, script: &CaseScript, drafts: &[SharedDraft], used: &[String]) -> String {
-        let h = handover_for(&HandoverInput { script, shared_drafts: drafts, protected: &self.nav.protected });
+    fn handover_text(
+        &self,
+        id: i32,
+        script: &CaseScript,
+        drafts: &[SharedDraft],
+        used: &[String],
+        needs_ruling: Option<String>,
+    ) -> String {
+        let h = handover_for(&HandoverInput { script, shared_drafts: drafts, protected: &self.nav.protected, needs_ruling });
         let order = order_note(&[(id, script)], None).into_iter().filter(|l| l != ORDER_PROPOSAL);
         let mut entries = quirk_entries(&self.quirks, &[id], None);
         entries.sort_by(|a, b| a.tag.cmp(&b.tag));
@@ -665,6 +674,7 @@ fn evaluate(ctx: &Ctx, id: i32, script: Result<Option<CaseScript>, String>) -> (
         area_clicks_by_name: &by_name,
         step_texts: &BTreeMap::new(),
         origins: &origins,
+        fixme: None,
     });
     if let Err(e) = trial {
         return fail(pc, e.0);
@@ -1091,6 +1101,7 @@ fn write_inner(
         }
         let feature_title = title_case(&feature);
 
+        let needs_ruling = divergences::needs_ruling(&ctx.root, &ctx.org, &ctx.project, id);
         let mut doc = docs[&id].clone();
         doc.folder = folders;
         doc.navigation_captured = captured;
@@ -1099,6 +1110,7 @@ fn write_inner(
             script: &r.script,
             shared_drafts: &r.shared_drafts,
             protected: &ctx.nav.protected,
+            needs_ruling: needs_ruling.clone(),
         });
         doc.handover.uses = uses_for(&r.components, &ctx.map.components);
 
@@ -1159,6 +1171,7 @@ fn write_inner(
             area_clicks_by_name: &r.by_name,
             step_texts: &step_texts,
             origins: &r.origins,
+            fixme: needs_ruling,
         })
         .map_err(|e| format!("case {id} cannot be exported: {}. Nothing was written.", e.0))?;
         raw_files.push(Out { rel: format!("suites/_generated/{file}"), content: spec });

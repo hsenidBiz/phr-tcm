@@ -6,6 +6,7 @@
 //! `close_repaired`), the file (`load`, `update`), the case's words
 //! (`case_text`) and the route (`POST /autorun-divergence`).
 
+use crate::common;
 use v2_lib::ado::AdoClient;
 use v2_lib::ai_bridge::{module_guard_for, route, BridgeContext};
 use v2_lib::autorun::case_text::{fold, CaseText};
@@ -454,4 +455,211 @@ fn the_route_is_auto_runs() {
         module_guard_for("/autorun-divergence", &Default::default()).expect("refused outside Auto Run");
     assert_eq!((status, body.as_str()), (404, "Auto Run is switched off in Modules"));
     assert!(module_guard_for("/autorun-divergence", &v2_lib::modules::Module::ALL.into_iter().collect()).is_none());
+}
+
+// ------------------------------------- failures, saves and the blocked run
+
+/// Case 7: three steps, nothing expected, one click each.
+async fn client_with_case_7() -> (MockServer, AdoClient) {
+    let server = MockServer::start().await;
+    let steps: Vec<Step> =
+        (1..=3).map(|i| Step { action: format!("Step {i}"), expected: String::new(), shared: None }).collect();
+    Mock::given(wm_method("GET"))
+        .and(wm_path("/acme/_apis/wit/workitems"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({ "value": [{
+            "id": 7,
+            "fields": { "System.Title": "Save a rating", "Microsoft.VSTS.TCM.Steps": build_steps_xml(&steps) }
+        }] })))
+        .mount(&server)
+        .await;
+    let client = AdoClient::with_base_urls("tok".into(), server.uri(), server.uri());
+    (server, client)
+}
+
+/// Case 7's scripts, each named step's click on its own selector.
+fn case_7_scripts(clicks: &[(i32, &str)]) -> serde_json::Value {
+    let mut steps: Vec<serde_json::Value> = (1..=3)
+        .map(|n| serde_json::json!({ "step_number": n, "actions": [{ "kind": "click", "selector": format!("#s{n}") }] }))
+        .collect();
+    for (n, selector) in clicks {
+        steps[(*n - 1) as usize]["actions"][0]["selector"] = serde_json::json!(selector);
+    }
+    serde_json::json!([{ "case_id": 7, "title": "Save a rating", "steps": steps }])
+}
+
+fn see(root: &std::path::Path, body: &str) {
+    let c = ctx();
+    common::see_scripts(root, &c.org, &c.project, body);
+}
+
+fn failed_run_of_7() -> v2_lib::autorun::LocalRun {
+    use v2_lib::autorun::{CaseRecord, LocalRun, StepRecord};
+    use v2_lib::browser::actions::ActionOutcome;
+    LocalRun {
+        id: "run-1700000000000".to_string(),
+        pbi_id: 42,
+        started_at: "1700000000000".to_string(),
+        cases: vec![CaseRecord {
+            case_id: 7,
+            title: "Save a rating".to_string(),
+            verdict: "Failed".to_string(),
+            note: String::new(),
+            steps: vec![StepRecord {
+                step_number: 2,
+                outcomes: vec![ActionOutcome::failed("nothing on the page answers to #toast")],
+                screenshot: None,
+                downloads: vec![],
+                tab: None,
+                dialog: None,
+                components: Vec::new(),
+                duration_ms: None,
+            }],
+            proposed: String::new(),
+            reason: String::new(),
+            duration_ms: None,
+            account: None,
+            retried: None,
+            notice: None,
+            page_errors_seen: 0,
+            phases: None,
+            cleanup: None,
+        }],
+        mode: String::new(),
+        published: None,
+        environment: None,
+        resets: vec![],
+        network_pauses: vec![],
+    }
+}
+
+fn stored(id: &str, case_id: i32, step: i32, kind: DivergenceKind, status: DivergenceStatus, ruling: Option<Ruling>) -> Divergence {
+    let ruled = status != DivergenceStatus::Open;
+    Divergence {
+        status,
+        ruling,
+        ruled_at: ruled.then(|| v2_lib::autorun::sessions::now_ms().to_string()),
+        reported_at: v2_lib::autorun::sessions::now_ms().to_string(),
+        ..divergence(id, case_id, step, kind, 0)
+    }
+}
+
+#[tokio::test]
+async fn the_failures_answer_lists_the_cases_divergences() {
+    let dir = TempDir::new();
+    let _root = crate::serial::autorun();
+    set_root(dir.path().to_path_buf());
+    v2_lib::autorun::store::save_run(dir.path(), &failed_run_of_7()).unwrap();
+
+    // No divergence: no section.
+    let (status, out) = route(&ctx(), None, "GET", "/autorun-failures?case_id=7", "", "1.0.0").await;
+    assert_eq!(status, 200, "{out}");
+    assert!(!out.contains("## Divergences"), "{out}");
+
+    update(dir.path(), "acme", "Web", |list| {
+        list.push(stored("d1", 7, 2, DivergenceKind::Data, DivergenceStatus::Open, None));
+        list.push(stored("d2", 7, 3, DivergenceKind::Wording, DivergenceStatus::AwaitingRepair, Some(Ruling::Rewrite)));
+        list.push(stored("d3", 7, 1, DivergenceKind::Data, DivergenceStatus::Ruled, Some(Ruling::CaseStands)));
+        // Another case's entry is not this run's business.
+        list.push(stored("d4", 8, 1, DivergenceKind::Data, DivergenceStatus::Open, None));
+        Ok(())
+    })
+    .unwrap();
+    let day = v2_lib::autorun::quirks::day_of(&v2_lib::autorun::sessions::now_ms().to_string());
+    let (status, out) = route(&ctx(), None, "GET", "/autorun-failures?case_id=7", "", "1.0.0").await;
+    assert_eq!(status, 200, "{out}");
+    let section = out.split("## Divergences").nth(1).expect("a Divergences section");
+    let lines: Vec<&str> = section.lines().filter(|l| l.starts_with("- ")).collect();
+    assert_eq!(
+        lines,
+        vec![
+            format!("- case 7 step 1 (d3): a person ruled on {day} that the case stands - leave the check as it is; a failure there is the data's or the application's (mark_autorun_suspected_defect, or tell the person).").as_str(),
+            "- case 7 step 2 (data, d1): needs a ruling - the case says \"exactly 4 levels\", the app shows \"6 levels\". Leave the script as the case says; the person rules in Auto Run.",
+            "- case 7 step 3 (rewrite, d2): the person is rewriting the case - repair that step's checks to the case as it now reads, declared in edits; the repair closes it.",
+        ]
+    );
+    assert!(!section.contains("case 8"), "{section}");
+    // The no-arguments answer carries it too.
+    let (status, out) = route(&ctx(), None, "GET", "/autorun-failures", "", "1.0.0").await;
+    assert_eq!(status, 200, "{out}");
+    assert!(out.contains("## Divergences"), "{out}");
+}
+
+#[tokio::test]
+async fn a_repair_of_the_rewritten_step_closes_its_divergence() {
+    let dir = TempDir::new();
+    let _root = crate::serial::autorun();
+    set_root(dir.path().to_path_buf());
+    let (_server, client) = client_with_case_7().await;
+    let first = case_7_scripts(&[]).to_string();
+    see(dir.path(), &first);
+    let (status, out) = route(&ctx(), Some(&client), "POST", "/autorun-script", &first, "1.0.0").await;
+    assert_eq!(status, 200, "{out}");
+    update(dir.path(), "acme", "Web", |list| {
+        list.push(stored("d1", 7, 2, DivergenceKind::Wording, DivergenceStatus::AwaitingRepair, Some(Ruling::Rewrite)));
+        Ok(())
+    })
+    .unwrap();
+
+    let repair = serde_json::json!({
+        "scripts": case_7_scripts(&[(2, "#s2-new")]),
+        "edits": [{ "case_id": 7, "steps": [2], "why": "the case now reads differently at step 2" }],
+    })
+    .to_string();
+    see(dir.path(), &repair);
+    let (status, out) = route(&ctx(), Some(&client), "POST", "/autorun-script", &repair, "1.0.0").await;
+    assert_eq!(status, 200, "{out}");
+    assert!(
+        out.lines().any(|l| l == "case 7: the divergence at step 2 is closed - the script now follows the rewritten case"),
+        "{out}"
+    );
+    let list = load(dir.path(), "acme", "Web").unwrap();
+    assert_eq!(list[0].status, DivergenceStatus::Ruled);
+    assert!(blocking(&list, 7).is_none());
+    assert!(needs_ruling(dir.path(), "acme", "Web", 7).is_none());
+}
+
+#[tokio::test]
+async fn a_save_says_the_case_needs_a_ruling() {
+    let dir = TempDir::new();
+    let _root = crate::serial::autorun();
+    set_root(dir.path().to_path_buf());
+    let (_server, client) = client_with_case_7().await;
+    update(dir.path(), "acme", "Web", |list| {
+        list.push(stored("d1", 7, 2, DivergenceKind::Data, DivergenceStatus::Open, None));
+        Ok(())
+    })
+    .unwrap();
+    let body = case_7_scripts(&[]).to_string();
+    see(dir.path(), &body);
+    let (status, out) = route(&ctx(), Some(&client), "POST", "/autorun-script", &body, "1.0.0").await;
+    assert_eq!(status, 200, "{out}");
+    assert!(
+        out.lines().any(|l| l
+            == "case 7: needs a ruling: step 2: the case says \"exactly 4 levels\" but the app shows \"6 levels\" (data) - a person rules on it in Auto Run - runs are Blocked until then"),
+        "{out}"
+    );
+    // A dry run says it too, and writes nothing.
+    let dry = serde_json::json!({ "scripts": case_7_scripts(&[(2, "#other")]), "edits": [{ "case_id": 7, "steps": [2], "why": "w" }], "dry_run": true }).to_string();
+    see(dir.path(), &dry);
+    let (status, out) = route(&ctx(), Some(&client), "POST", "/autorun-script", &dry, "1.0.0").await;
+    assert_eq!(status, 200, "{out}");
+    assert!(out.contains("case 7: needs a ruling: step 2:") && out.contains("runs are Blocked until then"), "{out}");
+}
+
+#[tokio::test]
+async fn a_save_for_a_case_with_an_app_divergence_says_nothing_of_a_block() {
+    let dir = TempDir::new();
+    let _root = crate::serial::autorun();
+    set_root(dir.path().to_path_buf());
+    let (_server, client) = client_with_case_7().await;
+    update(dir.path(), "acme", "Web", |list| {
+        list.push(stored("d1", 7, 2, DivergenceKind::App, DivergenceStatus::Open, None));
+        Ok(())
+    })
+    .unwrap();
+    let body = case_7_scripts(&[]).to_string();
+    see(dir.path(), &body);
+    let (status, out) = route(&ctx(), Some(&client), "POST", "/autorun-script", &body, "1.0.0").await;
+    assert_eq!(status, 200, "{out}");
+    assert!(!out.contains("Blocked"), "{out}");
 }
