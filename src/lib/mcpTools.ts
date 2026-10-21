@@ -177,6 +177,11 @@ export const MCP_TOOLS: McpToolInfo[] = [
     summary: "The active environment's account keys and usernames - with passwords only in a test environment - and this project's Test files a case can upload.",
   },
   {
+    name: "save_test_file",
+    label: "Save a test file",
+    summary: "Save a file the assistant made into this project's Test files, so a case or a template can upload it. Only documents a test uploads are taken.",
+  },
+  {
     name: "list_api_templates",
     label: "List API templates",
     summary:
@@ -304,6 +309,7 @@ export const AUTORUN_TOOLS = [
   "set_autorun_order",
   "propose_accounts",
   "get_accounts",
+  "save_test_file",
   "get_autorun_network_wait",
   "search_autorun_requests",
   "get_autorun_request",
@@ -430,6 +436,7 @@ export const TOOL_PAIRS: readonly (readonly string[])[] = [
     "set_autorun_order",
     "propose_accounts",
     "get_accounts",
+    "save_test_file",
     "get_autorun_network_wait",
     "search_autorun_requests",
     "get_autorun_request",

@@ -169,6 +169,7 @@ pub const AUTORUN_TOOLS: &[&str] = &[
     "set_autorun_order",
     "propose_accounts",
     "get_accounts",
+    "save_test_file",
     "get_autorun_network_wait",
     "search_autorun_requests",
     "get_autorun_request",

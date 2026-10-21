@@ -661,6 +661,17 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
             "inputSchema": schema(serde_json::json!({}), &[]),
         },
         {
+            "name": "save_test_file",
+            "description": "Save a file you made into this project's Test files, so an Auto Run `upload` action or an API template's `files` can send it by name. Only documents a test uploads are taken (the extensions are listed in the refusal); never save notes, scripts or reports here.",
+            "inputSchema": schema(serde_json::json!({
+                "name": { "type": "string", "description": "The file's name, e.g. bad-row.csv. Required unless from_path is given, in which case it defaults to that file's own name." },
+                "text": { "type": "string", "description": "The content as UTF-8, for a .txt, .csv, .json or .xml file." },
+                "base64": { "type": "string", "description": "The content as standard base64, for any kind of file a test uploads." },
+                "from_path": { "type": "string", "description": "An absolute path to a file you wrote on this machine; it is copied, at most 25 MB." },
+                "replace": { "type": "boolean", "description": "Replace a file of that name already in Test files (default false)." },
+            }), &[]),
+        },
+        {
             "name": "get_autorun_network_wait",
             "description": "Whether an unattended Auto Run is paused because the company network is unreachable (the environment's database server has stopped answering), which case it will run next, how many seconds it has waited and how many seconds remain before it gives up. Answers { waiting: false } when no run is paused. Read only: only the network returning, the person pressing Stop or the time limit ends the wait, and nothing you call can.",
             "inputSchema": schema(serde_json::json!({}), &[]),
@@ -2029,6 +2040,7 @@ fn tools_call_outcome(params: &serde_json::Value, call: BridgeCall) -> (serde_js
         "set_autorun_order" => call("POST", "/autorun-order", &args.to_string()),
         "propose_accounts" => call("POST", "/accounts-propose", &args.to_string()),
         "get_accounts" => call("GET", "/accounts", ""),
+        "save_test_file" => call("POST", "/test-file-save", &args.to_string()),
         "list_api_templates"
             if args["kind"].as_str() == Some("fixtures")
                 && ["module", "search", "flow", "offset", "limit"].iter().any(|k| says(&args[*k])) =>

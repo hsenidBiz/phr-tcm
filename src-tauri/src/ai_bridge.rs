@@ -525,6 +525,8 @@ pub async fn route(
         // With the project's Test files beside them, by name and size: what
         // a case uploads.
         ("GET", "/accounts") => accounts_read(ctx),
+        // A file the assistant made, saved into those Test files.
+        ("POST", "/test-file-save") => test_file_save(ctx, body),
         // The API template routes: gated with the Auto Run ones by the
         // guard above. Proving and running write to the application, so
         // both also need the person's own switch (`ctx.api_writes`); the
@@ -826,6 +828,92 @@ fn test_files_answer(root: &std::path::Path, ctx: &BridgeContext) -> Result<Vec<
         .into_iter()
         .map(|f| serde_json::json!({ "name": f.name, "size": crate::test_files::human_size(u64::from(f.size)) }))
         .collect())
+}
+
+/// Said when `save_test_file` is given no content, or more than one.
+pub const TEST_FILE_ONE_SOURCE: &str = "Give the file's content as exactly one of text, base64 or from_path.";
+
+/// Said when `save_test_file` is given no name and no `from_path` to take it from.
+pub const TEST_FILE_NEEDS_A_NAME: &str = "Give the file a name, or a from_path to take it from.";
+
+/// Said when `base64` is not standard base64.
+pub const TEST_FILE_BAD_BASE64: &str = "base64 is not standard base64 - encode the file's bytes and save it again.";
+
+/// Said when `from_path` is not an absolute path.
+pub const TEST_FILE_PATH_NOT_FULL: &str = "from_path must be the full path to a file you wrote on this machine.";
+
+/// `POST /test-file-save`: a file the assistant made, saved into the project's Test files
+/// (`test_files::save_bytes`). Exactly one of `text`, `base64` or `from_path` carries the
+/// content. Every refusal is a 400 with a sentence that names the file and no path; the
+/// raw error goes to the app log. It writes only inside the project's Test files folder.
+fn test_file_save(ctx: &BridgeContext, body: &str) -> (u16, String) {
+    use base64::Engine as _;
+    let v: serde_json::Value = match serde_json::from_str(body) {
+        Ok(v) => v,
+        Err(_) => return (400, "that is not readable JSON.".to_string()),
+    };
+    let text_of = |key: &str| match &v[key] {
+        serde_json::Value::String(s) => Some(s.clone()),
+        _ => None,
+    };
+    let (text, b64, from_path) = (text_of("text"), text_of("base64"), text_of("from_path"));
+    if [text.is_some(), b64.is_some(), from_path.is_some()].iter().filter(|x| **x).count() != 1 {
+        return (400, TEST_FILE_ONE_SOURCE.to_string());
+    }
+    let replace = v["replace"].as_bool() == Some(true);
+    if ctx.org.trim().is_empty() || ctx.project.trim().is_empty() {
+        return (400, TEST_FILES_NEED_A_PROJECT.to_string());
+    }
+    let root = match autorun_root() {
+        Ok(r) => r,
+        Err(refused) => return refused,
+    };
+    let folder = crate::test_files::folder(&root, &ctx.org, &ctx.project);
+    let given_name = text_of("name").map(|n| n.trim().to_string()).filter(|n| !n.is_empty());
+    let name = match (&given_name, &from_path) {
+        (Some(n), _) => n.clone(),
+        (None, Some(p)) => crate::test_files::picked_name(std::path::Path::new(p)),
+        (None, None) => return (400, TEST_FILE_NEEDS_A_NAME.to_string()),
+    };
+    let bytes = if let Some(t) = text {
+        t.into_bytes()
+    } else if let Some(b) = b64 {
+        match base64::engine::general_purpose::STANDARD.decode(b.trim()) {
+            Ok(bytes) => bytes,
+            Err(_) => return (400, TEST_FILE_BAD_BASE64.to_string()),
+        }
+    } else {
+        let path = std::path::PathBuf::from(from_path.unwrap_or_default());
+        if !path.is_absolute() {
+            return (400, TEST_FILE_PATH_NOT_FULL.to_string());
+        }
+        match std::fs::metadata(&path) {
+            Ok(m) if m.is_file() => {}
+            Ok(_) => return (400, format!("\"{name}\" is not a file")),
+            Err(e) => {
+                crate::applog::warn(format!("test files: \"{name}\" could not be read for the assistant: {e}"));
+                return (400, format!("\"{name}\" could not be read - check the path and save it again"));
+            }
+        }
+        match crate::test_files::read_capped(&path, &name) {
+            Ok(bytes) => bytes,
+            Err(why) => return (400, why),
+        }
+    };
+    let replaced = replace && crate::test_files::resolve(&folder, &name).is_ok_and(|p| p.exists());
+    match crate::test_files::save_bytes(&folder, &name, &bytes, replace) {
+        Ok(saved) => (
+            200,
+            serde_json::json!({
+                "saved": saved.name,
+                "size": crate::test_files::human_size(u64::from(saved.size)),
+                "replaced": replaced,
+                "use": "Refer to it by its name: an Auto Run upload action's file, or a template's files.",
+            })
+            .to_string(),
+        ),
+        Err(why) => (400, why),
+    }
 }
 
 /// Said on every answer of a discovery that must not save

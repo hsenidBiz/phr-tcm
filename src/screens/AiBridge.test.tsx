@@ -1078,6 +1078,7 @@ test("switching the Auto Run scripts row off sends every tool name in the disabl
     "save_autorun_area",
     "save_autorun_component",
     "save_autorun_script",
+    "save_test_file",
     "search_autorun_requests",
     "set_autorun_headers",
     "set_autorun_order",

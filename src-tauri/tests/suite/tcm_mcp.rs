@@ -131,6 +131,7 @@ fn tools_list_names_every_tool() {
             "set_autorun_order",
             "propose_accounts",
             "get_accounts",
+            "save_test_file",
             "get_autorun_network_wait",
             "search_autorun_requests",
             "get_autorun_request",
@@ -1549,7 +1550,7 @@ fn with_auto_run_off_and_api_templates_on_the_quirk_tool_stays() {
 /// filled in.
 #[test]
 fn with_only_the_api_templates_row_on_a_quirk_without_from_is_the_api_assistants() {
-    const AUTORUN_ROW_OFF: &str = r#"{"disabled":["save_autorun_script","get_autorun_script","delete_autorun_script","get_autorun_network_wait","get_autorun_page","probe_autorun_locator","try_autorun_action","replay_autorun_to_step","start_autorun_discovery","discover_autorun_actions","save_autorun_area","end_autorun_discovery","reset_autorun_browser","save_autorun_component","get_autorun_failures","record_validation_rule","mark_autorun_suspected_defect","report_case_divergence","set_autorun_order","propose_accounts","get_accounts","search_autorun_requests","get_autorun_request","autorun_capture","autorun_har","set_autorun_headers","autorun_cookies"]}"#;
+    const AUTORUN_ROW_OFF: &str = r#"{"disabled":["save_autorun_script","get_autorun_script","delete_autorun_script","get_autorun_network_wait","get_autorun_page","probe_autorun_locator","try_autorun_action","replay_autorun_to_step","start_autorun_discovery","discover_autorun_actions","save_autorun_area","end_autorun_discovery","reset_autorun_browser","save_autorun_component","get_autorun_failures","record_validation_rule","mark_autorun_suspected_defect","report_case_divergence","set_autorun_order","propose_accounts","get_accounts","save_test_file","search_autorun_requests","get_autorun_request","autorun_capture","autorun_har","set_autorun_headers","autorun_cookies"]}"#;
     let posted = |tools: &'static str, args: &str| -> (String, serde_json::Value) {
         let calls = std::cell::RefCell::new(vec![]);
         let call = |_m: &str, path: &str, body: &str| -> Result<(u16, String), String> {
@@ -1611,7 +1612,7 @@ fn the_guide_tool_offers_a_topic_only_while_its_row_is_on() {
 
     // Every module on, the Auto Run row switched off: no autorun topic, its
     // parts gone, the others there.
-    const ROW_OFF: &str = r#"{"disabled":["save_autorun_script","get_autorun_script","delete_autorun_script","get_autorun_page","probe_autorun_locator","try_autorun_action","replay_autorun_to_step","start_autorun_discovery","discover_autorun_actions","save_autorun_area","end_autorun_discovery","reset_autorun_browser","save_autorun_component","get_autorun_failures","record_validation_rule","mark_autorun_suspected_defect","report_case_divergence","set_autorun_order","propose_accounts","get_accounts","get_autorun_network_wait"],"modules":["writing_style","auto_run","api_templates","crystal_reports","db_access","playwright"]}"#;
+    const ROW_OFF: &str = r#"{"disabled":["save_autorun_script","get_autorun_script","delete_autorun_script","get_autorun_page","probe_autorun_locator","try_autorun_action","replay_autorun_to_step","start_autorun_discovery","discover_autorun_actions","save_autorun_area","end_autorun_discovery","reset_autorun_browser","save_autorun_component","get_autorun_failures","record_validation_rule","mark_autorun_suspected_defect","report_case_divergence","set_autorun_order","propose_accounts","get_accounts","save_test_file","get_autorun_network_wait"],"modules":["writing_style","auto_run","api_templates","crystal_reports","db_access","playwright"]}"#;
     let g = guide_of(ROW_OFF);
     assert_eq!(g["inputSchema"]["properties"]["topic"]["enum"], serde_json::json!(["writing", "api_templates", "reports"]));
     assert!(g["inputSchema"]["properties"].get("quick").is_none(), "{g}");
@@ -1705,7 +1706,7 @@ fn the_account_tools_are_listed_only_with_the_auto_run_row_where_auto_run_is_off
         if path == "/tools" {
             return Ok((
                 200,
-                r#"{"disabled":["save_autorun_script","get_autorun_script","delete_autorun_script","get_autorun_network_wait","get_autorun_page","probe_autorun_locator","try_autorun_action","replay_autorun_to_step","start_autorun_discovery","discover_autorun_actions","save_autorun_area","end_autorun_discovery","reset_autorun_browser","save_autorun_component","get_autorun_failures","record_quirk","record_validation_rule","mark_autorun_suspected_defect","report_case_divergence","set_autorun_order","propose_accounts","get_accounts","search_autorun_requests","get_autorun_request","autorun_capture","autorun_har","set_autorun_headers","autorun_cookies"]}"#.into(),
+                r#"{"disabled":["save_autorun_script","get_autorun_script","delete_autorun_script","get_autorun_network_wait","get_autorun_page","probe_autorun_locator","try_autorun_action","replay_autorun_to_step","start_autorun_discovery","discover_autorun_actions","save_autorun_area","end_autorun_discovery","reset_autorun_browser","save_autorun_component","get_autorun_failures","record_quirk","record_validation_rule","mark_autorun_suspected_defect","report_case_divergence","set_autorun_order","propose_accounts","get_accounts","save_test_file","search_autorun_requests","get_autorun_request","autorun_capture","autorun_har","set_autorun_headers","autorun_cookies"]}"#.into(),
             ));
         }
         Ok((200, "{}".into()))
@@ -1803,6 +1804,51 @@ fn get_accounts_also_gives_the_test_files() {
     let d = tools.iter().find(|t| t["name"] == "get_accounts").unwrap()["description"].as_str().unwrap();
     assert!(d.contains("`test_files`") && d.contains("you cannot"), "{d}");
     assert!(d.contains("Never write a username or password into a script"), "{d}");
+}
+
+/// `save_test_file` rides with the Auto Run tools, where `get_accounts` shows the Test files: listed
+/// only while Auto Run (and so, below it, API Templates) is on, refused as "not available" otherwise,
+/// and a call forwards its arguments whole to `/test-file-save`.
+#[test]
+fn save_test_file_is_offered_only_with_auto_run_or_api_templates() {
+    let listed = |modules: &'static str| -> bool {
+        let call = move |_m: &str, _p: &str, _b: &str| -> Result<(u16, String), String> { Ok((200, modules.to_string())) };
+        let v: serde_json::Value = serde_json::from_str(
+            &handle_message(r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#, "1.0.0", &call).unwrap(),
+        )
+        .unwrap();
+        v["result"]["tools"].as_array().unwrap().iter().any(|t| t["name"] == "save_test_file")
+    };
+    assert!(!listed(r#"{"disabled":[],"modules":["writing_style"]}"#));
+    assert!(!listed(r#"{"disabled":[],"modules":["db_access"]}"#));
+    assert!(listed(r#"{"disabled":[],"modules":["db_access","auto_run"]}"#));
+    assert!(listed(r#"{"disabled":[],"modules":["db_access","auto_run","api_templates"]}"#));
+    assert_eq!(v2_lib::ai_tools::module_of_tool("save_test_file"), Some(Module::AutoRun));
+
+    // Off: a call is refused naming the module, and nothing reaches the app.
+    let off = |_m: &str, path: &str, _b: &str| -> Result<(u16, String), String> {
+        assert_eq!(path, "/tools", "nothing past /tools for a refused tool");
+        Ok((200, r#"{"disabled":[],"modules":["writing_style"]}"#.to_string()))
+    };
+    let req = r#"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"save_test_file","arguments":{"name":"a.txt","text":"x"}}}"#;
+    let v: serde_json::Value = serde_json::from_str(&handle_message(req, "1.0.0", &off).unwrap()).unwrap();
+    assert_eq!(v["result"]["isError"], true, "{v}");
+    assert!(v["result"]["content"][0]["text"].as_str().unwrap().contains("not available"), "{v}");
+
+    // On: the arguments travel whole.
+    let seen = std::cell::RefCell::new(vec![]);
+    let on = |m: &str, path: &str, body: &str| -> Result<(u16, String), String> {
+        if path == "/tools" {
+            return Ok((200, r#"{"disabled":[],"modules":["db_access","auto_run"]}"#.to_string()));
+        }
+        seen.borrow_mut().push((m.to_string(), path.to_string(), body.to_string()));
+        Ok((200, "{}".into()))
+    };
+    handle_message(req, "1.0.0", &on).unwrap();
+    let seen = seen.borrow();
+    assert_eq!((seen[0].0.as_str(), seen[0].1.as_str()), ("POST", "/test-file-save"));
+    let sent: serde_json::Value = serde_json::from_str(&seen[0].2).unwrap();
+    assert_eq!(sent, serde_json::json!({ "name": "a.txt", "text": "x" }));
 }
 
 /// `replay_autorun_to_step` is one of the Auto Run tools: listed with them
@@ -2699,7 +2745,7 @@ fn the_network_tools_are_off_until_the_app_says_yes() {
             assert!(v["result"]["content"][0]["text"].as_str().unwrap().contains("Network tools switch"), "{tool}: {v}");
         }
         assert!(names.contains(&"get_autorun_page") && names.contains(&"get_autorun_network_wait"), "{names:?}");
-        assert_eq!(names.len(), 53, "{names:?}");
+        assert_eq!(names.len(), 54, "{names:?}");
     }
     // The proxy's own fallback when the app does not answer names no switch.
     let saved = v2_lib::mcp::tools_reply_or_saved(Err("down".into()), Some(Module::ALL.into_iter().collect()));

@@ -293,7 +293,7 @@ folder of documents for tests, on their machine - by its NAME, never a
 path. Use only a name listed under "Test files" at the end of this guide
 (no such section means the project has none yet); if the case needs a
 file that is not there, ask the person to add it to
-Test files (Auto Run or API Templates) - never invent a name. Point the
+Test files (Auto Run or API Templates) - never invent a name. If the case needs a file nobody has added - a spreadsheet with a bad row, a file over a size limit - make it yourself and save it with save_test_file; Test files only take documents a test uploads. Point the
 selector at the page's file input, or at the button or link that opens
 the file chooser: the input gets the file directly, and a button is
 clicked with the chooser answered for you (a button that opens no chooser
