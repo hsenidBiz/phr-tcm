@@ -1621,6 +1621,10 @@ You open and drive a browser of your own to find what a script needs:
   An area records the values in force when it was saved; after each sign-in
   the app sets them, only where they differ, before walking the area's path,
   and the answer says what it changed.
+- A recipe may name the application's modes (`modes`: what shows in each, and
+  the control that switches to it). An area records the mode it was saved in,
+  and every trip to it switches to that mode first (and back for an area of
+  the other), skipping an account that has only one.
 - `end_autorun_discovery` ends your discovery and keeps the browser: what it
   mapped is kept, and the browser stays open and signed in for your next
   replay or discovery; only the person's End discovery button closes it.

@@ -6182,6 +6182,9 @@ async fn save_discovered_area<B: DiscoveryBrowser>(
             },
             None => None,
         };
+        // The mode the account is in (a project whose recipe names modes):
+        // the area is for that one.
+        let mode = crate::autorun::menu_setup::read_mode(d, &recipe.modes, timing).await;
         let mut path = match (&repairing, &reason) {
             (Some(old), Some(reason)) => area_repair::repaired(
                 old,
@@ -6205,10 +6208,14 @@ async fn save_discovered_area<B: DiscoveryBrowser>(
                 // it replaced: it goes with that path.
                 repaired_by_assistant: None,
                 preferences: Default::default(),
+                mode: None,
             },
         };
         if let Some(read) = preferences {
             path.preferences = read;
+        }
+        if mode.is_some() {
+            path.mode = mode;
         }
         // The clicks are saved as the trip made them: each finds exactly
         // one element on the page (`nav::go_to_module_pinning`).
@@ -6268,6 +6275,7 @@ async fn save_discovered_area<B: DiscoveryBrowser>(
     }
     let saved = path.clicks.len();
     let preferences = path.preferences.clone();
+    let mode = path.mode.clone();
     let new_menu = nav::menu_path(&path.clicks);
     let written = match (&repairing, path.repaired_by_assistant.as_ref()) {
         // A repair goes to the file as it is now (`area_repair::save_repair`).
@@ -6319,6 +6327,9 @@ async fn save_discovered_area<B: DiscoveryBrowser>(
     }
     if !preferences.is_empty() {
         answer["preferences"] = serde_json::json!(preferences);
+    }
+    if let Some(mode) = mode {
+        answer["mode"] = serde_json::json!(mode);
     }
     (200, answer.to_string())
 }

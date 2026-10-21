@@ -527,6 +527,7 @@ pub fn finish(module: &str, area: &str, captured: Captured, recorded: &str) -> R
                 // left is gone with the path it repaired.
                 repaired_by_assistant: None,
                 preferences: Default::default(),
+                mode: None,
             })
         }
     }

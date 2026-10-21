@@ -807,6 +807,13 @@ export const commands = {
 	 */
 	menu_preferences?: MenuPreferences_Serialize | null,
 	/**
+	 *  The application's modes (Admin, Self Service), when it has them: what
+	 *  shows in each and the control that switches to it. An area records
+	 *  the mode it was saved in, and every trip to it switches to that mode
+	 *  first (`menu_setup::match_mode`).
+	 */
+	modes?: MenuMode_Serialize[],
+	/**
 	 *  Pop-ups the runner closes by itself: before every action that
 	 *  touches the page (a click, a fill, a drag, an upload) it looks
 	 *  once, without waiting, for each, and clicks the close control of one
@@ -4354,6 +4361,38 @@ export type Mention = {
 	created_date: string,
 };
 
+/**
+ *  One of the application's modes (Admin, Self Service): the same screens
+ *  drawn for a different role, switched between by a control.
+ */
+export type MenuMode = MenuMode_Serialize | MenuMode_Deserialize;
+
+/**
+ *  One of the application's modes (Admin, Self Service): the same screens
+ *  drawn for a different role, switched between by a control.
+ */
+export type MenuMode_Deserialize = {
+	/**  How areas and answers name it: "Admin", "Self Service". */
+	name: string,
+	/**  Visible while the account is in this mode. */
+	shown: Target_Deserialize,
+	/**  Clicked, from another mode, to switch to this one. */
+	switch: Target_Deserialize,
+};
+
+/**
+ *  One of the application's modes (Admin, Self Service): the same screens
+ *  drawn for a different role, switched between by a control.
+ */
+export type MenuMode_Serialize = {
+	/**  How areas and answers name it: "Admin", "Self Service". */
+	name: string,
+	/**  Visible while the account is in this mode. */
+	shown: Target_Serialize,
+	/**  Clicked, from another mode, to switch to this one. */
+	switch: Target_Serialize,
+};
+
 /**  One setting in the dialog. */
 export type MenuPreference = MenuPreference_Serialize | MenuPreference_Deserialize;
 
@@ -6137,6 +6176,13 @@ export type SignInRecipe_Deserialize = {
 	 */
 	menu_preferences?: MenuPreferences_Deserialize | null,
 	/**
+	 *  The application's modes (Admin, Self Service), when it has them: what
+	 *  shows in each and the control that switches to it. An area records
+	 *  the mode it was saved in, and every trip to it switches to that mode
+	 *  first (`menu_setup::match_mode`).
+	 */
+	modes?: MenuMode_Deserialize[],
+	/**
 	 *  Pop-ups the runner closes by itself: before every action that
 	 *  touches the page (a click, a fill, a drag, an upload) it looks
 	 *  once, without waiting, for each, and clicks the close control of one
@@ -6184,6 +6230,13 @@ export type SignInRecipe_Serialize = {
 	 *  from what the area recorded (`menu_setup`).
 	 */
 	menu_preferences?: MenuPreferences_Serialize | null,
+	/**
+	 *  The application's modes (Admin, Self Service), when it has them: what
+	 *  shows in each and the control that switches to it. An area records
+	 *  the mode it was saved in, and every trip to it switches to that mode
+	 *  first (`menu_setup::match_mode`).
+	 */
+	modes?: MenuMode_Serialize[],
 	/**
 	 *  Pop-ups the runner closes by itself: before every action that
 	 *  touches the page (a click, a fill, a drag, an upload) it looks

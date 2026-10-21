@@ -36,6 +36,8 @@ struct App {
     probed: Arc<Mutex<String>>,
     /// The Preferences link is not on the page.
     link_missing: Arc<AtomicBool>,
+    /// The mode the account is in ("" for an account with only one).
+    mode: Arc<Mutex<String>>,
 }
 
 impl App {
@@ -58,9 +60,16 @@ fn app_at(saved_on: bool, at: &str) -> (ScriptedDriver, App) {
         shown: Arc::new(AtomicBool::new(saved_on)),
         probed: Arc::new(Mutex::new(String::new())),
         link_missing: Arc::new(AtomicBool::new(false)),
+        mode: Arc::new(Mutex::new(String::new())),
     };
-    let (log, saved, shown, probed, link_missing) =
-        (app.log.clone(), app.saved.clone(), app.shown.clone(), app.probed.clone(), app.link_missing.clone());
+    let (log, saved, shown, probed, link_missing, mode) = (
+        app.log.clone(),
+        app.saved.clone(),
+        app.shown.clone(),
+        app.probed.clone(),
+        app.link_missing.clone(),
+        app.mode.clone(),
+    );
     let path = Arc::new(Mutex::new(at.to_string()));
     let mut last_css = String::new();
     let mut d = ScriptedDriver::new(move |method, params| {
@@ -97,7 +106,10 @@ fn app_at(saved_on: bool, at: &str) -> (ScriptedDriver, App) {
                 json!({ "result": { "objectId": "arr" } })
             }
             "Runtime.getProperties" => {
-                let there = !(last_css == "#prefslink" && link_missing.load(Ordering::SeqCst));
+                let now = mode.lock().unwrap().clone();
+                let there = !(last_css == "#prefslink" && link_missing.load(Ordering::SeqCst))
+                    && !(last_css == "#admin-shown" && now != "Admin")
+                    && !(last_css == "#ss-shown" && now != "Self Service");
                 json!({ "result": if there {
                     vec![json!({ "name": "0", "value": { "objectId": format!("css:{last_css}") } })]
                 } else {
@@ -121,7 +133,15 @@ fn app_at(saved_on: bool, at: &str) -> (ScriptedDriver, App) {
                     }
                     "css:#toggle" => log.lock().unwrap().push("click toggle".to_string()),
                     "css:#go" => *path.lock().unwrap() = "/hr/home/index".to_string(),
-                    "css:#leave" => *path.lock().unwrap() = "/hr/leave".to_string(),
+                    "css:#to-admin" | "css:#to-ss" => {
+                        let to = if on == "css:#to-admin" { "Admin" } else { "Self Service" };
+                        log.lock().unwrap().push(format!("switch {to}"));
+                        *mode.lock().unwrap() = to.to_string();
+                    }
+                    "css:#leave" => {
+                        log.lock().unwrap().push("click leave".to_string());
+                        *path.lock().unwrap() = "/hr/leave".to_string();
+                    }
                     _ => {}
                 }
                 json!({})
@@ -146,6 +166,10 @@ fn recipe() -> SignInRecipe {
             "close": { "css": "#closeprefs" },
             "settings": [ { "name": GROUP, "control": { "css": "#SectionWiseMode" }, "on": false } ]
         },
+        "modes": [
+            { "name": "Admin", "shown": { "css": "#admin-shown" }, "switch": { "css": "#to-admin" } },
+            { "name": "Self Service", "shown": { "css": "#ss-shown" }, "switch": { "css": "#to-ss" } }
+        ],
         "signed_in": { "css": "#marker" }
     }))
     .unwrap()
@@ -170,6 +194,68 @@ async fn trip(d: &mut ScriptedDriver, preferences: Value) -> (Result<String, Str
     (out.map_err(|f| f.for_dialog()), notes)
 }
 
+/// A trip to the Leave area, recorded in `mode`, from a page in use.
+async fn trip_in_mode(d: &mut ScriptedDriver, mode: Option<&str>) -> (Result<String, String>, Vec<String>) {
+    let mut path = leave(json!({}));
+    path.mode = mode.map(str::to_string);
+    let route = Route::new(&recipe(), path);
+    let mut notes = Vec::new();
+    let out = go_to_module_noted(d, &route, TripFrom::Elsewhere, &quick(), &mut notes).await;
+    (out.map_err(|f| f.for_dialog()), notes)
+}
+
+#[tokio::test]
+async fn a_self_service_area_under_an_admin_account_switches_mode_first() {
+    let (mut d, app) = app(false);
+    *app.mode.lock().unwrap() = "Admin".to_string();
+    let (out, notes) = trip_in_mode(&mut d, Some("Self Service")).await;
+    assert_eq!(out, Ok("/hr/leave".to_string()));
+    assert_eq!(notes, vec!["switched from Admin to Self Service mode".to_string()]);
+    let log = app.log();
+    let switched = log.iter().position(|l| l == "switch Self Service").expect("the switch was clicked");
+    let first = log.iter().position(|l| l == "click leave").expect("the path was walked");
+    assert!(switched < first, "{log:?}");
+    assert_eq!(*app.mode.lock().unwrap(), "Self Service");
+}
+
+#[tokio::test]
+async fn an_admin_area_after_a_self_service_one_switches_back() {
+    let (mut d, app) = app(false);
+    *app.mode.lock().unwrap() = "Admin".to_string();
+    let (_, notes) = trip_in_mode(&mut d, Some("Self Service")).await;
+    assert_eq!(notes.len(), 1, "{notes:?}");
+    // Already in the area's mode: nothing is clicked.
+    let (_, notes) = trip_in_mode(&mut d, Some("Self Service")).await;
+    assert!(notes.is_empty(), "{notes:?}");
+    let (out, notes) = trip_in_mode(&mut d, Some("Admin")).await;
+    assert_eq!(out, Ok("/hr/leave".to_string()));
+    assert_eq!(notes, vec!["switched from Self Service to Admin mode".to_string()]);
+    assert_eq!(app.count("switch Admin"), 1, "{:?}", app.log());
+    assert_eq!(*app.mode.lock().unwrap(), "Admin");
+}
+
+#[tokio::test]
+async fn an_account_with_one_mode_skips_the_switch() {
+    // No mode marker shows at all.
+    let (mut d, app) = app(false);
+    let (out, notes) = trip_in_mode(&mut d, Some("Self Service")).await;
+    assert_eq!(out, Ok("/hr/leave".to_string()));
+    assert!(notes.is_empty(), "{notes:?}");
+    assert_eq!(app.count("switch Self Service"), 0, "{:?}", app.log());
+    // An area that recorded no mode never looks either.
+    *app.mode.lock().unwrap() = "Admin".to_string();
+    let (_, notes) = trip_in_mode(&mut d, None).await;
+    assert!(notes.is_empty(), "{notes:?}");
+    assert_eq!(app.count("switch Self Service"), 0, "{:?}", app.log());
+}
+
+#[tokio::test]
+async fn a_mode_the_recipe_does_not_name_fails_the_trip() {
+    let (mut d, _app) = app(false);
+    let (out, _) = trip_in_mode(&mut d, Some("Manager")).await;
+    assert_eq!(out, Err("the area's mode Manager is not one the recipe names".to_string()));
+}
+
 #[tokio::test]
 async fn an_account_already_matching_changes_nothing() {
     // Off is what the recipe's areas need, and what the account has.
@@ -179,7 +265,7 @@ async fn an_account_already_matching_changes_nothing() {
     assert!(notes.is_empty(), "{notes:?}");
     assert_eq!(app.count("click control"), 0, "{:?}", app.log());
     // The dialog was opened to look, and closed again.
-    assert_eq!(app.log(), vec!["open userimg", "open prefslink", "click close"]);
+    assert_eq!(app.log(), vec!["open userimg", "open prefslink", "click close", "click leave"]);
     // Nothing was let through the guard for it.
     assert!(d.holds.is_empty(), "{:?}", d.holds);
 }
@@ -354,6 +440,44 @@ async fn an_area_save_records_the_preferences_in_force() {
     assert!(file.contains("\"preferences\""), "{file}");
 }
 
+#[tokio::test]
+async fn an_area_save_records_the_mode_it_was_saved_in() {
+    let dir = tempfile::tempdir().unwrap();
+    save_recipe(dir.path(), ORG, PROJECT, &recipe()).unwrap();
+    save_accounts(dir.path(), &[account()]).unwrap();
+    let (d, app) = app_at(false, "/hr/leave");
+    *app.mode.lock().unwrap() = "Admin".to_string();
+    let discovery = Some(DiscoveryState {
+        area: Some("Leave".to_string()),
+        account: Some("admin".to_string()),
+        started_at: 1,
+        tried: Vec::new(),
+        mapping: None,
+        case_id: None,
+        no_save: false,
+        call_no_save: false,
+        call_case_id: None,
+    });
+    let mut browser = Some(FakeBrowser {
+        d,
+        lease: Held::supervised(),
+        account: Some("admin".to_string()),
+        discovery,
+        guarded_case: None,
+        guard_owner: None,
+    });
+    let (status, body) =
+        discover_area_in(&mut browser, dir.path(), ORG, PROJECT, "Leave Apply", "Leave", vec![css("#leave")], &quick()).await;
+    assert_eq!(status, 200, "{body}");
+    let said: Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(said["mode"], "Admin", "{body}");
+    let nav = load_nav(dir.path(), ORG, PROJECT).unwrap();
+    let saved = find_area(&nav, "leave apply").expect("the area was saved");
+    assert_eq!(saved.mode.as_deref(), Some("Admin"));
+    // Reading the mode switches nothing.
+    assert_eq!(app.count("switch Self Service"), 0, "{:?}", app.log());
+}
+
 // ----------------------------------------------------------------- the recipe
 
 fn recipe_with(menu_preferences: Value) -> SignInRecipe {
@@ -391,6 +515,33 @@ fn recipe_validate_refuses_an_empty_or_duplicate_preference() {
         .validate()
         .unwrap_err();
     assert!(err.contains("{{username}} and {{password}}"), "{err}");
+}
+
+#[test]
+fn recipe_validate_refuses_a_single_mode() {
+    let mode = |name: &str, shown: &str| json!({ "name": name, "shown": { "css": shown }, "switch": { "css": "#sw" } });
+    let with = |modes: Value| -> SignInRecipe {
+        serde_json::from_value(json!({
+            "start_url": "https://hr.example.internal/",
+            "steps": [ { "kind": "click", "selector": { "css": "#go" } } ],
+            "modes": modes,
+            "signed_in": { "css": "#marker" }
+        }))
+        .unwrap()
+    };
+    assert!(with(json!([mode("Admin", "#a"), mode("Self Service", "#b")])).validate().is_ok());
+    let err = with(json!([mode("Admin", "#a")])).validate().unwrap_err();
+    assert!(err.contains("one mode is nothing to switch between"), "{err}");
+    let err = with(json!([mode("Admin", "#a"), mode(" ", "#b")])).validate().unwrap_err();
+    assert!(err.contains("needs a name"), "{err}");
+    let err = with(json!([mode("Admin", "#a"), mode("admin", "#b")])).validate().unwrap_err();
+    assert!(err.contains("used twice"), "{err}");
+    let err = with(json!([mode("Admin", "#{{password}}"), mode("Self Service", "#b")])).validate().unwrap_err();
+    assert!(err.contains("{{username}} and {{password}}"), "{err}");
+    // None named is fine, and writes nothing.
+    let none = with(json!([]));
+    assert!(none.validate().is_ok());
+    assert!(!serde_json::to_string(&none).unwrap().contains("modes"));
 }
 
 #[test]

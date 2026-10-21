@@ -1646,6 +1646,7 @@ fn record_area(root: &std::path::Path, org: &str, project: &str, name: &str) {
             made_by: v2_lib::autorun::nav::MadeBy::Person,
             repaired_by_assistant: None,
             preferences: Default::default(),
+            mode: None,
         },
     )
     .unwrap();

@@ -76,6 +76,12 @@ pub struct ModulePath {
     /// project's recipe names none.
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub preferences: std::collections::BTreeMap<String, bool>,
+    /// The application's mode (by the recipe's `modes` name) the area was
+    /// recorded in: every trip to it switches the account to that mode
+    /// first. Absent in a file written before this was kept, and where the
+    /// project's recipe names no modes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mode: Option<String>,
 }
 
 /// An assistant's repair of an area's path: what the area held before, so
@@ -555,6 +561,9 @@ pub struct Home {
     /// The recipe's menu preferences, which `go_to_module` sets after a
     /// sign-in (`menu_setup`).
     pub menu_preferences: Option<super::recipe::MenuPreferences>,
+    /// The recipe's modes, which `go_to_module` switches between
+    /// (`menu_setup::match_mode`).
+    pub modes: Vec<super::recipe::MenuMode>,
 }
 
 impl Home {
@@ -565,6 +574,7 @@ impl Home {
             signed_in: recipe.signed_in.clone(),
             after_sign_in: recipe.after_sign_in.clone(),
             menu_preferences: recipe.menu_preferences.clone(),
+            modes: recipe.modes.clone(),
         }
     }
 }
@@ -1005,6 +1015,17 @@ pub async fn go_to_module_noted<D: Driver>(
             Ok(done) => notes.extend(done),
             Err(why) => notes.push(format!("menu preferences could not be checked: {why}")),
         }
+    }
+    // The mode the area was recorded in, on every trip. A switch changes the
+    // page, so the walk starts as if from elsewhere.
+    let mut from = from;
+    match super::menu_setup::match_mode(d, &route.home, route.path.mode.as_deref(), timing).await {
+        Ok(Some(note)) => {
+            notes.push(note);
+            from = TripFrom::Elsewhere;
+        }
+        Ok(None) => {}
+        Err(reason) => return Err(PathFailure { at: Where::Home, reason, harness: false }),
     }
     if from == TripFrom::Elsewhere && page_on_home_origin(d, route).await.is_some() {
         let quick = Timing {

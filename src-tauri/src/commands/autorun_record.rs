@@ -160,6 +160,10 @@ fn set_recorded_preferences(read: Option<std::collections::BTreeMap<String, bool
     *RECORDED_PREFERENCES.lock().unwrap_or_else(|e| e.into_inner()) = read.map(|m| m.into_iter().collect()).unwrap_or_default();
 }
 
+/// The application mode the recording browser was in when the person stopped
+/// (`menu_setup::read_mode`), kept the same way.
+static RECORDED_MODE: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+
 fn take_recorded_preferences() -> std::collections::BTreeMap<String, bool> {
     std::mem::take(&mut *RECORDED_PREFERENCES.lock().unwrap_or_else(|e| e.into_inner())).into_iter().collect()
 }
@@ -411,6 +415,7 @@ pub async fn auto_run_record_start(
     let (mut cdp, browser) = open_browser(which, true).await?;
     let start = prepare_to_record(&mut cdp, &root, &recipe, &who, &Timing::supervised(), &mut lease).await?;
     set_recorded_preferences(None);
+    *RECORDED_MODE.lock().unwrap_or_else(|e| e.into_inner()) = None;
 
     let about = RecordingFor { organization, project, module, area, account, which, start };
     open_the_recording(claim, about, move |claim, stop, cancel| {
@@ -427,6 +432,10 @@ pub async fn auto_run_record_start(
                     Ok(read) => set_recorded_preferences(Some(read)),
                     Err(why) => crate::applog::warn(format!("module recording: the menu preferences could not be read: {why}")),
                 }
+            }
+            if !recipe.modes.is_empty() && out.1.is_some() {
+                let read = crate::autorun::menu_setup::read_mode(&mut cdp, &recipe.modes, &Timing::supervised()).await;
+                *RECORDED_MODE.lock().unwrap_or_else(|e| e.into_inner()) = read;
             }
             drop(cdp);
             drop(browser);
@@ -468,6 +477,7 @@ pub async fn auto_run_record_stop(app: tauri::AppHandle) -> Result<ModuleRecordR
         Ok(mut p) => {
             p.start = start;
             p.preferences = take_recorded_preferences();
+            p.mode = RECORDED_MODE.lock().unwrap_or_else(|e| e.into_inner()).take();
             p
         }
         Err(failure) => return Ok(ModuleRecordResult { saved: false, module, area, failure }),

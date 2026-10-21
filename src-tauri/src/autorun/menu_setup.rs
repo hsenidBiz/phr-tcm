@@ -7,7 +7,7 @@
 //! where an account differs, changed.
 
 use super::nav::Home;
-use super::recipe::MenuPreferences;
+use super::recipe::{MenuMode, MenuPreferences};
 use super::signin;
 use crate::browser::actions::{execute_in, Action, ActionOutcome, Policy};
 use crate::browser::cdp::Driver;
@@ -197,4 +197,60 @@ async fn change_and_close<D: Driver>(
     }
     closed?;
     Ok(notes)
+}
+
+/// The longest `read_mode` looks for a mode's marker.
+const MODE_LOOK_MS: u64 = 2_000;
+
+/// The mode the account is in right now: the name of the recipe's mode whose
+/// `shown` is visible, looked for up to `expect_ms` (at most two seconds). `None`
+/// when no mode shows, which is an account that has only one.
+pub async fn read_mode<D: Driver>(d: &mut D, modes: &[MenuMode], timing: &Timing) -> Option<String> {
+    if modes.is_empty() {
+        return None;
+    }
+    let limit = Instant::now() + Duration::from_millis(timing.expect_ms.min(MODE_LOOK_MS));
+    loop {
+        for m in modes {
+            if expect(d, &m.shown, Check::Visible, 0, timing.poll_ms).await.ok {
+                return Some(m.name.clone());
+            }
+        }
+        if Instant::now() >= limit {
+            return None;
+        }
+        d.idle(Duration::from_millis(timing.poll_ms)).await;
+    }
+}
+
+/// Put the account in `wanted` mode (the area's), when the recipe names modes
+/// and the account shows one it is not in. Answers a note when it switched.
+/// Nothing is done for an area that recorded no mode, a recipe without modes,
+/// or an account that shows none (it has only one mode).
+pub async fn match_mode<D: Driver>(
+    d: &mut D,
+    home: &Home,
+    wanted: Option<&str>,
+    timing: &Timing,
+) -> Result<Option<String>, String> {
+    let Some(w) = wanted else { return Ok(None) };
+    if home.modes.is_empty() {
+        return Ok(None);
+    }
+    let Some(target) = home.modes.iter().find(|m| m.name.eq_ignore_ascii_case(w)) else {
+        return Err(format!("the area's mode {w} is not one the recipe names"));
+    };
+    let Some(from) = read_mode(d, &home.modes, timing).await else { return Ok(None) };
+    if from.eq_ignore_ascii_case(&target.name) {
+        return Ok(None);
+    }
+    let out = click(d, &target.switch, timing).await;
+    if !out.ok {
+        return Err(format!("could not switch from {from} to {} mode ({})", target.name, out.detail));
+    }
+    let shown = expect(d, &target.shown, Check::Visible, timing.nav_ms, timing.poll_ms).await;
+    if !shown.ok {
+        return Err(format!("the page did not show {} mode after switching from {from}", target.name));
+    }
+    Ok(Some(format!("switched from {from} to {} mode", target.name)))
 }
