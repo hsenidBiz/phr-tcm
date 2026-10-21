@@ -1706,6 +1706,8 @@ it) and, when the browser is not on the page it belongs to, `area`,
 out a rule that no longer holds. Never record words you did not see on
 the page.
 
+In Claude's auto mode, reading a delete confirmation (`get_autorun_page`) can be refused as a deletion. A no_save discovery cannot delete anything: ask the person to approve that read rather than working around it.
+
 ### Mapping the menus
 
 `/tcm:map-menus` maps whole modules ahead of time. Pass `mapping` as true

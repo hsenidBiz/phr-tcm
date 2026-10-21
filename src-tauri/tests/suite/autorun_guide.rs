@@ -2313,3 +2313,9 @@ fn the_guide_names_every_role_and_how_its_rules_arrive() {
     }
     assert!(!section.contains('\u{2014}') && !section.contains('\u{2013}'));
 }
+
+#[test]
+fn the_guide_says_a_delete_dialog_read_may_be_refused_in_auto_mode() {
+    let g = autorun_guide();
+    assert!(g.contains("can be refused as a deletion"), "the guide never says a delete-dialog read may be refused");
+}

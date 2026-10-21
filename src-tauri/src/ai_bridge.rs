@@ -4658,6 +4658,8 @@ struct Discovered {
     outcome: crate::browser::actions::ActionOutcome,
     dialogs: Vec<String>,
     writes: Vec<serde_json::Value>,
+    /// Saves the guard stopped, each `METHOD /path`: not writes.
+    blocked: Vec<String>,
     after: String,
 }
 
@@ -4972,6 +4974,9 @@ async fn discover_action_heard<B: DiscoveryBrowser>(
             "detail": ran.outcome.detail,
         }));
         writes.extend(ran.writes);
+        if reports_blocks {
+            blocked_writes.extend(ran.blocked);
+        }
         dialogs.extend(ran.dialogs);
         after = ran.after;
         let failed = !ran.outcome.ok;
@@ -4999,6 +5004,10 @@ async fn discover_action_heard<B: DiscoveryBrowser>(
     let mut blocked = count_blocked_writes(d, p.discovery.as_mut(), &runs);
     if reports_blocks {
         blocked_writes.extend(take_no_save_blocks(d, &runs));
+        // A save seen both ways (in the request record and as a stop) is
+        // said once, in the order it was first seen.
+        let mut seen = std::collections::HashSet::new();
+        blocked_writes.retain(|w| seen.insert(w.clone()));
         blocked = Some(blocked_writes.len());
     }
     let mut answer = serde_json::json!({
@@ -5529,11 +5538,18 @@ async fn discover_one<D: crate::browser::cdp::Driver>(
     let what = describe_action(action);
     let now = crate::autorun::sessions::now_ms();
     let mut writes = Vec::new();
+    let mut blocked = Vec::new();
     for sent in sent {
         if !crate::browser::save_guard::SAVE_METHODS.contains(&sent.method.as_str()) {
             continue;
         }
         let path = without_typed(&crate::autorun::discovery_map::path_only(&sent.path_query), action);
+        // A save the guard failed in the browser never reached the server:
+        // it is blocked, not written, and the map does not log it.
+        if crate::browser::save_guard::stopped_by_guard(&sent) {
+            blocked.push(format!("{} {path}", sent.method));
+            continue;
+        }
         if recording {
             let entry = crate::autorun::discovery_map::WriteEntry {
                 method: sent.method.clone(),
@@ -5563,7 +5579,7 @@ async fn discover_one<D: crate::browser::cdp::Driver>(
             unrecorded(&why);
         }
     }
-    Ok(Discovered { outcome: tried.outcome, dialogs, writes, after })
+    Ok(Discovered { outcome: tried.outcome, dialogs, writes, blocked, after })
 }
 
 /// Said by `end_autorun_discovery` once the discovery is over and its
