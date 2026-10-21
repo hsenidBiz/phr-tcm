@@ -12,7 +12,7 @@ use tauri::State;
 use crate::ai_tools::{
     atomic_write, command_dir, command_files_in, config_carries, config_for, detect_in, is_installed,
     legacy_command_path, merge_all, merge_entry, migrate_claude_permissions, migrate_cursor_permissions,
-    project_command_dir,
+    project_command_dir, agent_dir, agent_files_in, project_agent_dir, AGENT_PREFIX,
     remove_entry, remove_legacy_command, set_claude_allow, set_cursor_allow, superseded_by,
     tcm_server, DetectedTool, McpServer, ToolSpec, CLAUDE_DB_RULES, CURSOR_DB_ENTRIES,
     COMMAND_MARKER, LEGACY_DB_SERVER, MANAGED_SERVERS, TCM_SERVER, TOOL_SPECS,
@@ -677,6 +677,9 @@ fn register_server(
                 if let Err(e) = write_commands_in(&command_dir(&home_dir()), disabled) {
                     crate::applog::warn(format!("could not write the Claude Code commands: {e}"));
                 }
+                if let Err(e) = write_agents_in(&agent_dir(&home_dir()), disabled) {
+                    crate::applog::warn(format!("could not write the Claude Code agents: {e}"));
+                }
             }
             return Ok(());
         };
@@ -690,6 +693,9 @@ fn register_server(
             // registration that worked.
             if let Err(e) = write_commands_in(&project_command_dir(r), disabled) {
                 crate::applog::warn(format!("could not write the Claude Code commands: {e}"));
+            }
+            if let Err(e) = write_agents_in(&project_agent_dir(r), disabled) {
+                crate::applog::warn(format!("could not write the Claude Code agents: {e}"));
             }
         }
         retire_global_with_superseded(spec, &server.name, r);
@@ -740,6 +746,7 @@ fn retire_global(spec: &ToolSpec, server_name: &str, root: Option<&str>) {
         let same_dir = root.is_some_and(|r| project_command_dir(r) == command_dir(&home_dir()));
         if server_name == TCM_SERVER && !same_dir {
             let _ = remove_commands_in(&command_dir(&home_dir()));
+            let _ = remove_agents_in(&agent_dir(&home_dir()));
         }
         unregister_claude_code(server_name)
     } else {
@@ -833,12 +840,14 @@ fn unregister_server(
             Some(r) => {
                 if server_name == TCM_SERVER {
                     let _ = remove_commands_in(&project_command_dir(r));
+                    let _ = remove_agents_in(&project_agent_dir(r));
                 }
                 unregister_claude_code_in(r, server_name)
             }
             None => {
                 if server_name == TCM_SERVER {
                     let _ = remove_commands_in(&command_dir(&home_dir()));
+                    let _ = remove_agents_in(&agent_dir(&home_dir()));
                 }
                 unregister_claude_code(server_name)
             }
@@ -857,9 +866,9 @@ fn unregister_server(
 /// Public so `set_bridge_context` can call it when the AI Bridge tab's
 /// toggles move.
 pub fn sync_commands(disabled: &[String], working_dir: Option<&str>) {
-    let dir = match root_of(working_dir) {
-        Some(r) => project_command_dir(r),
-        None => command_dir(&home_dir()),
+    let (dir, agents) = match root_of(working_dir) {
+        Some(r) => (project_command_dir(r), project_agent_dir(r)),
+        None => (command_dir(&home_dir()), agent_dir(&home_dir())),
     };
     if !dir.is_dir() {
         return;
@@ -867,6 +876,77 @@ pub fn sync_commands(disabled: &[String], working_dir: Option<&str>) {
     if let Err(e) = write_commands_in(&dir, disabled) {
         crate::applog::warn(format!("could not sync the Claude Code commands: {e}"));
     }
+    if let Err(e) = write_agents_in(&agents, disabled) {
+        crate::applog::warn(format!("could not sync the Claude Code agents: {e}"));
+    }
+}
+
+/// An agent file of ours: named `tcm-*.md` and carrying `COMMAND_MARKER`.
+/// The agents folder is shared with the person's own agents, so nothing
+/// else in it is ever overwritten or removed.
+fn is_our_agent_file(path: &std::path::Path) -> bool {
+    path.extension().and_then(|e| e.to_str()) == Some("md")
+        && path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .is_some_and(|n| n.starts_with(AGENT_PREFIX))
+        && matches!(std::fs::read_to_string(path), Ok(t) if t.contains(COMMAND_MARKER))
+}
+
+/// Write the role files into `dir` (see `agent_files_in`), sweeping an old
+/// one of ours that is no longer wanted. Same refusals as `write_commands_in`
+/// for a wanted path holding somebody else's file.
+pub fn write_agents_in(dir: &std::path::Path, disabled: &[String]) -> Result<(), String> {
+    let wanted = agent_files_in(dir, &crate::ai_tools::effective_disabled(disabled));
+
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let keep = wanted.iter().any(|(p, _)| *p == path);
+            if !keep && is_our_agent_file(&path) {
+                let _ = std::fs::remove_file(&path);
+            }
+        }
+    }
+    if wanted.is_empty() {
+        // Nothing to write: do not create the folder just to leave it empty.
+        return Ok(());
+    }
+
+    std::fs::create_dir_all(dir).map_err(|e| format!("failed to create {}: {e}", dir.display()))?;
+    let mut first_error: Option<String> = None;
+    for (path, contents) in wanted {
+        if matches!(std::fs::read_to_string(&path), Ok(t) if !t.contains(COMMAND_MARKER)) {
+            let msg = format!(
+                "{} already exists and was not written by this app - left alone",
+                path.display()
+            );
+            first_error.get_or_insert(msg);
+            continue;
+        }
+        if let Err(e) = atomic_write(&path, &contents) {
+            first_error.get_or_insert(e);
+        }
+    }
+    match first_error {
+        Some(e) => Err(e),
+        None => Ok(()),
+    }
+}
+
+/// Take the role files away with the registration. Ours only; the folder
+/// goes only if that leaves it empty.
+pub fn remove_agents_in(dir: &std::path::Path) -> Result<(), String> {
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if is_our_agent_file(&path) {
+                let _ = std::fs::remove_file(&path);
+            }
+        }
+    }
+    let _ = std::fs::remove_dir(dir);
+    Ok(())
 }
 
 /// Write the command set into `dir`, dropping ours for any tool that is

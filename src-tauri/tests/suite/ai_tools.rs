@@ -1966,3 +1966,117 @@ fn setup_and_discover_prompt_for_marks_and_the_run_order() {
         assert!(!body.contains('\u{2014}') && !body.contains('\u{2013}'), "/tcm:{stem} has a dash");
     }
 }
+
+// ------------------------------------------------------------ role agent files
+
+use v2_lib::ai_tools::{agent_dir, agent_files_in, project_agent_dir, AGENT_PREFIX};
+use v2_lib::autorun::roles::Role;
+use v2_lib::commands::ai_tools::{remove_agents_in, write_agents_in};
+
+#[test]
+fn the_agent_folders_sit_beside_the_command_folders() {
+    assert_eq!(agent_dir("H"), std::path::PathBuf::from("H").join(".claude").join("agents"));
+    assert_eq!(project_agent_dir("R"), std::path::PathBuf::from("R").join(".claude").join("agents"));
+    assert_eq!(AGENT_PREFIX, "tcm-");
+}
+
+#[test]
+fn each_role_file_is_generated_with_the_marker() {
+    let dir = std::path::Path::new("D:/repo/.claude/agents");
+    let files = agent_files_in(dir, &[]);
+    let names: Vec<String> = files
+        .iter()
+        .map(|(p, _)| p.file_name().unwrap().to_string_lossy().into_owned())
+        .collect();
+    assert_eq!(names, ["tcm-writer.md", "tcm-healer.md", "tcm-case-rewriter.md", "tcm-auditor.md"]);
+    for (role, (_, content)) in Role::ALL.iter().zip(files.iter()) {
+        let key = role.key();
+        assert!(content.starts_with(&format!("---\nname: tcm-{key}\ndescription: ")), "{key}");
+        assert!(content.contains(COMMAND_MARKER), "{key} has no marker");
+        assert!(content.contains(role.text().trim_end()), "{key} lacks its text");
+        assert!(
+            content.ends_with(&format!("These rules also come from `get_guide` with topic autorun and role {key}.\n")),
+            "{key} ends wrong"
+        );
+    }
+}
+
+#[test]
+fn no_role_file_without_auto_run() {
+    let dir = std::path::Path::new("D:/repo/.claude/agents");
+    assert!(agent_files_in(dir, &["start_autorun_discovery".to_string()]).is_empty());
+    assert!(agent_files_in(dir, &effective_disabled_for(&[], &mods(&[Module::DbAccess]))).is_empty());
+    assert_eq!(agent_files_in(dir, &effective_disabled_for(&[], &all_mods())).len(), 4);
+}
+
+#[test]
+fn writing_the_agents_leaves_the_persons_files_alone() {
+    let dir = TempDir::new();
+    std::fs::write(dir.path().join("my-agent.md"), "my own agent").unwrap();
+    std::fs::write(dir.path().join("tcm-healer.md"), "the person's own healer").unwrap();
+
+    let err = write_agents_in(dir.path(), &[]).unwrap_err();
+    assert!(err.contains("tcm-healer.md"), "{err}");
+    assert!(err.contains("was not written by this app"), "{err}");
+
+    assert_eq!(std::fs::read_to_string(dir.path().join("my-agent.md")).unwrap(), "my own agent");
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("tcm-healer.md")).unwrap(),
+        "the person's own healer"
+    );
+    for n in ["tcm-writer.md", "tcm-case-rewriter.md", "tcm-auditor.md"] {
+        let t = std::fs::read_to_string(dir.path().join(n)).unwrap();
+        assert!(t.contains(COMMAND_MARKER), "{n}");
+    }
+}
+
+#[test]
+fn an_old_role_file_is_swept_and_others_stay() {
+    let dir = TempDir::new();
+    std::fs::write(dir.path().join("tcm-planner.md"), format!("{COMMAND_MARKER}\nan old role")).unwrap();
+    std::fs::write(dir.path().join("notes.md"), format!("{COMMAND_MARKER}\nnot ours by name")).unwrap();
+
+    write_agents_in(dir.path(), &[]).unwrap();
+
+    assert!(!dir.path().join("tcm-planner.md").exists());
+    assert!(dir.path().join("notes.md").exists());
+    assert!(dir.path().join("tcm-writer.md").exists());
+}
+
+#[test]
+fn removing_the_agents_takes_only_ours() {
+    let dir = TempDir::new();
+    write_agents_in(dir.path(), &[]).unwrap();
+    std::fs::write(dir.path().join("my-agent.md"), "mine").unwrap();
+    std::fs::write(dir.path().join("tcm-mine.md"), "no marker").unwrap();
+    std::fs::write(dir.path().join("notes.md"), format!("{COMMAND_MARKER}\nno prefix")).unwrap();
+
+    remove_agents_in(dir.path()).unwrap();
+
+    for r in Role::ALL {
+        assert!(!dir.path().join(format!("tcm-{}.md", r.key())).exists());
+    }
+    for n in ["my-agent.md", "tcm-mine.md", "notes.md"] {
+        assert!(dir.path().join(n).exists(), "{n} must stay");
+    }
+
+    // With only ours in it, the folder goes too.
+    let lone = TempDir::new();
+    let sub = lone.path().join("agents");
+    write_agents_in(&sub, &[]).unwrap();
+    remove_agents_in(&sub).unwrap();
+    assert!(!sub.exists());
+}
+
+#[test]
+fn role_files_name_only_real_tools() {
+    let tools = v2_lib::mcp::all_tool_names();
+    for (path, content) in agent_files_in(std::path::Path::new("x"), &[]) {
+        assert!(!content.contains('\u{2014}') && !content.contains('\u{2013}'), "{path:?} has a dash");
+        for (i, span) in content.split('`').enumerate() {
+            if i % 2 == 1 && span.contains('_') {
+                assert!(tools.iter().any(|t| t == span), "{path:?} names `{span}`, which is no tool");
+            }
+        }
+    }
+}

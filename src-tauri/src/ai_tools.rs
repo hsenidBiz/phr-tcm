@@ -817,6 +817,58 @@ pub fn project_command_dir(root: &str) -> PathBuf {
     PathBuf::from(root).join(".claude").join("commands").join("tcm")
 }
 
+/// `~/.claude/agents/` - Claude Code's subagent folder, shared with the
+/// person's own agents: only `tcm-*.md` files carrying `COMMAND_MARKER` are
+/// ever written over or removed.
+pub fn agent_dir(home: &str) -> PathBuf {
+    PathBuf::from(home).join(".claude").join("agents")
+}
+
+/// `<repo>/.claude/agents/`.
+pub fn project_agent_dir(root: &str) -> PathBuf {
+    PathBuf::from(root).join(".claude").join("agents")
+}
+
+/// Every role file this app writes is named `tcm-<key>.md`.
+pub const AGENT_PREFIX: &str = "tcm-";
+
+/// One role as a Claude Code agent file. Explicit lines, as
+/// `command_markdown` does.
+pub fn agent_markdown(role: crate::autorun::roles::Role) -> String {
+    let key = role.key();
+    let text = role.text();
+    let mut lines: Vec<String> = vec![
+        "---".into(),
+        format!("name: {AGENT_PREFIX}{key}"),
+        format!("description: {}", yaml_scalar(role.description())),
+        "---".into(),
+        String::new(),
+        COMMAND_MARKER.into(),
+        String::new(),
+    ];
+    for l in text.trim_end().split('\n') {
+        lines.push(l.to_string());
+    }
+    lines.push(String::new());
+    lines.push(format!("These rules also come from `get_guide` with topic autorun and role {key}."));
+    let mut out = lines.join("\n");
+    out.push('\n');
+    out
+}
+
+/// Every role file for `dir`: none when `start_autorun_discovery` is
+/// disabled (Auto Run off takes every Auto Run tool, as `command_files_in`
+/// drops the discover command), else the four in `Role::ALL` order.
+pub fn agent_files_in(dir: &std::path::Path, disabled: &[String]) -> Vec<(PathBuf, String)> {
+    if disabled.iter().any(|d| d == "start_autorun_discovery") {
+        return Vec::new();
+    }
+    crate::autorun::roles::Role::ALL
+        .iter()
+        .map(|r| (dir.join(format!("{AGENT_PREFIX}{}.md", r.key())), agent_markdown(*r)))
+        .collect()
+}
+
 /// The single top-level file an earlier version wrote. Still named here so
 /// registering can clear it: leaving it behind would put `/tcm-testcases`
 /// in the picker next to the namespaced set, pointing at the same thing.

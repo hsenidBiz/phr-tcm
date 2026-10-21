@@ -41,6 +41,17 @@ impl Role {
         }
     }
 
+    /// What the role's agent file says it is for (its frontmatter
+    /// description, which is what Claude Code shows and matches on).
+    pub fn description(self) -> &'static str {
+        match self {
+            Role::Writer => "Choose which of a PBI's test cases to script and write their Auto Run scripts from the live app, under Test Case Manager's writer rules",
+            Role::Healer => "Diagnose and repair failed Auto Run cases within the repair bounds, under Test Case Manager's healer rules",
+            Role::CaseRewriter => "Change a saved Auto Run script or component, for a repair or a rewritten test case, under Test Case Manager's case rewriter rules",
+            Role::Auditor => "Check saved Auto Run scripts against their test cases and report what they miss or fit, never editing, under Test Case Manager's auditor rules",
+        }
+    }
+
     /// Trimmed and lowercased, with "_" and " " read as "-". Also the
     /// Playwright agents' names: "planner" and "generator" -> Writer;
     /// "refactorer" and "spec-editor" -> CaseRewriter; "doc-drift-auditor"
