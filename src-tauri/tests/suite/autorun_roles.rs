@@ -112,6 +112,7 @@ fn the_healer_carries_the_bounds_word_for_word() {
             "stronger model",
             "the case rewriter's rules",
             "until then its script is not checked",
+            "the same failure came back after your last repair",
         ],
     );
 }

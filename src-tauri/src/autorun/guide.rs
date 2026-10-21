@@ -2252,6 +2252,7 @@ all:
 - `STOP: the run could not take this case to its module screen - fix the module path or the case's Module in the app, not the script`
 - `STOP: the person marked this case Blocked - a missing precondition is not a script defect`
 - `STOP: the case waits for a person's ruling on a divergence - leave the script as the case says`
+- `STOP: the same failure as before the last repair: the same step, the same action, the same words - the repair did not reach the cause, so stop on this case and report each failure, what the repair changed and your diagnosis to the person`
 
 None of those is a script defect. For the one that could not reach the
 case's area, the area's menu path may have moved: repair the area, not

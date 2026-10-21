@@ -40,6 +40,24 @@ pub struct ReplayRecord {
     /// The account KEY the case ran as, if any.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub account: Option<String>,
+    /// The step failure this case's replay kept before this one: what a failure that comes back is
+    /// compared with.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub previous: Option<PriorFailure>,
+}
+
+/// An earlier failure of a case: when it ended and its signature.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct PriorFailure {
+    pub at: u64,
+    pub signature: failures::FailureSignature,
+}
+
+impl ReplayRecord {
+    /// The one failed case of this replay, read as a run's (`as_run`).
+    pub fn as_run_case(&self) -> Option<CaseRecord> {
+        as_run(self).cases.into_iter().next()
+    }
 }
 
 /// Where the kept replays are: `replays/` under the Auto Run folder.
@@ -84,6 +102,9 @@ pub fn note(root: &Path, case_id: i32, title: &str, to_step: i32, end: &ReplayEn
         ReplayPhase::Area => "area",
         ReplayPhase::Step => "step",
     };
+    let previous = load(root, case_id)
+        .filter(|old| old.phase == "step")
+        .and_then(|old| failures::signature(&as_run(&old).cases[0]).map(|signature| PriorFailure { at: old.at, signature }));
     let record = ReplayRecord {
         case_id,
         title: title.to_string(),
@@ -94,6 +115,7 @@ pub fn note(root: &Path, case_id: i32, title: &str, to_step: i32, end: &ReplayEn
         why: why.clone(),
         outcomes: outcomes.clone(),
         account,
+        previous,
     };
     // Written beside its place and renamed into it, as the other stores
     // write: a reader never meets half a file.

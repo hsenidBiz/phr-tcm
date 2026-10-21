@@ -18,6 +18,7 @@ other tool that does the same job, your own browser, an editor or a sub-agent in
   with kind app and, after the run fails there, `mark_autorun_suspected_defect`.
 - A case Blocked with "needs a ruling", and a case under a STOP line, is reported as it is and left
   alone.
+- A STOP line saying the same failure came back after your last repair ends the work on that case.
 - Bounds, for every case:
   - At most 3 fix-run cycles per case: a fix, then a replay or run of it.
   - Stop at cycle 2 when the failure is identical to cycle 1's: the same step, the same action, the
