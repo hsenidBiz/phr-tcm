@@ -1019,6 +1019,22 @@ pub fn without_page(answer: (u16, String), body: &str) -> (u16, String) {
 /// given, and the most it ever carries.
 pub const TEMPLATE_PAGE: usize = 25;
 pub const TEMPLATE_PAGE_MAX: usize = 100;
+/// The most characters a list answer in full carries; over it the answer is
+/// the index, which says how to narrow.
+pub const TEMPLATE_ANSWER_CAP: usize = 40_000;
+/// A run's `detail` is cut to this many characters in a list answer.
+const RUN_DETAIL_CUT: usize = 300;
+
+/// A run record as a list answer shows it: its `detail` cut to
+/// `RUN_DETAIL_CUT` characters plus `...`.
+fn last_run_cut(r: &crate::api_templates::store::RunRecord) -> serde_json::Value {
+    let mut v = serde_json::json!(r);
+    if let Some(d) = r.detail.as_deref().filter(|d| d.chars().count() > RUN_DETAIL_CUT) {
+        let cut: String = d.chars().take(RUN_DETAIL_CUT).collect();
+        v["detail"] = serde_json::json!(format!("{cut}..."));
+    }
+    v
+}
 
 /// The saved templates for this project, filtered and paged.
 ///
@@ -1136,98 +1152,111 @@ fn api_template_list(ctx: &BridgeContext, target: &str) -> (u16, String) {
         flows.retain(|f| page.iter().any(|s| s.template.stage.as_ref().is_some_and(|r| r.flow == f.id)));
     }
 
-    let flow_rows: Vec<serde_json::Value> = flows
-        .iter()
-        .map(|f| {
-            if !full {
-                return serde_json::json!({ "id": f.id, "title": f.title, "stage_count": f.stages.len() });
-            }
-            let stages: Vec<serde_json::Value> = f
-                .stages
-                .iter()
-                .map(|s| {
-                    let on: Vec<&str> =
-                        gate::templates_on(&saved, &f.id, &s.id).iter().map(|t| t.template.id.as_str()).collect();
-                    serde_json::json!({
-                        "id": s.id,
-                        "title": s.title,
-                        "requires": s.requires,
-                        "optional": s.optional,
-                        "creates": s.creates,
-                        "templates": on,
+    let build = |full: bool| -> serde_json::Value {
+        let flow_rows: Vec<serde_json::Value> = flows
+            .iter()
+            .map(|f| {
+                if !full {
+                    return serde_json::json!({ "id": f.id, "title": f.title, "stage_count": f.stages.len() });
+                }
+                let stages: Vec<serde_json::Value> = f
+                    .stages
+                    .iter()
+                    .map(|s| {
+                        let on: Vec<&str> =
+                            gate::templates_on(&saved, &f.id, &s.id).iter().map(|t| t.template.id.as_str()).collect();
+                        serde_json::json!({
+                            "id": s.id,
+                            "title": s.title,
+                            "requires": s.requires,
+                            "optional": s.optional,
+                            "creates": s.creates,
+                            "templates": on,
+                        })
                     })
+                    .collect();
+                serde_json::json!({
+                    "id": f.id,
+                    "title": f.title,
+                    "module": f.module,
+                    "subject": f.subject,
+                    "stages": stages,
                 })
-                .collect();
-            serde_json::json!({
-                "id": f.id,
-                "title": f.title,
-                "module": f.module,
-                "subject": f.subject,
-                "stages": stages,
             })
-        })
-        .collect();
-    let rows: Vec<serde_json::Value> = page
-        .iter()
-        .map(|s| {
-            let t = &s.template;
-            if !full {
-                return serde_json::json!({
+            .collect();
+        let rows: Vec<serde_json::Value> = page
+            .iter()
+            .map(|s| {
+                let t = &s.template;
+                if !full {
+                    return serde_json::json!({
+                        "id": t.id,
+                        "title": t.title,
+                        "module": t.module,
+                        "effect": t.effect,
+                        "proven": t.proven.is_some(),
+                        "stage": t.stage,
+                    });
+                }
+                serde_json::json!({
                     "id": t.id,
                     "title": t.title,
                     "module": t.module,
                     "effect": t.effect,
-                    "proven": t.proven.is_some(),
+                    "params": t.params,
+                    "outputs": t.outputs,
                     "stage": t.stage,
-                });
-            }
-            serde_json::json!({
-                "id": t.id,
-                "title": t.title,
-                "module": t.module,
-                "effect": t.effect,
-                "params": t.params,
-                "outputs": t.outputs,
-                "stage": t.stage,
-                // An imported template arrives unproven (api_templates::share):
-                // runs of it are allowed, so the assistant is told plainly.
-                "proven": t.proven.is_some(),
-                "unproven": t.proven.is_none().then_some(crate::api_templates::share::UNPROVEN_FOR_ASSISTANT),
-                "last_run": s.runs.iter().find(|r| r.mode == store::MODE_RUN),
+                    // An imported template arrives unproven (api_templates::share):
+                    // runs of it are allowed, so the assistant is told plainly.
+                    "proven": t.proven.is_some(),
+                    "unproven": t.proven.is_none().then_some(crate::api_templates::share::UNPROVEN_FOR_ASSISTANT),
+                    "last_run": s.runs.iter().find(|r| r.mode == store::MODE_RUN).map(last_run_cut),
+                })
             })
-        })
-        .collect();
-    let mut paging = serde_json::json!({ "total": total, "offset": offset, "returned": rows.len() });
-    if offset + rows.len() < total {
-        paging["next_offset"] = serde_json::json!(offset + rows.len());
-    }
-    let mut answer = serde_json::json!({ "templates": rows, "flows": flow_rows, "paging": paging });
-    let with_flow = !matches!(arg("with_flow").as_deref(), Some("false") | Some("0"));
-    if full && !with_flow {
-        if let Some(map) = answer.as_object_mut() {
-            map.remove("flows");
-        }
-        answer["left_out"] = serde_json::json!("the flows and the Test files (flow: false)");
-    } else if full {
-        // Names and sizes only: what a template's `files` may name.
-        let test_files: Vec<serde_json::Value> = project_test_files(&root, ctx)
-            .into_iter()
-            .map(|f| serde_json::json!({ "name": f.name, "size": f.size }))
             .collect();
-        answer["test_files"] = serde_json::json!(test_files);
-    } else {
-        let mut note = format!(
-            "This is the index of {total} templates. Narrow it with module, search or flow until at most {limit} match, or pass id, for params, outputs, the newest run and the test files. Page with offset and limit (at most {TEMPLATE_PAGE_MAX})."
-        );
-        // The full answer says it on each unproven row; the index says it
-        // once.
-        if page.iter().any(|s| s.template.proven.is_none()) {
-            note.push_str(&format!(
-                " A template whose proven is false was {}.",
-                crate::api_templates::share::UNPROVEN_FOR_ASSISTANT
+        let mut paging = serde_json::json!({ "total": total, "offset": offset, "returned": rows.len() });
+        if offset + rows.len() < total {
+            paging["next_offset"] = serde_json::json!(offset + rows.len());
+        }
+        let mut answer = serde_json::json!({ "templates": rows, "flows": flow_rows, "paging": paging });
+        let with_flow = !matches!(arg("with_flow").as_deref(), Some("false") | Some("0"));
+        if full && !with_flow {
+            if let Some(map) = answer.as_object_mut() {
+                map.remove("flows");
+            }
+            answer["left_out"] = serde_json::json!("the flows and the Test files (flow: false)");
+        } else if full {
+            // Names and sizes only: what a template's `files` may name.
+            let test_files: Vec<serde_json::Value> = project_test_files(&root, ctx)
+                .into_iter()
+                .map(|f| serde_json::json!({ "name": f.name, "size": f.size }))
+                .collect();
+            answer["test_files"] = serde_json::json!(test_files);
+        } else {
+            let mut note = format!(
+                "This is the index of {total} templates. Narrow it with module, search or flow until at most {limit} match, or pass id, for params, outputs, the newest run and the test files. Page with offset and limit (at most {TEMPLATE_PAGE_MAX})."
+            );
+            // The full answer says it on each unproven row; the index says it
+            // once.
+            if page.iter().any(|s| s.template.proven.is_none()) {
+                note.push_str(&format!(
+                    " A template whose proven is false was {}.",
+                    crate::api_templates::share::UNPROVEN_FOR_ASSISTANT
+                ));
+            }
+            answer["note"] = serde_json::json!(note);
+        }
+        answer
+    };
+    let mut answer = build(full);
+    if full && !by_id {
+        let n = answer.to_string().len();
+        if n > TEMPLATE_ANSWER_CAP {
+            answer = build(false);
+            answer["note"] = serde_json::json!(format!(
+                "The answer in full would be {n} characters, more than one answer carries ({TEMPLATE_ANSWER_CAP}): this is the index of {total} templates. Pass id for one template in full, narrow with module, search or flow, or page with a smaller limit."
             ));
         }
-        answer["note"] = serde_json::json!(note);
     }
     (200, answer.to_string())
 }
@@ -1746,8 +1775,17 @@ fn api_fixture_list(ctx: &BridgeContext, target: &str) -> (u16, String) {
     }
     if q(target, "full").is_some_and(|v| v.trim().eq_ignore_ascii_case("true")) {
         let fixtures: Vec<serde_json::Value> = saved.iter().map(in_full).collect();
-        return (200, serde_json::json!({ "fixtures": fixtures }).to_string());
+        let answer = serde_json::json!({ "fixtures": fixtures }).to_string();
+        if answer.len() <= TEMPLATE_ANSWER_CAP {
+            return (200, answer);
+        }
+        let n = answer.len();
+        return (200, fixture_index(&saved, Some(format!("The fixtures in full would be {n} characters: pass id for one in full."))));
     }
+    (200, fixture_index(&saved, None))
+}
+
+fn fixture_index(saved: &[crate::api_templates::fixture_store::SavedFixture], over: Option<String>) -> String {
     let fixtures: Vec<serde_json::Value> = saved
         .iter()
         .map(|s| {
@@ -1768,7 +1806,8 @@ fn api_fixture_list(ctx: &BridgeContext, target: &str) -> (u16, String) {
             })
         })
         .collect();
-    (200, serde_json::json!({ "fixtures": fixtures, "note": FIXTURES_IN_SHORT }).to_string())
+    let note = over.unwrap_or_else(|| FIXTURES_IN_SHORT.to_string());
+    serde_json::json!({ "fixtures": fixtures, "note": note }).to_string()
 }
 
 /// `POST /api-template-fixture-save`: checks the fixture against the saved

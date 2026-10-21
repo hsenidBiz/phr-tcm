@@ -3712,6 +3712,59 @@ mod api_template_routes {
         }
     }
 
+    /// A list that fits `limit` but would be over 40,000 characters in full
+    /// is the index, with a note that says why.
+    #[tokio::test]
+    async fn a_template_list_too_long_in_full_comes_as_the_index() {
+        let _root = crate::serial::autorun();
+        let dir = root_with_recipe_and_account();
+        let c = ctx();
+        for n in 0..25 {
+            let mut v = draft();
+            v["id"] = json!(format!("long-{n:02}"));
+            let params: Vec<serde_json::Value> = (0..40)
+                .map(|p| json!({ "name": format!("a_parameter_with_a_long_name_number_{p:02}_for_template_{n:02}"), "type": "string" }))
+                .collect();
+            v["params"] = json!(params);
+            let t: v2_lib::api_templates::ApiTemplate = serde_json::from_value(v).unwrap();
+            v2_lib::api_templates::store::save(dir.path(), &c.org, &c.project, &t).unwrap();
+        }
+        let (status, v, out) = list("/api-templates").await;
+        assert_eq!(status, 200, "{out}");
+        let rows = v["templates"].as_array().unwrap();
+        assert_eq!(rows.len(), 25, "{out}");
+        assert!(rows.iter().all(|r| r.get("params").is_none()), "{out}");
+        assert!(v["note"].as_str().unwrap().starts_with("The answer in full would be"), "{out}");
+        assert!(out.len() < 40_000, "{} characters", out.len());
+        // One template by id is still in full.
+        let (_, one, _) = list("/api-templates?id=long-03").await;
+        assert_eq!(one["templates"][0]["params"].as_array().unwrap().len(), 40, "{one}");
+    }
+
+    #[tokio::test]
+    async fn a_long_last_run_detail_is_cut() {
+        use v2_lib::api_templates::store::{append_run, RunRecord};
+        let _root = crate::serial::autorun();
+        let dir = root_with_recipe_and_account();
+        let c = ctx();
+        let t = crate::common::saved_on_stage("cut-detail", "Cut the detail", "rules");
+        v2_lib::api_templates::store::save(dir.path(), &c.org, &c.project, &t).unwrap();
+        let run = RunRecord {
+            at: "2026-09-29 11:00:00".into(),
+            mode: "run".into(),
+            account: "admin".into(),
+            ok: false,
+            failed_step: Some("Cycle setup".into()),
+            detail: Some("x".repeat(1000)),
+            outputs: Default::default(),
+        };
+        append_run(dir.path(), &c.org, &c.project, &t.id, run).unwrap();
+        let (_, v, out) = list("/api-templates").await;
+        let detail = v["templates"][0]["last_run"]["detail"].as_str().unwrap_or_else(|| panic!("{out}"));
+        assert_eq!(detail.chars().count(), 303, "{out}");
+        assert!(detail.ends_with("..."), "{detail}");
+    }
+
     /// `module` is a case-insensitive substring; `search` matches the id,
     /// the title, or a param or output name. A filtered result that fits
     /// in one page carries the full detail.
