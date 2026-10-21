@@ -36,6 +36,14 @@ working exactly as it does today.
 
 - Several assistants may write scripts at the same time, each in its own browser window.
 - Write the design (this document) before anything is built.
+- (2026-10-21) **3 browsers in all**: the main one and two more, fixed.
+- (2026-10-21) **Subagents of one session get their own browsers from the start**: the optional
+  `agent` name on every Auto Run tool (sent as `x-tcm-agent-name`, making process id + name the
+  agent) and a proxy that answers calls concurrently ship in phase 3, not phase 5.
+- (2026-10-21) **Idle release**: an extra browser with no call for 30 minutes is released; the main
+  one never is.
+- (2026-10-21) **Unattended runs keep today's rule**: a run waits until every assistant's browser is
+  released.
 
 ## What exists today (the facts the parts build on)
 
@@ -351,11 +359,12 @@ Guide (`autorun/guide.rs`) and tool descriptions (`mcp.rs`), and the tcm skills'
 3. **Extra slots** (needs the owner's answers): `slot_for`'s rules 2-4, the cap, `OPENING`, F7 and
    environment/module checks across slots, per-slot stop/release/reset, lease holder by slot and
    the agent-facing sentences, `get_accounts.in_use_by`, case claims, one mapping run at a time,
-   gone-process release, guide and descriptions.
+   gone-process release, guide and descriptions; **subagent names** (`agent` argument,
+   `x-tcm-agent-name`) and the concurrent proxy (owner, 2026-10-21: from the start).
 4. **The Assistants card** and its commands/event; docs-site shots for it. Phases 3 and 4 go out
    in the same beta - extra browsers are never shipped without the person's way to see and
    release them.
-5. **Idle release** of extra slots; and, if Question 2 is yes, subagent names (below).
+5. **Idle release** of extra slots (30 minutes).
 
 ## Decisions for the builder (my calls)
 
@@ -371,19 +380,7 @@ Guide (`autorun/guide.rs`) and tool descriptions (`mcp.rs`), and the tcm skills'
 
 ## Questions for the owner
 
-1. **How many browsers at once?** Recommended: **3 in all** (the main one and two more), fixed.
-   Raise only after the hand check measures memory and CPU with three going.
-2. **Subagents of one session, each with its own browser?** Today all subagents of one Claude
-   session share its one MCP process, so they would share one browser. Possible: an optional
-   `agent` name on every Auto Run tool (e.g. `"w1"`), which the proxy strips from the arguments and
-   sends as `x-tcm-agent-name`, making (process id, name) the agent; the proxy must then answer
-   calls concurrently (a thread per call, responses written under a lock) or one subagent's 45 s
-   replay wait blocks the rest. Recommended: **yes, but as phase 5**, after separate sessions
-   work - separate sessions need no new tool argument.
-3. **Idle release.** Recommended: an extra browser with no call for **30 minutes** is released
-   (main never is).
-4. **Unattended runs while assistants work.** Recommended: **keep today's rule** - Run waits until
-   every assistant's browser is released (F7 extended). Relaxing it is its own design.
+All four were answered on 2026-10-21 (see Decisions): 3 browsers; subagents get their own browsers from the start; idle release after 30 minutes; unattended runs keep today's rule.
 
 ## Anti-goals
 
