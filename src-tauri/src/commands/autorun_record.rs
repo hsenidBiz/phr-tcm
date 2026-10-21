@@ -168,6 +168,30 @@ fn take_recorded_preferences() -> std::collections::BTreeMap<String, bool> {
     std::mem::take(&mut *RECORDED_PREFERENCES.lock().unwrap_or_else(|e| e.into_inner())).into_iter().collect()
 }
 
+/// The menu preferences and the mode in force in the recording browser right
+/// now, for a project whose recipe names them: read where a recording
+/// BEGINS, before the first click is captured. A dialog that cannot be read
+/// gives no preferences (the area then keeps what it held,
+/// `nav::keep_recorded_values`).
+pub async fn read_start_state<D: crate::browser::cdp::Driver>(
+    d: &mut D,
+    recipe: &crate::autorun::recipe::SignInRecipe,
+    timing: &Timing,
+) -> (Option<std::collections::BTreeMap<String, bool>>, Option<String>) {
+    let preferences = match recipe.menu_preferences.as_ref() {
+        Some(prefs) => match crate::autorun::menu_setup::read_preferences(d, prefs, timing).await {
+            Ok(read) => Some(read),
+            Err(why) => {
+                crate::applog::warn(format!("module recording: the menu preferences could not be read: {why}"));
+                None
+            }
+        },
+        None => None,
+    };
+    let mode = crate::autorun::menu_setup::read_mode(d, &recipe.modes, timing).await;
+    (preferences, mode)
+}
+
 /// Whether a recording has been opened and not yet stopped or cancelled
 /// (its browser may have been closed since).
 pub async fn recording_is_open() -> bool {
@@ -414,8 +438,14 @@ pub async fn auto_run_record_start(
     let which = Browser::from_name(&browser_name);
     let (mut cdp, browser) = open_browser(which, true).await?;
     let start = prepare_to_record(&mut cdp, &root, &recipe, &who, &Timing::supervised(), &mut lease).await?;
-    set_recorded_preferences(None);
-    *RECORDED_MODE.lock().unwrap_or_else(|e| e.into_inner()) = None;
+    // What the area is recorded in is what is in force where the recording
+    // BEGINS, read before the first click is captured: a recording whose
+    // clicks switch the mode (or change a preference) is for the state it
+    // started in, which is where a fresh browser's check starts too. A
+    // dialog that cannot be read leaves the preferences out.
+    let (preferences, started_in) = read_start_state(&mut cdp, &recipe, &Timing::supervised()).await;
+    set_recorded_preferences(preferences);
+    *RECORDED_MODE.lock().unwrap_or_else(|e| e.into_inner()) = started_in;
 
     let about = RecordingFor { organization, project, module, area, account, which, start };
     open_the_recording(claim, about, move |claim, stop, cancel| {
@@ -424,19 +454,6 @@ pub async fn auto_run_record_start(
                 let _ = ev.emit(&app);
             })
             .await;
-            // The browser is still open: the menu preferences in force are
-            // what the area was recorded with (a project whose recipe names
-            // them). A dialog that cannot be read leaves them out.
-            if let (Some(prefs), Some(_)) = (recipe.menu_preferences.as_ref(), out.1.as_ref()) {
-                match crate::autorun::menu_setup::read_preferences(&mut cdp, prefs, &Timing::supervised()).await {
-                    Ok(read) => set_recorded_preferences(Some(read)),
-                    Err(why) => crate::applog::warn(format!("module recording: the menu preferences could not be read: {why}")),
-                }
-            }
-            if !recipe.modes.is_empty() && out.1.is_some() {
-                let read = crate::autorun::menu_setup::read_mode(&mut cdp, &recipe.modes, &Timing::supervised()).await;
-                *RECORDED_MODE.lock().unwrap_or_else(|e| e.into_inner()) = read;
-            }
             drop(cdp);
             drop(browser);
             drop(lease);
@@ -483,6 +500,9 @@ pub async fn auto_run_record_stop(app: tauri::AppHandle) -> Result<ModuleRecordR
         Err(failure) => return Ok(ModuleRecordResult { saved: false, module, area, failure }),
     };
     let root = super::autorun::root(&app)?;
+    // A read that failed at the start leaves what the area already held.
+    let mut path = path;
+    nav::keep_recorded_values(&root, &organization, &project, &mut path);
     match check_in_fresh_browser(&root, &organization, &project, &account, which, &path, recorder::CANCELLED).await {
         Ok(_) => {
             let clicks = path.clicks.len();

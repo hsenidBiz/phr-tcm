@@ -593,3 +593,200 @@ async fn no_save_hold_is_taken_when_the_account_is_already_in_the_areas_mode() {
     assert!(out.is_ok() && notes.is_empty(), "{out:?} {notes:?}");
     assert!(d.holds.is_empty(), "{:?}", d.holds);
 }
+
+// ------------------------------------------- areas that already exist (mapping)
+
+use v2_lib::autorun::nav::put_path;
+use v2_lib::commands::autorun::MappingRun;
+
+/// A mapping run's own area "Leave Apply", saved earlier with `extra` fields
+/// (preferences, mode) and the one click `#leave`.
+fn mapped_before(root: &std::path::Path, extra: Value) {
+    let mut path: Value = json!({
+        "module": "Leave", "area": "Leave Apply", "clicks": [ { "css": "#leave" } ],
+        "arrived": "/hr/leave", "recorded": "2026-10-20T10:00:00Z", "made_by": "mapping"
+    });
+    for (k, v) in extra.as_object().unwrap() {
+        path[k] = v.clone();
+    }
+    put_path(root, ORG, PROJECT, serde_json::from_value(path).unwrap()).unwrap();
+}
+
+/// A mapping run over Leave saves "Leave Apply" again from `app`.
+async fn map_again(root: &std::path::Path, d: ScriptedDriver) -> (u16, Value) {
+    let discovery = Some(DiscoveryState {
+        area: Some("Leave".to_string()),
+        account: Some("admin".to_string()),
+        started_at: 1,
+        tried: Vec::new(),
+        mapping: Some(MappingRun::new(&["Leave".to_string()])),
+        case_id: None,
+        no_save: false,
+        call_no_save: false,
+        call_case_id: None,
+    });
+    let mut browser = Some(FakeBrowser {
+        d,
+        lease: Held::supervised(),
+        account: Some("admin".to_string()),
+        discovery,
+        guarded_case: None,
+        guard_owner: None,
+    });
+    let (status, body) =
+        discover_area_in(&mut browser, root, ORG, PROJECT, "Leave Apply", "Leave", vec![css("#leave")], &quick()).await;
+    (status, serde_json::from_str(&body).unwrap_or(Value::String(body)))
+}
+
+fn project_files(dir: &std::path::Path) {
+    save_recipe(dir, ORG, PROJECT, &recipe()).unwrap();
+    save_accounts(dir, &[account()]).unwrap();
+}
+
+#[tokio::test]
+async fn an_existing_area_with_the_same_clicks_gains_the_mode_and_preferences_it_lacks() {
+    let dir = tempfile::tempdir().unwrap();
+    project_files(dir.path());
+    mapped_before(dir.path(), json!({}));
+    let (d, app) = app_at(true, "/hr/leave");
+    *app.mode.lock().unwrap() = "Admin".to_string();
+    let (status, said) = map_again(dir.path(), d).await;
+    assert_eq!(status, 200, "{said}");
+    assert!(said.get("unchanged").is_none(), "not answered as unchanged: {said}");
+    assert_eq!(said["saved"], true, "{said}");
+    assert_eq!(said["message"], "unchanged path; recorded its mode/menu preferences", "{said}");
+    let nav = load_nav(dir.path(), ORG, PROJECT).unwrap();
+    let saved = find_area(&nav, "leave apply").unwrap();
+    assert_eq!(saved.mode.as_deref(), Some("Admin"));
+    assert_eq!(saved.preferences.get(GROUP), Some(&true));
+    assert_eq!(saved.clicks.len(), 1, "the clicks stand as they were");
+    // Run again: now it is unchanged for real.
+    let (d, app) = app_at(true, "/hr/leave");
+    *app.mode.lock().unwrap() = "Admin".to_string();
+    let (_, said) = map_again(dir.path(), d).await;
+    assert_eq!((said["saved"].clone(), said["unchanged"].clone()), (json!(false), json!(true)), "{said}");
+}
+
+#[tokio::test]
+async fn a_failed_read_keeps_what_the_area_already_held() {
+    let dir = tempfile::tempdir().unwrap();
+    project_files(dir.path());
+    mapped_before(dir.path(), json!({ "mode": "Self Service", "preferences": { GROUP: false } }));
+    // The preferences dialog will not open, and no mode shows.
+    let (d, app) = app_at(true, "/hr/leave");
+    app.link_missing.store(true, Ordering::SeqCst);
+    let (status, said) = map_again(dir.path(), d).await;
+    assert_eq!(status, 200, "{said}");
+    assert_eq!((said["saved"].clone(), said["unchanged"].clone()), (json!(false), json!(true)), "{said}");
+    let nav = load_nav(dir.path(), ORG, PROJECT).unwrap();
+    let saved = find_area(&nav, "leave apply").unwrap();
+    assert_eq!(saved.mode.as_deref(), Some("Self Service"));
+    assert_eq!(saved.preferences.get(GROUP), Some(&false));
+}
+
+#[tokio::test]
+async fn a_repair_keeps_the_mode_and_preferences_it_read() {
+    use v2_lib::ai_bridge::repair_area_in;
+    let dir = tempfile::tempdir().unwrap();
+    project_files(dir.path());
+    // A person's area whose old click no longer exists, recorded with no mode.
+    let old: ModulePath = serde_json::from_value(json!({
+        "module": "Leave", "area": "Leave Apply", "clicks": [ { "css": "#old" } ],
+        "arrived": "/hr/leave", "recorded": "2026-10-20T10:00:00Z"
+    }))
+    .unwrap();
+    put_path(dir.path(), ORG, PROJECT, old).unwrap();
+    let (d, app) = app_at(true, "/hr/leave");
+    *app.mode.lock().unwrap() = "Admin".to_string();
+    let discovery = Some(DiscoveryState {
+        area: Some("Leave".to_string()),
+        account: Some("admin".to_string()),
+        started_at: 1,
+        tried: Vec::new(),
+        mapping: None,
+        case_id: None,
+        no_save: false,
+        call_no_save: false,
+        call_case_id: None,
+    });
+    let mut browser = Some(FakeBrowser {
+        d,
+        lease: Held::supervised(),
+        account: Some("admin".to_string()),
+        discovery,
+        guarded_case: None,
+        guard_owner: None,
+    });
+    let (status, body) = repair_area_in(
+        &mut browser, dir.path(), ORG, PROJECT, "Leave Apply", "", vec![css("#leave")], "the menu item moved", &quick(),
+    )
+    .await;
+    assert_eq!(status, 200, "{body}");
+    let nav = load_nav(dir.path(), ORG, PROJECT).unwrap();
+    let saved = find_area(&nav, "leave apply").unwrap();
+    assert!(saved.repaired_by_assistant.is_some(), "{saved:?}");
+    assert_eq!(saved.mode.as_deref(), Some("Admin"));
+    assert!(saved.preferences.contains_key(GROUP), "{:?}", saved.preferences);
+}
+
+// ---------------------------------------------- the person's recording
+
+/// The recording saves the state it STARTED in: read before the first click
+/// is captured, so a recording that clicks "Switch to Self Service" is still
+/// for the mode it began in, and a fresh browser's check begins there too.
+#[tokio::test]
+async fn a_recording_reads_the_mode_and_preferences_it_starts_in() {
+    use v2_lib::commands::autorun_record::read_start_state;
+    let (mut d, app) = app_at(true, "/");
+    *app.mode.lock().unwrap() = "Admin".to_string();
+    let (prefs, mode) = read_start_state(&mut d, &recipe(), &quick()).await;
+    assert_eq!(prefs, Some([(GROUP.to_string(), true)].into_iter().collect()));
+    assert_eq!(mode.as_deref(), Some("Admin"));
+    // Then the recorded clicks switch to Self Service; the state read stands.
+    *app.mode.lock().unwrap() = "Self Service".to_string();
+    assert_eq!(mode.as_deref(), Some("Admin"));
+    // The path saved with it walks from an Admin account without a switch,
+    // and from a Self Service one switches back first.
+    let mut path = leave(json!({}));
+    path.clicks = vec![css("#to-ss"), css("#leave")];
+    path.mode = mode;
+    let route = Route::new(&recipe(), path);
+    *app.mode.lock().unwrap() = "Admin".to_string();
+    let mut notes = Vec::new();
+    let out = go_to_module_noted(&mut d, &route, TripFrom::Elsewhere, &quick(), &mut notes).await;
+    assert!(out.is_ok(), "{:?}", out.map_err(|f| f.for_dialog()));
+    assert!(notes.is_empty(), "no switch for an account already in the starting mode: {notes:?}");
+    // A dialog that cannot be read leaves no preferences.
+    app.link_missing.store(true, Ordering::SeqCst);
+    let (prefs, _) = read_start_state(&mut d, &recipe(), &quick()).await;
+    assert_eq!(prefs, None);
+}
+
+/// The reads happen before listening starts, and not again at Stop.
+#[test]
+fn the_recording_reads_its_state_before_it_listens_and_not_at_stop() {
+    let src = include_str!("../../src/commands/autorun_record.rs").replace(char::from(13), "");
+    let start = &src[src.find("pub async fn auto_run_record_start").unwrap()..src.find("pub async fn auto_run_record_stop").unwrap()];
+    let read = start.find("read_start_state(").expect("the start reads the state");
+    let listen = start.find("listen(&mut cdp").expect("the recording listens");
+    assert!(read < listen, "read after listening began");
+    assert!(!start[listen..].contains("read_mode") && !start[listen..].contains("read_preferences"), "read again when it stops");
+}
+
+/// A re-record whose read failed keeps what the area held.
+#[test]
+fn a_re_recorded_area_keeps_values_a_failed_read_could_not_give() {
+    let dir = tempfile::tempdir().unwrap();
+    mapped_before(dir.path(), json!({ "mode": "Self Service", "preferences": { GROUP: false } }));
+    let mut again = leave(json!({}));
+    again.area = "Leave Apply".to_string();
+    v2_lib::autorun::nav::keep_recorded_values(dir.path(), ORG, PROJECT, &mut again);
+    assert_eq!(again.mode.as_deref(), Some("Self Service"));
+    assert_eq!(again.preferences.get(GROUP), Some(&false));
+    // A read that worked wins.
+    let mut read = leave(json!({ GROUP: true }));
+    read.area = "Leave Apply".to_string();
+    read.mode = Some("Admin".to_string());
+    v2_lib::autorun::nav::keep_recorded_values(dir.path(), ORG, PROJECT, &mut read);
+    assert_eq!((read.mode.as_deref(), read.preferences.get(GROUP)), (Some("Admin"), Some(&true)));
+}

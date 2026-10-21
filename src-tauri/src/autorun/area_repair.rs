@@ -106,6 +106,25 @@ pub fn save_repair(
     reason: String,
     at: String,
 ) -> Result<NavFile, String> {
+    save_repair_recording(root, org, project, tried, clicks, arrived, start, reason, at, None)
+}
+
+/// `save_repair`, also writing the menu preferences and mode the repair read
+/// when it ran its trips (they are the area's now). The area keeps what it
+/// held where the repair read none.
+#[allow(clippy::too_many_arguments)]
+pub fn save_repair_recording(
+    root: &Path,
+    org: &str,
+    project: &str,
+    tried: &ModulePath,
+    clicks: Vec<Target>,
+    arrived: String,
+    start: String,
+    reason: String,
+    at: String,
+    read: Option<(std::collections::BTreeMap<String, bool>, Option<String>)>,
+) -> Result<NavFile, String> {
     let mut nav = nav::load_nav(root, org, project)?;
     let key = nav::module_key(tried.name());
     let Some(slot) = nav.modules.iter_mut().find(|m| nav::module_key(m.name()) == key) else {
@@ -121,6 +140,14 @@ pub fn save_repair(
         ));
     }
     *slot = repaired(slot, clicks, arrived, start, reason, at);
+    if let Some((preferences, mode)) = read {
+        if !preferences.is_empty() {
+            slot.preferences = preferences;
+        }
+        if mode.is_some() {
+            slot.mode = mode;
+        }
+    }
     nav::save_nav(root, org, project, &nav)?;
     Ok(nav)
 }

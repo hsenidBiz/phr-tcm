@@ -432,6 +432,20 @@ pub fn check_area_free(nav: &NavFile, area: &str, module: &str) -> Result<(), St
     }
 }
 
+/// A re-recorded area whose menu preferences or mode could not be read keeps
+/// what the area already saved had: a read that failed never drops recorded
+/// values. Nothing is changed when the project has no such area yet.
+pub fn keep_recorded_values(root: &Path, org: &str, project: &str, path: &mut ModulePath) {
+    let Ok(nav) = load_nav(root, org, project) else { return };
+    let Some(old) = find_area(&nav, path.name()) else { return };
+    if path.preferences.is_empty() {
+        path.preferences = old.preferences.clone();
+    }
+    if path.mode.is_none() {
+        path.mode = old.mode.clone();
+    }
+}
+
 /// Add an area, or replace the one already recorded under the same name
 /// and module, in any case (Re-record). A new area whose name is taken by
 /// one under ANOTHER module is refused: names are unique per project. An

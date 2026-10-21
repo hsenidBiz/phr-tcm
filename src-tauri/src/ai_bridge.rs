@@ -6210,8 +6210,9 @@ async fn save_discovered_area<B: DiscoveryBrowser>(
                 // changed, and an assistant's repair note describes the path
                 // it replaced: it goes with that path.
                 repaired_by_assistant: None,
-                preferences: Default::default(),
-                mode: None,
+                // What an area already saved keeps when a read fails below.
+                preferences: existing.as_ref().map(|old| old.preferences.clone()).unwrap_or_default(),
+                mode: existing.as_ref().and_then(|old| old.mode.clone()),
             },
         };
         if let Some(read) = preferences {
@@ -6272,6 +6273,28 @@ async fn save_discovered_area<B: DiscoveryBrowser>(
                 run.locate_last(screen);
             }
         }
+        // The same clicks, but the mode or the menu preferences read now are
+        // not what the area holds (an area saved before they were kept, or
+        // one recorded in another state): only those are written, the saved
+        // clicks stay as they are.
+        let (mode_differs, prefs_differ) = (old.mode != path.mode, old.preferences != path.preferences);
+        if mode_differs || prefs_differ {
+            let mut updated = old.clone();
+            updated.preferences = path.preferences.clone();
+            updated.mode = path.mode.clone();
+            if let Err(why) = nav::put_path(root, organization, project, updated) {
+                return (409, why);
+            }
+            stand_in_saved_area(d, p.discovery, p.signed_in.as_deref(), root, organization, project, kept.clone()).await;
+            let what = match (mode_differs, prefs_differ) {
+                (true, true) => "mode/menu preferences",
+                (true, false) => "mode",
+                _ => "menu preferences",
+            };
+            crate::applog::info(format!("Auto Run area {kept}: recorded its {what}"));
+            let message = format!("unchanged path; recorded its {what}");
+            return (200, serde_json::json!({ "saved": true, "arrived": at, "message": message }).to_string());
+        }
         stand_in_saved_area(d, p.discovery, p.signed_in.as_deref(), root, organization, project, kept).await;
         crate::applog::info("Auto Run mapping run found an area unchanged");
         return (200, serde_json::json!({ "saved": false, "unchanged": true, "arrived": at }).to_string());
@@ -6282,7 +6305,7 @@ async fn save_discovered_area<B: DiscoveryBrowser>(
     let new_menu = nav::menu_path(&path.clicks);
     let written = match (&repairing, path.repaired_by_assistant.as_ref()) {
         // A repair goes to the file as it is now (`area_repair::save_repair`).
-        (Some(old), Some(note)) => area_repair::save_repair(
+        (Some(old), Some(note)) => area_repair::save_repair_recording(
             root,
             organization,
             project,
@@ -6292,6 +6315,7 @@ async fn save_discovered_area<B: DiscoveryBrowser>(
             path.start.clone(),
             note.reason.clone(),
             note.at.clone(),
+            Some((path.preferences.clone(), path.mode.clone())),
         ),
         _ => nav::put_path(root, organization, project, path),
     };
