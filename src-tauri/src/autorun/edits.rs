@@ -45,6 +45,7 @@ pub struct Edit {
 
 /// One check a repair gives up: its step, its kind (`expect_count`...) and why, one line.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct GiveUp {
     pub step: i32,
     pub kind: String,

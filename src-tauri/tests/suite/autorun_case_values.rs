@@ -786,11 +786,17 @@ fn giving_up_a_check_because_of_the_app_is_refused() {
 
 #[test]
 fn gives_up_naming_more_than_the_repair_removes_is_refused() {
-    let r = repair(&three_checks(), &three_checks(), &[give(2, "expect_visible", "step 4 already proves it")]);
+    // The text check is swapped for a visible one: one kind goes, the count stays.
+    let mut old = three_checks();
+    old.steps[1].actions[0] = act(json!({ "kind": "expect_text", "selector": "#t", "equals": "Saved" }));
+    let r = repair(&old, &three_checks(), &[give(2, "expect_text", "step 4 already proves it")]);
     assert_eq!(
         r,
         vec!["step 2: gives_up names 1 checks but the repair removes 0 there - name only the checks it removes".to_string()]
     );
+    // Naming a check the repair keeps matches nothing it removes.
+    let r = repair(&three_checks(), &three_checks(), &[give(2, "expect_visible", "step 4 already proves it")]);
+    assert!(r.iter().any(|l| l.starts_with("step 2: gives_up names a expect_visible check, and the old step 2 has none")), "{r:?}");
 }
 
 #[test]
@@ -1186,4 +1192,105 @@ async fn a_save_with_only_case_values_lists_no_value_line() {
     assert!(out.lines().any(|l| l == "case 7: check values: 5 from the case, 0 assumed, 0 invented, 2 exempt"), "{out}");
     assert!(!out.contains(": assumed: ") && !out.contains(": invented: "), "{out}");
     assert!(!out.contains("Repeat every assumed"), "{out}");
+}
+
+// ------------------------------------------------- the check floor, review round 1
+
+#[test]
+fn a_gives_up_entry_must_match_a_check_actually_removed() {
+    let old = two_step_script(
+        json!([{ "kind": "click", "selector": "#a" }]),
+        json!([
+            { "kind": "expect_count", "selector": level_selector(), "equals": 4 },
+            { "kind": "expect_text", "selector": "#t", "equals": "Saved" },
+        ]),
+    );
+    let new = two_step_script(
+        json!([{ "kind": "click", "selector": "#a" }]),
+        json!([{ "kind": "expect_count", "selector": level_selector(), "equals": 4 }]),
+    );
+    // The count is still there: naming it gives up nothing real.
+    let r = repair(&old, &new, &[give(2, "expect_count", "step 4 already counts the same rows")]);
+    assert!(
+        r.contains(&"step 2: gives_up names a expect_count check, and the old step 2 has none - name the kind of a check the repair removes".to_string()),
+        "{r:?}"
+    );
+    assert!(r.iter().any(|l| l.starts_with("step 2: the repair removes 1 of its checks and gives_up names 0")), "{r:?}");
+    // The text is what went.
+    let r = repair(&old, &new, &[give(2, "expect_text", "step 4 already proves the text")]);
+    assert!(r.is_empty(), "{r:?}");
+}
+
+#[test]
+fn a_wrong_kind_never_excuses_a_dropped_value() {
+    let old = two_step_script(
+        json!([{ "kind": "click", "selector": "#a" }]),
+        json!([
+            { "kind": "expect_count", "selector": level_selector(), "equals": 4 },
+            { "kind": "expect_visible", "selector": "#v" },
+        ]),
+    );
+    let new = two_step_script(json!([{ "kind": "click", "selector": "#a" }]), json!([{ "kind": "expect_count", "selector": level_selector(), "equals": 6 }]));
+    // The visible check went, the count moved to 6: naming the count excuses nothing.
+    let r = repair(&old, &new, &[give(2, "expect_count", "step 4 already counts the same rows")]);
+    assert!(r.iter().any(|l| l.contains("the repair drops \"4\"")), "{r:?}");
+}
+
+#[test]
+fn a_cleanup_check_can_be_given_up_and_another_check_does_not_offset_it() {
+    let with_cleanup = |first: Value, cleanup: Value| -> CaseScript {
+        script(json!([
+            { "step_number": 1, "actions": first },
+            { "step_number": 2, "actions": [{ "kind": "click", "selector": "#b" }] },
+            { "step_number": 3, "cleanup": true, "actions": cleanup },
+        ]))
+    };
+    let old = with_cleanup(json!([{ "kind": "expect_visible", "selector": "#a" }]), json!([{ "kind": "expect_visible", "selector": "#c" }]));
+    let new = with_cleanup(
+        json!([{ "kind": "expect_visible", "selector": "#a" }, { "kind": "expect_visible", "selector": "#d" }]),
+        json!([]),
+    );
+    let ask = |g: &[GiveUp]| check_repair_values(&old, &new, &text_of(&case_147556()), &[3], g, "AUTOTEST");
+    let r = ask(&[]);
+    assert!(r.iter().any(|l| l.starts_with("step 3: the repair removes 1 of its checks and gives_up names 0")), "{r:?}");
+    let r = ask(&[give(3, "expect_visible", "the session is closed by step 4")]);
+    assert!(r.is_empty(), "{r:?}");
+}
+
+#[tokio::test]
+async fn an_unchanged_resave_never_lowers_a_stored_floor() {
+    let dir = TempDir::new();
+    let _root = crate::serial::autorun();
+    set_root(dir.path().to_path_buf());
+    let (_server, client) = client_with(&repair_case()).await;
+    let body = two_check_body(old_two_checks());
+    see(dir.path(), &body);
+    let mut saved: CaseScript = serde_json::from_value(serde_json::from_str::<Value>(&body).unwrap()[0].clone()).unwrap();
+    saved.organization = Some("acme".into());
+    saved.project = Some("Web".into());
+    saved.checks = 5;
+    v2_lib::autorun::store::save_script(dir.path(), &saved).unwrap();
+    let (status, out) = route(&ctx(), Some(&client), "POST", "/autorun-script", &body, "1.0.0").await;
+    assert_eq!(status, 200, "{out}");
+    assert!(out.contains("(unchanged)"), "{out}");
+    assert_eq!(v2_lib::autorun::store::load_script(dir.path(), 7).unwrap().unwrap().checks, 5);
+}
+
+#[tokio::test]
+async fn a_stray_key_in_a_gives_up_entry_is_named() {
+    let dir = TempDir::new();
+    let _root = crate::serial::autorun();
+    set_root(dir.path().to_path_buf());
+    let (_server, client) = client_with(&repair_case()).await;
+    store_old(dir.path(), old_two_checks());
+    let body = json!({
+        "scripts": serde_json::from_str::<Value>(&two_check_body(json!([{ "kind": "expect_visible", "selector": "#t" }]))).unwrap(),
+        "edits": [{ "case_id": 7, "steps": [2], "why": "the rows moved", "gives_up": [
+            { "step": 2, "kind": "expect_count", "reason": "step 4 already counts the same rows" }
+        ] }],
+    })
+    .to_string();
+    let (status, out) = route(&ctx(), Some(&client), "POST", "/autorun-script", &body, "1.0.0").await;
+    assert_eq!(status, 400, "{out}");
+    assert!(out.contains("unknown field") && out.contains("reason"), "{out}");
 }

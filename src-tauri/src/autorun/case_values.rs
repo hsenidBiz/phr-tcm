@@ -598,18 +598,25 @@ fn kind_of(a: &Action) -> String {
         .unwrap_or_default()
 }
 
+/// A step by number, the clean-up step included: its checks can be given up too.
 fn old_step(script: &CaseScript, n: i32) -> Option<&StepScript> {
-    script.case_steps().find(|s| s.step_number == n)
+    script.steps.iter().find(|s| s.step_number == n)
+}
+
+/// The kinds of the checks step `n` loses: the old step's kinds minus the
+/// new step's, each new one cancelling one old one of its kind.
+fn removed_kinds(old: &CaseScript, new: &CaseScript, n: i32) -> Vec<String> {
+    let mut removed = old_step(old, n).map(check_kinds_of_step).unwrap_or_default();
+    for k in new.steps.iter().find(|s| s.step_number == n).map(check_kinds_of_step).unwrap_or_default() {
+        if let Some(i) = removed.iter().position(|r| *r == k) {
+            removed.remove(i);
+        }
+    }
+    removed
 }
 
 fn gives_up_kind(g: &GiveUp) -> String {
     g.kind.trim().to_lowercase()
-}
-
-/// The `gives_up` entries of a repair that are well formed and honest: the
-/// ones `check_repair_values` does not refuse for themselves.
-pub fn valid_gives_up<'a>(old: &CaseScript, declared_steps: &[i32], gives_up: &'a [GiveUp]) -> Vec<&'a GiveUp> {
-    gives_up.iter().filter(|g| gives_up_refusal(old, declared_steps, g).is_none()).collect()
 }
 
 fn gives_up_format_ok(g: &GiveUp) -> bool {
@@ -657,17 +664,35 @@ pub fn check_repair_values(
         }
     };
     // 1. Each entry on its own.
+    // An entry must also match a check the repair really removes: each
+    // removed check is matched once.
     let mut valid: Vec<&GiveUp> = Vec::new();
+    let mut removed: std::collections::BTreeMap<i32, Vec<String>> = std::collections::BTreeMap::new();
     for g in gives_up {
-        match gives_up_refusal(old, declared_steps, g) {
-            Some(r) => push(&mut out, r),
-            None => valid.push(g),
+        if let Some(r) = gives_up_refusal(old, declared_steps, g) {
+            push(&mut out, r);
+            continue;
+        }
+        let n = g.step;
+        let kind = gives_up_kind(g);
+        let left = removed.entry(n).or_insert_with(|| removed_kinds(old, new, n));
+        match left.iter().position(|k| *k == kind) {
+            Some(i) => {
+                left.remove(i);
+                valid.push(g);
+            }
+            None => push(
+                &mut out,
+                format!("step {n}: gives_up names a {kind} check, and the old step {n} has none - name the kind of a check the repair removes"),
+            ),
         }
     }
     // 2. The floor.
     let floor = if old.checks > 0 { old.checks as usize } else { check_count(old) };
     let kept = check_count(new);
-    if kept + valid.len() < floor {
+    // A clean-up step's checks are not in the count, so giving one up lowers nothing.
+    let named = valid.iter().filter(|g| old.case_steps().any(|s| s.step_number == g.step)).count();
+    if kept + named < floor {
         push(
             &mut out,
             format!(
@@ -679,10 +704,15 @@ pub fn check_repair_values(
     let mut steps: Vec<i32> = declared_steps.to_vec();
     steps.sort_unstable();
     steps.dedup();
-    for &n in &steps {
+    // Every old step, not only the declared ones: a check lost where nothing
+    // was declared (the clean-up step, say) is not offset by one added elsewhere.
+    let mut every: Vec<i32> = steps.iter().copied().chain(old.steps.iter().map(|s| s.step_number)).collect();
+    every.sort_unstable();
+    every.dedup();
+    for &n in &every {
         let Some(o) = old_step(old, n) else { continue };
         let before = check_kinds_of_step(o).len();
-        let after = new.case_steps().find(|s| s.step_number == n).map_or(0, |s| check_kinds_of_step(s).len());
+        let after = new.steps.iter().find(|s| s.step_number == n).map_or(0, |s| check_kinds_of_step(s).len());
         let lost = before.saturating_sub(after);
         let given = valid.iter().filter(|g| g.step == n).count();
         if given < lost {

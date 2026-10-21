@@ -9433,6 +9433,8 @@ async fn save_autorun_scripts(
             Err(e) => return (500, e),
         };
         let declared = edits.iter().find(|e| e.case_id == sent.case_id);
+        // An unchanged re-send never lowers the floor it was stored with.
+        let mut stored_floor: u32 = 0;
         let mut script = sent.clone();
         // A new script is checked whole; an unchanged one and a repair keep
         // steps checked by an earlier save, so they vouch as it did.
@@ -9461,6 +9463,7 @@ async fn save_autorun_scripts(
                 script.last_repair = old.last_repair.clone();
                 script.precondition_repairs = old.precondition_repairs.clone();
                 script.given_up = old.given_up.clone();
+                stored_floor = old.checks;
                 let marks_changed = old.changes != sent.changes
                     || old.needs_unchanged != sent.needs_unchanged
                     || old.needs_state != sent.needs_state;
@@ -9573,7 +9576,7 @@ async fn save_autorun_scripts(
                 lines.push(format!("case {} (new)", script.case_id));
             }
         }
-        script.checks = crate::autorun::case_values::check_count(&script) as u32;
+        script.checks = (crate::autorun::case_values::check_count(&script) as u32).max(stored_floor);
         prepared.push(script);
     }
     if !refused.is_empty() {
