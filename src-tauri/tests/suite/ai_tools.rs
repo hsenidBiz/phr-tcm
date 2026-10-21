@@ -576,6 +576,7 @@ fn each_tool_belongs_to_its_module() {
             "record_quirk",
             "record_validation_rule",
             "mark_autorun_suspected_defect",
+            "report_case_divergence",
             "set_autorun_order",
             "propose_accounts",
             "get_accounts",

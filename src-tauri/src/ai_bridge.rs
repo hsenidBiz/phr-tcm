@@ -485,6 +485,9 @@ pub async fn route(
         ("POST", "/autorun-quirk-retire") => autorun_quirk_retire(ctx, body),
         ("POST", "/autorun-validation-rule") => record_validation_rule(ctx, body).await,
         ("POST", "/autorun-defect") => autorun_defect(body),
+        // A place the live app or its data differs from the case: stored for a
+        // person to rule on, quoting the case, checked against it.
+        ("POST", "/autorun-divergence") => autorun_divergence(ctx, client, body).await,
         // Components: saved only once the open discovery has tried them
         // live, and retired only while no saved script uses them.
         ("POST", "/autorun-component-save") => autorun_component_save(ctx, client, body).await,
@@ -8104,6 +8107,95 @@ fn autorun_defect(body: &str) -> (u16, String) {
         m.case_id, mark.step_number
     ));
     (200, serde_json::to_string(&mark).unwrap_or_default())
+}
+
+/// `POST /autorun-divergence`: where a test case and the live application
+/// disagree, reported instead of fitting a check to the page. The case is
+/// read from Azure DevOps and must hold the words the assistant quotes
+/// (`case_says`), at a step it has; the divergence is stored for a person
+/// to rule on (`divergences::report_in`). Never touches a script.
+async fn autorun_divergence(ctx: &BridgeContext, client: Option<&crate::ado::AdoClient>, body: &str) -> (u16, String) {
+    use crate::autorun::divergences::{self, Reported};
+    #[derive(serde::Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct DivergenceBody {
+        case_id: i32,
+        step: i32,
+        case_says: String,
+        app_shows: String,
+        kind: divergences::DivergenceKind,
+    }
+    let shape = "{ \"case_id\": 147556, \"step\": 2, \"case_says\": \"exactly 4 levels\", \"app_shows\": \"6 levels\", \"kind\": \"data\" }";
+    let b: DivergenceBody = match serde_json::from_str(body) {
+        Ok(b) => b,
+        Err(e) => {
+            return (
+                400,
+                format!("that is not a divergence: {e}. Expected {shape} - kind is data, app or wording."),
+            )
+        }
+    };
+    let root = match autorun_root() {
+        Ok(r) => r,
+        Err(refused) => return refused,
+    };
+    let Some(client) = client else {
+        return (
+            503,
+            "sign in to Test Case Manager first - a divergence is checked against its test case".to_string(),
+        );
+    };
+    let case = match client
+        .get_test_cases_by_ids(&ctx.org, &[b.case_id], ctx.module_ref.as_deref(), ctx.preconditions_ref.as_deref())
+        .await
+    {
+        Ok(cases) => cases.into_iter().find(|c| c.id == b.case_id),
+        Err(crate::ado::AdoError::NotFound) => None,
+        Err(e) => return (502, format!("Azure DevOps error: {e:?}")),
+    };
+    let Some(case) = case else {
+        return (400, format!("case {} is not a test case in this organization", b.case_id));
+    };
+    if b.step < 1 || b.step as usize > case.steps.len() {
+        return (400, format!("case {} has {} steps - \"step\" is one of them", b.case_id, case.steps.len()));
+    }
+    if !crate::autorun::case_text::CaseText::from_case(&case).holds(&b.case_says) {
+        return (
+            400,
+            format!(
+                "\"case_says\" is the case's own words, quoted from step {}, another expected result or the preconditions - case {} does not hold \"{}\"",
+                b.step, b.case_id, b.case_says
+            ),
+        );
+    }
+    let (case_says, app_shows) =
+        (crate::autorun::defects::scrub_note(&b.case_says), crate::autorun::defects::scrub_note(&b.app_shows));
+    let now = crate::autorun::sessions::now_ms();
+    let mut refused: Option<String> = None;
+    let reported = divergences::update(&root, &ctx.org, &ctx.project, |list| {
+        let r = divergences::report_in(list, b.case_id, b.step, &case_says, &app_shows, b.kind, now)
+            .inspect_err(|why| refused = Some(why.clone()))?;
+        let id = match &r {
+            Reported::New(id) | Reported::Updated(id) => id,
+        };
+        let stored = list.iter().find(|d| &d.id == id).cloned().expect("the divergence just reported");
+        Ok((stored, matches!(r, Reported::Updated(_))))
+    });
+    match reported {
+        Ok((stored, updated)) => {
+            crate::applog::info(format!(
+                "AI reported a {} divergence on case {} step {}",
+                stored.kind.word(),
+                b.case_id,
+                b.step
+            ));
+            (200, divergences::tool_answer(b.case_id, &stored, updated))
+        }
+        // A rule's refusal is the assistant's to read; a file that could
+        // not be read or written is the machine's.
+        Err(e) if refused.is_some() => (400, e),
+        Err(e) => (500, e),
+    }
 }
 
 /// What `set_autorun_order` says after the order it saved: with

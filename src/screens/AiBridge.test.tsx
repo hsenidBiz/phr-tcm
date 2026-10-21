@@ -1073,6 +1073,7 @@ test("switching the Auto Run scripts row off sends every tool name in the disabl
     "propose_accounts",
     "record_validation_rule",
     "replay_autorun_to_step",
+    "report_case_divergence",
     "reset_autorun_browser",
     "save_autorun_area",
     "save_autorun_component",

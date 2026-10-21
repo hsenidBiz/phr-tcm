@@ -157,6 +157,11 @@ export const MCP_TOOLS: McpToolInfo[] = [
     summary: "Mark a failed step as the application's fault, not the script's, with a note, and leave the script alone.",
   },
   {
+    name: "report_case_divergence",
+    label: "Report a case divergence",
+    summary: "Tell the person where the live app or its data differs from a case, and keep the script as the case says.",
+  },
+  {
     name: "set_autorun_order",
     label: "Set Auto Run's order",
     summary: "Set the order Auto Run runs a PBI's cases in on this machine. Run Tests' order is not changed.",
@@ -295,6 +300,7 @@ export const AUTORUN_TOOLS = [
   "record_quirk",
   "record_validation_rule",
   "mark_autorun_suspected_defect",
+  "report_case_divergence",
   "set_autorun_order",
   "propose_accounts",
   "get_accounts",
@@ -420,6 +426,7 @@ export const TOOL_PAIRS: readonly (readonly string[])[] = [
     "record_quirk",
     "record_validation_rule",
     "mark_autorun_suspected_defect",
+    "report_case_divergence",
     "set_autorun_order",
     "propose_accounts",
     "get_accounts",

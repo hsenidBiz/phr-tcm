@@ -583,6 +583,17 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
             }), &["case_id", "step_number", "note"]),
         },
         {
+            "name": "report_case_divergence",
+            "description": "Use this when the live app or its data differs from what a test case says - a count, a text, an order or a state - instead of writing the check to fit the page. It stores the divergence for the person and never changes the script. kind data: the environment does not meet the case's precondition; the case's runs are Blocked with \"needs a ruling\" until the person rules in Auto Run. kind wording: the case is unclear or out of date and needs rewriting; Blocked the same way. kind app: the application does not do what the case expects; not blocked, so the run fails at that step, then mark it with mark_autorun_suspected_defect. case_says quotes the case's own words (that step, another expected result or its preconditions); app_shows is what the page showed. Save the script as the case says either way, and name the divergence in your report.",
+            "inputSchema": schema(serde_json::json!({
+                "case_id": { "type": "number", "description": "The test case." },
+                "step": { "type": "number", "description": "The case's step whose check differs." },
+                "case_says": { "type": "string", "description": "The case's own words, quoted, at most 300 characters." },
+                "app_shows": { "type": "string", "description": "What the page showed, in a few words, at most 300 characters." },
+                "kind": { "type": "string", "enum": ["data", "app", "wording"] },
+            }), &["case_id", "step", "case_says", "app_shows", "kind"]),
+        },
+        {
             "name": "set_autorun_order",
             "description": "Set the order Auto Run runs a PBI's test cases in on this machine, for Run selected and Run unattended. Put each case that needs shared state unchanged before the cases that change it, and keep cases that need the same settings together, so a run needs as few pauses as possible; the scripts' changes, needs_unchanged and needs_state marks say which those are. It does not change Run Tests' order. Every id must be one of the PBI's test cases: one that is not is refused with `case <id> is not in PBI <pbi>`, and nothing is saved. Each call REPLACES the PBI's whole saved order (`mode: \"replace\"`, the default): cases you leave out run after the listed ones, in list order. `mode: \"append\"` keeps the saved order's other cases, in their order, after the ones you list. The answer says which it did. A listed case with no saved script is saved in the order and named back: `case <id> has no saved script`.",
             "inputSchema": schema(serde_json::json!({
@@ -1952,6 +1963,7 @@ fn tools_call(params: &serde_json::Value, call: BridgeCall) -> serde_json::Value
         "record_quirk" => quirk_call(&with_inferred_from(args, &off), call),
         "record_validation_rule" => call("POST", "/autorun-validation-rule", &args.to_string()),
         "mark_autorun_suspected_defect" => call("POST", "/autorun-defect", &args.to_string()),
+        "report_case_divergence" => call("POST", "/autorun-divergence", &args.to_string()),
         "set_autorun_order" => call("POST", "/autorun-order", &args.to_string()),
         "propose_accounts" => call("POST", "/accounts-propose", &args.to_string()),
         "get_accounts" => call("GET", "/accounts", ""),

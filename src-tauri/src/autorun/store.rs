@@ -58,6 +58,12 @@ pub fn on_scripts_changed(f: impl Fn(&Path, &[i32]) + Send + Sync + 'static) {
     LISTENERS.lock().unwrap_or_else(|e| e.into_inner()).push(std::sync::Arc::new(f));
 }
 
+/// `scripts_changed` for a module beside the store whose own files change
+/// what the Auto Run screen shows for a case (the divergences file).
+pub fn notify_scripts_changed(root: &Path, case_ids: &[i32]) {
+    scripts_changed(root, case_ids)
+}
+
 /// Tell every listener that these cases' scripts changed. Nothing is said
 /// for no case.
 fn scripts_changed(root: &Path, case_ids: &[i32]) {
