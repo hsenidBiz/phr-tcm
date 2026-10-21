@@ -638,6 +638,32 @@ async fn a_quick_try_click_that_failed_still_reloads_home() {
     assert_eq!(app.log(), vec!["navigate /hr/home/index", "click #toggle", "click Leave"]);
 }
 
+/// An area saved before clicks had to match one element can come to match
+/// two (a breadcrumb named like the menu entry). The failure then says the
+/// area's click is what to repair, so an assistant repairs the area and not
+/// the script.
+#[tokio::test]
+async fn a_path_click_that_matches_two_elements_says_to_repair_the_area() {
+    use v2_lib::autorun::nav::AREA_PATH_NOT_EXACT;
+    let (mut d, app) = sidebar_app("/hr/payroll", true, false);
+    *app.outside_on.lock().unwrap() = "/hr/payroll".to_string();
+    let mut path = leave_path();
+    path.start = "/hr/payroll".into();
+    let route = Route::new(&login_home_recipe("/hr/security/login"), path);
+    let failure = go_to_module(&mut d, &route, TripFrom::SignIn, &common::quick()).await.unwrap_err();
+    assert!(failure.reason.contains("2 elements"), "{}", failure.reason);
+    assert!(failure.reason.ends_with(AREA_PATH_NOT_EXACT), "{}", failure.reason);
+    assert!(app.log().is_empty(), "a click was made: {:?}", app.log());
+
+    // A path that fails for another reason does not get the sentence.
+    let (mut d, _) = sidebar_app("/hr/payroll", false, false);
+    let mut path = leave_path();
+    path.start = "/hr/payroll".into();
+    let route = Route::new(&login_home_recipe("/hr/security/login"), path);
+    let failure = go_to_module(&mut d, &route, TripFrom::SignIn, &common::quick()).await.unwrap_err();
+    assert!(!failure.reason.contains(AREA_PATH_NOT_EXACT), "{}", failure.reason);
+}
+
 /// A page on another origin than the route's home (a fresh browser's
 /// `about:blank`) has none of the path's clicks: the trip goes home at
 /// once, with no quick try looked for or waited on first.

@@ -5998,12 +5998,20 @@ async fn save_discovered_area<B: DiscoveryBrowser>(
                 repaired_by_assistant: None,
             },
         };
-        let route = nav::Route::new(&recipe, path);
-        nav::go_to_module(d, &route, nav::TripFrom::SignIn, timing).await.map(|at| (at, route.path))
+        // The clicks are saved as the trip made them: each finds exactly
+        // one element on the page (`nav::go_to_module_pinning`).
+        let mut route = nav::Route::new(&recipe, path);
+        match nav::go_to_module_pinning(d, &route, timing).await {
+            Ok((at, clicks, notes)) => {
+                route.path.clicks = clicks;
+                Ok((at, route.path, notes))
+            }
+            Err(failure) => Err(failure),
+        }
     } else {
         Err(nav::PathFailure { at: nav::Where::Home, reason: went.detail, harness: went.harness })
     };
-    let (at, path) = match reached {
+    let (at, path, pinned) = match reached {
         Ok(found) => found,
         Err(failure) => {
             let reason = failure.for_dialog();
@@ -6072,13 +6080,18 @@ async fn save_discovered_area<B: DiscoveryBrowser>(
     if let Some(reason) = reason {
         crate::applog::info(format!("AI repaired area {kept}: {reason}"));
         let message = area_repair::repaired_answer(&kept, &reason);
-        return (
-            200,
-            serde_json::json!({ "saved": true, "repaired": true, "arrived": at, "message": message }).to_string(),
-        );
+        let mut answer = serde_json::json!({ "saved": true, "repaired": true, "arrived": at, "message": message });
+        if !pinned.is_empty() {
+            answer["pinned"] = serde_json::json!(pinned);
+        }
+        return (200, answer.to_string());
     }
     crate::applog::info(format!("Auto Run discovery saved an area ({saved} clicks)"));
-    (200, serde_json::json!({ "saved": true, "arrived": at }).to_string())
+    let mut answer = serde_json::json!({ "saved": true, "arrived": at });
+    if !pinned.is_empty() {
+        answer["pinned"] = serde_json::json!(pinned);
+    }
+    (200, answer.to_string())
 }
 
 /// `/autorun-discover-start`: open the Auto Run browser for the assistant

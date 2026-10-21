@@ -1509,6 +1509,161 @@ async fn an_existing_area_name_is_refused() {
     assert_eq!(find_area(&nav, "Leave Apply"), Some(&existing), "the existing area was changed");
 }
 
+// ------------------------------- an area's clicks match exactly one element
+
+/// A page whose `#admin` button opens `/hr/admin`, where link "Strategic
+/// Objectives" (`ax-100`, seen, inside `#admin-list`) opens
+/// `/hr/objectives`. With `twin`, a second link of that name (`ax-101`)
+/// sits hidden inside `#recent`. `scoping_id` says whether the page has an
+/// id on the one list that holds only the seen link (what `PIN_ID_JS` finds).
+/// `signed_in` is always true: `#marker` is there.
+fn objectives_app(twin: bool, scoping_id: bool) -> ScriptedDriver {
+    let path = Arc::new(Mutex::new("/hr/objectives".to_string()));
+    let mut last_css = String::new();
+    let mut last_probed = String::new();
+    let mut d = ScriptedDriver::new(move |method, params| {
+        let f = params["functionDeclaration"].as_str().unwrap_or("");
+        let object = params["objectId"].as_str().unwrap_or("").to_string();
+        Ok(match method {
+            "Page.navigate" => {
+                *path.lock().unwrap() = v2_lib::autorun::nav::path_of(params["url"].as_str().unwrap_or(""));
+                json!({ "frameId": "F", "loaderId": "L" })
+            }
+            "Runtime.evaluate" if params["expression"] == "document" => json!({ "result": { "objectId": "doc" } }),
+            "Runtime.evaluate" if params["expression"] == "location.href" => json!({ "result": {
+                "value": format!("https://hr.example.internal{}", path.lock().unwrap())
+            } }),
+            "Runtime.evaluate" => json!({ "result": { "value": null } }),
+            "Accessibility.queryAXTree" if params["role"] == "link" => {
+                let node = |id: i64| {
+                    json!({ "nodeId": format!("n{id}"), "role": { "value": "link" },
+                        "name": { "value": "Strategic Objectives" }, "backendDOMNodeId": id })
+                };
+                // The seen link is under the document and `#admin-list`, the
+                // twin under the document and `#recent`.
+                let mut nodes = vec![];
+                if object != "css:#recent" {
+                    nodes.push(node(100));
+                }
+                if twin && matches!(object.as_str(), "doc" | "css:#recent") {
+                    nodes.push(node(101));
+                }
+                json!({ "nodes": nodes })
+            }
+            "Accessibility.queryAXTree" => json!({ "nodes": [] }),
+            "DOM.resolveNode" => json!({ "object": { "objectId": format!("ax-{}", params["backendNodeId"]) } }),
+            "DOM.describeNode" => {
+                let n: i64 = object.strip_prefix("ax-").and_then(|n| n.parse().ok()).unwrap_or(1);
+                json!({ "node": { "backendNodeId": n } })
+            }
+            "Runtime.callFunctionOn" if f == PROBE_JS => {
+                last_probed = object.clone();
+                json!({ "result": { "value": ready_probe() } })
+            }
+            "Runtime.callFunctionOn" if f == VISIBLE_JS || f == v2_lib::browser::input::SHOWN_JS => {
+                json!({ "result": { "value": object != "ax-101" } })
+            }
+            "Runtime.callFunctionOn" if f == HIGHLIGHT_JS || f == HAS_FOCUS_JS => json!({ "result": { "value": true } }),
+            "Runtime.callFunctionOn" if f == v2_lib::autorun::nav::PIN_ID_JS => {
+                // Asked of the seen link, with the twin as the argument.
+                let right = object == "ax-100" && params["arguments"][0]["objectId"] == "ax-101";
+                json!({ "result": { "value": if right && scoping_id { json!("admin-list") } else { Value::Null } } })
+            }
+            "Runtime.callFunctionOn" => {
+                if let Some(sel) = params["arguments"][0]["value"].as_str() {
+                    last_css = sel.to_string();
+                }
+                json!({ "result": { "objectId": "arr" } })
+            }
+            "Runtime.getProperties" => json!({ "result": [
+                { "name": "0", "value": { "objectId": format!("css:{}", last_css) } }
+            ] }),
+            "Input.dispatchMouseEvent" if params["type"] == "mouseReleased" => {
+                match last_probed.as_str() {
+                    "css:#admin" => *path.lock().unwrap() = "/hr/admin".to_string(),
+                    "ax-100" => *path.lock().unwrap() = "/hr/objectives".to_string(),
+                    _ => {}
+                }
+                json!({})
+            }
+            _ => json!({}),
+        })
+    });
+    d.on_every_call_events.push((
+        "Page.navigate".into(),
+        Event { method: "Page.lifecycleEvent".into(), params: json!({ "frameId": "F", "loaderId": "L", "name": "load" }) },
+    ));
+    d
+}
+
+fn link(name: &str) -> Target {
+    serde_json::from_value(json!({ "role": "link", "name": name })).unwrap()
+}
+
+/// A click whose name a second, hidden element shares is saved inside the
+/// one list that holds only it: a chain from that list's id to the click.
+#[tokio::test]
+async fn an_area_click_with_a_hidden_twin_is_saved_scoped_to_its_own_list() {
+    let dir = root_with_recipe_and_account();
+    let (mut browser, _) = slot(objectives_app(true, true), exploring("Admin"));
+    browser.as_mut().unwrap().account = Some("admin".into());
+
+    let clicks = vec![css("#admin"), link("Strategic Objectives")];
+    let (status, body) =
+        discover_area_in(&mut browser, dir.path(), ORG, PROJECT, "Objectives", "Admin", clicks, &quick()).await;
+    assert_eq!(status, 200, "{body}");
+    let v = parsed(&body);
+    assert_eq!(v["saved"], true, "{body}");
+    assert_eq!(v["pinned"], json!(["click 2: scoped to #admin-list"]), "{body}");
+
+    let saved = find_area(&load_nav(dir.path(), ORG, PROJECT).unwrap(), "Objectives").cloned().expect("not saved");
+    let want: Target = serde_json::from_value(json!([
+        { "css": "#admin-list" },
+        { "role": "link", "name": "Strategic Objectives" }
+    ]))
+    .unwrap();
+    assert_eq!(saved.clicks, vec![css("#admin"), want]);
+}
+
+/// A twin and no id to scope by: the save is refused, saying so, and the
+/// areas file is not written.
+#[tokio::test]
+async fn an_area_click_with_a_twin_and_no_scoping_id_is_refused() {
+    let dir = root_with_recipe_and_account();
+    let (mut browser, _) = slot(objectives_app(true, false), exploring("Admin"));
+    browser.as_mut().unwrap().account = Some("admin".into());
+
+    let clicks = vec![css("#admin"), link("Strategic Objectives")];
+    let (status, out) =
+        discover_area_in(&mut browser, dir.path(), ORG, PROJECT, "Objectives", "Admin", clicks, &quick()).await;
+    assert_eq!(status, 409, "{out}");
+    assert!(out.starts_with("The clicks did not arrive: "), "{out}");
+    assert!(out.contains("counting hidden ones"), "{out}");
+    assert!(out.contains("click 2"), "{out}");
+    assert!(!nav_path(dir.path(), ORG, PROJECT).exists(), "the areas file was written");
+    assert!(find_area(&load_nav(dir.path(), ORG, PROJECT).unwrap(), "Objectives").is_none());
+}
+
+/// A click that is the only element of its name is saved with the name
+/// exact, so a longer name added later cannot make it match two.
+#[tokio::test]
+async fn a_unique_area_click_is_saved_exact() {
+    let dir = root_with_recipe_and_account();
+    let (mut browser, _) = slot(objectives_app(false, false), exploring("Admin"));
+    browser.as_mut().unwrap().account = Some("admin".into());
+
+    let clicks = vec![css("#admin"), link("Strategic Objectives")];
+    let (status, body) =
+        discover_area_in(&mut browser, dir.path(), ORG, PROJECT, "Objectives", "Admin", clicks, &quick()).await;
+    assert_eq!(status, 200, "{body}");
+    let v = parsed(&body);
+    assert_eq!(v["pinned"], json!(["click 2: exact name"]), "{body}");
+
+    let saved = find_area(&load_nav(dir.path(), ORG, PROJECT).unwrap(), "Objectives").cloned().expect("not saved");
+    let want: Target = serde_json::from_value(json!({ "role": "link", "name": "Strategic Objectives", "exact": true })).unwrap();
+    assert_eq!(saved.clicks, vec![css("#admin"), want]);
+}
+
 // ------------------------------------------- an assistant's repair
 
 const MOVED: &str = "The Leave menu moved under Self Service";
