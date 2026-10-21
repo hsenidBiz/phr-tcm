@@ -42,7 +42,46 @@
 <body>
 <main>
   <h1>Test Case Manager backlog</h1>
-  <p class="sub">Updated 20 October 2026, after 2.2.3-beta.19 (thorough checks, for every module). What is left is below.</p>
+  <p class="sub">Updated 21 October 2026, after 2.2.3-beta.20 (the Playwright pipeline's rules in TCM, tool errors 72-79, assistant test files). What is left is below.</p>
+
+  <h2>Next beta (2.2.3-beta.21), agreed, not built yet</h2>
+  <div class="item">
+    <div class="head"><span class="title">Left from the tool-errors round</span><span class="status todo">Next</span></div>
+    <ul>
+      <li>Tool error row 79 ("blocked").</li>
+      <li>Carry a replay on from where it stopped.</li>
+      <li>The app sets menu preferences itself. Needs the controls of your Preferences dialog to write the steps.</li>
+      <li>Admin and Self Service mode.</li>
+      <li>The module change agreed on 21 October (partly built; saved aside, and finished in this beta).</li>
+    </ul>
+  </div>
+
+  <h2>The Playwright pipeline's rules in TCM, tool errors 72-79 (2.2.3-beta.20, 21 October 2026)</h2>
+  <div class="item">
+    <div class="head"><span class="title">Hand checks owed</span><span class="status todo">Waiting on you</span></div>
+    <ul>
+      <li>The Setup panel's rows on a narrow and a wide window: no label sits on top of its controls.</li>
+      <li>An assistant reset during discovery keeps your sign-in. The log says either "the assistant's reset found the sign-in gone" or "the home page re-issued the sign-in's cookies".</li>
+      <li>A case whose text disagrees with the app: the assistant reports it, the case card asks for your ruling, and each ruling does what it says. After "Rewrite the case", editing the case in Azure DevOps, saving the script in the editor, or Undo ruling releases it.</li>
+      <li>/tcm:script-pbi on one PBI: it loads the writer's rules first, stops at the bounds, and never fits a check to the page.</li>
+      <li>A repair that tries to add a when-visible guard without a quirk is refused; with an app-quirk quirk it saves.</li>
+      <li>A product bug the assistant notes shows on its cases and at the top of the run report.</li>
+      <li>The assistant makes an import spreadsheet with a bad row and saves it with save_test_file; an upload step then uses it. A .ps1 or .md is refused.</li>
+      <li>In a new Claude chat, the first discovery answer carries the writer's rules; each answer of the four tools ends with the rules of the moment.</li>
+      <li>The tcm-writer, tcm-healer, tcm-case-rewriter and tcm-auditor agent files appear beside the skills and leave your own agents alone.</li>
+    </ul>
+  </div>
+  <div class="item">
+    <div class="head"><span class="title">Not fully done</span><span class="status todo">Follow-ups</span></div>
+    <ul>
+      <li>A verdict you set later in Review (Failed or Blocked on a watched run) may not clear a script's checked mark; only a run's first save does.</li>
+      <li>A guard the case itself asks for ("if a banner shows, close it") still needs a quirk classed app quirk in a repair.</li>
+      <li>A Rewrite ruling made while Azure DevOps cannot be read takes the case's fingerprint at the next read, so a case rewritten before that is not noticed (the editor save, Undo ruling or a repair still release it).</li>
+      <li>A step-by-step run's later steps do not re-check whether the case was rewritten; the first step does.</li>
+      <li>How To Use does not yet show the Undo ruling button.</li>
+      <li>The fixtures list's size cap has no test of its own.</li>
+    </ul>
+  </div>
 
   <h2>Thorough checks (2.2.3-beta.19, 20 October 2026)</h2>
   <div class="item">
