@@ -3846,6 +3846,9 @@ async fn autorun_try(
         Ok(v) => v,
         Err(refused) => return refused,
     };
+    if let Some(r) = crate::autorun::forbidden_fixes::forbidden_in(&raw) {
+        return (400, r);
+    }
     let action: crate::browser::actions::Action = match serde_json::from_value(raw) {
         Ok(a) => a,
         Err(e) => {
@@ -6303,6 +6306,9 @@ async fn autorun_discover_action(
         Ok(v) => v,
         Err(refused) => return refused,
     };
+    if let Some(r) = crate::autorun::forbidden_fixes::forbidden_in(&raw) {
+        return (400, r);
+    }
     let action: crate::browser::actions::Action = match serde_json::from_value(raw) {
         Ok(a) => a,
         Err(e) => {
@@ -6380,6 +6386,9 @@ async fn autorun_discover_actions(
     }
     let mut actions = Vec::with_capacity(raw.len());
     for (i, one) in raw.iter().enumerate() {
+        if let Some(r) = crate::autorun::forbidden_fixes::forbidden_in(one) {
+            return (400, format!("action {}: {r}", i + 1));
+        }
         match serde_json::from_value::<crate::browser::actions::Action>(one.clone()) {
             Ok(a) => actions.push(a),
             Err(e) => {
@@ -6491,6 +6500,9 @@ async fn autorun_component_save(
         Ok(v) => v,
         Err(e) => return (400, format!("that is not readable JSON: {e}. Expected {SHAPE}.")),
     };
+    if let Some(r) = v.get("actions").and_then(crate::autorun::forbidden_fixes::forbidden_in) {
+        return (400, r);
+    }
     let draft: Component = match serde_json::from_value(v.clone()) {
         Ok(c) => c,
         Err(e) => return (400, format!("that is not a component: {e}. Expected {SHAPE}.")),
@@ -9173,6 +9185,16 @@ fn parse_save_request(
                     fields.entry("case_id").or_insert_with(|| id.clone());
                 }
                 edit_values.push(edit);
+            }
+        }
+    }
+    if let serde_json::Value::Array(items) = &scripts_value {
+        for script in items {
+            if let Some(r) = script.get("steps").and_then(crate::autorun::forbidden_fixes::forbidden_in) {
+                return Err(match script.get("case_id") {
+                    Some(id) => format!("case {id}: {r}"),
+                    None => r,
+                });
             }
         }
     }

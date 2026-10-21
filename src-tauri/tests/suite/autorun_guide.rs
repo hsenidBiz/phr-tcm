@@ -2259,3 +2259,14 @@ fn the_guide_says_check_what_the_case_names_in_its_place() {
     assert!(quick_rules().lines().count() <= 45);
     assert!(!g.contains('\u{2014}') && !g.contains('\u{2013}'), "no dashes in text an assistant reads");
 }
+
+/// The actions section says outright that page script, a fixed wait and a retry
+/// do not exist and are refused.
+#[test]
+fn the_guide_says_no_action_runs_page_script_waits_or_retries() {
+    let flat = autorun_guide().split_whitespace().collect::<Vec<_>>().join(" ");
+    let first = "There is no action that runs page script, waits a fixed time or retries a step, and none will be added: a save, a try or a discovery that asks for one (`evaluate`, `sleep`, `retry` and the like) is refused with the reason.";
+    assert!(flat.contains(first), "the guide never says no action runs page script, waits or retries");
+    assert!(flat.contains("Wait for what the step needs with `wait_for` or a check's `timeout_ms`"));
+    assert!(!flat.contains('\u{2014}') && !flat.contains('\u{2013}'));
+}

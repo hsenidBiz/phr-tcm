@@ -22,6 +22,7 @@ pub mod downloads;
 pub mod edits;
 pub mod failures;
 pub mod floor;
+pub mod forbidden_fixes;
 pub mod guide;
 pub mod har;
 pub mod lease;

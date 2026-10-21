@@ -333,6 +333,11 @@ runs, tries, discoveries and replays alike. So scripts need NO long
 first-step waits: keep each `timeout_ms` to what the action itself needs
 once the page has loaded, and never raise one to cover the spinner.
 
+There is no action that runs page script, waits a fixed time or retries a step, and none will be
+added: a save, a try or a discovery that asks for one (`evaluate`, `sleep`, `retry` and the like) is
+refused with the reason. Wait for what the step needs with `wait_for` or a check's `timeout_ms`; a
+failure that comes and goes is an environment flake to report, and a real bug must surface as a failure.
+
 ## Refreshing, sessions and the keyboard
 
 **A refresh.** `reload` reloads the page and waits for it to load; its

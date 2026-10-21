@@ -62,6 +62,7 @@ mod autorun_downloads;
 mod autorun_edits;
 mod autorun_failures;
 mod autorun_floor;
+mod autorun_forbidden_fixes;
 mod autorun_guide;
 mod autorun_held_browser;
 mod autorun_inspect;
