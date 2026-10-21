@@ -4311,7 +4311,7 @@ mod crystal_routes {
         for path in PATHS.iter().chain(&["/crystal-guide"]) {
             let (status, body) = module_guard_for(path, &off).unwrap_or_else(|| panic!("{path} was not refused"));
             assert_eq!(status, 404, "{path}");
-            assert_eq!(body, "Crystal Reports is switched off in Modules", "{path}");
+            assert_eq!(body, Module::CrystalReports.off_sentence(), "{path}");
             assert!(module_guard_for(path, &Module::ALL.into_iter().collect()).is_none(), "{path}");
         }
         // The module hangs off Core: nothing else being off refuses it.

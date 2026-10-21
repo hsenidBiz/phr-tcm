@@ -53,6 +53,14 @@ pub const MAX_OBJECT_SQL_CHARS: usize = 200_000;
 pub const OBJECTS_NEED_MODULE: &str =
     "creating or altering procedures, views and functions needs the Crystal Reports module switched on in Modules";
 
+/// The same refusal, naming the module only on a machine that is offered it.
+pub const OBJECTS_NOT_AVAILABLE: &str = "creating or altering procedures, views and functions is not available on this machine";
+
+/// `OBJECTS_NEED_MODULE` when `unlocked`, `OBJECTS_NOT_AVAILABLE` otherwise.
+pub fn objects_need_module(unlocked: bool) -> String {
+    if unlocked { OBJECTS_NEED_MODULE } else { OBJECTS_NOT_AVAILABLE }.to_string()
+}
+
 /// The one sentence a write on a read-only connection comes back with. It
 /// names the connection to switch to and where to switch it, because that
 /// is the only thing the person can act on.
@@ -441,6 +449,11 @@ pub fn lexically_closed(sql: &str) -> bool {
 /// login; `ObjectChange` only on the dev login with the Crystal Reports
 /// module on; a refusal is a refusal on every connection.
 pub fn allowed(sql: &str, access: Access) -> Result<Verdict, String> {
+    allowed_with(sql, access, crate::extras::unlocked())
+}
+
+/// `allowed` with the unlock state passed in, for the sentence it may give.
+pub fn allowed_with(sql: &str, access: Access, unlocked: bool) -> Result<Verdict, String> {
     match classify(sql) {
         Verdict::Read => Ok(Verdict::Read),
         Verdict::Write => match access {
@@ -449,7 +462,7 @@ pub fn allowed(sql: &str, access: Access) -> Result<Verdict, String> {
         },
         Verdict::ObjectChange => match access {
             Access::DevObjects => Ok(Verdict::ObjectChange),
-            Access::DevWrites => Err(OBJECTS_NEED_MODULE.to_string()),
+            Access::DevWrites => Err(objects_need_module(unlocked)),
             Access::ReadOnly => Err(READ_ONLY_SENTENCE.to_string()),
         },
         Verdict::Refused(why) => Err(why),

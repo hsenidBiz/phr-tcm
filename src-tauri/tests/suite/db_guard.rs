@@ -598,13 +598,14 @@ fn only_these_objects_may_be_made() {
 #[test]
 fn object_changes_need_the_dev_login_and_the_module() {
     use v2_lib::db::guard::OBJECTS_NEED_MODULE;
+    use v2_lib::db::allowed_with;
     assert_eq!(
         OBJECTS_NEED_MODULE,
         "creating or altering procedures, views and functions needs the Crystal Reports module switched on in Modules"
     );
     let sql = "CREATE OR ALTER PROCEDURE dbo.p AS SELECT 1";
     assert_eq!(allowed(sql, Access::ReadOnly).unwrap_err(), READ_ONLY_SENTENCE);
-    assert_eq!(allowed(sql, Access::DevWrites).unwrap_err(), OBJECTS_NEED_MODULE);
+    assert_eq!(allowed_with(sql, Access::DevWrites, true).unwrap_err(), OBJECTS_NEED_MODULE);
     assert_eq!(allowed(sql, Access::DevObjects), Ok(Verdict::ObjectChange));
 
     // The allowance adds to the dev login's writes; it takes nothing away
@@ -787,4 +788,19 @@ END";
         let why = refused_everywhere(&sql);
         assert!(why.contains("SELECT ... INTO makes a table"), "{sql:?}: {why}");
     }
+}
+
+#[test]
+fn the_object_refusal_names_no_module_while_it_is_locked() {
+    use v2_lib::db::guard::{objects_need_module, OBJECTS_NOT_AVAILABLE};
+    use v2_lib::db::allowed_with;
+    let sql = "CREATE OR ALTER PROCEDURE dbo.p AS SELECT 1";
+    let locked = allowed_with(sql, Access::DevWrites, false).unwrap_err();
+    assert_eq!(locked, OBJECTS_NOT_AVAILABLE);
+    assert!(!locked.contains("Crystal"), "{locked}");
+    assert_eq!(objects_need_module(false), OBJECTS_NOT_AVAILABLE);
+    assert!(objects_need_module(true).contains("Crystal Reports"));
+    // Only the sentence differs; the read-only and allowed answers do not.
+    assert_eq!(allowed_with(sql, Access::ReadOnly, false).unwrap_err(), READ_ONLY_SENTENCE);
+    assert_eq!(allowed_with(sql, Access::DevObjects, false), Ok(Verdict::ObjectChange));
 }

@@ -220,13 +220,27 @@ fn the_refusal_names_the_module() {
         (Module::AutoRun, "Auto Run is switched off in Modules"),
         (Module::ApiTemplates, "API Templates is switched off in Modules"),
         (Module::Playwright, "Playwright is switched off in Modules"),
-        (Module::CrystalReports, "Crystal Reports is switched off in Modules"),
     ] {
         assert_eq!(m.off_sentence(), said);
         assert_eq!(v2_lib::modules::require(m, false).unwrap_err(), said);
         assert!(v2_lib::modules::require(m, true).is_ok());
     }
     assert_eq!(v2_lib::pw_repo::NOT_OFFERED, Module::Playwright.off_sentence());
+}
+
+/// While the held-back module is locked no sentence names it; unlocked it
+/// is refused like any other module. Every other module reads the same
+/// either way.
+#[test]
+fn the_held_back_module_is_not_named_while_locked() {
+    let m = Module::CrystalReports;
+    assert_eq!(m.off_sentence_for(false), "That module is not available on this machine.");
+    assert_eq!(m.off_sentence_for(false), v2_lib::modules::NOT_AVAILABLE);
+    assert!(!m.off_sentence_for(false).contains("Crystal"));
+    assert_eq!(m.off_sentence_for(true), "Crystal Reports is switched off in Modules");
+    for other in Module::ALL.into_iter().filter(|o| *o != m) {
+        assert_eq!(other.off_sentence_for(false), other.off_sentence_for(true));
+    }
 }
 
 /// Each IPC command group refuses while its module is off, with that

@@ -81,6 +81,15 @@ impl Module {
 
     /// What every gate says when it refuses because this module is off.
     pub fn off_sentence(self) -> String {
+        self.off_sentence_for(crate::extras::unlocked())
+    }
+
+    /// `off_sentence` with the unlock state passed in. While the held-back
+    /// module is locked, nothing an assistant or person can read names it.
+    pub fn off_sentence_for(self, unlocked: bool) -> String {
+        if !unlocked && self == HIDDEN_UNTIL_UNLOCKED {
+            return NOT_AVAILABLE.to_string();
+        }
         format!("{} is switched off in Modules", self.name())
     }
 

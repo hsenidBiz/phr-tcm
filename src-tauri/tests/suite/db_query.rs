@@ -99,7 +99,7 @@ fn the_module_sentence_is_what_the_dev_login_hears_without_crystal_reports() {
         assert!(why.contains(OBJECT_ON_ITS_OWN), "{access:?}: {why}");
     }
     assert!(OBJECT_ON_ITS_OWN.contains("send a procedure, view or function on its own"));
-    assert_eq!(v2_lib::db::allowed(PROC, Access::DevWrites).unwrap_err(), OBJECTS_NEED_MODULE);
+    assert_eq!(v2_lib::db::allowed_with(PROC, Access::DevWrites, true).unwrap_err(), OBJECTS_NEED_MODULE);
 }
 
 #[tokio::test]

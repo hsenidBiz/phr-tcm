@@ -22,7 +22,7 @@ pub use credentials::{
 };
 pub use batch::{BatchStatement, Ended, MAX_BATCH_STATEMENTS};
 pub use guard::{
-    access_for, access_for_user, allowed, classify, lexically_closed, Access, Verdict,
+    access_for, access_for_user, allowed, allowed_with, classify, objects_need_module, lexically_closed, Access, Verdict,
     MAX_OBJECT_SQL_CHARS, MAX_SQL_CHARS, OBJECTS_NEED_MODULE, READ_ONLY_SENTENCE,
 };
 pub use schema::{

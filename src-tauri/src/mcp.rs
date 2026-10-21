@@ -996,7 +996,7 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
 /// needs. `on` is explicit so every branch is testable.
 pub fn refusal_text(name: &str, on: &BTreeSet<Module>) -> String {
     if let Some(m) = crate::ai_tools::module_of_tool(name).filter(|m| !on.contains(m)) {
-        format!("The `{name}` tool is not available: {}.", m.off_sentence())
+        format!("The `{name}` tool is not available: {}.", m.off_sentence().trim_end_matches('.'))
     } else if crate::ai_tools::NETWORK_TOOLS.contains(&name) {
         format!(
             "The `{name}` tool is switched off in Test Case Manager. It needs the Network tools switch \
@@ -1105,7 +1105,7 @@ pub fn guide_refusal(topic: Option<&str>, off: &[String], on: &BTreeSet<Module>)
     };
     match guide_topic_module(topic) {
         Err(()) => Some(format!("There is no `{topic}` guide: `topic` is one of {topics}.")),
-        Ok(Some(m)) if !on.contains(&m) => Some(format!("The `{topic}` guide is not available: {}.", m.off_sentence())),
+        Ok(Some(m)) if !on.contains(&m) => Some(format!("The `{topic}` guide is not available: {}.", m.off_sentence().trim_end_matches('.'))),
         Ok(_) if !guide_offered(topic, off) => Some(format!(
             "The `{topic}` guide is switched off in Test Case Manager. \
              Turn it back on in the app's AI Bridge tab if you need it."

@@ -987,7 +987,7 @@ fn each_module_off_removes_its_tools_from_the_list_and_refuses_them() {
             let v: serde_json::Value = serde_json::from_str(&resp).unwrap();
             assert_eq!(v["result"]["isError"], true, "{t}");
             let text = v["result"]["content"][0]["text"].as_str().unwrap();
-            assert!(text.contains("is switched off in Modules"), "{t}: {text}");
+            assert!(text.contains("is switched off in Modules") || text.contains("not available on this machine"), "{t}: {text}");
         }
     }
     // Writing Style and Playwright have no tools: switching them off leaves the list as it is.
@@ -1633,7 +1633,7 @@ fn the_guide_tool_offers_a_topic_only_while_its_row_is_on() {
         "The `autorun` guide is switched off in Test Case Manager. Turn it back on in the app's AI Bridge tab if you need it."
     );
     let said = ask(r#"{"disabled":[],"modules":["writing_style"]}"#, "reports");
-    assert_eq!(said, format!("The `reports` guide is not available: {}.", Module::CrystalReports.off_sentence()));
+    assert_eq!(said, format!("The `reports` guide is not available: {}.", Module::CrystalReports.off_sentence().trim_end_matches('.')));
     // An unknown topic names only the topics offered.
     let said = ask(r#"{"disabled":[],"modules":["writing_style"]}"#, "selectors");
     assert!(said.contains("\"writing\"") && !said.contains("autorun"), "{said}");
@@ -2553,7 +2553,7 @@ fn the_guide_tool_refuses_a_topic_whose_module_is_off() {
         assert_eq!(v["result"]["isError"], true, "{topic}: {v}");
         assert_eq!(
             v["result"]["content"][0]["text"],
-            format!("The `{topic}` guide is not available: {}.", module.off_sentence()),
+            format!("The `{topic}` guide is not available: {}.", module.off_sentence().trim_end_matches('.')),
             "{topic}"
         );
     }

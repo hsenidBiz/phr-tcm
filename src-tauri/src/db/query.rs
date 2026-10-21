@@ -180,7 +180,7 @@ pub async fn run_query<R: Runner>(
         Verdict::Write if access == Access::ReadOnly => Some(guard::READ_ONLY_SENTENCE.to_string()),
         Verdict::ObjectChange => match access {
             Access::DevObjects => None,
-            Access::DevWrites => Some(guard::OBJECTS_NEED_MODULE.to_string()),
+            Access::DevWrites => Some(guard::objects_need_module(crate::extras::unlocked())),
             Access::ReadOnly => Some(guard::READ_ONLY_SENTENCE.to_string()),
         },
         Verdict::Write | Verdict::Read => None,
