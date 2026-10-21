@@ -1511,14 +1511,38 @@ async fn an_existing_area_name_is_refused() {
 
 // ------------------------------- an area's clicks match exactly one element
 
-/// A page whose `#admin` button opens `/hr/admin`, where link "Strategic
-/// Objectives" (`ax-100`, seen, inside `#admin-list`) opens
-/// `/hr/objectives`. With `twin`, a second link of that name (`ax-101`)
-/// sits hidden inside `#recent`. `scoping_id` says whether the page has an
-/// id on the one list that holds only the seen link (what `PIN_ID_JS` finds).
-/// `signed_in` is always true: `#marker` is there.
+/// What `objectives_app` is built to do.
+#[derive(Clone)]
+struct Objectives {
+    /// A second link of the name, hidden, inside `#recent`.
+    twin: bool,
+    /// The one list that holds only the seen link has an id.
+    scoping_id: bool,
+    /// The backend id the link inside `#admin-list` has (100 is the seen link).
+    scoped_finds: i64,
+    /// The link is drawn this long after the page was first asked for it.
+    shows_after_ms: u64,
+    /// Asking the page for the scoping id fails.
+    pin_call_fails: bool,
+}
+
+impl Default for Objectives {
+    fn default() -> Self {
+        Objectives { twin: false, scoping_id: false, scoped_finds: 100, shows_after_ms: 0, pin_call_fails: false }
+    }
+}
+
 fn objectives_app(twin: bool, scoping_id: bool) -> ScriptedDriver {
+    objectives(Objectives { twin, scoping_id, ..Objectives::default() })
+}
+
+/// A page whose `#admin` button opens `/hr/admin`, where link "Strategic
+/// Objectives" (`ax-100`, seen, inside `#admin-list`, which is inside
+/// `#ehrm-modulemenus-8`) opens `/hr/objectives`. See `Objectives` for the
+/// twin and the rest. `#marker` is always there.
+fn objectives(cfg: Objectives) -> ScriptedDriver {
     let path = Arc::new(Mutex::new("/hr/objectives".to_string()));
+    let asked = Mutex::new(None::<std::time::Instant>);
     let mut last_css = String::new();
     let mut last_probed = String::new();
     let mut d = ScriptedDriver::new(move |method, params| {
@@ -1539,13 +1563,21 @@ fn objectives_app(twin: bool, scoping_id: bool) -> ScriptedDriver {
                     json!({ "nodeId": format!("n{id}"), "role": { "value": "link" },
                         "name": { "value": "Strategic Objectives" }, "backendDOMNodeId": id })
                 };
-                // The seen link is under the document and `#admin-list`, the
-                // twin under the document and `#recent`.
-                let mut nodes = vec![];
-                if object != "css:#recent" {
-                    nodes.push(node(100));
+                // The link is drawn some time after the page first looked.
+                let began = *asked.lock().unwrap().get_or_insert_with(std::time::Instant::now);
+                if began.elapsed().as_millis() < u128::from(cfg.shows_after_ms) {
+                    return Ok(json!({ "nodes": [] }));
                 }
-                if twin && matches!(object.as_str(), "doc" | "css:#recent") {
+                // The seen link is under the document, `#ehrm-modulemenus-8`
+                // and `#admin-list`; the twin under the document,
+                // `#ehrm-modulemenus-8` and `#recent`.
+                let mut nodes = vec![];
+                match object.as_str() {
+                    "css:#recent" => {}
+                    "css:#admin-list" => nodes.push(node(cfg.scoped_finds)),
+                    _ => nodes.push(node(100)),
+                }
+                if cfg.twin && matches!(object.as_str(), "doc" | "css:#recent" | "css:#ehrm-modulemenus-8") {
                     nodes.push(node(101));
                 }
                 json!({ "nodes": nodes })
@@ -1565,9 +1597,15 @@ fn objectives_app(twin: bool, scoping_id: bool) -> ScriptedDriver {
             }
             "Runtime.callFunctionOn" if f == HIGHLIGHT_JS || f == HAS_FOCUS_JS => json!({ "result": { "value": true } }),
             "Runtime.callFunctionOn" if f == v2_lib::autorun::nav::PIN_ID_JS => {
+                if cfg.pin_call_fails {
+                    return Err(v2_lib::browser::cdp::CdpError::Protocol {
+                        method: "Runtime.callFunctionOn".into(),
+                        message: "Argument should belong to the same JavaScript world as target object".into(),
+                    });
+                }
                 // Asked of the seen link, with the twin as the argument.
                 let right = object == "ax-100" && params["arguments"][0]["objectId"] == "ax-101";
-                json!({ "result": { "value": if right && scoping_id { json!("admin-list") } else { Value::Null } } })
+                json!({ "result": { "value": if right && cfg.scoping_id { json!("admin-list") } else { Value::Null } } })
             }
             "Runtime.callFunctionOn" => {
                 if let Some(sel) = params["arguments"][0]["value"].as_str() {
@@ -1662,6 +1700,210 @@ async fn a_unique_area_click_is_saved_exact() {
     let saved = find_area(&load_nav(dir.path(), ORG, PROJECT).unwrap(), "Objectives").cloned().expect("not saved");
     let want: Target = serde_json::from_value(json!({ "role": "link", "name": "Strategic Objectives", "exact": true })).unwrap();
     assert_eq!(saved.clicks, vec![css("#admin"), want]);
+}
+
+fn chain(steps: Value) -> Target {
+    serde_json::from_value(steps).unwrap()
+}
+
+/// A discovery in the Admin module, signed in, standing on `driver`.
+fn admin_discovery(driver: ScriptedDriver, state: Option<DiscoveryState>) -> Option<FakeBrowser> {
+    let (mut browser, _) = slot(driver, state);
+    browser.as_mut().unwrap().account = Some("admin".into());
+    browser
+}
+
+/// Save Objectives with clicks `#admin` then `second`, in a fresh project.
+async fn save_objectives(
+    cfg: Objectives,
+    second: Target,
+) -> (TempDir, Option<FakeBrowser>, u16, String) {
+    let dir = root_with_recipe_and_account();
+    let mut browser = admin_discovery(objectives(cfg), exploring("Admin"));
+    let (status, body) = discover_area_in(
+        &mut browser,
+        dir.path(),
+        ORG,
+        PROJECT,
+        "Objectives",
+        "Admin",
+        vec![css("#admin"), second],
+        &quick(),
+    )
+    .await;
+    (dir, browser, status, body)
+}
+
+/// Row 75's own shape: the click already is a chain inside the menu that
+/// holds both twins. The pin goes inside that menu's one list, and the
+/// chain it keeps still finds exactly the clicked link.
+#[tokio::test]
+async fn a_chain_click_with_a_twin_in_its_own_scope_is_scoped_inside_it() {
+    let own = chain(json!([{ "css": "#ehrm-modulemenus-8" }, { "role": "link", "name": "Strategic Objectives" }]));
+    let cfg = Objectives { twin: true, scoping_id: true, ..Objectives::default() };
+    let (dir, _, status, body) = save_objectives(cfg, own).await;
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(parsed(&body)["pinned"], json!(["click 2: scoped to #admin-list"]), "{body}");
+    let saved = find_area(&load_nav(dir.path(), ORG, PROJECT).unwrap(), "Objectives").cloned().expect("not saved");
+    let want = chain(json!([{ "css": "#admin-list" }, { "role": "link", "name": "Strategic Objectives" }]));
+    assert_eq!(saved.clicks, vec![css("#admin"), want]);
+}
+
+/// A scope that finds exactly one element is not enough: it must be the
+/// element that was clicked. Here the chain finds another link alone.
+#[tokio::test]
+async fn a_scoped_chain_that_finds_another_element_is_refused() {
+    let cfg = Objectives { twin: true, scoping_id: true, scoped_finds: 102, ..Objectives::default() };
+    let (dir, _, status, out) = save_objectives(cfg, link("Strategic Objectives")).await;
+    assert_eq!(status, 409, "{out}");
+    assert!(out.contains("counting hidden ones"), "{out}");
+    assert!(find_area(&load_nav(dir.path(), ORG, PROJECT).unwrap(), "Objectives").is_none());
+}
+
+/// A submenu that draws a moment after the click before it is still pinned:
+/// the pin waits for the click to show, as the click itself does.
+#[tokio::test]
+async fn a_click_that_draws_late_is_still_pinned() {
+    let cfg = Objectives { twin: true, scoping_id: true, shows_after_ms: 150, ..Objectives::default() };
+    let (_, _, status, body) = save_objectives(cfg, link("Strategic Objectives")).await;
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(parsed(&body)["pinned"], json!(["click 2: scoped to #admin-list"]), "{body}");
+}
+
+/// A click the pin never saw (it draws after the pin gave up, but while the
+/// click still waits) is saved as sent, and the answer says it was not
+/// checked.
+#[tokio::test]
+async fn a_click_the_pin_never_saw_is_saved_as_sent_with_a_note() {
+    let cfg = Objectives { twin: true, scoping_id: true, shows_after_ms: 600, ..Objectives::default() };
+    let (dir, _, status, body) = save_objectives(cfg, link("Strategic Objectives")).await;
+    assert_eq!(status, 200, "{body}");
+    let notes = parsed(&body)["pinned"].clone();
+    assert!(notes[0].as_str().is_some_and(|n| n.starts_with("click 2: could not be checked")), "{body}");
+    let saved = find_area(&load_nav(dir.path(), ORG, PROJECT).unwrap(), "Objectives").cloned().expect("not saved");
+    assert_eq!(saved.clicks, vec![css("#admin"), link("Strategic Objectives")]);
+}
+
+/// The browser failing while the scope is looked for is said as that, not
+/// as a page with no id.
+#[tokio::test]
+async fn a_browser_error_while_scoping_is_not_reported_as_a_page_with_no_id() {
+    let cfg = Objectives { twin: true, scoping_id: true, pin_call_fails: true, ..Objectives::default() };
+    let (_, _, status, out) = save_objectives(cfg, link("Strategic Objectives")).await;
+    assert_eq!(status, 409, "{out}");
+    assert!(out.contains("could not look"), "{out}");
+    assert!(!out.contains("no part of the page with an id"), "{out}");
+    assert!(out.contains("click 2"), "{out}");
+}
+
+/// A refused pin is reported at the click, so a mapping summary and the log
+/// read it there and not at home.
+#[tokio::test]
+async fn a_pin_refusal_is_reported_at_its_click() {
+    use v2_lib::autorun::nav::{go_to_module_pinning, Home, Route, Where};
+    let dir = root_with_recipe_and_account();
+    let mut d = objectives_app(true, false);
+    let path = ModulePath {
+        area: "Objectives".into(),
+        module: "Admin".into(),
+        clicks: vec![css("#admin"), link("Strategic Objectives")],
+        arrived: "/hr/objectives".into(),
+        recorded: "2026-10-01T00:00:00Z".into(),
+        start: "/hr/objectives".into(),
+        made_by: MadeBy::Person,
+        repaired_by_assistant: None,
+    };
+    let recipe = v2_lib::autorun::recipe::load_effective_recipe(dir.path(), ORG, PROJECT).unwrap();
+    let route = Route { home: Home::of(&recipe), path };
+    let failure = go_to_module_pinning(&mut d, &route, &quick()).await.unwrap_err();
+    assert!(matches!(failure.at, Where::Click { n: 2, .. }), "{:?}", failure.at);
+    assert!(!failure.harness);
+}
+
+/// An older mapping-made area with a role-and-name click.
+fn older_objectives(made_by: MadeBy, arrived: &str) -> ModulePath {
+    ModulePath {
+        area: "Objectives".into(),
+        module: "Admin".into(),
+        clicks: vec![css("#admin"), link("Strategic Objectives")],
+        arrived: arrived.into(),
+        recorded: "2026-10-01T00:00:00Z".into(),
+        start: "/".into(),
+        made_by,
+        repaired_by_assistant: None,
+    }
+}
+
+/// An area a mapping run made before clicks were pinned, whose role-and-name
+/// click still matches one element, is found unchanged: no write, and the
+/// run counts it unchanged (pinning would only add `exact`).
+#[tokio::test]
+async fn a_mapping_rerun_finds_an_older_area_unchanged_when_its_click_still_matches_one() {
+    let dir = root_with_recipe_and_account();
+    let older = older_objectives(MadeBy::Mapping, "/hr/objectives");
+    put_path(dir.path(), ORG, PROJECT, older.clone()).unwrap();
+    let before = file_state(dir.path());
+    let mut browser = admin_discovery(objectives_app(false, false), mapping(exploring("Admin"), &["Admin"]));
+
+    let (status, body) =
+        discover_area_in(&mut browser, dir.path(), ORG, PROJECT, "Objectives", "Admin", older.clicks.clone(), &quick())
+            .await;
+    assert_eq!(status, 200, "{body}");
+    let v = parsed(&body);
+    assert_eq!((v["saved"].clone(), v["unchanged"].clone()), (json!(false), json!(true)), "{body}");
+    assert_eq!(file_state(dir.path()), before, "the areas file was written");
+    let run = the_run(&browser);
+    assert_eq!(run.unchanged, vec!["Objectives".to_string()]);
+    assert!(run.updated.is_empty(), "{run:?}");
+}
+
+/// The same older area, whose click now has a twin on the page: the pinned
+/// click is saved and reported, and the run counts the area updated.
+#[tokio::test]
+async fn a_mapping_rerun_saves_an_older_areas_click_pinned_once_it_has_a_twin() {
+    let dir = root_with_recipe_and_account();
+    let older = older_objectives(MadeBy::Mapping, "/hr/objectives");
+    put_path(dir.path(), ORG, PROJECT, older.clone()).unwrap();
+    let mut browser = admin_discovery(objectives_app(true, true), mapping(exploring("Admin"), &["Admin"]));
+
+    let (status, body) =
+        discover_area_in(&mut browser, dir.path(), ORG, PROJECT, "Objectives", "Admin", older.clicks.clone(), &quick())
+            .await;
+    assert_eq!(status, 200, "{body}");
+    let v = parsed(&body);
+    assert_eq!(v["saved"], true, "{body}");
+    assert_eq!(v["pinned"], json!(["click 2: scoped to #admin-list"]), "{body}");
+    let saved = find_area(&load_nav(dir.path(), ORG, PROJECT).unwrap(), "Objectives").cloned().unwrap();
+    assert_eq!(saved.clicks[1], chain(json!([{ "css": "#admin-list" }, { "role": "link", "name": "Strategic Objectives" }])));
+    assert_eq!(the_run(&browser).updated.len(), 1);
+}
+
+/// A repair that sends the saved clicks again is not the same path when the
+/// app pins them: here the saved path fails only because its recorded
+/// arrival is wrong, and the pinned clicks differ from the saved ones.
+#[tokio::test]
+async fn a_repair_that_resends_the_old_clicks_is_judged_after_they_are_pinned() {
+    let dir = root_with_recipe_and_account();
+    let older = older_objectives(MadeBy::Person, "/hr/elsewhere");
+    put_path(dir.path(), ORG, PROJECT, older.clone()).unwrap();
+    let mut browser = admin_discovery(objectives_app(false, false), exploring("Admin"));
+
+    let (status, out) = repair_area_in(
+        &mut browser,
+        dir.path(),
+        ORG,
+        PROJECT,
+        "Objectives",
+        "",
+        older.clicks.clone(),
+        "The arrival moved",
+        &quick(),
+    )
+    .await;
+    assert_eq!(status, 200, "{out}");
+    let saved = find_area(&load_nav(dir.path(), ORG, PROJECT).unwrap(), "Objectives").cloned().unwrap();
+    assert_eq!(saved.arrived, "/hr/objectives");
+    assert_ne!(saved.clicks, older.clicks);
 }
 
 // ------------------------------------------- an assistant's repair
@@ -1917,7 +2159,6 @@ async fn a_repair_with_the_saved_clicks_is_refused() {
     )
     .await;
     assert_eq!((status, out.as_str()), (409, SAME_PATH));
-    assert!(browser.as_ref().unwrap().d.calls_to("Page.navigate").is_empty(), "the browser was touched");
     assert_eq!(file_state(dir.path()), before, "the areas file was written");
 }
 

@@ -732,15 +732,40 @@ async fn page_on_home_origin<D: Driver>(d: &mut D, route: &Route) -> Option<Stri
 /// two, and the repair is on the area, not on any script.
 pub const AREA_PATH_NOT_EXACT: &str = " The area's recorded click now matches more than one element: repair the area (save_autorun_area with repair) with that click scoped to the list it belongs to.";
 
+/// What a pinned click's note says when it was scoped; a mapping run reads it
+/// to tell a click that now matches two from one that only got `exact`.
+pub const SCOPED_NOTE: &str = ": scoped to #";
+
+/// Ids a framework hands out as it draws, by their start: a scope named like
+/// this is another element the next time the page is drawn.
+pub const GENERATED_ID_PREFIXES: &[&str] =
+    &["ui-id", "ember", "mat-", "cdk-", "rc-", "radix-", "headlessui-", "react-", "select2-", "ng-", "mui-"];
+
+/// Plain words that are an id only until a counter is added to them
+/// (`tabs-1`, `menu_2`, `panel3`): with digits after them, the id is generated.
+pub const GENERATED_ID_STEMS: &[&str] =
+    &["tab", "tabs", "panel", "menu", "popup", "popover", "tooltip", "dropdown", "collapse", "accordion", "modal", "dialog"];
+
 /// `this` is the seen element; the arguments are the other elements the
-/// click matches. The first ancestor's id that names only that ancestor
-/// (`#id` finds one element on the page), holds none of the others, and is
-/// no generated name (letters, `_` and `-`, then at most two digits).
+/// click matches. The first ancestor's id that is stable (`plain`: letters,
+/// `_` and `-`, then at most two digits, and neither a framework's prefix
+/// nor a plain word with a counter after it), names only that ancestor
+/// (`#id` finds one element on the page), and holds none of the others.
+/// `plain_id` is the same rule, checked again before an id is put in a
+/// selector; the two lists are the ones above.
 pub const PIN_ID_JS: &str = r#"function(...others) {
-  const plain = /^[A-Za-z][A-Za-z_-]*\d{0,2}$/;
+  const prefixes = ['ui-id', 'ember', 'mat-', 'cdk-', 'rc-', 'radix-', 'headlessui-', 'react-', 'select2-', 'ng-', 'mui-'];
+  const stems = ['tab', 'tabs', 'panel', 'menu', 'popup', 'popover', 'tooltip', 'dropdown', 'collapse', 'accordion', 'modal', 'dialog'];
+  const plain = (id) => {
+    if (!/^[A-Za-z][A-Za-z_-]*\d{0,2}$/.test(id)) return false;
+    const l = id.toLowerCase();
+    if (prefixes.some((p) => l.startsWith(p))) return false;
+    const m = l.match(/^(.*?)[-_]?\d+$/);
+    return !(m && stems.includes(m[1]));
+  };
   for (let a = this.parentElement; a; a = a.parentElement) {
     const id = a.id;
-    if (!id || !plain.test(id)) continue;
+    if (!id || !plain(id)) continue;
     if (document.querySelectorAll('#' + CSS.escape(id)).length !== 1) continue;
     if (others.some((o) => a.contains(o))) continue;
     return id;
@@ -748,9 +773,8 @@ pub const PIN_ID_JS: &str = r#"function(...others) {
   return null;
 }"#;
 
-/// `PIN_ID_JS`'s rule for an id, checked again here before the id is put in
-/// a selector.
-fn plain_id(id: &str) -> bool {
+/// Is `id` one a click may be scoped to (`PIN_ID_JS`'s rule)?
+pub fn plain_id(id: &str) -> bool {
     let mut chars = id.chars();
     if !chars.next().is_some_and(|c| c.is_ascii_alphabetic()) {
         return false;
@@ -761,6 +785,17 @@ fn plain_id(id: &str) -> bool {
             'A'..='Z' | 'a'..='z' | '_' | '-' if digits == 0 => {}
             '0'..='9' if digits < 2 => digits += 1,
             _ => return false,
+        }
+    }
+    let lower = id.to_ascii_lowercase();
+    if GENERATED_ID_PREFIXES.iter().any(|p| lower.starts_with(p)) {
+        return false;
+    }
+    if digits > 0 {
+        let stem = lower.trim_end_matches(|c: char| c.is_ascii_digit());
+        let stem = stem.strip_suffix(['-', '_']).unwrap_or(stem);
+        if GENERATED_ID_STEMS.contains(&stem) {
+            return false;
         }
     }
     true
@@ -782,24 +817,47 @@ struct Pins {
 }
 
 /// What `click` must say to find exactly one element, for an area to save:
-/// the click to keep, and a note when it changed.
+/// the click to keep, and a note when it changed (or could not be checked).
 ///
-/// A click that does not find one seen element now is returned as it is, so
-/// the click itself fails and says why. Otherwise it counts what the click
-/// matches with the hidden elements too. Only the one: each name or text
-/// step is made exact when that still finds that same element alone. More:
-/// the click is put inside the nearest ancestor with an id of its own that
-/// holds none of the others (`PIN_ID_JS`), kept when the chain then finds
-/// exactly one. With no such ancestor the answer is `Err`.
-async fn pin_one<D: Driver>(d: &mut D, n: usize, click: &Target) -> Result<(Target, Option<String>), String> {
+/// The page is given the click's own settle and wait first: a submenu the
+/// previous click opened may still be drawing. A click that still shows
+/// nothing is kept as it is, with a note saying it was not checked. One that
+/// finds more than one seen element is returned as it is too, so the click
+/// itself fails and says why. Otherwise it counts what the click matches with
+/// the hidden elements too. Only the one: each name or text step is made
+/// exact when that still finds that same element alone. More: the click is
+/// put inside the nearest ancestor with a stable id of its own that holds
+/// none of the others (`PIN_ID_JS`) - as `[#id, last step]` or as the
+/// click's own chain with `#id` before its last step - and the first of those
+/// that finds exactly the clicked element is kept. With none, the answer is
+/// `Err`, the sentence for the person (the caller names the click).
+async fn pin_one<D: Driver>(
+    d: &mut D,
+    n: usize,
+    click: &Target,
+    timing: &Timing,
+) -> Result<(Target, Option<String>), String> {
     let unchanged = || Ok((click.clone(), None));
     if click.is_legacy() {
         return unchanged();
     }
-    let seen = match resolve(d, click).await {
-        Ok(found) if found.len() == 1 => found,
-        _ => return unchanged(),
+    crate::browser::actions::settle(d, timing).await;
+    let deadline = Instant::now() + Duration::from_millis(timing.action_ms);
+    let seen = loop {
+        match resolve(d, click).await {
+            Ok(found) if !found.is_empty() => break found,
+            _ if Instant::now() >= deadline => {
+                return Ok((
+                    click.clone(),
+                    Some(format!("click {n}: could not be checked, the page did not show it before it was clicked")),
+                ));
+            }
+            _ => d.idle(Duration::from_millis(timing.poll_ms)).await,
+        }
     };
+    if seen.len() > 1 {
+        return unchanged();
+    }
     let Ok(all) = resolve(d, &click.including_hidden()).await else { return unchanged() };
     let can_be_exact = click.links().iter().any(|s| !s.exact && (s.name.is_some() || s.text.is_some()));
     if all.len() <= 1 && !can_be_exact {
@@ -809,37 +867,58 @@ async fn pin_one<D: Driver>(d: &mut D, n: usize, click: &Target) -> Result<(Targ
     let Ok(want) = page::backend_id(d, &seen[0]).await else { return unchanged() };
     let mut others = Vec::new();
     if all.len() > 1 {
+        let mut seen_again = false;
         for h in &all {
             match page::backend_id(d, h).await {
-                Ok(id) if id == want => {}
+                Ok(id) if id == want => seen_again = true,
                 Ok(_) => others.push(h.clone()),
                 Err(_) => return unchanged(),
             }
+        }
+        // An `nth` can pick a different element once hidden ones count.
+        if !seen_again {
+            return unchanged();
         }
     }
     if others.is_empty() {
         return Ok(exact_steps(d, n, click, want).await);
     }
+    let matches = all.len();
     let no_list = || {
         format!(
-            "click {n} ({}) matches {} elements on the page, counting hidden ones, and no part of the page with an id holds only the one it clicks - send that click as a chain inside the list it belongs to, or with nth",
-            click.describe(),
-            all.len()
+            "it matches {matches} elements on the page, counting hidden ones, and no part of the page with an id holds only the one it clicks - send that click as a chain inside the list it belongs to, or with nth"
         )
     };
-    let id = page::call_value_with_handles(d, &seen[0], PIN_ID_JS, &others)
-        .await
-        .ok()
-        .and_then(|v| v.as_str().map(str::to_string))
-        .filter(|id| plain_id(id));
+    let id = match page::call_value_with_handles(d, &seen[0], PIN_ID_JS, &others).await {
+        Ok(v) => v.as_str().filter(|id| plain_id(id)).map(str::to_string),
+        Err(e) => {
+            crate::applog::warn(format!("pinning click {n}: looking for a part of the page that holds only it failed: {e}"));
+            return Err(format!(
+                "it matches {matches} elements on the page, counting hidden ones, and the browser could not look for a part of the page that holds only the one it clicks (the click may be inside a frame) - send that click as a chain inside the list it belongs to, or with nth"
+            ));
+        }
+    };
     let Some(id) = id else { return Err(no_list()) };
-    let mut steps = vec![LocatorStep { css: Some(format!("#{id}")), ..LocatorStep::default() }];
-    steps.extend(click.links());
-    let chain = Target::Chain(steps);
-    match resolve(d, &chain.including_hidden()).await {
-        Ok(found) if found.len() == 1 => Ok((chain, Some(format!("click {n}: scoped to #{id}")))),
-        _ => Err(no_list()),
+    let scope = LocatorStep { css: Some(format!("#{id}")), ..LocatorStep::default() };
+    let steps = click.links();
+    let mut candidates = Vec::new();
+    if let Some(last) = steps.last() {
+        candidates.push(vec![scope.clone(), last.clone()]);
+        if steps.len() > 1 {
+            let mut inside = steps[..steps.len() - 1].to_vec();
+            inside.push(scope);
+            inside.push(last.clone());
+            candidates.push(inside);
+        }
     }
+    for candidate in candidates {
+        let chain = Target::Chain(candidate);
+        let Ok(found) = resolve(d, &chain.including_hidden()).await else { continue };
+        if found.len() == 1 && page::backend_id(d, &found[0]).await.is_ok_and(|id| id == want) {
+            return Ok((chain, Some(format!("click {n}{SCOPED_NOTE}{id}"))));
+        }
+    }
+    Err(no_list())
 }
 
 /// `click`, each of its name and text steps made exact where the click then
@@ -1003,13 +1082,18 @@ async fn click_path<D: Driver>(
         *made += 1;
         let mut click = click.clone();
         if let Some(pins) = pins.as_deref_mut() {
-            match pin_one(d, i + 1, &click).await {
+            match pin_one(d, i + 1, &click, timing).await {
                 Ok((pinned, note)) => {
                     click = pinned;
                     pins.notes.extend(note);
                 }
-                // The click's own sentence, which already says which click.
-                Err(why) => return Err(PathFailure { at: Where::Home, reason: why, harness: false }),
+                Err(why) => {
+                    return Err(PathFailure {
+                        at: Where::Click { n: i + 1, locator: click.describe() },
+                        reason: why,
+                        harness: false,
+                    })
+                }
             }
         }
         let out = execute_in(d, &Action::Click { selector: click.clone() }, timing, &policy).await;

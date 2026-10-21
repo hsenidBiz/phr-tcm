@@ -254,12 +254,23 @@ fn resolve_skips(f: &Fixture, on: &[Flow]) -> Vec<(String, Result<(String, Strin
         .iter()
         .map(|entry| {
             let n = entry.trim();
-            let hits: Vec<(&Flow, &Stage)> = match n.split_once('/') {
-                Some((flow, stage)) => on
-                    .iter()
+            let pair = |flow: &str, stage: &str| -> Vec<(&Flow, &Stage)> {
+                on.iter()
                     .filter(|fl| fl.id.eq_ignore_ascii_case(flow.trim()))
                     .flat_map(|fl| fl.stages.iter().filter(|s| s.id.eq_ignore_ascii_case(stage.trim())).map(move |s| (fl, s)))
-                    .collect(),
+                    .collect()
+            };
+            // The gate prints a stage as `Goal groups (<flow id>/<stage id>)`:
+            // the ids in that bracket name it, when they name a stage.
+            let bracketed = n
+                .strip_suffix(')')
+                .and_then(|rest| rest.rsplit_once(" ("))
+                .and_then(|(_, ids)| ids.split_once('/'))
+                .map(|(flow, stage)| pair(flow, stage))
+                .filter(|hits| !hits.is_empty());
+            let hits: Vec<(&Flow, &Stage)> = match n.split_once('/') {
+                _ if bracketed.is_some() => bracketed.unwrap_or_default(),
+                Some((flow, stage)) => pair(flow, stage),
                 None => {
                     let by = |m: &dyn Fn(&Stage) -> bool| -> Vec<(&Flow, &Stage)> {
                         on.iter().flat_map(|fl| fl.stages.iter().filter(|s| m(s)).map(move |s| (fl, s))).collect()

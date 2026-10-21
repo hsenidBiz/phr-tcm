@@ -5698,7 +5698,8 @@ pub async fn discover_area_in<B: DiscoveryBrowser>(
 /// 2026-10-20). The name must be an area the project has - whoever made
 /// it, a person included - and the repair keeps it under its own module
 /// (`module` may be blank; another one is refused), and new clicks equal
-/// to the saved ones are refused (`area_repair::SAME_PATH`). It is allowed
+/// to the saved ones are refused (`area_repair::SAME_PATH`), judged after the
+/// new clicks are pinned (`nav::go_to_module_pinning`). It is allowed
 /// only while the area is failing to be reached, decided live every time:
 /// the area's saved path is replayed from a fresh home as a run takes it
 /// (`nav::reach_module`, two tries with a reload between) before anything
@@ -5858,9 +5859,10 @@ async fn save_discovered_area<B: DiscoveryBrowser>(
             Some(found) => Some(found.clone()),
         },
     };
-    if repairing.as_ref().is_some_and(|old| old.clicks == clicks) {
-        return (409, area_repair::SAME_PATH.to_string());
-    }
+    // The clicks as sent: an area is compared with them, not with the clicks
+    // as they are saved once pinned (`nav::go_to_module_pinning`), and a
+    // repair is the same path only if pinning would not change them either.
+    let sent = clicks.clone();
     let module = repairing.as_ref().map_or(module, |old| old.module.clone());
     // The run's own area of this name, which this save may update.
     let existing = match nav::find_area(&navfile, &name) {
@@ -6017,6 +6019,11 @@ async fn save_discovered_area<B: DiscoveryBrowser>(
     let (at, path, pinned) = match reached {
         Ok(found) => found,
         Err(failure) => {
+            // The saved path again fails the way it did: nothing new to try.
+            let refused_pin = failure.reason.contains("counting hidden ones");
+            if !refused_pin && repairing.as_ref().is_some_and(|old| old.clicks == sent) {
+                return (409, area_repair::SAME_PATH.to_string());
+            }
             let reason = failure.for_dialog();
             let (status, page) = read_page(d, crate::browser::snapshot::DEFAULT_LIMIT, None).await;
             let showed = if status == 200 {
@@ -6031,8 +6038,16 @@ async fn save_discovered_area<B: DiscoveryBrowser>(
             return (409, format!("The clicks did not arrive: {reason}. The page showed: {showed}"));
         }
     };
-    // The run's own area, found where it was: nothing to write.
-    if let Some(old) = existing.as_ref().filter(|old| old.clicks == path.clicks && old.arrived == path.arrived) {
+    if repairing.as_ref().is_some_and(|old| old.clicks == path.clicks) {
+        return (409, area_repair::SAME_PATH.to_string());
+    }
+    // The run's own area, found where it was: nothing to write. Its saved
+    // clicks stand when they are the clicks found now, even when pinning
+    // would only make a name exact; they do not when one now matches more
+    // than one element and had to be scoped.
+    let scoped = pinned.iter().any(|note| note.contains(nav::SCOPED_NOTE));
+    let found_as_saved = |old: &nav::ModulePath| old.clicks == path.clicks || (old.clicks == sent && !scoped);
+    if let Some(old) = existing.as_ref().filter(|old| found_as_saved(old) && old.arrived == path.arrived) {
         let kept = old.name().to_string();
         if let Some(state) = p.discovery.as_mut() {
             if let Some(run) = state.mapping.as_mut() {
