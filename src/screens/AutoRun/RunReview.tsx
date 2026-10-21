@@ -24,6 +24,7 @@ import ResultFilterRow from "./ResultFilterRow";
 import RetriedBadge from "./RetriedBadge";
 import RunDownloads from "./RunDownloads";
 import NoticeBadge from "./NoticeBadge";
+import ProductBugBadge from "./ProductBugBadge";
 import OutcomeGroups from "./OutcomeGroups";
 import PageErrorsBadge from "./PageErrorsBadge";
 import VerdictPicker from "./VerdictPicker";
@@ -418,6 +419,7 @@ export default function RunReview(props: {
                   <span className="min-w-0 flex-1 truncate text-text">{c.title}</span>
                   <RetriedBadge first={c.retried} />
                   <NoticeBadge notice={c.notice} />
+                  <ProductBugBadge bugs={c.product_bugs} />
                   <PageErrorsBadge seen={c.page_errors_seen} />
                   {replayTo !== null && (
                     <Button

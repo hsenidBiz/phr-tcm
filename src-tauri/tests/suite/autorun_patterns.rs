@@ -33,6 +33,7 @@ fn failed_case(case_id: i32, step_number: i32, detail: &str) -> CaseRecord {
         account: None,
         retried: None,
         notice: None,
+        product_bugs: Vec::new(),
         page_errors_seen: 0, phases: None, cleanup: None,
     }
 }

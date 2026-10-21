@@ -874,6 +874,16 @@ test("a case whose preconditions were not checked is labelled Not checked, with 
   expect(within(caseCard(201)).queryByText("Not checked")).not.toBeInTheDocument();
 });
 
+test("a case with a product bug shows the badge, listing the bugs", async () => {
+  const bugs = ["q1: the date picker drops the year", "q2: Save twice creates a duplicate"];
+  renderReview({ ...RUN, cases: RUN.cases.map((c) => (c.case_id === 202 ? { ...c, product_bugs: bugs } : c)) });
+
+  const label = (await waitFor(() => within(caseCard(202)).getByText("Product bug"))).parentElement!;
+  expect(label).toHaveAttribute("title", bugs.join("\n"));
+  expect(label).toHaveClass("text-danger");
+  expect(within(caseCard(201)).queryByText("Product bug")).not.toBeInTheDocument();
+});
+
 test("a case's downloads show under its steps with their sizes, and Open opens one", async () => {
   const opened: unknown[] = [];
   const run = structuredClone(RUN);

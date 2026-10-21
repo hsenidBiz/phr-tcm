@@ -127,6 +127,7 @@ export default function QuirksList({
             <span key={e}> - {e}</span>
           ))}
         </p>
+        {q.class && <p className="text-[11px] text-muted">Class: {q.class}</p>}
         {q.sources.length > 0 && <p className="text-[11px] text-muted">From cases: {sourcesText(q)}</p>}
         {isRetired && (
           <p className="text-[11px] text-muted">

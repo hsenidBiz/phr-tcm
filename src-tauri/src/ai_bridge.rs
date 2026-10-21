@@ -7873,7 +7873,7 @@ fn autorun_failures(ctx: &BridgeContext, target: &str) -> (u16, String) {
 /// default) or "api", for one building API templates. Both read the same
 /// list - one per project.
 fn autorun_quirk(ctx: &BridgeContext, body: &str) -> (u16, String) {
-    use crate::autorun::quirks::{record_quirk, Recorded, FROM_API, FROM_AUTORUN};
+    use crate::autorun::quirks::{record_quirk_classed, QuirkClass, Recorded, FROM_API, FROM_AUTORUN};
     let text = match body_field(body, "text", "{ \"text\": \"one line about this application\" }") {
         Ok(serde_json::Value::String(s)) => s,
         Ok(_) => return (400, "\"text\" is one line of text".to_string()),
@@ -7885,6 +7885,14 @@ fn autorun_quirk(ctx: &BridgeContext, body: &str) -> (u16, String) {
         Some(serde_json::Value::String(s)) if s == FROM_AUTORUN => FROM_AUTORUN,
         Some(serde_json::Value::String(s)) if s == FROM_API => FROM_API,
         Some(_) => return (400, format!("\"from\" is \"{FROM_AUTORUN}\" or \"{FROM_API}\"")),
+    };
+    let class = match v.get("class") {
+        None | Some(serde_json::Value::Null) => None,
+        Some(serde_json::Value::String(s)) => match QuirkClass::parse(s) {
+            Some(c) => Some(c),
+            None => return (400, QUIRK_CLASS_REFUSED.to_string()),
+        },
+        Some(_) => return (400, QUIRK_CLASS_REFUSED.to_string()),
     };
     // The cases and steps it is about, when the assistant names them -
     // each step checked against the newest run of its case, so a note can
@@ -7918,7 +7926,7 @@ fn autorun_quirk(ctx: &BridgeContext, body: &str) -> (u16, String) {
             Err(why) => return (400, why),
         }
     }
-    match record_quirk(
+    match record_quirk_classed(
         &root,
         &ctx.org,
         &ctx.project,
@@ -7926,14 +7934,34 @@ fn autorun_quirk(ctx: &BridgeContext, body: &str) -> (u16, String) {
         "assistant",
         from,
         sources,
+        class,
         crate::autorun::sessions::now_ms(),
     ) {
-        Ok(Recorded::Added(id)) => (200, format!("recorded as {id}")),
-        Ok(Recorded::AlreadyKnown(id)) => (200, format!("already known, as {id}")),
-        Ok(Recorded::Reactivated(id, reason)) => (200, reactivated_reply(&id, reason.as_deref())),
+        Ok((recorded, kept)) => {
+            let mut answer = match &recorded {
+                Recorded::Added(id) => format!("recorded as {id}"),
+                Recorded::AlreadyKnown(id) => format!("already known, as {id}"),
+                Recorded::Reactivated(id, reason) => reactivated_reply(id, reason.as_deref()),
+            };
+            if let (Some(asked), Some(kept)) = (class, kept) {
+                if !matches!(recorded, Recorded::Added(_)) && asked != kept {
+                    answer.push_str(&format!(" (kept its class: {})", kept.label()));
+                }
+            }
+            if kept == Some(QuirkClass::ProductBug) {
+                answer.push_str(PRODUCT_BUG_ANSWER);
+            }
+            (200, answer)
+        }
         Err(why) => (400, why),
     }
 }
+
+/// Said when a quirk is sent a `class` that is not one of the three.
+const QUIRK_CLASS_REFUSED: &str = "\"class\" is \"app quirk\", \"environment flake\" or \"product bug\"";
+
+/// Added to the answer for a product bug.
+const PRODUCT_BUG_ANSWER: &str = " A product bug is shown on every result of the cases it names and at the top of the run report: tell the person, never script around it.";
 
 /// Remember, or take out, one rule the application enforced in an area -
 /// the words its page showed after an action it refused - as the
@@ -9930,7 +9958,7 @@ async fn save_autorun_scripts(
         };
         let sources: Vec<crate::autorun::quirks::QuirkSource> =
             repair_sources.iter().filter(|s| s.case_id == edit.case_id).cloned().collect();
-        match crate::autorun::quirks::record_quirk(
+        match crate::autorun::quirks::record_quirk_classed(
             &root,
             &ctx.org,
             &ctx.project,
@@ -9938,8 +9966,11 @@ async fn save_autorun_scripts(
             "assistant",
             crate::autorun::quirks::FROM_AUTORUN,
             sources,
+            edit.quirk_class,
             crate::autorun::sessions::now_ms(),
-        ) {
+        )
+        .map(|(r, _)| r)
+        {
             Ok(crate::autorun::quirks::Recorded::Added(id)) => {
                 report.push(format!("quirk recorded as {id}: {}", text.trim()))
             }

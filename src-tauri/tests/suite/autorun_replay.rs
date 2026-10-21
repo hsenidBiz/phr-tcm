@@ -2347,6 +2347,7 @@ async fn protected_shots_survive_the_end_of_run_prune() {
         account: None,
         retried: None,
         notice: None,
+        product_bugs: Vec::new(),
         page_errors_seen: 0,
         phases: None,
         cleanup: None,
@@ -2966,4 +2967,39 @@ async fn a_passing_run_sets_it() {
         .unwrap();
     assert_eq!(run.cases[0].proposed, "Passed", "{:?}", run.cases[0]);
     assert!(store::load_script(root, 1).unwrap().unwrap().checked);
+}
+
+/// A product-bug quirk that names a case rides on that case's result; a
+/// case it does not name carries nothing.
+#[tokio::test]
+async fn a_case_a_product_bug_quirk_names_carries_it_on_its_result() {
+    let _g = crate::serial::activity_log();
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    store::save_script(root, &passing_script(1)).unwrap();
+    store::save_script(root, &passing_script(2)).unwrap();
+    v2_lib::autorun::quirks::update_quirks(root, "Acme", "Web", |list| {
+        v2_lib::autorun::quirks::record_in_classed(
+            list,
+            "Save twice makes a duplicate",
+            "assistant",
+            "autorun",
+            vec![v2_lib::autorun::quirks::QuirkSource { case_id: 1, steps: vec![1], class: None }],
+            Some(v2_lib::autorun::quirks::QuirkClass::ProductBug),
+            1000,
+        )
+    })
+    .unwrap();
+    let db: PreconditionDb<common::FakeStageDb> = PreconditionDb::ReadingOff;
+    let mut browsers = browsers_of(vec![common::FakePage::default().driver(), common::FakePage::default().driver()]);
+    let mut run = new_run("run-x");
+    let cancel = AtomicBool::new(false);
+    run_cases_checked(&mut browsers, root, "Acme", "Web", &mut run, &[to_run(1, None), to_run(2, None)], None, false, &quick(), &cancel, &db, &mut |_| {})
+        .await
+        .unwrap();
+    assert_eq!(run.cases[0].product_bugs.len(), 1, "{:?}", run.cases[0]);
+    assert!(run.cases[0].product_bugs[0].ends_with(": Save twice makes a duplicate"));
+    assert!(run.cases[1].product_bugs.is_empty());
+    let saved = store::load_run(root, "run-x").unwrap().unwrap();
+    assert_eq!(saved.cases[0].product_bugs, run.cases[0].product_bugs);
 }

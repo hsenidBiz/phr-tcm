@@ -16,6 +16,7 @@ import ResultFilterRow from "./ResultFilterRow";
 import RetriedBadge from "./RetriedBadge";
 import RunDownloads from "./RunDownloads";
 import NoticeBadge from "./NoticeBadge";
+import ProductBugBadge from "./ProductBugBadge";
 import PageErrorsBadge from "./PageErrorsBadge";
 import { recordedBatches, resetLinesBefore, shownBatchHeading } from "./plan";
 import {
@@ -264,6 +265,7 @@ export default function PastRuns({
                           <span className="min-w-0 flex-1 truncate text-text">{c.title}</span>
                           <RetriedBadge first={c.retried} />
                           <NoticeBadge notice={c.notice} />
+                          <ProductBugBadge bugs={c.product_bugs} />
                           <PageErrorsBadge seen={c.page_errors_seen} />
                           {c.verdict ? (
                             <span className={cn("text-xs font-medium", rowTone[c.verdict] ?? "text-faint")}>

@@ -36,6 +36,36 @@ pub struct QuirkSource {
     pub class: Option<String>,
 }
 
+/// What a quirk is. Unset on a note written before classes existed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, specta::Type)]
+pub enum QuirkClass {
+    /// How the application behaves.
+    #[serde(rename = "app quirk")]
+    AppQuirk,
+    /// This environment, not the product.
+    #[serde(rename = "environment flake")]
+    EnvironmentFlake,
+    /// The application is wrong, and a case works around it.
+    #[serde(rename = "product bug")]
+    ProductBug,
+}
+
+impl QuirkClass {
+    pub fn label(self) -> &'static str {
+        match self {
+            QuirkClass::AppQuirk => "app quirk",
+            QuirkClass::EnvironmentFlake => "environment flake",
+            QuirkClass::ProductBug => "product bug",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<QuirkClass> {
+        [QuirkClass::AppQuirk, QuirkClass::EnvironmentFlake, QuirkClass::ProductBug]
+            .into_iter()
+            .find(|c| c.label() == s)
+    }
+}
+
 pub const STATUS_ACTIVE: &str = "active";
 pub const STATUS_RETIRED: &str = "retired";
 pub const FROM_AUTORUN: &str = "autorun";
@@ -91,6 +121,9 @@ pub struct Quirk {
     /// Which assistant's work it came from: "autorun" or "api".
     #[serde(default = "autorun")]
     pub from: String,
+    /// What the line is; none for a note filed without one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub class: Option<QuirkClass>,
 }
 
 impl Quirk {
@@ -111,6 +144,7 @@ impl Quirk {
             retired_at: None,
             retired_by: None,
             from: from.to_string(),
+            class: None,
         }
     }
 
@@ -457,6 +491,22 @@ pub fn record_in(
     sources: Vec<QuirkSource>,
     now_ms: u64,
 ) -> Result<Recorded, String> {
+    record_in_classed(list, text, by, from, sources, None, now_ms)
+}
+
+/// `record_in` with a class. A new note takes it; a note already on the
+/// list (active, or brought back) without a class takes it, and one with a
+/// class keeps its own.
+#[allow(clippy::too_many_arguments)]
+pub fn record_in_classed(
+    list: &mut Vec<Quirk>,
+    text: &str,
+    by: &str,
+    from: &str,
+    sources: Vec<QuirkSource>,
+    class: Option<QuirkClass>,
+    now_ms: u64,
+) -> Result<Recorded, String> {
     let trimmed = text.trim();
     if trimmed.is_empty() {
         return Err("a quirk needs some text".to_string());
@@ -466,6 +516,9 @@ pub fn record_in(
         if list[i].is_active() {
             for s in sources {
                 merge_source(&mut list[i], s);
+            }
+            if list[i].class.is_none() {
+                list[i].class = class;
             }
             return Ok(Recorded::AlreadyKnown(list[i].id.clone()));
         }
@@ -486,6 +539,9 @@ pub fn record_in(
         for s in sources {
             merge_source(q, s);
         }
+        if q.class.is_none() {
+            q.class = class;
+        }
         return Ok(Recorded::Reactivated(q.id.clone(), reason));
     }
     if active_count(list) >= MAX_QUIRKS {
@@ -493,6 +549,7 @@ pub fn record_in(
     }
     let mut q = Quirk::new(trimmed, by, from, now_ms);
     q.sources = sources;
+    q.class = class;
     list.push(q);
     ensure_ids(list);
     Ok(Recorded::Added(list.last().expect("just pushed").id.clone()))
@@ -510,7 +567,40 @@ pub fn record_quirk(
     sources: Vec<QuirkSource>,
     now_ms: u64,
 ) -> Result<Recorded, String> {
-    update_quirks(root, org, project, |list| record_in(list, text, by, from, sources, now_ms)).map(|(r, _)| r)
+    record_quirk_classed(root, org, project, text, by, from, sources, None, now_ms).map(|(r, _)| r)
+}
+
+/// `record_quirk` with a class; also says the class the note ended up with
+/// (its own when it already had one).
+#[allow(clippy::too_many_arguments)]
+pub fn record_quirk_classed(
+    root: &Path,
+    org: &str,
+    project: &str,
+    text: &str,
+    by: &str,
+    from: &str,
+    sources: Vec<QuirkSource>,
+    class: Option<QuirkClass>,
+    now_ms: u64,
+) -> Result<(Recorded, Option<QuirkClass>), String> {
+    update_quirks(root, org, project, |list| {
+        let r = record_in_classed(list, text, by, from, sources, class, now_ms)?;
+        let kept = list.iter().find(|q| q.id == r.id()).and_then(|q| q.class);
+        Ok((r, kept))
+    })
+    .map(|(r, _)| r)
+}
+
+/// The product bugs a case works around, one `id: text` each: the active
+/// notes of class product bug that name the case as a source.
+pub fn product_bugs_for(quirks: &[Quirk], case_id: i32) -> Vec<String> {
+    quirks
+        .iter()
+        .filter(|q| q.is_active() && q.class == Some(QuirkClass::ProductBug))
+        .filter(|q| q.sources.iter().any(|s| s.case_id == case_id))
+        .map(|q| format!("{}: {}", q.id, q.text))
+        .collect()
 }
 
 /// Appends one note from the Auto Run side, unless the same fact is
@@ -829,6 +919,9 @@ pub fn attribution(q: &Quirk) -> String {
     let mut parts: Vec<String> = vec![if assistant { "assistant" } else { "person" }.to_string()];
     if assistant && q.from == FROM_API {
         parts.push("API".to_string());
+    }
+    if let Some(c) = q.class {
+        parts.push(c.label().to_string());
     }
     if !q.sources.is_empty() {
         if q.confirmed > 0 {

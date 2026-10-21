@@ -363,7 +363,7 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
                 },
                 "edits": {
                     "type": "array",
-                    "description": "Only when a script already exists: one entry per case you change, { case_id, steps (every step number you changed), why, area? (true when you changed the script's area, including leaving out one it had), quirk?, precondition? (at most one per case per save), gives_up? (the checks this repair removes, each { step, kind (expect_count, expect_text...), why }, why one line: the person sees each one; only when the case no longer asks for the check or another check already proves the same - a check the app fails is a divergence, report_case_divergence, never a check to give up) }: get_guide (topic autorun), section \"Saving it\".",
+                    "description": "Only when a script already exists: one entry per case you change, { case_id, steps (every step number you changed), why, area? (true when you changed the script's area, including leaving out one it had), quirk?, quirk_class? (\"app quirk\", \"environment flake\" or \"product bug\", the quirk's class), precondition? (at most one per case per save), gives_up? (the checks this repair removes, each { step, kind (expect_count, expect_text...), why }, why one line: the person sees each one; only when the case no longer asks for the check or another check already proves the same - a check the app fails is a divergence, report_case_divergence, never a check to give up) }: get_guide (topic autorun), section \"Saving it\".",
                     "items": { "type": "object" },
                 },
                 "dry_run": { "type": "boolean", "description": DRY_RUN_SCRIPT },
@@ -555,6 +555,7 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
             "inputSchema": schema(serde_json::json!({
                 "text": { "type": "string", "description": "To record: one line, e.g. \"the results grid paginates at 25 rows\"." },
                 "cases": quirk_cases(),
+                "class": { "type": "string", "enum": ["app quirk", "environment flake", "product bug"], "description": "What the line is: an app quirk (how the application behaves), an environment flake (this environment, not the product) or a product bug (the application is wrong, and a case works around it). A product bug is shown on the cases' results and at the top of the run report." },
                 "from": { "type": "string", "enum": ["autorun", "api"], "description": "\"api\" when you learned it building API templates; \"autorun\" (the default) for Auto Run scripts." },
                 "retire": { "type": "string", "description": "To retire: the quirk's id, as the Known quirks section shows it (e.g. q1a2b3c)." },
                 "reason": { "type": "string", "description": "With retire: one sentence on why the note no longer helps." },

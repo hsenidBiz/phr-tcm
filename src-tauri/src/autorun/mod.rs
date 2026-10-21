@@ -475,6 +475,10 @@ pub struct CaseRecord {
     /// (`preconditions::NOT_CHECKED`). Never a reason to block.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub notice: Option<String>,
+    /// The product bugs (quirks of that class) this case works around, each
+    /// `id: text`, copied from the project's quirks when the case was run.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub product_bugs: Vec<String>,
     /// How many page errors a script with `"page_errors": "flag"` met in
     /// this case (`page_errors`). Written only when there were any.
     #[serde(default, skip_serializing_if = "is_zero")]

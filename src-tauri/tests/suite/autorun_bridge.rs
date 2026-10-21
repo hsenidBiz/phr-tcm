@@ -2432,6 +2432,7 @@ fn failed_run(id: &str, case_id: i32) -> LocalRun {
             account: None,
             retried: None,
             notice: None,
+            product_bugs: Vec::new(),
             page_errors_seen: 0, phases: None, cleanup: None,
         }],
         mode: String::new(),
@@ -4681,4 +4682,33 @@ async fn a_bundles_notes_are_capped() {
     assert!(lines[23].starts_with("case 101: note: names \"Open AUTOTEST Review 101\""), "{out}");
     assert!(lines[42].starts_with("case 120: note: names"), "{out}");
     assert_eq!(lines[43], "and 2 more notes");
+}
+
+/// A quirk's `class` is one of three words, anything else is refused
+/// naming them; a product bug's answer tells the assistant what happens.
+#[tokio::test]
+async fn a_bad_class_is_refused_naming_the_three() {
+    let dir = TempDir::new();
+    let _root = crate::serial::autorun();
+    set_root(dir.path().to_path_buf());
+    for bad in [r#""class": "bug""#, r#""class": 3"#] {
+        let body = format!(r#"{{ "text": "Save twice makes a duplicate", {bad} }}"#);
+        let (status, out) = route(&ctx(), None, "POST", "/autorun-quirk", &body, "1.0.0").await;
+        assert_eq!(status, 400, "{out}");
+        assert_eq!(out, r#""class" is "app quirk", "environment flake" or "product bug""#);
+    }
+    assert!(load_quirks(dir.path(), "acme", "Web").unwrap().is_empty());
+
+    let body = r#"{ "text": "Save twice makes a duplicate", "class": "product bug" }"#;
+    let (status, out) = route(&ctx(), None, "POST", "/autorun-quirk", body, "1.0.0").await;
+    assert_eq!(status, 200, "{out}");
+    assert!(out.starts_with("recorded as "), "{out}");
+    assert!(out.contains("tell the person, never script around it"), "{out}");
+    assert_eq!(load_quirks(dir.path(), "acme", "Web").unwrap()[0].class.map(|c| c.label()), Some("product bug"));
+
+    // Known with a class of its own: says it kept it.
+    let body = r#"{ "text": "Save twice makes a duplicate", "class": "app quirk" }"#;
+    let (_, out) = route(&ctx(), None, "POST", "/autorun-quirk", body, "1.0.0").await;
+    assert!(out.contains("already known"), "{out}");
+    assert!(out.contains("(kept its class: product bug)"), "{out}");
 }

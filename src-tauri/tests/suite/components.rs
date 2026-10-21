@@ -964,6 +964,7 @@ fn old_script_and_component_files_with_counts_still_load() {
         steps: vec![1],
         why: "the step only saves".into(),
         quirk: None,
+        quirk_class: None,
         area: false,
         precondition: None,
         gives_up: Vec::new(),

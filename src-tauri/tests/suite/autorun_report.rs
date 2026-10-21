@@ -772,3 +772,94 @@ fn an_order_check_and_a_position_check_have_words() {
         );
     }
 }
+
+/// A case's whole details block, summary to close.
+fn product_section_of(html: &str, case_id: i32) -> String {
+    let marker = format!("<span class=\"id\">#{case_id}</span>");
+    let at = html.find(&marker).unwrap_or_else(|| panic!("no section for case {case_id}"));
+    let end = html[at..].find("</details>").unwrap();
+    html[at..at + end].to_string()
+}
+
+fn with_bugs(run: &mut LocalRun, bugs: &[(i32, &[&str])]) {
+    for (case_id, list) in bugs {
+        let c = run.cases.iter_mut().find(|c| c.case_id == *case_id).unwrap();
+        c.product_bugs = list.iter().map(|s| s.to_string()).collect();
+    }
+}
+
+#[test]
+fn a_product_bug_is_listed_at_the_top_of_the_report_and_on_its_case() {
+    let mut run = run_of(SHOT);
+    with_bugs(&mut run, &[(201, &["q1: Save <twice> makes a duplicate"]), (203, &["q1: Save <twice> makes a duplicate", "q2: dates drop the year"])]);
+    let html = build(&run, &[], "2 Oct 2026", &no_shots);
+    let top = html.find("<h2>Product bugs worked around</h2>").expect("the section");
+    assert!(top < html.find("<h2>Summary</h2>").unwrap(), "above the summary");
+    assert!(html.contains("<li>q1: Save &lt;twice&gt; makes a duplicate - cases #201, #203</li>"), "{html}");
+    assert!(html.contains("<li>q2: dates drop the year - cases #203</li>"));
+    assert!(product_section_of(&html, 201).contains("<p><strong>Product bug:</strong> q1: Save &lt;twice&gt; makes a duplicate</p>"));
+    assert!(!product_section_of(&html, 204).contains("Product bug:"));
+}
+
+#[test]
+fn the_top_list_stops_at_ten() {
+    let mut run = run_of(SHOT);
+    let bugs: Vec<String> = (1..=13).map(|i| format!("q{i}: bug {i}")).collect();
+    run.cases[0].product_bugs = bugs;
+    let html = build(&run, &[], "2 Oct 2026", &no_shots);
+    let top = &html[html.find("<ul class=\"bugs\">").unwrap()..];
+    let top = &top[..top.find("</ul>").unwrap()];
+    assert_eq!(top.matches("<li>").count(), 11, "{top}");
+    assert!(top.contains("<li>and 3 more</li>"), "{top}");
+    assert!(top.contains("q10: bug 10") && !top.contains("q11: bug 11"));
+}
+
+#[test]
+fn a_run_with_no_product_bug_or_divergence_has_no_new_section() {
+    let html = build(&run_of(SHOT), &[], "2 Oct 2026", &no_shots);
+    assert!(!html.contains("Product bugs worked around") && !html.contains("<ul class=\"bugs\">"));
+    assert!(!html.contains("Divergence:") && !html.contains("Product bug:"));
+}
+
+#[test]
+fn a_divergence_shows_on_its_case_in_the_report() {
+    use v2_lib::autorun::divergences::{Divergence, DivergenceKind, DivergenceStatus, Ruling};
+    use v2_lib::autorun::report::{build_with_extras, ReportExtras};
+    let run = run_of(SHOT);
+    let started: i64 = run.started_at.parse().unwrap();
+    let d = |case_id: i32, status: DivergenceStatus, ruling: Option<Ruling>, ruled_at: Option<i64>| Divergence {
+        id: "d1".into(),
+        case_id,
+        step: 2,
+        case_says: "4 levels".into(),
+        app_shows: "6 levels".into(),
+        kind: DivergenceKind::Data,
+        reported_at: started.to_string(),
+        status,
+        ruling,
+        ruled_at: ruled_at.map(|t| t.to_string()),
+    };
+    let day = 24 * 60 * 60 * 1000;
+    let list = vec![
+        d(201, DivergenceStatus::Open, None, None),
+        d(203, DivergenceStatus::AwaitingRepair, None, None),
+        d(204, DivergenceStatus::Ruled, Some(Ruling::DataFixed), Some(started - day)),
+        d(202, DivergenceStatus::Ruled, Some(Ruling::CaseStands), Some(started - 30 * day)),
+    ];
+    let html = build_with_extras(
+        &run,
+        &[],
+        &Default::default(),
+        "2 Oct 2026",
+        &no_shots,
+        &|_| None,
+        &ReportExtras { divergences: &list },
+    );
+    assert!(product_section_of(&html, 201).contains(
+        "<p><strong>Divergence:</strong> step 2: the case says &quot;4 levels&quot;, the app shows &quot;6 levels&quot; (data, needs a ruling)</p>"
+    ) || product_section_of(&html, 201).contains("step 2: the case says"), "{}", section_of(&html, 201));
+    assert!(product_section_of(&html, 201).contains("(data, needs a ruling)"));
+    assert!(product_section_of(&html, 203).contains("(data, waits for a repair)"));
+    assert!(product_section_of(&html, 204).contains("(data, ruled: the data was fixed)"));
+    assert!(!product_section_of(&html, 202).contains("Divergence:"), "ruled long ago");
+}

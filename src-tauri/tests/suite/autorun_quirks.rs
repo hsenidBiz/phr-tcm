@@ -5,8 +5,8 @@
 
 use v2_lib::autorun::quirks::{
     add_quirk, apply_run_evidence, cap_refusal, delete_in, edit_in, load_quirks, quirks_path, quirks_section,
-    record_in, record_run_evidence, restore_in, retire_candidates, retire_in, save_quirks, source_for_repair, source_from_run, count_saved_run, person_retired,
-    Quirk, QuirkSource, Recorded, MAX_QUIRKS, MAX_QUIRK_CHARS, MAX_RETIRED, PERSON_NOTE, RETIRE_TOOL,
+    product_bugs_for, record_in, record_in_classed, record_run_evidence, restore_in, retire_candidates, retire_in, save_quirks, source_for_repair, source_from_run, count_saved_run, person_retired,
+    Quirk, QuirkClass, QuirkSource, Recorded, MAX_QUIRKS, MAX_QUIRK_CHARS, MAX_RETIRED, PERSON_NOTE, RETIRE_TOOL,
 };
 use v2_lib::autorun::recipe::project_slug;
 use v2_lib::autorun::{CaseRecord, CaseScript, LocalRun, StepRecord, StepScript};
@@ -414,6 +414,7 @@ fn case(case_id: i32, steps: Vec<StepRecord>) -> CaseRecord {
         account: None,
         retried: None,
         notice: None,
+        product_bugs: Vec::new(),
         page_errors_seen: 0, phases: None, cleanup: None,
     }
 }
@@ -714,4 +715,72 @@ fn a_saved_run_is_counted_by_its_id() {
     assert_eq!(load_quirks(dir.path(), "Acme", "Web").unwrap()[0].confirmed, 1);
     assert!(count_saved_run(dir.path(), "Acme", "Web", "run-56", 5).is_err());
     assert!(count_saved_run(dir.path(), "Acme", "Web", "../x", 5).is_err());
+}
+
+#[test]
+fn a_quirk_records_its_class_and_shows_it() {
+    let mut list = Vec::new();
+    record_in_classed(&mut list, "Save twice makes a duplicate", "assistant", "autorun", vec![], Some(QuirkClass::ProductBug), 1000)
+        .unwrap();
+    assert_eq!(list[0].class, Some(QuirkClass::ProductBug));
+    let section = quirks_section(&list);
+    assert!(section.contains("(assistant, product bug"), "{section}");
+    let json = serde_json::to_string(&list[0]).unwrap();
+    assert!(json.contains(r#""class":"product bug""#), "{json}");
+    // No class: nothing written, nothing shown.
+    let mut plain = Vec::new();
+    record_in(&mut plain, "the grid pages", "assistant", "autorun", vec![], 1000).unwrap();
+    assert!(!serde_json::to_string(&plain[0]).unwrap().contains("class"));
+    assert!(!quirks_section(&plain).contains("product bug"));
+}
+
+#[test]
+fn a_known_quirk_takes_a_class_once() {
+    let mut list = Vec::new();
+    record_in(&mut list, "dates render as dd/mm", "assistant", "autorun", vec![], 1000).unwrap();
+    // Known, without a class: takes the one given.
+    let r = record_in_classed(&mut list, "dates render as dd/mm", "assistant", "autorun", vec![], Some(QuirkClass::AppQuirk), 2000).unwrap();
+    assert!(matches!(r, Recorded::AlreadyKnown(_)));
+    assert_eq!(list[0].class, Some(QuirkClass::AppQuirk));
+    // Known, with a class: keeps its own.
+    record_in_classed(&mut list, "dates render as dd/mm", "assistant", "autorun", vec![], Some(QuirkClass::ProductBug), 3000).unwrap();
+    assert_eq!(list[0].class, Some(QuirkClass::AppQuirk));
+    // A retired one brought back takes a class too.
+    let id = list[0].id.clone();
+    list[0].class = None;
+    retire_in(&mut list, &id, Some("gone"), None, true, 4000).unwrap();
+    let r = record_in_classed(&mut list, "dates render as dd/mm", "assistant", "autorun", vec![], Some(QuirkClass::EnvironmentFlake), 5000).unwrap();
+    assert!(matches!(r, Recorded::Reactivated(..)));
+    assert_eq!(list[0].class, Some(QuirkClass::EnvironmentFlake));
+}
+
+#[test]
+fn product_bugs_for_names_only_active_product_bugs_of_the_case() {
+    let mut list = Vec::new();
+    for (text, class, case_id) in [
+        ("bug for 7", Some(QuirkClass::ProductBug), 7),
+        ("quirk for 7", Some(QuirkClass::AppQuirk), 7),
+        ("unclassed for 7", None, 7),
+        ("bug for 8", Some(QuirkClass::ProductBug), 8),
+        ("retired bug for 7", Some(QuirkClass::ProductBug), 7),
+    ] {
+        record_in_classed(&mut list, text, "assistant", "autorun", vec![source(case_id, &[1], None)], class, 1000).unwrap();
+    }
+    let retired = list.iter().find(|q| q.text == "retired bug for 7").unwrap().id.clone();
+    retire_in(&mut list, &retired, Some("fixed"), None, true, 2000).unwrap();
+    let id = list.iter().find(|q| q.text == "bug for 7").unwrap().id.clone();
+    assert_eq!(product_bugs_for(&list, 7), vec![format!("{id}: bug for 7")]);
+    assert!(product_bugs_for(&list, 9).is_empty());
+}
+
+#[test]
+fn an_old_quirks_file_without_a_class_loads_unchanged() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = quirks_path(dir.path(), "Acme", "Web");
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(&path, r#"[{"id":"q000001","text":"the grid pages","by":"person","at":"1000"}]"#).unwrap();
+    let list = load_quirks(dir.path(), "Acme", "Web").unwrap();
+    assert_eq!(list[0].class, None);
+    save_quirks(dir.path(), "Acme", "Web", &list).unwrap();
+    assert!(!std::fs::read_to_string(&path).unwrap().contains("class"));
 }

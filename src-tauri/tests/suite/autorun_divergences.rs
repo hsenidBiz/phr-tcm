@@ -520,6 +520,7 @@ fn failed_run_of_7() -> v2_lib::autorun::LocalRun {
             account: None,
             retried: None,
             notice: None,
+            product_bugs: Vec::new(),
             page_errors_seen: 0,
             phases: None,
             cleanup: None,

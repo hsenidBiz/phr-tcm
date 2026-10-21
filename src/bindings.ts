@@ -2769,6 +2769,11 @@ export type CaseRecord_Deserialize = {
 	 */
 	notice?: string | null,
 	/**
+	 *  The product bugs (quirks of that class) this case works around, each
+	 *  `id: text`, copied from the project's quirks when the case was run.
+	 */
+	product_bugs?: string[],
+	/**
 	 *  How many page errors a script with `"page_errors": "flag"` met in
 	 *  this case (`page_errors`). Written only when there were any.
 	 */
@@ -2823,6 +2828,11 @@ export type CaseRecord_Serialize = {
 	 *  (`preconditions::NOT_CHECKED`). Never a reason to block.
 	 */
 	notice?: string | null,
+	/**
+	 *  The product bugs (quirks of that class) this case works around, each
+	 *  `id: text`, copied from the project's quirks when the case was run.
+	 */
+	product_bugs?: string[],
 	/**
 	 *  How many page errors a script with `"page_errors": "flag"` met in
 	 *  this case (`page_errors`). Written only when there were any.
@@ -5104,6 +5114,15 @@ export type PwRunning = {
  */
 export type Quirk = Quirk_Serialize | Quirk_Deserialize;
 
+/**  What a quirk is. Unset on a note written before classes existed. */
+export type QuirkClass = 
+/**  How the application behaves. */
+"app quirk" | 
+/**  This environment, not the product. */
+"environment flake" | 
+/**  The application is wrong, and a case works around it. */
+"product bug";
+
 /**  The case and steps a quirk was filed about, with a repair. */
 export type QuirkSource = QuirkSource_Serialize | QuirkSource_Deserialize;
 
@@ -5174,6 +5193,8 @@ export type Quirk_Deserialize = {
 	retired_by?: string | null,
 	/**  Which assistant's work it came from: "autorun" or "api". */
 	from?: string,
+	/**  What the line is; none for a note filed without one. */
+	class?: QuirkClass | null,
 };
 
 /**
@@ -5217,6 +5238,8 @@ export type Quirk_Serialize = {
 	retired_by: string | null,
 	/**  Which assistant's work it came from: "autorun" or "api". */
 	from: string,
+	/**  What the line is; none for a note filed without one. */
+	class?: QuirkClass | null,
 };
 
 export type RecipeStep = RecipeStep_Serialize | RecipeStep_Deserialize;

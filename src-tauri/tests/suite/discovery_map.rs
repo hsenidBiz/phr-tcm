@@ -269,6 +269,7 @@ fn run_case(case_id: i32, proposed: &str) -> CaseRecord {
         account: None,
         retried: None,
         notice: None,
+        product_bugs: Vec::new(),
         page_errors_seen: 0, phases: None, cleanup: None,
     }
 }

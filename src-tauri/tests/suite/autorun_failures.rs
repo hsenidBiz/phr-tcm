@@ -56,6 +56,7 @@ fn minimal_case(case_id: i32) -> CaseRecord {
         account: None,
         retried: None,
         notice: None,
+        product_bugs: Vec::new(),
         page_errors_seen: 0, phases: None, cleanup: None,
     }
 }
@@ -75,6 +76,7 @@ fn empty_case() -> CaseRecord {
         account: None,
         retried: None,
         notice: None,
+        product_bugs: Vec::new(),
         page_errors_seen: 0, phases: None, cleanup: None,
     }
 }
@@ -205,6 +207,7 @@ fn describe_failures_renders_the_exact_block_for_a_failed_case_with_a_script_and
                 account: Some("hr.admin".to_string()),
                 retried: None,
                 notice: None,
+                product_bugs: Vec::new(),
                 page_errors_seen: 0, phases: None, cleanup: None,
             },
             CaseRecord {
@@ -234,6 +237,7 @@ fn describe_failures_renders_the_exact_block_for_a_failed_case_with_a_script_and
                 account: None,
                 retried: None,
                 notice: None,
+                product_bugs: Vec::new(),
                 page_errors_seen: 0, phases: None, cleanup: None,
             },
             CaseRecord {
@@ -248,6 +252,7 @@ fn describe_failures_renders_the_exact_block_for_a_failed_case_with_a_script_and
                 account: None,
                 retried: None,
                 notice: None,
+                product_bugs: Vec::new(),
                 page_errors_seen: 0, phases: None, cleanup: None,
             },
         ],

@@ -3192,3 +3192,17 @@ fn the_divergence_tool_is_listed_with_its_kinds() {
     let last = recorded.last().unwrap();
     assert_eq!((last.0.as_str(), last.1.as_str()), ("POST", "/autorun-divergence"));
 }
+
+#[test]
+fn the_quirk_tool_offers_a_class_of_three() {
+    let resp = handle_message(r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#, "1.0.0", &stub(200, "{}")).unwrap();
+    let v: serde_json::Value = serde_json::from_str(&resp).unwrap();
+    let tools = v["result"]["tools"].as_array().unwrap();
+    let quirk = tools.iter().find(|t| t["name"] == "record_quirk").unwrap();
+    assert_eq!(
+        quirk["inputSchema"]["properties"]["class"]["enum"],
+        serde_json::json!(["app quirk", "environment flake", "product bug"])
+    );
+    let save = tools.iter().find(|t| t["name"] == "save_autorun_script").unwrap();
+    assert!(save["inputSchema"]["properties"]["edits"]["description"].as_str().unwrap().contains("quirk_class"));
+}

@@ -156,6 +156,7 @@ pub fn as_run(r: &ReplayRecord) -> LocalRun {
             account: r.account.clone(),
             retried: None,
             notice: None,
+            product_bugs: Vec::new(),
             page_errors_seen: 0,
             phases: None,
             cleanup: None,

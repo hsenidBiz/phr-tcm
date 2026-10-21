@@ -3106,13 +3106,15 @@ pub fn write_report_at(
     // expands. A file that does not read leaves those actions named by
     // their component only.
     let components = crate::autorun::components::load_components(root, organization, project).unwrap_or_default();
-    let html = crate::autorun::report::build_with_components(
+    let divergences = crate::autorun::divergences::load(root, organization, project).unwrap_or_default();
+    let html = crate::autorun::report::build_with_extras(
         &run,
         &scripts,
         &components,
         ran_at,
         &|name| store::shot_exists(root, name),
         &|name| store::download_size(root, run_id, name),
+        &crate::autorun::report::ReportExtras { divergences: &divergences },
     );
     let dir = store::reports_dir(root);
     let path = dir.join(format!("{run_id}.html"));

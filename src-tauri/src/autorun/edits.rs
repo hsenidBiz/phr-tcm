@@ -29,6 +29,9 @@ pub struct Edit {
     /// to know. Recorded as a project quirk.
     #[serde(default)]
     pub quirk: Option<String>,
+    /// What that quirk is: an app quirk, an environment flake or a product bug.
+    #[serde(default)]
+    pub quirk_class: Option<super::quirks::QuirkClass>,
     /// The repair moves the case to another area (or back to its module's
     /// default area, by leaving `area` out). Where a case starts
     /// is part of the script, so this is declared like a changed step.
