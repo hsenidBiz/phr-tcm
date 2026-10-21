@@ -58,6 +58,12 @@ pub fn on_scripts_changed(f: impl Fn(&Path, &[i32]) + Send + Sync + 'static) {
     LISTENERS.lock().unwrap_or_else(|e| e.into_inner()).push(std::sync::Arc::new(f));
 }
 
+/// `scripts_changed` for a module beside the store whose own files change
+/// what the Auto Run screen shows for a case (the divergences file).
+pub fn notify_scripts_changed(root: &Path, case_ids: &[i32]) {
+    scripts_changed(root, case_ids)
+}
+
 /// Tell every listener that these cases' scripts changed. Nothing is said
 /// for no case.
 fn scripts_changed(root: &Path, case_ids: &[i32]) {
@@ -349,6 +355,20 @@ pub fn set_suspected_defect(root: &Path, case_id: i32, mark: Option<SuspectedDef
         return Ok(());
     }
     script.suspected_defect = mark;
+    write_script(root, &script)
+}
+
+/// Set whether a case's script counts as checked (`proven`). Does nothing for a case with no script
+/// or a flag that already has that value; touches nothing else, `saved_at` least of all.
+pub fn set_checked(root: &Path, case_id: i32, checked: bool) -> Result<(), String> {
+    let _held = scripts_lock();
+    let Some(mut script) = load_script(root, case_id)? else {
+        return Ok(());
+    };
+    if script.checked == checked {
+        return Ok(());
+    }
+    script.checked = checked;
     write_script(root, &script)
 }
 

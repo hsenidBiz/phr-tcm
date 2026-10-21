@@ -33,7 +33,7 @@ fn refusal(v: Value) -> String {
 }
 
 fn step(actions: Vec<Action>) -> StepScript {
-    StepScript { step_number: 1, actions, unchecked: None, cleanup: false }
+    StepScript { step_number: 1, actions, unchecked: None, cleanup: false, because: Vec::new() }
 }
 
 /// The guide's example: delete every leftover goal group but the two the
@@ -460,6 +460,7 @@ fn export(actions: Value) -> Result<String, String> {
         area_clicks_by_name: &by_name,
         step_texts: &texts,
         origins: &origins,
+        fixme: None,
     })
     .map_err(|e| e.0)
 }

@@ -15,7 +15,7 @@
 //! once per run, to the text that step sent for that param, so a script can
 //! open its own draft by a unique name when no template hands the name back.
 
-use super::flow::{creating_stage, required_before, Flow, Stage};
+use super::flow::{creating_stage, required_before, short_title, Flow, Stage};
 use super::{exec, ApiTemplate, Effect};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -210,14 +210,14 @@ fn flow_problems(
     // The stages this record does not include, each in the flow it is of.
     let skipped = skipped_ids(f, templates, flows);
     let mut problems = Vec::new();
-    let missing: Vec<&str> = required_before(&flow, &stage.id)
+    let missing: Vec<String> = required_before(&flow, &stage.id)
         .into_iter()
         .filter(|s| !performed.iter().any(|p| p == &s.id) && !skipped.iter().any(|(fl, st)| fl == &flow.id && st == &s.id))
-        .map(|s| s.title.as_str())
+        .map(|s| format!("{} ({}/{})", short_title(&s.title), flow.id, s.id))
         .collect();
     if !missing.is_empty() {
         problems.push(format!(
-            "step {n}: template {} performs {} of flow {}, so the steps before it must perform {} - or, for a stage this record does not include, name it in the fixture's skip_stages",
+            "step {n}: template {} performs {} of flow {}, so the steps before it must perform {} - or, for a stage this record does not include, name it in the fixture's skip_stages (its title, or the id in brackets)",
             t.id,
             stage.title,
             flow.title,
@@ -244,8 +244,8 @@ fn flow_problems(
 
 /// Each `skip_stages` entry resolved to the one stage it names, in the flow
 /// that owns it: `(entry, Some((flow id, stage id)))`, or `None` with the
-/// sentence that refuses it. An entry is a stage's title or id (case and
-/// the space around it ignored), or `<flow id>/<stage id>`; it is read
+/// sentence that refuses it. An entry is a stage's title (or the part of it
+/// before its first " ("), or its id (case and the space around it ignored), or `<flow id>/<stage id>`; it is read
 /// against the flows `f`'s steps are on, and must name exactly one stage
 /// of them - a title or an id two of them share is refused, asking for the
 /// stage id or the flow-qualified form.
@@ -254,22 +254,40 @@ fn resolve_skips(f: &Fixture, on: &[Flow]) -> Vec<(String, Result<(String, Strin
         .iter()
         .map(|entry| {
             let n = entry.trim();
-            let hits: Vec<(&Flow, &Stage)> = match n.split_once('/') {
-                Some((flow, stage)) => on
-                    .iter()
+            let pair = |flow: &str, stage: &str| -> Vec<(&Flow, &Stage)> {
+                on.iter()
                     .filter(|fl| fl.id.eq_ignore_ascii_case(flow.trim()))
                     .flat_map(|fl| fl.stages.iter().filter(|s| s.id.eq_ignore_ascii_case(stage.trim())).map(move |s| (fl, s)))
-                    .collect(),
+                    .collect()
+            };
+            // The gate prints a stage as `Goal groups (<flow id>/<stage id>)`:
+            // the ids in that bracket name it, when they name a stage.
+            let bracketed = n
+                .strip_suffix(')')
+                .and_then(|rest| rest.rsplit_once(" ("))
+                .and_then(|(_, ids)| ids.split_once('/'))
+                .map(|(flow, stage)| pair(flow, stage))
+                .filter(|hits| !hits.is_empty());
+            let hits: Vec<(&Flow, &Stage)> = match n.split_once('/') {
+                _ if bracketed.is_some() => bracketed.unwrap_or_default(),
+                Some((flow, stage)) => pair(flow, stage),
                 None => {
                     let by = |m: &dyn Fn(&Stage) -> bool| -> Vec<(&Flow, &Stage)> {
                         on.iter().flat_map(|fl| fl.stages.iter().filter(|s| m(s)).map(move |s| (fl, s))).collect()
                     };
                     let by_id = by(&|s: &Stage| s.id.eq_ignore_ascii_case(n));
-                    if by_id.len() == 1 {
+                    if !by_id.is_empty() {
                         by_id
                     } else {
                         let by_title = by(&|s: &Stage| s.title.trim().eq_ignore_ascii_case(n));
-                        if by_id.is_empty() { by_title } else { by_id }
+                        if by_title.is_empty() {
+                            // The gate's message and the title in a flow both
+                            // read "Goal groups (done, or ...)": the part
+                            // before the bracket names the stage too.
+                            by(&|s: &Stage| short_title(&s.title).eq_ignore_ascii_case(n))
+                        } else {
+                            by_title
+                        }
                     }
                 }
             };

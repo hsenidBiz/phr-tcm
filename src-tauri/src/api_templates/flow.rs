@@ -333,6 +333,12 @@ pub fn substitute_check(check: &str, subject: &Subject, value: &Value) -> Result
     }
 }
 
+/// A stage's title without a trailing bracket: `Goal groups (done, or not
+/// part of this cycle)` is `Goal groups`.
+pub fn short_title(title: &str) -> &str {
+    title.split(" (").next().unwrap_or(title).trim()
+}
+
 /// Every stage that must be done before `stage`, transitively, in the
 /// flow's declaration order. The stage itself is never in the set, and an
 /// unknown stage has none.

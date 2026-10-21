@@ -3,8 +3,10 @@
 //!
 //! Pure functions over `CaseScript` - no browser, no filesystem. Nothing
 //! here judges whether an edit is a GOOD idea, only whether it was
-//! honestly declared: a declared step may change in any way, a check
-//! dropped included, and an undeclared one stays exactly as it was.
+//! honestly declared: a declared step may change how it does things; the
+//! save's value gate refuses a repair that lowers the script's checks
+//! without naming each one in gives_up, or moves a value away from the case.
+//! An undeclared step stays exactly as it was.
 
 use super::nav::module_key;
 use super::{CaseScript, Precondition, PreconditionOp, PreconditionRepair, StepScript};
@@ -27,6 +29,9 @@ pub struct Edit {
     /// to know. Recorded as a project quirk.
     #[serde(default)]
     pub quirk: Option<String>,
+    /// What that quirk is: an app quirk, an environment flake or a product bug.
+    #[serde(default)]
+    pub quirk_class: Option<super::quirks::QuirkClass>,
     /// The repair moves the case to another area (or back to its module's
     /// default area, by leaving `area` out). Where a case starts
     /// is part of the script, so this is declared like a changed step.
@@ -36,6 +41,18 @@ pub struct Edit {
     /// reason. At most one per case per save.
     #[serde(default)]
     pub precondition: Option<PreconditionEdit>,
+    /// Checks this repair removes, each with why (`case_values::check_repair_values`).
+    #[serde(default)]
+    pub gives_up: Vec<GiveUp>,
+}
+
+/// One check a repair gives up: its step, its kind (`expect_count`...) and why, one line.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct GiveUp {
+    pub step: i32,
+    pub kind: String,
+    pub why: String,
 }
 
 /// One precondition a repair adds, removes or changes. A saved one is
@@ -205,10 +222,11 @@ pub const SETUP_KEPT: &str =
 /// counts as a change to the step, and so is whether it is the clean-up.
 pub fn step_signature(step: &StepScript) -> String {
     format!(
-        "{}|{}{}",
+        "{}|{}{}{}",
         serde_json::to_string(&step.actions).unwrap_or_default(),
         step.unchecked.as_deref().unwrap_or(""),
-        if step.cleanup { "|cleanup" } else { "" }
+        if step.cleanup { "|cleanup" } else { "" },
+        if step.because.is_empty() { String::new() } else { format!("|because:{}", serde_json::to_string(&step.because).unwrap_or_default()) }
     )
 }
 

@@ -187,17 +187,17 @@ fn a_same_name_is_refused_unless_replace_is_sent() {
     let root = tempfile::tempdir().unwrap();
     let picked = tempfile::tempdir().unwrap();
     let dir = folder(root.path(), ORG, PROJECT);
-    add(&dir, &write(picked.path(), "cv.pdf", b"one"), false).unwrap();
+    add(&dir, &write(picked.path(), "cv.pdf", b"%PDF-one"), false).unwrap();
 
-    let again = write(picked.path(), "cv.pdf", b"two!");
+    let again = write(picked.path(), "cv.pdf", b"%PDF-two!");
     let err = add(&dir, &again, false).unwrap_err();
     assert!(err.contains("\"cv.pdf\" is already in Test files"), "{err}");
     assert!(!err.contains(&picked.path().display().to_string()), "a sentence names no path: {err}");
-    assert_eq!(std::fs::read(dir.join("cv.pdf")).unwrap(), b"one", "nothing was written");
+    assert_eq!(std::fs::read(dir.join("cv.pdf")).unwrap(), b"%PDF-one", "nothing was written");
 
     let replaced = add(&dir, &again, true).unwrap();
-    assert_eq!(replaced.size, 4);
-    assert_eq!(std::fs::read(dir.join("cv.pdf")).unwrap(), b"two!");
+    assert_eq!(replaced.size, 9);
+    assert_eq!(std::fs::read(dir.join("cv.pdf")).unwrap(), b"%PDF-two!");
     assert_eq!(list(&dir).unwrap().len(), 1);
 }
 
@@ -220,13 +220,13 @@ fn the_size_cap_holds_on_add_and_on_read() {
     let picked = tempfile::tempdir().unwrap();
     let dir = folder(root.path(), ORG, PROJECT);
 
-    let at_cap = sized(picked.path(), "at-cap.bin", MAX_BYTES);
+    let at_cap = sized(picked.path(), "at-cap.txt", MAX_BYTES);
     assert_eq!(add(&dir, &at_cap, false).unwrap().size as u64, MAX_BYTES);
 
-    let over = sized(picked.path(), "over.bin", MAX_BYTES + 1);
+    let over = sized(picked.path(), "over.txt", MAX_BYTES + 1);
     let err = add(&dir, &over, false).unwrap_err();
-    assert!(err.contains("\"over.bin\" is larger than 25 MB"), "{err}");
-    assert!(!dir.join("over.bin").exists());
+    assert!(err.contains("\"over.txt\" is larger than 25 MB"), "{err}");
+    assert!(!dir.join("over.txt").exists());
 
     // A file put in the folder by hand is held to the same cap for a run.
     sized(&dir, "grown.bin", MAX_BYTES + 1);
@@ -234,7 +234,7 @@ fn the_size_cap_holds_on_add_and_on_read() {
     assert!(err.contains("larger than 25 MB"), "{err}");
     let err = read_for_run(&dir, "grown.bin", "this step").unwrap_err();
     assert!(err.contains("larger than 25 MB"), "{err}");
-    assert_eq!(read_for_run(&dir, "at-cap.bin", "this step").unwrap().len() as u64, MAX_BYTES);
+    assert_eq!(read_for_run(&dir, "at-cap.txt", "this step").unwrap().len() as u64, MAX_BYTES);
 }
 
 #[test]
@@ -250,7 +250,7 @@ fn a_missing_file_says_where_to_add_it() {
 fn every_command_is_refused_where_auto_run_is_not_offered() {
     let root = tempfile::tempdir().unwrap();
     let picked = tempfile::tempdir().unwrap();
-    let file = write(picked.path(), "cv.pdf", b"x");
+    let file = write(picked.path(), "cv.pdf", b"%PDF-x");
     let refused = "Auto Run is switched off in Modules";
     assert_eq!(list_at(false, root.path(), ORG, PROJECT).unwrap_err(), refused);
     assert_eq!(add_at(false, root.path(), ORG, PROJECT, &file, false).unwrap_err(), refused);
@@ -263,7 +263,7 @@ fn every_command_is_refused_where_auto_run_is_not_offered() {
 fn where_offered_the_commands_work_on_the_projects_folder() {
     let root = tempfile::tempdir().unwrap();
     let picked = tempfile::tempdir().unwrap();
-    let file = write(picked.path(), "cv.pdf", b"x");
+    let file = write(picked.path(), "cv.pdf", b"%PDF-x");
     assert!(list_at(true, root.path(), " ", PROJECT).unwrap_err().contains("choose an organization and a project"));
     assert_eq!(
         add_at(true, root.path(), ORG, PROJECT, Path::new("cv.pdf"), false).unwrap_err(),
@@ -277,6 +277,383 @@ fn where_offered_the_commands_work_on_the_projects_folder() {
     assert_eq!(opened, folder(root.path(), ORG, PROJECT));
     remove_at(true, root.path(), ORG, PROJECT, "cv.pdf").unwrap();
     assert!(list_at(true, root.path(), ORG, PROJECT).unwrap().is_empty());
+}
+
+// --- an assistant saves a file (`save_test_file`) ---
+
+mod assistant_saves {
+    use super::*;
+    use base64::Engine as _;
+    use v2_lib::ai_bridge::{BridgeContext, TEST_FILES_NEED_A_PROJECT};
+    use v2_lib::test_files::{is_uploadable, looks_like, not_uploadable, not_what_it_says, save_bytes};
+
+    const ONE_SOURCE: &str = "Give the file's content as exactly one of text, base64 or from_path.";
+    const OVER: &str = "\"big.txt\" is larger than 25 MB - a test file can be at most 25 MB";
+
+    fn ctx() -> BridgeContext {
+        BridgeContext { org: ORG.into(), project: PROJECT.into(), ..BridgeContext::default() }
+    }
+
+    /// The route, against a temp data root. The guard keeps the process-wide root to this test.
+    struct Bridge {
+        _root: std::sync::MutexGuard<'static, ()>,
+        dir: tempfile::TempDir,
+    }
+
+    impl Bridge {
+        fn new() -> Self {
+            let guard = crate::serial::autorun();
+            let dir = tempfile::tempdir().unwrap();
+            v2_lib::autorun::store::set_root(dir.path().to_path_buf());
+            Bridge { _root: guard, dir }
+        }
+        fn folder(&self) -> std::path::PathBuf {
+            folder(self.dir.path(), ORG, PROJECT)
+        }
+        async fn save(&self, args: Value) -> (u16, String) {
+            crate::common::route_without_rules(&ctx(), None, "POST", "/test-file-save", &args.to_string(), "1.0.0").await
+        }
+        fn is_empty(&self) -> bool {
+            list(&self.folder()).unwrap().is_empty()
+        }
+    }
+
+    fn b64(bytes: &[u8]) -> String {
+        base64::engine::general_purpose::STANDARD.encode(bytes)
+    }
+
+    #[tokio::test]
+    async fn an_assistant_can_save_a_csv_as_text_and_it_lists() {
+        let b = Bridge::new();
+        let (status, body) = b.save(json!({ "name": "bad-row.csv", "text": "id,name\n1,Ann\n2\n" })).await;
+        assert_eq!(status, 200, "{body}");
+        let v: Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(
+            v,
+            json!({
+                "saved": "bad-row.csv",
+                "size": "16 bytes",
+                "replaced": false,
+                "use": "Refer to it by its name: an Auto Run upload action's file, or a template's files."
+            })
+        );
+        let names: Vec<(String, u32)> = list(&b.folder()).unwrap().into_iter().map(|f| (f.name, f.size)).collect();
+        assert_eq!(names, [("bad-row.csv".to_string(), 16)]);
+        assert_eq!(std::fs::read_to_string(b.folder().join("bad-row.csv")).unwrap(), "id,name\n1,Ann\n2\n");
+        assert!(!body.contains(&b.dir.path().display().to_string()), "{body}");
+    }
+
+    #[tokio::test]
+    async fn base64_xlsx_is_saved_when_it_starts_like_a_zip() {
+        let b = Bridge::new();
+        let mut zip = b"PK\x03\x04".to_vec();
+        zip.extend_from_slice(&[0u8; 40]);
+        let (status, body) = b.save(json!({ "name": "import.xlsx", "base64": b64(&zip) })).await;
+        assert_eq!(status, 200, "{body}");
+        assert_eq!(std::fs::read(b.folder().join("import.xlsx")).unwrap(), zip);
+        let v: Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(v["size"], "44 bytes");
+        // The right bytes under the wrong name.
+        let (status, body) = b.save(json!({ "name": "import.pdf", "base64": b64(&zip) })).await;
+        assert_eq!((status, body), (400, not_what_it_says("import.pdf")));
+    }
+
+    #[tokio::test]
+    async fn an_xlsx_that_is_really_text_is_refused() {
+        let b = Bridge::new();
+        let (status, body) = b.save(json!({ "name": "import.xlsx", "text": "id,name\n1,Ann\n" })).await;
+        assert_eq!((status, body), (400, not_what_it_says("import.xlsx")));
+        assert!(b.is_empty());
+        // Not base64 at all.
+        let (status, body) = b.save(json!({ "name": "import.xlsx", "base64": "not base64 !!" })).await;
+        assert_eq!(status, 400, "{body}");
+        assert!(b.is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_script_or_note_is_refused() {
+        let b = Bridge::new();
+        for name in ["run.ps1", "notes.md", "page.html", "setup.exe", "no-extension", "report.rpt"] {
+            let (status, body) = b.save(json!({ "name": name, "text": "echo hi" })).await;
+            assert_eq!((status, body.as_str()), (400, not_uploadable(name).as_str()), "{name}");
+            assert!(body.contains("Keep notes, scripts and reports out of Test files."));
+        }
+        assert!(!b.folder().exists() || b.is_empty(), "nothing was written");
+        assert!(is_uploadable("A.XLSX") && !is_uploadable("a.exe") && !is_uploadable("xlsx"));
+    }
+
+    #[tokio::test]
+    async fn text_kinds_are_not_content_checked() {
+        let b = Bridge::new();
+        // Json that does not parse, a Windows-1252 csv and a UTF-16 txt are real test inputs.
+        let (status, body) = b.save(json!({ "name": "data.json", "text": "{\"a\": " })).await;
+        assert_eq!(status, 200, "{body}");
+        let ansi = b"name,price\nCaf\xE9,\xA35\n";
+        let (status, body) = b.save(json!({ "name": "ansi.csv", "base64": b64(ansi) })).await;
+        assert_eq!(status, 200, "{body}");
+        assert_eq!(std::fs::read(b.folder().join("ansi.csv")).unwrap(), ansi);
+        let utf16: Vec<u8> = [0xFF, 0xFE].into_iter().chain("id\tname".encode_utf16().flat_map(|u| u.to_le_bytes())).collect();
+        let (status, body) = b.save(json!({ "name": "wide.txt", "base64": b64(&utf16) })).await;
+        assert_eq!(status, 200, "{body}");
+        let (status, body) = b.save(json!({ "name": "empty.json", "text": "" })).await;
+        assert_eq!(status, 200, "{body}");
+        // The binary kinds keep the magic-byte check.
+        assert!(looks_like("a.csv", b"\xEF\xBB\xBFid,name"));
+        assert!(looks_like("a.txt", &[0xFF, 0xFE, 0x00]));
+        assert!(looks_like("a.webp", b"RIFF\0\0\0\0WEBPVP8 "));
+        assert!(!looks_like("a.webp", b"RIFF\0\0\0\0WAVEfmt "));
+    }
+
+    #[tokio::test]
+    async fn malformed_true_saves_a_deliberately_broken_binary_file() {
+        let _log = crate::serial::log_tail();
+        let b = Bridge::new();
+        let (status, body) = b.save(json!({ "name": "corrupt.pdf", "text": "not a pdf" })).await;
+        assert_eq!((status, body.as_str()), (400, not_what_it_says("corrupt.pdf").as_str()));
+        assert!(body.ends_with("If you meant a broken file for a negative test, pass malformed: true."), "{body}");
+        assert!(b.is_empty());
+        let (status, body) = b.save(json!({ "name": "corrupt.pdf", "text": "not a pdf", "malformed": true })).await;
+        assert_eq!(status, 200, "{body}");
+        assert_eq!(std::fs::read(b.folder().join("corrupt.pdf")).unwrap(), b"not a pdf");
+        let lines: Vec<String> = v2_lib::applog::recent(200)
+            .into_iter()
+            .map(|l| l.message)
+            .filter(|m| m.contains("the assistant saved \"corrupt.pdf\""))
+            .collect();
+        assert_eq!(lines, ["test files: the assistant saved \"corrupt.pdf\" as a deliberately malformed file (9 bytes)"]);
+        // The extension rule still applies.
+        let (status, body) = b.save(json!({ "name": "run.ps1", "text": "echo hi", "malformed": true })).await;
+        assert_eq!((status, body.as_str()), (400, not_uploadable("run.ps1").as_str()));
+    }
+
+    #[tokio::test]
+    async fn from_path_must_be_a_plain_local_path() {
+        let b = Bridge::new();
+        let said = "from_path must be a file on this computer's own drives.";
+        for path in [
+            r"\\server\share\a.txt",
+            "//server/share/a.txt",
+            r"\\?\C:\a.txt",
+            r"\\.\C:\a.txt",
+            r"\\?\UNC\server\share\a.txt",
+            "C:a.txt",
+            r"\a.txt",
+            "a.txt",
+            r"..\a.txt",
+        ] {
+            let (status, body) = b.save(json!({ "from_path": path })).await;
+            assert_eq!((status, body.as_str()), (400, said), "{path}");
+            let (status, body) = b.save(json!({ "name": "a.txt", "from_path": path })).await;
+            assert_eq!((status, body.as_str()), (400, said), "{path} with a name");
+        }
+        assert!(b.is_empty());
+        assert!(v2_lib::test_files::is_plain_local_path(r"C:\Users\x\a.txt"));
+        assert!(v2_lib::test_files::is_plain_local_path("D:/data/a.txt"));
+        assert!(!v2_lib::test_files::is_plain_local_path(r"\\host\share\a.txt"));
+    }
+
+    #[tokio::test]
+    async fn from_path_keeps_the_sources_extension_and_must_be_uploadable() {
+        let b = Bridge::new();
+        let elsewhere = tempfile::tempdir().unwrap();
+        let secret = write(elsewhere.path(), "settings.json", b"{\"token\": \"x\"}");
+        let from = secret.display().to_string();
+        // A json file cannot be saved as a text file, or as anything else.
+        for name in ["data.txt", "data.csv", "data", "data.json.txt"] {
+            let (status, body) = b.save(json!({ "name": name, "from_path": from })).await;
+            assert_eq!(
+                (status, body.as_str()),
+                (400, "The saved name must keep the file's own extension (.json)."),
+                "{name}"
+            );
+        }
+        assert!(b.is_empty());
+        // The same extension in any case is kept.
+        let (status, body) = b.save(json!({ "name": "Settings-Copy.JSON", "from_path": from })).await;
+        assert_eq!(status, 200, "{body}");
+        // A source that is not an uploadable kind is refused whatever it is called.
+        let key = write(elsewhere.path(), "id_ed25519", b"-----BEGIN-----");
+        let (status, body) = b.save(json!({ "name": "key.txt", "from_path": key.display().to_string() })).await;
+        assert_eq!((status, body.as_str()), (400, not_uploadable("id_ed25519").as_str()));
+        let env = write(elsewhere.path(), "creds.env", b"A=1");
+        let (status, body) = b.save(json!({ "name": "creds.txt", "from_path": env.display().to_string() })).await;
+        assert_eq!((status, body.as_str()), (400, not_uploadable("creds.env").as_str()));
+        assert_eq!(list(&b.folder()).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn the_refusal_lists_every_extension_a_test_uploads() {
+        let said = not_uploadable("run.ps1");
+        for ext in v2_lib::test_files::UPLOADABLE {
+            assert!(said.contains(&format!(".{ext}")), "{ext} is missing from: {said}");
+        }
+    }
+
+    #[tokio::test]
+    async fn the_save_route_is_auto_runs_and_refused_while_it_is_off() {
+        let (status, _) = v2_lib::ai_bridge::module_guard_for("/test-file-save", &Default::default()).expect("refused");
+        assert_eq!(status, 404);
+        assert!(v2_lib::ai_bridge::module_guard_for("/test-file-save", &v2_lib::modules::Module::ALL.into_iter().collect()).is_none());
+    }
+
+    #[tokio::test]
+    async fn an_existing_name_needs_replace() {
+        let b = Bridge::new();
+        b.save(json!({ "name": "a.txt", "text": "one" })).await;
+        let (status, body) = b.save(json!({ "name": "a.txt", "text": "two!" })).await;
+        assert_eq!(status, 400, "{body}");
+        assert_eq!(body, "\"a.txt\" is already in Test files - replace it, or rename your copy first");
+        assert_eq!(std::fs::read_to_string(b.folder().join("a.txt")).unwrap(), "one");
+        let (status, body) = b.save(json!({ "name": "a.txt", "text": "two!", "replace": true })).await;
+        assert_eq!(status, 200, "{body}");
+        let v: Value = serde_json::from_str(&body).unwrap();
+        assert_eq!((v["replaced"].clone(), v["size"].clone()), (json!(true), json!("4 bytes")));
+        assert_eq!(std::fs::read_to_string(b.folder().join("a.txt")).unwrap(), "two!");
+        // `replace` on a name that is not there replaces nothing.
+        let (_, body) = b.save(json!({ "name": "b.txt", "text": "x", "replace": true })).await;
+        assert_eq!(serde_json::from_str::<Value>(&body).unwrap()["replaced"], false);
+    }
+
+    #[tokio::test]
+    async fn over_the_cap_is_refused() {
+        let b = Bridge::new();
+        let big = "a".repeat(MAX_BYTES as usize + 1);
+        let (status, body) = b.save(json!({ "name": "big.txt", "text": big })).await;
+        assert_eq!((status, body.as_str()), (400, OVER));
+        assert!(b.is_empty());
+        // The same cap on a file read from disk.
+        let elsewhere = tempfile::tempdir().unwrap();
+        let path = sized(elsewhere.path(), "big.txt", MAX_BYTES + 1);
+        let (status, body) = b.save(json!({ "from_path": path.display().to_string() })).await;
+        assert_eq!((status, body.as_str()), (400, OVER));
+        assert!(b.is_empty());
+    }
+
+    #[tokio::test]
+    async fn exactly_one_content_source() {
+        let b = Bridge::new();
+        for args in [
+            json!({ "name": "a.txt" }),
+            json!({ "name": "a.txt", "text": "x", "base64": b64(b"x") }),
+            json!({ "name": "a.txt", "text": "x", "from_path": "C:/x/a.txt" }),
+            json!({ "name": "a.txt", "text": "x", "base64": b64(b"x"), "from_path": "C:/x/a.txt" }),
+        ] {
+            let (status, body) = b.save(args.clone()).await;
+            assert_eq!((status, body.as_str()), (400, ONE_SOURCE), "{args}");
+        }
+        assert!(b.is_empty());
+    }
+
+    #[tokio::test]
+    async fn from_path_defaults_the_name() {
+        let b = Bridge::new();
+        let elsewhere = tempfile::tempdir().unwrap();
+        let path = write(elsewhere.path(), "appraisal.pdf", b"%PDF-1.4 body");
+        let (status, body) = b.save(json!({ "from_path": path.display().to_string() })).await;
+        assert_eq!(status, 200, "{body}");
+        assert_eq!(serde_json::from_str::<Value>(&body).unwrap()["saved"], "appraisal.pdf");
+        assert_eq!(std::fs::read(b.folder().join("appraisal.pdf")).unwrap(), b"%PDF-1.4 body");
+        assert!(!body.contains(&elsewhere.path().display().to_string()), "{body}");
+        // An own name wins; a relative or missing path is refused with no path in the sentence.
+        let (status, _) = b.save(json!({ "name": "renamed.pdf", "from_path": path.display().to_string() })).await;
+        assert_eq!(status, 200);
+        assert!(b.folder().join("renamed.pdf").is_file());
+        let (status, body) = b.save(json!({ "from_path": "appraisal.pdf" })).await;
+        assert_eq!(status, 400, "{body}");
+        let gone = elsewhere.path().join("gone.pdf");
+        let (status, body) = b.save(json!({ "from_path": gone.display().to_string() })).await;
+        assert_eq!(status, 400, "{body}");
+        assert!(!body.contains(&elsewhere.path().display().to_string()), "{body}");
+        // A script on disk is refused by its name, not copied.
+        let script = write(elsewhere.path(), "run.ps1", b"echo hi");
+        let (status, body) = b.save(json!({ "from_path": script.display().to_string() })).await;
+        assert_eq!((status, body.as_str()), (400, not_uploadable("run.ps1").as_str()));
+    }
+
+    #[tokio::test]
+    async fn a_name_with_a_separator_is_refused() {
+        let b = Bridge::new();
+        for name in ["../escape.txt", "sub/a.txt", "sub\\a.txt", "C:\\x\\a.txt", ".."] {
+            let (status, body) = b.save(json!({ "name": name, "text": "x" })).await;
+            assert_eq!(status, 400, "{name}: {body}");
+            assert!(body.contains("cannot be a test file name"), "{name}: {body}");
+        }
+        assert!(b.is_empty());
+        assert!(!b.dir.path().join("test-files").join("escape.txt").exists());
+        assert!(!b.dir.path().join("escape.txt").exists());
+    }
+
+    #[tokio::test]
+    async fn it_needs_a_project_and_a_name() {
+        let b = Bridge::new();
+        let body = json!({ "name": "a.txt", "text": "x" }).to_string();
+        let none = BridgeContext::default();
+        let (status, said) = crate::common::route_without_rules(&none, None, "POST", "/test-file-save", &body, "1.0.0").await;
+        assert_eq!((status, said.as_str()), (400, TEST_FILES_NEED_A_PROJECT));
+        let (status, said) = b.save(json!({ "text": "x" })).await;
+        assert_eq!(status, 400, "{said}");
+    }
+
+    #[test]
+    fn the_person_adding_a_script_from_the_screen_is_refused_too() {
+        let root = tempfile::tempdir().unwrap();
+        let picked = tempfile::tempdir().unwrap();
+        let dir = folder(root.path(), ORG, PROJECT);
+        for name in ["run.ps1", "notes.md", "tool.exe"] {
+            let err = add(&dir, &write(picked.path(), name, b"echo hi"), false).unwrap_err();
+            assert_eq!(err, not_uploadable(name));
+        }
+        let err = add_at(true, root.path(), ORG, PROJECT, &write(picked.path(), "x.html", b"<p>"), false).unwrap_err();
+        assert_eq!(err, not_uploadable("x.html"));
+        assert!(list(&dir).unwrap().is_empty(), "nothing was written");
+        add(&dir, &write(picked.path(), "real.pdf", b"%PDF-1.7"), false).unwrap();
+    }
+
+    #[test]
+    fn a_person_adding_a_file_is_held_to_the_extension_only() {
+        let root = tempfile::tempdir().unwrap();
+        let picked = tempfile::tempdir().unwrap();
+        let dir = folder(root.path(), ORG, PROJECT);
+        // Excel's ANSI csv, a UTF-16 text, a broken json and a corrupt pdf are test inputs.
+        for (name, bytes) in [
+            ("employees.csv", b"name\nJos\xE9\n".to_vec()),
+            ("wide.txt", vec![0xFF, 0xFE, b'a', 0]),
+            ("broken.json", b"{\"a\": ".to_vec()),
+            ("empty.json", Vec::new()),
+            ("corrupt.pdf", b"just text".to_vec()),
+            ("fake.xlsx", b"id,name\n".to_vec()),
+        ] {
+            add(&dir, &write(picked.path(), name, &bytes), false).unwrap_or_else(|e| panic!("{name}: {e}"));
+            assert_eq!(std::fs::read(dir.join(name)).unwrap(), bytes, "{name}");
+        }
+    }
+
+    #[test]
+    fn save_bytes_writes_beside_then_renames_and_leaves_nothing_behind() {
+        let root = tempfile::tempdir().unwrap();
+        let dir = folder(root.path(), ORG, PROJECT);
+        let saved = save_bytes(&dir, "a.csv", b"x,y\n", false, false).unwrap();
+        assert_eq!((saved.name.as_str(), saved.size), ("a.csv", 4));
+        let on_disk: Vec<String> =
+            std::fs::read_dir(&dir).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect();
+        assert_eq!(on_disk, ["a.csv"], "no .part left");
+    }
+
+    #[test]
+    fn the_log_line_names_no_path() {
+        let _log = crate::serial::log_tail();
+        let root = tempfile::tempdir().unwrap();
+        let dir = folder(root.path(), ORG, PROJECT);
+        save_bytes(&dir, "log-line-check.csv", b"a,b\n", false, false).unwrap();
+        let lines: Vec<String> = v2_lib::applog::recent(200)
+            .into_iter()
+            .map(|l| l.message)
+            .filter(|m| m.contains("log-line-check.csv"))
+            .collect();
+        assert_eq!(lines, ["test files: the assistant saved \"log-line-check.csv\" (4 bytes)"]);
+        let shown = root.path().display().to_string();
+        assert!(lines.iter().all(|l| !l.contains(&shown) && !l.contains('\\') && !l.contains('/')), "{lines:?}");
+    }
 }
 
 // --- API templates: Step.files ---
@@ -512,7 +889,7 @@ fn script_with(action: Value) -> CaseScript {
         title: "Attach a form".into(),
         account: None,
         area: None,
-        steps: vec![StepScript { step_number: 1, actions: vec![serde_json::from_value(action).unwrap()], unchecked: None, cleanup: false }],
+        steps: vec![StepScript { step_number: 1, actions: vec![serde_json::from_value(action).unwrap()], unchecked: None, cleanup: false, because: Vec::new() }],
         repairs: 0,
         last_repair: None,
         suspected_defect: None,
@@ -525,7 +902,7 @@ fn script_with(action: Value) -> CaseScript {
         needs_state: Default::default(),
         saved_at: None,
         fail_on_unexpected_dialog: false,
-        page_errors: None, ignore_page_errors: vec![], organization: None, project: None, checked: false,
+        page_errors: None, ignore_page_errors: vec![], organization: None, project: None, checked: false, checks: 0, given_up: Vec::new(),
     }
 }
 
@@ -784,6 +1161,7 @@ fn upload_step(file: &str) -> StepScript {
         actions: vec![serde_json::from_value(json!({ "kind": "upload", "selector": { "css": "#cv" }, "file": file })).unwrap()],
         unchecked: None,
         cleanup: false,
+        because: Vec::new(),
     }
 }
 

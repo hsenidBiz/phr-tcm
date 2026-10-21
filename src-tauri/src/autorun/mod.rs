@@ -11,20 +11,26 @@ pub mod api_checks;
 pub mod area_repair;
 pub mod capture_redact;
 pub mod capture_tools;
+pub mod case_text;
+pub mod case_values;
 pub mod cleanup;
 pub mod defects;
+pub mod divergences;
 pub mod components;
 pub mod discovery_map;
 pub mod downloads;
 pub mod edits;
 pub mod failures;
 pub mod floor;
+pub mod forbidden_fixes;
 pub mod guide;
 pub mod har;
 pub mod lease;
 pub mod mapping_summary;
 pub mod marks;
 pub mod nav;
+pub mod proven;
+pub mod roles;
 pub mod network;
 pub mod one_browser;
 pub mod overrides;
@@ -81,6 +87,43 @@ pub struct StepScript {
     /// failing the case. Written only when true.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub cleanup: bool,
+    /// Each value a check of this step uses that the case does not hold as
+    /// written, with where the case defines it (`case_values`). Written only
+    /// when there are any.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub because: Vec<Because>,
+}
+
+/// Where a check's value comes from when the case does not hold it word for word.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, specta::Type)]
+pub struct Because {
+    pub value: String,
+    pub why: String,
+    /// assumed or invented; absent reads as assumed. from_case is never
+    /// written: the save works it out.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provenance: Option<Provenance>,
+}
+
+/// Where a check's value comes from: the case as written (from_case, worked
+/// out by the save), the case read indirectly (assumed: "one per DEF row"),
+/// or chosen where the case leaves it free (invented).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, specta::Type)]
+#[serde(rename_all = "snake_case")]
+pub enum Provenance {
+    FromCase,
+    Assumed,
+    Invented,
+}
+
+impl Provenance {
+    pub fn word(self) -> &'static str {
+        match self {
+            Provenance::FromCase => "from_case",
+            Provenance::Assumed => "assumed",
+            Provenance::Invented => "invented",
+        }
+    }
 }
 
 /// How one test case is driven. Keyed by the Azure DevOps case id so a
@@ -200,9 +243,28 @@ pub struct CaseScript {
     /// app (the assistant's save and an import), so its own locators count
     /// as seen in its area (`seen_check::load_checked_map`). A save from
     /// the editor clears it. Set by the save, whatever was sent; written
-    /// only when true.
+    /// only when true. Cleared when a run or replay of the case fails or is Blocked (`proven`), and
+    /// set again by a pass of the whole case; never set while a divergence of the case waits for a
+    /// ruling. A script that is not checked does not vouch for its locators.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub checked: bool,
+    /// The script's number of checks (`case_values::check_count`), stamped by every save: the floor a
+    /// repair may not go under unless its edit names each check it gives up. 0 = not stamped yet.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub checks: u32,
+    /// Every check a repair gave up, oldest first. Set by the save from the edits, never from what was sent.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub given_up: Vec<GivenUp>,
+}
+
+/// A check a repair gave up, with why: shown to the person on the case. The person's own save in
+/// the script editor clears the list (their save is the acceptance).
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, specta::Type)]
+pub struct GivenUp {
+    pub step: i32,
+    pub kind: String,
+    pub why: String,
+    pub at: String,
 }
 
 /// What a script does with the page's own errors.
@@ -415,6 +477,10 @@ pub struct CaseRecord {
     /// (`preconditions::NOT_CHECKED`). Never a reason to block.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub notice: Option<String>,
+    /// The product bugs (quirks of that class) this case works around, each
+    /// `id: text`, copied from the project's quirks when the case was run.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub product_bugs: Vec<String>,
     /// How many page errors a script with `"page_errors": "flag"` met in
     /// this case (`page_errors`). Written only when there were any.
     #[serde(default, skip_serializing_if = "is_zero")]

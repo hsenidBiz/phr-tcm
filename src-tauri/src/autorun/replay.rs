@@ -13,7 +13,7 @@ use super::components::{ran_actions, ComponentFile, Ran};
 use super::nav::{self, Route};
 use super::runner::{self, as_action_outcome};
 use super::lease::{Held, Holder};
-use super::{preconditions, recipe, setup, signin, transient};
+use super::{preconditions, quirks, recipe, setup, signin, transient};
 use super::plan::Pause;
 use super::network::{Network, WaitEnd, MAX_NETWORK_RERUNS};
 use super::{store, CasePhases, CaseRecord, CaseScript, LocalRun, NetworkPauseRecord, ResetRecord, StepRecord, StepScript, RESET_CONTINUED, RESET_STOPPED};
@@ -395,6 +395,17 @@ async fn run_case_in<D: Driver>(
         None
     };
 
+    // A case with an open data or wording divergence (or one waiting for
+    // its repair) never runs: it is Blocked with the sentence, before it
+    // signs in, and so never counts as passed.
+    if skip.is_none() {
+        if let Some(why) = super::divergences::needs_ruling(root, organization, project, script.case_id) {
+            let mut record = blocked_before_start(script, account, why);
+            record.duration_ms = i32::try_from(began.elapsed().as_millis()).ok();
+            return record;
+        }
+    }
+
     // A no-save script never runs unguarded: the guard goes on before
     // anything happens in the browser, or the case does not run at all.
     if skip.is_none() && script.no_save {
@@ -670,6 +681,7 @@ async fn run_case_in<D: Driver>(
         account: account.map(str::to_string),
         retried: None,
         notice: None,
+        product_bugs: Vec::new(),
         page_errors_seen,
         phases: Some(CasePhases { sign_in_ms: sign_in_took, area_ms: area_took, steps_ms: steps_took, total_ms: ms(took), ..Default::default() }),
         cleanup,
@@ -742,6 +754,7 @@ fn unrun(case_id: i32, title: &str, proposed: &str, reason: String) -> CaseRecor
         account: None,
         retried: None,
         notice: None,
+        product_bugs: Vec::new(),
         page_errors_seen: 0, phases: None, cleanup: None,
     }
 }
@@ -830,6 +843,7 @@ fn blocked_before_start(script: &CaseScript, account: Option<&str>, reason: Stri
         account: account.map(str::to_string),
         retried: None,
         notice: None,
+        product_bugs: Vec::new(),
         page_errors_seen: 0, phases: None, cleanup: script.cleanup_step().map(|s| not_run(s, &why)),
     }
 }
@@ -1123,6 +1137,8 @@ pub async fn run_cases_planned<B: Browsers, P: StageDb, G: ResetGate>(
     // Where this call's cases start, so the evidence below counts only
     // what THIS run did, even into a run record that already held some.
     let first = run.cases.len();
+    // Read once: the product bugs a case works around ride on its result.
+    let quirks = quirks::load_quirks(root, organization, project).unwrap_or_default();
 
     'cases: for (i, case) in cases.iter().enumerate() {
         if cancel.load(Ordering::SeqCst) {
@@ -1274,6 +1290,7 @@ pub async fn run_cases_planned<B: Browsers, P: StageDb, G: ResetGate>(
                     // Said on the record whichever way the case went, so the
                     // review and the report show the checks were skipped.
                     record.notice = notice;
+                    record.product_bugs = quirks::product_bugs_for(&quirks, case.case_id);
                     record
                 }
             };
@@ -1310,6 +1327,9 @@ pub async fn run_cases_planned<B: Browsers, P: StageDb, G: ResetGate>(
             break record;
         };
         let proposed = record.proposed.clone();
+        if let Some(o) = super::proven::outcome_of_record(&record) {
+            super::proven::note_outcome(root, case_id, o);
+        }
         run.cases.push(record);
         if let Err(e) = store::save_run(root, run) {
             save_error.get_or_insert(e);

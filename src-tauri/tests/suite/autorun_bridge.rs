@@ -9,7 +9,8 @@
 //! check the script against. Driving the browser never does.
 
 use v2_lib::ado::AdoClient;
-use v2_lib::ai_bridge::{describe_try, module_guard_for, module_of_route, route, BridgeContext};
+use crate::common::route_without_rules as route;
+use v2_lib::ai_bridge::{describe_try, module_guard_for, module_of_route, BridgeContext};
 use v2_lib::modules::Module;
 use v2_lib::autorun::guide::autorun_guide;
 use v2_lib::autorun::quirks::load_quirks;
@@ -267,7 +268,8 @@ async fn a_repair_may_remove_change_or_add_one_precondition_with_a_reason() {
     let (status, out) = save(body).await;
     assert_eq!(status, 200, "{out}");
     let changed = "precondition changed: Evaluation rules for 274 (Performance cycle wizard) to Participants for 274 (Performance cycle wizard) - the case needs a participant, not just the rules";
-    assert_eq!(out, format!("saved 1 script(s): case 7 (repaired)\ncase 7: {changed}"));
+    assert_eq!(out, format!("saved 1 script(s): case 7 (repaired)\ncase 7: {changed}
+case 7: check values: 1 from the case, 0 assumed, 0 invented, 0 exempt"));
     let saved = load_script(dir.path(), 7).unwrap().unwrap();
     assert_eq!(serde_json::to_value(&saved.preconditions).unwrap(), serde_json::json!([cycle_pre("participants")]));
     assert_eq!(saved.repairs, 2);
@@ -453,6 +455,15 @@ fn edit_step_2(why: &str) -> serde_json::Value {
     serde_json::json!({ "case_id": 7, "steps": [2], "why": why })
 }
 
+/// A repair that drops step 2's toast check names it: the floor refuses a
+/// lowered check count unless the edit gives each check up, with why.
+fn edit_step_2_giving_up_the_toast(why: &str) -> serde_json::Value {
+    serde_json::json!({
+        "case_id": 7, "steps": [2], "why": why,
+        "gives_up": [{ "step": 2, "kind": "expect_contains_text", "why": "the toast is not part of the case any more" }],
+    })
+}
+
 /// The guide is format documentation, not org data - it must answer
 /// before anyone signs in, or an assistant cannot even learn the shape.
 #[tokio::test]
@@ -470,7 +481,7 @@ async fn a_bundle_saves_every_case_it_carries() {
     let _root = crate::serial::autorun();
     set_root(dir.path().to_path_buf());
     let (_server, client) =
-        client_with_cases(&[(201, "Valid login", &[""]), (202, "Locked account", &[""])]).await;
+        client_with_cases(&[(201, "Valid login", &["Dashboard"]), (202, "Locked account", &[""])]).await;
 
     let body = serde_json::json!([
         {
@@ -666,7 +677,8 @@ async fn a_new_script_needs_no_declaration_but_must_meet_the_floor() {
     let (status, out) =
         route(&ctx(), Some(&client), "POST", "/autorun-script", &declared, "1.0.0").await;
     assert_eq!(status, 200, "{out}");
-    assert_eq!(out, "saved 1 script(s): case 7 (repaired)");
+    assert_eq!(out, "saved 1 script(s): case 7 (repaired)
+case 7: check values: 1 from the case, 0 assumed, 0 invented, 0 exempt");
     assert_eq!(
         load_script(dir.path(), 7).unwrap().unwrap().repairs,
         1,
@@ -832,7 +844,7 @@ async fn an_edit_must_be_declared_and_may_drop_a_check() {
                     step_2
                 ]
             }],
-            "edits": [edit_step_2("the toast never appears in my run")],
+            "edits": [edit_step_2_giving_up_the_toast("the toast never appears in my run")],
         })
         .to_string()
     };
@@ -1347,7 +1359,9 @@ async fn an_unchanged_script_costs_no_repair() {
     )
     .await;
     assert_eq!(status, 200, "{out}");
-    assert_eq!(out, "saved 2 script(s): case 7 (new), case 9 (new)");
+    assert_eq!(out, "saved 2 script(s): case 7 (new), case 9 (new)
+case 7: check values: 1 from the case, 0 assumed, 0 invented, 0 exempt
+case 9: check values: 1 from the case, 0 assumed, 0 invented, 0 exempt");
 
     // Case 7 is repaired; case 9 comes back word for word.
     let body = serde_json::json!({
@@ -1361,7 +1375,7 @@ async fn an_unchanged_script_costs_no_repair() {
     assert_eq!(status, 200, "{out}");
     assert_eq!(
         out,
-        "saved 2 script(s): case 7 (repaired), case 9 (unchanged)"
+        "saved 2 script(s): case 7 (repaired), case 9 (unchanged)\ncase 7: check values: 1 from the case, 0 assumed, 0 invented, 0 exempt"
     );
     assert_eq!(load_script(dir.path(), 7).unwrap().unwrap().repairs, 1);
     assert_eq!(load_script(dir.path(), 9).unwrap().unwrap().repairs, 0, "case 9 paid nothing");
@@ -2419,6 +2433,7 @@ fn failed_run(id: &str, case_id: i32) -> LocalRun {
             account: None,
             retried: None,
             notice: None,
+            product_bugs: Vec::new(),
             page_errors_seen: 0, phases: None, cleanup: None,
         }],
         mode: String::new(),
@@ -2755,7 +2770,7 @@ async fn a_full_list_refuses_through_the_bridge_with_candidates() {
 /// routes to Database Access; everything else is Core.
 #[test]
 fn each_route_prefix_belongs_to_its_module() {
-    for path in ["/autorun-guide", "/autorun-anything-later", "/accounts", "/accounts-propose"] {
+    for path in ["/autorun-guide", "/autorun-anything-later", "/accounts", "/accounts-propose", "/test-file-save"] {
         assert_eq!(module_of_route(path), Some(Module::AutoRun), "{path}");
     }
     for path in ["/api-template-guide", "/api-templates", "/api-template-fixture-run"] {
@@ -2764,7 +2779,7 @@ fn each_route_prefix_belongs_to_its_module() {
     for path in ["/db-lookup", "/db-query"] {
         assert_eq!(module_of_route(path), Some(Module::DbAccess), "{path}");
     }
-    for path in ["/ping", "/guide", "/tools", "/test-cases", "/db-query-later", "/accountsx"] {
+    for path in ["/ping", "/guide", "/tools", "/test-cases", "/db-query-later", "/accountsx", "/test-file-save-later"] {
         assert_eq!(module_of_route(path), None, "{path}");
     }
 }
@@ -3246,7 +3261,7 @@ async fn a_repair_may_follow_what_the_case_itself_changed() {
                 { "step_number": 2, "actions": [{ "kind": "click", "selector": "#save" }] }
             ]
         }],
-        "edits": [edit_step_2("the case no longer expects a toast at step 2")],
+        "edits": [edit_step_2_giving_up_the_toast("the case no longer expects a toast at step 2")],
     })
     .to_string();
     see_scripts(dir.path(), &following);
@@ -3359,6 +3374,7 @@ fn scripted(case_id: i32) -> CaseScript {
             actions: vec![Action::Navigate { url: "https://app.example/".into() }],
             unchecked: None,
             cleanup: false,
+            because: Vec::new(),
         }],
         repairs: 0,
         last_repair: None,
@@ -3372,7 +3388,7 @@ fn scripted(case_id: i32) -> CaseScript {
         needs_state: Default::default(),
         saved_at: None,
         fail_on_unexpected_dialog: false,
-        page_errors: None, ignore_page_errors: vec![], organization: None, project: None, checked: false,
+        page_errors: None, ignore_page_errors: vec![], organization: None, project: None, checked: false, checks: 0, given_up: Vec::new(),
     }
 }
 
@@ -3851,7 +3867,8 @@ async fn a_dry_run_that_passes_says_it_would_save() {
 
     let body = tool_body(serde_json::json!({ "scripts": scripts, "dry_run": true }));
     let (status, out) = route(&ctx(), Some(&client), "POST", "/autorun-script", &body, "1.0.0").await;
-    assert_eq!((status, out.as_str()), (200, "Dry run: nothing was saved. It would save 1 script(s): case 7 (new)"));
+    assert_eq!((status, out.as_str()), (200, "Dry run: nothing was saved. It would save 1 script(s): case 7 (new)
+case 7: check values: 1 from the case, 0 assumed, 0 invented, 0 exempt"));
     assert_eq!(load_script(dir.path(), 7).unwrap(), None, "a dry run wrote the script");
     // Never mistaken for a save: it opens by saying nothing was saved, and
     // never says "saved N script(s)".
@@ -3862,7 +3879,8 @@ async fn a_dry_run_that_passes_says_it_would_save() {
     // The scripts as a string, as sibling tools take them, and false.
     let body = tool_body(serde_json::json!({ "scripts": scripts.to_string(), "dry_run": true }));
     let (status, out) = route(&ctx(), Some(&client), "POST", "/autorun-script", &body, "1.0.0").await;
-    assert_eq!((status, out.as_str()), (200, "Dry run: nothing was saved. It would save 1 script(s): case 7 (new)"));
+    assert_eq!((status, out.as_str()), (200, "Dry run: nothing was saved. It would save 1 script(s): case 7 (new)
+case 7: check values: 1 from the case, 0 assumed, 0 invented, 0 exempt"));
     let body = tool_body(serde_json::json!({ "scripts": scripts, "dry_run": false }));
     let (status, out) = route(&ctx(), Some(&client), "POST", "/autorun-script", &body, "1.0.0").await;
     assert_eq!(status, 200, "{out}");
@@ -3927,7 +3945,8 @@ async fn a_dry_run_writes_and_records_nothing() {
     see_scripts(dir.path(), &case_7(".toast", "Saved").to_string());
     let seen = every_file(dir.path());
     let (status, out) = route(&ctx(), Some(&client), "POST", "/autorun-script", &dry(".toast", true), "1.0.0").await;
-    assert_eq!((status, out.as_str()), (200, "Dry run: nothing was saved. It would save 1 script(s): case 7 (repaired)"));
+    assert_eq!((status, out.as_str()), (200, "Dry run: nothing was saved. It would save 1 script(s): case 7 (repaired)
+case 7: check values: 1 from the case, 0 assumed, 0 invented, 0 exempt"));
     assert_eq!(every_file(dir.path()), seen, "a dry run that passed changed a file");
     let kept = load_script(dir.path(), 7).unwrap().unwrap();
     assert_eq!(kept.repairs, 0);
@@ -4439,14 +4458,14 @@ async fn a_save_notes_a_loose_record_name_and_an_undeclared_record_without_refus
     assert_eq!(status, 200, "{out}");
     let lines: Vec<&str> = out.lines().collect();
     assert_eq!(lines[0], "Dry run: nothing was saved. It would save 1 script(s): case 7 (new)");
-    assert_eq!(lines[1..], notes[..], "{out}");
+    assert_eq!(lines[2..], notes[..], "{out}");
     assert_eq!(load_script(dir.path(), 7).unwrap(), None);
 
     let (status, out) = route(&ctx(), Some(&client), "POST", "/autorun-script", &body.to_string(), "1.0.0").await;
     assert_eq!(status, 200, "{out}");
     let lines: Vec<&str> = out.lines().collect();
     assert_eq!(lines[0], "saved 1 script(s): case 7 (new)");
-    assert_eq!(lines[1..], notes[..], "{out}");
+    assert_eq!(lines[2..], notes[..], "{out}");
     assert!(load_script(dir.path(), 7).unwrap().is_some());
 
     // Saved again unchanged, it is not read for notes.
@@ -4615,18 +4634,19 @@ async fn notes_come_after_the_precondition_lines() {
         "case 7: note: step 2: button \"{review}\" matches loosely, and the live app also showed button \"{review} Copy\", which it would match too when both are on the page: add \"exact\": true."
     );
     let precondition = "case 7: precondition added: Publish for 274 (Performance cycle wizard) - the case opens a published cycle";
+    let values = "case 7: check values: 1 from the case, 0 assumed, 0 invented, 0 exempt";
     let dry = serde_json::json!({ "scripts": changed, "edits": edits, "dry_run": true }).to_string();
     let (status, out) = route(&ctx(), Some(&client), "POST", "/autorun-script", &dry, "1.0.0").await;
     assert_eq!(status, 200, "{out}");
     assert_eq!(
         out,
-        format!("{} It would save 1 script(s): case 7 (repaired)\n{precondition}\n{loose}", v2_lib::ai_bridge::DRY_RUN_NOTHING_SAVED)
+        format!("{} It would save 1 script(s): case 7 (repaired)\n{precondition}\n{values}\n{loose}", v2_lib::ai_bridge::DRY_RUN_NOTHING_SAVED)
     );
     let body = serde_json::json!({ "scripts": changed, "edits": edits }).to_string();
     let (status, out) = route(&ctx(), Some(&client), "POST", "/autorun-script", &body, "1.0.0").await;
     assert_eq!(status, 200, "{out}");
     // The script now declares a precondition: no note for undeclared records.
-    assert_eq!(out, format!("saved 1 script(s): case 7 (repaired)\n{precondition}\n{loose}"));
+    assert_eq!(out, format!("saved 1 script(s): case 7 (repaired)\n{precondition}\n{values}\n{loose}"));
 }
 
 /// A big bundle's notes stop at 20, then say how many more there were.
@@ -4659,8 +4679,187 @@ async fn a_bundles_notes_are_capped() {
     let (status, out) = route(&ctx(), Some(&client), "POST", "/autorun-script", &body, "1.0.0").await;
     assert_eq!(status, 200, "{out}");
     let lines: Vec<&str> = out.lines().collect();
-    assert_eq!(lines.len(), 1 + 20 + 1, "{out}");
-    assert!(lines[1].starts_with("case 101: note: names \"Open AUTOTEST Review 101\""), "{out}");
-    assert!(lines[20].starts_with("case 120: note: names"), "{out}");
-    assert_eq!(lines[21], "and 2 more notes");
+    assert_eq!(lines.len(), 1 + 22 + 20 + 1, "{out}");
+    assert!(lines[23].starts_with("case 101: note: names \"Open AUTOTEST Review 101\""), "{out}");
+    assert!(lines[42].starts_with("case 120: note: names"), "{out}");
+    assert_eq!(lines[43], "and 2 more notes");
+}
+
+/// A quirk's `class` is one of three words, anything else is refused
+/// naming them; a product bug's answer tells the assistant what happens.
+#[tokio::test]
+async fn a_bad_class_is_refused_naming_the_three() {
+    let dir = TempDir::new();
+    let _root = crate::serial::autorun();
+    set_root(dir.path().to_path_buf());
+    for bad in [r#""class": "bug""#, r#""class": 3"#] {
+        let body = format!(r#"{{ "text": "Save twice makes a duplicate", {bad} }}"#);
+        let (status, out) = route(&ctx(), None, "POST", "/autorun-quirk", &body, "1.0.0").await;
+        assert_eq!(status, 400, "{out}");
+        assert_eq!(out, r#""class" is "app quirk", "environment flake" or "product bug""#);
+    }
+    assert!(load_quirks(dir.path(), "acme", "Web").unwrap().is_empty());
+
+    let body = r#"{ "text": "Save twice makes a duplicate", "class": "product bug" }"#;
+    let (status, out) = route(&ctx(), None, "POST", "/autorun-quirk", body, "1.0.0").await;
+    assert_eq!(status, 200, "{out}");
+    assert!(out.starts_with("recorded as "), "{out}");
+    assert!(out.contains("tell the person, never script around it"), "{out}");
+    assert_eq!(load_quirks(dir.path(), "acme", "Web").unwrap()[0].class.map(|c| c.label()), Some("product bug"));
+
+    // Known with a class of its own: says it kept it.
+    let body = r#"{ "text": "Save twice makes a duplicate", "class": "app quirk" }"#;
+    let (_, out) = route(&ctx(), None, "POST", "/autorun-quirk", body, "1.0.0").await;
+    assert!(out.contains("already known"), "{out}");
+    assert!(out.contains("(kept its class: product bug)"), "{out}");
+}
+
+/// The failures answer ends with the bounds of a repair, so an assistant that
+/// reads only the answer still sees them.
+#[tokio::test]
+async fn the_failures_answer_ends_with_the_repair_bounds() {
+    use v2_lib::autorun::failures::REPAIR_BOUNDS;
+    let dir = TempDir::new();
+    let _root = crate::serial::autorun();
+    set_root(dir.path().to_path_buf());
+    save_run(dir.path(), &failed_run("run-1700000000000", 7)).unwrap();
+    for target in ["/autorun-failures?case_id=7", "/autorun-failures?run_id=run-1700000000000", "/autorun-failures"] {
+        let (status, out) = v2_lib::ai_bridge::route(&ctx(), None, "GET", target, "", "1.0.0").await;
+        assert_eq!(status, 200, "{out}");
+        assert!(out.ends_with(v2_lib::autorun::roles::RULES_FAILURES), "{target}: {out}");
+        let out = v2_lib::autorun::roles::without_rules(&out, v2_lib::autorun::roles::RULES_FAILURES);
+        assert!(out.ends_with(REPAIR_BOUNDS.trim_end()), "{target}: {out}");
+        assert!(out.contains("At most 3 fix-run cycles per case"), "{out}");
+        assert_eq!(out.matches("## Bounds of a repair").count(), 1, "{out}");
+    }
+}
+
+/// A run with nothing failed or blocked carries no bounds.
+#[tokio::test]
+async fn no_bounds_when_nothing_failed() {
+    let dir = TempDir::new();
+    let _root = crate::serial::autorun();
+    set_root(dir.path().to_path_buf());
+    let mut run = failed_run("run-1700000000001", 8);
+    run.cases[0].verdict = "Passed".to_string();
+    run.cases[0].steps.clear();
+    save_run(dir.path(), &run).unwrap();
+    let (status, out) = route(&ctx(), None, "GET", "/autorun-failures?case_id=8", "", "1.0.0").await;
+    assert_eq!(status, 200, "{out}");
+    assert!(out.starts_with("no failed case in run"), "{out}");
+    assert!(!out.contains("Bounds of a repair"), "{out}");
+}
+
+// ------------------------------------------------------ the rules of the moment
+
+/// Through the real router: the rules are on the answer, so the tests above that pin a whole answer
+/// go through `crate::common::route_without_rules`.
+async fn ruled(ctx: &BridgeContext, client: Option<&AdoClient>, method: &str, target: &str, body: &str) -> (u16, String) {
+    v2_lib::ai_bridge::route(ctx, client, method, target, body, "1.0.0").await
+}
+
+#[tokio::test]
+async fn every_failures_answer_ends_with_its_rules() {
+    use v2_lib::autorun::failures::REPAIR_BOUNDS;
+    use v2_lib::autorun::roles::RULES_FAILURES;
+    let dir = TempDir::new();
+    let _root = crate::serial::autorun();
+    set_root(dir.path().to_path_buf());
+    let (status, out) = ruled(&ctx(), None, "GET", "/autorun-failures", "").await;
+    assert_eq!(status, 404, "{out}");
+    assert!(out.ends_with(RULES_FAILURES), "{out}");
+
+    let mut passed = failed_run("run-1700000000001", 8);
+    passed.cases[0].verdict = "Passed".to_string();
+    passed.cases[0].steps.clear();
+    save_run(dir.path(), &passed).unwrap();
+    let (status, out) = ruled(&ctx(), None, "GET", "/autorun-failures?case_id=8", "").await;
+    assert_eq!(status, 200, "{out}");
+    assert!(out.starts_with("no failed case in run"), "{out}");
+    assert!(out.ends_with(RULES_FAILURES), "{out}");
+
+    save_run(dir.path(), &failed_run("run-1700000000002", 7)).unwrap();
+    let (status, out) = ruled(&ctx(), None, "GET", "/autorun-failures?case_id=7", "").await;
+    assert_eq!(status, 200, "{out}");
+    let bounds = out.find(REPAIR_BOUNDS).expect("the bounds of a repair");
+    assert!(out[bounds..].ends_with(RULES_FAILURES), "{out}");
+    assert!(out.find("Rules now:").unwrap() > bounds, "the rules come after the bounds: {out}");
+}
+
+#[tokio::test]
+async fn a_repair_save_answer_ends_with_its_rules_and_a_new_script_save_does_not() {
+    use v2_lib::autorun::roles::RULES_REPAIR_SAVE;
+    let dir = TempDir::new();
+    let _root = crate::serial::autorun();
+    set_root(dir.path().to_path_buf());
+    let (_server, client) = client_with_cases(&[(7, "Save a rating", &["", "A toast says Saved"])]).await;
+
+    let first = case_7("#toast", "Saved").to_string();
+    see_scripts(dir.path(), &first);
+    let (status, out) = ruled(&ctx(), Some(&client), "POST", "/autorun-script", &first).await;
+    assert_eq!(status, 200, "{out}");
+    assert!(!out.contains("Rules now:"), "a new script's save carries no rules: {out}");
+
+    let repair = serde_json::json!({
+        "scripts": case_7("#toast", "Saved!"),
+        "edits": [edit_step_2("the toast gained an exclamation mark")],
+    })
+    .to_string();
+    see_scripts(dir.path(), &repair);
+    let (status, out) = ruled(&ctx(), Some(&client), "POST", "/autorun-script", &repair).await;
+    assert_eq!(status, 200, "{out}");
+    assert!(out.ends_with(RULES_REPAIR_SAVE), "{out}");
+
+    // A repair the route refuses (a reorder) carries them too.
+    let reordered = serde_json::json!({
+        "scripts": [{
+            "case_id": 7, "title": "Save a rating",
+            "steps": [
+                { "step_number": 2, "actions": [
+                    { "kind": "click", "selector": "#save" },
+                    { "kind": "expect_contains_text", "selector": "#toast", "value": "Saved!" }
+                ]},
+                { "step_number": 1, "actions": [{ "kind": "navigate", "url": "https://app.example/ratings" }] }
+            ]
+        }],
+        "edits": [edit_step_2("reordered")],
+    })
+    .to_string();
+    see_scripts(dir.path(), &reordered);
+    let (status, out) = ruled(&ctx(), Some(&client), "POST", "/autorun-script", &reordered).await;
+    assert_eq!(status, 400, "{out}");
+    assert!(out.ends_with(RULES_REPAIR_SAVE), "{out}");
+}
+
+#[tokio::test]
+async fn a_discovery_start_answer_ends_with_its_rules_and_a_mapping_run_does_not() {
+    use v2_lib::autorun::roles::RULES_DISCOVERY;
+    let dir = TempDir::new();
+    let _root = crate::serial::autorun();
+    set_root(dir.path().to_path_buf());
+    let plain = serde_json::json!({ "account": "nobody-saved-this" }).to_string();
+    let (status, out) = ruled(&ctx(), None, "POST", "/autorun-discover-start", &plain).await;
+    assert!(status >= 400, "{out}");
+    assert!(out.ends_with(RULES_DISCOVERY), "{out}");
+
+    for mapping in [serde_json::json!(true), serde_json::json!("true")] {
+        let body = serde_json::json!({ "account": "nobody-saved-this", "mapping": mapping }).to_string();
+        let (status, out) = ruled(&ctx(), None, "POST", "/autorun-discover-start", &body).await;
+        assert!(status >= 400, "{out}");
+        assert!(!out.contains("Rules now:"), "a mapping run carries no rules: {out}");
+    }
+}
+
+#[tokio::test]
+async fn a_replay_answer_ends_with_its_rules() {
+    use v2_lib::autorun::roles::RULES_REPLAY;
+    let dir = TempDir::new();
+    let _root = crate::serial::autorun();
+    set_root(dir.path().to_path_buf());
+    let (status, out) = ruled(&ctx(), None, "POST", "/autorun-replay", &serde_json::json!({ "case_id": 7, "step": 2 }).to_string()).await;
+    assert!(status >= 400, "{out}");
+    assert!(out.ends_with(RULES_REPLAY), "{out}");
+
+    let (_, out) = ruled(&ctx(), None, "POST", "/autorun-replay-stop", "{}").await;
+    assert!(out.ends_with(RULES_REPLAY), "{out}");
 }

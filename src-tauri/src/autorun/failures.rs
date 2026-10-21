@@ -21,6 +21,28 @@ use std::path::Path;
 /// ("Could not reach module ...").
 pub const UNREACHED_STOP: &str = "the run could not reach this case's area - repair the area's path with save_autorun_area and its repair argument (the guide's areas section), not the script";
 
+/// The `STOP:` line for a case that needs a person's ruling on a divergence.
+pub const NEEDS_RULING_STOP: &str = "the case waits for a person's ruling on a divergence - leave the script as the case says";
+
+/// How a failure is classified before anything is changed. The guide repeats
+/// it word for word (a test holds the two together).
+pub const CLASSIFY_FIRST: &str = "Classify each failure before you change anything: the locator, timing, the environment, data or a missing precondition, or the application not doing what the case expects.";
+
+/// The bounds of a repair, ending the failures answer when a case failed or
+/// was Blocked, and repeated word for word (less its heading) in the guide.
+/// Guidance for the assistant: the app refuses none of the cycle limits, only
+/// the check floor and the case's values at the save.
+pub const REPAIR_BOUNDS: &str = "## Bounds of a repair
+
+Classify each failure before you change anything: the locator, timing, the environment, data or a missing precondition, or the application not doing what the case expects. A check whose value differs from what the page shows is data, a missing precondition or the application, never a script fix: call report_case_divergence and keep the case's value. A missing precondition is reported, never repaired: a healer pointed at a missing precondition will keep rewriting assertions and locators until an empty or disabled page satisfies them, which produces a script that passes and proves nothing.
+
+- At most 3 fix-run cycles per case: a fix, then a replay or run of it.
+- Stop at cycle 2 when the failure is identical to cycle 1's: the same step, the same action, the same words.
+- Stop at once on a login page, a missing precondition or a product defect: a real bug must surface as a failure.
+- A pass after a change that changed nothing is run 2 more times: 2 green of 3 is a flake, not a fix. Report it as a flake.
+- A repair keeps the script's number of checks unless its edit names each check given up and why in gives_up, and never changes a check's value away from the case; the save refuses both otherwise.
+";
+
 /// Why an assistant must not try to repair this case. Checked in this
 /// order because a case can match more than one at once (a Blocked case
 /// whose sign-in also failed, say) and the sign-in / browser reasons are
@@ -57,6 +79,12 @@ pub fn stop_reason(case: &CaseRecord) -> Option<String> {
                 .to_string(),
         );
     }
+    // A divergence a person has not ruled on: the script stays as the case
+    // says. A `waits for a repair:` reason is not a stop - it is the
+    // signal to repair.
+    if case.reason.starts_with(super::divergences::NEEDS_RULING_PREFIX) {
+        return Some(NEEDS_RULING_STOP.to_string());
+    }
     if case.verdict == "Blocked" {
         return Some(
             "the person marked this case Blocked - a missing precondition is not a script defect"
@@ -64,6 +92,80 @@ pub fn stop_reason(case: &CaseRecord) -> Option<String> {
         );
     }
     None
+}
+
+/// A failure, as the bounds compare two: the first step with a failed action, that action's index in the
+/// step, and the first line of its words, lowercased, every digit run read as "#", whitespace collapsed,
+/// at most 160 characters.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct FailureSignature {
+    pub step: i32,
+    pub action: usize,
+    pub words: String,
+}
+
+/// None when no action of the case failed.
+pub fn signature(case: &CaseRecord) -> Option<FailureSignature> {
+    for step in &case.steps {
+        let failed = step.outcomes.iter().enumerate().find(|(_, o)| !o.ok && !o.detail.starts_with("not run:"));
+        if let Some((action, outcome)) = failed {
+            let first = outcome.detail.lines().next().unwrap_or("").to_lowercase();
+            let mut masked = String::new();
+            let mut in_digits = false;
+            for c in first.chars() {
+                if c.is_ascii_digit() {
+                    if !in_digits {
+                        masked.push('#');
+                    }
+                    in_digits = true;
+                } else {
+                    in_digits = false;
+                    masked.push(c);
+                }
+            }
+            let words: String = masked.split_whitespace().collect::<Vec<_>>().join(" ").chars().take(160).collect();
+            return Some(FailureSignature { step: step.step_number, action, words });
+        }
+    }
+    None
+}
+
+/// The `STOP:` line for a failure that came back unchanged after the script was repaired.
+pub const SAME_FAILURE_STOP: &str = "the same failure as before the last repair: the same step, the same action, the same words - the repair did not reach the cause, so stop on this case and report each failure, what the repair changed and your diagnosis to the person";
+
+fn iso_ms(ms: u64) -> String {
+    crate::applog::iso_of(std::time::UNIX_EPOCH + std::time::Duration::from_millis(ms))
+}
+
+/// SAME_FAILURE_STOP when `case` (read at `read_at_ms`) fails as the newest earlier failure of the same case
+/// did and the script was repaired in between: `script.repairs > 0` and `script.saved_at` later than that
+/// earlier failure and no later than `read_at_ms` (both as `applog::iso_of`, whole seconds). The earlier
+/// failure is the newest, before `read_at_ms`, of: each run of `store::list_runs(root)` holding the case
+/// failed (`is_failed`) at `started_at`; the case's kept replay (`replay_record::load`) at its `at`; and that
+/// replay's `previous`.
+pub fn same_failure_stop(root: &Path, case: &CaseRecord, script: Option<&CaseScript>, read_at_ms: u64) -> Option<&'static str> {
+    let now = signature(case)?;
+    let script = script.filter(|s| s.repairs > 0)?;
+    let saved = script.saved_at.as_deref()?;
+    let mut earlier: Vec<(u64, FailureSignature)> = Vec::new();
+    for run in store::list_runs(root) {
+        let Ok(at) = run.started_at.parse::<u64>() else { continue };
+        if let Some(c) = run.cases.iter().find(|c| c.case_id == case.case_id && is_failed(c)) {
+            if let Some(sig) = signature(c) {
+                earlier.push((at, sig));
+            }
+        }
+    }
+    if let Some(rec) = super::replay_record::load(root, case.case_id) {
+        if let Some(sig) = rec.as_run_case().and_then(|c| signature(&c)) {
+            earlier.push((rec.at, sig));
+        }
+        if let Some(prev) = rec.previous {
+            earlier.push((prev.at, prev.signature));
+        }
+    }
+    let (at, sig) = earlier.into_iter().filter(|(at, _)| *at < read_at_ms).max_by_key(|(at, _)| *at)?;
+    (sig == now && saved > iso_ms(at).as_str() && saved <= iso_ms(read_at_ms).as_str()).then_some(SAME_FAILURE_STOP)
 }
 
 /// A case whose machine proposal or human verdict says it did not pass -
@@ -268,7 +370,7 @@ fn run_mode_is_replay(run_id: &str) -> bool {
 /// One failed case's whole block: header, account and area when known,
 /// the stop reason when there is one, every failed or skipped
 /// step, and the person's own note last.
-fn describe_case(run_id: &str, case: &CaseRecord, script: Option<&CaseScript>, components: &ComponentFile, root: Option<&Path>) -> String {
+fn describe_case(run_id: &str, case: &CaseRecord, script: Option<&CaseScript>, components: &ComponentFile, root: Option<&Path>, started: Option<u64>) -> String {
     let mut lines: Vec<String> = Vec::new();
 
     // A supervised run never fills in `proposed` - only a person's own
@@ -296,7 +398,11 @@ fn describe_case(run_id: &str, case: &CaseRecord, script: Option<&CaseScript>, c
     if let Some(m) = script.and_then(|s| s.suspected_defect.as_ref()) {
         lines.push(format!("suspected defect at step {}: {}", m.step_number, m.note));
     }
-    if let Some(reason) = stop_reason(case) {
+    let stop = stop_reason(case).or_else(|| match (root, started) {
+        (Some(root), Some(at)) => same_failure_stop(root, case, script, at).map(str::to_string),
+        _ => None,
+    });
+    if let Some(reason) = stop {
         lines.push(format!("STOP: {reason}"));
     }
 
@@ -344,7 +450,7 @@ pub fn describe_failures_in(root: Option<&Path>, run: &LocalRun, scripts: &[Case
         // A case that passed is listed too when its clean-up failed: a
         // broken clean-up leaves data behind for the next run.
         .filter(|c| is_failed(c) || c.cleanup_line().is_some())
-        .map(|c| describe_case(&run.id, c, scripts.iter().find(|s| s.case_id == c.case_id), components, root))
+        .map(|c| describe_case(&run.id, c, scripts.iter().find(|s| s.case_id == c.case_id), components, root, run.started_at.parse::<u64>().ok()))
         .collect();
 
     if blocks.is_empty() {

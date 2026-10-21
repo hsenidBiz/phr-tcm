@@ -97,7 +97,14 @@ fn rpc_error(id: serde_json::Value, code: i32, message: &str) -> String {
     .to_string()
 }
 
+/// As the proxy answers, with no session: no role text, no pointer. Tests and every caller but `run_stdio_proxy` use it.
 pub fn handle_message(msg: &str, version: &str, call: BridgeCall) -> Option<String> {
+    handle_message_in(msg, version, call, &mut crate::mcp_session::Session::untracked())
+}
+
+/// `handle_message` with the session the proxy keeps: a role's rules ride ahead of the first answer of the
+/// tool that starts the role, a pointer line ahead of later ones.
+pub fn handle_message_in(msg: &str, version: &str, call: BridgeCall, session: &mut crate::mcp_session::Session) -> Option<String> {
     let Ok(v) = serde_json::from_str::<serde_json::Value>(msg) else {
         return Some(rpc_error(serde_json::Value::Null, -32700, "Parse error"));
     };
@@ -112,6 +119,7 @@ pub fn handle_message(msg: &str, version: &str, call: BridgeCall) -> Option<Stri
 
     let result = match method {
         "initialize" => {
+            session.reset();
             // `version` is the RUNNING APP's; serverInfo reports this proxy's
             // own, so the two can be compared at all.
             let mut result = serde_json::json!({
@@ -131,7 +139,25 @@ pub fn handle_message(msg: &str, version: &str, call: BridgeCall) -> Option<Stri
             let no_ask = db_no_ask_from(&reply);
             tools_list(tool_policy_from(reply).0, no_ask)
         }
-        "tools/call" => tools_call(&v["params"], call),
+        "tools/call" => {
+            let params = &v["params"];
+            let name = params["name"].as_str().unwrap_or_default();
+            let args = coerce_args(name, &params["arguments"]);
+            let (mut result, reached) = tools_call_outcome(params, call);
+            if reached && result["isError"] != serde_json::Value::Bool(true) && name == "get_guide" {
+                if let Some(role) = args["role"].as_str().and_then(crate::autorun::roles::Role::from_key) {
+                    session.mark_read(role);
+                }
+            }
+            if reached {
+                if let Some(note) = session.note_for(name, &args) {
+                    if let Some(items) = result["content"].as_array_mut() {
+                        items.insert(0, serde_json::json!({ "type": "text", "text": note }));
+                    }
+                }
+            }
+            result
+        }
         _ => {
             return Some(
                 serde_json::json!({
@@ -354,7 +380,7 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
         },
         {
             "name": "save_autorun_script",
-            "description": format!("Save action scripts so the app can drive those test cases through a real browser. Takes a LIST, one entry per case, so one call can cover a whole PBI: {{ case_id, title, account (optional: the KEY of the account the case runs as, never a username or password), area, steps: [{{ step_number, actions }}] }}. {} Every script is checked against its OWN test case before anything is written: a step whose expected result nothing asserts is refused unless that step says why in `unchecked`. Every locator must have been seen on the live app - an action needs one seen matching exactly one element; a refusal says what each use needs. CHANGING a script that already exists is a repair and needs `edits`. Steps you leave out of `edits` must stay exactly as they were (a declared step may change in any way, removing a check included), and a precondition removed or changed without a precondition edit is refused. All or nothing: one bad action, locator, case id or undeclared change rejects the whole batch. Call get_guide (topic autorun) first for the action vocabulary; its section \"Saving it\" has the seen-locator rules and the shape of `edits`.", crate::autorun::nav::SET_AREA_RULE),
+            "description": format!("Save action scripts so the app can drive those test cases through a real browser. Takes a LIST, one entry per case, so one call can cover a whole PBI: {{ case_id, title, account (optional: the KEY of the account the case runs as, never a username or password), area, steps: [{{ step_number, actions }}] }}. {} Every script is checked against its OWN test case before anything is written: a step whose expected result nothing asserts is refused unless that step says why in `unchecked`. Every locator must have been seen on the live app - an action needs one seen matching exactly one element; a refusal says what each use needs. CHANGING a script that already exists is a repair and needs `edits`. Steps you leave out of `edits` must stay exactly as they were (a declared step may change how it does things, but a repair that lowers the script's checks must name each one it gives up in `gives_up`, and a repair never moves a check's value away from the case), and a precondition removed or changed without a precondition edit is refused. All or nothing: one bad action, locator, case id or undeclared change rejects the whole batch. Call get_guide (topic autorun) first for the action vocabulary; its section \"Saving it\" has the seen-locator rules and the shape of `edits`. The first repair (a save with edits) of a session opens its answer with the case rewriter's rules, and every answer of a save with edits ends with the rules that apply at that moment.", crate::autorun::nav::SET_AREA_RULE),
             "inputSchema": schema(serde_json::json!({
                 "scripts": {
                     "type": "array",
@@ -363,7 +389,7 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
                 },
                 "edits": {
                     "type": "array",
-                    "description": "Only when a script already exists: one entry per case you change, { case_id, steps (every step number you changed), why, area? (true when you changed the script's area, including leaving out one it had), quirk?, precondition? (at most one per case per save) }: get_guide (topic autorun), section \"Saving it\".",
+                    "description": "Only when a script already exists: one entry per case you change, { case_id, steps (every step number you changed), why, area? (true when you changed the script's area, including leaving out one it had), quirk?, quirk_class? (\"app quirk\", \"environment flake\" or \"product bug\", the quirk's class), precondition? (at most one per case per save), gives_up? (the checks this repair removes, each { step, kind (expect_count, expect_text...), why }, why one line: the person sees each one; only when the case no longer asks for the check or another check already proves the same - a check the app fails is a divergence, report_case_divergence, never a check to give up) }: get_guide (topic autorun), section \"Saving it\".",
                     "items": { "type": "object" },
                 },
                 "dry_run": { "type": "boolean", "description": DRY_RUN_SCRIPT },
@@ -433,7 +459,7 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
         },
         {
             "name": "replay_autorun_to_step",
-            "description": "Replay a case's saved script in the supervised Auto Run browser, steps 1 to `step` - 1, and stop before `step` runs, so you can heal the failing step where it failed. Needs no browser open: when none is, the app opens one; a discovery of yours holding the browser is ended first (what it mapped is kept). Like a run, it checks the preconditions, signs in as the case's account and goes to its area. A script marked must not save replays at once too, its saves stopped throughout. Answers a sentence and the page where it stopped, so you can try that step at once with try_autorun_action. Replay to the failing step and never past it to see what happens. The browser stays open on that step, signed in. Do not release it between replays: reset_autorun_browser gives a clean page with the sign-in kept, and its `release` is for a broken browser only. One replay at a time: one still going after about 45 seconds says so - call again with the same case and step to keep waiting on that same replay (never a new one); a different case or step is refused until it ends. `stop: true`, sent alone, stops your replay that is still going; with no replay going it answers 404, and the person's own replay is refused (only they can stop it). Carrying on from an earlier replay, a browser already signed in, and how a stop ends: get_guide (topic autorun), section \"Repairing a script that failed\".",
+            "description": "Replay a case's saved script in the supervised Auto Run browser, steps 1 to `step` - 1, and stop before `step` runs, so you can heal the failing step where it failed. Needs no browser open: when none is, the app opens one; a discovery of yours holding the browser is ended first (what it mapped is kept). Like a run, it checks the preconditions, signs in as the case's account and goes to its area. A script marked must not save replays at once too, its saves stopped throughout. Answers a sentence and the page where it stopped, so you can try that step at once with try_autorun_action. Replay to the failing step and never past it to see what happens. The browser stays open on that step, signed in. Do not release it between replays: reset_autorun_browser gives a clean page with the sign-in kept, and its `release` is for a broken browser only. One replay at a time: one still going after about 45 seconds says so - call again with the same case and step to keep waiting on that same replay (never a new one); a different case or step is refused until it ends. `stop: true`, sent alone, stops your replay that is still going; with no replay going it answers 404, and the person's own replay is refused (only they can stop it). Carrying on from an earlier replay, a browser already signed in, and how a stop ends: get_guide (topic autorun), section \"Repairing a script that failed\". Every answer ends with the rules that apply at that moment.",
             "inputSchema": schema(serde_json::json!({
                 "case_id": { "type": "number", "description": "The case whose saved script is replayed." },
                 "step": { "type": "number", "description": "The step to stop before: the failing step. Steps 1 to step - 1 run." },
@@ -443,7 +469,7 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
         },
         {
             "name": "start_autorun_discovery",
-            "description": "Open the app's own Auto Run browser and sign in as a saved account, so you can explore the live application before you write a script. The app replays the recorded sign-in and types the password; you never see it. Answers the landing page as get_autorun_page shows it, and its address path. Refused while a run, a replay or a person's browser holds the Auto Run browser. It takes over a browser your own replay left open (its other tabs closed, not signing in again when it is signed in as the account you name) and goes home, and the answer says so. A failed sign-in closes the browser and says why: report it rather than trying again. Every locator you will put in a script must be seen on the live app first: a save refuses any locator the app has not seen. Never read the application's code to write scripts. For a case marked no_save, name it with `case_id` (or pass `no_save: true`): every save the page tries is blocked, not only reported, until the discovery ends. Call end_autorun_discovery when you are done.",
+            "description": "Open the app's own Auto Run browser and sign in as a saved account, so you can explore the live application before you write a script. The app replays the recorded sign-in and types the password; you never see it. Answers the landing page as get_autorun_page shows it, and its address path. Refused while a run, a replay or a person's browser holds the Auto Run browser. It takes over a browser your own replay left open (its other tabs closed, not signing in again when it is signed in as the account you name) and goes home, and the answer says so. A failed sign-in closes the browser and says why: report it rather than trying again. Every locator you will put in a script must be seen on the live app first: a save refuses any locator the app has not seen. Never read the application's code to write scripts. For a case marked no_save, name it with `case_id` (or pass `no_save: true`): every save the page tries is blocked, not only reported, until the discovery ends. Call end_autorun_discovery when you are done. The first discovery start of a session that is not a mapping run opens its answer with the writer's rules; a later one opens with a line pointing back at them. Every answer that is not a mapping run's ends with the rules that apply at that moment.",
             "inputSchema": schema(serde_json::json!({
                 "account": { "type": "string", "description": "The KEY of the saved account to sign in as, from get_accounts. Never a username or a password." },
                 "area": { "type": "string", "description": "The recorded area you are exploring, by name; what you see is filed under it (with none, under no area)." },
@@ -481,7 +507,7 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
         },
         {
             "name": "save_autorun_area",
-            "description": "Save a screen you found through the menus during discovery as an area, so runs can reach it before step 1. The app checks it first: from the home page, signed in, it replays your clicks and saves the area only if they arrive where the discovery browser is now. A refusal says what the page showed. A name already taken is refused; pick another or ask the person - except a repair: when a run cannot reach an existing area (its menu moved), find the screen through the menus and send that area's name, its module, the new clicks and `repair: { reason }`. The area's saved path is tried first, from a fresh home as a run takes it, and the repair is refused while it still arrives; the area keeps its name, module and scripts, only its clicks change, and the person can put the old path back. Set each script's `area` to this name. If you cannot find the screen through the menus, ask the person to record the area in Auto Run instead.",
+            "description": "Save a screen you found through the menus during discovery as an area, so runs can reach it before step 1. The app checks it first: from the home page, signed in, it replays your clicks and saves the area only if they arrive where the discovery browser is now. A refusal says what the page showed. Each click is saved to match exactly one element: the app scopes one that has a twin on the page (a hidden one included) to its own list, and refuses it when it cannot. A name already taken is refused; pick another or ask the person - except a repair: when a run cannot reach an existing area (its menu moved), find the screen through the menus and send that area's name, its module, the new clicks and `repair: { reason }`. The area's saved path is tried first, from a fresh home as a run takes it, and the repair is refused while it still arrives; the area keeps its name, module and scripts, only its clicks change, and the person can put the old path back. Set each script's `area` to this name. If you cannot find the screen through the menus, ask the person to record the area in Auto Run instead.",
             "inputSchema": schema(serde_json::json!({
                 "name": { "type": "string", "description": "The new area's name, unique in this project; with `repair`, the existing area's name." },
                 "module": { "type": "string", "description": "The test case Module the area belongs to; with `repair`, the area's own module (a repair never moves an area)." },
@@ -514,7 +540,7 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
         },
         {
             "name": "save_autorun_component",
-            "description": "Save a component: a widget or short flow worked out once on the live app, that any script then runs with one use_component action. Make one when a widget or flow is needed more than once; reuse a saved one rather than repeat its actions. Try it first with discover_autorun_actions, a use_component of it with this component as its `draft`, and save it unchanged once that works; anything else is refused. Every fixed locator in it must have been seen: an action needs one seen matching exactly one element, while a check that can pass with several matches may use one seen matching several; every input it declares must be used, and every one it uses declared; it cannot sign in, type a username or password, use another component, or build an address from an input. Saving a name already saved is a change: it needs `why` and is tried live again first. `remove: true` and only the `name` removes a saved one instead, refused while a script uses it (the refusal names the cases).",
+            "description": "Save a component: a widget or short flow worked out once on the live app, that any script then runs with one use_component action. Make one when a widget or flow is needed more than once; reuse a saved one rather than repeat its actions. Try it first with discover_autorun_actions, a use_component of it with this component as its `draft`, and save it unchanged once that works; anything else is refused. Every fixed locator in it must have been seen: an action needs one seen matching exactly one element, while a check that can pass with several matches may use one seen matching several; every input it declares must be used, and every one it uses declared; it cannot sign in, type a username or password, use another component, or build an address from an input. Saving a name already saved is a change: it needs `why` and is tried live again first. `remove: true` and only the `name` removes a saved one instead, refused while a script uses it (the refusal names the cases). The first component save of a session opens its answer with the case rewriter's rules.",
             "inputSchema": schema(serde_json::json!({
                 "name": { "type": "string", "description": "Its name, unique in this project, e.g. \"Pick a date\"." },
                 "description": { "type": "string", "description": "One line: what it does and when to use it." },
@@ -543,7 +569,7 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
         },
         {
             "name": "get_autorun_failures",
-            "description": "What failed in an Auto Run run on THIS machine, as text you can act on: which step, which action (its own JSON), what the page said, and the picture. It also says when you must not touch the script at all - a sign-in that failed, a browser that stopped answering, a case that could not reach its module screen, or a case the person marked Blocked are not script defects (a case that could not reach its area: repair the area with save_autorun_area). A newer replay of a case that stopped on a failure counts as its newest word (the text says \"from a replay to step N\"). Asked with neither case_id nor run_id, it names the run it read and ends with the other recent runs on this machine with failed or blocked cases, each with its run_id. Read this before repairing anything.",
+            "description": "What failed in an Auto Run run on THIS machine, as text you can act on: which step, which action (its own JSON), what the page said, and the picture. It also says when you must not touch the script at all - a sign-in that failed, a browser that stopped answering, a case that could not reach its module screen, or a case the person marked Blocked are not script defects (a case that could not reach its area: repair the area with save_autorun_area). A newer replay of a case that stopped on a failure counts as its newest word (the text says \"from a replay to step N\"). Asked with neither case_id nor run_id, it names the run it read and ends with the other recent runs on this machine with failed or blocked cases, each with its run_id. Its answer ends with the bounds of a repair: at most 3 fix-run cycles per case, stop at cycle 2 on an identical failure, stop at once on a login page, a missing precondition or a product defect, and 2 green of 3 is a flake, not a fix. Read this before repairing anything. The first answer of a session opens with the healer's rules; a later one opens with a line pointing back at them. Every answer ends with the rules that apply at that moment.",
             "inputSchema": schema(serde_json::json!({
                 "case_id": { "type": "number", "description": "The newest run that holds this test case." },
                 "run_id": { "type": "string", "description": "One run by its id instead. With neither, the newest run on this machine." },
@@ -555,6 +581,7 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
             "inputSchema": schema(serde_json::json!({
                 "text": { "type": "string", "description": "To record: one line, e.g. \"the results grid paginates at 25 rows\"." },
                 "cases": quirk_cases(),
+                "class": { "type": "string", "enum": ["app quirk", "environment flake", "product bug"], "description": "What the line is: an app quirk (how the application behaves), an environment flake (this environment, not the product) or a product bug (the application is wrong, and a case works around it). A product bug is shown on the cases' results and at the top of the run report." },
                 "from": { "type": "string", "enum": ["autorun", "api"], "description": "\"api\" when you learned it building API templates; \"autorun\" (the default) for Auto Run scripts." },
                 "retire": { "type": "string", "description": "To retire: the quirk's id, as the Known quirks section shows it (e.g. q1a2b3c)." },
                 "reason": { "type": "string", "description": "With retire: one sentence on why the note no longer helps." },
@@ -581,6 +608,17 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
                 "step_number": { "type": "number", "description": "The step that failed because of the application." },
                 "note": { "type": "string", "description": "What the application did, against what the case expects; at most 300 characters." },
             }), &["case_id", "step_number", "note"]),
+        },
+        {
+            "name": "report_case_divergence",
+            "description": "Use this when the live app or its data differs from what a test case says - a count, a text, an order or a state - instead of writing the check to fit the page. It stores the divergence for the person and never changes the script. kind data: the environment does not meet the case's precondition; the case's runs are Blocked with \"needs a ruling\" until the person rules in Auto Run. kind wording: the case is unclear or out of date and needs rewriting; Blocked the same way. kind app: the application does not do what the case expects; not blocked, so the run fails at that step, then mark it with mark_autorun_suspected_defect. case_says quotes the case's own words (that step, another expected result or its preconditions); app_shows is what the page showed. Save the script as the case says either way, and name the divergence in your report.",
+            "inputSchema": schema(serde_json::json!({
+                "case_id": { "type": "number", "description": "The test case." },
+                "step": { "type": "number", "description": "The case's step whose check differs." },
+                "case_says": { "type": "string", "description": "The case's own words, quoted, at most 300 characters." },
+                "app_shows": { "type": "string", "description": "What the page showed, in a few words, at most 300 characters." },
+                "kind": { "type": "string", "enum": ["data", "app", "wording"] },
+            }), &["case_id", "step", "case_says", "app_shows", "kind"]),
         },
         {
             "name": "set_autorun_order",
@@ -621,6 +659,18 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
             "name": "get_accounts",
             "description": "The app's active environment and its accounts: key, label and username - the keys are what a script's `account` or a template run names. Passwords are included only when a person has marked the environment as a test environment; otherwise a note says so. Never write a username or password into a script or template. Also the project's `test_files` (name and size), the only files a case's upload step can send; one that is missing is for the person to add in Auto Run, Setup, Test files - you cannot.",
             "inputSchema": schema(serde_json::json!({}), &[]),
+        },
+        {
+            "name": "save_test_file",
+            "description": "Save a file you made into this project's Test files, so an Auto Run `upload` action or an API template's `files` can send it by name. Only documents a test uploads are taken (the extensions are listed in the refusal); never save notes, scripts or reports here. malformed: true saves a deliberately broken file (a corrupt PDF for a test that the app rejects it); the extension rule still applies.",
+            "inputSchema": schema(serde_json::json!({
+                "name": { "type": "string", "description": "The file's name, e.g. bad-row.csv. Required unless from_path is given, in which case it defaults to that file's own name." },
+                "text": { "type": "string", "description": "The content as UTF-8, for a .txt, .csv, .json or .xml file." },
+                "base64": { "type": "string", "description": "The content as standard base64, for any kind of file a test uploads." },
+                "from_path": { "type": "string", "description": "A full path (drive letter first) to a file you wrote on this computer's own drives, never a network share; it is copied, at most 25 MB, and the saved name must keep its extension." },
+                "malformed": { "type": "boolean", "description": "Save a deliberately broken file, for a negative upload test (default false). The extension rule still applies." },
+                "replace": { "type": "boolean", "description": "Replace a file of that name already in Test files (default false)." },
+            }), &[]),
         },
         {
             "name": "get_autorun_network_wait",
@@ -692,7 +742,7 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
         },
         {
             "name": "list_api_templates",
-            "description": "The API templates saved for the current project, filtered and paged. Check here before building a template - the one you need may already exist; it is also the reference for real endpoints, paths and response fields when a script checks the API (never run from a script). When at most `limit` match, each comes in full (params, outputs, flow stage, whether it is proven on this site - prove an imported one before relying on it - and its newest run) with the project's flows and Test files; when more match, a compact index: narrow it with `module`, `search` or `flow`, or pass `id` for one template in full. With `id`, the other filters and the paging are ignored. While `paging.next_offset` is there, call again with `offset` set to it. With `kind: \"fixtures\"` it lists the saved fixtures instead: `id` for one in full, `full: true` for all. What each field means: get_guide (topic api_templates). Read-only; answers with the API templates switch off.",
+            "description": "The API templates saved for the current project, filtered and paged. Check here before building a template - the one you need may already exist; it is also the reference for real endpoints, paths and response fields when a script checks the API (never run from a script). When at most `limit` match and the answer stays under 40,000 characters, each comes in full (params, outputs, flow stage, whether it is proven on this site - prove an imported one before relying on it - and its newest run) with the project's flows and Test files; when more match, a compact index: narrow it with `module`, `search` or `flow`, or pass `id` for one template in full. With `id`, the other filters and the paging are ignored. While `paging.next_offset` is there, call again with `offset` set to it. With `kind: \"fixtures\"` it lists the saved fixtures instead: `id` for one in full, `full: true` for all. What each field means: get_guide (topic api_templates). Read-only; answers with the API templates switch off.",
             "inputSchema": schema(serde_json::json!({
                 "kind": { "type": "string", "enum": ["templates", "fixtures"], "description": "\"templates\" (the default) or \"fixtures\"." },
                 "module": { "type": "string", "description": "Only templates whose module contains this text (case does not matter)." },
@@ -1014,7 +1064,7 @@ pub fn offered_topics(off: &[String]) -> Vec<&'static str> {
 fn guide_sentence(topic: &str) -> &'static str {
     match topic {
         "writing" => "\"writing\": Test Case Manager import JSON - format rules, the org's allowed Module values, the workflow and the transform ops; call it first.",
-        "autorun" => "\"autorun\": writing an Auto Run action script - the actions and checks, and which source decides what: locators come from the live app, every assertion from the case's own expected result, never from what the code does; read it before writing a script. Alone it answers the Quick rules, this project's live sections and every section title; `section` adds one section, `quick` only the Quick rules and live sections, `full` the whole guide.",
+        "autorun" => "\"autorun\": writing an Auto Run action script - the actions and checks, and which source decides what: locators come from the live app, every assertion from the case's own expected result, never from what the code does; read it before writing a script. Alone it answers the Quick rules, this project's live sections and every section title; `section` adds one section, `quick` only the Quick rules and live sections, `full` the whole guide. `role` gives one role's rules.",
         "api_templates" => "\"api_templates\": building an API template - the format, placeholders and captures, the workflow, this project's account keys and sign-in origin; read it before your first prove_api_template.",
         "reports" => "\"reports\": working with Crystal Reports - the IR, units (twips), edit ops, the layout plan and the limits; read it before your first edit_report.",
         _ => "",
@@ -1039,6 +1089,7 @@ fn guide_tool(off: &[String]) -> serde_json::Value {
         props["quick"] = serde_json::json!({ "type": "boolean", "description": "autorun only. true: only the Quick rules and the live sections - the active environment, whether get_accounts gives passwords, this project's areas, areas to explore, components and quirks." });
         props["section"] = serde_json::json!({ "type": "string", "description": "autorun only. One section's title, e.g. \"Selectors\" or \"Saving it\" (case ignored): the Quick rules and that section. An unknown title answers the list of titles." });
         props["full"] = serde_json::json!({ "type": "boolean", "description": "autorun only. true: every section - over 100,000 characters; prefer `section`." });
+        props["role"] = serde_json::json!({ "type": "string", "enum": ["writer", "healer", "case-rewriter", "auditor"], "description": "autorun only. One role's rules, which hold whatever tools you have: writer (choosing what to script and writing it from the live app), healer (diagnosing and repairing a failed case), case-rewriter (changing a saved script or component, a repair or a rewritten case) or auditor (checking saved scripts against their cases, reporting only). With quick, section or full, the rules come first." });
     }
     serde_json::json!({ "name": "get_guide", "description": description, "inputSchema": schema(props, &["topic"]) })
 }
@@ -1063,9 +1114,43 @@ pub fn guide_refusal(topic: Option<&str>, off: &[String], on: &BTreeSet<Module>)
     }
 }
 
-/// Said when `section`, `quick` or `full` comes with a topic other than
-/// autorun: only that guide is long enough to be read in parts.
-pub const GUIDE_PARTS_AUTORUN_ONLY: &str = "`section`, `quick` and `full` are for topic \"autorun\" only - send the other topics with `topic` alone";
+/// Said when `section`, `quick`, `full` or `role` comes with a topic other
+/// than autorun: only that guide is long enough to be read in parts, and
+/// only it has roles.
+pub const GUIDE_PARTS_AUTORUN_ONLY: &str = "`section`, `quick`, `full` and `role` are for topic \"autorun\" only - send the other topics with `topic` alone";
+
+/// The autorun guide as `section`, `quick` and `full` ask for it.
+fn autorun_guide_call(args: &serde_json::Value, call: BridgeCall) -> Result<(u16, String), String> {
+    match args["section"].as_str().map(str::trim).filter(|s| !s.is_empty()) {
+        Some(section) => call("GET", &format!("/autorun-guide?section={}", urlencoding::encode(section)), ""),
+        None if args["quick"].as_bool().unwrap_or(false) => call("GET", "/autorun-guide?quick=true", ""),
+        None if args["full"].as_bool().unwrap_or(false) => call("GET", "/autorun-guide", ""),
+        // The whole guide is too long for one answer: the Quick rules,
+        // the live sections and the section titles.
+        None => call("GET", "/autorun-guide?overview=true", ""),
+    }
+}
+
+/// `get_guide` with a `role`: the role's rules, answered here with no call
+/// to the app. With `section`, `quick` or `full` too, the rules come first
+/// and the guide's answer follows.
+fn role_guide(args: &serde_json::Value, call: BridgeCall) -> Result<(u16, String), String> {
+    let asked = args["role"].as_str().unwrap_or_default();
+    let Some(role) = crate::autorun::roles::Role::from_key(asked) else {
+        return Ok((400, crate::autorun::roles::unknown_role(asked)));
+    };
+    if !["section", "quick", "full"].iter().any(|k| says(&args[*k])) {
+        return Ok((200, role.text()));
+    }
+    let mut rest = args.clone();
+    if let Some(o) = rest.as_object_mut() {
+        o.remove("role");
+    }
+    match autorun_guide_call(&rest, call)? {
+        (status, body) if status < 400 => Ok((status, format!("{}\n\n{}", role.text().trim_end(), body))),
+        other => Ok(other),
+    }
+}
 
 /// Whether an optional argument says anything: absent, null, false and ""
 /// all say nothing.
@@ -1126,6 +1211,10 @@ fn component_call(args: &serde_json::Value, call: BridgeCall) -> Result<(u16, St
 fn given(args: &serde_json::Value, key: &str) -> bool {
     args.get(key).is_some_and(|v| !v.is_null())
 }
+
+/// The top-level keys `save_autorun_script` reads: any other is refused
+/// rather than dropped.
+pub const SAVE_SCRIPT_KEYS: [&str; 3] = ["scripts", "edits", "dry_run"];
 
 /// The arguments' keys with a value, other than `allowed`.
 fn others<'a>(args: &'a serde_json::Value, allowed: &[&str]) -> Vec<&'a str> {
@@ -1537,10 +1626,104 @@ pub const RETIRED_TOOLS: &[(&str, &str)] = &[
 /// What a call to a retired tool is told, or `None` for any other name.
 pub fn retired_tool_answer(name: &str) -> Option<String> {
     let (_, now) = RETIRED_TOOLS.iter().find(|(old, _)| *old == name)?;
-    Some(format!("`{name}` is now {now}"))
+    Some(format!("`{name}` is now {now} {STALE_TOOL_LIST}"))
 }
 
-fn tools_call(params: &serde_json::Value, call: BridgeCall) -> serde_json::Value {
+/// Said after a retired tool's answer: a client keeps the tool list it got
+/// when its session began, so a tool the app added or renamed since is
+/// missing from it until a new session.
+pub const STALE_TOOL_LIST: &str = "Your session's tool list is older than this app, so the tool named here may be missing from it: start a new session to get the current tools.";
+
+/// Each tool's `inputSchema.properties`, from this build's own tool list.
+fn tool_properties(name: &str) -> Option<&'static serde_json::Map<String, serde_json::Value>> {
+    static TOOL_PROPS: std::sync::OnceLock<std::collections::HashMap<String, serde_json::Map<String, serde_json::Value>>> =
+        std::sync::OnceLock::new();
+    TOOL_PROPS
+        .get_or_init(|| {
+            tools_list(vec![], false)["tools"]
+                .as_array()
+                .map(|tools| {
+                    tools
+                        .iter()
+                        .filter_map(|t| {
+                            let name = t["name"].as_str()?.to_string();
+                            let props = t["inputSchema"]["properties"].as_object()?.clone();
+                            Some((name, props))
+                        })
+                        .collect()
+                })
+                .unwrap_or_default()
+        })
+        .get(name)
+}
+
+/// The kinds a property's `type` declares: a string or an array of strings.
+/// Empty for a property with no `type` (an `anyOf` one), which is left alone.
+fn declared_types(property: &serde_json::Value) -> Vec<&str> {
+    match &property["type"] {
+        serde_json::Value::String(t) => vec![t.as_str()],
+        serde_json::Value::Array(ts) => ts.iter().filter_map(|t| t.as_str()).collect(),
+        _ => vec![],
+    }
+}
+
+/// `args` read against `name`'s current schema, for a client whose tool
+/// list is older than this app: a boolean sent as text is the boolean, and
+/// an object or list sent as JSON text (or a list's items sent as JSON text)
+/// is that object or list. Only where the schema's `type` leaves text out -
+/// a parameter that also takes a string (a flow id, a css selector) is
+/// never read as anything else - and only when the text really is one: any
+/// other text is left as it was, so the route names what is wrong with it.
+pub fn coerce_args(name: &str, args: &serde_json::Value) -> serde_json::Value {
+    let (Some(props), Some(given)) = (tool_properties(name), args.as_object()) else {
+        return args.clone();
+    };
+    let mut out = given.clone();
+    for (key, value) in out.iter_mut() {
+        let Some(property) = props.get(key) else { continue };
+        let types = declared_types(property);
+        if types.is_empty() || types.contains(&"string") {
+            continue;
+        }
+        if let serde_json::Value::String(text) = value {
+            if types.contains(&"boolean") {
+                match text.trim().to_ascii_lowercase().as_str() {
+                    "true" => *value = serde_json::Value::Bool(true),
+                    "false" => *value = serde_json::Value::Bool(false),
+                    _ => {}
+                }
+            } else if types.contains(&"object") || types.contains(&"array") {
+                if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(text) {
+                    let kind = if parsed.is_object() {
+                        "object"
+                    } else if parsed.is_array() {
+                        "array"
+                    } else {
+                        ""
+                    };
+                    if types.contains(&kind) {
+                        *value = parsed;
+                    }
+                }
+            }
+        }
+        if types.contains(&"array") && property["items"]["type"] == "object" {
+            if let serde_json::Value::Array(items) = value {
+                for item in items.iter_mut() {
+                    if let serde_json::Value::String(text) = item {
+                        if let Ok(parsed @ serde_json::Value::Object(_)) = serde_json::from_str::<serde_json::Value>(text) {
+                            *item = parsed;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    serde_json::Value::Object(out)
+}
+
+/// The answer to a tool call, and whether the call reached the app (the dispatch answered, with any status).
+fn tools_call_outcome(params: &serde_json::Value, call: BridgeCall) -> (serde_json::Value, bool) {
     let name = params["name"].as_str().unwrap_or_default();
     let args = &params["arguments"];
     // Every bridge request from here on names the tool, so the app logs the
@@ -1549,8 +1732,12 @@ fn tools_call(params: &serde_json::Value, call: BridgeCall) -> serde_json::Value
     // A tool that was merged away answers with where it went, before any
     // name-based refusal can misread it.
     if let Some(text) = retired_tool_answer(name) {
-        return serde_json::json!({ "content": [{ "type": "text", "text": text }], "isError": true });
+        return (serde_json::json!({ "content": [{ "type": "text", "text": text }], "isError": true }), false);
     }
+    // A client's tool list may be older than this app: read its arguments
+    // against the schema this build offers.
+    let coerced = coerce_args(name, args);
+    let args = &coerced;
     // Checked again here, not just in tools/list: a client may be working
     // from a list it cached before the tool was switched off.
     let (off, on) = tool_policy(call);
@@ -1562,13 +1749,16 @@ fn tools_call(params: &serde_json::Value, call: BridgeCall) -> serde_json::Value
         None
     };
     if let Some(text) = refused {
-        return serde_json::json!({
-            "content": [{
-                "type": "text",
-                "text": text,
-            }],
-            "isError": true,
-        });
+        return (
+            serde_json::json!({
+                "content": [{
+                    "type": "text",
+                    "text": text,
+                }],
+                "isError": true,
+            }),
+            false,
+        );
     }
     let outcome = match name {
         "begin_test_case_writing" => {
@@ -1599,20 +1789,16 @@ fn tools_call(params: &serde_json::Value, call: BridgeCall) -> serde_json::Value
         }
         "get_guide"
             if args["topic"].as_str().map(str::trim) != Some("autorun")
-                && ["section", "quick", "full"].iter().any(|k| says(&args[*k])) =>
+                && ["section", "quick", "full", "role"].iter().any(|k| says(&args[*k])) =>
         {
             Ok((400, GUIDE_PARTS_AUTORUN_ONLY.to_string()))
         }
+        "get_guide" if args["topic"].as_str().map(str::trim) == Some("autorun") && says(&args["role"]) => {
+            role_guide(args, call)
+        }
         "get_guide" => match args["topic"].as_str().map(str::trim).unwrap_or_default() {
             "writing" => call("GET", "/guide", ""),
-            "autorun" => match args["section"].as_str().map(str::trim).filter(|s| !s.is_empty()) {
-                Some(section) => call("GET", &format!("/autorun-guide?section={}", urlencoding::encode(section)), ""),
-                None if args["quick"].as_bool().unwrap_or(false) => call("GET", "/autorun-guide?quick=true", ""),
-                None if args["full"].as_bool().unwrap_or(false) => call("GET", "/autorun-guide", ""),
-                // The whole guide is too long for one answer: the Quick rules,
-                // the live sections and the section titles.
-                None => call("GET", "/autorun-guide?overview=true", ""),
-            },
+            "autorun" => autorun_guide_call(args, call),
             "api_templates" => call("GET", "/api-template-guide", ""),
             "reports" => call("GET", "/crystal-guide", ""),
             // Refused before the match by `guide_refusal`; said again here
@@ -1698,6 +1884,17 @@ fn tools_call(params: &serde_json::Value, call: BridgeCall) -> serde_json::Value
         // is structurally unable to drop `paths` or `output_path` - the
         // same pattern as `check_spec_coverage` above.
         "merge_case_files" => call("POST", "/merge-cases", &args.to_string()),
+        // Any other top-level key is one this dispatch would drop without a
+        // word - a declaration under a near name (`edit`, `declarations`,
+        // `repair`) never reaches the route, which would then only say
+        // "edits" is missing.
+        "save_autorun_script" if !others(args, &SAVE_SCRIPT_KEYS).is_empty() => Ok((
+            400,
+            format!(
+                "`save_autorun_script` takes scripts, edits and dry_run - not {}: a repair's declarations go in \"edits\", beside \"scripts\"",
+                others(args, &SAVE_SCRIPT_KEYS).join(", ")
+            ),
+        )),
         "save_autorun_script" => {
             // The bridge takes the bare array, so a caller that wrapped it
             // in {scripts: [...]} and one that sent the list directly both
@@ -1748,7 +1945,18 @@ fn tools_call(params: &serde_json::Value, call: BridgeCall) -> serde_json::Value
                 (None, _) => Ok(args.to_string()),
             };
             match body {
-                Ok(body) => call("POST", "/autorun-script", &with_dry_run(body, args.get("dry_run"))),
+                Ok(body) => match call("POST", "/autorun-script", &with_dry_run(body, args.get("dry_run"))) {
+                    // A repair refused for its missing `edits` says what the
+                    // call carried, so the next report is conclusive.
+                    Ok((400, text)) if text.contains("\"edits\" is missing") => {
+                        let carried: Vec<&str> = args
+                            .as_object()
+                            .map(|o| o.iter().filter(|(_, v)| !v.is_null()).map(|(k, _)| k.as_str()).collect())
+                            .unwrap_or_default();
+                        Ok((400, format!("{text} (This call carried: {}.)", carried.join(", "))))
+                    }
+                    other => other,
+                },
                 // Refused here, before anything reaches the app, in the
                 // same shape as a refusal from the route.
                 Err(refused) => Ok((400, refused)),
@@ -1829,9 +2037,11 @@ fn tools_call(params: &serde_json::Value, call: BridgeCall) -> serde_json::Value
         "record_quirk" => quirk_call(&with_inferred_from(args, &off), call),
         "record_validation_rule" => call("POST", "/autorun-validation-rule", &args.to_string()),
         "mark_autorun_suspected_defect" => call("POST", "/autorun-defect", &args.to_string()),
+        "report_case_divergence" => call("POST", "/autorun-divergence", &args.to_string()),
         "set_autorun_order" => call("POST", "/autorun-order", &args.to_string()),
         "propose_accounts" => call("POST", "/accounts-propose", &args.to_string()),
         "get_accounts" => call("GET", "/accounts", ""),
+        "save_test_file" => call("POST", "/test-file-save", &args.to_string()),
         "list_api_templates"
             if args["kind"].as_str() == Some("fixtures")
                 && ["module", "search", "flow", "offset", "limit"].iter().any(|k| says(&args[*k])) =>
@@ -2029,7 +2239,8 @@ fn tools_call(params: &serde_json::Value, call: BridgeCall) -> serde_json::Value
         }
         other => Err(format!("{}{other}", ToolError::UNKNOWN_TOOL_TAG)),
     };
-    match outcome {
+    let reached = outcome.is_ok();
+    let result = match outcome {
         Ok((status, body)) if status < 400 => serde_json::json!({
             "content": [{ "type": "text", "text": body }],
         }),
@@ -2046,7 +2257,8 @@ fn tools_call(params: &serde_json::Value, call: BridgeCall) -> serde_json::Value
             "isError": true,
             "content": [{ "type": "text", "text": ToolError::message(&e) }],
         }),
-    }
+    };
+    (result, reached)
 }
 
 /// Why a tool call could not be answered.
@@ -2172,12 +2384,18 @@ pub fn run_stdio_proxy() {
     }
     let stdin = std::io::stdin();
     let mut stdout = std::io::stdout();
+    let mut session = crate::mcp_session::Session::new();
     for line in stdin.lock().lines() {
         let Ok(line) = line else { break };
         if line.trim().is_empty() {
             continue;
         }
-        if let Some(resp) = handle_message(&line, &version, &bridge_call) {
+        let now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0);
+        session.tick(now_ms);
+        if let Some(resp) = handle_message_in(&line, &version, &bridge_call, &mut session) {
             let _ = writeln!(stdout, "{resp}");
             let _ = stdout.flush();
         }

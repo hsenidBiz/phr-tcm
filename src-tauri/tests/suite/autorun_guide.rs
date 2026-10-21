@@ -393,22 +393,25 @@ fn the_guide_lists_every_refusal_the_edit_gate_can_give() {
     }
 }
 
-/// The owner's call: a repair may change a declared step in any way,
-/// removing a check included, and a script may be repaired as often as it
-/// needs. The guide says so, and no longer names a cap on repairs or
-/// changes, or a rule against dropping a check.
+/// A repair may change what a declared step does (the locator, the waiting,
+/// the navigation, how a check is made) but keeps the script's checks unless
+/// its edit names each one given up, and never moves a value away from the
+/// case. No cap on repairs, and the guide no longer says a check may be
+/// dropped freely.
 #[test]
-fn the_guide_lets_a_repair_drop_a_check_and_names_no_repair_cap() {
+fn the_guide_limits_what_a_repair_may_drop_and_names_no_repair_cap() {
     let g = autorun_guide();
     let flat = g.split_whitespace().collect::<Vec<_>>().join(" ");
     for said in [
-        "removing one or turning it into an action that checks nothing included",
+        "A repair may change the steps it declares: the locator, the waiting, the navigation, or how a check is made.",
         "Every step it does not declare stays exactly as it was",
-        "A script may be repaired as often as it needs.",
+        "A script may be repaired as often as it needs;",
     ] {
         assert!(flat.contains(said), "the guide never says {said:?}");
     }
     for gone in [
+        "removing one or turning it into an action that checks nothing",
+        "removing a check included",
         "repair cap",
         "never removed or weakened",
         "repaired 3 times",
@@ -436,6 +439,7 @@ fn the_guide_lists_every_stop_line_and_gives_no_count() {
         "the run could not reach this case's area - repair the area's path with save_autorun_area and its repair argument (the guide's areas section), not the script",
         "the run could not take this case to its module screen - fix the module path or the case's Module in the app, not the script",
         "the person marked this case Blocked - a missing precondition is not a script defect",
+        v2_lib::autorun::failures::SAME_FAILURE_STOP,
     ] {
         assert!(g.contains(&format!("`STOP: {line}`")), "the guide never lists `STOP: {line}`");
     }
@@ -1638,6 +1642,8 @@ fn every_quick_rule_is_in_the_full_guide() {
         ("report the order and any reset points", "Shared state a case changes"),
         ("State needed before a run: a precondition", "Shared state a case changes"),
         ("`page_said` and \"the app refused\" are the app's own words; judge them against the case", "Discovering the app"),
+        ("never fit one to the page", "When the case and the app disagree"),
+        ("`report_case_divergence` and keep the case's value", "When the case and the app disagree"),
     ] {
         assert!(quick.contains(phrase), "the quick rules never say {phrase:?}: {quick}");
         assert!(section(home).contains(phrase), "\"{home}\" never says {phrase:?}");
@@ -2072,4 +2078,238 @@ fn the_selectors_section_lists_every_check_happy_with_many() {
     for kind in ["expect_count", "expect_hidden", "wait_for", "expect_each", "expect_order"] {
         assert!(sentence.contains(kind), "the happy-with-many sentence never names {kind}: {sentence}");
     }
+}
+
+fn flat_guide(text: &str) -> String {
+    text.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// The guide says what to do when the case and the app disagree: the case's
+/// value stays, the divergence is reported, a person rules.
+#[test]
+fn the_guide_says_never_fit_a_check_to_the_page() {
+    use v2_lib::autorun::guide::{guide_section, quick_rules, section_titles};
+    let g = autorun_guide();
+    let titles = section_titles(&g);
+    let at = |t: &str| titles.iter().position(|x| *x == t).unwrap_or_else(|| panic!("no section {t}: {titles:?}"));
+    assert_eq!(
+        at("When the case and the app disagree"),
+        at("Where each fact is allowed to come from") + 1,
+        "the section follows `Where each fact is allowed to come from`"
+    );
+    let section = guide_section(&g, "When the case and the app disagree").expect("the section");
+    let flat = flat_guide(&section);
+    for said in [
+        "never fit one to the page",
+        "exactly 4 levels",
+        "Level 1 to Level 6",
+        "A passing script must mean the case's own expected result was seen",
+        "step 2: the check counts 6 but the case says 4 (\"exactly 4 levels\")",
+        "`report_case_divergence { case_id, step, case_says, app_shows, kind }`",
+        "needs a ruling: step N: the case says \"...\" but the app shows \"...\" (data) - a person rules on it in Auto Run",
+        "The case is right",
+        "Data fixed",
+        "Rewrite the case",
+        "waits for a repair: step N: ...",
+        "a healer pointed at a missing precondition will keep rewriting assertions and locators until an empty or disabled page satisfies them, which produces a script that passes and proves nothing",
+        "An `app` divergence does not block.",
+        "mark_autorun_suspected_defect",
+    ] {
+        assert!(flat.contains(said), "the section never says {said:?}: {flat}");
+    }
+    let refuses = guide_section(&g, "Discovering the app").unwrap();
+    assert!(
+        flat_guide(&refuses).contains("a count, a list or a state that differs from the case is never written into a check"),
+        "What the application refuses never carries the rule"
+    );
+    let quick = quick_rules();
+    assert!(quick.lines().count() <= 45, "the quick rules run to {} lines", quick.lines().count());
+    assert!(flat_guide(&quick).contains("never fit one to the page"), "{quick}");
+    assert!(!g.contains('\u{2014}') && !g.contains('\u{2013}'), "no dashes in text an assistant reads");
+}
+
+/// The guide repeats the repair bounds the failures answer ends with, word
+/// for word.
+#[test]
+fn the_guide_repeats_the_repair_bounds_word_for_word() {
+    use v2_lib::autorun::failures::{CLASSIFY_FIRST, REPAIR_BOUNDS};
+    let guide = autorun_guide();
+    let g = flat_guide(&guide);
+    let body = REPAIR_BOUNDS.split_once('\n').expect("a heading line").1;
+    assert!(g.contains(&flat_guide(body)), "the guide never repeats the bounds");
+    assert!(g.contains(&flat_guide(CLASSIFY_FIRST)), "the guide never repeats the classification");
+    assert!(REPAIR_BOUNDS.starts_with("## Bounds of a repair"));
+    let repair = v2_lib::autorun::guide::guide_section(&guide, "Repairing a script that failed").unwrap();
+    assert!(repair.contains("### Bounds of a repair"), "the subsection is missing");
+    assert!(
+        repair.find("### Bounds of a repair").unwrap() < repair.find("### Changing a precondition").unwrap(),
+        "the bounds come before `Changing a precondition`"
+    );
+    assert!(repair.contains("At most 3 fix-run cycles per case"), "digits, not words");
+}
+
+/// Saving it: what the value check compares, the exemptions, `because` and
+/// where a value comes from.
+#[test]
+fn the_guide_says_what_the_value_check_compares() {
+    use v2_lib::autorun::guide::guide_section;
+    let g = autorun_guide();
+    let flat = flat_guide(&guide_section(&g, "Saving it").unwrap());
+    for said in [
+        "Every check's literal value is compared with the case's steps, expected results and preconditions",
+        "`expect_count` and `expect_row_count`",
+        "A pattern (`matches`), an attribute, a style, an address and a response are not compared.",
+        "Exempt: 0 and 1, text under 3 characters",
+        "anything holding a `{{placeholder}}`",
+        "a value the script types or uploads",
+        "A range the case gives",
+        "needs a `because` on its step",
+        "at most 200 characters",
+        "never what the app shows",
+        "`provenance`",
+        "`from_case`",
+        "`assumed`",
+        "`invented`",
+        "\"provenance\": \"invented\"",
+        "case N: check values: 5 from the case, 1 assumed, 1 invented, 2 exempt",
+        "case N: assumed: step S \"6\" - ...",
+        "before you say the work is done",
+        "A count the case states differently is refused naming both, and no `because` lifts it.",
+        "A value chosen by clicking an option is not typed, so a check on it needs a `because` unless the case states it.",
+    ] {
+        assert!(flat.contains(said), "Saving it never says {said:?}: {flat}");
+    }
+    assert!(!flat.contains("removing a check included"), "{flat}");
+    assert!(flat.contains("gives_up"), "the repair bullet never mentions the floor: {flat}");
+    assert!(!g.contains('\u{2014}') && !g.contains('\u{2013}'), "no dashes in text an assistant reads");
+}
+
+/// Repairing: the check floor, the figures a repair may not move, the
+/// ruling STOP, the bounds, the quirk class and the divergence route to a
+/// product bug.
+#[test]
+fn the_repair_section_forbids_fewer_checks_and_moved_values() {
+    use v2_lib::autorun::guide::guide_section;
+    let g = autorun_guide();
+    let repair = guide_section(&g, "Repairing a script that failed").unwrap();
+    let flat = flat_guide(&repair);
+    for said in [
+        "`gives_up`",
+        "\"gives_up\": [{ \"step\": 3, \"kind\": \"expect_count\", \"why\": \"step 4 already counts the same rows\" }]",
+        "never because the app fails it",
+        "The person sees every check given up on the case",
+        "case N: check given up: step S kind - why",
+        "A repair never changes a check's value away from the case.",
+        "the repair lowers the script's checks from N to M",
+        "step N: the repair drops \"4\", which the case gives",
+        "A person removes or changes a check in the script editor.",
+        "a repaired script is checked again once a run passes or a replay runs the whole case",
+        "- `STOP: the case waits for a person's ruling on a divergence - leave the script as the case says`",
+        "(`app quirk`, `environment flake` or `product bug`; an edit's `quirk_class`)",
+        "a product bug is shown on every result of the cases it names and at the top of the run report",
+        "While you write a script, a case the application gets wrong is reported with `report_case_divergence` and kind `app` instead; the mark comes after the run fails there.",
+        "guidance",
+    ] {
+        assert!(flat.contains(said), "the repair section never says {said:?}: {flat}");
+    }
+    assert_eq!(
+        v2_lib::autorun::failures::NEEDS_RULING_STOP,
+        "the case waits for a person's ruling on a divergence - leave the script as the case says"
+    );
+}
+
+/// A script is `checked` only while it is proven.
+#[test]
+fn the_guide_says_a_script_is_checked_only_while_proven() {
+    use v2_lib::autorun::guide::guide_section;
+    let g = autorun_guide();
+    let flat = flat_guide(&guide_section(&g, "Saving it").unwrap());
+    for said in [
+        "only while it is proven",
+        "fails or is Blocked clears it",
+        "a pass of the whole case sets it again",
+        "leaves it off",
+        "does not vouch for its locators",
+        "A case is done only when its script is checked.",
+    ] {
+        assert!(flat.contains(said), "Saving it never says {said:?}: {flat}");
+    }
+}
+
+/// Checking thoroughly: what the expected result names, in the place the
+/// case names; an action the page does not allow; a whole list needs a
+/// count.
+#[test]
+fn the_guide_says_check_what_the_case_names_in_its_place() {
+    use v2_lib::autorun::guide::{guide_section, quick_rules};
+    let g = autorun_guide();
+    let flat = flat_guide(&guide_section(&g, "Checking thoroughly").unwrap());
+    for said in [
+        "Each thing a step's expected result names is checked: a message, a state, a column, and an icon too.",
+        "i.fa-sitemap",
+        "Having no name is no reason to leave it out",
+        "chain the check inside that place",
+        "{ \"role\": \"cell\", \"name\": \"Pending\", \"exact\": true }",
+        "not by `nth`",
+        "An action the page does not allow",
+        "Never put another action in its place without saying so.",
+        "add an `expect_count` of the items with the case's number, so an extra item fails",
+    ] {
+        assert!(flat.contains(said), "Checking thoroughly never says {said:?}: {flat}");
+    }
+    assert!(quick_rules().lines().count() <= 45);
+    assert!(!g.contains('\u{2014}') && !g.contains('\u{2013}'), "no dashes in text an assistant reads");
+}
+
+/// The actions section says outright that page script, a fixed wait and a retry
+/// do not exist and are refused.
+#[test]
+fn the_guide_says_no_action_runs_page_script_waits_or_retries() {
+    let flat = autorun_guide().split_whitespace().collect::<Vec<_>>().join(" ");
+    let first = "There is no action that runs page script, waits a fixed time or retries a step, and none will be added: a save, a try or a discovery that asks for one (`evaluate`, `sleep`, `retry` and the like) is refused with the reason.";
+    assert!(flat.contains(first), "the guide never says no action runs page script, waits or retries");
+    assert!(flat.contains("Wait for what the step needs with `wait_for` or a check's `timeout_ms`"));
+    assert!(!flat.contains('\u{2014}') && !flat.contains('\u{2013}'));
+}
+
+#[test]
+fn the_repair_section_says_a_repair_cannot_let_the_page_decide() {
+    let g = autorun_guide();
+    let repair = flat_guide(g.split_once("## Repairing a script that failed").unwrap().1.split("\n## ").next().unwrap());
+    assert!(
+        repair.contains("A repair may not let the page decide whether a failure counts, either. A check never goes inside a guard."),
+        "{repair}"
+    );
+    assert!(repair.contains("for a `product bug` it is refused"), "{repair}");
+    let dismissing = flat_guide(g.split_once("## Dismissing what may not show up").unwrap().1.split("\n## ").next().unwrap());
+    assert!(dismissing.contains("In a repair, a new guard needs the edit's `quirk` and `quirk_class`"), "{dismissing}");
+}
+
+#[test]
+fn the_guide_names_every_role_and_how_its_rules_arrive() {
+    let guide = autorun_guide();
+    let titles = v2_lib::autorun::guide::section_titles(&guide);
+    assert!(titles.iter().any(|t| *t == "Roles"), "{titles:?}");
+    let at = guide.find("\n## Roles").expect("a Roles section") + 1;
+    let rest = &guide[at + 3..];
+    let section = &guide[at..at + 3 + rest.find("\n## ").unwrap_or(rest.len())];
+    for needle in [
+        "writer:",
+        "healer:",
+        "case rewriter:",
+        "auditor:",
+        "start_autorun_discovery",
+        "get_autorun_failures",
+        "save_autorun_script",
+        "save_autorun_component",
+        "replay_autorun_to_step",
+        "Rules now:",
+        "tcm-<role>.md",
+        "whatever tools",
+        "20 minutes",
+        "/tcm:script-pbi reads the writer's rules first",
+    ] {
+        assert!(section.contains(needle), "the Roles section lacks {needle:?}");
+    }
+    assert!(!section.contains('\u{2014}') && !section.contains('\u{2013}'));
 }

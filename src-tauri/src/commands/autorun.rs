@@ -6,6 +6,7 @@
 //! it open; steps run against it one at a time, driven by the human
 //! clicking through.
 
+use crate::autorun::replay_to::NotSignedIn;
 use crate::autorun::store;
 use crate::autorun::{CaseScript, LocalRun, StepScript};
 use crate::browser::actions::ActionOutcome;
@@ -1425,10 +1426,20 @@ pub async fn reset_for_assistant(organization: &str, project: &str) -> (u16, Str
 /// in play to keep one; the replay's stand and last page change are
 /// forgotten (`DiscoveryBrowser::taken_over`); and the home page is loaded
 /// (`nav::load_home`), cookies kept. The sign-in still stands only when a
-/// replay would reuse it (`replay_to::signed_in_here`: the lease, the
-/// sign-in's cookies, a session not refused, the signed-in marker);
+/// replay would have reused it before that load (`replay_to::sign_in_stands`:
+/// the account, the lease, the sign-in's cookies) and the home page then
+/// shows it (the signed-in marker, a session not refused);
 /// otherwise - a home page whose marker never shows included - the account
-/// and its cookies' print are forgotten, so the next replay signs in again.
+/// and its cookies' print are forgotten, so the next replay signs in again,
+/// and the app log says which condition failed (`NotSignedIn`).
+///
+/// The order matters: the sign-in's cookies are judged BEFORE the home load
+/// (`replay_to::sign_in_stands`, on the page the replay left, as a replay's
+/// own reuse check judges them), because the home page - the login page on
+/// PeoplesHR - may re-issue a session cookie of the very same sign-in. Only
+/// the app's own home load runs between that check and the cookie print
+/// taken again after it, so a sign-in that stood still stands; the marker
+/// and the refusal are looked at after the load.
 /// A home page that does not open answers 502 (503 when the browser did not
 /// answer), still saying what was cleaned first.
 pub async fn reset_in_for_assistant<B: crate::ai_bridge::DiscoveryBrowser>(
@@ -1483,6 +1494,14 @@ pub async fn reset_in_for_assistant<B: crate::ai_bridge::DiscoveryBrowser>(
     b.taken_over();
     let guard = if lifted { "guard lifted" } else { GUARD_STILL_ON_AT_RESET };
     let p = b.parts();
+    // The sign-in's cookies, judged before the home load re-issues any.
+    let account = p.signed_in.clone();
+    let stands = match account.as_deref() {
+        Some(key) => {
+            crate::autorun::replay_to::sign_in_stands(p.driver, root, organization, project, key, &account, &*p.lease).await
+        }
+        None => Err(NotSignedIn::NoAccount),
+    };
     let home = crate::autorun::nav::load_home(p.driver, &crate::autorun::nav::Home::of(&recipe), timing).await;
     // The home page loaded, but its signed-in marker never showed: the
     // sign-in has gone. Neither the page failing to load nor the browser
@@ -1492,20 +1511,47 @@ pub async fn reset_in_for_assistant<B: crate::ai_bridge::DiscoveryBrowser>(
     // browser is home, signed in, and the sign-in is judged below.
     let loaded = home.ok || (!home.harness && home.detail.starts_with(crate::autorun::nav::AFTER_SIGN_IN_STOPPED_AT_HOME));
     if !loaded && !marker_gone {
+        // The sign-in is left as it was (the next replay's own check judges
+        // it), but a reason found before the load is not lost.
+        if let Err(why) = &stands {
+            crate::applog::info(format!(
+                "Auto Run: the assistant's reset found the sign-in in doubt before the home page failed to open: {}",
+                why.reason()
+            ));
+        }
         let status = if home.harness { 503 } else { 502 };
         return said_at_reset(status, summary, with_changes_left(reset_failed_sentence(guard, &home.detail), &left));
     }
-    let account = p.signed_in.clone();
-    let still = match account.as_deref() {
-        Some(key) if !marker_gone => {
-            crate::autorun::replay_to::signed_in_here(p.driver, root, organization, project, key, &account, &*p.lease, timing)
-                .await
+    let verdict: Result<(), NotSignedIn> = match (stands, account.as_deref()) {
+        (Err(why), _) => Err(why),
+        _ if marker_gone => Err(NotSignedIn::HomeNeverSignedIn),
+        (Ok(_), None) => Err(NotSignedIn::NoAccount),
+        (Ok(recipe), Some(key)) => {
+            // `load_home` waits for the marker itself only when the recipe
+            // has `after_sign_in` steps; otherwise it is looked for here.
+            let looked = if recipe.after_sign_in.is_empty() {
+                crate::autorun::signin::already_signed_in_why(p.driver, &recipe, Some(key), key, timing, timing.nav_ms).await
+            } else if crate::autorun::signin::session_refused(p.driver).await.is_some() {
+                Err(NotSignedIn::SessionRefused)
+            } else {
+                Ok(())
+            };
+            match looked {
+                // Only the app's own home load ran since the cookies were
+                // judged: what it re-issued belongs to the same sign-in.
+                Ok(()) => {
+                    crate::autorun::replay_to::retake_sign_in(p.driver, &recipe.origins(), &mut *p.lease, "the home page").await
+                }
+                Err(why) => Err(why),
+            }
         }
-        _ => false,
     };
-    let said = match (still, account) {
-        (true, Some(key)) => reset_sentence(&key).replace("guard lifted", guard),
-        _ => {
+    let said = match (verdict, account) {
+        (Ok(()), Some(key)) => reset_sentence(&key).replace("guard lifted", guard),
+        (verdict, _) => {
+            if let Err(why) = verdict {
+                crate::applog::info(format!("Auto Run: the assistant's reset found the sign-in gone: {}", why.reason()));
+            }
             *p.signed_in = None;
             p.lease.forget_sign_in();
             if lifted {
@@ -2166,6 +2212,9 @@ pub(crate) async fn replay_supervised(
     let title = store::load_script(&root, case_id).ok().flatten().map(|s| s.title).unwrap_or_default();
     let ran_as = slot.as_ref().and_then(|s| s.lease.account().map(str::to_string));
     crate::autorun::replay_record::note(&root, case_id, &title, step, &end, ran_as, crate::autorun::sessions::now_ms());
+    if let Some(o) = crate::autorun::proven::outcome_of_replay(&end) {
+        crate::autorun::proven::note_outcome(&root, case_id, o);
+    }
     // The browser the replay leaves open, if it does, and whose it is.
     let left_open = slot.as_ref().map(|s| replay_to::LeftOpen {
         account: s.lease.account().map(str::to_string),
@@ -2566,6 +2615,8 @@ pub fn save_script_from_editor(
         organization: None,
         project: None,
         checked: false,
+        checks: 0,
+        given_up: Vec::new(),
     });
     let CaseScript {
         // The editor's own.
@@ -2592,6 +2643,9 @@ pub fn save_script_from_editor(
         organization: _,
         project: _,
         checked: _,
+        // Stamped below: the person's save is the acceptance of what was given up.
+        checks: _,
+        given_up: _,
         // The stored script's. Only the assistant writes a setup, so the
         // webview can never change a fixture or write an old one back.
         setup,
@@ -2608,6 +2662,10 @@ pub fn save_script_from_editor(
     script.organization = Some(organization.trim().to_string());
     script.project = Some(project.trim().to_string());
     script.checked = false;
+    // The person's save is the accepted path: it stamps the checks it leaves
+    // and accepts whatever an assistant gave up.
+    script.checks = crate::autorun::case_values::check_count(&script) as u32;
+    script.given_up = Vec::new();
     // The project's rules - no address while that is switched off, only
     // recorded areas - the same ones the import and the assistant's save
     // apply.
@@ -2616,7 +2674,32 @@ pub fn save_script_from_editor(
     // the script editor is a THIRD way in, and a case id of 0 or an empty
     // step list refused from a file but accepted from the editor would be
     // a rule that depends on which door you came through.
-    store::save_scripts_atomically(root, std::slice::from_ref(&script)).map_err(|e| e.to_string())
+    let case_id = script.case_id;
+    store::save_scripts_atomically(root, std::slice::from_ref(&script)).map_err(|e| e.to_string())?;
+    // The person's save is the acceptance of a script that waited for a
+    // rewritten case: the case runs again. Said in the log when the file
+    // cannot be written; the save itself is down.
+    let waiting = crate::autorun::divergences::load(root, organization, project)
+        .map(|l| l.iter().any(|d| d.case_id == case_id && d.status == crate::autorun::divergences::DivergenceStatus::AwaitingRepair))
+        .unwrap_or(false);
+    if waiting {
+        let now = crate::autorun::sessions::now_ms();
+        match crate::autorun::divergences::update(root, organization, project, |list| {
+            Ok(crate::autorun::divergences::close_for_editor_save(list, case_id, now))
+        }) {
+            Ok(steps) => {
+                for step in steps {
+                    crate::applog::info(format!(
+                        "Auto Run: case {case_id} saved in the script editor; its divergence at step {step} is closed"
+                    ));
+                }
+            }
+            Err(e) => crate::applog::warn(format!(
+                "Auto Run: case {case_id} saved in the script editor, but its divergence could not be closed: {e}"
+            )),
+        }
+    }
+    Ok(())
 }
 
 /// A person's Clear on a case's suspected-defect mark: they have looked and
@@ -2858,7 +2941,8 @@ fn import_scripts(
         // vouches for its locators once it lands.
         sc.organization = Some(organization.trim().to_string());
         sc.project = Some(project.trim().to_string());
-        sc.checked = true;
+        sc.checked = crate::autorun::proven::may_be_checked(root, organization, project, sc.case_id);
+        sc.checks = crate::autorun::case_values::check_count(sc) as u32;
     }
     // With a component in use, the check and the write hold the components
     // lock, so a component save cannot slip between them.
@@ -2980,6 +3064,11 @@ pub fn save_run_at(root: &std::path::Path, mut run: LocalRun) -> Result<(), Stri
     // taken: the shots folder is pruned then. A later save (the Review
     // screen's) adds no pictures, so it does not read every run to prune.
     if first {
+        for record in &run.cases {
+            if let Some(o) = crate::autorun::proven::outcome_of_record(record) {
+                crate::autorun::proven::note_outcome(root, record.case_id, o);
+            }
+        }
         store::prune_old_shots(root);
     }
     Ok(())
@@ -3042,13 +3131,15 @@ pub fn write_report_at(
     // expands. A file that does not read leaves those actions named by
     // their component only.
     let components = crate::autorun::components::load_components(root, organization, project).unwrap_or_default();
-    let html = crate::autorun::report::build_with_components(
+    let divergences = crate::autorun::divergences::load(root, organization, project).unwrap_or_default();
+    let html = crate::autorun::report::build_with_extras(
         &run,
         &scripts,
         &components,
         ran_at,
         &|name| store::shot_exists(root, name),
         &|name| store::download_size(root, run_id, name),
+        &crate::autorun::report::ReportExtras { divergences: &divergences },
     );
     let dir = store::reports_dir(root);
     let path = dir.join(format!("{run_id}.html"));

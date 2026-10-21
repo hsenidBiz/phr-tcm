@@ -2347,6 +2347,7 @@ async fn protected_shots_survive_the_end_of_run_prune() {
         account: None,
         retried: None,
         notice: None,
+        product_bugs: Vec::new(),
         page_errors_seen: 0,
         phases: None,
         cleanup: None,
@@ -2832,4 +2833,173 @@ async fn progress_counts_the_cases_steps_and_names_the_clean_up_apart() {
     let ran: Vec<(&str, i32)> =
         heard.iter().filter(|(p, _, _)| p == "step" || p == "cleanup").map(|(p, n, _)| (p.as_str(), *n)).collect();
     assert_eq!(ran, vec![("step", 1), ("step", 2), ("step", 3), ("cleanup", 4)]);
+}
+
+// ---------------------------------------------- a case that needs a ruling
+
+fn two_yes_steps(case_id: i32) -> CaseScript {
+    script(case_id, Some("admin"), serde_json::json!([
+        { "step_number": 1, "actions": [{ "kind": "check_text", "value": "yes" }] },
+        { "step_number": 2, "actions": [{ "kind": "check_text", "value": "yes" }] }
+    ]))
+}
+
+fn store_divergence(root: &Path, case_id: i32, kind: v2_lib::autorun::divergences::DivergenceKind) {
+    use v2_lib::autorun::divergences::{report_in, update};
+    update(root, "Acme", "Web", |list| {
+        report_in(list, case_id, 2, "exactly 4 levels", "6 levels", kind, 1_700_000_000_000).map(|_| ())
+    })
+    .unwrap();
+}
+
+#[tokio::test]
+async fn a_case_that_needs_a_ruling_is_blocked_before_it_signs_in() {
+    use v2_lib::autorun::divergences::DivergenceKind;
+    use v2_lib::autorun::replay::run_case;
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    save_recipe(root, "Acme", "Web", &common::recipe()).unwrap();
+    save_accounts(root, &[common::account()]).unwrap();
+    store_divergence(root, 7, DivergenceKind::Data);
+    let (mut d, _state) = common::stateful_app(false, None);
+    let cancel = AtomicBool::new(false);
+    let rec = run_case(&mut d, root, "Acme", "Web", &two_yes_steps(7), &quick(), &cancel, &mut |_| {}).await;
+    assert_eq!(rec.proposed, "Blocked", "{rec:?}");
+    assert!(rec.reason.starts_with("needs a ruling: step 2:"), "{}", rec.reason);
+    assert!(d.calls_to("Page.navigate").is_empty(), "no sign-in and no navigation: {:?}", d.calls);
+    assert!(d.calls_to("Runtime.callFunctionOn").is_empty(), "{:?}", d.calls);
+    assert_eq!(rec.steps.len(), 2);
+    for step in &rec.steps {
+        assert!(
+            step.outcomes.iter().all(|o| !o.ok && o.detail.starts_with("not run: needs a ruling")),
+            "{:?}",
+            step.outcomes
+        );
+    }
+}
+
+#[tokio::test]
+async fn an_app_divergence_lets_the_case_run() {
+    use v2_lib::autorun::divergences::DivergenceKind;
+    use v2_lib::autorun::replay::run_case;
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    store_divergence(root, 7, DivergenceKind::App);
+    let mut case = two_yes_steps(7);
+    case.account = None;
+    let mut d = checking_driver();
+    let cancel = AtomicBool::new(false);
+    let rec = run_case(&mut d, root, "Acme", "Web", &case, &quick(), &cancel, &mut |_| {}).await;
+    assert_eq!(rec.proposed, "Passed", "{rec:?}");
+}
+
+#[tokio::test]
+async fn a_ruled_divergence_no_longer_blocks_the_case() {
+    use v2_lib::autorun::divergences::{rule_in, update, DivergenceKind, Ruling};
+    use v2_lib::autorun::replay::run_case;
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    store_divergence(root, 7, DivergenceKind::Data);
+    update(root, "Acme", "Web", |list| rule_in(list, "d1", Ruling::CaseStands, 1_700_000_001_000).map(|_| ())).unwrap();
+    let mut case = two_yes_steps(7);
+    case.account = None;
+    let mut d = checking_driver();
+    let cancel = AtomicBool::new(false);
+    let rec = run_case(&mut d, root, "Acme", "Web", &case, &quick(), &cancel, &mut |_| {}).await;
+    assert_eq!(rec.proposed, "Passed", "{rec:?}");
+}
+
+#[tokio::test]
+async fn a_case_waiting_for_a_repair_is_blocked_with_that_sentence() {
+    use v2_lib::autorun::divergences::{rule_in, update, DivergenceKind, Ruling};
+    use v2_lib::autorun::replay::run_case;
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    store_divergence(root, 7, DivergenceKind::Wording);
+    update(root, "Acme", "Web", |list| rule_in(list, "d1", Ruling::Rewrite, 1_700_000_001_000).map(|_| ())).unwrap();
+    let mut case = two_yes_steps(7);
+    case.account = None;
+    let mut d = checking_driver();
+    let cancel = AtomicBool::new(false);
+    let rec = run_case(&mut d, root, "Acme", "Web", &case, &quick(), &cancel, &mut |_| {}).await;
+    assert_eq!(rec.proposed, "Blocked", "{rec:?}");
+    assert!(rec.reason.starts_with("waits for a repair: step 2:"), "{}", rec.reason);
+    assert!(d.calls_to("Runtime.callFunctionOn").is_empty(), "{:?}", d.calls);
+}
+
+/// A script stored as checked and stamped, for the checked-flag tests.
+fn stamped_checked(case_id: i32, value: &str, checked: bool) -> CaseScript {
+    let mut s = in_a_tab(case_id, value);
+    s.organization = Some("Acme".into());
+    s.project = Some("Web".into());
+    s.checked = checked;
+    s
+}
+
+#[tokio::test]
+async fn an_unattended_run_that_fails_clears_checked() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    store::save_script(root, &stamped_checked(1, "no", true)).unwrap();
+    let before = store::load_script(root, 1).unwrap().unwrap();
+    let mut browsers = FakeBrowsers { queue: [Some(tabbed(checking_driver()))].into(), opened: 0, closed: 0, returned: vec![] };
+    let mut run = new_run("run-clears-checked");
+    let cancel = AtomicBool::new(false);
+    run_cases(&mut browsers, root, "Acme", "Web", &mut run, &[to_run(1, None)], None, false, &quick(), &cancel, &mut |_| {})
+        .await
+        .unwrap();
+    assert_eq!(run.cases[0].proposed, "Failed", "{:?}", run.cases[0]);
+    let after = store::load_script(root, 1).unwrap().unwrap();
+    assert!(!after.checked);
+    assert_eq!(after.saved_at, before.saved_at);
+}
+
+#[tokio::test]
+async fn a_passing_run_sets_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    store::save_script(root, &stamped_checked(1, "yes", false)).unwrap();
+    let mut browsers = FakeBrowsers { queue: [Some(tabbed(checking_driver()))].into(), opened: 0, closed: 0, returned: vec![] };
+    let mut run = new_run("run-sets-checked");
+    let cancel = AtomicBool::new(false);
+    run_cases(&mut browsers, root, "Acme", "Web", &mut run, &[to_run(1, None)], None, false, &quick(), &cancel, &mut |_| {})
+        .await
+        .unwrap();
+    assert_eq!(run.cases[0].proposed, "Passed", "{:?}", run.cases[0]);
+    assert!(store::load_script(root, 1).unwrap().unwrap().checked);
+}
+
+/// A product-bug quirk that names a case rides on that case's result; a
+/// case it does not name carries nothing.
+#[tokio::test]
+async fn a_case_a_product_bug_quirk_names_carries_it_on_its_result() {
+    let _g = crate::serial::activity_log();
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    store::save_script(root, &passing_script(1)).unwrap();
+    store::save_script(root, &passing_script(2)).unwrap();
+    v2_lib::autorun::quirks::update_quirks(root, "Acme", "Web", |list| {
+        v2_lib::autorun::quirks::record_in_classed(
+            list,
+            "Save twice makes a duplicate",
+            "assistant",
+            "autorun",
+            vec![v2_lib::autorun::quirks::QuirkSource { case_id: 1, steps: vec![1], class: None }],
+            Some(v2_lib::autorun::quirks::QuirkClass::ProductBug),
+            1000,
+        )
+    })
+    .unwrap();
+    let db: PreconditionDb<common::FakeStageDb> = PreconditionDb::ReadingOff;
+    let mut browsers = browsers_of(vec![common::FakePage::default().driver(), common::FakePage::default().driver()]);
+    let mut run = new_run("run-x");
+    let cancel = AtomicBool::new(false);
+    run_cases_checked(&mut browsers, root, "Acme", "Web", &mut run, &[to_run(1, None), to_run(2, None)], None, false, &quick(), &cancel, &db, &mut |_| {})
+        .await
+        .unwrap();
+    assert_eq!(run.cases[0].product_bugs.len(), 1, "{:?}", run.cases[0]);
+    assert!(run.cases[0].product_bugs[0].ends_with(": Save twice makes a duplicate"));
+    assert!(run.cases[1].product_bugs.is_empty());
+    let saved = store::load_run(root, "run-x").unwrap().unwrap();
+    assert_eq!(saved.cases[0].product_bugs, run.cases[0].product_bugs);
 }

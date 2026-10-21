@@ -607,7 +607,7 @@ fn an_old_script_of_another_kind_with_an_extra_key_still_loads() {
 // -------------------------------------------------------------- the runner
 
 fn step(actions: Vec<Action>) -> StepScript {
-    StepScript { step_number: 1, actions, unchecked: None, cleanup: false }
+    StepScript { step_number: 1, actions, unchecked: None, cleanup: false, because: Vec::new() }
 }
 
 async fn run(d: &mut ScriptedDriver, actions: Vec<Action>) -> Vec<ActionOutcome> {

@@ -406,7 +406,8 @@ fn a_save_names_every_problem_one_sentence_each() {
 /// cannot check, and writes nothing.
 #[tokio::test]
 async fn every_save_path_refuses_a_precondition_it_cannot_check() {
-    use v2_lib::ai_bridge::{route, BridgeContext};
+    use crate::common::route_without_rules as route;
+    use v2_lib::ai_bridge::BridgeContext;
     use v2_lib::autorun::store::{load_script, set_root};
     use v2_lib::commands::autorun::{import_scripts_from_path, save_script_from_editor};
 

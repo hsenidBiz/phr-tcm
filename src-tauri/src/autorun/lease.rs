@@ -245,6 +245,20 @@ pub async fn acquire(env: &str, key: &str, holder: Holder, wait: Duration) -> Re
     }
 }
 
+/// What `Held::check_sign_in` made of the browser's cookies against the
+/// app's last sign-in.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CookieCheck {
+    /// Each HttpOnly cookie of the sign-in is there with the same value.
+    Same,
+    /// No sign-in has been noted (or it left no HttpOnly cookies).
+    NoPrint,
+    /// These cookies changed or went, by name (`name (changed)`, `name (gone)`).
+    Changed(Vec<String>),
+    /// The browser did not answer the cookie read.
+    Unread,
+}
+
 /// The lease one browser holds for the account it is signed in as.
 ///
 /// A sign-in asks `hold` first and goes ahead only when it is `Ok`. From
@@ -330,14 +344,21 @@ impl Held {
     /// noted: no. When they differ, the app log says which changed or went,
     /// by name only - never a value.
     pub async fn same_sign_in<D: crate::browser::cdp::Driver>(&self, d: &mut D, origins: &[String]) -> bool {
-        let Some(print) = &self.signed_in else { return false };
+        matches!(self.check_sign_in(d, origins).await, CookieCheck::Same)
+    }
+
+    /// `same_sign_in`, saying which way it was not: no print noted, cookies
+    /// that changed or went (named, never their values), or a browser that
+    /// did not answer the cookie read.
+    pub async fn check_sign_in<D: crate::browser::cdp::Driver>(&self, d: &mut D, origins: &[String]) -> CookieCheck {
+        let Some(print) = &self.signed_in else { return CookieCheck::NoPrint };
         match crate::browser::session::changed_cookies(d, origins, print, &self.ignored).await {
-            Some(changed) if changed.is_empty() => true,
+            Some(changed) if changed.is_empty() => CookieCheck::Same,
             Some(changed) => {
                 crate::applog::info(format!("Auto Run: the sign-in's cookies changed: {}", changed.join(", ")));
-                false
+                CookieCheck::Changed(changed)
             }
-            None => false,
+            None => CookieCheck::Unread,
         }
     }
 

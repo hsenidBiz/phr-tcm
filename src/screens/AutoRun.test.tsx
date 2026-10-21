@@ -652,6 +652,8 @@ test("no path through this screen - load, selection, a supervised run or an unat
     "pbi_test_cases_full", // read-only: the case list itself, from ADO
     "auto_run_load_script",
     "auto_run_load_scripts",
+    "auto_run_load_divergences", // read-only, local: the case card's reported divergences
+    "auto_run_needs_ruling", // read-only, local: whether a person must rule before the case runs
     "auto_run_new_id",
     "auto_run_open_browser",
     "auto_run_step",

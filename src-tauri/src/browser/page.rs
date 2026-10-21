@@ -76,6 +76,25 @@ pub async fn call_value<D: Driver>(
     value_of(r)
 }
 
+/// `call_value` with other elements handed in as the function's arguments
+/// (each handle becomes the element it names inside the page).
+pub async fn call_value_with_handles<D: Driver>(
+    d: &mut D,
+    on: &Handle,
+    function: &str,
+    handles: &[Handle],
+) -> Result<Value, CdpError> {
+    let params = json!({
+        "objectId": on,
+        "functionDeclaration": function,
+        "arguments": handles.iter().map(|h| json!({ "objectId": h })).collect::<Vec<_>>(),
+        "returnByValue": true,
+        "awaitPromise": true,
+    });
+    let r = d.call("Runtime.callFunctionOn", params).await?;
+    value_of(r)
+}
+
 /// `call_value` with its own time limit (`Driver::call_within`).
 pub async fn call_value_within<D: Driver>(
     d: &mut D,

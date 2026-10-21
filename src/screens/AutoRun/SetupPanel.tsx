@@ -210,9 +210,11 @@ function SetupRow({ label, state, children }: { label: string; state: ReactNode;
       aria-label={label}
       className="space-y-1 border-t border-border/60 pt-3 first-of-type:border-t-0 first-of-type:pt-0"
     >
-      <div className="flex items-center gap-2">
-        <span className="min-w-0 flex-1 text-xs font-medium text-muted">{label}</span>
-        <span className="flex shrink-0 flex-wrap justify-end gap-2">{children}</span>
+      {/* The label never gives up its width to the buttons: when they do not fit beside it, they
+          wrap onto the next line instead of covering it. */}
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+        <span className="mr-auto shrink-0 text-xs font-medium text-muted">{label}</span>
+        <span className="flex max-w-full flex-wrap justify-end gap-2">{children}</span>
       </div>
       <div className="break-words text-sm text-text">{state}</div>
     </div>

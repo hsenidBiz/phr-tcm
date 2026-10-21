@@ -14,7 +14,7 @@ fn script(json: serde_json::Value) -> CaseScript {
 }
 
 fn edit(steps: &[i32], why: &str) -> Edit {
-    Edit { case_id: 1, steps: steps.to_vec(), why: why.to_string(), quirk: None, area: false, precondition: None }
+    Edit { case_id: 1, steps: steps.to_vec(), why: why.to_string(), quirk: None, quirk_class: None, area: false, precondition: None, gives_up: Vec::new() }
 }
 
 #[test]
@@ -524,7 +524,7 @@ fn pre_edit(v: serde_json::Value) -> PreconditionEdit {
 
 /// The declaration of a precondition edit alone: no steps, no `why`.
 fn pre_only(v: serde_json::Value) -> Edit {
-    Edit { case_id: 1, steps: vec![], why: String::new(), quirk: None, area: false, precondition: Some(pre_edit(v)) }
+    Edit { case_id: 1, steps: vec![], why: String::new(), quirk: None, quirk_class: None, area: false, precondition: Some(pre_edit(v)), gives_up: Vec::new() }
 }
 
 /// Remove, add and change: each accepted with a reason, and each comes back

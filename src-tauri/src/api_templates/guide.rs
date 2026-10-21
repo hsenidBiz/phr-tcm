@@ -116,7 +116,7 @@ with every problem listed together:
   "Test files" at the end of this guide (no such section means there are
   none yet). Use only those names - if the test needs a file that
   is not there, ask the person to add it to Test files (Auto Run or API
-  Templates), never invent a name. A run that names a missing file is
+  Templates), never invent a name. If the case needs a file nobody has added - a spreadsheet with a bad row, a file over a size limit - make it yourself and save it with save_test_file; Test files only take documents a test uploads. A run that names a missing file is
   refused before anything is sent. The file is sent with a content type
   from its extension; reports name it and its size, never its contents.
   At most 25 MB per file.

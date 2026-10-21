@@ -638,6 +638,69 @@ async fn a_quick_try_click_that_failed_still_reloads_home() {
     assert_eq!(app.log(), vec!["navigate /hr/home/index", "click #toggle", "click Leave"]);
 }
 
+/// An area saved before clicks had to match one element can come to match
+/// two (a breadcrumb named like the menu entry). The failure then says the
+/// area's click is what to repair, so an assistant repairs the area and not
+/// the script.
+#[tokio::test]
+async fn a_path_click_that_matches_two_elements_says_to_repair_the_area() {
+    use v2_lib::autorun::nav::AREA_PATH_NOT_EXACT;
+    let (mut d, app) = sidebar_app("/hr/payroll", true, false);
+    *app.outside_on.lock().unwrap() = "/hr/payroll".to_string();
+    let mut path = leave_path();
+    path.start = "/hr/payroll".into();
+    let route = Route::new(&login_home_recipe("/hr/security/login"), path);
+    let failure = go_to_module(&mut d, &route, TripFrom::SignIn, &common::quick()).await.unwrap_err();
+    assert!(failure.reason.contains("2 elements"), "{}", failure.reason);
+    assert!(failure.reason.ends_with(AREA_PATH_NOT_EXACT), "{}", failure.reason);
+    assert!(app.log().is_empty(), "a click was made: {:?}", app.log());
+
+    // A path that fails for another reason does not get the sentence.
+    let (mut d, _) = sidebar_app("/hr/payroll", false, false);
+    let mut path = leave_path();
+    path.start = "/hr/payroll".into();
+    let route = Route::new(&login_home_recipe("/hr/security/login"), path);
+    let failure = go_to_module(&mut d, &route, TripFrom::SignIn, &common::quick()).await.unwrap_err();
+    assert!(!failure.reason.contains(AREA_PATH_NOT_EXACT), "{}", failure.reason);
+}
+
+/// Which ids may scope a click. A scope must outlast the next render: an
+/// id with a counter in it (a framework numbers its panels as it draws
+/// them) names another list the next time. `PIN_ID_JS` applies the same
+/// rule in the page.
+#[test]
+fn only_a_stable_id_may_scope_a_click() {
+    use v2_lib::autorun::nav::{plain_id, GENERATED_ID_PREFIXES, GENERATED_ID_STEMS, PIN_ID_JS};
+    for kept in ["admin-list", "sidebar", "nav_main", "ehrm-modulemenus-8", "main2", "left-menu", "Recent"] {
+        assert!(plain_id(kept), "{kept} was rejected");
+    }
+    for rejected in [
+        "ui-id-5",
+        "mat-menu-panel-3",
+        "mat-input-0",
+        "cdk-overlay-0",
+        "ember12",
+        "tabs-1",
+        "panel_2",
+        "react-select-3-listbox",
+        "radix-3",
+        "a1b2",
+        "x-123",
+        ":r1:",
+        "3f2a9c1e-77b0-4d1a-9e0f-5c1d2b3a4e5f",
+        "",
+        "9lives",
+        "a b",
+    ] {
+        assert!(!plain_id(rejected), "{rejected} was accepted");
+    }
+    // The page-side rule carries the same lists.
+    for word in GENERATED_ID_PREFIXES.iter().chain(GENERATED_ID_STEMS) {
+        assert!(PIN_ID_JS.contains(&format!("'{word}'")), "{word} is not in PIN_ID_JS");
+    }
+    assert!(!GENERATED_ID_PREFIXES.is_empty() && !GENERATED_ID_STEMS.is_empty());
+}
+
 /// A page on another origin than the route's home (a fresh browser's
 /// `about:blank`) has none of the path's clicks: the trip goes home at
 /// once, with no quick try looked for or waited on first.

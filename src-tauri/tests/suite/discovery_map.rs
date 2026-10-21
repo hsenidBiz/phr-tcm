@@ -269,6 +269,7 @@ fn run_case(case_id: i32, proposed: &str) -> CaseRecord {
         account: None,
         retried: None,
         notice: None,
+        product_bugs: Vec::new(),
         page_errors_seen: 0, phases: None, cleanup: None,
     }
 }
@@ -279,7 +280,7 @@ fn saved_script(root: &std::path::Path, case_id: i32, area: Option<&str>) {
         title: "a case".into(),
         account: None,
         area: area.map(str::to_string),
-        steps: vec![StepScript { step_number: 2, actions: vec![], unchecked: None, cleanup: false }],
+        steps: vec![StepScript { step_number: 2, actions: vec![], unchecked: None, cleanup: false, because: Vec::new() }],
         repairs: 0,
         last_repair: None,
         suspected_defect: None,
@@ -293,7 +294,7 @@ fn saved_script(root: &std::path::Path, case_id: i32, area: Option<&str>) {
         saved_at: None,
         fail_on_unexpected_dialog: false,
         page_errors: None,
-        ignore_page_errors: vec![], organization: None, project: None, checked: false,
+        ignore_page_errors: vec![], organization: None, project: None, checked: false, checks: 0, given_up: Vec::new(),
     };
     save_script(root, &script).unwrap();
 }

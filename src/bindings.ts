@@ -625,9 +625,18 @@ export const commands = {
 	 *  app (the assistant's save and an import), so its own locators count
 	 *  as seen in its area (`seen_check::load_checked_map`). A save from
 	 *  the editor clears it. Set by the save, whatever was sent; written
-	 *  only when true.
+	 *  only when true. Cleared when a run or replay of the case fails or is Blocked (`proven`), and
+	 *  set again by a pass of the whole case; never set while a divergence of the case waits for a
+	 *  ruling. A script that is not checked does not vouch for its locators.
 	 */
 	checked?: boolean,
+	/**
+	 *  The script's number of checks (`case_values::check_count`), stamped by every save: the floor a
+	 *  repair may not go under unless its edit names each check it gives up. 0 = not stamped yet.
+	 */
+	checks?: number,
+	/**  Every check a repair gave up, oldest first. Set by the save from the edits, never from what was sent. */
+	given_up?: GivenUp[],
 } | null, string>(__TAURI_INVOKE("auto_run_load_script", { caseId })),
 	/**
 	 *  Every listed case's script in one call - what the Auto Run screen asks
@@ -642,6 +651,14 @@ export const commands = {
 	 *  mark and nothing else - the script's actions and repair count stay.
 	 */
 	autoRunClearSuspectedDefect: (caseId: number) => typedError<null, string>(__TAURI_INVOKE("auto_run_clear_suspected_defect", { caseId })),
+	autoRunLoadDivergences: (organization: string, project: string) => typedError<Divergence_Serialize[], string>(__TAURI_INVOKE("auto_run_load_divergences", { organization, project })),
+	autoRunRuleDivergence: (organization: string, project: string, id: string, ruling: Ruling) => typedError<Divergence_Serialize[], string>(__TAURI_INVOKE("auto_run_rule_divergence", { organization, project, id, ruling })),
+	/**
+	 *  A person takes back a "Rewrite the case" ruling: the divergence needs a
+	 *  ruling again.
+	 */
+	autoRunUndoDivergenceRuling: (organization: string, project: string, id: string) => typedError<Divergence_Serialize[], string>(__TAURI_INVOKE("auto_run_undo_divergence_ruling", { organization, project, id })),
+	autoRunNeedsRuling: (organization: string, project: string, caseId: number) => typedError<string | null, string>(__TAURI_INVOKE("auto_run_needs_ruling", { organization, project, caseId })),
 	/**
 	 *  The plan for the cases selected on the Auto Run tab, in list order.
 	 *  Each case's marks come from its saved script; a case with no script
@@ -2511,6 +2528,31 @@ export type BackupImportResult = {
 	app_version: string,
 };
 
+/**  Where a check's value comes from when the case does not hold it word for word. */
+export type Because = Because_Serialize | Because_Deserialize;
+
+/**  Where a check's value comes from when the case does not hold it word for word. */
+export type Because_Deserialize = {
+	value: string,
+	why: string,
+	/**
+	 *  assumed or invented; absent reads as assumed. from_case is never
+	 *  written: the save works it out.
+	 */
+	provenance?: Provenance | null,
+};
+
+/**  Where a check's value comes from when the case does not hold it word for word. */
+export type Because_Serialize = {
+	value: string,
+	why: string,
+	/**
+	 *  assumed or invented; absent reads as assumed. from_case is never
+	 *  written: the save works it out.
+	 */
+	provenance?: Provenance | null,
+};
+
 export type BoardData = {
 	items: BoardItem[],
 	states_by_type: { [key in string]: StateInfo[] },
@@ -2732,6 +2774,11 @@ export type CaseRecord_Deserialize = {
 	 */
 	notice?: string | null,
 	/**
+	 *  The product bugs (quirks of that class) this case works around, each
+	 *  `id: text`, copied from the project's quirks when the case was run.
+	 */
+	product_bugs?: string[],
+	/**
 	 *  How many page errors a script with `"page_errors": "flag"` met in
 	 *  this case (`page_errors`). Written only when there were any.
 	 */
@@ -2786,6 +2833,11 @@ export type CaseRecord_Serialize = {
 	 *  (`preconditions::NOT_CHECKED`). Never a reason to block.
 	 */
 	notice?: string | null,
+	/**
+	 *  The product bugs (quirks of that class) this case works around, each
+	 *  `id: text`, copied from the project's quirks when the case was run.
+	 */
+	product_bugs?: string[],
 	/**
 	 *  How many page errors a script with `"page_errors": "flag"` met in
 	 *  this case (`page_errors`). Written only when there were any.
@@ -2946,9 +2998,18 @@ export type CaseScript_Deserialize = {
 	 *  app (the assistant's save and an import), so its own locators count
 	 *  as seen in its area (`seen_check::load_checked_map`). A save from
 	 *  the editor clears it. Set by the save, whatever was sent; written
-	 *  only when true.
+	 *  only when true. Cleared when a run or replay of the case fails or is Blocked (`proven`), and
+	 *  set again by a pass of the whole case; never set while a divergence of the case waits for a
+	 *  ruling. A script that is not checked does not vouch for its locators.
 	 */
 	checked?: boolean,
+	/**
+	 *  The script's number of checks (`case_values::check_count`), stamped by every save: the floor a
+	 *  repair may not go under unless its edit names each check it gives up. 0 = not stamped yet.
+	 */
+	checks?: number,
+	/**  Every check a repair gave up, oldest first. Set by the save from the edits, never from what was sent. */
+	given_up?: GivenUp[],
 };
 
 /**
@@ -3086,9 +3147,18 @@ export type CaseScript_Serialize = {
 	 *  app (the assistant's save and an import), so its own locators count
 	 *  as seen in its area (`seen_check::load_checked_map`). A save from
 	 *  the editor clears it. Set by the save, whatever was sent; written
-	 *  only when true.
+	 *  only when true. Cleared when a run or replay of the case fails or is Blocked (`proven`), and
+	 *  set again by a pass of the whole case; never set while a divergence of the case waits for a
+	 *  ruling. A script that is not checked does not vouch for its locators.
 	 */
 	checked?: boolean,
+	/**
+	 *  The script's number of checks (`case_values::check_count`), stamped by every save: the floor a
+	 *  repair may not go under unless its edit names each check it gives up. 0 = not stamped yet.
+	 */
+	checks?: number,
+	/**  Every check a repair gave up, oldest first. Set by the save from the edits, never from what was sent. */
+	given_up?: GivenUp[],
 };
 
 export type CellMatch = "exact" | "contains";
@@ -3407,6 +3477,68 @@ export type DetectedTool = {
 
 /**  How an `expect_dialog` answers: OK, or Cancel. */
 export type DialogAnswer = "accept" | "dismiss";
+
+export type Divergence = Divergence_Serialize | Divergence_Deserialize;
+
+export type DivergenceKind = "data" | "app" | "wording";
+
+export type DivergenceStatus = "open" | "awaiting_repair" | "ruled";
+
+export type Divergence_Deserialize = {
+	/**  "d1", "d2"...: 1 + the highest number in the file. */
+	id: string,
+	case_id: number,
+	step: number,
+	/**  Scrubbed (`defects::scrub_note`), at most `MAX_TEXT` characters. */
+	case_says: string,
+	app_shows: string,
+	kind: DivergenceKind,
+	/**  Epoch milliseconds, as a string. */
+	reported_at: string,
+	status: DivergenceStatus,
+	ruling?: Ruling | null,
+	ruled_at?: string | null,
+	/**
+	 *  While the case is rewritten (`AwaitingRepair`): the fingerprint of
+	 *  the case's steps text when the ruling was made, or at the first read
+	 *  after it for a ruling an earlier build saved. A different one later
+	 *  means the case was rewritten (`note_case_text`).
+	 */
+	case_fp?: string | null,
+	/**
+	 *  The ruled step's action text, folded, as it read when `case_fp` was
+	 *  taken: a rewrite that renumbers the step is still found by it.
+	 */
+	step_action?: string | null,
+};
+
+export type Divergence_Serialize = {
+	/**  "d1", "d2"...: 1 + the highest number in the file. */
+	id: string,
+	case_id: number,
+	step: number,
+	/**  Scrubbed (`defects::scrub_note`), at most `MAX_TEXT` characters. */
+	case_says: string,
+	app_shows: string,
+	kind: DivergenceKind,
+	/**  Epoch milliseconds, as a string. */
+	reported_at: string,
+	status: DivergenceStatus,
+	ruling?: Ruling | null,
+	ruled_at?: string | null,
+	/**
+	 *  While the case is rewritten (`AwaitingRepair`): the fingerprint of
+	 *  the case's steps text when the ruling was made, or at the first read
+	 *  after it for a ruling an earlier build saved. A different one later
+	 *  means the case was rewritten (`note_case_text`).
+	 */
+	case_fp?: string | null,
+	/**
+	 *  The ruled step's action text, folded, as it read when `case_fp` was
+	 *  taken: a rewrite that renumbers the step is still found by it.
+	 */
+	step_action?: string | null,
+};
 
 /**
  *  One file in a run's download folder, as Past runs and the review list
@@ -3840,6 +3972,17 @@ export type Flow_Serialize = {
 	sources: string[],
 	stages: Stage[],
 	saved?: FlowSaved | null,
+};
+
+/**
+ *  A check a repair gave up, with why: shown to the person on the case. The person's own save in
+ *  the script editor clears the list (their save is the acceptance).
+ */
+export type GivenUp = {
+	step: number,
+	kind: string,
+	why: string,
+	at: string,
 };
 
 /**
@@ -4874,6 +5017,13 @@ export type Proven_Serialize = {
 };
 
 /**
+ *  Where a check's value comes from: the case as written (from_case, worked
+ *  out by the save), the case read indirectly (assumed: "one per DEF row"),
+ *  or chosen where the case leaves it free (invented).
+ */
+export type Provenance = "from_case" | "assumed" | "invented";
+
+/**
  *  What the screen knows about a case that the run file does not: the
  *  case's real Azure DevOps step ids, in document order, and which of its
  *  rows are Shared Steps references.
@@ -4993,6 +5143,15 @@ export type PwRunning = {
  */
 export type Quirk = Quirk_Serialize | Quirk_Deserialize;
 
+/**  What a quirk is. Unset on a note written before classes existed. */
+export type QuirkClass = 
+/**  How the application behaves. */
+"app quirk" | 
+/**  This environment, not the product. */
+"environment flake" | 
+/**  The application is wrong, and a case works around it. */
+"product bug";
+
 /**  The case and steps a quirk was filed about, with a repair. */
 export type QuirkSource = QuirkSource_Serialize | QuirkSource_Deserialize;
 
@@ -5063,6 +5222,8 @@ export type Quirk_Deserialize = {
 	retired_by?: string | null,
 	/**  Which assistant's work it came from: "autorun" or "api". */
 	from?: string,
+	/**  What the line is; none for a note filed without one. */
+	class?: QuirkClass | null,
 };
 
 /**
@@ -5106,6 +5267,8 @@ export type Quirk_Serialize = {
 	retired_by: string | null,
 	/**  Which assistant's work it came from: "autorun" or "api". */
 	from: string,
+	/**  What the line is; none for a note filed without one. */
+	class?: QuirkClass | null,
 };
 
 export type RecipeStep = RecipeStep_Serialize | RecipeStep_Deserialize;
@@ -5563,6 +5726,8 @@ export type ResultFailureDetail = {
 	comment: string,
 	bug_ids: number[],
 };
+
+export type Ruling = "case_stands" | "data_fixed" | "rewrite";
 
 /**  What to run. */
 export type RunAction = 
@@ -6190,6 +6355,12 @@ export type StepScript_Deserialize = {
 	 *  failing the case. Written only when true.
 	 */
 	cleanup?: boolean,
+	/**
+	 *  Each value a check of this step uses that the case does not hold as
+	 *  written, with where the case defines it (`case_values`). Written only
+	 *  when there are any.
+	 */
+	because?: Because_Deserialize[],
 };
 
 /**  The actions that carry out one numbered step of a test case. */
@@ -6211,6 +6382,12 @@ export type StepScript_Serialize = {
 	 *  failing the case. Written only when true.
 	 */
 	cleanup?: boolean,
+	/**
+	 *  Each value a check of this step uses that the case does not hold as
+	 *  written, with where the case defines it (`case_values`). Written only
+	 *  when there are any.
+	 */
+	because?: Because_Serialize[],
 };
 
 export type Step_Deserialize = {

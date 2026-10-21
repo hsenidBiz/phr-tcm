@@ -615,7 +615,7 @@ fn a_later_stage_alone_is_refused() {
     assert_eq!(
         flow_problems(&f),
         vec![
-            "step 1: template flow-publish performs Publish of flow Performance cycle wizard, so the steps before it must perform Cycle setup, Evaluation rules - or, for a stage this record does not include, name it in the fixture's skip_stages",
+            "step 1: template flow-publish performs Publish of flow Performance cycle wizard, so the steps before it must perform Cycle setup (cycle-flow/setup), Evaluation rules (cycle-flow/rules) - or, for a stage this record does not include, name it in the fixture's skip_stages (its title, or the id in brackets)",
             "step 1: template flow-publish performs Publish of flow Performance cycle wizard, so its cycleId must be one {{steps.<m>.<output>}} of an earlier step on that flow",
         ]
     );
@@ -710,7 +710,7 @@ fn a_missing_middle_stage_is_refused() {
     ]);
     assert_eq!(
         flow_problems(&f),
-        vec!["step 2: template flow-publish performs Publish of flow Performance cycle wizard, so the steps before it must perform Evaluation rules - or, for a stage this record does not include, name it in the fixture's skip_stages"]
+        vec!["step 2: template flow-publish performs Publish of flow Performance cycle wizard, so the steps before it must perform Evaluation rules (cycle-flow/rules) - or, for a stage this record does not include, name it in the fixture's skip_stages (its title, or the id in brackets)"]
     );
 }
 
@@ -763,6 +763,112 @@ fn a_stage_the_record_does_not_include_can_be_skipped() {
     let mut v = serde_json::to_value(fixture()).unwrap();
     v.as_object_mut().unwrap().remove("skip_stages");
     assert_eq!(serde_json::from_value::<Fixture>(v).unwrap(), fixture());
+}
+
+/// The cycle flow with a stage whose title carries a bracket, as an
+/// assistant reads it in the gate's message.
+fn goal_group_flow() -> v2_lib::api_templates::flow::Flow {
+    serde_json::from_value(json!({
+        "id": "cycle-flow",
+        "title": "Performance cycle wizard",
+        "module": "PMS",
+        "subject": { "name": "cycleId", "type": "number" },
+        "stages": [
+            { "id": "setup", "title": "Cycle setup", "creates": true, "check": "SELECT 1 FROM t WHERE id = {{cycleId}}" },
+            { "id": "goal-groups", "title": "Goal groups (done, or not part of this cycle)", "requires": ["setup"], "check": "SELECT 1 FROM g WHERE id = {{cycleId}}" },
+            { "id": "publish", "title": "Publish", "requires": ["goal-groups"], "check": "SELECT 1 FROM p WHERE id = {{cycleId}}" }
+        ]
+    }))
+    .unwrap()
+}
+
+fn goal_group_flows(id: &str) -> Option<v2_lib::api_templates::flow::Flow> {
+    (id == "cycle-flow").then(goal_group_flow)
+}
+
+#[test]
+fn skip_stages_takes_a_stage_title_without_its_bracket() {
+    use v2_lib::api_templates::fixture::skipped_stages;
+    let f = Fixture {
+        skip_stages: vec!["Goal groups".into()],
+        ..flow_fixture(vec![
+            step("flow-setup", &[("cycleName", "{{prefix}} cycle")]),
+            step("flow-publish", &[("cycleId", "{{steps.1.cycleId}}")]),
+        ])
+    };
+    validate(&f, &flow_lookup, &goal_group_flows).unwrap();
+    assert_eq!(
+        skipped_stages(&f, &flow_lookup, &goal_group_flows),
+        vec!["Goal groups (done, or not part of this cycle) (flow Performance cycle wizard)"]
+    );
+}
+
+/// The gate prints a stage as `Goal groups (cycle-flow/goal-groups)`; an
+/// assistant that pastes it back into skip_stages is understood: the ids in
+/// the bracket name the stage.
+#[test]
+fn skip_stages_takes_the_gates_own_form_back() {
+    use v2_lib::api_templates::fixture::skipped_stages;
+    let f = Fixture {
+        skip_stages: vec!["Goal groups (cycle-flow/goal-groups)".into()],
+        ..flow_fixture(vec![
+            step("flow-setup", &[("cycleName", "{{prefix}} cycle")]),
+            step("flow-publish", &[("cycleId", "{{steps.1.cycleId}}")]),
+        ])
+    };
+    validate(&f, &flow_lookup, &goal_group_flows).unwrap();
+    assert_eq!(
+        skipped_stages(&f, &flow_lookup, &goal_group_flows),
+        vec!["Goal groups (done, or not part of this cycle) (flow Performance cycle wizard)"]
+    );
+    // A bracket that names no stage is read as the title it is, and refused as one.
+    let f = Fixture { skip_stages: vec!["Goal groups (cycle-flow/nope)".into()], ..f };
+    let p = validate(&f, &flow_lookup, &goal_group_flows).unwrap_err();
+    assert!(p.iter().any(|p| p.starts_with("skip_stages: Goal groups (cycle-flow/nope) is not a stage")), "{p:?}");
+}
+
+/// Two stages that share a short title are not guessed between.
+#[test]
+fn two_stages_sharing_a_short_title_are_refused_as_ambiguous() {
+    let two = |id: &str| -> Option<v2_lib::api_templates::flow::Flow> {
+        (id == "cycle-flow").then(|| {
+            serde_json::from_value(json!({
+                "id": "cycle-flow",
+                "title": "Performance cycle wizard",
+                "module": "PMS",
+                "subject": { "name": "cycleId", "type": "number" },
+                "stages": [
+                    { "id": "setup", "title": "Cycle setup", "creates": true, "check": "SELECT 1 FROM t WHERE id = {{cycleId}}" },
+                    { "id": "g-a", "title": "Goal groups (a)", "requires": ["setup"], "check": "SELECT 1 FROM g WHERE id = {{cycleId}}" },
+                    { "id": "g-b", "title": "Goal groups (b)", "requires": ["setup"], "check": "SELECT 1 FROM g WHERE id = {{cycleId}}" },
+                    { "id": "publish", "title": "Publish", "requires": ["g-a", "g-b"], "check": "SELECT 1 FROM p WHERE id = {{cycleId}}" }
+                ]
+            }))
+            .unwrap()
+        })
+    };
+    let f = Fixture {
+        skip_stages: vec!["Goal groups".into()],
+        ..flow_fixture(vec![
+            step("flow-setup", &[("cycleName", "{{prefix}} cycle")]),
+            step("flow-publish", &[("cycleId", "{{steps.1.cycleId}}")]),
+        ])
+    };
+    let p = validate(&f, &flow_lookup, &two).unwrap_err();
+    assert!(
+        p.contains(&"skip_stages: Goal groups names more than one stage (cycle-flow/g-a, cycle-flow/g-b) - name the one you mean by its stage id, or as <flow id>/<stage id>".to_string()),
+        "{p:?}"
+    );
+}
+
+#[test]
+fn the_gate_names_each_missing_stage_with_its_id() {
+    let f = flow_fixture(vec![
+        step("flow-setup", &[("cycleName", "{{prefix}} cycle")]),
+        step("flow-publish", &[("cycleId", "{{steps.1.cycleId}}")]),
+    ]);
+    let p = validate(&f, &flow_lookup, &goal_group_flows).unwrap_err();
+    assert!(p[0].contains("must perform Goal groups (cycle-flow/goal-groups) - or, for a stage this record does not include, name it in the fixture's skip_stages (its title, or the id in brackets)"), "{p:?}");
 }
 
 #[test]

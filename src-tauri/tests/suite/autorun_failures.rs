@@ -56,6 +56,7 @@ fn minimal_case(case_id: i32) -> CaseRecord {
         account: None,
         retried: None,
         notice: None,
+        product_bugs: Vec::new(),
         page_errors_seen: 0, phases: None, cleanup: None,
     }
 }
@@ -75,6 +76,7 @@ fn empty_case() -> CaseRecord {
         account: None,
         retried: None,
         notice: None,
+        product_bugs: Vec::new(),
         page_errors_seen: 0, phases: None, cleanup: None,
     }
 }
@@ -205,6 +207,7 @@ fn describe_failures_renders_the_exact_block_for_a_failed_case_with_a_script_and
                 account: Some("hr.admin".to_string()),
                 retried: None,
                 notice: None,
+                product_bugs: Vec::new(),
                 page_errors_seen: 0, phases: None, cleanup: None,
             },
             CaseRecord {
@@ -234,6 +237,7 @@ fn describe_failures_renders_the_exact_block_for_a_failed_case_with_a_script_and
                 account: None,
                 retried: None,
                 notice: None,
+                product_bugs: Vec::new(),
                 page_errors_seen: 0, phases: None, cleanup: None,
             },
             CaseRecord {
@@ -248,6 +252,7 @@ fn describe_failures_renders_the_exact_block_for_a_failed_case_with_a_script_and
                 account: None,
                 retried: None,
                 notice: None,
+                product_bugs: Vec::new(),
                 page_errors_seen: 0, phases: None, cleanup: None,
             },
         ],
@@ -264,12 +269,13 @@ fn describe_failures_renders_the_exact_block_for_a_failed_case_with_a_script_and
         account: Some("hr.admin".to_string()),
         area: None,
         steps: vec![
-            StepScript { step_number: 2, actions: vec![save_button()], unchecked: None, cleanup: false },
+            StepScript { step_number: 2, actions: vec![save_button()], unchecked: None, cleanup: false, because: Vec::new() },
             StepScript {
                 step_number: 3,
                 actions: vec![Action::Click { selector: "text=Confirm".into() }],
                 unchecked: None,
                 cleanup: false,
+                because: Vec::new(),
             },
         ],
         repairs: 1,
@@ -284,7 +290,7 @@ fn describe_failures_renders_the_exact_block_for_a_failed_case_with_a_script_and
         needs_state: Default::default(),
         saved_at: None,
         fail_on_unexpected_dialog: false,
-        page_errors: None, ignore_page_errors: vec![], organization: None, project: None, checked: false,
+        page_errors: None, ignore_page_errors: vec![], organization: None, project: None, checked: false, checks: 0, given_up: Vec::new(),
     }];
 
     let expected = [
@@ -389,6 +395,7 @@ fn describe_failures_masks_a_fill_value_but_never_the_other_fields() {
             actions: vec![Action::Fill { selector: "#password".into(), value: "correct horse battery staple".to_string() }],
             unchecked: None,
             cleanup: false,
+            because: Vec::new(),
         }],
         repairs: 0,
         last_repair: None,
@@ -402,7 +409,7 @@ fn describe_failures_masks_a_fill_value_but_never_the_other_fields() {
         needs_state: Default::default(),
         saved_at: None,
         fail_on_unexpected_dialog: false,
-        page_errors: None, ignore_page_errors: vec![], organization: None, project: None, checked: false,
+        page_errors: None, ignore_page_errors: vec![], organization: None, project: None, checked: false, checks: 0, given_up: Vec::new(),
     }];
 
     let out = describe_failures(&run, &scripts);
@@ -503,7 +510,7 @@ fn describe_failures_says_the_script_changed_when_the_action_index_is_gone() {
         title: "A case".to_string(),
         account: None,
         area: None,
-        steps: vec![StepScript { step_number: 1, actions: vec![], unchecked: None, cleanup: false }],
+        steps: vec![StepScript { step_number: 1, actions: vec![], unchecked: None, cleanup: false, because: Vec::new() }],
         repairs: 0,
         last_repair: None,
         suspected_defect: None,
@@ -516,7 +523,7 @@ fn describe_failures_says_the_script_changed_when_the_action_index_is_gone() {
         needs_state: Default::default(),
         saved_at: None,
         fail_on_unexpected_dialog: false,
-        page_errors: None, ignore_page_errors: vec![], organization: None, project: None, checked: false,
+        page_errors: None, ignore_page_errors: vec![], organization: None, project: None, checked: false, checks: 0, given_up: Vec::new(),
     }];
     let out = describe_failures(&run, &scripts);
     assert!(out
@@ -646,7 +653,7 @@ fn describe_failures_names_the_scripts_area_when_it_has_one() {
         title: "A case".to_string(),
         account: Some("hr.admin".to_string()),
         area: Some("Manage Cycle".to_string()),
-        steps: vec![StepScript { step_number: 1, actions: vec![save_button()], unchecked: None, cleanup: false }],
+        steps: vec![StepScript { step_number: 1, actions: vec![save_button()], unchecked: None, cleanup: false, because: Vec::new() }],
         repairs: 0,
         last_repair: None,
         suspected_defect: None,
@@ -659,7 +666,7 @@ fn describe_failures_names_the_scripts_area_when_it_has_one() {
         needs_state: Default::default(),
         saved_at: None,
         fail_on_unexpected_dialog: false,
-        page_errors: None, ignore_page_errors: vec![], organization: None, project: None, checked: false,
+        page_errors: None, ignore_page_errors: vec![], organization: None, project: None, checked: false, checks: 0, given_up: Vec::new(),
     };
     let text = describe_failures(&run, std::slice::from_ref(&script));
     let lines: Vec<&str> = text.lines().collect();
@@ -987,4 +994,30 @@ fn a_passed_case_whose_clean_up_failed_is_listed_for_its_clean_up() {
         ]
         .join("\n")
     );
+}
+
+#[test]
+fn a_needs_a_ruling_case_is_a_stop() {
+    use v2_lib::autorun::failures::NEEDS_RULING_STOP;
+    let case = CaseRecord {
+        proposed: "Blocked".to_string(),
+        reason: "needs a ruling: step 2: the case says \"exactly 4 levels\" but the app shows \"6 levels\" (data) - a person rules on it in Auto Run".to_string(),
+        ..empty_case()
+    };
+    assert_eq!(stop_reason(&case), Some(NEEDS_RULING_STOP.to_string()));
+    assert_eq!(
+        NEEDS_RULING_STOP,
+        "the case waits for a person's ruling on a divergence - leave the script as the case says"
+    );
+}
+
+#[test]
+fn a_case_waiting_for_a_repair_is_not_a_stop() {
+    let case = CaseRecord {
+        proposed: "Blocked".to_string(),
+        reason: "waits for a repair: step 2: the person is rewriting the case - repair the script to the case as it now reads"
+            .to_string(),
+        ..empty_case()
+    };
+    assert_eq!(stop_reason(&case), None);
 }

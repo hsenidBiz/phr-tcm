@@ -5,7 +5,8 @@
 
 use serde_json::json;
 use std::path::Path;
-use v2_lib::ai_bridge::{route, BridgeContext};
+use crate::common::route_without_rules as route;
+use v2_lib::ai_bridge::BridgeContext;
 use v2_lib::autorun::replay_record::{as_run, latest_for_case, load, note, REPLAY_MODE};
 use v2_lib::autorun::replay_to::{ReplayEnd, ReplayPhase};
 use v2_lib::autorun::store::{self, save_run};
@@ -68,6 +69,7 @@ fn run_failing_step_1(started_at: u64) -> LocalRun {
             account: None,
             retried: None,
             notice: None,
+            product_bugs: Vec::new(),
             page_errors_seen: 0,
             phases: None,
             cleanup: None,
@@ -136,7 +138,7 @@ async fn the_newer_of_the_run_and_the_replay_is_read() {
     save_run(dir.path(), &run_failing_step_1(3_000)).unwrap();
     assert_eq!(latest_for_case(dir.path(), ID).map(|r| r.id), Some("run-3000".to_string()));
     let (_, out) = route(&ctx(), None, "GET", &format!("/autorun-failures?case_id={ID}"), "", "1.0.0").await;
-    assert!(out.contains("run run-3000") && !out.contains("replay"), "{out}");
+    assert!(out.contains("run run-3000") && !out.contains("from a replay"), "{out}");
 }
 
 /// With no case named, the newest word is the newest of every kept replay
@@ -162,7 +164,7 @@ async fn with_no_case_named_the_newer_of_any_replay_and_the_newest_run_is_read()
 
     save_run(dir.path(), &run_failing_step_1(3_000)).unwrap();
     let (_, out) = route(&ctx(), None, "GET", "/autorun-failures", "", "1.0.0").await;
-    assert!(out.contains("run run-3000") && !out.contains("replay"), "{out}");
+    assert!(out.contains("run run-3000") && !out.contains("from a replay"), "{out}");
 }
 
 /// A suspected defect can be marked straight after a replay that stopped

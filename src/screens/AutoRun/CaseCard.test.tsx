@@ -8,7 +8,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
 import type { ComponentProps } from "react";
-import type { CaseScript } from "../../bindings";
+import type { CaseScript, Divergence } from "../../bindings";
 import CaseCard, { scriptFacts, scriptFiles } from "./CaseCard";
 import { matchesSearch } from "./CaseSearch";
 
@@ -81,6 +81,7 @@ function renderCard(props: Partial<ComponentProps<typeof CaseCard>> = {}) {
           selected={false}
           open={false}
           confirmingClear={false}
+          divergences={[]}
           {...handlers}
           {...props}
         />
@@ -173,7 +174,7 @@ test("an open card leaves out every fact with no value, and Files when there is 
   expect(screen.getByText("1 step")).toBeInTheDocument();
   for (const label of [
     "Runs as", "Area", "Must not save", "Page errors", "Ignored page errors", "Unexpected dialogs",
-    "Preconditions", "Changes", "Needs unchanged", "Last repair",
+    "Preconditions", "Changes", "Needs unchanged", "Last repair", "Assumed values", "Invented values",
   ]) {
     expect(screen.queryByText(label)).not.toBeInTheDocument();
   }
@@ -247,6 +248,49 @@ test("scriptFacts and scriptFiles skip what is not there", () => {
   expect(scriptFacts({ ...BARE, account: "  ", changes: [] } as CaseScript)).toHaveLength(1);
 });
 
+test("the card lists assumed and invented values", () => {
+  const script = {
+    ...BARE,
+    steps: [
+      { step_number: 1, actions: [] },
+      {
+        step_number: 2,
+        actions: [],
+        because: [
+          { value: "6", why: "one row per DEF level the precondition lists" },
+          { value: "USD", why: "one currency the case leaves free", provenance: "invented" },
+        ],
+      },
+    ],
+  } as CaseScript;
+  expect(scriptFacts(script)).toContainEqual({
+    label: "Assumed values",
+    value: "step 2: 6 (one row per DEF level the precondition lists)",
+  });
+  expect(scriptFacts(script)).toContainEqual({
+    label: "Invented values",
+    value: "step 2: USD (one currency the case leaves free)",
+  });
+  expect(scriptFacts(BARE).some((f) => /Assumed|Invented/.test(f.label))).toBe(false);
+  renderCard({ open: true, script });
+  expect(screen.getByText("Assumed values")).toBeInTheDocument();
+  expect(screen.getByText("Invented values")).toBeInTheDocument();
+  expect(screen.getByText("step 2: 6 (one row per DEF level the precondition lists)")).toBeInTheDocument();
+});
+
+test("the card lists checks given up", () => {
+  const script = {
+    ...BARE,
+    given_up: [{ step: 3, kind: "expect_count", why: "step 4 already counts the same rows", at: "2026-10-21T09:30:00Z" }],
+  } as CaseScript;
+  const line = "step 3 expect_count: step 4 already counts the same rows (2026-10-21)";
+  expect(scriptFacts(script)).toContainEqual({ label: "Checks given up", value: line });
+  expect(scriptFacts(BARE).some((f) => f.label === "Checks given up")).toBe(false);
+  renderCard({ open: true, script });
+  expect(screen.getByText("Checks given up")).toBeInTheDocument();
+  expect(screen.getByText(line)).toBeInTheDocument();
+});
+
 test("the search matches the id with or without #, and the title, ignoring case", () => {
   const c = { id: 4321, title: "Login - Locked Account" };
   expect(matchesSearch(c, "")).toBe(true);
@@ -295,4 +339,33 @@ test("a script with no setup shows no setup line and does not ask", async () => 
   renderCard({ open: true, script: BARE });
   expect(screen.queryByText("Setup:", { exact: false })).not.toBeInTheDocument();
   expect(calls).not.toContain("auto_run_setup_view");
+});
+
+const DIV: Divergence = {
+  id: "d1",
+  case_id: 7,
+  step: 2,
+  case_says: "exactly 4 levels",
+  app_shows: "6 levels",
+  kind: "data",
+  reported_at: "1",
+  status: "open",
+};
+
+test("a collapsed card says it needs a ruling", () => {
+  renderCard({ divergences: [DIV] });
+  expect(screen.getByRole("img", { name: "Needs a ruling: step 2" })).toBeInTheDocument();
+});
+
+test("a collapsed card whose case waits for a repair does not say it needs a ruling", () => {
+  renderCard({ divergences: [{ ...DIV, status: "awaiting_repair" }] });
+  expect(screen.getByRole("img", { name: "Waits for a repair: step 2" })).toBeInTheDocument();
+  expect(screen.queryByRole("img", { name: /Needs a ruling/ })).not.toBeInTheDocument();
+});
+
+test("a case with no script still shows its divergence", () => {
+  renderCard({ open: true, script: null, divergences: [DIV] });
+  expect(screen.getByText("No script yet")).toBeInTheDocument();
+  expect(screen.getByText("Needs a ruling")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Rule the case is right for #7 step 2" })).toBeInTheDocument();
 });

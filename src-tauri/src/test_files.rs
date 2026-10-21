@@ -197,17 +197,145 @@ pub fn picked_name(source: &Path) -> String {
     source.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()
 }
 
+/// The extensions a test uploads: the content-type table's (`content_type`) and nothing else.
+pub const UPLOADABLE: &[&str] = &[
+    "pdf", "png", "jpg", "jpeg", "gif", "webp", "txt", "csv", "json", "xml", "doc", "docx", "xls", "xlsx", "ppt",
+    "pptx", "zip",
+];
+
+fn extension(name: &str) -> Option<String> {
+    name.rsplit_once('.').map(|(_, ext)| ext.to_ascii_lowercase())
+}
+
+/// Whether `name` is a kind of file a test uploads (its extension, in any case, is in `UPLOADABLE`).
+pub fn is_uploadable(name: &str) -> bool {
+    extension(name).is_some_and(|ext| UPLOADABLE.contains(&ext.as_str()))
+}
+
+/// Said for any other name.
+pub fn not_uploadable(name: &str) -> String {
+    format!("\"{name}\" is not a file a test uploads: Test files only hold documents an upload step or a template's files send (.pdf, .png, .jpg, .jpeg, .gif, .webp, .txt, .csv, .json, .xml, .doc, .docx, .xls, .xlsx, .ppt, .pptx, .zip). Keep notes, scripts and reports out of Test files.")
+}
+
+/// Whether `bytes` really are a file of `name`'s kind, checked for an assistant's file only: the
+/// first bytes for binary kinds - pdf "%PDF-"; png 89 50 4E 47; jpg/jpeg FF D8 FF; gif "GIF8";
+/// webp "RIFF"....+"WEBP" at 8; docx/xlsx/pptx/zip "PK"; doc/xls/ppt D0 CF 11 E0 A1 B1 1A E1.
+/// txt/csv/json/xml hold anything (a Windows-1252 or UTF-16 export, or an unparseable json, is a
+/// real test input).
+pub fn looks_like(name: &str, bytes: &[u8]) -> bool {
+    let Some(ext) = extension(name) else { return false };
+    match ext.as_str() {
+        "pdf" => bytes.starts_with(b"%PDF-"),
+        "png" => bytes.starts_with(&[0x89, 0x50, 0x4E, 0x47]),
+        "jpg" | "jpeg" => bytes.starts_with(&[0xFF, 0xD8, 0xFF]),
+        "gif" => bytes.starts_with(b"GIF8"),
+        "webp" => bytes.len() >= 12 && bytes.starts_with(b"RIFF") && &bytes[8..12] == b"WEBP",
+        "docx" | "xlsx" | "pptx" | "zip" => bytes.starts_with(b"PK"),
+        "doc" | "xls" | "ppt" => bytes.starts_with(&[0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1]),
+        "txt" | "csv" | "json" | "xml" => true,
+        _ => false,
+    }
+}
+
+/// Said when it does not.
+pub fn not_what_it_says(name: &str) -> String {
+    format!("\"{name}\" does not hold what its extension says - write a real file of that kind (an .xlsx is a zipped workbook, not text) and save it again. If you meant a broken file for a negative test, pass malformed: true.")
+}
+
+fn already_there(name: &str) -> String {
+    format!("\"{name}\" is already in Test files - replace it, or rename your copy first")
+}
+
+/// The checks and the atomic write both ways in share, for bytes in hand: valid name, uploadable,
+/// size cap, `looks_like` when `check_content` and - unless `replace` - no file of that name
+/// already there. The bytes are written beside the final name and moved into place, so a reader
+/// never sees half of them. Returns the saved file's size on success; the caller logs it in its
+/// own words.
+fn commit(folder: &Path, name: &str, bytes: &[u8], replace: bool, check_content: bool) -> Result<TestFile, String> {
+    let dest = resolve(folder, name)?;
+    if !is_uploadable(name) {
+        return Err(not_uploadable(name));
+    }
+    if bytes.len() as u64 > MAX_BYTES {
+        return Err(too_big(name));
+    }
+    if check_content && !looks_like(name, bytes) {
+        return Err(not_what_it_says(name));
+    }
+    if dest.exists() && !replace {
+        return Err(already_there(name));
+    }
+    std::fs::create_dir_all(folder).map_err(|e| failed("added", name, e))?;
+    // A leading dot is not a test file name, so `list` never shows this.
+    let part = folder.join(format!(".{name}.part"));
+    if let Err(e) = std::fs::write(&part, bytes) {
+        let _ = std::fs::remove_file(&part);
+        return Err(failed("added", name, e));
+    }
+    if let Err(e) = std::fs::rename(&part, &dest) {
+        let _ = std::fs::remove_file(&part);
+        return Err(failed("added", name, e));
+    }
+    let meta = std::fs::metadata(&dest).map_err(|e| failed("read", name, e))?;
+    Ok(entry(name, &meta))
+}
+
+/// Saves `bytes` into `folder` as `name`: `add`'s checks and write for bytes an assistant made,
+/// and the magic-byte check of a binary kind (`looks_like`) unless `malformed` - a deliberately
+/// broken file for a negative upload test, to which the extension rule still applies.
+/// Logs the name and size, never a path.
+pub fn save_bytes(folder: &Path, name: &str, bytes: &[u8], replace: bool, malformed: bool) -> Result<TestFile, String> {
+    let saved = commit(folder, name, bytes, replace, !malformed)?;
+    let size = human_size(u64::from(saved.size));
+    if malformed {
+        crate::applog::info(format!(
+            "test files: the assistant saved \"{name}\" as a deliberately malformed file ({size})"
+        ));
+    } else {
+        crate::applog::info(format!("test files: the assistant saved \"{name}\" ({size})"));
+    }
+    Ok(saved)
+}
+
+/// Whether `p` is a plain local absolute path: a drive-letter path on Windows (`C:\x`, `C:/x`),
+/// never a UNC share (`\\server\share`), a device path (`\\?\`, `\\.\`) or a root-relative one.
+/// Judged on the text alone, before anything touches the file system.
+pub fn is_plain_local_path(p: &str) -> bool {
+    if p.starts_with("\\\\") || p.starts_with("//") || !Path::new(p).has_root() {
+        return false;
+    }
+    #[cfg(windows)]
+    {
+        let b = p.as_bytes();
+        b.len() >= 3 && b[0].is_ascii_alphabetic() && b[1] == b':' && (b[2] == b'\\' || b[2] == b'/')
+    }
+    #[cfg(not(windows))]
+    {
+        true
+    }
+}
+
+/// `name`'s extension without the dot, lowercased: what the saved name must keep of its source.
+pub fn extension_of(name: &str) -> Option<String> {
+    extension(name)
+}
+
 /// Copies the file at `source` into `folder` under its own name. Refused,
 /// each with a sentence naming the file: a name `valid_test_file_name`
-/// refuses, a file over `MAX_BYTES`, or - unless `replace` - a file of that
-/// name already there (the screen asks the person first). The copy is
-/// written beside its final name and moved into place, so a reader never
-/// sees half of it; the size cap is checked on what is actually read.
+/// refuses, one that is not a kind of file a test uploads, a file over
+/// `MAX_BYTES`, one that does not hold what its extension says, or - unless
+/// `replace` - a file of that name already there (the screen asks the person
+/// first). The copy is written beside its final name and moved into place,
+/// so a reader never sees half of it; the size cap is checked on what is
+/// actually read.
 pub fn add(folder: &Path, source: &Path, replace: bool) -> Result<TestFile, String> {
     let name = picked_name(source);
     let dest = resolve(folder, &name)?;
+    if !is_uploadable(&name) {
+        return Err(not_uploadable(&name));
+    }
     if dest.exists() && !replace {
-        return Err(format!("\"{name}\" is already in Test files - replace it, or rename your copy first"));
+        return Err(already_there(&name));
     }
     let meta = std::fs::metadata(source).map_err(|e| failed("read", &name, e))?;
     if !meta.is_file() {
@@ -216,27 +344,25 @@ pub fn add(folder: &Path, source: &Path, replace: bool) -> Result<TestFile, Stri
     if meta.len() > MAX_BYTES {
         return Err(too_big(&name));
     }
+    let bytes = read_capped(source, &name)?;
+    // A person's file is taken as it is: only the kind of file is held to the allowlist. A
+    // Windows-1252 or UTF-16 export, or a deliberately broken file, is a real test input.
+    let saved = commit(folder, &name, &bytes, replace, false)?;
+    crate::applog::info(format!("test files: added \"{name}\" ({})", human_size(u64::from(saved.size))));
+    Ok(saved)
+}
+
+/// At most `MAX_BYTES + 1` bytes of the file at `source`: one that grew past the cap since it was
+/// looked at is refused on what was read.
+pub fn read_capped(source: &Path, name: &str) -> Result<Vec<u8>, String> {
     let mut bytes = Vec::new();
     std::fs::File::open(source)
         .and_then(|f| f.take(MAX_BYTES + 1).read_to_end(&mut bytes))
-        .map_err(|e| failed("read", &name, e))?;
+        .map_err(|e| failed("read", name, e))?;
     if bytes.len() as u64 > MAX_BYTES {
-        return Err(too_big(&name));
+        return Err(too_big(name));
     }
-    std::fs::create_dir_all(folder).map_err(|e| failed("added", &name, e))?;
-    // A leading dot is not a test file name, so `list` never shows this.
-    let part = folder.join(format!(".{name}.part"));
-    if let Err(e) = std::fs::write(&part, &bytes) {
-        let _ = std::fs::remove_file(&part);
-        return Err(failed("added", &name, e));
-    }
-    if let Err(e) = std::fs::rename(&part, &dest) {
-        let _ = std::fs::remove_file(&part);
-        return Err(failed("added", &name, e));
-    }
-    let meta = std::fs::metadata(&dest).map_err(|e| failed("read", &name, e))?;
-    crate::applog::info(format!("test files: added \"{name}\" ({})", human_size(meta.len())));
-    Ok(entry(&name, &meta))
+    Ok(bytes)
 }
 
 /// Deletes this machine's copy of `name` - a local file, nothing else.
@@ -276,14 +402,7 @@ pub fn check_for_run(folder: &Path, name: &str, who: &str) -> Result<(PathBuf, u
 /// read, not on what the folder said a moment before.
 pub fn read_for_run(folder: &Path, name: &str, who: &str) -> Result<Vec<u8>, String> {
     let (path, _) = check_for_run(folder, name, who)?;
-    let mut bytes = Vec::new();
-    std::fs::File::open(&path)
-        .and_then(|f| f.take(MAX_BYTES + 1).read_to_end(&mut bytes))
-        .map_err(|e| failed("read", name, e))?;
-    if bytes.len() as u64 > MAX_BYTES {
-        return Err(too_big(name));
-    }
-    Ok(bytes)
+    read_capped(&path, name)
 }
 
 /// The live part of an assistant's guide: the names in this project's Test

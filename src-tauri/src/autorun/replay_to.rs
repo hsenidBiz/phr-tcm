@@ -9,10 +9,11 @@
 //! opens the browser or calls Azure DevOps: the command hands it the open
 //! supervised session.
 
-use super::lease::Held;
+use super::lease::{CookieCheck, Held};
 use super::nav::{Route, TripFrom};
 use super::preconditions::{self, NoDb, PreconditionDb};
 use super::runner::{self, AreaRoute, InRun, AFTER_STOP};
+use super::recipe::SignInRecipe;
 use super::replay::Browsers;
 use super::setup::{self, NoBrowsers};
 use super::{replay, signin, store, CaseScript};
@@ -653,7 +654,20 @@ pub async fn replay_to_traced<D: Driver, P: StageDb, B: Browsers>(
         if stopped() {
             return ReplayEnd::Stopped { step: 1 };
         }
-        if signed_in_here(d, root, organization, project, key, account, lease, timing).await {
+        // Only a case whose account this browser is signed in as is asked
+        // why not: any other account signs in as always.
+        let reused = if account.as_deref() == Some(key) {
+            match signed_in_here_why(d, root, organization, project, key, account, lease, timing).await {
+                Ok(()) => true,
+                Err(r) => {
+                    crate::applog::info(format!("{}: not signed in already as {key}: {}", who(id), r.reason()));
+                    false
+                }
+            }
+        } else {
+            false
+        };
+        if reused {
             let went = replay::trip_to_module(d, root, &route, TripFrom::Elsewhere, timing, &who(id)).await;
             if closed(&went) {
                 return ReplayEnd::BrowserGone { step: 1, why: None, outcomes: Vec::new() };
@@ -662,6 +676,15 @@ pub async fn replay_to_traced<D: Driver, P: StageDb, B: Browsers>(
             if went.ok {
                 crate::applog::info(format!("{}: signed in already as {key}, went to {area}", who(id)));
                 reuse.went = Some(area.to_string());
+                // The trip may have reloaded the home page, which can re-issue
+                // a cookie of this same sign-in: the print is taken again.
+                if let Err(r) = retake_sign_in_for(d, root, organization, project, lease, "the trip to the area").await {
+                    crate::applog::info(format!(
+                        "{}: the sign-in's cookies could not be taken again after the trip: {}",
+                        who(id),
+                        r.reason()
+                    ));
+                }
             } else {
                 crate::applog::info(format!(
                     "{}: signed in already as {key}, but the trip to {area} failed - signing in again",
@@ -744,18 +767,161 @@ pub async fn signed_in_here<D: Driver>(
     lease: &Held,
     timing: &Timing,
 ) -> bool {
-    if account.as_deref() != Some(key) || !lease.holds(root, key) {
-        return false;
+    signed_in_here_why(d, root, organization, project, key, account, lease, timing).await.is_ok()
+}
+
+/// `signed_in_here`, saying why not (`NotSignedIn`).
+#[allow(clippy::too_many_arguments)]
+pub async fn signed_in_here_why<D: Driver>(
+    d: &mut D,
+    root: &Path,
+    organization: &str,
+    project: &str,
+    key: &str,
+    account: &Option<String>,
+    lease: &Held,
+    timing: &Timing,
+) -> Result<(), NotSignedIn> {
+    let recipe = sign_in_stands(d, root, organization, project, key, account, lease).await?;
+    signin::already_signed_in_why(d, &recipe, account.as_deref(), key, timing, timing.expect_ms.min(signin::SIGNED_IN_LOOK_MS)).await
+}
+
+/// Why a browser is not (or no longer) signed in as the case's account.
+/// `reason` is a clause of the app log's line.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum NotSignedIn {
+    /// The browser's session names no account.
+    NoAccount,
+    /// The browser's session is another account's.
+    OtherAccount,
+    /// This browser does not hold the account's lease in the active environment.
+    LeaseNotHeld,
+    /// The app's last sign-in left no print of its HttpOnly cookies.
+    NoPrint,
+    /// The sign-in recipe could not be read.
+    NoRecipe,
+    /// The sign-in's HttpOnly cookies changed or went (named on the line before).
+    CookiesChanged,
+    /// The browser did not answer while its cookies were read.
+    CookiesUnread,
+    /// The page says the application refused the session.
+    SessionRefused,
+    /// The recipe's signed-in marker did not show within this many ms.
+    MarkerNotShown(u64),
+    /// The home page opened but never showed it was signed in.
+    HomeNeverSignedIn,
+    /// No HttpOnly cookies could be read after the home page loaded.
+    NoCookiesAfterHome,
+}
+
+impl NotSignedIn {
+    pub fn reason(&self) -> String {
+        match self {
+            NotSignedIn::NoAccount => "no account is signed in in this browser".to_string(),
+            NotSignedIn::OtherAccount => "the browser is signed in as another account".to_string(),
+            NotSignedIn::LeaseNotHeld => {
+                "this browser does not hold the account's lease in the active environment".to_string()
+            }
+            NotSignedIn::NoPrint => "the app's last sign-in left no print of its HttpOnly cookies".to_string(),
+            NotSignedIn::NoRecipe => "the sign-in recipe could not be read".to_string(),
+            NotSignedIn::CookiesChanged => "the sign-in's HttpOnly cookies changed (named on the line before)".to_string(),
+            NotSignedIn::CookiesUnread => "the browser did not answer while its cookies were read".to_string(),
+            NotSignedIn::SessionRefused => "the page says the application refused the session".to_string(),
+            NotSignedIn::MarkerNotShown(ms) => format!("the signed-in marker did not show within {ms} ms"),
+            NotSignedIn::HomeNeverSignedIn => crate::autorun::nav::HOME_NEVER_SIGNED_IN.to_string(),
+            NotSignedIn::NoCookiesAfterHome => "no HttpOnly cookies could be read after the home page loaded".to_string(),
+        }
+    }
+}
+
+/// A sign-in that stood is taken again after the app's own home load or
+/// trip ran: a page the app serves (its login page, on PeoplesHR) may
+/// re-issue an HttpOnly cookie of that very sign-in, and the print taken
+/// before would call it changed from then on. Callers have judged the
+/// cookies just before (`sign_in_stands`), and only the app's own page
+/// loads and menu clicks ran since. The cookies the load re-issued are
+/// named in the app log (names only, never a value; `by` says what
+/// loaded). When no cookie can be read the sign-in is forgotten
+/// (`NoCookiesAfterHome`), so nothing is trusted that cannot be checked.
+pub async fn retake_sign_in<D: Driver>(
+    d: &mut D,
+    origins: &[String],
+    lease: &mut Held,
+    by: &str,
+) -> Result<(), NotSignedIn> {
+    if let Some(old) = lease.sign_in_print() {
+        if let Some(changed) = crate::browser::session::changed_cookies(d, origins, old, lease.ignored_in_print()).await {
+            if !changed.is_empty() {
+                crate::applog::info(format!("Auto Run: {by} re-issued the sign-in's cookies: {}", changed.join(", ")));
+            }
+        }
+    }
+    match crate::browser::session::cookie_print(d, origins).await {
+        Some(print) => {
+            lease.note_sign_in(Some(print));
+            Ok(())
+        }
+        None => {
+            lease.forget_sign_in();
+            Err(NotSignedIn::NoCookiesAfterHome)
+        }
+    }
+}
+
+/// `retake_sign_in` for the cookies of `root`'s project recipe (read again;
+/// one that cannot be read forgets the sign-in).
+pub async fn retake_sign_in_for<D: Driver>(
+    d: &mut D,
+    root: &Path,
+    organization: &str,
+    project: &str,
+    lease: &mut Held,
+    by: &str,
+) -> Result<(), NotSignedIn> {
+    match super::recipe::load_effective_recipe(root, organization, project) {
+        Ok(recipe) => retake_sign_in(d, &recipe.origins(), lease, by).await,
+        Err(_) => {
+            lease.forget_sign_in();
+            Err(NotSignedIn::NoRecipe)
+        }
+    }
+}
+
+/// The part of `signed_in_here_why` that never looks at the page: the
+/// browser's session is `key`'s (`account`), it holds `key`'s lease in the
+/// active environment, the app's last sign-in left a print, the recipe can
+/// be read, and the print's HttpOnly cookies are all still there with the
+/// same values (`Held::check_sign_in`). Gives the recipe it read.
+pub async fn sign_in_stands<D: Driver>(
+    d: &mut D,
+    root: &Path,
+    organization: &str,
+    project: &str,
+    key: &str,
+    account: &Option<String>,
+    lease: &Held,
+) -> Result<SignInRecipe, NotSignedIn> {
+    match account.as_deref() {
+        None => return Err(NotSignedIn::NoAccount),
+        Some(a) if a != key => return Err(NotSignedIn::OtherAccount),
+        Some(_) => {}
+    }
+    if !lease.holds(root, key) {
+        return Err(NotSignedIn::LeaseNotHeld);
     }
     if lease.sign_in_print().is_none() {
-        return false;
+        return Err(NotSignedIn::NoPrint);
     }
-    let Ok(recipe) = super::recipe::load_effective_recipe(root, organization, project) else { return false };
-    // The assistant's test cookies are left out (`Held::same_sign_in`).
-    if !lease.same_sign_in(d, &recipe.origins()).await {
-        return false;
+    let Ok(recipe) = super::recipe::load_effective_recipe(root, organization, project) else {
+        return Err(NotSignedIn::NoRecipe);
+    };
+    // The assistant's test cookies are left out (`Held::check_sign_in`).
+    match lease.check_sign_in(d, &recipe.origins()).await {
+        CookieCheck::Same => Ok(recipe),
+        CookieCheck::NoPrint => Err(NotSignedIn::NoPrint),
+        CookieCheck::Changed(_) => Err(NotSignedIn::CookiesChanged),
+        CookieCheck::Unread => Err(NotSignedIn::CookiesUnread),
     }
-    signin::already_signed_in(d, &recipe, account.as_deref(), key, timing).await
 }
 
 /// What a replay from the beginning made of a browser already signed in as

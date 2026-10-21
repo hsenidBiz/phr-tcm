@@ -403,7 +403,16 @@ pub async fn route(
                 (200, autorun_guide_with_quirks(ctx, quick))
             }
         },
-        ("POST", "/autorun-script") => save_autorun_scripts(ctx, client, body).await,
+        // A save that repairs (carries `edits`) ends with the repair rules, a refusal too.
+        ("POST", "/autorun-script") => {
+            let answer = save_autorun_scripts(ctx, client, body).await;
+            let parsed: serde_json::Value = serde_json::from_str(body).unwrap_or_default();
+            if crate::autorun::roles::cases_repaired_by(&parsed).is_empty() {
+                answer
+            } else {
+                crate::autorun::roles::with_rules(answer, crate::autorun::roles::RULES_REPAIR_SAVE)
+            }
+        }
         // One saved script, and a delete that keeps it aside: files on this
         // machine only, never Azure DevOps.
         ("GET", "/autorun-script") => autorun_script_read(target),
@@ -449,7 +458,16 @@ pub async fn route(
         ("POST", "/autorun-discover-start") => {
             let mut seen = None;
             let answer = without_page(autorun_discover_start(ctx, body, &mut seen).await, body);
-            with_overrides_seen(with_no_save_note(answer, discovery_no_save()), seen)
+            let answer = with_overrides_seen(with_no_save_note(answer, discovery_no_save()), seen);
+            // A mapping run records areas and writes no check: no rules.
+            let mapping = serde_json::from_str::<serde_json::Value>(body)
+                .map(|v| v["mapping"].as_bool() == Some(true) || v["mapping"].as_str().map(|s| s.trim().eq_ignore_ascii_case("true")) == Some(true))
+                .unwrap_or(false);
+            if mapping {
+                answer
+            } else {
+                crate::autorun::roles::with_rules(answer, crate::autorun::roles::RULES_DISCOVERY)
+            }
         }
         ("POST", "/autorun-discover-action") => {
             let mut seen = None;
@@ -476,15 +494,29 @@ pub async fn route(
         // sign-in. Never the person's browser, never while a replay runs.
         ("POST", "/autorun-reset") => crate::commands::autorun::reset_for_assistant(&ctx.org, &ctx.project).await,
         ("POST", "/autorun-discover-area") => autorun_discover_area(ctx, body).await,
-        ("POST", "/autorun-replay") => without_page(autorun_replay(ctx, body).await, body),
+        ("POST", "/autorun-replay") => {
+            release_rewritten_cases(ctx, client).await;
+            crate::autorun::roles::with_rules(
+                without_page(autorun_replay(ctx, body).await, body),
+                crate::autorun::roles::RULES_REPLAY,
+            )
+        }
         // The assistant's replay going, stopped through the same stop the
         // person's Stop sets, and its answer once it has ended.
-        ("POST", "/autorun-replay-stop") => autorun_replay_stop_with(REPLAY_ANSWER_WAIT).await,
-        ("GET", "/autorun-failures") => autorun_failures(ctx, target),
+        ("POST", "/autorun-replay-stop") => {
+            crate::autorun::roles::with_rules(autorun_replay_stop_with(REPLAY_ANSWER_WAIT).await, crate::autorun::roles::RULES_REPLAY)
+        }
+        ("GET", "/autorun-failures") => {
+            release_rewritten_cases(ctx, client).await;
+            crate::autorun::roles::with_rules(autorun_failures(ctx, target), crate::autorun::roles::RULES_FAILURES)
+        }
         ("POST", "/autorun-quirk") => autorun_quirk(ctx, body),
         ("POST", "/autorun-quirk-retire") => autorun_quirk_retire(ctx, body),
         ("POST", "/autorun-validation-rule") => record_validation_rule(ctx, body).await,
         ("POST", "/autorun-defect") => autorun_defect(body),
+        // A place the live app or its data differs from the case: stored for a
+        // person to rule on, quoting the case, checked against it.
+        ("POST", "/autorun-divergence") => autorun_divergence(ctx, client, body).await,
         // Components: saved only once the open discovery has tried them
         // live, and retired only while no saved script uses them.
         ("POST", "/autorun-component-save") => autorun_component_save(ctx, client, body).await,
@@ -499,6 +531,8 @@ pub async fn route(
         // With the project's Test files beside them, by name and size: what
         // a case uploads.
         ("GET", "/accounts") => accounts_read(ctx),
+        // A file the assistant made, saved into those Test files.
+        ("POST", "/test-file-save") => test_file_save(ctx, body),
         // The API template routes: gated with the Auto Run ones by the
         // guard above. Proving and running write to the application, so
         // both also need the person's own switch (`ctx.api_writes`); the
@@ -641,7 +675,8 @@ pub fn smells_like_a_write(method: &str, target: &str) -> bool {
 /// somebody remembering to repeat a check.
 pub fn module_of_route(path: &str) -> Option<crate::modules::Module> {
     use crate::modules::Module;
-    if path.starts_with("/autorun-") || path == "/accounts" || path.starts_with("/accounts-") {
+    if path.starts_with("/autorun-") || path == "/accounts" || path.starts_with("/accounts-") || path == "/test-file-save"
+    {
         Some(Module::AutoRun)
     } else if path.starts_with("/api-template") {
         Some(Module::ApiTemplates)
@@ -802,6 +837,105 @@ fn test_files_answer(root: &std::path::Path, ctx: &BridgeContext) -> Result<Vec<
         .collect())
 }
 
+/// Said when `save_test_file` is given no content, or more than one.
+pub const TEST_FILE_ONE_SOURCE: &str = "Give the file's content as exactly one of text, base64 or from_path.";
+
+/// Said when `save_test_file` is given no name and no `from_path` to take it from.
+pub const TEST_FILE_NEEDS_A_NAME: &str = "Give the file a name, or a from_path to take it from.";
+
+/// Said when `base64` is not standard base64.
+pub const TEST_FILE_BAD_BASE64: &str = "base64 is not standard base64 - encode the file's bytes and save it again.";
+
+/// Said when `from_path` is not a plain local absolute path: a relative one, a network share
+/// (`\\server\share`) or a device path (`\\?\`, `\\.\`).
+pub const TEST_FILE_PATH_NOT_LOCAL: &str = "from_path must be a file on this computer's own drives.";
+
+/// `POST /test-file-save`: a file the assistant made, saved into the project's Test files
+/// (`test_files::save_bytes`). Exactly one of `text`, `base64` or `from_path` carries the
+/// content. Every refusal is a 400 with a sentence that names the file and no path; the
+/// raw error goes to the app log. It writes only inside the project's Test files folder.
+fn test_file_save(ctx: &BridgeContext, body: &str) -> (u16, String) {
+    use base64::Engine as _;
+    let v: serde_json::Value = match serde_json::from_str(body) {
+        Ok(v) => v,
+        Err(_) => return (400, "that is not readable JSON.".to_string()),
+    };
+    let text_of = |key: &str| match &v[key] {
+        serde_json::Value::String(s) => Some(s.clone()),
+        _ => None,
+    };
+    let (text, b64, from_path) = (text_of("text"), text_of("base64"), text_of("from_path"));
+    if [text.is_some(), b64.is_some(), from_path.is_some()].iter().filter(|x| **x).count() != 1 {
+        return (400, TEST_FILE_ONE_SOURCE.to_string());
+    }
+    let replace = v["replace"].as_bool() == Some(true);
+    let malformed = v["malformed"].as_bool() == Some(true);
+    // Judged on the text alone, before any file system call: a share is never opened.
+    if from_path.as_deref().is_some_and(|p| !crate::test_files::is_plain_local_path(p)) {
+        return (400, TEST_FILE_PATH_NOT_LOCAL.to_string());
+    }
+    if ctx.org.trim().is_empty() || ctx.project.trim().is_empty() {
+        return (400, TEST_FILES_NEED_A_PROJECT.to_string());
+    }
+    let root = match autorun_root() {
+        Ok(r) => r,
+        Err(refused) => return refused,
+    };
+    let folder = crate::test_files::folder(&root, &ctx.org, &ctx.project);
+    let given_name = text_of("name").map(|n| n.trim().to_string()).filter(|n| !n.is_empty());
+    let name = match (&given_name, &from_path) {
+        (Some(n), _) => n.clone(),
+        (None, Some(p)) => crate::test_files::picked_name(std::path::Path::new(p)),
+        (None, None) => return (400, TEST_FILE_NEEDS_A_NAME.to_string()),
+    };
+    let bytes = if let Some(t) = text {
+        t.into_bytes()
+    } else if let Some(b) = b64 {
+        match base64::engine::general_purpose::STANDARD.decode(b.trim()) {
+            Ok(bytes) => bytes,
+            Err(_) => return (400, TEST_FILE_BAD_BASE64.to_string()),
+        }
+    } else {
+        let path = std::path::PathBuf::from(from_path.unwrap_or_default());
+        // The source is itself a kind of file a test uploads, and the saved name keeps its
+        // extension: a file cannot be copied in under another kind's name.
+        let source_name = crate::test_files::picked_name(&path);
+        if !crate::test_files::is_uploadable(&source_name) {
+            return (400, crate::test_files::not_uploadable(&source_name));
+        }
+        let ext = crate::test_files::extension_of(&source_name).unwrap_or_default();
+        if crate::test_files::extension_of(&name).as_deref() != Some(ext.as_str()) {
+            return (400, format!("The saved name must keep the file's own extension (.{ext})."));
+        }
+        match std::fs::metadata(&path) {
+            Ok(m) if m.is_file() => {}
+            Ok(_) => return (400, format!("\"{name}\" is not a file")),
+            Err(e) => {
+                crate::applog::warn(format!("test files: \"{name}\" could not be read for the assistant: {e}"));
+                return (400, format!("\"{name}\" could not be read - check the path and save it again"));
+            }
+        }
+        match crate::test_files::read_capped(&path, &name) {
+            Ok(bytes) => bytes,
+            Err(why) => return (400, why),
+        }
+    };
+    let replaced = replace && crate::test_files::resolve(&folder, &name).is_ok_and(|p| p.exists());
+    match crate::test_files::save_bytes(&folder, &name, &bytes, replace, malformed) {
+        Ok(saved) => (
+            200,
+            serde_json::json!({
+                "saved": saved.name,
+                "size": crate::test_files::human_size(u64::from(saved.size)),
+                "replaced": replaced,
+                "use": "Refer to it by its name: an Auto Run upload action's file, or a template's files.",
+            })
+            .to_string(),
+        ),
+        Err(why) => (400, why),
+    }
+}
+
 /// Said on every answer of a discovery that must not save
 /// (`with_no_save_note`): the flag, once set, holds until the discovery
 /// ends.
@@ -905,6 +1039,22 @@ pub fn without_page(answer: (u16, String), body: &str) -> (u16, String) {
 /// given, and the most it ever carries.
 pub const TEMPLATE_PAGE: usize = 25;
 pub const TEMPLATE_PAGE_MAX: usize = 100;
+/// The most characters a list answer in full carries; over it the answer is
+/// the index, which says how to narrow.
+pub const TEMPLATE_ANSWER_CAP: usize = 40_000;
+/// A run's `detail` is cut to this many characters in a list answer.
+const RUN_DETAIL_CUT: usize = 300;
+
+/// A run record as a list answer shows it: its `detail` cut to
+/// `RUN_DETAIL_CUT` characters plus `...`.
+fn last_run_cut(r: &crate::api_templates::store::RunRecord) -> serde_json::Value {
+    let mut v = serde_json::json!(r);
+    if let Some(d) = r.detail.as_deref().filter(|d| d.chars().count() > RUN_DETAIL_CUT) {
+        let cut: String = d.chars().take(RUN_DETAIL_CUT).collect();
+        v["detail"] = serde_json::json!(format!("{cut}..."));
+    }
+    v
+}
 
 /// The saved templates for this project, filtered and paged.
 ///
@@ -1022,98 +1172,111 @@ fn api_template_list(ctx: &BridgeContext, target: &str) -> (u16, String) {
         flows.retain(|f| page.iter().any(|s| s.template.stage.as_ref().is_some_and(|r| r.flow == f.id)));
     }
 
-    let flow_rows: Vec<serde_json::Value> = flows
-        .iter()
-        .map(|f| {
-            if !full {
-                return serde_json::json!({ "id": f.id, "title": f.title, "stage_count": f.stages.len() });
-            }
-            let stages: Vec<serde_json::Value> = f
-                .stages
-                .iter()
-                .map(|s| {
-                    let on: Vec<&str> =
-                        gate::templates_on(&saved, &f.id, &s.id).iter().map(|t| t.template.id.as_str()).collect();
-                    serde_json::json!({
-                        "id": s.id,
-                        "title": s.title,
-                        "requires": s.requires,
-                        "optional": s.optional,
-                        "creates": s.creates,
-                        "templates": on,
+    let build = |full: bool| -> serde_json::Value {
+        let flow_rows: Vec<serde_json::Value> = flows
+            .iter()
+            .map(|f| {
+                if !full {
+                    return serde_json::json!({ "id": f.id, "title": f.title, "stage_count": f.stages.len() });
+                }
+                let stages: Vec<serde_json::Value> = f
+                    .stages
+                    .iter()
+                    .map(|s| {
+                        let on: Vec<&str> =
+                            gate::templates_on(&saved, &f.id, &s.id).iter().map(|t| t.template.id.as_str()).collect();
+                        serde_json::json!({
+                            "id": s.id,
+                            "title": s.title,
+                            "requires": s.requires,
+                            "optional": s.optional,
+                            "creates": s.creates,
+                            "templates": on,
+                        })
                     })
+                    .collect();
+                serde_json::json!({
+                    "id": f.id,
+                    "title": f.title,
+                    "module": f.module,
+                    "subject": f.subject,
+                    "stages": stages,
                 })
-                .collect();
-            serde_json::json!({
-                "id": f.id,
-                "title": f.title,
-                "module": f.module,
-                "subject": f.subject,
-                "stages": stages,
             })
-        })
-        .collect();
-    let rows: Vec<serde_json::Value> = page
-        .iter()
-        .map(|s| {
-            let t = &s.template;
-            if !full {
-                return serde_json::json!({
+            .collect();
+        let rows: Vec<serde_json::Value> = page
+            .iter()
+            .map(|s| {
+                let t = &s.template;
+                if !full {
+                    return serde_json::json!({
+                        "id": t.id,
+                        "title": t.title,
+                        "module": t.module,
+                        "effect": t.effect,
+                        "proven": t.proven.is_some(),
+                        "stage": t.stage,
+                    });
+                }
+                serde_json::json!({
                     "id": t.id,
                     "title": t.title,
                     "module": t.module,
                     "effect": t.effect,
-                    "proven": t.proven.is_some(),
+                    "params": t.params,
+                    "outputs": t.outputs,
                     "stage": t.stage,
-                });
-            }
-            serde_json::json!({
-                "id": t.id,
-                "title": t.title,
-                "module": t.module,
-                "effect": t.effect,
-                "params": t.params,
-                "outputs": t.outputs,
-                "stage": t.stage,
-                // An imported template arrives unproven (api_templates::share):
-                // runs of it are allowed, so the assistant is told plainly.
-                "proven": t.proven.is_some(),
-                "unproven": t.proven.is_none().then_some(crate::api_templates::share::UNPROVEN_FOR_ASSISTANT),
-                "last_run": s.runs.iter().find(|r| r.mode == store::MODE_RUN),
+                    // An imported template arrives unproven (api_templates::share):
+                    // runs of it are allowed, so the assistant is told plainly.
+                    "proven": t.proven.is_some(),
+                    "unproven": t.proven.is_none().then_some(crate::api_templates::share::UNPROVEN_FOR_ASSISTANT),
+                    "last_run": s.runs.iter().find(|r| r.mode == store::MODE_RUN).map(last_run_cut),
+                })
             })
-        })
-        .collect();
-    let mut paging = serde_json::json!({ "total": total, "offset": offset, "returned": rows.len() });
-    if offset + rows.len() < total {
-        paging["next_offset"] = serde_json::json!(offset + rows.len());
-    }
-    let mut answer = serde_json::json!({ "templates": rows, "flows": flow_rows, "paging": paging });
-    let with_flow = !matches!(arg("with_flow").as_deref(), Some("false") | Some("0"));
-    if full && !with_flow {
-        if let Some(map) = answer.as_object_mut() {
-            map.remove("flows");
-        }
-        answer["left_out"] = serde_json::json!("the flows and the Test files (flow: false)");
-    } else if full {
-        // Names and sizes only: what a template's `files` may name.
-        let test_files: Vec<serde_json::Value> = project_test_files(&root, ctx)
-            .into_iter()
-            .map(|f| serde_json::json!({ "name": f.name, "size": f.size }))
             .collect();
-        answer["test_files"] = serde_json::json!(test_files);
-    } else {
-        let mut note = format!(
-            "This is the index of {total} templates. Narrow it with module, search or flow until at most {limit} match, or pass id, for params, outputs, the newest run and the test files. Page with offset and limit (at most {TEMPLATE_PAGE_MAX})."
-        );
-        // The full answer says it on each unproven row; the index says it
-        // once.
-        if page.iter().any(|s| s.template.proven.is_none()) {
-            note.push_str(&format!(
-                " A template whose proven is false was {}.",
-                crate::api_templates::share::UNPROVEN_FOR_ASSISTANT
+        let mut paging = serde_json::json!({ "total": total, "offset": offset, "returned": rows.len() });
+        if offset + rows.len() < total {
+            paging["next_offset"] = serde_json::json!(offset + rows.len());
+        }
+        let mut answer = serde_json::json!({ "templates": rows, "flows": flow_rows, "paging": paging });
+        let with_flow = !matches!(arg("with_flow").as_deref(), Some("false") | Some("0"));
+        if full && !with_flow {
+            if let Some(map) = answer.as_object_mut() {
+                map.remove("flows");
+            }
+            answer["left_out"] = serde_json::json!("the flows and the Test files (flow: false)");
+        } else if full {
+            // Names and sizes only: what a template's `files` may name.
+            let test_files: Vec<serde_json::Value> = project_test_files(&root, ctx)
+                .into_iter()
+                .map(|f| serde_json::json!({ "name": f.name, "size": f.size }))
+                .collect();
+            answer["test_files"] = serde_json::json!(test_files);
+        } else {
+            let mut note = format!(
+                "This is the index of {total} templates. Narrow it with module, search or flow until at most {limit} match, or pass id, for params, outputs, the newest run and the test files. Page with offset and limit (at most {TEMPLATE_PAGE_MAX})."
+            );
+            // The full answer says it on each unproven row; the index says it
+            // once.
+            if page.iter().any(|s| s.template.proven.is_none()) {
+                note.push_str(&format!(
+                    " A template whose proven is false was {}.",
+                    crate::api_templates::share::UNPROVEN_FOR_ASSISTANT
+                ));
+            }
+            answer["note"] = serde_json::json!(note);
+        }
+        answer
+    };
+    let mut answer = build(full);
+    if full && !by_id {
+        let n = answer.to_string().len();
+        if n > TEMPLATE_ANSWER_CAP {
+            answer = build(false);
+            answer["note"] = serde_json::json!(format!(
+                "The answer in full would be {n} characters, more than one answer carries ({TEMPLATE_ANSWER_CAP}): this is the index of {total} templates. Pass id for one template in full, narrow with module, search or flow, or page with a smaller limit."
             ));
         }
-        answer["note"] = serde_json::json!(note);
     }
     (200, answer.to_string())
 }
@@ -1632,8 +1795,17 @@ fn api_fixture_list(ctx: &BridgeContext, target: &str) -> (u16, String) {
     }
     if q(target, "full").is_some_and(|v| v.trim().eq_ignore_ascii_case("true")) {
         let fixtures: Vec<serde_json::Value> = saved.iter().map(in_full).collect();
-        return (200, serde_json::json!({ "fixtures": fixtures }).to_string());
+        let answer = serde_json::json!({ "fixtures": fixtures }).to_string();
+        if answer.len() <= TEMPLATE_ANSWER_CAP {
+            return (200, answer);
+        }
+        let n = answer.len();
+        return (200, fixture_index(&saved, Some(format!("The fixtures in full would be {n} characters: pass id for one in full."))));
     }
+    (200, fixture_index(&saved, None))
+}
+
+fn fixture_index(saved: &[crate::api_templates::fixture_store::SavedFixture], over: Option<String>) -> String {
     let fixtures: Vec<serde_json::Value> = saved
         .iter()
         .map(|s| {
@@ -1654,7 +1826,8 @@ fn api_fixture_list(ctx: &BridgeContext, target: &str) -> (u16, String) {
             })
         })
         .collect();
-    (200, serde_json::json!({ "fixtures": fixtures, "note": FIXTURES_IN_SHORT }).to_string())
+    let note = over.unwrap_or_else(|| FIXTURES_IN_SHORT.to_string());
+    serde_json::json!({ "fixtures": fixtures, "note": note }).to_string()
 }
 
 /// `POST /api-template-fixture-save`: checks the fixture against the saved
@@ -3843,6 +4016,9 @@ async fn autorun_try(
         Ok(v) => v,
         Err(refused) => return refused,
     };
+    if let Some(r) = crate::autorun::forbidden_fixes::forbidden_in(&raw) {
+        return (400, r);
+    }
     let action: crate::browser::actions::Action = match serde_json::from_value(raw) {
         Ok(a) => a,
         Err(e) => {
@@ -4282,7 +4458,11 @@ pub async fn discover_start_in<B: DiscoveryBrowser>(
             timing,
         )
         .await
-            && went_home(p.driver, root, organization, project, timing).await;
+            && went_home(p.driver, root, organization, project, timing).await
+            // Going home may have re-issued a cookie of the same sign-in.
+            && crate::autorun::replay_to::retake_sign_in_for(p.driver, root, organization, project, p.lease, "the home page")
+                .await
+                .is_ok();
         lift_a_calls_guard(p.driver, p.guarded_case, p.guard_owner).await;
         let signed = if kept {
             crate::applog::info(format!("Auto Run discovery as {key}: signed in already, the sign-in is kept"));
@@ -5691,7 +5871,8 @@ pub async fn discover_area_in<B: DiscoveryBrowser>(
 /// 2026-10-20). The name must be an area the project has - whoever made
 /// it, a person included - and the repair keeps it under its own module
 /// (`module` may be blank; another one is refused), and new clicks equal
-/// to the saved ones are refused (`area_repair::SAME_PATH`). It is allowed
+/// to the saved ones are refused (`area_repair::SAME_PATH`), judged after the
+/// new clicks are pinned (`nav::go_to_module_pinning`). It is allowed
 /// only while the area is failing to be reached, decided live every time:
 /// the area's saved path is replayed from a fresh home as a run takes it
 /// (`nav::reach_module`, two tries with a reload between) before anything
@@ -5851,9 +6032,10 @@ async fn save_discovered_area<B: DiscoveryBrowser>(
             Some(found) => Some(found.clone()),
         },
     };
-    if repairing.as_ref().is_some_and(|old| old.clicks == clicks) {
-        return (409, area_repair::SAME_PATH.to_string());
-    }
+    // The clicks as sent: an area is compared with them, not with the clicks
+    // as they are saved once pinned (`nav::go_to_module_pinning`), and a
+    // repair is the same path only if pinning would not change them either.
+    let sent = clicks.clone();
     let module = repairing.as_ref().map_or(module, |old| old.module.clone());
     // The run's own area of this name, which this save may update.
     let existing = match nav::find_area(&navfile, &name) {
@@ -5994,14 +6176,27 @@ async fn save_discovered_area<B: DiscoveryBrowser>(
                 repaired_by_assistant: None,
             },
         };
-        let route = nav::Route::new(&recipe, path);
-        nav::go_to_module(d, &route, nav::TripFrom::SignIn, timing).await.map(|at| (at, route.path))
+        // The clicks are saved as the trip made them: each finds exactly
+        // one element on the page (`nav::go_to_module_pinning`).
+        let mut route = nav::Route::new(&recipe, path);
+        match nav::go_to_module_pinning(d, &route, timing).await {
+            Ok((at, clicks, notes)) => {
+                route.path.clicks = clicks;
+                Ok((at, route.path, notes))
+            }
+            Err(failure) => Err(failure),
+        }
     } else {
         Err(nav::PathFailure { at: nav::Where::Home, reason: went.detail, harness: went.harness })
     };
-    let (at, path) = match reached {
+    let (at, path, pinned) = match reached {
         Ok(found) => found,
         Err(failure) => {
+            // The saved path again fails the way it did: nothing new to try.
+            let refused_pin = failure.reason.contains("counting hidden ones");
+            if !refused_pin && repairing.as_ref().is_some_and(|old| old.clicks == sent) {
+                return (409, area_repair::SAME_PATH.to_string());
+            }
             let reason = failure.for_dialog();
             let (status, page) = read_page(d, crate::browser::snapshot::DEFAULT_LIMIT, None).await;
             let showed = if status == 200 {
@@ -6016,8 +6211,16 @@ async fn save_discovered_area<B: DiscoveryBrowser>(
             return (409, format!("The clicks did not arrive: {reason}. The page showed: {showed}"));
         }
     };
-    // The run's own area, found where it was: nothing to write.
-    if let Some(old) = existing.as_ref().filter(|old| old.clicks == path.clicks && old.arrived == path.arrived) {
+    if repairing.as_ref().is_some_and(|old| old.clicks == path.clicks) {
+        return (409, area_repair::SAME_PATH.to_string());
+    }
+    // The run's own area, found where it was: nothing to write. Its saved
+    // clicks stand when they are the clicks found now, even when pinning
+    // would only make a name exact; they do not when one now matches more
+    // than one element and had to be scoped.
+    let scoped = pinned.iter().any(|note| note.contains(nav::SCOPED_NOTE));
+    let found_as_saved = |old: &nav::ModulePath| old.clicks == path.clicks || (old.clicks == sent && !scoped);
+    if let Some(old) = existing.as_ref().filter(|old| found_as_saved(old) && old.arrived == path.arrived) {
         let kept = old.name().to_string();
         if let Some(state) = p.discovery.as_mut() {
             if let Some(run) = state.mapping.as_mut() {
@@ -6068,13 +6271,18 @@ async fn save_discovered_area<B: DiscoveryBrowser>(
     if let Some(reason) = reason {
         crate::applog::info(format!("AI repaired area {kept}: {reason}"));
         let message = area_repair::repaired_answer(&kept, &reason);
-        return (
-            200,
-            serde_json::json!({ "saved": true, "repaired": true, "arrived": at, "message": message }).to_string(),
-        );
+        let mut answer = serde_json::json!({ "saved": true, "repaired": true, "arrived": at, "message": message });
+        if !pinned.is_empty() {
+            answer["pinned"] = serde_json::json!(pinned);
+        }
+        return (200, answer.to_string());
     }
     crate::applog::info(format!("Auto Run discovery saved an area ({saved} clicks)"));
-    (200, serde_json::json!({ "saved": true, "arrived": at }).to_string())
+    let mut answer = serde_json::json!({ "saved": true, "arrived": at });
+    if !pinned.is_empty() {
+        answer["pinned"] = serde_json::json!(pinned);
+    }
+    (200, answer.to_string())
 }
 
 /// `/autorun-discover-start`: open the Auto Run browser for the assistant
@@ -6268,6 +6476,9 @@ async fn autorun_discover_action(
         Ok(v) => v,
         Err(refused) => return refused,
     };
+    if let Some(r) = crate::autorun::forbidden_fixes::forbidden_in(&raw) {
+        return (400, r);
+    }
     let action: crate::browser::actions::Action = match serde_json::from_value(raw) {
         Ok(a) => a,
         Err(e) => {
@@ -6345,6 +6556,9 @@ async fn autorun_discover_actions(
     }
     let mut actions = Vec::with_capacity(raw.len());
     for (i, one) in raw.iter().enumerate() {
+        if let Some(r) = crate::autorun::forbidden_fixes::forbidden_in(one) {
+            return (400, format!("action {}: {r}", i + 1));
+        }
         match serde_json::from_value::<crate::browser::actions::Action>(one.clone()) {
             Ok(a) => actions.push(a),
             Err(e) => {
@@ -6456,6 +6670,9 @@ async fn autorun_component_save(
         Ok(v) => v,
         Err(e) => return (400, format!("that is not readable JSON: {e}. Expected {SHAPE}.")),
     };
+    if let Some(r) = v.get("actions").and_then(crate::autorun::forbidden_fixes::forbidden_in) {
+        return (400, r);
+    }
     let draft: Component = match serde_json::from_value(v.clone()) {
         Ok(c) => c,
         Err(e) => return (400, format!("that is not a component: {e}. Expected {SHAPE}.")),
@@ -7638,7 +7855,7 @@ async fn try_action<D: crate::browser::cdp::Driver>(
     } else {
         page_address(d).await.0
     };
-    let step = crate::autorun::StepScript { step_number: 0, actions: vec![action.clone()], unchecked: None, cleanup: false };
+    let step = crate::autorun::StepScript { step_number: 0, actions: vec![action.clone()], unchecked: None, cleanup: false, because: Vec::new() };
     // A try fails on a request the application refused: the assistant learns
     // the reason now, not from a wait that times out later.
     // A discovery's `noted` carries its last action that changed the page
@@ -7745,6 +7962,16 @@ async fn try_action<D: crate::browser::cdp::Driver>(
     Ok(Tried { outcome, dialog: run.dialog, steps, answered })
 }
 
+/// Before a replay or a failures answer: a case whose divergence waits for a
+/// rewrite that has since been saved in Azure DevOps runs again (read only;
+/// nothing when signed out).
+async fn release_rewritten_cases(ctx: &BridgeContext, client: Option<&crate::ado::AdoClient>) {
+    let (Some(client), Ok(root)) = (client, autorun_root()) else {
+        return;
+    };
+    crate::commands::autorun_divergence::refresh_rewritten(client, &root, &ctx.org, &ctx.project, None).await;
+}
+
 /// A run's failed cases, as text an assistant can act on - and, when it
 /// must not touch the script at all, the reason why.
 fn autorun_failures(ctx: &BridgeContext, target: &str) -> (u16, String) {
@@ -7800,8 +8027,30 @@ fn autorun_failures(ctx: &BridgeContext, target: &str) -> (u16, String) {
     // expands. A file that does not read leaves those actions named by
     // their component only.
     let components = crate::autorun::components::load_components(&root, &ctx.org, &ctx.project).unwrap_or_default();
-    let said = crate::autorun::failures::describe_failures_in(Some(&root), &run, &scripts, &components);
+    let mut said = crate::autorun::failures::describe_failures_in(Some(&root), &run, &scripts, &components);
+    // The divergences reported for the run's failed or blocked cases: what
+    // a person has yet to rule on, what waits for a repair, what was ruled.
+    let stopped: Vec<i32> =
+        run.cases.iter().filter(|c| crate::autorun::failures::is_failed(c)).map(|c| c.case_id).collect();
+    if let Ok(list) = crate::autorun::divergences::load(&root, &ctx.org, &ctx.project) {
+        if let Some(section) =
+            crate::autorun::divergences::failures_section(&list, &stopped, crate::autorun::sessions::now_ms())
+        {
+            said.push_str("\n\n");
+            said.push_str(&section);
+        }
+    }
+    // The bounds of a repair end the answer whenever a case failed or was
+    // Blocked, so an assistant that reads only this still sees them.
+    let bounds = if said.starts_with("no failed case") {
+        None
+    } else {
+        Some(format!("\n\n{}", crate::autorun::failures::REPAIR_BOUNDS))
+    };
     if case_id.is_some() || q(target, "run_id").is_some() {
+        if let Some(b) = &bounds {
+            said.push_str(b);
+        }
         return (200, said);
     }
     // Asked of no case and no run: say which run that was, and name the
@@ -7816,6 +8065,9 @@ fn autorun_failures(ctx: &BridgeContext, target: &str) -> (u16, String) {
         out.push_str("\n\n");
         out.push_str(&others);
     }
+    if let Some(b) = &bounds {
+        out.push_str(b);
+    }
     (200, out)
 }
 
@@ -7826,7 +8078,7 @@ fn autorun_failures(ctx: &BridgeContext, target: &str) -> (u16, String) {
 /// default) or "api", for one building API templates. Both read the same
 /// list - one per project.
 fn autorun_quirk(ctx: &BridgeContext, body: &str) -> (u16, String) {
-    use crate::autorun::quirks::{record_quirk, Recorded, FROM_API, FROM_AUTORUN};
+    use crate::autorun::quirks::{record_quirk_classed, QuirkClass, Recorded, FROM_API, FROM_AUTORUN};
     let text = match body_field(body, "text", "{ \"text\": \"one line about this application\" }") {
         Ok(serde_json::Value::String(s)) => s,
         Ok(_) => return (400, "\"text\" is one line of text".to_string()),
@@ -7838,6 +8090,14 @@ fn autorun_quirk(ctx: &BridgeContext, body: &str) -> (u16, String) {
         Some(serde_json::Value::String(s)) if s == FROM_AUTORUN => FROM_AUTORUN,
         Some(serde_json::Value::String(s)) if s == FROM_API => FROM_API,
         Some(_) => return (400, format!("\"from\" is \"{FROM_AUTORUN}\" or \"{FROM_API}\"")),
+    };
+    let class = match v.get("class") {
+        None | Some(serde_json::Value::Null) => None,
+        Some(serde_json::Value::String(s)) => match QuirkClass::parse(s) {
+            Some(c) => Some(c),
+            None => return (400, QUIRK_CLASS_REFUSED.to_string()),
+        },
+        Some(_) => return (400, QUIRK_CLASS_REFUSED.to_string()),
     };
     // The cases and steps it is about, when the assistant names them -
     // each step checked against the newest run of its case, so a note can
@@ -7871,7 +8131,7 @@ fn autorun_quirk(ctx: &BridgeContext, body: &str) -> (u16, String) {
             Err(why) => return (400, why),
         }
     }
-    match record_quirk(
+    match record_quirk_classed(
         &root,
         &ctx.org,
         &ctx.project,
@@ -7879,14 +8139,34 @@ fn autorun_quirk(ctx: &BridgeContext, body: &str) -> (u16, String) {
         "assistant",
         from,
         sources,
+        class,
         crate::autorun::sessions::now_ms(),
     ) {
-        Ok(Recorded::Added(id)) => (200, format!("recorded as {id}")),
-        Ok(Recorded::AlreadyKnown(id)) => (200, format!("already known, as {id}")),
-        Ok(Recorded::Reactivated(id, reason)) => (200, reactivated_reply(&id, reason.as_deref())),
+        Ok((recorded, kept)) => {
+            let mut answer = match &recorded {
+                Recorded::Added(id) => format!("recorded as {id}"),
+                Recorded::AlreadyKnown(id) => format!("already known, as {id}"),
+                Recorded::Reactivated(id, reason) => reactivated_reply(id, reason.as_deref()),
+            };
+            if let (Some(asked), Some(kept)) = (class, kept) {
+                if !matches!(recorded, Recorded::Added(_)) && asked != kept {
+                    answer.push_str(&format!(" (kept its class: {})", kept.label()));
+                }
+            }
+            if kept == Some(QuirkClass::ProductBug) {
+                answer.push_str(PRODUCT_BUG_ANSWER);
+            }
+            (200, answer)
+        }
         Err(why) => (400, why),
     }
 }
+
+/// Said when a quirk is sent a `class` that is not one of the three.
+const QUIRK_CLASS_REFUSED: &str = "\"class\" is \"app quirk\", \"environment flake\" or \"product bug\"";
+
+/// Added to the answer for a product bug.
+const PRODUCT_BUG_ANSWER: &str = " A product bug is shown on every result of the cases it names and at the top of the run report: tell the person, never script around it.";
 
 /// Remember, or take out, one rule the application enforced in an area -
 /// the words its page showed after an action it refused - as the
@@ -8087,6 +8367,100 @@ fn autorun_defect(body: &str) -> (u16, String) {
         m.case_id, mark.step_number
     ));
     (200, serde_json::to_string(&mark).unwrap_or_default())
+}
+
+/// `POST /autorun-divergence`: where a test case and the live application
+/// disagree, reported instead of fitting a check to the page. The case is
+/// read from Azure DevOps and must hold the words the assistant quotes
+/// (`case_says`), at a step it has; the divergence is stored for a person
+/// to rule on (`divergences::report_in`). Never touches a script.
+async fn autorun_divergence(ctx: &BridgeContext, client: Option<&crate::ado::AdoClient>, body: &str) -> (u16, String) {
+    use crate::autorun::divergences::{self, Reported};
+    #[derive(serde::Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct DivergenceBody {
+        case_id: i32,
+        step: i32,
+        case_says: String,
+        app_shows: String,
+        kind: divergences::DivergenceKind,
+    }
+    let shape = "{ \"case_id\": 147556, \"step\": 2, \"case_says\": \"exactly 4 levels\", \"app_shows\": \"6 levels\", \"kind\": \"data\" }";
+    let b: DivergenceBody = match serde_json::from_str(body) {
+        Ok(b) => b,
+        Err(e) => {
+            return (
+                400,
+                format!("that is not a divergence: {e}. Expected {shape} - kind is data, app or wording."),
+            )
+        }
+    };
+    let root = match autorun_root() {
+        Ok(r) => r,
+        Err(refused) => return refused,
+    };
+    let Some(client) = client else {
+        return (
+            503,
+            "sign in to Test Case Manager first - a divergence is checked against its test case".to_string(),
+        );
+    };
+    let case = match client
+        .get_test_cases_by_ids(&ctx.org, &[b.case_id], ctx.module_ref.as_deref(), ctx.preconditions_ref.as_deref())
+        .await
+    {
+        Ok(cases) => cases.into_iter().find(|c| c.id == b.case_id),
+        Err(crate::ado::AdoError::NotFound) => None,
+        Err(e) => {
+            // The raw error goes to the log; the reader gets the sentence
+            // that names no address (CLAUDE.md, user-facing errors).
+            crate::applog::warn(format!("Auto Run: a divergence's test case could not be read: {e:?}"));
+            return (502, format!("Azure DevOps error: {}", e.user_text()));
+        }
+    };
+    let Some(case) = case else {
+        return (400, format!("case {} is not a test case in this organization", b.case_id));
+    };
+    if b.step < 1 || b.step as usize > case.steps.len() {
+        return (400, format!("case {} has {} steps - \"step\" is one of them", b.case_id, case.steps.len()));
+    }
+    if !crate::autorun::case_text::CaseText::from_case(&case).holds(&b.case_says) {
+        return (
+            400,
+            format!(
+                "\"case_says\" is the case's own words, quoted from step {}, another expected result or the preconditions - case {} does not hold \"{}\"",
+                b.step, b.case_id, b.case_says
+            ),
+        );
+    }
+    let (case_says, app_shows) =
+        (crate::autorun::defects::scrub_note(&b.case_says), crate::autorun::defects::scrub_note(&b.app_shows));
+    let now = crate::autorun::sessions::now_ms();
+    let mut refused: Option<String> = None;
+    let reported = divergences::update(&root, &ctx.org, &ctx.project, |list| {
+        let r = divergences::report_in(list, b.case_id, b.step, &case_says, &app_shows, b.kind, now)
+            .inspect_err(|why| refused = Some(why.clone()))?;
+        let id = match &r {
+            Reported::New(id) | Reported::Updated(id) => id,
+        };
+        let stored = list.iter().find(|d| &d.id == id).cloned().expect("the divergence just reported");
+        Ok((stored, matches!(r, Reported::Updated(_))))
+    });
+    match reported {
+        Ok((stored, updated)) => {
+            crate::applog::info(format!(
+                "AI reported a {} divergence on case {} step {}",
+                stored.kind.word(),
+                b.case_id,
+                b.step
+            ));
+            (200, divergences::tool_answer(b.case_id, &stored, updated))
+        }
+        // A rule's refusal is the assistant's to read; a file that could
+        // not be read or written is the machine's.
+        Err(e) if refused.is_some() => (400, e),
+        Err(e) => (500, e),
+    }
 }
 
 /// What `set_autorun_order` says after the order it saved: with
@@ -8999,6 +9373,16 @@ fn parse_save_request(
             }
         }
     }
+    if let serde_json::Value::Array(items) = &scripts_value {
+        for script in items {
+            if let Some(r) = script.get("steps").and_then(crate::autorun::forbidden_fixes::forbidden_in) {
+                return Err(match script.get("case_id") {
+                    Some(id) => format!("case {id}: {r}"),
+                    None => r,
+                });
+            }
+        }
+    }
     let mut scripts: Vec<crate::autorun::CaseScript> = serde_json::from_value(scripts_value).map_err(bad_scripts)?;
     // The same declaration sent twice (nested and at the top) is one; two
     // DIFFERENT declarations for one case are refused, since the gate
@@ -9271,6 +9655,12 @@ async fn save_autorun_scripts(
     // for a new script (all of them), its declared steps for a repair. An
     // unchanged resave is not listed: it was checked when it was saved.
     let mut seen_scope: Vec<(i32, Option<Vec<i32>>)> = Vec::new();
+    // The saved script of each repair, for the check floor and the values a
+    // repair may not move away from the case (`case_values::check_repair_values`).
+    let mut repair_olds: Vec<(i32, crate::autorun::CaseScript)> = Vec::new();
+    // One line per check this save's repairs give up, said after the save's
+    // first line (outside the notes cap).
+    let mut given_up_lines: Vec<String> = Vec::new();
     // Whether scripts saved before they were stamped count here, read once.
     let legacy = crate::autorun::seen_check::legacy_scripts_count(&root, &ctx.org, &ctx.project);
     // Every case's refusal from this gate, said together: a bundle with two
@@ -9280,6 +9670,8 @@ async fn save_autorun_scripts(
     // after the save's first line. The flows name the stages, read only
     // when a precondition edit is declared; without them the ids are said.
     let mut precondition_lines: Vec<String> = Vec::new();
+    // Cases kept unchecked because a divergence of theirs waits for a ruling, said after those.
+    let mut unchecked_lines: Vec<String> = Vec::new();
     let flows = if edits.iter().any(|e| e.precondition.is_some()) {
         crate::api_templates::flow_store::list(&root, &ctx.org, &ctx.project).unwrap_or_default()
     } else {
@@ -9291,6 +9683,8 @@ async fn save_autorun_scripts(
             Err(e) => return (500, e),
         };
         let declared = edits.iter().find(|e| e.case_id == sent.case_id);
+        // An unchanged re-send never lowers the floor it was stored with.
+        let mut stored_floor: u32 = 0;
         let mut script = sent.clone();
         // A new script is checked whole; an unchanged one and a repair keep
         // steps checked by an earlier save, so they vouch as it did.
@@ -9299,7 +9693,14 @@ async fn save_autorun_scripts(
             .is_none_or(|old| crate::autorun::seen_check::vouch_carries_over(old, &ctx.org, &ctx.project, legacy));
         script.organization = Some(ctx.org.trim().to_string());
         script.project = Some(ctx.project.trim().to_string());
-        script.checked = vouched;
+        let may_check = crate::autorun::proven::may_be_checked(&root, &ctx.org, &ctx.project, sent.case_id);
+        script.checked = vouched && may_check;
+        if vouched && !may_check {
+            unchecked_lines.push(format!(
+                "case {}: not marked checked: a divergence of the case waits for a person's ruling, and the script counts as checked once a run passes after the ruling",
+                sent.case_id
+            ));
+        }
         match existing {
             // A re-send that changes nothing is not a repair. The count
             // is of changes made without a person looking, so an
@@ -9318,6 +9719,8 @@ async fn save_autorun_scripts(
                 script.repairs = old.repairs;
                 script.last_repair = old.last_repair.clone();
                 script.precondition_repairs = old.precondition_repairs.clone();
+                script.given_up = old.given_up.clone();
+                stored_floor = old.checks;
                 let marks_changed = old.changes != sent.changes
                     || old.needs_unchanged != sent.needs_unchanged
                     || old.needs_state != sent.needs_state;
@@ -9345,6 +9748,26 @@ async fn save_autorun_scripts(
                     continue;
                 }
                 script.repairs = old.repairs.saturating_add(1);
+                // What was given up before stays; this repair's own entries
+                // are added from its edit, never from what was sent.
+                script.given_up = old.given_up.clone();
+                if let Some(e) = declared {
+                    let at = crate::applog::iso_stamp();
+                    for g in &e.gives_up {
+                        let entry = crate::autorun::GivenUp {
+                            step: g.step,
+                            kind: g.kind.trim().to_lowercase(),
+                            why: g.why.trim().to_string(),
+                            at: at.clone(),
+                        };
+                        given_up_lines.push(format!(
+                            "case {}: check given up: step {} {} - {}. The person sees it on the case; name it in your report.",
+                            script.case_id, entry.step, entry.kind, entry.why
+                        ));
+                        script.given_up.push(entry);
+                    }
+                }
+                repair_olds.push((sent.case_id, old.clone()));
                 // `check_edits` above only returns Ok when a real change
                 // was fully declared, so `declared` is always Some here -
                 // there is no path where a script actually differs from
@@ -9405,10 +9828,12 @@ async fn save_autorun_scripts(
                 script.repairs = 0;
                 script.last_repair = None;
                 script.precondition_repairs = Vec::new();
+                script.given_up = Vec::new();
                 seen_scope.push((sent.case_id, None));
                 lines.push(format!("case {} (new)", script.case_id));
             }
         }
+        script.checks = (crate::autorun::case_values::check_count(&script) as u32).max(stored_floor);
         prepared.push(script);
     }
     if !refused.is_empty() {
@@ -9470,6 +9895,64 @@ async fn save_autorun_scripts(
         return (400, short.join("\n"));
     }
 
+    // The environment's test name prefix, for the note on a record a script
+    // relies on without declaring it, and for the values a check may carry
+    // that the case never held.
+    let test_prefix = crate::environments::active(&root)
+        .map(|e| e.test_prefix)
+        .unwrap_or_else(|_| crate::environments::default_test_prefix());
+    // The project's quirks, for the class a repair's quirk will actually have
+    // and whether it fits (a file that cannot be read is judged as empty; the
+    // record itself says what it could not do).
+    let quirks_now = crate::autorun::quirks::load_quirks(&root, &ctx.org, &ctx.project).unwrap_or_default();
+
+    // Gate 2b: a new or changed step's check values come from the case. A
+    // value the case does not hold needs a "because"; a count the case
+    // states differently is refused. Unchanged steps are not compared.
+    let mut value_refusals: Vec<String> = Vec::new();
+    let mut value_sources: Vec<(i32, Vec<crate::autorun::case_values::SourcedValue>)> = Vec::new();
+    let mut value_notes: Vec<String> = Vec::new();
+    for (case_id, only) in &seen_scope {
+        let (Some(script), Some(case)) =
+            (prepared.iter().find(|s| s.case_id == *case_id), cases.iter().find(|c| c.id == *case_id))
+        else {
+            continue;
+        };
+        let text = crate::autorun::case_text::CaseText::from_case(case);
+        // A repair also keeps its checks and the case's values.
+        if let (Some((_, old)), Some(edit)) =
+            (repair_olds.iter().find(|(id, _)| id == case_id), edits.iter().find(|e| e.case_id == *case_id))
+        {
+            value_refusals.extend(
+                crate::autorun::case_values::check_repair_values(old, script, &text, &edit.steps, &edit.gives_up, &test_prefix)
+                    .into_iter()
+                    .map(|r| format!("case {case_id}: {r}")),
+            );
+            // And it never lets the page decide whether a failure counts.
+            value_refusals.extend(
+                crate::autorun::forbidden_fixes::check_repair_absorbs_with(old, script, Some(edit), &quirks_now)
+                    .into_iter()
+                    .map(|r| format!("case {case_id}: {r}")),
+            );
+        }
+        // A repair holds only the values new or changed in its steps.
+        let old_script = repair_olds.iter().find(|(id, _)| id == case_id).map(|(_, old)| old);
+        let found = crate::autorun::case_values::check_case_values_against(
+            script,
+            &text,
+            only.as_deref(),
+            &test_prefix,
+            old_script,
+        );
+        value_refusals.extend(found.refusals.into_iter().map(|r| format!("case {case_id}: {r}")));
+        value_sources.push((*case_id, found.sourced));
+        value_notes.extend(found.notes.into_iter().map(|n| format!("case {case_id}: note: {n}")));
+    }
+    let value_listed = crate::autorun::case_values::value_source_lines(&value_sources);
+    if !value_refusals.is_empty() {
+        return (400, value_refusals.join("\n"));
+    }
+
     // Gate 3: every locator a new or changed step names was seen on the
     // live app (`seen_check`), so no script is saved against a guess.
     // The components are read only when a checked script uses one, so a
@@ -9482,11 +9965,6 @@ async fn save_autorun_scripts(
     // The saved scripts, read once for every check of this save.
     let saved_scripts =
         if seen_scope.is_empty() { Vec::new() } else { crate::autorun::store::list_scripts(&root) };
-    // The environment's test name prefix, for the note on a record a script
-    // relies on without declaring it.
-    let test_prefix = crate::environments::active(&root)
-        .map(|e| e.test_prefix)
-        .unwrap_or_else(|_| crate::environments::default_test_prefix());
     // The project's own save words, for what counts as saving a record.
     let save_words = crate::autorun::nav::load_nav(&root, &ctx.org, &ctx.project).map(|n| n.save_words).unwrap_or_default();
     let check_and_save = || -> Result<Vec<String>, SaveRefusal> {
@@ -9551,6 +10029,8 @@ async fn save_autorun_scripts(
                     .chain(crate::autorun::preconditions::undeclared_record_note(script, only.as_deref(), &test_prefix, &save_words));
                 notes.extend(sentences.map(|n| format!("case {case_id}: note: {n}")));
             }
+            // The value check's notes count toward the same cap.
+            notes.extend(value_notes.iter().cloned());
             if notes.len() > MAX_SAVE_NOTES {
                 let more = notes.len() - MAX_SAVE_NOTES;
                 notes.truncate(MAX_SAVE_NOTES);
@@ -9631,13 +10111,23 @@ async fn save_autorun_scripts(
         Err(refused) => return answer(refused.said()),
     };
     if dry_run {
-        let said = std::iter::once(dry_run_answer(prepared.len(), &lines)).chain(precondition_lines).chain(notes);
+        let blocked = blocked_by_divergence_lines(&root, ctx, &prepared);
+        let said = std::iter::once(dry_run_answer(prepared.len(), &lines))
+            .chain(precondition_lines)
+            .chain(unchecked_lines)
+            .chain(given_up_lines)
+            .chain(value_listed)
+            .chain(notes)
+            .chain(blocked);
         return (200, said.collect::<Vec<_>>().join("\n"));
     }
     crate::applog::info(format!("AI saved {} auto-run script(s)", prepared.len()));
 
     let mut report = vec![format!("saved {} script(s): {}", prepared.len(), lines.join(", "))];
     report.extend(precondition_lines);
+    report.extend(unchecked_lines);
+    report.extend(given_up_lines);
+    report.extend(value_listed);
     report.extend(notes);
     for (case_id, step) in &repaired_marks {
         match crate::autorun::store::clear_suspected_defect_at(&root, *case_id, *step) {
@@ -9657,6 +10147,48 @@ async fn save_autorun_scripts(
             )),
         }
     }
+    // A repair declared for the steps of a case the person is rewriting
+    // closes the divergence at those steps: the script now follows the
+    // rewritten case. A failure to close is said, never a refusal: the
+    // scripts are already down.
+    for edit in edits.iter().filter(|e| !e.steps.is_empty()) {
+        let now = crate::autorun::sessions::now_ms();
+        // A step the rewrite renumbered is found by its action text.
+        let text = cases.iter().find(|c| c.id == edit.case_id).map(crate::autorun::case_text::CaseText::from_case);
+        let closed = crate::autorun::divergences::update(&root, &ctx.org, &ctx.project, |list| {
+            Ok(crate::autorun::divergences::close_repaired_with(list, edit.case_id, &edit.steps, now, &|step| {
+                text.as_ref().and_then(|t| t.step_action_folded(step))
+            }))
+        });
+        match closed {
+            Ok(steps) => report.extend(steps.into_iter().map(|s| {
+                format!(
+                    "case {}: the divergence at step {s} is closed - the script now follows the rewritten case",
+                    edit.case_id
+                )
+            })),
+            Err(e) => {
+                // Said only when something was waiting on this repair.
+                let waiting = crate::autorun::divergences::load(&root, &ctx.org, &ctx.project)
+                    .map(|l| {
+                        l.iter().any(|d| {
+                            d.case_id == edit.case_id
+                                && d.status == crate::autorun::divergences::DivergenceStatus::AwaitingRepair
+                                && edit.steps.contains(&d.step)
+                        })
+                    })
+                    .unwrap_or(false);
+                if waiting {
+                    let at = edit.steps.iter().map(|s| s.to_string()).collect::<Vec<_>>().join(", ");
+                    report.push(format!(
+                        "case {}: the divergence at step {at} could not be closed: {e}",
+                        edit.case_id
+                    ));
+                }
+            }
+        }
+    }
+    report.extend(blocked_by_divergence_lines(&root, ctx, &prepared));
     // The quirks come last, after the scripts are safely down: a quirk
     // the list will not take (too long, or the fortieth) is worth saying
     // so about, but it is not worth losing a good repair over.
@@ -9668,7 +10200,7 @@ async fn save_autorun_scripts(
         };
         let sources: Vec<crate::autorun::quirks::QuirkSource> =
             repair_sources.iter().filter(|s| s.case_id == edit.case_id).cloned().collect();
-        match crate::autorun::quirks::record_quirk(
+        match crate::autorun::quirks::record_quirk_classed(
             &root,
             &ctx.org,
             &ctx.project,
@@ -9676,8 +10208,11 @@ async fn save_autorun_scripts(
             "assistant",
             crate::autorun::quirks::FROM_AUTORUN,
             sources,
+            edit.quirk_class,
             crate::autorun::sessions::now_ms(),
-        ) {
+        )
+        .map(|(r, _)| r)
+        {
             Ok(crate::autorun::quirks::Recorded::Added(id)) => {
                 report.push(format!("quirk recorded as {id}: {}", text.trim()))
             }
@@ -9691,6 +10226,30 @@ async fn save_autorun_scripts(
         }
     }
     answer((200, report.join("\n")))
+}
+
+/// One line for each saved case that a divergence keeps from running: its
+/// runs are Blocked until a person rules (or the repair lands). Read only;
+/// a divergences file that cannot be read says nothing.
+fn blocked_by_divergence_lines(
+    root: &std::path::Path,
+    ctx: &BridgeContext,
+    saved: &[crate::autorun::CaseScript],
+) -> Vec<String> {
+    let Ok(list) = crate::autorun::divergences::load(root, &ctx.org, &ctx.project) else {
+        return Vec::new();
+    };
+    saved
+        .iter()
+        .filter_map(|s| {
+            let d = crate::autorun::divergences::blocking(&list, s.case_id)?;
+            Some(format!(
+                "case {}: {} - runs are Blocked until then",
+                s.case_id,
+                crate::autorun::divergences::run_sentence(d)
+            ))
+        })
+        .collect()
 }
 
 /// The most notes one save answers with before saying how many more.

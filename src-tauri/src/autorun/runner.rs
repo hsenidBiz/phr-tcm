@@ -1048,7 +1048,7 @@ pub async fn run_step_in_run<D: Driver>(
         all
     });
     let areas = merged.as_ref().or(run.areas);
-    let expanded_step = StepScript { step_number: step.step_number, actions, unchecked: step.unchecked.clone(), cleanup: step.cleanup };
+    let expanded_step = StepScript { step_number: step.step_number, actions, unchecked: step.unchecked.clone(), cleanup: step.cleanup, because: Vec::new() };
     run.components = uses;
     let mut out =
         run_expanded(d, root, organization, project, &expanded_step, timing, account, lease, route, area, areas, run)

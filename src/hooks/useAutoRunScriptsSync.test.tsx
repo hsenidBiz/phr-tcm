@@ -168,3 +168,33 @@ test("the case card's setup view is read again with the script, for the cases na
   });
   await screen.findByText("setup 2 new");
 });
+
+test("a scripts-changed event also reads the divergences again", async () => {
+  mockIPC(() => null, { shouldMockEvents: true });
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  let fetches = 0;
+  function Divs() {
+    useQuery({
+      queryKey: ["autorun-divergences", "acme", "Web"],
+      queryFn: async () => {
+        fetches += 1;
+        return [];
+      },
+    });
+    return null;
+  }
+  function Both() {
+    useAutoRunScriptsSync();
+    return <Divs />;
+  }
+  render(
+    <QueryClientProvider client={qc}>
+      <Both />
+    </QueryClientProvider>,
+  );
+  await waitFor(() => expect(fetches).toBe(1));
+  await act(async () => {
+    await emit("autorun-scripts-changed", { case_ids: [7] });
+  });
+  await waitFor(() => expect(fetches).toBe(2));
+});

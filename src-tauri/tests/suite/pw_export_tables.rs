@@ -37,6 +37,7 @@ fn spec_with(script: &CaseScript, signin: &[RecipeStep]) -> Result<String, Strin
         area_clicks_by_name: &BTreeMap::new(),
         step_texts: &BTreeMap::new(),
         origins: &origins(),
+        fixme: None,
     })
     .map_err(|e| e.0)
 }

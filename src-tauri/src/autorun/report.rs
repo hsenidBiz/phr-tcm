@@ -18,6 +18,7 @@
 
 use super::components::{ran_actions, ComponentFile, Ran};
 use super::replay::{MODULE_STEP, SIGN_IN_STEP};
+use super::divergences::{Divergence, DivergenceStatus, Ruling};
 use super::{CaseRecord, CaseScript, LocalRun, ResetRecord, StepRecord};
 use crate::browser::actions::{Action, ActionOutcome, DialogAnswer};
 use crate::html_escape::esc_attr;
@@ -488,6 +489,7 @@ fn case_section(
     components: &ComponentFile,
     exists: &dyn Fn(&str) -> bool,
     size_of: &dyn Fn(&str) -> Option<u64>,
+    divergences: &[&Divergence],
 ) -> String {
     let b = case_bucket(case);
     let open = if matches!(b, "Failed" | "Blocked") { " open" } else { "" };
@@ -517,6 +519,12 @@ fn case_section(
     // Something the run skipped for this case, and the case went on.
     if let Some(notice) = &case.notice {
         h.push_str(&format!("<p><strong>Notice:</strong> {}</p>", esc_attr(notice)));
+    }
+    for bug in &case.product_bugs {
+        h.push_str(&format!("<p><strong>Product bug:</strong> {}</p>", esc_attr(bug)));
+    }
+    for d in divergences {
+        h.push_str(&format!("<p><strong>Divergence:</strong> {}</p>", esc_attr(&divergence_words(d))));
     }
     // A clean-up that failed, whatever the case's own verdict.
     if let Some(line) = case.cleanup_line() {
@@ -579,6 +587,81 @@ fn resets_before(run: &LocalRun, case_id: i32) -> Vec<String> {
     run.resets.iter().filter(|r| r.before_case_id == case_id).flat_map(reset_lines).map(|l| esc_attr(&l)).collect()
 }
 
+/// How many product bugs the top list names before it says "and N more".
+pub const MAX_BUG_LINES: usize = 10;
+
+/// How long after its ruling a divergence still shows in a run's report.
+const RULED_SHOWN_MS: i64 = 7 * 24 * 60 * 60 * 1000;
+
+/// What the report says of one divergence, unescaped.
+fn divergence_words(d: &Divergence) -> String {
+    let status = match (d.status, d.ruling) {
+        (DivergenceStatus::Open, _) => "needs a ruling",
+        (DivergenceStatus::AwaitingRepair, _) => "waits for a repair",
+        (DivergenceStatus::Ruled, Some(Ruling::DataFixed)) => "ruled: the data was fixed",
+        (DivergenceStatus::Ruled, Some(Ruling::Rewrite)) => "ruled: the case is being rewritten",
+        (DivergenceStatus::Ruled, _) => "ruled: the case stands",
+    };
+    format!(
+        "step {}: the case says \"{}\", the app shows \"{}\" ({}, {status})",
+        d.step,
+        d.case_says,
+        d.app_shows,
+        d.kind.word()
+    )
+}
+
+/// The divergences of `case_id` the report shows: open or awaiting a
+/// repair, or ruled in the week before the run started or after.
+fn shown_divergences<'a>(run: &LocalRun, extras: &'a ReportExtras, case_id: i32) -> Vec<&'a Divergence> {
+    let started: i64 = run.started_at.trim().parse().unwrap_or(0);
+    extras
+        .divergences
+        .iter()
+        .filter(|d| d.case_id == case_id)
+        .filter(|d| match d.status {
+            DivergenceStatus::Open | DivergenceStatus::AwaitingRepair => true,
+            DivergenceStatus::Ruled => {
+                d.ruled_at.as_deref().and_then(|s| s.parse::<i64>().ok()).is_some_and(|at| at >= started - RULED_SHOWN_MS)
+            }
+        })
+        .collect()
+}
+
+/// The top section: each distinct product bug the run's cases work around
+/// and the cases it affects, at most `MAX_BUG_LINES` lines. Empty when no
+/// case carries one.
+fn product_bugs_section(run: &LocalRun) -> String {
+    let mut bugs: Vec<(&str, Vec<i32>)> = Vec::new();
+    for case in &run.cases {
+        for bug in &case.product_bugs {
+            match bugs.iter_mut().find(|(t, _)| *t == bug.as_str()) {
+                Some((_, ids)) => ids.push(case.case_id),
+                None => bugs.push((bug.as_str(), vec![case.case_id])),
+            }
+        }
+    }
+    if bugs.is_empty() {
+        return String::new();
+    }
+    let mut h = String::from("<h2>Product bugs worked around</h2><ul class=\"bugs\">");
+    for (text, ids) in bugs.iter().take(MAX_BUG_LINES) {
+        let cases: Vec<String> = ids.iter().map(|id| format!("#{id}")).collect();
+        h.push_str(&format!("<li>{} - cases {}</li>", esc_attr(text), cases.join(", ")));
+    }
+    if bugs.len() > MAX_BUG_LINES {
+        h.push_str(&format!("<li>and {} more</li>", bugs.len() - MAX_BUG_LINES));
+    }
+    h.push_str("</ul>");
+    h
+}
+
+/// What the report shows beyond the run itself.
+pub struct ReportExtras<'a> {
+    /// The project's reported divergences (`divergences::load`).
+    pub divergences: &'a [Divergence],
+}
+
 /// A bucket as a CSS class suffix.
 fn css_key(bucket: &str) -> &'static str {
     match bucket {
@@ -610,7 +693,7 @@ h3{font-size:15px;margin:0 0 6px}dl{display:grid;grid-template-columns:max-conte
 dt{color:#59636e}dd{margin:0}table{border-collapse:collapse;width:100%}th,td{border:1px solid #d0d7de;padding:4px 8px;text-align:left;vertical-align:top}\
 th{background:#f6f8fa}.id{font-family:Consolas,monospace;color:#59636e}.b-passed{color:#1a7f37;font-weight:600}\
 .b-failed{color:#cf222e;font-weight:600}.b-blocked{color:#9a6700;font-weight:600}.b-notrun{color:#59636e;font-weight:600}\
-.took{color:#59636e;font-size:12px;font-weight:400}.retried{color:#9a6700;font-size:12px;font-weight:600;border:1px solid #d4a72c;border-radius:10px;padding:0 6px;margin-left:6px}\
+.took{color:#59636e;font-size:12px;font-weight:400}.bugs{color:#9a6700;font-weight:600}.retried{color:#9a6700;font-size:12px;font-weight:600;border:1px solid #d4a72c;border-radius:10px;padding:0 6px;margin-left:6px}\
 .case{border:1px solid #d0d7de;border-radius:6px;padding:8px 12px;margin:0 0 12px}.case>summary{cursor:pointer;font-weight:600;font-size:15px}\
 .note{color:#59636e;font-style:italic}.reset{color:#9a6700;font-weight:600}.batch{text-align:left;font-weight:600}.step{margin:10px 0 0}h4{font-size:14px;margin:0 0 4px}\
 .actions{list-style:none;margin:0 0 4px;padding:0}.actions li{margin:0 0 2px}.ok{color:#1a7f37}.bad{color:#cf222e}\
@@ -662,6 +745,20 @@ pub fn build_with_components(
     exists: &dyn Fn(&str) -> bool,
     size_of: &dyn Fn(&str) -> Option<u64>,
 ) -> String {
+    build_with_extras(run, scripts, components, ran_at, exists, size_of, &ReportExtras { divergences: &[] })
+}
+
+/// [`build_with_components`], with the product bugs listed on top (they
+/// ride on the run's cases) and each case's divergences from `extras`.
+pub fn build_with_extras(
+    run: &LocalRun,
+    scripts: &[CaseScript],
+    components: &ComponentFile,
+    ran_at: &str,
+    exists: &dyn Fn(&str) -> bool,
+    size_of: &dyn Fn(&str) -> Option<u64>,
+    extras: &ReportExtras,
+) -> String {
     let script_for = |id: i32| scripts.iter().find(|s| s.case_id == id);
     let when = if ran_at.trim().is_empty() { utc_time(&run.started_at) } else { ran_at.trim().to_string() };
     let mode = if run.mode == "unattended" { "Unattended" } else { "Supervised" };
@@ -691,6 +788,7 @@ pub fn build_with_components(
         None => h.push_str("<dt>Azure DevOps</dt><dd>Not sent - these results are on this machine only</dd>"),
     }
     h.push_str("</dl>");
+    h.push_str(&product_bugs_section(run));
 
     let c = counts(run);
     h.push_str("<h2>Summary</h2><table class=\"summary\"><thead><tr>");
@@ -740,7 +838,14 @@ pub fn build_with_components(
             for line in resets_before(run, case.case_id) {
                 h.push_str(&format!("<p class=\"reset\">{line}</p>"));
             }
-            h.push_str(&case_section(case, script_for(case.case_id), components, exists, size_of));
+            h.push_str(&case_section(
+                case,
+                script_for(case.case_id),
+                components,
+                exists,
+                size_of,
+                &shown_divergences(run, extras, case.case_id),
+            ));
         }
     }
 
