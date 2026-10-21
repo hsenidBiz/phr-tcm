@@ -7673,7 +7673,7 @@ async fn try_action<D: crate::browser::cdp::Driver>(
     } else {
         page_address(d).await.0
     };
-    let step = crate::autorun::StepScript { step_number: 0, actions: vec![action.clone()], unchecked: None, cleanup: false };
+    let step = crate::autorun::StepScript { step_number: 0, actions: vec![action.clone()], unchecked: None, cleanup: false, because: Vec::new() };
     // A try fails on a request the application refused: the assistant learns
     // the reason now, not from a wait that times out later.
     // A discovery's `noted` carries its last action that changed the page
@@ -9606,6 +9606,39 @@ async fn save_autorun_scripts(
         return (400, short.join("\n"));
     }
 
+    // The environment's test name prefix, for the note on a record a script
+    // relies on without declaring it, and for the values a check may carry
+    // that the case never held.
+    let test_prefix = crate::environments::active(&root)
+        .map(|e| e.test_prefix)
+        .unwrap_or_else(|_| crate::environments::default_test_prefix());
+
+    // Gate 2b: a new or changed step's check values come from the case. A
+    // value the case does not hold needs a "because"; a count the case
+    // states differently is refused. Unchanged steps are not compared.
+    let mut value_refusals: Vec<String> = Vec::new();
+    let mut value_listed: Vec<String> = Vec::new();
+    let mut value_notes: Vec<String> = Vec::new();
+    for (case_id, only) in &seen_scope {
+        let (Some(script), Some(case)) =
+            (prepared.iter().find(|s| s.case_id == *case_id), cases.iter().find(|c| c.id == *case_id))
+        else {
+            continue;
+        };
+        let found = crate::autorun::case_values::check_case_values(
+            script,
+            &crate::autorun::case_text::CaseText::from_case(case),
+            only.as_deref(),
+            &test_prefix,
+        );
+        value_refusals.extend(found.refusals.into_iter().map(|r| format!("case {case_id}: {r}")));
+        value_listed.extend(found.listed.into_iter().map(|l| format!("case {case_id}: value not in the case: {l}")));
+        value_notes.extend(found.notes.into_iter().map(|n| format!("case {case_id}: note: {n}")));
+    }
+    if !value_refusals.is_empty() {
+        return (400, value_refusals.join("\n"));
+    }
+
     // Gate 3: every locator a new or changed step names was seen on the
     // live app (`seen_check`), so no script is saved against a guess.
     // The components are read only when a checked script uses one, so a
@@ -9618,11 +9651,6 @@ async fn save_autorun_scripts(
     // The saved scripts, read once for every check of this save.
     let saved_scripts =
         if seen_scope.is_empty() { Vec::new() } else { crate::autorun::store::list_scripts(&root) };
-    // The environment's test name prefix, for the note on a record a script
-    // relies on without declaring it.
-    let test_prefix = crate::environments::active(&root)
-        .map(|e| e.test_prefix)
-        .unwrap_or_else(|_| crate::environments::default_test_prefix());
     // The project's own save words, for what counts as saving a record.
     let save_words = crate::autorun::nav::load_nav(&root, &ctx.org, &ctx.project).map(|n| n.save_words).unwrap_or_default();
     let check_and_save = || -> Result<Vec<String>, SaveRefusal> {
@@ -9762,14 +9790,23 @@ async fn save_autorun_scripts(
         Some(found) => after_recording(found, said),
         None => said,
     };
-    let notes = match checked {
+    let mut notes = match checked {
         Ok(notes) => notes,
         Err(refused) => return answer(refused.said()),
     };
+    if !value_notes.is_empty() {
+        notes.extend(value_notes);
+        if notes.len() > MAX_SAVE_NOTES + 1 {
+            let more = notes.len() - MAX_SAVE_NOTES;
+            notes.truncate(MAX_SAVE_NOTES);
+            notes.push(format!("and {more} more notes"));
+        }
+    }
     if dry_run {
         let blocked = blocked_by_divergence_lines(&root, ctx, &prepared);
         let said = std::iter::once(dry_run_answer(prepared.len(), &lines))
             .chain(precondition_lines)
+            .chain(value_listed)
             .chain(notes)
             .chain(blocked);
         return (200, said.collect::<Vec<_>>().join("\n"));
@@ -9778,6 +9815,7 @@ async fn save_autorun_scripts(
 
     let mut report = vec![format!("saved {} script(s): {}", prepared.len(), lines.join(", "))];
     report.extend(precondition_lines);
+    report.extend(value_listed);
     report.extend(notes);
     for (case_id, step) in &repaired_marks {
         match crate::autorun::store::clear_suspected_defect_at(&root, *case_id, *step) {

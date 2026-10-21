@@ -121,7 +121,7 @@ fn a_navigate_inside_a_guard_is_still_an_address() {
 }
 
 fn step(actions: Vec<Action>) -> StepScript {
-    StepScript { step_number: 1, actions, unchecked: None, cleanup: false }
+    StepScript { step_number: 1, actions, unchecked: None, cleanup: false, because: Vec::new() }
 }
 
 #[tokio::test]
@@ -323,7 +323,7 @@ async fn a_banner_that_shows_up_after_within_ms_is_skipped_and_the_next_step_run
     // by then - the check after the click sees it.
     let save = action(json!({ "kind": "click", "selector": { "css": "#save" } }));
     let banner_up = action(json!({ "kind": "expect_visible", "selector": { "css": "#late" } }));
-    let next = StepScript { step_number: 2, actions: vec![save, banner_up], unchecked: None, cleanup: false };
+    let next = StepScript { step_number: 2, actions: vec![save, banner_up], unchecked: None, cleanup: false, because: Vec::new() };
     let second = run_step(&mut d, dir.path(), "Acme", "Web", &next, &quick(), &mut acc).await.unwrap();
     assert!(second[0].ok, "the next step runs as usual: {:?}", second[0]);
     assert!(second[1].ok, "the banner did show up late: {:?}", second[1]);

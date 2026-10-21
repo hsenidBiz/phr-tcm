@@ -3,6 +3,8 @@
 //!
 //! Pure: nothing here reads a file, a page or Azure DevOps.
 
+use std::collections::BTreeSet;
+
 use super::seen_check::has_phrase;
 
 /// One test case's words as plain text: title, each step's action and
@@ -56,8 +58,185 @@ impl CaseText {
     /// whole words.
     pub fn holds(&self, phrase: &str) -> bool {
         let phrase = fold(phrase);
-        !phrase.is_empty() && has_phrase(&self.all_folded(), &phrase)
+        if phrase.is_empty() {
+            return false;
+        }
+        let all = self.all_folded();
+        has_phrase(&all, &phrase) || range_members(&all).iter().any(|m| *m == phrase)
     }
+
+    /// Every number the case holds: the digit runs of its words, plus the
+    /// size of each range it spells out ("Level 1 to Level 4" holds 4).
+    pub fn case_numbers(&self) -> BTreeSet<u32> {
+        let all = self.all_folded();
+        let mut set = numbers(&all);
+        set.extend(range_sizes(&all));
+        set
+    }
+}
+
+/// Every maximal ASCII digit run whose neighbours are not alphabetic ("level
+/// 4" gives 4, "q4" gives nothing); runs over 9 digits are skipped.
+pub fn numbers(folded: &str) -> BTreeSet<u32> {
+    let chars: Vec<char> = folded.chars().collect();
+    let mut out = BTreeSet::new();
+    let mut i = 0;
+    while i < chars.len() {
+        if !chars[i].is_ascii_digit() {
+            i += 1;
+            continue;
+        }
+        let start = i;
+        while i < chars.len() && chars[i].is_ascii_digit() {
+            i += 1;
+        }
+        let before_ok = start == 0 || !chars[start - 1].is_alphabetic();
+        let after_ok = i >= chars.len() || !chars[i].is_alphabetic();
+        if before_ok && after_ok && i - start <= 9 {
+            if let Ok(n) = chars[start..i].iter().collect::<String>().parse::<u32>() {
+                out.insert(n);
+            }
+        }
+    }
+    out
+}
+
+fn is_dash(t: &str) -> bool {
+    matches!(t, "-" | "\u{2013}" | "\u{2014}")
+}
+
+/// One range the case spells out: the word, its two ends.
+fn ranges(folded: &str) -> Vec<(String, u32, u32)> {
+    let raw: Vec<&str> = folded.split_whitespace().collect();
+    let clean = |t: &str| t.trim_matches(|c: char| !c.is_alphanumeric()).to_string();
+    let int = |t: &str| -> Option<u32> {
+        let c = clean(t);
+        if !c.is_empty() && c.chars().all(|ch| ch.is_ascii_digit()) && c.len() <= 9 {
+            c.parse().ok()
+        } else {
+            None
+        }
+    };
+    let is_sep = |t: &str| is_dash(t) || matches!(clean(t).as_str(), "to" | "through" | "until");
+    let word_of = |t: &str| {
+        let c = clean(t);
+        (c.chars().count() >= 2 && c.chars().all(char::is_alphabetic)).then_some(c)
+    };
+    let ok = |a: u32, b: u32| a < b && b - a <= 50;
+    let mut out = Vec::new();
+    for i in 0..raw.len() {
+        let Some(x) = word_of(raw[i]) else { continue };
+        let Some(&t1) = raw.get(i + 1) else { continue };
+        // "X a-b"
+        let c1 = clean(t1);
+        if let Some((l, r)) = c1.split_once('-') {
+            if let (Ok(a), Ok(b)) = (l.parse::<u32>(), r.parse::<u32>()) {
+                if ok(a, b) {
+                    out.push((x.clone(), a, b));
+                    continue;
+                }
+            }
+        }
+        let Some(a) = int(t1) else { continue };
+        let Some(&t2) = raw.get(i + 2) else { continue };
+        if !is_sep(t2) {
+            continue;
+        }
+        let Some(&t3) = raw.get(i + 3) else { continue };
+        // "X a - b": a bare end after a dash
+        if let Some(b) = int(t3) {
+            if ok(a, b) && is_dash(t2) {
+                out.push((x.clone(), a, b));
+            }
+            continue;
+        }
+        // "X a to X b"
+        if word_of(t3).as_deref() == Some(x.as_str()) {
+            if let Some(b) = raw.get(i + 4).and_then(|t| int(t)) {
+                if ok(a, b) {
+                    out.push((x.clone(), a, b));
+                }
+            }
+        }
+    }
+    out
+}
+
+/// The members of each range the case spells out: "level 1 to level 4"
+/// gives "level 1", "level 2", "level 3", "level 4".
+pub fn range_members(folded: &str) -> Vec<String> {
+    ranges(folded).into_iter().flat_map(|(x, a, b)| (a..=b).map(move |k| format!("{x} {k}"))).collect()
+}
+
+/// How many members each range holds.
+fn range_sizes(folded: &str) -> Vec<u32> {
+    ranges(folded).into_iter().map(|(_, a, b)| b - a + 1).collect()
+}
+
+/// A number the case states about a kind of thing: "exactly 4 levels".
+#[derive(Debug, Clone, PartialEq)]
+pub struct StatedCount {
+    pub n: u32,
+    /// The qualifier (when there is one), the number and the noun, as written.
+    pub phrase: String,
+    /// The noun lowercased, plural off.
+    pub stem: String,
+}
+
+const STOP: &[&str] = &[
+    "to", "and", "or", "of", "through", "until", "than", "in", "on", "at", "by", "per", "for", "from", "is", "are",
+    "was", "were", "x", "times", "second", "seconds", "minute", "minutes", "hour", "hours", "day", "days", "week",
+    "weeks", "month", "months", "year", "years", "am", "pm", "percent",
+];
+
+fn trim_punct(t: &str) -> &str {
+    t.trim_matches(|c: char| !c.is_alphanumeric())
+}
+
+/// The counts the ORIGINAL text states: a whole number of 2 or more, then a
+/// noun.
+pub fn stated_counts(text: &str) -> Vec<StatedCount> {
+    let tokens: Vec<&str> = text.split_whitespace().collect();
+    let mut out = Vec::new();
+    for i in 0..tokens.len() {
+        let tok = tokens[i];
+        if tok.is_empty() || tok.len() > 9 || !tok.chars().all(|c| c.is_ascii_digit()) {
+            continue;
+        }
+        let Ok(n) = tok.parse::<u32>() else { continue };
+        if n < 2 {
+            continue;
+        }
+        let Some(next) = tokens.get(i + 1) else { continue };
+        if !next.chars().next().is_some_and(char::is_alphabetic) {
+            continue;
+        }
+        let noun = trim_punct(next);
+        let lower = noun.to_lowercase();
+        if lower.is_empty() || STOP.contains(&lower.as_str()) {
+            continue;
+        }
+        let stem = if lower.ends_with("es") && lower.chars().count() > 4 {
+            lower[..lower.len() - 2].to_string()
+        } else if let Some(s) = lower.strip_suffix('s') {
+            s.to_string()
+        } else {
+            lower.clone()
+        };
+        if stem.chars().count() < 3 {
+            continue;
+        }
+        let qualifier = i
+            .checked_sub(1)
+            .map(|p| tokens[p])
+            .filter(|q| matches!(trim_punct(q).to_lowercase().as_str(), "exactly" | "only" | "precisely" | "all"));
+        let phrase = match qualifier {
+            Some(q) => format!("{} {n} {noun}", trim_punct(q)),
+            None => format!("{n} {noun}"),
+        };
+        out.push(StatedCount { n, phrase, stem });
+    }
+    out
 }
 
 /// Lowercase; curly quotes to straight; `*`, backtick, `#` and `>` removed;

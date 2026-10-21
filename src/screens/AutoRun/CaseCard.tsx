@@ -66,6 +66,12 @@ export function scriptFacts(script: CaseScript): { label: string; value: string 
     { label: "Changes", value: (script.changes ?? []).join(", ") },
     { label: "Needs unchanged", value: (script.needs_unchanged ?? []).join(", ") },
     { label: "Last repair", value: script.last_repair?.trim() },
+    {
+      label: "Values not in the case",
+      value: script.steps
+        .flatMap((s) => (s.because ?? []).map((b) => `step ${s.step_number}: ${b.value} (${b.why})`))
+        .join("; "),
+    },
   ];
   return facts.flatMap(({ label, value }) => (value ? [{ label, value }] : []));
 }

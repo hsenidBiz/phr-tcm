@@ -205,10 +205,11 @@ pub const SETUP_KEPT: &str =
 /// counts as a change to the step, and so is whether it is the clean-up.
 pub fn step_signature(step: &StepScript) -> String {
     format!(
-        "{}|{}{}",
+        "{}|{}{}{}",
         serde_json::to_string(&step.actions).unwrap_or_default(),
         step.unchecked.as_deref().unwrap_or(""),
-        if step.cleanup { "|cleanup" } else { "" }
+        if step.cleanup { "|cleanup" } else { "" },
+        if step.because.is_empty() { String::new() } else { format!("|because:{}", serde_json::to_string(&step.because).unwrap_or_default()) }
     )
 }
 

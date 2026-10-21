@@ -279,7 +279,7 @@ fn saved_script(root: &std::path::Path, case_id: i32, area: Option<&str>) {
         title: "a case".into(),
         account: None,
         area: area.map(str::to_string),
-        steps: vec![StepScript { step_number: 2, actions: vec![], unchecked: None, cleanup: false }],
+        steps: vec![StepScript { step_number: 2, actions: vec![], unchecked: None, cleanup: false, because: Vec::new() }],
         repairs: 0,
         last_repair: None,
         suspected_defect: None,

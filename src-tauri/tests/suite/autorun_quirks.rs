@@ -425,8 +425,8 @@ fn script_for(case_id: i32) -> CaseScript {
         account: None,
         area: None,
         steps: vec![
-            StepScript { step_number: 2, actions: vec![save_button()], unchecked: None, cleanup: false },
-            StepScript { step_number: 3, actions: vec![save_button()], unchecked: None, cleanup: false },
+            StepScript { step_number: 2, actions: vec![save_button()], unchecked: None, cleanup: false, because: Vec::new() },
+            StepScript { step_number: 3, actions: vec![save_button()], unchecked: None, cleanup: false, because: Vec::new() },
         ],
         repairs: 0,
         last_repair: None,

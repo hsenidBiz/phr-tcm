@@ -2514,6 +2514,12 @@ export type BackupImportResult = {
 	app_version: string,
 };
 
+/**  Where a check's value comes from when the case does not hold it word for word. */
+export type Because = {
+	value: string,
+	why: string,
+};
+
 export type BoardData = {
 	items: BoardItem[],
 	states_by_type: { [key in string]: StateInfo[] },
@@ -6233,6 +6239,12 @@ export type StepScript_Deserialize = {
 	 *  failing the case. Written only when true.
 	 */
 	cleanup?: boolean,
+	/**
+	 *  Each value a check of this step uses that the case does not hold as
+	 *  written, with where the case defines it (`case_values`). Written only
+	 *  when there are any.
+	 */
+	because?: Because[],
 };
 
 /**  The actions that carry out one numbered step of a test case. */
@@ -6254,6 +6266,12 @@ export type StepScript_Serialize = {
 	 *  failing the case. Written only when true.
 	 */
 	cleanup?: boolean,
+	/**
+	 *  Each value a check of this step uses that the case does not hold as
+	 *  written, with where the case defines it (`case_values`). Written only
+	 *  when there are any.
+	 */
+	because?: Because[],
 };
 
 export type Step_Deserialize = {

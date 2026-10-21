@@ -12,6 +12,7 @@ pub mod area_repair;
 pub mod capture_redact;
 pub mod capture_tools;
 pub mod case_text;
+pub mod case_values;
 pub mod cleanup;
 pub mod defects;
 pub mod divergences;
@@ -83,6 +84,18 @@ pub struct StepScript {
     /// failing the case. Written only when true.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub cleanup: bool,
+    /// Each value a check of this step uses that the case does not hold as
+    /// written, with where the case defines it (`case_values`). Written only
+    /// when there are any.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub because: Vec<Because>,
+}
+
+/// Where a check's value comes from when the case does not hold it word for word.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, specta::Type)]
+pub struct Because {
+    pub value: String,
+    pub why: String,
 }
 
 /// How one test case is driven. Keyed by the Azure DevOps case id so a

@@ -59,7 +59,7 @@ fn a_sign_in_reads_as_one_action_outcome() {
 }
 
 fn step(actions: Vec<Action>) -> StepScript {
-    StepScript { step_number: 1, actions, unchecked: None, cleanup: false }
+    StepScript { step_number: 1, actions, unchecked: None, cleanup: false, because: Vec::new() }
 }
 
 #[tokio::test]
@@ -390,6 +390,7 @@ async fn with_addresses_switched_off_a_saved_navigate_fails_with_the_projects_se
         actions: vec![Action::Navigate { url: "/hr/leave/apply".into() }, Action::CheckText { value: "Leave".into() }],
         unchecked: None,
         cleanup: false,
+        because: Vec::new(),
     };
     let out = run_step(&mut d, dir.path(), "Acme", "Web", &step, &quick(), &mut acc).await.unwrap();
     assert!(!out[0].ok);
@@ -653,7 +654,7 @@ fn yes_page() -> ScriptedDriver {
 }
 
 fn tab_step(actions: serde_json::Value) -> StepScript {
-    StepScript { step_number: 1, actions: serde_json::from_value(actions).unwrap(), unchecked: None, cleanup: false }
+    StepScript { step_number: 1, actions: serde_json::from_value(actions).unwrap(), unchecked: None, cleanup: false, because: Vec::new() }
 }
 
 /// Runs one step the way a run does, and hands back what it learned.
@@ -872,7 +873,7 @@ mod components_in_a_step {
     }
 
     fn step_of(actions: serde_json::Value) -> StepScript {
-        StepScript { step_number: 1, actions: serde_json::from_value(actions).unwrap(), unchecked: None, cleanup: false }
+        StepScript { step_number: 1, actions: serde_json::from_value(actions).unwrap(), unchecked: None, cleanup: false, because: Vec::new() }
     }
 
     async fn run_in(

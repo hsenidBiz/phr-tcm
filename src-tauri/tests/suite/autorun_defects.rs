@@ -513,11 +513,14 @@ fn the_route_is_refused_where_auto_run_is_not_offered() {
 // --------------------------------------------- an assistant's repair
 
 /// Azure DevOps standing in for case 7's lookup: three steps, nothing
-/// expected, so the floor asks for no check.
+/// expected but step 3's "Saved" (which script(7) checks, so the value is
+/// the case's own), so the floor asks for no other check.
 async fn client_with_case_7() -> (MockServer, AdoClient) {
     let server = MockServer::start().await;
     let steps: Vec<Step> =
-        (1..=3).map(|i| Step { action: format!("Step {i}"), expected: String::new(), shared: None }).collect();
+        (1..=3)
+        .map(|i| Step { action: format!("Step {i}"), expected: if i == 3 { "Saved".to_string() } else { String::new() }, shared: None })
+        .collect();
     Mock::given(wm_method("GET"))
         .and(wm_path("/acme/_apis/wit/workitems"))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({ "value": [{

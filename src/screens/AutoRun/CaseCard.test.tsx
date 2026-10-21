@@ -174,7 +174,7 @@ test("an open card leaves out every fact with no value, and Files when there is 
   expect(screen.getByText("1 step")).toBeInTheDocument();
   for (const label of [
     "Runs as", "Area", "Must not save", "Page errors", "Ignored page errors", "Unexpected dialogs",
-    "Preconditions", "Changes", "Needs unchanged", "Last repair",
+    "Preconditions", "Changes", "Needs unchanged", "Last repair", "Values not in the case",
   ]) {
     expect(screen.queryByText(label)).not.toBeInTheDocument();
   }
@@ -246,6 +246,28 @@ test("scriptFacts and scriptFiles skip what is not there", () => {
   expect(scriptFiles(FULL)).toEqual({ uploads: ["note.pdf"], downloads: ["leave-*.xlsx"] });
   // Blank text is no value either.
   expect(scriptFacts({ ...BARE, account: "  ", changes: [] } as CaseScript)).toHaveLength(1);
+});
+
+test("the card lists values not in the case", () => {
+  const script = {
+    ...BARE,
+    steps: [
+      { step_number: 1, actions: [] },
+      {
+        step_number: 2,
+        actions: [],
+        because: [{ value: "6", why: "one row per DEF level the precondition lists" }],
+      },
+    ],
+  } as CaseScript;
+  expect(scriptFacts(script)).toContainEqual({
+    label: "Values not in the case",
+    value: "step 2: 6 (one row per DEF level the precondition lists)",
+  });
+  expect(scriptFacts(BARE).some((f) => f.label === "Values not in the case")).toBe(false);
+  renderCard({ open: true, script });
+  expect(screen.getByText("Values not in the case")).toBeInTheDocument();
+  expect(screen.getByText("step 2: 6 (one row per DEF level the precondition lists)")).toBeInTheDocument();
 });
 
 test("the search matches the id with or without #, and the title, ignoring case", () => {

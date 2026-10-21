@@ -470,7 +470,7 @@ async fn a_bundle_saves_every_case_it_carries() {
     let _root = crate::serial::autorun();
     set_root(dir.path().to_path_buf());
     let (_server, client) =
-        client_with_cases(&[(201, "Valid login", &[""]), (202, "Locked account", &[""])]).await;
+        client_with_cases(&[(201, "Valid login", &["Dashboard"]), (202, "Locked account", &[""])]).await;
 
     let body = serde_json::json!([
         {
@@ -3359,6 +3359,7 @@ fn scripted(case_id: i32) -> CaseScript {
             actions: vec![Action::Navigate { url: "https://app.example/".into() }],
             unchecked: None,
             cleanup: false,
+            because: Vec::new(),
         }],
         repairs: 0,
         last_repair: None,

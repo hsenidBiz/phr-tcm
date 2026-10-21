@@ -42,7 +42,7 @@ fn action(v: serde_json::Value) -> Action {
 }
 
 fn step(actions: Vec<Action>) -> StepScript {
-    StepScript { step_number: 1, actions, unchecked: None, cleanup: false }
+    StepScript { step_number: 1, actions, unchecked: None, cleanup: false, because: Vec::new() }
 }
 
 // ---------------------------------------------------------------- the recipe
