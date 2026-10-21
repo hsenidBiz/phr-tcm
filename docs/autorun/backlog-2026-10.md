@@ -237,6 +237,37 @@ information in the slots the Playwright pipeline already reads; it never overrid
     Not taken: assets, related CSS/JS files and complete element cloning - they serve copying a
     design, not testing, and would pull large files into the assistant's context.
 
+## Carry a replay on across cases that share their first steps (agreed 2026-10-21)
+
+31. **A shared-steps checkpoint between cases.** Agents prove scripts by replaying them, and
+    cases on one screen often open with the same steps (Strategic Objectives' Goal Cascading
+    cases: open the page, select "Common Automation", open Add Goal). A replay already carries
+    on within one case ("Carried on from step K"), but `carry_from` in
+    `src-tauri/src/autorun/replay_to.rs` requires the same case id, so case B replays steps
+    1-3 that case A has just run. Change:
+    - **Match on the steps, not the case.** Case B may carry on from where case A's replay
+      stands before step K+1 when both have the same account, area, preconditions, setup and
+      save mode (`no_save` or not), and steps 1 to K are identical in every action
+      (`run_fingerprint` of the prefix), with the browser still on that page and the stand
+      fresh. The answer says "Carried on from step K of case A (the same first K steps)".
+    - **Only a prefix that saves nothing.** A stand whose steps 1 to K made a write cannot be
+      shared: case B would start from data case A changed.
+    - **Back to the checkpoint.** After case B's own steps run, the page is no longer where
+      step K left it. Keep the checkpoint for case C only when B ended back on it: the same
+      address and nothing B opened still open (its last step is a clean-up that closes the
+      dialog it opened, as the look-only cases do). Otherwise C replays the prefix from the
+      start.
+    - **The proof stays whole.** This only saves an assistant's replays while writing and
+      healing. A person's run still plays every case from its sign-in, so every case keeps
+      its end-to-end proof; the guide says so.
+    - Tests: two cases sharing 3 steps carry on; a differing action, account, area, save mode
+      or precondition starts from the beginning; a prefix that wrote data is never shared; a
+      case that ends off the checkpoint loses it for the next case.
+
+    Already changed without the app (2026-10-21): the agent briefs prove a look-only
+    (`no_save`) script with one full replay instead of two; a script that saves keeps two in a
+    row for repeatability.
+
 ## Smaller
 
 - `save_autorun_script` through MCP drops `edits`, so repairs had to go through
