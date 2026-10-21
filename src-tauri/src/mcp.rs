@@ -1026,7 +1026,7 @@ pub fn offered_topics(off: &[String]) -> Vec<&'static str> {
 fn guide_sentence(topic: &str) -> &'static str {
     match topic {
         "writing" => "\"writing\": Test Case Manager import JSON - format rules, the org's allowed Module values, the workflow and the transform ops; call it first.",
-        "autorun" => "\"autorun\": writing an Auto Run action script - the actions and checks, and which source decides what: locators come from the live app, every assertion from the case's own expected result, never from what the code does; read it before writing a script. Alone it answers the Quick rules, this project's live sections and every section title; `section` adds one section, `quick` only the Quick rules and live sections, `full` the whole guide.",
+        "autorun" => "\"autorun\": writing an Auto Run action script - the actions and checks, and which source decides what: locators come from the live app, every assertion from the case's own expected result, never from what the code does; read it before writing a script. Alone it answers the Quick rules, this project's live sections and every section title; `section` adds one section, `quick` only the Quick rules and live sections, `full` the whole guide. `role` gives one role's rules.",
         "api_templates" => "\"api_templates\": building an API template - the format, placeholders and captures, the workflow, this project's account keys and sign-in origin; read it before your first prove_api_template.",
         "reports" => "\"reports\": working with Crystal Reports - the IR, units (twips), edit ops, the layout plan and the limits; read it before your first edit_report.",
         _ => "",
@@ -1051,6 +1051,7 @@ fn guide_tool(off: &[String]) -> serde_json::Value {
         props["quick"] = serde_json::json!({ "type": "boolean", "description": "autorun only. true: only the Quick rules and the live sections - the active environment, whether get_accounts gives passwords, this project's areas, areas to explore, components and quirks." });
         props["section"] = serde_json::json!({ "type": "string", "description": "autorun only. One section's title, e.g. \"Selectors\" or \"Saving it\" (case ignored): the Quick rules and that section. An unknown title answers the list of titles." });
         props["full"] = serde_json::json!({ "type": "boolean", "description": "autorun only. true: every section - over 100,000 characters; prefer `section`." });
+        props["role"] = serde_json::json!({ "type": "string", "enum": ["writer", "healer", "case-rewriter", "auditor"], "description": "autorun only. One role's rules, which hold whatever tools you have: writer (choosing what to script and writing it from the live app), healer (diagnosing and repairing a failed case), case-rewriter (changing a saved script or component, a repair or a rewritten case) or auditor (checking saved scripts against their cases, reporting only). With quick, section or full, the rules come first." });
     }
     serde_json::json!({ "name": "get_guide", "description": description, "inputSchema": schema(props, &["topic"]) })
 }
@@ -1075,9 +1076,43 @@ pub fn guide_refusal(topic: Option<&str>, off: &[String], on: &BTreeSet<Module>)
     }
 }
 
-/// Said when `section`, `quick` or `full` comes with a topic other than
-/// autorun: only that guide is long enough to be read in parts.
-pub const GUIDE_PARTS_AUTORUN_ONLY: &str = "`section`, `quick` and `full` are for topic \"autorun\" only - send the other topics with `topic` alone";
+/// Said when `section`, `quick`, `full` or `role` comes with a topic other
+/// than autorun: only that guide is long enough to be read in parts, and
+/// only it has roles.
+pub const GUIDE_PARTS_AUTORUN_ONLY: &str = "`section`, `quick`, `full` and `role` are for topic \"autorun\" only - send the other topics with `topic` alone";
+
+/// The autorun guide as `section`, `quick` and `full` ask for it.
+fn autorun_guide_call(args: &serde_json::Value, call: BridgeCall) -> Result<(u16, String), String> {
+    match args["section"].as_str().map(str::trim).filter(|s| !s.is_empty()) {
+        Some(section) => call("GET", &format!("/autorun-guide?section={}", urlencoding::encode(section)), ""),
+        None if args["quick"].as_bool().unwrap_or(false) => call("GET", "/autorun-guide?quick=true", ""),
+        None if args["full"].as_bool().unwrap_or(false) => call("GET", "/autorun-guide", ""),
+        // The whole guide is too long for one answer: the Quick rules,
+        // the live sections and the section titles.
+        None => call("GET", "/autorun-guide?overview=true", ""),
+    }
+}
+
+/// `get_guide` with a `role`: the role's rules, answered here with no call
+/// to the app. With `section`, `quick` or `full` too, the rules come first
+/// and the guide's answer follows.
+fn role_guide(args: &serde_json::Value, call: BridgeCall) -> Result<(u16, String), String> {
+    let asked = args["role"].as_str().unwrap_or_default();
+    let Some(role) = crate::autorun::roles::Role::from_key(asked) else {
+        return Ok((400, crate::autorun::roles::unknown_role(asked)));
+    };
+    if !["section", "quick", "full"].iter().any(|k| says(&args[*k])) {
+        return Ok((200, role.text()));
+    }
+    let mut rest = args.clone();
+    if let Some(o) = rest.as_object_mut() {
+        o.remove("role");
+    }
+    match autorun_guide_call(&rest, call)? {
+        (status, body) if status < 400 => Ok((status, format!("{}\n\n{}", role.text().trim_end(), body))),
+        other => Ok(other),
+    }
+}
 
 /// Whether an optional argument says anything: absent, null, false and ""
 /// all say nothing.
@@ -1712,20 +1747,16 @@ fn tools_call(params: &serde_json::Value, call: BridgeCall) -> serde_json::Value
         }
         "get_guide"
             if args["topic"].as_str().map(str::trim) != Some("autorun")
-                && ["section", "quick", "full"].iter().any(|k| says(&args[*k])) =>
+                && ["section", "quick", "full", "role"].iter().any(|k| says(&args[*k])) =>
         {
             Ok((400, GUIDE_PARTS_AUTORUN_ONLY.to_string()))
         }
+        "get_guide" if args["topic"].as_str().map(str::trim) == Some("autorun") && says(&args["role"]) => {
+            role_guide(args, call)
+        }
         "get_guide" => match args["topic"].as_str().map(str::trim).unwrap_or_default() {
             "writing" => call("GET", "/guide", ""),
-            "autorun" => match args["section"].as_str().map(str::trim).filter(|s| !s.is_empty()) {
-                Some(section) => call("GET", &format!("/autorun-guide?section={}", urlencoding::encode(section)), ""),
-                None if args["quick"].as_bool().unwrap_or(false) => call("GET", "/autorun-guide?quick=true", ""),
-                None if args["full"].as_bool().unwrap_or(false) => call("GET", "/autorun-guide", ""),
-                // The whole guide is too long for one answer: the Quick rules,
-                // the live sections and the section titles.
-                None => call("GET", "/autorun-guide?overview=true", ""),
-            },
+            "autorun" => autorun_guide_call(args, call),
             "api_templates" => call("GET", "/api-template-guide", ""),
             "reports" => call("GET", "/crystal-guide", ""),
             // Refused before the match by `guide_refusal`; said again here

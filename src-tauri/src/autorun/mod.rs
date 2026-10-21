@@ -30,6 +30,7 @@ pub mod mapping_summary;
 pub mod marks;
 pub mod nav;
 pub mod proven;
+pub mod roles;
 pub mod network;
 pub mod one_browser;
 pub mod overrides;

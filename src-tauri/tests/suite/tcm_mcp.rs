@@ -3206,3 +3206,94 @@ fn the_quirk_tool_offers_a_class_of_three() {
     let save = tools.iter().find(|t| t["name"] == "save_autorun_script").unwrap();
     assert!(save["inputSchema"]["properties"]["edits"]["description"].as_str().unwrap().contains("quirk_class"));
 }
+
+/// A fake bridge for the role tests: `/tools` answers a development app,
+/// the quick autorun guide answers a fixed text, and any other path fails.
+fn role_fake(
+    seen: &std::cell::RefCell<Vec<String>>,
+) -> impl Fn(&str, &str, &str) -> Result<(u16, String), String> + '_ {
+    move |_m: &str, path: &str, _b: &str| {
+        if path == "/tools" {
+            return Ok((200, r#"{"disabled":[]}"#.to_string()));
+        }
+        seen.borrow_mut().push(path.to_string());
+        match path {
+            "/autorun-guide?quick=true" => Ok((200, "the quick guide".to_string())),
+            other => panic!("no guide route is called for a role: {other}"),
+        }
+    }
+}
+
+fn guide_call(args: &str, call: &dyn Fn(&str, &str, &str) -> Result<(u16, String), String>) -> serde_json::Value {
+    let req = format!(
+        r#"{{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{{"name":"get_guide","arguments":{args}}}}}"#
+    );
+    serde_json::from_str(&handle_message(&req, "1.0.0", call).unwrap()).unwrap()
+}
+
+#[test]
+fn get_guide_answers_a_role_by_name() {
+    use v2_lib::autorun::roles::Role;
+    let seen = std::cell::RefCell::new(vec![]);
+    let call = role_fake(&seen);
+    let v = guide_call(r#"{"topic":"autorun","role":"healer"}"#, &call);
+    assert_ne!(v["result"]["isError"], true, "{v}");
+    assert_eq!(v["result"]["content"][0]["text"], Role::Healer.text());
+    assert!(seen.borrow().is_empty(), "no guide route was called: {:?}", seen.borrow());
+}
+
+#[test]
+fn a_role_with_quick_comes_first() {
+    use v2_lib::autorun::roles::Role;
+    let seen = std::cell::RefCell::new(vec![]);
+    let call = role_fake(&seen);
+    let v = guide_call(r#"{"topic":"autorun","role":"writer","quick":true}"#, &call);
+    let text = v["result"]["content"][0]["text"].as_str().unwrap();
+    assert_eq!(text, format!("{}\n\nthe quick guide", Role::Writer.text().trim_end()), "{v}");
+    assert_eq!(*seen.borrow(), vec!["/autorun-guide?quick=true".to_string()]);
+}
+
+#[test]
+fn an_unknown_role_names_the_four() {
+    let seen = std::cell::RefCell::new(vec![]);
+    let call = role_fake(&seen);
+    let v = guide_call(r#"{"topic":"autorun","role":"tester"}"#, &call);
+    assert_eq!(v["result"]["isError"], true, "{v}");
+    assert_eq!(
+        v["result"]["content"][0]["text"],
+        "bridge returned 400: There is no role \"tester\": role is one of \"writer\", \"healer\", \"case-rewriter\" and \"auditor\"."
+    );
+}
+
+#[test]
+fn role_is_for_the_autorun_topic_only() {
+    use v2_lib::mcp::GUIDE_PARTS_AUTORUN_ONLY;
+    let seen = std::cell::RefCell::new(vec![]);
+    let call = role_fake(&seen);
+    let v = guide_call(r#"{"topic":"writing","role":"healer"}"#, &call);
+    assert_eq!(v["result"]["isError"], true, "{v}");
+    assert!(v["result"]["content"][0]["text"].as_str().unwrap().contains(GUIDE_PARTS_AUTORUN_ONLY), "{v}");
+    assert!(GUIDE_PARTS_AUTORUN_ONLY.contains("`role`"));
+    assert!(seen.borrow().is_empty(), "{:?}", seen.borrow());
+}
+
+#[test]
+fn get_guide_offers_role_with_the_autorun_topic() {
+    let guide_of = |tools: &'static str| -> serde_json::Value {
+        let call = move |_m: &str, _p: &str, _b: &str| -> Result<(u16, String), String> { Ok((200, tools.to_string())) };
+        let v: serde_json::Value = serde_json::from_str(
+            &v2_lib::mcp::handle_message(r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#, "1.0.0", &call).unwrap(),
+        )
+        .unwrap();
+        v["result"]["tools"].as_array().unwrap().iter().find(|t| t["name"] == "get_guide").unwrap().clone()
+    };
+    let on = guide_of(r#"{"disabled":[],"modules":["writing_style","auto_run","api_templates","crystal_reports","db_access","playwright"]}"#);
+    assert_eq!(
+        on["inputSchema"]["properties"]["role"]["enum"],
+        serde_json::json!(["writer", "healer", "case-rewriter", "auditor"]),
+        "{on}"
+    );
+    assert!(on["description"].as_str().unwrap().contains("`role` gives one role's rules."), "{on}");
+    let off = guide_of(r#"{"disabled":[],"modules":["writing_style"]}"#);
+    assert!(off["inputSchema"]["properties"].get("role").is_none(), "{off}");
+}
