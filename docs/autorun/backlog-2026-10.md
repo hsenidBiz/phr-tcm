@@ -335,6 +335,44 @@ information in the slots the Playwright pipeline already reads; it never overrid
       case with its sentence; a repair that changes an expected count to a value not in the
       case is refused.
 
+    **How the Playwright repo does it (D:\PHR-PLAYWRIGHT-AUTOMATION), to borrow from:**
+    - **Classify a failure before reacting** (`CLAUDE.md` pipeline step 4,
+      `.claude/commands/gen-test.md` step 4). A missing precondition (an empty list where
+      records were expected, a disabled control, a validation message naming an unmet
+      dependency) stops the pipeline: it is recorded in the test case's Preconditions table
+      and reported, and the healer is NOT called. The reason is written out: "a healer
+      pointed at a missing precondition ... will keep rewriting assertions and locators
+      until an empty or disabled page satisfies them, which produces a spec that passes and
+      proves nothing." TCM's guide and `tcm:heal` should carry the same sentence; 147556 is
+      exactly this (a 6-level environment for a 4-level precondition).
+    - **A bounds block pasted verbatim into every healer dispatch**, overriding the
+      healer's "repeat until it passes": at most 3 fix-run cycles; stop at cycle 2 on an
+      identical failure signature; stop on a login page, a missing precondition or a
+      product defect ("a real bug must surface as a failure"); a pass after a no-op is run
+      twice more and two green of three is a flake, not a fix. TCM: put the same stop
+      conditions in the answer of `get_autorun_failures` and in the `tcm:heal` and
+      `tcm:script-pbi` bodies, not only in the guide.
+    - **Fixes that are forbidden by name**: deleting or weakening an `expect(`, fixed waits,
+      `evaluate()` in a spec, `.toPass()` to absorb a product bug. Enforced, not just
+      asked: the `assertion-count` lint fails a refactored spec with fewer `expect(` calls
+      than its raw spec. TCM equivalent: a repair may not lower a script's number of checks
+      or change a check's expected value, unless the person accepts it in the app.
+    - **An honest "not green" state**: a test the healer cannot fix is left as
+      `test.fixme()` with a one-line reason, and nothing downstream (refactor, lint) may run
+      on a fixme'd spec. TCM equivalent: a script saved with an open divergence is marked
+      "needs a ruling", runs as Blocked with that sentence, and never counts as passed.
+    - **Provenance of every value**: the test data records each value as `from-ticket`,
+      `assumed` or `invented`, and the run summary lists every assumed or invented value
+      ("review ... before trusting these tests"); success is reported only after printing
+      it. TCM equivalent: the `because` list from the save check above, repeated in the
+      assistant's report and shown on the script.
+    - **Product bugs are loud**: `docs/app-quirks.md` classes each quirk as `app quirk`,
+      `environment flake` or `product bug`, and a product bug the pipeline worked around
+      "must be called out explicitly in the step 7 run summary ... it must not be buried in
+      an otherwise-green result". TCM: a quirk recorded with `record_autorun_quirk` gets
+      the same class, and a `product bug` quirk used by a case is shown on that case's
+      result and at the top of the run report.
+
 ## A skill that scripts a PBI's cases (agreed 2026-10-21)
 
 34. **`/tcm:script-pbi` - script a batch of a PBI's cases from one short command.** Today
