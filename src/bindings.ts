@@ -642,6 +642,9 @@ export const commands = {
 	 *  mark and nothing else - the script's actions and repair count stay.
 	 */
 	autoRunClearSuspectedDefect: (caseId: number) => typedError<null, string>(__TAURI_INVOKE("auto_run_clear_suspected_defect", { caseId })),
+	autoRunLoadDivergences: (organization: string, project: string) => typedError<Divergence_Serialize[], string>(__TAURI_INVOKE("auto_run_load_divergences", { organization, project })),
+	autoRunRuleDivergence: (organization: string, project: string, id: string, ruling: Ruling) => typedError<Divergence_Serialize[], string>(__TAURI_INVOKE("auto_run_rule_divergence", { organization, project, id, ruling })),
+	autoRunNeedsRuling: (organization: string, project: string, caseId: number) => typedError<string | null, string>(__TAURI_INVOKE("auto_run_needs_ruling", { organization, project, caseId })),
 	/**
 	 *  The plan for the cases selected on the Auto Run tab, in list order.
 	 *  Each case's marks come from its saved script; a case with no script
@@ -3408,6 +3411,44 @@ export type DetectedTool = {
 /**  How an `expect_dialog` answers: OK, or Cancel. */
 export type DialogAnswer = "accept" | "dismiss";
 
+export type Divergence = Divergence_Serialize | Divergence_Deserialize;
+
+export type DivergenceKind = "data" | "app" | "wording";
+
+export type DivergenceStatus = "open" | "awaiting_repair" | "ruled";
+
+export type Divergence_Deserialize = {
+	/**  "d1", "d2"...: 1 + the highest number in the file. */
+	id: string,
+	case_id: number,
+	step: number,
+	/**  Scrubbed (`defects::scrub_note`), at most `MAX_TEXT` characters. */
+	case_says: string,
+	app_shows: string,
+	kind: DivergenceKind,
+	/**  Epoch milliseconds, as a string. */
+	reported_at: string,
+	status: DivergenceStatus,
+	ruling?: Ruling | null,
+	ruled_at?: string | null,
+};
+
+export type Divergence_Serialize = {
+	/**  "d1", "d2"...: 1 + the highest number in the file. */
+	id: string,
+	case_id: number,
+	step: number,
+	/**  Scrubbed (`defects::scrub_note`), at most `MAX_TEXT` characters. */
+	case_says: string,
+	app_shows: string,
+	kind: DivergenceKind,
+	/**  Epoch milliseconds, as a string. */
+	reported_at: string,
+	status: DivergenceStatus,
+	ruling?: Ruling | null,
+	ruled_at?: string | null,
+};
+
 /**
  *  One file in a run's download folder, as Past runs and the review list
  *  it: its name and size, read from disk when asked (`store::download_files`),
@@ -5563,6 +5604,8 @@ export type ResultFailureDetail = {
 	comment: string,
 	bug_ids: number[],
 };
+
+export type Ruling = "case_stands" | "data_fixed" | "rewrite";
 
 /**  What to run. */
 export type RunAction = 

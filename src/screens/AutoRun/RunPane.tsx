@@ -348,18 +348,41 @@ export default function RunPane({
     if (!opened || launches === 0 || scriptAccount === null || busy) return;
     if (signedFor.current === launches) return;
     signedFor.current = launches;
-    if (checksFirst) {
-      void startCase(scriptAccount);
-      return;
-    }
-    if (scriptAccount === "") {
-      setSignIn({ state: "idle", account: "", out: null });
-      return;
-    }
-    void signInAs(scriptAccount, false);
+    void beginCase(scriptAccount);
     // startCase and signInAs are recreated every render; the values below
     // are the only things that should start a case.
   }, [opened, launches, scriptAccount, checksFirst, busy]);
+
+  /** Where a case starts: first the question of a reported divergence a
+   * person has yet to rule on (the case is Blocked with its sentence and
+   * never signs in), then the precondition check or the sign-in. */
+  const beginCase = async (account: string) => {
+    const forLaunch = launches;
+    setBusy(true);
+    let sentence: string | null = null;
+    try {
+      const r = await commands.autoRunNeedsRuling(org, project, caseId);
+      if (r.status === "ok") sentence = r.data;
+    } catch {
+      // Rust logs it; the run goes on.
+    }
+    if (launchRef.current !== forLaunch) return;
+    if (sentence) {
+      setPre({ state: "blocked", reason: sentence, notice: "" });
+      setBusy(false);
+      return;
+    }
+    setBusy(false);
+    if (checksFirst) {
+      void startCase(account);
+      return;
+    }
+    if (account === "") {
+      setSignIn({ state: "idle", account: "", out: null });
+      return;
+    }
+    void signInAs(account, false);
+  };
 
   /** A case whose script has preconditions or a setup: the app checks them
    * first (and runs the setup), and signs the case in only when every one

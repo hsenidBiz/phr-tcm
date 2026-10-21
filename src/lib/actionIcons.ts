@@ -198,6 +198,8 @@ export {
   // A line that warns without stopping anything - the export dialog's
   // per-case warnings: the case still goes, the person just sees this first.
   TriangleAlert as IconWarning,
+  // A person's ruling that they changed the environment to match the case.
+  Wrench as IconDataFixed,
   // Showing and hiding a secret on screen (a repo test account's password):
   // an eye, open to show it and struck through to hide it again.
   Eye as IconShowSecret,

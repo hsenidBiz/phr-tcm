@@ -8,7 +8,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
 import type { ComponentProps } from "react";
-import type { CaseScript } from "../../bindings";
+import type { CaseScript, Divergence } from "../../bindings";
 import CaseCard, { scriptFacts, scriptFiles } from "./CaseCard";
 import { matchesSearch } from "./CaseSearch";
 
@@ -81,6 +81,7 @@ function renderCard(props: Partial<ComponentProps<typeof CaseCard>> = {}) {
           selected={false}
           open={false}
           confirmingClear={false}
+          divergences={[]}
           {...handlers}
           {...props}
         />
@@ -295,4 +296,27 @@ test("a script with no setup shows no setup line and does not ask", async () => 
   renderCard({ open: true, script: BARE });
   expect(screen.queryByText("Setup:", { exact: false })).not.toBeInTheDocument();
   expect(calls).not.toContain("auto_run_setup_view");
+});
+
+const DIV: Divergence = {
+  id: "d1",
+  case_id: 7,
+  step: 2,
+  case_says: "exactly 4 levels",
+  app_shows: "6 levels",
+  kind: "data",
+  reported_at: "1",
+  status: "open",
+};
+
+test("a collapsed card says it needs a ruling", () => {
+  renderCard({ divergences: [DIV] });
+  expect(screen.getByRole("img", { name: "Needs a ruling: step 2" })).toBeInTheDocument();
+});
+
+test("a case with no script still shows its divergence", () => {
+  renderCard({ open: true, script: null, divergences: [DIV] });
+  expect(screen.getByText("No script yet")).toBeInTheDocument();
+  expect(screen.getByText("Needs a ruling")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Rule the case is right for #7 step 2" })).toBeInTheDocument();
 });

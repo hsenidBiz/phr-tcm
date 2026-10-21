@@ -11,7 +11,7 @@ import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/rea
 import { useEffect, useId, useMemo, useRef, useState, useSyncExternalStore, type ComponentProps, type KeyboardEvent } from "react";
 import { createPortal } from "react-dom";
 import { sidebarCollapsedSnapshot, stickyLeftPx, subscribeSidebar } from "../../lib/sidebarState";
-import { commands, events, type AutorunResetNeeded, type PbiHit, type PlanView } from "../../bindings";
+import { commands, events, type AutorunResetNeeded, type Divergence, type PbiHit, type PlanView } from "../../bindings";
 import { loadScript } from "../../lib/scriptBatch";
 import { Checkbox } from "../../components/ui/checkbox";
 import MoreActionsMenu from "../../components/MoreActionsMenu";
@@ -93,6 +93,8 @@ const MAX_IDS_IN_TOAST = 10;
 const NO_FILTER: ReadonlySet<ResultBucket> = new Set();
 /** No card open. */
 const NONE_OPEN: ReadonlySet<number> = new Set();
+/** One shared empty list, so a card with no divergence is not redrawn. */
+const EMPTY: Divergence[] = [];
 
 export default function AutoRun({
   org,
@@ -136,6 +138,20 @@ export default function AutoRun({
     queries: scriptQueries,
     combine: (results) => results.every((q) => !q.isPending),
   });
+
+  // Reported divergences: local data that changes under the app (an
+  // assistant reports, a save closes), so a plain query.
+  const divergenceList = useQuery({
+    queryKey: ["autorun-divergences", org, project],
+    queryFn: () => unwrapStr(commands.autoRunLoadDivergences(org, project)),
+    enabled: Boolean(org && project),
+    retry: false,
+  });
+  const divergencesByCase = useMemo(() => {
+    const out: Record<number, Divergence[]> = {};
+    for (const d of divergenceList.data ?? []) (out[d.case_id] ??= []).push(d);
+    return out;
+  }, [divergenceList.data]);
 
   const [editing, setEditing] = useState<number | null>(null);
   // The case whose suspected-defect Clear is waiting on Keep / Clear.
@@ -675,6 +691,7 @@ export default function AutoRun({
         open={openHere.has(c.id)}
         runBlocked={runBlocked}
         confirmingClear={confirmingClear === c.id}
+        divergences={divergencesByCase[c.id] ?? EMPTY}
         lastRun={lastRunOf.get(c.id)}
         {...cardActions}
       />

@@ -20,6 +20,8 @@ export function useAutoRunScriptsSync(): void {
   const qc = useQueryClient();
   useEffect(() => {
     const un = events.autorunScriptsChanged.listen((e) => {
+      // A save closes a divergence awaiting its repair; the card shows it.
+      void qc.invalidateQueries({ queryKey: ["autorun-divergences"] });
       const ids = e.payload.case_ids;
       // No case named: every script is read again rather than none.
       if (ids.length === 0) {

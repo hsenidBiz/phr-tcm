@@ -663,3 +663,29 @@ async fn a_save_for_a_case_with_an_app_divergence_says_nothing_of_a_block() {
     assert_eq!(status, 200, "{out}");
     assert!(!out.contains("Blocked"), "{out}");
 }
+
+#[test]
+fn the_app_rules_a_divergence_and_loads_the_rest() {
+    use v2_lib::commands::autorun_divergence::{load_at, rule_at};
+    let now = v2_lib::autorun::sessions::now_ms();
+    let dir = TempDir::new();
+    let root = dir.path();
+    let id = update(root, "org", "proj", |list| {
+        report_in(list, 147556, 2, "exactly 4 levels", "6 levels", DivergenceKind::Data, now)
+    })
+    .unwrap();
+    let Reported::New(id) = id else { panic!("a new one") };
+    assert_eq!(load_at(root, "org", "proj", now).unwrap().len(), 1);
+    assert!(needs_ruling(root, "org", "proj", 147556).is_some());
+
+    let after = rule_at(root, "org", "proj", &id, Ruling::CaseStands, now + 1000).unwrap();
+    assert_eq!(after.len(), 1);
+    assert_eq!(after[0].status, DivergenceStatus::Ruled);
+    assert!(needs_ruling(root, "org", "proj", 147556).is_none());
+
+    // visible for seven days, then gone from the card's list
+    assert_eq!(load_at(root, "org", "proj", now + 1000 + 6 * DAY).unwrap().len(), 1);
+    assert!(load_at(root, "org", "proj", now + 1000 + 8 * DAY).unwrap().is_empty());
+    // ruling twice is refused
+    assert!(rule_at(root, "org", "proj", &id, Ruling::CaseStands, now + 2000).is_err());
+}

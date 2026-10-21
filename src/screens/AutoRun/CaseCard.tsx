@@ -9,14 +9,15 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { memo, useId, type CSSProperties } from "react";
-import type { Action, CaseScript } from "../../bindings";
+import type { Action, CaseScript, Divergence } from "../../bindings";
 import { Button } from "../../components/ui/button";
 import { Checkbox } from "../../components/ui/checkbox";
 import SharedStepLabel from "../../components/SharedStepLabel";
-import { IconAdd, IconBug, IconEdit, IconHideDetails, IconRun, IconShowDetails } from "../../lib/actionIcons";
+import { IconAdd, IconBug, IconEdit, IconHideDetails, IconRun, IconShowDetails, IconWarning } from "../../lib/actionIcons";
 import { cn } from "../../lib/cn";
 import { caseTextLine } from "../../lib/markdown";
 import { plural } from "../../lib/plural";
+import { DivergenceRow, needsAttention } from "./DivergenceMark";
 import RunDownloads from "./RunDownloads";
 import { loadSetupView, setupViewKey } from "./setupView";
 import { ClearConfirm, SuspectedDefectBadge } from "./SuspectedDefectMark";
@@ -93,6 +94,7 @@ function CaseCard({
   onRun,
   runBlocked,
   confirmingClear,
+  divergences,
   onAskClear,
   onClearDone,
   lastRun,
@@ -115,6 +117,8 @@ function CaseCard({
   runBlocked?: string;
   /** The suspected-defect Clear is waiting on Keep or Clear. */
   confirmingClear: boolean;
+  /** The case's reported divergences, open and recently ruled. */
+  divergences: readonly Divergence[];
   onAskClear: (id: number) => void;
   onClearDone: () => void;
   /** The run the last result came from, with this case's steps in it. */
@@ -123,6 +127,7 @@ function CaseCard({
   const bodyId = useId();
   const ready = Boolean(script);
   const defect = script?.suspected_defect;
+  const attention = divergences.find(needsAttention);
   const files = script ? scriptFiles(script) : { uploads: [], downloads: [] };
   const hasRunDownloads = (lastRun?.steps ?? []).some((s) => (s.downloads ?? []).length > 0);
   const showFiles = files.uploads.length > 0 || files.downloads.length > 0 || hasRunDownloads;
@@ -194,6 +199,16 @@ function CaseCard({
             <IconBug aria-hidden className="size-3.5" />
           </span>
         )}
+        {!open && attention && (
+          <span
+            role="img"
+            aria-label={`Needs a ruling: step ${attention.step}`}
+            title={`Needs a ruling: step ${attention.step}`}
+            className="shrink-0 text-warning"
+          >
+            <IconWarning aria-hidden className="size-3.5" />
+          </span>
+        )}
         <span className={cn("shrink-0 text-xs font-medium", bucketTone[result])}>
           <span className="sr-only">Last result: </span>
           {result}
@@ -202,6 +217,13 @@ function CaseCard({
 
       {open && (
         <div id={bodyId} className="space-y-3 border-t border-border/60 px-3 pb-3 pt-2">
+          {divergences.length > 0 && (
+            <div className="space-y-1">
+              {divergences.map((d) => (
+                <DivergenceRow key={d.id} org={org} project={project} caseId={c.id} divergence={d} />
+              ))}
+            </div>
+          )}
           {!script ? (
             <p className="text-xs text-muted">No script yet</p>
           ) : (

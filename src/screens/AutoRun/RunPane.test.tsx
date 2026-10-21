@@ -1463,3 +1463,23 @@ test("a clean-up step is run as the Clean-up and saved apart from the case's ste
   expect(c.cleanup?.step_number).toBe(2);
   expect(c.cleanup?.outcomes).toEqual([{ ok: true, detail: "deleted" }]);
 });
+
+test("a case that needs a ruling is blocked before it signs in", async () => {
+  const sentence =
+    'needs a ruling: step 2: the case says "exactly 4 levels" but the app shows "6 levels" (data) - a person rules on it in Auto Run';
+  const seen: string[] = [];
+  mockIPC((cmd) => {
+    seen.push(cmd);
+    if (cmd === "auto_run_load_script") return { case_id: 1, title: "s", steps: STEPS, account: "hr.admin" };
+    if (cmd === "auto_run_needs_ruling") return sentence;
+    if (cmd === "auto_run_sign_in") return OK;
+    return null;
+  });
+  renderPane([{ id: 1, title: "Leave request" }]);
+  fireEvent.click(await screen.findByRole("button", { name: "Open browser" }));
+
+  expect(await screen.findByText(`Blocked before step 1: ${sentence}`)).toBeInTheDocument();
+  expect(seen).not.toContain("auto_run_sign_in");
+  expect(seen).not.toContain("auto_run_check_preconditions");
+  expect(screen.getByRole("button", { name: /Run step 1/ })).toBeDisabled();
+});
