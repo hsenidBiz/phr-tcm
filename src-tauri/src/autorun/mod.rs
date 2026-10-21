@@ -96,6 +96,31 @@ pub struct StepScript {
 pub struct Because {
     pub value: String,
     pub why: String,
+    /// assumed or invented; absent reads as assumed. from_case is never
+    /// written: the save works it out.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provenance: Option<Provenance>,
+}
+
+/// Where a check's value comes from: the case as written (from_case, worked
+/// out by the save), the case read indirectly (assumed: "one per DEF row"),
+/// or chosen where the case leaves it free (invented).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, specta::Type)]
+#[serde(rename_all = "snake_case")]
+pub enum Provenance {
+    FromCase,
+    Assumed,
+    Invented,
+}
+
+impl Provenance {
+    pub fn word(self) -> &'static str {
+        match self {
+            Provenance::FromCase => "from_case",
+            Provenance::Assumed => "assumed",
+            Provenance::Invented => "invented",
+        }
+    }
 }
 
 /// How one test case is driven. Keyed by the Azure DevOps case id so a

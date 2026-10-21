@@ -9646,7 +9646,7 @@ async fn save_autorun_scripts(
     // value the case does not hold needs a "because"; a count the case
     // states differently is refused. Unchanged steps are not compared.
     let mut value_refusals: Vec<String> = Vec::new();
-    let mut value_listed: Vec<String> = Vec::new();
+    let mut value_sources: Vec<(i32, Vec<crate::autorun::case_values::SourcedValue>)> = Vec::new();
     let mut value_notes: Vec<String> = Vec::new();
     for (case_id, only) in &seen_scope {
         let (Some(script), Some(case)) =
@@ -9667,9 +9667,10 @@ async fn save_autorun_scripts(
         }
         let found = crate::autorun::case_values::check_case_values(script, &text, only.as_deref(), &test_prefix);
         value_refusals.extend(found.refusals.into_iter().map(|r| format!("case {case_id}: {r}")));
-        value_listed.extend(found.listed.into_iter().map(|l| format!("case {case_id}: value not in the case: {l}")));
+        value_sources.push((*case_id, found.sourced));
         value_notes.extend(found.notes.into_iter().map(|n| format!("case {case_id}: note: {n}")));
     }
+    let value_listed = crate::autorun::case_values::value_source_lines(&value_sources);
     if !value_refusals.is_empty() {
         return (400, value_refusals.join("\n"));
     }

@@ -10,7 +10,8 @@ use v2_lib::autorun::case_text::{numbers, range_members, stated_counts, CaseText
 use v2_lib::autorun::case_values::{check_case_values, check_count, check_repair_values, values_of_step, ValueKind};
 use v2_lib::autorun::edits::GiveUp;
 use v2_lib::autorun::store::set_root;
-use v2_lib::autorun::CaseScript;
+use v2_lib::autorun::case_values::SourcedValue;
+use v2_lib::autorun::{CaseScript, Provenance};
 use v2_lib::steps_xml::{build_steps_xml, Step};
 use wiremock::matchers::{method as wm_method, path as wm_path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -422,7 +423,7 @@ async fn a_saved_value_with_a_because_is_listed_in_the_answer() {
     let (status, out) = route(&ctx(), Some(&client), "POST", "/autorun-script", &body, "1.0.0").await;
     assert_eq!(status, 200, "{out}");
     assert!(
-        out.lines().any(|l| l == "case 7: value not in the case: step 2 \"Record saved successfully\" - the confirmation step 3 expects"),
+        out.lines().any(|l| l == "case 7: assumed: step 2 \"Record saved successfully\" - the confirmation step 3 expects"),
         "{out}"
     );
     let saved = v2_lib::autorun::store::load_script(dir.path(), 7).unwrap().unwrap();
@@ -661,7 +662,7 @@ async fn a_dry_run_lists_the_values_not_in_the_case() {
     see(dir.path(), &body);
     let (status, out) = route(&ctx(), Some(&client), "POST", "/autorun-script", &body, "1.0.0").await;
     assert_eq!(status, 200, "{out}");
-    assert!(out.lines().any(|l| l == "case 7: value not in the case: step 2 \"Gamma\" - the toast step 3 expects"), "{out}");
+    assert!(out.lines().any(|l| l == "case 7: assumed: step 2 \"Gamma\" - the toast step 3 expects"), "{out}");
     assert!(v2_lib::autorun::store::load_script(dir.path(), 7).unwrap().is_none());
 }
 
@@ -1004,4 +1005,185 @@ fn the_persons_save_stamps_the_checks_and_clears_what_was_given_up() {
     let after = v2_lib::autorun::store::load_script(dir.path(), 7).unwrap().unwrap();
     assert_eq!(after.checks, 3);
     assert!(after.given_up.is_empty());
+}
+
+// ------------------------------------------------------ value sources
+
+fn sv(step: i32, value: &str, provenance: Option<Provenance>, why: &str) -> SourcedValue {
+    SourcedValue { step, value: value.into(), provenance, why: why.into() }
+}
+
+fn five_step_script() -> CaseScript {
+    let texts: Vec<String> = (1..=4).map(|i| format!("Level {i}")).collect();
+    script(json!([
+        { "step_number": 1, "actions": [{ "kind": "navigate", "url": "https://app.example/def" }] },
+        { "step_number": 2, "actions": [{ "kind": "expect_order", "selector": level_selector(), "texts": texts }] },
+        { "step_number": 3, "actions": [
+            { "kind": "fill", "selector": "#goal", "value": "AUTOTEST Goal 1" },
+            { "kind": "expect_text", "selector": "#goal", "equals": "AUTOTEST Goal 1" },
+        ] },
+        { "step_number": 4, "actions": [{ "kind": "expect_contains_text", "selector": "#toast", "value": "Record saved successfully" }],
+          "because": [{ "value": "Record saved successfully", "why": "the confirmation step 3 expects" }] },
+        { "step_number": 5, "actions": [{ "kind": "expect_count", "selector": "#rows", "equals": 1 }] },
+    ]))
+}
+
+#[test]
+fn every_value_in_scope_has_a_source() {
+    let case = case_of(
+        147556,
+        "DEF levels",
+        &[("Open", ""), ("Open the level dropdown", "The dropdown lists Level 1 to Level 4"), ("Add", ""), ("Save", ""), ("Look", "")],
+        "",
+    );
+    let r = check(&case, &five_step_script(), None);
+    assert!(r.refusals.is_empty(), "{:?}", r.refusals);
+    use Provenance::*;
+    assert_eq!(
+        r.sourced,
+        vec![
+            sv(2, "4", Some(FromCase), ""),
+            sv(2, "Level 1", Some(FromCase), ""),
+            sv(2, "Level 2", Some(FromCase), ""),
+            sv(2, "Level 3", Some(FromCase), ""),
+            sv(2, "Level 4", Some(FromCase), ""),
+            sv(3, "AUTOTEST Goal 1", Some(Invented), "typed by the script"),
+            sv(4, "Record saved successfully", Some(Assumed), "the confirmation step 3 expects"),
+            sv(5, "1", None, ""),
+        ]
+    );
+}
+
+#[test]
+fn a_because_marked_invented_is_sourced_as_invented() {
+    let case = case_of(9, "Pay", &[("Open", ""), ("Pay", "A receipt appears")], "");
+    let action = json!({ "kind": "expect_contains_text", "selector": "#total", "value": "USD" });
+    let s = two_steps(action, json!([{ "value": "USD", "why": "one currency the case leaves free", "provenance": "invented" }]));
+    let r = check(&case, &s, None);
+    assert!(r.refusals.is_empty(), "{:?}", r.refusals);
+    assert_eq!(r.sourced, vec![sv(2, "USD", Some(Provenance::Invented), "one currency the case leaves free")]);
+}
+
+#[test]
+fn a_because_marked_from_case_is_refused() {
+    let case = case_of(9, "Pay", &[("Open", ""), ("Pay", "A receipt appears")], "");
+    let action = json!({ "kind": "expect_contains_text", "selector": "#total", "value": "USD" });
+    let s = two_steps(action, json!([{ "value": "USD", "why": "the case says so", "provenance": "from_case" }]));
+    let r = check(&case, &s, None);
+    assert!(
+        r.refusals.contains(&"step 2: a \"because\" is \"assumed\" or \"invented\" - from_case is what the save works out for a value the case holds, which needs no because".to_string()),
+        "{:?}",
+        r.refusals
+    );
+}
+
+#[test]
+fn an_unknown_provenance_fails_the_parse_naming_the_three() {
+    let e = serde_json::from_value::<v2_lib::autorun::Because>(json!({ "value": "x", "why": "y", "provenance": "guessed" }))
+        .unwrap_err()
+        .to_string();
+    assert!(e.contains("unknown variant") && e.contains("from_case") && e.contains("assumed") && e.contains("invented"), "{e}");
+}
+
+#[test]
+fn an_old_because_without_provenance_reads_as_assumed() {
+    let case = case_of(9, "Rows", &[("Open", ""), ("Look", "Rows are shown")], "");
+    let entry = json!({ "value": "6", "why": "one row per DEF level the precondition lists" });
+    let b: v2_lib::autorun::Because = serde_json::from_value(entry.clone()).unwrap();
+    assert_eq!(b.provenance, None);
+    assert_eq!(serde_json::to_value(&b).unwrap(), entry, "serializes back without the key");
+    let s = two_steps(rows_count(6), json!([entry]));
+    let r = check(&case, &s, None);
+    assert_eq!(r.sourced, vec![sv(2, "6", Some(Provenance::Assumed), "one row per DEF level the precondition lists")]);
+}
+
+async fn answer_for(case: &v2_lib::ado::TestCaseFull, body: String) -> (u16, String) {
+    let dir = TempDir::new();
+    let _root = crate::serial::autorun();
+    set_root(dir.path().to_path_buf());
+    let (_server, client) = client_with(case).await;
+    see(dir.path(), &body);
+    route(&ctx(), Some(&client), "POST", "/autorun-script", &body, "1.0.0").await
+}
+
+fn case_7() -> v2_lib::ado::TestCaseFull {
+    case_of(
+        7,
+        "Rate it",
+        &[
+            ("Open", ""),
+            ("Open the level dropdown", "The dropdown lists Level 1 to Level 4"),
+            ("Save", "A confirmation appears"),
+            ("Rate", "A rating is shown"),
+        ],
+        "",
+    )
+}
+
+fn bundle_7(step_3: Value, step_4: Value) -> String {
+    let texts: Vec<String> = (1..=4).map(|i| format!("Level {i}")).collect();
+    json!([{
+        "case_id": 7,
+        "title": "Rate it",
+        "steps": [
+            { "step_number": 1, "actions": [{ "kind": "navigate", "url": "https://app.example/def" }] },
+            { "step_number": 2, "actions": [{ "kind": "expect_order", "selector": level_selector(), "texts": texts }] },
+            step_3,
+            step_4,
+        ]
+    }])
+    .to_string()
+}
+
+#[tokio::test]
+async fn the_save_answer_gives_each_values_source() {
+    let step_3 = json!({ "step_number": 3,
+        "actions": [{ "kind": "expect_contains_text", "selector": "#toast", "value": "Record saved successfully" }],
+        "because": [{ "value": "Record saved successfully", "why": "the confirmation step 3 expects" }] });
+    let step_4 = json!({ "step_number": 4, "actions": [
+        { "kind": "fill", "selector": "#rating", "value": "AUTOTEST Rating 1" },
+        { "kind": "expect_text", "selector": "#rating", "equals": "AUTOTEST Rating 1" },
+        { "kind": "expect_count", "selector": "#rows", "equals": 1 },
+    ] });
+    let (status, out) = answer_for(&case_7(), bundle_7(step_3, step_4)).await;
+    assert_eq!(status, 200, "{out}");
+    let lines: Vec<&str> = out.lines().collect();
+    assert!(lines.contains(&"case 7: check values: 5 from the case, 1 assumed, 1 invented, 1 exempt"), "{out}");
+    assert!(lines.contains(&"case 7: assumed: step 3 \"Record saved successfully\" - the confirmation step 3 expects"), "{out}");
+    assert!(lines.contains(&"case 7: invented: step 4 \"AUTOTEST Rating 1\" - typed by the script"), "{out}");
+    assert_eq!(
+        lines.iter().filter(|l| **l == "Repeat every assumed and invented value in your report before you say the work is done.").count(),
+        1,
+        "{out}"
+    );
+}
+
+#[tokio::test]
+async fn the_value_lines_stop_at_forty() {
+    let actions: Vec<Value> = (1..=45)
+        .map(|i| json!({ "kind": "expect_contains_text", "selector": "#toast", "value": format!("Mango {i} stock") }))
+        .collect();
+    let because: Vec<Value> =
+        (1..=45).map(|i| json!({ "value": format!("Mango {i} stock"), "why": "the stock the case lists" })).collect();
+    let step_3 = json!({ "step_number": 3, "actions": actions, "because": because });
+    let step_4 = json!({ "step_number": 4, "actions": [{ "kind": "expect_count", "selector": "#rows", "equals": 1 }] });
+    let (status, out) = answer_for(&case_7(), bundle_7(step_3, step_4)).await;
+    assert_eq!(status, 200, "{out}");
+    assert_eq!(out.lines().filter(|l| l.starts_with("case 7: assumed: step 3")).count(), 40, "{out}");
+    assert!(
+        out.lines().any(|l| l == "and 5 more assumed or invented values - get_autorun_script shows each step's because"),
+        "{out}"
+    );
+    assert!(out.contains("Repeat every assumed and invented value"), "{out}");
+}
+
+#[tokio::test]
+async fn a_save_with_only_case_values_lists_no_value_line() {
+    let step_3 = json!({ "step_number": 3, "actions": [{ "kind": "expect_count", "selector": "#rows", "equals": 1 }] });
+    let step_4 = json!({ "step_number": 4, "actions": [{ "kind": "expect_count", "selector": "#rows", "equals": 1 }] });
+    let (status, out) = answer_for(&case_7(), bundle_7(step_3, step_4)).await;
+    assert_eq!(status, 200, "{out}");
+    assert!(out.lines().any(|l| l == "case 7: check values: 5 from the case, 0 assumed, 0 invented, 2 exempt"), "{out}");
+    assert!(!out.contains(": assumed: ") && !out.contains(": invented: "), "{out}");
+    assert!(!out.contains("Repeat every assumed"), "{out}");
 }

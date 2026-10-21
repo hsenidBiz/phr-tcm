@@ -267,7 +267,8 @@ async fn a_repair_may_remove_change_or_add_one_precondition_with_a_reason() {
     let (status, out) = save(body).await;
     assert_eq!(status, 200, "{out}");
     let changed = "precondition changed: Evaluation rules for 274 (Performance cycle wizard) to Participants for 274 (Performance cycle wizard) - the case needs a participant, not just the rules";
-    assert_eq!(out, format!("saved 1 script(s): case 7 (repaired)\ncase 7: {changed}"));
+    assert_eq!(out, format!("saved 1 script(s): case 7 (repaired)\ncase 7: {changed}
+case 7: check values: 1 from the case, 0 assumed, 0 invented, 0 exempt"));
     let saved = load_script(dir.path(), 7).unwrap().unwrap();
     assert_eq!(serde_json::to_value(&saved.preconditions).unwrap(), serde_json::json!([cycle_pre("participants")]));
     assert_eq!(saved.repairs, 2);
@@ -675,7 +676,8 @@ async fn a_new_script_needs_no_declaration_but_must_meet_the_floor() {
     let (status, out) =
         route(&ctx(), Some(&client), "POST", "/autorun-script", &declared, "1.0.0").await;
     assert_eq!(status, 200, "{out}");
-    assert_eq!(out, "saved 1 script(s): case 7 (repaired)");
+    assert_eq!(out, "saved 1 script(s): case 7 (repaired)
+case 7: check values: 1 from the case, 0 assumed, 0 invented, 0 exempt");
     assert_eq!(
         load_script(dir.path(), 7).unwrap().unwrap().repairs,
         1,
@@ -1356,7 +1358,9 @@ async fn an_unchanged_script_costs_no_repair() {
     )
     .await;
     assert_eq!(status, 200, "{out}");
-    assert_eq!(out, "saved 2 script(s): case 7 (new), case 9 (new)");
+    assert_eq!(out, "saved 2 script(s): case 7 (new), case 9 (new)
+case 7: check values: 1 from the case, 0 assumed, 0 invented, 0 exempt
+case 9: check values: 1 from the case, 0 assumed, 0 invented, 0 exempt");
 
     // Case 7 is repaired; case 9 comes back word for word.
     let body = serde_json::json!({
@@ -1370,7 +1374,7 @@ async fn an_unchanged_script_costs_no_repair() {
     assert_eq!(status, 200, "{out}");
     assert_eq!(
         out,
-        "saved 2 script(s): case 7 (repaired), case 9 (unchanged)"
+        "saved 2 script(s): case 7 (repaired), case 9 (unchanged)\ncase 7: check values: 1 from the case, 0 assumed, 0 invented, 0 exempt"
     );
     assert_eq!(load_script(dir.path(), 7).unwrap().unwrap().repairs, 1);
     assert_eq!(load_script(dir.path(), 9).unwrap().unwrap().repairs, 0, "case 9 paid nothing");
@@ -3861,7 +3865,8 @@ async fn a_dry_run_that_passes_says_it_would_save() {
 
     let body = tool_body(serde_json::json!({ "scripts": scripts, "dry_run": true }));
     let (status, out) = route(&ctx(), Some(&client), "POST", "/autorun-script", &body, "1.0.0").await;
-    assert_eq!((status, out.as_str()), (200, "Dry run: nothing was saved. It would save 1 script(s): case 7 (new)"));
+    assert_eq!((status, out.as_str()), (200, "Dry run: nothing was saved. It would save 1 script(s): case 7 (new)
+case 7: check values: 1 from the case, 0 assumed, 0 invented, 0 exempt"));
     assert_eq!(load_script(dir.path(), 7).unwrap(), None, "a dry run wrote the script");
     // Never mistaken for a save: it opens by saying nothing was saved, and
     // never says "saved N script(s)".
@@ -3872,7 +3877,8 @@ async fn a_dry_run_that_passes_says_it_would_save() {
     // The scripts as a string, as sibling tools take them, and false.
     let body = tool_body(serde_json::json!({ "scripts": scripts.to_string(), "dry_run": true }));
     let (status, out) = route(&ctx(), Some(&client), "POST", "/autorun-script", &body, "1.0.0").await;
-    assert_eq!((status, out.as_str()), (200, "Dry run: nothing was saved. It would save 1 script(s): case 7 (new)"));
+    assert_eq!((status, out.as_str()), (200, "Dry run: nothing was saved. It would save 1 script(s): case 7 (new)
+case 7: check values: 1 from the case, 0 assumed, 0 invented, 0 exempt"));
     let body = tool_body(serde_json::json!({ "scripts": scripts, "dry_run": false }));
     let (status, out) = route(&ctx(), Some(&client), "POST", "/autorun-script", &body, "1.0.0").await;
     assert_eq!(status, 200, "{out}");
@@ -3937,7 +3943,8 @@ async fn a_dry_run_writes_and_records_nothing() {
     see_scripts(dir.path(), &case_7(".toast", "Saved").to_string());
     let seen = every_file(dir.path());
     let (status, out) = route(&ctx(), Some(&client), "POST", "/autorun-script", &dry(".toast", true), "1.0.0").await;
-    assert_eq!((status, out.as_str()), (200, "Dry run: nothing was saved. It would save 1 script(s): case 7 (repaired)"));
+    assert_eq!((status, out.as_str()), (200, "Dry run: nothing was saved. It would save 1 script(s): case 7 (repaired)
+case 7: check values: 1 from the case, 0 assumed, 0 invented, 0 exempt"));
     assert_eq!(every_file(dir.path()), seen, "a dry run that passed changed a file");
     let kept = load_script(dir.path(), 7).unwrap().unwrap();
     assert_eq!(kept.repairs, 0);
@@ -4449,14 +4456,14 @@ async fn a_save_notes_a_loose_record_name_and_an_undeclared_record_without_refus
     assert_eq!(status, 200, "{out}");
     let lines: Vec<&str> = out.lines().collect();
     assert_eq!(lines[0], "Dry run: nothing was saved. It would save 1 script(s): case 7 (new)");
-    assert_eq!(lines[1..], notes[..], "{out}");
+    assert_eq!(lines[2..], notes[..], "{out}");
     assert_eq!(load_script(dir.path(), 7).unwrap(), None);
 
     let (status, out) = route(&ctx(), Some(&client), "POST", "/autorun-script", &body.to_string(), "1.0.0").await;
     assert_eq!(status, 200, "{out}");
     let lines: Vec<&str> = out.lines().collect();
     assert_eq!(lines[0], "saved 1 script(s): case 7 (new)");
-    assert_eq!(lines[1..], notes[..], "{out}");
+    assert_eq!(lines[2..], notes[..], "{out}");
     assert!(load_script(dir.path(), 7).unwrap().is_some());
 
     // Saved again unchanged, it is not read for notes.
@@ -4625,18 +4632,19 @@ async fn notes_come_after_the_precondition_lines() {
         "case 7: note: step 2: button \"{review}\" matches loosely, and the live app also showed button \"{review} Copy\", which it would match too when both are on the page: add \"exact\": true."
     );
     let precondition = "case 7: precondition added: Publish for 274 (Performance cycle wizard) - the case opens a published cycle";
+    let values = "case 7: check values: 1 from the case, 0 assumed, 0 invented, 0 exempt";
     let dry = serde_json::json!({ "scripts": changed, "edits": edits, "dry_run": true }).to_string();
     let (status, out) = route(&ctx(), Some(&client), "POST", "/autorun-script", &dry, "1.0.0").await;
     assert_eq!(status, 200, "{out}");
     assert_eq!(
         out,
-        format!("{} It would save 1 script(s): case 7 (repaired)\n{precondition}\n{loose}", v2_lib::ai_bridge::DRY_RUN_NOTHING_SAVED)
+        format!("{} It would save 1 script(s): case 7 (repaired)\n{precondition}\n{values}\n{loose}", v2_lib::ai_bridge::DRY_RUN_NOTHING_SAVED)
     );
     let body = serde_json::json!({ "scripts": changed, "edits": edits }).to_string();
     let (status, out) = route(&ctx(), Some(&client), "POST", "/autorun-script", &body, "1.0.0").await;
     assert_eq!(status, 200, "{out}");
     // The script now declares a precondition: no note for undeclared records.
-    assert_eq!(out, format!("saved 1 script(s): case 7 (repaired)\n{precondition}\n{loose}"));
+    assert_eq!(out, format!("saved 1 script(s): case 7 (repaired)\n{precondition}\n{values}\n{loose}"));
 }
 
 /// A big bundle's notes stop at 20, then say how many more there were.
@@ -4669,8 +4677,8 @@ async fn a_bundles_notes_are_capped() {
     let (status, out) = route(&ctx(), Some(&client), "POST", "/autorun-script", &body, "1.0.0").await;
     assert_eq!(status, 200, "{out}");
     let lines: Vec<&str> = out.lines().collect();
-    assert_eq!(lines.len(), 1 + 20 + 1, "{out}");
-    assert!(lines[1].starts_with("case 101: note: names \"Open AUTOTEST Review 101\""), "{out}");
-    assert!(lines[20].starts_with("case 120: note: names"), "{out}");
-    assert_eq!(lines[21], "and 2 more notes");
+    assert_eq!(lines.len(), 1 + 22 + 20 + 1, "{out}");
+    assert!(lines[23].starts_with("case 101: note: names \"Open AUTOTEST Review 101\""), "{out}");
+    assert!(lines[42].starts_with("case 120: note: names"), "{out}");
+    assert_eq!(lines[43], "and 2 more notes");
 }

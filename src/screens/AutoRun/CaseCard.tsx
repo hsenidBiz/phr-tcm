@@ -66,12 +66,8 @@ export function scriptFacts(script: CaseScript): { label: string; value: string 
     { label: "Changes", value: (script.changes ?? []).join(", ") },
     { label: "Needs unchanged", value: (script.needs_unchanged ?? []).join(", ") },
     { label: "Last repair", value: script.last_repair?.trim() },
-    {
-      label: "Values not in the case",
-      value: script.steps
-        .flatMap((s) => (s.because ?? []).map((b) => `step ${s.step_number}: ${b.value} (${b.why})`))
-        .join("; "),
-    },
+    { label: "Assumed values", value: becauseFacts(script, false) },
+    { label: "Invented values", value: becauseFacts(script, true) },
     {
       label: "Checks given up",
       value: (script.given_up ?? [])
@@ -80,6 +76,17 @@ export function scriptFacts(script: CaseScript): { label: string; value: string 
     },
   ];
   return facts.flatMap(({ label, value }) => (value ? [{ label, value }] : []));
+}
+
+/** The steps' "because" entries of one source (an entry with no source reads as assumed). */
+function becauseFacts(script: CaseScript, invented: boolean): string {
+  return script.steps
+    .flatMap((s) =>
+      (s.because ?? [])
+        .filter((b) => (b.provenance === "invented") === invented)
+        .map((b) => `step ${s.step_number}: ${b.value} (${b.why})`),
+    )
+    .join("; ");
 }
 
 /** A small label over one section of an open card. */

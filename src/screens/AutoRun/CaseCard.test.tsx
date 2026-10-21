@@ -174,7 +174,7 @@ test("an open card leaves out every fact with no value, and Files when there is 
   expect(screen.getByText("1 step")).toBeInTheDocument();
   for (const label of [
     "Runs as", "Area", "Must not save", "Page errors", "Ignored page errors", "Unexpected dialogs",
-    "Preconditions", "Changes", "Needs unchanged", "Last repair", "Values not in the case",
+    "Preconditions", "Changes", "Needs unchanged", "Last repair", "Assumed values", "Invented values",
   ]) {
     expect(screen.queryByText(label)).not.toBeInTheDocument();
   }
@@ -248,7 +248,7 @@ test("scriptFacts and scriptFiles skip what is not there", () => {
   expect(scriptFacts({ ...BARE, account: "  ", changes: [] } as CaseScript)).toHaveLength(1);
 });
 
-test("the card lists values not in the case", () => {
+test("the card lists assumed and invented values", () => {
   const script = {
     ...BARE,
     steps: [
@@ -256,17 +256,25 @@ test("the card lists values not in the case", () => {
       {
         step_number: 2,
         actions: [],
-        because: [{ value: "6", why: "one row per DEF level the precondition lists" }],
+        because: [
+          { value: "6", why: "one row per DEF level the precondition lists" },
+          { value: "USD", why: "one currency the case leaves free", provenance: "invented" },
+        ],
       },
     ],
   } as CaseScript;
   expect(scriptFacts(script)).toContainEqual({
-    label: "Values not in the case",
+    label: "Assumed values",
     value: "step 2: 6 (one row per DEF level the precondition lists)",
   });
-  expect(scriptFacts(BARE).some((f) => f.label === "Values not in the case")).toBe(false);
+  expect(scriptFacts(script)).toContainEqual({
+    label: "Invented values",
+    value: "step 2: USD (one currency the case leaves free)",
+  });
+  expect(scriptFacts(BARE).some((f) => /Assumed|Invented/.test(f.label))).toBe(false);
   renderCard({ open: true, script });
-  expect(screen.getByText("Values not in the case")).toBeInTheDocument();
+  expect(screen.getByText("Assumed values")).toBeInTheDocument();
+  expect(screen.getByText("Invented values")).toBeInTheDocument();
   expect(screen.getByText("step 2: 6 (one row per DEF level the precondition lists)")).toBeInTheDocument();
 });
 

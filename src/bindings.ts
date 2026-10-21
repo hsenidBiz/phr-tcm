@@ -2522,9 +2522,28 @@ export type BackupImportResult = {
 };
 
 /**  Where a check's value comes from when the case does not hold it word for word. */
-export type Because = {
+export type Because = Because_Serialize | Because_Deserialize;
+
+/**  Where a check's value comes from when the case does not hold it word for word. */
+export type Because_Deserialize = {
 	value: string,
 	why: string,
+	/**
+	 *  assumed or invented; absent reads as assumed. from_case is never
+	 *  written: the save works it out.
+	 */
+	provenance?: Provenance | null,
+};
+
+/**  Where a check's value comes from when the case does not hold it word for word. */
+export type Because_Serialize = {
+	value: string,
+	why: string,
+	/**
+	 *  assumed or invented; absent reads as assumed. from_case is never
+	 *  written: the save works it out.
+	 */
+	provenance?: Provenance | null,
 };
 
 export type BoardData = {
@@ -4953,6 +4972,13 @@ export type Proven_Serialize = {
 };
 
 /**
+ *  Where a check's value comes from: the case as written (from_case, worked
+ *  out by the save), the case read indirectly (assumed: "one per DEF row"),
+ *  or chosen where the case leaves it free (invented).
+ */
+export type Provenance = "from_case" | "assumed" | "invented";
+
+/**
  *  What the screen knows about a case that the run file does not: the
  *  case's real Azure DevOps step ids, in document order, and which of its
  *  rows are Shared Steps references.
@@ -6276,7 +6302,7 @@ export type StepScript_Deserialize = {
 	 *  written, with where the case defines it (`case_values`). Written only
 	 *  when there are any.
 	 */
-	because?: Because[],
+	because?: Because_Deserialize[],
 };
 
 /**  The actions that carry out one numbered step of a test case. */
@@ -6303,7 +6329,7 @@ export type StepScript_Serialize = {
 	 *  written, with where the case defines it (`case_values`). Written only
 	 *  when there are any.
 	 */
-	because?: Because[],
+	because?: Because_Serialize[],
 };
 
 export type Step_Deserialize = {

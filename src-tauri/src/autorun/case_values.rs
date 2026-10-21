@@ -10,7 +10,7 @@ use std::collections::BTreeSet;
 use super::case_text::{fold, stated_counts, CaseText};
 use super::seen_check::has_phrase;
 use super::edits::GiveUp;
-use super::{Because, CaseScript, StepScript};
+use super::{Because, CaseScript, Provenance, StepScript};
 use crate::browser::actions::Action;
 
 /// What kind of value a check carries.
@@ -233,7 +233,61 @@ pub struct ValueReport {
     pub refusals: Vec<String>,
     /// Values the case does not hold that a `because` covers, one line each.
     pub listed: Vec<String>,
+    /// One per value of each step in scope that no refusal names, in script
+    /// order, with where it comes from.
+    pub sourced: Vec<SourcedValue>,
     pub notes: Vec<String>,
+}
+
+/// One check value and its source. `provenance` None = exempt (a bare
+/// count, a short text, a placeholder or a precondition's own value).
+#[derive(Debug, Clone, PartialEq)]
+pub struct SourcedValue {
+    pub step: i32,
+    pub value: String,
+    pub provenance: Option<Provenance>,
+    pub why: String,
+}
+
+/// At most this many assumed or invented values are listed in a save's answer.
+pub const MAX_VALUE_LINES: usize = 40;
+
+/// The save answer's lines about check values: per case with any sourced
+/// value a summary, then each assumed or invented one (at most
+/// `MAX_VALUE_LINES` in all), then once a request to repeat them.
+pub fn value_source_lines(sourced: &[(i32, Vec<SourcedValue>)]) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    let mut written = 0usize;
+    let mut more = 0usize;
+    for (case_id, values) in sourced {
+        if values.is_empty() {
+            continue;
+        }
+        let count = |p: Option<Provenance>| values.iter().filter(|v| v.provenance == p).count();
+        out.push(format!(
+            "case {case_id}: check values: {} from the case, {} assumed, {} invented, {} exempt",
+            count(Some(Provenance::FromCase)),
+            count(Some(Provenance::Assumed)),
+            count(Some(Provenance::Invented)),
+            count(None),
+        ));
+        for v in values.iter().filter(|v| matches!(v.provenance, Some(Provenance::Assumed | Provenance::Invented))) {
+            if written >= MAX_VALUE_LINES {
+                more += 1;
+                continue;
+            }
+            written += 1;
+            let word = v.provenance.map_or("", Provenance::word);
+            out.push(format!("case {case_id}: {word}: step {} \"{}\" - {}", v.step, v.value, v.why));
+        }
+    }
+    if more > 0 {
+        out.push(format!("and {more} more assumed or invented values - get_autorun_script shows each step's because"));
+    }
+    if written > 0 {
+        out.push("Repeat every assumed and invented value in your report before you say the work is done.".to_string());
+    }
+    out
 }
 
 /// A reason that opens with one of these names the app as its source.
@@ -257,27 +311,51 @@ pub fn names_the_app(why: &str) -> bool {
     APP_SOURCE_START.iter().any(|p| opening.starts_with(p)) || APP_SOURCE_ANYWHERE.iter().any(|p| why.contains(p))
 }
 
-fn exempt(v: &CheckValue, ex: &Exemptions) -> bool {
+/// Why a value needs no because.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Exempt {
+    /// A bare count, a short text, a placeholder, a precondition's value.
+    Bare,
+    Typed,
+    Upload,
+    Prefix,
+}
+
+fn exempt_kind(v: &CheckValue, ex: &Exemptions) -> Option<Exempt> {
     let folded = fold(&v.value);
     match v.kind {
         ValueKind::Count => {
-            if matches!(v.value.as_str(), "0" | "1") {
-                return true;
-            }
-            ex.precondition_values.contains(&folded)
+            (matches!(v.value.as_str(), "0" | "1") || ex.precondition_values.contains(&folded)).then_some(Exempt::Bare)
         }
         ValueKind::Text => {
             if folded.chars().count() < 3 || v.value.contains("{{") {
-                return true;
+                return Some(Exempt::Bare);
             }
-            if prefixed(&folded, &ex.test_prefix) {
-                return true;
+            if ex.precondition_values.contains(&folded) {
+                return Some(Exempt::Bare);
             }
             if ex.typed.iter().any(|t| has_phrase(&folded, t) || has_phrase(t, &folded)) {
-                return true;
+                return Some(Exempt::Typed);
             }
-            ex.uploads.contains(&folded) || ex.precondition_values.contains(&folded)
+            if ex.uploads.contains(&folded) {
+                return Some(Exempt::Upload);
+            }
+            prefixed(&folded, &ex.test_prefix).then_some(Exempt::Prefix)
         }
+    }
+}
+
+fn exempt(v: &CheckValue, ex: &Exemptions) -> bool {
+    exempt_kind(v, ex).is_some()
+}
+
+/// The invented source of a value the script itself makes.
+fn invented_by(kind: Exempt) -> &'static str {
+    match kind {
+        Exempt::Typed => "typed by the script",
+        Exempt::Upload => "uploaded by the script",
+        Exempt::Prefix => "a record named with the test name prefix",
+        Exempt::Bare => "",
     }
 }
 
@@ -297,6 +375,14 @@ fn because_format_refusal(n: i32, entries: &[Because]) -> Option<String> {
         .iter()
         .any(|b| b.value.trim().is_empty() || b.why.trim().is_empty() || b.why.chars().count() > 200 || b.why.contains('\n'));
     bad.then(|| format!("step {n}: each \"because\" is {{ \"value\", \"why\" }}, the why one line of at most 200 characters"))
+}
+
+fn because_provenance_refusal(n: i32, entries: &[Because]) -> Option<String> {
+    entries.iter().any(|b| b.provenance == Some(Provenance::FromCase)).then(|| {
+        format!(
+            "step {n}: a \"because\" is \"assumed\" or \"invented\" - from_case is what the save works out for a value the case holds, which needs no because"
+        )
+    })
 }
 
 fn because_app_refusals(n: i32, entries: &[Because]) -> Vec<String> {
@@ -336,6 +422,9 @@ pub fn check_case_values(
         if let Some(r) = because_format_refusal(n, &step.because) {
             push_refusal(&mut report, r);
         }
+        if let Some(r) = because_provenance_refusal(n, &step.because) {
+            push_refusal(&mut report, r);
+        }
         for r in because_app_refusals(n, &step.because) {
             push_refusal(&mut report, r);
         }
@@ -344,15 +433,32 @@ pub fn check_case_values(
         for v in &values {
             used.insert(fold(&v.value));
         }
-        for v in &values {
-            if exempt(v, &ex) {
-                continue;
+        let mut sourced_here: BTreeSet<String> = BTreeSet::new();
+        let mut source = |report: &mut ValueReport, v: &CheckValue, provenance: Option<Provenance>, why: String| {
+            if sourced_here.insert(fold(&v.value)) {
+                report.sourced.push(SourcedValue { step: n, value: v.value.clone(), provenance, why });
             }
+        };
+        for v in &values {
+            let exempt_as = exempt_kind(v, &ex);
             let in_case = match v.kind {
                 ValueKind::Count => v.value.parse::<u32>().is_ok_and(|c| numbers.contains(&c)),
                 ValueKind::Text => case.holds(&v.value),
             };
+            let covered = step.because.iter().find(|b| fold(&b.value) == fold(&v.value));
+            if exempt_as == Some(Exempt::Bare) {
+                source(&mut report, v, None, String::new());
+                continue;
+            }
             if in_case {
+                source(&mut report, v, Some(Provenance::FromCase), String::new());
+                continue;
+            }
+            if let Some(kind) = exempt_as {
+                match covered {
+                    Some(b) => source(&mut report, v, Some(b.provenance.unwrap_or(Provenance::Assumed)), b.why.trim().to_string()),
+                    None => source(&mut report, v, Some(Provenance::Invented), invented_by(kind).to_string()),
+                }
                 continue;
             }
             // An order's own length follows from its texts, each held on its
@@ -364,9 +470,9 @@ pub fn check_case_values(
                     continue;
                 }
             }
-            let covered = step.because.iter().find(|b| fold(&b.value) == fold(&v.value));
             match covered {
                 Some(b) => {
+                    source(&mut report, v, Some(b.provenance.unwrap_or(Provenance::Assumed)), b.why.trim().to_string());
                     let line = format!("step {n} \"{}\" - {}", v.value, b.why.trim());
                     if !report.listed.contains(&line) {
                         report.listed.push(line);
