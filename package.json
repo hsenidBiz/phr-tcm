@@ -58,7 +58,7 @@
     "playwright-core": "^1.61.1",
     "shadcn": "^4.13.0",
     "typescript": "~5.8.3",
-    "vite": "^7.0.4",
+    "vite": "^7.3.7",
     "vite-plugin-singlefile": "^2.3.3",
     "vitest": "^4.1.11"
   },
