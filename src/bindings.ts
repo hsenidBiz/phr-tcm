@@ -625,7 +625,9 @@ export const commands = {
 	 *  app (the assistant's save and an import), so its own locators count
 	 *  as seen in its area (`seen_check::load_checked_map`). A save from
 	 *  the editor clears it. Set by the save, whatever was sent; written
-	 *  only when true.
+	 *  only when true. Cleared when a run or replay of the case fails or is Blocked (`proven`), and
+	 *  set again by a pass of the whole case; never set while a divergence of the case waits for a
+	 *  ruling. A script that is not checked does not vouch for its locators.
 	 */
 	checked?: boolean,
 	/**
@@ -2981,7 +2983,9 @@ export type CaseScript_Deserialize = {
 	 *  app (the assistant's save and an import), so its own locators count
 	 *  as seen in its area (`seen_check::load_checked_map`). A save from
 	 *  the editor clears it. Set by the save, whatever was sent; written
-	 *  only when true.
+	 *  only when true. Cleared when a run or replay of the case fails or is Blocked (`proven`), and
+	 *  set again by a pass of the whole case; never set while a divergence of the case waits for a
+	 *  ruling. A script that is not checked does not vouch for its locators.
 	 */
 	checked?: boolean,
 	/**
@@ -3128,7 +3132,9 @@ export type CaseScript_Serialize = {
 	 *  app (the assistant's save and an import), so its own locators count
 	 *  as seen in its area (`seen_check::load_checked_map`). A save from
 	 *  the editor clears it. Set by the save, whatever was sent; written
-	 *  only when true.
+	 *  only when true. Cleared when a run or replay of the case fails or is Blocked (`proven`), and
+	 *  set again by a pass of the whole case; never set while a divergence of the case waits for a
+	 *  ruling. A script that is not checked does not vouch for its locators.
 	 */
 	checked?: boolean,
 	/**
