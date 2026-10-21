@@ -27,6 +27,20 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.2.3-beta.20",
+    date: "2026-10-21",
+    items: [
+      "Auto Run: the assistant now follows the same written rules as the Playwright pipeline, for writing, repairing, rewriting and auditing scripts, whatever tools it has, and the main Auto Run answers end with the rules that apply at that moment.",
+      "Auto Run: new /tcm:script-pbi command scripts a batch of one PBI's cases from one command.",
+      "Auto Run: when a case and the app disagree, the assistant reports it instead of bending the check to fit the page, and the case card asks you to rule whether the case or the app is right. A case waiting for a rewrite is released by editing it, saving its script, or Undo ruling.",
+      "Auto Run: checks take their values from the case or say where they come from; a repair cannot drop checks, add page scripts, fixed waits or retries, or quietly ignore errors without a recorded reason; and a script stays marked checked only while it passes.",
+      "Auto Run: a product bug the assistant notes is shown on the cases it names and at the top of the run report.",
+      "Auto Run: when the same failure comes back after a repair, the assistant stops instead of trying again and again.",
+      "Test files: the assistant can make a file a test uploads, such as a spreadsheet with a bad row, and save it to Test files. Test files only hold files a test uploads.",
+      "Fixes: the Setup panel's rows no longer overlap; an assistant reset no longer loses your sign-in; area clicks always land on the right item; a long API template list no longer overflows the assistant's answer.",
+    ],
+  },
+  {
     version: "2.2.3-beta.19",
     date: "2026-10-20",
     items: [
