@@ -28,60 +28,129 @@ pub struct CheckValue {
     pub value: String,
     /// A count that must be exactly this (not a bound), or a text compared whole.
     pub exact: bool,
-    /// The check action as JSON, lowercased: what a stated count's noun is
-    /// looked for in.
+    /// The check action as JSON, lowercased.
     pub action_json: String,
+    /// Every string VALUE of the action (never a key, never its `kind`),
+    /// lowercased and joined with spaces: what a stated count's noun is
+    /// looked for in.
+    pub values_text: String,
+    /// How a count bounds what the page shows.
+    pub rel: Rel,
 }
 
-fn count(step: i32, n: u32, exact: bool, action_json: &str) -> CheckValue {
-    CheckValue { step, kind: ValueKind::Count, value: n.to_string(), exact, action_json: action_json.to_string() }
+/// What a count claims about the number of things.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Rel {
+    /// Exactly this many.
+    Equal,
+    /// This many or more (`at_least`, `expect_each` `min`).
+    AtLeast,
+    /// This many or fewer.
+    AtMost,
+    /// The length of an `expect_order`: others may sit between its texts, so
+    /// only a length above the stated count contradicts it.
+    OrderLength,
+    /// Not a count.
+    NotCount,
 }
 
-fn text(step: i32, value: &str, exact: bool, action_json: &str) -> CheckValue {
-    CheckValue { step, kind: ValueKind::Text, value: value.to_string(), exact, action_json: action_json.to_string() }
+/// The action's string values, never its keys or its `kind`.
+fn string_values(v: &serde_json::Value, out: &mut Vec<String>) {
+    match v {
+        serde_json::Value::String(s) => out.push(s.to_lowercase()),
+        serde_json::Value::Array(a) => a.iter().for_each(|x| string_values(x, out)),
+        serde_json::Value::Object(m) => {
+            for (k, x) in m {
+                if k != "kind" {
+                    string_values(x, out);
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+struct Seen<'a> {
+    json: &'a str,
+    values: &'a str,
+}
+
+fn count(step: i32, n: u32, rel: Rel, s: &Seen) -> CheckValue {
+    CheckValue {
+        step,
+        kind: ValueKind::Count,
+        value: n.to_string(),
+        exact: rel == Rel::Equal,
+        action_json: s.json.to_string(),
+        values_text: s.values.to_string(),
+        rel,
+    }
+}
+
+fn text(step: i32, value: &str, exact: bool, s: &Seen) -> CheckValue {
+    CheckValue {
+        step,
+        kind: ValueKind::Text,
+        value: value.to_string(),
+        exact,
+        action_json: s.json.to_string(),
+        values_text: s.values.to_string(),
+        rel: Rel::NotCount,
+    }
 }
 
 fn values_of_action(step: i32, action: &Action, out: &mut Vec<CheckValue>) {
-    let json = serde_json::to_string(action).unwrap_or_default().to_lowercase();
+    let value = serde_json::to_value(action).unwrap_or_default();
+    let json = value.to_string().to_lowercase();
+    let mut strings = Vec::new();
+    string_values(&value, &mut strings);
+    let values = strings.join(" ");
+    let s = &Seen { json: &json, values: &values };
     match action {
         Action::ExpectCount { equals, at_least, at_most, .. } | Action::ExpectRowCount { equals, at_least, at_most, .. } => {
             if let Some(n) = equals {
-                out.push(count(step, *n, true, &json));
+                out.push(count(step, *n, Rel::Equal, s));
             }
-            for n in [at_least, at_most].into_iter().flatten() {
-                out.push(count(step, *n, false, &json));
+            if let Some(n) = at_least {
+                out.push(count(step, *n, Rel::AtLeast, s));
+            }
+            if let Some(n) = at_most {
+                out.push(count(step, *n, Rel::AtMost, s));
             }
         }
         Action::ExpectOrder { texts, .. } => {
             if texts.len() >= 2 {
-                out.push(count(step, texts.len() as u32, true, &json));
+                out.push(count(step, texts.len() as u32, Rel::OrderLength, s));
             }
-            out.extend(texts.iter().map(|t| text(step, t, false, &json)));
+            out.extend(texts.iter().map(|t| text(step, t, false, s)));
         }
-        Action::ExpectEach { min, equals, contains, .. } => {
+        Action::ExpectEach { min, equals, contains, attribute, .. } => {
             if let Some(n) = min {
-                out.push(count(step, *n, false, &json));
+                out.push(count(step, *n, Rel::AtLeast, s));
             }
-            if let Some(v) = equals {
-                out.push(text(step, v, true, &json));
-            }
-            if let Some(v) = contains {
-                out.push(text(step, v, false, &json));
+            // An attribute's value is not the case's words, as for `expect_attribute`.
+            if attribute.is_none() {
+                if let Some(v) = equals {
+                    out.push(text(step, v, true, s));
+                }
+                if let Some(v) = contains {
+                    out.push(text(step, v, false, s));
+                }
             }
         }
-        Action::CheckText { value } => out.push(text(step, value, false, &json)),
-        Action::ExpectText { equals: Some(v), .. } => out.push(text(step, v, true, &json)),
-        Action::ExpectContainsText { value, .. } => out.push(text(step, value, false, &json)),
+        Action::CheckText { value } => out.push(text(step, value, false, s)),
+        Action::ExpectText { equals: Some(v), .. } => out.push(text(step, v, true, s)),
+        Action::ExpectContainsText { value, .. } => out.push(text(step, value, false, s)),
         Action::ExpectDialog { text: t, contains, .. } => {
             if let Some(v) = t {
-                out.push(text(step, v, true, &json));
+                out.push(text(step, v, true, s));
             }
             if let Some(v) = contains {
-                out.push(text(step, v, false, &json));
+                out.push(text(step, v, false, s));
             }
         }
         Action::ExpectRow { cells, .. } | Action::ExpectNoRow { cells, .. } => {
-            out.extend(cells.0.iter().map(|(_, v)| text(step, v, false, &json)));
+            out.extend(cells.0.iter().map(|(_, v)| text(step, v, false, s)));
         }
         Action::WhenVisible { then, .. } | Action::RepeatWhileVisible { then, .. } => {
             for a in then {
@@ -166,7 +235,8 @@ pub struct ValueReport {
     pub notes: Vec<String>,
 }
 
-const APP_SOURCE: [&str; 12] = [
+/// A reason that opens with one of these names the app as its source.
+const APP_SOURCE_START: [&str; 8] = [
     "app shows",
     "app has",
     "app lists",
@@ -174,12 +244,16 @@ const APP_SOURCE: [&str; 12] = [
     "page has",
     "page lists",
     "environment has",
-    "the site has",
-    "was seen",
-    "is seen",
-    "observed",
-    "currently",
+    "site has",
 ];
+/// ... and one that says any of these anywhere does too.
+const APP_SOURCE_ANYWHERE: [&str; 3] = ["the app shows", "the page shows", "what is on the page"];
+
+fn names_the_app(why: &str) -> bool {
+    let why = fold(why);
+    let opening = why.strip_prefix("the ").unwrap_or(&why);
+    APP_SOURCE_START.iter().any(|p| opening.starts_with(p)) || APP_SOURCE_ANYWHERE.iter().any(|p| why.contains(p))
+}
 
 fn exempt(v: &CheckValue, ex: &Exemptions) -> bool {
     let folded = fold(&v.value);
@@ -194,7 +268,7 @@ fn exempt(v: &CheckValue, ex: &Exemptions) -> bool {
             if folded.chars().count() < 3 || v.value.contains("{{") {
                 return true;
             }
-            if !ex.test_prefix.is_empty() && folded.starts_with(&ex.test_prefix) {
+            if prefixed(&folded, &ex.test_prefix) {
                 return true;
             }
             if ex.typed.iter().any(|t| has_phrase(&folded, t) || has_phrase(t, &folded)) {
@@ -203,6 +277,17 @@ fn exempt(v: &CheckValue, ex: &Exemptions) -> bool {
             ex.uploads.contains(&folded) || ex.precondition_values.contains(&folded)
         }
     }
+}
+
+/// Starts with the test prefix as a whole token: the prefix, then a space,
+/// `-`, `_` or the end (a prefix that ends in punctuation needs nothing more).
+fn prefixed(folded: &str, prefix: &str) -> bool {
+    if prefix.is_empty() {
+        return false;
+    }
+    let Some(rest) = folded.strip_prefix(prefix) else { return false };
+    prefix.chars().next_back().is_some_and(|c| !c.is_alphanumeric())
+        || rest.chars().next().is_none_or(|c| matches!(c, ' ' | '-' | '_'))
 }
 
 fn because_format_refusal(n: i32, entries: &[Because]) -> Option<String> {
@@ -215,10 +300,7 @@ fn because_format_refusal(n: i32, entries: &[Because]) -> Option<String> {
 fn because_app_refusals(n: i32, entries: &[Because]) -> Vec<String> {
     entries
         .iter()
-        .filter(|b| {
-            let why = fold(&b.why);
-            APP_SOURCE.iter().any(|p| why.contains(p))
-        })
+        .filter(|b| names_the_app(&b.why))
         .map(|b| {
             format!(
                 "step {n}: the \"because\" for \"{}\" names the app as its source - a check's value comes from the case; when the app differs, call report_case_divergence",
@@ -273,8 +355,8 @@ pub fn check_case_values(
             }
             // An order's own length follows from its texts, each held on its
             // own: only a stated count can contradict it.
-            let order_length = v.kind == ValueKind::Count && v.action_json.contains("\"texts\"");
-            if v.kind == ValueKind::Count && v.exact {
+            let order_length = v.rel == Rel::OrderLength;
+            if v.kind == ValueKind::Count {
                 if let Some(r) = contradicts_stated_count(case, n, v) {
                     push_refusal(&mut report, r);
                     continue;
@@ -314,20 +396,43 @@ pub fn check_case_values(
     report
 }
 
-/// The case states another count of the thing this check counts.
+/// Whether `text` holds the noun `stem` as a word (or its plural).
+fn has_noun(text: &str, stem: &str) -> bool {
+    text.split(|c: char| !c.is_alphanumeric())
+        .any(|w| w == stem || w.strip_suffix('s') == Some(stem) || w.strip_suffix("es") == Some(stem))
+}
+
+/// A bound or count the case's stated count rules out.
+fn contradicts(rel: Rel, got: u32, stated: u32) -> bool {
+    match rel {
+        Rel::Equal => got != stated,
+        Rel::AtLeast | Rel::OrderLength => got > stated,
+        Rel::AtMost => got < stated,
+        Rel::NotCount => false,
+    }
+}
+
+/// The case states another count of the thing this check counts. The noun
+/// is looked for as a word in the check's own values and in the case step's
+/// own words, never in the check's keys.
 fn contradicts_stated_count(case: &CaseText, n: i32, v: &CheckValue) -> Option<String> {
+    let Ok(got) = v.value.parse::<u32>() else { return None };
     let mut sources: Vec<&str> = Vec::new();
+    let mut step_words = String::new();
     if n >= 1 {
         if let Some((action, expected)) = case.steps.get(n as usize - 1) {
             sources.push(action);
             sources.push(expected);
+            step_words = format!("{action} {expected}").to_lowercase();
         }
     }
     sources.push(&case.preconditions);
     sources
         .iter()
         .flat_map(|t| stated_counts(t))
-        .find(|sc| v.action_json.contains(&sc.stem))
+        .find(|sc| {
+            contradicts(v.rel, got, sc.n) && (has_noun(&v.values_text, &sc.stem) || has_noun(&step_words, &sc.stem))
+        })
         .map(|sc| {
             format!(
                 "step {n}: the check counts {} but the case says {} (\"{}\") - a count comes from the case as written; if the app shows {}, call report_case_divergence and keep {}",

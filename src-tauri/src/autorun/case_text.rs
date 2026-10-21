@@ -71,6 +71,11 @@ impl CaseText {
         let all = self.all_folded();
         let mut set = numbers(&all);
         set.extend(range_sizes(&all));
+        set.extend(
+            all.split(|c: char| !c.is_alphanumeric())
+                .filter_map(|w| NUMBER_WORDS.iter().position(|n| *n == w))
+                .map(|i| i as u32 + 1),
+        );
         set
     }
 }
@@ -101,6 +106,20 @@ pub fn numbers(folded: &str) -> BTreeSet<u32> {
     out
 }
 
+/// "one" is 1 ... "twenty" is 20.
+const NUMBER_WORDS: [&str; 20] = [
+    "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven", "twelve", "thirteen",
+    "fourteen", "fifteen", "sixteen", "seventeen", "eighteen", "nineteen", "twenty",
+];
+
+/// "levels" -> "level": the word a range's members are written with.
+fn singular(w: &str) -> String {
+    match w.strip_suffix('s') {
+        Some(s) if s.chars().count() >= 3 && !s.ends_with('s') => s.to_string(),
+        _ => w.to_string(),
+    }
+}
+
 fn is_dash(t: &str) -> bool {
     matches!(t, "-" | "\u{2013}" | "\u{2014}")
 }
@@ -120,7 +139,7 @@ fn ranges(folded: &str) -> Vec<(String, u32, u32)> {
     let is_sep = |t: &str| is_dash(t) || matches!(clean(t).as_str(), "to" | "through" | "until");
     let word_of = |t: &str| {
         let c = clean(t);
-        (c.chars().count() >= 2 && c.chars().all(char::is_alphabetic)).then_some(c)
+        (c.chars().count() >= 2 && c.chars().all(char::is_alphabetic)).then(|| singular(&c))
     };
     let ok = |a: u32, b: u32| a < b && b - a <= 50;
     let mut out = Vec::new();
@@ -143,9 +162,9 @@ fn ranges(folded: &str) -> Vec<(String, u32, u32)> {
             continue;
         }
         let Some(&t3) = raw.get(i + 3) else { continue };
-        // "X a - b": a bare end after a dash
+        // "X a to b" / "X a - b": a bare end
         if let Some(b) = int(t3) {
-            if ok(a, b) && is_dash(t2) {
+            if ok(a, b) {
                 out.push((x.clone(), a, b));
             }
             continue;
@@ -204,7 +223,8 @@ pub fn stated_counts(text: &str) -> Vec<StatedCount> {
             continue;
         }
         let Ok(n) = tok.parse::<u32>() else { continue };
-        if n < 2 {
+        // A year is not a count.
+        if n < 2 || (1900..=2099).contains(&n) {
             continue;
         }
         let Some(next) = tokens.get(i + 1) else { continue };

@@ -9715,6 +9715,8 @@ async fn save_autorun_scripts(
                     .chain(crate::autorun::preconditions::undeclared_record_note(script, only.as_deref(), &test_prefix, &save_words));
                 notes.extend(sentences.map(|n| format!("case {case_id}: note: {n}")));
             }
+            // The value check's notes count toward the same cap.
+            notes.extend(value_notes.iter().cloned());
             if notes.len() > MAX_SAVE_NOTES {
                 let more = notes.len() - MAX_SAVE_NOTES;
                 notes.truncate(MAX_SAVE_NOTES);
@@ -9790,18 +9792,10 @@ async fn save_autorun_scripts(
         Some(found) => after_recording(found, said),
         None => said,
     };
-    let mut notes = match checked {
+    let notes = match checked {
         Ok(notes) => notes,
         Err(refused) => return answer(refused.said()),
     };
-    if !value_notes.is_empty() {
-        notes.extend(value_notes);
-        if notes.len() > MAX_SAVE_NOTES + 1 {
-            let more = notes.len() - MAX_SAVE_NOTES;
-            notes.truncate(MAX_SAVE_NOTES);
-            notes.push(format!("and {more} more notes"));
-        }
-    }
     if dry_run {
         let blocked = blocked_by_divergence_lines(&root, ctx, &prepared);
         let said = std::iter::once(dry_run_answer(prepared.len(), &lines))
