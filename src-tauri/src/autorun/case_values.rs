@@ -402,6 +402,22 @@ fn has_noun(text: &str, stem: &str) -> bool {
         .any(|w| w == stem || w.strip_suffix('s') == Some(stem) || w.strip_suffix("es") == Some(stem))
 }
 
+/// Words that locate a thing without naming what it is.
+const STRUCTURAL: &[&str] = &[
+    "option", "options", "row", "rows", "listitem", "li", "tr", "td", "ul", "ol", "div", "span", "a", "item", "items",
+    "cell", "cells", "combobox", "select", "list", "listbox", "table", "grid", "tbody", "gridcell", "rowgroup",
+];
+
+/// Whether the check's own values name a countable thing of their own (a
+/// role, name or text such as "button", "Save", "card"): then the case
+/// step's words are not used to find the noun. A bare css, or a structural
+/// word only, names nothing.
+fn names_own_noun(values_text: &str) -> bool {
+    values_text.split_whitespace().any(|w| {
+        !w.contains(|c: char| c.is_ascii_digit() || "#.[]>:=()*_".contains(c)) && !STRUCTURAL.contains(&w)
+    })
+}
+
 /// A bound or count the case's stated count rules out.
 fn contradicts(rel: Rel, got: u32, stated: u32) -> bool {
     match rel {
@@ -431,7 +447,7 @@ fn contradicts_stated_count(case: &CaseText, n: i32, v: &CheckValue) -> Option<S
         .iter()
         .flat_map(|t| stated_counts(t))
         .find(|sc| {
-            contradicts(v.rel, got, sc.n) && (has_noun(&v.values_text, &sc.stem) || has_noun(&step_words, &sc.stem))
+            contradicts(v.rel, got, sc.n) && (has_noun(&v.values_text, &sc.stem) || (!names_own_noun(&v.values_text) && has_noun(&step_words, &sc.stem)))
         })
         .map(|sc| {
             format!(

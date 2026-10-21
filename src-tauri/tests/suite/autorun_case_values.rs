@@ -679,3 +679,15 @@ async fn value_notes_count_toward_the_notes_cap() {
     assert_eq!(notes, 20, "{out}");
     assert!(out.lines().any(|l| l == "and 5 more notes"), "{out}");
 }
+
+#[test]
+fn the_step_text_names_the_noun_only_when_the_check_names_none_of_its_own() {
+    let case = case_147556();
+    let css = json!({ "kind": "expect_count", "selector": { "css": "#ddlDefLvl option" }, "equals": 6 });
+    let r = check(&case, &two_steps(css, json!([{ "value": "6", "why": "one row per DEF level" }])), None);
+    assert!(r.refusals[0].contains("the check counts 6 but the case says 4"), "{:?}", r.refusals);
+    let button = json!({ "kind": "expect_count", "selector": { "role": "button" }, "equals": 3 });
+    let r = check(&case, &two_steps(button, json!([{ "value": "3", "why": "the three buttons step 1 names" }])), None);
+    assert!(r.refusals.is_empty(), "{:?}", r.refusals);
+    assert_eq!(r.listed.len(), 1);
+}
