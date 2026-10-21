@@ -662,12 +662,13 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
         },
         {
             "name": "save_test_file",
-            "description": "Save a file you made into this project's Test files, so an Auto Run `upload` action or an API template's `files` can send it by name. Only documents a test uploads are taken (the extensions are listed in the refusal); never save notes, scripts or reports here.",
+            "description": "Save a file you made into this project's Test files, so an Auto Run `upload` action or an API template's `files` can send it by name. Only documents a test uploads are taken (the extensions are listed in the refusal); never save notes, scripts or reports here. malformed: true saves a deliberately broken file (a corrupt PDF for a test that the app rejects it); the extension rule still applies.",
             "inputSchema": schema(serde_json::json!({
                 "name": { "type": "string", "description": "The file's name, e.g. bad-row.csv. Required unless from_path is given, in which case it defaults to that file's own name." },
                 "text": { "type": "string", "description": "The content as UTF-8, for a .txt, .csv, .json or .xml file." },
                 "base64": { "type": "string", "description": "The content as standard base64, for any kind of file a test uploads." },
-                "from_path": { "type": "string", "description": "An absolute path to a file you wrote on this machine; it is copied, at most 25 MB." },
+                "from_path": { "type": "string", "description": "A full path (drive letter first) to a file you wrote on this computer's own drives, never a network share; it is copied, at most 25 MB, and the saved name must keep its extension." },
+                "malformed": { "type": "boolean", "description": "Save a deliberately broken file, for a negative upload test (default false). The extension rule still applies." },
                 "replace": { "type": "boolean", "description": "Replace a file of that name already in Test files (default false)." },
             }), &[]),
         },

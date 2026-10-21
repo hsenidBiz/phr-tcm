@@ -357,6 +357,12 @@ test("a collapsed card says it needs a ruling", () => {
   expect(screen.getByRole("img", { name: "Needs a ruling: step 2" })).toBeInTheDocument();
 });
 
+test("a collapsed card whose case waits for a repair does not say it needs a ruling", () => {
+  renderCard({ divergences: [{ ...DIV, status: "awaiting_repair" }] });
+  expect(screen.getByRole("img", { name: "Waits for a repair: step 2" })).toBeInTheDocument();
+  expect(screen.queryByRole("img", { name: /Needs a ruling/ })).not.toBeInTheDocument();
+});
+
 test("a case with no script still shows its divergence", () => {
   renderCard({ open: true, script: null, divergences: [DIV] });
   expect(screen.getByText("No script yet")).toBeInTheDocument();

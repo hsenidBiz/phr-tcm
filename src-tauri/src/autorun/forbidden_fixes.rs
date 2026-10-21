@@ -85,11 +85,36 @@ pub fn check_repair_absorbs(
     new: &crate::autorun::CaseScript,
     edit: Option<&crate::autorun::edits::Edit>,
 ) -> Vec<String> {
+    check_repair_absorbs_with(old, new, edit, &[])
+}
+
+/// [`check_repair_absorbs`] against the project's quirks (`quirks`, all of them): a guard or an
+/// ignored page error is judged on the class its quirk will actually have - a note already active
+/// with that text keeps its own class, whatever the edit says - and is refused when the quirk
+/// cannot be recorded because the list is full.
+pub fn check_repair_absorbs_with(
+    old: &crate::autorun::CaseScript,
+    new: &crate::autorun::CaseScript,
+    edit: Option<&crate::autorun::edits::Edit>,
+    quirks: &[crate::autorun::quirks::Quirk],
+) -> Vec<String> {
     use crate::autorun::quirks::QuirkClass;
     use crate::autorun::PageErrors;
     use crate::browser::actions::Action;
     let quirk_given = edit.is_some_and(|e| e.quirk.as_deref().is_some_and(|q| !q.trim().is_empty()));
-    let class = edit.and_then(|e| e.quirk_class);
+    let edit_class = edit.and_then(|e| e.quirk_class);
+    let quirk_text = edit.and_then(|e| e.quirk.as_deref()).map(str::trim).filter(|q| !q.is_empty());
+    let mut cannot_record: Option<String> = None;
+    let class = match quirk_text {
+        Some(text) => match crate::autorun::quirks::class_it_would_have(quirks, text, edit_class) {
+            Ok(class) => class,
+            Err(why) => {
+                cannot_record = Some(why);
+                edit_class
+            }
+        },
+        None => edit_class,
+    };
     let is_guard = |a: &&Action| matches!(a, Action::WhenVisible { .. } | Action::RepeatWhileVisible { .. });
     let mut out: Vec<String> = Vec::new();
 
@@ -110,6 +135,8 @@ pub fn check_repair_absorbs(
             out.push(format!("step {n}: the repair adds a {kind} around a product bug - a real bug must surface as a failure: leave the step failing and mark it with mark_autorun_suspected_defect"));
         } else if !quirk_given || class.is_none() {
             out.push(format!("step {n}: the repair adds a {kind} - a guard runs or not as the page decides, which is how a failure gets absorbed: give the case's edit a quirk saying what the page does, with quirk_class \"app quirk\" or \"environment flake\""));
+        } else if let Some(why) = &cannot_record {
+            out.push(format!("step {n}: the repair adds a {kind} on the strength of a quirk, but that quirk cannot be recorded, so the guard is refused: {why}"));
         }
     }
 
@@ -122,6 +149,8 @@ pub fn check_repair_absorbs(
             out.push(format!("the repair ignores \"{phrase}\", a product bug - a real bug must surface as a failure: leave it failing and tell the person"));
         } else if !quirk_given || class.is_none() {
             out.push(format!("the repair adds \"{phrase}\" to ignore_page_errors - a page error that fails the case is the application's: give the case's edit a quirk saying what the error is, with quirk_class \"app quirk\" or \"environment flake\", or leave it failing and tell the person"));
+        } else if let Some(why) = &cannot_record {
+            out.push(format!("the repair adds \"{phrase}\" to ignore_page_errors on the strength of a quirk, but that quirk cannot be recorded, so it is refused: {why}"));
         }
     }
 

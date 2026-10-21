@@ -653,6 +653,11 @@ export const commands = {
 	autoRunClearSuspectedDefect: (caseId: number) => typedError<null, string>(__TAURI_INVOKE("auto_run_clear_suspected_defect", { caseId })),
 	autoRunLoadDivergences: (organization: string, project: string) => typedError<Divergence_Serialize[], string>(__TAURI_INVOKE("auto_run_load_divergences", { organization, project })),
 	autoRunRuleDivergence: (organization: string, project: string, id: string, ruling: Ruling) => typedError<Divergence_Serialize[], string>(__TAURI_INVOKE("auto_run_rule_divergence", { organization, project, id, ruling })),
+	/**
+	 *  A person takes back a "Rewrite the case" ruling: the divergence needs a
+	 *  ruling again.
+	 */
+	autoRunUndoDivergenceRuling: (organization: string, project: string, id: string) => typedError<Divergence_Serialize[], string>(__TAURI_INVOKE("auto_run_undo_divergence_ruling", { organization, project, id })),
 	autoRunNeedsRuling: (organization: string, project: string, caseId: number) => typedError<string | null, string>(__TAURI_INVOKE("auto_run_needs_ruling", { organization, project, caseId })),
 	/**
 	 *  The plan for the cases selected on the Auto Run tab, in list order.
@@ -3493,6 +3498,18 @@ export type Divergence_Deserialize = {
 	status: DivergenceStatus,
 	ruling?: Ruling | null,
 	ruled_at?: string | null,
+	/**
+	 *  While the case is rewritten (`AwaitingRepair`): the fingerprint of
+	 *  the case's steps text when the ruling was made, or at the first read
+	 *  after it for a ruling an earlier build saved. A different one later
+	 *  means the case was rewritten (`note_case_text`).
+	 */
+	case_fp?: string | null,
+	/**
+	 *  The ruled step's action text, folded, as it read when `case_fp` was
+	 *  taken: a rewrite that renumbers the step is still found by it.
+	 */
+	step_action?: string | null,
 };
 
 export type Divergence_Serialize = {
@@ -3509,6 +3526,18 @@ export type Divergence_Serialize = {
 	status: DivergenceStatus,
 	ruling?: Ruling | null,
 	ruled_at?: string | null,
+	/**
+	 *  While the case is rewritten (`AwaitingRepair`): the fingerprint of
+	 *  the case's steps text when the ruling was made, or at the first read
+	 *  after it for a ruling an earlier build saved. A different one later
+	 *  means the case was rewritten (`note_case_text`).
+	 */
+	case_fp?: string | null,
+	/**
+	 *  The ruled step's action text, folded, as it read when `case_fp` was
+	 *  taken: a rewrite that renumbers the step is still found by it.
+	 */
+	step_action?: string | null,
 };
 
 /**

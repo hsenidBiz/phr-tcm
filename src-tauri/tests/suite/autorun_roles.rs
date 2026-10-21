@@ -257,3 +257,19 @@ fn the_rules_of_the_moment_are_short_and_plain() {
     assert_eq!(without_rules(&format!("x\n\n{RULES_REPLAY}"), RULES_REPLAY), "x");
     assert_eq!(without_rules("x\n\ny", RULES_REPLAY), "x\n\ny");
 }
+
+#[test]
+fn the_pointer_holds_for_a_chat_that_never_saw_the_rules() {
+    for r in Role::ALL {
+        let p = v2_lib::autorun::roles::pointer(r);
+        assert_eq!(
+            p,
+            format!(
+                "(The {n}'s rules hold for this work whatever tools you use. If they did not come with an earlier answer in this chat, get_guide with topic autorun and role {k} gives them.)",
+                n = r.name(),
+                k = r.key()
+            )
+        );
+        assert!(!p.contains("this session"), "{p}");
+    }
+}

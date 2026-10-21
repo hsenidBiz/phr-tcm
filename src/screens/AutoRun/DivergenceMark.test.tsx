@@ -30,7 +30,7 @@ function show(d: Divergence) {
   const calls: { cmd: string; args: unknown }[] = [];
   mockIPC((cmd, args) => {
     calls.push({ cmd, args });
-    if (cmd === "auto_run_rule_divergence") return [];
+    if (cmd === "auto_run_rule_divergence" || cmd === "auto_run_undo_divergence_ruling") return [];
     return null;
   });
   const qc = new QueryClient();
@@ -89,9 +89,39 @@ test("keep closes the confirm without ruling", () => {
   expect(calls.some((c) => c.cmd === "auto_run_rule_divergence")).toBe(false);
 });
 
-test("a case waiting for a repair has no buttons and names heal", () => {
+test("a case waiting for a repair offers no ruling, only to undo it, and names heal", () => {
   show({ ...base, status: "awaiting_repair" });
   expect(screen.getByText("Waits for a repair")).toBeInTheDocument();
-  expect(screen.queryByRole("button")).not.toBeInTheDocument();
+  expect(screen.getAllByRole("button").map((b) => b.getAttribute("aria-label"))).toEqual([
+    "Undo the ruling on #147556 step 2",
+  ]);
   expect(screen.getByText(/\/tcm:heal/)).toBeInTheDocument();
+});
+
+test("undoing the rewrite ruling calls the command and asks for nothing else", async () => {
+  const calls = show({ ...base, status: "awaiting_repair" });
+  fireEvent.click(screen.getByRole("button", { name: "Undo the ruling on #147556 step 2" }));
+  await waitFor(() =>
+    expect(calls.find((c) => c.cmd === "auto_run_undo_divergence_ruling")?.args).toEqual({
+      organization: "acme",
+      project: "Web",
+      id: "d1",
+    }),
+  );
+  expect(calls.some((c) => c.cmd === "auto_run_rule_divergence")).toBe(false);
+  expect(opener.openUrl).not.toHaveBeenCalled();
+});
+
+test("a failed undo says why and stays", async () => {
+  mockIPC((cmd) => {
+    if (cmd === "auto_run_undo_divergence_ruling") throw "only a ruling that waits for a repair can be undone";
+    return null;
+  });
+  render(
+    <QueryClientProvider client={new QueryClient()}>
+      <DivergenceRow org="acme" project="Web" caseId={147556} divergence={{ ...base, status: "awaiting_repair" }} />
+    </QueryClientProvider>,
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Undo the ruling on #147556 step 2" }));
+  expect(await screen.findByText("only a ruling that waits for a repair can be undone")).toBeInTheDocument();
 });

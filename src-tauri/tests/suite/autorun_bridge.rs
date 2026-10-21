@@ -2770,7 +2770,7 @@ async fn a_full_list_refuses_through_the_bridge_with_candidates() {
 /// routes to Database Access; everything else is Core.
 #[test]
 fn each_route_prefix_belongs_to_its_module() {
-    for path in ["/autorun-guide", "/autorun-anything-later", "/accounts", "/accounts-propose"] {
+    for path in ["/autorun-guide", "/autorun-anything-later", "/accounts", "/accounts-propose", "/test-file-save"] {
         assert_eq!(module_of_route(path), Some(Module::AutoRun), "{path}");
     }
     for path in ["/api-template-guide", "/api-templates", "/api-template-fixture-run"] {
@@ -2779,7 +2779,7 @@ fn each_route_prefix_belongs_to_its_module() {
     for path in ["/db-lookup", "/db-query"] {
         assert_eq!(module_of_route(path), Some(Module::DbAccess), "{path}");
     }
-    for path in ["/ping", "/guide", "/tools", "/test-cases", "/db-query-later", "/accountsx"] {
+    for path in ["/ping", "/guide", "/tools", "/test-cases", "/db-query-later", "/accountsx", "/test-file-save-later"] {
         assert_eq!(module_of_route(path), None, "{path}");
     }
 }

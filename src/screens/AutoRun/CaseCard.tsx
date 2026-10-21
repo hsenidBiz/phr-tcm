@@ -17,7 +17,7 @@ import { IconAdd, IconBug, IconEdit, IconHideDetails, IconRun, IconShowDetails, 
 import { cn } from "../../lib/cn";
 import { caseTextLine } from "../../lib/markdown";
 import { plural } from "../../lib/plural";
-import { DivergenceRow, needsAttention } from "./DivergenceMark";
+import { badgeText, DivergenceRow, needsAttention } from "./DivergenceMark";
 import RunDownloads from "./RunDownloads";
 import { loadSetupView, setupViewKey } from "./setupView";
 import { ClearConfirm, SuspectedDefectBadge } from "./SuspectedDefectMark";
@@ -221,8 +221,8 @@ function CaseCard({
         {!open && attention && (
           <span
             role="img"
-            aria-label={`Needs a ruling: step ${attention.step}`}
-            title={`Needs a ruling: step ${attention.step}`}
+            aria-label={`${badgeText(attention)}: step ${attention.step}`}
+            title={`${badgeText(attention)}: step ${attention.step}`}
             className="shrink-0 text-warning"
           >
             <IconWarning aria-hidden className="size-3.5" />

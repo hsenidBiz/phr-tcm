@@ -838,6 +838,8 @@ fn a_divergence_shows_on_its_case_in_the_report() {
         status,
         ruling,
         ruled_at: ruled_at.map(|t| t.to_string()),
+        case_fp: None,
+        step_action: None,
     };
     let day = 24 * 60 * 60 * 1000;
     let list = vec![

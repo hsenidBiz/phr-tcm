@@ -555,6 +555,20 @@ pub fn record_in_classed(
     Ok(Recorded::Added(list.last().expect("just pushed").id.clone()))
 }
 
+/// The class a note recorded with `text` and `class` would end up with, without recording it: a
+/// note already on the list keeps its own class (one without a class takes `class`), as
+/// `record_in_classed` does. `Err` is the refusal when the list is full and the text is not
+/// already an active note.
+pub fn class_it_would_have(list: &[Quirk], text: &str, class: Option<QuirkClass>) -> Result<Option<QuirkClass>, String> {
+    let wanted = normalized(text.trim());
+    match list.iter().find(|q| normalized(&q.text) == wanted) {
+        Some(q) if q.is_active() => Ok(q.class.or(class)),
+        Some(q) if active_count(list) < MAX_QUIRKS => Ok(q.class.or(class)),
+        None if active_count(list) < MAX_QUIRKS => Ok(class),
+        _ => Err(cap_refusal(list, Some(RETIRE_TOOL))),
+    }
+}
+
 /// Records one note in the project's file.
 #[allow(clippy::too_many_arguments)]
 pub fn record_quirk(

@@ -7,7 +7,7 @@ use serde_json::{json, Value};
 use v2_lib::ado::AdoClient;
 use v2_lib::ai_bridge::{route, BridgeContext};
 use v2_lib::autorun::case_text::{numbers, range_members, stated_counts, CaseText};
-use v2_lib::autorun::case_values::{check_case_values, check_count, check_repair_values, values_of_step, ValueKind};
+use v2_lib::autorun::case_values::{check_case_values, check_case_values_against, check_count, check_repair_values, values_of_step, ValueKind};
 use v2_lib::autorun::edits::GiveUp;
 use v2_lib::autorun::store::set_root;
 use v2_lib::autorun::case_values::SourcedValue;
@@ -1340,4 +1340,40 @@ async fn a_stray_key_in_a_gives_up_entry_is_named() {
     let (status, out) = route(&ctx(), Some(&client), "POST", "/autorun-script", &body, "1.0.0").await;
     assert_eq!(status, 400, "{out}");
     assert!(out.contains("unknown field") && out.contains("reason"), "{out}");
+}
+
+#[test]
+fn a_repair_holds_only_the_values_new_or_changed_in_its_steps() {
+    let case = case_147556();
+    // A script saved before the rule: step 2 checks a text the case never held.
+    let stale = json!({ "kind": "expect_text", "selector": level_selector(), "equals": "Legacy label" });
+    let old = two_steps(stale.clone(), json!([]));
+    // The healer fixes only the locator of the same check.
+    let locator_only = two_steps(
+        json!({ "kind": "expect_text", "selector": [{ "role": "combobox", "name": "Levels" }, { "role": "option" }], "equals": "Legacy label" }),
+        json!([]),
+    );
+    let text = text_of(&case);
+    // Held whole, the old value is refused ...
+    let whole = check_case_values(&locator_only, &text, Some(&[2]), "AUTOTEST");
+    assert_eq!(whole.refusals.len(), 1, "{:?}", whole.refusals);
+    // ... a repair of the step does not hold what the old step already had ...
+    let repaired = check_case_values_against(&locator_only, &text, Some(&[2]), "AUTOTEST", Some(&old));
+    assert!(repaired.refusals.is_empty(), "{:?}", repaired.refusals);
+    // ... but a value that is new or changed is held, with or without the old step.
+    let changed = two_steps(
+        json!({ "kind": "expect_text", "selector": level_selector(), "equals": "Brand new label" }),
+        json!([]),
+    );
+    let held = check_case_values_against(&changed, &text, Some(&[2]), "AUTOTEST", Some(&old));
+    assert_eq!(held.refusals.len(), 1, "{:?}", held.refusals);
+    assert!(held.refusals[0].contains("Brand new label"), "{:?}", held.refusals);
+    // The same value on a different step number is new there.
+    let moved = script(json!([
+        { "step_number": 1, "actions": [{ "kind": "navigate", "url": "https://app.example/def" }] },
+        { "step_number": 2, "actions": [{ "kind": "click", "selector": "#a" }] },
+        { "step_number": 3, "actions": [stale] },
+    ]));
+    let held = check_case_values_against(&moved, &text, Some(&[3]), "AUTOTEST", Some(&old));
+    assert_eq!(held.refusals.len(), 1, "{:?}", held.refusals);
 }

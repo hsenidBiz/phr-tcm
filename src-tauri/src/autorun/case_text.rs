@@ -50,6 +50,32 @@ impl CaseText {
         }
     }
 
+    /// A short stable print of the steps' text (each step's action and
+    /// expected result with whitespace collapsed), for noticing that a case
+    /// was rewritten. Case and punctuation count: a rewrite may change only
+    /// those. The title and preconditions are not in it.
+    pub fn steps_fingerprint(&self) -> String {
+        let collapse = |s: &str| s.split_whitespace().collect::<Vec<_>>().join(" ");
+        let mut text = String::new();
+        for (action, expected) in &self.steps {
+            text.push_str(&collapse(action));
+            text.push('\u{1f}');
+            text.push_str(&collapse(expected));
+            text.push('\u{1e}');
+        }
+        crate::filewatch::fingerprint(text.as_bytes())
+    }
+
+    /// Step `n`'s action alone, folded; none for a step the case has not or
+    /// one with no action text.
+    pub fn step_action_folded(&self, n: i32) -> Option<String> {
+        if n < 1 {
+            return None;
+        }
+        let folded = fold(&self.steps.get(n as usize - 1)?.0);
+        (!folded.is_empty()).then_some(folded)
+    }
+
     pub fn preconditions_folded(&self) -> String {
         fold(&self.preconditions)
     }

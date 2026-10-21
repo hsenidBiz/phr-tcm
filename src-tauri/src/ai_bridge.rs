@@ -494,16 +494,22 @@ pub async fn route(
         // sign-in. Never the person's browser, never while a replay runs.
         ("POST", "/autorun-reset") => crate::commands::autorun::reset_for_assistant(&ctx.org, &ctx.project).await,
         ("POST", "/autorun-discover-area") => autorun_discover_area(ctx, body).await,
-        ("POST", "/autorun-replay") => crate::autorun::roles::with_rules(
-            without_page(autorun_replay(ctx, body).await, body),
-            crate::autorun::roles::RULES_REPLAY,
-        ),
+        ("POST", "/autorun-replay") => {
+            release_rewritten_cases(ctx, client).await;
+            crate::autorun::roles::with_rules(
+                without_page(autorun_replay(ctx, body).await, body),
+                crate::autorun::roles::RULES_REPLAY,
+            )
+        }
         // The assistant's replay going, stopped through the same stop the
         // person's Stop sets, and its answer once it has ended.
         ("POST", "/autorun-replay-stop") => {
             crate::autorun::roles::with_rules(autorun_replay_stop_with(REPLAY_ANSWER_WAIT).await, crate::autorun::roles::RULES_REPLAY)
         }
-        ("GET", "/autorun-failures") => crate::autorun::roles::with_rules(autorun_failures(ctx, target), crate::autorun::roles::RULES_FAILURES),
+        ("GET", "/autorun-failures") => {
+            release_rewritten_cases(ctx, client).await;
+            crate::autorun::roles::with_rules(autorun_failures(ctx, target), crate::autorun::roles::RULES_FAILURES)
+        }
         ("POST", "/autorun-quirk") => autorun_quirk(ctx, body),
         ("POST", "/autorun-quirk-retire") => autorun_quirk_retire(ctx, body),
         ("POST", "/autorun-validation-rule") => record_validation_rule(ctx, body).await,
@@ -669,7 +675,8 @@ pub fn smells_like_a_write(method: &str, target: &str) -> bool {
 /// somebody remembering to repeat a check.
 pub fn module_of_route(path: &str) -> Option<crate::modules::Module> {
     use crate::modules::Module;
-    if path.starts_with("/autorun-") || path == "/accounts" || path.starts_with("/accounts-") {
+    if path.starts_with("/autorun-") || path == "/accounts" || path.starts_with("/accounts-") || path == "/test-file-save"
+    {
         Some(Module::AutoRun)
     } else if path.starts_with("/api-template") {
         Some(Module::ApiTemplates)
@@ -839,8 +846,9 @@ pub const TEST_FILE_NEEDS_A_NAME: &str = "Give the file a name, or a from_path t
 /// Said when `base64` is not standard base64.
 pub const TEST_FILE_BAD_BASE64: &str = "base64 is not standard base64 - encode the file's bytes and save it again.";
 
-/// Said when `from_path` is not an absolute path.
-pub const TEST_FILE_PATH_NOT_FULL: &str = "from_path must be the full path to a file you wrote on this machine.";
+/// Said when `from_path` is not a plain local absolute path: a relative one, a network share
+/// (`\\server\share`) or a device path (`\\?\`, `\\.\`).
+pub const TEST_FILE_PATH_NOT_LOCAL: &str = "from_path must be a file on this computer's own drives.";
 
 /// `POST /test-file-save`: a file the assistant made, saved into the project's Test files
 /// (`test_files::save_bytes`). Exactly one of `text`, `base64` or `from_path` carries the
@@ -861,6 +869,11 @@ fn test_file_save(ctx: &BridgeContext, body: &str) -> (u16, String) {
         return (400, TEST_FILE_ONE_SOURCE.to_string());
     }
     let replace = v["replace"].as_bool() == Some(true);
+    let malformed = v["malformed"].as_bool() == Some(true);
+    // Judged on the text alone, before any file system call: a share is never opened.
+    if from_path.as_deref().is_some_and(|p| !crate::test_files::is_plain_local_path(p)) {
+        return (400, TEST_FILE_PATH_NOT_LOCAL.to_string());
+    }
     if ctx.org.trim().is_empty() || ctx.project.trim().is_empty() {
         return (400, TEST_FILES_NEED_A_PROJECT.to_string());
     }
@@ -884,8 +897,15 @@ fn test_file_save(ctx: &BridgeContext, body: &str) -> (u16, String) {
         }
     } else {
         let path = std::path::PathBuf::from(from_path.unwrap_or_default());
-        if !path.is_absolute() {
-            return (400, TEST_FILE_PATH_NOT_FULL.to_string());
+        // The source is itself a kind of file a test uploads, and the saved name keeps its
+        // extension: a file cannot be copied in under another kind's name.
+        let source_name = crate::test_files::picked_name(&path);
+        if !crate::test_files::is_uploadable(&source_name) {
+            return (400, crate::test_files::not_uploadable(&source_name));
+        }
+        let ext = crate::test_files::extension_of(&source_name).unwrap_or_default();
+        if crate::test_files::extension_of(&name).as_deref() != Some(ext.as_str()) {
+            return (400, format!("The saved name must keep the file's own extension (.{ext})."));
         }
         match std::fs::metadata(&path) {
             Ok(m) if m.is_file() => {}
@@ -901,7 +921,7 @@ fn test_file_save(ctx: &BridgeContext, body: &str) -> (u16, String) {
         }
     };
     let replaced = replace && crate::test_files::resolve(&folder, &name).is_ok_and(|p| p.exists());
-    match crate::test_files::save_bytes(&folder, &name, &bytes, replace) {
+    match crate::test_files::save_bytes(&folder, &name, &bytes, replace, malformed) {
         Ok(saved) => (
             200,
             serde_json::json!({
@@ -7942,6 +7962,16 @@ async fn try_action<D: crate::browser::cdp::Driver>(
     Ok(Tried { outcome, dialog: run.dialog, steps, answered })
 }
 
+/// Before a replay or a failures answer: a case whose divergence waits for a
+/// rewrite that has since been saved in Azure DevOps runs again (read only;
+/// nothing when signed out).
+async fn release_rewritten_cases(ctx: &BridgeContext, client: Option<&crate::ado::AdoClient>) {
+    let (Some(client), Ok(root)) = (client, autorun_root()) else {
+        return;
+    };
+    crate::commands::autorun_divergence::refresh_rewritten(client, &root, &ctx.org, &ctx.project, None).await;
+}
+
 /// A run's failed cases, as text an assistant can act on - and, when it
 /// must not touch the script at all, the reason why.
 fn autorun_failures(ctx: &BridgeContext, target: &str) -> (u16, String) {
@@ -8381,7 +8411,12 @@ async fn autorun_divergence(ctx: &BridgeContext, client: Option<&crate::ado::Ado
     {
         Ok(cases) => cases.into_iter().find(|c| c.id == b.case_id),
         Err(crate::ado::AdoError::NotFound) => None,
-        Err(e) => return (502, format!("Azure DevOps error: {e:?}")),
+        Err(e) => {
+            // The raw error goes to the log; the reader gets the sentence
+            // that names no address (CLAUDE.md, user-facing errors).
+            crate::applog::warn(format!("Auto Run: a divergence's test case could not be read: {e:?}"));
+            return (502, format!("Azure DevOps error: {}", e.user_text()));
+        }
     };
     let Some(case) = case else {
         return (400, format!("case {} is not a test case in this organization", b.case_id));
@@ -9866,6 +9901,10 @@ async fn save_autorun_scripts(
     let test_prefix = crate::environments::active(&root)
         .map(|e| e.test_prefix)
         .unwrap_or_else(|_| crate::environments::default_test_prefix());
+    // The project's quirks, for the class a repair's quirk will actually have
+    // and whether it fits (a file that cannot be read is judged as empty; the
+    // record itself says what it could not do).
+    let quirks_now = crate::autorun::quirks::load_quirks(&root, &ctx.org, &ctx.project).unwrap_or_default();
 
     // Gate 2b: a new or changed step's check values come from the case. A
     // value the case does not hold needs a "because"; a count the case
@@ -9891,12 +9930,20 @@ async fn save_autorun_scripts(
             );
             // And it never lets the page decide whether a failure counts.
             value_refusals.extend(
-                crate::autorun::forbidden_fixes::check_repair_absorbs(old, script, Some(edit))
+                crate::autorun::forbidden_fixes::check_repair_absorbs_with(old, script, Some(edit), &quirks_now)
                     .into_iter()
                     .map(|r| format!("case {case_id}: {r}")),
             );
         }
-        let found = crate::autorun::case_values::check_case_values(script, &text, only.as_deref(), &test_prefix);
+        // A repair holds only the values new or changed in its steps.
+        let old_script = repair_olds.iter().find(|(id, _)| id == case_id).map(|(_, old)| old);
+        let found = crate::autorun::case_values::check_case_values_against(
+            script,
+            &text,
+            only.as_deref(),
+            &test_prefix,
+            old_script,
+        );
         value_refusals.extend(found.refusals.into_iter().map(|r| format!("case {case_id}: {r}")));
         value_sources.push((*case_id, found.sourced));
         value_notes.extend(found.notes.into_iter().map(|n| format!("case {case_id}: note: {n}")));
@@ -10106,8 +10153,12 @@ async fn save_autorun_scripts(
     // scripts are already down.
     for edit in edits.iter().filter(|e| !e.steps.is_empty()) {
         let now = crate::autorun::sessions::now_ms();
+        // A step the rewrite renumbered is found by its action text.
+        let text = cases.iter().find(|c| c.id == edit.case_id).map(crate::autorun::case_text::CaseText::from_case);
         let closed = crate::autorun::divergences::update(&root, &ctx.org, &ctx.project, |list| {
-            Ok(crate::autorun::divergences::close_repaired(list, edit.case_id, &edit.steps, now))
+            Ok(crate::autorun::divergences::close_repaired_with(list, edit.case_id, &edit.steps, now, &|step| {
+                text.as_ref().and_then(|t| t.step_action_folded(step))
+            }))
         });
         match closed {
             Ok(steps) => report.extend(steps.into_iter().map(|s| {

@@ -406,6 +406,18 @@ pub fn check_case_values(
     only_steps: Option<&[i32]>,
     test_prefix: &str,
 ) -> ValueReport {
+    check_case_values_against(script, case, only_steps, test_prefix, None)
+}
+
+/// [`check_case_values`] for a repair of `old`: a value the old step already had (same kind,
+/// same text) is not held again - only a value that is new or changed in a step in scope is.
+pub fn check_case_values_against(
+    script: &CaseScript,
+    case: &CaseText,
+    only_steps: Option<&[i32]>,
+    test_prefix: &str,
+    old: Option<&CaseScript>,
+) -> ValueReport {
     let ex = exemptions(script, test_prefix);
     let numbers = case.case_numbers();
     let mut report = ValueReport::default();
@@ -433,6 +445,11 @@ pub fn check_case_values(
         for v in &values {
             used.insert(fold(&v.value));
         }
+        // What the old step already had is not new (a repair of a script saved before the rule).
+        let had: Vec<(ValueKind, String)> = old
+            .and_then(|o| old_step(o, n))
+            .map(|o| values_of_step(o).into_iter().map(|v| (v.kind, fold(&v.value))).collect())
+            .unwrap_or_default();
         let mut sourced_here: BTreeSet<String> = BTreeSet::new();
         let mut source = |report: &mut ValueReport, v: &CheckValue, provenance: Option<Provenance>, why: String| {
             if sourced_here.insert(fold(&v.value)) {
@@ -440,6 +457,8 @@ pub fn check_case_values(
             }
         };
         for v in &values {
+            // Counted and listed as before, but never refused: the old step had it.
+            let had_it = had.contains(&(v.kind, fold(&v.value)));
             let exempt_as = exempt_kind(v, &ex);
             let in_case = match v.kind {
                 ValueKind::Count => v.value.parse::<u32>().is_ok_and(|c| numbers.contains(&c)),
@@ -464,7 +483,7 @@ pub fn check_case_values(
             // An order's own length follows from its texts, each held on its
             // own: only a stated count can contradict it.
             let order_length = v.rel == Rel::OrderLength;
-            if v.kind == ValueKind::Count {
+            if v.kind == ValueKind::Count && !had_it {
                 if let Some(r) = contradicts_stated_count(case, n, v) {
                     push_refusal(&mut report, r);
                     continue;
@@ -478,7 +497,7 @@ pub fn check_case_values(
                         report.listed.push(line);
                     }
                 }
-                None if order_length => {}
+                None if order_length || had_it => {}
                 None => {
                     let what = if v.kind == ValueKind::Count { "the count" } else { "the text" };
                     push_refusal(

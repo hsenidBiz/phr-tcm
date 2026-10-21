@@ -337,3 +337,60 @@ async fn a_repair_adding_a_guard_without_a_quirk_is_refused_through_the_save() {
     assert_eq!(status, 400, "{out}");
     assert_eq!(out, format!("case 7: {NO_QUIRK_GUARD}"));
 }
+
+// ---- the guard is judged on the class its quirk will actually have ----
+
+use v2_lib::autorun::forbidden_fixes::check_repair_absorbs_with;
+use v2_lib::autorun::quirks::{Quirk, MAX_QUIRKS};
+
+fn note(text: &str, class: Option<QuirkClass>) -> Quirk {
+    let mut q = Quirk::new(text, "assistant", "autorun", 1);
+    q.class = class;
+    q
+}
+
+#[test]
+fn a_guard_is_judged_on_the_class_an_active_note_with_that_text_already_has() {
+    let old = script(json!([save_step()]));
+    let new = script(json!([guarded_step()]));
+    let text = "Save errors out on a full table";
+    let e = edit(Some(text), Some(QuirkClass::AppQuirk));
+    // Alone, the edit's own class passes.
+    assert!(check_repair_absorbs_with(&old, &new, Some(&e), &[]).is_empty());
+    // The same text is already an active product bug: its class wins, whatever the edit says.
+    let quirks = [note(&format!("  {}  ", text.to_uppercase()), Some(QuirkClass::ProductBug))];
+    assert_eq!(
+        check_repair_absorbs_with(&old, &new, Some(&e), &quirks),
+        vec!["step 2: the repair adds a when_visible around a product bug - a real bug must surface as a failure: leave the step failing and mark it with mark_autorun_suspected_defect".to_string()]
+    );
+    // An active note of another class keeps its class too, even against a product bug edit.
+    let flake = [note(text, Some(QuirkClass::EnvironmentFlake))];
+    let bug_edit = edit(Some(text), Some(QuirkClass::ProductBug));
+    assert!(check_repair_absorbs_with(&old, &new, Some(&bug_edit), &flake).is_empty());
+    // A note with no class takes the edit's.
+    let unclassed = [note(text, None)];
+    assert!(check_repair_absorbs_with(&old, &new, Some(&e), &unclassed).is_empty());
+}
+
+#[test]
+fn a_guard_is_refused_when_its_quirk_cannot_be_recorded() {
+    let old = script(json!([save_step()]));
+    let new = script(json!([guarded_step()]));
+    let full: Vec<Quirk> = (0..MAX_QUIRKS).map(|i| note(&format!("a quirk number {i}"), Some(QuirkClass::AppQuirk))).collect();
+    let e = edit(Some("A session warning may cover the form"), Some(QuirkClass::AppQuirk));
+    let got = check_repair_absorbs_with(&old, &new, Some(&e), &full);
+    assert_eq!(got.len(), 1, "{got:?}");
+    assert!(got[0].starts_with("step 2: the repair adds a when_visible on the strength of a quirk, but that quirk cannot be recorded"), "{got:?}");
+    assert!(got[0].contains("retire one"), "{got:?}");
+    // A quirk already on the list needs no room.
+    let mut with_it = full.clone();
+    with_it[0] = note("A session warning may cover the form", Some(QuirkClass::AppQuirk));
+    assert!(check_repair_absorbs_with(&old, &new, Some(&e), &with_it).is_empty());
+    // And so does a script with no guard.
+    assert!(check_repair_absorbs_with(&old, &old, Some(&e), &full).is_empty());
+    // The same for a new ignored page error.
+    let (o, n) = (with_ignore(&[]), with_ignore(&["/api/ping"]));
+    let got = check_repair_absorbs_with(&o, &n, Some(&edit(Some("ping 503s"), Some(QuirkClass::AppQuirk))), &full);
+    assert_eq!(got.len(), 1, "{got:?}");
+    assert!(got[0].contains("cannot be recorded"), "{got:?}");
+}

@@ -9,7 +9,7 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import { useId, useState } from "react";
 import { commands, type Divergence, type Ruling } from "../../bindings";
 import { Button } from "../../components/ui/button";
-import { IconCancel, IconConfirm, IconDataFixed, IconOpenInBrowser } from "../../lib/actionIcons";
+import { IconCancel, IconConfirm, IconDataFixed, IconOpenInBrowser, IconUndo } from "../../lib/actionIcons";
 import { toast } from "../../lib/toast";
 
 /** True while a divergence stops its case's runs or waits on a repair. */
@@ -17,7 +17,7 @@ export function needsAttention(d: Divergence): boolean {
   return d.status === "awaiting_repair" || (d.status === "open" && d.kind !== "app");
 }
 
-function badgeText(d: Divergence): string {
+export function badgeText(d: Divergence): string {
   if (d.status === "awaiting_repair") return "Waits for a repair";
   if (d.status === "ruled") return "Ruled";
   return d.kind === "app" ? "Divergence" : "Needs a ruling";
@@ -97,6 +97,24 @@ export function DivergenceRow({
     }
   };
 
+  // Takes a "Rewrite the case" ruling back: the divergence needs a ruling again.
+  const undo = async () => {
+    setBusy(true);
+    setProblem(null);
+    try {
+      const res = await commands.autoRunUndoDivergenceRuling(org, project, divergence.id);
+      if (res.status === "error") {
+        setProblem(res.error);
+        return;
+      }
+      await queryClient.invalidateQueries({ queryKey: ["autorun-divergences", org, project] });
+    } catch (e) {
+      setProblem(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const waiting = divergence.status === "awaiting_repair";
   return (
     <div className="flex flex-wrap items-center gap-2 pt-1">
@@ -140,6 +158,19 @@ export function DivergenceRow({
             Rewrite the case
           </Button>
         </>
+      )}
+      {waiting && (
+        <Button
+          size="sm"
+          variant="outline"
+          className="shrink-0"
+          disabled={busy}
+          aria-label={`Undo the ruling on #${caseId} step ${step}`}
+          onClick={() => void undo()}
+        >
+          <IconUndo aria-hidden />
+          Undo ruling
+        </Button>
       )}
       {asking && (
         <div className="flex w-full flex-wrap items-center gap-2 border-t border-border/60 pt-2">

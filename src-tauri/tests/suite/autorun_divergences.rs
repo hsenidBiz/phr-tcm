@@ -11,6 +11,7 @@ use v2_lib::ado::AdoClient;
 use v2_lib::ai_bridge::{module_guard_for, route, BridgeContext};
 use v2_lib::autorun::case_text::{fold, CaseText};
 use v2_lib::autorun::divergences::{
+    close_for_editor_save, close_repaired_with, note_case_text, undo_in,
     blocking, close_repaired, load, needs_ruling, open_for, path, report_in, rule_in, run_sentence, tool_answer,
     update, Divergence, DivergenceKind, DivergenceStatus, Reported, Ruling, KEEP_RULED_MS,
 };
@@ -116,6 +117,8 @@ fn divergence(id: &str, case_id: i32, step: i32, kind: DivergenceKind, reported_
         status: DivergenceStatus::Open,
         ruling: None,
         ruled_at: None,
+        case_fp: None,
+        step_action: None,
     }
 }
 
@@ -691,4 +694,210 @@ fn the_app_rules_a_divergence_and_loads_the_rest() {
     assert!(load_at(root, "org", "proj", now + 1000 + 8 * DAY).unwrap().is_empty());
     // ruling twice is refused
     assert!(rule_at(root, "org", "proj", &id, Ruling::CaseStands, now + 2000).is_err());
+}
+
+// ------------------------------------- "Rewrite the case" must have ways out
+
+fn awaiting(id: &str, step: i32) -> Divergence {
+    Divergence {
+        status: DivergenceStatus::AwaitingRepair,
+        ruling: Some(Ruling::Rewrite),
+        ruled_at: Some(NOW.to_string()),
+        ..divergence(id, 147556, step, DivergenceKind::Data, NOW)
+    }
+}
+
+fn rewritten_case() -> CaseText {
+    let mut case = case_147556();
+    case.steps[1].expected = "The dropdown lists Level 1 to Level 6".into();
+    CaseText::from_case(&case)
+}
+
+#[test]
+fn a_rewritten_case_closes_the_divergence_that_waited_for_it() {
+    let was = CaseText::from_case(&case_147556());
+    let mut list = vec![awaiting("d1", 2)];
+    // No print yet (a ruling an earlier build saved): this read gives it one and closes nothing.
+    assert!(note_case_text(&mut list, 147556, &was, NOW + 1).is_empty());
+    assert_eq!(list[0].case_fp.as_deref(), Some(was.steps_fingerprint().as_str()));
+    assert_eq!(list[0].step_action.as_deref(), Some("open the level dropdown"));
+    assert_eq!(list[0].status, DivergenceStatus::AwaitingRepair);
+    // The same text again: still waiting, and still blocking.
+    assert!(note_case_text(&mut list, 147556, &was, NOW + 2).is_empty());
+    assert!(blocking(&list, 147556).is_some());
+    // Another case's text is not this one's.
+    assert!(note_case_text(&mut list, 9, &rewritten_case(), NOW + 3).is_empty());
+    // The steps text changed in Azure DevOps: closed, and the case runs again.
+    assert_eq!(note_case_text(&mut list, 147556, &rewritten_case(), NOW + 4), vec![2]);
+    assert_eq!(list[0].status, DivergenceStatus::Ruled);
+    assert_eq!(list[0].ruled_at.as_deref(), Some((NOW + 4).to_string().as_str()));
+    assert!(blocking(&list, 147556).is_none());
+    // A title change alone is not a rewrite of the steps.
+    let mut list = vec![awaiting("d1", 2)];
+    note_case_text(&mut list, 147556, &was, NOW);
+    let mut retitled = case_147556();
+    retitled.title = "DEF levels (renamed)".into();
+    assert!(note_case_text(&mut list, 147556, &CaseText::from_case(&retitled), NOW + 1).is_empty());
+}
+
+#[test]
+fn a_ruling_saved_by_an_earlier_build_loads_with_no_print() {
+    let old = r#"[{"id":"d1","case_id":7,"step":2,"case_says":"a","app_shows":"b","kind":"data","reported_at":"1","status":"awaiting_repair","ruling":"rewrite","ruled_at":"2"}]"#;
+    let list: Vec<Divergence> = serde_json::from_str(old).unwrap();
+    assert_eq!((list[0].case_fp.clone(), list[0].step_action.clone()), (None, None));
+    // And a list without a print is written back without the keys.
+    assert!(!serde_json::to_string(&list).unwrap().contains("case_fp"));
+}
+
+#[test]
+fn a_repair_declaring_a_renumbered_step_closes_it_by_the_steps_action_text() {
+    let was = CaseText::from_case(&case_147556());
+    let mut list = vec![awaiting("d1", 2)];
+    note_case_text(&mut list, 147556, &was, NOW);
+    // The rewrite put a step before it: the ruled step is now step 3, and the repair declares 3.
+    let now_reads = |step: i32| match step {
+        3 => Some("open the level dropdown".to_string()),
+        _ => Some("something else".to_string()),
+    };
+    assert!(close_repaired_with(&mut list, 147556, &[4], NOW + 1, &now_reads).is_empty());
+    assert_eq!(list[0].status, DivergenceStatus::AwaitingRepair);
+    assert_eq!(close_repaired_with(&mut list, 147556, &[3], NOW + 2, &now_reads), vec![2]);
+    assert_eq!(list[0].status, DivergenceStatus::Ruled);
+    // Declaring the very step still closes, as before.
+    let mut list = vec![awaiting("d1", 2)];
+    assert_eq!(close_repaired(&mut list, 147556, &[2], NOW), vec![2]);
+}
+
+#[test]
+fn a_persons_editor_save_closes_what_waited_for_a_repair() {
+    let mut list = vec![
+        awaiting("d1", 2),
+        Divergence { case_id: 8, ..awaiting("d2", 2) },
+        divergence("d3", 147556, 3, DivergenceKind::Wording, NOW),
+    ];
+    assert_eq!(close_for_editor_save(&mut list, 147556, NOW + 1), vec![2]);
+    assert_eq!(list[0].status, DivergenceStatus::Ruled);
+    assert_eq!(list[1].status, DivergenceStatus::AwaitingRepair, "another case's");
+    assert_eq!(list[2].status, DivergenceStatus::Open, "an open one still needs a ruling");
+}
+
+#[test]
+fn saving_the_script_in_the_editor_unblocks_a_case_waiting_for_a_rewrite() {
+    use v2_lib::commands::autorun::save_script_from_editor;
+    let dir = TempDir::new();
+    let root = dir.path();
+    update(root, "acme", "Web", |list| {
+        list.push(Divergence { case_id: 7, ..awaiting("d1", 2) });
+        list.push(Divergence { case_id: 8, ..awaiting("d2", 2) });
+        Ok(())
+    })
+    .unwrap();
+    assert!(needs_ruling(root, "acme", "Web", 7).unwrap().starts_with("waits for a repair: "));
+    let script: v2_lib::autorun::CaseScript = serde_json::from_value(serde_json::json!({ "case_id": 7, "title": "t", "steps": [
+        { "step_number": 1, "actions": [{ "kind": "check_text", "value": "ok" }] }
+    ] }))
+    .unwrap();
+    save_script_from_editor(root, "acme", "Web", script).unwrap();
+    assert!(needs_ruling(root, "acme", "Web", 7).is_none(), "the person's save is the acceptance");
+    assert!(needs_ruling(root, "acme", "Web", 8).is_some(), "another case still waits");
+}
+
+#[test]
+fn undoing_a_rewrite_ruling_puts_it_back_to_needing_a_ruling() {
+    use v2_lib::commands::autorun_divergence::undo_at;
+    let mut list = vec![awaiting("d1", 2), divergence("d2", 147556, 3, DivergenceKind::Data, NOW)];
+    list[0].case_fp = Some("abc".into());
+    list[0].step_action = Some("open".into());
+    assert_eq!(undo_in(&mut list, "d1"), Ok(147556));
+    assert_eq!(
+        (list[0].status, list[0].ruling, list[0].ruled_at.clone(), list[0].case_fp.clone(), list[0].step_action.clone()),
+        (DivergenceStatus::Open, None, None, None, None)
+    );
+    assert!(blocking(&list, 147556).is_some());
+    // Only a ruling that waits for a repair can be undone.
+    assert!(undo_in(&mut list, "d1").is_err());
+    assert!(undo_in(&mut list, "d2").is_err());
+    assert!(undo_in(&mut list, "nope").is_err());
+
+    // Through the app's own command body: the file changes and the list comes back.
+    let dir = TempDir::new();
+    update(dir.path(), "acme", "Web", |l| {
+        l.push(awaiting("d1", 2));
+        Ok(())
+    })
+    .unwrap();
+    let after = undo_at(dir.path(), "acme", "Web", "d1", NOW).unwrap();
+    assert_eq!(after[0].status, DivergenceStatus::Open);
+    assert!(needs_ruling(dir.path(), "acme", "Web", 147556).unwrap().starts_with("needs a ruling: "));
+}
+
+#[tokio::test]
+async fn reading_the_case_closes_a_rewrite_that_was_saved_and_gives_a_new_ruling_its_print() {
+    use v2_lib::commands::autorun_divergence::refresh_rewritten;
+    let dir = TempDir::new();
+    let root = dir.path();
+    let (_server, client) = client_with_case().await;
+    let live = CaseText::from_case(&case_147556());
+    // A ruling made while the case could not be read has no print: the read gives it one.
+    update(root, "acme", "Web", |l| {
+        l.push(awaiting("d1", 2));
+        Ok(())
+    })
+    .unwrap();
+    assert!(refresh_rewritten(&client, root, "acme", "Web", None).await.is_empty());
+    let stored = load(root, "acme", "Web").unwrap();
+    assert_eq!(stored[0].case_fp.as_deref(), Some(live.steps_fingerprint().as_str()));
+    assert!(needs_ruling(root, "acme", "Web", 147556).is_some());
+    // The case as the person left it differs from the print the ruling was made on.
+    update(root, "acme", "Web", |l| {
+        l[0].case_fp = Some(rewritten_case().steps_fingerprint());
+        Ok(())
+    })
+    .unwrap();
+    assert_eq!(refresh_rewritten(&client, root, "acme", "Web", Some(&[1])).await, vec![]);
+    assert_eq!(refresh_rewritten(&client, root, "acme", "Web", Some(&[147556])).await, vec![(147556, 2)]);
+    assert!(needs_ruling(root, "acme", "Web", 147556).is_none());
+    // Nothing waits any more: no call is made at all.
+    let none = MockServer::start().await;
+    let unreachable = AdoClient::with_base_urls("tok".into(), none.uri(), none.uri());
+    assert!(refresh_rewritten(&unreachable, root, "acme", "Web", None).await.is_empty());
+    assert!(none.received_requests().await.unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn the_replay_route_lets_a_rewritten_case_run_again() {
+    let dir = TempDir::new();
+    let _root = crate::serial::autorun();
+    set_root(dir.path().to_path_buf());
+    let (_server, client) = client_with_case().await;
+    update(dir.path(), "acme", "Web", |l| {
+        l.push(Divergence { case_fp: Some(rewritten_case().steps_fingerprint()), ..awaiting("d1", 2) });
+        Ok(())
+    })
+    .unwrap();
+    // The failures answer reads the case first, so the wait it describes is over.
+    let (_, _) = route(&ctx(), Some(&client), "GET", "/autorun-failures?case_id=147556", "", "1.0.0").await;
+    assert!(needs_ruling(dir.path(), "acme", "Web", 147556).is_none());
+}
+
+#[tokio::test]
+async fn the_divergence_routes_ado_error_names_no_address_and_is_logged_raw() {
+    let _log = crate::serial::log_tail();
+    let dir = TempDir::new();
+    let _root = crate::serial::autorun();
+    set_root(dir.path().to_path_buf());
+    let server = MockServer::start().await;
+    Mock::given(wm_method("GET"))
+        .respond_with(ResponseTemplate::new(500).set_body_string("The service is busy"))
+        .mount(&server)
+        .await;
+    let client = AdoClient::with_base_urls("tok".into(), server.uri(), server.uri());
+    let (status, out) = post(Some(&client), &body("exactly 4 levels", "data")).await;
+    assert_eq!(status, 502, "{out}");
+    assert_eq!(out, "Azure DevOps error: The service is busy");
+    assert!(!out.contains("Http") && !out.contains(&server.uri()), "{out}");
+    assert!(
+        v2_lib::applog::recent(200).iter().any(|l| l.message.contains("a divergence's test case could not be read")),
+        "the raw error is in the log"
+    );
 }

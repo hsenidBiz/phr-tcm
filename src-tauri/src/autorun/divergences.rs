@@ -10,7 +10,7 @@
 //!
 //! The rules are pure functions on a list; `update` is the one writer.
 
-use super::case_text::fold;
+use super::case_text::{fold, CaseText};
 use super::quirks::day_of;
 use super::recipe::project_slug;
 use std::path::{Path, PathBuf};
@@ -67,6 +67,16 @@ pub struct Divergence {
     pub ruling: Option<Ruling>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ruled_at: Option<String>,
+    /// While the case is rewritten (`AwaitingRepair`): the fingerprint of
+    /// the case's steps text when the ruling was made, or at the first read
+    /// after it for a ruling an earlier build saved. A different one later
+    /// means the case was rewritten (`note_case_text`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub case_fp: Option<String>,
+    /// The ruled step's action text, folded, as it read when `case_fp` was
+    /// taken: a rewrite that renumbers the step is still found by it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub step_action: Option<String>,
 }
 
 pub const MAX_TEXT: usize = 300;
@@ -234,6 +244,8 @@ pub fn report_in(
         status: DivergenceStatus::Open,
         ruling: None,
         ruled_at: None,
+        case_fp: None,
+        step_action: None,
     });
     Ok(Reported::New(id))
 }
@@ -298,12 +310,86 @@ pub fn needs_ruling(root: &Path, org: &str, project: &str, case_id: i32) -> Opti
 /// A repair saved for these steps closes the case's awaiting-repair
 /// divergences at them; answers those steps.
 pub fn close_repaired(list: &mut [Divergence], case_id: i32, steps: &[i32], now_ms: u64) -> Vec<i32> {
+    close_repaired_with(list, case_id, steps, now_ms, &|_| None)
+}
+
+/// [`close_repaired`], also closing the divergence of a step the rewrite
+/// renumbered: a declared step whose action text (`action_of`, folded, from
+/// the case as it now reads) is the ruled step's action text.
+pub fn close_repaired_with(
+    list: &mut [Divergence],
+    case_id: i32,
+    steps: &[i32],
+    now_ms: u64,
+    action_of: &dyn Fn(i32) -> Option<String>,
+) -> Vec<i32> {
     let mut closed = vec![];
     for d in list.iter_mut() {
-        if d.case_id == case_id && d.status == DivergenceStatus::AwaitingRepair && steps.contains(&d.step) {
-            d.status = DivergenceStatus::Ruled;
-            d.ruled_at = Some(now_ms.to_string());
+        if d.case_id != case_id || d.status != DivergenceStatus::AwaitingRepair {
+            continue;
+        }
+        let renumbered = d.step_action.as_ref().is_some_and(|a| steps.iter().any(|s| action_of(*s).as_ref() == Some(a)));
+        if steps.contains(&d.step) || renumbered {
+            close(d, now_ms);
             closed.push(d.step);
+        }
+    }
+    closed
+}
+
+fn close(d: &mut Divergence, now_ms: u64) {
+    d.status = DivergenceStatus::Ruled;
+    d.ruled_at = Some(now_ms.to_string());
+}
+
+/// A person's save of the case's script in the editor is the acceptance of
+/// whatever waited for a repair: closes the case's awaiting-repair
+/// divergences; answers their steps.
+pub fn close_for_editor_save(list: &mut [Divergence], case_id: i32, now_ms: u64) -> Vec<i32> {
+    let mut closed = vec![];
+    for d in list.iter_mut().filter(|d| d.case_id == case_id && d.status == DivergenceStatus::AwaitingRepair) {
+        close(d, now_ms);
+        closed.push(d.step);
+    }
+    closed
+}
+
+/// A person takes back a "Rewrite the case" ruling: the divergence is open
+/// again and needs a ruling; answers its case id.
+pub fn undo_in(list: &mut [Divergence], id: &str) -> Result<i32, String> {
+    let Some(d) = list.iter_mut().find(|d| d.id == id) else {
+        return Err(format!("no divergence {id}"));
+    };
+    if d.status != DivergenceStatus::AwaitingRepair {
+        return Err("only a ruling that waits for a repair can be undone".to_string());
+    }
+    d.status = DivergenceStatus::Open;
+    d.ruling = None;
+    d.ruled_at = None;
+    d.case_fp = None;
+    d.step_action = None;
+    Ok(d.case_id)
+}
+
+/// The case as Azure DevOps reads it now, against its awaiting-repair
+/// divergences. One with no print yet gets this one (a ruling an earlier
+/// build saved, or one made while Azure DevOps could not be read); one whose
+/// print differs means the case was rewritten, and it is closed. Answers the
+/// steps closed.
+pub fn note_case_text(list: &mut [Divergence], case_id: i32, text: &CaseText, now_ms: u64) -> Vec<i32> {
+    let fp = text.steps_fingerprint();
+    let mut closed = vec![];
+    for d in list.iter_mut().filter(|d| d.case_id == case_id && d.status == DivergenceStatus::AwaitingRepair) {
+        match d.case_fp.as_deref() {
+            None => {
+                d.case_fp = Some(fp.clone());
+                d.step_action = text.step_action_folded(d.step);
+            }
+            Some(was) if was != fp => {
+                close(d, now_ms);
+                closed.push(d.step);
+            }
+            Some(_) => {}
         }
     }
     closed

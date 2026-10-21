@@ -226,6 +226,7 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             autorun::auto_run_clear_suspected_defect,
             autorun_divergence::auto_run_load_divergences,
             autorun_divergence::auto_run_rule_divergence,
+            autorun_divergence::auto_run_undo_divergence_ruling,
             autorun_divergence::auto_run_needs_ruling,
             autorun::auto_run_plan,
             autorun::auto_run_save_order,

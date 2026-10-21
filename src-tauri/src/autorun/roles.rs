@@ -86,7 +86,7 @@ pub const ROLE_MAX_CHARS: usize = 4000;
 /// The line a later answer of the role's tool opens with.
 pub fn pointer(role: Role) -> String {
     format!(
-        "(The {n}'s rules came with an earlier answer in this session and still hold, whatever tools you use. get_guide with topic autorun and role {k} gives them again.)",
+        "(The {n}'s rules hold for this work whatever tools you use. If they did not come with an earlier answer in this chat, get_guide with topic autorun and role {k} gives them.)",
         n = role.name(),
         k = role.key()
     )

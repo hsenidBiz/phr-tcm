@@ -383,18 +383,117 @@ mod assistant_saves {
     }
 
     #[tokio::test]
-    async fn json_that_does_not_parse_is_refused() {
+    async fn text_kinds_are_not_content_checked() {
         let b = Bridge::new();
+        // Json that does not parse, a Windows-1252 csv and a UTF-16 txt are real test inputs.
         let (status, body) = b.save(json!({ "name": "data.json", "text": "{\"a\": " })).await;
-        assert_eq!((status, body), (400, not_what_it_says("data.json")));
-        assert!(b.is_empty());
-        let (status, body) = b.save(json!({ "name": "data.json", "text": "{\"a\": 1}" })).await;
         assert_eq!(status, 200, "{body}");
-        // A BOM is allowed; bytes that are not UTF-8 are not.
+        let ansi = b"name,price\nCaf\xE9,\xA35\n";
+        let (status, body) = b.save(json!({ "name": "ansi.csv", "base64": b64(ansi) })).await;
+        assert_eq!(status, 200, "{body}");
+        assert_eq!(std::fs::read(b.folder().join("ansi.csv")).unwrap(), ansi);
+        let utf16: Vec<u8> = [0xFF, 0xFE].into_iter().chain("id\tname".encode_utf16().flat_map(|u| u.to_le_bytes())).collect();
+        let (status, body) = b.save(json!({ "name": "wide.txt", "base64": b64(&utf16) })).await;
+        assert_eq!(status, 200, "{body}");
+        let (status, body) = b.save(json!({ "name": "empty.json", "text": "" })).await;
+        assert_eq!(status, 200, "{body}");
+        // The binary kinds keep the magic-byte check.
         assert!(looks_like("a.csv", b"\xEF\xBB\xBFid,name"));
-        assert!(!looks_like("a.txt", &[0xFF, 0xFE, 0x00]));
+        assert!(looks_like("a.txt", &[0xFF, 0xFE, 0x00]));
         assert!(looks_like("a.webp", b"RIFF\0\0\0\0WEBPVP8 "));
         assert!(!looks_like("a.webp", b"RIFF\0\0\0\0WAVEfmt "));
+    }
+
+    #[tokio::test]
+    async fn malformed_true_saves_a_deliberately_broken_binary_file() {
+        let _log = crate::serial::log_tail();
+        let b = Bridge::new();
+        let (status, body) = b.save(json!({ "name": "corrupt.pdf", "text": "not a pdf" })).await;
+        assert_eq!((status, body.as_str()), (400, not_what_it_says("corrupt.pdf").as_str()));
+        assert!(body.ends_with("If you meant a broken file for a negative test, pass malformed: true."), "{body}");
+        assert!(b.is_empty());
+        let (status, body) = b.save(json!({ "name": "corrupt.pdf", "text": "not a pdf", "malformed": true })).await;
+        assert_eq!(status, 200, "{body}");
+        assert_eq!(std::fs::read(b.folder().join("corrupt.pdf")).unwrap(), b"not a pdf");
+        let lines: Vec<String> = v2_lib::applog::recent(200)
+            .into_iter()
+            .map(|l| l.message)
+            .filter(|m| m.contains("the assistant saved \"corrupt.pdf\""))
+            .collect();
+        assert_eq!(lines, ["test files: the assistant saved \"corrupt.pdf\" as a deliberately malformed file (9 bytes)"]);
+        // The extension rule still applies.
+        let (status, body) = b.save(json!({ "name": "run.ps1", "text": "echo hi", "malformed": true })).await;
+        assert_eq!((status, body.as_str()), (400, not_uploadable("run.ps1").as_str()));
+    }
+
+    #[tokio::test]
+    async fn from_path_must_be_a_plain_local_path() {
+        let b = Bridge::new();
+        let said = "from_path must be a file on this computer's own drives.";
+        for path in [
+            r"\\server\share\a.txt",
+            "//server/share/a.txt",
+            r"\\?\C:\a.txt",
+            r"\\.\C:\a.txt",
+            r"\\?\UNC\server\share\a.txt",
+            "C:a.txt",
+            r"\a.txt",
+            "a.txt",
+            r"..\a.txt",
+        ] {
+            let (status, body) = b.save(json!({ "from_path": path })).await;
+            assert_eq!((status, body.as_str()), (400, said), "{path}");
+            let (status, body) = b.save(json!({ "name": "a.txt", "from_path": path })).await;
+            assert_eq!((status, body.as_str()), (400, said), "{path} with a name");
+        }
+        assert!(b.is_empty());
+        assert!(v2_lib::test_files::is_plain_local_path(r"C:\Users\x\a.txt"));
+        assert!(v2_lib::test_files::is_plain_local_path("D:/data/a.txt"));
+        assert!(!v2_lib::test_files::is_plain_local_path(r"\\host\share\a.txt"));
+    }
+
+    #[tokio::test]
+    async fn from_path_keeps_the_sources_extension_and_must_be_uploadable() {
+        let b = Bridge::new();
+        let elsewhere = tempfile::tempdir().unwrap();
+        let secret = write(elsewhere.path(), "settings.json", b"{\"token\": \"x\"}");
+        let from = secret.display().to_string();
+        // A json file cannot be saved as a text file, or as anything else.
+        for name in ["data.txt", "data.csv", "data", "data.json.txt"] {
+            let (status, body) = b.save(json!({ "name": name, "from_path": from })).await;
+            assert_eq!(
+                (status, body.as_str()),
+                (400, "The saved name must keep the file's own extension (.json)."),
+                "{name}"
+            );
+        }
+        assert!(b.is_empty());
+        // The same extension in any case is kept.
+        let (status, body) = b.save(json!({ "name": "Settings-Copy.JSON", "from_path": from })).await;
+        assert_eq!(status, 200, "{body}");
+        // A source that is not an uploadable kind is refused whatever it is called.
+        let key = write(elsewhere.path(), "id_ed25519", b"-----BEGIN-----");
+        let (status, body) = b.save(json!({ "name": "key.txt", "from_path": key.display().to_string() })).await;
+        assert_eq!((status, body.as_str()), (400, not_uploadable("id_ed25519").as_str()));
+        let env = write(elsewhere.path(), "creds.env", b"A=1");
+        let (status, body) = b.save(json!({ "name": "creds.txt", "from_path": env.display().to_string() })).await;
+        assert_eq!((status, body.as_str()), (400, not_uploadable("creds.env").as_str()));
+        assert_eq!(list(&b.folder()).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn the_refusal_lists_every_extension_a_test_uploads() {
+        let said = not_uploadable("run.ps1");
+        for ext in v2_lib::test_files::UPLOADABLE {
+            assert!(said.contains(&format!(".{ext}")), "{ext} is missing from: {said}");
+        }
+    }
+
+    #[tokio::test]
+    async fn the_save_route_is_auto_runs_and_refused_while_it_is_off() {
+        let (status, _) = v2_lib::ai_bridge::module_guard_for("/test-file-save", &Default::default()).expect("refused");
+        assert_eq!(status, 404);
+        assert!(v2_lib::ai_bridge::module_guard_for("/test-file-save", &v2_lib::modules::Module::ALL.into_iter().collect()).is_none());
     }
 
     #[tokio::test]
@@ -506,18 +605,34 @@ mod assistant_saves {
         }
         let err = add_at(true, root.path(), ORG, PROJECT, &write(picked.path(), "x.html", b"<p>"), false).unwrap_err();
         assert_eq!(err, not_uploadable("x.html"));
-        // A real kind of file still has to be one.
-        let err = add(&dir, &write(picked.path(), "fake.pdf", b"just text"), false).unwrap_err();
-        assert_eq!(err, not_what_it_says("fake.pdf"));
         assert!(list(&dir).unwrap().is_empty(), "nothing was written");
         add(&dir, &write(picked.path(), "real.pdf", b"%PDF-1.7"), false).unwrap();
+    }
+
+    #[test]
+    fn a_person_adding_a_file_is_held_to_the_extension_only() {
+        let root = tempfile::tempdir().unwrap();
+        let picked = tempfile::tempdir().unwrap();
+        let dir = folder(root.path(), ORG, PROJECT);
+        // Excel's ANSI csv, a UTF-16 text, a broken json and a corrupt pdf are test inputs.
+        for (name, bytes) in [
+            ("employees.csv", b"name\nJos\xE9\n".to_vec()),
+            ("wide.txt", vec![0xFF, 0xFE, b'a', 0]),
+            ("broken.json", b"{\"a\": ".to_vec()),
+            ("empty.json", Vec::new()),
+            ("corrupt.pdf", b"just text".to_vec()),
+            ("fake.xlsx", b"id,name\n".to_vec()),
+        ] {
+            add(&dir, &write(picked.path(), name, &bytes), false).unwrap_or_else(|e| panic!("{name}: {e}"));
+            assert_eq!(std::fs::read(dir.join(name)).unwrap(), bytes, "{name}");
+        }
     }
 
     #[test]
     fn save_bytes_writes_beside_then_renames_and_leaves_nothing_behind() {
         let root = tempfile::tempdir().unwrap();
         let dir = folder(root.path(), ORG, PROJECT);
-        let saved = save_bytes(&dir, "a.csv", b"x,y\n", false).unwrap();
+        let saved = save_bytes(&dir, "a.csv", b"x,y\n", false, false).unwrap();
         assert_eq!((saved.name.as_str(), saved.size), ("a.csv", 4));
         let on_disk: Vec<String> =
             std::fs::read_dir(&dir).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect();
@@ -529,7 +644,7 @@ mod assistant_saves {
         let _log = crate::serial::log_tail();
         let root = tempfile::tempdir().unwrap();
         let dir = folder(root.path(), ORG, PROJECT);
-        save_bytes(&dir, "log-line-check.csv", b"a,b\n", false).unwrap();
+        save_bytes(&dir, "log-line-check.csv", b"a,b\n", false, false).unwrap();
         let lines: Vec<String> = v2_lib::applog::recent(200)
             .into_iter()
             .map(|l| l.message)

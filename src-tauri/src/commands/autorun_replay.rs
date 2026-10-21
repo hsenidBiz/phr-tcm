@@ -309,6 +309,10 @@ pub async fn auto_run_replay(
     CANCEL.store(false, Ordering::SeqCst);
 
     let root = super::autorun::root(&app)?;
+    // A case whose divergence waits for a rewrite that has since been saved
+    // in Azure DevOps runs again.
+    let selected: Vec<i32> = cases.iter().map(|c| c.case_id).collect();
+    super::autorun_divergence::refresh_rewritten_in_app(&app, &root, &organization, &project, Some(&selected)).await;
     // The browser picked in the dialog, remembered for a replay to a step
     // that finds no supervised browser open.
     store::remember_browser(&root, &browser_name);

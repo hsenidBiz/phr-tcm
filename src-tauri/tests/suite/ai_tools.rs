@@ -1890,6 +1890,7 @@ fn the_script_pbi_command_scripts_a_batch_within_the_bounds() {
         "its script is checked",
         "SELECT DB_NAME()",
         "the VPN is down",
+        "When `db_query` is not offered, skip this check and say so; when it is offered but the database cannot be reached, the VPN is down: stop.",
         "under 300 words",
         "at most 3 fix-run cycles",
         "stop at cycle 2 when the failure is identical to cycle 1's",

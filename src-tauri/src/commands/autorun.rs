@@ -2674,7 +2674,32 @@ pub fn save_script_from_editor(
     // the script editor is a THIRD way in, and a case id of 0 or an empty
     // step list refused from a file but accepted from the editor would be
     // a rule that depends on which door you came through.
-    store::save_scripts_atomically(root, std::slice::from_ref(&script)).map_err(|e| e.to_string())
+    let case_id = script.case_id;
+    store::save_scripts_atomically(root, std::slice::from_ref(&script)).map_err(|e| e.to_string())?;
+    // The person's save is the acceptance of a script that waited for a
+    // rewritten case: the case runs again. Said in the log when the file
+    // cannot be written; the save itself is down.
+    let waiting = crate::autorun::divergences::load(root, organization, project)
+        .map(|l| l.iter().any(|d| d.case_id == case_id && d.status == crate::autorun::divergences::DivergenceStatus::AwaitingRepair))
+        .unwrap_or(false);
+    if waiting {
+        let now = crate::autorun::sessions::now_ms();
+        match crate::autorun::divergences::update(root, organization, project, |list| {
+            Ok(crate::autorun::divergences::close_for_editor_save(list, case_id, now))
+        }) {
+            Ok(steps) => {
+                for step in steps {
+                    crate::applog::info(format!(
+                        "Auto Run: case {case_id} saved in the script editor; its divergence at step {step} is closed"
+                    ));
+                }
+            }
+            Err(e) => crate::applog::warn(format!(
+                "Auto Run: case {case_id} saved in the script editor, but its divergence could not be closed: {e}"
+            )),
+        }
+    }
+    Ok(())
 }
 
 /// A person's Clear on a case's suspected-defect mark: they have looked and
