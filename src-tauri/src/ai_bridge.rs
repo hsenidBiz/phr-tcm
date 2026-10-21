@@ -403,7 +403,16 @@ pub async fn route(
                 (200, autorun_guide_with_quirks(ctx, quick))
             }
         },
-        ("POST", "/autorun-script") => save_autorun_scripts(ctx, client, body).await,
+        // A save that repairs (carries `edits`) ends with the repair rules, a refusal too.
+        ("POST", "/autorun-script") => {
+            let answer = save_autorun_scripts(ctx, client, body).await;
+            let parsed: serde_json::Value = serde_json::from_str(body).unwrap_or_default();
+            if crate::autorun::roles::cases_repaired_by(&parsed).is_empty() {
+                answer
+            } else {
+                crate::autorun::roles::with_rules(answer, crate::autorun::roles::RULES_REPAIR_SAVE)
+            }
+        }
         // One saved script, and a delete that keeps it aside: files on this
         // machine only, never Azure DevOps.
         ("GET", "/autorun-script") => autorun_script_read(target),
@@ -449,7 +458,16 @@ pub async fn route(
         ("POST", "/autorun-discover-start") => {
             let mut seen = None;
             let answer = without_page(autorun_discover_start(ctx, body, &mut seen).await, body);
-            with_overrides_seen(with_no_save_note(answer, discovery_no_save()), seen)
+            let answer = with_overrides_seen(with_no_save_note(answer, discovery_no_save()), seen);
+            // A mapping run records areas and writes no check: no rules.
+            let mapping = serde_json::from_str::<serde_json::Value>(body)
+                .map(|v| v["mapping"].as_bool() == Some(true) || v["mapping"].as_str().map(|s| s.trim().eq_ignore_ascii_case("true")) == Some(true))
+                .unwrap_or(false);
+            if mapping {
+                answer
+            } else {
+                crate::autorun::roles::with_rules(answer, crate::autorun::roles::RULES_DISCOVERY)
+            }
         }
         ("POST", "/autorun-discover-action") => {
             let mut seen = None;
@@ -476,11 +494,16 @@ pub async fn route(
         // sign-in. Never the person's browser, never while a replay runs.
         ("POST", "/autorun-reset") => crate::commands::autorun::reset_for_assistant(&ctx.org, &ctx.project).await,
         ("POST", "/autorun-discover-area") => autorun_discover_area(ctx, body).await,
-        ("POST", "/autorun-replay") => without_page(autorun_replay(ctx, body).await, body),
+        ("POST", "/autorun-replay") => crate::autorun::roles::with_rules(
+            without_page(autorun_replay(ctx, body).await, body),
+            crate::autorun::roles::RULES_REPLAY,
+        ),
         // The assistant's replay going, stopped through the same stop the
         // person's Stop sets, and its answer once it has ended.
-        ("POST", "/autorun-replay-stop") => autorun_replay_stop_with(REPLAY_ANSWER_WAIT).await,
-        ("GET", "/autorun-failures") => autorun_failures(ctx, target),
+        ("POST", "/autorun-replay-stop") => {
+            crate::autorun::roles::with_rules(autorun_replay_stop_with(REPLAY_ANSWER_WAIT).await, crate::autorun::roles::RULES_REPLAY)
+        }
+        ("GET", "/autorun-failures") => crate::autorun::roles::with_rules(autorun_failures(ctx, target), crate::autorun::roles::RULES_FAILURES),
         ("POST", "/autorun-quirk") => autorun_quirk(ctx, body),
         ("POST", "/autorun-quirk-retire") => autorun_quirk_retire(ctx, body),
         ("POST", "/autorun-validation-rule") => record_validation_rule(ctx, body).await,

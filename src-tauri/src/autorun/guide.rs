@@ -200,6 +200,30 @@ These are examples, not a rule:
 - Handing a lookup to a lighter agent keeps long page text out of your
   own context; ask it for only what you need.
 
+## Roles
+
+Scripting here is done in four roles, each with its own short rules:
+
+- writer: choosing what to script and writing it from the live app. Its rules come with your
+  first `start_autorun_discovery` of a session (a mapping run aside); /tcm:discover points at them.
+- healer: diagnosing and repairing a failed case. Its rules come with your first
+  `get_autorun_failures` of a session.
+- case rewriter: changing a saved script or component, a repair or a rewritten case. Its rules
+  come with your first repair through `save_autorun_script` (a save with `edits`) or your first
+  `save_autorun_component` of a session.
+- auditor: checking saved scripts against their cases and reporting, never editing. Ask for its
+  rules with `get_guide`.
+
+A role's rules come once a session, ahead of that tool's answer, and a later answer of the tool opens
+with one line pointing back at them; a session starts over after 20 minutes without a call.
+`get_guide` with topic `autorun` and `role` (`writer`, `healer`, `case-rewriter` or `auditor`) gives a
+role's rules at any time, and Claude Code also gets each role as an agent file, `tcm-<role>.md` in
+`.claude/agents`. Whatever the session, every answer of `start_autorun_discovery`,
+`get_autorun_failures`, `replay_autorun_to_step` and a `save_autorun_script` with `edits` ends with
+"Rules now:": the two or three rules that apply at that moment. They hold whatever tools you have: a
+rule about one tool holds for any other tool that does the same job, your own browser, an editor or a
+sub-agent included.
+
 ## The actions
 
 Each step of the test case becomes one entry with a `step_number` and a

@@ -234,3 +234,25 @@ fn cases_repaired_by_reads_every_shape() {
     );
     assert_eq!(cases_repaired_by(&json!({"scripts": [{"case_id": 7, "steps": []}]})), Vec::<i32>::new());
 }
+
+#[test]
+fn the_rules_of_the_moment_are_short_and_plain() {
+    use v2_lib::autorun::roles::{with_rules, without_rules, RULES_DISCOVERY, RULES_FAILURES, RULES_REPAIR_SAVE, RULES_REPLAY};
+    for rules in [RULES_DISCOVERY, RULES_REPAIR_SAVE, RULES_FAILURES, RULES_REPLAY] {
+        assert!(rules.starts_with("Rules now:\n- "), "{rules}");
+        let lines: Vec<&str> = rules.lines().skip(1).collect();
+        assert!((2..=3).contains(&lines.len()), "{rules}");
+        for line in lines {
+            assert!(line.starts_with("- "), "{line}");
+            assert!(line.chars().count() < 220, "{line}");
+        }
+        assert!(!rules.contains('\u{2014}') && !rules.contains('\u{2013}'), "{rules}");
+        assert!(!rules.contains('`'), "{rules}");
+    }
+    assert_eq!(
+        with_rules((400, "x\n".into()), RULES_REPLAY),
+        (400, format!("x\n\n{RULES_REPLAY}"))
+    );
+    assert_eq!(without_rules(&format!("x\n\n{RULES_REPLAY}"), RULES_REPLAY), "x");
+    assert_eq!(without_rules("x\n\ny", RULES_REPLAY), "x\n\ny");
+}

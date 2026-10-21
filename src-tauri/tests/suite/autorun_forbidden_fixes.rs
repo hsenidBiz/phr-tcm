@@ -2,7 +2,8 @@
 //! script, a fixed wait and a retry (Task 18).
 
 use serde_json::json;
-use v2_lib::ai_bridge::{route, BridgeContext};
+use crate::common::route_without_rules as route;
+use v2_lib::ai_bridge::BridgeContext;
 use v2_lib::autorun::forbidden_fixes::{forbidden_in, forbidden_kind, NO_FIXED_WAIT, NO_PAGE_SCRIPT, NO_RETRY};
 use v2_lib::autorun::guide::ACTION_KINDS;
 use v2_lib::autorun::store::set_root;

@@ -192,3 +192,23 @@ pub fn role_for_call(tool: &str, args: &serde_json::Value) -> Option<Role> {
         _ => None,
     }
 }
+
+/// The rules that apply at that moment, said at the END of every answer of the route, whatever its status.
+pub const RULES_DISCOVERY: &str = "Rules now:\n- Every check's value is the case's own, as written: when the app or its data differs, call report_case_divergence and keep the case's value, never fit the check to the page.\n- Carry out each step live before you write it; never guess a locator, an address or a menu path.\n- A value the case does not hold needs a because, assumed or invented, saying where it comes from.";
+pub const RULES_REPAIR_SAVE: &str = "Rules now:\n- A repair keeps every check and every value the case gives; a check is given up only by naming it in gives_up with why, and the person sees it.\n- Prove the repair with a replay of the whole case: the script is not checked until one passes.\n- Repeat every assumed and invented value and every check given up in your report.";
+pub const RULES_FAILURES: &str = "Rules now:\n- Classify each failure first: a missing precondition or an app defect is reported with report_case_divergence, never healed.\n- At most 3 fix-run cycles per case; stop at cycle 2 when the failure is identical to cycle 1's.\n- A case Blocked with \"needs a ruling\" waits for the person: leave it alone.";
+pub const RULES_REPLAY: &str = "Rules now:\n- Diagnose a failure on this page before anything changes: a missing precondition or an app defect is reported, never healed.\n- Change only the locator, the waiting or the navigation; never a check's value, and never the number of checks without gives_up.\n- The case counts as checked only after a replay of the whole case passes.";
+
+/// `answer` with "\n\n" + `rules` after its text (the text's trailing whitespace trimmed first); the status unchanged.
+pub fn with_rules(answer: (u16, String), rules: &str) -> (u16, String) {
+    let (status, text) = answer;
+    (status, format!("{}\n\n{}", text.trim_end(), rules))
+}
+
+/// `body` without a trailing "\n\n" + `rules`; unchanged when it does not end with them. For tests that pin an answer.
+pub fn without_rules(body: &str, rules: &str) -> String {
+    match body.strip_suffix(&format!("\n\n{rules}")) {
+        Some(rest) => rest.to_string(),
+        None => body.to_string(),
+    }
+}

@@ -49,6 +49,7 @@ pub mod import_parser;
 pub mod intake;
 pub mod markdown;
 pub mod mcp;
+pub mod mcp_session;
 pub mod model;
 pub mod note_server;
 pub mod optimize;

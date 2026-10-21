@@ -2080,3 +2080,23 @@ fn role_files_name_only_real_tools() {
         }
     }
 }
+
+/// `/tcm:discover` and `/tcm:heal` say where their role's rules come from, and do not copy them.
+#[test]
+fn the_discover_and_heal_commands_say_where_their_rules_come_from() {
+    let flat_of = |stem: &str| {
+        COMMANDS.iter().find(|c| c.stem == stem).unwrap().body.join("
+").split_whitespace().collect::<Vec<_>>().join(" ")
+    };
+    let discover = flat_of("discover");
+    assert!(
+        discover.contains("The writer's rules come ahead of your first `start_autorun_discovery` answer and hold for the whole session, whatever tools you use: follow them."),
+        "{discover}"
+    );
+    let heal = flat_of("heal");
+    assert!(
+        heal.contains("The healer's rules come ahead of your first `get_autorun_failures` answer, and the case rewriter's ahead of your first repair save; both hold for the whole session, whatever tools you use: follow them."),
+        "{heal}"
+    );
+    assert!(!heal.contains("three"), "{heal}");
+}

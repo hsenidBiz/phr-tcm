@@ -12,9 +12,10 @@ use crate::common::{account, pick_a_date, quick, ready_probe, FakePage, Scripted
 use serde_json::{json, Value};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
+use crate::common::route_without_rules as route;
 use v2_lib::ai_bridge::{
     close_browser_in, discover_action_in, discover_area_in, discover_start_in, discovery_sighting, end_discovery_in,
-    read_page, refuse_while_discovering, repair_area_in, route, BridgeContext, DiscoveryBrowser, DiscoveryParts,
+    read_page, refuse_while_discovering, repair_area_in, BridgeContext, DiscoveryBrowser, DiscoveryParts,
     NO_DISCOVERY,
 };
 use v2_lib::autorun::area_repair::{LONG_REASON, NOTHING_TO_REPAIR, SAME_PATH};

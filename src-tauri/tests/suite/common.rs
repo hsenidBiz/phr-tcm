@@ -1356,3 +1356,27 @@ pub fn dev_app<'a>(
         }
     }
 }
+
+/// `ai_bridge::route` with the rules of the moment taken off the end of the five routes that carry them
+/// (`roles::RULES_*`), so a test that pins a whole answer keeps pinning the old text exactly. The tests that
+/// pin the rules themselves call `v2_lib::ai_bridge::route`.
+pub async fn route_without_rules(
+    ctx: &v2_lib::ai_bridge::BridgeContext,
+    client: Option<&v2_lib::ado::AdoClient>,
+    method: &str,
+    target: &str,
+    body: &str,
+    version: &str,
+) -> (u16, String) {
+    use v2_lib::autorun::roles;
+    let (status, out) = v2_lib::ai_bridge::route(ctx, client, method, target, body, version).await;
+    let path = target.split_once('?').map(|(p, _)| p).unwrap_or(target);
+    let rules = match (method, path) {
+        ("GET", "/autorun-failures") => roles::RULES_FAILURES,
+        ("POST", "/autorun-replay") | ("POST", "/autorun-replay-stop") => roles::RULES_REPLAY,
+        ("POST", "/autorun-discover-start") => roles::RULES_DISCOVERY,
+        ("POST", "/autorun-script") => roles::RULES_REPAIR_SAVE,
+        _ => return (status, out),
+    };
+    (status, roles::without_rules(&out, rules))
+}

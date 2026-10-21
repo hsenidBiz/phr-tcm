@@ -5,7 +5,8 @@
 
 use serde_json::json;
 use std::path::Path;
-use v2_lib::ai_bridge::{route, BridgeContext};
+use crate::common::route_without_rules as route;
+use v2_lib::ai_bridge::BridgeContext;
 use v2_lib::autorun::replay_record::{as_run, latest_for_case, load, note, REPLAY_MODE};
 use v2_lib::autorun::replay_to::{ReplayEnd, ReplayPhase};
 use v2_lib::autorun::store::{self, save_run};

@@ -2283,3 +2283,31 @@ fn the_repair_section_says_a_repair_cannot_let_the_page_decide() {
     let dismissing = flat_guide(g.split_once("## Dismissing what may not show up").unwrap().1.split("\n## ").next().unwrap());
     assert!(dismissing.contains("In a repair, a new guard needs the edit's `quirk` and `quirk_class`"), "{dismissing}");
 }
+
+#[test]
+fn the_guide_names_every_role_and_how_its_rules_arrive() {
+    let guide = autorun_guide();
+    let titles = v2_lib::autorun::guide::section_titles(&guide);
+    assert!(titles.iter().any(|t| *t == "Roles"), "{titles:?}");
+    let at = guide.find("\n## Roles").expect("a Roles section") + 1;
+    let rest = &guide[at + 3..];
+    let section = &guide[at..at + 3 + rest.find("\n## ").unwrap_or(rest.len())];
+    for needle in [
+        "writer:",
+        "healer:",
+        "case rewriter:",
+        "auditor:",
+        "start_autorun_discovery",
+        "get_autorun_failures",
+        "save_autorun_script",
+        "save_autorun_component",
+        "replay_autorun_to_step",
+        "Rules now:",
+        "tcm-<role>.md",
+        "whatever tools",
+        "20 minutes",
+    ] {
+        assert!(section.contains(needle), "the Roles section lacks {needle:?}");
+    }
+    assert!(!section.contains('\u{2014}') && !section.contains('\u{2013}'));
+}

@@ -156,6 +156,7 @@ mod import_parser;
 mod intake;
 mod markdown;
 mod mcp;
+mod mcp_session;
 mod mentions;
 mod modules;
 mod net_capture;

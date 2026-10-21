@@ -9,7 +9,8 @@
 //! check the script against. Driving the browser never does.
 
 use v2_lib::ado::AdoClient;
-use v2_lib::ai_bridge::{describe_try, module_guard_for, module_of_route, route, BridgeContext};
+use crate::common::route_without_rules as route;
+use v2_lib::ai_bridge::{describe_try, module_guard_for, module_of_route, BridgeContext};
 use v2_lib::modules::Module;
 use v2_lib::autorun::guide::autorun_guide;
 use v2_lib::autorun::quirks::load_quirks;
@@ -4723,9 +4724,11 @@ async fn the_failures_answer_ends_with_the_repair_bounds() {
     set_root(dir.path().to_path_buf());
     save_run(dir.path(), &failed_run("run-1700000000000", 7)).unwrap();
     for target in ["/autorun-failures?case_id=7", "/autorun-failures?run_id=run-1700000000000", "/autorun-failures"] {
-        let (status, out) = route(&ctx(), None, "GET", target, "", "1.0.0").await;
+        let (status, out) = v2_lib::ai_bridge::route(&ctx(), None, "GET", target, "", "1.0.0").await;
         assert_eq!(status, 200, "{out}");
-        assert!(out.ends_with(REPAIR_BOUNDS), "{target}: {out}");
+        assert!(out.ends_with(v2_lib::autorun::roles::RULES_FAILURES), "{target}: {out}");
+        let out = v2_lib::autorun::roles::without_rules(&out, v2_lib::autorun::roles::RULES_FAILURES);
+        assert!(out.ends_with(REPAIR_BOUNDS.trim_end()), "{target}: {out}");
         assert!(out.contains("At most 3 fix-run cycles per case"), "{out}");
         assert_eq!(out.matches("## Bounds of a repair").count(), 1, "{out}");
     }
@@ -4745,4 +4748,118 @@ async fn no_bounds_when_nothing_failed() {
     assert_eq!(status, 200, "{out}");
     assert!(out.starts_with("no failed case in run"), "{out}");
     assert!(!out.contains("Bounds of a repair"), "{out}");
+}
+
+// ------------------------------------------------------ the rules of the moment
+
+/// Through the real router: the rules are on the answer, so the tests above that pin a whole answer
+/// go through `crate::common::route_without_rules`.
+async fn ruled(ctx: &BridgeContext, client: Option<&AdoClient>, method: &str, target: &str, body: &str) -> (u16, String) {
+    v2_lib::ai_bridge::route(ctx, client, method, target, body, "1.0.0").await
+}
+
+#[tokio::test]
+async fn every_failures_answer_ends_with_its_rules() {
+    use v2_lib::autorun::failures::REPAIR_BOUNDS;
+    use v2_lib::autorun::roles::RULES_FAILURES;
+    let dir = TempDir::new();
+    let _root = crate::serial::autorun();
+    set_root(dir.path().to_path_buf());
+    let (status, out) = ruled(&ctx(), None, "GET", "/autorun-failures", "").await;
+    assert_eq!(status, 404, "{out}");
+    assert!(out.ends_with(RULES_FAILURES), "{out}");
+
+    let mut passed = failed_run("run-1700000000001", 8);
+    passed.cases[0].verdict = "Passed".to_string();
+    passed.cases[0].steps.clear();
+    save_run(dir.path(), &passed).unwrap();
+    let (status, out) = ruled(&ctx(), None, "GET", "/autorun-failures?case_id=8", "").await;
+    assert_eq!(status, 200, "{out}");
+    assert!(out.starts_with("no failed case in run"), "{out}");
+    assert!(out.ends_with(RULES_FAILURES), "{out}");
+
+    save_run(dir.path(), &failed_run("run-1700000000002", 7)).unwrap();
+    let (status, out) = ruled(&ctx(), None, "GET", "/autorun-failures?case_id=7", "").await;
+    assert_eq!(status, 200, "{out}");
+    let bounds = out.find(REPAIR_BOUNDS).expect("the bounds of a repair");
+    assert!(out[bounds..].ends_with(RULES_FAILURES), "{out}");
+    assert!(out.find("Rules now:").unwrap() > bounds, "the rules come after the bounds: {out}");
+}
+
+#[tokio::test]
+async fn a_repair_save_answer_ends_with_its_rules_and_a_new_script_save_does_not() {
+    use v2_lib::autorun::roles::RULES_REPAIR_SAVE;
+    let dir = TempDir::new();
+    let _root = crate::serial::autorun();
+    set_root(dir.path().to_path_buf());
+    let (_server, client) = client_with_cases(&[(7, "Save a rating", &["", "A toast says Saved"])]).await;
+
+    let first = case_7("#toast", "Saved").to_string();
+    see_scripts(dir.path(), &first);
+    let (status, out) = ruled(&ctx(), Some(&client), "POST", "/autorun-script", &first).await;
+    assert_eq!(status, 200, "{out}");
+    assert!(!out.contains("Rules now:"), "a new script's save carries no rules: {out}");
+
+    let repair = serde_json::json!({
+        "scripts": case_7("#toast", "Saved!"),
+        "edits": [edit_step_2("the toast gained an exclamation mark")],
+    })
+    .to_string();
+    see_scripts(dir.path(), &repair);
+    let (status, out) = ruled(&ctx(), Some(&client), "POST", "/autorun-script", &repair).await;
+    assert_eq!(status, 200, "{out}");
+    assert!(out.ends_with(RULES_REPAIR_SAVE), "{out}");
+
+    // A repair the route refuses (a reorder) carries them too.
+    let reordered = serde_json::json!({
+        "scripts": [{
+            "case_id": 7, "title": "Save a rating",
+            "steps": [
+                { "step_number": 2, "actions": [
+                    { "kind": "click", "selector": "#save" },
+                    { "kind": "expect_contains_text", "selector": "#toast", "value": "Saved!" }
+                ]},
+                { "step_number": 1, "actions": [{ "kind": "navigate", "url": "https://app.example/ratings" }] }
+            ]
+        }],
+        "edits": [edit_step_2("reordered")],
+    })
+    .to_string();
+    see_scripts(dir.path(), &reordered);
+    let (status, out) = ruled(&ctx(), Some(&client), "POST", "/autorun-script", &reordered).await;
+    assert_eq!(status, 400, "{out}");
+    assert!(out.ends_with(RULES_REPAIR_SAVE), "{out}");
+}
+
+#[tokio::test]
+async fn a_discovery_start_answer_ends_with_its_rules_and_a_mapping_run_does_not() {
+    use v2_lib::autorun::roles::RULES_DISCOVERY;
+    let dir = TempDir::new();
+    let _root = crate::serial::autorun();
+    set_root(dir.path().to_path_buf());
+    let plain = serde_json::json!({ "account": "nobody-saved-this" }).to_string();
+    let (status, out) = ruled(&ctx(), None, "POST", "/autorun-discover-start", &plain).await;
+    assert!(status >= 400, "{out}");
+    assert!(out.ends_with(RULES_DISCOVERY), "{out}");
+
+    for mapping in [serde_json::json!(true), serde_json::json!("true")] {
+        let body = serde_json::json!({ "account": "nobody-saved-this", "mapping": mapping }).to_string();
+        let (status, out) = ruled(&ctx(), None, "POST", "/autorun-discover-start", &body).await;
+        assert!(status >= 400, "{out}");
+        assert!(!out.contains("Rules now:"), "a mapping run carries no rules: {out}");
+    }
+}
+
+#[tokio::test]
+async fn a_replay_answer_ends_with_its_rules() {
+    use v2_lib::autorun::roles::RULES_REPLAY;
+    let dir = TempDir::new();
+    let _root = crate::serial::autorun();
+    set_root(dir.path().to_path_buf());
+    let (status, out) = ruled(&ctx(), None, "POST", "/autorun-replay", &serde_json::json!({ "case_id": 7, "step": 2 }).to_string()).await;
+    assert!(status >= 400, "{out}");
+    assert!(out.ends_with(RULES_REPLAY), "{out}");
+
+    let (_, out) = ruled(&ctx(), None, "POST", "/autorun-replay-stop", "{}").await;
+    assert!(out.ends_with(RULES_REPLAY), "{out}");
 }
