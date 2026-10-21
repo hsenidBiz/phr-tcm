@@ -268,6 +268,43 @@ information in the slots the Playwright pipeline already reads; it never overrid
     (`no_save`) script with one full replay instead of two; a script that saves keeps two in a
     row for repeatability.
 
+## The app sets the menu up itself (agreed 2026-10-21)
+
+32. **Match each account's menu to the way the areas were recorded.** PeoplesHR keeps menu
+    preferences per user on the server (profile picture > Preferences, saved by
+    `POST /hr/Home/SetUserPreferences`, and the page reloads), and a signed-in admin starts in
+    Admin mode. An area recorded under one account's settings fails under another's:
+    Strategic Objectives' 6 BSC cases were blocked at "button Self Service in
+    #ehrm-modulemenus-8 not found" when they signed in as Automation01, which had Group Menu
+    Items on and sits in Admin mode. Avin wants the app to do this switching, not each
+    script or a hand-edited recipe:
+    - **Menu preferences at sign-in.** The project records the menu preferences its areas
+      need (today: Group Menu Items off, `#SectionWiseMode`). After every sign-in, before the
+      menu-opener step of `after_sign_in`, the app opens Preferences, turns each one to the
+      recorded value only when it differs, and closes the dialog. A change reloads the page,
+      so the side menu is opened after it. The switch sits off-screen while the dialog is
+      closed, so `when_visible` cannot test it without opening the dialog. Proven by hand
+      2026-10-21 on Automation01: open User Image > Preferences, `when_visible
+      #SectionWiseMode:checked` then click it, then close the dialog.
+    - **Admin or Self Service per area.** An area whose path runs through Self Service
+      records that mode. Before walking the path, the app switches to it with the side bar's
+      "You are in Admin Mode / Switch to Self Service" control, and back for an Admin area.
+      An account that has only one mode skips it.
+    - **Record it with the area.** Area recording and menu mapping save the mode and the
+      menu preferences that were in force, so a later run can restore them.
+    - The answer and the run report say when a preference or mode was changed, and for
+      which account.
+    - Tests: an account already matching changes nothing; a differing preference is switched
+      once and the next sign-in finds it set; a Self Service area under an admin account
+      switches mode first; an Admin area after a Self Service one switches back.
+
+    Related, in the run window: **Sign in as** overrides every script's account and is
+    remembered per project, so a run picked as Automation01 once keeps signing in the BSC
+    cases (scripted for `gabriel`) as Automation01. Show, before Start, how many selected
+    cases name a different account ("6 cases name gabriel: they will sign in as
+    automation"), and default to "Each script's own account" when the selection mixes
+    accounts.
+
 ## Smaller
 
 - `save_autorun_script` through MCP drops `edits`, so repairs had to go through
