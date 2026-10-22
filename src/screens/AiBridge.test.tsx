@@ -1359,6 +1359,22 @@ test("running changes without asking needs writes on, and says what each tool ne
   );
 });
 
+/// The Auto Run tools' "always allow" follows the Auto Run module, so the
+/// tab says so only while Auto Run is on.
+test("the tab says Claude Code is told to allow the Auto Run tools only while Auto Run is on", async () => {
+  localStorage.setItem("tcm-v2-db-selected", "dev-login");
+  dbMocks();
+  renderBridge(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+  await screen.findByText("Signs in as sgdev01db01_devlogin");
+  const line = "With Auto Run on, Claude Code is told to allow its Auto Run tools without asking.";
+  expect(screen.getByText(line)).toBeInTheDocument();
+
+  act(() => setModulesForTest(["db_access", "writing_style"]));
+  expect(screen.queryByText(line)).not.toBeInTheDocument();
+  act(() => setModulesForTest(ALL_MODULES));
+  expect(screen.getByText(line)).toBeInTheDocument();
+});
+
 /// Forgetting takes every saved login, the choice and permission to write
 /// with it. Leaving writes standing would hand the next database a
 /// decision nobody made about it.

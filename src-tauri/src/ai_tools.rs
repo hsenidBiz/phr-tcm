@@ -1392,6 +1392,135 @@ pub const CLAUDE_DB_RULES: &[&str] = &[CLAUDE_DB_QUERY_RULE, "mcp__tcm__preview_
 /// `CLAUDE_DB_RULES` as Cursor's allowlist entries.
 pub const CURSOR_DB_ENTRIES: &[&str] = &[CURSOR_DB_QUERY_ENTRY, "tcm:preview_report_live"];
 
+/// The Auto Run tools Claude Code is told to allow without asking while the
+/// Auto Run module is on: the ones that drive and save from the browser an
+/// assistant is exploring with (open the discovery, try and run actions,
+/// read the page, release the browser, save a script or component). Without
+/// them Claude Code stops at "Allow this tool?" in the middle of that work.
+///
+/// Only names the server offers today (a test pins it): the single-action
+/// `discover_autorun_action` is gone, `discover_autorun_actions` takes one
+/// action or a list; and `release_autorun_browser` is now
+/// `reset_autorun_browser` with `release` true (`mcp::RETIRED_TOOLS`).
+/// A rule goes in only while its tool is on - the module on, and the person's
+/// own switch for it on the AI Bridge tab - and comes out with it.
+pub const CLAUDE_AUTORUN_RULES: &[&str] = &[
+    "mcp__tcm__start_autorun_discovery",
+    "mcp__tcm__discover_autorun_actions",
+    "mcp__tcm__try_autorun_action",
+    "mcp__tcm__end_autorun_discovery",
+    "mcp__tcm__reset_autorun_browser",
+    "mcp__tcm__save_autorun_script",
+    "mcp__tcm__save_autorun_component",
+    "mcp__tcm__get_autorun_page",
+];
+
+/// The API template tools Claude Code is told to allow without asking while
+/// the API Templates module is on (and, as above, the person's own switch
+/// for each tool). Proving and running a template still needs the person's
+/// API templates switch: the bridge checks that, whatever Claude Code asks.
+pub const CLAUDE_API_TEMPLATE_RULES: &[&str] = &[
+    "mcp__tcm__run_api_template",
+    "mcp__tcm__prove_api_template",
+    "mcp__tcm__save_api_flow",
+];
+
+/// `CLAUDE_AUTORUN_RULES` as Cursor's allowlist entries.
+pub const CURSOR_AUTORUN_ENTRIES: &[&str] = &[
+    "tcm:start_autorun_discovery",
+    "tcm:discover_autorun_actions",
+    "tcm:try_autorun_action",
+    "tcm:end_autorun_discovery",
+    "tcm:reset_autorun_browser",
+    "tcm:save_autorun_script",
+    "tcm:save_autorun_component",
+    "tcm:get_autorun_page",
+];
+
+/// `CLAUDE_API_TEMPLATE_RULES` as Cursor's allowlist entries.
+pub const CURSOR_API_TEMPLATE_ENTRIES: &[&str] =
+    &["tcm:run_api_template", "tcm:prove_api_template", "tcm:save_api_flow"];
+
+/// The tool an allow entry is for: `mcp__tcm__<tool>` (Claude Code) or
+/// `tcm:<tool>` (Cursor). An entry of neither shape is returned whole.
+pub fn entry_tool(entry: &str) -> &str {
+    entry
+        .strip_prefix(&format!("mcp__{TCM_SERVER}__"))
+        .or_else(|| entry.strip_prefix(&format!("{TCM_SERVER}:")))
+        .unwrap_or(entry)
+}
+
+/// What the allow files should say about one entry.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RuleWant {
+    /// In the file.
+    Put,
+    /// Out of the file.
+    Take,
+    /// Neither is known yet: whatever the file holds stays.
+    Leave,
+}
+
+/// Everything that decides which of our entries the allow files hold: the
+/// database switch, the modules that are on, and the tools the person
+/// switched off on the AI Bridge tab. `disabled` is `None` until the app
+/// has been told that list (the first push of the tab's state): an entry
+/// for a tool of a module that is ON is then neither written nor taken out,
+/// so a start-up repair never writes a rule for a tool the person has
+/// switched off.
+#[derive(Debug, Clone)]
+pub struct AllowState {
+    pub db: bool,
+    pub modules: BTreeSet<crate::modules::Module>,
+    pub disabled: Option<Vec<String>>,
+}
+
+impl AllowState {
+    /// `tool`'s entry: out while its module is off or the person switched
+    /// the tool off, in otherwise (`Leave` while the person's list is not known).
+    pub fn want_tool(&self, tool: &str) -> RuleWant {
+        if effective_disabled_for(&[], &self.modules).iter().any(|t| t == tool) {
+            return RuleWant::Take;
+        }
+        match &self.disabled {
+            Some(off) if off.iter().any(|t| t == tool) => RuleWant::Take,
+            Some(_) => RuleWant::Put,
+            None => RuleWant::Leave,
+        }
+    }
+}
+
+/// The entries of one allow file to write and to take out.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct AllowPlan {
+    pub put: Vec<&'static str>,
+    pub take: Vec<&'static str>,
+}
+
+/// Which of a file's entries (`db`: the database switch's, `autorun` and
+/// `api_templates`: the modules') go in and which come out. The database
+/// switch decides its own entries alone; the module entries never depend
+/// on it.
+pub fn plan_allow(
+    state: &AllowState,
+    db: &[&'static str],
+    autorun: &[&'static str],
+    api_templates: &[&'static str],
+) -> AllowPlan {
+    let mut plan = AllowPlan::default();
+    for e in db {
+        if state.db { plan.put.push(e) } else { plan.take.push(e) }
+    }
+    for e in autorun.iter().chain(api_templates) {
+        match state.want_tool(entry_tool(e)) {
+            RuleWant::Put => plan.put.push(e),
+            RuleWant::Take => plan.take.push(e),
+            RuleWant::Leave => {}
+        }
+    }
+    plan
+}
+
 /// `merge` (`set_claude_allow` / `set_cursor_allow`) for each of `entries`
 /// in turn: the text with every one of them in (`on`) or out, or `None`
 /// when none of them changed it - so an unchanged file is never rewritten.

@@ -294,6 +294,9 @@ pub fn set_bridge_context(
     let root = super::autorun::root(&app).ok();
     let handle = app.state::<BridgeHandle>();
     let guard = handle.running.lock().unwrap();
+    // The tool list the bridge now holds: a push for another environment
+    // than the active one leaves the context's own list in place.
+    let mut held_disabled: Option<Vec<String>> = None;
     if let Some((shared, _)) = guard.as_ref() {
         let next = BridgeContext {
             org: organization,
@@ -315,7 +318,9 @@ pub fn set_bridge_context(
             gate: Default::default(),
         };
         push_context_with(&shared.ctx, root.as_deref(), next, &switches.env_id);
+        held_disabled = Some(shared.ctx.lock().unwrap_or_else(|e| e.into_inner()).disabled_tools.clone());
     }
+    drop(guard);
     // A tool switched off in the AI Bridge tab loses its slash command too.
     // The tool side already refuses a disabled tool twice - filtered from
     // tools/list, refused again on call - but the picker was still offering
@@ -340,6 +345,29 @@ pub fn set_bridge_context(
     if last.as_ref() != Some(&key) {
         *last = Some(key);
         crate::commands::ai_tools::sync_commands(&disabled_tools, working_dir.as_deref());
+    }
+    drop(last);
+
+    // The "always allow" the app writes for the Auto Run and API template
+    // tools follows the same things - the tools switched off, the
+    // repository, the modules - and is written wherever the server is
+    // registered, whether or not the command folder exists. Judged on the
+    // list the bridge holds, and only when that, the repository or the
+    // modules have moved.
+    type AllowKey = (Vec<String>, Option<String>, std::collections::BTreeSet<crate::modules::Module>);
+    static LAST_ALLOW: std::sync::Mutex<Option<AllowKey>> = std::sync::Mutex::new(None);
+    let Some(root) = root else { return };
+    let held = held_disabled.unwrap_or(disabled_tools);
+    let mut last_allow = LAST_ALLOW.lock().unwrap_or_else(|e| e.into_inner());
+    let key: AllowKey = (held.clone(), working_dir.clone(), crate::modules::current());
+    if last_allow.as_ref() != Some(&key) {
+        *last_allow = Some(key);
+        crate::commands::ai_tools::log_allow_outcomes(&crate::commands::ai_tools::sync_allow_rules_in(
+            &root,
+            working_dir.as_deref(),
+            &crate::commands::ai_tools::ToolHome::real(),
+            Some(held),
+        ));
     }
 }
 

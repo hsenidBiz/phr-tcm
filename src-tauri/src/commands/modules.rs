@@ -68,11 +68,27 @@ pub fn resync_commands(app: &tauri::AppHandle) {
     use tauri::Manager;
     let handle = app.state::<crate::commands::ai_bridge::BridgeHandle>();
     // The save has worked: a poisoned bridge lock must not turn that into
-    // a failure, so recover the guards.
-    let guard = handle.running.lock().unwrap_or_else(|e| e.into_inner());
-    if let Some((shared, _)) = guard.as_ref() {
-        let ctx = shared.ctx.lock().unwrap_or_else(|e| e.into_inner());
-        crate::commands::ai_tools::sync_commands(&ctx.disabled_tools, ctx.working_dir.as_deref());
+    // a failure, so recover the guards. What is wanted is copied out and the
+    // locks let go before any file is written.
+    let wanted = {
+        let guard = handle.running.lock().unwrap_or_else(|e| e.into_inner());
+        guard.as_ref().map(|(shared, _)| {
+            let ctx = shared.ctx.lock().unwrap_or_else(|e| e.into_inner());
+            (std::sync::Arc::clone(shared), ctx.disabled_tools.clone(), ctx.working_dir.clone())
+        })
+    };
+    if let Some((shared, disabled, working_dir)) = wanted {
+        crate::commands::ai_tools::sync_commands(&disabled, working_dir.as_deref());
+        // The same switch decides the "always allow" the app writes for the
+        // Auto Run and API template tools: a module off takes its rules out.
+        if let Ok(root) = crate::commands::autorun::root(app) {
+            crate::commands::ai_tools::log_allow_outcomes(&crate::commands::ai_tools::sync_allow_files(
+                &root,
+                working_dir.as_deref(),
+                &crate::commands::ai_tools::ToolHome::real(),
+                Some(&shared.ctx),
+            ));
+        }
     }
 }
 
