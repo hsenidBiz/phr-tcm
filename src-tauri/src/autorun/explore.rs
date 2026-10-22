@@ -618,7 +618,6 @@ pub fn record_change(
 /// The create a `send_api_request` call made, whose id the runner took from
 /// the response itself - so it needs no check against the page's saves.
 /// Kept as a verified create. Hands back its entry number.
-#[allow(dead_code)]
 pub(crate) fn record_send_create(
     root: &Path,
     session: &str,

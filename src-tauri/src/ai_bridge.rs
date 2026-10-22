@@ -581,6 +581,26 @@ pub async fn route(
             .await;
             with_discovery_hint(answer, crate::commands::autorun::auto_run_discovery_active(), false)
         }
+        // One GET or POST from the assistant's own explore session, sent
+        // from the page that session's browser is on.
+        ("POST", "/api-template-send") => match (unattended_run_is_using_the_browser(), autorun_root()) {
+            (Some(busy), _) => busy,
+            (None, Ok(root)) => {
+                let mut slot = crate::commands::autorun::supervised().lock().await;
+                let answer = send_in(
+                    &mut slot,
+                    ctx,
+                    &root,
+                    body,
+                    &crate::browser::timing::Timing::supervised(),
+                    crate::api_templates::runner::RUN_LIMIT,
+                    &crate::api_templates::runner::RETRY_PAUSES,
+                )
+                .await;
+                let_go_if_silent(&mut slot, answer).await
+            }
+            (None, Err(refused)) => refused,
+        },
         // Flows: saving one writes a local file and reads the database, and
         // progress only reads - neither writes to the application, so
         // neither needs the API templates switch.
@@ -5973,6 +5993,132 @@ pub fn explore_changes(root: &std::path::Path, org: &str, project: &str, body: &
         })
         .collect();
     (200, serde_json::json!({ "sessions": sessions }).to_string())
+}
+
+/// `/api-template-send`: one GET or POST from the page the discovery's
+/// browser is on, in the account it signed in as - no sign-in of its own, no
+/// lease of its own. A POST also needs an explore session (so what it
+/// changes goes on a change list) and the person's API templates switch.
+/// Every refusal comes before anything is sent: the body, then the switch,
+/// then the session, the no-save guard, the account the browser still holds,
+/// the one-at-a-time slot and the run's own checks. A POST that was sent
+/// without being a read is noted on the session's list of saves
+/// (`explore::note_writes`); a create that worked goes on the change list
+/// from the response's own id (`explore::record_send_create`); an edit or a
+/// delete says to record what it changed.
+pub async fn send_in<B: DiscoveryBrowser>(
+    slot: &mut Option<B>,
+    ctx: &BridgeContext,
+    root: &std::path::Path,
+    body: &str,
+    timing: &crate::browser::timing::Timing,
+    limit: std::time::Duration,
+    retry_pauses: &[std::time::Duration],
+) -> (u16, String) {
+    use crate::api_templates::one_off as oo;
+    use crate::api_templates::runner::{claim, preflight, run_in_page, Mode, RunRequest, TokenPage};
+    use crate::api_templates::{Effect, Method};
+    use crate::autorun::explore as ex;
+    let one = match oo::parse(body) {
+        Ok(one) => one,
+        Err(refused) => return refused,
+    };
+    let posts = one.step.method == Method::Post;
+    if posts && !ctx.api_writes {
+        return (400, API_WRITES_OFF.to_string());
+    }
+    let path = oo::filled_path(&one);
+    let Some(browser) = slot.as_mut() else {
+        return (409, oo::NO_SESSION_FOR_SEND.to_string());
+    };
+    let parts = browser.parts();
+    let Some(state) = parts.discovery.as_ref() else {
+        return (409, oo::NO_SESSION_FOR_SEND.to_string());
+    };
+    let session = state.explore_session().map(str::to_string);
+    if posts && session.is_none() {
+        return (409, oo::POST_NEEDS_EXPLORE.to_string());
+    }
+    if posts && discovery_must_not_save(root, state) {
+        return (409, crate::browser::save_guard::blocked("POST", &path));
+    }
+    let account = match state.account.clone() {
+        Some(account) if parts.lease.holds(root, &account) => account,
+        _ => return (409, oo::SESSION_NOT_SIGNED_IN.to_string()),
+    };
+    let Some(_claim) = claim() else {
+        return (409, API_TEMPLATE_BUSY.to_string());
+    };
+    if posts {
+        if let Err(moved) = assistant_may_still_write(ctx, root) {
+            return (409, moved);
+        }
+    }
+    let page = one.antiforgery_page.clone();
+    let req = RunRequest {
+        org: ctx.org.clone(),
+        project: ctx.project.clone(),
+        account,
+        values: one.values.clone(),
+        mode: Mode::Explore,
+        template: oo::as_template(&one, oo::ONE_OFF_ID, page.as_deref().unwrap_or("/")),
+    };
+    if let Err(problems) = preflight(root, &req, None) {
+        return (400, problems.join("\n"));
+    }
+    let how = match page {
+        Some(p) => TokenPage::Open(p),
+        None => TokenPage::Here,
+    };
+    let out = run_in_page(parts.driver, root, &req, timing, how, limit, retry_pauses).await;
+
+    let report = &out.report;
+    let request = oo::request_of(&one);
+    let sent = report.steps.iter().any(|s| s.status.is_some());
+    if posts && one.effect != Effect::Read && sent {
+        if let Some(session) = &session {
+            if let Err(why) = ex::note_writes(root, session, &[("POST".to_string(), path.clone())]) {
+                crate::applog::warn(format!("Auto Run explore session: a save could not be noted: {why}"));
+            }
+        }
+    }
+    let mut v = serde_json::json!({
+        "ok": report.ok,
+        "status": out.answer.as_ref().map(|a| a.status),
+        "captured": report.created,
+        "request": request,
+    });
+    if let Some(a) = &out.answer {
+        v["response"] = serde_json::json!({
+            "content_type": a.content_type,
+            "body": crate::autorun::capture_redact::redact_body(a.content_type.as_deref(), &a.body),
+            "cut": a.cut,
+        });
+    }
+    if !report.ok {
+        v["failed"] = serde_json::json!(report.failed);
+        v["detail"] = serde_json::json!(report.message());
+    }
+    match (one.effect, &one.created, &session) {
+        (Effect::Create, Some(made), Some(session)) if report.ok => {
+            let kept = report
+                .created
+                .get(&made.id)
+                .ok_or_else(|| ex::CHANGE_NOT_KEPT.to_string())
+                .and_then(|id| ex::record_send_create(root, session, &made.kind, id, &made.name, &request));
+            match kept {
+                Ok(n) => v["change"] = serde_json::json!(n),
+                Err(why) => {
+                    crate::applog::warn(format!("Auto Run explore session: a create could not be kept: {why}"));
+                    v["change_not_kept"] = serde_json::json!(why);
+                }
+            }
+        }
+        (Effect::Edit, _, _) if sent => v["record_change"] = serde_json::json!(oo::edit_reminder(&request)),
+        (Effect::Delete, _, _) if sent => v["record_change"] = serde_json::json!(oo::delete_reminder(&request)),
+        _ => {}
+    }
+    (if report.ok { 200 } else { 502 }, v.to_string())
 }
 
 /// Close out the explore session in `slot`, if one is going, however it

@@ -149,6 +149,7 @@ mod discovery_locators;
 mod draft_comments;
 mod draft_merge;
 mod environments;
+mod explore_send;
 mod extras;
 mod filewatch;
 mod guide;

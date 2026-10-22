@@ -215,6 +215,10 @@ impl Rig {
     pub(crate) fn fetched(&self) -> Vec<Vec<Value>> {
         self.script.lock().unwrap().fetched.clone()
     }
+    /// The address the page was last sent to; empty when it never was.
+    pub(crate) fn navigated(&self) -> String {
+        self.script.lock().unwrap().navigated.clone()
+    }
     /// How many times the recipe was run: its one click per sign-in.
     pub(crate) fn sign_ins(&self) -> usize {
         self.state.clicks.load(Ordering::SeqCst)
