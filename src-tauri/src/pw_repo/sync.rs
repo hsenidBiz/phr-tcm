@@ -14,6 +14,7 @@
 //! the repo has in none of its places (`pw_repo::presence`, `add_new`).
 
 use crate::autorun::{recipe, store, CaseScript};
+use crate::browser::viewport::DEFAULT_PAGE;
 use crate::pw_export::clone;
 use crate::pw_export::export::{self, Fingerprinter};
 use crate::pw_repo::presence;
@@ -40,6 +41,11 @@ pub struct Parts {
     /// the part was kept, which is then judged without it (`Fingerprint::legacy_hash`).
     #[serde(default)]
     pub handover: String,
+    /// The page size the export asked Playwright for (`FingerprintInput::page`):
+    /// empty at the default size, where the spec says nothing of it and the
+    /// fingerprint is what it was before the size was a setting.
+    #[serde(default)]
+    pub page: String,
 }
 
 /// A case's fingerprint: SHA-256 (lowercase hex) of the canonical JSON
@@ -86,6 +92,11 @@ pub struct FingerprintInput {
     /// and the case's own order lines, one per line. Empty when it says
     /// nothing, and then the hash is what it was before this part existed.
     pub handover: String,
+    /// The page size the spec runs at (`browser::viewport::current`). At the
+    /// default the spec does not name it and the hash is what it was before
+    /// the size was a setting; at any other size it joins the hash, so a spec
+    /// exported at another size reads as out of date.
+    pub page: crate::browser::viewport::PageSize,
 }
 
 /// `v` with every object's keys in sorted order, all the way down: the
@@ -117,14 +128,24 @@ pub fn fingerprint(input: &FingerprintInput) -> Fingerprint {
     let area = json!({ "name": input.area, "clicks": input.area_clicks });
     let account = json!({ "account": input.account, "user_key": input.user_key });
     let handover = Value::String(input.handover.clone());
+    // Only when it is not the default: a spec at the default page says
+    // nothing of it, so every fingerprint taken before the size was a
+    // setting stays what it was.
+    let page = (input.page != DEFAULT_PAGE).then(|| json!({ "width": input.page.width, "height": input.page.height }));
     let parts = Parts {
         title: sha(&title),
         steps: sha(&input.steps),
         area: sha(&area),
         account: sha(&account),
         handover: sha(&handover),
+        page: page.as_ref().map(sha).unwrap_or_default(),
     };
     let mut whole = json!({ "title": title, "steps": input.steps, "area": area, "account": account });
+    if let Some(page) = page {
+        whole["page"] = page;
+    }
+    // The hash as an export from before the handover took it - which, at a
+    // page size that is not the default, still names the page.
     let legacy_hash = sha(&whole);
     // Only when it says something: a case with nothing to hand over hashes
     // exactly as it did before the handover was part of it.
@@ -319,6 +340,9 @@ fn changed(was: &Parts, now: &Parts) -> String {
     // A record from before the part was kept has nothing to compare it with.
     if !was.handover.is_empty() && was.handover != now.handover {
         what.push("TCM facts");
+    }
+    if was.page != now.page {
+        what.push("page size");
     }
     if what.is_empty() {
         "the script changed since the export".to_string()

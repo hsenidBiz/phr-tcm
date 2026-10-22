@@ -485,7 +485,18 @@ impl Fingerprinter {
         };
         let account = saved.account.as_deref().map(str::trim).unwrap_or("").to_string();
         let user_key = self.map.accounts.get(&self.env_id).and_then(|m| m.get(&account)).cloned();
-        Ok(Some(sync::fingerprint(&sync::FingerprintInput { title, steps, area, area_clicks: clicks, account, user_key, handover })))
+        // The page size too: the spec asks Playwright for it (`translate::raw_spec`).
+        let page = crate::browser::viewport::current();
+        Ok(Some(sync::fingerprint(&sync::FingerprintInput {
+            title,
+            steps,
+            area,
+            area_clicks: clicks,
+            account,
+            user_key,
+            handover,
+            page,
+        })))
     }
 
     /// What TCM hands over for case `id` that the repo cannot see, one line
