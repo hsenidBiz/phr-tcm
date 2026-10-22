@@ -83,6 +83,7 @@ mod autorun_plan;
 mod autorun_preconditions;
 mod autorun_prompt_race;
 mod autorun_publish;
+mod autorun_pw_rules;
 mod autorun_quirks;
 mod discovery_map;
 mod autorun_recipe;

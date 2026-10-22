@@ -43,6 +43,7 @@ pub mod loading;
 pub mod popups;
 pub mod preconditions;
 pub mod publish;
+pub mod pw_rules;
 pub mod quirks;
 pub mod recipe;
 pub mod recorder;
