@@ -2,3 +2,7 @@
 # Never convert its line endings, or the release snapshot check sees every
 # file as changed.
 src-tauri/pw-rules/** -text
+
+# The report engine copy is a byte-for-byte copy of its source folder. Never
+# convert its line endings, or a refresh shows every file as changed.
+crystal-reports/** -text

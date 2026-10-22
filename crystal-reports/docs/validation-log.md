@@ -407,3 +407,38 @@ Formula-slot exclusivity remains open pending per-slot static-default semantics.
 **Gates:** `rpt-core/tests/followups.rs` (8 tests) + the full battery + check-shapes +
 verify-portable; live-DB connection cache covered by the existing `live_db.rs` leak-rule
 test (connect path) with reuse exercised by the gated live smoke.
+
+
+## 24. Empty-data preview semantics — notice + engine-parity group-band suppression — 2026-10-22
+
+**Context** (reported from the TCM app): previewing `PMSV10_IndPerfOverview.rpt` showed an
+empty page plus 13 "formula error: unknown name: {sheet.…}" diagnostics. Diagnosis: the
+report passes all load checks; it simply has NO SAVED DATA (like every PMSV10 fixture), and
+two presentation faults made that look like 13 errors:
+
+1. **The renderer printed the group skeleton over zero rows.** Upstream rpt-layout emitted
+   the group header/footer bands once for an empty dataset ("so static content renders").
+   Real Crystal prints NO group band when there are no rows — and every one of the 13
+   failing fields sat exactly in the employee group's header/footers (the detail band's
+   stage_* fields never printed, hence no errors from them). FIXED (VENDORED.md #11): the
+   empty-group branch now emits nothing; the pinning test was rewritten to pin the parity
+   behavior (group captions absent, page header present).
+2. **"No data" was never said.** `preview()` now puts a first-class notice first in
+   `diagnostics` — "this report has no data to render (no saved data / the query returned
+   no rows) — only its static bands are shown; render with the live preview to draw fresh
+   rows" — and filters the "formula error: unknown name" entries that are pure consequences
+   of the empty row set. The live path emits the same notice when a fetch returns zero rows.
+
+**Found while re-verifying: the WSR golden pin had gone stale, and the reason matters.**
+The pinned wall-clock hash (validation-log §21, pinned 2026-10-16) no longer matched — in
+BOTH bundle copies, identically, so nothing in this change caused it. Root cause: World
+Sales Report DOES render as-of-dependent content (its page-header ModificationTime /
+DataDate field objects resolve from the render's as-of instant), so the render is
+byte-stable within a day but moves with the calendar — §21's "WSR prints no time-dependent
+field" claim was wrong (within-day determinism cannot distinguish date-granular values;
+verified directly by rendering at two fixed as_of instants a week apart → different bytes).
+The golden test now pins a FIXED as_of, making the hash a function of pipeline + fonts
+only; the wall-clock `preview()` path is asserted structurally beside it.
+
+Gates: rpt-layout 334 green; rpt-core preview battery 6/6 (the no-data test now pins the
+notice + the filtered noise + group-band suppression); full workspace gate re-run.

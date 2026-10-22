@@ -671,13 +671,11 @@ impl<'a> Formatter<'a> {
         let dataset = self.dataset;
         // Body: grouped or flat.
         if dataset.groups.is_empty() {
-            if self.bands.group_headers.is_empty() && self.bands.group_footers.is_empty() {
-                self.emit_details(&dataset.details, &dataset.grand_total);
-            } else {
-                // A report that defines group bands but produced no group (an empty dataset) still
-                // lays out the group skeleton once, so its static content renders.
-                self.emit_empty_group_skeleton();
-            }
+            // A report that defines group bands but produced no group instance (an empty dataset)
+            // prints NO group header or footer — engine parity: Crystal suppresses every group
+            // band when there are no rows (VENDORED.md #11). Only the report/page bands render;
+            // a flat detail walk over zero rows emits nothing by itself.
+            self.emit_details(&dataset.details, &dataset.grand_total);
         } else {
             for g in &dataset.groups {
                 self.emit_group(g);

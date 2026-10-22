@@ -73,6 +73,14 @@ the render-stack vendoring itself):
     string and one picture OUR side renders correctly (extension #7's fix); the golden-PDF
     hash test in `rpt-core/tests/preview.rs` pins the output.
 
+11. `rpt-layout` (`lib.rs`, `paginate.rs`): a report whose group bands produced no group
+    instance (an empty dataset) prints NO group header or footer — engine parity with
+    Crystal, which suppresses every group band when there are no rows. Upstream instead laid
+    out the group skeleton once ("so static content renders"), which evaluated group-band
+    field objects over zero rows and surfaced them as unknown-name formula errors. The
+    upstream test pinning the skeleton behavior was rewritten to pin the parity behavior
+    (`empty_dataset_prints_no_group_bands`).
+
 The MPL-2.0 requires these files to remain under MPL-2.0 with their notices when they are
 further distributed — keep this directory intact when copying into your application, including
 this list of local changes.

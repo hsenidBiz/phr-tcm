@@ -135,7 +135,7 @@ fn parse_hms(s: &str) -> Option<(u8, u8, u8)> {
 /// As [`preview`], minus the decode.
 pub fn preview_report(rpt: &Rpt) -> Result<PreviewOutput, String> {
     let doc = rpt_render::render(rpt.report());
-    finish_preview(doc, Vec::new())
+    finish_preview(doc, Vec::new(), !rpt.report().has_saved_data)
 }
 
 /// [`preview_live`] over an already-decoded report, fetching fresh rows from SQL Server —
@@ -187,12 +187,35 @@ pub fn preview_live_report(rpt: &Rpt, db: &LiveDb) -> Result<PreviewOutput, Stri
     };
     let doc = rpt_render::render_with(report, opts);
     scope_notes.extend(scope.take_notes());
-    finish_preview(doc, scope_notes)
+    // A live fetch that returned no rows leaves the same empty-page shape as no saved data —
+    // same notice, worded for the live path.
+    let empty_live = rpt_db_mssql::row_count(&fetched.data) == 0;
+    finish_preview(doc, scope_notes, empty_live)
 }
 
-fn finish_preview(doc: rpt_pages::PagedDocument, mut diagnostics: Vec<String>) -> Result<PreviewOutput, String> {
+fn finish_preview(
+    doc: rpt_pages::PagedDocument,
+    mut diagnostics: Vec<String>,
+    no_data: bool,
+) -> Result<PreviewOutput, String> {
     let page_count = doc.pages.len();
-    diagnostics.extend(doc.diagnostics.iter().map(|d| d.describe()));
+    let rendered: Vec<String> = doc.diagnostics.iter().map(|d| d.describe()).collect();
+    if no_data {
+        // Zero rows means no columns resolve, so every db-field reference a page-level band
+        // evaluates surfaces as "formula error: unknown name" — pure consequences of the
+        // empty row set, not defects. Say the one thing that matters and drop the noise.
+        diagnostics.insert(
+            0,
+            "this report has no data to render (no saved data / the query returned no rows) — only its static bands are shown; render with the live preview to draw fresh rows".to_string(),
+        );
+        diagnostics.extend(
+            rendered
+                .into_iter()
+                .filter(|d| !d.starts_with("formula error: unknown name")),
+        );
+    } else {
+        diagnostics.extend(rendered);
+    }
     let pdf = rpt_render::try_render_document(&doc, &rpt_render::PdfOptions::default())
         .map_err(|e| format!("PDF export failed: {e}"))?;
     Ok(PreviewOutput { pdf, page_count, diagnostics })
