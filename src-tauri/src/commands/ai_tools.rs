@@ -11,13 +11,14 @@ use tauri::State;
 
 use crate::ai_tools::{
     atomic_write, command_dir, command_files_in, config_carries, config_for, detect_in, is_installed,
-    legacy_command_path, merge_all, merge_entry, migrate_claude_permissions, migrate_cursor_permissions,
+    legacy_command_path, merge_entry, migrate_claude_permissions, migrate_cursor_permissions,
     project_command_dir, agent_dir, project_agent_dir, AGENT_PREFIX,
     remove_entry, remove_legacy_command, set_claude_allow, set_cursor_allow, superseded_by,
     tcm_server, plan_allow, AllowPlan, AllowState, DetectedTool, McpServer, ToolSpec, CLAUDE_API_TEMPLATE_RULES,
     CLAUDE_AUTORUN_RULES, CLAUDE_DB_RULES, CURSOR_API_TEMPLATE_ENTRIES, CURSOR_AUTORUN_ENTRIES, CURSOR_DB_ENTRIES,
     COMMAND_MARKER, LEGACY_DB_SERVER, MANAGED_SERVERS, TCM_SERVER, TOOL_SPECS,
 };
+use crate::allow_record::{scope_key, AllowRecord};
 use crate::autorun::pw_rules::without_read_dates;
 use crate::db::credentials::{self, DbCredentialsForm, DbDatabase, DbSecrets};
 
@@ -90,32 +91,51 @@ pub fn detect_ai_tools(working_dir: Option<String>) -> Vec<DetectedTool> {
 /// `disabled_tools` is the AI Bridge tab's current on/off set: registering
 /// writes the repository's command files, and writing them from an empty
 /// set would hand back the commands for tools the user has switched off.
+///
+/// Registering shells out (`claude mcp add`), looks for programs on PATH and
+/// writes the tools' settings files, so it runs on a blocking thread, not
+/// the main one.
 #[tauri::command]
 #[specta::specta]
-pub fn register_ai_tool(
+pub async fn register_ai_tool(
     app: tauri::AppHandle,
     id: String,
     working_dir: Option<String>,
     disabled_tools: Vec<String>,
     global: bool,
 ) -> Result<(), String> {
+    let root = super::autorun::root(&app).ok();
+    let job = tauri::async_runtime::spawn_blocking(move || {
+        register_and_allow(&id, working_dir.as_deref(), disabled_tools, global, root.as_deref())
+    });
+    job.await.unwrap_or_else(|e| {
+        crate::applog::warn(format!("registering an AI tool stopped early: {e}"));
+        Err("The tool could not be registered. Settings → Logs has the details.".to_string())
+    })
+}
+
+/// `register_ai_tool`'s work: register, then give the tool its "always
+/// allow". `root` is the app's data folder (None: it could not be found, and
+/// the allow rules are left for the next sync).
+pub fn register_and_allow(
+    id: &str,
+    working_dir: Option<&str>,
+    disabled_tools: Vec<String>,
+    global: bool,
+    root: Option<&std::path::Path>,
+) -> Result<(), String> {
     let exe = std::env::current_exe()
         .map_err(|e| format!("failed to resolve current exe: {e}"))?
         .to_string_lossy()
         .to_string();
-    register_server(&id, &tcm_server(&exe), working_dir.as_deref(), &disabled_tools, global)?;
+    register_server(id, &tcm_server(&exe), working_dir, &disabled_tools, global)?;
     // A tool registered gets its own "always allow" for what the app lets
     // run unasked right now - the database tools while the active
     // environment runs changes without asking, the Auto Run and API
     // template tools while their modules are on - the same as the ones
     // registered before. Best-effort: the registration worked.
-    if let Ok(root) = super::autorun::root(&app) {
-        log_allow_outcomes(&sync_allow_rules_in(
-            &root,
-            working_dir.as_deref(),
-            &ToolHome::real(),
-            Some(disabled_tools),
-        ));
+    if let Some(root) = root {
+        log_allow_outcomes(&sync_allow_rules_in(root, working_dir, &ToolHome::real(), Some(disabled_tools)));
     }
     Ok(())
 }
@@ -223,7 +243,7 @@ pub fn sync_allow_rules_in(
 ) -> Vec<AutoApproveOutcome> {
     match_allow_files_with(root, |db| {
         let state = AllowState { db, modules: crate::modules::current(), disabled };
-        apply_allow_in(tools, &state, working_dir)
+        apply_allow_in(tools, &state, working_dir, root)
     })
 }
 
@@ -352,22 +372,69 @@ fn allow_note(id: &str, name: &str) -> String {
     }
 }
 
+/// One settings file to write: where it is, and how the record
+/// (`allow_record`) names it.
+struct Target {
+    path: PathBuf,
+    key: String,
+}
+
+/// What `write_allow` may take out besides what the app's record holds.
+#[derive(Clone, Copy)]
+struct Taking<'a> {
+    /// The entries the plan takes out.
+    take: &'a [&'a str],
+    /// Of those, the ones that may go without being on the record: the
+    /// database switch's, once, for the first removal after the record began.
+    legacy: &'a [&'a str],
+}
+
 /// Put `put` into one file and take `take` out of it, in one write. A
 /// missing file is created only when there is something to put in; taking
-/// entries out of a missing file leaves it missing. Only the entries named
-/// are touched - everything else in the person's file is theirs - and a
+/// entries out of a missing file leaves it missing.
+///
+/// Only entries the app wrote are ever taken out. An entry `put` finds in the
+/// file already is the person's: it is left alone, never put on the record,
+/// and so never removed. `record` is told what the app added (before the file
+/// is written, so an entry is never in the file without being recorded) and
+/// what it removed. Everything else in the person's file is theirs, and a
 /// file that is not a JSON object is refused unchanged. The errors carry no
 /// path (they reach the log, which a bug report ships): the file is named by
 /// its file name alone.
-fn write_allow(file: &AllowFile, path: &std::path::Path, put: &[&str], take: &[&str]) -> Result<(), String> {
-    write_allow_inner(file, path, put, take).map_err(|e| without_path(&e, path))
+fn write_allow(
+    file: &AllowFile,
+    target: &Target,
+    put: &[&str],
+    taking: Taking,
+    record: &mut AllowRecord,
+    root: &std::path::Path,
+) -> Result<(), String> {
+    write_allow_inner(file, target, put, taking, record, root).map_err(|e| without_path(&e, &target.path))
 }
 
-fn write_allow_inner(file: &AllowFile, path: &std::path::Path, put: &[&str], take: &[&str]) -> Result<(), String> {
+fn write_allow_inner(
+    file: &AllowFile,
+    target: &Target,
+    put: &[&str],
+    taking: Taking,
+    record: &mut AllowRecord,
+    root: &std::path::Path,
+) -> Result<(), String> {
+    let path = &target.path;
+    // What the app may take out of this file: what it wrote, or (once) the
+    // database entries of older versions.
+    let removable: Vec<&str> = taking
+        .take
+        .iter()
+        .copied()
+        .filter(|e| record.holds(&target.key, e) || taking.legacy.contains(e))
+        .collect();
     let existing = match std::fs::read_to_string(path) {
         Ok(s) => s,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
             if put.is_empty() {
+                // Nothing there to take out of.
+                record.forget(&target.key, &removable);
                 return Ok(());
             }
             String::new()
@@ -376,22 +443,50 @@ fn write_allow_inner(file: &AllowFile, path: &std::path::Path, put: &[&str], tak
     };
     let mut text = existing;
     let mut changed = false;
-    for (entries, on) in [(put, true), (take, false)] {
-        if let Some(next) =
-            merge_all(&text, entries, on, file.merge).map_err(|e| format!("{}: {e}", path.display()))?
-        {
+    let mut added: Vec<&str> = Vec::new();
+    for entry in put {
+        // "Taking it out would change something" is "it is there" - under
+        // the server's current name or its old one.
+        let there = (file.merge)(&text, entry, false).map_err(|e| format!("{}: {e}", path.display()))?.is_some();
+        if let Some(next) = (file.merge)(&text, entry, true).map_err(|e| format!("{}: {e}", path.display()))? {
+            text = next;
+            changed = true;
+            if !there {
+                added.push(entry);
+            }
+        }
+    }
+    for entry in &removable {
+        if let Some(next) = (file.merge)(&text, entry, false).map_err(|e| format!("{}: {e}", path.display()))? {
             text = next;
             changed = true;
         }
     }
-    if !changed {
-        return Ok(());
+    if !added.is_empty() {
+        record.add(&target.key, &added);
+        if let Err(e) = record.save(root) {
+            record.forget(&target.key, &added);
+            return Err(e);
+        }
     }
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)
-            .map_err(|e| format!("could not create {}: {e}", parent.display()))?;
+    if changed {
+        let written = match path.parent() {
+            Some(parent) => std::fs::create_dir_all(parent)
+                .map_err(|e| format!("could not create {}: {e}", parent.display())),
+            None => Ok(()),
+        }
+        .and_then(|()| atomic_write(path, &text));
+        if let Err(e) = written {
+            if !added.is_empty() {
+                record.forget(&target.key, &added);
+                let _ = record.save(root);
+            }
+            return Err(e);
+        }
     }
-    atomic_write(path, &text)
+    // Out of the file (or never in it): off the record.
+    record.forget(&target.key, &removable);
+    Ok(())
 }
 
 /// `message` with the settings file's path (and its folder) taken out, the
@@ -441,18 +536,6 @@ pub fn carry_over_rules_in(
     }
 }
 
-/// Each installed tool that carries our server, and what was done for it.
-///
-/// A tool with a writable allow file gets the entries where the server is
-/// registered: the working repository's file, the machine's, or both.
-/// Entries that are not wanted - the database switch off, a module off, a
-/// tool the person switched off - are taken out of both files, registered
-/// there or not: nothing the app wrote should outlive what wrote it. Every
-/// other tool that carries the server is named with what the person has to
-/// do (for the database switch).
-pub fn apply_allow_now(state: &AllowState, working_dir: Option<&str>) -> Vec<AutoApproveOutcome> {
-    apply_allow_in(&ToolHome::real(), state, working_dir)
-}
 
 /// Where the AI tools' settings are read from: this machine's home and
 /// app data folders and PATH, or a test's.
@@ -469,9 +552,30 @@ impl ToolHome {
     }
 }
 
-/// `apply_allow_now` for the tools found under `tools`.
-pub fn apply_allow_in(tools: &ToolHome, state: &AllowState, working_dir: Option<&str>) -> Vec<AutoApproveOutcome> {
+/// Each installed tool that carries our server, and what was done for it,
+/// for the tools found under `tools`; `data_root` is the app's data folder,
+/// where the record of what the app wrote is kept (`allow_record`).
+///
+/// A tool with a writable allow file gets the entries where the server is
+/// registered: the working repository's file, the machine's, or both.
+/// Entries that are not wanted - the database switch off, a module off, a
+/// tool the person switched off - are taken out of both files, registered
+/// there or not, but only the ones the app wrote itself: an entry that was in
+/// the person's file before the app wanted it is theirs. Each file is handled
+/// on its own: one that cannot be read or written (and is logged) does not
+/// stop the other. Every other tool that carries the server is named with
+/// what the person has to do (for the database switch).
+pub fn apply_allow_in(
+    tools: &ToolHome,
+    state: &AllowState,
+    working_dir: Option<&str>,
+    data_root: &std::path::Path,
+) -> Vec<AutoApproveOutcome> {
     let root = root_of(working_dir);
+    let mut record = AllowRecord::load(data_root, state.db);
+    // The database switch's older entries may go once, with the switch off.
+    let legacy_now = record.legacy_db && !state.db;
+    let mut all_applied = true;
     let mut out = Vec::new();
     for t in detect_in(&tools.home, &tools.appdata, &tools.on_path, root) {
         let here = t.registered_servers.iter().any(|s| s == TCM_SERVER);
@@ -488,43 +592,71 @@ pub fn apply_allow_in(tools: &ToolHome, state: &AllowState, working_dir: Option<
         };
         let plan = file.plan(state);
         // Where the server is registered: the only files entries go into.
-        let mut put_paths = Vec::new();
+        let user_target = || Target { path: (file.user)(&tools.home), key: scope_key(&t.id, None) };
+        let project_target = |r: &str| Target { path: (file.project)(r), key: scope_key(&t.id, Some(r)) };
+        let mut put_to = Vec::new();
         if here && t.scope == "project" {
             if let Some(r) = root {
-                put_paths.push((file.project)(r));
+                put_to.push(project_target(r));
             }
         }
         if (here && t.scope == "global") || global_too {
-            put_paths.push((file.user)(&tools.home));
+            put_to.push(user_target());
         }
         // Where entries come out of: both files, registered there or not.
-        let mut paths = put_paths.clone();
+        let mut targets: Vec<(Target, bool)> = put_to.into_iter().map(|tg| (tg, true)).collect();
         let mut also = Vec::new();
         if let Some(r) = root {
-            also.push((file.project)(r));
+            also.push(project_target(r));
         }
-        also.push((file.user)(&tools.home));
-        for p in also {
-            if !paths.contains(&p) {
-                paths.push(p);
+        also.push(user_target());
+        for tg in also {
+            if !targets.iter().any(|(have, _)| have.path == tg.path) {
+                targets.push((tg, false));
             }
         }
-        if !t.installed || (state.db && put_paths.is_empty()) {
+        if !t.installed {
             continue;
         }
-        let result = paths.iter().try_for_each(|p| {
-            let put: &[&str] = if put_paths.contains(p) { &plan.put } else { &[] };
-            write_allow(file, p, put, &plan.take)
-        });
-        out.push(match result {
-            Ok(()) => AutoApproveOutcome {
+        // With the database switch on, a tool the server is registered with
+        // nowhere gets nothing put: it is still cleaned of module entries
+        // that are off, but it is not reported as set.
+        let silent = state.db && !targets.iter().any(|(_, put)| *put);
+        let taking = Taking {
+            take: &plan.take,
+            legacy: if legacy_now { file.db } else { &[] },
+        };
+        let mut failures: Vec<String> = Vec::new();
+        for (target, put_here) in &targets {
+            let put: &[&str] = if *put_here { &plan.put } else { &[] };
+            if let Err(e) = write_allow(file, target, put, taking, &mut record, data_root) {
+                crate::applog::warn(format!("auto-approve for {}: {e}", t.name));
+                failures.push(e);
+            }
+        }
+        if !failures.is_empty() {
+            all_applied = false;
+        }
+        if silent {
+            continue;
+        }
+        out.push(if failures.is_empty() {
+            AutoApproveOutcome {
                 tool: t.name.clone(),
                 applied: true,
                 // Cursor reads it only in some run modes: say so, even when set.
                 note: if state.db && t.id == "cursor" { allow_note(&t.id, &t.name) } else { String::new() },
-            },
-            Err(e) => AutoApproveOutcome { tool: t.name.clone(), applied: false, note: e },
+            }
+        } else {
+            AutoApproveOutcome { tool: t.name.clone(), applied: false, note: failures.join("; ") }
         });
+    }
+    // The database switch's older entries had their one removal.
+    if legacy_now && all_applied {
+        record.end_legacy_db();
+    }
+    if let Err(e) = record.save(data_root) {
+        crate::applog::warn(format!("auto-approve: {e}"));
     }
     out
 }

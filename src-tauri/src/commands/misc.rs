@@ -270,15 +270,20 @@ pub fn get_extras_unlocked() -> bool {
 /// the log; the person gets a sentence they can act on.
 #[tauri::command]
 #[specta::specta]
-pub fn set_extras_unlocked(app: tauri::AppHandle, unlocked: bool) -> Result<(), String> {
+pub async fn set_extras_unlocked(app: tauri::AppHandle, unlocked: bool) -> Result<(), String> {
     let before = crate::modules::current();
     crate::extras::set_unlocked(unlocked).map_err(|e| {
         crate::applog::warn(format!("could not save the extras setting: {e}"));
         "Could not save this setting. The app log in Settings has the details.".to_string()
     })?;
-    // What is offered can change with the switch: hear it as a module switch is.
+    // What is offered can change with the switch: hear it as a module switch
+    // is, with the files written off the main thread.
     if crate::modules::current() != before {
-        crate::commands::modules::resync_commands(&app);
+        if let Err(e) =
+            tauri::async_runtime::spawn_blocking(move || crate::commands::modules::resync_commands(&app)).await
+        {
+            crate::applog::warn(format!("re-syncing the AI tools' files stopped early: {e}"));
+        }
     }
     Ok(())
 }

@@ -36,6 +36,8 @@ fn state(db: bool, modules: BTreeSet<Module>, disabled: &[&str]) -> AllowState {
 struct Machine {
     home: tempfile::TempDir,
     repo: tempfile::TempDir,
+    /// The app's data folder, where the record of what it wrote is kept.
+    data: tempfile::TempDir,
     tools: ToolHome,
 }
 
@@ -57,7 +59,7 @@ fn machine(settings: Option<&str>) -> Machine {
         appdata: home.path().join("appdata").to_string_lossy().to_string(),
         on_path: |_| false,
     };
-    Machine { home, repo, tools }
+    Machine { home, repo, data: tempfile::tempdir().unwrap(), tools }
 }
 
 impl Machine {
@@ -78,7 +80,16 @@ impl Machine {
             .unwrap_or_default()
     }
     fn apply(&self, st: &AllowState) -> Vec<v2_lib::commands::ai_tools::AutoApproveOutcome> {
-        apply_allow_in(&self.tools, st, Some(&self.dir()))
+        apply_allow_in(&self.tools, st, Some(&self.dir()), self.data.path())
+    }
+    fn record_file(&self) -> std::path::PathBuf {
+        v2_lib::allow_record::AllowRecord::path(self.data.path())
+    }
+    /// Put `rules` into the repository's file as the person's own.
+    fn persons(&self, rules: &[&str]) {
+        std::fs::create_dir_all(self.repo.path().join(".claude")).unwrap();
+        let text = serde_json::to_string_pretty(&json!({ "permissions": { "allow": rules } })).unwrap();
+        std::fs::write(self.file(), text).unwrap();
     }
 }
 
@@ -330,11 +341,12 @@ fn a_file_that_is_not_an_object_is_refused_unchanged_and_the_answer_names_no_pat
         }
         assert!(cc.note.contains("settings.local.json"), "it names the file: {}", cc.note);
     }
-    // Taking out from a file nothing was ever put in is just as careful.
+    // Taking out from a file the app never put anything in has nothing to
+    // do - and does not touch it.
     let m = machine(Some("[1, 2]"));
     let out = m.apply(&state(false, mods(&[Module::DbAccess]), &[]));
     assert_eq!(m.text(), "[1, 2]");
-    assert!(out.iter().any(|o| o.tool == "Claude Code" && !o.applied));
+    assert!(out.iter().all(|o| o.tool != "Claude Code" || o.applied), "{out:?}");
 }
 
 #[test]
@@ -364,11 +376,34 @@ fn rules_go_only_where_the_server_is_registered() {
     assert!(has_all(&held, CLAUDE_AUTORUN_RULES));
     assert!(!m.file().exists(), "the repository's file is not the registered one");
 
-    // Rules left in a file where it is not registered still come out.
-    std::fs::create_dir_all(m.repo.path().join(".claude")).unwrap();
-    std::fs::write(m.file(), r#"{"permissions":{"allow":["mcp__tcm__try_autorun_action","mine"]}}"#).unwrap();
+    // Rules the app wrote into a file where the server is no longer
+    // registered still come out; the person's own stay.
+    m.persons(&["mine"]);
+    std::fs::write(
+        m.repo.path().join(".mcp.json"),
+        r#"{"mcpServers": {"tcm": {"command": "x", "args": ["--mcp"]}}}"#,
+    )
+    .unwrap();
+    m.apply(&state(false, auto_run_on(), &[]));
+    assert!(has_all(&m.allow(), CLAUDE_AUTORUN_RULES));
+    std::fs::remove_file(m.repo.path().join(".mcp.json")).unwrap();
     m.apply(&state(false, mods(&[Module::DbAccess]), &[]));
     assert_eq!(m.allow(), ["mine"]);
+}
+
+/// Unregistered tool, database switch on: module rules the app wrote still
+/// come out of its files when the module goes off.
+#[test]
+fn module_rules_come_out_of_an_unregistered_tools_files_while_the_database_switch_is_on() {
+    let m = machine(None);
+    m.apply(&state(true, auto_run_on(), &[]));
+    assert!(has_all(&m.allow(), CLAUDE_AUTORUN_RULES) && has_all(&m.allow(), CLAUDE_DB_RULES));
+
+    std::fs::remove_file(m.repo.path().join(".mcp.json")).unwrap();
+    let out = m.apply(&state(true, mods(&[Module::DbAccess]), &[]));
+    assert!(has_none(&m.allow(), CLAUDE_AUTORUN_RULES), "{:?}", m.allow());
+    assert!(has_all(&m.allow(), CLAUDE_DB_RULES), "the database switch is still on and its rules stay");
+    assert!(out.iter().all(|o| o.tool != "Claude Code"), "a tool the server is not registered with is not reported as set: {out:?}");
 }
 
 #[test]
@@ -397,4 +432,287 @@ fn cursor_gets_the_same_rules_in_its_allowlist() {
     assert_eq!(held(), ["other:tool"]);
     let v: Value = serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
     assert_eq!(v["terminalAllowlist"], json!(["ls"]));
+}
+
+// ------------------------------------------------------------ whose rules they are
+
+/// The owner's own hand-written rule, with the same name as one the app
+/// writes, is theirs: Auto Run going off leaves it.
+#[test]
+fn a_hand_written_rule_stays_when_auto_run_goes_off() {
+    let mine = "mcp__tcm__start_autorun_discovery";
+    let m = machine(None);
+    m.persons(&[mine, "Bash(git status)"]);
+    m.apply(&state(false, auto_run_on(), &[]));
+    let held = m.allow();
+    assert!(has_all(&held, CLAUDE_AUTORUN_RULES), "{held:?}");
+    assert_eq!(held.iter().filter(|r| *r == mine).count(), 1, "not written twice: {held:?}");
+
+    m.apply(&state(false, mods(&[Module::DbAccess]), &[]));
+    assert_eq!(m.allow(), [mine, "Bash(git status)"], "the app's seven went, the owner's own stayed");
+}
+
+/// A rule the app wrote comes out; one the person had before stays, even when
+/// both are in the same module.
+#[test]
+fn only_a_rule_the_app_wrote_is_taken_out() {
+    let m = machine(None);
+    m.persons(&["mcp__tcm__get_autorun_page", "mcp__tcm__run_api_template"]);
+    m.apply(&state(false, api_on(), &["try_autorun_action"]));
+    assert!(m.allow().iter().any(|r| r == "mcp__tcm__save_autorun_script"));
+    assert!(!m.allow().iter().any(|r| r == "mcp__tcm__try_autorun_action"));
+
+    // One of the app's own is switched off on the tab: it goes. The
+    // person's two stay while their tools are switched off, too.
+    m.apply(&state(false, api_on(), &["save_autorun_script", "get_autorun_page", "run_api_template"]));
+    let held = m.allow();
+    assert!(!held.iter().any(|r| r == "mcp__tcm__save_autorun_script"), "{held:?}");
+    assert!(held.iter().any(|r| r == "mcp__tcm__get_autorun_page"), "the person's: {held:?}");
+    assert!(held.iter().any(|r| r == "mcp__tcm__run_api_template"), "the person's: {held:?}");
+
+    m.apply(&state(false, mods(&[Module::DbAccess]), &[]));
+    assert_eq!(m.allow(), ["mcp__tcm__get_autorun_page", "mcp__tcm__run_api_template"]);
+}
+
+/// On, then off, with every rule already in the file: nothing is written either way.
+#[test]
+fn on_then_off_with_pre_existing_identical_rules_leaves_the_file_byte_identical() {
+    let m = machine(None);
+    let all: Vec<&str> = CLAUDE_AUTORUN_RULES.iter().chain(CLAUDE_API_TEMPLATE_RULES).copied().collect();
+    m.persons(&all);
+    // Nothing to tell the file apart by but its bytes: a style the app would not write.
+    let text = format!("{{\"permissions\":{{\"allow\":{}}}}}\n", serde_json::to_string(&all).unwrap());
+    std::fs::write(m.file(), &text).unwrap();
+
+    m.apply(&state(false, api_on(), &[]));
+    assert_eq!(m.text(), text, "found there, so not written");
+    m.apply(&state(false, mods(&[Module::DbAccess]), &[]));
+    assert_eq!(m.text(), text, "found there, so not the app's to take out");
+}
+
+/// The record holds what the app added and nothing else, and names a file by
+/// its tool and scope, not by its path.
+#[test]
+fn the_record_holds_only_what_the_app_added_and_no_path() {
+    let m = machine(None);
+    m.persons(&["mcp__tcm__get_autorun_page"]);
+    m.apply(&state(false, auto_run_on(), &[]));
+    let record: Value = serde_json::from_str(&std::fs::read_to_string(m.record_file()).unwrap()).unwrap();
+    let files = record["files"].as_object().unwrap();
+    assert_eq!(files.len(), 1, "{record}");
+    let (key, entries) = files.iter().next().unwrap();
+    assert!(key.starts_with("claude-code:project:"), "{key}");
+    let mut written: Vec<String> = serde_json::from_value(entries.clone()).unwrap();
+    written.sort();
+    let mut want: Vec<String> =
+        CLAUDE_AUTORUN_RULES.iter().filter(|r| **r != "mcp__tcm__get_autorun_page").map(|r| r.to_string()).collect();
+    want.sort();
+    assert_eq!(written, want, "the person's own rule is not on the record");
+
+    let raw = std::fs::read_to_string(m.record_file()).unwrap();
+    for dir in [m.repo.path(), m.home.path(), m.data.path()] {
+        let d = dir.to_string_lossy().to_string();
+        assert!(!raw.contains(&d) && !raw.contains(&d.replace('\\', "/")), "the record carries a path: {raw}");
+    }
+
+    // Off: what was recorded is forgotten as it goes.
+    m.apply(&state(false, mods(&[Module::DbAccess]), &[]));
+    let record: Value = serde_json::from_str(&std::fs::read_to_string(m.record_file()).unwrap()).unwrap();
+    assert_eq!(record["files"], json!({}), "{record}");
+}
+
+/// One repository's record is not another's: a rule the person wrote in a
+/// second repository is not taken out because the app wrote it in the first.
+#[test]
+fn a_repositorys_rules_are_recorded_apart_from_anothers() {
+    let a = machine(None);
+    a.apply(&state(false, auto_run_on(), &[]));
+
+    let other = tempfile::tempdir().unwrap();
+    std::fs::write(other.path().join(".mcp.json"), r#"{"mcpServers": {"tcm": {"command": "x"}}}"#).unwrap();
+    std::fs::create_dir_all(other.path().join(".claude")).unwrap();
+    let theirs = other.path().join(".claude").join("settings.local.json");
+    std::fs::write(&theirs, r#"{"permissions":{"allow":["mcp__tcm__try_autorun_action"]}}"#).unwrap();
+    apply_allow_in(
+        &a.tools,
+        &state(false, mods(&[Module::DbAccess]), &[]),
+        Some(&other.path().to_string_lossy()),
+        a.data.path(),
+    );
+    assert_eq!(
+        std::fs::read_to_string(&theirs).unwrap(),
+        r#"{"permissions":{"allow":["mcp__tcm__try_autorun_action"]}}"#,
+        "the other repository's own rule was not the app's"
+    );
+}
+
+// The database switch's rules predate the record.
+
+fn their_db_rules_file(m: &Machine) {
+    let mut allow: Vec<&str> = CLAUDE_DB_RULES.to_vec();
+    allow.push("mine");
+    m.persons(&allow);
+}
+
+/// An older version wrote the database rules (the switch was on when the app
+/// last ran): the first removal after the upgrade takes them out, as before.
+#[test]
+fn the_database_rules_an_older_version_wrote_come_out_once_on_the_first_removal() {
+    let m = machine(None);
+    their_db_rules_file(&m);
+    // First look at upgrade: the switch is still on, the rules are found there.
+    m.apply(&state(true, mods(&[Module::DbAccess]), &[]));
+    assert!(has_all(&m.allow(), CLAUDE_DB_RULES));
+    // Switched off: they were the app's, written before the record existed.
+    m.apply(&state(false, mods(&[Module::DbAccess]), &[]));
+    assert_eq!(m.allow(), ["mine"]);
+
+    // That was the one removal. A rule the person writes now is theirs.
+    their_db_rules_file(&m);
+    m.apply(&state(true, mods(&[Module::DbAccess]), &[]));
+    m.apply(&state(false, mods(&[Module::DbAccess]), &[]));
+    assert!(has_all(&m.allow(), CLAUDE_DB_RULES), "{:?}", m.allow());
+}
+
+/// The switch was off when the app first looked, so it wrote nothing: the
+/// same rules in the file are the person's, and stay.
+#[test]
+fn database_rules_found_with_the_switch_off_at_the_start_are_the_persons() {
+    let m = machine(None);
+    their_db_rules_file(&m);
+    m.apply(&state(false, mods(&[Module::DbAccess]), &[]));
+    assert!(has_all(&m.allow(), CLAUDE_DB_RULES), "left");
+    m.apply(&state(true, mods(&[Module::DbAccess]), &[]));
+    m.apply(&state(false, mods(&[Module::DbAccess]), &[]));
+    assert!(has_all(&m.allow(), CLAUDE_DB_RULES), "{:?}", m.allow());
+}
+
+/// Rules the app puts in with the switch on, after the record began, are
+/// recorded and come out like any other.
+#[test]
+fn database_rules_the_app_writes_after_the_record_began_come_out_with_the_switch() {
+    let m = machine(None);
+    m.apply(&state(false, mods(&[Module::DbAccess]), &[]));
+    m.apply(&state(true, mods(&[Module::DbAccess]), &[]));
+    assert!(has_all(&m.allow(), CLAUDE_DB_RULES));
+    m.apply(&state(false, mods(&[Module::DbAccess]), &[]));
+    assert!(has_none(&m.allow(), CLAUDE_DB_RULES));
+}
+
+/// A record that cannot be read starts again, without losing the person's file.
+#[test]
+fn an_unreadable_record_starts_over_and_the_persons_file_is_safe() {
+    let m = machine(None);
+    m.persons(&["mcp__tcm__get_autorun_page"]);
+    std::fs::write(m.record_file(), "{ not json").unwrap();
+    m.apply(&state(false, auto_run_on(), &[]));
+    m.apply(&state(false, mods(&[Module::DbAccess]), &[]));
+    assert_eq!(m.allow(), ["mcp__tcm__get_autorun_page"]);
+}
+
+#[test]
+fn cursor_leaves_an_entry_the_person_had_and_removes_its_own() {
+    let m = machine(None);
+    std::fs::create_dir_all(m.home.path().join(".cursor")).unwrap();
+    std::fs::write(
+        m.home.path().join(".cursor").join("mcp.json"),
+        r#"{"mcpServers": {"tcm": {"command": "x"}}}"#,
+    )
+    .unwrap();
+    let file = m.home.path().join(".cursor").join("permissions.json");
+    std::fs::write(&file, r#"{"mcpAllowlist": ["tcm:try_autorun_action", "other:tool"]}"#).unwrap();
+    let held = || -> Vec<String> {
+        let v: Value = serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
+        serde_json::from_value(v["mcpAllowlist"].clone()).unwrap()
+    };
+    m.apply(&state(false, auto_run_on(), &[]));
+    assert!(held().iter().any(|e| e == "tcm:save_autorun_script"));
+    m.apply(&state(false, mods(&[Module::DbAccess]), &[]));
+    assert_eq!(held(), ["tcm:try_autorun_action", "other:tool"]);
+}
+
+// ------------------------------------------------------------ off the main thread
+
+/// These four now write the AI tools' files and look programs up on PATH
+/// (the allow-rule sync), so they must be async commands run off the main
+/// thread. This stops compiling if any goes back to a sync fn.
+#[allow(dead_code)]
+fn the_commands_that_sync_the_allow_files_are_async(app: tauri::AppHandle) {
+    fn is_future<F: std::future::Future>(_: F) {}
+    is_future(v2_lib::commands::ai_bridge::set_bridge_context(
+        app.clone(),
+        String::new(),
+        String::new(),
+        None,
+        None,
+        Vec::new(),
+        None,
+        None,
+        Default::default(),
+    ));
+    is_future(v2_lib::commands::ai_tools::register_ai_tool(
+        app.clone(),
+        String::new(),
+        None,
+        Vec::new(),
+        false,
+    ));
+    is_future(v2_lib::commands::modules::modules_set(app.clone(), Module::AutoRun, true));
+    is_future(v2_lib::commands::misc::set_extras_unlocked(app, false));
+}
+
+/// The module switch's re-sync copies what it needs out of the bridge and
+/// lets both locks go before it writes anything.
+#[test]
+fn the_allow_files_are_synced_with_no_bridge_lock_held() {
+    use v2_lib::ai_bridge::{BridgeContext, BridgeState};
+    use v2_lib::commands::ai_bridge::BridgeHandle;
+    use v2_lib::commands::modules::resync_commands_with;
+
+    let none = BridgeHandle::default();
+    let mut called = false;
+    resync_commands_with(&none, |_, _, _| called = true);
+    assert!(!called, "no bridge running: nothing is synced");
+
+    let ctx = BridgeContext {
+        disabled_tools: vec!["try_autorun_action".to_string()],
+        working_dir: Some("D:/repo".to_string()),
+        ..Default::default()
+    };
+    let shared = BridgeState::new(ctx, "1.0.0".to_string());
+    let handle = BridgeHandle::default();
+    *handle.running.lock().unwrap() = Some((std::sync::Arc::clone(&shared), 1234));
+    let mut seen: Option<(Vec<String>, Option<String>)> = None;
+    resync_commands_with(&handle, |_, disabled, dir| {
+        assert!(handle.running.try_lock().is_ok(), "the bridge handle is locked while files are written");
+        assert!(shared.ctx.try_lock().is_ok(), "the bridge context is locked while files are written");
+        seen = Some((disabled.to_vec(), dir.map(str::to_string)));
+    });
+    assert_eq!(seen, Some((vec!["try_autorun_action".to_string()], Some("D:/repo".to_string()))));
+}
+
+// ------------------------------------------------------------ one file does not stop the other
+
+/// The repository's settings file is not readable as JSON: the machine's file
+/// is still brought into line, and the failure is reported.
+#[test]
+fn an_unreadable_file_does_not_stop_the_other_file() {
+    let m = machine(None);
+    std::fs::write(m.home.path().join(".claude.json"), r#"{"mcpServers": {"tcm": {"command": "x"}}}"#).unwrap();
+    let user = m.home.path().join(".claude").join("settings.json");
+    let user_allow = || -> Vec<String> {
+        let v: Value = serde_json::from_str(&std::fs::read_to_string(&user).unwrap_or_default()).unwrap_or(json!({}));
+        serde_json::from_value(v["permissions"]["allow"].clone()).unwrap_or_default()
+    };
+    m.apply(&state(false, auto_run_on(), &[]));
+    assert!(has_all(&user_allow(), CLAUDE_AUTORUN_RULES), "{:?}", user_allow());
+
+    // The repository's file goes bad; it is the first the sync meets.
+    std::fs::create_dir_all(m.repo.path().join(".claude")).unwrap();
+    std::fs::write(m.file(), "{ not json").unwrap();
+    let out = m.apply(&state(false, mods(&[Module::DbAccess]), &[]));
+    assert!(has_none(&user_allow(), CLAUDE_AUTORUN_RULES), "the machine's file was cleaned: {:?}", user_allow());
+    assert_eq!(m.text(), "{ not json", "the unreadable file is left as it was");
+    let cc = out.iter().find(|o| o.tool == "Claude Code").expect("Claude Code is reported");
+    assert!(!cc.applied && cc.note.contains("settings.local.json"), "{cc:?}");
 }
