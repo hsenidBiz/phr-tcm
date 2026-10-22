@@ -70,6 +70,9 @@ export const cacheKeys = {
     `suite-cases:${org}/${project}/${planId}/${suiteId}`,
   runHistory: (org: string, project: string, planId: number | undefined) =>
     `run-history:${org}/${project}/${planId}`,
+  // Per suite: the history is asked for that suite's cases only.
+  suiteRunHistory: (org: string, project: string, planId: number | undefined, suiteId: number | undefined) =>
+    `run-history:${org}/${project}/${planId}/${suiteId}`,
   points: (org: string, project: string, planId: number | undefined, suiteId: number | undefined) =>
     `points:${org}/${project}/${planId}/${suiteId}`,
   boardPrs: (org: string, project: string) => `board-prs:${org}/${project}`,

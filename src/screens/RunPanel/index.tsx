@@ -189,23 +189,6 @@ export default function RunPanel({
     qc.invalidateQueries({ queryKey: ["points"] });
   };
 
-  // Last-5 outcome history per case (spec: Execution Depth & Trust, A).
-  const history = useQuery({
-    queryKey: ["run-history", org, project, suite.data?.plan_id],
-    ...persistentQuery({
-      key: cacheKeys.runHistory(org, project, suite.data?.plan_id),
-      fetcher: () => unwrap(commands.runHistory(org, project, suite.data!.plan_id)),
-      ...CACHE.outcomes,
-    }),
-    enabled: Boolean(suite.data),
-    gcTime: 30 * 60_000,
-    retry: false,
-  });
-  const historyByCase = useMemo(
-    () => new Map((history.data ?? []).map((h) => [h.test_case_id, h.outcomes])),
-    [history.data],
-  );
-
   // Seeded from disk so opening Run Tests paints immediately, then
   // revalidates - outcomes change with every run, so they are never
   // served stale for longer than the refetch takes.
@@ -235,6 +218,28 @@ export default function RunPanel({
     gcTime: 30 * 60_000, // keep the background prefetch alive while unobserved
     retry: false,
   });
+
+  // Last-5 outcome history per case (spec: Execution Depth & Trust, A).
+  // Asked for this suite's cases, so the sweep knows when it can stop.
+  const historyCaseIds = useMemo(
+    () => [...new Set((points.data ?? []).flatMap((p) => (p.test_case_id == null ? [] : [p.test_case_id])))].sort((a, b) => a - b),
+    [points.data],
+  );
+  const history = useQuery({
+    queryKey: ["run-history", org, project, suite.data?.plan_id, suite.data?.suite_id, historyCaseIds.join(",")],
+    ...persistentQuery({
+      key: cacheKeys.suiteRunHistory(org, project, suite.data?.plan_id, suite.data?.suite_id),
+      fetcher: () => unwrap(commands.runHistory(org, project, suite.data!.plan_id, historyCaseIds)),
+      ...CACHE.outcomes,
+    }),
+    enabled: Boolean(suite.data && points.data),
+    gcTime: 30 * 60_000,
+    retry: false,
+  });
+  const historyByCase = useMemo(
+    () => new Map((history.data ?? []).map((h) => [h.test_case_id, h.outcomes])),
+    [history.data],
+  );
 
   const report = useMutation({
     mutationFn: () =>

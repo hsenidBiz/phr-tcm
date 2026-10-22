@@ -1190,8 +1190,12 @@ export const commands = {
 	 *  were. Returns the ids the server reports as now in the suite.
 	 */
 	addCasesToSuite: (organization: string, project: string, planId: number, suiteId: number, caseIds: number[]) => typedError<number[], AdoError>(__TAURI_INVOKE("add_cases_to_suite", { organization, project, planId, suiteId, caseIds })),
-	/**  Recent outcome history per test case for a plan (last 5, newest first). */
-	runHistory: (organization: string, project: string, planId: number) => typedError<CaseHistory[], AdoError>(__TAURI_INVOKE("run_history", { organization, project, planId })),
+	/**
+	 *  Recent outcome history (last 5, newest first) for the given test
+	 *  cases of a plan - the suite's cases, so the sweep knows when it can
+	 *  stop. An empty list returns every case in the plan's 15 newest runs.
+	 */
+	runHistory: (organization: string, project: string, planId: number, testCaseIds: number[]) => typedError<CaseHistory[], AdoError>(__TAURI_INVOKE("run_history", { organization, project, planId, testCaseIds })),
 	/**
 	 *  Execution report for one or more suites (a folder passes all its
 	 *  descendants): gathers points + failure details (comments, linked bugs),

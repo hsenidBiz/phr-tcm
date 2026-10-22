@@ -1,6 +1,6 @@
 import { mockIPC, clearMocks } from "@tauri-apps/api/mocks";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act, fireEvent, render, screen, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { emit } from "@tauri-apps/api/event";
 import { toast } from "../lib/toast";
 import { afterEach, expect, test, vi } from "vitest";
@@ -92,6 +92,33 @@ test("loads suite + points as a read-only overview (outcomes live in the runner)
   expect(screen.queryByLabelText("Outcome for Valid login")).not.toBeInTheDocument();
   expect(screen.queryByPlaceholderText("Optional comment")).not.toBeInTheDocument();
   expect(screen.queryByRole("button", { name: /Record .* outcome/ })).not.toBeInTheDocument();
+});
+
+test("run history is asked for the suite's own cases", async () => {
+  let seen: unknown = null;
+  mockIPC((cmd, args) => {
+    switch (cmd) {
+      case "plugin:event|listen":
+        return 1;
+      case "plugin:event|unlisten":
+        return null;
+      case "run_history":
+        seen = args;
+        return [];
+      case "ensure_pbi_suite":
+        return { plan_id: 9, plan_name: "Auth - Test Plan", suite_id: 91 };
+      case "list_test_points":
+        return [
+          { point_id: 7, test_case_id: 201, test_case_name: "Valid login", config_name: "Windows 10", tester: "", last_outcome: "failed", last_run_id: 3, last_result_id: 30 },
+          { point_id: 8, test_case_id: 202, test_case_name: "Invalid login", config_name: "Windows 10", tester: "", last_outcome: "", last_run_id: null, last_result_id: null },
+        ];
+    }
+  });
+  renderPanel();
+  await screen.findByText("Valid login");
+  await waitFor(() =>
+    expect(seen).toEqual({ organization: "acme", project: "Web", planId: 9, testCaseIds: [201, 202] }),
+  );
 });
 
 test("expanding a row shows the case steps and the last failure detail", async () => {
