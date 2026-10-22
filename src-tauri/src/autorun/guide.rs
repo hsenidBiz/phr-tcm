@@ -202,7 +202,7 @@ These are examples, not a rule:
 
 ## Roles
 
-Scripting here is done in four roles, each with its own short rules:
+Scripting here is done in four roles, and a task done with no test case has a fifth, each with its own short rules:
 
 - writer: choosing what to script and writing it from the live app. Its rules come with your
   first `start_autorun_discovery` of a session (a mapping run aside); /tcm:script-pbi reads the writer's rules first.
@@ -213,10 +213,12 @@ Scripting here is done in four roles, each with its own short rules:
   `save_autorun_component` of a session.
 - auditor: checking saved scripts against their cases and reporting, never editing. Ask for its
   rules with `get_guide`.
+- explorer: doing a task in the live app with no test case, recording every change. Its rules come
+  with your first `start_autorun_discovery` of a session with `explore` true.
 
 A role's rules come once a session, ahead of that tool's answer, and a later answer of the tool opens
 with one line pointing back at them; a session starts over after 20 minutes without a call.
-`get_guide` with topic `autorun` and `role` (`writer`, `healer`, `case-rewriter` or `auditor`) gives a
+`get_guide` with topic `autorun` and `role` (`writer`, `healer`, `case-rewriter`, `auditor` or `explorer`) gives a
 role's rules at any time, and Claude Code also gets each role as an agent file, `tcm-<role>.md` in
 `.claude/agents`. Whatever the session, every answer of `start_autorun_discovery`,
 `get_autorun_failures`, `replay_autorun_to_step` and a `save_autorun_script` with `edits` ends with

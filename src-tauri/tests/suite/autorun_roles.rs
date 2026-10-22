@@ -1,4 +1,4 @@
-//! The four role texts (writer, healer, case rewriter, auditor), which call
+//! The role texts (writer, healer, case rewriter, auditor, explorer), which call
 //! starts which role, and which cases a save repairs.
 
 use serde_json::json;
@@ -20,11 +20,11 @@ fn holds(role: Role, needles: &[&str]) {
 }
 
 #[test]
-fn the_four_roles_have_keys_names_and_texts() {
+fn the_roles_have_keys_names_and_texts() {
     let keys: Vec<_> = Role::ALL.iter().map(|r| r.key()).collect();
-    assert_eq!(keys, ["writer", "healer", "case-rewriter", "auditor"]);
+    assert_eq!(keys, ["writer", "healer", "case-rewriter", "auditor", "explorer"]);
     let names: Vec<_> = Role::ALL.iter().map(|r| r.name()).collect();
-    assert_eq!(names, ["writer", "healer", "case rewriter", "auditor"]);
+    assert_eq!(names, ["writer", "healer", "case rewriter", "auditor", "explorer"]);
     assert_eq!(Role::from_key(" Healer "), Some(Role::Healer));
     assert_eq!(Role::from_key("case rewriter"), Some(Role::CaseRewriter));
     assert_eq!(Role::from_key("case_rewriter"), Some(Role::CaseRewriter));
@@ -32,6 +32,8 @@ fn the_four_roles_have_keys_names_and_texts() {
     assert_eq!(Role::from_key("generator"), Some(Role::Writer));
     assert_eq!(Role::from_key("refactorer"), Some(Role::CaseRewriter));
     assert_eq!(Role::from_key("doc-drift-auditor"), Some(Role::Auditor));
+    assert_eq!(Role::from_key("explore"), Some(Role::Explorer));
+    assert_eq!(Role::from_key(" Explorer "), Some(Role::Explorer));
     assert_eq!(Role::from_key("tester"), None);
     for r in Role::ALL {
         let t = r.text();
@@ -163,6 +165,25 @@ fn the_auditor_reports_and_never_edits() {
 }
 
 #[test]
+fn the_explorer_carries_the_owners_rules() {
+    holds(
+        Role::Explorer,
+        &[
+            "nothing beyond it",
+            "Read a value before you change it",
+            "record_explore_change",
+            "test name prefix",
+            "wait for their yes in this chat",
+            "Never bend a check",
+            "fails twice in the same way",
+            "saved as an API template",
+            "undo_explore_creates",
+            "Say plainly what you cannot undo",
+        ],
+    );
+}
+
+#[test]
 fn every_backticked_name_in_a_role_is_a_tool() {
     let tools = v2_lib::mcp::all_tool_names();
     for r in Role::ALL {
@@ -194,9 +215,9 @@ fn which_call_starts_which_role() {
     assert_eq!(role_for_call("start_autorun_discovery", &json!({})), Some(Role::Writer));
     assert_eq!(role_for_call("start_autorun_discovery", &json!({"mapping": true})), None);
     assert_eq!(role_for_call("start_autorun_discovery", &json!({"mapping": "true"})), None);
-    // An explore session has no writer role: its rules come with the start's answer.
-    assert_eq!(role_for_call("start_autorun_discovery", &json!({"explore": true})), None);
-    assert_eq!(role_for_call("start_autorun_discovery", &json!({"explore": "true"})), None);
+    // An explore session is the explorer, never the writer.
+    assert_eq!(role_for_call("start_autorun_discovery", &json!({"explore": true})), Some(Role::Explorer));
+    assert_eq!(role_for_call("start_autorun_discovery", &json!({"explore": "true"})), Some(Role::Explorer));
     assert_eq!(role_for_call("start_autorun_discovery", &json!({"explore": false})), Some(Role::Writer));
     assert_eq!(role_for_call("get_autorun_failures", &json!({})), Some(Role::Healer));
     let scripts = json!([{"case_id": 7, "steps": []}]);

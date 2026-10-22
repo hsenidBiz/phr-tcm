@@ -3,7 +3,8 @@
 //! in the QA automation repo) and adapted to TCM's tools: the writer
 //! (playwright-test-planner and -generator), the healer
 //! (playwright-test-healer and the healer bounds), the case rewriter
-//! (test-refactorer and spec-editor) and the auditor (doc-drift-auditor).
+//! (test-refactorer and spec-editor) and the auditor (doc-drift-auditor);
+//! the explorer is this app's own, for a task done with no test case.
 //! Each role's text is in `roles/<key>.md`; an MCP session gets it ahead of
 //! the first answer of the tool that starts the role (`mcp_session`), and
 //! `get_guide` gives it by name. They hold whatever tools the assistant has.
@@ -14,12 +15,13 @@ pub enum Role {
     Healer,
     CaseRewriter,
     Auditor,
+    Explorer,
 }
 
 impl Role {
-    pub const ALL: [Role; 4] = [Role::Writer, Role::Healer, Role::CaseRewriter, Role::Auditor];
+    pub const ALL: [Role; 5] = [Role::Writer, Role::Healer, Role::CaseRewriter, Role::Auditor, Role::Explorer];
 
-    /// "writer", "healer", "case-rewriter", "auditor": the role argument and
+    /// "writer", "healer", "case-rewriter", "auditor", "explorer": the role argument and
     /// the file name.
     pub fn key(self) -> &'static str {
         match self {
@@ -27,10 +29,11 @@ impl Role {
             Role::Healer => "healer",
             Role::CaseRewriter => "case-rewriter",
             Role::Auditor => "auditor",
+            Role::Explorer => "explorer",
         }
     }
 
-    /// "writer", "healer", "case rewriter", "auditor": how a sentence names
+    /// "writer", "healer", "case rewriter", "auditor", "explorer": how a sentence names
     /// it.
     pub fn name(self) -> &'static str {
         match self {
@@ -38,6 +41,7 @@ impl Role {
             Role::Healer => "healer",
             Role::CaseRewriter => "case rewriter",
             Role::Auditor => "auditor",
+            Role::Explorer => "explorer",
         }
     }
 
@@ -49,13 +53,14 @@ impl Role {
             Role::Healer => "Diagnose and repair failed Auto Run cases within the repair bounds, under Test Case Manager's healer rules",
             Role::CaseRewriter => "Change a saved Auto Run script or component, for a repair or a rewritten test case, under Test Case Manager's case rewriter rules",
             Role::Auditor => "Check saved Auto Run scripts against their test cases and report what they miss or fit, never editing, under Test Case Manager's auditor rules",
+            Role::Explorer => "Do a task the person names in the live app with no test case, record every change and report, under Test Case Manager's explorer rules",
         }
     }
 
     /// Trimmed and lowercased, with "_" and " " read as "-". Also the
     /// Playwright agents' names: "planner" and "generator" -> Writer;
     /// "refactorer" and "spec-editor" -> CaseRewriter; "doc-drift-auditor"
-    /// -> Auditor.
+    /// -> Auditor. "explore" -> Explorer.
     pub fn from_key(key: &str) -> Option<Role> {
         let k = key.trim().to_lowercase().replace(['_', ' '], "-");
         match k.as_str() {
@@ -63,6 +68,7 @@ impl Role {
             "healer" => Some(Role::Healer),
             "case-rewriter" | "refactorer" | "spec-editor" => Some(Role::CaseRewriter),
             "auditor" | "doc-drift-auditor" => Some(Role::Auditor),
+            "explorer" | "explore" => Some(Role::Explorer),
             _ => None,
         }
     }
@@ -75,6 +81,7 @@ impl Role {
             Role::Healer => include_str!("roles/healer.md"),
             Role::CaseRewriter => include_str!("roles/case-rewriter.md"),
             Role::Auditor => include_str!("roles/auditor.md"),
+            Role::Explorer => include_str!("roles/explorer.md"),
         };
         raw.replace("\r\n", "\n")
     }
@@ -95,7 +102,7 @@ pub fn pointer(role: Role) -> String {
 /// Said when `role` names no role.
 pub fn unknown_role(asked: &str) -> String {
     format!(
-        "There is no role \"{}\": role is one of \"writer\", \"healer\", \"case-rewriter\" and \"auditor\".",
+        "There is no role \"{}\": role is one of \"writer\", \"healer\", \"case-rewriter\", \"auditor\" and \"explorer\".",
         asked.trim()
     )
 }
@@ -178,15 +185,16 @@ fn is_true(v: &serde_json::Value) -> bool {
     v.as_bool() == Some(true) || v.as_str().map(|s| s.trim().eq_ignore_ascii_case("true")) == Some(true)
 }
 
-/// The role a call starts: `start_autorun_discovery` not a mapping run (its
-/// `mapping` is not true or "true") and not an explore session (its
-/// `explore` is not true or "true") -> Writer; `get_autorun_failures` ->
+/// The role a call starts: `start_autorun_discovery` with `explore` true or
+/// "true" -> Explorer; otherwise, not a mapping run (its `mapping` is not
+/// true or "true") -> Writer; `get_autorun_failures` ->
 /// Healer; `save_autorun_script` with `cases_repaired_by` non-empty ->
 /// CaseRewriter; `save_autorun_component` -> CaseRewriter; anything else
 /// None. The auditor has no tool: `get_guide` gives it.
 pub fn role_for_call(tool: &str, args: &serde_json::Value) -> Option<Role> {
     match tool {
-        "start_autorun_discovery" if !is_true(&args["mapping"]) && !is_true(&args["explore"]) => Some(Role::Writer),
+        "start_autorun_discovery" if is_true(&args["explore"]) => Some(Role::Explorer),
+        "start_autorun_discovery" if !is_true(&args["mapping"]) => Some(Role::Writer),
         "get_autorun_failures" => Some(Role::Healer),
         "save_autorun_script" if !cases_repaired_by(args).is_empty() => Some(Role::CaseRewriter),
         "save_autorun_component" => Some(Role::CaseRewriter),

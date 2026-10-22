@@ -2064,7 +2064,7 @@ fn each_role_file_is_generated_with_the_marker() {
         .iter()
         .map(|(p, _)| p.file_name().unwrap().to_string_lossy().into_owned())
         .collect();
-    assert_eq!(names, ["tcm-writer.md", "tcm-healer.md", "tcm-case-rewriter.md", "tcm-auditor.md"]);
+    assert_eq!(names, ["tcm-writer.md", "tcm-healer.md", "tcm-case-rewriter.md", "tcm-auditor.md", "tcm-explorer.md"]);
     for (role, (_, content)) in Role::ALL.iter().zip(files.iter()) {
         let key = role.key();
         assert!(content.starts_with(&format!("---\nname: tcm-{key}\ndescription: ")), "{key}");
@@ -2082,7 +2082,7 @@ fn no_role_file_without_auto_run() {
     let dir = std::path::Path::new("D:/repo/.claude/agents");
     assert!(agent_files_in(dir, &["start_autorun_discovery".to_string()]).is_empty());
     assert!(agent_files_in(dir, &effective_disabled_for(&[], &mods(&[Module::DbAccess]))).is_empty());
-    assert_eq!(agent_files_in(dir, &effective_disabled_for(&[], &all_mods())).len(), 4);
+    assert_eq!(agent_files_in(dir, &effective_disabled_for(&[], &all_mods())).len(), 5);
 }
 
 #[test]
@@ -2100,7 +2100,7 @@ fn writing_the_agents_leaves_the_persons_files_alone() {
         std::fs::read_to_string(dir.path().join("tcm-healer.md")).unwrap(),
         "the person's own healer"
     );
-    for n in ["tcm-writer.md", "tcm-case-rewriter.md", "tcm-auditor.md"] {
+    for n in ["tcm-writer.md", "tcm-case-rewriter.md", "tcm-auditor.md", "tcm-explorer.md"] {
         let t = std::fs::read_to_string(dir.path().join(n)).unwrap();
         assert!(t.contains(COMMAND_MARKER), "{n}");
     }

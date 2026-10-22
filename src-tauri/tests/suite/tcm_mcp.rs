@@ -3306,14 +3306,33 @@ fn a_role_with_quick_comes_first() {
 }
 
 #[test]
-fn an_unknown_role_names_the_four() {
+fn an_unknown_role_names_them_all() {
     let seen = std::cell::RefCell::new(vec![]);
     let call = role_fake(&seen);
     let v = guide_call(r#"{"topic":"autorun","role":"tester"}"#, &call);
     assert_eq!(v["result"]["isError"], true, "{v}");
     assert_eq!(
         v["result"]["content"][0]["text"],
-        "bridge returned 400: There is no role \"tester\": role is one of \"writer\", \"healer\", \"case-rewriter\" and \"auditor\"."
+        "bridge returned 400: There is no role \"tester\": role is one of \"writer\", \"healer\", \"case-rewriter\", \"auditor\" and \"explorer\"."
+    );
+}
+
+#[test]
+fn an_explore_start_opens_with_the_explorers_rules() {
+    use v2_lib::autorun::roles::Role;
+    use v2_lib::mcp_session::Session;
+    let mut s = Session::new();
+    s.tick(1_000);
+    let args = serde_json::json!({"account": "a", "explore": true});
+    assert_eq!(s.note_for("start_autorun_discovery", &args), Some(Role::Explorer.text()));
+    assert_eq!(
+        s.note_for("start_autorun_discovery", &args),
+        Some(v2_lib::autorun::roles::pointer(Role::Explorer))
+    );
+    // The writer's rules are a separate delivery: a plain start still brings them.
+    assert_eq!(
+        s.note_for("start_autorun_discovery", &serde_json::json!({"account": "a"})),
+        Some(Role::Writer.text())
     );
 }
 
@@ -3342,7 +3361,7 @@ fn get_guide_offers_role_with_the_autorun_topic() {
     let on = guide_of(r#"{"disabled":[],"modules":["writing_style","auto_run","api_templates","crystal_reports","db_access","playwright"]}"#);
     assert_eq!(
         on["inputSchema"]["properties"]["role"]["enum"],
-        serde_json::json!(["writer", "healer", "case-rewriter", "auditor"]),
+        serde_json::json!(["writer", "healer", "case-rewriter", "auditor", "explorer"]),
         "{on}"
     );
     assert!(on["description"].as_str().unwrap().contains("`role` gives one role's rules."), "{on}");
