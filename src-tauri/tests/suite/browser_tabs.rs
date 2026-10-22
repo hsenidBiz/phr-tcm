@@ -180,7 +180,10 @@ async fn the_first_page_is_attached_over_the_browsers_socket_and_every_command_c
     assert_eq!(f[0]["method"], "Target.attachToTarget");
     assert_eq!(f[0]["params"], json!({ "targetId": "T-main", "flatten": true }));
     assert!(f[0].get("sessionId").is_none(), "attaching is the browser's own call");
-    assert_eq!(sent_on(&cdp, MAIN), ["Page.enable", "Page.setLifecycleEventsEnabled"]);
+    assert_eq!(
+        sent_on(&cdp, MAIN),
+        ["Page.enable", "Page.setLifecycleEventsEnabled", "Emulation.setDeviceMetricsOverride"]
+    );
     let auto = f.iter().find(|f| f["method"] == "Target.setAutoAttach").expect("auto-attach was never asked for");
     assert!(auto.get("sessionId").is_none(), "auto-attach is asked of the browser, not of the page");
     assert_eq!(auto["params"], json!({ "autoAttach": true, "waitForDebuggerOnStart": true, "flatten": true }));
@@ -340,6 +343,7 @@ async fn a_tab_opened_while_guarded_is_set_up_and_guarded_before_it_runs() {
         "Runtime.enable",
         "Page.enable",
         "Page.setLifecycleEventsEnabled",
+        "Emulation.setDeviceMetricsOverride",
         "Page.addScriptToEvaluateOnNewDocument",
     ] {
         assert!(at(m) < run, "{m} came after the tab was let run: {setup:?}");
@@ -1610,4 +1614,61 @@ async fn a_guarded_save_is_still_stopped_with_test_headers_set() {
     let stop = answer_to(&cdp, "r1").expect("the save was left paused");
     assert_eq!(stop["method"], "Fetch.failRequest");
     assert_eq!(cdp.take_save_blocked().as_deref(), Some(SAVE_STOPPED));
+}
+
+// ---- The page area: 1280 x 720 at scale 1 ------------------------------
+
+const METRICS: &str = "Emulation.setDeviceMetricsOverride";
+
+fn metrics() -> Value {
+    json!({ "width": 1280, "height": 720, "deviceScaleFactor": 1.0, "mobile": false })
+}
+
+#[tokio::test]
+async fn the_first_page_is_given_its_size_before_anything_is_done_in_it() {
+    let mut cdp = browser().await;
+    let frame = sent(&cdp).iter().find(|f| f["method"] == METRICS).expect("the page size was never set");
+    assert_eq!(frame["sessionId"], MAIN);
+    assert_eq!(frame["params"], metrics());
+    // Before the first call a script's step makes.
+    cdp.call("Page.navigate", json!({ "url": "https://hr.example/home" })).await.unwrap();
+    let methods: Vec<&str> = sent(&cdp).iter().map(|f| f["method"].as_str().unwrap()).collect();
+    let size = methods.iter().position(|m| *m == METRICS).unwrap();
+    let nav = methods.iter().position(|m| *m == "Page.navigate").unwrap();
+    assert!(size < nav, "{methods:?}");
+}
+
+#[tokio::test]
+async fn a_tab_the_page_opens_is_given_its_size_before_it_is_let_run() {
+    let mut cdp = browser().await;
+    feed(&mut cdp, [attached("S-pop", "T-pop", "page", "https://hr.example/report", true)]);
+    settle(&mut cdp).await;
+    let setup = sent_on(&cdp, "S-pop");
+    let size = setup.iter().position(|m| m == METRICS).unwrap_or_else(|| panic!("no size for the tab: {setup:?}"));
+    let run = setup.iter().position(|m| m == "Runtime.runIfWaitingForDebugger").unwrap();
+    assert!(size < run, "{setup:?}");
+    let frame = sent(&cdp).iter().find(|f| f["method"] == METRICS && f["sessionId"] == "S-pop").unwrap();
+    assert_eq!(frame["params"], metrics());
+}
+
+#[tokio::test]
+async fn a_refused_page_size_is_logged_and_fails_neither_the_first_page_nor_a_new_tab() {
+    let _log = crate::serial::log_tail();
+    let mut fake = FakeBrowser::new();
+    fake.refuse = vec![METRICS.to_string()];
+    let mut cdp = Cdp::over(fake);
+    cdp.drive_first_page("T-main", "https://hr.example/home?token=hunter2").await.expect("a refused size failed the page");
+    feed(&mut cdp, [attached("S-pop", "T-pop", "page", "https://hr.example/report?token=hunter2", true)]);
+    settle(&mut cdp).await;
+
+    // The tab was still set up and let run.
+    assert!(sent_on(&cdp, "S-pop").iter().any(|m| m == "Runtime.runIfWaitingForDebugger"));
+    assert_eq!(cdp.tabs().len(), 2);
+    cdp.call("Runtime.evaluate", json!({ "expression": "1" })).await.expect("the page stopped answering");
+
+    let lines: Vec<String> = v2_lib::applog::recent(200).into_iter().map(|l| l.message).collect();
+    assert!(lines.iter().any(|l| l.contains("could not set the page size on the first page")), "{lines:?}");
+    assert!(lines.iter().any(|l| l.contains("could not set the size of a tab") && l.ends_with(": /report")), "{lines:?}");
+    let ours: Vec<&String> = lines.iter().filter(|l| l.contains("setDeviceMetricsOverride")).collect();
+    assert!(ours.iter().all(|l| !l.contains("hr.example") && !l.contains("hunter2")), "{ours:?}");
 }

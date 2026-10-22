@@ -566,6 +566,9 @@ enum SetupStep {
     /// The page log, dialog handler or lifecycle events: a refusal only
     /// loses that, and is logged.
     Watch(&'static str),
+    /// The 1280 x 720 page at scale 1 (`viewport`): a refusal is logged and
+    /// the tab goes on at the browser's own size.
+    Viewport,
 }
 
 /// One frame read off the socket, parsed once.
@@ -933,6 +936,14 @@ impl<T: Transport> Cdp<T> {
         self.whole_browser = true;
         self.call("Page.enable", serde_json::json!({})).await?;
         self.call("Page.setLifecycleEventsEnabled", serde_json::json!({ "enabled": true })).await?;
+        // The page area, before anything is navigated or acted on. Never
+        // fatal: a run at the browser's own size is still a run.
+        if let Err(e) = self.call(super::viewport::SET_DEVICE_METRICS, super::viewport::device_metrics_params()).await {
+            if matches!(e, CdpError::Closed) {
+                return Err(e);
+            }
+            crate::applog::warn(format!("Auto Run could not set the page size on the first page: {e}"));
+        }
         self.call_on(
             None,
             "Target.setAutoAttach",
@@ -1747,6 +1758,9 @@ impl<T: Transport> Cdp<T> {
         ] {
             self.queue(s, method, params, Some(SetupStep::Watch(method)));
         }
+        // The page area, before the tab runs and so before its first
+        // navigation.
+        self.queue(s, super::viewport::SET_DEVICE_METRICS, super::viewport::device_metrics_params(), Some(SetupStep::Viewport));
         // The assistant's test headers, after the tab's Network domain is on
         // and before it runs: its first request carries them too.
         if !self.extra_headers.is_empty() {
@@ -1817,6 +1831,7 @@ impl<T: Transport> Cdp<T> {
                 SetupStep::Bypass => ("guard", "Network.setBypassServiceWorker"),
                 SetupStep::Fetch { .. } => ("guard", "Fetch.enable"),
                 SetupStep::Watch(m) => ("watch", m),
+                SetupStep::Viewport => ("set the size of", super::viewport::SET_DEVICE_METRICS),
             };
             // The page's path only: never its host or query.
             crate::applog::warn(format!(
@@ -1825,7 +1840,7 @@ impl<T: Transport> Cdp<T> {
             ));
         }
         match step {
-            SetupStep::Watch(_) => return Ok(()),
+            SetupStep::Watch(_) | SetupStep::Viewport => return Ok(()),
             SetupStep::Bypass => tab.unguardable |= refused,
             SetupStep::Fetch { .. } => {}
         }

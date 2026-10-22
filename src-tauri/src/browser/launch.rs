@@ -94,6 +94,11 @@ pub fn edge_candidates(program_files: &str, program_files_x86: &str) -> Vec<Path
 /// instead of the page under test. A page that is not shown draws no
 /// frames, and every role lookup (`Accessibility.queryAXTree`, which
 /// answers only after a frame) then goes unanswered.
+///
+/// `--force-device-scale-factor=1` keeps a high-DPI screen from scaling the
+/// page, and the window size holds a 1280 x 720 page with the browser's own
+/// frame and toolbar (`viewport`). The page area itself is fixed per tab
+/// over CDP, which wins over the window.
 pub fn launch_args(port: u16, profile_dir: &Path) -> Vec<String> {
     vec![
         format!("--remote-debugging-port={port}"),
@@ -105,6 +110,8 @@ pub fn launch_args(port: u16, profile_dir: &Path) -> Vec<String> {
         "--disable-backgrounding-occluded-windows".to_string(),
         "--disable-renderer-backgrounding".to_string(),
         "--disable-sync".to_string(),
+        "--force-device-scale-factor=1".to_string(),
+        super::viewport::window_size_arg().to_string(),
         "about:blank".to_string(),
     ]
 }
@@ -119,12 +126,13 @@ pub fn args_with(port: u16, profile_dir: &Path, extra: &[&str]) -> Vec<String> {
     args
 }
 
-/// Extra switches for an unattended run nobody is watching: headless, at a
-/// fixed desktop-sized viewport so the page under test lays out the same
-/// way it would on a real screen rather than whatever default a headless
-/// window happens to start at.
+/// Extra switches for an unattended run nobody is watching: headless, in a
+/// window the size every browser the app drives starts with
+/// (`viewport::window_size_arg`), rather than whatever default a headless
+/// window happens to start at. The page itself is fixed per tab by
+/// `viewport::device_metrics_params`.
 pub fn background_args() -> [&'static str; 2] {
-    ["--headless=new", "--window-size=1366,900"]
+    ["--headless=new", super::viewport::window_size_arg()]
 }
 
 /// Ask the OS for a port, then let it go: the browser binds it a moment
