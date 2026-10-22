@@ -8,16 +8,20 @@ use std::path::Path;
 /// A ruled divergence stays visible this long.
 const SHOW_RULED_MS: u64 = 7 * 24 * 60 * 60 * 1000;
 
-/// Every open or awaiting-repair divergence, and the ruled ones of the last
-/// seven days.
+/// Every open or awaiting-repair divergence, the ruled ones of the last
+/// seven days, and every ruling the assistant made that can still be undone
+/// (`Divergence::undoable`) until the file prunes it: its Undo is on the
+/// card for as long as the ruling is.
 pub fn load_at(root: &Path, org: &str, project: &str, now_ms: u64) -> Result<Vec<Divergence>, String> {
     let mut list = divergences::load(root, org, project)?;
     list.retain(|d| match d.status {
-        DivergenceStatus::Ruled => d
-            .ruled_at
-            .as_deref()
-            .and_then(|s| s.parse::<u64>().ok())
-            .is_some_and(|at| now_ms.saturating_sub(at) <= SHOW_RULED_MS),
+        DivergenceStatus::Ruled => {
+            d.undoable()
+                || d.ruled_at
+                    .as_deref()
+                    .and_then(|s| s.parse::<u64>().ok())
+                    .is_some_and(|at| now_ms.saturating_sub(at) <= SHOW_RULED_MS)
+        }
         _ => true,
     });
     Ok(list)

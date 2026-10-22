@@ -121,6 +121,18 @@ impl Divergence {
     fn by_assistant(&self) -> bool {
         self.ruled_by == Some(RuledBy::Assistant)
     }
+
+    /// Can a person take this ruling back? One that waits for a repair, or
+    /// one the assistant made that a repair has not closed since: a closed
+    /// rewrite (ruled, with the ruling "rewrite") is done, and reopening it
+    /// would block the case on a step the rewrite may have renumbered.
+    pub fn undoable(&self) -> bool {
+        match self.status {
+            DivergenceStatus::AwaitingRepair => true,
+            DivergenceStatus::Ruled => self.by_assistant() && self.ruling != Some(Ruling::Rewrite),
+            DivergenceStatus::Open => false,
+        }
+    }
 }
 
 pub const MAX_TEXT: usize = 300;
@@ -357,7 +369,8 @@ pub fn check_note(note: Option<&str>) -> Result<Option<String>, String> {
 /// refusal rules nothing and answers each refused pick as `"{id}: {why}"`,
 /// one per line. Then each is ruled by [`rule_in`] itself, so the effect is
 /// exactly the person's, with who ruled and the words set. A pick named
-/// twice counts once. Answers the cases ruled, in pick order, each once.
+/// twice counts once; the same divergence named under two cases is refused
+/// at the case that is not its own. Answers the cases ruled, in pick order, each once.
 pub fn rule_by_assistant_in(
     list: &mut [Divergence],
     picks: &[(i32, String)],
@@ -371,9 +384,11 @@ pub fn rule_by_assistant_in(
     }
     let said = check_said(said)?;
     let note = check_note(note)?;
+    // The same divergence named under two cases is two picks: the case of
+    // each is checked, so a mistaken pick is refused rather than hidden.
     let mut distinct: Vec<&(i32, String)> = vec![];
     for pick in picks {
-        if !distinct.iter().any(|p| p.1 == pick.1) {
+        if !distinct.contains(&pick) {
             distinct.push(pick);
         }
     }
@@ -524,16 +539,17 @@ pub fn close_for_editor_save(list: &mut [Divergence], case_id: i32, now_ms: u64)
     closed
 }
 
-/// A person takes back a "Rewrite the case" ruling, or any ruling the
-/// assistant made: the divergence is open again and needs a ruling;
-/// answers its case id. A person's own "the case stands" or "data fixed"
-/// ruling is not undone.
+/// A person takes back a "Rewrite the case" ruling that still waits for its
+/// repair, or a ruling the assistant made that no repair has closed since
+/// (`Divergence::undoable`): the divergence is open again and needs a
+/// ruling; answers its case id. A person's own "the case stands" or "data
+/// fixed" ruling is not undone.
 pub fn undo_in(list: &mut [Divergence], id: &str) -> Result<i32, String> {
     let Some(d) = list.iter_mut().find(|d| d.id == id) else {
         return Err(format!("no divergence {id}"));
     };
-    if d.status != DivergenceStatus::AwaitingRepair && !d.by_assistant() {
-        return Err("only a ruling that waits for a repair, or one the assistant made, can be undone".to_string());
+    if !d.undoable() {
+        return Err("only a ruling that waits for a repair, or one the assistant made that no repair has closed, can be undone".to_string());
     }
     d.status = DivergenceStatus::Open;
     d.ruling = None;

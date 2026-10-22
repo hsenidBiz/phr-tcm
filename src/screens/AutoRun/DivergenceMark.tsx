@@ -119,6 +119,11 @@ export function DivergenceRow({
   // An assistant's ruling carries the person's own words from the chat, and
   // can be taken back; a ruling the person made with the buttons here cannot.
   const byAssistant = divergence.ruled_by === "assistant";
+  // A rewrite the assistant ruled that a repair has since closed is done:
+  // taking it back would block the case on a step the rewrite may have
+  // renumbered. Any other assistant ruling keeps its Undo as long as it shows.
+  const repaired = divergence.status === "ruled" && divergence.ruling === "rewrite";
+  const canUndo = waiting || (byAssistant && !repaired);
   return (
     <div className="flex flex-wrap items-center gap-2 pt-1">
       <DivergenceBadge divergence={divergence} />
@@ -168,7 +173,7 @@ export function DivergenceRow({
           {divergence.note ? ` Its note: ${divergence.note}` : ""}
         </span>
       )}
-      {(waiting || byAssistant) && (
+      {canUndo && (
         <Button
           size="sm"
           variant="outline"

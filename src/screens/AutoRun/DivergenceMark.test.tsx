@@ -161,6 +161,17 @@ test("undoing an assistant's ruling calls the undo command", async () => {
   );
 });
 
+test("an assistant's rewrite that a repair has closed shows its words and offers no undo", () => {
+  show({ ...byAssistant, ruling: "rewrite" });
+  expect(screen.getByText('Ruled by the assistant, on your words: "a different cycle name is fine"')).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /Undo the ruling/ })).not.toBeInTheDocument();
+});
+
+test("an assistant's rewrite that still waits for its repair offers undo", () => {
+  show({ ...byAssistant, status: "awaiting_repair", ruling: "rewrite" });
+  expect(screen.getByRole("button", { name: "Undo the ruling on #147556 step 2" })).toBeInTheDocument();
+});
+
 test("a person's own ruling offers no undo", () => {
   show({ ...byAssistant, ruled_by: null, said: null });
   expect(screen.queryByRole("button", { name: /Undo the ruling/ })).not.toBeInTheDocument();

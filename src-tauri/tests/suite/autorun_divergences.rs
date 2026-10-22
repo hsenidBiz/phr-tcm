@@ -1074,9 +1074,79 @@ mod assistant {
         for id in ["d1", "d2"] {
             assert_eq!(
                 undo_in(&mut persons, id).unwrap_err(),
-                "only a ruling that waits for a repair, or one the assistant made, can be undone"
+                "only a ruling that waits for a repair, or one the assistant made that no repair has closed, can be undone"
             );
         }
+    }
+
+    #[test]
+    fn an_assistant_rewrite_a_repair_has_closed_cannot_be_undone() {
+        let mut list = open_three();
+        rule_by_assistant_in(&mut list, &[pick(147556, "d1")], Ruling::Rewrite, SAID, None, NOW).unwrap();
+        rule_by_assistant_in(&mut list, &[pick(147556, "d2")], Ruling::CaseStands, SAID, None, NOW).unwrap();
+        // While it waits for its repair, Undo is there.
+        assert!(list[0].undoable());
+        // The repair closes it: ruled, ruling "rewrite", still the assistant's.
+        let step = list[0].step;
+        assert_eq!(close_for_editor_save(&mut list, 147556, NOW + 5), vec![step]);
+        assert_eq!((list[0].status, list[0].ruling, list[0].ruled_by), (DivergenceStatus::Ruled, Some(Ruling::Rewrite), Some(RuledBy::Assistant)));
+        assert!(!list[0].undoable());
+        let before = list.clone();
+        assert!(undo_in(&mut list, "d1").is_err());
+        assert_eq!(list, before, "nothing was reopened");
+        // The ruling that is still standing keeps its Undo.
+        assert!(list[1].undoable());
+        assert_eq!(undo_in(&mut list, "d2"), Ok(147556));
+    }
+
+    #[test]
+    fn an_assistant_ruling_stays_on_the_card_for_its_undo_but_a_closed_one_does_not() {
+        use v2_lib::commands::autorun_divergence::load_at;
+        let dir = TempDir::new();
+        let root = dir.path();
+        let now = v2_lib::autorun::sessions::now_ms();
+        update(root, "acme", "Web", |l| {
+            l.extend(open_three());
+            Ok(())
+        })
+        .unwrap();
+        update(root, "acme", "Web", |l| {
+            rule_by_assistant_in(l, &[pick(147556, "d1")], Ruling::CaseStands, SAID, None, now)?;
+            rule_by_assistant_in(l, &[pick(147556, "d2")], Ruling::Rewrite, SAID, None, now)?;
+            close_for_editor_save(l, 147556, now + 1);
+            rule_in(l, "d3", Ruling::CaseStands, now)?;
+            Ok(())
+        })
+        .unwrap();
+        let ids = |at: u64| load_at(root, "acme", "Web", at).unwrap().into_iter().map(|d| d.id).collect::<Vec<_>>();
+        // Within the week they are all on the card.
+        assert_eq!(ids(now + 2 * DAY), ["d1", "d2", "d3"].map(String::from));
+        // After it: the person's own ruling and the repaired rewrite go; the
+        // assistant's standing ruling keeps its Undo.
+        assert_eq!(ids(now + 30 * DAY), ["d1"].map(String::from));
+    }
+
+    #[test]
+    fn a_batch_naming_one_divergence_under_two_cases_is_refused() {
+        let mut list = open_three();
+        list[1].case_id = 147557;
+        let before = list.clone();
+        let err = rule_by_assistant_in(
+            &mut list,
+            &[pick(147556, "d1"), pick(147557, "d1")],
+            Ruling::CaseStands,
+            SAID,
+            None,
+            NOW,
+        )
+        .unwrap_err();
+        assert_eq!(err, "d1: d1 is case 147556's divergence, not case 147557's");
+        assert_eq!(list, before, "d1 was left open");
+        // The same pick named twice is still one pick.
+        assert_eq!(
+            rule_by_assistant_in(&mut list, &[pick(147556, "d1"), pick(147556, "d1")], Ruling::CaseStands, SAID, None, NOW),
+            Ok(vec![147556])
+        );
     }
 
     fn checked_script(case_id: i32) -> v2_lib::autorun::CaseScript {
