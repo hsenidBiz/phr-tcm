@@ -176,6 +176,186 @@ pub fn compiled(p: &str) -> Result<regex::Regex, String> {
     })
 }
 
+/// The most forms one word may take: each optional letter or group doubles them.
+const MAX_WORD_FORMS: usize = 8;
+
+fn flush_word(forms: &mut Vec<String>, out: &mut Vec<Vec<String>>) {
+    if forms[0].chars().count() >= 3 {
+        let mut word: Vec<String> = Vec::new();
+        for f in forms.iter() {
+            let f = f.to_lowercase();
+            if !word.contains(&f) {
+                word.push(f);
+            }
+        }
+        if !out.contains(&word) {
+            out.push(word);
+        }
+    }
+    *forms = vec![String::new()];
+}
+
+/// The word being read with its last letter optional (`s?`, `s*`, `s{0,1}`): each form with and without it.
+fn last_letter_optional(forms: &mut Vec<String>) {
+    if forms[0].is_empty() || forms.len() * 2 > MAX_WORD_FORMS {
+        return;
+    }
+    let mut next: Vec<String> = Vec::new();
+    for f in forms.iter() {
+        let mut shorter = f.clone();
+        shorter.pop();
+        for g in [shorter, f.clone()] {
+            if !next.contains(&g) {
+                next.push(g);
+            }
+        }
+    }
+    *forms = next;
+}
+
+/// A `(` was read and `start` is the index after it. The group's own letters join the word being
+/// read, as an extra form when the group is optional (`Record(s)?`); any other group is a break,
+/// and an optional one that is not plain letters is skipped whole, its words being optional.
+/// Returns the index to go on from.
+fn read_group(chars: &[char], start: usize, forms: &mut Vec<String>, out: &mut Vec<Vec<String>>) -> usize {
+    let mut depth = 1usize;
+    let mut j = start;
+    while j < chars.len() {
+        match chars[j] {
+            '\\' => j += 1,
+            '[' => {
+                j += 1;
+                while j < chars.len() && chars[j] != ']' {
+                    if chars[j] == '\\' {
+                        j += 1;
+                    }
+                    j += 1;
+                }
+            }
+            '(' => depth += 1,
+            ')' => {
+                depth -= 1;
+                if depth == 0 {
+                    break;
+                }
+            }
+            _ => {}
+        }
+        j += 1;
+    }
+    if j >= chars.len() {
+        flush_word(forms, out);
+        return start;
+    }
+    let inner: String = chars[start..j].iter().collect();
+    let inner = inner.strip_prefix("?:").unwrap_or(&inner);
+    let plain = !inner.is_empty() && inner.chars().all(char::is_alphanumeric);
+    let after = j + 1;
+    match chars.get(after) {
+        Some('?' | '*') => {
+            let mut end = after + 1;
+            if chars.get(end) == Some(&'?') {
+                end += 1;
+            }
+            if plain && !forms[0].is_empty() && forms.len() * 2 <= MAX_WORD_FORMS {
+                let longer: Vec<String> = forms.iter().map(|f| format!("{f}{inner}")).collect();
+                forms.extend(longer);
+            } else {
+                flush_word(forms, out);
+            }
+            end
+        }
+        // A repeat count: whatever the group holds may come any number of times, or none.
+        Some('{') => {
+            flush_word(forms, out);
+            after
+        }
+        _ if plain => {
+            for f in forms.iter_mut() {
+                f.push_str(inner);
+            }
+            after
+        }
+        _ => {
+            flush_word(forms, out);
+            start
+        }
+    }
+}
+
+/// The words written in a pattern's literal text, lowercased, each with every form an optional part
+/// allows: runs of 3 or more letters or digits outside `[...]` classes and `{..}` counts, broken by any
+/// metacharacter or escape (`\d`, `\.`, `\b` ...). A letter or a group of letters that `?`, `*` or `{0,..}`
+/// makes optional gives the word both ways: `participants?` is "participant" and "participants",
+/// `Records? saved` is "record"/"records" and "saved". The first form of a word has none of its optional
+/// parts and must be 3 or more characters. In order, each once.
+pub fn literal_word_forms(p: &str) -> Vec<Vec<String>> {
+    let chars: Vec<char> = p.chars().collect();
+    let mut out: Vec<Vec<String>> = Vec::new();
+    let mut forms: Vec<String> = vec![String::new()];
+    // The character before was a quantifier: a `?` now is its lazy mark, not a new quantifier.
+    let mut lazy_ok = false;
+    let mut i = 0;
+    while i < chars.len() {
+        let c = chars[i];
+        i += 1;
+        let after_quantifier = std::mem::take(&mut lazy_ok);
+        match c {
+            // An escape is a class or a punctuation mark, never a word.
+            '\\' => {
+                i += 1;
+                flush_word(&mut forms, &mut out);
+            }
+            '[' => {
+                flush_word(&mut forms, &mut out);
+                while i < chars.len() {
+                    let k = chars[i];
+                    i += 1;
+                    match k {
+                        '\\' => i += 1,
+                        ']' => break,
+                        _ => {}
+                    }
+                }
+            }
+            '(' => i = read_group(&chars, i, &mut forms, &mut out),
+            '?' | '*' | '+' => {
+                if c == '?' && after_quantifier {
+                    continue;
+                }
+                lazy_ok = true;
+                if c != '+' {
+                    last_letter_optional(&mut forms);
+                }
+            }
+            '{' => {
+                let end = chars[i..].iter().position(|k| *k == '}').map_or(chars.len(), |n| i + n);
+                let body: String = chars[i..end].iter().collect();
+                i = (end + 1).min(chars.len());
+                lazy_ok = true;
+                if body.starts_with('0') {
+                    last_letter_optional(&mut forms);
+                } else if body != "1" && !body.starts_with("1,") {
+                    // A letter repeated a set number of times: only what comes before it is certain.
+                    forms.iter_mut().for_each(|f| {
+                        f.pop();
+                    });
+                    flush_word(&mut forms, &mut out);
+                }
+            }
+            c if c.is_alphanumeric() => forms.iter_mut().for_each(|f| f.push(c)),
+            _ => flush_word(&mut forms, &mut out),
+        }
+    }
+    flush_word(&mut forms, &mut out);
+    out
+}
+
+/// [`literal_word_forms`] with each word's required form only: the words every match writes.
+pub fn literal_words(p: &str) -> Vec<String> {
+    literal_word_forms(p).into_iter().map(|mut w| w.swap_remove(0)).collect()
+}
+
 /// `/p/`, how sentences show a pattern.
 pub fn shown(p: &str) -> String {
     format!("/{p}/")

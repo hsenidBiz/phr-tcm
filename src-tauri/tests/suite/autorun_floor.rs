@@ -297,3 +297,44 @@ fn a_clean_up_step_on_a_case_step_is_refused() {
         "{out:?}"
     );
 }
+
+/// A step whose checks leave out part of its expected result lists each
+/// part beside the checks it does hold.
+#[test]
+fn a_checked_step_may_list_what_its_checks_leave_out() {
+    let sc = script(serde_json::json!([
+        { "step_number": 1, "actions": [{ "kind": "expect_visible", "selector": "#a" }],
+          "unchecked": [{ "item": "no lock icon", "why": "no check reads an icon the app never shows (backlog 37)" }] }
+    ]));
+    let out = check_floor(&sc, &case(&["Locked and greyed"]));
+    assert!(out.is_empty(), "{out:?}");
+}
+
+#[test]
+fn a_list_on_a_step_with_no_check_satisfies_the_floor() {
+    let sc = script(serde_json::json!([
+        { "step_number": 1, "actions": [{ "kind": "click", "selector": "#a" }],
+          "unchecked": [{ "item": "the PDF", "why": "no check reads a PDF (backlog 37)" }] }
+    ]));
+    let out = check_floor(&sc, &case(&["The PDF opens"]));
+    assert!(out.is_empty(), "{out:?}");
+}
+
+#[test]
+fn a_sentence_unchecked_with_a_check_is_still_refused() {
+    let sc = script(serde_json::json!([
+        { "step_number": 1, "actions": [{ "kind": "expect_visible", "selector": "#a" }], "unchecked": "nothing to read" }
+    ]));
+    let out = check_floor(&sc, &case(&["Saved"]));
+    assert_eq!(out, vec!["step 1 says it is unchecked but has a check - drop one or the other".to_string()]);
+}
+
+#[test]
+fn an_unchecked_list_where_the_case_expects_nothing_is_refused() {
+    let sc = script(serde_json::json!([
+        { "step_number": 1, "actions": [{ "kind": "expect_visible", "selector": "#a" }],
+          "unchecked": [{ "item": "x", "why": "y" }] }
+    ]));
+    let out = check_floor(&sc, &case(&[""]));
+    assert_eq!(out, vec!["step 1 says it is unchecked but the case expects nothing there".to_string()]);
+}

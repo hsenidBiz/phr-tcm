@@ -3642,6 +3642,11 @@ fn matched_targets(action: &crate::browser::actions::Action) -> Vec<(&crate::bro
         },
         Action::Drag { from, to, .. } => vec![(from, 1), (to, 1)],
         Action::ExpectPosition { selector, relative_to, .. } => vec![(selector, 1), (relative_to, 1)],
+        // The clicked element, and the region when it names one: a pass
+        // read each as one element.
+        Action::ExpectNoChange { selector, region, .. } => {
+            std::iter::once((selector, 1)).chain(region.as_ref().map(|r| (r, 1))).collect()
+        }
         Action::ExpectRow { table, .. } | Action::ExpectSorted { table, .. } => vec![(table, 1)],
         Action::ExpectRowCount { table, equals, at_least, .. } => {
             if equals.is_some_and(|n| n >= 1) || at_least.is_some_and(|n| n >= 1) {
@@ -4218,6 +4223,7 @@ pub fn describe_action(action: &crate::browser::actions::Action) -> String {
         | Action::ExpectEach { selector, .. }
         | Action::ExpectOrder { selector, .. }
         | Action::ExpectPosition { selector, .. }
+        | Action::ExpectNoChange { selector, .. }
         | Action::Upload { selector, .. }
         | Action::WhenVisible { selector, .. }
         | Action::RepeatWhileVisible { selector, .. } => selector.describe(),

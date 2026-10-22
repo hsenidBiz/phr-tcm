@@ -4,11 +4,13 @@
 //! reported in sentences that never carry a query string, a host, a header
 //! or a token.
 
-use crate::common::{quick, ScriptedDriver};
+use crate::common::{quick, FakePage, ScriptedDriver};
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
 use v2_lib::api_templates::exec::encode_query;
-use v2_lib::autorun::api_checks::{api_request, expect_response, judge, pick, Pick, GET_FN};
+use v2_lib::autorun::api_checks::{
+    all_taken, api_request, expect_response, judge, pick, pick_in_order, which_request, Pick, StepRequests, GET_FN,
+};
 use v2_lib::autorun::patterns::{classify, ErrorClass};
 use v2_lib::autorun::recipe::SignInRecipe;
 use v2_lib::autorun::runner::run_step;
@@ -97,9 +99,14 @@ fn short() -> Timing {
     quick()
 }
 
+/// A sentence of a check that took the step's only matching request, sent before any action was noted.
+fn at_start(sentence: &str) -> String {
+    format!("{sentence}: the step's matching request 1 of 1, sent as the step began")
+}
+
 async fn check(d: &mut ScriptedDriver, a: &Action) -> ActionOutcome {
     let mark = d.net_mark();
-    let out = expect_response(d, a, mark, &short()).await;
+    let out = expect_response(d, a, &mut StepRequests::new(mark, vec!["expect_response".into()]), &short()).await;
     assert!(d.deadline_was_cleared(), "the wait loop must hand its deadline back: {:?}", d.deadlines);
     out
 }
@@ -164,6 +171,124 @@ fn a_match_still_going_is_pending_only() {
     assert!(matches!(pick(&[], None, "/a/Save"), Pick::None { seen: 0 }));
 }
 
+#[test]
+fn pick_in_order_takes_the_oldest_untaken_match() {
+    let entries = vec![
+        entry(0, "GET", "/other", Some(200), NetState::Finished),
+        entry(1, "POST", "/a/Save", Some(500), NetState::Finished),
+        entry(2, "POST", "/a/Save", Some(200), NetState::Finished),
+        entry(3, "POST", "/a/Save", None, NetState::Pending),
+    ];
+    let taken = |ids: &[&str]| ids.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+    // The oldest, where `pick` takes the most recent finished one.
+    assert!(matches!(pick_in_order(&entries, None, "/a/save", &[]), Pick::Finished(e) if e.seq == 1));
+    assert!(matches!(pick_in_order(&entries, None, "/a/save", &taken(&["r1"])), Pick::Finished(e) if e.seq == 2));
+    assert!(matches!(pick_in_order(&entries, None, "/a/save", &taken(&["r1", "r2"])), Pick::PendingOnly(e) if e.seq == 3));
+    assert!(matches!(pick_in_order(&entries, None, "/a/save", &taken(&["r1", "r2", "r3"])), Pick::None { seen: 4 }));
+    // Taking is by the request, not by the pattern: another pattern still sees it.
+    assert!(matches!(pick_in_order(&entries, Some("get"), "/other", &taken(&["r1"])), Pick::Finished(e) if e.seq == 0));
+    // An older request still going is skipped once a newer match has finished: the oldest that
+    // FINISHED is taken, and the check waits only while none has.
+    let slow_first = vec![
+        entry(0, "GET", "/a/List", None, NetState::Pending),
+        entry(1, "GET", "/a/List", Some(200), NetState::Finished),
+    ];
+    assert!(matches!(pick_in_order(&slow_first, None, "/a/list", &[]), Pick::Finished(e) if e.seq == 1));
+    let both_going = vec![
+        entry(0, "GET", "/a/List", None, NetState::Pending),
+        entry(1, "GET", "/a/List", None, NetState::Pending),
+    ];
+    assert!(matches!(pick_in_order(&both_going, None, "/a/list", &[]), Pick::PendingOnly(e) if e.seq == 0));
+    // Of several that finished, the oldest still left; the older pending one is next once it finishes.
+    let two_done = vec![
+        entry(0, "GET", "/a/List", None, NetState::Pending),
+        entry(1, "GET", "/a/List", Some(200), NetState::Finished),
+        entry(2, "GET", "/a/List", Some(201), NetState::Finished),
+    ];
+    assert!(matches!(pick_in_order(&two_done, None, "/a/list", &[]), Pick::Finished(e) if e.seq == 1));
+    assert!(matches!(pick_in_order(&two_done, None, "/a/list", &["r1".to_string()]), Pick::Finished(e) if e.seq == 2));
+    assert!(matches!(
+        pick_in_order(&two_done, None, "/a/list", &["r1".to_string(), "r2".to_string()]),
+        Pick::PendingOnly(e) if e.seq == 0
+    ));
+    // A request that failed is judged when none left has finished, and a newer one that finished wins over it.
+    let failing = vec![
+        entry(0, "GET", "/a/List", None, NetState::Failed("net::ERR_FAILED".into())),
+        entry(1, "GET", "/a/List", Some(200), NetState::Finished),
+    ];
+    assert!(matches!(pick_in_order(&failing, None, "/a/list", &[]), Pick::Finished(e) if e.seq == 1));
+    let failed_then_going = vec![
+        entry(0, "GET", "/a/List", None, NetState::Pending),
+        entry(1, "GET", "/a/List", None, NetState::Failed("net::ERR_FAILED".into())),
+    ];
+    assert!(matches!(pick_in_order(&failed_then_going, None, "/a/list", &[]), Pick::Failed(e) if e.seq == 1));
+    assert!(matches!(pick_in_order(&[], None, "/a/list", &[]), Pick::None { seen: 0 }));
+}
+
+#[test]
+fn a_cancelled_request_is_passed_over_when_a_later_one_matches() {
+    let aborted = || NetState::Failed("net::ERR_ABORTED".into());
+    // A debounced search: the first request cancelled, the second answered.
+    let debounced = vec![
+        entry(0, "GET", "/api/Search?q=ab", None, aborted()),
+        entry(1, "GET", "/api/Search?q=abc", Some(200), NetState::Finished),
+    ];
+    assert!(matches!(pick_in_order(&debounced, None, "/api/search", &[]), Pick::Finished(e) if e.seq == 1));
+    // The later one still going: it is the one waited for, never "was cancelled".
+    let resent = vec![
+        entry(0, "GET", "/api/Search?q=ab", None, aborted()),
+        entry(1, "GET", "/api/Search?q=abc", None, NetState::Pending),
+    ];
+    assert!(matches!(pick_in_order(&resent, None, "/api/search", &[]), Pick::PendingOnly(e) if e.seq == 1));
+    // Once the later one is taken, the cancelled one is not left for the next check.
+    assert!(matches!(
+        pick_in_order(&debounced, None, "/api/search", &["r1".to_string()]),
+        Pick::None { seen: 2 }
+    ));
+    // A lone cancelled request is still judged, and fails as it does today.
+    let lone = vec![entry(0, "GET", "/api/Search?q=ab", None, aborted())];
+    assert!(matches!(pick_in_order(&lone, None, "/api/search", &[]), Pick::Failed(e) if e.seq == 0));
+}
+
+#[test]
+fn which_request_names_the_place_and_the_action() {
+    let entries = vec![
+        entry(0, "GET", "/other", Some(200), NetState::Finished),
+        entry(1, "POST", "/a/Save", Some(200), NetState::Finished),
+        entry(2, "POST", "/a/Save", Some(200), NetState::Finished),
+        entry(3, "POST", "/a/Save", Some(200), NetState::Finished),
+    ];
+    let kinds = ["click", "fill", "press_key", "expect_response"].map(String::from).to_vec();
+    let mut step = StepRequests::new(0, kinds.clone());
+    for seen in [0, 1, 2, 4] {
+        step.action_began(seen);
+    }
+    let said = |i: usize| which_request(&entries, &entries[i], Some("post"), "/a/save", &step);
+    assert_eq!(said(1), ": the step's matching request 1 of 3, sent after action 2 (fill) began");
+    assert_eq!(said(2), ": the step's matching request 2 of 3, sent after action 3 (press_key) began");
+    assert_eq!(said(3), ": the step's matching request 3 of 3, sent after action 3 (press_key) began");
+    // Before the first action had begun, or when no action was noted.
+    let mut early = StepRequests::new(0, kinds.clone());
+    early.action_began(2);
+    assert_eq!(
+        which_request(&entries, &entries[1], Some("post"), "/a/save", &early),
+        ": the step's matching request 1 of 3, sent as the step began"
+    );
+    let bare = StepRequests::new(0, kinds);
+    assert_eq!(
+        which_request(&entries, &entries[0], None, "/other", &bare),
+        ": the step's matching request 1 of 1, sent as the step began"
+    );
+}
+
+#[test]
+fn all_taken_names_the_path_only() {
+    assert_eq!(
+        all_taken(" /a/Save?token=abc ", 100, 2),
+        "no request matching \"/a/Save\" left in 0.1 s: an earlier expect_response of this step took each of the 2 that matched"
+    );
+}
+
 // ------------------------------------------------------------------ judge
 
 #[test]
@@ -225,7 +350,7 @@ async fn a_request_made_during_the_step_that_answered_right_passes() {
     on_first_look(&mut d, save_finished(200));
     let out = check(&mut d, &expect(Some("post"), "/performancecycle/save", 200, None, None)).await;
     assert!(out.ok, "{out:?}");
-    assert_eq!(out.detail, "POST /hr/pmsv10/PerformanceCycle/Save answered 200");
+    assert_eq!(out.detail, at_start("POST /hr/pmsv10/PerformanceCycle/Save answered 200"));
     assert!(d.calls_to("Network.getResponseBody").is_empty(), "no body is read without a JSON check");
 }
 
@@ -268,7 +393,7 @@ async fn a_matching_request_that_never_finishes_says_it_had_not_finished() {
     on_first_look(&mut d, vec![sent("7", "POST", "https://hr.example/hr/Cycle/Save?id=1"), answered("7", 200, "application/json")]);
     let out = check(&mut d, &expect(None, "/Save", 200, None, Some(200))).await;
     assert!(!out.ok);
-    assert_eq!(out.detail, "POST /hr/Cycle/Save had not finished after 0.2 s");
+    assert_eq!(out.detail, at_start("POST /hr/Cycle/Save had not finished after 0.2 s"));
 }
 
 #[tokio::test]
@@ -276,12 +401,12 @@ async fn a_failed_and_a_cancelled_request_each_have_their_sentence() {
     let mut d = browser(|| Ok(json!({})));
     on_first_look(&mut d, vec![sent("7", "POST", "https://hr.example/hr/Cycle/Save"), failed("7", "net::ERR_CONNECTION_RESET")]);
     let out = check(&mut d, &expect(None, "/Save", 200, None, None)).await;
-    assert_eq!(out.detail, "POST /hr/Cycle/Save failed: net::ERR_CONNECTION_RESET");
+    assert_eq!(out.detail, at_start("POST /hr/Cycle/Save failed: net::ERR_CONNECTION_RESET"));
 
     let mut d = browser(|| Ok(json!({})));
     on_first_look(&mut d, vec![sent("7", "POST", "https://hr.example/hr/Cycle/Save"), failed("7", "net::ERR_ABORTED")]);
     let out = check(&mut d, &expect(None, "/Save", 200, None, None)).await;
-    assert_eq!(out.detail, "POST /hr/Cycle/Save was cancelled by the page");
+    assert_eq!(out.detail, at_start("POST /hr/Cycle/Save was cancelled by the page"));
 }
 
 #[tokio::test]
@@ -289,14 +414,14 @@ async fn a_wrong_status_names_both_and_shows_the_body_when_one_was_read() {
     let mut d = browser(|| Ok(json!({})));
     on_first_look(&mut d, save_finished(500));
     let out = check(&mut d, &expect(Some("POST"), "/Save", 200, None, None)).await;
-    assert_eq!(out.detail, "POST /hr/pmsv10/PerformanceCycle/Save answered 500, expected 200");
+    assert_eq!(out.detail, at_start("POST /hr/pmsv10/PerformanceCycle/Save answered 500, expected 200"));
 
     let mut d = browser(|| Ok(json!({ "body": "{\"error\":\"boom\"}", "base64Encoded": false })));
     on_first_look(&mut d, save_finished(500));
     let out = check(&mut d, &expect(Some("POST"), "/Save", 200, Some(json!({ "success": true })), None)).await;
     assert_eq!(
         out.detail,
-        "POST /hr/pmsv10/PerformanceCycle/Save answered 500, expected 200 - the response began: {\"error\":\"boom\"}"
+        "POST /hr/pmsv10/PerformanceCycle/Save answered 500, expected 200: the step's matching request 1 of 1, sent as the step began - the response began: {\"error\":\"boom\"}"
     );
 }
 
@@ -309,13 +434,13 @@ async fn an_unexpected_400_shows_its_body_so_an_empty_one_can_be_told_apart() {
     let out = check(&mut d, &expect(Some("POST"), "/Save", 200, None, None)).await;
     assert_eq!(
         out.detail,
-        "POST /hr/pmsv10/PerformanceCycle/Save answered 400, expected 200 - the response began: {\"error\":\"Name is required\"}"
+        "POST /hr/pmsv10/PerformanceCycle/Save answered 400, expected 200: the step's matching request 1 of 1, sent as the step began - the response began: {\"error\":\"Name is required\"}"
     );
 
     let mut d = browser(|| Ok(json!({ "body": "", "base64Encoded": false })));
     on_first_look(&mut d, save_finished(400));
     let out = check(&mut d, &expect(Some("POST"), "/Save", 200, None, None)).await;
-    assert_eq!(out.detail, "POST /hr/pmsv10/PerformanceCycle/Save answered 400, expected 200");
+    assert_eq!(out.detail, at_start("POST /hr/pmsv10/PerformanceCycle/Save answered 400, expected 200"));
 
     // An expected 400 is a pass, and its body is still never read.
     let mut d = browser(|| panic!("the body of an expected answer is not read"));
@@ -336,7 +461,7 @@ async fn a_body_chrome_no_longer_holds_or_that_is_not_json_fails_plainly() {
     on_first_look(&mut d, save_finished(200));
     let out = check(&mut d, &expect(None, "/Save", 200, Some(json!({ "success": true })), None)).await;
     assert!(!out.ok && !out.harness, "{out:?}");
-    assert_eq!(out.detail, "the response body was no longer available");
+    assert_eq!(out.detail, at_start("the response body was no longer available"));
 
     let mut d = browser(|| Ok(json!({ "body": "<html>\n  <title>Sign in</title>\n</html>", "base64Encoded": false })));
     on_first_look(&mut d, save_finished(200));
@@ -344,7 +469,7 @@ async fn a_body_chrome_no_longer_holds_or_that_is_not_json_fails_plainly() {
     assert!(!out.ok);
     assert_eq!(
         out.detail,
-        "the response to POST /hr/pmsv10/PerformanceCycle/Save was not JSON - the response began: <html> <title>Sign in</title> </html>"
+        "the response to POST /hr/pmsv10/PerformanceCycle/Save was not JSON: the step's matching request 1 of 1, sent as the step began - the response began: <html> <title>Sign in</title> </html>"
     );
 }
 
@@ -385,7 +510,7 @@ async fn no_outcome_ever_carries_the_query_string() {
         on_first_look(&mut d, events);
         details.push(check(&mut d, &a).await.detail);
     }
-    assert_eq!(details[0], "POST /hr/Cycle/Save answered 200");
+    assert_eq!(details[0], at_start("POST /hr/Cycle/Save answered 200"));
     assert_eq!(details[8], "no request matching \"/Other\" in 0.1 s (this step made 0 requests)");
     for detail in &details {
         assert!(!detail.contains("access_token") && !detail.contains("abc123") && !detail.contains("hr.example"), "{detail}");
@@ -403,7 +528,13 @@ async fn a_browser_that_stops_answering_is_a_harness_failure() {
 #[tokio::test]
 async fn an_invalid_expect_response_is_refused_before_it_waits() {
     let mut d = browser(|| Ok(json!({})));
-    let out = expect_response(&mut d, &expect(None, "  ", 200, None, None), 0, &short()).await;
+    let out = expect_response(
+        &mut d,
+        &expect(None, "  ", 200, None, None),
+        &mut StepRequests::new(0, vec!["expect_response".into()]),
+        &short(),
+    )
+    .await;
     assert!(!out.ok);
     assert!(out.detail.starts_with("this action cannot run: "), "{}", out.detail);
     assert!(d.calls.is_empty());
@@ -443,7 +574,7 @@ async fn a_save_redirected_to_sign_in_says_so_promptly() {
             "judged when the redirect arrived, not at the timeout: {out:?}"
         );
         assert!(!out.ok && !out.harness, "{out:?}");
-        assert_eq!(out.detail, "POST /hr/pmsv10/PerformanceCycle/Save was redirected to /Account/Login");
+        assert_eq!(out.detail, at_start("POST /hr/pmsv10/PerformanceCycle/Save was redirected to /Account/Login"));
         assert!(d.calls_to("Network.getResponseBody").is_empty(), "a redirect's body is never read");
         assert_eq!(classify(&out.detail, None), ErrorClass::Api);
     }
@@ -462,7 +593,7 @@ async fn a_redirect_to_another_site_says_so_without_its_host() {
     let out = check(&mut d, &expect(None, "/Save", 200, None, Some(1_000))).await;
     assert_eq!(
         out.detail,
-        "POST /hr/pmsv10/PerformanceCycle/Save was redirected to /common/oauth2/authorize (on another site)"
+        at_start("POST /hr/pmsv10/PerformanceCycle/Save was redirected to /common/oauth2/authorize (on another site)")
     );
     for leak in ["microsoftonline", "client_id", "abc", "xyz", "hr.example", "handler"] {
         assert!(!out.detail.contains(leak), "{leak}: {}", out.detail);
@@ -483,7 +614,7 @@ async fn a_post_expected_to_answer_302_passes_post_redirect_get() {
     );
     let out = check(&mut d, &expect(Some("POST"), "/PerformanceCycle/Save", 302, None, Some(1_000))).await;
     assert!(out.ok, "{out:?}");
-    assert_eq!(out.detail, "POST /hr/pmsv10/PerformanceCycle/Save answered 302");
+    assert_eq!(out.detail, at_start("POST /hr/pmsv10/PerformanceCycle/Save answered 302"));
 
     // A redirect has no JSON to check: asked for, it fails - without reading
     // the page it went on to.
@@ -499,14 +630,14 @@ async fn a_post_expected_to_answer_302_passes_post_redirect_get() {
     );
     let out = check(&mut d, &expect(Some("POST"), "/Save", 302, Some(json!({ "success": true })), Some(1_000))).await;
     assert!(!out.ok, "{out:?}");
-    assert_eq!(out.detail, "POST /hr/pmsv10/PerformanceCycle/Save was redirected to /hr/pmsv10/PerformanceCycle/Index");
+    assert_eq!(out.detail, at_start("POST /hr/pmsv10/PerformanceCycle/Save was redirected to /hr/pmsv10/PerformanceCycle/Index"));
     assert!(d.calls_to("Network.getResponseBody").is_empty());
 
     // Expected another 3xx than the one it answered.
     let mut d = browser(|| Ok(json!({})));
     on_first_look(&mut d, vec![sent("7", "POST", SAVE), redirected("7", 302, SAVE, "https://hr.example/hr/Index")]);
     let out = check(&mut d, &expect(None, "/Save", 303, None, Some(1_000))).await;
-    assert_eq!(out.detail, "POST /hr/pmsv10/PerformanceCycle/Save was redirected to /hr/Index");
+    assert_eq!(out.detail, at_start("POST /hr/pmsv10/PerformanceCycle/Save was redirected to /hr/Index"));
 }
 
 #[tokio::test]
@@ -525,7 +656,7 @@ async fn a_redirect_target_that_matches_the_pattern_is_no_false_pass() {
     );
     let out = check(&mut d, &expect(None, "/PerformanceCycle", 200, None, Some(1_000))).await;
     assert!(!out.ok, "{out:?}");
-    assert_eq!(out.detail, "POST /hr/pmsv10/PerformanceCycle/Save was redirected to /hr/pmsv10/PerformanceCycle/Index");
+    assert_eq!(out.detail, at_start("POST /hr/pmsv10/PerformanceCycle/Save was redirected to /hr/pmsv10/PerformanceCycle/Index"));
 }
 
 // ------------------------------------------- misplaced expectations (I2)
@@ -658,7 +789,10 @@ async fn a_request_made_by_an_earlier_action_of_the_same_step_is_checked() {
     .await;
     assert!(out[0].ok, "{:?}", out[0]);
     assert!(out[1].ok, "{:?}", out[1]);
-    assert_eq!(out[1].detail, "GET /hr/api/cycles answered 200");
+    assert_eq!(
+        out[1].detail,
+        "GET /hr/api/cycles answered 200: the step's matching request 1 of 1, sent after action 1 (navigate) began"
+    );
 }
 
 /// A browser whose page sends these requests only once it has been asked
@@ -711,7 +845,149 @@ async fn a_lone_tried_expect_response_is_carried_out_by_the_runner() {
     let out = run_step(&mut d, dir.path(), "Acme", "Web", &lone, &quick(), &mut acc).await.unwrap();
     assert_eq!(out.len(), 1);
     assert!(out[0].ok, "{:?}", out[0]);
-    assert_eq!(out[0].detail, "POST /hr/pmsv10/PerformanceCycle/Save answered 200");
+    // The page sent it while the check waited: after the check's own action began.
+    assert_eq!(
+        out[0].detail,
+        "POST /hr/pmsv10/PerformanceCycle/Save answered 200: the step's matching request 1 of 1, sent after action 1 (expect_response) began"
+    );
+}
+
+fn click_option() -> Action {
+    serde_json::from_value(json!({ "kind": "click", "selector": { "css": "#option" } })).unwrap()
+}
+
+/// A page whose click on the option makes these `GET /hr/api/List` requests, each answered 200.
+fn clicking_sends(urls: &[&str]) -> ScriptedDriver {
+    let mut d = FakePage::default().driver().with_net_record();
+    for (i, url) in urls.iter().enumerate() {
+        let id = format!("L{i}");
+        for e in [sent(&id, "GET", url), answered(&id, 200, "application/json"), finished(&id)] {
+            d.on_call_events.push(("Input.dispatchMouseEvent".into(), e));
+        }
+    }
+    d
+}
+
+const FILTER_URL: &str = "https://hr.example/hr/api/List?StatusFilter=Draft";
+
+#[tokio::test]
+async fn an_expect_response_after_a_filter_click_in_the_same_step_matches_the_filters_request() {
+    let mut d = clicking_sends(&[FILTER_URL]);
+    let out = run(&mut d, vec![click_option(), expect(Some("GET"), "StatusFilter=Draft", 200, None, Some(300))]).await;
+    assert!(out[0].ok, "{:?}", out[0]);
+    assert!(out[1].ok, "{:?}", out[1]);
+    assert_eq!(
+        out[1].detail,
+        "GET /hr/api/List answered 200: the step's matching request 1 of 1, sent after action 1 (click) began"
+    );
+}
+
+#[tokio::test]
+async fn two_checks_on_one_pattern_take_two_requests_in_order() {
+    let mut d = clicking_sends(&[FILTER_URL, "https://hr.example/hr/api/List?StatusFilter=Draft&page=2"]);
+    let again = expect(Some("GET"), "/api/List", 200, None, Some(300));
+    let out = run(&mut d, vec![click_option(), again.clone(), again]).await;
+    assert!(out[1].ok && out[2].ok, "{:?}", out);
+    assert_eq!(
+        out[1].detail,
+        "GET /hr/api/List answered 200: the step's matching request 1 of 2, sent after action 1 (click) began"
+    );
+    assert_eq!(
+        out[2].detail,
+        "GET /hr/api/List answered 200: the step's matching request 2 of 2, sent after action 1 (click) began"
+    );
+}
+
+#[tokio::test]
+async fn a_check_with_every_match_taken_says_so() {
+    let mut d = clicking_sends(&[FILTER_URL, "https://hr.example/hr/api/List?StatusFilter=Draft&page=2"]);
+    let again = expect(Some("GET"), "/api/List", 200, None, Some(100));
+    let out = run(&mut d, vec![click_option(), again.clone(), again.clone(), again]).await;
+    assert!(out[1].ok && out[2].ok, "{:?}", out);
+    assert!(!out[3].ok, "{:?}", out[3]);
+    assert_eq!(out[3].detail, all_taken("/api/List", 100, 2));
+    assert_eq!(classify(&out[3].detail, None), ErrorClass::Api);
+}
+
+#[tokio::test]
+async fn a_failure_ends_with_the_request_it_judged_before_any_excerpt() {
+    let mut d = clicking_sends(&[FILTER_URL]);
+    let out = run(&mut d, vec![click_option(), expect(None, "/api/List", 201, None, Some(300))]).await;
+    assert!(!out[1].ok);
+    assert_eq!(
+        out[1].detail,
+        "GET /hr/api/List answered 200, expected 201: the step's matching request 1 of 1, sent after action 1 (click) began"
+    );
+    assert_eq!(classify(&out[1].detail, None), ErrorClass::Api);
+}
+
+/// A click that sends one request that never finishes (a fetch whose body the page never reads stays
+/// going in the browser's record) and then one that is answered.
+fn clicking_sends_one_going_and_one_answered() -> ScriptedDriver {
+    let mut d = FakePage::default().driver().with_net_record();
+    for e in [
+        sent("L0", "GET", "https://hr.example/hr/api/List?page=1"),
+        sent("L1", "GET", "https://hr.example/hr/api/List?page=2"),
+        answered("L1", 200, "application/json"),
+        finished("L1"),
+    ] {
+        d.on_call_events.push(("Input.dispatchMouseEvent".into(), e));
+    }
+    d
+}
+
+#[tokio::test]
+async fn an_older_request_still_going_does_not_hold_up_a_newer_one_that_has_answered() {
+    let mut d = clicking_sends_one_going_and_one_answered();
+    let began = std::time::Instant::now();
+    let out = run(&mut d, vec![click_option(), expect(Some("GET"), "/api/List", 200, None, Some(5000))]).await;
+    assert!(out[1].ok, "{:?}", out[1]);
+    assert_eq!(
+        out[1].detail,
+        "GET /hr/api/List answered 200: the step's matching request 2 of 2, sent after action 1 (click) began"
+    );
+    assert!(began.elapsed() < std::time::Duration::from_millis(3000), "it waited for the older request: {:?}", began.elapsed());
+}
+
+#[tokio::test]
+async fn a_check_waits_only_while_no_matching_request_has_finished() {
+    let mut d = clicking_sends_one_going_and_one_answered();
+    let again = expect(Some("GET"), "/api/List", 200, None, Some(100));
+    let out = run(&mut d, vec![click_option(), again.clone(), again]).await;
+    assert!(out[1].ok, "{:?}", out[1]);
+    // The next check takes the one left, which never finished.
+    assert!(!out[2].ok, "{:?}", out[2]);
+    assert_eq!(
+        out[2].detail,
+        "GET /hr/api/List had not finished after 0.1 s: the step's matching request 1 of 2, sent after action 1 (click) began"
+    );
+}
+
+#[tokio::test]
+async fn a_debounced_search_that_cancels_and_resends_judges_the_resent_request() {
+    // The first request is cancelled before the page resends it: a moment later the resent one is
+    // answered. The check does not stop at the cancelled one.
+    let mut d = browser(|| Ok(json!({})));
+    on_first_look(
+        &mut d,
+        vec![sent("1", "GET", "https://hr.example/hr/api/Search?q=ab"), failed("1", "net::ERR_ABORTED")],
+    );
+    d.on_idle_events.extend([
+        sent("2", "GET", "https://hr.example/hr/api/Search?q=abc"),
+        answered("2", 200, "application/json"),
+        finished("2"),
+    ]);
+    let out = check(&mut d, &expect(Some("GET"), "/api/Search", 200, None, Some(5000))).await;
+    assert!(out.ok, "{out:?}");
+    assert_eq!(out.detail, "GET /hr/api/Search answered 200: the step's matching request 2 of 2, sent as the step began");
+
+    // One that is never resent is still said to have been cancelled - at the end of the wait, not at once.
+    let mut d = browser(|| Ok(json!({})));
+    on_first_look(&mut d, vec![sent("1", "GET", "https://hr.example/hr/api/Search?q=ab"), failed("1", "net::ERR_ABORTED")]);
+    let began = std::time::Instant::now();
+    let out = check(&mut d, &expect(Some("GET"), "/api/Search", 200, None, None)).await;
+    assert_eq!(out.detail, at_start("GET /hr/api/Search was cancelled by the page"));
+    assert!(began.elapsed() >= std::time::Duration::from_millis(100), "judged at once: {:?}", began.elapsed());
 }
 
 // --------------------------------------------------- patterns and recipes
@@ -728,6 +1004,11 @@ fn every_expect_response_failure_is_in_the_api_class() {
         "the response to POST /hr/Cycle/Save was not JSON - the response began: <html> not found",
         "the response to POST /hr/Cycle/Save: expected name = \"x\", got \"y\"",
         "the response body was no longer available",
+        // Ending with the request the check took.
+        "POST /hr/Cycle/Save was cancelled by the page: the step's matching request 2 of 3, sent after action 1 (click) began",
+        "POST /hr/Cycle/Save had not finished after 10 s: the step's matching request 1 of 1, sent as the step began",
+        "POST /hr/Cycle/Save answered 500, expected 200: the step's matching request 1 of 1, sent as the step began - the response began: {}",
+        "no request matching \"/Save\" left in 10 s: an earlier expect_response of this step took each of the 2 that matched",
     ] {
         assert_eq!(classify(detail, None), ErrorClass::Api, "{detail}");
         assert_eq!(classify(detail, Some("/hr/Cycle/Save")), ErrorClass::Api, "{detail}");
@@ -1044,7 +1325,7 @@ async fn a_body_that_cannot_be_decoded_says_it_could_not_be_read() {
     on_first_look(&mut d, save_finished(200));
     let out = check(&mut d, &expect(None, "/Save", 200, Some(json!({ "ok": true })), None)).await;
     assert!(!out.ok && !out.harness, "{out:?}");
-    assert_eq!(out.detail, "the response body could not be read");
+    assert_eq!(out.detail, at_start("the response body could not be read"));
 }
 
 // ----------------------------------------------------------- validation

@@ -53,6 +53,9 @@ pub enum ErrorClass {
     /// An `expect_position`'s element was not where it was wanted
     /// (`expect::look`'s `is not ...: it is at (...)`).
     PositionMismatch,
+    /// An `expect_no_change` click was followed by a change
+    /// (`no_change::NOTHING_EXPECTED`).
+    ChangedOnClick,
     StillVisible,
     PageTextMissing,
     UrlMismatch,
@@ -104,6 +107,7 @@ impl ErrorClass {
             ErrorClass::AttributeMismatch => "attribute_mismatch",
             ErrorClass::StyleMismatch => "style_mismatch",
             ErrorClass::PositionMismatch => "position_mismatch",
+            ErrorClass::ChangedOnClick => "changed_on_click",
             ErrorClass::StillVisible => "still_visible",
             ErrorClass::PageTextMissing => "page_text_missing",
             ErrorClass::UrlMismatch => "url_mismatch",
@@ -139,6 +143,7 @@ impl ErrorClass {
             ErrorClass::AttributeMismatch => "a different attribute".to_string(),
             ErrorClass::StyleMismatch => "a different style".to_string(),
             ErrorClass::PositionMismatch => "a different position".to_string(),
+            ErrorClass::ChangedOnClick => "the page changed after a click that should do nothing".to_string(),
             ErrorClass::StillVisible => "still visible".to_string(),
             ErrorClass::PageTextMissing => "the page lacked the words".to_string(),
             ErrorClass::UrlMismatch => "a different address".to_string(),
@@ -282,6 +287,11 @@ pub fn classify(detail: &str, target: Option<&str>) -> ErrorClass {
             _ => ErrorClass::AppRefused,
         };
     }
+    // An `expect_no_change` that saw something change: its own words, which
+    // name the region, and so can end as anything.
+    if whole.starts_with(crate::browser::no_change::NOTHING_EXPECTED) {
+        return ErrorClass::ChangedOnClick;
+    }
     // Before anything that reads a sentence's ending: an API check's
     // failure can end with an excerpt of whatever the server answered.
     if is_api_check(whole) {
@@ -371,7 +381,9 @@ fn is_api_check(whole: &str) -> bool {
         return true;
     }
     // `<METHOD> /<path> <what happened>`.
-    let sentence = whole.split(api::BODY_BEGAN).next().unwrap_or(whole);
+    // Without the request an `expect_response` says it took (`api::WHICH`).
+    let whole = api::without_which(whole);
+    let sentence = whole.split(api::BODY_BEGAN).next().unwrap_or(&whole);
     let Some((method, rest)) = sentence.split_once(' ') else {
         return false;
     };
@@ -586,6 +598,7 @@ pub fn action_target(action: &Action) -> Option<String> {
         | Action::ExpectEach { selector, .. }
         | Action::ExpectOrder { selector, .. }
         | Action::ExpectPosition { selector, .. }
+        | Action::ExpectNoChange { selector, .. }
         | Action::Upload { selector, .. }
         | Action::WhenVisible { selector, .. }
         | Action::RepeatWhileVisible { selector, .. } => Some(selector.describe()),

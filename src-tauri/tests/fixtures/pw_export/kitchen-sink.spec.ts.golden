@@ -41,6 +41,50 @@ test.describe('F', () => {
         await page.waitForTimeout(100);
       }
     };
+    type Req = Awaited<ReturnType<typeof page.waitForRequest>>;
+    const sent: { request: Req; from: unknown; state: 'going' | 'done' | 'failed'; error: string }[] = [];
+    page.context().on('request', r => {
+      if (r.redirectedFrom()) { return; }
+      let from: unknown = null;
+      try { from = r.frame().page(); } catch { from = null; }
+      sent.push({ request: r, from, state: 'going', error: '' });
+    });
+    page.context().on('requestfinished', r => {
+      const s = sent.find(e => e.request === r);
+      if (s) { s.state = 'done'; }
+    });
+    page.context().on('requestfailed', r => {
+      const s = sent.find(e => e.request === r);
+      if (s) { s.state = 'failed'; s.error = r.failure()?.errorText ?? ''; }
+    });
+    const nextResponse = async (from: number, taken: Set<object>, matches: (r: Req) => boolean, timeout: number) => {
+      const end = Date.now() + timeout;
+      const cancelled = (e: { state: string; error: string }) => e.state === 'failed' && e.error.includes('ERR_ABORTED');
+      const named = (e: { request: Req }) => `${e.request.method()} ${new URL(e.request.url()).pathname}`;
+      let cancelledAt = 0;
+      for (;;) {
+        const mine = sent.slice(from).filter(e => e.from === cur && matches(e.request));
+        const left = mine.filter((e, i) => !taken.has(e) && !(cancelled(e) && i < mine.length - 1));
+        const done = left.find(e => e.state === 'done');
+        if (done) {
+          taken.add(done);
+          return (await done.request.response())!;
+        }
+        const failed = left.find(e => e.state === 'failed');
+        if (failed && !left.some(e => e.state === 'going')) {
+          cancelledAt = cancelledAt || Date.now();
+          if (!cancelled(failed) || Date.now() - cancelledAt >= 1000 || Date.now() >= end) {
+            throw new Error(`${named(failed)} failed: ${failed.error}`);
+          }
+        } else {
+          cancelledAt = 0;
+        }
+        if (Date.now() >= end) {
+          throw new Error(left.length > 0 ? `${named(left[0])} had not finished after ${timeout} ms` : mine.length > 0 ? 'an earlier expect_response of this step took each matching request' : `no matching request in ${timeout} ms`);
+        }
+        await page.waitForTimeout(100);
+      }
+    };
     let tab_help_tab: typeof page;
     let tab_second: typeof page;
     await page.goto('/');
@@ -63,7 +107,7 @@ test.describe('F', () => {
     await cur.locator('iframe#body').filter({ visible: true }).contentFrame().getByText('Ready', { exact: true }).filter({ visible: true }).first().waitFor({ timeout: 4000 });
 
     // 2. Check what it shows.
-    // Not checked: A person checks the colour.
+    // TODO unchecked: the step's expected result - A person checks the colour.
     const mark2 = opened.length;
     await expect(cur.locator('body')).toContainText('Welcome', { ignoreCase: true, useInnerText: true });
     await expect(cur).toHaveURL(new RegExp('\\/hr\\/x\\?y=1'), { timeout: 10000 });
@@ -77,17 +121,15 @@ test.describe('F', () => {
 
     // 3.
     const mark3 = opened.length;
-    const resp3_0 = cur.waitForResponse(r => r.url().toLowerCase().includes('/api/save') && r.request().method() === 'POST', { timeout: 8000 });
-    resp3_0.catch(() => {});
-    const resp3_1 = cur.waitForResponse(r => r.url().toLowerCase().includes('/api/list'), { timeout: 10000 });
-    resp3_1.catch(() => {});
+    const sentFrom3 = sent.length;
+    const taken3 = new Set<object>();
     if (await cur.getByRole('dialog', { name: 'Confirm' }).filter({ visible: true }).first().waitFor({ timeout: 1500 }).then(() => true, () => false)) {
       await cur.getByRole('button', { name: 'OK' }).filter({ visible: true }).first().click();
     }
-    const r3_0 = await resp3_0;
+    const r3_0 = await nextResponse(sentFrom3, taken3, (r: Req) => r.url().toLowerCase().includes('/api/save') && r.method() === 'POST', 8000);
     expect(r3_0.status()).toBe(200);
     expect(await r3_0.json()).toMatchObject({ 'ok': true, 'ids': [1, 2] });
-    const r3_1 = await resp3_1;
+    const r3_1 = await nextResponse(sentFrom3, taken3, (r: Req) => r.url().toLowerCase().includes('/api/list'), 10000);
     expect(r3_1.status()).toBe(200);
     const a3_0 = await cur.request.get('/api/items', { params: { 'page': '1' }, maxRedirects: 0 });
     expect(a3_0.status()).toBe(200);

@@ -715,7 +715,7 @@ async fn an_unchecked_step_with_a_reason_passes_the_floor() {
         route(&ctx(), Some(&client), "POST", "/autorun-script", &body, "1.0.0").await;
     assert_eq!(status, 200, "{out}");
     let saved = load_script(dir.path(), 7).unwrap().unwrap();
-    assert_eq!(saved.steps[1].unchecked.as_deref(), Some("the toast vanishes too fast to read"));
+    assert_eq!(saved.steps[1].unchecked.as_ref().and_then(v2_lib::autorun::Unchecked::reason), Some("the toast vanishes too fast to read"));
 }
 
 /// The floor needs the test case, and the test case comes from Azure

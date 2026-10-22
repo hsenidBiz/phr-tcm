@@ -378,6 +378,7 @@ pub fn takes_many(action: &Action) -> bool {
         | Action::ExpectEnabled { .. }
         | Action::ExpectDisabled { .. }
         | Action::ExpectChecked { .. }
+        | Action::ExpectNoChange { .. }
         | Action::ExpectFocused { .. }
         | Action::ExpectPosition { .. }
         | Action::ExpectRow { .. }
@@ -1990,7 +1991,7 @@ pub fn uses_components(script: &CaseScript) -> bool {
 
 /// Said of an absence check whose locator was only ever seen matching
 /// nothing: the one rule of the three that refuses.
-pub const ABSENCE_UNPROVEN: &str = "was only ever seen matching nothing on the live app, so this check that it is absent could pass with the locator wrong: probe it where it is shown (in any area), or check it present elsewhere in this script with the same last part, then save again. If the app never shows it anywhere, name it by the case's own words (a text, or a role with a name), or leave the check out, and when the step then checks nothing, say why in its \"unchecked\".";
+pub const ABSENCE_UNPROVEN: &str = "was only ever seen matching nothing on the live app, so this check that it is absent could pass with the locator wrong: probe it where it is shown (in any area), or check it present elsewhere in this script with the same last part, then save again. If the app never shows it anywhere, name it by the case's own words (a text, or a role with a name), or leave the check out and name it in the step's \"unchecked\" list with why.";
 
 /// Said, after the locator, of an absence check let through on the case's
 /// own words: it was never seen, and the save says so instead of refusing.

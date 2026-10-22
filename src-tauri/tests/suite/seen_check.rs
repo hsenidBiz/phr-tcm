@@ -2951,6 +2951,24 @@ fn a_position_check_takes_both_locators_seen_matching_one() {
     assert!(refused.contains("#bar was never seen on the live app"), "{refused}");
 }
 
+/// `expect_no_change` clicks one element and reads one region: both are
+/// held to one seen matching exactly one element, as a click's is.
+#[test]
+fn a_no_change_check_takes_both_locators_seen_matching_one() {
+    let script = one_step(
+        "Cycles",
+        serde_json::json!([{ "kind": "expect_no_change", "selector": { "css": "#new" }, "region": { "css": "#bar" } }]),
+    );
+    assert_eq!(check_seen(&two_sighted(1, 1), &none(), &script, &[], None), Ok(()));
+    assert_eq!(check_seen(&two_sighted(2, 1), &none(), &script, &[], None), Err(many_refusal(1, "#new")));
+    assert_eq!(check_seen(&two_sighted(1, 2), &none(), &script, &[], None), Err(many_refusal(1, "#bar")));
+    // Without a region, the clicked element alone.
+    let alone = one_step("Cycles", serde_json::json!([{ "kind": "expect_no_change", "selector": { "css": "#new" } }]));
+    assert_eq!(check_seen(&sighted_matching("Cycles", css("#new"), 1), &none(), &alone, &[], None), Ok(()));
+    let refused = check_seen(&DiscoveryMap::default(), &none(), &alone, &[], None).unwrap_err();
+    assert!(refused.contains("never seen"), "{refused}");
+}
+
 // ------------------------- page_until: the control that pages, and what is looked for
 
 /// `next` is clicked, so it is held to a click's rule; each `until` is looked

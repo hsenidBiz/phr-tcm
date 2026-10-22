@@ -112,7 +112,7 @@ fn a_sibling_script_becomes_the_golden_raw_spec() {
 }
 
 #[test]
-fn a_response_is_armed_before_the_click_and_awaited_after() {
+fn a_response_is_marked_before_the_click_and_taken_after() {
     let got = one_step(json!([
         { "kind": "click", "selector": "#save" },
         { "kind": "expect_response", "method": "post", "url_contains": "API/Save", "status": 201,
@@ -120,14 +120,142 @@ fn a_response_is_armed_before_the_click_and_awaited_after() {
     ]))
     .run()
     .unwrap();
-    let arm = got.find("const resp1_0 = cur.waitForResponse(r => r.url().toLowerCase().includes('api/save') && r.request().method() === 'POST', { timeout: 10000 });").expect("armed");
+    // Where the step's requests begin, marked as the step starts; the check takes from there.
+    let mark = got.find("const sentFrom1 = sent.length;").expect("marked");
     let click = got.find("await cur.locator('#save').first().click();").unwrap();
-    let wait = got.find("const r1_0 = await resp1_0;").expect("awaited");
-    assert!(arm < click && click < wait, "{got}");
+    let wait = got
+        .find("const r1_0 = await nextResponse(sentFrom1, taken1, (r: Req) => r.url().toLowerCase().includes('api/save') && r.method() === 'POST', 10000);")
+        .expect("taken");
+    assert!(mark < click && click < wait, "{got}");
+    assert!(got.contains("const taken1 = new Set<object>();"), "{got}");
     assert!(got.contains("expect(r1_0.status()).toBe(201);"));
     assert!(got.contains(
         "expect(await r1_0.json()).toMatchObject({ 'ok': true, 'n': 2, 'who': 'it\\'s', 'tags': ['a', 'b'] });"
     ), "{got}");
+    // The page's requests are logged in the order they are sent, once, before the first page load.
+    assert_eq!(got.matches("const nextResponse = async").count(), 1, "{got}");
+    assert!(got.find("page.context().on('request'").unwrap() < got.find("await page.goto('/')").unwrap(), "{got}");
+    assert!(!got.contains("waitForResponse"), "{got}");
+    // A spec with no such check carries none of it.
+    let plain = one_step(json!([{ "kind": "click", "selector": "#a" }])).run().unwrap();
+    assert!(!plain.contains("nextResponse") && !plain.contains("'requestfinished'"), "{plain}");
+}
+
+#[test]
+fn two_responses_in_one_step_each_take_their_own() {
+    let got = one_step(json!([
+        { "kind": "click", "selector": "#filter" },
+        { "kind": "expect_response", "method": "get", "url_contains": "api/List", "status": 200 },
+        { "kind": "expect_response", "method": "get", "url_contains": "api/List", "status": 200 }
+    ]))
+    .run()
+    .unwrap();
+    let take = "(r: Req) => r.url().toLowerCase().includes('api/list') && r.method() === 'GET', 10000);";
+    let mark = got.find("const sentFrom1 = sent.length;").expect("marked");
+    let first = got.find(&format!("const r1_0 = await nextResponse(sentFrom1, taken1, {take}")).expect("the first check");
+    let second = got.find(&format!("const r1_1 = await nextResponse(sentFrom1, taken1, {take}")).expect("the second check");
+    let click = got.find("await cur.locator('#filter').first().click();").unwrap();
+    assert!(mark < click && click < first && first < second, "{got}");
+    // They share one set of the requests already taken, and one mark.
+    assert_eq!(got.matches("const taken1 = new Set<object>();").count(), 1, "{got}");
+    assert_eq!(got.matches("const sentFrom1 = sent.length;").count(), 1, "{got}");
+}
+
+/// The export takes requests in the order they were SENT, as the app does (`pick_in_order`), not the
+/// order their answers arrive: the helper the spec carries is run here in Node against the same
+/// timelines the app's rule is asked about, and the two agree on which request each check takes.
+#[test]
+fn the_export_takes_requests_in_the_order_the_app_does() {
+    use std::process::Command;
+    use v2_lib::autorun::api_checks::{pick_in_order, Pick};
+    use v2_lib::browser::net_record::{NetEntry, NetState};
+    if Command::new("node").arg("--version").output().is_err() {
+        eprintln!("node is not installed: the generated helper was not run");
+        return;
+    }
+    let got = lf(&one_step(json!([
+        { "kind": "click", "selector": "#filter" },
+        { "kind": "expect_response", "url_contains": "api/List", "status": 200 }
+    ]))
+    .run()
+    .unwrap());
+    let from = got.find("    type Req = ").expect("the log");
+    let at = got.find("    const nextResponse = ").expect("the helper");
+    let end = at + got[at..].find("\n    };\n").expect("its end") + "\n    };\n".len();
+    let helper = &got[from..end];
+
+    // Each timeline: JS that sends, answers and cancels requests A and B, then what each of two checks
+    // takes - judged by the export here, and by `pick_in_order` over the same states below.
+    let scenarios: [(&str, &str, [&str; 2]); 3] = [
+        // The first is slow: B answers first, and A after the first check has been made.
+        ("slow_first", "send(A); send(B); finish(B); setTimeout(() => finish(A), 80);", ["B", "A"]),
+        // Both answered, B first, before the checks are made: the oldest sent comes first.
+        ("answered_out_of_order", "send(A); send(B); finish(B); finish(A);", ["A", "B"]),
+        // A debounced search: the first is cancelled, the second answered.
+        ("debounced", "send(A); fail(A, 'net::ERR_ABORTED'); send(B); finish(B);", ["B", "B"]),
+    ];
+    let mut ran = String::new();
+    for (name, timeline, _) in &scenarios {
+        ran.push_str(&format!(
+            "  {{ const out = []; reset(); {timeline}\n    for (let i = 0; i < 2; i++) {{ try {{ out.push((await nextResponse(0, taken, () => true, 400)).name); }} catch (e) {{ out.push('error'); }} }}\n    results['{name}'] = out; }}\n"
+        ));
+    }
+    let script = format!(
+        "const handlers: Record<string, ((r: any) => void)[]> = {{}};\nconst context = {{ on: (ev: string, f: (r: any) => void) => {{ (handlers[ev] ||= []).push(f); }} }};\nconst page: any = {{ context: () => context, waitForTimeout: (ms: number) => new Promise(r => setTimeout(r, ms)) }};\nlet cur = page;\n{helper}\nlet taken = new Set<object>();\nconst made: Record<string, any> = {{}};\nconst reset = () => {{ sent.length = 0; taken = new Set<object>(); for (const k of Object.keys(made)) delete made[k]; }};\nconst req = (name: string) => made[name] ||= {{ name, method: () => 'GET', url: () => 'https://hr.example/hr/api/List?x=' + name, redirectedFrom: () => null, frame: () => ({{ page: () => page }}), failure: () => ({{ errorText: '' }}), response: async () => ({{ name }}) }};\nconst send = (n: string) => handlers.request.forEach(f => f(req(n)));\nconst finish = (n: string) => handlers.requestfinished.forEach(f => f(req(n)));\nconst fail = (n: string, text: string) => {{ const r = req(n); r.failure = () => ({{ errorText: text }}); handlers.requestfailed.forEach(f => f(r)); }};\nconst A = 'A', B = 'B';\nconst results: Record<string, string[]> = {{}};\n(async () => {{\n{ran}  console.log(JSON.stringify(results));\n}})();\n"
+    );
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("helper.ts");
+    std::fs::write(&file, script).unwrap();
+    let out = Command::new("node").arg(&file).output().unwrap();
+    assert!(out.status.success(), "{}\n{}", String::from_utf8_lossy(&out.stderr), String::from_utf8_lossy(&out.stdout));
+    let said: serde_json::Value = serde_json::from_str(String::from_utf8_lossy(&out.stdout).trim()).unwrap();
+
+    // The app's rule over the same timelines.
+    let entry = |name: &str, seq: u64, state: NetState| NetEntry {
+        seq,
+        id: name.to_string(),
+        method: "GET".into(),
+        path_query: format!("/hr/api/List?x={name}"),
+        status: matches!(state, NetState::Finished).then_some(200),
+        mime: None,
+        state,
+        redirect: None,
+        kind: Some("XHR".into()),
+        same_site: true,
+        polling: false,
+    };
+    let took = |entries: &[NetEntry], taken: &[String]| match pick_in_order(entries, None, "api/list", taken) {
+        Pick::Finished(e) | Pick::Failed(e) | Pick::PendingOnly(e) => e.id,
+        Pick::None { .. } => "none".to_string(),
+    };
+    let fin = NetState::Finished;
+    let app: Vec<(&str, [String; 2])> = vec![
+        ("slow_first", {
+            let one = took(&[entry("A", 0, NetState::Pending), entry("B", 1, fin.clone())], &[]);
+            let two = took(&[entry("A", 0, fin.clone()), entry("B", 1, fin.clone())], &[one.clone()]);
+            [one, two]
+        }),
+        ("answered_out_of_order", {
+            let one = took(&[entry("A", 0, fin.clone()), entry("B", 1, fin.clone())], &[]);
+            let two = took(&[entry("A", 0, fin.clone()), entry("B", 1, fin.clone())], &[one.clone()]);
+            [one, two]
+        }),
+        // Both checks are asked about the same, cancelled-then-answered, record: B is taken, then nothing is left.
+        ("debounced", {
+            let record = [entry("A", 0, NetState::Failed("net::ERR_ABORTED".into())), entry("B", 1, fin.clone())];
+            let one = took(&record, &[]);
+            [one.clone(), one]
+        }),
+    ];
+    for ((name, _, expected), (app_name, app_took)) in scenarios.iter().zip(&app) {
+        assert_eq!(name, app_name);
+        assert_eq!(app_took.as_slice(), expected.map(String::from).as_slice(), "the app, {name}");
+        let export: Vec<String> = said[name].as_array().unwrap().iter().map(|v| v.as_str().unwrap().to_string()).collect();
+        // The export's second check, when nothing is left for it, says so with an error; the app's
+        // `debounced` has taken the one request there is at both checks above, so only the first is compared.
+        let n = if *name == "debounced" { 1 } else { 2 };
+        assert_eq!(export[..n], app_took[..n], "the export, {name}: {export:?}");
+    }
 }
 
 #[test]
@@ -227,6 +355,73 @@ fn checked_translates_to_to_be_checked() {
     // A clear box is not a partly ticked one: an aria widget saying mixed fails.
     assert!(got.contains("await expect(cur.locator('#news').first()).not.toHaveAttribute('aria-checked', 'mixed', { timeout: 300 });"), "{got}");
     assert!(!got.contains("#agree').first()).not.toHaveAttribute"), "{got}");
+}
+
+/// `expect_no_change` becomes one block: the control waited for and checked
+/// not to be under another element, the pointer put on it, a forced click,
+/// the same wait, and the same comparisons the app makes (the address, the
+/// open dialogs and any browser dialog, what the click sent, the messages the
+/// page shows, the region's text and states), so a case that passes here
+/// fails there only for a reason. The helpers go out once, and their bodies
+/// are the app's own (`no_change::STATE_JS`, `DIALOGS_JS`, `MESSAGES_JS`,
+/// `COVERED_JS`).
+#[test]
+fn expect_no_change_exports_a_forced_click_and_the_same_comparisons() {
+    use v2_lib::browser::no_change::{COVERED_JS, DIALOGS_JS, MESSAGES_JS, STATE_JS};
+    let got = one_step(json!([
+        { "kind": "expect_no_change", "selector": "#save" },
+        { "kind": "expect_no_change", "selector": "#card", "region": { "css": "#cards", "nth": 0 }, "within_ms": 2000 }
+    ]))
+    .run()
+    .unwrap();
+    let got = lf(&got);
+    let block = |name: &str, target: &str, region: &str, wait: u32| {
+        format!(
+            "    {{\n      const target = {target};\n      const region = {region};\n      await expect(target).toBeVisible({{ timeout: 10000 }});\n      const covered = await target.evaluate(coveredBy);\n      if (covered) {{ throw new Error('{name} is covered by ' + covered); }}\n      await target.hover({{ force: true }});\n      const before = {{ url: cur.url(), dialogs: await cur.evaluate(openDialogs), messages: await cur.evaluate(shownMessages), state: await region.evaluate(noChangeState) }};\n      let browserDialog = false;\n      const onDialog = (d: {{ dismiss(): Promise<void> }}) => {{ browserDialog = true; d.dismiss().catch(() => {{}}); }};\n      const writes: string[] = [];\n      const onRequest = (r: Awaited<ReturnType<typeof cur.waitForRequest>>) => {{ if (/^(POST|PUT|PATCH|DELETE)$/.test(r.method())) {{ writes.push(`${{r.method()}} ${{new URL(r.url()).pathname}}`); }} }};\n      cur.on('dialog', onDialog);\n      cur.on('request', onRequest);\n      await target.click({{ force: true }});\n      await cur.waitForTimeout({wait});\n      cur.off('dialog', onDialog);\n      cur.off('request', onRequest);\n      expect(writes, 'what the click sent').toEqual([]);\n      expect(cur.url(), 'the address').toBe(before.url);\n      expect(browserDialog, 'a browser dialog').toBe(false);\n      expect(await cur.evaluate(openDialogs), 'open dialogs').toBe(before.dialogs);\n      expect(newTexts(before.messages, await cur.evaluate(shownMessages)), 'new messages').toEqual([]);\n      expect(await region.evaluate(noChangeState), 'the region').toEqual(before.state);\n    }}\n"
+        )
+    };
+    // A plain-string selector is never narrowed to its first match: several is a failure, as in the app.
+    assert!(got.contains(&block("#save", "cur.locator('#save')", "cur.locator('#save')", 1000)), "{got}");
+    assert!(got.contains(&block("#card", "cur.locator('#card')", "cur.locator('#cards').filter({ visible: true }).nth(0)", 2000)), "{got}");
+    // Once, before the first use, with the app's own bodies word for word.
+    assert_eq!(got.matches("const noChangeState = (e: Element) =>").count(), 1, "{got}");
+    assert_eq!(got.matches("const openDialogs = () =>").count(), 1, "{got}");
+    assert_eq!(got.matches("const shownMessages = () =>").count(), 1, "{got}");
+    assert_eq!(got.matches("const coveredBy = (e: Element) =>").count(), 1, "{got}");
+    assert_eq!(got.matches("const newTexts = ").count(), 1, "{got}");
+    assert!(got.find("const noChangeState").unwrap() < got.find("const before").unwrap(), "{got}");
+    assert!(got.find("const coveredBy").unwrap() < got.find("const before").unwrap(), "{got}");
+    // Every line between the function's first and last (those are wrapped).
+    for body in [STATE_JS, DIALOGS_JS, MESSAGES_JS, COVERED_JS] {
+        let lines: Vec<&str> = body.lines().collect();
+        for line in &lines[1..lines.len() - 1] {
+            assert!(got.contains(&format!("    {line}\n")), "the helper lost {line:?}: {got}");
+        }
+    }
+    assert!(got.contains("    }).call(e as HTMLElement);\n") && got.contains("    })();\n"), "{got}");
+    assert!(got.contains("function (this: HTMLElement) {"), "{got}");
+    // A spec with no such action carries neither helper.
+    let plain = lf(&one_step(json!([{ "kind": "click", "selector": "#a" }])).run().unwrap());
+    assert!(!plain.contains("noChangeState") && !plain.contains("openDialogs"), "{plain}");
+}
+
+/// The check that the control is not under another element is the app's
+/// (`COVERED_JS`), run before the pointer goes on it and before the page is
+/// read: a covered control fails with the app's own words and is never clicked.
+#[test]
+fn expect_no_change_checks_the_control_is_ready_and_not_covered_before_it_clicks() {
+    let got = lf(&one_step(json!([{ "kind": "expect_no_change", "selector": "#save" }])).run().unwrap());
+    let at = |needle: &str| got.find(needle).unwrap_or_else(|| panic!("{needle} missing: {got}"));
+    assert!(at("toBeVisible") < at("evaluate(coveredBy)"), "{got}");
+    assert!(at("evaluate(coveredBy)") < at("target.hover({ force: true })"), "{got}");
+    assert!(at("target.hover({ force: true })") < at("const before ="), "{got}");
+    assert!(at("const before =") < at("target.click({ force: true })"), "{got}");
+    assert!(got.contains("throw new Error('#save is covered by ' + covered)"), "{got}");
+    // The wording is the app's: `<target> is covered by <what is there>`.
+    assert!(v2_lib::browser::input::COVERED_BY.starts_with("is covered by"));
+    // A selector with a form of its own (an object) keeps the first-match rule it always had.
+    let object = lf(&one_step(json!([{ "kind": "expect_no_change", "selector": { "css": "#save" } }])).run().unwrap());
+    assert!(object.contains("const target = cur.locator('#save').filter({ visible: true }).first();") || object.contains("const target = cur.locator('#save').first();"), "{object}");
 }
 
 #[test]
@@ -331,7 +526,7 @@ fn the_header_comes_first_and_a_missing_text_leaves_the_number_alone() {
     assert!(got.starts_with(
         "// spec: suites/sl/admin/m/f/test-cases/f.md\n// seed: suites/_generated/seed.spec.ts\n\nimport { test, expect } from '@playwright/test';\n\ntest.describe('F', () => {\n  test('A case', async ({ page }) => {\n    let cur = page;\n    await page.goto('/');\n"
     ), "{got}");
-    assert!(got.contains("    // 7. first second\n    // Not checked: line one line two\n"), "{got}");
+    assert!(got.contains("    // 7. first second\n    // TODO unchecked: the step's expected result - line one line two\n"), "{got}");
     assert!(got.contains("\n    // 8.\n"), "{got}");
     assert!(got.ends_with("  });\n});\n"));
     assert!(!got.contains("fixme") && !got.contains("skip"));
@@ -439,7 +634,7 @@ fn a_blank_area_name_replays_the_own_area_and_response_text_is_trimmed() {
     .run()
     .unwrap();
     assert!(got.contains("await cur.locator('a.area')"), "{got}");
-    assert!(got.contains("includes('save') && r.request().method() === 'POST'"), "{got}");
+    assert!(got.contains("includes('save') && r.method() === 'POST'"), "{got}");
 }
 
 #[test]
@@ -680,12 +875,16 @@ fn an_armed_wait_never_rejects_unhandled_when_its_guard_is_skipped() {
     // Handled at once, beside the arming, before the guard...
     let dl = got.find("const dl1_0 = ").unwrap();
     let dl_settled = got.find("dl1_0.catch(() => {});").unwrap();
-    let resp_settled = got.find("resp1_0.catch(() => {});").unwrap();
     let guard = got.find("if (await cur.locator('#export')").unwrap();
-    assert!(dl < dl_settled && dl_settled < guard && resp_settled < guard, "{got}");
+    assert!(dl < dl_settled && dl_settled < guard, "{got}");
     // ...while the check inside still awaits the wait itself, which rejects.
     assert!(got.contains("      const d1_0 = await dl1_0;\n"), "{got}");
-    assert!(got.contains("      const r1_0 = await resp1_0;\n"), "{got}");
+    // A response check arms no promise at all: it takes from the requests logged since the step began, so a
+    // guard that is skipped leaves nothing behind to reject.
+    assert!(!got.contains("resp1_0"), "{got}");
+    let mark = got.find("const sentFrom1 = sent.length;").unwrap();
+    assert!(mark < guard, "{got}");
+    assert!(got.contains("      const r1_0 = await nextResponse(sentFrom1, taken1, (r: Req) => r.url().toLowerCase().includes('/api/x'), 10000);\n"), "{got}");
 }
 
 #[test]
@@ -705,15 +904,17 @@ fn an_expectation_with_no_timeout_waits_as_long_as_auto_run_does() {
     .run()
     .unwrap();
     let default = format!("{{ timeout: {ms} }}");
-    // Seven expect lines, the text polls and the response wait: all the app's default.
-    assert_eq!(got.matches(&default).count(), 8, "{got}");
+    // Six expect lines and the text polls: all the app's default.
+    assert_eq!(got.matches(&default).count(), 7, "{got}");
+    // And the response check, which takes its wait as a number of milliseconds.
+    assert!(got.contains(&format!("includes('/api'), {ms});")), "{got}");
     assert!(got.contains("toBeVisible({ timeout: 1234 })"), "{got}");
     // Nothing falls back to Playwright's own 5 s.
-    for l in got.lines().filter(|l| l.contains("await expect(") || l.contains("expect.poll(") || l.contains("waitForResponse(")) {
+    for l in got.lines().filter(|l| l.contains("await expect(") || l.contains("expect.poll(") || l.contains("= await nextResponse(")) {
         if l.contains("toHaveURL(") {
             continue;
         }
-        assert!(l.contains("timeout: "), "no timeout on: {l}");
+        assert!(l.contains("timeout: ") || l.contains(&format!(", {ms});")), "no timeout on: {l}");
     }
 }
 
@@ -1251,4 +1452,46 @@ fn page_until_exports_the_same_walk() {
     .run()
     .unwrap();
     assert!(one.contains("const until = [cur.locator('.card').filter({ visible: true }).getByText('Unpublished').filter({ visible: true })];"), "{one}");
+}
+
+#[test]
+fn each_unchecked_expectation_is_a_todo_line() {
+    let mut fx = Fx::new(script(json!([
+        { "step_number": 1, "actions": [], "unchecked": [
+            { "item": "no lock icon", "why": "no check reads an icon" },
+            { "item": "no access-denied message", "why": "no check reads words the app never shows (backlog 37)", "stand_in": "expect_hidden" }
+        ] },
+        { "step_number": 2, "actions": [] }
+    ])));
+    fx.texts.insert(1, "first".into());
+    let got = fx.run().unwrap();
+    assert!(
+        got.contains(
+            "    // 1. first\n    // TODO unchecked: no lock icon - no check reads an icon\n    // TODO unchecked: no access-denied message - no check reads words the app never shows (backlog 37) (stand-in: expect_hidden)\n"
+        ),
+        "{got}"
+    );
+    assert!(!got.contains("Not checked"), "{got}");
+}
+
+#[test]
+fn the_todo_lines_are_the_cards_expectations() {
+    use v2_lib::autorun::unchecked::{expectations, todo_line};
+    #[derive(serde::Deserialize)]
+    struct Entry {
+        name: String,
+        script: v2_lib::autorun::CaseScript,
+    }
+    let entries: Vec<Entry> = serde_json::from_str(include_str!("../fixtures/unchecked_expectations.json")).unwrap();
+    for e in entries {
+        let want: Vec<String> = expectations(&e.script).iter().map(todo_line).collect();
+        let spec = Fx::new(e.script.clone()).run().unwrap();
+        let got: Vec<String> = spec
+            .lines()
+            .map(str::trim)
+            .filter(|l| l.starts_with("// TODO unchecked:"))
+            .map(str::to_string)
+            .collect();
+        assert_eq!(got, want, "{}", e.name);
+    }
 }

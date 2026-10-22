@@ -41,6 +41,7 @@ fn the_guide_names_every_action_the_executor_can_run() {
         Action::ExpectEnabled { selector: "s".into(), timeout_ms: None },
         Action::ExpectDisabled { selector: "s".into(), timeout_ms: None },
         Action::ExpectChecked { selector: "s".into(), checked: true, timeout_ms: None },
+        Action::ExpectNoChange { selector: "s".into(), region: None, within_ms: None },
         Action::SignIn { account: "a".into() },
         Action::Upload { selector: "s".into(), file: "f.pdf".into() },
         Action::ExpectResponse { method: None, url_contains: "/x".into(), status: 200, json: None, timeout_ms: None, stray: Default::default() },
@@ -144,6 +145,16 @@ fn the_guide_teaches_the_api_checks_and_their_limits() {
     // status-only check: the guide has to say so and advise `json`.
     assert!(flat.contains("no redirect"), "the guide never says a 200 sign-in page without a redirect passes");
     assert!(flat.contains("give `json` whenever the answer must be data"), "the guide never advises json for data");
+    // Every check is armed as the step starts, takes the next request in order, and says which.
+    assert!(
+        flat.contains("every `expect_response` of a step is armed when the step starts, so a request an earlier action of the step made is caught."),
+        "the guide never says the checks are armed at the step's start"
+    );
+    assert!(
+        flat.contains("that no earlier `expect_response` of the step took, passing over one the page cancelled when a later one matches, and its answer says which: `the step's matching request 2 of 3, sent after action 3 (press_key) began`."),
+        "the guide never says each check takes the next request in order"
+    );
+    assert!(!flat.contains("the most recent one that finished is checked"), "the old rule is still taught");
     // A tried expect_response is a step of its own.
     assert!(flat.contains("sees only the requests the page makes while it waits"), "the guide never explains a tried check");
     // Every example line in the section is a real action, so a copied one
@@ -2197,8 +2208,17 @@ fn the_guide_says_what_the_value_check_compares() {
     for said in [
         "Every check's literal value is compared with the case's steps, expected results and preconditions",
         "`expect_count` and `expect_row_count`",
-        "A pattern (`matches`), an attribute, a style, an address and a response are not compared.",
-        "Exempt: 0 and 1, text under 3 characters",
+        "A pattern (`matches`), an attribute's or a style's value, `true` and `false`",
+        "are compared too, exactly as text is: one the case does not hold and no `because` covers is refused",
+        "`expect_download` holds (`contains_text`, `headers`, `cells`, a PDF's phrases and page counts)",
+        "an optional letter or group counting in either form (`participants?` is held by \"participant\" or \"participants\")",
+        "True: checked, ticked, selected, enabled, pressed, expanded, shown, visible, active, or \"is on\", \"turned on\", \"switched on\".",
+        "False: unchecked, unticked, disabled, collapsed, hidden, inactive, or \"is off\", \"turned off\", \"switched off\".",
+        "\"not\", \"isn't\" or \"no longer\" just before a state word flips it, so \"is not selected\" says false only.",
+        "Zero: 0, zero, none, nothing, or \"no\" and a noun. One: 1, one, \"a single\". Words such as open, on, current, no and only say nothing alone.",
+        "A repair keeps every one of these values the case gives, and a value it changes is held like a new one.",
+        "An address and a response are not compared, nor are a downloaded file's name and sheet, an `expect_sorted` column or a tab's address",
+        "Exempt: `at_least` 0 or 1 and `min` 1, text under 3 characters that is not a number",
         "anything holding a `{{placeholder}}`",
         "a value the script types or uploads",
         "A range the case gives",
@@ -2466,4 +2486,39 @@ fn the_guide_says_the_password_rule_in_its_first_propose_accounts_sentence() {
         "{flat}"
     );
     assert!(flat.contains("never the stored value: one that looks like a password or hash is refused"), "{flat}");
+}
+
+/// A step whose checks leave out part of its expected result lists each part
+/// in `unchecked` as { item, why }; the guide says how, beside the rule that a
+/// step is either unchecked or checked.
+#[test]
+fn the_guide_says_how_a_checked_step_lists_what_its_checks_leave_out() {
+    let g = autorun_guide();
+    let flat = |text: &str| text.split_whitespace().collect::<Vec<_>>().join(" ");
+    let g = flat(&g);
+    for said in [
+        "A step whose checks leave out part of its expected result lists each part in `unchecked` instead: `\"unchecked\": [{ \"item\": \"no lock icon on the fields\", \"why\": \"no check reads an icon the app never shows (backlog 37)\" }]`. Say in `why` what is missing, naming the backlog item of a tool that does not exist yet.",
+        "A check that only stands in for the item stays in the step, and the item names its kind: `\"stand_in\": \"expect_hidden\"`.",
+        "Each item shows on the case card and in the run report (\"1 expectation unchecked\" on a pass), and Export to Playwright writes each as a `// TODO unchecked` line.",
+        "A step is either `unchecked` (no checks at all, and the reason) or checked, never both. A checked step lists what its checks leave out in an `unchecked` list of { item, why }.",
+        "A step whose `unchecked` is one sentence and that also checks something is refused.",
+    ] {
+        assert!(g.contains(said), "the autorun guide never says {said:?}");
+    }
+}
+
+/// A case that says clicking a disabled control does nothing is written with
+/// `expect_no_change`, which the guide teaches in its vocabulary and beside
+/// the rule for a disabled control: a `click` on one is refused.
+#[test]
+fn the_guide_teaches_expect_no_change_for_a_click_on_a_disabled_control() {
+    let g = autorun_guide();
+    let flat = g.split_whitespace().collect::<Vec<_>>().join(" ");
+    for said in [
+        "- `{ \"kind\": \"expect_no_change\", \"selector\": ..., \"region\": ..., \"within_ms\": 1000 }` - click the element anyway, even disabled, where a person's click would land, then check for `within_ms` (default 1000, 200 to 10000) that nothing happened: the address, the open dialogs, any browser dialog, the text and states of `region` (the clicked element when left out) are as they were, the click sent no POST, PUT, PATCH or DELETE, and no new alert, status or toast message appeared anywhere on the page. For a case that says clicking a control does nothing; never for a click you could make with `click`",
+        "When the case says clicking a disabled control does nothing, check `expect_disabled` and then `expect_no_change` on it: a `click` on a disabled control is refused.",
+    ] {
+        assert!(flat.contains(said), "the autorun guide never says {said:?}");
+    }
+    assert!(!flat.contains('\u{2013}') && !flat.contains('\u{2014}'), "no dash in text an assistant reads");
 }

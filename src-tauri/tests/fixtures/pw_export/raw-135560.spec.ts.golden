@@ -34,7 +34,7 @@ test.describe('Definition Wizard', () => {
     await cur.locator('a[href*=\'DefinitionWizard\']').filter({ visible: true }).first().click();
 
     // 1. Open "Performance Management", go to "Setup & Configuration" and select "Definition Wizard".
-    // Not checked: The run's recorded Definition Wizard area does this navigation before step 1, so the script starts past it.
+    // TODO unchecked: the step's expected result - The run's recorded Definition Wizard area does this navigation before step 1, so the script starts past it.
 
     // 2. If the landing page shows, make sure the "Goals / KPIs" and "Competencies" cards are both selected and click "Continue to Configuration".
     await cur.locator('#btnContinue-button').first().waitFor({ state: 'attached', timeout: 20000 });
@@ -61,7 +61,7 @@ test.describe('Definition Wizard', () => {
     await expect.poll(async () => asCase(await cur.locator('.phr-dw-prof-tpl-item[data-template-id=\'1\'] [data-role=\'template-apply-button\'] button').filter({ visible: true }).first().evaluate(readText), await cur.locator('.phr-dw-prof-tpl-item[data-template-id=\'1\'] [data-role=\'template-apply-button\'] button').filter({ visible: true }).first().evaluate(readWritten), 'Active', true), { timeout: 10000 }).toBe('Active');
 
     // 5. Click "Add Level". Copy the two lines Senior and Expert from a text editor and paste them into the "Level name" field of the new row.
-    // Not checked: A clipboard paste cannot be driven - the script commits the two-line text with fill instead - and the case does not say what the one-line text reads, so whether it shows on one line is left for a person.
+    // TODO unchecked: the step's expected result - A clipboard paste cannot be driven - the script commits the two-line text with fill instead - and the case does not say what the one-line text reads, so whether it shows on one line is left for a person.
     await cur.locator('#btnProficiencyAddLevel-button').filter({ visible: true }).first().click();
     await cur.locator('#phr-proficiency-custom-panel input.phr-textbox-input[placeholder=\'Level name\']').filter({ visible: true }).first().fill('Senior\nExpert');
 

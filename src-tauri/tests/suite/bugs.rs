@@ -51,3 +51,113 @@ fn a_fenced_query_in_a_step_keeps_the_next_step_out_of_the_code_block() {
     assert!(items[1].contains("Open the report") && items[1].contains("Expected: It shows the row"), "{html}");
     assert!(!items[1].contains("<pre>"), "{html}");
 }
+
+// ---- Screenshots on a bug ------------------------------------------------
+//
+// A pasted screenshot can reach the Rust side empty or cut off (a clipboard
+// that offered the picture before it was ready). Azure DevOps takes any
+// file, so the bug would carry a broken image and the toast would still say
+// "Filed bug". The upload refuses such a file and counts it as failed.
+
+use base64::Engine;
+use v2_lib::ado::AdoClient;
+use v2_lib::commands::bugs::{attach_screenshots, bug_image_ext};
+use wiremock::matchers::{method, path};
+use wiremock::{Mock, MockServer, ResponseTemplate};
+
+fn b64(bytes: &[u8]) -> String {
+    base64::engine::general_purpose::STANDARD.encode(bytes)
+}
+
+const PNG_SIG: [u8; 8] = [0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a];
+const IEND: [u8; 12] = [0, 0, 0, 0, b'I', b'E', b'N', b'D', 0xae, 0x42, 0x60, 0x82];
+
+fn whole_png() -> Vec<u8> {
+    let mut v = PNG_SIG.to_vec();
+    v.extend_from_slice(&[0, 0, 0, 13, b'I', b'H', b'D', b'R', 0, 0, 0, 1, 0, 0, 0, 1, 8, 6, 0, 0, 0, 0x1f, 0x15, 0xc4, 0x89]);
+    v.extend_from_slice(&IEND);
+    v
+}
+
+fn whole_jpeg() -> Vec<u8> {
+    vec![0xff, 0xd8, 0xff, 0xe0, 0, 16, b'J', b'F', b'I', b'F', 0, 1, 1, 0, 0, 1, 0, 1, 0, 0, 0xff, 0xd9]
+}
+
+#[test]
+fn a_whole_picture_of_each_kind_is_accepted_with_its_own_extension() {
+    assert_eq!(bug_image_ext(&whole_png()), Ok("png"));
+    assert_eq!(bug_image_ext(&whole_jpeg()), Ok("jpg"));
+    let mut gif = b"GIF89a".to_vec();
+    gif.extend_from_slice(&[1, 0, 1, 0, 0, 0, 0, 0x3b]);
+    assert_eq!(bug_image_ext(&gif), Ok("gif"));
+    let mut bmp = vec![0u8; 30];
+    bmp[0] = b'B';
+    bmp[1] = b'M';
+    bmp[2] = 30;
+    assert_eq!(bug_image_ext(&bmp), Ok("bmp"));
+    let mut webp = b"RIFF".to_vec();
+    webp.extend_from_slice(&[8, 0, 0, 0]);
+    webp.extend_from_slice(b"WEBPVP8 ");
+    assert_eq!(bug_image_ext(&webp), Ok("webp"));
+}
+
+#[test]
+fn an_empty_or_cut_off_picture_is_refused() {
+    assert_eq!(bug_image_ext(&[]), Err("the image is empty"));
+    let png = whole_png();
+    assert!(bug_image_ext(&png[..png.len() - 20]).is_err(), "a PNG without its end");
+    assert!(bug_image_ext(&png[..5]).is_err());
+    let jpeg = whole_jpeg();
+    assert!(bug_image_ext(&jpeg[..jpeg.len() - 4]).is_err(), "a JPEG without its end");
+    let mut bmp = vec![0u8; 30];
+    bmp[0] = b'B';
+    bmp[1] = b'M';
+    bmp[2] = 200; // declares 200 bytes, holds 30
+    assert!(bug_image_ext(&bmp).is_err(), "a BMP shorter than it says");
+    let mut webp = b"RIFF".to_vec();
+    webp.extend_from_slice(&[0xff, 0, 0, 0]);
+    webp.extend_from_slice(b"WEBPVP8 ");
+    assert!(bug_image_ext(&webp).is_err(), "a WebP shorter than it says");
+    assert!(bug_image_ext(b"just some text, not a picture at all").is_err());
+}
+
+#[tokio::test]
+async fn an_empty_and_a_cut_off_screenshot_are_never_uploaded_and_count_as_failed() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/o/p/_apis/wit/attachments"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({ "url": "https://x/att/1" })))
+        .mount(&server)
+        .await;
+    Mock::given(method("PATCH"))
+        .and(path("/o/p/_apis/wit/workitems/7"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({ "id": 7 })))
+        .mount(&server)
+        .await;
+    let client = AdoClient::with_base_url("tok".into(), server.uri());
+
+    let png = whole_png();
+    let shots = vec![
+        b64(&png),            // whole: goes up
+        String::new(),        // a paste that had not arrived: 0 bytes
+        b64(&png[..png.len() - 20]), // cut off
+        b64(&whole_jpeg()),   // whole, and keeps its own extension
+    ];
+    let failed = attach_screenshots(&client, "o", "p", 7, &shots).await;
+    assert_eq!(failed, 2, "the empty one and the cut-off one are failures");
+
+    let reqs = server.received_requests().await.unwrap();
+    let uploads: Vec<String> = reqs
+        .iter()
+        .filter(|r| r.method.as_str() == "POST")
+        .map(|r| r.url.query().unwrap_or_default().to_string())
+        .collect();
+    assert_eq!(uploads.len(), 2, "only the two whole pictures were uploaded: {uploads:?}");
+    assert!(uploads[0].contains("fileName=bug-7-1.png"), "{uploads:?}");
+    assert!(uploads[1].contains("fileName=bug-7-4.jpg"), "{uploads:?}");
+    assert_eq!(reqs.iter().filter(|r| r.method.as_str() == "PATCH").count(), 2);
+    assert!(
+        reqs.iter().all(|r| r.method.as_str() != "DELETE"),
+        "Azure DevOps stays GET/POST/PATCH"
+    );
+}

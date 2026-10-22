@@ -1014,7 +1014,7 @@ pub async fn run_step_in_run<D: Driver>(
     run: &mut InRun<'_>,
 ) -> Result<Vec<ActionOutcome>, String> {
     run.components = Vec::new();
-    let (expanded, uses) = match components::expand_step(root, organization, project, &step.actions) {
+    let (expanded, uses, places) = match components::expand_step_placed(root, organization, project, &step.actions) {
         Ok(x) => x,
         Err((at, why)) => {
             run.began = None;
@@ -1031,7 +1031,7 @@ pub async fn run_step_in_run<D: Driver>(
     };
     if uses.is_empty() {
         let areas = run.areas;
-        return run_expanded(d, root, organization, project, step, timing, account, lease, route, area, areas, run).await;
+        return run_expanded(d, root, organization, project, step, None, timing, account, lease, route, area, areas, run).await;
     }
     let (actions, from): (Vec<Action>, Vec<Option<String>>) = expanded.into_iter().unzip();
     // An area a component's `return_to_area` names, which the caller did
@@ -1051,9 +1051,13 @@ pub async fn run_step_in_run<D: Driver>(
     let areas = merged.as_ref().or(run.areas);
     let expanded_step = StepScript { step_number: step.step_number, actions, unchecked: step.unchecked.clone(), cleanup: step.cleanup, because: Vec::new() };
     run.components = uses;
-    let mut out =
-        run_expanded(d, root, organization, project, &expanded_step, timing, account, lease, route, area, areas, run)
-            .await?;
+    // The actions as written, and where each expanded action came from: a sentence
+    // that counts the step's actions counts the script's, not the expansion's.
+    let written = Some((step.actions.as_slice(), places.as_slice()));
+    let mut out = run_expanded(
+        d, root, organization, project, &expanded_step, written, timing, account, lease, route, area, areas, run,
+    )
+    .await?;
     for (o, c) in out.iter_mut().zip(from) {
         o.component = c;
     }
@@ -1061,7 +1065,9 @@ pub async fn run_step_in_run<D: Driver>(
 }
 
 /// A step whose components are already expanded, run with `areas` for its
-/// `return_to_area` actions that name one.
+/// `return_to_area` actions that name one. `written`, when components were
+/// expanded: the step's actions as written, and for each expanded action the
+/// index of the written one it came from.
 #[allow(clippy::too_many_arguments)]
 async fn run_expanded<D: Driver>(
     d: &mut D,
@@ -1069,6 +1075,7 @@ async fn run_expanded<D: Driver>(
     organization: &str,
     project: &str,
     step: &StepScript,
+    written: Option<(&[Action], &[usize])>,
     timing: &Timing,
     account: &mut Option<String>,
     lease: &mut Held,
@@ -1123,6 +1130,15 @@ async fn run_expanded<D: Driver>(
     let saves_fail = !run.saves_only_counted;
     let mut deferred: Vec<(usize, u32)> = Vec::new();
     let mark = d.net_mark();
+    // Every `expect_response` of the step shares one book, armed from this
+    // mark: what an earlier check took, and how many requests the step had
+    // made as each action began.
+    // The kinds are those of the actions as written (`written`), so "after action 3"
+    // names the script's third action.
+    let mut requests: Option<api_checks::StepRequests> = step.actions.iter().any(holds_expect_response).then(|| {
+        let shown = written.map_or(step.actions.as_slice(), |(actions, _)| actions);
+        api_checks::StepRequests::new(mark, shown.iter().map(super::patterns::action_kind).collect())
+    });
     let began = Instant::now();
     run.began = Some(began);
     run.tab = None;
@@ -1160,6 +1176,14 @@ async fn run_expanded<D: Driver>(
         None => &mut own_noted,
     };
     for (index, action) in step.actions.iter().enumerate() {
+        if let Some(book) = requests.as_mut() {
+            // One note per written action: a component's actions after the first
+            // belong to the same one.
+            let begins = written.is_none_or(|(_, places)| index == 0 || places.get(index) != places.get(index - 1));
+            if begins {
+                book.action_began(d.net_since(mark).len());
+            }
+        }
         if let Some(why) = blocked {
             out.push(ActionOutcome::failed(why));
             continue;
@@ -1299,7 +1323,10 @@ async fn run_expanded<D: Driver>(
                 went
             }
             // Only the runner knows where the step began.
-            Action::ExpectResponse { .. } => api_checks::expect_response(d, action, mark, timing).await,
+            Action::ExpectResponse { .. } => {
+                let book = requests.get_or_insert_with(|| api_checks::StepRequests::new(mark, Vec::new()));
+                api_checks::expect_response(d, action, book, timing).await
+            }
             Action::ApiRequest { path, .. } => {
                 // Its fetch is the run's own request: a 5xx it gets back is
                 // never the page's error.
@@ -1731,6 +1758,15 @@ async fn page_loaded<D: Driver>(
         Ok(notes) => Ok(notes),
         Err(NotReady::StillLoading(why)) => Err((ActionOutcome::failed(why), None)),
         Err(NotReady::Stopped) => Err((ActionOutcome::failed(AFTER_STOP), Some(AFTER_STOP))),
+    }
+}
+
+/// Is this an `expect_response`, or does it hold one in its `then`?
+fn holds_expect_response(a: &Action) -> bool {
+    match a {
+        Action::ExpectResponse { .. } => true,
+        Action::WhenVisible { then, .. } | Action::RepeatWhileVisible { then, .. } => then.iter().any(holds_expect_response),
+        _ => false,
     }
 }
 

@@ -33,6 +33,7 @@ pub const ACTION_KINDS: &[&str] = &[
     "expect_enabled",
     "expect_disabled",
     "expect_checked",
+    "expect_no_change",
     "sign_in",
     "upload",
     "expect_response",
@@ -147,7 +148,7 @@ Not covered here: call `get_guide` (topic `autorun`) with a `section`, or `full`
 - Try a component with `use_component` and `draft` before
   `save_autorun_component`, then save it unchanged from the draft that worked.
 - A step is either `unchecked` (no checks at all, and the reason) or
-  checked, never both. Check a ticked box with `expect_checked`, and any
+  checked, never both. A checked step lists what its checks leave out in an `unchecked` list of { item, why }. Check a ticked box with `expect_checked`, and any
   other state with `expect_attribute`, never by adding a state to its selector.
 - A `{{fixture.*}}` or `{{setup.*}}` placeholder may stand in a name or a
   text, in a quoted attribute value, or next to fixed text in an id or
@@ -270,6 +271,7 @@ no script step for it, and do not renumber the steps that come after it.
 - `{ "kind": "expect_enabled", "selector": ... }` - the element can be used
 - `{ "kind": "expect_checked", "selector": ..., "checked": true }` - the checkbox or radio is ticked (`"checked": false`: it is not), read from its live state, which follows clicks; any other element answers by its `aria-checked`, and a partly ticked box (`mixed`) is neither. `checked` is true when left out
 - `{ "kind": "expect_disabled", "selector": ... }` - the element is disabled: its `disabled` property is set, it or an element around it has `aria-disabled="true"`, or it is a form control (button, input, select, textarea) a disabled fieldset holds outside that fieldset's first legend; a link in a disabled fieldset is not disabled. A click waits out the same rule
+- `{ "kind": "expect_no_change", "selector": ..., "region": ..., "within_ms": 1000 }` - click the element anyway, even disabled, where a person's click would land, then check for `within_ms` (default 1000, 200 to 10000) that nothing happened: the address, the open dialogs, any browser dialog, the text and states of `region` (the clicked element when left out) are as they were, the click sent no POST, PUT, PATCH or DELETE, and no new alert, status or toast message appeared anywhere on the page. For a case that says clicking a control does nothing; never for a click you could make with `click`
 - `{ "kind": "sign_in", "account": "hr.supervisor" }` - change who is signed in, in the middle of a case
 - `{ "kind": "check_text", "value": "..." }`  - is this text anywhere on the page (same-origin frames included), right now? A hidden frame is not searched, and a frame holding a page from another site is not searched.
 - `{ "kind": "check_url", "contains": "..." }` - is this in the address? Looked for again until it is, like every expect_ check (timeout_ms optional). With `"equals": "/hr/cycles/index"` in place of `contains`, the address is exactly that: a value starting with / is compared with the path, query and fragment, anything else with the whole address. With `"same_as": "before"`, the address is the one `remember_url` noted as before.
@@ -335,6 +337,9 @@ Backspace.
 A step may carry `"unchecked": "<why>"` when its expected result
 genuinely cannot be checked (a PDF preview, an email). Use it rarely, say
 why in one sentence, and never to skip a check you could write.
+A step whose checks leave out part of its expected result lists each part in `unchecked` instead: `"unchecked": [{ "item": "no lock icon on the fields", "why": "no check reads an icon the app never shows (backlog 37)" }]`. Say in `why` what is missing, naming the backlog item of a tool that does not exist yet.
+A check that only stands in for the item stays in the step, and the item names its kind: `"stand_in": "expect_hidden"`.
+Each item shows on the case card and in the run report ("1 expectation unchecked" on a pass), and Export to Playwright writes each as a `// TODO unchecked` line.
 
 A script may end with one clean-up step that removes what the case made:
 `{ "step_number": <the case's last step + 1>, "cleanup": true, "unchecked": "<what it removes>", "actions": [ ... ] }`.
@@ -634,9 +639,13 @@ it (a click, usually) and then check it, in the same step:
   is refused.
 - `method` is optional (any method matches when it is left out). `status`
   defaults to 200. `timeout_ms` defaults to 10 seconds.
-- When several requests match, the most recent one that finished is
-  checked. A request that never finishes within the time fails, and the
-  answer says it had not finished.
+- Every `expect_response` of a step is armed when the step starts, so a
+  request an earlier action of the step made is caught. Each takes the
+  step's oldest matching request that no earlier `expect_response` of the
+  step took, passing over one the page cancelled when a later one matches,
+  and its answer says which: `the step's matching request 2 of 3, sent
+  after action 3 (press_key) began`. A request that never finishes within
+  the time fails, and the answer says it had not finished.
 - A request the server redirected is judged on the redirect it answered:
   give that status (302, say) to check a form that saves and then moves
   on. Any other status fails, naming the path it was sent to.
@@ -2140,7 +2149,7 @@ Before every save:
   its list, and is seen as a whole. A locator changed
   after its last probe is a guess.
 - A step is either `unchecked` (no checks at all, and the reason) or
-  checked, never both. A step marked `unchecked` that also checks
+  checked, never both. A checked step lists what its checks leave out in an `unchecked` list of { item, why }. A step whose `unchecked` is one sentence and that also checks
   something is refused.
 - Check a ticked box with `expect_checked` on the element you saw (a
   checkbox, radio or switch): it reads the box's live state, which
@@ -2150,7 +2159,10 @@ Before every save:
   to its selector.
   Whether a control can be used is `expect_enabled` or `expect_disabled`,
   which read the `disabled` property, `aria-disabled` on it or around it,
-  and a disabled fieldset around a form control, together. An attribute that must not be there is
+  and a disabled fieldset around a form control, together. When the case
+  says clicking a disabled control does nothing, check `expect_disabled`
+  and then `expect_no_change` on it: a `click` on a disabled control is
+  refused. An attribute that must not be there is
   `expect_attribute` with `"absent": true` instead of `equals`.
 - A `{{fixture.*}}` or `{{setup.*}}` placeholder may stand in a name or a
   text (`{ "text": "Draft {{setup.cycle_name}} Pending" }`), in a quoted
@@ -2171,10 +2183,24 @@ Before every save:
   `expect_each` (`min`), how many `texts` an `expect_order` lists, and the text of `check_text`,
   `expect_text` (`equals`), `expect_contains_text`, `expect_order`'s `texts`, `expect_each` (`equals`,
   `contains`), `expect_dialog` and each cell value of `expect_row` and `expect_no_row`. A pattern
-  (`matches`), an attribute, a style, an address and a response are not compared. Exempt: 0 and 1, text
-  under 3 characters, anything holding a `{{placeholder}}`, text starting with the environment's test
-  name prefix, a value the script types or uploads, and a precondition's value. A range the case gives
-  ("Level 1 to Level 4") counts each of its members.
+  (`matches`), an attribute's or a style's value, `true` and `false` (`expect_checked`, and an attribute
+  such as `aria-pressed`), a count of 0 or 1, a number written as text, the `name` or `text` an
+  `expect_visible` locator ends with, and what an `expect_download` holds (`contains_text`, `headers`,
+  `cells`, a PDF's phrases and page counts) are compared too, exactly as text is: one the case does not hold and
+  no `because` covers is refused, so give it a `because`. A pattern is from the case when every word of 3
+  or more letters or digits written in it is the case's, an optional letter or group counting in either
+  form (`participants?` is held by "participant" or "participants"). `true` and `false`, 0 and 1 are from the
+  case when the step's own words say so. True: checked, ticked, selected, enabled, pressed, expanded,
+  shown, visible, active, or "is on", "turned on", "switched on". False: unchecked, unticked, disabled,
+  collapsed, hidden, inactive, or "is off", "turned off", "switched off". "not", "isn't" or "no longer" just
+  before a state word flips it, so "is not selected" says false only. Zero: 0, zero, none, nothing, or "no"
+  and a noun. One: 1, one, "a single". Words such as open, on, current, no and only say nothing alone.
+  A repair keeps every one of these values the case gives, and a value it changes is held like a new one.
+  An address and a response are not compared, nor are a downloaded file's name and sheet, an
+  `expect_sorted` column or a tab's address, which say where to look. Exempt: `at_least` 0 or 1 and `min` 1, text
+  under 3 characters that is not a number, anything holding a `{{placeholder}}`, text starting with the
+  environment's test name prefix, a value the script types or uploads, and a precondition's value. A
+  range the case gives ("Level 1 to Level 4") counts each of its members.
   A value the case does not contain needs a `because` on its step saying where it comes from, one
   line of at most 200 characters, never what the app shows, with its `provenance`: `assumed` (the
   default: the case defines it indirectly,

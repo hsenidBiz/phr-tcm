@@ -1777,6 +1777,10 @@ async fn api_checks_read_the_requests_a_real_page_makes() {
     const PAGE: &str = r#"<!doctype html><html><body>
 <button id="save" onclick="fetch('/PerformanceCycle/Save?token=hunter2', { method: 'POST' }).then(r => r.text()).then(t => { document.getElementById('out').textContent = t; })">Save</button>
 <button id="expired" onclick="fetch('/PerformanceCycle/Expired?token=hunter2', { method: 'POST' })">Save as an ended session</button>
+<button id="pair" onclick="fetch('/api/cycles/42?include=first').then(r => r.text()).then(() => fetch('/api/cycles/42?include=second')).then(r => r.text())">Two questions</button>
+<button id="debounce" onclick="const c = new AbortController(); fetch('/api/cycles/42?include=stale', { signal: c.signal }).catch(() => {}); c.abort(); fetch('/api/cycles/42?include=fresh').then(r => r.text())">Search</button>
+<button id="slowfirst" onclick="fetch('/api/cycles/42?include=slow').then(r => r.text()); fetch('/api/cycles/42?include=quick').then(r => r.text())">Slow first</button>
+<button id="resend" onclick="const c = new AbortController(); fetch('/api/cycles/42?include=stale', { signal: c.signal }).catch(() => {}); c.abort(); setTimeout(() => fetch('/api/cycles/42?include=resent').then(r => r.text()), 300)">Search later</button>
 <p id="out"></p>
 </body></html>"#;
     let listener = TcpListener::bind("127.0.0.1:0").expect("no free port");
@@ -1795,6 +1799,19 @@ async fn api_checks_read_the_requests_a_real_page_makes() {
             let head = String::from_utf8_lossy(&buf[..n]).into_owned();
             let line = head.lines().next().unwrap_or("").to_string();
             log.lock().unwrap().push(line.clone());
+            // A slow answer: it comes on its own thread, 2.5 s later, and the others are not held up.
+            if line.starts_with("GET /api/cycles/42?include=slow") {
+                std::thread::spawn(move || {
+                    std::thread::sleep(Duration::from_millis(2500));
+                    let body = r#"{"name":"Q4 Cycle","include":"slow","extra":1}"#;
+                    let _ = write!(
+                        stream,
+                        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nCache-Control: no-store\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                        body.len()
+                    );
+                });
+                continue;
+            }
             // An ended session: the save is sent on to the sign-in page.
             if line.starts_with("POST /PerformanceCycle/Expired") {
                 let _ = write!(
@@ -1855,19 +1872,84 @@ Connection: close
     let echoed = page::eval_value(&mut live.cdp, "document.getElementById('out').textContent").await.unwrap();
     assert_eq!(echoed.as_str(), Some(r#"{"success":true,"id":7}"#), "the page never made the request");
 
-    // A wrong status and a wrong field both fail, naming the method and path.
+    assert!(
+        out[1].detail.ends_with(": the step's matching request 1 of 1, sent after action 1 (click) began"),
+        "the check did not say which request it took: {}",
+        out[1].detail
+    );
+
+    // A wrong status and a wrong field both fail, naming the method and path
+    // (each in a step of its own: a check takes a request no earlier check
+    // of its step took).
     let wrong = step(2, vec![
         click.clone(),
         json!({ "kind": "expect_response", "url_contains": "/PerformanceCycle/Save", "status": 500 }),
-        json!({ "kind": "expect_response", "url_contains": "/PerformanceCycle/Save", "json": { "success": false } }),
     ]);
     let out = run_step(&mut live.cdp, root.path(), "acme", "PMS", &wrong, &timing(), &mut account).await.unwrap();
     must(out[0].clone());
     refused(out[1].clone(), "answered 200, expected 500");
-    refused(out[2].clone(), "expected success = false, got true");
-    for o in &out[1..] {
+    let wrong_field = step(2, vec![
+        click.clone(),
+        json!({ "kind": "expect_response", "url_contains": "/PerformanceCycle/Save", "json": { "success": false } }),
+    ]);
+    let out_field = run_step(&mut live.cdp, root.path(), "acme", "PMS", &wrong_field, &timing(), &mut account).await.unwrap();
+    must(out_field[0].clone());
+    refused(out_field[1].clone(), "expected success = false, got true");
+    for o in [&out[1], &out_field[1]] {
         assert!(!o.detail.contains("hunter2") && !o.detail.contains("127.0.0.1"), "{}", o.detail);
     }
+
+    // One click that sends two requests: two checks on the same pattern take
+    // them in the order they were sent, and a third has nothing left.
+    let pair = step(2, vec![
+        json!({ "kind": "click", "selector": { "css": "#pair" } }),
+        json!({ "kind": "expect_response", "method": "GET", "url_contains": "/api/cycles/42", "json": { "include": "first" } }),
+        json!({ "kind": "expect_response", "method": "GET", "url_contains": "/api/cycles/42", "json": { "include": "second" } }),
+        json!({ "kind": "expect_response", "method": "GET", "url_contains": "/api/cycles/42", "timeout_ms": 600 }),
+    ]);
+    let out = run_step(&mut live.cdp, root.path(), "acme", "PMS", &pair, &timing(), &mut account).await.unwrap();
+    must(out[0].clone());
+    must(out[1].clone());
+    must(out[2].clone());
+    // The second request is sent once the first is answered: after the click returned, so it may be later.
+    assert!(out[1].detail.ends_with(": the step's matching request 1 of 2, sent after action 1 (click) began"), "{}", out[1].detail);
+    assert!((out[2].detail.contains(": the step's matching request 2 of 2, sent after action ") && out[2].detail.ends_with(" began")), "{}", out[2].detail);
+    refused(out[3].clone(), "an earlier expect_response of this step took each of the 2 that matched");
+
+    // A debounced search: the page calls the first request off and sends it
+    // again. The cancelled one is passed over, never reported as the answer.
+    let debounced = step(2, vec![
+        json!({ "kind": "click", "selector": { "css": "#debounce" } }),
+        json!({ "kind": "expect_response", "method": "GET", "url_contains": "/api/cycles/42", "json": { "include": "fresh" } }),
+    ]);
+    let out = run_step(&mut live.cdp, root.path(), "acme", "PMS", &debounced, &timing(), &mut account).await.unwrap();
+    must(out[0].clone());
+    must(out[1].clone());
+    assert!(out[1].detail.contains("matching request 2 of 2"), "the cancelled request was not recorded: {}", out[1].detail);
+
+    // The older request is slow (it answers 2.5 s later) and a newer one has answered: the newer one is
+    // judged at once, never waited behind the older.
+    let slow = step(2, vec![
+        json!({ "kind": "click", "selector": { "css": "#slowfirst" } }),
+        json!({ "kind": "expect_response", "method": "GET", "url_contains": "/api/cycles/42", "json": { "include": "quick" } }),
+    ]);
+    let began = std::time::Instant::now();
+    let out = run_step(&mut live.cdp, root.path(), "acme", "PMS", &slow, &timing(), &mut account).await.unwrap();
+    must(out[0].clone());
+    must(out[1].clone());
+    assert!(out[1].detail.contains("matching request 2 of 2"), "{}", out[1].detail);
+    assert!(began.elapsed() < Duration::from_millis(2400), "it waited for the slow one: {:?}", began.elapsed());
+
+    // A debounced search that cancels at once and sends again 300 ms later: judged on the resent one, never
+    // reported as cancelled in the gap.
+    let resend = step(2, vec![
+        json!({ "kind": "click", "selector": { "css": "#resend" } }),
+        json!({ "kind": "expect_response", "method": "GET", "url_contains": "/api/cycles/42", "json": { "include": "resent" } }),
+    ]);
+    let out = run_step(&mut live.cdp, root.path(), "acme", "PMS", &resend, &timing(), &mut account).await.unwrap();
+    must(out[0].clone());
+    must(out[1].clone());
+    assert!(out[1].detail.contains("matching request 2 of 2"), "{}", out[1].detail);
 
     // The earlier steps' requests are not this step's: nothing was sent here.
     let none = step(3, vec![json!({ "kind": "expect_response", "url_contains": "/PerformanceCycle/Save", "timeout_ms": 600 })]);
@@ -1883,11 +1965,18 @@ Connection: close
         json!({ "kind": "api_request", "path": "/api/cycles/42", "expect": { "status": 404 } }),
         json!({ "kind": "api_request", "path": "/api/missing" }),
     ]);
+    // A failed action stops its step, so each failing request is its own step.
     let out = run_step(&mut live.cdp, root.path(), "acme", "PMS", &ask, &timing(), &mut account).await.unwrap();
     must(out[0].clone());
     refused(out[1].clone(), "GET /api/cycles/42");
-    refused(out[2].clone(), "answered 200, expected 404");
-    refused(out[3].clone(), "answered 404, expected 200");
+    for (wanted, request) in [
+        ("answered 200, expected 404", &ask.actions[2]),
+        ("answered 404, expected 200", &ask.actions[3]),
+    ] {
+        let alone = step(4, vec![serde_json::to_value(request).unwrap()]);
+        let out = run_step(&mut live.cdp, root.path(), "acme", "PMS", &alone, &timing(), &mut account).await.unwrap();
+        refused(out[0].clone(), wanted);
+    }
     assert!(
         seen.lock().unwrap().iter().any(|l| l.starts_with("GET /api/cycles/42?include=rules ")),
         "the server never saw the encoded query: {:?}",
@@ -1900,14 +1989,22 @@ Connection: close
     let expired = step(5, vec![
         json!({ "kind": "click", "selector": { "css": "#expired" } }),
         json!({ "kind": "expect_response", "method": "POST", "url_contains": "/PerformanceCycle/Expired", "status": 302 }),
-        json!({ "kind": "expect_response", "method": "POST", "url_contains": "/PerformanceCycle/Expired", "timeout_ms": 8000 }),
     ]);
-    let began = std::time::Instant::now();
     let out = run_step(&mut live.cdp, root.path(), "acme", "PMS", &expired, &timing(), &mut account).await.unwrap();
     must(out[0].clone());
     must(out[1].clone());
-    assert_eq!(out[2].detail, "POST /PerformanceCycle/Expired was redirected to /Account/Login");
-    assert!(!out[2].ok);
+    let expired_again = step(6, vec![
+        json!({ "kind": "click", "selector": { "css": "#expired" } }),
+        json!({ "kind": "expect_response", "method": "POST", "url_contains": "/PerformanceCycle/Expired", "timeout_ms": 8000 }),
+    ]);
+    let began = std::time::Instant::now();
+    let out = run_step(&mut live.cdp, root.path(), "acme", "PMS", &expired_again, &timing(), &mut account).await.unwrap();
+    must(out[0].clone());
+    assert_eq!(
+        out[1].detail,
+        "POST /PerformanceCycle/Expired was redirected to /Account/Login: the step's matching request 1 of 1, sent after action 1 (click) began"
+    );
+    assert!(!out[1].ok);
     assert!(began.elapsed() < Duration::from_secs(8), "the redirect waited out the timeout");
     assert!(
         seen.lock().unwrap().iter().any(|l| l.starts_with("GET /Account/Login")),
@@ -3724,6 +3821,127 @@ async fn states_expect_checked_follows_clicks() {
     // A container is never read for the first box inside it.
     let region = json!({ "role": "region", "name": "Switches" });
     refused(run(&mut live, checked(region, true)).await, "matches a container, point at the checkbox");
+}
+
+/// The page with cards a person can click though they are not usable.
+fn no_change_fixture_url() -> String {
+    fixture_url().replace("autorun-live.html", "autorun-no-change.html")
+}
+
+/// `open()`, then on to the no-change fixture.
+async fn open_no_change() -> Live {
+    let mut live = open().await;
+    let out = run(&mut live, json!({ "kind": "navigate", "url": no_change_fixture_url() })).await;
+    assert!(out.ok, "the no-change fixture did not load: {}", out.detail);
+    must(run(&mut live, json!({ "kind": "expect_visible", "selector": { "css": "#dis-button" } })).await);
+    live
+}
+
+fn no_change(selector: &str, extra: serde_json::Value) -> serde_json::Value {
+    let mut action = json!({ "kind": "expect_no_change", "selector": { "css": selector }, "within_ms": 300 });
+    for (k, v) in extra.as_object().unwrap() {
+        action[k] = v.clone();
+    }
+    action
+}
+
+/// A disabled button is clicked anyway, and the page does nothing: the
+/// action passes. A plain `click` on it is refused, as it always was.
+#[tokio::test]
+#[ignore = "starts a real headless Edge"]
+async fn a_forced_click_on_a_disabled_card_with_nothing_expected_passes_when_nothing_changes() {
+    let mut live = open_no_change().await;
+    refused(run(&mut live, json!({ "kind": "click", "selector": { "css": "#dis-button" } })).await, "is disabled");
+    let out = run(&mut live, no_change("#dis-button", json!({}))).await;
+    assert!(out.ok, "{}", out.detail);
+    assert!(out.detail.starts_with("clicked #dis-button anyway and nothing happened in 0.3 s"), "{}", out.detail);
+}
+
+/// A card that says `aria-disabled` and opens a dialog when clicked: the
+/// forced click reaches it, and the dialog is what is said.
+#[tokio::test]
+#[ignore = "starts a real headless Edge"]
+async fn a_forced_click_on_a_disabled_card_fails_when_a_dialog_opens() {
+    use v2_lib::browser::no_change::NOTHING_EXPECTED;
+    let mut live = open_no_change().await;
+    let out = run(&mut live, no_change("#aria-card", json!({}))).await;
+    assert!(!out.ok, "{}", out.detail);
+    assert!(out.detail.starts_with(NOTHING_EXPECTED), "{}", out.detail);
+    assert!(out.detail.contains("a dialog opened"), "{}", out.detail);
+}
+
+/// A card with `pointer-events: none`: a person's click on it lands on the
+/// container around it, so the forced click goes ahead and the container's
+/// own handler changes the container's text.
+#[tokio::test]
+#[ignore = "starts a real headless Edge"]
+async fn a_forced_click_through_pointer_events_none_reaches_its_container() {
+    let mut live = open_no_change().await;
+    let out = run(&mut live, no_change("#through-card", json!({ "region": { "css": "#holder" } }))).await;
+    assert!(!out.ok, "{}", out.detail);
+    assert!(out.detail.contains("the text of #holder changed"), "{}", out.detail);
+    // The same click on the card alone changes nothing of the card.
+    let card = run(&mut live, no_change("#through-card", json!({}))).await;
+    assert!(card.ok, "{}", card.detail);
+}
+
+/// A card that looks switched off but sends a POST when clicked: nothing in
+/// the card changes, and the write is what is said (the path only).
+#[tokio::test]
+#[ignore = "starts a real headless Edge"]
+async fn a_forced_click_that_sends_a_post_fails_naming_it() {
+    use v2_lib::browser::no_change::NOTHING_EXPECTED;
+    let mut live = open_no_change().await;
+    let out = run(&mut live, no_change("#writer-card", json!({}))).await;
+    assert!(!out.ok, "{}", out.detail);
+    assert!(out.detail.starts_with(&format!("{NOTHING_EXPECTED}the click sent POST /hr/Cycle/Save")), "{}", out.detail);
+    assert!(!out.detail.contains("hunter2") && !out.detail.contains("127.0.0.1"), "{}", out.detail);
+}
+
+/// A card that only writes a status message elsewhere on the page.
+#[tokio::test]
+#[ignore = "starts a real headless Edge"]
+async fn a_forced_click_that_shows_a_status_message_fails_naming_it() {
+    use v2_lib::browser::no_change::NOTHING_EXPECTED;
+    let mut live = open_no_change().await;
+    let out = run(&mut live, no_change("#status-card", json!({}))).await;
+    assert!(!out.ok, "{}", out.detail);
+    assert_eq!(out.detail, format!("{NOTHING_EXPECTED}a message appeared: \"Cycle saved\""), "{}", out.detail);
+}
+
+/// A hint that shows only while the pointer is over the card is already
+/// showing when the page is read before the click: the pointer is put on the
+/// control first, so the hint is not the click's doing.
+#[tokio::test]
+#[ignore = "starts a real headless Edge"]
+async fn a_hint_shown_while_the_pointer_is_over_the_card_is_not_a_change() {
+    let mut live = open_no_change().await;
+    let out = run(&mut live, no_change("#hint-card", json!({}))).await;
+    assert!(out.ok, "{}", out.detail);
+}
+
+/// A class added under the pointer is how a card looks, not what it holds:
+/// only text and control or aria states are compared.
+#[tokio::test]
+#[ignore = "starts a real headless Edge"]
+async fn a_hover_class_is_not_a_change() {
+    let mut live = open_no_change().await;
+    let out = run(&mut live, no_change("#hover-card", json!({}))).await;
+    assert!(out.ok, "{}", out.detail);
+    // The pointer did go over it: the page did change how it looks.
+    let class = json!({ "kind": "expect_attribute", "selector": { "css": "#hover-card" }, "name": "class", "matches": "lit", "timeout_ms": 300 });
+    must(run(&mut live, class).await);
+}
+
+/// An overlay over a card is not where a person's click would reach the
+/// card: the forced click is refused, never made.
+#[tokio::test]
+#[ignore = "starts a real headless Edge"]
+async fn a_forced_click_never_clicks_an_overlay_on_a_real_page() {
+    let mut live = open_no_change().await;
+    let out = run_with(&mut live, no_change("#covered-card", json!({})), &Timing { action_ms: 800, ..timing() }).await;
+    assert!(!out.ok, "{}", out.detail);
+    assert!(out.detail.contains("is covered by"), "{}", out.detail);
 }
 
 /// A bare css `within`, as an assistant most often writes one, counts every

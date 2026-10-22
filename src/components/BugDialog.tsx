@@ -3,7 +3,8 @@ import { X } from "lucide-react";
 import { useState } from "react";
 import { toast } from "../lib/toast";
 import { commands, type Step, type TestCaseFull } from "../bindings";
-import { blobToB64 } from "../lib/blob";
+import { imageMime } from "../lib/blob";
+import { firstValidClipboardImage, imageOfPasteFile, NOT_ON_CLIPBOARD_YET, type ClipboardImage } from "../lib/clipboardImage";
 import { unwrapStr } from "../lib/ipc";
 import { sharedStepQueryKey, sharedStepText } from "../lib/sharedSteps";
 import { Button } from "./ui/button";
@@ -70,17 +71,27 @@ export default function BugDialog({
   const [repro, setRepro] = useState(defaultRepro);
   // Screenshots pasted INTO the dialog (Ctrl+V) - evidence of the bug that
   // was never attached to the run, e.g. a capture sitting on the clipboard.
-  const [pasted, setPasted] = useState<string[]>([]);
+  const [pasted, setPasted] = useState<ClipboardImage[]>([]);
 
+  // The same check and retry the runner's paste has: a clipboard that offers
+  // the picture before it is ready gives nothing or its front half, and that
+  // must not reach the bug. Nothing is added, and the person is told, until
+  // a whole picture arrives.
   const onPaste = (e: React.ClipboardEvent) => {
     const item = [...e.clipboardData.items].find((i) => i.type.startsWith("image/"));
     if (!item) return;
+    // Taken now: the event's item list closes when this handler returns.
     const blob = item.getAsFile();
-    if (!blob) return;
-    void blobToB64(blob).then((b64) => {
-      setPasted((x) => [...x, b64]);
-      toast.success("Screenshot added to the bug");
-    });
+    void (async () => {
+      const first = await imageOfPasteFile(blob, item.type);
+      const img = await firstValidClipboardImage(first, () => imageOfPasteFile(blob, item.type));
+      if (img) {
+        setPasted((x) => [...x, img]);
+        toast.success("Screenshot added to the bug");
+      } else {
+        toast.info(NOT_ON_CLIPBOARD_YET);
+      }
+    })();
   };
 
   /** What gets filed, gathered at CLICK time rather than read out of the
@@ -135,10 +146,10 @@ export default function BugDialog({
       />
       {pasted.length > 0 && (
         <div className="flex flex-wrap gap-2">
-          {pasted.map((b64, i) => (
+          {pasted.map((img, i) => (
             <span key={i} className="relative">
               <img
-                src={`data:image/png;base64,${b64}`}
+                src={`data:${imageMime(img.mime) ?? "image/png"};base64,${img.b64}`}
                 alt={`Pasted screenshot ${i + 1}`}
                 className="h-14 rounded border border-border object-cover"
               />
@@ -167,7 +178,7 @@ export default function BugDialog({
         <Button
           size="sm"
           disabled={!title.trim() || file.isPending}
-          onClick={() => file.mutate({ title, repro, shots: [...screenshots, ...pasted] })}
+          onClick={() => file.mutate({ title, repro, shots: [...screenshots, ...pasted.map((p) => p.b64)] })}
         >
           <IconBug aria-hidden />
           {file.isPending ? "Filing" : "File bug"}

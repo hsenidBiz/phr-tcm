@@ -103,6 +103,9 @@ pub struct ScriptedDriver {
     /// the dialog opened in - and, when nobody expected it, noted for
     /// `take_dialogs`. Fires once.
     pub dialogs_on_call: Vec<(String, String, String)>,
+    /// `dialogs_on_call` for the first call a test says yes to, by method and
+    /// parameters: (says yes, kind, message). Fires once.
+    pub dialog_when: Option<(SaysYes, String, String)>,
     /// The run's page errors, fed every event this driver emits after a
     /// call, as `Cdp` feeds its own.
     pub page_errors: PageErrorBook,
@@ -244,6 +247,7 @@ impl ScriptedDriver {
             tabs: Tabs::default(),
             book: DialogBook::default(),
             dialogs_on_call: vec![],
+            dialog_when: None,
             page_errors: PageErrorBook::default(),
             idle_clock: None,
             on_idle_events: vec![],
@@ -457,6 +461,11 @@ impl Driver for ScriptedDriver {
                 true
             }
         });
+        if self.dialog_when.as_mut().is_some_and(|(says, _, _)| says(method, &params)) {
+            if let Some((_, kind, message)) = self.dialog_when.take() {
+                opened.push((kind, message));
+            }
+        }
         for (kind, message) in opened {
             let answer = self.book.opened(&kind, &message);
             self.tabs.calls.push((self.tabs.now(), "Page.handleJavaScriptDialog".to_string()));

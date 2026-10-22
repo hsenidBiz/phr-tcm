@@ -12,13 +12,39 @@ use super::seen_check::has_phrase;
 use super::edits::GiveUp;
 use super::{Because, CaseScript, Provenance, StepScript};
 use crate::browser::actions::Action;
+use crate::browser::locator::Target;
+use crate::browser::actions::{CellMatch, HeadersSpec};
+use crate::browser::pattern::literal_word_forms;
 
 /// What kind of value a check carries.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ValueKind {
     Count,
     Text,
+    /// A `matches` pattern: held by the words written in it (`literal_word_forms`).
+    Pattern,
+    /// `true` or `false`: a checked, pressed or other boolean state.
+    State,
 }
+
+/// Whole words in a step's own text that say a state is on. `on` says it only in "is on", "turned on"
+/// or "switched on" (`state_of`).
+pub const STATE_TRUE_WORDS: &[&str] =
+    &["checked", "ticked", "selected", "enabled", "pressed", "expanded", "shown", "visible", "active"];
+/// ... and off. `off` says it only in "is off", "turned off" or "switched off"; "not selected" and
+/// "not checked" say it through the negation (`state_of`).
+pub const STATE_FALSE_WORDS: &[&str] = &["unchecked", "unticked", "disabled", "collapsed", "hidden", "inactive"];
+/// The words that lead `on` and `off` into a state.
+const SWITCH_LEADS: &[&str] = &["is", "isnt", "turned", "switched"];
+/// A word after `on` or `off` that makes it a place or a preposition ("on the page"), not a state.
+const NOT_A_STATE_AFTER: &[&str] = &[
+    "the", "a", "an", "this", "that", "these", "those", "each", "every", "its", "their", "your", "my", "our", "page",
+    "screen", "top", "left", "right", "bottom",
+];
+/// Whole words in a step's own text that say there are none ("no <noun>" says it too).
+pub const NONE_WORDS: &[&str] = &["0", "zero", "none", "nothing"];
+/// ... and that there is one ("a single" says it too).
+pub const ONE_WORDS: &[&str] = &["1", "one"];
 
 /// One literal value a check uses.
 #[derive(Debug, Clone, PartialEq)]
@@ -37,6 +63,15 @@ pub struct CheckValue {
     pub values_text: String,
     /// How a count bounds what the page shows.
     pub rel: Rel,
+    /// True for the values the check has always read (a count of 2 or more, a text of 3 characters
+    /// or more): a count is held against a count the case states. False for the rest (0 and 1, a
+    /// number written as short text, a pattern, an attribute's or a style's value, a state, the name
+    /// or text of a visible locator, a download's contents): they are held by the case or a `because`
+    /// all the same, and a repair keeps one the case gives like any other.
+    pub strict: bool,
+    /// What a refusal calls it: "the count", "the text", "the pattern", "the state", "the attribute
+    /// value" or "the style value".
+    pub what: &'static str,
 }
 
 /// What a count claims about the number of things.
@@ -85,9 +120,25 @@ fn count(step: i32, n: u32, rel: Rel, s: &Seen) -> CheckValue {
         action_json: s.json.to_string(),
         values_text: s.values.to_string(),
         rel,
+        strict: n >= 2,
+        what: "the count",
     }
 }
 
+/// A whole number, with a decimal part or a `%` perhaps: "5", "12.5", "3,5", "40%".
+fn is_number_text(value: &str) -> bool {
+    let v = value.trim();
+    let v = v.strip_suffix('%').unwrap_or(v);
+    let mut parts = v.splitn(2, ['.', ',']);
+    let digits = |p: &str| !p.is_empty() && p.chars().all(|c| c.is_ascii_digit());
+    match (parts.next(), parts.next()) {
+        (Some(whole), None) => digits(whole),
+        (Some(whole), Some(frac)) => digits(whole) && digits(frac),
+        _ => false,
+    }
+}
+
+/// A text the check has always read, except a number short enough to have been exempt as short.
 fn text(step: i32, value: &str, exact: bool, s: &Seen) -> CheckValue {
     CheckValue {
         step,
@@ -97,6 +148,50 @@ fn text(step: i32, value: &str, exact: bool, s: &Seen) -> CheckValue {
         action_json: s.json.to_string(),
         values_text: s.values.to_string(),
         rel: Rel::NotCount,
+        strict: !(is_number_text(value) && value.trim().chars().count() < 3),
+        what: "the text",
+    }
+}
+
+/// A value of a kind the check did not read before item 39.
+fn loose(step: i32, kind: ValueKind, value: &str, exact: bool, what: &'static str, s: &Seen) -> CheckValue {
+    CheckValue {
+        step,
+        kind,
+        value: value.to_string(),
+        exact,
+        action_json: s.json.to_string(),
+        values_text: s.values.to_string(),
+        rel: Rel::NotCount,
+        strict: false,
+        what,
+    }
+}
+
+fn pattern(step: i32, value: &str, s: &Seen) -> CheckValue {
+    loose(step, ValueKind::Pattern, value, false, "the pattern", s)
+}
+
+/// An attribute's value: `true` or `false` (ignoring case and spaces) is a state, any other a text.
+fn attribute_value(step: i32, value: &str, s: &Seen) -> CheckValue {
+    match value.trim().to_lowercase().as_str() {
+        b @ ("true" | "false") => loose(step, ValueKind::State, b, true, "the state", s),
+        _ => loose(step, ValueKind::Text, value, true, "the attribute value", s),
+    }
+}
+
+/// The name and the text the last link of an `expect_visible` locator ends with.
+fn visible_values(step: i32, selector: &Target, out: &mut Vec<CheckValue>, s: &Seen) {
+    let last = match selector {
+        Target::One(l) => l,
+        Target::Chain(links) => match links.last() {
+            Some(l) => l,
+            None => return,
+        },
+        Target::Legacy(_) => return,
+    };
+    for v in [&last.text, &last.name].into_iter().flatten() {
+        out.push(loose(step, ValueKind::Text, v, last.exact, "the text", s));
     }
 }
 
@@ -125,11 +220,10 @@ fn values_of_action(step: i32, action: &Action, out: &mut Vec<CheckValue>) {
             }
             out.extend(texts.iter().map(|t| text(step, t, false, s)));
         }
-        Action::ExpectEach { min, equals, contains, attribute, .. } => {
+        Action::ExpectEach { min, equals, contains, matches, attribute, .. } => {
             if let Some(n) = min {
                 out.push(count(step, *n, Rel::AtLeast, s));
             }
-            // An attribute's value is not the case's words, as for `expect_attribute`.
             if attribute.is_none() {
                 if let Some(v) = equals {
                     out.push(text(step, v, true, s));
@@ -137,11 +231,73 @@ fn values_of_action(step: i32, action: &Action, out: &mut Vec<CheckValue>) {
                 if let Some(v) = contains {
                     out.push(text(step, v, false, s));
                 }
+            } else {
+                if let Some(v) = equals {
+                    out.push(attribute_value(step, v, s));
+                }
+                if let Some(v) = contains {
+                    out.push(loose(step, ValueKind::Text, v, false, "the attribute value", s));
+                }
+            }
+            if let Some(p) = matches {
+                out.push(pattern(step, p, s));
             }
         }
         Action::CheckText { value } => out.push(text(step, value, false, s)),
-        Action::ExpectText { equals: Some(v), .. } => out.push(text(step, v, true, s)),
+        Action::ExpectText { equals, matches, .. } => {
+            if let Some(v) = equals {
+                out.push(text(step, v, true, s));
+            }
+            if let Some(p) = matches {
+                out.push(pattern(step, p, s));
+            }
+        }
+        Action::ExpectAttribute { equals, matches, .. } => {
+            if let Some(v) = equals {
+                out.push(attribute_value(step, v, s));
+            }
+            if let Some(p) = matches {
+                out.push(pattern(step, p, s));
+            }
+        }
+        Action::ExpectStyle { equals, contains, not_equals, .. } => {
+            if let Some(v) = equals {
+                out.push(loose(step, ValueKind::Text, v, true, "the style value", s));
+            }
+            if let Some(v) = contains {
+                out.push(loose(step, ValueKind::Text, v, false, "the style value", s));
+            }
+            if let Some(v) = not_equals {
+                out.push(loose(step, ValueKind::Text, v, true, "the style value", s));
+            }
+        }
+        Action::ExpectChecked { checked, .. } => {
+            out.push(loose(step, ValueKind::State, if *checked { "true" } else { "false" }, true, "the state", s));
+        }
+        Action::ExpectVisible { selector, .. } => visible_values(step, selector, out, s),
         Action::ExpectContainsText { value, .. } => out.push(text(step, value, false, s)),
+        // What a downloaded file must hold. The file's name and its sheet say where to look, not what
+        // is there, so they are not values.
+        Action::ExpectDownload { headers, cells, contains_text, pdf, .. } => {
+            let mut said: Vec<(String, bool)> = contains_text.iter().flatten().map(|v| (v.clone(), false)).collect();
+            if let Some(HeadersSpec::Exact(list) | HeadersSpec::Contains(list)) = headers {
+                let exact = matches!(headers, Some(HeadersSpec::Exact(_)));
+                said.extend(list.iter().map(|v| (v.clone(), exact)));
+            }
+            said.extend(cells.iter().flatten().map(|c| (c.text.clone(), c.how == CellMatch::Exact)));
+            if let Some(p) = pdf {
+                said.extend(p.contains.iter().flat_map(|c| c.list()).map(|v| (v, false)));
+                said.extend(p.on_page.iter().flatten().flat_map(|page| page.contains.list()).map(|v| (v, false)));
+                if let Some(pages) = &p.pages {
+                    for (n, rel) in [(pages.equals, Rel::Equal), (pages.at_least, Rel::AtLeast), (pages.at_most, Rel::AtMost)] {
+                        if let Some(n) = n {
+                            out.push(count(step, n, rel, s));
+                        }
+                    }
+                }
+            }
+            out.extend(said.iter().map(|(v, exact)| loose(step, ValueKind::Text, v, *exact, "the text", s)));
+        }
         Action::ExpectDialog { text: t, contains, .. } => {
             if let Some(v) = t {
                 out.push(text(step, v, true, s));
@@ -321,14 +477,44 @@ enum Exempt {
     Prefix,
 }
 
+/// Why a pattern needs no because: every word written in it (some form of it) is in a value the script
+/// types, or in the test name prefix, or it starts with that prefix.
+fn pattern_exempt(value: &str, ex: &Exemptions) -> Option<Exempt> {
+    let words = literal_word_forms(value);
+    let typed = |w: &String| ex.typed.iter().any(|t| has_phrase(t, w));
+    let in_prefix = |w: &String| !ex.test_prefix.is_empty() && has_phrase(&ex.test_prefix, w);
+    if !words.is_empty() {
+        if words.iter().all(|alts| alts.iter().any(typed)) {
+            return Some(Exempt::Typed);
+        }
+        if words.iter().all(|alts| alts.iter().any(|w| typed(w) || in_prefix(w))) {
+            return Some(Exempt::Prefix);
+        }
+    }
+    prefixed(&fold(value.trim_start_matches('^')), &ex.test_prefix).then_some(Exempt::Prefix)
+}
+
 fn exempt_kind(v: &CheckValue, ex: &Exemptions) -> Option<Exempt> {
     let folded = fold(&v.value);
     match v.kind {
+        // A bound that only asks for something to be there (`at_least` 0 or 1, `min` 1) is presence,
+        // not a number the case gives; an exact count or an upper bound of 0 or 1 is compared.
         ValueKind::Count => {
-            (matches!(v.value.as_str(), "0" | "1") || ex.precondition_values.contains(&folded)).then_some(Exempt::Bare)
+            let presence = v.rel == Rel::AtLeast && matches!(v.value.as_str(), "0" | "1");
+            (presence || ex.precondition_values.contains(&folded)).then_some(Exempt::Bare)
+        }
+        ValueKind::Pattern => {
+            if v.value.contains("{{") || ex.precondition_values.contains(&folded) {
+                Some(Exempt::Bare)
+            } else {
+                pattern_exempt(&v.value, ex)
+            }
+        }
+        ValueKind::State => {
+            (v.value.contains("{{") || ex.precondition_values.contains(&folded)).then_some(Exempt::Bare)
         }
         ValueKind::Text => {
-            if folded.chars().count() < 3 || v.value.contains("{{") {
+            if (folded.chars().count() < 3 && !is_number_text(&v.value)) || v.value.contains("{{") {
                 return Some(Exempt::Bare);
             }
             if ex.precondition_values.contains(&folded) {
@@ -347,6 +533,135 @@ fn exempt_kind(v: &CheckValue, ex: &Exemptions) -> Option<Exempt> {
 
 fn exempt(v: &CheckValue, ex: &Exemptions) -> bool {
     exempt_kind(v, ex).is_some()
+}
+
+/// A step's words, lowercased: runs of letters and digits, an apostrophe inside a word dropped
+/// ("isn't" is "isnt").
+fn words_of(step_text: &str) -> Vec<String> {
+    let mut words: Vec<String> = Vec::new();
+    let mut word = String::new();
+    for c in step_text.chars() {
+        if c.is_alphanumeric() {
+            word.push(c);
+        } else if c != '\'' && !word.is_empty() {
+            words.push(std::mem::take(&mut word));
+        }
+    }
+    if !word.is_empty() {
+        words.push(word);
+    }
+    words
+}
+
+/// Whether the word at `i` is a negation: "not", "isn't" and the like, or "no longer" (at "longer").
+fn is_negator(words: &[String], i: usize) -> bool {
+    match words[i].as_str() {
+        "not" | "isnt" | "arent" | "wasnt" | "werent" | "cannot" | "cant" => true,
+        "longer" => i > 0 && words[i - 1] == "no",
+        _ => false,
+    }
+}
+
+/// A negation sits directly before the word at `i`, within 2 words ("is not selected", "is not yet selected").
+fn negated(words: &[String], i: usize) -> bool {
+    (1..=2).any(|d| i >= d && is_negator(words, i - d))
+}
+
+/// What the word at `i` says about a state: `Some(true)` on, `Some(false)` off, `None` nothing. A negation
+/// flips it. `on` and `off` count only after "is", "turned" or "switched" (a negation may sit between) and
+/// never before "the", "a", "this", "page" and the like, so "Click on the card" and "the card is on the
+/// page" say nothing.
+fn state_of(words: &[String], i: usize) -> Option<bool> {
+    let w = words[i].as_str();
+    let said = if STATE_TRUE_WORDS.contains(&w) {
+        true
+    } else if STATE_FALSE_WORDS.contains(&w) {
+        false
+    } else if w == "on" || w == "off" {
+        let led = (1..=3).any(|d| i >= d && SWITCH_LEADS.contains(&words[i - d].as_str()));
+        // "turned on" and "switched on" are a state whatever follows; "is on" is not when a place follows.
+        let switched = i >= 1 && matches!(words[i - 1].as_str(), "turned" | "switched");
+        let place = words.get(i + 1).is_some_and(|n| NOT_A_STATE_AFTER.contains(&n.as_str()));
+        if !led || (place && !switched) {
+            return None;
+        }
+        w == "on"
+    } else {
+        return None;
+    };
+    Some(said != negated(words, i))
+}
+
+/// Whether the step's own words say a state is `on` (true) or off (false).
+fn step_says_state(step_text: &str, on: bool) -> bool {
+    let words = words_of(step_text);
+    (0..words.len()).any(|i| state_of(&words, i) == Some(on))
+}
+
+/// Whether the step's own words say there are none: "0", "zero", "none", "nothing" or "no <noun>".
+fn step_says_none(step_text: &str) -> bool {
+    let words = words_of(step_text);
+    words.iter().enumerate().any(|(i, w)| {
+        NONE_WORDS.contains(&w.as_str()) || (w == "no" && words.get(i + 1).is_some_and(|next| next != "longer"))
+    })
+}
+
+/// Whether the step's own words say there is one: "1", "one" or "a single".
+fn step_says_one(step_text: &str) -> bool {
+    let words = words_of(step_text);
+    words
+        .iter()
+        .enumerate()
+        .any(|(i, w)| ONE_WORDS.contains(&w.as_str()) || (w == "single" && i > 0 && words[i - 1] == "a"))
+}
+
+/// Whether the case holds `v`: a strict count by `case_numbers`; a count 0 or 1, or the text "0" or
+/// "1", by the step's own words for none or one (`step_says_none`, `step_says_one`); a text by
+/// `CaseText::holds`; a pattern when it writes words and the case holds each, in either form an
+/// optional letter or group gives it (`literal_word_forms`); `true` or `false` by the step's own words
+/// for on or off (`step_says_state`).
+pub fn held_by_case(v: &CheckValue, case: &CaseText) -> bool {
+    held_with(v, case, &case.case_numbers())
+}
+
+fn held_with(v: &CheckValue, case: &CaseText, numbers: &BTreeSet<u32>) -> bool {
+    let by_step = || match v.value.as_str() {
+        "0" => step_says_none(&case.step_folded(v.step)),
+        "1" => step_says_one(&case.step_folded(v.step)),
+        _ => false,
+    };
+    match v.kind {
+        ValueKind::Count if v.strict => v.value.parse::<u32>().is_ok_and(|c| numbers.contains(&c)),
+        ValueKind::Count => by_step(),
+        ValueKind::Text => by_step() || case.holds(&v.value),
+        ValueKind::Pattern => {
+            let words = literal_word_forms(&v.value);
+            !words.is_empty() && words.iter().all(|alts| alts.iter().any(|w| case.holds(w)))
+        }
+        ValueKind::State => match v.value.as_str() {
+            "true" => step_says_state(&case.step_folded(v.step), true),
+            "false" => step_says_state(&case.step_folded(v.step), false),
+            _ => false,
+        },
+    }
+}
+
+/// What a step's own words must say to hold a state the case lacks: the words, so the writer can see why.
+fn state_hint(v: &CheckValue) -> String {
+    if v.kind != ValueKind::State {
+        return String::new();
+    }
+    if v.value == "true" {
+        format!(
+            "; a step holds true with: {}, or \"is on\", \"turned on\", \"switched on\"",
+            STATE_TRUE_WORDS.join(", ")
+        )
+    } else {
+        format!(
+            "; a step holds false with: {}, \"not selected\", \"not checked\", or \"is off\", \"turned off\", \"switched off\"",
+            STATE_FALSE_WORDS.join(", ")
+        )
+    }
 }
 
 /// The invented source of a value the script itself makes.
@@ -460,10 +775,7 @@ pub fn check_case_values_against(
             // Counted and listed as before, but never refused: the old step had it.
             let had_it = had.contains(&(v.kind, fold(&v.value)));
             let exempt_as = exempt_kind(v, &ex);
-            let in_case = match v.kind {
-                ValueKind::Count => v.value.parse::<u32>().is_ok_and(|c| numbers.contains(&c)),
-                ValueKind::Text => case.holds(&v.value),
-            };
+            let in_case = held_with(v, case, &numbers);
             let covered = step.because.iter().find(|b| fold(&b.value) == fold(&v.value));
             if exempt_as == Some(Exempt::Bare) {
                 source(&mut report, v, None, String::new());
@@ -483,7 +795,7 @@ pub fn check_case_values_against(
             // An order's own length follows from its texts, each held on its
             // own: only a stated count can contradict it.
             let order_length = v.rel == Rel::OrderLength;
-            if v.kind == ValueKind::Count && !had_it {
+            if v.kind == ValueKind::Count && v.strict && !had_it {
                 if let Some(r) = contradicts_stated_count(case, n, v) {
                     push_refusal(&mut report, r);
                     continue;
@@ -499,12 +811,14 @@ pub fn check_case_values_against(
                 }
                 None if order_length || had_it => {}
                 None => {
-                    let what = if v.kind == ValueKind::Count { "the count" } else { "the text" };
                     push_refusal(
                         &mut report,
                         format!(
-                            "step {n}: {what} \"{}\" is not in the case - take it from the case's steps, expected results or preconditions as written, or give it a \"because\" on the step ({{ \"value\": \"{}\", \"why\": \"where the case defines it\" }})",
-                            v.value, v.value
+                            "step {n}: {} \"{}\" is not in the case - take it from the case's steps, expected results or preconditions as written, or give it a \"because\" on the step ({{ \"value\": \"{}\", \"why\": \"where the case defines it\" }}){}",
+                            v.what,
+                            v.value,
+                            v.value,
+                            state_hint(v)
                         ),
                     );
                 }
@@ -665,6 +979,17 @@ fn gives_up_refusal(old: &CaseScript, declared_steps: &[i32], g: &GiveUp) -> Opt
 const GIVES_UP_SHAPE: &str =
     "the edit's gives_up entries are { \"step\", \"kind\", \"why\" }, the why one line of at most 200 characters";
 
+/// Whether `new` keeps the pattern `old`: the same pattern, or one that still writes each word `old` writes
+/// (a widened pattern), in either form.
+fn pattern_keeps(old: &str, new: &str) -> bool {
+    if fold(old) == fold(new) {
+        return true;
+    }
+    let old_words = literal_word_forms(old);
+    let new_words = literal_word_forms(new);
+    !old_words.is_empty() && old_words.iter().all(|o| new_words.iter().any(|n| o.iter().any(|f| n.contains(f))))
+}
+
 /// What a repair may not do to the checks: go under the script's floor
 /// without naming each check it gives up (with why), or move a value away
 /// from the case. `declared_steps` are the steps the edit declares.
@@ -755,18 +1080,20 @@ pub fn check_repair_values(
         let Some(o) = old_step(old, n) else { continue };
         let new_values = new.case_steps().find(|s| s.step_number == n).map(values_of_step).unwrap_or_default();
         for v in values_of_step(o) {
+            // Every kind of value is kept when the case gives it: a state, a pattern, an attribute's or a
+            // style's value, a visible name, a count of 0 or 1 and a short number as much as the rest. A
+            // value the case does not give (one a `because` covered) a repair may change; the save then
+            // holds what it wrote like any new value.
             if exempt(&v, &ex) {
                 continue;
             }
-            let in_case = match v.kind {
-                ValueKind::Count => v.value.parse::<u32>().is_ok_and(|c| numbers.contains(&c)),
-                ValueKind::Text => case.holds(&v.value),
-            };
-            if !in_case {
+            if !held_with(&v, case, &numbers) {
                 continue;
             }
             let kept = match v.kind {
                 ValueKind::Count => new_values.iter().any(|w| w.kind == ValueKind::Count && w.value == v.value),
+                ValueKind::State => new_values.iter().any(|w| w.kind == ValueKind::State && w.value == v.value),
+                ValueKind::Pattern => new_values.iter().any(|w| w.kind == ValueKind::Pattern && pattern_keeps(&v.value, &w.value)),
                 ValueKind::Text => {
                     let old_fold = fold(&v.value);
                     new_values.iter().any(|w| {

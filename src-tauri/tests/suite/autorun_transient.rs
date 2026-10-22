@@ -98,6 +98,24 @@ fn a_404_or_another_status_is_not_transient() {
     }
 }
 
+/// An `expect_response` ends its sentence with the request it took; what is transient is read without it.
+#[test]
+fn naming_the_request_an_expect_response_took_changes_nothing_transient() {
+    let which = ": the step's matching request 2 of 3, sent after action 1 (click) began";
+    let judged = |detail: String| is_transient(&failed_at_2("Failed", ActionOutcome::failed(detail)), Some(&script(expect_save())));
+    assert!(judged(format!("POST /hr/Cycle/Save answered 503, expected 200{which}")).is_some());
+    assert!(judged(format!("POST /hr/Cycle/Save answered 400, expected 200{which}")).is_some());
+    assert!(judged(format!("POST /hr/Cycle/Save failed: net::ERR_CONNECTION_RESET{which}")).is_some());
+    assert_eq!(judged(format!("POST /hr/Cycle/Save answered 404, expected 200{which}")), None);
+    assert_eq!(judged(format!("POST /hr/Cycle/Save was cancelled by the page{which}")), None);
+    assert_eq!(judged(format!("POST /hr/Cycle/Save failed: net::ERR_ABORTED{which}")), None);
+    // A body that said why is still a refused request.
+    assert_eq!(
+        judged(format!("POST /hr/Cycle/Save answered 400, expected 200{which} - the response began: {{\"error\":\"Name is required\"}}")),
+        None
+    );
+}
+
 #[test]
 fn a_network_failure_on_a_request_the_step_waited_for_is_transient() {
     let reset = failed_at_2("Failed", ActionOutcome::failed("POST /hr/Cycle/Save failed: net::ERR_CONNECTION_RESET"));

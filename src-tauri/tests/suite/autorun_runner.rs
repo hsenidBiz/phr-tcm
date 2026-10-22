@@ -1005,6 +1005,46 @@ mod components_in_a_step {
         assert!(d.calls_to("Input.dispatchMouseEvent").is_empty(), "a click ran: {:?}", d.calls);
     }
 
+    /// "Sent after action N" counts the step's actions as the script is written: a component is one
+    /// action, however many it expands to.
+    #[tokio::test]
+    async fn a_requests_place_counts_the_actions_as_written_not_as_a_component_expands() {
+        use v2_lib::browser::cdp::Event;
+        let dir = tempfile::tempdir().unwrap();
+        put(dir.path(), "Acme", "Web", made("Open the list", 1, json!([]), json!([
+            { "kind": "click", "selector": { "css": "#a" } },
+            { "kind": "click", "selector": { "css": "#b" } }
+        ]))).unwrap();
+        let s = step_of(json!([
+            { "kind": "click", "selector": { "css": "#pre" } },
+            { "kind": "use_component", "component": "Open the list", "inputs": {} },
+            { "kind": "expect_response", "method": "GET", "url_contains": "/api/List", "status": 200, "timeout_ms": 300 }
+        ]));
+        let mut d = FakePage::default().driver().with_net_record();
+        // Sent as the component's second click is released: the step's third click, its second action.
+        let mut releases = 0;
+        d.events_when = Some((
+            Box::new(move |method, params| {
+                if method == "Input.dispatchMouseEvent" && params["type"] == "mouseReleased" {
+                    releases += 1;
+                }
+                releases == 3
+            }),
+            vec![
+                Event { method: "Network.requestWillBeSent".into(), params: json!({ "requestId": "L0", "request": { "url": "https://hr.example/hr/api/List", "method": "GET" } }) },
+                Event { method: "Network.responseReceived".into(), params: json!({ "requestId": "L0", "response": { "status": 200, "mimeType": "application/json" } }) },
+                Event { method: "Network.loadingFinished".into(), params: json!({ "requestId": "L0" }) },
+            ],
+        ));
+        let (out, _) = run_in(&mut d, dir.path(), &s).await;
+        assert_eq!(out.len(), 4, "{out:?}");
+        assert!(out[3].ok, "{:?}", out[3]);
+        assert_eq!(
+            out[3].detail,
+            "GET /hr/api/List answered 200: the step's matching request 1 of 1, sent after action 2 (use_component) began"
+        );
+    }
+
     #[tokio::test]
     async fn a_failure_inside_a_component_never_logs_a_typed_value() {
         let _log = crate::serial::log_tail();
@@ -1070,6 +1110,8 @@ fn every_action_kind_says_whether_it_changes_the_page() {
         (json!({ "kind": "expect_enabled", "selector": css }), false),
         (json!({ "kind": "expect_disabled", "selector": css }), false),
         (json!({ "kind": "expect_checked", "selector": css, "checked": true }), false),
+        // A forced click: it may change the page, whatever it then checks.
+        (json!({ "kind": "expect_no_change", "selector": css }), true),
         (json!({ "kind": "expect_response", "url_contains": "/api" }), false),
         (json!({ "kind": "expect_focused", "selector": css }), false),
         (json!({ "kind": "expect_download", "name": "*.csv" }), false),

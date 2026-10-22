@@ -393,3 +393,46 @@ test("a case with no script still shows its divergence", () => {
   expect(screen.getByText("Needs a ruling")).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Rule the case is right for #7 step 2" })).toBeInTheDocument();
 });
+
+/** A script whose step 2 leaves one expectation unchecked, with a stand-in. */
+const WITH_UNCHECKED = {
+  case_id: 5002,
+  title: "Open the cycle",
+  steps: [
+    { step_number: 1, actions: [] },
+    {
+      step_number: 2,
+      actions: [],
+      unchecked: [{ item: "no access-denied message", why: "the app never shows one", stand_in: "expect_hidden" }],
+    },
+  ],
+} as CaseScript;
+
+test("a passed case with an unchecked entry says 1 expectation unchecked", () => {
+  renderCard({ c: { ...CASE, id: 5002 }, script: WITH_UNCHECKED, result: "Passed" });
+  expect(screen.getByText("1 expectation unchecked")).toBeInTheDocument();
+});
+
+test("a failed case does not count its unchecked expectations", () => {
+  renderCard({ c: { ...CASE, id: 5002 }, script: WITH_UNCHECKED, result: "Failed" });
+  expect(screen.queryByText(/expectations? unchecked/)).not.toBeInTheDocument();
+});
+
+test("an open passed card says how many too, and a card whose script leaves nothing unchecked says nothing", () => {
+  mockIPC(() => null);
+  const { unmount } = renderCard({ c: { ...CASE, id: 5002 }, script: WITH_UNCHECKED, result: "Passed", open: true });
+  expect(screen.getByText("1 expectation unchecked")).toBeInTheDocument();
+  unmount();
+  renderCard({ open: true, script: BARE, result: "Passed" });
+  expect(screen.queryByText(/expectations? unchecked/)).not.toBeInTheDocument();
+  expect(screen.queryByText("Unchecked")).not.toBeInTheDocument();
+});
+
+test("the open card lists each unchecked expectation with why and its stand-in", () => {
+  mockIPC(() => null);
+  renderCard({ c: { ...CASE, id: 5002 }, script: WITH_UNCHECKED, result: "Failed", open: true });
+  expect(screen.getByText("Unchecked")).toBeInTheDocument();
+  const list = screen.getByRole("list", { name: "Unchecked expectations of #5002" });
+  expect(within(list).getAllByRole("listitem")).toHaveLength(1);
+  expect(list).toHaveTextContent("step 2: no access-denied message - the app never shows one (stand-in: expect_hidden)");
+});

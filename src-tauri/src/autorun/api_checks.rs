@@ -405,6 +405,122 @@ pub fn pick(entries: &[NetEntry], method: Option<&str>, url_contains: &str) -> P
     }
 }
 
+/// What the step's `expect_response` checks share, armed when the step starts: where the step began in the
+/// network record, the requests earlier checks of the step took, and how many of the step's requests had
+/// been recorded as each action began.
+#[derive(Debug, Clone, Default)]
+pub struct StepRequests {
+    /// Where the step began in the network record (`Driver::net_mark`).
+    pub mark: u64,
+    /// The ids of the requests earlier checks of the step took.
+    pub taken: Vec<String>,
+    /// How many of the step's requests had been recorded as each action began, in order.
+    pub seen_at_action: Vec<usize>,
+    /// The step's actions' kinds (`patterns::action_kind`), in order.
+    pub kinds: Vec<String>,
+}
+
+impl StepRequests {
+    /// `kinds`: the step's actions' kinds (`patterns::action_kind`), in order.
+    pub fn new(mark: u64, kinds: Vec<String>) -> Self {
+        StepRequests { mark, taken: Vec::new(), seen_at_action: Vec::new(), kinds }
+    }
+
+    /// The next action begins with `seen` of the step's requests recorded.
+    pub fn action_began(&mut self, seen: usize) {
+        self.seen_at_action.push(seen);
+    }
+}
+
+/// A match the page called off itself: not the server failing, and not a request to judge while a later
+/// one matches.
+fn cancelled(e: &NetEntry) -> bool {
+    e.redirect.is_none() && matches!(&e.state, NetState::Failed(why) if why.trim() == ABORTED)
+}
+
+/// The request the next check takes: among `entries` (the step's, oldest first) that match and are not in
+/// `taken`, passing over one the page cancelled (`ABORTED`) while a later one matches:
+/// - the OLDEST that has finished (answered or redirected), whether or not an older one is still going: a
+///   request that never finishes (a fetch whose body the page never reads stays going in the browser's
+///   record) must not hold up the check while a newer one has answered;
+/// - else the oldest that failed;
+/// - else the oldest, still going: the check waits only while none has finished.
+///
+/// None left -> None { seen }.
+pub fn pick_in_order(entries: &[NetEntry], method: Option<&str>, url_contains: &str, taken: &[String]) -> Pick {
+    let pattern = url_contains.trim().to_lowercase();
+    let found: Vec<&NetEntry> = entries.iter().filter(|e| matches(e, method, &pattern)).collect();
+    let last = found.len().saturating_sub(1);
+    let left: Vec<&NetEntry> = found
+        .iter()
+        .enumerate()
+        .filter(|(i, e)| !taken.contains(&e.id) && !(cancelled(e) && *i < last))
+        .map(|(_, e)| *e)
+        .collect();
+    if let Some(e) = left.iter().find(|e| answered(e)) {
+        return Pick::Finished((*e).clone());
+    }
+    if let Some(e) = left.iter().find(|e| matches!(e.state, NetState::Failed(_))) {
+        return Pick::Failed((*e).clone());
+    }
+    match left.first() {
+        Some(e) => Pick::PendingOnly((*e).clone()),
+        None => Pick::None { seen: entries.len() },
+    }
+}
+
+/// How long a lone cancelled request is waited on, in case the page sends it again (a debounced search
+/// cancels on each keystroke and resends after its delay): the check then judges the one resent.
+pub const RESEND_GRACE_MS: u64 = 1000;
+
+/// Where a sentence about the picked request says which one it was.
+pub const WHICH: &str = ": the step's matching request ";
+
+/// ": the step's matching request 2 of 3, sent after action 3 (press_key) began" - the action is the last whose
+/// `seen_at_action` is at most the entry's index among the step's requests; before the first,
+/// ": the step's matching request 1 of 1, sent as the step began".
+pub fn which_request(
+    entries: &[NetEntry],
+    picked: &NetEntry,
+    method: Option<&str>,
+    url_contains: &str,
+    step: &StepRequests,
+) -> String {
+    let pattern = url_contains.trim().to_lowercase();
+    let found: Vec<&NetEntry> = entries.iter().filter(|e| matches(e, method, &pattern)).collect();
+    let place = found.iter().position(|e| e.id == picked.id).map_or(1, |p| p + 1);
+    let n = found.len().max(place);
+    let index = entries.iter().position(|e| e.id == picked.id).unwrap_or(0);
+    let action = step.seen_at_action.iter().rposition(|seen| *seen <= index);
+    match action {
+        Some(k) => {
+            let kind = step.kinds.get(k).map_or("action", String::as_str);
+            format!("{WHICH}{place} of {n}, sent after action {} ({kind}) began", k + 1)
+        }
+        None => format!("{WHICH}{place} of {n}, sent as the step began"),
+    }
+}
+
+/// `NO_REQUEST` + pattern (path only) + "\" left in <s> s: an earlier expect_response of this step took each of the <n> that matched".
+pub fn all_taken(url_contains: &str, waited_ms: u64, n: usize) -> String {
+    format!(
+        "{NO_REQUEST}{}\" left in {} s: an earlier expect_response of this step took each of the {n} that matched",
+        without_query(url_contains.trim()),
+        seconds(waited_ms)
+    )
+}
+
+/// `detail` without the ": the step's matching request ..." an `expect_response` ended its sentence with
+/// (the excerpt of a body that may follow it stays): for readers of the sentences that come before it.
+pub fn without_which(detail: &str) -> String {
+    let Some(at) = detail.find(WHICH) else { return detail.to_string() };
+    let after = &detail[at..];
+    match after.find(BODY_BEGAN) {
+        Some(b) => format!("{}{}", &detail[..at], &after[b..]),
+        None => detail[..at].to_string(),
+    }
+}
+
 /// `POST /hr/Cycle/Save` - the method and the path, never the query.
 fn named(e: &NetEntry) -> String {
     format!("{} {}", method_of(&e.method), without_query(&e.path_query))
@@ -508,9 +624,10 @@ async fn look<D: Driver>(d: &mut D) -> Result<Value, CdpError> {
     d.call("Runtime.evaluate", json!({ "expression": "1", "returnByValue": true })).await
 }
 
-/// Carry out an `expect_response`, looking only at requests that started at
-/// or after `mark`.
-pub async fn expect_response<D: Driver>(d: &mut D, a: &Action, mark: u64, timing: &Timing) -> ActionOutcome {
+/// Carry out an `expect_response`, looking only at requests that started in the step (`step.mark` onwards).
+/// It takes the step's oldest matching request no earlier check took, records it in `step.taken`, and ends
+/// its pass or failure sentence with which request that was and after which action it was sent.
+pub async fn expect_response<D: Driver>(d: &mut D, a: &Action, step: &mut StepRequests, timing: &Timing) -> ActionOutcome {
     let Action::ExpectResponse { method, url_contains, status, json, timeout_ms, .. } = a else {
         return ActionOutcome::failed(format!("{CANNOT_RUN}this is not an expect_response"));
     };
@@ -523,12 +640,18 @@ pub async fn expect_response<D: Driver>(d: &mut D, a: &Action, mark: u64, timing
     // loop is a function of its own.
     let deadline = Instant::now() + Duration::from_millis(wait_ms);
     d.set_deadline(Some(deadline));
-    let found = watch(d, method.as_deref(), url_contains, mark, wait_ms, timing.poll_ms, deadline).await;
+    let found = watch(d, method.as_deref(), url_contains, step, wait_ms, timing.poll_ms, deadline).await;
     d.set_deadline(None);
-    let entry = match found {
-        Ok(e) => e,
+    let (entry, finished) = match found {
+        Ok(Waited::Judge(e)) => (e, true),
+        Ok(Waited::NotFinished(e)) => (e, false),
         Err(out) => return out,
     };
+    step.taken.push(entry.id.clone());
+    let which = which_request(&d.net_since(step.mark), &entry, method.as_deref(), url_contains, step);
+    if !finished {
+        return ActionOutcome::failed(format!("{}{which}", not_finished(&entry, wait_ms)));
+    }
     // Read only for a JSON check, or for an unexpected 400 - whether it
     // said why is what tells a refused request from a transient one
     // (`transient`) - and never for a redirected request (what Chrome
@@ -542,8 +665,8 @@ pub async fn expect_response<D: Driver>(d: &mut D, a: &Action, mark: u64, timing
         _ => Body::Gone,
     };
     match judge_body(&entry, *status, json.as_ref(), &body) {
-        Ok(()) => ActionOutcome::passed(format!("{}{ANSWERED}{status}", named(&entry))),
-        Err(why) => failed_showing(why, body.text()),
+        Ok(()) => ActionOutcome::passed(format!("{}{ANSWERED}{status}{which}", named(&entry))),
+        Err(why) => failed_showing(format!("{why}{which}"), body.text()),
     }
 }
 
@@ -629,21 +752,32 @@ fn fetch_error(err: &str, url: &str, path: &str) -> String {
     excerpt(&scrub_tokens(&words.join(" "), None))
 }
 
+/// How the wait for a check's request ended.
+enum Waited {
+    /// The request to judge.
+    Judge(NetEntry),
+    /// The request the check took, still going when the time ran out.
+    NotFinished(NetEntry),
+}
+
 /// Look until a matching request has finished or failed. A failed match
 /// ends the wait only when no other match is still going: a page that
-/// calls one request off and sends it again is judged on the second.
+/// calls one request off and sends it again is judged on the second. Only
+/// requests no earlier check of the step took are looked at, oldest first.
 async fn watch<D: Driver>(
     d: &mut D,
     method: Option<&str>,
     url_contains: &str,
-    mark: u64,
+    step: &StepRequests,
     wait_ms: u64,
     poll_ms: u64,
     deadline: Instant,
-) -> Result<NetEntry, ActionOutcome> {
+) -> Result<Waited, ActionOutcome> {
     // Whether any call has come back - a page that never makes the request
     // is not the same failure as a browser that has stopped answering.
     let mut answered = false;
+    // Since when the only request left to judge has been one the page cancelled.
+    let mut cancelled_since: Option<Instant> = None;
     loop {
         match look(d).await {
             Ok(_) => answered = true,
@@ -651,14 +785,24 @@ async fn watch<D: Driver>(
             Err(CdpError::Timeout { .. }) => {}
             Err(e) => return Err(harness(e)),
         }
-        let entries = d.net_since(mark);
+        let entries = d.net_since(step.mark);
         let pattern = url_contains.trim().to_lowercase();
-        let still_going = entries.iter().any(|e| going(e) && matches(e, method, &pattern));
-        let picked = pick(&entries, method, url_contains);
-        match picked {
-            Pick::Finished(e) => return Ok(e),
-            Pick::Failed(e) if !still_going => return Ok(e),
-            _ => {}
+        let still_going =
+            entries.iter().any(|e| going(e) && matches(e, method, &pattern) && !step.taken.contains(&e.id));
+        let picked = pick_in_order(&entries, method, url_contains, &step.taken);
+        match &picked {
+            Pick::Finished(e) => return Ok(Waited::Judge(e.clone())),
+            Pick::Failed(e) if !still_going && !cancelled(e) => return Ok(Waited::Judge(e.clone())),
+            // A page that cancels a request on the keystroke and sends it again after a delay
+            // is judged on the second: a lone cancelled one is given a moment (or the time
+            // the check has) before it is said to be cancelled.
+            Pick::Failed(e) if !still_going => {
+                let since = *cancelled_since.get_or_insert_with(Instant::now);
+                if since.elapsed() >= Duration::from_millis(RESEND_GRACE_MS) {
+                    return Ok(Waited::Judge(e.clone()));
+                }
+            }
+            _ => cancelled_since = None,
         }
         if Instant::now() >= deadline {
             if !answered {
@@ -667,9 +811,16 @@ async fn watch<D: Driver>(
             return match picked {
                 // A failed match while another was still going: judged
                 // as it stands.
-                Pick::Finished(e) | Pick::Failed(e) => Ok(e),
-                Pick::PendingOnly(e) => Err(ActionOutcome::failed(not_finished(&e, wait_ms))),
-                Pick::None { seen } => Err(ActionOutcome::failed(no_request(url_contains, wait_ms, seen))),
+                Pick::Finished(e) | Pick::Failed(e) => Ok(Waited::Judge(e)),
+                Pick::PendingOnly(e) => Ok(Waited::NotFinished(e)),
+                Pick::None { seen } => {
+                    let matched = entries.iter().filter(|e| matches(e, method, &pattern)).count();
+                    Err(ActionOutcome::failed(if matched > 0 {
+                        all_taken(url_contains, wait_ms, matched)
+                    } else {
+                        no_request(url_contains, wait_ms, seen)
+                    }))
+                }
             };
         }
         d.idle(Duration::from_millis(poll_ms)).await;

@@ -29,6 +29,7 @@ import OutcomeGroups from "./OutcomeGroups";
 import PageErrorsBadge from "./PageErrorsBadge";
 import VerdictPicker from "./VerdictPicker";
 import { recordedBatches, resetLinesBefore, shownBatchHeading } from "./plan";
+import { uncheckedText } from "./unchecked";
 import { countBuckets, matchesFilter, replayStep, type ResultFilter } from "./verdicts";
 
 /** The result of a successful send - never the "refused" branch, which
@@ -168,7 +169,7 @@ export default function RunReview(props: {
   const unchecked = (caseId: number, stepNumber: number): string | null => {
     const i = (run?.cases ?? []).findIndex((c) => c.case_id === caseId);
     const script = i >= 0 ? scripts[i]?.data : null;
-    return script?.steps.find((s) => s.step_number === stepNumber)?.unchecked?.trim() || null;
+    return uncheckedText(script?.steps.find((s) => s.step_number === stepNumber)?.unchecked);
   };
 
   const [expanded, setExpanded] = useState<Set<number>>(new Set());

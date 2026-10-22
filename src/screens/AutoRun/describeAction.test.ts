@@ -86,6 +86,11 @@ describe("a sentence for every action kind", () => {
       { kind: "expect_checked", selector: { role: "checkbox", name: "Remember me" }, checked: false },
       'Check the "Remember me" checkbox is not ticked',
     ],
+    [{ kind: "expect_no_change", selector: SAVE }, 'Click the "Save & Continue" button anyway and check nothing happens'],
+    [
+      { kind: "expect_no_change", selector: { css: "#a" }, region: { css: "#cards" }, within_ms: 2000 },
+      "Click the element #a anyway and check nothing happens to the element #cards (watched for 2 s)",
+    ],
     [{ kind: "sign_in", account: "hr.admin" }, "Sign in as hr.admin"],
     [
       { kind: "upload", selector: { role: "button", name: "Browse" }, file: "employees.xlsx" },
@@ -378,7 +383,7 @@ describe("a sentence for every action kind", () => {
       [
         "navigate", "click", "fill", "wait_for", "check_text", "check_url", "remember_url", "expect_visible", "expect_hidden",
         "expect_text", "expect_contains_text", "expect_count", "expect_attribute", "expect_style", "expect_enabled", "expect_disabled",
-        "expect_checked", "sign_in", "upload",
+        "expect_checked", "expect_no_change", "sign_in", "upload",
         "expect_response", "api_request", "when_visible", "reload", "expire_session", "return_to_area",
         "press_key", "expect_focused", "expect_download", "expect_tab", "open_tab", "switch_tab", "close_tab",
         "expect_tab_closed", "drag", "expect_dialog", "expect_row", "expect_no_row", "expect_sorted", "expect_row_count",

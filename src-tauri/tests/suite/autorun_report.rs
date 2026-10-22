@@ -773,6 +773,19 @@ fn an_order_check_and_a_position_check_have_words() {
     }
 }
 
+#[test]
+fn a_forced_click_that_expects_nothing_has_words() {
+    let say = |v: serde_json::Value| action_words(&serde_json::from_value(v).unwrap());
+    assert_eq!(
+        say(serde_json::json!({ "kind": "expect_no_change", "selector": { "css": "#save" } })),
+        "click #save anyway and expect nothing to happen"
+    );
+    assert_eq!(
+        say(serde_json::json!({ "kind": "expect_no_change", "selector": { "css": "#save" }, "region": { "css": "#cards" }, "within_ms": 2000 })),
+        "click #save anyway and expect nothing to happen to #cards"
+    );
+}
+
 /// A case's whole details block, summary to close.
 fn product_section_of(html: &str, case_id: i32) -> String {
     let marker = format!("<span class=\"id\">#{case_id}</span>");
@@ -942,4 +955,82 @@ fn the_report_names_an_assistant_ruling_and_the_persons_words() {
     assert!(section.contains("ruled by the assistant"), "{section}");
     assert!(section.contains("a different cycle name is fine"), "{section}");
     assert!(section.contains("ruled: the case stands"), "{section}");
+}
+
+/// A run of the given cases (id, verdict), each with the given steps' outcomes empty.
+fn run_with(cases: &[(i32, &str)]) -> LocalRun {
+    let list: Vec<serde_json::Value> = cases
+        .iter()
+        .map(|(id, verdict)| {
+            serde_json::json!({ "case_id": id, "title": format!("Case {id}"), "verdict": verdict, "note": "", "steps": [] })
+        })
+        .collect();
+    serde_json::from_value(serde_json::json!({
+        "id": "run-1786000300000", "pbi_id": 42, "started_at": "1786000300000", "mode": "unattended",
+        "cases": list
+    }))
+    .unwrap()
+}
+
+/// A script whose step 1 lists `entries` as unchecked (none: no key).
+fn script_with_unchecked(case_id: i32, entries: serde_json::Value) -> CaseScript {
+    let mut step = serde_json::json!({ "step_number": 1, "actions": [{ "kind": "check_text", "value": "Saved" }] });
+    if !entries.is_null() {
+        step["unchecked"] = entries;
+    }
+    serde_json::from_value(serde_json::json!({ "case_id": case_id, "title": "t", "steps": [step] })).unwrap()
+}
+
+fn two_entries() -> serde_json::Value {
+    serde_json::json!([
+        { "item": "no lock icon", "why": "no check reads an icon" },
+        { "item": "no denied message", "why": "no check reads words", "stand_in": "expect_hidden" }
+    ])
+}
+
+#[test]
+fn a_passed_case_with_unchecked_entries_says_how_many() {
+    let run = run_with(&[(301, "Passed")]);
+    let html = build(&run, &[script_with_unchecked(301, two_entries())], "x", &no_shots);
+    assert!(html.contains("<td class=\"b-passed\">Passed, 2 expectations unchecked</td>"), "{html}");
+    assert!(html.contains("<span class=\"b-passed\">Passed, 2 expectations unchecked</span>"), "{html}");
+    assert!(html.contains("<p><strong>Unchecked:</strong> step 1: no lock icon - no check reads an icon</p>"), "{html}");
+    assert!(
+        html.contains("<p><strong>Unchecked:</strong> step 1: no denied message - no check reads words (stand-in: expect_hidden)</p>"),
+        "{html}"
+    );
+}
+
+#[test]
+fn a_failed_case_shows_its_unchecked_items_but_no_count() {
+    let run = run_with(&[(302, "Failed")]);
+    let html = build(&run, &[script_with_unchecked(302, two_entries())], "x", &no_shots);
+    assert!(html.contains("<td class=\"b-failed\">Failed</td>"), "{html}");
+    assert!(html.contains("<span class=\"b-failed\">Failed</span>"), "{html}");
+    assert!(!html.contains("Failed, "), "{html}");
+    assert_eq!(html.matches("<p><strong>Unchecked:</strong>").count(), 2, "{html}");
+    assert!(!html.contains("class=\"unchecked\""), "{html}");
+}
+
+#[test]
+fn the_summary_counts_unchecked_expectations_in_passed_cases() {
+    let run = run_with(&[(303, "Passed"), (304, "Passed"), (305, "Passed"), (306, "Failed")]);
+    let scripts = [
+        script_with_unchecked(303, two_entries()),
+        script_with_unchecked(304, serde_json::json!("the PDF cannot be read")),
+        script_with_unchecked(305, serde_json::Value::Null),
+        script_with_unchecked(306, two_entries()),
+    ];
+    let html = build(&run, &scripts, "x", &no_shots);
+    assert!(html.contains("<p class=\"unchecked\">3 expectations unchecked in 2 passed cases</p>"), "{html}");
+    let one = build(&run_with(&[(303, "Passed")]), &[script_with_unchecked(303, serde_json::json!("why"))], "x", &no_shots);
+    assert!(one.contains("<p class=\"unchecked\">1 expectation unchecked in 1 passed case</p>"), "{one}");
+}
+
+#[test]
+fn a_run_with_none_unchecked_reads_as_before() {
+    let run = run_with(&[(307, "Passed"), (308, "Failed")]);
+    let html = build(&run, &[script_with_unchecked(307, serde_json::Value::Null), script_with_unchecked(308, serde_json::Value::Null)], "x", &no_shots);
+    assert!(!html.to_lowercase().contains("unchecked"), "{html}");
+    assert!(html.contains("<td class=\"b-passed\">Passed</td>"), "{html}");
 }

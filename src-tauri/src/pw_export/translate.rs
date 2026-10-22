@@ -17,6 +17,7 @@ use crate::browser::actions::{page_goals, url_rule, Action, DropAt, TAB_WAIT_MS,
 use crate::browser::expect::{READ_TEXT_JS, WRITTEN_TEXT_JS};
 use crate::browser::keys;
 use crate::browser::locator::Target;
+use crate::browser::no_change::{COVERED_JS, DIALOGS_JS, MESSAGES_JS, STATE_JS, WAIT_MS as NO_CHANGE_WAIT_MS};
 use crate::browser::position::READ_BOX_JS;
 use crate::browser::table::{self, RowCount, SortAs, SortKind, TableCheck, SETTLE_MS, SETTLE_POLL_MS};
 use crate::browser::timing::Timing;
@@ -97,6 +98,10 @@ fn check_action(a: &Action, origins: &[String]) -> Res<()> {
         Action::ExpectPosition { selector, relative_to, .. } => {
             check_target(selector)?;
             check_target(relative_to)
+        }
+        Action::ExpectNoChange { selector, region, .. } => {
+            check_target(selector)?;
+            region.as_ref().map_or(Ok(()), check_target)
         }
         Action::PageUntil { next, until, until_all, .. } => {
             check_target(next)?;
@@ -266,8 +271,18 @@ pub fn raw_spec(input: &RawSpecInput) -> Res<String> {
     if uses(input, &|a| matches!(a, Action::ExpectPosition { .. })) {
         em.placed();
     }
+    // What `expect_no_change` compares, once.
+    if uses(input, &|a| matches!(a, Action::ExpectNoChange { .. })) {
+        for l in no_change_ts(4) {
+            em.out.push_str(&l);
+            em.out.push('\n');
+        }
+    }
     if tabs {
         em.collector();
+    }
+    if uses(input, &|a| matches!(a, Action::ExpectResponse { .. })) {
+        em.request_log();
     }
     for name in tab_names(input) {
         em.line(4, &format!("let tab_{name}: typeof page;"));
@@ -285,6 +300,7 @@ pub fn raw_spec(input: &RawSpecInput) -> Res<String> {
         em.line(4, "try {");
     }
     let mut prev_mark: Option<String> = None;
+    let unchecked = crate::autorun::unchecked::expectations(input.script);
     for (i, step) in input.script.case_steps().enumerate() {
         if cleanup.is_none() || i > 0 {
             em.out.push('\n');
@@ -294,8 +310,8 @@ pub fn raw_spec(input: &RawSpecInput) -> Res<String> {
             Some(t) => em.line(at, &format!("// {n}. {}", one_line(t))),
             None => em.line(at, &format!("// {n}.")),
         }
-        if let Some(why) = &step.unchecked {
-            em.line(at, &format!("// Not checked: {}", one_line(why)));
+        for e in unchecked.iter().filter(|e| e.step == n) {
+            em.line(at, &one_line(&crate::autorun::unchecked::todo_line(e)));
         }
         if tabs {
             let mark = format!("mark{n}");
@@ -308,7 +324,7 @@ pub fn raw_spec(input: &RawSpecInput) -> Res<String> {
     if let Some(step) = cleanup {
         let n = step.step_number;
         em.line(4, "} finally {");
-        match &step.unchecked {
+        match step.unchecked.as_ref().and_then(crate::autorun::Unchecked::reason) {
             Some(why) => em.line(6, &format!("// Clean-up: {}", one_line(why))),
             None => em.line(6, "// Clean-up"),
         }
@@ -375,6 +391,53 @@ pub fn read_text_ts(indent: usize) -> Vec<String> {
     }
     if let Some(last) = lines.last_mut() {
         last.push_str(").call(e as HTMLElement);");
+    }
+    lines
+}
+
+/// `noChangeState`, `openDialogs`, `shownMessages`, `coveredBy` and `newTexts`
+/// as TypeScript, built from `STATE_JS`, `DIALOGS_JS`, `MESSAGES_JS` and
+/// `COVERED_JS` as [`read_text_ts`] builds `readText`: the bodies are the
+/// constants', word for word; only `this` is given a type. Emitted once per
+/// spec that uses `expect_no_change`.
+pub fn no_change_ts(indent: usize) -> Vec<String> {
+    let pad = " ".repeat(indent);
+    // `const <name> = <head><js body><tail>`; `typed` gives `this` its type.
+    let wrap = |js: &str, name: &str, head: &str, tail: &str, typed: bool| -> Vec<String> {
+        let body = if typed {
+            let t = js.replacen("function() {", "function (this: HTMLElement) {", 1);
+            assert!(t != js, "{name}'s source no longer starts with `function() {{`");
+            t
+        } else {
+            assert!(js.starts_with("function() {"), "{name}'s source no longer starts with `function() {{`");
+            js.to_string()
+        };
+        let mut lines: Vec<String> = body.lines().map(|l| format!("{pad}{l}")).collect();
+        if let Some(first) = lines.first_mut() {
+            *first = format!("{pad}const {name} = {head}{}", first.trim_start());
+        }
+        if let Some(last) = lines.last_mut() {
+            last.push_str(tail);
+        }
+        lines
+    };
+    let mut lines = wrap(STATE_JS, "noChangeState", "(e: Element) => (", ").call(e as HTMLElement);", true);
+    lines.extend(wrap(DIALOGS_JS, "openDialogs", "() => (", ")();", false));
+    lines.extend(wrap(MESSAGES_JS, "shownMessages", "() => (", ")();", false));
+    lines.extend(wrap(COVERED_JS, "coveredBy", "(e: Element) => (", ").call(e as HTMLElement);", true));
+    // The app's `no_change::new_texts`.
+    for l in [
+        "const newTexts = (before: string[], after: string[]): string[] => {",
+        "  const had = new Map<string, number>();",
+        "  for (const t of before) had.set(t, (had.get(t) ?? 0) + 1);",
+        "  return after.filter((t) => {",
+        "    const n = had.get(t) ?? 0;",
+        "    if (n > 0) { had.set(t, n - 1); return false; }",
+        "    return true;",
+        "  });",
+        "};",
+    ] {
+        lines.push(format!("{pad}{l}"));
     }
     lines
 }
@@ -542,6 +605,16 @@ fn one(t: &Target) -> String {
         format!("{base}.first()")
     } else {
         base
+    }
+}
+
+/// `one`, except that a plain-string selector keeps every match: the app's
+/// forced look (`expect_no_change`) refuses a selector that matches several,
+/// and so does Playwright's strict mode when the locator is not narrowed.
+fn strict_one(t: &Target) -> String {
+    match t {
+        Target::Legacy(_) => locator("cur", t),
+        _ => one(t),
     }
 }
 
@@ -734,6 +807,19 @@ fn key_name(key: &str) -> Res<String> {
 
 // ---------------------------------------------------------------------
 // Emission
+
+/// How many `expect_response` the actions arm, the ones inside a `when_visible` or `repeat_while_visible`
+/// included.
+fn responses_in(actions: &[Action]) -> usize {
+    actions
+        .iter()
+        .map(|a| match a {
+            Action::ExpectResponse { .. } => 1,
+            Action::WhenVisible { then, .. } | Action::RepeatWhileVisible { then, .. } => responses_in(then),
+            _ => 0,
+        })
+        .sum()
+}
 
 #[derive(Default)]
 struct Counters {
@@ -937,6 +1023,64 @@ impl Em<'_> {
         }
     }
 
+    /// The requests the page sends, in the order they are sent, for `expect_response` to take from:
+    /// each with whether it is still going, finished (a redirect's own answer included) or failed, and
+    /// the page that sent it. `nextResponse` is the app's `api_checks::pick_in_order`: of the
+    /// step's requests that match and that no earlier check took, the OLDEST that has finished (so
+    /// the export takes them in the order they were sent, not the order the answers arrive), waiting
+    /// only while none has; one the page cancelled is passed over while a later one matches, and a lone
+    /// cancelled one is given a second in case the page sends it again.
+    fn request_log(&mut self) {
+        for l in [
+            "type Req = Awaited<ReturnType<typeof page.waitForRequest>>;",
+            "const sent: { request: Req; from: unknown; state: 'going' | 'done' | 'failed'; error: string }[] = [];",
+            "page.context().on('request', r => {",
+            "  if (r.redirectedFrom()) { return; }",
+            "  let from: unknown = null;",
+            "  try { from = r.frame().page(); } catch { from = null; }",
+            "  sent.push({ request: r, from, state: 'going', error: '' });",
+            "});",
+            "page.context().on('requestfinished', r => {",
+            "  const s = sent.find(e => e.request === r);",
+            "  if (s) { s.state = 'done'; }",
+            "});",
+            "page.context().on('requestfailed', r => {",
+            "  const s = sent.find(e => e.request === r);",
+            "  if (s) { s.state = 'failed'; s.error = r.failure()?.errorText ?? ''; }",
+            "});",
+            "const nextResponse = async (from: number, taken: Set<object>, matches: (r: Req) => boolean, timeout: number) => {",
+            "  const end = Date.now() + timeout;",
+            "  const cancelled = (e: { state: string; error: string }) => e.state === 'failed' && e.error.includes('ERR_ABORTED');",
+            "  const named = (e: { request: Req }) => `${e.request.method()} ${new URL(e.request.url()).pathname}`;",
+            "  let cancelledAt = 0;",
+            "  for (;;) {",
+            "    const mine = sent.slice(from).filter(e => e.from === cur && matches(e.request));",
+            "    const left = mine.filter((e, i) => !taken.has(e) && !(cancelled(e) && i < mine.length - 1));",
+            "    const done = left.find(e => e.state === 'done');",
+            "    if (done) {",
+            "      taken.add(done);",
+            "      return (await done.request.response())!;",
+            "    }",
+            "    const failed = left.find(e => e.state === 'failed');",
+            "    if (failed && !left.some(e => e.state === 'going')) {",
+            "      cancelledAt = cancelledAt || Date.now();",
+            "      if (!cancelled(failed) || Date.now() - cancelledAt >= 1000 || Date.now() >= end) {",
+            "        throw new Error(`${named(failed)} failed: ${failed.error}`);",
+            "      }",
+            "    } else {",
+            "      cancelledAt = 0;",
+            "    }",
+            "    if (Date.now() >= end) {",
+            "      throw new Error(left.length > 0 ? `${named(left[0])} had not finished after ${timeout} ms` : mine.length > 0 ? 'an earlier expect_response of this step took each matching request' : `no matching request in ${timeout} ms`);",
+            "    }",
+            "    await page.waitForTimeout(100);",
+            "  }",
+            "};",
+        ] {
+            self.line(4, l);
+        }
+    }
+
     /// A list of actions, with what they expect armed first.
     fn block(&mut self, scope: String, actions: &[Action], indent: usize) -> Res<()> {
         let saved_scope = std::mem::replace(&mut self.scope, scope);
@@ -964,22 +1108,21 @@ impl Em<'_> {
     }
 
     fn arm(&mut self, actions: &[Action], indent: usize, n: &mut Counters) {
+        // The step's `expect_response` checks all look at the requests the page sent from the
+        // step's start (`request_log`) and share the set of those already taken, so each takes the
+        // next one, as the app does.
+        if responses_in(actions) >= 1 {
+            let sc = self.scope.clone();
+            self.line(indent, &format!("const sentFrom{sc} = sent.length;"));
+            self.line(indent, &format!("const taken{sc} = new Set<object>();"));
+        }
+        self.arm_each(actions, indent, n);
+    }
+
+    fn arm_each(&mut self, actions: &[Action], indent: usize, n: &mut Counters) {
         for a in actions {
             let sc = self.scope.clone();
             match a {
-                Action::ExpectResponse { method, url_contains, timeout_ms, .. } => {
-                    // waitForResponse takes the FIRST match after arming while the app
-                    // judges the latest one; url and method are trimmed as the app does.
-                    let mut test = format!("r.url().toLowerCase().includes({})", lit(&url_contains.trim().to_lowercase()));
-                    if let Some(m) = method.as_deref().map(str::trim).filter(|m| !m.is_empty()) {
-                        let _ = write!(test, " && r.request().method() === {}", lit(&m.to_uppercase()));
-                    }
-                    let opt = format!(", {{ timeout: {} }}", expect_timeout(*timeout_ms));
-                    let i = n.resp;
-                    n.resp += 1;
-                    self.line(indent, &format!("const resp{sc}_{i} = cur.waitForResponse(r => {test}{opt});"));
-                    self.settle(indent, &format!("resp{sc}_{i}"));
-                }
                 Action::ExpectDownload { within_ms, .. } => {
                     let i = n.dl;
                     n.dl += 1;
@@ -987,7 +1130,9 @@ impl Em<'_> {
                     self.line(indent, &format!("const dl{sc}_{i} = cur.waitForEvent('download', {{ timeout: {ms} }});"));
                     self.settle(indent, &format!("dl{sc}_{i}"));
                 }
-                Action::WhenVisible { then, .. } | Action::RepeatWhileVisible { then, .. } => self.arm(then, indent, n),
+                Action::WhenVisible { then, .. } | Action::RepeatWhileVisible { then, .. } => {
+                    self.arm_each(then, indent, n)
+                }
                 _ => {}
             }
         }
@@ -1433,6 +1578,54 @@ impl Em<'_> {
                     ),
                 );
             }
+            // A forced click, and the same comparisons the app makes
+            // (`browser::no_change`) after the same wait. Pass and fail
+            // match: the control is waited for (visible) and must not be
+            // under another element, the pointer goes onto it before the
+            // page is read, and then the address, the open dialogs and any
+            // browser dialog, what the click sent (a POST, PUT, PATCH or
+            // DELETE), the messages the page shows, and the region's text and
+            // states are compared. A selector given as a plain string is
+            // never narrowed to its first match: several is a failure here as
+            // it is in the app.
+            Action::ExpectNoChange { selector, region, within_ms } => {
+                let wait = within_ms.unwrap_or(NO_CHANGE_WAIT_MS);
+                let covered = format!("{} is covered by ", selector.describe());
+                self.line(indent, "{");
+                self.line(indent + 2, &format!("const target = {};", strict_one(selector)));
+                self.line(indent + 2, &format!("const region = {};", strict_one(region.as_ref().unwrap_or(selector))));
+                self.line(indent + 2, &format!("await expect(target).{};", call("toBeVisible", &[], None)));
+                self.line(indent + 2, "const covered = await target.evaluate(coveredBy);");
+                self.line(indent + 2, &format!("if (covered) {{ throw new Error({} + covered); }}", lit(&covered)));
+                self.line(indent + 2, "await target.hover({ force: true });");
+                self.line(
+                    indent + 2,
+                    "const before = { url: cur.url(), dialogs: await cur.evaluate(openDialogs), messages: await cur.evaluate(shownMessages), state: await region.evaluate(noChangeState) };",
+                );
+                self.line(indent + 2, "let browserDialog = false;");
+                self.line(
+                    indent + 2,
+                    "const onDialog = (d: { dismiss(): Promise<void> }) => { browserDialog = true; d.dismiss().catch(() => {}); };",
+                );
+                self.line(indent + 2, "const writes: string[] = [];");
+                self.line(
+                    indent + 2,
+                    "const onRequest = (r: Awaited<ReturnType<typeof cur.waitForRequest>>) => { if (/^(POST|PUT|PATCH|DELETE)$/.test(r.method())) { writes.push(`${r.method()} ${new URL(r.url()).pathname}`); } };",
+                );
+                self.line(indent + 2, "cur.on('dialog', onDialog);");
+                self.line(indent + 2, "cur.on('request', onRequest);");
+                self.line(indent + 2, "await target.click({ force: true });");
+                self.line(indent + 2, &format!("await cur.waitForTimeout({wait});"));
+                self.line(indent + 2, "cur.off('dialog', onDialog);");
+                self.line(indent + 2, "cur.off('request', onRequest);");
+                self.line(indent + 2, "expect(writes, 'what the click sent').toEqual([]);");
+                self.line(indent + 2, "expect(cur.url(), 'the address').toBe(before.url);");
+                self.line(indent + 2, "expect(browserDialog, 'a browser dialog').toBe(false);");
+                self.line(indent + 2, "expect(await cur.evaluate(openDialogs), 'open dialogs').toBe(before.dialogs);");
+                self.line(indent + 2, "expect(newTexts(before.messages, await cur.evaluate(shownMessages)), 'new messages').toEqual([]);");
+                self.line(indent + 2, "expect(await region.evaluate(noChangeState), 'the region').toEqual(before.state);");
+                self.line(indent, "}");
+            }
             Action::ExpectFocused { selector, timeout_ms } => {
                 self.line(
                     indent,
@@ -1460,10 +1653,23 @@ impl Em<'_> {
                 self.line(indent, "}");
             }
             Action::RepeatWhileVisible { selector, max, except, then } => self.repeat(selector, *max, except, then, indent)?,
-            Action::ExpectResponse { status, json, .. } => {
+            Action::ExpectResponse { method, url_contains, status, json, timeout_ms, .. } => {
                 let i = self.cnt.resp;
                 self.cnt.resp += 1;
-                self.line(indent, &format!("const r{sc}_{i} = await resp{sc}_{i};"));
+                // The oldest matching request of the step that has finished and that no earlier
+                // check took, waiting only while none has (`nextResponse`): the app's own rule.
+                // Url and method are trimmed as the app does.
+                let mut test = format!("r.url().toLowerCase().includes({})", lit(&url_contains.trim().to_lowercase()));
+                if let Some(m) = method.as_deref().map(str::trim).filter(|m| !m.is_empty()) {
+                    let _ = write!(test, " && r.method() === {}", lit(&m.to_uppercase()));
+                }
+                self.line(
+                    indent,
+                    &format!(
+                        "const r{sc}_{i} = await nextResponse(sentFrom{sc}, taken{sc}, (r: Req) => {test}, {});",
+                        expect_timeout(*timeout_ms)
+                    ),
+                );
                 self.line(indent, &format!("expect(r{sc}_{i}.status()).toBe({status});"));
                 if let Some(j) = json {
                     self.line(

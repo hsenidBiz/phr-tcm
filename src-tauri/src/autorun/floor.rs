@@ -1,7 +1,7 @@
 //! The expected-result floor: every way an Auto Run script falls short of
 //! its test case's expected results. Pure - no browser, no filesystem.
 
-use super::CaseScript;
+use super::{CaseScript, Unchecked};
 use crate::steps_xml::Step;
 
 /// One expected result of the test case, by step position (1-based).
@@ -98,7 +98,8 @@ pub fn check_floor(script: &CaseScript, expected: &[Expected]) -> Vec<String> {
             true => step.actions.iter().any(super::checks_in_cleanup),
             false => step.actions.iter().any(|a| a.is_check()),
         };
-        if has_check {
+        // A list names what a step's checks leave out, so it sits beside them.
+        if has_check && matches!(step.unchecked, Some(Unchecked::Step(_))) {
             out.push((n, format!("step {n} says it is unchecked but has a check - drop one or the other")));
             continue;
         }

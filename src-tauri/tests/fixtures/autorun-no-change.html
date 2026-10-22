@@ -1,0 +1,56 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Auto Run no-change fixture</title>
+<!--
+  Cards that a person can click though they are not usable, for
+  `expect_no_change`: a disabled button, a card with aria-disabled that
+  opens a dialog anyway, a card that lets the click through to its
+  container, a card that only looks different under the pointer, and a card
+  an overlay lies over. The tests read only what the page wrote.
+-->
+<style>
+  .card { display: block; width: 220px; height: 40px; margin: 8px; padding: 4px; border: 1px solid #888; }
+  .card.lit { background: #ffd; }
+  #holder { width: 260px; margin: 8px; padding: 4px; border: 1px solid #888; }
+  #through-card { pointer-events: none; height: 30px; }
+  #stack { position: relative; width: 240px; margin: 8px; }
+  #overlay { position: absolute; left: 0; top: 0; right: 0; bottom: 0; background: rgba(0, 0, 0, 0.15); }
+</style>
+<button id="dis-button" class="card" disabled>Disabled button card</button>
+<div id="aria-card" class="card" role="button" tabindex="0" aria-disabled="true">Aria disabled card</div>
+<div id="dlg" role="dialog" aria-label="Opened by the card" hidden>Opened by the card</div>
+<div id="holder">
+  <div id="through-card" class="card">Click-through card</div>
+</div>
+<div id="hover-card" class="card">Hover card</div>
+<div id="stack">
+  <div id="covered-card" class="card">Covered card</div>
+  <div id="overlay"></div>
+</div>
+<div id="writer-card" class="card" role="button" tabindex="0" aria-disabled="true">Writer card</div>
+<div id="status-card" class="card" role="button" tabindex="0" aria-disabled="true">Status card</div>
+<div id="status-line" role="status"></div>
+<div id="hint-card" class="card">Hint card <span id="hint" hidden>Fill the required fields first</span></div>
+<script>
+  // A "disabled" card that sends a write anyway (to a port nothing listens
+  // on: the request is made and recorded, and fails).
+  document.getElementById('writer-card').addEventListener('click', () => {
+    fetch('http://127.0.0.1:9/hr/Cycle/Save?token=hunter2', { method: 'POST', body: 'x', mode: 'no-cors' }).catch(() => {});
+  });
+  // One that says so on the page instead.
+  document.getElementById('status-card').addEventListener('click', () => {
+    document.getElementById('status-line').textContent = 'Cycle saved';
+  });
+  // A hint that shows only while the pointer is over the card.
+  const hintCard = document.getElementById('hint-card');
+  hintCard.addEventListener('mouseenter', () => { document.getElementById('hint').hidden = false; });
+  hintCard.addEventListener('mouseleave', () => { document.getElementById('hint').hidden = true; });
+  document.getElementById('aria-card').addEventListener('click', () => {
+    document.getElementById('dlg').hidden = false;
+  });
+  document.getElementById('holder').addEventListener('click', () => {
+    document.getElementById('holder').appendChild(document.createTextNode(' reached'));
+  });
+  const hover = document.getElementById('hover-card');
+  hover.addEventListener('mouseover', () => hover.classList.add('lit'));
+</script>
