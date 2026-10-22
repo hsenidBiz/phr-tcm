@@ -114,6 +114,8 @@ fn the_writer_carries_the_owners_rules() {
             "assumed (the case defines it indirectly)",
             "invented (you chose it where the case leaves it free)",
             "never swapped for another action without saying so",
+            "(expect_no_change)",
+            "goes in the step's unchecked list with why",
             "No fixed wait, no page script and no retry",
             "test name prefix",
             "a replay of the whole case passes",
@@ -146,6 +148,7 @@ fn the_healer_carries_the_bounds_word_for_word() {
             "the case rewriter's rules",
             "until then its script is not checked",
             "the same failure came back after your last repair",
+            "never just left out: it goes in the step's unchecked list with why",
         ],
     );
 }
@@ -191,6 +194,7 @@ fn the_auditor_reports_and_never_edits() {
             "pass with the app wrong",
             "fail with the app right",
             "Never mark a finding fixed",
+            "a check that only stands in for the item is WEAKER",
         ],
     );
 }

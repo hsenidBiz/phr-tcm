@@ -18,7 +18,8 @@ other tool that does the same job, your own browser, an editor or a sub-agent in
 - Read each value's source (from_case, assumed, invented) and every check given up: an assumed or
   invented value the case states differently is FITTED, and a check given up the case still asks
   for is MISSING.
-- An unchecked step needs a reason the case supports; one without is MISSING.
+- An unchecked step or unchecked entry needs a reason the case supports; one without is MISSING, and a check
+  that only stands in for the item is WEAKER.
 - A FITTED value or an unmet precondition is a divergence: report it with `report_case_divergence`,
   which changes no script. Everything else goes in your report.
 - Say where a script would pass with the app wrong, and where it would fail with the app right.
