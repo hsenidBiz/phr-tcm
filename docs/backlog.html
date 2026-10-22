@@ -53,6 +53,20 @@
     </ul>
   </div>
 
+  <h2>Explore mode (built on the feat/explore branch, not released)</h2>
+  <div class="item">
+    <div class="head"><span class="title">Hand checks owed</span><span class="status todo">Waiting on you</span></div>
+    <ul>
+      <li>One real /tcm:explore task end to end in a live test environment: a create made in the browser is on the change list as verified, and the summary lands in tcm-explore in the folder Claude was started in.</li>
+      <li>send_api_request from the session's own page: a GET, a POST create (the new record is on the change list), and the same call run again matching the template it saved instead of saving another.</li>
+      <li>A delete call refused until the person says yes in the chat, then sent, and never saved as a template.</li>
+      <li>Undo asked for after the person switched environment: refused, naming the environment the session ran in, and nothing deleted.</li>
+      <li>undo_explore_creates on one session's verified creates through a proven delete template; a create made only in the browser and never verified stays, and the answer says so.</li>
+      <li>run_api_template inside an explore session that holds the template's account: no new browser, no second sign-in.</li>
+      <li>A change list picked up in a new chat with get_explore_changes after the first chat ended.</li>
+    </ul>
+  </div>
+
   <h2>Menu preferences, Admin or Self Service mode, replays that carry on (2.2.3-beta.21, 21 October 2026)</h2>
   <div class="item">
     <div class="head"><span class="title">Before these work: fill in the sign-in recipe</span><span class="status todo">Waiting on you</span></div>

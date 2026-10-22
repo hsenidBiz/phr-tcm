@@ -202,7 +202,7 @@ These are examples, not a rule:
 
 ## Roles
 
-Scripting here is done in four roles, and a task done with no test case has a fifth, each with its own short rules:
+Scripting here is done in five roles, each with its own short rules:
 
 - writer: choosing what to script and writing it from the live app. Its rules come with your
   first `start_autorun_discovery` of a session (a mapping run aside); /tcm:script-pbi reads the writer's rules first.
@@ -213,8 +213,8 @@ Scripting here is done in four roles, and a task done with no test case has a fi
   `save_autorun_component` of a session.
 - auditor: checking saved scripts against their cases and reporting, never editing. Ask for its
   rules with `get_guide`.
-- explorer: doing a task in the live app with no test case, recording every change. Its rules come
-  with your first `start_autorun_discovery` of a session with `explore` true.
+- explorer: doing a task the person names with no test case, in an explore session. Its rules come
+  with your first `start_autorun_discovery` with `explore` true of a session.
 
 A role's rules come once a session, ahead of that tool's answer, and a later answer of the tool opens
 with one line pointing back at them; a session starts over after 20 minutes without a call.
@@ -1851,6 +1851,39 @@ made. End your discovery summary with that list under "API templates to
 make", so they can be made with the API template tools and reused by
 every case that needs the same state. Never make one from a request you
 only guessed: only from a request discovery saw.
+
+## Exploring a task
+
+Some work has no test case: the person names a task, such as "set up a leave type and check it
+shows for an employee", and you do it in the live app. Start an explore session with
+`start_autorun_discovery` and `explore` true. The area is optional, and nothing is filed as seen:
+the discovery map and the saved areas are left as they were. An explore session is never a
+mapping run. Its answers end with the explorer's rules, so read them each time.
+
+Keep the change list as you go. Call `record_explore_change` for every create, every change and
+every delete, as soon as it is made: a create with its kind, id and name, a change with the record,
+the field and the value before and after, a delete with what the record held. A create is
+verified against the saves the session's own browser made, and only a verified create can be
+undone later. A create the app did not confirm can be removed only in the browser, by hand.
+`get_explore_changes` lists the saved sessions of this project, newest first, and with a session
+id gives that session's whole list. The list is one file in the Auto Run data folder, so it
+outlives the chat: a new chat picks up from it.
+
+When you call `end_autorun_discovery`, it names the saves the session's browser sent that are
+not on the change list. Name each in your summary, or record it first. For a one-off API call from
+the session's page, see `send_api_request` in the API template guide (`get_guide` with topic
+`api_templates`).
+
+Before anything is deleted, in the browser or with a request, tell the person what will be
+deleted and wait for their yes in the chat. Undo and remove only when the person asks. For
+creates the app verified, `undo_explore_creates` deletes them through each kind's proven delete
+template. A changed field you set back by hand, from its before value, and then mark undone with
+`record_explore_change`. Say plainly what cannot be undone: a change with no before value, a kind
+with no delete template, a record changed again since, and a create that was not verified.
+
+End with a summary: the task, the account and environment, what you did, each check and its
+result, the findings, the change list, the templates saved or reused, and how to undo. Show it in
+the chat and save it to `tcm-explore/<date>-<short-task>.md` in the folder you were started in.
 
 ## Components
 

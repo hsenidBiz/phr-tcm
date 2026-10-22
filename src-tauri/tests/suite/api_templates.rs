@@ -1074,3 +1074,31 @@ fn an_explore_proof_says_so() {
     let back: Proven = serde_json::from_value(serde_json::to_value(&proof).unwrap()).unwrap();
     assert_eq!(back, proof);
 }
+
+#[test]
+fn the_template_guide_explains_one_off_requests() {
+    let text = v2_lib::api_templates::guide::text(&[], None);
+    let flat_all = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    assert!(
+        flat_all.contains("- `effect`: `create`, `edit`, `delete` or `read` - what the template does to the application's data. You declare it; the tab shows it as a badge. A `read` template changes nothing; a fixture may use one, and nothing it finds counts as made by the tests."),
+        "{flat_all}"
+    );
+    let start = text.find("## One-off requests in an explore session").expect("the section is missing");
+    assert!(start > text.find("## Delete templates").unwrap(), "after Delete templates");
+    assert!(start < text.find("## When a run fails").unwrap(), "before When a run fails");
+    let section = text[start..].split("\n## ").next().unwrap();
+    let flat = section.split_whitespace().collect::<Vec<_>>().join(" ");
+    for needle in [
+        "`send_api_request`",
+        "`antiforgery_page`",
+        "no new browser, no sign-in",
+        "never saved",
+        "same method, path and body fields",
+        "person_said_yes",
+        "yes",
+        "`run_api_template`",
+    ] {
+        assert!(flat.contains(needle), "{needle} not in: {flat}");
+    }
+    assert!(!section.contains('\u{2014}') && !section.contains('\u{2013}'), "no em or en dashes");
+}

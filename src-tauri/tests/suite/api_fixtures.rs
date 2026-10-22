@@ -1769,7 +1769,7 @@ fn the_guide_explains_delete_templates() {
         v2_lib::autorun::cleanup::PROVE_REFUSAL,
         "the record marks it deleted",
         "`run_api_template` refuses a delete template, and so does a fixture",
-        "Only the person's Clean up test-made drafts, in the app, runs one",
+        "Only two things run one: the person's Clean up test-made drafts, in the app, which previews the drafts for the person to tick and confirm, and an undo of your own explore session (`undo_explore_creates`), which deletes only the creates the app verified in that session, through each kind's proven delete template.",
     ] {
         assert!(flat.contains(needle), "{needle} not in: {flat}");
     }

@@ -59,8 +59,8 @@ with every problem listed together:
 - Unknown fields are refused, at every level.
 - `id`: lowercase ASCII letters, digits, `-` and `_`; 1 to 100 characters.
   It is the file name.
-- `effect`: `create`, `edit` or `delete` - what the template does to the
-  application's data. You declare it; the tab shows it as a badge.
+- `effect`: `create`, `edit`, `delete` or `read` - what the template does to the
+  application's data. You declare it; the tab shows it as a badge. A `read` template changes nothing; a fixture may use one, and nothing it finds counts as made by the tests.
 - `sources`: where in the application's code each request comes from, as
   `file:line`.
 - `params[].required`: true ONLY when the application refuses the request
@@ -422,10 +422,28 @@ what fixtures and setups made. Any other `id` is refused with `a delete
 template is only proven on a draft the tests made`. A prove that succeeds
 deleted that draft, and the record marks it deleted.
 
-`run_api_template` refuses a delete template, and so does a fixture. Only
-the person's Clean up test-made drafts, in the app, runs one: it previews
-the drafts, the person ticks and confirms, and each is deleted through its
-kind's proven delete template.
+`run_api_template` refuses a delete template, and so does a fixture. Only two things run one: the person's Clean up test-made drafts, in the app, which previews the drafts for the person to tick and confirm, and an undo of your own explore session (`undo_explore_creates`), which deletes only the creates the app verified in that session, through each kind's proven delete template.
+
+## One-off requests in an explore session
+
+In an explore session (`start_autorun_discovery` with `explore` true, see the Auto Run guide)
+`send_api_request` runs one GET or POST in your explore session's own page: no new browser, no
+sign-in, as the account the session signed in as. The anti-forgery token is read on the page you
+are on; when that page has none, pass `antiforgery_page`, a page of the app with a form on it,
+and the token is read there, in the same tab. The answer is redacted and cut at the first 64 KB.
+
+- A GET only reads. A POST needs the person's API templates switch and an `effect`: `read`,
+  `create`, `edit` or `delete`. A create also names what it made (`created`: kind, id and name)
+  unless the answer carries the id, and it goes on the session's change list.
+- `effect: delete` needs `person_said_yes` true, and only after you told the person what will be
+  deleted and they said yes in the chat. Without it the call is refused and nothing is sent. A
+  delete call is never saved as a template.
+- A call that worked is saved as a template proven by that run, or matched to a template already
+  saved with the same method, path and body fields, which is reused instead of saved again.
+- A failed call, a delete call, a call with a secret written out in it, and a call from a page
+  with no token are never saved: the answer says which and why. Send a secret as a param.
+- `run_api_template` runs a saved template in your explore session when the session holds the
+  template's account; otherwise it opens its own browser as before.
 
 ## When a run fails
 
