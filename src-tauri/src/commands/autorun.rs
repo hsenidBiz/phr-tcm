@@ -2685,6 +2685,7 @@ pub fn save_script_from_editor(
         checked: false,
         checks: 0,
         given_up: Vec::new(),
+        cleared_defect: None,
     });
     let CaseScript {
         // The editor's own.
@@ -2714,6 +2715,8 @@ pub fn save_script_from_editor(
         // Stamped below: the person's save is the acceptance of what was given up.
         checks: _,
         given_up: _,
+        // Kept by the store like the mark.
+        cleared_defect: _,
         // The stored script's. Only the assistant writes a setup, so the
         // webview can never change a fixture or write an old one back.
         setup,

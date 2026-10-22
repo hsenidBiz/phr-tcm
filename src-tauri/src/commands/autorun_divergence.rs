@@ -37,6 +37,22 @@ pub fn rule_at(
     load_at(root, org, project, now_ms)
 }
 
+/// Why [`rule_by_assistant_at`] ruled nothing: a rule's refusal is the assistant's to read (a 400), a file that
+/// could not be read or written is the machine's (a 500).
+#[derive(Debug, Clone, PartialEq)]
+pub enum RulingFailure {
+    Refused(String),
+    Machine(String),
+}
+
+impl RulingFailure {
+    pub fn text(&self) -> &str {
+        match self {
+            RulingFailure::Refused(s) | RulingFailure::Machine(s) => s,
+        }
+    }
+}
+
 /// The assistant's ruling, on the person's words, on the divergences it
 /// names: [`divergences::rule_by_assistant_in`] under the file's lock, then
 /// each ruled case's script is set to not checked, so it counts as checked
@@ -52,11 +68,18 @@ pub fn rule_by_assistant_at(
     said: &str,
     note: Option<&str>,
     now_ms: u64,
-) -> Result<String, String> {
-    let (cases, answer) = divergences::update(root, org, project, |list| {
-        let cases = divergences::rule_by_assistant_in(list, picks, ruling, said, note, now_ms)?;
+) -> Result<String, RulingFailure> {
+    let mut refused: Option<String> = None;
+    let ruled = divergences::update(root, org, project, |list| {
+        let cases = divergences::rule_by_assistant_in(list, picks, ruling, said, note, now_ms)
+            .inspect_err(|why| refused = Some(why.clone()))?;
         Ok((cases, divergences::ruling_answer(list, picks, ruling)))
-    })?;
+    });
+    let (cases, answer) = match ruled {
+        Ok(done) => done,
+        Err(e) if refused.is_some() => return Err(RulingFailure::Refused(e)),
+        Err(e) => return Err(RulingFailure::Machine(e)),
+    };
     clear_checked(root, &cases);
     crate::applog::info(format!(
         "Auto Run: {} divergence(s) on case(s) {cases:?} ruled {ruling:?} by the assistant",

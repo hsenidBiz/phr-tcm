@@ -1166,3 +1166,181 @@ mod assistant {
         assert!(!serde_json::to_string(&list[0]).unwrap().contains("ruled_by"));
     }
 }
+
+// ------------------------------------------------- the assistant's ruling route
+
+mod ruling_route {
+    use super::*;
+    use v2_lib::autorun::divergences::{NO_PICK, SAID_EMPTY, WAITS_FOR_REPAIR_PREFIX};
+    use v2_lib::autorun::proven::{note_outcome, Outcome};
+    use v2_lib::autorun::store::{load_script, save_script};
+
+    const SAID: &str = "a different cycle name is fine";
+
+    async fn rule(client: Option<&AdoClient>, body: serde_json::Value) -> (u16, String) {
+        route(&ctx(), client, "POST", "/autorun-divergence-ruling", &body.to_string(), "1.0.0").await
+    }
+
+    fn seed(root: &std::path::Path, ids: &[(&str, i32, DivergenceKind)]) {
+        update(root, "acme", "Web", |l| {
+            for (id, step, kind) in ids {
+                l.push(divergence(id, 147556, *step, *kind, v2_lib::autorun::sessions::now_ms()));
+            }
+            Ok(())
+        })
+        .unwrap();
+    }
+
+    fn checked_script() -> v2_lib::autorun::CaseScript {
+        serde_json::from_value(serde_json::json!({
+            "case_id": 147556, "title": "t", "checked": true, "organization": "acme", "project": "Web",
+            "steps": [{ "step_number": 1, "actions": [{ "kind": "check_text", "value": "ok" }] }]
+        }))
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn the_ruling_route_refuses_an_empty_said() {
+        let dir = TempDir::new();
+        let _root = crate::serial::autorun();
+        set_root(dir.path().to_path_buf());
+        seed(dir.path(), &[("d1", 2, DivergenceKind::Data)]);
+        let before = std::fs::read_to_string(path(dir.path(), "acme", "Web")).unwrap();
+        let (status, out) = rule(
+            None,
+            serde_json::json!({ "case_id": 147556, "divergence_id": "d1", "ruling": "case_right", "said": "" }),
+        )
+        .await;
+        assert_eq!((status, out.as_str()), (400, SAID_EMPTY));
+        assert_eq!(std::fs::read_to_string(path(dir.path(), "acme", "Web")).unwrap(), before);
+    }
+
+    #[tokio::test]
+    async fn a_case_right_ruling_lets_the_next_run_of_the_case_pass() {
+        let dir = TempDir::new();
+        let _root = crate::serial::autorun();
+        set_root(dir.path().to_path_buf());
+        seed(dir.path(), &[("d1", 2, DivergenceKind::Data)]);
+        save_script(dir.path(), &checked_script()).unwrap();
+        assert!(needs_ruling(dir.path(), "acme", "Web", 147556).is_some());
+        let (status, out) = rule(
+            None,
+            serde_json::json!({ "case_id": 147556, "divergence_id": "d1", "ruling": "case_right", "said": SAID }),
+        )
+        .await;
+        assert_eq!(status, 200, "{out}");
+        assert!(out.starts_with("Ruled d1 (case 147556 step 2): the case is right"), "{out}");
+        assert_eq!(needs_ruling(dir.path(), "acme", "Web", 147556), None);
+        assert!(!load_script(dir.path(), 147556).unwrap().unwrap().checked, "checked only after a pass");
+        note_outcome(dir.path(), 147556, Outcome::Green);
+        assert!(load_script(dir.path(), 147556).unwrap().unwrap().checked);
+        // The person's words are kept and not in the log.
+        let stored = load(dir.path(), "acme", "Web").unwrap();
+        assert_eq!(stored[0].said.as_deref(), Some(SAID));
+        assert!(!v2_lib::applog::recent(200).iter().any(|l| l.message.contains(SAID)));
+    }
+
+    #[tokio::test]
+    async fn the_batch_route_rules_only_the_divergences_it_names() {
+        let dir = TempDir::new();
+        let _root = crate::serial::autorun();
+        set_root(dir.path().to_path_buf());
+        seed(
+            dir.path(),
+            &[("d1", 2, DivergenceKind::Data), ("d2", 3, DivergenceKind::Data), ("d3", 4, DivergenceKind::Data)],
+        );
+        let (status, out) = rule(
+            None,
+            serde_json::json!({
+                "divergences": [
+                    { "case_id": 147556, "divergence_id": "d1" },
+                    { "case_id": 147556, "divergence_id": "d3" }
+                ],
+                "ruling": "case_right",
+                "said": SAID
+            }),
+        )
+        .await;
+        assert_eq!(status, 200, "{out}");
+        assert_eq!(out.matches("Ruled d").count(), 2, "{out}");
+        let stored = load(dir.path(), "acme", "Web").unwrap();
+        let status_of = |id: &str| stored.iter().find(|d| d.id == id).unwrap().status;
+        assert_eq!(
+            (status_of("d1"), status_of("d2"), status_of("d3")),
+            (DivergenceStatus::Ruled, DivergenceStatus::Open, DivergenceStatus::Ruled)
+        );
+        // One that cannot take it rules none, and the answer names it.
+        let (status, out) = rule(
+            None,
+            serde_json::json!({
+                "divergences": [
+                    { "case_id": 147556, "divergence_id": "d2" },
+                    { "case_id": 147556, "divergence_id": "d1" }
+                ],
+                "ruling": "case_right",
+                "said": SAID
+            }),
+        )
+        .await;
+        assert_eq!(status, 400, "{out}");
+        assert!(out.starts_with("d1: "), "{out}");
+        let after = load(dir.path(), "acme", "Web").unwrap();
+        assert_eq!(after.iter().find(|d| d.id == "d2").unwrap().status, DivergenceStatus::Open);
+    }
+
+    #[tokio::test]
+    async fn a_rewrite_ruling_by_the_assistant_keeps_the_case_blocked() {
+        let dir = TempDir::new();
+        let _root = crate::serial::autorun();
+        set_root(dir.path().to_path_buf());
+        let (_server, client) = client_with_case().await;
+        seed(dir.path(), &[("d1", 2, DivergenceKind::Wording)]);
+        let (status, out) = rule(
+            Some(&client),
+            serde_json::json!({ "case_id": 147556, "divergence_id": "d1", "ruling": "rewrite_case", "said": SAID }),
+        )
+        .await;
+        assert_eq!(status, 200, "{out}");
+        let blocked = needs_ruling(dir.path(), "acme", "Web", 147556).expect("still blocked");
+        assert!(blocked.starts_with(WAITS_FOR_REPAIR_PREFIX), "{blocked}");
+        let stored = load(dir.path(), "acme", "Web").unwrap();
+        assert!(stored[0].case_fp.is_some(), "the case's print was taken at the ruling");
+    }
+
+    #[tokio::test]
+    async fn the_ruling_route_takes_one_form_or_the_other() {
+        let dir = TempDir::new();
+        let _root = crate::serial::autorun();
+        set_root(dir.path().to_path_buf());
+        seed(dir.path(), &[("d1", 2, DivergenceKind::Data)]);
+        let (status, out) = rule(
+            None,
+            serde_json::json!({
+                "case_id": 147556, "divergence_id": "d1",
+                "divergences": [{ "case_id": 147556, "divergence_id": "d1" }],
+                "ruling": "case_right", "said": SAID
+            }),
+        )
+        .await;
+        assert_eq!(
+            (status, out.as_str()),
+            (400, "name one divergence (case_id and divergence_id) or several (divergences), not both")
+        );
+        let (status, out) = rule(None, serde_json::json!({ "ruling": "case_right", "said": SAID })).await;
+        assert_eq!((status, out.as_str()), (400, NO_PICK));
+        // A body that does not parse names the shape.
+        let (status, out) = rule(None, serde_json::json!({ "ruling": "maybe", "said": SAID })).await;
+        assert_eq!(status, 400);
+        assert!(out.contains("\"divergence_id\": \"d3\"") && out.contains("case_right, data_fixed or rewrite_case"), "{out}");
+        assert_eq!(load(dir.path(), "acme", "Web").unwrap()[0].status, DivergenceStatus::Open);
+    }
+
+    #[test]
+    fn the_ruling_routes_are_auto_runs() {
+        use v2_lib::ai_bridge::{module_of_route, smells_like_a_write};
+        for p in ["/autorun-divergence-ruling", "/autorun-defect-clear"] {
+            assert_eq!(module_of_route(p), Some(v2_lib::modules::Module::AutoRun), "{p}");
+            assert!(!smells_like_a_write("POST", p), "{p}");
+        }
+    }
+}

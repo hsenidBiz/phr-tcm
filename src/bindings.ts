@@ -637,6 +637,12 @@ export const commands = {
 	checks?: number,
 	/**  Every check a repair gave up, oldest first. Set by the save from the edits, never from what was sent. */
 	given_up?: GivenUp[],
+	/**
+	 *  The suspected-defect mark the assistant cleared on the person's words (`clear_autorun_suspected_defect`),
+	 *  kept so the case card can show what the person said. Set only by `store::clear_suspected_defect_with_words`;
+	 *  gone when a mark is set again. Every save keeps the one on disk, like the mark.
+	 */
+	cleared_defect?: ClearedDefect_Serialize | null,
 } | null, string>(__TAURI_INVOKE("auto_run_load_script", { caseId })),
 	/**
 	 *  Every listed case's script in one call - what the Auto Run screen asks
@@ -3048,6 +3054,12 @@ export type CaseScript_Deserialize = {
 	checks?: number,
 	/**  Every check a repair gave up, oldest first. Set by the save from the edits, never from what was sent. */
 	given_up?: GivenUp[],
+	/**
+	 *  The suspected-defect mark the assistant cleared on the person's words (`clear_autorun_suspected_defect`),
+	 *  kept so the case card can show what the person said. Set only by `store::clear_suspected_defect_with_words`;
+	 *  gone when a mark is set again. Every save keeps the one on disk, like the mark.
+	 */
+	cleared_defect?: ClearedDefect_Deserialize | null,
 };
 
 /**
@@ -3197,6 +3209,12 @@ export type CaseScript_Serialize = {
 	checks?: number,
 	/**  Every check a repair gave up, oldest first. Set by the save from the edits, never from what was sent. */
 	given_up?: GivenUp[],
+	/**
+	 *  The suspected-defect mark the assistant cleared on the person's words (`clear_autorun_suspected_defect`),
+	 *  kept so the case card can show what the person said. Set only by `store::clear_suspected_defect_with_words`;
+	 *  gone when a mark is set again. Every save keeps the one on disk, like the mark.
+	 */
+	cleared_defect?: ClearedDefect_Serialize | null,
 };
 
 export type CellMatch = "exact" | "contains";
@@ -3283,6 +3301,36 @@ export type CleanupResult = {
 	ok: boolean,
 	/**  `deleted`, or the sentence the delete failed with. */
 	outcome: string,
+};
+
+/**
+ *  A suspected-defect mark the assistant cleared because the person said so in the chat: the step it was on,
+ *  their words (scrubbed, never written to the app log), the assistant's own note, and when.
+ */
+export type ClearedDefect = ClearedDefect_Serialize | ClearedDefect_Deserialize;
+
+/**
+ *  A suspected-defect mark the assistant cleared because the person said so in the chat: the step it was on,
+ *  their words (scrubbed, never written to the app log), the assistant's own note, and when.
+ */
+export type ClearedDefect_Deserialize = {
+	step_number: number,
+	said: string,
+	note?: string | null,
+	/**  Epoch milliseconds as a string, like `SuspectedDefect::marked_at`. */
+	cleared_at: string,
+};
+
+/**
+ *  A suspected-defect mark the assistant cleared because the person said so in the chat: the step it was on,
+ *  their words (scrubbed, never written to the app log), the assistant's own note, and when.
+ */
+export type ClearedDefect_Serialize = {
+	step_number: number,
+	said: string,
+	note?: string | null,
+	/**  Epoch milliseconds as a string, like `SuspectedDefect::marked_at`. */
+	cleared_at: string,
 };
 
 /**

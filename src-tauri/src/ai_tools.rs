@@ -166,6 +166,8 @@ pub const AUTORUN_TOOLS: &[&str] = &[
     "record_validation_rule",
     "mark_autorun_suspected_defect",
     "report_case_divergence",
+    "rule_case_divergence",
+    "clear_autorun_suspected_defect",
     "set_autorun_order",
     "propose_accounts",
     "get_accounts",

@@ -578,6 +578,8 @@ fn each_tool_belongs_to_its_module() {
             "record_validation_rule",
             "mark_autorun_suspected_defect",
             "report_case_divergence",
+            "rule_case_divergence",
+            "clear_autorun_suspected_defect",
             "set_autorun_order",
             "propose_accounts",
             "get_accounts",
@@ -2214,4 +2216,11 @@ fn the_explore_tools_belong_to_their_modules() {
     assert_eq!(module_of_tool("undo_explore_creates"), Some(Module::ApiTemplates));
     assert_eq!(module_of_tool("record_explore_change"), Some(Module::AutoRun));
     assert_eq!(module_of_tool("get_explore_changes"), Some(Module::AutoRun));
+}
+
+/// The two ruling tools are Auto Run's.
+#[test]
+fn the_ruling_tools_belong_to_auto_run() {
+    assert_eq!(module_of_tool("rule_case_divergence"), Some(Module::AutoRun));
+    assert_eq!(module_of_tool("clear_autorun_suspected_defect"), Some(Module::AutoRun));
 }

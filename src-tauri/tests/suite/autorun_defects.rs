@@ -824,3 +824,83 @@ fn the_result_comment_carries_the_defect_reason() {
         "Auto Run: Suspected application defect at step 3: saving answers Error 500 - step 3: the toast said Error 500"
     );
 }
+
+// ------------------------------------------------ the assistant's clearing
+
+fn clear_body(case_id: i32, said: &str) -> String {
+    serde_json::json!({ "case_id": case_id, "said": said }).to_string()
+}
+
+#[tokio::test]
+async fn clearing_a_mark_needs_the_persons_words() {
+    let dir = TempDir::new();
+    let _root = crate::serial::autorun();
+    set_root(dir.path().to_path_buf());
+    save_script(dir.path(), &script(501)).unwrap();
+    set_suspected_defect(dir.path(), 501, Some(mark(3, "saving answers Error 500"))).unwrap();
+    let go = |body: String| async move { route(&ctx(), None, "POST", "/autorun-defect-clear", &body, "1.0.0").await };
+
+    let (status, out) = go(clear_body(501, "")).await;
+    assert_eq!((status, out.as_str()), (400, v2_lib::autorun::divergences::SAID_EMPTY));
+    assert!(load_script(dir.path(), 501).unwrap().unwrap().suspected_defect.is_some(), "the mark stays");
+
+    let (status, out) = go(clear_body(501, "the viewport fix made it pass")).await;
+    assert_eq!(status, 200, "{out}");
+    assert!(out.starts_with("Cleared the suspected-defect mark on case 501 step 3, on the person's words."), "{out}");
+    let saved = load_script(dir.path(), 501).unwrap().unwrap();
+    assert_eq!(saved.suspected_defect, None);
+    // The steps and the repairs are as they were.
+    assert_eq!((saved.repairs, saved.steps.len()), (2, 3));
+
+    let (status, out) = go(clear_body(501, "the viewport fix made it pass")).await;
+    assert_eq!((status, out.as_str()), (400, "case 501 has no suspected-defect mark"));
+    // A case with no script has no mark either.
+    let (status, out) = go(clear_body(999, "the viewport fix made it pass")).await;
+    assert_eq!((status, out.as_str()), (400, "case 999 has no suspected-defect mark"));
+    // The words are not in the log.
+    assert!(!v2_lib::applog::recent(200).iter().any(|l| l.message.contains("viewport fix")));
+}
+
+/// The cleared mark keeps the person's words, scrubbed like a note, so the case card can show them; a save
+/// keeps them, a new mark ends them, and a file from before this field still loads.
+#[tokio::test]
+async fn a_cleared_mark_keeps_the_persons_words_for_the_case_card() {
+    let dir = TempDir::new();
+    let _root = crate::serial::autorun();
+    set_root(dir.path().to_path_buf());
+    save_script(dir.path(), &script(501)).unwrap();
+    // A script file from before the field loads with none, and writes none.
+    let old = raw(dir.path(), 501);
+    assert!(old.get("cleared_defect").is_none(), "{old}");
+    let loaded: CaseScript = serde_json::from_value(old).unwrap();
+    assert_eq!(loaded.cleared_defect, None);
+
+    set_suspected_defect(dir.path(), 501, Some(mark(3, "saving answers Error 500"))).unwrap();
+    let body = serde_json::json!({
+        "case_id": 501,
+        "said": "yes, clear it, see https://hr.example.internal/x?token=abc",
+        "note": "fixed elsewhere"
+    })
+    .to_string();
+    let (status, out) = route(&ctx(), None, "POST", "/autorun-defect-clear", &body, "1.0.0").await;
+    assert_eq!(status, 200, "{out}");
+
+    let saved = load_script(dir.path(), 501).unwrap().unwrap();
+    let kept = saved.cleared_defect.clone().expect("the person's words are kept");
+    assert_eq!((kept.step_number, kept.note.as_deref()), (3, Some("fixed elsewhere")));
+    assert!(kept.said.starts_with("yes, clear it"), "{}", kept.said);
+    assert!(!kept.said.contains("hr.example.internal") && !kept.said.contains("token="), "{}", kept.said);
+    assert!(kept.cleared_at.parse::<u64>().is_ok());
+
+    // Every save keeps them, whatever it was sent.
+    let mut sent = script(501);
+    sent.title = "renamed".into();
+    save_scripts_atomically(dir.path(), std::slice::from_ref(&sent)).unwrap();
+    assert_eq!(load_script(dir.path(), 501).unwrap().unwrap().cleared_defect, Some(kept.clone()));
+    save_script_from_editor(dir.path(), "acme", "Web", script(501)).unwrap();
+    assert_eq!(load_script(dir.path(), 501).unwrap().unwrap().cleared_defect, Some(kept));
+
+    // A new mark ends them.
+    set_suspected_defect(dir.path(), 501, Some(mark(2, "again"))).unwrap();
+    assert_eq!(load_script(dir.path(), 501).unwrap().unwrap().cleared_defect, None);
+}

@@ -341,7 +341,7 @@ pub fn check_said(said: &str) -> Result<String, String> {
 
 /// The assistant's own note: empty is none, one line of at most
 /// `MAX_TEXT` characters, scrubbed.
-fn check_note(note: Option<&str>) -> Result<Option<String>, String> {
+pub fn check_note(note: Option<&str>) -> Result<Option<String>, String> {
     let Some(note) = note.map(str::trim).filter(|n| !n.is_empty()) else {
         return Ok(None);
     };

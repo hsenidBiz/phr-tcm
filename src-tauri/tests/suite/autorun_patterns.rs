@@ -57,7 +57,7 @@ fn script(case_id: i32, step_number: i32, action: Action) -> CaseScript {
         needs_state: Default::default(),
         saved_at: None,
         fail_on_unexpected_dialog: false,
-        page_errors: None, ignore_page_errors: vec![], organization: None, project: None, checked: false, checks: 0, given_up: Vec::new(),
+        page_errors: None, ignore_page_errors: vec![], organization: None, project: None, checked: false, checks: 0, given_up: Vec::new(), cleared_defect: None,
     }
 }
 

@@ -538,6 +538,10 @@ pub async fn route(
         // A place the live app or its data differs from the case: stored for a
         // person to rule on, quoting the case, checked against it.
         ("POST", "/autorun-divergence") => autorun_divergence(ctx, client, body).await,
+        // The assistant applying a ruling the person gave in the chat, quoting
+        // their words, and clearing its own suspected-defect mark the same way.
+        ("POST", "/autorun-divergence-ruling") => autorun_divergence_ruling(ctx, client, body).await,
+        ("POST", "/autorun-defect-clear") => autorun_defect_clear(body),
         // Components: saved only once the open discovery has tried them
         // live, and retired only while no saved script uses them.
         ("POST", "/autorun-component-save") => autorun_component_save(ctx, client, body).await,
@@ -9593,6 +9597,130 @@ async fn autorun_divergence(ctx: &BridgeContext, client: Option<&crate::ado::Ado
         // A rule's refusal is the assistant's to read; a file that could
         // not be read or written is the machine's.
         Err(e) if refused.is_some() => (400, e),
+        Err(e) => (500, e),
+    }
+}
+
+/// `POST /autorun-divergence-ruling`: the assistant applies the ruling the person gave in the chat, on one
+/// divergence or on several (all or none), quoting their words (`divergences::rule_by_assistant_in`, by
+/// `commands::autorun_divergence::rule_by_assistant_at`). A rewrite ruling takes the case's print at once, so a
+/// later rewrite is seen as a difference. The person's words are stored and shown, never written to the log.
+async fn autorun_divergence_ruling(ctx: &BridgeContext, client: Option<&crate::ado::AdoClient>, body: &str) -> (u16, String) {
+    use crate::autorun::divergences::{self, AssistantRuling};
+    #[derive(serde::Deserialize)]
+    struct Pick {
+        case_id: i32,
+        divergence_id: String,
+    }
+    #[derive(serde::Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct RulingBody {
+        case_id: Option<i32>,
+        divergence_id: Option<String>,
+        divergences: Option<Vec<Pick>>,
+        ruling: AssistantRuling,
+        said: String,
+        note: Option<String>,
+    }
+    let shape = "{ \"case_id\": 141701, \"divergence_id\": \"d3\", \"ruling\": \"case_right\", \"said\": \"a different cycle name is fine\" } - ruling is case_right, data_fixed or rewrite_case";
+    let b: RulingBody = match serde_json::from_str(body) {
+        Ok(b) => b,
+        Err(e) => return (400, format!("that is not a ruling: {e}. Expected {shape}.")),
+    };
+    let single = b.case_id.is_some() || b.divergence_id.is_some();
+    let picks: Vec<(i32, String)> = match (single, b.divergences) {
+        (true, Some(_)) => {
+            return (
+                400,
+                "name one divergence (case_id and divergence_id) or several (divergences), not both".to_string(),
+            )
+        }
+        (true, None) => match (b.case_id, b.divergence_id) {
+            (Some(c), Some(d)) => vec![(c, d)],
+            _ => return (400, divergences::NO_PICK.to_string()),
+        },
+        (false, Some(list)) => list.into_iter().map(|p| (p.case_id, p.divergence_id)).collect(),
+        (false, None) => return (400, divergences::NO_PICK.to_string()),
+    };
+    let root = match autorun_root() {
+        Ok(r) => r,
+        Err(refused) => return refused,
+    };
+    let ruling = b.ruling.ruling();
+    let now = crate::autorun::sessions::now_ms();
+    let answer = match crate::commands::autorun_divergence::rule_by_assistant_at(
+        &root,
+        &ctx.org,
+        &ctx.project,
+        &picks,
+        ruling,
+        &b.said,
+        b.note.as_deref(),
+        now,
+    ) {
+        Ok(answer) => answer,
+        Err(crate::commands::autorun_divergence::RulingFailure::Refused(why)) => return (400, why),
+        Err(crate::commands::autorun_divergence::RulingFailure::Machine(e)) => return (500, e),
+    };
+    if ruling == crate::autorun::divergences::Ruling::Rewrite {
+        if let Some(client) = client {
+            let mut cases: Vec<i32> = picks.iter().map(|(c, _)| *c).collect();
+            cases.sort_unstable();
+            cases.dedup();
+            crate::commands::autorun_divergence::refresh_rewritten(client, &root, &ctx.org, &ctx.project, Some(&cases)).await;
+        }
+    }
+    (200, answer)
+}
+
+/// `POST /autorun-defect-clear`: the assistant clears the suspected-defect mark it set, once the person said so
+/// in the chat. Their words are kept with the cleared mark (`store::clear_suspected_defect_with_words`) so the
+/// case card can show them; there is no Undo. Never written to the log: only the case and the step.
+fn autorun_defect_clear(body: &str) -> (u16, String) {
+    #[derive(serde::Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct ClearBody {
+        case_id: i32,
+        said: String,
+        note: Option<String>,
+    }
+    let shape = "{ \"case_id\": 501, \"said\": \"the person's own words from this chat\" }";
+    let b: ClearBody = match serde_json::from_str(body) {
+        Ok(b) => b,
+        Err(e) => return (400, format!("that is not a clearing: {e}. Expected {shape}.")),
+    };
+    let said = match crate::autorun::divergences::check_said(&b.said) {
+        Ok(s) => s,
+        Err(why) => return (400, why),
+    };
+    let note = match crate::autorun::divergences::check_note(b.note.as_deref()) {
+        Ok(n) => n,
+        Err(why) => return (400, why),
+    };
+    let root = match autorun_root() {
+        Ok(r) => r,
+        Err(refused) => return refused,
+    };
+    let script = match crate::autorun::store::load_script(&root, b.case_id) {
+        Ok(s) => s,
+        Err(e) => return (500, e),
+    };
+    if script.as_ref().and_then(|s| s.suspected_defect.as_ref()).is_none() {
+        return (400, format!("case {} has no suspected-defect mark", b.case_id));
+    }
+    let now = crate::autorun::sessions::now_ms();
+    match crate::autorun::store::clear_suspected_defect_with_words(&root, b.case_id, &said, note.as_deref(), now) {
+        Ok(Some(step)) => {
+            crate::applog::info(format!("AI cleared the suspected defect on case {} step {step} on the person's words", b.case_id));
+            (
+                200,
+                format!(
+                    "Cleared the suspected-defect mark on case {} step {step}, on the person's words. A failure there is no longer labelled as an application defect.",
+                    b.case_id
+                ),
+            )
+        }
+        Ok(None) => (400, format!("case {} has no suspected-defect mark", b.case_id)),
         Err(e) => (500, e),
     }
 }
