@@ -2384,3 +2384,32 @@ fn the_guide_explains_text_as_written() {
     assert!(flat.contains("as written in the page"), "{flat}");
     assert!(!section.contains('\u{2014}') && !section.contains('\u{2013}'), "no em or en dashes");
 }
+
+/// The guide explains the assistant's ruling: when it may be applied, what
+/// it records, what each ruling does, and how a mark is cleared.
+#[test]
+fn the_guide_explains_assistant_rulings() {
+    use v2_lib::autorun::guide::guide_section;
+    let g = autorun_guide();
+    let section = guide_section(&g, "When the case and the app disagree").expect("the section");
+    let flat = flat_guide(&section);
+    for needle in [
+        "`rule_case_divergence { case_id, divergence_id, ruling, said, note }`",
+        "`case_right`",
+        "`data_fixed`",
+        "`rewrite_case`",
+        "all are ruled or none is",
+        "ruled by the assistant",
+        "relayed by another assistant",
+        "undo your ruling",
+    ] {
+        assert!(flat.contains(needle), "the section never says {needle:?}: {flat}");
+    }
+    assert!(!section.contains('\u{2014}') && !section.contains('\u{2013}'), "no em or en dashes");
+
+    let repair = &g[g.find("## Repairing a script that failed").unwrap()..];
+    let start = repair.find("### When the application is wrong").expect("the subsection is missing");
+    let wrong = repair[start..].split("\n## ").next().unwrap();
+    assert!(wrong.contains("`clear_autorun_suspected_defect { case_id, said }`"), "{wrong}");
+    assert!(!wrong.contains('\u{2014}') && !wrong.contains('\u{2013}'), "no em or en dashes");
+}
