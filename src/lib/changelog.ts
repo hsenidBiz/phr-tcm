@@ -27,6 +27,18 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.2.3-beta.26",
+    date: "2026-10-23",
+    items: [
+      "Auto Run: what a script could not check now shows. A pass reads \"Passed, 1 expectation unchecked\" on the case card and in the run report, and the Playwright export carries a TODO line for each.",
+      "Auto Run: the assistant can no longer save a check whose expected value it took from the page without saying where it came from, for colours, states, patterns, attributes and counts as well as text.",
+      "Auto Run: a new expect_no_change step clicks a control, even a disabled one, and checks that nothing happened: no new address, dialog, message or save.",
+      "Auto Run: every response check in a step watches from the step's start and takes the step's requests in order, so it catches a request an earlier action in the same step sent, and says which one matched.",
+      "Runner and bug reports: a screenshot pasted before it has fully reached the clipboard (for example from a virtual machine) is retried, never attached broken. JPEG and other image types paste too.",
+      "Runner: Not Applicable is easy to read on a dark theme.",
+    ],
+  },
+  {
     version: "2.2.3-beta.25",
     date: "2026-10-22",
     items: [
