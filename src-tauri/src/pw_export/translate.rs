@@ -17,6 +17,7 @@ use crate::browser::actions::{page_goals, url_rule, Action, DropAt, TAB_WAIT_MS,
 use crate::browser::expect::{READ_TEXT_JS, WRITTEN_TEXT_JS};
 use crate::browser::keys;
 use crate::browser::locator::Target;
+use crate::browser::no_change::{DIALOGS_JS, STATE_JS, WAIT_MS as NO_CHANGE_WAIT_MS};
 use crate::browser::position::READ_BOX_JS;
 use crate::browser::table::{self, RowCount, SortAs, SortKind, TableCheck, SETTLE_MS, SETTLE_POLL_MS};
 use crate::browser::timing::Timing;
@@ -97,6 +98,10 @@ fn check_action(a: &Action, origins: &[String]) -> Res<()> {
         Action::ExpectPosition { selector, relative_to, .. } => {
             check_target(selector)?;
             check_target(relative_to)
+        }
+        Action::ExpectNoChange { selector, region, .. } => {
+            check_target(selector)?;
+            region.as_ref().map_or(Ok(()), check_target)
         }
         Action::PageUntil { next, until, until_all, .. } => {
             check_target(next)?;
@@ -266,6 +271,13 @@ pub fn raw_spec(input: &RawSpecInput) -> Res<String> {
     if uses(input, &|a| matches!(a, Action::ExpectPosition { .. })) {
         em.placed();
     }
+    // What `expect_no_change` compares, once.
+    if uses(input, &|a| matches!(a, Action::ExpectNoChange { .. })) {
+        for l in no_change_ts(4) {
+            em.out.push_str(&l);
+            em.out.push('\n');
+        }
+    }
     if tabs {
         em.collector();
     }
@@ -377,6 +389,33 @@ pub fn read_text_ts(indent: usize) -> Vec<String> {
     if let Some(last) = lines.last_mut() {
         last.push_str(").call(e as HTMLElement);");
     }
+    lines
+}
+
+/// `noChangeState` and `openDialogs` as TypeScript, built from `STATE_JS`
+/// and `DIALOGS_JS` as [`read_text_ts`] builds `readText`: the bodies are the
+/// constants', word for word; only `this` is given a type. Emitted once per
+/// spec that uses `expect_no_change`.
+pub fn no_change_ts(indent: usize) -> Vec<String> {
+    let typed = STATE_JS.replacen("function() {", "function (this: HTMLElement) {", 1);
+    assert!(typed != STATE_JS, "STATE_JS no longer starts with `function() {{`");
+    assert!(DIALOGS_JS.starts_with("function() {"), "DIALOGS_JS no longer starts with `function() {{`");
+    let pad = " ".repeat(indent);
+    let mut lines: Vec<String> = typed.lines().map(|l| format!("{pad}{l}")).collect();
+    if let Some(first) = lines.first_mut() {
+        *first = format!("{pad}const noChangeState = (e: Element) => ({}", first.trim_start());
+    }
+    if let Some(last) = lines.last_mut() {
+        last.push_str(").call(e as HTMLElement);");
+    }
+    let mut dialogs: Vec<String> = DIALOGS_JS.lines().map(|l| format!("{pad}{l}")).collect();
+    if let Some(first) = dialogs.first_mut() {
+        *first = format!("{pad}const openDialogs = () => ({}", first.trim_start());
+    }
+    if let Some(last) = dialogs.last_mut() {
+        last.push_str(")();");
+    }
+    lines.extend(dialogs);
     lines
 }
 
@@ -1433,6 +1472,34 @@ impl Em<'_> {
                         call("toHaveAttribute", &[lit("aria-checked"), lit("mixed")], *timeout_ms)
                     ),
                 );
+            }
+            // A forced click, and the same three comparisons the app makes
+            // (`browser::no_change`) after the same wait. Pass and fail
+            // match: the address, the open dialogs and any browser dialog,
+            // and the region's text and states.
+            Action::ExpectNoChange { selector, region, within_ms } => {
+                let wait = within_ms.unwrap_or(NO_CHANGE_WAIT_MS);
+                self.line(indent, "{");
+                self.line(indent + 2, &format!("const target = {};", one(selector)));
+                self.line(indent + 2, &format!("const region = {};", one(region.as_ref().unwrap_or(selector))));
+                self.line(
+                    indent + 2,
+                    "const before = { url: cur.url(), dialogs: await cur.evaluate(openDialogs), state: await region.evaluate(noChangeState) };",
+                );
+                self.line(indent + 2, "let browserDialog = false;");
+                self.line(
+                    indent + 2,
+                    "const onDialog = (d: { dismiss(): Promise<void> }) => { browserDialog = true; d.dismiss().catch(() => {}); };",
+                );
+                self.line(indent + 2, "cur.on('dialog', onDialog);");
+                self.line(indent + 2, "await target.click({ force: true });");
+                self.line(indent + 2, &format!("await cur.waitForTimeout({wait});"));
+                self.line(indent + 2, "cur.off('dialog', onDialog);");
+                self.line(indent + 2, "expect(cur.url(), 'the address').toBe(before.url);");
+                self.line(indent + 2, "expect(browserDialog, 'a browser dialog').toBe(false);");
+                self.line(indent + 2, "expect(await cur.evaluate(openDialogs), 'open dialogs').toBe(before.dialogs);");
+                self.line(indent + 2, "expect(await region.evaluate(noChangeState), 'the region').toEqual(before.state);");
+                self.line(indent, "}");
             }
             Action::ExpectFocused { selector, timeout_ms } => {
                 self.line(

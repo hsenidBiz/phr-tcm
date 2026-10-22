@@ -33,6 +33,7 @@ pub const ACTION_KINDS: &[&str] = &[
     "expect_enabled",
     "expect_disabled",
     "expect_checked",
+    "expect_no_change",
     "sign_in",
     "upload",
     "expect_response",
@@ -270,6 +271,7 @@ no script step for it, and do not renumber the steps that come after it.
 - `{ "kind": "expect_enabled", "selector": ... }` - the element can be used
 - `{ "kind": "expect_checked", "selector": ..., "checked": true }` - the checkbox or radio is ticked (`"checked": false`: it is not), read from its live state, which follows clicks; any other element answers by its `aria-checked`, and a partly ticked box (`mixed`) is neither. `checked` is true when left out
 - `{ "kind": "expect_disabled", "selector": ... }` - the element is disabled: its `disabled` property is set, it or an element around it has `aria-disabled="true"`, or it is a form control (button, input, select, textarea) a disabled fieldset holds outside that fieldset's first legend; a link in a disabled fieldset is not disabled. A click waits out the same rule
+- `{ "kind": "expect_no_change", "selector": ..., "region": ..., "within_ms": 1000 }` - click the element anyway, even disabled, where a person's click would land, then check for `within_ms` (default 1000, 200 to 10000) that nothing happened: the address, the open dialogs, any browser dialog, and the text and states of `region` (the clicked element when left out) are as they were. For a case that says clicking a control does nothing; never for a click you could make with `click`
 - `{ "kind": "sign_in", "account": "hr.supervisor" }` - change who is signed in, in the middle of a case
 - `{ "kind": "check_text", "value": "..." }`  - is this text anywhere on the page (same-origin frames included), right now? A hidden frame is not searched, and a frame holding a page from another site is not searched.
 - `{ "kind": "check_url", "contains": "..." }` - is this in the address? Looked for again until it is, like every expect_ check (timeout_ms optional). With `"equals": "/hr/cycles/index"` in place of `contains`, the address is exactly that: a value starting with / is compared with the path, query and fragment, anything else with the whole address. With `"same_as": "before"`, the address is the one `remember_url` noted as before.
@@ -2153,7 +2155,10 @@ Before every save:
   to its selector.
   Whether a control can be used is `expect_enabled` or `expect_disabled`,
   which read the `disabled` property, `aria-disabled` on it or around it,
-  and a disabled fieldset around a form control, together. An attribute that must not be there is
+  and a disabled fieldset around a form control, together. When the case
+  says clicking a disabled control does nothing, check `expect_disabled`
+  and then `expect_no_change` on it: a `click` on a disabled control is
+  refused. An attribute that must not be there is
   `expect_attribute` with `"absent": true` instead of `equals`.
 - A `{{fixture.*}}` or `{{setup.*}}` placeholder may stand in a name or a
   text (`{ "text": "Draft {{setup.cycle_name}} Pending" }`), in a quoted

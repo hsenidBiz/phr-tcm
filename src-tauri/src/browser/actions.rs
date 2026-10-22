@@ -169,6 +169,17 @@ pub enum Action {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         timeout_ms: Option<u32>,
     },
+    /// Click `selector` anyway, disabled or `aria-disabled` as it may be, as a person's click at its centre
+    /// lands, then check for `within_ms` (`no_change::WAIT_MS` when left out) that nothing happened: the
+    /// address, the page's open dialogs, any browser dialog, and the text and states of `region` (the
+    /// clicked element when left out) read as before the click (`no_change`).
+    ExpectNoChange {
+        selector: Target,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        region: Option<Target>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        within_ms: Option<u32>,
+    },
     /// Change who is signed in. Carried out by the runner (it needs the
     /// tester's accounts and the project's recipe), not by this driver.
     SignIn { account: String },
@@ -1277,6 +1288,18 @@ impl Action {
             | Action::ExpectEnabled { selector, .. }
             | Action::ExpectDisabled { selector, .. }
             | Action::ExpectChecked { selector, .. } => selector.validate(),
+            Action::ExpectNoChange { selector, region, within_ms } => {
+                selector.validate()?;
+                if let Some(region) = region {
+                    region.validate().map_err(|why| format!("expect_no_change region: {why}"))?;
+                }
+                match within_ms {
+                    Some(ms) if !(super::no_change::MIN_MS..=super::no_change::MAX_MS).contains(ms) => {
+                        Err(super::no_change::TIME.to_string())
+                    }
+                    _ => Ok(()),
+                }
+            }
             Action::ExpectText { selector, equals, matches, .. } => {
                 selector.validate()?;
                 match (equals, matches) {
@@ -1667,6 +1690,7 @@ impl Action {
             Action::ExpectEach { selector, child, .. } => std::iter::once(selector).chain(child.as_ref()).collect(),
             Action::ExpectOrder { selector, .. } => vec![selector],
             Action::ExpectPosition { selector, relative_to, .. } => vec![selector, relative_to],
+            Action::ExpectNoChange { selector, region, .. } => std::iter::once(selector).chain(region.as_ref()).collect(),
             Action::PageUntil { next, until, until_all, .. } => std::iter::once(next).chain(page_goals(until, until_all)).collect(),
             Action::WhenVisible { selector, then, .. } | Action::RepeatWhileVisible { selector, then, .. } => {
                 std::iter::once(selector).chain(then.iter().flat_map(Action::targets)).collect()
@@ -1720,6 +1744,7 @@ impl Action {
             Action::ExpectEach { selector, child, .. } => std::iter::once(selector).chain(child.as_mut()).collect(),
             Action::ExpectOrder { selector, .. } => vec![selector],
             Action::ExpectPosition { selector, relative_to, .. } => vec![selector, relative_to],
+            Action::ExpectNoChange { selector, region, .. } => std::iter::once(selector).chain(region.as_mut()).collect(),
             Action::PageUntil { next, until, until_all, .. } => {
                 std::iter::once(next).chain(page_goals_mut(until, until_all)).collect()
             }
@@ -1787,6 +1812,7 @@ impl Action {
                 | Action::ExpectEnabled { .. }
                 | Action::ExpectDisabled { .. }
                 | Action::ExpectChecked { .. }
+                | Action::ExpectNoChange { .. }
                 | Action::ExpectFocused { .. }
                 | Action::ExpectResponse { .. }
                 | Action::ApiRequest { .. }
@@ -2477,6 +2503,9 @@ async fn run<D: Driver>(d: &mut D, action: &Action, timing: &Timing, policy: &Po
         }
         Action::ExpectChecked { selector, checked, timeout_ms } => {
             expect::expect(d, selector, Check::Checked(*checked), wait(timeout_ms, timing), timing.poll_ms).await
+        }
+        Action::ExpectNoChange { selector, region, within_ms } => {
+            super::no_change::expect_no_change(d, selector, region.as_ref(), *within_ms, timing).await
         }
         // The runner intercepts `sign_in` before it ever reaches this
         // executor (it alone has the tester's accounts and the project's

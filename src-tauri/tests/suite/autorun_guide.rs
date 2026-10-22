@@ -41,6 +41,7 @@ fn the_guide_names_every_action_the_executor_can_run() {
         Action::ExpectEnabled { selector: "s".into(), timeout_ms: None },
         Action::ExpectDisabled { selector: "s".into(), timeout_ms: None },
         Action::ExpectChecked { selector: "s".into(), checked: true, timeout_ms: None },
+        Action::ExpectNoChange { selector: "s".into(), region: None, within_ms: None },
         Action::SignIn { account: "a".into() },
         Action::Upload { selector: "s".into(), file: "f.pdf".into() },
         Action::ExpectResponse { method: None, url_contains: "/x".into(), status: 200, json: None, timeout_ms: None, stray: Default::default() },
@@ -2486,4 +2487,20 @@ fn the_guide_says_how_a_checked_step_lists_what_its_checks_leave_out() {
     ] {
         assert!(g.contains(said), "the autorun guide never says {said:?}");
     }
+}
+
+/// A case that says clicking a disabled control does nothing is written with
+/// `expect_no_change`, which the guide teaches in its vocabulary and beside
+/// the rule for a disabled control: a `click` on one is refused.
+#[test]
+fn the_guide_teaches_expect_no_change_for_a_click_on_a_disabled_control() {
+    let g = autorun_guide();
+    let flat = g.split_whitespace().collect::<Vec<_>>().join(" ");
+    for said in [
+        "- `{ \"kind\": \"expect_no_change\", \"selector\": ..., \"region\": ..., \"within_ms\": 1000 }` - click the element anyway, even disabled, where a person's click would land, then check for `within_ms` (default 1000, 200 to 10000) that nothing happened: the address, the open dialogs, any browser dialog, and the text and states of `region` (the clicked element when left out) are as they were. For a case that says clicking a control does nothing; never for a click you could make with `click`",
+        "When the case says clicking a disabled control does nothing, check `expect_disabled` and then `expect_no_change` on it: a `click` on a disabled control is refused.",
+    ] {
+        assert!(flat.contains(said), "the autorun guide never says {said:?}");
+    }
+    assert!(!flat.contains('\u{2013}') && !flat.contains('\u{2014}'), "no dash in text an assistant reads");
 }

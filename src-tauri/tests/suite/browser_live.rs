@@ -3726,6 +3726,92 @@ async fn states_expect_checked_follows_clicks() {
     refused(run(&mut live, checked(region, true)).await, "matches a container, point at the checkbox");
 }
 
+/// The page with cards a person can click though they are not usable.
+fn no_change_fixture_url() -> String {
+    fixture_url().replace("autorun-live.html", "autorun-no-change.html")
+}
+
+/// `open()`, then on to the no-change fixture.
+async fn open_no_change() -> Live {
+    let mut live = open().await;
+    let out = run(&mut live, json!({ "kind": "navigate", "url": no_change_fixture_url() })).await;
+    assert!(out.ok, "the no-change fixture did not load: {}", out.detail);
+    must(run(&mut live, json!({ "kind": "expect_visible", "selector": { "css": "#dis-button" } })).await);
+    live
+}
+
+fn no_change(selector: &str, extra: serde_json::Value) -> serde_json::Value {
+    let mut action = json!({ "kind": "expect_no_change", "selector": { "css": selector }, "within_ms": 300 });
+    for (k, v) in extra.as_object().unwrap() {
+        action[k] = v.clone();
+    }
+    action
+}
+
+/// A disabled button is clicked anyway, and the page does nothing: the
+/// action passes. A plain `click` on it is refused, as it always was.
+#[tokio::test]
+#[ignore = "starts a real headless Edge"]
+async fn a_forced_click_on_a_disabled_card_with_nothing_expected_passes_when_nothing_changes() {
+    let mut live = open_no_change().await;
+    refused(run(&mut live, json!({ "kind": "click", "selector": { "css": "#dis-button" } })).await, "is disabled");
+    let out = run(&mut live, no_change("#dis-button", json!({}))).await;
+    assert!(out.ok, "{}", out.detail);
+    assert!(out.detail.starts_with("clicked #dis-button anyway and nothing happened in 0.3 s"), "{}", out.detail);
+}
+
+/// A card that says `aria-disabled` and opens a dialog when clicked: the
+/// forced click reaches it, and the dialog is what is said.
+#[tokio::test]
+#[ignore = "starts a real headless Edge"]
+async fn a_forced_click_on_a_disabled_card_fails_when_a_dialog_opens() {
+    use v2_lib::browser::no_change::NOTHING_EXPECTED;
+    let mut live = open_no_change().await;
+    let out = run(&mut live, no_change("#aria-card", json!({}))).await;
+    assert!(!out.ok, "{}", out.detail);
+    assert!(out.detail.starts_with(NOTHING_EXPECTED), "{}", out.detail);
+    assert!(out.detail.contains("a dialog opened"), "{}", out.detail);
+}
+
+/// A card with `pointer-events: none`: a person's click on it lands on the
+/// container around it, so the forced click goes ahead and the container's
+/// own handler changes the container's text.
+#[tokio::test]
+#[ignore = "starts a real headless Edge"]
+async fn a_forced_click_through_pointer_events_none_reaches_its_container() {
+    let mut live = open_no_change().await;
+    let out = run(&mut live, no_change("#through-card", json!({ "region": { "css": "#holder" } }))).await;
+    assert!(!out.ok, "{}", out.detail);
+    assert!(out.detail.contains("the text of #holder changed"), "{}", out.detail);
+    // The same click on the card alone changes nothing of the card.
+    let card = run(&mut live, no_change("#through-card", json!({}))).await;
+    assert!(card.ok, "{}", card.detail);
+}
+
+/// A class added under the pointer is how a card looks, not what it holds:
+/// only text and control or aria states are compared.
+#[tokio::test]
+#[ignore = "starts a real headless Edge"]
+async fn a_hover_class_is_not_a_change() {
+    let mut live = open_no_change().await;
+    let out = run(&mut live, no_change("#hover-card", json!({}))).await;
+    assert!(out.ok, "{}", out.detail);
+    // The pointer did go over it: the page did change how it looks.
+    let class = json!({ "kind": "expect_attribute", "selector": { "css": "#hover-card" }, "name": "class", "matches": "lit", "timeout_ms": 300 });
+    must(run(&mut live, class).await);
+}
+
+/// An overlay over a card is not where a person's click would reach the
+/// card: the forced click is refused, never made.
+#[tokio::test]
+#[ignore = "starts a real headless Edge"]
+async fn a_forced_click_never_clicks_an_overlay_on_a_real_page() {
+    let mut live = open_no_change().await;
+    let out = run_with(&mut live, no_change("#covered-card", json!({})), &Timing { action_ms: 800, ..timing() }).await;
+    assert!(!out.ok, "{}", out.detail);
+    assert!(out.detail.contains("is covered by"), "{}", out.detail);
+}
+
 /// A bare css `within`, as an assistant most often writes one, counts every
 /// visible match: "section" on a page of several sections is refused with
 /// the count, never read as its first match.

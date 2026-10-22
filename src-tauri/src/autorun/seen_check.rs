@@ -378,6 +378,7 @@ pub fn takes_many(action: &Action) -> bool {
         | Action::ExpectEnabled { .. }
         | Action::ExpectDisabled { .. }
         | Action::ExpectChecked { .. }
+        | Action::ExpectNoChange { .. }
         | Action::ExpectFocused { .. }
         | Action::ExpectPosition { .. }
         | Action::ExpectRow { .. }

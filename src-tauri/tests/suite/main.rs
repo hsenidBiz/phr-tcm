@@ -127,6 +127,7 @@ mod browser_live;
 mod browser_live_tree;
 mod browser_tree;
 mod browser_locator;
+mod browser_no_change;
 mod browser_page;
 mod browser_page_log;
 mod browser_page_until;

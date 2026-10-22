@@ -127,6 +127,8 @@ fn names_a_record_id(re: &regex::Regex, css: &str) -> bool {
 /// the project's own?
 fn clicks_save(action: &Action, words: &[String]) -> bool {
     use crate::browser::locator::fold_name;
+    // Only a click that saves. An `expect_no_change` on a save button is a
+    // click the case says does nothing, so it makes no record.
     let Action::Click { selector } = action else { return false };
     selector.links().iter().any(|l| {
         let shown = match (&l.role, &l.name, &l.text) {

@@ -133,6 +133,10 @@ pub fn action_words(action: &Action) -> String {
         Action::ExpectChecked { selector, checked, .. } => {
             format!("expect {} to be {}", selector.describe(), if *checked { "checked" } else { "not checked" })
         }
+        Action::ExpectNoChange { selector, region, .. } => {
+            let to = region.as_ref().map(|r| format!(" to {}", r.describe())).unwrap_or_default();
+            format!("click {} anyway and expect nothing to happen{to}", selector.describe())
+        }
         Action::SignIn { account } => format!("sign in as {account}"),
         Action::Upload { selector, file } => format!("upload {file} into {}", selector.describe()),
         Action::ExpectResponse { method, url_contains, status, .. } => {

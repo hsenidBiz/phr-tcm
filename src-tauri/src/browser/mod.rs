@@ -81,6 +81,7 @@ pub mod pattern;
 pub mod keys;
 pub mod drag;
 pub mod dialogs;
+pub mod no_change;
 pub mod table;
 pub mod page_errors;
 pub mod page_messages;

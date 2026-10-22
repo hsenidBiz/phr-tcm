@@ -61,6 +61,7 @@ pub fn checks_for_loading(action: &Action) -> bool {
             | Action::ExpectEnabled { .. }
             | Action::ExpectDisabled { .. }
             | Action::ExpectChecked { .. }
+            | Action::ExpectNoChange { .. }
             | Action::ExpectFocused { .. }
             | Action::ExpectRow { .. }
             | Action::ExpectNoRow { .. }

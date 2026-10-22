@@ -27,7 +27,10 @@ pub const CLOSE_MS: u64 = 2_000;
 /// waits, navigation and tab actions look or go elsewhere; a key press goes
 /// to whatever has focus, which clicking a close control would move.
 pub fn touches_the_page(action: &Action) -> bool {
-    matches!(action, Action::Click { .. } | Action::Fill { .. } | Action::Drag { .. } | Action::Upload { .. })
+    matches!(
+        action,
+        Action::Click { .. } | Action::ExpectNoChange { .. } | Action::Fill { .. } | Action::Drag { .. } | Action::Upload { .. }
+    )
 }
 
 /// Said on an action after the runner closed `name` before it.

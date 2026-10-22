@@ -773,6 +773,19 @@ fn an_order_check_and_a_position_check_have_words() {
     }
 }
 
+#[test]
+fn a_forced_click_that_expects_nothing_has_words() {
+    let say = |v: serde_json::Value| action_words(&serde_json::from_value(v).unwrap());
+    assert_eq!(
+        say(serde_json::json!({ "kind": "expect_no_change", "selector": { "css": "#save" } })),
+        "click #save anyway and expect nothing to happen"
+    );
+    assert_eq!(
+        say(serde_json::json!({ "kind": "expect_no_change", "selector": { "css": "#save" }, "region": { "css": "#cards" }, "within_ms": 2000 })),
+        "click #save anyway and expect nothing to happen to #cards"
+    );
+}
+
 /// A case's whole details block, summary to close.
 fn product_section_of(html: &str, case_id: i32) -> String {
     let marker = format!("<span class=\"id\">#{case_id}</span>");

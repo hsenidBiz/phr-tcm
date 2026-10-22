@@ -229,6 +229,46 @@ fn checked_translates_to_to_be_checked() {
     assert!(!got.contains("#agree').first()).not.toHaveAttribute"), "{got}");
 }
 
+/// `expect_no_change` becomes one block: a forced click, the same wait, and
+/// the same three comparisons the app makes (the address, the open dialogs
+/// and any browser dialog, the region's text and states), so a case that
+/// passes here fails there only for a reason. The helpers go out once, and
+/// their bodies are the app's own (`no_change::STATE_JS`, `DIALOGS_JS`).
+#[test]
+fn expect_no_change_exports_a_forced_click_and_the_same_three_comparisons() {
+    use v2_lib::browser::no_change::{DIALOGS_JS, STATE_JS};
+    let got = one_step(json!([
+        { "kind": "expect_no_change", "selector": "#save" },
+        { "kind": "expect_no_change", "selector": "#card", "region": { "css": "#cards", "nth": 0 }, "within_ms": 2000 }
+    ]))
+    .run()
+    .unwrap();
+    let got = lf(&got);
+    let block = |target: &str, region: &str, wait: u32| {
+        format!(
+            "    {{\n      const target = {target};\n      const region = {region};\n      const before = {{ url: cur.url(), dialogs: await cur.evaluate(openDialogs), state: await region.evaluate(noChangeState) }};\n      let browserDialog = false;\n      const onDialog = (d: {{ dismiss(): Promise<void> }}) => {{ browserDialog = true; d.dismiss().catch(() => {{}}); }};\n      cur.on('dialog', onDialog);\n      await target.click({{ force: true }});\n      await cur.waitForTimeout({wait});\n      cur.off('dialog', onDialog);\n      expect(cur.url(), 'the address').toBe(before.url);\n      expect(browserDialog, 'a browser dialog').toBe(false);\n      expect(await cur.evaluate(openDialogs), 'open dialogs').toBe(before.dialogs);\n      expect(await region.evaluate(noChangeState), 'the region').toEqual(before.state);\n    }}\n"
+        )
+    };
+    assert!(got.contains(&block("cur.locator('#save').first()", "cur.locator('#save').first()", 1000)), "{got}");
+    assert!(got.contains(&block("cur.locator('#card').first()", "cur.locator('#cards').filter({ visible: true }).nth(0)", 2000)), "{got}");
+    // Once, before the first use, with the app's own bodies word for word.
+    assert_eq!(got.matches("const noChangeState = (e: Element) =>").count(), 1, "{got}");
+    assert_eq!(got.matches("const openDialogs = () =>").count(), 1, "{got}");
+    assert!(got.find("const noChangeState").unwrap() < got.find("const before").unwrap(), "{got}");
+    // Every line between the function's first and last (those are wrapped).
+    for body in [STATE_JS, DIALOGS_JS] {
+        let lines: Vec<&str> = body.lines().collect();
+        for line in &lines[1..lines.len() - 1] {
+            assert!(got.contains(&format!("    {line}\n")), "the helper lost {line:?}: {got}");
+        }
+    }
+    assert!(got.contains("    }).call(e as HTMLElement);\n") && got.contains("    })();\n"), "{got}");
+    assert!(got.contains("function (this: HTMLElement) {"), "{got}");
+    // A spec with no such action carries neither helper.
+    let plain = lf(&one_step(json!([{ "kind": "click", "selector": "#a" }])).run().unwrap());
+    assert!(!plain.contains("noChangeState") && !plain.contains("openDialogs"), "{plain}");
+}
+
 #[test]
 fn tab_switching_moves_cur() {
     let got = one_step(json!([

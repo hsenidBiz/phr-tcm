@@ -490,6 +490,17 @@ function describeKnown(a: Action): Sentence {
         ...describeTarget(a.selector),
         words(` is ${a.checked === false ? "not ticked" : "ticked"}${upTo(a.timeout_ms)}`),
       ];
+    case "expect_no_change": {
+      const within = optNum(a.within_ms);
+      const watched = within === undefined ? "" : ` (watched for ${seconds(within)} s)`;
+      return [
+        words("Click "),
+        ...describeTarget(a.selector),
+        words(" anyway and check nothing happens"),
+        ...(a.region == null ? [] : [words(" to "), ...describeTarget(a.region)]),
+        words(watched),
+      ];
+    }
     case "sign_in":
       return [words(`Sign in as ${str(a.account)}`)];
     case "upload":

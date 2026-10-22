@@ -47,7 +47,7 @@ pub struct Ready {
 macro_rules! probe_js {
     () => {
         concat!(
-    "async function(settle, still) {\n  const disabledWhy = ",
+    "async function(settle, still, force) {\n  const disabledWhy = ",
     disabled_why_js!(),
     ";\n",
     r#"
@@ -141,6 +141,10 @@ macro_rules! probe_js {
     const hit = onscreen && !!top && !nospot && !blocker(top) &&
       (top === this || this.contains(top) || through || (label && label.control === this) ||
         (!!stand && (top === stand || stand.contains(top))));
+    // The point lands on an element AROUND this one (it, or something above it, lets the click through,
+    // or its own box is drawn under the container's): where a person's click on it ends up, and not an
+    // overlay on it. Only a forced click (`expect_no_change`) goes ahead on it.
+    const around = onscreen && !!top && top !== this && !nospot && !stand && top.contains(this);
     const say = (e) => !e ? 'another element' : e.tagName.toLowerCase() + (e.id ? '#' + e.id : '') +
       (typeof e.className === 'string' && e.className.trim() ? '.' + e.className.trim().split(/\s+/).join('.') : '');
     const editable =
@@ -160,7 +164,7 @@ macro_rules! probe_js {
       visible: seen(this),
       enabled: disabledWhy(this) === '',
       editable: !!editable,
-      onscreen: allOnscreen, hit: allHit, nospot, x: lx + ox, y: ly + oy,
+      onscreen: allOnscreen, hit: allHit, around: around && allOnscreen && outer === null, nospot, x: lx + ox, y: ly + oy,
       rect: [a.left + ox, a.top + oy, a.width, a.height],
       covered_by: !allOnscreen || allHit ? '' : (outer !== null ? say(outer || null) : say(top)),
     };
@@ -170,7 +174,8 @@ macro_rules! probe_js {
   const first = measure(!still);
   // Only an element the flags already call usable is worth watching
   // across frames: anything else is reported for its flags, not its motion.
-  if (!settle || !first.visible || !first.onscreen || !first.enabled || !first.hit) {
+  // A forced look (`expect_no_change`) does not hold a disabled element, nor a hit on an element around it.
+  if (!settle || !first.visible || !first.onscreen || (!force && !first.enabled) || !(first.hit || (force && first.around))) {
     first.stable = false;
     return first;
   }
@@ -206,9 +211,13 @@ macro_rules! probe_js {
     };
 }
 
-/// `this` is the element. Arguments: `settle`, and `still` - measure the
+/// `this` is the element. Arguments: `settle`, `still` - measure the
 /// element where it stands, without scrolling it into view first (what
-/// `inspect` reads: a look that must not move the page).
+/// `inspect` reads: a look that must not move the page) - and `force`: a
+/// forced look (`expect_no_change`) still watches a disabled element, or one
+/// whose point lands on an element around it (`around`), for stillness,
+/// where any other look stops at the first flag that is not ready. The
+/// flags are reported as they are either way.
 ///
 /// Without `settle` it is one synchronous measurement (the re-check
 /// `click` makes the instant before it acts). With it, an element whose
@@ -386,19 +395,25 @@ pub fn matched_many(n: usize) -> String {
 /// into it - editable, then hit. Shared between `look` (deciding whether
 /// a wait is over) and `click` (re-checking the instant before it acts),
 /// so the wording can never drift between the two.
-fn reason(p: &Value, need_editable: bool) -> Option<String> {
+///
+/// `forced` (the click `expect_no_change` makes) lets a disabled element
+/// through, and a hit at its centre that lands on an element AROUND it
+/// (`pointer-events: none`): a person's click lands there. Not being
+/// visible, in view or free of a spot problem, and being under another
+/// element (an overlay), still hold it.
+fn reason(p: &Value, need_editable: bool, forced: bool) -> Option<String> {
     let flag = |k: &str| p[k].as_bool().unwrap_or(false);
     if !flag("visible") {
         Some(NOT_VISIBLE.to_string())
     } else if !flag("onscreen") {
         Some(OFFSCREEN.to_string())
-    } else if !flag("enabled") {
+    } else if !forced && !flag("enabled") {
         Some(DISABLED.to_string())
     } else if need_editable && !flag("editable") {
         Some(NOT_EDITABLE.to_string())
     } else if flag("nospot") {
         Some(NO_FREE_SPOT.to_string())
-    } else if !flag("hit") {
+    } else if !flag("hit") && !(forced && flag("around")) {
         Some(format!("{COVERED_BY}{}", p["covered_by"].as_str().unwrap_or("another element")))
     } else {
         None
@@ -412,15 +427,17 @@ enum Look {
 
 async fn look<D: Driver>(d: &mut D, target: &Target, need_editable: bool) -> Result<Look, CdpError> {
     // A legacy css string clicks its first match, as it always did.
-    look_with(d, target, need_editable, !target.is_legacy()).await
+    look_with(d, target, need_editable, !target.is_legacy(), false).await
 }
 
-/// `look`, with whether two or more matches are refused said outright.
+/// `look`, with whether two or more matches are refused said outright, and
+/// whether the look is `forced` (see `reason`).
 async fn look_with<D: Driver>(
     d: &mut D,
     target: &Target,
     need_editable: bool,
     refuse_many: bool,
+    forced: bool,
 ) -> Result<Look, CdpError> {
     let found = resolve_explained(d, target).await?;
     let as_written = found.as_written;
@@ -432,8 +449,12 @@ async fn look_with<D: Driver>(
         return Ok(Look::NotYet(matched_many(handles.len())));
     }
     let handle = handles.into_iter().next().expect("checked non-empty");
-    let p = page::call_value(d, &handle, PROBE_JS, &[json!(true)]).await?;
-    if let Some(why) = reason(&p, need_editable) {
+    let p = if forced {
+        page::call_value(d, &handle, PROBE_JS, &[json!(true), json!(false), json!(true)]).await?
+    } else {
+        page::call_value(d, &handle, PROBE_JS, &[json!(true)]).await?
+    };
+    if let Some(why) = reason(&p, need_editable, forced) {
         return Ok(Look::NotYet(why));
     }
     // Everything the flags alone can say is fine, so the one thing left
@@ -457,7 +478,7 @@ async fn look_with<D: Driver>(
 /// to leave a click out. A look that fails for any reason is "no".
 pub async fn clickable_now<D: Driver>(d: &mut D, target: &Target) -> bool {
     page::release(d).await;
-    matches!(look_with(d, target, false, true).await, Ok(Look::Ready(_)))
+    matches!(look_with(d, target, false, true, false).await, Ok(Look::Ready(_)))
 }
 
 /// What a wait loop says it last saw when its budget ran out inside a
@@ -477,9 +498,26 @@ pub async fn wait_ready<D: Driver>(
     need_editable: bool,
     timing: &Timing,
 ) -> Result<Ready, Blocked> {
+    wait_for_look(d, target, need_editable, false, timing).await
+}
+
+/// `wait_ready(d, target, false, timing)`, except that being disabled (`DISABLED`, `aria-disabled`) does not
+/// hold it, nor a hit at its centre landing on an element AROUND it (`pointer-events: none`); one match,
+/// visible, in view, still and not under another element (an overlay) are still waited for.
+pub async fn wait_ready_forced<D: Driver>(d: &mut D, target: &Target, timing: &Timing) -> Result<Ready, Blocked> {
+    wait_for_look(d, target, false, true, timing).await
+}
+
+async fn wait_for_look<D: Driver>(
+    d: &mut D,
+    target: &Target,
+    need_editable: bool,
+    forced: bool,
+    timing: &Timing,
+) -> Result<Ready, Blocked> {
     let deadline = Instant::now() + Duration::from_millis(timing.action_ms);
     d.set_deadline(Some(deadline));
-    let out = keep_looking(d, target, need_editable, timing, deadline).await;
+    let out = keep_looking(d, target, need_editable, forced, timing, deadline).await;
     d.set_deadline(None);
     out
 }
@@ -488,6 +526,7 @@ async fn keep_looking<D: Driver>(
     d: &mut D,
     target: &Target,
     need_editable: bool,
+    forced: bool,
     timing: &Timing,
     deadline: Instant,
 ) -> Result<Ready, Blocked> {
@@ -498,7 +537,12 @@ async fn keep_looking<D: Driver>(
     let mut last = STILL_LOOKING.to_string();
     loop {
         page::release(d).await;
-        match look(d, target, need_editable).await {
+        let seen = if forced {
+            look_with(d, target, need_editable, true, true).await
+        } else {
+            look(d, target, need_editable).await
+        };
+        match seen {
             Ok(Look::Ready(r)) => return Ok(r),
             Ok(Look::NotYet(why)) => {
                 looked = true;
@@ -544,8 +588,22 @@ fn blame(e: CdpError) -> Blocked {
 /// stale by design. Clicks at the freshly probed point, never the one
 /// `wait_ready` returned.
 pub async fn click<D: Driver>(d: &mut D, ready: &Ready) -> Result<(), Blocked> {
-    let p = page::call_value(d, &ready.handle, PROBE_JS, &[]).await.map_err(blame)?;
-    if let Some(why) = reason(&p, false) {
+    click_as(d, ready, false).await
+}
+
+/// `click`, re-probing under the same rule as `wait_ready_forced`.
+pub async fn click_forced<D: Driver>(d: &mut D, ready: &Ready) -> Result<(), Blocked> {
+    click_as(d, ready, true).await
+}
+
+async fn click_as<D: Driver>(d: &mut D, ready: &Ready, forced: bool) -> Result<(), Blocked> {
+    let p = if forced {
+        page::call_value(d, &ready.handle, PROBE_JS, &[json!(false), json!(false), json!(true)]).await
+    } else {
+        page::call_value(d, &ready.handle, PROBE_JS, &[]).await
+    }
+    .map_err(blame)?;
+    if let Some(why) = reason(&p, false, forced) {
         return Err(Blocked::Page(format!("{MOVED_BEFORE_CLICK}{why}")));
     }
     let x = p["x"].as_f64().unwrap_or(ready.x);
