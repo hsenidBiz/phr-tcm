@@ -1,0 +1,4 @@
+# The Playwright rules snapshot is a byte-for-byte copy of the owner's clone.
+# Never convert its line endings, or the release snapshot check sees every
+# file as changed.
+src-tauri/pw-rules/** -text
