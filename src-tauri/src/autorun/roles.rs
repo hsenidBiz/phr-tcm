@@ -179,13 +179,14 @@ fn is_true(v: &serde_json::Value) -> bool {
 }
 
 /// The role a call starts: `start_autorun_discovery` not a mapping run (its
-/// `mapping` is not true or "true") -> Writer; `get_autorun_failures` ->
+/// `mapping` is not true or "true") and not an explore session (its
+/// `explore` is not true or "true") -> Writer; `get_autorun_failures` ->
 /// Healer; `save_autorun_script` with `cases_repaired_by` non-empty ->
 /// CaseRewriter; `save_autorun_component` -> CaseRewriter; anything else
 /// None. The auditor has no tool: `get_guide` gives it.
 pub fn role_for_call(tool: &str, args: &serde_json::Value) -> Option<Role> {
     match tool {
-        "start_autorun_discovery" if !is_true(&args["mapping"]) => Some(Role::Writer),
+        "start_autorun_discovery" if !is_true(&args["mapping"]) && !is_true(&args["explore"]) => Some(Role::Writer),
         "get_autorun_failures" => Some(Role::Healer),
         "save_autorun_script" if !cases_repaired_by(args).is_empty() => Some(Role::CaseRewriter),
         "save_autorun_component" => Some(Role::CaseRewriter),
@@ -197,7 +198,8 @@ pub fn role_for_call(tool: &str, args: &serde_json::Value) -> Option<Role> {
 pub const RULES_DISCOVERY: &str = "Rules now:\n- Every check's value is the case's own, as written: when the app or its data differs, call report_case_divergence and keep the case's value, never fit the check to the page.\n- Carry out each step live before you write it; never guess a locator, an address or a menu path.\n- A value the case does not hold needs a because, assumed or invented, saying where it comes from.";
 pub const RULES_REPAIR_SAVE: &str = "Rules now:\n- A repair keeps every check and every value the case gives; a check is given up only by naming it in gives_up with why, and the person sees it.\n- Prove the repair with a replay of the whole case: the script is not checked until one passes.\n- Repeat every assumed and invented value and every check given up in your report.";
 pub const RULES_FAILURES: &str = "Rules now:\n- Classify each failure first: a missing precondition or an app defect is reported with report_case_divergence, never healed.\n- At most 3 fix-run cycles per case; stop at cycle 2 when the failure is identical to cycle 1's.\n- A case Blocked with \"needs a ruling\" waits for the person: leave it alone.";
-pub const RULES_REPLAY: &str = "Rules now:\n- Diagnose a failure on this page before anything changes: a missing precondition or an app defect is reported, never healed.\n- Change only the locator, the waiting or the navigation; never a check's value, and never the number of checks without gives_up.\n- The case counts as checked only after a replay of the whole case passes.";
+pub const RULES_EXPLORE: &str = "Rules now:\n- Do only the task asked; read a value before you change it, and record every change with record_explore_change.\n- Check each outcome on the page, in the requests or with db_query; a mismatch is a finding for your summary, never a check bent to fit.\n- Before anything is deleted, name it to the person and wait for their yes in this chat; stop and report when a step fails twice the same way.";
+pub const RULES_REPLAY: &str ="Rules now:\n- Diagnose a failure on this page before anything changes: a missing precondition or an app defect is reported, never healed.\n- Change only the locator, the waiting or the navigation; never a check's value, and never the number of checks without gives_up.\n- The case counts as checked only after a replay of the whole case passes.";
 
 /// `answer` with "\n\n" + `rules` after its text (the text's trailing whitespace trimmed first); the status unchanged.
 pub fn with_rules(answer: (u16, String), rules: &str) -> (u16, String) {

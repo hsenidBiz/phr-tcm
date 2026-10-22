@@ -115,6 +115,7 @@ fn discovering() -> Option<DiscoveryState> {
         no_save: false,
         call_no_save: false,
         call_case_id: None,
+        explore: None,
     })
 }
 

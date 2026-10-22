@@ -194,6 +194,10 @@ fn which_call_starts_which_role() {
     assert_eq!(role_for_call("start_autorun_discovery", &json!({})), Some(Role::Writer));
     assert_eq!(role_for_call("start_autorun_discovery", &json!({"mapping": true})), None);
     assert_eq!(role_for_call("start_autorun_discovery", &json!({"mapping": "true"})), None);
+    // An explore session has no writer role: its rules come with the start's answer.
+    assert_eq!(role_for_call("start_autorun_discovery", &json!({"explore": true})), None);
+    assert_eq!(role_for_call("start_autorun_discovery", &json!({"explore": "true"})), None);
+    assert_eq!(role_for_call("start_autorun_discovery", &json!({"explore": false})), Some(Role::Writer));
     assert_eq!(role_for_call("get_autorun_failures", &json!({})), Some(Role::Healer));
     let scripts = json!([{"case_id": 7, "steps": []}]);
     assert_eq!(role_for_call("save_autorun_script", &json!({"scripts": scripts})), None);
@@ -238,8 +242,10 @@ fn cases_repaired_by_reads_every_shape() {
 
 #[test]
 fn the_rules_of_the_moment_are_short_and_plain() {
-    use v2_lib::autorun::roles::{with_rules, without_rules, RULES_DISCOVERY, RULES_FAILURES, RULES_REPAIR_SAVE, RULES_REPLAY};
-    for rules in [RULES_DISCOVERY, RULES_REPAIR_SAVE, RULES_FAILURES, RULES_REPLAY] {
+    use v2_lib::autorun::roles::{
+        with_rules, without_rules, RULES_DISCOVERY, RULES_EXPLORE, RULES_FAILURES, RULES_REPAIR_SAVE, RULES_REPLAY,
+    };
+    for rules in [RULES_DISCOVERY, RULES_REPAIR_SAVE, RULES_FAILURES, RULES_REPLAY, RULES_EXPLORE] {
         assert!(rules.starts_with("Rules now:\n- "), "{rules}");
         let lines: Vec<&str> = rules.lines().skip(1).collect();
         assert!((2..=3).contains(&lines.len()), "{rules}");
