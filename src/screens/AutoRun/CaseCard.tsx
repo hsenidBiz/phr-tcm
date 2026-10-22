@@ -21,6 +21,7 @@ import { badgeText, DivergenceRow, needsAttention } from "./DivergenceMark";
 import RunDownloads from "./RunDownloads";
 import { loadSetupView, setupViewKey } from "./setupView";
 import { ClearConfirm, ClearedDefectNote, SuspectedDefectBadge } from "./SuspectedDefectMark";
+import { uncheckedExpectations, uncheckedLine, uncheckedWords } from "./unchecked";
 import { bucketTone, type ResultBucket } from "./verdicts";
 
 /** Every action of a script, the ones nested in a `when_visible` too. */
@@ -151,6 +152,10 @@ function CaseCard({
   const hasRunDownloads = (lastRun?.steps ?? []).some((s) => (s.downloads ?? []).length > 0);
   const showFiles = files.uploads.length > 0 || files.downloads.length > 0 || hasRunDownloads;
   const facts = script ? scriptFacts(script) : [];
+  // What the script's checks leave out. A passed case says how many beside
+  // its result; the open card lists them whatever the result. Read only when
+  // one of the two will show.
+  const unchecked = script && (open || result === "Passed") ? uncheckedExpectations(script) : [];
   // The setup's fixture is read only when a card with a setup opens: a list
   // of many cases reads none until one is looked at.
   const setup = useQuery({
@@ -232,6 +237,9 @@ function CaseCard({
           <span className="sr-only">Last result: </span>
           {result}
         </span>
+        {result === "Passed" && unchecked.length > 0 && (
+          <span className="shrink-0 text-xs text-warning">{uncheckedWords(unchecked.length)}</span>
+        )}
       </div>
 
       {open && (
@@ -299,6 +307,19 @@ function CaseCard({
                   </ol>
                 )}
               </div>
+
+              {unchecked.length > 0 && (
+                <div className="space-y-1">
+                  <SectionLabel>Unchecked</SectionLabel>
+                  <ul aria-label={`Unchecked expectations of #${c.id}`} className="space-y-0.5 text-xs text-text">
+                    {unchecked.map((e, i) => (
+                      <li key={i} className="break-words">
+                        {uncheckedLine(e)}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
 
               {showFiles && (
                 <div className="space-y-2">

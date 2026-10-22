@@ -280,6 +280,7 @@ export const autoRun: Screen = {
       does:
         "Opens the case, as a click on its title does. Closed, a case shows only its id, its title and its last result. " +
         "Open, it shows what its script does: how many steps, the account it signs in as, its area, its rules, its setup, and its last repair, then its steps, the files it uploads and checks, and the last run's downloads, each with **Open**. " +
+        "A case that passed although its script leaves expectations unchecked says how many beside its result (**1 expectation unchecked**), and open, lists each under **Unchecked** with why. " +
         "The case's buttons are at the bottom. The cases you open stay open while you stay on Auto Run.",
     },
     {
