@@ -13,6 +13,9 @@ An API template writes test data through the application's OWN endpoints -
 the same requests its pages send - from inside a browser that signed in the
 way a person does. Use one when a test needs data set up (a cycle created,
 a record moved to a state) and clicking through the screens would be slow.
+Every browser the app drives shows a 1280 x 720 page at scale 1, the same as
+Playwright's default, so a layout you see while writing a script is the layout
+a run sees.
 
 A template is saved ONLY by a proving run in which every step passed. There
 is no tool that sends a free-form request, and none that removes a

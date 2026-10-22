@@ -1509,19 +1509,19 @@ async fn a_background_browser_really_is_a_desktop_sized_window() {
     let mut cdp = browsers.open().await.expect("Edge did not start");
     let nav = execute_with(&mut cdp, &action_of(json!({ "kind": "navigate", "url": fixture_url() })), &timing()).await;
     assert!(nav.ok, "{}", nav.detail);
-    let size = page::eval_value(&mut cdp, "[window.innerWidth, window.innerHeight]")
+    let size = page::eval_value(&mut cdp, "[window.innerWidth, window.innerHeight, window.devicePixelRatio]")
         .await
         .expect("could not read the window size");
     let dims = size.as_array().expect("window size should read as an array");
     let width = dims[0].as_f64().unwrap_or(0.0);
     let height = dims[1].as_f64().unwrap_or(0.0);
+    let scale = dims[2].as_f64().unwrap_or(0.0);
     browsers.close(cdp).await;
     // A headless default of 800x600 would lay the application out as a
-    // tablet - `background_args`'s --window-size must actually take
-    // effect. >= rather than == because a scrollbar can shave a little off
-    // the reported inner width.
-    assert!(width >= 1300.0, "width was {width}, expected close to 1366");
-    assert!(height >= 700.0, "height was {height}, expected close to 900");
+    // tablet - the page size set on every page must actually take effect,
+    // exactly 1280 x 720 at scale 1 (`browser::viewport`), as Playwright's
+    // default is.
+    assert_eq!((width, height, scale), (1280.0, 720.0, 1.0), "the page was not 1280 x 720 at scale 1");
 }
 
 #[tokio::test]
