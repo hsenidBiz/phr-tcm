@@ -355,6 +355,28 @@ fn saving_a_fixture_named_by_its_id_is_refused() {
     assert_eq!(fixture_store::load(root, ORG, PROJECT, &f.id).unwrap(), None);
 }
 
+/// An explore session's creates are recorded under the fixture id
+/// `explore`, so no fixture may be saved under it.
+#[test]
+fn the_explore_fixture_id_is_reserved() {
+    use v2_lib::api_templates::fixture_store::RESERVED_ID_REFUSAL;
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    store::save(root, ORG, PROJECT, &template("make-cycle", "create", true)).unwrap();
+    store::save(root, ORG, PROJECT, &template("make-suite", "create", true)).unwrap();
+    let mut f = fixture();
+    f.id = "explore".into();
+    assert_eq!(fixture_store::save(root, ORG, PROJECT, &f), Err(vec![RESERVED_ID_REFUSAL.to_string()]));
+    assert_eq!(RESERVED_ID_REFUSAL, "the fixture id explore is kept for explore sessions - choose another id");
+    assert_eq!(fixture_store::load(root, ORG, PROJECT, "explore").unwrap(), None);
+    // Any case is refused too (an uppercase id is not a valid one anyway).
+    f.id = "Explore".into();
+    assert!(fixture_store::save(root, ORG, PROJECT, &f).is_err());
+    // Another id is unaffected.
+    f.id = "explore-two".into();
+    fixture_store::save(root, ORG, PROJECT, &f).unwrap();
+}
+
 #[test]
 fn a_fixture_with_creates_must_use_the_prefix() {
     let mut f = fixture();

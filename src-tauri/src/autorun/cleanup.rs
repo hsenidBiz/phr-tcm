@@ -522,6 +522,23 @@ async fn delete_grouped<B: Browsers, F: FnMut(CleanupProgress)>(
 /// writes them as it verifies each create).
 pub const EXPLORE_MADE: &str = "explore";
 
+/// Said when an undo is asked for with a session id that is not an explore
+/// session's.
+pub const NOT_A_SESSION: &str = "that is not an explore session, so nothing was deleted";
+
+/// Whether `session` has an explore session's shape - the stem of its change
+/// list, `YYYYMMDD-HHMMSS-<key>`, the key holding only letters, digits,
+/// `.`, `_` and `-`. A fixture run's id (`run-<ms>`) never has it.
+pub fn is_session_id(session: &str) -> bool {
+    let b = session.as_bytes();
+    b.len() > 16
+        && b[..8].iter().all(u8::is_ascii_digit)
+        && b[8] == b'-'
+        && b[9..15].iter().all(u8::is_ascii_digit)
+        && b[15] == b'-'
+        && b[16..].iter().all(|c| c.is_ascii_alphanumeric() || matches!(c, b'.' | b'_' | b'-'))
+}
+
 /// Said when an undo names no id.
 pub const NOTHING_NAMED: &str = "name at least one id to undo";
 
@@ -558,6 +575,12 @@ pub fn undo_plan(
     ids: &[String],
     kind: Option<&str>,
 ) -> Result<Vec<(TestMade, Option<ApiTemplate>)>, String> {
+    // `explore` is also a fixture id a fixture could have been saved under
+    // before it was reserved, so the session id's own shape is what ties an
+    // entry to an explore session.
+    if !is_session_id(session) {
+        return Err(NOT_A_SESSION.to_string());
+    }
     if ids.is_empty() {
         return Err(NOTHING_NAMED.to_string());
     }
@@ -570,9 +593,11 @@ pub fn undo_plan(
         ENVIRONMENT_UNREADABLE.to_string()
     })?;
     let kind = kind.map(str::trim).filter(|k| !k.is_empty());
-    let made: Vec<TestMade> = test_made::list(root)
-        .into_iter()
+    let record = test_made::list(root);
+    let made: Vec<TestMade> = record
+        .iter()
         .filter(|e| e.fixture == EXPLORE_MADE && e.run_id == session)
+        .cloned()
         .filter(|e| e.status == PRESENT || e.status.starts_with("delete failed"))
         .filter(|e| kind.is_none_or(|k| e.kind == k))
         .collect();
@@ -604,6 +629,17 @@ pub fn undo_plan(
         };
         if here.iter().any(|e| e.kind != first.kind) {
             return Err(more_than_one_kind(id));
+        }
+        // The record already holds another claim on this very id: whatever
+        // this session verified, it is not only this session's to delete.
+        let claimed = record.iter().any(|e| {
+            e.environment == first.environment
+                && e.kind == first.kind
+                && e.id == first.id
+                && !(e.fixture == EXPLORE_MADE && e.run_id == session)
+        });
+        if claimed {
+            return Err(not_this_sessions(id));
         }
         if !plan.iter().any(|(e, _)| e.kind == first.kind && e.id == first.id) {
             let t = delete_template_for(&templates, &first.kind, &active.name).cloned();
