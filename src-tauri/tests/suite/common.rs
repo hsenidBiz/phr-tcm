@@ -1240,6 +1240,7 @@ pub fn saved_on_stage(id: &str, title: &str, stage: &str) -> v2_lib::api_templat
         account: "admin".into(),
         outputs: Default::default(),
         environment: None,
+        via: None,
     });
     t
 }

@@ -44,6 +44,7 @@ fn template(id: &str, effect: &str, proven: bool) -> ApiTemplate {
             account: "admin".into(),
             outputs: BTreeMap::new(),
             environment: None,
+            via: None,
         });
     }
     t
@@ -286,6 +287,37 @@ fn lookup_with_readers(id: &str) -> Option<ApiTemplate> {
         }
         _ => lookup(id),
     }
+}
+
+#[test]
+fn a_read_step_is_allowed_in_a_fixture_and_creates_nothing() {
+    use v2_lib::api_templates::fixture::creates_one_step;
+    let lookup_read = |id: &str| match id {
+        "look-up-cycle" => {
+            let mut t = template(id, "read", true);
+            t.steps[0].method = v2_lib::api_templates::Method::Get;
+            t.steps[0].form = None;
+            Some(t)
+        }
+        _ => lookup(id),
+    };
+    let reading = Fixture {
+        steps: vec![step("look-up-cycle", &[("cycleName", "{{prefix}} cycle")])],
+        outputs: BTreeMap::new(),
+        creates: vec![],
+        ..fixture()
+    };
+    validate(&reading, &lookup_read, &no_flow).unwrap();
+
+    let claiming = Fixture {
+        creates: vec![Creates {
+            kind: "cycle".into(),
+            id: "{{steps.1.cycleId}}".into(),
+            name: "{{steps.1.cycleName}}".into(),
+        }],
+        ..reading
+    };
+    assert_eq!(validate(&claiming, &lookup_read, &no_flow).unwrap_err(), vec![creates_one_step("cycle")]);
 }
 
 #[test]
@@ -929,6 +961,7 @@ mod running {
             account: "admin".into(),
             outputs: BTreeMap::new(),
             environment: None,
+            via: None,
         });
         t
     }

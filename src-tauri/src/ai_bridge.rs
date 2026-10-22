@@ -1669,6 +1669,7 @@ async fn run_api_template_request<B: crate::api_templates::held::Keeps, D: crate
             // The run held the template slot, so no switch happened since
             // it signed in: the active environment is the one it ran in.
             environment: crate::environments::active(root).ok().map(|e| e.name),
+            via: None,
         };
         let t = ApiTemplate { proven: Some(proven), ..req.template.clone() };
         match store::save(root, org, project, &t) {

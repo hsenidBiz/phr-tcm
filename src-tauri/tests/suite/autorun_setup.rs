@@ -43,6 +43,7 @@ fn proven(mut t: ApiTemplate) -> ApiTemplate {
         account: "admin".into(),
         outputs: BTreeMap::new(),
         environment: None,
+        via: None,
     });
     t
 }

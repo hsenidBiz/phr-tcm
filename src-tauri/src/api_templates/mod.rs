@@ -38,6 +38,9 @@ pub enum Effect {
     Create,
     Edit,
     Delete,
+    /// Changes nothing: it only looks something up. Saved from an explore
+    /// session, where a call that reads is as worth keeping as one that writes.
+    Read,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, specta::Type)]
@@ -159,7 +162,16 @@ pub struct Proven {
     /// then. `None` for a proof saved before environments existed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub environment: Option<String>,
+    /// How the proof was made when it was not a proving run: `EXPLORE_PROOF`
+    /// for a template saved from an explore session. `None` for every proof
+    /// a proving run made, and left out of the file then, so a template
+    /// saved before this existed reads and writes back exactly as it was.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub via: Option<String>,
 }
+
+/// `Proven::via` of a template saved from an explore session.
+pub const EXPLORE_PROOF: &str = "explore session";
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, specta::Type)]
 #[serde(deny_unknown_fields)]

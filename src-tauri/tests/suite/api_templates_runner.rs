@@ -813,6 +813,7 @@ fn preflight_needs_replace_and_why_for_an_existing_id() {
         account: "admin".into(),
         outputs: BTreeMap::new(),
         environment: None,
+        via: None,
     });
     assert_eq!(preflight(root.path(), &request(saved.clone(), Mode::Run), Some(&saved)), Ok(()));
 
@@ -882,6 +883,7 @@ mod through_the_bridge {
             account: "admin".into(),
             outputs: BTreeMap::from([("cycleId".to_string(), json!(1))]),
             environment: None,
+            via: None,
         });
         t
     }

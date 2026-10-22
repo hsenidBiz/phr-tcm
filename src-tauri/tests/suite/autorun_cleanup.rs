@@ -70,6 +70,7 @@ fn proof(at: &str, env: Option<&str>) -> Proven {
         account: "admin".into(),
         outputs: BTreeMap::new(),
         environment: env.map(str::to_string),
+        via: None,
     }
 }
 
