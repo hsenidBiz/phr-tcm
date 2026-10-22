@@ -27,6 +27,16 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.2.3-beta.23",
+    date: "2026-10-22",
+    items: [
+      "Explore mode: new /tcm:explore command. Give the assistant a plain task with no test case, such as setting up data and checking what happens, and it does it in the Auto Run browser as a saved account, checks the result, and ends with a written summary.",
+      "Explore mode: the assistant can send one-off API calls from the page it already has open, with no new sign-in. Every call that works is saved as an API template, or matched to one you already have, so it can be reused later.",
+      "Explore mode: the assistant keeps a list of every record it created, every value it changed and every record it deleted. When you ask, it undoes what it made, after showing you exactly what will be removed and waiting for your yes. It also asks before deleting anything as part of a task.",
+      "API templates: a new read kind for templates that only look things up.",
+    ],
+  },
+  {
     version: "2.2.3-beta.22",
     date: "2026-10-22",
     items: [
