@@ -27,6 +27,17 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.2.3-beta.25",
+    date: "2026-10-22",
+    items: [
+      "Auto Run: the assistant's scripting rules now come from your Playwright repo's own agent files and skills, read fresh each time, with TCM's own stricter rules first. If no Playwright repo is set, the assistant uses a copy shipped with the app and Auto Run tells you a Playwright repo is needed.",
+      "Auto Run: /tcm:script-pbi is now /tcm:gen-tests. The old name still works for now and says it was renamed.",
+      "Settings: the size of the page in every browser the app drives can be changed (Auto Run card). It ships as 1280 x 720.",
+      "AI Bridge: with Auto Run on, Claude Code and Cursor are told to allow the Auto Run tools (and, with API Templates on, the template tools) without asking. Only the rules the app wrote are ever removed; your own stay.",
+      "Auto Run: on a test environment, accounts the assistant proposes come with their passwords, or a reason why there is none.",
+    ],
+  },
+  {
     version: "2.2.3-beta.24",
     date: "2026-10-22",
     items: [
