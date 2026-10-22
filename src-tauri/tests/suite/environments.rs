@@ -1123,7 +1123,7 @@ mod accounts_for_the_assistant {
         let body = json!({ "accounts": [
             with_password("hr.sup", "sup1", "Db-Pw-7731"),
             without_password("hr.emp", "emp1", "the database holds only a hash"),
-            without_password("hr.adm", "adm1", &"x".repeat(200)),
+            without_password("hr.adm", "adm1", &reason_of(200)),
         ] });
         let (status, out) = call("POST", "/accounts-propose", &body.to_string()).await;
         assert_eq!(status, 200, "{out}");
@@ -1143,10 +1143,69 @@ mod accounts_for_the_assistant {
         assert!(sent.contains("the database holds only a hash"), "{sent}");
 
         // A reason is at most 200 characters.
-        let long = json!({ "accounts": [without_password("hr.emp", "emp1", &"x".repeat(201))] });
+        let long = json!({ "accounts": [without_password("hr.emp", "emp1", &reason_of(201))] });
         let (status, out) = call("POST", "/accounts-propose", &long.to_string()).await;
         assert_eq!(status, 400, "{out}");
         assert!(out.contains("hr.emp") && out.contains("200"), "{out}");
+    }
+
+    /// A reason in words of exactly `n` characters, spaces inside and none at the ends.
+    fn reason_of(n: usize) -> String {
+        let mut s = "word ".repeat(n / 5 + 1);
+        s.truncate(n - 1);
+        s.push('s');
+        s
+    }
+
+    /// A reason that is a stored value - a hash, a password, one long token -
+    /// is refused, nothing is kept, and the answer is the one sentence and
+    /// does not repeat the value.
+    #[tokio::test]
+    async fn a_no_password_reason_that_looks_like_a_value_is_refused() {
+        let _root = crate::serial::autorun();
+        let dir = bridge_root();
+        let root = dir.path();
+        mark_test_environment(root);
+        let keep = json!({ "accounts": [with_password("hr.old", "old1", "Db-Pw-0")] });
+        assert_eq!(call("POST", "/accounts-propose", &keep.to_string()).await.0, 200);
+        let before = proposals_text(root);
+
+        for value in [
+            "5f4dcc3b5aa765d61d8327deb882cf99",
+            "Welcome2024!Welcome",
+            "$2a$10$N9qo8uLOickgx2ZMRZoMye",
+            "the column holds 5f4dcc3b5aa765d61d8327deb882cf99, a hash",
+            "aGVsbG8gd29ybGQgdGhpcyBpcyBhIHRva2Vu+/=",
+            "0123456789abcdef",
+        ] {
+            let body = json!({ "accounts": [without_password("hr.emp", "emp1", value)] });
+            let (status, out) = call("POST", "/accounts-propose", &body.to_string()).await;
+            assert_eq!(status, 400, "{value}: {out}");
+            assert!(out.contains("no_password is a reason in words, not a value."), "{value}: {out}");
+            assert!(out.contains("hr.emp"), "names the account: {out}");
+            assert!(!out.contains(value), "the answer repeats the value: {out}");
+            assert_eq!(proposals_text(root), before, "{value}: nothing of the refused call is saved");
+        }
+
+        // Words are fine, including ones that mention a hash.
+        for reason in ["the database holds only a hash", "no password column found for this login", "short"] {
+            let body = json!({ "accounts": [without_password("hr.emp", "emp1", reason)] });
+            let (status, out) = call("POST", "/accounts-propose", &body.to_string()).await;
+            assert_eq!(status, 200, "{reason}: {out}");
+        }
+    }
+
+    /// Outside a test environment a reason is dropped before it is kept, so
+    /// its shape is not judged there.
+    #[tokio::test]
+    async fn outside_a_test_environment_a_reason_that_looks_like_a_value_is_ignored_not_judged() {
+        let _root = crate::serial::autorun();
+        let dir = bridge_root();
+        let root = dir.path();
+        let body = json!({ "accounts": [without_password("hr.emp", "emp1", "5f4dcc3b5aa765d61d8327deb882cf99")] });
+        let (status, out) = call("POST", "/accounts-propose", &body.to_string()).await;
+        assert_eq!(status, 200, "{out}");
+        assert!(!proposals_text(root).contains("5f4dcc3b"), "not kept");
     }
 
     #[tokio::test]
@@ -1200,6 +1259,11 @@ mod accounts_for_the_assistant {
             assert_eq!(status, 400, "{out}");
             assert!(out.contains("hr.sup"), "names the key: {out}");
             assert!(bad.is_empty() || !out.contains(bad), "never repeats the password: {out}");
+            if bad.is_empty() {
+                // It points at the two things that are allowed, not at a third that is refused.
+                assert!(out.contains("give the password") && out.contains("no_password"), "{out}");
+                assert!(!out.contains("leave the password out"), "{out}");
+            }
             assert!(proposals_text(root).is_empty());
         }
         let body = json!({ "accounts": [with_password("hr.sup", "sup1", &"y".repeat(256))] });

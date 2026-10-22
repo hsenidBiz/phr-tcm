@@ -315,6 +315,12 @@ fn hide_long_runs(text: &str) -> String {
     LONG_RUN.replace_all(text, |c: &Captures| hide_run(&c[0])).into_owned()
 }
 
+/// Whether `text` holds a long opaque token (a digest, a key, a session
+/// value) - what `hide_long_runs` would hide - as opposed to words.
+pub fn holds_opaque_token(text: &str) -> bool {
+    hide_long_runs(text) != text
+}
+
 /// A cookie or session label, then within 80 characters an opaque value of 16
 /// or more: `ASP.NET_SessionId=5kbsz4dpbtzs1x4aeuvq2o4t`. Shorter than a
 /// token the long-run rule catches, so the label gives it away.

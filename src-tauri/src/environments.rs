@@ -535,6 +535,21 @@ pub const MAX_PROPOSED_PASSWORD: usize = 256;
 /// characters.
 pub const MAX_NO_PASSWORD_REASON: usize = 200;
 
+/// Said when a `no_password` reason is a stored value (a password or a hash)
+/// and not words.
+pub const NO_PASSWORD_IS_A_VALUE: &str = "no_password is a reason in words, not a value.";
+
+/// Whether a `no_password` reason looks like a password or a hash and not
+/// words: a single token of 16 or more characters with no spaces in it, or
+/// text holding the kind of long opaque token the capture redaction hides.
+/// The reason is shown beside the account and kept in plain JSON, so it must
+/// not be where a stored value ends up.
+pub fn no_password_is_a_value(reason: &str) -> bool {
+    let reason = reason.trim();
+    (reason.chars().count() >= 16 && !reason.chars().any(char::is_whitespace))
+        || crate::autorun::capture_redact::holds_opaque_token(reason)
+}
+
 /// Said, with the keys that lack one, when a proposal for a test environment
 /// has an account with neither a password nor a reason for having none.
 pub fn proposed_password_missing(keys: &[&str]) -> String {
@@ -576,7 +591,7 @@ pub fn validate_proposals(list: &[StoredProposal]) -> Result<(), String> {
         match &p.password {
             Some(pw) if pw.is_empty() => {
                 return Err(format!(
-                    "the password proposed for \"{}\" is empty - leave the password out instead",
+                    "the password proposed for \"{}\" is empty - give the password, or no_password with the reason there is none",
                     p.key
                 ))
             }
@@ -603,6 +618,9 @@ pub fn validate_proposals(list: &[StoredProposal]) -> Result<(), String> {
                     "the no_password reason for \"{}\" is longer than {MAX_NO_PASSWORD_REASON} characters",
                     p.key
                 ));
+            }
+            if no_password_is_a_value(why) {
+                return Err(format!("the no_password reason for \"{}\": {NO_PASSWORD_IS_A_VALUE}", p.key));
             }
         }
     }
