@@ -552,6 +552,42 @@ information in the slots the Playwright pipeline already reads; it never overrid
       of the case pass; an undo puts the divergence back open and the case Blocked; the batch
       form rules only the divergences it names.
 
+## After the Manage Cycle re-comparison (agreed 2026-10-22)
+
+39. **What still kept TCM behind Playwright on PBI 138110**
+    (`manage-cycle-tcm-vs-playwright-2026-10-22.md`). The new pipeline closed most of the gap
+    (10 shared cases: Playwright stronger on 8 on 10-20, on 1 now), but four things remain:
+    - **The value check sees only some values.** Item 33's save check compares numbers and
+      quoted text, so values taken from the page reached the scripts with no `because`: a
+      participant count "1" (141700), the amber banner's RGB values (141736, 141737), pressed
+      and checked states, regex patterns, attributes, styles, true/false and 0/1, and Preview
+      labels such as "Customer Focus". None contradicted its case, but none is marked
+      `assumed` either. Extend the source check to every expected value of every check kind
+      (`matches` patterns, `expect_style`, `expect_attribute`, `expect_checked` / pressed,
+      boolean and 0/1 values, and visible text), each needing `from_case` or a `because`.
+    - **An unchecked expectation must show.** What a script could not check (141717's 800 ms
+      timing, 141739's lock icon and its click, 141751's stand-in "no alert" for "no
+      access-denied message") is not recorded anywhere, so those cases show as full passes.
+      Each step gets `unchecked` entries naming the expected item and why (a missing tool
+      names its backlog item), shown on the case card, counted in the run report ("passed,
+      2 expectations unchecked") and exported to Playwright as a `// TODO unchecked` line.
+      A stand-in check is recorded as one, beside the expectation it stands in for.
+    - **Click a disabled control and see nothing happen.** 141739 says "click another card:
+      nothing happens"; the runner refuses a click on a disabled element, so the healer
+      checked only that it is disabled. Add `click { force: true, expect: "nothing" }` (or
+      `expect_no_change`) that dispatches the click anyway and then checks the address, the
+      open dialogs and the target region are unchanged.
+    - **A request made earlier in the same step.** `expect_response` waits for a request
+      after the step began; one the step's own earlier action fired before the check was
+      armed (a filter change, then the check) can be missed or matched to the wrong call.
+      Arm every `expect_response` in a step at the step's start, so it catches the step's
+      own requests in order, and say in the answer which request matched and when.
+    - Tests: a `matches` pattern taken from the page with no `because` is listed as
+      assumed; a step with an `unchecked` entry shows "1 expectation unchecked" on a pass; a
+      forced click on a disabled card with `expect: nothing` passes when nothing changes and
+      fails when a dialog opens; an `expect_response` after a filter click in the same step
+      matches the filter's request.
+
 ## Smaller
 
 - `save_autorun_script` through MCP drops `edits`, so repairs had to go through
