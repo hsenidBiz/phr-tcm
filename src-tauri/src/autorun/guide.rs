@@ -1345,9 +1345,14 @@ the list) and name it in your report. Never put another action in its place with
 **A check that something is absent needs a positive control.** `expect_hidden`
 and `expect_count` of 0 pass when the locator matches nothing, so a locator
 that is wrong passes forever. The save refuses one whose locator "was only
-ever seen matching nothing on the live app". There are two ways through:
+ever seen matching nothing on the live app". There are three ways through:
 probe the locator where it is shown (in any area), or have the script check
-the same thing present somewhere else, with the same last part. Say a
+the same thing present somewhere else, with the same last part, or, for
+something the app never shows anywhere ("no access-denied message", "no lock
+icon"), name it by the case's own words, as a text or a role with a name: the
+save lets it through without a sighting and says so (`from_case`). A css or a
+role with no name still needs a sighting, and the same words in a click are
+refused. Say a
 Draft cycle card has no Unpublish switch. The switch is seen on a Published
 card, so check it absent on the Draft card and present on the Published one:
 
@@ -2195,7 +2200,8 @@ Before every save:
 An absence check (`expect_hidden`, or `expect_count` of 0) whose locator was
 only ever seen matching nothing is refused, because it could pass with the
 locator wrong. This applies only to new or changed steps; "Checking
-thoroughly" gives the two ways through. Other things a save notices come back
+thoroughly" gives the three ways through. One named by the case's own words
+is saved and listed as `from_case`: repeat it in your report. Other things a save notices come back
 as `case N: note: ...` lines after the answer: a loose name also seen inside a
 longer one, or a record named with no precondition declared. A note never
 refuses a save.

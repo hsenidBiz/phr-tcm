@@ -2056,6 +2056,19 @@ fn the_saving_section_names_the_absence_refusal_and_the_notes() {
     assert!(pre.contains("names a test record and declares no"), "Preconditions never says the save notes it");
 }
 
+/// "Checking thoroughly" says an absence check can be named by the case's
+/// own words, and that the save lists it as `from_case`.
+#[test]
+fn the_guide_explains_absence_on_the_cases_words() {
+    use v2_lib::autorun::guide::guide_section;
+    let g = autorun_guide();
+    let section = guide_section(&g, "Checking thoroughly").expect("a Checking thoroughly section");
+    let flat = section.split_whitespace().collect::<Vec<_>>().join(" ");
+    assert!(flat.contains("from_case") && flat.contains("no lock icon"), "Checking thoroughly never explains from_case");
+    let saving = guide_section(&g, "Saving it").expect("a Saving it section");
+    assert!(saving.split_whitespace().collect::<Vec<_>>().join(" ").contains("listed as `from_case`"));
+}
+
 /// The publish example is its bullets and then its two-line block; the
 /// flip-back paragraph comes after the block, not between the two.
 #[test]

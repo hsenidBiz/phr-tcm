@@ -1990,7 +1990,37 @@ pub fn uses_components(script: &CaseScript) -> bool {
 
 /// Said of an absence check whose locator was only ever seen matching
 /// nothing: the one rule of the three that refuses.
-pub const ABSENCE_UNPROVEN: &str = "was only ever seen matching nothing on the live app, so this check that it is absent could pass with the locator wrong: probe it where it is shown (in any area), or check it present elsewhere in this script with the same last part, then save again. If the app never shows it anywhere, leave the check out, and when the step then checks nothing, say why in its \"unchecked\".";
+pub const ABSENCE_UNPROVEN: &str = "was only ever seen matching nothing on the live app, so this check that it is absent could pass with the locator wrong: probe it where it is shown (in any area), or check it present elsewhere in this script with the same last part, then save again. If the app never shows it anywhere, name it by the case's own words (a text, or a role with a name), or leave the check out, and when the step then checks nothing, say why in its \"unchecked\".";
+
+/// Said, after the locator, of an absence check let through on the case's
+/// own words: it was never seen, and the save says so instead of refusing.
+pub const ABSENT_FROM_CASE: &str = "is checked absent on the case's own words (from_case): it was never seen on the live app";
+
+/// What the save made of the absence checks it judged: the ones it refuses
+/// (`refusals`, "Step {n}: {locator} {ABSENCE_UNPROVEN}") and the ones it
+/// lets through on the case's own words (`from_case`), listed for the
+/// report.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct AbsenceReview {
+    pub refusals: Vec<String>,
+    pub from_case: Vec<String>,
+}
+
+/// Is `link` named by the case's own words: a `text` link, or a `role` link
+/// with a `name`, with no css and no data placeholder, whose every word is
+/// at least `MIN_TYPED_LEN` characters once folded and is whole words of
+/// some line of `case_text` (already folded)?
+fn named_by_case(link: &LocatorStep, case_text: &[String]) -> bool {
+    let by_words = link.text.is_some() || (link.role.is_some() && link.name.is_some());
+    if !by_words || link.css.is_some() || link_holds_placeholder(link) {
+        return false;
+    }
+    let own = words(link);
+    !own.is_empty()
+        && own
+            .iter()
+            .all(|w| w.chars().count() >= MIN_TYPED_LEN && case_text.iter().any(|t| has_phrase(t, w)))
+}
 
 /// Is this a check that passes when its locator matches nothing:
 /// `expect_hidden`, an `expect_count` of 0 (`equals` or `at_most`)? A
@@ -2036,6 +2066,23 @@ pub fn absence_refusals(
     only_steps: Option<&[i32]>,
     saved: Option<&CaseScript>,
 ) -> Vec<String> {
+    absence_review(map, script, &[], only_steps, saved).refusals
+}
+
+/// `absence_refusals`' rule, plus one way through: an unproven absence
+/// check whose LAST link is named by the case's own words (`named_by_case`:
+/// a `text`, or a `role` with a `name`, whose words are whole words of
+/// `case_text`) is never refused. It is listed once in `from_case` as
+/// "step {n}: {locator} {ABSENT_FROM_CASE}". A css link, a role with no
+/// name and words the case does not say are refused as before.
+pub fn absence_review(
+    map: &DiscoveryMap,
+    script: &CaseScript,
+    case_text: &[String],
+    only_steps: Option<&[i32]>,
+    saved: Option<&CaseScript>,
+) -> AbsenceReview {
+    let mut review = AbsenceReview::default();
     let before: Vec<&Action> = saved
         .into_iter()
         .flat_map(|s| s.steps.iter())
@@ -2051,8 +2098,9 @@ pub fn absence_refusals(
         .filter(|(_, a)| is_absence_check(a) && !before.contains(a))
         .collect();
     if judged.is_empty() {
-        return Vec::new();
+        return review;
     }
+    let case_text: Vec<String> = case_text.iter().map(|t| fold_name(t)).collect();
     let areas = every_area(map);
     let shown = present_only(map);
     let present = Sightings::new(&shown, &areas);
@@ -2067,7 +2115,6 @@ pub fn absence_refusals(
         .filter_map(|(t, _)| t.links().pop())
         .map(|l| loosened(&l))
         .collect();
-    let mut out: Vec<String> = Vec::new();
     for (step, action) in judged {
         for target in own_targets(action) {
             let Some(last) = target.links().pop() else { continue };
@@ -2075,13 +2122,23 @@ pub fn absence_refusals(
             let proven = present.has(&last, true)
                 || wholes.iter().any(|w| w.last().is_some_and(|l| same_link_filled(&loosened(l), &loose)))
                 || used.iter().any(|u| same_link(u, &loose));
+            if proven {
+                continue;
+            }
+            if named_by_case(&last, &case_text) {
+                let line = format!("step {step}: {} {ABSENT_FROM_CASE}", target.describe());
+                if !review.from_case.contains(&line) {
+                    review.from_case.push(line);
+                }
+                continue;
+            }
             let line = format!("Step {step}: {} {ABSENCE_UNPROVEN}", target.describe());
-            if !proven && !out.contains(&line) {
-                out.push(line);
+            if !review.refusals.contains(&line) {
+                review.refusals.push(line);
             }
         }
     }
-    out
+    review
 }
 
 /// The most loose names one case's notes list before saying how many more.

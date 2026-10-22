@@ -11115,6 +11115,10 @@ async fn save_autorun_scripts(
             // something is absent: refused after the unseen ones, which a
             // discovery in progress may still record.
             let mut unproven: Vec<(i32, Vec<String>)> = Vec::new();
+            // Absence checks let through on the case's own words: listed
+            // first among the notes, so the cap never drops one before the
+            // others.
+            let mut from_case: Vec<String> = Vec::new();
             for (case_id, only) in &seen_scope {
                 let (Some(script), Some(case)) = (
                     prepared.iter().find(|s| s.case_id == *case_id),
@@ -11135,15 +11139,17 @@ async fn save_autorun_scripts(
                     &files,
                 ) {
                     SeenVerdict::Passed => {
-                        let lines = crate::autorun::seen_check::absence_refusals(
+                        let review = crate::autorun::seen_check::absence_review(
                             &map,
                             script,
+                            &case_step_text(case),
                             only.as_deref(),
                             saved_scripts.iter().find(|s| s.case_id == *case_id),
                         );
-                        if !lines.is_empty() {
-                            unproven.push((*case_id, lines));
+                        if !review.refusals.is_empty() {
+                            unproven.push((*case_id, review.refusals));
                         }
+                        from_case.extend(review.from_case.into_iter().map(|n| format!("case {case_id}: note: {n}")));
                     }
                     SeenVerdict::Other(why) => return Err(SaveRefusal::Unseen(why)),
                     SeenVerdict::Unseen(lines) => unseen.push((*case_id, lines)),
@@ -11156,6 +11162,7 @@ async fn save_autorun_scripts(
                 return Err(SaveRefusal::Other(400, unseen_in_bundle(&unproven)));
             }
             // Everything is seen. Notes, for the new and changed steps only.
+            notes.extend(from_case);
             for (case_id, only) in &seen_scope {
                 let Some(script) = prepared.iter().find(|s| s.case_id == *case_id) else { continue };
                 let sentences = crate::autorun::seen_check::loose_name_notes(&map, &components, script, only.as_deref())

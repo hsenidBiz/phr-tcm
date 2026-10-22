@@ -3129,7 +3129,7 @@ fn an_each_child_with_a_placeholder_is_checked_at_run_time() {
 
 // ------------------------- the save's own rules: absence needs a control
 
-use v2_lib::autorun::seen_check::{absence_refusals, loose_name_notes, ABSENCE_UNPROVEN};
+use v2_lib::autorun::seen_check::{absence_refusals, absence_review, loose_name_notes, ABSENCE_UNPROVEN, ABSENT_FROM_CASE};
 
 fn two_steps(first: serde_json::Value, second: serde_json::Value) -> CaseScript {
     script(
@@ -3265,6 +3265,76 @@ fn an_absence_check_whose_locator_is_seen_present_is_never_refused() {
     let present = sighted_matching("Cycles", css(".x"), 1);
     let hidden = one_step("Cycles", serde_json::json!([{ "kind": "expect_hidden", "selector": { "css": ".x" } }]));
     assert!(absence_refusals(&present, &hidden, None, None).is_empty());
+}
+
+/// A map in which nothing was ever seen.
+fn nothing_seen() -> DiscoveryMap {
+    map_with("Cycles", "/cycles", &[])
+}
+
+#[test]
+fn an_absence_check_on_unseen_case_words_is_from_case() {
+    let case = vec!["No access-denied message is shown".to_string()];
+    let counted = two_steps(
+        serde_json::json!([]),
+        serde_json::json!([{ "kind": "expect_count", "selector": { "text": "access-denied message" }, "equals": 0 }]),
+    );
+    let review = absence_review(&nothing_seen(), &counted, &case, None, None);
+    assert!(review.refusals.is_empty(), "{:?}", review.refusals);
+    assert_eq!(
+        review.from_case,
+        vec!["step 2: text \"access-denied message\" is checked absent on the case's own words (from_case): it was never seen on the live app".to_string()]
+    );
+    assert!(review.from_case[0].ends_with(ABSENT_FROM_CASE));
+
+    let icon = vec!["no lock icon".to_string()];
+    let hidden = two_steps(
+        serde_json::json!([]),
+        serde_json::json!([{ "kind": "expect_hidden", "selector": { "role": "img", "name": "lock" } }]),
+    );
+    let review = absence_review(&nothing_seen(), &hidden, &icon, None, None);
+    assert!(review.refusals.is_empty(), "{:?}", review.refusals);
+    assert_eq!(review.from_case, vec![format!("step 2: img \"lock\" {ABSENT_FROM_CASE}")]);
+
+    // The wrapper keeps its old rule: with no case text it still refuses.
+    assert_eq!(absence_refusals(&nothing_seen(), &hidden, None, None).len(), 1);
+}
+
+#[test]
+fn css_and_role_only_absence_checks_still_need_a_sighting() {
+    let case = vec!["no lock icon".to_string()];
+    for (selector, map) in [
+        (serde_json::json!({ "css": ".lock" }), filed(serde_json::json!({ "css": ".lock" }), 0)),
+        (serde_json::json!({ "role": "alert" }), filed(serde_json::json!({ "role": "alert" }), 0)),
+    ] {
+        let described = serde_json::from_value::<Target>(selector.clone()).unwrap().describe();
+        let hidden = two_steps(serde_json::json!([]), serde_json::json!([{ "kind": "expect_hidden", "selector": selector }]));
+        let review = absence_review(&map, &hidden, &case, None, None);
+        assert_eq!(review.refusals, vec![format!("Step 2: {described} {ABSENCE_UNPROVEN}")]);
+        assert!(review.from_case.is_empty());
+    }
+}
+
+#[test]
+fn words_the_case_does_not_say_are_still_unproven() {
+    let case = vec!["No access-denied message is shown".to_string()];
+    let hidden = two_steps(
+        serde_json::json!([]),
+        serde_json::json!([{ "kind": "expect_hidden", "selector": { "text": "Forbidden" } }]),
+    );
+    let review = absence_review(&nothing_seen(), &hidden, &case, None, None);
+    assert_eq!(review.refusals, vec![format!("Step 2: text \"Forbidden\" {ABSENCE_UNPROVEN}")]);
+    assert!(review.from_case.is_empty());
+}
+
+#[test]
+fn the_same_case_words_in_a_click_are_refused() {
+    let case = vec!["No access-denied message is shown".to_string()];
+    let clicking = two_steps(serde_json::json!([]), serde_json::json!([click(serde_json::json!({ "text": "access-denied message" }))]));
+    match seen_verdict(&nothing_seen(), &none(), &clicking, &case, None, &[]) {
+        SeenVerdict::Unseen(lines) => assert!(lines.iter().any(|l| l.contains("access-denied message")), "{lines:?}"),
+        other => panic!("a click on the case's words was not refused: {other:?}"),
+    }
 }
 
 // ------------------------- loose record names
