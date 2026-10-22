@@ -27,12 +27,12 @@ export const settings: Screen = {
     {
       id: MORE,
       route: [OPEN, { scrollTo: { role: "button", name: "Show UI tour" } }],
-      alt: "Settings scrolled down to the AI tools, Updates, Backup and Help cards",
+      alt: "Settings with the Updates, Backup and Help cards in view beside the General card",
     },
     {
       id: MODULES,
       route: [OPEN, { scrollTo: { role: "button", name: "Modules" } }],
-      alt: "The end of the General card, with the Modules row, and the AI tools card under it",
+      alt: "The end of the General card, with the Modules row, and the Auto Run and AI tools cards under it",
     },
     // From the top of Settings: the log is shorter than the changelog, so a page
     // that arrived scrolled snaps up when it opens, and the two theme passes
