@@ -20,7 +20,7 @@ use v2_lib::ai_bridge::{
     page_read_in, record_change_in, BridgeContext, API_WRITES_OFF, ENDED_FOR_UNDO, EXPLORE_NOT_MAPPING,
     EXPLORE_NOT_STARTED, READ_WITH_NO_AREA,
 };
-use v2_lib::autorun::cleanup::not_this_sessions;
+use v2_lib::autorun::cleanup::{not_this_sessions, ran_in_project};
 use v2_lib::autorun::discovery_map::map_path;
 use v2_lib::autorun::cleanup::EXPLORE_MADE;
 use v2_lib::autorun::explore::{
@@ -739,7 +739,12 @@ fn session_that_made(responses: Vec<Value>, ids: &[&str]) -> (Rig, String, Strin
 /// Another explore session in `r`'s root, started at `started_ms`, that
 /// made and verified a cycle for each of `ids`.
 fn made_session(r: &Rig, ids: &[&str], started_ms: u64) -> String {
-    let session = begin(r.root.path(), RUN_ORG, RUN_PROJECT, "admin", started_ms).unwrap();
+    made_session_in(r, RUN_ORG, RUN_PROJECT, ids, started_ms)
+}
+
+/// `made_session`, in the organisation `org` and the project `project`.
+fn made_session_in(r: &Rig, org: &str, project: &str, ids: &[&str], started_ms: u64) -> String {
+    let session = begin(r.root.path(), org, project, "admin", started_ms).unwrap();
     for id in ids {
         let post = save("POST", "/hr/c?x=1", 2000, text(&format!("{{\"Id\":{id}}}")));
         let recorded =
@@ -865,4 +870,28 @@ async fn undo_needs_the_switch_and_a_saved_session() {
     assert_eq!(r.browsers.opened, 0);
     assert!(r.fetched().is_empty());
     assert_eq!(status_of(r.root.path(), &env, "cycle", "274"), "present");
+}
+
+/// A session from another project (or organisation) is refused before
+/// anything opens: its creates would go through this project's delete
+/// templates. Nothing is sent and the record is left as it was.
+#[tokio::test]
+async fn undo_refuses_a_session_from_another_project_and_deletes_nothing() {
+    let _locks = undo_locks();
+    let (mut r, _, env) = session_that_made(vec![answer(200, json!({ "success": true }))], &[]);
+    let elsewhere = made_session_in(&r, RUN_ORG, "Other", &["274"], 1_760_000_200_000);
+    let other_org = made_session_in(&r, "other-org", RUN_PROJECT, &["275"], 1_760_000_300_000);
+    let mut none: Option<FakeBrowser> = None;
+
+    let (status, v) = undo_in(&mut none, &mut r, true, json!({ "session": elsewhere, "ids": ["274"] })).await;
+    assert_eq!((status, v), (400, json!(ran_in_project("Other"))));
+    assert_eq!(ran_in_project("Other"), "this session ran in the project Other - switch to it, then undo");
+    let (status, v) = undo_in(&mut none, &mut r, true, json!({ "session": other_org, "ids": ["275"] })).await;
+    assert_eq!((status, v), (400, json!(ran_in_project(RUN_PROJECT))));
+
+    assert_eq!(r.browsers.opened, 0);
+    assert!(r.fetched().is_empty(), "something was sent");
+    assert_eq!(status_of(r.root.path(), &env, "cycle", "274"), "present");
+    assert_eq!(status_of(r.root.path(), &env, "cycle", "275"), "present");
+    assert!(!load(r.root.path(), &elsewhere).unwrap().changes[0].undone);
 }

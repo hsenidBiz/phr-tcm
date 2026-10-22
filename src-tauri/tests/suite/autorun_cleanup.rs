@@ -1338,3 +1338,52 @@ fn the_bridge_reaches_clean_up_only_to_undo_an_explore_session() {
         assert!(lib.contains(&format!("api_templates::{command},")), "{command} is not registered");
     }
 }
+
+/// The route's function is the one place that reaches the explore undo, so
+/// who reaches the route's function matters too: it is named in no file but
+/// `ai_bridge.rs`, called once, from the function the route arm calls, and
+/// that function is called from nowhere but the arm for the route's path.
+#[test]
+fn the_explore_undo_function_has_one_caller_and_one_route() {
+    let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let mut naming = Vec::new();
+    let mut stack = vec![src.clone()];
+    while let Some(dir) = stack.pop() {
+        for e in std::fs::read_dir(dir).unwrap().flatten() {
+            let p = e.path();
+            if p.is_dir() {
+                stack.push(p);
+            } else if p.extension().is_some_and(|x| x == "rs")
+                && std::fs::read_to_string(&p).unwrap().contains("explore_undo_in")
+            {
+                naming.push(p.strip_prefix(&src).unwrap().to_string_lossy().replace('\\', "/"));
+            }
+        }
+    }
+    naming.sort();
+    assert_eq!(naming, ["ai_bridge.rs"], "the explore undo function is named outside the bridge");
+
+    let bridge = std::fs::read_to_string(src.join("ai_bridge.rs")).unwrap().replace("\r\n", "\n");
+    // The nearest item start above `at`.
+    let enclosing = |at: usize| -> String {
+        let before = &bridge[..at];
+        let start = ["\nfn ", "\nasync fn ", "\npub fn ", "\npub async fn ", "\npub(crate) fn ", "\npub(crate) async fn "]
+            .iter()
+            .filter_map(|h| before.rfind(h).map(|i| (i, h.len())))
+            .max()
+            .map(|(i, len)| &before[i + len..])
+            .unwrap_or("");
+        start.chars().take_while(|c| c.is_alphanumeric() || *c == '_').collect()
+    };
+
+    let calls: Vec<usize> = bridge.match_indices("explore_undo_in(").map(|(i, _)| i).collect();
+    assert_eq!(calls.len(), 1, "the explore undo function is called {} times", calls.len());
+    assert_eq!(enclosing(calls[0]), "api_template_explore_undo");
+
+    // That wrapper is defined once and called once: on the route's own arm.
+    let uses: Vec<usize> = bridge.match_indices("api_template_explore_undo(").map(|(i, _)| i).collect();
+    assert_eq!(uses.len(), 2, "api_template_explore_undo is named {} times", uses.len());
+    let arm = bridge.find("(\"POST\", \"/api-template-explore-undo\") => api_template_explore_undo(").expect("the route arm");
+    assert!(uses.iter().any(|u| *u > arm && *u < arm + 80), "the wrapper is not called from its route arm");
+    assert_eq!(bridge.matches("\"/api-template-explore-undo\")").count(), 1, "another arm for the route");
+}

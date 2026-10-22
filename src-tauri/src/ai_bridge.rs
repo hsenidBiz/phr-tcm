@@ -6284,8 +6284,8 @@ const UNDO_SHAPE: &str = "{ \"session\": \"<the session id>\", \"ids\": [\"<id>\
 
 /// `/api-template-explore-undo`: delete, through the proven delete templates,
 /// the creates `ids` of one explore session - and only those: an id must be
-/// one the session verified (its change list and the test-made list agree),
-/// made in the active environment. The person's ask is the gate, so it also
+/// one the test-made list holds as this session's verified create, made in
+/// the active environment and in the project open now. The person's ask is the gate, so it also
 /// needs the API templates switch. Every refusal comes before anything is
 /// deleted: the switch, the body, the session, the one-at-a-time slot, then
 /// the plan, which refuses the whole undo for one id that is not the
@@ -6385,7 +6385,10 @@ pub async fn explore_undo_in<S: DiscoveryBrowser, B: crate::autorun::replay::Bro
     .await
     {
         Ok(report) => report,
-        Err(why) => return (400, why),
+        Err(why) => {
+            // The session was closed above whatever came of the deletes.
+            return (400, ended.map_or(why.clone(), |said| format!("{why}\n{said}")));
+        }
     };
 
     let mut not_marked = Vec::new();
@@ -6424,6 +6427,11 @@ async fn api_template_explore_undo(ctx: &BridgeContext, body: &str) -> (u16, Str
         Err(refused) => return refused,
     };
     let mut slot = crate::commands::autorun::supervised().lock().await;
+    // Looked at again now the lock is held: a run may have started while
+    // this call waited for it.
+    if let Some(busy) = unattended_run_is_using_the_browser() {
+        return busy;
+    }
     let mut browsers = real_template_browsers(crate::browser::launch::Browser::Edge);
     explore_undo_in(&mut slot, &mut browsers, ctx, &root, body, &crate::commands::autorun_replay::replay_timing(false)).await
 }

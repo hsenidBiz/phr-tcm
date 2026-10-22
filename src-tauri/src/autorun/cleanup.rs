@@ -559,9 +559,18 @@ pub fn ran_elsewhere(env_name: &str) -> String {
     format!("this session ran in {env_name} - switch to it, then undo")
 }
 
+/// Said when the session ran in another project than the one open now: a
+/// delete goes through this project's delete templates, which are not the
+/// ones that project's creates were made with.
+pub fn ran_in_project(project: &str) -> String {
+    format!("this session ran in the project {project} - switch to it, then undo")
+}
+
 /// The entries an undo of `session` would delete, each with its kind's
 /// proven delete template (None: no template, so it is not deleted).
 ///
+/// A session that ran in another organisation or project than `org` and
+/// `project` is refused (`ran_in_project`) before anything else is looked at.
 /// Only record entries made by an explore session (`EXPLORE_MADE`) under
 /// this `session`, still there or whose delete failed, are looked at; the
 /// prefix, age and preview checks of Clean up do not apply, since the
@@ -584,7 +593,16 @@ pub fn undo_plan(
     if ids.is_empty() {
         return Err(NOTHING_NAMED.to_string());
     }
-    let envs = crate::environments::load_or_init(root, None).map_err(|e| {
+    // The session's own file says which organisation and project it ran in.
+    // A file that is not there or does not read is left to the caller (the
+    // bridge route loads it first and refuses); one that reads and names
+    // another project plans nothing.
+    if let Ok(s) = super::explore::load(root, session) {
+        if !s.organization.eq_ignore_ascii_case(org) || !s.project.eq_ignore_ascii_case(project) {
+            return Err(ran_in_project(&s.project));
+        }
+    }
+    let envs =crate::environments::load_or_init(root, None).map_err(|e| {
         applog::warn(format!("clean up: the environments could not be read: {e}"));
         ENVIRONMENT_UNREADABLE.to_string()
     })?;
