@@ -17,7 +17,7 @@ import { Textarea } from "../components/ui/input";
 import { cn } from "../lib/cn";
 import { useFieldRefs } from "../hooks/useFieldRefs";
 import { unwrap, unwrapStr } from "../lib/ipc";
-import { blobToB64 } from "../lib/blob";
+import { blobToB64, validImageB64 } from "../lib/blob";
 import { emitPointRecorded } from "../lib/runnerBus";
 import { loadMyOrder, onMyOrderChanged, resortUpcoming, type OrderKey } from "../lib/runOrder";
 import { loadRunnerPinned, loadRunnerSession, saveRunnerPinned } from "../lib/runnerSession";
@@ -120,6 +120,30 @@ async function readClipboardImageB64(): Promise<string | null> {
     if (!type) continue;
     const blob = await item.getType(type);
     return blobToB64(blob);
+  }
+  return null;
+}
+
+/** A virtual machine's clipboard sync can offer image/png before the image
+ * is ready, so the first read is empty or cut short and the data lands a
+ * moment later. Reads the clipboard again, this many times this far apart. */
+const CLIPBOARD_RETRIES = 3;
+const CLIPBOARD_RETRY_MS = 300;
+
+/** Said when no whole image ever turned up. Nothing has been attached. */
+const NOT_ON_CLIPBOARD_YET = "The screenshot had not reached the clipboard yet - paste again.";
+
+/** The first whole image the clipboard yields: `first` if it is one, else
+ * the first valid re-read within CLIPBOARD_RETRIES tries. Null when none
+ * is - including where the async clipboard read is not available at all
+ * (some WebView2 setups), which leaves `first` as the only candidate. */
+async function firstValidClipboardImage(first: string | null): Promise<string | null> {
+  if (first && (await validImageB64(first))) return first;
+  if (typeof navigator.clipboard?.read !== "function") return null;
+  for (let i = 0; i < CLIPBOARD_RETRIES; i++) {
+    await new Promise((res) => setTimeout(res, CLIPBOARD_RETRY_MS));
+    const again = await readClipboardImageB64().catch(() => null);
+    if (again && (await validImageB64(again))) return again;
   }
   return null;
 }
@@ -439,12 +463,20 @@ export default function RunnerWindow() {
   const patch = (caseId: number, p: Partial<CaseState>) =>
     setStates((s) => ({ ...s, [caseId]: { ...emptyState(), ...s[caseId], ...p } }));
 
-  const addImage = (caseId: number, b64: string, kind: string) =>
+  /** Attach an image to a case. The last guard: an empty image is never
+   * attached, whoever the caller is. True when it was attached. */
+  const addImage = (caseId: number, b64: string, kind: string): boolean => {
+    if (!b64) {
+      if (import.meta.env.DEV) console.warn(`addImage: ignored an empty ${kind} image for case ${caseId}`);
+      return false;
+    }
     setStates((s) => {
       const prev = s[caseId] ?? emptyState();
       const att = { file_name: `${kind}-${caseId}-${prev.attachments.length + 1}.png`, b64 };
       return { ...s, [caseId]: { ...prev, attachments: [...prev.attachments, att] } };
     });
+    return true;
+  };
 
   const addAttachment = (caseId: number, att: RunAttachment) =>
     setStates((s) => {
@@ -471,12 +503,16 @@ export default function RunnerWindow() {
       if (!current || bugFor) return;
       const item = [...(e.clipboardData?.items ?? [])].find((i) => i.type.startsWith("image/"));
       if (!item) return; // text paste - none of our business
+      // An image the VM has offered but not yet delivered comes through as
+      // no file or an empty/cut-off one: all of it goes the retry way below.
       const blob = item.getAsFile();
-      if (!blob) return;
-      void blobToB64(blob).then((b64) => {
-        addImage(current.id, b64, "pasted");
-        toast.success("Pasted screenshot");
-      });
+      const caseId = current.id;
+      void (async () => {
+        const first = blob ? await blobToB64(blob).catch(() => "") : "";
+        const b64 = await firstValidClipboardImage(first);
+        if (b64 && addImage(caseId, b64, "pasted")) toast.success("Pasted screenshot");
+        else toast.info(NOT_ON_CLIPBOARD_YET);
+      })();
     };
     window.addEventListener("paste", onPaste);
     return () => window.removeEventListener("paste", onPaste);
@@ -579,8 +615,8 @@ export default function RunnerWindow() {
     while (Date.now() < deadline && snipToken.current === token) {
       await new Promise((res) => setTimeout(res, 1000));
       const img = await readClipboardImageB64().catch(() => null);
-      if (img && img !== before) {
-        addImage(caseId, img, "snip");
+      // A cut-off or empty read is "no new image yet": keep polling.
+      if (img && img !== before && (await validImageB64(img)) && addImage(caseId, img, "snip")) {
         restoreFromSnip();
         toast.success("Snip attached");
         setSnipping(false);
@@ -606,13 +642,15 @@ export default function RunnerWindow() {
   async function pasteImage() {
     if (!current) return;
     try {
-      const b64 = await readClipboardImageB64();
-      if (b64) {
-        addImage(current.id, b64, "pasted");
-        toast.success("Pasted screenshot");
-      } else {
+      const caseId = current.id;
+      const first = await readClipboardImageB64();
+      if (first === null) {
         toast.info("No image on the clipboard.");
+        return;
       }
+      const b64 = await firstValidClipboardImage(first);
+      if (b64 && addImage(caseId, b64, "pasted")) toast.success("Pasted screenshot");
+      else toast.info(NOT_ON_CLIPBOARD_YET);
     } catch {
       toast.error("Clipboard image paste is not available.");
     }
@@ -779,12 +817,33 @@ export default function RunnerWindow() {
           }
           return;
         }
+        // Last line of defence: an image that is empty or will not decode
+        // is never uploaded - a broken file on the result helps no one. It
+        // is left out and said so below. Files that are not images (a
+        // recording, anything from Attach file) go up as they are.
+        const unsent: string[] = [];
+        const sendable: RunAttachment[] = [];
+        for (const a of s.attachments) {
+          const isImage = IMAGE_EXT.test(a.file_name);
+          if (!a.b64 || (isImage && !(await validImageB64(a.b64, mimeFor(a.file_name))))) {
+            unsent.push(a.file_name);
+          } else {
+            sendable.push(a);
+          }
+        }
         const extras = await unwrap(
           commands.recordResult(session!.org, session!.project, run.runId, resultId, {
             ...payload,
+            attachments: sendable.length ? sendable : null,
             point_id: point.point_id,
           }),
         );
+        for (const name of unsent) {
+          toast.warning(
+            `Recorded, but ${name} was not uploaded - the image was empty or damaged. Remove it and paste the screenshot again.`,
+            { duration: 10000 },
+          );
+        }
         syncedRef.current[c.id] = snap;
         recordFailures.current.delete(c.id);
         // Tell the main window so the Run Tests table repaints this row now.

@@ -22,6 +22,36 @@ vi.mock("@tauri-apps/api/window", () => ({
   getCurrentWindow: () => windowMock,
 }));
 
+// The toasts are asserted on (a broken paste must never claim success), so
+// they are spies. Every method the runner and its toaster call is here.
+const toastMock = vi.hoisted(() => ({
+  success: vi.fn(),
+  error: vi.fn(),
+  info: vi.fn(),
+  warning: vi.fn(),
+  dismiss: vi.fn(),
+}));
+vi.mock("../lib/toast", () => ({ toast: toastMock }));
+
+// jsdom cannot decode an image, so the decoder validImageB64 uses is
+// swapped for one that accepts whatever the structural checks let through.
+// `decode.accepts` forces it fully open for the one test that reaches the
+// last-resort guard in addImage.
+const decode = vi.hoisted(() => ({ accepts: false }));
+vi.mock("../lib/blob", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../lib/blob")>();
+  return {
+    ...actual,
+    validImageB64: (b64: string, mime?: string) =>
+      decode.accepts ? Promise.resolve(true) : actual.validImageB64(b64, mime, async () => true),
+  };
+});
+
+/** A real 1x1 PNG (69 bytes), base64. */
+const PNG_B64 =
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC";
+const pngBytes = () => Uint8Array.from(atob(PNG_B64), (c) => c.charCodeAt(0));
+
 beforeEach(() => {
   localStorage.setItem(
     "tcm-v2-runner-session",
@@ -711,7 +741,8 @@ test("pasting an image (Ctrl+V) attaches it to the current case", async () => {
   // makes the paste land.
   await act(async () => {});
 
-  const file = new File([new Uint8Array([137, 80, 78, 71])], "clip.png", { type: "image/png" });
+  // A whole image: the runner no longer attaches bytes it cannot decode.
+  const file = new File([pngBytes() as BlobPart], "clip.png", { type: "image/png" });
   fireEvent.paste(window, {
     clipboardData: { items: [{ type: "image/png", getAsFile: () => file }] },
   });
@@ -720,6 +751,229 @@ test("pasting an image (Ctrl+V) attaches it to the current case", async () => {
   // (the fullscreen viewer holds a second copy of the same image), after a
   // file read and a render - several async hops, so the longer wait stays.
   expect((await screen.findAllByAltText("pasted-201-1.png", undefined, { timeout: 5000 })).length).toBeGreaterThan(0);
+});
+
+// --- A screenshot that has not reached the clipboard yet ---
+//
+// A virtual machine's clipboard sync offers the image/png format before the
+// image data is ready, so the paste event's file is empty or cut short. The
+// runner used to attach that as it came - a thumbnail showing only its alt
+// text - and toast "Pasted screenshot". Now it reads the clipboard again a
+// moment later, and attaches nothing it cannot decode.
+
+const NOT_YET = "The screenshot had not reached the clipboard yet - paste again.";
+/** The first bytes of a real PNG: what a paste cut off mid-transfer holds. */
+const truncatedPng = () => pngBytes().slice(0, 40);
+
+/** navigator.clipboard.read() answering one entry per call (the last one
+ * repeats): bytes for an image, null for no image, "throw" for a refusal. */
+function mockClipboardReads(reads: Array<Uint8Array | null | "throw">) {
+  let n = 0;
+  const read = vi.fn(async () => {
+    const r = reads[Math.min(n++, reads.length - 1)];
+    if (r === "throw") throw new Error("denied");
+    if (r === null) return [];
+    return [
+      {
+        types: ["image/png"],
+        getType: async () => new Blob([r as BlobPart], { type: "image/png" }),
+      },
+    ];
+  });
+  Object.defineProperty(navigator, "clipboard", { value: { read }, configurable: true });
+  return read;
+}
+
+function noClipboardRead() {
+  Object.defineProperty(navigator, "clipboard", { value: undefined, configurable: true });
+}
+
+afterEach(() => {
+  noClipboardRead();
+  decode.accepts = false;
+  for (const m of Object.values(toastMock)) m.mockClear();
+});
+
+async function openRunnerForPaste() {
+  mockIPC((cmd) => {
+    if (cmd === "run_history") return [];
+    if (cmd === "pbi_test_cases_full") return [fullCase];
+    if (cmd === "list_test_points") return [];
+  });
+  renderRunner();
+  await screen.findByText("Valid login");
+  await act(async () => {}); // the paste listener's effect has run
+}
+
+function pasteEvent(bytes: Uint8Array) {
+  const file = new File([bytes as BlobPart], "clip.png", { type: "image/png" });
+  fireEvent.paste(window, {
+    clipboardData: { items: [{ type: "image/png", getAsFile: () => file }] },
+  });
+}
+
+const successToasts = () =>
+  toastMock.success.mock.calls.filter((c) => /screenshot|snip/i.test(String(c[0])));
+
+test("an empty image in a paste event attaches nothing and says it had not reached the clipboard yet", async () => {
+  noClipboardRead();
+  await openRunnerForPaste();
+
+  pasteEvent(new Uint8Array(0));
+
+  await vi.waitFor(() => expect(toastMock.info).toHaveBeenCalledWith(NOT_YET));
+  expect(screen.queryAllByAltText("pasted-201-1.png")).toHaveLength(0);
+  expect(successToasts()).toHaveLength(0);
+});
+
+test("a truncated PNG in a paste event attaches nothing either", async () => {
+  noClipboardRead();
+  await openRunnerForPaste();
+
+  pasteEvent(truncatedPng());
+
+  await vi.waitFor(() => expect(toastMock.info).toHaveBeenCalledWith(NOT_YET));
+  expect(screen.queryAllByAltText("pasted-201-1.png")).toHaveLength(0);
+  expect(successToasts()).toHaveLength(0);
+});
+
+test("a paste event that stays unreadable after three more reads attaches nothing", async () => {
+  const read = mockClipboardReads([new Uint8Array(0)]);
+  await openRunnerForPaste();
+
+  pasteEvent(new Uint8Array(0));
+
+  await vi.waitFor(() => expect(toastMock.info).toHaveBeenCalledWith(NOT_YET), { timeout: 5000 });
+  expect(read).toHaveBeenCalledTimes(3);
+  expect(screen.queryAllByAltText("pasted-201-1.png")).toHaveLength(0);
+  expect(successToasts()).toHaveLength(0);
+});
+
+test("an invalid then valid clipboard read attaches exactly one image after a retry", async () => {
+  const read = mockClipboardReads([new Uint8Array(0), pngBytes()]);
+  await openRunnerForPaste();
+
+  pasteEvent(truncatedPng());
+
+  const thumbs = await screen.findAllByAltText("pasted-201-1.png", undefined, { timeout: 5000 });
+  expect(thumbs[0]).toHaveAttribute("src", `data:image/png;base64,${PNG_B64}`);
+  expect(read).toHaveBeenCalledTimes(2); // the empty read, then the real one
+  expect(screen.queryAllByAltText("pasted-201-2.png")).toHaveLength(0);
+  expect(toastMock.success).toHaveBeenCalledTimes(1);
+  expect(toastMock.info).not.toHaveBeenCalledWith(NOT_YET);
+});
+
+test("the Paste button waits for a screenshot that has not arrived, then attaches it once", async () => {
+  mockClipboardReads([truncatedPng(), pngBytes()]);
+  await openRunnerForPaste();
+
+  fireEvent.click(screen.getByRole("button", { name: "Paste" }));
+
+  const thumbs = await screen.findAllByAltText("pasted-201-1.png", undefined, { timeout: 5000 });
+  expect(thumbs[0]).toHaveAttribute("src", `data:image/png;base64,${PNG_B64}`);
+  expect(screen.queryAllByAltText("pasted-201-2.png")).toHaveLength(0);
+  expect(toastMock.success).toHaveBeenCalledTimes(1);
+});
+
+test("the Paste button attaches nothing when the image never becomes readable", async () => {
+  mockClipboardReads([new Uint8Array(0)]);
+  await openRunnerForPaste();
+
+  fireEvent.click(screen.getByRole("button", { name: "Paste" }));
+
+  await vi.waitFor(() => expect(toastMock.info).toHaveBeenCalledWith(NOT_YET), { timeout: 5000 });
+  expect(screen.queryAllByAltText("pasted-201-1.png")).toHaveLength(0);
+  expect(successToasts()).toHaveLength(0);
+});
+
+test("the snip poll ignores an invalid read and keeps polling", async () => {
+  windowMock.minimize.mockClear();
+  // before the snip: no image; first poll: a cut-off one; second poll: whole.
+  const read = mockClipboardReads([null, truncatedPng(), pngBytes()]);
+  mockIPC((cmd) => {
+    if (cmd === "run_history") return [];
+    if (cmd === "pbi_test_cases_full") return [fullCase];
+    if (cmd === "list_test_points") return [];
+    if (cmd === "open_snip") return null;
+  });
+  renderRunner();
+  await screen.findByText("Valid login");
+  await act(async () => {});
+
+  fireEvent.click(screen.getByRole("button", { name: "Snip" }));
+
+  const thumbs = await screen.findAllByAltText("snip-201-1.png", undefined, { timeout: 8000 });
+  // The cut-off read was skipped, not attached: the image that landed is the whole one.
+  expect(thumbs[0]).toHaveAttribute("src", `data:image/png;base64,${PNG_B64}`);
+  expect(read).toHaveBeenCalledTimes(3);
+  expect(toastMock.success).toHaveBeenCalledTimes(1);
+}, 15000);
+
+test("addImage ignores an empty image even if the decoder were to accept it", async () => {
+  decode.accepts = true; // a future caller that skips the real check
+  noClipboardRead();
+  await openRunnerForPaste();
+
+  pasteEvent(new Uint8Array(0));
+
+  await vi.waitFor(() => expect(toastMock.info).toHaveBeenCalledWith(NOT_YET));
+  expect(screen.queryAllByAltText("pasted-201-1.png")).toHaveLength(0);
+  expect(successToasts()).toHaveLength(0);
+});
+
+test("an attachment that is damaged when results are recorded is left out and said so", async () => {
+  const calls: Array<{ cmd: string; args: Record<string, unknown> }> = [];
+  mockIPC((cmd, args) => {
+    if (cmd === "run_history") return [];
+    if (cmd === "pbi_test_cases_full") return [fullCase];
+    if (cmd === "list_test_points")
+      return [
+        {
+          point_id: 7,
+          test_case_id: 201,
+          test_case_name: "Valid login",
+          config_name: "W10",
+          tester: "",
+          last_outcome: "",
+          last_run_id: null,
+          last_result_id: null,
+        },
+      ];
+    if (cmd === "start_test_run")
+      return {
+        run_id: 300,
+        web_url: "https://x/run/300",
+        results: [{ point_id: 7, result_id: 70 }],
+        unmatched: [],
+      };
+    if (cmd === "record_result") {
+      calls.push({ cmd, args: args as Record<string, unknown> });
+      return [];
+    }
+    if (cmd === "finish_test_run") return null;
+  });
+  renderRunner();
+  await screen.findByText("Valid login");
+  await act(async () => {});
+
+  // A cut-off image gets onto the case only because the check was open...
+  decode.accepts = true;
+  pasteEvent(truncatedPng());
+  await screen.findAllByAltText("pasted-201-1.png", undefined, { timeout: 5000 });
+  // ...and the real check is back by the time results go up.
+  decode.accepts = false;
+
+  fireEvent.click(screen.getByRole("button", { name: "Passed" }));
+  fireEvent.click(screen.getByRole("button", { name: /Finish \(1\)/ }));
+
+  await vi.waitFor(() => expect(calls.length).toBeGreaterThan(0), { timeout: 5000 });
+  const outcome = (calls[0].args as { outcome: { attachments: unknown } }).outcome;
+  expect(outcome.attachments).toBeNull();
+  await vi.waitFor(() =>
+    expect(
+      toastMock.warning.mock.calls.some((c) => String(c[0]).includes("pasted-201-1.png")),
+    ).toBe(true),
+  );
 });
 
 /** Single-screen snipping: the runner covers the very thing the tester
