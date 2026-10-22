@@ -152,6 +152,8 @@ fn fetch_failed(detail: &str) -> bool {
 /// An API check's sentence begins `<METHOD> <path> `, neither with a space
 /// in it; what follows says how it failed (`api_checks`).
 fn api_glitch(detail: &str) -> bool {
+    // Without the request an `expect_response` says it took.
+    let detail = super::api_checks::without_which(detail);
     let mut parts = detail.splitn(3, ' ');
     let (Some(_method), Some(_path), Some(rest)) = (parts.next(), parts.next(), parts.next()) else {
         return false;

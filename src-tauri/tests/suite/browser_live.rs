@@ -1777,6 +1777,8 @@ async fn api_checks_read_the_requests_a_real_page_makes() {
     const PAGE: &str = r#"<!doctype html><html><body>
 <button id="save" onclick="fetch('/PerformanceCycle/Save?token=hunter2', { method: 'POST' }).then(r => r.text()).then(t => { document.getElementById('out').textContent = t; })">Save</button>
 <button id="expired" onclick="fetch('/PerformanceCycle/Expired?token=hunter2', { method: 'POST' })">Save as an ended session</button>
+<button id="pair" onclick="fetch('/api/cycles/42?include=first').then(r => r.text()).then(() => fetch('/api/cycles/42?include=second')).then(r => r.text())">Two questions</button>
+<button id="debounce" onclick="const c = new AbortController(); fetch('/api/cycles/42?include=stale', { signal: c.signal }).catch(() => {}); c.abort(); fetch('/api/cycles/42?include=fresh').then(r => r.text())">Search</button>
 <p id="out"></p>
 </body></html>"#;
     let listener = TcpListener::bind("127.0.0.1:0").expect("no free port");
@@ -1855,19 +1857,60 @@ Connection: close
     let echoed = page::eval_value(&mut live.cdp, "document.getElementById('out').textContent").await.unwrap();
     assert_eq!(echoed.as_str(), Some(r#"{"success":true,"id":7}"#), "the page never made the request");
 
-    // A wrong status and a wrong field both fail, naming the method and path.
+    assert!(
+        out[1].detail.ends_with(": the step's matching request 1 of 1, sent after action 1 (click) began"),
+        "the check did not say which request it took: {}",
+        out[1].detail
+    );
+
+    // A wrong status and a wrong field both fail, naming the method and path
+    // (each in a step of its own: a check takes a request no earlier check
+    // of its step took).
     let wrong = step(2, vec![
         click.clone(),
         json!({ "kind": "expect_response", "url_contains": "/PerformanceCycle/Save", "status": 500 }),
-        json!({ "kind": "expect_response", "url_contains": "/PerformanceCycle/Save", "json": { "success": false } }),
     ]);
     let out = run_step(&mut live.cdp, root.path(), "acme", "PMS", &wrong, &timing(), &mut account).await.unwrap();
     must(out[0].clone());
     refused(out[1].clone(), "answered 200, expected 500");
-    refused(out[2].clone(), "expected success = false, got true");
-    for o in &out[1..] {
+    let wrong_field = step(2, vec![
+        click.clone(),
+        json!({ "kind": "expect_response", "url_contains": "/PerformanceCycle/Save", "json": { "success": false } }),
+    ]);
+    let out_field = run_step(&mut live.cdp, root.path(), "acme", "PMS", &wrong_field, &timing(), &mut account).await.unwrap();
+    must(out_field[0].clone());
+    refused(out_field[1].clone(), "expected success = false, got true");
+    for o in [&out[1], &out_field[1]] {
         assert!(!o.detail.contains("hunter2") && !o.detail.contains("127.0.0.1"), "{}", o.detail);
     }
+
+    // One click that sends two requests: two checks on the same pattern take
+    // them in the order they were sent, and a third has nothing left.
+    let pair = step(2, vec![
+        json!({ "kind": "click", "selector": { "css": "#pair" } }),
+        json!({ "kind": "expect_response", "method": "GET", "url_contains": "/api/cycles/42", "json": { "include": "first" } }),
+        json!({ "kind": "expect_response", "method": "GET", "url_contains": "/api/cycles/42", "json": { "include": "second" } }),
+        json!({ "kind": "expect_response", "method": "GET", "url_contains": "/api/cycles/42", "timeout_ms": 600 }),
+    ]);
+    let out = run_step(&mut live.cdp, root.path(), "acme", "PMS", &pair, &timing(), &mut account).await.unwrap();
+    must(out[0].clone());
+    must(out[1].clone());
+    must(out[2].clone());
+    // The second request is sent once the first is answered: after the click returned, so it may be later.
+    assert!(out[1].detail.ends_with(": the step's matching request 1 of 2, sent after action 1 (click) began"), "{}", out[1].detail);
+    assert!((out[2].detail.contains(": the step's matching request 2 of 2, sent after action ") && out[2].detail.ends_with(" began")), "{}", out[2].detail);
+    refused(out[3].clone(), "an earlier expect_response of this step took each of the 2 that matched");
+
+    // A debounced search: the page calls the first request off and sends it
+    // again. The cancelled one is passed over, never reported as the answer.
+    let debounced = step(2, vec![
+        json!({ "kind": "click", "selector": { "css": "#debounce" } }),
+        json!({ "kind": "expect_response", "method": "GET", "url_contains": "/api/cycles/42", "json": { "include": "fresh" } }),
+    ]);
+    let out = run_step(&mut live.cdp, root.path(), "acme", "PMS", &debounced, &timing(), &mut account).await.unwrap();
+    must(out[0].clone());
+    must(out[1].clone());
+    assert!(out[1].detail.contains("matching request 2 of 2"), "the cancelled request was not recorded: {}", out[1].detail);
 
     // The earlier steps' requests are not this step's: nothing was sent here.
     let none = step(3, vec![json!({ "kind": "expect_response", "url_contains": "/PerformanceCycle/Save", "timeout_ms": 600 })]);
@@ -1883,11 +1926,18 @@ Connection: close
         json!({ "kind": "api_request", "path": "/api/cycles/42", "expect": { "status": 404 } }),
         json!({ "kind": "api_request", "path": "/api/missing" }),
     ]);
+    // A failed action stops its step, so each failing request is its own step.
     let out = run_step(&mut live.cdp, root.path(), "acme", "PMS", &ask, &timing(), &mut account).await.unwrap();
     must(out[0].clone());
     refused(out[1].clone(), "GET /api/cycles/42");
-    refused(out[2].clone(), "answered 200, expected 404");
-    refused(out[3].clone(), "answered 404, expected 200");
+    for (wanted, request) in [
+        ("answered 200, expected 404", &ask.actions[2]),
+        ("answered 404, expected 200", &ask.actions[3]),
+    ] {
+        let alone = step(4, vec![serde_json::to_value(request).unwrap()]);
+        let out = run_step(&mut live.cdp, root.path(), "acme", "PMS", &alone, &timing(), &mut account).await.unwrap();
+        refused(out[0].clone(), wanted);
+    }
     assert!(
         seen.lock().unwrap().iter().any(|l| l.starts_with("GET /api/cycles/42?include=rules ")),
         "the server never saw the encoded query: {:?}",
@@ -1900,14 +1950,22 @@ Connection: close
     let expired = step(5, vec![
         json!({ "kind": "click", "selector": { "css": "#expired" } }),
         json!({ "kind": "expect_response", "method": "POST", "url_contains": "/PerformanceCycle/Expired", "status": 302 }),
-        json!({ "kind": "expect_response", "method": "POST", "url_contains": "/PerformanceCycle/Expired", "timeout_ms": 8000 }),
     ]);
-    let began = std::time::Instant::now();
     let out = run_step(&mut live.cdp, root.path(), "acme", "PMS", &expired, &timing(), &mut account).await.unwrap();
     must(out[0].clone());
     must(out[1].clone());
-    assert_eq!(out[2].detail, "POST /PerformanceCycle/Expired was redirected to /Account/Login");
-    assert!(!out[2].ok);
+    let expired_again = step(6, vec![
+        json!({ "kind": "click", "selector": { "css": "#expired" } }),
+        json!({ "kind": "expect_response", "method": "POST", "url_contains": "/PerformanceCycle/Expired", "timeout_ms": 8000 }),
+    ]);
+    let began = std::time::Instant::now();
+    let out = run_step(&mut live.cdp, root.path(), "acme", "PMS", &expired_again, &timing(), &mut account).await.unwrap();
+    must(out[0].clone());
+    assert_eq!(
+        out[1].detail,
+        "POST /PerformanceCycle/Expired was redirected to /Account/Login: the step's matching request 1 of 1, sent after action 1 (click) began"
+    );
+    assert!(!out[1].ok);
     assert!(began.elapsed() < Duration::from_secs(8), "the redirect waited out the timeout");
     assert!(
         seen.lock().unwrap().iter().any(|l| l.starts_with("GET /Account/Login")),

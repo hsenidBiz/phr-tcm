@@ -1123,6 +1123,14 @@ async fn run_expanded<D: Driver>(
     let saves_fail = !run.saves_only_counted;
     let mut deferred: Vec<(usize, u32)> = Vec::new();
     let mark = d.net_mark();
+    // Every `expect_response` of the step shares one book, armed from this
+    // mark: what an earlier check took, and how many requests the step had
+    // made as each action began.
+    let mut requests: Option<api_checks::StepRequests> = step
+        .actions
+        .iter()
+        .any(holds_expect_response)
+        .then(|| api_checks::StepRequests::new(mark, step.actions.iter().map(super::patterns::action_kind).collect()));
     let began = Instant::now();
     run.began = Some(began);
     run.tab = None;
@@ -1160,6 +1168,9 @@ async fn run_expanded<D: Driver>(
         None => &mut own_noted,
     };
     for (index, action) in step.actions.iter().enumerate() {
+        if let Some(book) = requests.as_mut() {
+            book.action_began(d.net_since(mark).len());
+        }
         if let Some(why) = blocked {
             out.push(ActionOutcome::failed(why));
             continue;
@@ -1299,7 +1310,10 @@ async fn run_expanded<D: Driver>(
                 went
             }
             // Only the runner knows where the step began.
-            Action::ExpectResponse { .. } => api_checks::expect_response(d, action, mark, timing).await,
+            Action::ExpectResponse { .. } => {
+                let book = requests.get_or_insert_with(|| api_checks::StepRequests::new(mark, Vec::new()));
+                api_checks::expect_response(d, action, book, timing).await
+            }
             Action::ApiRequest { path, .. } => {
                 // Its fetch is the run's own request: a 5xx it gets back is
                 // never the page's error.
@@ -1731,6 +1745,15 @@ async fn page_loaded<D: Driver>(
         Ok(notes) => Ok(notes),
         Err(NotReady::StillLoading(why)) => Err((ActionOutcome::failed(why), None)),
         Err(NotReady::Stopped) => Err((ActionOutcome::failed(AFTER_STOP), Some(AFTER_STOP))),
+    }
+}
+
+/// Is this an `expect_response`, or does it hold one in its `then`?
+fn holds_expect_response(a: &Action) -> bool {
+    match a {
+        Action::ExpectResponse { .. } => true,
+        Action::WhenVisible { then, .. } | Action::RepeatWhileVisible { then, .. } => then.iter().any(holds_expect_response),
+        _ => false,
     }
 }
 

@@ -145,6 +145,16 @@ fn the_guide_teaches_the_api_checks_and_their_limits() {
     // status-only check: the guide has to say so and advise `json`.
     assert!(flat.contains("no redirect"), "the guide never says a 200 sign-in page without a redirect passes");
     assert!(flat.contains("give `json` whenever the answer must be data"), "the guide never advises json for data");
+    // Every check is armed as the step starts, takes the next request in order, and says which.
+    assert!(
+        flat.contains("every `expect_response` of a step is armed when the step starts, so a request an earlier action of the step made is caught."),
+        "the guide never says the checks are armed at the step's start"
+    );
+    assert!(
+        flat.contains("that no earlier `expect_response` of the step took, passing over one the page cancelled when a later one matches, and its answer says which: `the step's matching request 2 of 3, sent after action 3 (press_key) began`."),
+        "the guide never says each check takes the next request in order"
+    );
+    assert!(!flat.contains("the most recent one that finished is checked"), "the old rule is still taught");
     // A tried expect_response is a step of its own.
     assert!(flat.contains("sees only the requests the page makes while it waits"), "the guide never explains a tried check");
     // Every example line in the section is a real action, so a copied one

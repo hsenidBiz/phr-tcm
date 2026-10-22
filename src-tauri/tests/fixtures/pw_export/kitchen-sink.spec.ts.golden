@@ -77,9 +77,10 @@ test.describe('F', () => {
 
     // 3.
     const mark3 = opened.length;
-    const resp3_0 = cur.waitForResponse(r => r.url().toLowerCase().includes('/api/save') && r.request().method() === 'POST', { timeout: 8000 });
+    const claimed3 = new Set<object>();
+    const resp3_0 = cur.waitForResponse(r => r.url().toLowerCase().includes('/api/save') && r.request().method() === 'POST' && !claimed3.has(r) && !!claimed3.add(r), { timeout: 8000 });
     resp3_0.catch(() => {});
-    const resp3_1 = cur.waitForResponse(r => r.url().toLowerCase().includes('/api/list'), { timeout: 10000 });
+    const resp3_1 = cur.waitForResponse(r => r.url().toLowerCase().includes('/api/list') && !claimed3.has(r) && !!claimed3.add(r), { timeout: 10000 });
     resp3_1.catch(() => {});
     if (await cur.getByRole('dialog', { name: 'Confirm' }).filter({ visible: true }).first().waitFor({ timeout: 1500 }).then(() => true, () => false)) {
       await cur.getByRole('button', { name: 'OK' }).filter({ visible: true }).first().click();

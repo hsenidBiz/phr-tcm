@@ -131,6 +131,37 @@ fn a_response_is_armed_before_the_click_and_awaited_after() {
 }
 
 #[test]
+fn two_responses_in_one_step_each_take_their_own() {
+    let got = one_step(json!([
+        { "kind": "click", "selector": "#filter" },
+        { "kind": "expect_response", "method": "get", "url_contains": "api/List", "status": 200 },
+        { "kind": "expect_response", "method": "get", "url_contains": "api/List", "status": 200 }
+    ]))
+    .run()
+    .unwrap();
+    let set = got.find("const claimed1 = new Set<object>();").expect("a claimed set");
+    let first = got
+        .find("const resp1_0 = cur.waitForResponse(r => r.url().toLowerCase().includes('api/list') && r.request().method() === 'GET' && !claimed1.has(r) && !!claimed1.add(r), { timeout: 10000 });")
+        .expect("the first wait claims its response");
+    let second = got
+        .find("const resp1_1 = cur.waitForResponse(r => r.url().toLowerCase().includes('api/list') && r.request().method() === 'GET' && !claimed1.has(r) && !!claimed1.add(r), { timeout: 10000 });")
+        .expect("the second wait claims its own");
+    let click = got.find("await cur.locator('#filter').first().click();").unwrap();
+    let wait = got.find("const r1_0 = await resp1_0;").expect("awaited");
+    let wait_too = got.find("const r1_1 = await resp1_1;").expect("awaited");
+    assert!(set < first && first < second && second < click && click < wait && wait < wait_too, "{got}");
+    assert_eq!(got.matches("const claimed1").count(), 1, "{got}");
+    // One response in a step keeps its plain line, with no set.
+    let one = one_step(json!([
+        { "kind": "click", "selector": "#filter" },
+        { "kind": "expect_response", "url_contains": "api/List" }
+    ]))
+    .run()
+    .unwrap();
+    assert!(!one.contains("claimed"), "{one}");
+}
+
+#[test]
 fn a_list_of_objects_in_a_json_check_is_refused() {
     let why = one_step(json!([
         { "kind": "expect_response", "url_contains": "x", "json": { "rows": [{ "a": 1 }] } }

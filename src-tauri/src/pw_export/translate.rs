@@ -775,6 +775,19 @@ fn key_name(key: &str) -> Res<String> {
 // ---------------------------------------------------------------------
 // Emission
 
+/// How many `expect_response` the actions arm, the ones inside a `when_visible` or `repeat_while_visible`
+/// included.
+fn responses_in(actions: &[Action]) -> usize {
+    actions
+        .iter()
+        .map(|a| match a {
+            Action::ExpectResponse { .. } => 1,
+            Action::WhenVisible { then, .. } | Action::RepeatWhileVisible { then, .. } => responses_in(then),
+            _ => 0,
+        })
+        .sum()
+}
+
 #[derive(Default)]
 struct Counters {
     resp: usize,
@@ -1004,15 +1017,30 @@ impl Em<'_> {
     }
 
     fn arm(&mut self, actions: &[Action], indent: usize, n: &mut Counters) {
+        // Two or more waits share a set of the responses already taken, so each takes the next
+        // one in order, as the app does; a block with one keeps its plain line.
+        let shared = responses_in(actions) >= 2;
+        if shared {
+            let sc = self.scope.clone();
+            self.line(indent, &format!("const claimed{sc} = new Set<object>();"));
+        }
+        self.arm_each(actions, indent, n, shared);
+    }
+
+    fn arm_each(&mut self, actions: &[Action], indent: usize, n: &mut Counters, shared: bool) {
         for a in actions {
             let sc = self.scope.clone();
             match a {
                 Action::ExpectResponse { method, url_contains, timeout_ms, .. } => {
-                    // waitForResponse takes the FIRST match after arming while the app
-                    // judges the latest one; url and method are trimmed as the app does.
+                    // Both the app and waitForResponse take the first match after the step
+                    // began; with several waits, each takes the next response no earlier one
+                    // took. Url and method are trimmed as the app does.
                     let mut test = format!("r.url().toLowerCase().includes({})", lit(&url_contains.trim().to_lowercase()));
                     if let Some(m) = method.as_deref().map(str::trim).filter(|m| !m.is_empty()) {
                         let _ = write!(test, " && r.request().method() === {}", lit(&m.to_uppercase()));
+                    }
+                    if shared {
+                        let _ = write!(test, " && !claimed{sc}.has(r) && !!claimed{sc}.add(r)");
                     }
                     let opt = format!(", {{ timeout: {} }}", expect_timeout(*timeout_ms));
                     let i = n.resp;
@@ -1027,7 +1055,9 @@ impl Em<'_> {
                     self.line(indent, &format!("const dl{sc}_{i} = cur.waitForEvent('download', {{ timeout: {ms} }});"));
                     self.settle(indent, &format!("dl{sc}_{i}"));
                 }
-                Action::WhenVisible { then, .. } | Action::RepeatWhileVisible { then, .. } => self.arm(then, indent, n),
+                Action::WhenVisible { then, .. } | Action::RepeatWhileVisible { then, .. } => {
+                    self.arm_each(then, indent, n, shared)
+                }
                 _ => {}
             }
         }

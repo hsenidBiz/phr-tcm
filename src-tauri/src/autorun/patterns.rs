@@ -381,7 +381,9 @@ fn is_api_check(whole: &str) -> bool {
         return true;
     }
     // `<METHOD> /<path> <what happened>`.
-    let sentence = whole.split(api::BODY_BEGAN).next().unwrap_or(whole);
+    // Without the request an `expect_response` says it took (`api::WHICH`).
+    let whole = api::without_which(whole);
+    let sentence = whole.split(api::BODY_BEGAN).next().unwrap_or(&whole);
     let Some((method, rest)) = sentence.split_once(' ') else {
         return false;
     };

@@ -639,9 +639,13 @@ it (a click, usually) and then check it, in the same step:
   is refused.
 - `method` is optional (any method matches when it is left out). `status`
   defaults to 200. `timeout_ms` defaults to 10 seconds.
-- When several requests match, the most recent one that finished is
-  checked. A request that never finishes within the time fails, and the
-  answer says it had not finished.
+- Every `expect_response` of a step is armed when the step starts, so a
+  request an earlier action of the step made is caught. Each takes the
+  step's oldest matching request that no earlier `expect_response` of the
+  step took, passing over one the page cancelled when a later one matches,
+  and its answer says which: `the step's matching request 2 of 3, sent
+  after action 3 (press_key) began`. A request that never finishes within
+  the time fails, and the answer says it had not finished.
 - A request the server redirected is judged on the redirect it answered:
   give that status (302, say) to check a form that saves and then moves
   on. Any other status fails, naming the path it was sent to.
