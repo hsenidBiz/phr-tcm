@@ -1410,3 +1410,44 @@ fn an_unpublished_runs_clean_up_pictures_survive_pruning() {
     assert!(root.join("shots").join(&step_shot).is_file(), "the clean-up's step picture was pruned");
     assert!(root.join("shots").join(&fail_shot).is_file(), "the clean-up's failure picture was pruned");
 }
+
+// ---- a same_as needs an earlier remember_url -------------------------------
+
+fn address_script(steps: serde_json::Value) -> CaseScript {
+    serde_json::from_value(serde_json::json!({ "case_id": 37, "title": "Address", "steps": steps })).unwrap()
+}
+
+#[test]
+fn a_same_as_needs_an_earlier_remember_url() {
+    let remember = serde_json::json!({ "kind": "remember_url", "as": "before" });
+    let same = serde_json::json!({ "kind": "check_url", "same_as": "before" });
+    let other = serde_json::json!({ "kind": "check_text", "value": "a" });
+    let refused = "check_url same_as \"before\" names no address an earlier remember_url of this case notes";
+
+    // Noted in step 1, compared in step 3; and noted earlier in the same step.
+    let sc = address_script(serde_json::json!([
+        { "step_number": 1, "actions": [remember.clone()], "unchecked": "notes the address" },
+        { "step_number": 2, "actions": [other.clone()] },
+        { "step_number": 3, "actions": [same.clone()] }
+    ]));
+    assert_eq!(v2_lib::autorun::store::check_scripts(&[sc]), Ok(()));
+    let sc = address_script(serde_json::json!([{ "step_number": 1, "actions": [remember.clone(), same.clone()] }]));
+    assert_eq!(v2_lib::autorun::store::check_scripts(&[sc]), Ok(()));
+
+    // Nothing noted, noted later, noted before it in the same step's list but after, or inside a guard.
+    for steps in [
+        serde_json::json!([{ "step_number": 1, "actions": [same.clone()] }]),
+        serde_json::json!([
+            { "step_number": 2, "actions": [same.clone()] },
+            { "step_number": 3, "actions": [remember.clone()], "unchecked": "notes the address" }
+        ]),
+        serde_json::json!([{ "step_number": 1, "actions": [same.clone(), remember.clone()] }]),
+        serde_json::json!([
+            { "step_number": 1, "actions": [{ "kind": "when_visible", "selector": "s", "then": [remember.clone()] }] },
+            { "step_number": 2, "actions": [same.clone()] }
+        ]),
+    ] {
+        let err = v2_lib::autorun::store::check_scripts(&[address_script(steps)]).unwrap_err();
+        assert!(err.ends_with(refused), "{err}");
+    }
+}

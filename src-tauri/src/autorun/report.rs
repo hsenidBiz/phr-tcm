@@ -81,7 +81,14 @@ pub fn action_words(action: &Action) -> String {
         Action::Fill { selector, .. } => format!("fill in {}", selector.describe()),
         Action::WaitFor { selector, .. } => format!("wait for {}", selector.describe()),
         Action::CheckText { value } => format!("check the page says \"{value}\""),
+        Action::CheckUrl { equals: Some(want), .. } => {
+            format!("expect the address to be \"{}\"", crate::browser::actions::path_only(want))
+        }
+        Action::CheckUrl { same_as: Some(name), .. } => {
+            format!("expect the address to be the one noted as \"{name}\"")
+        }
         Action::CheckUrl { contains, .. } => format!("check the address contains \"{contains}\""),
+        Action::RememberUrl { name } => format!("note the address as \"{name}\""),
         Action::ExpectVisible { selector, .. } => format!("expect {} to be visible", selector.describe()),
         Action::ExpectHidden { selector, .. } => format!("expect {} to be hidden", selector.describe()),
         Action::ExpectText { selector, matches: Some(p), .. } => {

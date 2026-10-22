@@ -1152,3 +1152,30 @@ fn the_exported_written_reader_is_the_apps_own() {
         .replacen("}).call(e as HTMLElement);", "}", 1);
     assert_eq!(back, WRITTEN_TEXT_JS.replace("\r\n", "\n"));
 }
+
+#[test]
+fn the_address_checks_export_with_the_same_rules() {
+    let got = one_step(json!([
+        { "kind": "check_url", "equals": "/hr/cycles" },
+        { "kind": "check_url", "equals": "https://app.example/hr/cycles?id=4#top", "timeout_ms": 4000 },
+        { "kind": "remember_url", "as": "before" },
+        { "kind": "check_url", "same_as": "before" }
+    ]))
+    .run()
+    .unwrap();
+    assert!(got.contains("u.pathname + u.search + u.hash"), "{got}");
+    assert!(got.contains(".toBe('/hr/cycles');"), "{got}");
+    assert!(got.contains(".toBe('/hr/cycles?id=4#top');"), "{got}");
+    assert_eq!(got.matches("const notedUrls: Record<string, string> = {};").count(), 1, "{got}");
+    assert!(got.contains("notedUrls['before'] = cur.url();"), "{got}");
+    assert!(got.contains("await expect.poll(() => cur.url(), { timeout: 10000 }).toBe(notedUrls['before']);"), "{got}");
+    // Only a script that notes an address carries the notebook.
+    let plain = one_step(json!([{ "kind": "check_url", "contains": "/x" }])).run().unwrap();
+    assert!(!plain.contains("notedUrls"), "{plain}");
+}
+
+#[test]
+fn an_exact_address_off_the_projects_origins_cannot_be_exported() {
+    let err = one_step(json!([{ "kind": "check_url", "equals": "https://elsewhere.example/x" }])).run().unwrap_err();
+    assert!(err.contains("check_url"), "{err}");
+}

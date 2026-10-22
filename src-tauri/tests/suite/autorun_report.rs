@@ -865,3 +865,22 @@ fn a_divergence_shows_on_its_case_in_the_report() {
     assert!(product_section_of(&html, 204).contains("(data, ruled: the data was fixed)"));
     assert!(!product_section_of(&html, 202).contains("Divergence:"), "ruled long ago");
 }
+
+#[test]
+fn the_address_checks_read_in_the_report() {
+    let said = |v: serde_json::Value| action_words(&serde_json::from_value::<v2_lib::browser::actions::Action>(v).unwrap());
+    assert_eq!(
+        said(serde_json::json!({ "kind": "check_url", "equals": "/hr/cycles" })),
+        "expect the address to be \"/hr/cycles\""
+    );
+    assert_eq!(
+        said(serde_json::json!({ "kind": "check_url", "equals": "https://app.example.test/hr/cycles?token=abc" })),
+        "expect the address to be \"/hr/cycles\""
+    );
+    assert_eq!(
+        said(serde_json::json!({ "kind": "check_url", "same_as": "before" })),
+        "expect the address to be the one noted as \"before\""
+    );
+    assert_eq!(said(serde_json::json!({ "kind": "remember_url", "as": "before" })), "note the address as \"before\"");
+    assert_eq!(said(serde_json::json!({ "kind": "check_url", "contains": "/home" })), "check the address contains \"/home\"");
+}

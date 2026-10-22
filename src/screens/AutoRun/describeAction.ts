@@ -404,8 +404,18 @@ function describeKnown(a: Action): Sentence {
       return [words("Wait for "), ...describeTarget(a.selector), words(` to appear${upTo(a.timeout_ms)}`)];
     case "check_text":
       return [words(`Check the page shows "${withoutHosts(str(a.value))}"`)];
-    case "check_url":
+    case "check_url": {
+      const equals = optStr(a.equals);
+      const sameAs = optStr(a.same_as);
+      // The path only, and the name: never a host or a query string.
+      if (equals !== undefined) return [words(`Check the address is "${pathOnly(equals)}"${upTo(a.timeout_ms)}`)];
+      if (sameAs !== undefined) {
+        return [words(`Check the address is still the one noted as "${sameAs}"${upTo(a.timeout_ms)}`)];
+      }
       return urlPart(str(a.contains), a.timeout_ms);
+    }
+    case "remember_url":
+      return [words(`Note the address as "${str(a.as)}"`)];
     case "expect_visible":
       return [words("Check "), ...describeTarget(a.selector), words(` is showing${upTo(a.timeout_ms)}`)];
     case "expect_hidden":

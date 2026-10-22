@@ -186,6 +186,10 @@ pub fn check_scripts(scripts: &[CaseScript]) -> Result<(), String> {
                 ));
             }
         }
+        // The addresses a top-level `remember_url` has noted so far, in the
+        // order the case runs. One inside a guard or a component does not
+        // count: it may never run.
+        let mut noted: std::collections::HashSet<&str> = std::collections::HashSet::new();
         for step in &sc.steps {
             if let Some(reason) = &step.unchecked {
                 if reason.trim().is_empty() {
@@ -210,6 +214,22 @@ pub fn check_scripts(scripts: &[CaseScript]) -> Result<(), String> {
                         step.step_number,
                         i + 1
                     ));
+                }
+                match action {
+                    crate::browser::actions::Action::RememberUrl { name } => {
+                        noted.insert(name.as_str());
+                    }
+                    crate::browser::actions::Action::CheckUrl { same_as: Some(name), .. }
+                        if !noted.contains(name.as_str()) =>
+                    {
+                        return Err(format!(
+                            "case {} step {} action {}: check_url same_as \"{name}\" names no address an earlier remember_url of this case notes",
+                            sc.case_id,
+                            step.step_number,
+                            i + 1
+                        ));
+                    }
+                    _ => {}
                 }
             }
         }

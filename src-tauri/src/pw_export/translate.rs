@@ -78,13 +78,16 @@ fn check_action(a: &Action, origins: &[String]) -> Res<()> {
     match a {
         Action::Navigate { url } => goto_target("navigate", url, origins).map(|_| ()),
         Action::CheckText { .. }
-        | Action::CheckUrl { .. }
+        | Action::RememberUrl { .. }
         | Action::Reload
         | Action::ExpireSession
         | Action::ReturnToArea { .. }
         | Action::ExpectTab { .. }
         | Action::SwitchTab { .. }
         | Action::ExpectTabClosed { .. } => Ok(()),
+        // An `equals` goes through the same address rules as a navigation.
+        Action::CheckUrl { equals: Some(want), .. } => goto_target("check_url", want, origins).map(|_| ()),
+        Action::CheckUrl { .. } => Ok(()),
         Action::PressKey { key, .. } => key_name(key).map(|_| ()),
         Action::ExpectEach { selector, child, .. } => {
             check_target(selector)?;
@@ -205,6 +208,10 @@ pub fn raw_spec(input: &RawSpecInput) -> Res<String> {
     }
 
     em.line(4, "let cur = page;");
+    // The addresses a `remember_url` notes, for a later `same_as`.
+    if uses(input, &|a| matches!(a, Action::RememberUrl { .. })) {
+        em.line(4, "const notedUrls: Record<string, string> = {};");
+    }
     // The app's text reader: `expect_text`, `expect_contains_text`, an
     // `expect_each` that reads text and an `expect_order`.
     if uses(input, &|a| {
@@ -1175,7 +1182,31 @@ impl Em<'_> {
                 indent,
                 &format!("await expect(cur.locator('body')).toContainText({}, {{ ignoreCase: true, useInnerText: true }});", lit(value)),
             ),
-            Action::CheckUrl { contains, timeout_ms } => self.line(
+            Action::CheckUrl { equals: Some(want), timeout_ms, .. } => {
+                let want = goto_target("check_url", want, self.input.origins)?;
+                let t = expect_timeout(*timeout_ms);
+                if want.starts_with('/') {
+                    // The app compares what follows the origin.
+                    self.line(
+                        indent,
+                        &format!(
+                            "await expect.poll(() => {{ const u = new URL(cur.url()); return u.pathname + u.search + u.hash; }}, {{ timeout: {t} }}).toBe({});",
+                            lit(&want)
+                        ),
+                    );
+                } else {
+                    self.line(indent, &format!("await expect.poll(() => cur.url(), {{ timeout: {t} }}).toBe({});", lit(&want)));
+                }
+            }
+            Action::CheckUrl { same_as: Some(name), timeout_ms, .. } => self.line(
+                indent,
+                &format!(
+                    "await expect.poll(() => cur.url(), {{ timeout: {} }}).toBe(notedUrls[{}]);",
+                    expect_timeout(*timeout_ms),
+                    lit(name)
+                ),
+            ),
+            Action::CheckUrl { contains, timeout_ms, .. } => self.line(
                 indent,
                 &format!(
                     "await expect(cur).toHaveURL(new RegExp({}), {{ timeout: {} }});",
@@ -1183,6 +1214,7 @@ impl Em<'_> {
                     expect_timeout(*timeout_ms)
                 ),
             ),
+            Action::RememberUrl { name } => self.line(indent, &format!("notedUrls[{}] = cur.url();", lit(name))),
             Action::ExpectVisible { selector, timeout_ms } => {
                 self.line(indent, &format!("await expect({}).{};", one(selector), call("toBeVisible", &[], *timeout_ms)))
             }

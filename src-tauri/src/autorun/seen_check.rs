@@ -388,6 +388,7 @@ pub fn takes_many(action: &Action) -> bool {
         | Action::Navigate { .. }
         | Action::CheckText { .. }
         | Action::CheckUrl { .. }
+        | Action::RememberUrl { .. }
         | Action::SignIn { .. }
         | Action::ExpectResponse { .. }
         | Action::ApiRequest { .. }

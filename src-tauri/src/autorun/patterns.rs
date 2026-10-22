@@ -619,7 +619,7 @@ pub fn action_target(action: &Action) -> Option<String> {
             Some(url[..end].to_string())
         }
         Action::CheckText { .. } => Some("the page text".to_string()),
-        Action::CheckUrl { .. } => Some("the page address".to_string()),
+        Action::CheckUrl { .. } | Action::RememberUrl { .. } => Some("the page address".to_string()),
         Action::SignIn { .. } => None,
         // An address fragment or a path: its query string can carry a
         // token, so it is dropped here as a navigation's is.

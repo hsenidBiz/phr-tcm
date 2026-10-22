@@ -47,13 +47,26 @@ pub enum Action {
     Fill { selector: Target, value: String },
     WaitFor { selector: Target, timeout_ms: u32 },
     CheckText { value: String },
-    /// The address holds `contains`. Looked at again until it does, like
-    /// every `expect_` check: a page that is still redirecting is not a
-    /// failure yet.
+    /// The address holds `contains`, or is exactly `equals` (a value
+    /// starting with / is compared with the path, query and fragment), or is
+    /// the one `remember_url` noted as `same_as` - exactly one of the three.
+    /// Looked at again until it does, like every `expect_` check: a page
+    /// that is still redirecting is not a failure yet.
     CheckUrl {
+        #[serde(default, skip_serializing_if = "String::is_empty")]
         contains: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
+        equals: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        same_as: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         timeout_ms: Option<u32>,
+    },
+    /// Note the address the page is on now as `name`, for a later
+    /// `check_url` `same_as` in the same case.
+    RememberUrl {
+        #[serde(rename = "as")]
+        name: String,
     },
     ExpectVisible {
         selector: Target,
@@ -504,6 +517,14 @@ fn check_tab_name(kind: &str, name: &str) -> Result<(), String> {
     }
     let shown: String = name.chars().take(40).collect();
     Err(format!("{kind}: {TAB_NAME_RULE}, not \"{shown}\""))
+}
+
+fn check_note_name(kind: &str, name: &str) -> Result<(), String> {
+    if valid_tab_name(name) {
+        return Ok(());
+    }
+    let shown: String = name.chars().take(40).collect();
+    Err(format!("{kind}: {NOTE_NAME_RULE}, not \"{shown}\""))
 }
 
 fn check_tab_wait(kind: &str, within_ms: &Option<u32>) -> Result<(), String> {
@@ -1070,6 +1091,19 @@ pub const ALLOWED_ORIGINS: &str = "this project's allowed origins";
 pub const PAGE_LACKS: &str = "page does NOT contain ";
 /// `check_url` - followed by the address actually showing.
 pub const URL_IS: &str = "url is ";
+/// A `check_url` that names two of `contains`, `equals` and `same_as`.
+pub const URL_ONE_OF: &str = "check_url takes one of \"contains\", \"equals\" or \"same_as\", not two";
+/// The rule a noted address's name follows.
+pub const NOTE_NAME_RULE: &str = "a noted address's name is 1 to 30 letters, digits, - or _";
+/// A `remember_url` on a browser that keeps no notebook.
+pub const NO_NOTEBOOK: &str = "this browser cannot note an address";
+
+/// A `check_url` `same_as` with nothing noted under `name`.
+pub fn not_noted(name: &str) -> String {
+    format!(
+        "no address was noted as \"{name}\" in this case: a remember_url with \"as\": \"{name}\" must come before this check"
+    )
+}
 /// What an upload's click opened instead of a file chooser.
 pub const FILE_CHOOSER: &str = "file chooser";
 /// Appended, in run files from before `dialogs`, when a page raised
@@ -1346,10 +1380,23 @@ impl Action {
             Action::CheckText { value } if value.trim().is_empty() => {
                 Err("check_text has an empty value".to_string())
             }
-            Action::CheckUrl { contains, .. } if contains.trim().is_empty() => {
-                Err("check_url has an empty value".to_string())
+            Action::CheckUrl { contains, equals, same_as, .. } => {
+                let given = usize::from(!contains.trim().is_empty())
+                    + usize::from(equals.is_some())
+                    + usize::from(same_as.is_some());
+                if given > 1 {
+                    return Err(URL_ONE_OF.to_string());
+                }
+                if given == 0 || equals.as_deref().is_some_and(|e| e.trim().is_empty()) {
+                    return Err("check_url has an empty value".to_string());
+                }
+                match same_as {
+                    Some(name) => check_note_name("check_url same_as", name),
+                    None => Ok(()),
+                }
             }
-            Action::CheckText { .. } | Action::CheckUrl { .. } => Ok(()),
+            Action::RememberUrl { name } => check_note_name("remember_url", name),
+            Action::CheckText { .. } => Ok(()),
             Action::SignIn { account } if !crate::autorun::accounts::valid_key(account) => {
                 Err(format!("sign_in names \"{account}\", which is not a usable account key"))
             }
@@ -1580,6 +1627,7 @@ impl Action {
             | Action::UseComponent { .. }
             | Action::CheckText { .. }
             | Action::CheckUrl { .. }
+            | Action::RememberUrl { .. }
             | Action::SignIn { .. }
             | Action::ExpectResponse { .. }
             | Action::ApiRequest { .. }
@@ -1631,6 +1679,7 @@ impl Action {
             | Action::UseComponent { .. }
             | Action::CheckText { .. }
             | Action::CheckUrl { .. }
+            | Action::RememberUrl { .. }
             | Action::SignIn { .. }
             | Action::ExpectResponse { .. }
             | Action::ApiRequest { .. }
@@ -2018,23 +2067,76 @@ pub async fn settle<D: Driver>(d: &mut D, timing: &Timing) -> Duration {
     began.elapsed()
 }
 
-/// `check_url`: does the address hold `contains`? Looked at again until it
-/// does or time runs out, like every `expect_` check - a page still
+/// What `check_url` waits for the address to be.
+#[derive(Debug, Clone, Copy)]
+pub enum UrlWant<'a> {
+    /// The address holds these words.
+    Contains(&'a str),
+    /// The address is exactly this (`url_equals`).
+    Equals(&'a str),
+    /// The address is the one noted as `name`, which was `noted`.
+    SameAs { name: &'a str, noted: &'a str },
+}
+
+impl UrlWant<'_> {
+    fn holds(&self, href: &str) -> bool {
+        match self {
+            UrlWant::Contains(c) => href.contains(c),
+            UrlWant::Equals(e) => url_equals(href, e),
+            UrlWant::SameAs { noted, .. } => href == *noted,
+        }
+    }
+
+    /// What a failure says: the address showing, and what it was not.
+    fn missed(&self, href: &str) -> String {
+        match self {
+            UrlWant::Contains(_) => format!("{URL_IS}{href}"),
+            UrlWant::Equals(e) => format!("{URL_IS}{href}, not \"{e}\""),
+            UrlWant::SameAs { name, noted } => {
+                format!("{URL_IS}{href}, not the address noted as \"{name}\" ({noted})")
+            }
+        }
+    }
+}
+
+/// Is the address `href` the one `want` names? A `want` starting with "/" is
+/// compared with the address's path, query and fragment (all after the
+/// origin); anything else with the whole address.
+pub fn url_equals(href: &str, want: &str) -> bool {
+    if !want.starts_with('/') {
+        return href == want;
+    }
+    let after_origin = match href.find("://") {
+        Some(i) => {
+            let rest = &href[i + 3..];
+            match rest.find(['/', '?', '#']) {
+                Some(j) if rest[j..].starts_with('/') => rest[j..].to_string(),
+                Some(j) => format!("/{}", &rest[j..]),
+                None => "/".to_string(),
+            }
+        }
+        None => href.to_string(),
+    };
+    after_origin == want
+}
+
+/// `check_url`: does the address hold what `want` names? Looked at again
+/// until it does or time runs out, like every `expect_` check - a page still
 /// redirecting is not a failure yet. The deadline is cleared on every way
 /// out, each look releases what it held, a transient error counts as a
 /// look, and a call the browser did not answer keeps going until the
 /// deadline decides.
-pub async fn check_url<D: Driver>(d: &mut D, contains: &str, timeout_ms: u64, poll_ms: u64) -> ActionOutcome {
+pub async fn check_url<D: Driver>(d: &mut D, want: UrlWant<'_>, timeout_ms: u64, poll_ms: u64) -> ActionOutcome {
     let deadline = Instant::now() + Duration::from_millis(timeout_ms);
     d.set_deadline(Some(deadline));
-    let out = keep_checking_url(d, contains, timeout_ms, poll_ms, deadline).await;
+    let out = keep_checking_url(d, want, timeout_ms, poll_ms, deadline).await;
     d.set_deadline(None);
     out
 }
 
 async fn keep_checking_url<D: Driver>(
     d: &mut D,
-    contains: &str,
+    want: UrlWant<'_>,
     timeout_ms: u64,
     poll_ms: u64,
     deadline: Instant,
@@ -2049,7 +2151,7 @@ async fn keep_checking_url<D: Driver>(
         match page::eval_value(d, "location.href").await {
             Ok(v) => {
                 let href = v.as_str().unwrap_or("").to_string();
-                if href.contains(contains) {
+                if want.holds(&href) {
                     return ActionOutcome::passed(format!("{URL_IS}{href}"));
                 }
                 last = Some(href);
@@ -2060,12 +2162,32 @@ async fn keep_checking_url<D: Driver>(
         }
         if Instant::now() >= deadline {
             return match (last, refused) {
-                (Some(href), _) => ActionOutcome::failed(format!("{URL_IS}{href}")),
+                (Some(href), _) => ActionOutcome::failed(want.missed(&href)),
                 (None, Some(why)) => why,
                 (None, None) => harness_timeout(timeout_ms, "the page address"),
             };
         }
         d.idle(Duration::from_millis(poll_ms)).await;
+    }
+}
+
+/// `remember_url`: note the address the page is on now as `name`.
+async fn remember_url<D: Driver>(d: &mut D, name: &str) -> ActionOutcome {
+    if d.noted_addresses().is_none() {
+        return ActionOutcome::failed(NO_NOTEBOOK.to_string());
+    }
+    page::release(d).await;
+    let href = match page::eval_value(d, "location.href").await {
+        Ok(v) => v.as_str().unwrap_or("").to_string(),
+        Err(e) => return failed_by(e),
+    };
+    let shown = path_only(&href);
+    match d.noted_addresses() {
+        Some(book) => {
+            book.insert(name.to_string(), href);
+            ActionOutcome::passed(format!("noted the address as \"{name}\": {shown}"))
+        }
+        None => ActionOutcome::failed(NO_NOTEBOOK.to_string()),
     }
 }
 
@@ -2124,9 +2246,23 @@ async fn run<D: Driver>(d: &mut D, action: &Action, timing: &Timing, policy: &Po
                 Err(e) => failed_by(e),
             }
         }
-        Action::CheckUrl { contains, timeout_ms } => {
-            check_url(d, contains, wait(timeout_ms, timing), timing.poll_ms).await
+        Action::CheckUrl { contains, equals, same_as, timeout_ms } => {
+            let within = wait(timeout_ms, timing);
+            if let Some(want) = equals {
+                return check_url(d, UrlWant::Equals(want), within, timing.poll_ms).await;
+            }
+            if let Some(name) = same_as {
+                let noted = d.noted_addresses().and_then(|book| book.get(name).cloned());
+                return match noted {
+                    Some(noted) => {
+                        check_url(d, UrlWant::SameAs { name, noted: &noted }, within, timing.poll_ms).await
+                    }
+                    None => ActionOutcome::failed(not_noted(name)),
+                };
+            }
+            check_url(d, UrlWant::Contains(contains), within, timing.poll_ms).await
         }
+        Action::RememberUrl { name } => remember_url(d, name).await,
         Action::ExpectVisible { selector, timeout_ms } => {
             expect::expect(d, selector, Check::Visible, wait(timeout_ms, timing), timing.poll_ms).await
         }

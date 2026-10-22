@@ -717,6 +717,10 @@ pub struct Cdp<T: Transport = WsTransport> {
     /// The test headers the assistant set (`set_extra_headers`), sent on
     /// every tab: a tab the page opens later is given them before it runs.
     extra_headers: std::collections::BTreeMap<String, String>,
+    /// The addresses a case's `remember_url` noted, by name
+    /// (`Driver::noted_addresses`). Emptied with the case's tabs
+    /// (`close_other_tabs`), so one case never reads another's.
+    noted: std::collections::BTreeMap<String, String>,
 }
 
 /// A browser's downloads: the folder they land in, and every download in
@@ -901,6 +905,7 @@ impl<T: Transport> Cdp<T> {
             capture: None,
             capture_pause: None,
             extra_headers: std::collections::BTreeMap::new(),
+            noted: std::collections::BTreeMap::new(),
         }
     }
 
@@ -2152,6 +2157,7 @@ impl<T: Transport> Cdp<T> {
         self.make_current(main);
         self.closed_by_page.clear();
         self.step_marks = (None, None);
+        self.noted.clear();
     }
 
     /// Every download so far, from every tab, in start order.
@@ -2933,6 +2939,11 @@ pub trait Driver {
         let params = serde_json::json!({ "headers": headers });
         async move { self.call("Network.setExtraHTTPHeaders", params).await.map(|_| ()) }
     }
+    /// The addresses this case's `remember_url` noted, by name; emptied
+    /// with the case's tabs. `None` for a driver that cannot note one.
+    fn noted_addresses(&mut self) -> Option<&mut std::collections::BTreeMap<String, String>> {
+        None
+    }
     /// See `Cdp::is_guarding_saves`. A driver with no guard of its own
     /// never is.
     fn is_guarding_saves(&self) -> bool {
@@ -3154,6 +3165,9 @@ impl<T: Transport> Driver for Cdp<T> {
     }
     async fn set_extra_headers(&mut self, headers: &std::collections::BTreeMap<String, String>) -> Result<(), CdpError> {
         Cdp::set_extra_headers(self, headers).await
+    }
+    fn noted_addresses(&mut self) -> Option<&mut std::collections::BTreeMap<String, String>> {
+        Some(&mut self.noted)
     }
     fn is_guarding_saves(&self) -> bool {
         Cdp::is_guarding_saves(self)

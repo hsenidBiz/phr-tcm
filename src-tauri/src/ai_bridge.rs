@@ -3629,6 +3629,7 @@ fn matched_targets(action: &crate::browser::actions::Action) -> Vec<(&crate::bro
         | Action::Navigate { .. }
         | Action::CheckText { .. }
         | Action::CheckUrl { .. }
+        | Action::RememberUrl { .. }
         | Action::SignIn { .. }
         | Action::ExpectResponse { .. }
         | Action::ApiRequest { .. }
@@ -4130,7 +4131,13 @@ pub fn describe_action(action: &crate::browser::actions::Action) -> String {
         // Its path only: a host and a query string never reach a log line
         // or the discovery map, and a query can carry a token.
         Action::Navigate { url } => crate::autorun::discovery_map::path_only(url),
-        Action::CheckUrl { contains, .. } => contains.clone(),
+        // The words it looks for (a path or a name), never a noted address.
+        Action::CheckUrl { contains, equals, same_as, .. } => equals
+            .as_deref()
+            .map(crate::autorun::discovery_map::path_only)
+            .or_else(|| same_as.clone())
+            .unwrap_or_else(|| contains.clone()),
+        Action::RememberUrl { name } => name.clone(),
         Action::UseComponent { component, .. } => component.trim().to_string(),
         Action::CheckText { .. }
         | Action::SignIn { .. }
