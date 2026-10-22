@@ -460,6 +460,37 @@ information in the slots the Playwright pipeline already reads; it never overrid
     - Tests: each role file is generated with the marker; each named tool answer carries its
       rule lines; a repair that lowers the check floor is refused.
 
+## Timing checks on a request (agreed 2026-10-22)
+
+36. **Let `expect_response` say when a request may start.** Manage Cycle case 141717 says the
+    search list refreshes "about 800 ms after the last keystroke", and "at once, before the
+    800 ms pause ends" when Enter is pressed. TCM cannot check either: `expect_response` only
+    waits for a request to finish within `timeout_ms`, so it bounds the upper end and nothing
+    else, and there is no timer action. The writer left the timing unchecked (Manage Cycle
+    audit, `mc3-audit.md`).
+    - **`not_before_ms`**: the matching request must not START earlier than this many ms after
+      the step's previous action (the last keystroke). A request seen earlier fails the check,
+      naming when it started. Pair with `timeout_ms` for the window: 141717 step 3 becomes
+      `expect_response { url_contains: <cards request>, not_before_ms: 600, timeout_ms: 2000 }`.
+    - **`started_within_ms`**: the request must start within this many ms of the previous
+      action, for "at once" (141717 step 4, Enter). Measured from the browser's own request
+      timestamps (CDP `Network.requestWillBeSent`), not from when the runner saw the
+      response, so a slow server does not fail it.
+    - The answer and the run report give the measured start time for both, so a near miss is
+      visible before it turns flaky.
+    - **No full reload**, the other half of 141717 step 3: an `expect_no_reload` check (or a
+      `same_document: true` on `expect_response`) that fails if the top frame navigated during
+      the step (CDP `Page.frameNavigated` on the main frame, or a new document id). Today the
+      only stand-in is "the typed text is still in the box", which the save must list as
+      assumed.
+    - Tests: a request that starts before `not_before_ms` fails with its start time; one in
+      the window passes; `started_within_ms` measures the request start, not the response; a
+      step whose page reloads fails `expect_no_reload`; a step that only re-fetches passes it.
+
+    Related, case wording (Avin 2026-10-22): the Manage Cycle status filters (141721-141724)
+    do not reload the page, they fetch the cards again. Their rewrite says so, and their
+    scripts check it with an `expect_response` on the cards request.
+
 ## Smaller
 
 - `save_autorun_script` through MCP drops `edits`, so repairs had to go through
