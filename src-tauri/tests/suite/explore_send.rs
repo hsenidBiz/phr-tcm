@@ -84,8 +84,11 @@ async fn holding(r: &mut Rig, discovery: Option<DiscoveryState>) -> Option<PageB
     let mut lease = Held::supervised();
     lease.hold(r.root.path(), "admin").await.unwrap();
     on_the_app(r);
+    // A capture with nothing in it: the page has shown and sent nothing yet.
+    let mut app = r.browsers.next.take().unwrap();
+    app.inner.capture = Some(v2_lib::browser::net_capture::NetCapture::default());
     Some(PageBrowser {
-        d: r.browsers.next.take().unwrap(),
+        d: app,
         lease,
         account: Some("admin".into()),
         discovery,
@@ -99,7 +102,7 @@ async fn holding(r: &mut Rig, discovery: Option<DiscoveryState>) -> Option<PageB
 async fn exploring_session(r: &mut Rig) -> (Option<PageBrowser>, String) {
     let id = begin(r.root.path(), ORG, PROJECT, "admin", 1_760_000_000_000).unwrap();
     let state = exploring("Leave").map(|s| DiscoveryState {
-        explore: Some(ExploreRun { session: Some(id.clone()) }),
+        explore: Some(ExploreRun { session: Some(id.clone()), ..ExploreRun::default() }),
         ..s
     });
     (holding(r, state).await, id)
@@ -586,7 +589,16 @@ async fn a_saved_template_runs_in_your_explore_session_when_it_holds_the_account
 
     let s = load(r.root.path(), &session).unwrap();
     let posted: Vec<(&str, &str)> = s.writes.iter().map(|w| (w.method.as_str(), w.path.as_str())).collect();
-    assert_eq!(posted, vec![("POST", "/hr/pmsv10/performancecycle"); 2], "{:?}", s.writes);
+    // Each save is noted with its handler: it is part of which save it is.
+    assert_eq!(
+        posted,
+        vec![
+            ("POST", "/hr/pmsv10/performancecycle?handler=SaveProgress"),
+            ("POST", "/hr/pmsv10/performancecycle?handler=SaveEvalRulesProgress")
+        ],
+        "{:?}",
+        s.writes
+    );
 }
 
 #[tokio::test]
@@ -627,4 +639,256 @@ async fn a_post_template_in_a_no_save_session_is_refused() {
     assert_eq!(browser.as_ref().unwrap().d.inner.calls_to("Page.navigate").len(), 0);
     assert!(store::list(r.root.path(), ORG, PROJECT).unwrap().remove(0).runs.is_empty());
     assert!(load(r.root.path(), &session).unwrap().writes.is_empty());
+}
+
+// ---- The final fix wave ----
+
+fn created_change(kind: &str, id: &str, name: &str) -> Change {
+    Change::Created { kind: kind.into(), id: id.into(), name: name.into(), verified: false }
+}
+
+/// C1: a create the call made is verified, and so deletable by an undo, only
+/// when the app can show its id is new to the session.
+#[tokio::test]
+async fn a_send_create_is_verified_only_when_its_id_is_new_to_the_session() {
+    use v2_lib::autorun::explore::NOT_VERIFIED;
+    let _locks = locks();
+    let mut r = rig(
+        vec![
+            answer(200, json!({ "cycleId": 274 })),
+            answer(200, json!({ "cycleId": 275 })),
+            answer(200, json!({ "cycleId": 276 })),
+            answer(200, json!({ "cycleId": 277 })),
+        ],
+        None,
+    );
+    let (mut browser, session) = exploring_session(&mut r).await;
+
+    // Nothing earlier carried the id: verified, on the test-made list.
+    let (_, v) = send(&mut browser, &r, true, create_cycle()).await;
+    assert_eq!((v["change"].clone(), v["verified"].clone()), (json!(1), json!(true)), "{v}");
+    assert!(v.get("note").is_none(), "{v}");
+    assert_eq!(test_made::list(r.root.path()).len(), 1);
+
+    // The call itself sends the id it names: that is an edit, not a create.
+    on_the_app(&r);
+    let mut sends_it = create_cycle();
+    sends_it["step"]["form"]["ParentId"] = json!("275");
+    let (_, v) = send(&mut browser, &r, true, sends_it).await;
+    assert_eq!(v["verified"], json!(false), "{v}");
+    assert_eq!(v["note"], NOT_VERIFIED, "{v}");
+    assert_eq!(v["change"], json!(2), "{v}");
+
+    // An earlier change on the list already names the id.
+    on_the_app(&r);
+    v2_lib::autorun::explore::record_change(
+        r.root.path(),
+        &session,
+        created_change("cycle", "276", "Seen before"),
+        None,
+        &[],
+        0,
+    )
+    .unwrap();
+    let (_, v) = send(&mut browser, &r, true, create_cycle()).await;
+    assert_eq!(v["verified"], json!(false), "{v}");
+
+    // No capture to prove it with: kept on the list, not verified.
+    on_the_app(&r);
+    browser.as_mut().unwrap().d.inner.capture = None;
+    let (_, v) = send(&mut browser, &r, true, create_cycle()).await;
+    assert_eq!(v["verified"], json!(false), "{v}");
+    assert_eq!(v["note"], NOT_VERIFIED, "{v}");
+
+    // Only the first reached the test-made list.
+    let made = test_made::list(r.root.path());
+    assert_eq!(made.len(), 1, "{made:?}");
+    assert_eq!(made[0].id, "274");
+    let s = load(r.root.path(), &session).unwrap();
+    let verified: Vec<bool> = s
+        .changes
+        .iter()
+        .filter_map(|c| match &c.change {
+            Change::Created { verified, .. } => Some(*verified),
+            _ => None,
+        })
+        .collect();
+    // The first send, the one that sent its own id, the one recorded by hand, the one an earlier change named, the one with no capture.
+    assert_eq!(verified, vec![true, false, false, false, false]);
+}
+
+/// I1: every POST that is sent is noted as a save, whatever its effect, with
+/// its handler.
+#[tokio::test]
+async fn every_post_that_is_sent_is_noted_as_a_save_with_its_handler() {
+    use v2_lib::autorun::explore::unaccounted;
+    let _locks = locks();
+    let mut r = rig(vec![answer(200, json!({ "found": true }))], None);
+    let (mut browser, session) = exploring_session(&mut r).await;
+
+    let search = json!({
+        "step": { "method": "POST", "path": PATH, "query": { "handler": "Search" }, "form": { "q": "x" } },
+        "effect": "read"
+    });
+    let (status, v) = send(&mut browser, &r, true, search).await;
+    assert_eq!(status, 200, "{v}");
+    assert_eq!(v["request"], format!("POST {PATH}?handler=Search"), "{v}");
+    let s = load(r.root.path(), &session).unwrap();
+    assert_eq!(s.writes.len(), 1, "{:?}", s.writes);
+    assert_eq!(s.writes[0].path, format!("{PATH}?handler=Search"));
+    assert_eq!(unaccounted(&s), vec![format!("POST {PATH}?handler=Search")]);
+}
+
+/// I3: a secret in the query, or in the token page's query, runs but is not saved.
+#[tokio::test]
+async fn a_secret_in_the_query_or_the_token_page_is_not_saved() {
+    let _locks = locks();
+    let mut r = rig(vec![answer(200, json!({ "ok": true })); 3], None);
+    let (mut browser, _) = exploring_session(&mut r).await;
+
+    let by_name = json!({ "step": { "method": "GET", "path": "/hr/x", "query": { "apiKey": "abc123" } } });
+    let (status, v) = send(&mut browser, &r, false, by_name).await;
+    assert_eq!(status, 200, "{v}");
+    assert_eq!(v["ok"], true, "{v}");
+    assert_eq!(v["template"]["not_saved"], SECRET_NOT_SAVED, "{v}");
+    assert!(!v.to_string().contains("abc123"), "{v}");
+
+    // A token-shaped value under an innocent name.
+    on_the_app(&r);
+    let opaque = "Zk3qT9vLm2Xw8pRt5BnYc7DfGh1JsKe4UoIa6MlPq0WxCz";
+    let by_value = json!({ "step": { "method": "GET", "path": "/hr/x", "query": { "q": opaque } } });
+    let (_, v) = send(&mut browser, &r, false, by_value).await;
+    assert_eq!(v["template"]["not_saved"], SECRET_NOT_SAVED, "{v}");
+
+    // The token page's own query: the page the browser stood on, with it.
+    on_the_app(&r);
+    r.script.lock().unwrap().hrefs =
+        VecDeque::from(vec![format!("https://hr.example.internal{PAGE}?access_token=abc123xyz"); 6]);
+    let page = json!({
+        "step": { "method": "GET", "path": "/hr/x", "query": { "id": "5" } },
+        "antiforgery_page": format!("{PAGE}?access_token=abc123xyz")
+    });
+    let (status, v) = send(&mut browser, &r, false, page).await;
+    assert_eq!(status, 200, "{v}");
+    assert_eq!(v["template"]["not_saved"], SECRET_NOT_SAVED, "{v}");
+    assert!(!v.to_string().contains("abc123xyz"), "{v}");
+    assert!(saved_ids(&r).is_empty());
+}
+
+/// I4: a template that never worked is not a match.
+#[tokio::test]
+async fn an_unproven_template_is_never_reused() {
+    use v2_lib::api_templates::one_off::{as_template, parse};
+    let _locks = locks();
+    let mut r = rig(vec![answer(200, json!({ "cycleId": 274 }))], None);
+    let (mut browser, _) = exploring_session(&mut r).await;
+
+    let one = parse(&save_progress().to_string()).unwrap();
+    let mut draft = as_template(&one, "my-draft", PAGE);
+    draft.proven = None;
+    store::save(r.root.path(), ORG, PROJECT, &draft).unwrap();
+
+    let (status, v) = send(&mut browser, &r, true, save_progress()).await;
+    assert_eq!(status, 200, "{v}");
+    assert_eq!(v["template"]["saved"], json!(true), "{v}");
+    assert_ne!(v["template"]["id"], json!("my-draft"), "{v}");
+    assert!(v["template"].get("reused").is_none(), "{v}");
+    assert_eq!(saved_ids(&r).len(), 2);
+}
+
+/// I4: a path segment that is a record id becomes a param, so one template
+/// serves every record.
+#[tokio::test]
+async fn a_record_id_in_the_path_becomes_one_template_for_every_record() {
+    let _locks = locks();
+    let mut r = rig(
+        vec![
+            answer(200, json!({ "name": "A" })),
+            answer(200, json!({ "name": "B" })),
+            answer(200, json!({ "name": "C" })),
+        ],
+        None,
+    );
+    let (mut browser, _) = exploring_session(&mut r).await;
+
+    let get = |path: &str| json!({ "step": { "method": "GET", "path": path } });
+    let (_, v) = send(&mut browser, &r, false, get("/hr/employees/101")).await;
+    assert_eq!(v["template"], json!({ "id": "get-hr-employees-id", "saved": true }), "{v}");
+    let t = store::load(r.root.path(), ORG, PROJECT, "get-hr-employees-id").unwrap().unwrap();
+    assert_eq!(t.steps[0].path, "/hr/employees/{{id}}");
+    assert_eq!(t.params.len(), 1);
+    assert_eq!(t.params[0].name, "id");
+    assert!(t.params[0].required);
+
+    on_the_app(&r);
+    let (_, v) = send(&mut browser, &r, false, get("/hr/employees/102")).await;
+    assert_eq!(v["template"], json!({ "id": "get-hr-employees-id", "reused": true }), "{v}");
+
+    // A GUID segment is an id too.
+    on_the_app(&r);
+    let (_, v) = send(&mut browser, &r, false, get("/hr/employees/6f1c2d3e-4a5b-4c6d-8e7f-90a1b2c3d4e5")).await;
+    assert_eq!(v["template"], json!({ "id": "get-hr-employees-id", "reused": true }), "{v}");
+    assert_eq!(saved_ids(&r), vec!["get-hr-employees-id".to_string()]);
+}
+
+/// M6: a POST that says it only reads is saved as a read only while the
+/// change list shows it changed nothing.
+#[tokio::test]
+async fn a_post_that_says_read_is_saved_as_read_unless_the_list_shows_it_changed_something() {
+    use v2_lib::autorun::explore::record_change;
+    let _locks = locks();
+    let mut r = rig(vec![answer(200, json!({ "ok": true })), answer(200, json!({ "ok": true }))], None);
+    let (mut browser, session) = exploring_session(&mut r).await;
+    let call = |handler: &str| {
+        json!({
+            "step": { "method": "POST", "path": PATH, "query": { "handler": handler }, "form": { "q": "x" } },
+            "effect": "read"
+        })
+    };
+
+    let (_, v) = send(&mut browser, &r, true, call("Find")).await;
+    let t = store::load(r.root.path(), ORG, PROJECT, v["template"]["id"].as_str().unwrap()).unwrap().unwrap();
+    assert_eq!(t.effect, Effect::Read);
+
+    // The session already recorded a change for this very save.
+    let changed = Change::Changed {
+        record: "Cycle".into(),
+        field: "Status".into(),
+        before: None,
+        after: Some(json!("Published")),
+        hidden: false,
+    };
+    record_change(r.root.path(), &session, changed, Some(format!("POST {PATH}?handler=Publish")), &[], 0).unwrap();
+    on_the_app(&r);
+    let (_, v) = send(&mut browser, &r, true, call("Publish")).await;
+    let t = store::load(r.root.path(), ORG, PROJECT, v["template"]["id"].as_str().unwrap()).unwrap().unwrap();
+    assert_eq!(t.effect, Effect::Edit);
+}
+
+/// M2: a GET from a plain discovery runs, and says why it is not saved.
+#[tokio::test]
+async fn a_get_from_a_plain_discovery_says_it_is_saved_only_from_an_explore_session() {
+    use v2_lib::api_templates::one_off::PLAIN_DISCOVERY_NOT_SAVED;
+    let _locks = locks();
+    let mut r = rig(vec![answer(200, json!({ "found": true }))], None);
+    let mut browser = holding(&mut r, exploring("Leave")).await;
+    let get = json!({ "step": { "method": "GET", "path": "/hr/x" } });
+    let (status, v) = send(&mut browser, &r, false, get).await;
+    assert_eq!(status, 200, "{v}");
+    assert_eq!(v["template"], json!({ "not_saved": PLAIN_DISCOVERY_NOT_SAVED }), "{v}");
+    assert_eq!(PLAIN_DISCOVERY_NOT_SAVED, "saved only from an explore session");
+    assert!(saved_ids(&r).is_empty());
+}
+
+/// I2: the guide says what the code requires on `created`, in the code's words.
+#[test]
+fn the_guide_says_what_created_needs() {
+    let guide = v2_lib::api_templates::guide::text(&[], None);
+    let flat = guide.split_whitespace().collect::<Vec<_>>().join(" ");
+    assert!(flat.contains("A create always names what it made, in `created`"), "{flat}");
+    assert!(flat.contains("`id`, which is the NAME of one of the step's `capture`s"), "{flat}");
+    assert!(flat.contains("A create whose answer carries no id cannot be recorded here"), "{flat}");
+    assert!(!flat.contains("unless the answer carries the id"), "{flat}");
+    // The code's own refusal says the same thing.
+    assert!(CREATED_NEEDED.contains("with id the name of one of the step's captures"), "{CREATED_NEEDED}");
 }

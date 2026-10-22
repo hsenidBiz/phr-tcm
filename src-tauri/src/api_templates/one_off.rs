@@ -11,6 +11,9 @@ use std::collections::BTreeMap;
 pub const ONE_OFF_ID: &str = "one-off";
 /// Said to a delete the person has not said yes to in the chat.
 pub const DELETE_NEEDS_YES: &str = "Tell the person what will be deleted and wait for their yes in the chat first.";
+/// Said to a save sent as anything but a delete whose address (or `handler`)
+/// says delete or remove.
+pub const LOOKS_LIKE_A_DELETE: &str = "This call looks like a delete: send it with effect delete and the person's yes.";
 /// Said to a POST that does not say what it does.
 pub const EFFECT_NEEDED: &str = "a POST needs an \"effect\": read, create, edit or delete";
 /// Said to a GET that names an effect other than read.
@@ -156,7 +159,7 @@ pub fn parse(body: &str) -> Result<OneOff, (u16, String)> {
         Some(_) => return bad(format!("values is an object of param names to values. Expected {SHAPE}.")),
     };
 
-    Ok(OneOff {
+    let one = OneOff {
         step,
         effect,
         params,
@@ -168,7 +171,17 @@ pub fn parse(body: &str) -> Result<OneOff, (u16, String)> {
         name: text(obj, "name"),
         description: text(obj, "description"),
         module: text(obj, "module"),
-    })
+    };
+    // A save whose address says delete or remove is a delete, whatever label
+    // it was sent with: the label is what asks for the person's yes. (A GET
+    // cannot be sent as a delete, so only a POST is judged.)
+    if one.step.method == Method::Post && one.effect != Effect::Delete {
+        let address = request_path(&one).to_ascii_lowercase();
+        if address.contains("delete") || address.contains("remove") {
+            return bad(LOOKS_LIKE_A_DELETE);
+        }
+    }
+    Ok(one)
 }
 
 /// The one-step template a run of `o` uses: `id`, the call's effect,
@@ -200,25 +213,60 @@ pub fn filled_path(o: &OneOff) -> String {
     super::exec::substitute_str(&o.step.path, &vars)
 }
 
-/// The call as the change list names a request: `POST /hr/x`.
+/// The values the call sends: its own, and its params' defaults.
+fn sent_vars(o: &OneOff) -> BTreeMap<String, Value> {
+    let t = as_template(o, ONE_OFF_ID, "/");
+    super::with_defaults(&t, &o.values).into_iter().collect()
+}
+
+/// The step's path with its values filled in, and the `handler` of its
+/// query when it has one (`/hr/x?handler=Save`): the part of the address
+/// that says which save a POST to the page is.
+pub fn request_path(o: &OneOff) -> String {
+    let path = filled_path(o);
+    match handler_of(&o.step) {
+        Some(handler) => format!("{path}?handler={}", super::exec::substitute_str(handler.trim(), &sent_vars(o))),
+        None => path,
+    }
+}
+
+/// The call as the change list names a request: `POST /hr/x`, with the
+/// `handler` when the call names one (`POST /hr/x?handler=Save`).
 pub fn request_of(o: &OneOff) -> String {
     let method = match o.step.method {
         Method::Get => "GET",
         Method::Post => "POST",
     };
-    crate::autorun::explore::request_line(method, &filled_path(o))
+    crate::autorun::explore::request_line(method, &request_path(o))
+}
+
+/// Whether the call itself sends `id`: in its address, its query, its body or
+/// its values. A create cannot send the id of a record that does not exist
+/// yet, so a call that does is an edit or a read, whatever it was called.
+pub fn sends_id(o: &OneOff, id: &str) -> bool {
+    use crate::autorun::explore::{id_in_json, id_in_text};
+    let vars = sent_vars(o);
+    let fill = |s: &str| super::exec::substitute_str(s, &vars);
+    id_in_text(&fill(&o.step.path), id)
+        || o.step.query.values().any(|v| id_in_text(&fill(v), id))
+        || o.step.form.iter().flat_map(|f| f.values()).any(|v| id_in_text(&fill(v), id))
+        || o.step.json.as_ref().is_some_and(|j| id_in_json(j, id))
+        || vars.values().any(|v| id_in_json(v, id))
 }
 
 /// The module a call saved from an explore session is filed under unless the
 /// assistant names one.
 pub const EXPLORE_MODULE: &str = "Explore";
+/// Said in place of a template id for a GET that worked in a discovery that
+/// is not an explore session.
+pub const PLAIN_DISCOVERY_NOT_SAVED: &str = "saved only from an explore session";
 /// Said in place of a template id for a delete call that worked.
 pub const DELETES_NOT_SAVED: &str = "a delete call is never saved as an API template";
 /// Said for a call whose page had no anti-forgery token.
 pub const NO_TOKEN_NOT_SAVED: &str =
     "not saved as a template: the page had no anti-forgery token, which a saved template needs to run later";
 /// Said for a call that writes a secret out.
-pub const SECRET_NOT_SAVED: &str = "not saved as a template: it sends a password, token or other secret as written, and a template never holds one - send that value as a param";
+pub const SECRET_NOT_SAVED: &str = "not saved as a template: it sends a password, token or other secret as written (in its body, its query, or the query of its token page), and a template never holds one - send that value as a param";
 
 /// The longest a derived id is before a "-2" is put on it.
 const ID_BASE_MAX: usize = 90;
@@ -315,9 +363,62 @@ pub fn same_call(saved: &ApiTemplate, step: &Step) -> bool {
     same_handler && body_of(one) == body_of(step) && body_field_names(one) == body_field_names(step)
 }
 
-/// The saved template that is the same call as `step`, if there is one.
+/// The saved template that is the same call as `step`, if there is one. Only
+/// a template that has been proven (`proven` set) is ever matched: one that
+/// never worked is not a reason to leave a call that just did unsaved.
 pub fn matching<'a>(saved: &'a [super::store::SavedTemplate], step: &Step) -> Option<&'a ApiTemplate> {
-    saved.iter().map(|s| &s.template).find(|t| same_call(t, step))
+    saved.iter().map(|s| &s.template).filter(|t| t.proven.is_some()).find(|t| same_call(t, step))
+}
+
+/// Whether `segment` is a record id: all digits, or GUID-shaped
+/// (8-4-4-4-12 hex digits).
+pub fn is_id_segment(segment: &str) -> bool {
+    if !segment.is_empty() && segment.chars().all(|c| c.is_ascii_digit()) {
+        return true;
+    }
+    let groups: Vec<&str> = segment.split('-').collect();
+    groups.len() == 5
+        && groups.iter().zip([8usize, 4, 4, 4, 12]).all(|(g, n)| g.len() == n && g.chars().all(|c| c.is_ascii_hexdigit()))
+}
+
+/// The step with each path segment that is a record id (`is_id_segment`)
+/// made a `{{id}}` param (`{{id2}}`, `{{id3}}`... for more, and never a name
+/// the call's params already use), so one template serves every record. The
+/// params are the call's own plus one required param per id; a number for an
+/// all-digit segment, text for a GUID. A step with no id segment comes back
+/// as it was.
+pub fn with_id_params(step: &Step, params: &[Param]) -> (Step, Vec<Param>) {
+    let mut out = step.clone();
+    let mut all: Vec<Param> = params.to_vec();
+    let mut n = 0;
+    let segments: Vec<String> = step
+        .path
+        .split('/')
+        .map(|segment| {
+            if !is_id_segment(segment) {
+                return segment.to_string();
+            }
+            let name = loop {
+                n += 1;
+                let name = if n == 1 { "id".to_string() } else { format!("id{n}") };
+                if !all.iter().any(|p| p.name == name) {
+                    break name;
+                }
+            };
+            let kind = if segment.chars().all(|c| c.is_ascii_digit()) { super::ParamType::Number } else { super::ParamType::String };
+            all.push(Param {
+                name: name.clone(),
+                kind,
+                required: true,
+                description: Some("The id of the record the call is for.".to_string()),
+                lookup: None,
+                default: None,
+            });
+            format!("{{{{{name}}}}}")
+        })
+        .collect();
+    out.path = segments.join("/");
+    (out, all)
 }
 
 /// `s` as lowercase `[a-z0-9]` words joined by single dashes.
@@ -380,8 +481,20 @@ fn writes_out(v: &Value, secret: bool) -> bool {
     }
 }
 
-/// A json or form field whose name `secret_name()` matches and whose value
-/// is written out (not wholly a {{placeholder}}).
+/// A query value written out that is a secret: its name `secret_name()`
+/// matches, or the value alone is token-shaped (the redaction of a captured
+/// request would hide it). A value wholly a {{placeholder}} is not written out.
+fn query_secret(key: &str, value: &str) -> bool {
+    let value = value.trim();
+    if value.is_empty() || is_placeholder(value) {
+        return false;
+    }
+    crate::autorun::capture_redact::secret_name(key) || crate::autorun::capture_redact::redact_field(key, value) != value
+}
+
+/// A json, form or query field whose name `secret_name()` matches and whose
+/// value is written out (not wholly a {{placeholder}}), or a query value that
+/// is token-shaped under any name.
 pub fn sends_a_secret(step: &Step) -> bool {
     use crate::autorun::capture_redact::secret_name;
     let in_json = step.json.as_ref().is_some_and(|j| writes_out(j, false));
@@ -389,5 +502,17 @@ pub fn sends_a_secret(step: &Step) -> bool {
         .form
         .as_ref()
         .is_some_and(|f| f.iter().any(|(k, v)| secret_name(k) && !v.trim().is_empty() && !is_placeholder(v)));
-    in_json || in_form
+    let in_query = step.query.iter().any(|(k, v)| query_secret(k, v));
+    in_json || in_form || in_query
+}
+
+/// A token page whose address (`antiforgery.page`) carries a secret in its
+/// query, by the same rules as `sends_a_secret`.
+pub fn page_sends_a_secret(page: &str) -> bool {
+    let Some((_, query)) = page.split_once('?') else { return false };
+    let query = query.split('#').next().unwrap_or("");
+    query.split('&').any(|pair| {
+        let (key, value) = pair.split_once('=').unwrap_or((pair, ""));
+        query_secret(key, value)
+    }) || crate::autorun::capture_redact::redact_path_query(page) != page
 }

@@ -3503,6 +3503,16 @@ fn the_explore_tools_are_listed_and_reach_their_routes() {
     let undo = tool("undo_explore_creates");
     assert_eq!(undo["inputSchema"]["required"], serde_json::json!(["session", "ids"]));
     assert_eq!(undo["inputSchema"]["properties"]["ids"]["type"], "array");
+    // The undo needs the person's yes, like a delete call.
+    assert_eq!(undo["inputSchema"]["properties"]["person_said_yes"]["type"], "boolean");
+    let undo_says = undo["description"].as_str().unwrap();
+    assert!(undo_says.contains("it needs the person's yes") && undo_says.contains("nothing is deleted"), "{undo_says}");
+    // `created` says what the code requires of it (I2).
+    let created = send["inputSchema"]["properties"]["created"].to_string();
+    assert!(created.contains("the NAME of one of the step's `capture`s"), "{created}");
+    assert!(created.contains("cannot be recorded here"), "{created}");
+    assert_eq!(send["inputSchema"]["properties"]["created"]["required"], serde_json::json!(["kind", "id", "name"]));
+    assert!(!send["description"].as_str().unwrap().contains("when the answer carries no id"));
     let record = tool("record_explore_change");
     assert_eq!(record["inputSchema"]["properties"]["change"]["enum"], serde_json::json!(["created", "changed", "deleted"]));
     assert_eq!(record["inputSchema"]["properties"]["undone"]["type"], "array");

@@ -1864,22 +1864,30 @@ Keep the change list as you go. Call `record_explore_change` for every create, e
 every delete, as soon as it is made: a create with its kind, id and name, a change with the record,
 the field and the value before and after, a delete with what the record held. A create is
 verified against the saves the session's own browser made, and only a verified create can be
-undone later. A create the app did not confirm can be removed only in the browser, by hand.
+undone later. It is verified when a save the session made (a POST or PUT answered 2xx) answered
+with the new id and that id appears nowhere before it: not in that save's own request (an edit
+sends the id it edits), not in anything the session saw or sent earlier, and not in an earlier
+change on the list. A create the app did not confirm can be removed only in the browser, by hand.
 `get_explore_changes` lists the saved sessions of this project, newest first, and with a session
-id gives that session's whole list. The list is one file in the Auto Run data folder, so it
-outlives the chat: a new chat picks up from it.
+id gives that session's whole list and its `verified_creates`: each with its kind, id, name and the
+request that proved it. The list is one file in the Auto Run data folder, so it outlives the chat:
+a new chat picks up from it.
 
 When you call `end_autorun_discovery`, it names the saves the session's browser sent that are
-not on the change list. Name each in your summary, or record it first. For a one-off API call from
+not on the change list. A change accounts for one save, so three identical saves with one change
+recorded leave two. Name each in your summary, or record it first. For a one-off API call from
 the session's page, see `send_api_request` in the API template guide (`get_guide` with topic
 `api_templates`).
 
 Before anything is deleted, in the browser or with a request, tell the person what will be
-deleted and wait for their yes in the chat. Undo and remove only when the person asks. For
-creates the app verified, `undo_explore_creates` deletes them through each kind's proven delete
-template. A changed field you set back by hand, from its before value, and then mark undone with
-`record_explore_change`. Say plainly what cannot be undone: a change with no before value, a kind
-with no delete template, a record changed again since, and a create that was not verified.
+deleted and wait for their yes in the chat. Undo and remove only when the person asks, and the
+undo needs that yes too: tell the person each record `undo_explore_creates` will delete (its kind,
+id and name, from `get_explore_changes`), wait for their yes in the chat, then send
+`person_said_yes` true. Without it nothing is deleted. For creates the app verified,
+`undo_explore_creates` deletes them through each kind's proven delete template. A changed field
+you set back by hand, from its before value, and then mark undone with `record_explore_change`.
+Say plainly what cannot be undone: a change with no before value, a kind with no delete template,
+a record changed again since, and a create that was not verified.
 
 End with a summary: the task, the account and environment, what you did, each check and its
 result, the findings, the change list, the templates saved or reused, and how to undo. Show it in

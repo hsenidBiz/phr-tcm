@@ -432,16 +432,27 @@ sign-in, as the account the session signed in as. The anti-forgery token is read
 are on; when that page has none, pass `antiforgery_page`, a page of the app with a form on it,
 and the token is read there, in the same tab. The answer is redacted and cut at the first 64 KB.
 
-- A GET only reads. A POST needs the person's API templates switch and an `effect`: `read`,
-  `create`, `edit` or `delete`. A create also names what it made (`created`: kind, id and name)
-  unless the answer carries the id, and it goes on the session's change list.
+- A GET only reads. A POST needs an explore session, the person's API templates switch and an
+  `effect`: `read`, `create`, `edit` or `delete`. A save whose address (or `handler`) says delete
+  or remove is refused unless it is sent as a delete.
+- A create always names what it made, in `created`: `kind`, `name`, and `id`, which is the NAME of
+  one of the step's `capture`s, the one that takes the new record's id from the answer (for
+  example `"id": "cycleId"` with `"capture": { "cycleId": "$.cycleId" }`), never the id itself.
+  A create whose answer carries no id cannot be recorded here. It goes on the session's change
+  list, and an undo can delete it later only when the app shows the id is new to the session:
+  the call did not send it, and nothing the session saw or sent before carried it. Otherwise it
+  stays on the list as not verified, to remove in the browser.
 - `effect: delete` needs `person_said_yes` true, and only after you told the person what will be
   deleted and they said yes in the chat. Without it the call is refused and nothing is sent. A
   delete call is never saved as a template.
-- A call that worked is saved as a template proven by that run, or matched to a template already
-  saved with the same method, path and body fields, which is reused instead of saved again.
-- A failed call, a delete call, a call with a secret written out in it, and a call from a page
-  with no token are never saved: the answer says which and why. Send a secret as a param.
+- A call that worked in an explore session is saved as a template proven by that run, or matched
+  to a proven template already saved with the same method, path and body fields, which is reused
+  instead of saved again. A path segment that is all digits or a GUID becomes a `{{id}}` param, so
+  one template serves every record. A POST sent as `read` is saved as `read` only when the change
+  list shows it changed nothing. A GET from a plain discovery runs but is not saved.
+- A failed call, a delete call, a call with a secret written out in it (in its body, its query,
+  or the query of its token page), and a call from a page with no token are never saved: the
+  answer says which and why. Send a secret as a param.
 - `run_api_template` runs a saved template in your explore session when the session holds the
   template's account; otherwise it opens its own browser as before.
 

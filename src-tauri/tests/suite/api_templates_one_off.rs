@@ -124,3 +124,165 @@ fn a_secret_written_out_is_found_and_a_placeholder_is_not() {
     let plain = step(json!({ "method": "POST", "path": "/x", "json": { "name": "n", "keyword": "k" } }));
     assert!(!sends_a_secret(&plain));
 }
+
+// ---- The final fix wave ----
+
+fn proven() -> v2_lib::api_templates::Proven {
+    v2_lib::api_templates::Proven {
+        at: "2026-10-22 09:00:00".into(),
+        origin: "https://hr.example.internal".into(),
+        account: "admin".into(),
+        outputs: Default::default(),
+        environment: None,
+        via: None,
+    }
+}
+
+fn kept(t: ApiTemplate) -> v2_lib::api_templates::store::SavedTemplate {
+    v2_lib::api_templates::store::SavedTemplate { template: t, runs: Vec::new() }
+}
+
+/// I4: only a proven template is ever matched.
+#[test]
+fn only_a_proven_template_is_matched() {
+    use v2_lib::api_templates::one_off::matching;
+    let call = json!({ "name": "r", "method": "GET", "path": "/hr/x" });
+    let draft = saved("read", call.clone());
+    let mut worked = saved("read", call);
+    worked.id = "worked".into();
+    worked.proven = Some(proven());
+    let s = step(json!({ "method": "GET", "path": "/hr/x" }));
+
+    assert!(matching(&[kept(draft.clone())], &s).is_none(), "an unproven draft was matched");
+    let both = [kept(draft), kept(worked)];
+    assert_eq!(matching(&both, &s).map(|t| t.id.as_str()), Some("worked"));
+}
+
+/// I4: an all-digit or GUID path segment is a record id and becomes a param.
+#[test]
+fn a_record_id_segment_becomes_an_id_param() {
+    use v2_lib::api_templates::one_off::{is_id_segment, with_id_params};
+    use v2_lib::api_templates::ParamType;
+    for id in ["101", "0", "6f1c2d3e-4a5b-4c6d-8e7f-90a1b2c3d4e5", "6F1C2D3E-4A5B-4C6D-8E7F-90A1B2C3D4E5"] {
+        assert!(is_id_segment(id), "{id}");
+    }
+    for not in ["", "employees", "v10", "12a", "{{id}}", "6f1c2d3e-4a5b-4c6d-8e7f", "pmsv10"] {
+        assert!(!is_id_segment(not), "{not}");
+    }
+
+    let s = step(json!({ "method": "GET", "path": "/hr/pmsv10/cycles/274/employees/6f1c2d3e-4a5b-4c6d-8e7f-90a1b2c3d4e5" }));
+    let (out, params) = with_id_params(&s, &[]);
+    assert_eq!(out.path, "/hr/pmsv10/cycles/{{id}}/employees/{{id2}}");
+    assert_eq!(params.iter().map(|p| p.name.as_str()).collect::<Vec<_>>(), ["id", "id2"]);
+    assert_eq!((params[0].kind, params[1].kind), (ParamType::Number, ParamType::String));
+    assert!(params.iter().all(|p| p.required && p.default.is_none()));
+
+    // A name the call's params already use is not taken again.
+    let own: Vec<v2_lib::api_templates::Param> =
+        serde_json::from_value(json!([{ "name": "id", "type": "string", "required": true }])).unwrap();
+    let (out, params) = with_id_params(&step(json!({ "method": "GET", "path": "/x/5" })), &own);
+    assert_eq!(out.path, "/x/{{id2}}");
+    assert_eq!(params.len(), 2);
+
+    // No id segment: the step comes back as it was.
+    let plain = step(json!({ "method": "GET", "path": "/hr/cycles" }));
+    assert_eq!(with_id_params(&plain, &[]), (plain, Vec::new()));
+}
+
+/// I4: two calls for different records are the same call once generalised.
+#[test]
+fn calls_for_two_records_match_one_template() {
+    use v2_lib::api_templates::one_off::{matching, with_id_params};
+    let (generalised, params) = with_id_params(&step(json!({ "method": "GET", "path": "/api/employees/101" })), &[]);
+    let mut t = saved("read", json!({ "name": "r", "method": "GET", "path": "/api/employees/101" }));
+    t.steps = vec![generalised];
+    t.params = params;
+    t.proven = Some(proven());
+    let list = [kept(t)];
+    let (next, _) = with_id_params(&step(json!({ "method": "GET", "path": "/api/employees/102" })), &[]);
+    assert!(matching(&list, &next).is_some());
+    let (other, _) = with_id_params(&step(json!({ "method": "GET", "path": "/api/departments/102" })), &[]);
+    assert!(matching(&list, &other).is_none());
+}
+
+/// I3: a secret in the query, whatever it is called, is a secret as written.
+#[test]
+fn a_secret_in_the_query_is_found() {
+    use v2_lib::api_templates::one_off::page_sends_a_secret;
+    let by_name = step(json!({ "method": "GET", "path": "/x", "query": { "apiKey": "abc" } }));
+    assert!(sends_a_secret(&by_name));
+    let token = step(json!({ "method": "GET", "path": "/x", "query": { "access_token": "abc" } }));
+    assert!(sends_a_secret(&token));
+    let opaque = step(json!({ "method": "GET", "path": "/x", "query": { "q": "Zk3qT9vLm2Xw8pRt5BnYc7DfGh1JsKe4UoIa6MlPq0WxCz" } }));
+    assert!(sends_a_secret(&opaque));
+    // A placeholder, and ordinary values, are not.
+    let param = step(json!({ "method": "GET", "path": "/x", "query": { "apiKey": "{{key}}" } }));
+    assert!(!sends_a_secret(&param));
+    let plain = step(json!({ "method": "GET", "path": "/x", "query": { "handler": "Save", "page": "2", "from": "2026-01-01", "id": "6f1c2d3e-4a5b-4c6d-8e7f-90a1b2c3d4e5", "keyword": "k" } }));
+    assert!(!sends_a_secret(&plain));
+
+    // The token page's query, by the same rules.
+    assert!(page_sends_a_secret("/hr/form?token=abc"));
+    assert!(page_sends_a_secret("/hr/form?x=1&apiKey=abc"));
+    assert!(page_sends_a_secret("/hr/form?q=Zk3qT9vLm2Xw8pRt5BnYc7DfGh1JsKe4UoIa6MlPq0WxCz"));
+    assert!(!page_sends_a_secret("/hr/form"));
+    assert!(!page_sends_a_secret("/hr/form?handler=Edit&id=5"));
+}
+
+/// M5: a save whose address says delete or remove is not sent as anything else.
+#[test]
+fn a_save_that_looks_like_a_delete_is_refused_unless_it_is_one() {
+    use v2_lib::api_templates::one_off::{parse, LOOKS_LIKE_A_DELETE};
+    assert_eq!(LOOKS_LIKE_A_DELETE, "This call looks like a delete: send it with effect delete and the person's yes.");
+    let post = |path: &str, handler: Option<&str>, effect: &str| {
+        let mut step = json!({ "method": "POST", "path": path, "form": { "x": "1" } });
+        if let Some(h) = handler {
+            step["query"] = json!({ "handler": h });
+        }
+        json!({ "step": step, "effect": effect }).to_string()
+    };
+    for effect in ["edit", "read"] {
+        for (path, handler) in [
+            ("/hr/employees/Delete", None),
+            ("/hr/Employees/REMOVE/5", None),
+            ("/hr/pmsv10/PerformanceCycle", Some("Delete")),
+            ("/hr/pmsv10/PerformanceCycle", Some("removeRow")),
+        ] {
+            assert_eq!(parse(&post(path, handler, effect)).unwrap_err(), (400, LOOKS_LIKE_A_DELETE.to_string()), "{path} {handler:?}");
+        }
+    }
+    let create = json!({
+        "step": { "method": "POST", "path": "/hr/x", "query": { "handler": "Delete" }, "capture": { "i": "$.id" } },
+        "effect": "create", "created": { "kind": "k", "id": "i", "name": "n" }
+    });
+    assert_eq!(parse(&create.to_string()).unwrap_err(), (400, LOOKS_LIKE_A_DELETE.to_string()));
+    // Sent as a delete, with the person's yes, it goes on; a handler that merely resembles a word does not count.
+    let yes = json!({ "step": { "method": "POST", "path": "/hr/x", "query": { "handler": "Delete" } }, "effect": "delete", "person_said_yes": true });
+    assert!(parse(&yes.to_string()).is_ok());
+    assert!(parse(&post("/hr/pmsv10/PerformanceCycle", Some("Save"), "edit")).is_ok());
+    // A GET cannot be sent as a delete, so its address is not judged.
+    assert!(parse(&json!({ "step": { "method": "GET", "path": "/hr/deleted-items" } }).to_string()).is_ok());
+}
+
+/// The call as the change list names it, and the ids the call itself sends.
+#[test]
+fn the_request_line_keeps_the_handler_and_the_call_knows_the_ids_it_sends() {
+    use v2_lib::api_templates::one_off::{parse, request_of, request_path, sends_id};
+    let one = parse(
+        &json!({
+            "step": { "method": "POST", "path": "/hr/c/{{cid}}", "query": { "handler": "Save", "x": "{{cid}}" },
+                      "json": { "parent": { "id": 274 } } },
+            "params": [{ "name": "cid", "type": "number", "required": true }],
+            "values": { "cid": 12 },
+            "effect": "edit"
+        })
+        .to_string(),
+    )
+    .unwrap();
+    assert_eq!(request_path(&one), "/hr/c/12?handler=Save");
+    assert_eq!(request_of(&one), "POST /hr/c/12?handler=Save");
+    assert!(sends_id(&one, "12"), "the id in the path");
+    assert!(sends_id(&one, "274"), "the id in the body");
+    assert!(!sends_id(&one, "27"), "a longer number is not the id");
+    assert!(!sends_id(&one, "99"));
+}

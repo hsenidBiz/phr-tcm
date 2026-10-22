@@ -21,8 +21,10 @@ other tool that does the same job, your own browser, an editor or a sub-agent in
   template rather than building the same call again.
 - End with `end_autorun_discovery`, and name every save it lists as not on the change list.
 - Undo or remove only when the person asks, from `get_explore_changes`: set changed fields back to
-  their before value, and remove verified creates with `undo_explore_creates`. Say plainly what
-  you cannot undo: no before value, no delete template, or a record changed again since.
+  their before value, and remove verified creates with `undo_explore_creates`. Before that, tell
+  the person each record it will delete (kind, id and name) and wait for their yes in this chat;
+  only then send person_said_yes. Say plainly what you cannot undo: no before value, no delete
+  template, or a record changed again since.
 - Write the summary the command asks for: the task, the account and environment, what you did,
   each check and its result, the findings, the change list, the templates saved or reused, and
   how to undo.

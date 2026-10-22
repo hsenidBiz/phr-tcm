@@ -155,6 +155,14 @@ impl Driver for App {
     fn set_deadline(&mut self, deadline: Option<Instant>) {
         self.inner.set_deadline(deadline)
     }
+
+    fn capture(&self) -> Option<&v2_lib::browser::net_capture::NetCapture> {
+        self.inner.capture()
+    }
+
+    fn capture_mut(&mut self) -> Option<&mut v2_lib::browser::net_capture::NetCapture> {
+        self.inner.capture_mut()
+    }
 }
 
 /// Hands out one prepared `App` and counts opens and closes; keeps the
