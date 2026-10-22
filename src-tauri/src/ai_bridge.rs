@@ -285,6 +285,16 @@ pub fn autorun_role_answer(target: &str) -> (u16, String) {
     }
 }
 
+/// `GET /autorun-pw-skills[?skill=<name>]`: the Playwright repo's skills, listed or one given, read from the clone set on the Playwright tab.
+pub fn autorun_pw_skills_answer(target: &str) -> (u16, String) {
+    crate::autorun::pw_rules::skills_answer(&crate::app_settings::current().playwright_clone, q(target, "skill").as_deref())
+}
+
+/// `GET /autorun-pw-repo[?file=<name>]`: one of the Playwright repo's own files (its CLAUDE.md when none is named).
+pub fn autorun_pw_repo_answer(target: &str) -> (u16, String) {
+    crate::autorun::pw_rules::repo_answer(&crate::app_settings::current().playwright_clone, q(target, "file").as_deref())
+}
+
 /// Query-string value by key from "a=1&b=2", percent-decoded ('+' -> space,
 /// arbitrary %XX -> the raw byte). `pub` so `tests/suite/ai_bridge.rs` can
 /// exercise it directly.
@@ -414,6 +424,9 @@ pub async fn route(
         },
         // A role's rules, read from the Playwright repo that is set: the proxy cannot, so it asks here.
         ("GET", "/autorun-role") => autorun_role_answer(target),
+        // The Playwright repo's own skills and files, read from the clone that is set.
+        ("GET", "/autorun-pw-skills") => autorun_pw_skills_answer(target),
+        ("GET", "/autorun-pw-repo") => autorun_pw_repo_answer(target),
         // A save that repairs (carries `edits`) ends with the repair rules, a refusal too.
         ("POST", "/autorun-script") => {
             let answer = save_autorun_scripts(ctx, client, body).await;

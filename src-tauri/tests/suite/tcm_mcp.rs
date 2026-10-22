@@ -1650,7 +1650,10 @@ fn the_guide_tool_offers_a_topic_only_while_its_row_is_on() {
     let only_shared: Vec<String> =
         ["record_quirk", "search_autorun_requests", "autorun_cookies"].iter().map(|s| s.to_string()).collect();
     assert!(guide_offered("autorun", &only_shared));
-    assert_eq!(offered_topics(&[]), vec!["writing", "autorun", "api_templates", "reports"]);
+    assert_eq!(
+        offered_topics(&[]),
+        vec!["writing", "autorun", "api_templates", "reports", "playwright_skills", "playwright_repo"]
+    );
 }
 
 /// The argument mixes that used to be dropped without a word are refused
@@ -2601,7 +2604,9 @@ fn the_guide_tool_refuses_a_missing_or_unknown_topic() {
     }
     assert_eq!(posted.get(), 0, "nothing reached the app");
 
-    assert_eq!(GUIDE_TOPICS, ["writing", "autorun", "api_templates", "reports"]);
+    assert_eq!(GUIDE_TOPICS, ["writing", "autorun", "api_templates", "reports", "playwright_skills", "playwright_repo"]);
+    assert_eq!(guide_topic_module("playwright_skills"), Ok(Some(Module::AutoRun)));
+    assert_eq!(guide_topic_module("playwright_repo"), Ok(Some(Module::AutoRun)));
     assert_eq!(guide_topic_module("writing"), Ok(None));
     assert_eq!(guide_topic_module("autorun"), Ok(Some(Module::AutoRun)));
     assert_eq!(guide_topic_module("api_templates"), Ok(Some(Module::ApiTemplates)));
@@ -3596,5 +3601,84 @@ fn the_ruling_tools_are_listed_and_reach_their_routes() {
         let (m, p, b) = calls.borrow().last().unwrap().clone();
         assert_eq!((m.as_str(), p.as_str()), ("POST", path), "{name}");
         assert_eq!(serde_json::from_str::<serde_json::Value>(&b).unwrap(), args, "{name}");
+    }
+}
+
+fn pw_fake(seen: &std::cell::RefCell<Vec<String>>) -> impl Fn(&str, &str, &str) -> Result<(u16, String), String> + '_ {
+    move |m: &str, path: &str, _b: &str| {
+        if path == "/tools" {
+            return Ok((200, r#"{"disabled":[]}"#.to_string()));
+        }
+        assert_eq!(m, "GET", "{path}");
+        seen.borrow_mut().push(path.to_string());
+        Ok((200, format!("APP {path}")))
+    }
+}
+
+#[test]
+fn get_guide_reaches_the_playwright_topics() {
+    let seen = std::cell::RefCell::new(vec![]);
+    let call = pw_fake(&seen);
+    for (args, want) in [
+        (r#"{"topic":"playwright_skills","skill":"edit-spec"}"#, "/autorun-pw-skills?skill=edit-spec"),
+        (r#"{"topic":"playwright_skills"}"#, "/autorun-pw-skills"),
+        (r#"{"topic":"playwright_skills","skill":""}"#, "/autorun-pw-skills"),
+        (r#"{"topic":"playwright_skills","skill":"../x y"}"#, "/autorun-pw-skills?skill=..%2Fx%20y"),
+        (r#"{"topic":"playwright_repo","file":"gen-test.md"}"#, "/autorun-pw-repo?file=gen-test.md"),
+        (r#"{"topic":"playwright_repo"}"#, "/autorun-pw-repo"),
+    ] {
+        seen.borrow_mut().clear();
+        let v = guide_call(args, &call);
+        assert_ne!(v["result"]["isError"], true, "{args}: {v}");
+        assert_eq!(v["result"]["content"][0]["text"], format!("APP {want}"), "{args}");
+        assert_eq!(*seen.borrow(), vec![want.to_string()], "{args}");
+    }
+}
+
+#[test]
+fn get_guide_describes_the_playwright_topics() {
+    let resp = handle_message(r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#, "1.0.0", &stub(200, r#"{"disabled":[]}"#)).unwrap();
+    let v: serde_json::Value = serde_json::from_str(&resp).unwrap();
+    let guide = v["result"]["tools"].as_array().unwrap().iter().find(|t| t["name"] == "get_guide").unwrap().clone();
+    let props = &guide["inputSchema"]["properties"];
+    assert_eq!(props["skill"]["type"], "string", "{guide}");
+    assert_eq!(props["file"]["enum"], serde_json::json!(v2_lib::autorun::pw_rules::REPO_FILES), "{guide}");
+    let d = guide["description"].as_str().unwrap();
+    assert!(d.contains("\"playwright_skills\": the team's Playwright repo's skills, read fresh from the repo set on the Playwright tab"), "{d}");
+    assert!(d.contains("\"playwright_repo\": the team's Playwright repo's own files, read fresh"), "{d}");
+}
+
+#[test]
+fn skill_and_file_are_for_their_topics_only() {
+    use v2_lib::mcp::GUIDE_SKILL_FILE_ONLY;
+    let seen = std::cell::RefCell::new(vec![]);
+    let call = pw_fake(&seen);
+    for args in [
+        r#"{"topic":"autorun","skill":"x"}"#,
+        r#"{"topic":"playwright_skills","file":"CLAUDE.md"}"#,
+        r#"{"topic":"playwright_repo","skill":"edit-spec"}"#,
+        r#"{"topic":"writing","file":"gen-test.md"}"#,
+    ] {
+        let v = guide_call(args, &call);
+        assert_eq!(v["result"]["isError"], true, "{args}: {v}");
+        assert!(v["result"]["content"][0]["text"].as_str().unwrap().contains(GUIDE_SKILL_FILE_ONLY), "{args}: {v}");
+    }
+    assert!(seen.borrow().is_empty(), "{:?}", seen.borrow());
+    // The autorun guide's own parts still belong to autorun only.
+    let v = guide_call(r#"{"topic":"playwright_skills","section":"x"}"#, &call);
+    assert!(v["result"]["content"][0]["text"].as_str().unwrap().contains(v2_lib::mcp::GUIDE_PARTS_AUTORUN_ONLY), "{v}");
+    assert!(seen.borrow().is_empty());
+}
+
+#[test]
+fn the_playwright_topics_go_with_auto_run() {
+    use v2_lib::mcp::{guide_refusal, guide_topic_module};
+    for topic in ["playwright_skills", "playwright_repo"] {
+        assert_eq!(guide_topic_module(topic), Ok(Some(Module::AutoRun)), "{topic}");
+        let without_auto_run: BTreeSet<Module> = Module::ALL.into_iter().filter(|m| *m != Module::AutoRun).collect();
+        let said = guide_refusal(Some(topic), &[], &without_auto_run).unwrap_or_default();
+        assert!(said.contains(&format!("The `{topic}` guide is not available")), "{topic}: {said}");
+        let all: BTreeSet<Module> = Module::ALL.into_iter().collect();
+        assert_eq!(guide_refusal(Some(topic), &[], &all), None, "{topic}");
     }
 }

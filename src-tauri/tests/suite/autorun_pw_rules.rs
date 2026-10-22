@@ -7,6 +7,10 @@ use v2_lib::autorun::pw_rules::{
     frontmatter_value, read, repo_path, section, shipped, shipped_line, snapshot, strip_frontmatter, From, RepoFile,
     Why, AGENT_FILES, GEN_TEST, READ_LIMIT, REPO_CLAUDE, SHIPPED_COPY, SNAPSHOT,
 };
+use v2_lib::autorun::pw_rules::{
+    gen_test_note, repo_answer, repo_note, skill_names, skills_answer, unknown_repo_file, unknown_skill, LIVE_MARK,
+    REPO_FILES, SHIPPED_MARK,
+};
 
 const PLANNER: &str = ".claude/agents/playwright-test-planner.md";
 
@@ -255,4 +259,126 @@ fn a_section_names_the_file_never_its_path() {
     assert!(shipped.starts_with(
         "## From the Playwright repo: playwright-test-planner.md, the copy shipped with this version\n\n"
     ));
+}
+
+/// A fake clone holding one skill, `alpha`.
+fn clone_with_alpha() -> tempfile::TempDir {
+    let dir = clone();
+    let skill = dir.path().join(".claude/skills/alpha");
+    std::fs::create_dir_all(&skill).unwrap();
+    std::fs::write(skill.join("SKILL.md"), "---\nname: alpha\ndescription: Does alpha\n---\nALPHA\n").unwrap();
+    dir
+}
+
+#[test]
+fn the_skills_are_listed_with_their_descriptions() {
+    let dir = clone_with_alpha();
+    let (status, text) = skills_answer(&path_of(&dir), None);
+    assert_eq!(status, 200);
+    assert!(text.contains(&format!("- alpha: Does alpha ({LIVE_MARK})")), "{text}");
+    let edit = text.lines().find(|l| l.starts_with("- edit-spec: ")).unwrap_or_else(|| panic!("{text}"));
+    assert!(edit.ends_with(&format!("({SHIPPED_MARK})")), "{edit}");
+    assert!(text.starts_with("The Playwright repo's skills:\n"), "{text}");
+    assert!(text.contains("Ask for one with `get_guide`, topic playwright_skills and `skill` its name."), "{text}");
+    assert_eq!(skills_answer(&path_of(&dir), Some("")), (200, text.clone()));
+    assert_eq!(skill_names(&path_of(&dir)), ["alpha", "edit-spec", "manage-test-users", "test-data"]);
+    // Not set: the shipped line first, every skill shipped.
+    let (_, none) = skills_answer("", None);
+    assert!(none.starts_with(&shipped_line(&Why::NoClone, &[])), "{none}");
+    assert!(!none.contains(LIVE_MARK), "{none}");
+    let missing = path_of(&dir) + "/nope";
+    let (_, gone) = skills_answer(&missing, None);
+    assert!(gone.starts_with(&shipped_line(&Why::CloneUnreadable, &[])), "{gone}");
+}
+
+#[test]
+fn one_skill_is_given_with_the_repo_note() {
+    let dir = clone_with_alpha();
+    let (status, text) = skills_answer(&path_of(&dir), Some("alpha"));
+    assert_eq!(status, 200);
+    assert!(text.contains("## From the Playwright repo: alpha/SKILL.md, read from the repo just now"), "{text}");
+    assert!(text.contains("ALPHA"), "{text}");
+    assert!(text.contains(repo_note().trim_end()), "{text}");
+    assert!(!text.contains("name: alpha"), "{text}");
+    // A shipped skill says so first.
+    let (status, text) = skills_answer(&path_of(&dir), Some("edit-spec"));
+    assert_eq!(status, 200);
+    assert!(text.starts_with("(Some of the Playwright repo's files below are"), "{text}");
+    assert!(text.contains("edit-spec/SKILL.md"), "{text}");
+}
+
+#[test]
+fn a_skill_name_with_a_path_is_refused() {
+    let dir = clone_with_alpha();
+    std::fs::write(dir.path().join("CLAUDE.md"), "SECRET ROOT FILE").unwrap();
+    let names = skill_names(&path_of(&dir));
+    for bad in ["../../CLAUDE", "edit-spec/../x", "C:\\x", "EDIT-SPEC", "alpha/", "../alpha", "alpha/SKILL.md", ".claude"] {
+        let (status, text) = skills_answer(&path_of(&dir), Some(bad));
+        assert_eq!(status, 404, "{bad}");
+        assert_eq!(text, unknown_skill(bad, &names), "{bad}");
+        assert!(text.contains("\"edit-spec\""), "{text}");
+        assert!(!text.contains("SECRET"), "{text}");
+    }
+}
+
+#[test]
+fn a_skill_folder_that_is_no_name_is_never_listed() {
+    let dir = clone_with_alpha();
+    let odd = dir.path().join(".claude/skills/has space");
+    std::fs::create_dir_all(&odd).unwrap();
+    std::fs::write(odd.join("SKILL.md"), "x").unwrap();
+    let bare = dir.path().join(".claude/skills/empty");
+    std::fs::create_dir_all(&bare).unwrap();
+    assert_eq!(skill_names(&path_of(&dir)), ["alpha", "edit-spec", "manage-test-users", "test-data"]);
+}
+
+#[test]
+fn the_repo_file_defaults_to_claude_md() {
+    for asked in [None, Some("")] {
+        let (status, text) = repo_answer("", asked);
+        assert_eq!(status, 200);
+        assert!(text.contains("CLAUDE.md, the copy shipped"), "{text}");
+        assert!(text.contains(repo_note().trim_end()), "{text}");
+        assert!(text.starts_with(&shipped_line(&Why::NoClone, &[])), "{text}");
+    }
+}
+
+#[test]
+fn gen_test_comes_with_its_note() {
+    let (status, text) = repo_answer("", Some("gen-test.md"));
+    assert_eq!(status, 200);
+    assert!(text.contains(gen_test_note().trim_end()), "{text}");
+    assert!(!text.contains(repo_note().trim_end()), "{text}");
+    // A live file is marked live and has no shipped line.
+    let dir = clone();
+    std::fs::write(dir.path().join(".claude/agents/spec-editor.md"), "---\nname: x\n---\nLIVE EDITOR\n").unwrap();
+    let (_, live) = repo_answer(&path_of(&dir), Some("spec-editor.md"));
+    assert!(live.starts_with("## From the Playwright repo: spec-editor.md, read from the repo just now"), "{live}");
+    assert!(live.contains("LIVE EDITOR") && live.contains(repo_note().trim_end()), "{live}");
+}
+
+#[test]
+fn an_unknown_repo_file_is_refused() {
+    for bad in ["../../.git/config", ".claude/agents/spec-editor.md", "claude.md", "C:\\x"] {
+        assert_eq!(repo_answer("", Some(bad)), (404, unknown_repo_file(bad)), "{bad}");
+    }
+    let said = unknown_repo_file("x");
+    assert!(said.starts_with("There is no Playwright repo file \"x\": `file` is one of \"CLAUDE.md\", \"gen-test.md\", "), "{said}");
+    assert!(said.ends_with(" and \"doc-drift-auditor.md\"."), "{said}");
+    for n in REPO_FILES {
+        assert_eq!(repo_answer("", Some(n)).0, 200, "{n}");
+    }
+}
+
+#[test]
+fn every_repo_note_names_only_real_tools() {
+    let tools = v2_lib::mcp::all_tool_names();
+    for note in [repo_note(), gen_test_note()] {
+        for (i, span) in note.split('`').enumerate() {
+            if i % 2 == 1 && span.contains('_') {
+                assert!(tools.iter().any(|t| t == span), "a repo note backticks {span:?}, which is no tool");
+            }
+        }
+        assert!(!note.contains('\u{2014}') && !note.contains('\u{2013}'));
+    }
 }

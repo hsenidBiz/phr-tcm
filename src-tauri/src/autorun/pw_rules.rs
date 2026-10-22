@@ -278,3 +278,152 @@ pub fn shipped_line(why: &Why, labels: &[String]) -> String {
         ),
     }
 }
+
+/// The files `get_guide` topic `playwright_repo` gives, by the names the repo
+/// has them: the repo's `CLAUDE.md`, the `gen-test` command, then the agent files.
+pub const REPO_FILES: [&str; 8] = [
+    "CLAUDE.md",
+    "gen-test.md",
+    "playwright-test-planner.md",
+    "playwright-test-generator.md",
+    "playwright-test-healer.md",
+    "spec-editor.md",
+    "test-refactorer.md",
+    "doc-drift-auditor.md",
+];
+
+const SKILLS_DIR: &str = ".claude/skills";
+const SKILL_FILE: &str = "SKILL.md";
+
+/// A skill folder's name: letters, digits, `_` and `-` and nothing else, so a
+/// name is never a path.
+fn plain_skill_name(name: &str) -> bool {
+    !name.is_empty() && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+}
+
+fn skill_rel(name: &str) -> String {
+    format!("{SKILLS_DIR}/{name}/{SKILL_FILE}")
+}
+
+/// Sorted, each once: the clone's `.claude/skills/<dir>/SKILL.md` folders (when
+/// the clone is a folder) and the snapshot's skills, those that read as text.
+/// Only names of `[A-Za-z0-9_-]+`.
+pub fn skill_names(clone: &str) -> Vec<String> {
+    let mut names: Vec<String> = SNAPSHOT
+        .iter()
+        .filter_map(|(k, _)| k.strip_prefix(".claude/skills/")?.strip_suffix("/SKILL.md"))
+        .map(str::to_string)
+        .collect();
+    let root = Path::new(clone.trim());
+    if !clone.trim().is_empty() && root.is_dir() {
+        if let Ok(entries) = std::fs::read_dir(root.join(SKILLS_DIR)) {
+            for e in entries.flatten() {
+                let Some(name) = e.file_name().to_str().map(str::to_string) else { continue };
+                if plain_skill_name(&name) && e.path().is_dir() {
+                    names.push(name);
+                }
+            }
+        }
+    }
+    names.sort();
+    names.dedup();
+    names.retain(|n| plain_skill_name(n) && read(clone, &skill_rel(n)).is_some());
+    names
+}
+
+/// What to remember when using the repo's own files in Test Case Manager.
+pub fn repo_note() -> String {
+    include_str!("roles/repo-tools.md").replace("\r\n", "\n")
+}
+
+/// What to remember when following the repo's `gen-test` command in Test Case Manager.
+pub fn gen_test_note() -> String {
+    include_str!("roles/gen-test-tools.md").replace("\r\n", "\n")
+}
+
+/// `"a", "b" and "c"`.
+fn quoted_list(names: &[String]) -> String {
+    let q: Vec<String> = names.iter().map(|n| format!("\"{n}\"")).collect();
+    match q.split_last() {
+        None => String::new(),
+        Some((last, [])) => last.clone(),
+        Some((last, rest)) => format!("{} and {last}", rest.join(", ")),
+    }
+}
+
+/// Said when `skill` names no skill.
+pub fn unknown_skill(asked: &str, names: &[String]) -> String {
+    format!("There is no Playwright skill \"{}\": `skill` is one of {}.", asked.trim(), quoted_list(names))
+}
+
+/// Said when `file` names none of [`REPO_FILES`].
+pub fn unknown_repo_file(asked: &str) -> String {
+    let names: Vec<String> = REPO_FILES.iter().map(|n| (*n).to_string()).collect();
+    format!("There is no Playwright repo file \"{}\": `file` is one of {}.", asked.trim(), quoted_list(&names))
+}
+
+/// The shipped line for one file read, followed by a blank line; empty when it was read live.
+fn shipped_prefix(file: &RepoFile) -> String {
+    match &file.from {
+        From::Live => String::new(),
+        From::Shipped(why) => format!("{}\n\n", shipped_line(why, &[file.label.clone()])),
+    }
+}
+
+/// `None` or `""`: (200, the list). A name in [`skill_names`] (exact): (200,
+/// [shipped line, blank line,] the skill's section, blank line, [`repo_note`]).
+/// Anything else: (404, [`unknown_skill`]). A name is never joined to a path
+/// before it matched a name from the list.
+pub fn skills_answer(clone: &str, skill: Option<&str>) -> (u16, String) {
+    let names = skill_names(clone);
+    let asked = skill.unwrap_or("");
+    if asked.is_empty() {
+        let mut out = String::new();
+        let root = Path::new(clone.trim());
+        if clone.trim().is_empty() {
+            out.push_str(&shipped_line(&Why::NoClone, &[]));
+            out.push_str("\n\n");
+        } else if !root.is_dir() {
+            out.push_str(&shipped_line(&Why::CloneUnreadable, &[]));
+            out.push_str("\n\n");
+        }
+        out.push_str("The Playwright repo's skills:\n");
+        for n in &names {
+            let Some(file) = read(clone, &skill_rel(n)) else { continue };
+            let mark = match file.from {
+                From::Live => LIVE_MARK,
+                From::Shipped(_) => SHIPPED_MARK,
+            };
+            let description = frontmatter_value(&file.text, "description")
+                .filter(|d| !d.is_empty())
+                .unwrap_or_else(|| "no description".to_string());
+            out.push_str(&format!("- {n}: {description} ({mark})\n"));
+        }
+        out.push_str("Ask for one with `get_guide`, topic playwright_skills and `skill` its name. In Test Case Manager a skill's steps are done with Test Case Manager's tools; never edit the Playwright clone.\n");
+        return (200, out);
+    }
+    let Some(name) = names.iter().find(|n| n.as_str() == asked) else {
+        return (404, unknown_skill(asked, &names));
+    };
+    match read(clone, &skill_rel(name)) {
+        Some(file) => (200, format!("{}{}\n\n{}", shipped_prefix(&file), section(&file), repo_note().trim_end()) + "\n"),
+        None => (404, unknown_skill(asked, &names)),
+    }
+}
+
+/// `None` or `""`: the repo's `CLAUDE.md`. A [`REPO_FILES`] name (exact): (200,
+/// [shipped line, blank line,] the section, blank line, the note: [`gen_test_note`]
+/// for `gen-test.md`, [`repo_note`] for the rest). Anything else: (404,
+/// [`unknown_repo_file`]).
+pub fn repo_answer(clone: &str, file: Option<&str>) -> (u16, String) {
+    let asked = file.filter(|f| !f.is_empty()).unwrap_or(REPO_CLAUDE);
+    let found = REPO_FILES
+        .iter()
+        .find(|n| **n == asked)
+        .and_then(|n| repo_path(n).and_then(|rel| read(clone, rel)).map(|f| (*n, f)));
+    let Some((name, file)) = found else {
+        return (404, unknown_repo_file(asked));
+    };
+    let note = if name == GEN_TEST { gen_test_note() } else { repo_note() };
+    (200, format!("{}{}\n\n{}", shipped_prefix(&file), section(&file), note.trim_end()) + "\n")
+}

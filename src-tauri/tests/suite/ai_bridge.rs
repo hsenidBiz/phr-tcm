@@ -4940,3 +4940,29 @@ fn the_role_route_gives_the_role_text() {
     assert_eq!(autorun_role_answer("/autorun-role"), (400, unknown_role("")));
     assert_eq!(module_of_route("/autorun-role"), Some(v2_lib::modules::Module::AutoRun));
 }
+
+#[test]
+fn the_playwright_rule_routes_are_auto_run_reads() {
+    use v2_lib::ai_bridge::{module_of_route, smells_like_a_write};
+    for path in ["/autorun-pw-skills", "/autorun-pw-repo"] {
+        assert_eq!(module_of_route(path), Some(v2_lib::modules::Module::AutoRun), "{path}");
+        assert!(!smells_like_a_write("GET", path), "{path}");
+        assert!(!smells_like_a_write("GET", &format!("{path}?skill=edit-spec")), "{path}");
+    }
+}
+
+#[test]
+fn the_playwright_rule_routes_answer_from_the_shipped_copy_with_no_clone() {
+    use v2_lib::ai_bridge::{autorun_pw_repo_answer, autorun_pw_skills_answer};
+    let (status, list) = autorun_pw_skills_answer("/autorun-pw-skills");
+    assert_eq!(status, 200, "{list}");
+    assert!(list.contains("- edit-spec: "), "{list}");
+    let (status, one) = autorun_pw_skills_answer("/autorun-pw-skills?skill=edit-spec");
+    assert_eq!(status, 200);
+    assert!(one.contains("edit-spec/SKILL.md"), "{one}");
+    assert_eq!(autorun_pw_skills_answer("/autorun-pw-skills?skill=..%2F..%2FCLAUDE").0, 404);
+    let (status, file) = autorun_pw_repo_answer("/autorun-pw-repo?file=gen-test.md");
+    assert_eq!(status, 200);
+    assert!(file.contains("gen-test.md"), "{file}");
+    assert_eq!(autorun_pw_repo_answer("/autorun-pw-repo?file=..%2F..%2F.git%2Fconfig").0, 404);
+}
