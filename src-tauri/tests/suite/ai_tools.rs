@@ -79,9 +79,9 @@ fn every_tool_gets_a_command_and_each_describes_itself() {
     // Auto Run is still in development: its tools are hidden and its
     // commands (`setup`, `heal`) are left out with them wherever they are
     // off, so nothing in the picker points at it.
-    const TOOLS: [&str; 9] = [
+    const TOOLS: [&str; 10] = [
         "begin-test-case-writing", "optimize", "get-wiki-info", "page", "setup", "discover", "map-menus", "heal",
-        "script-pbi",
+        "script-pbi", "explore",
     ];
     let stems: Vec<&str> = COMMANDS.iter().map(|c| c.stem).collect();
     assert_eq!(stems, TOOLS, "one command per tool, in call order");
@@ -1913,6 +1913,35 @@ fn the_script_pbi_command_scripts_a_batch_within_the_bounds() {
     assert!(!body.contains('\u{2014}') && !body.contains('\u{2013}'), "no em or en dashes");
 }
 
+/// `/tcm:explore` does a task with no test case, checks it, writes the summary, and undoes only on request.
+#[test]
+fn the_explore_command_does_a_task_and_ends_with_a_summary() {
+    let c = COMMANDS.iter().find(|c| c.stem == "explore").expect("an explore command");
+    assert_eq!(c.tool, "start_autorun_discovery");
+    assert_eq!(c.desc, "Do a task in the live app with no test case, check it, and report what changed");
+    assert_eq!(c.hint, "[the task, or undo <session> / remove <session>]");
+    let body = c.body.join("\n");
+    let flat = body.split_whitespace().collect::<Vec<_>>().join(" ");
+    for said in [
+        "explore true",
+        "`record_explore_change`",
+        "wait for their yes in this chat",
+        "`end_autorun_discovery`",
+        "tcm-explore/<date>-<short-task>.md",
+        "`undo_explore_creates`",
+        "only because the person asked",
+        "`send_api_request`",
+        "`get_explore_changes`",
+    ] {
+        assert!(flat.contains(said), "/tcm:explore never says {said:?}: {flat}");
+    }
+    assert!(!body.contains('\u{2014}') && !body.contains('\u{2013}'), "no em or en dashes");
+    let tools = v2_lib::mcp::all_tool_names();
+    for name in body.split('`').skip(1).step_by(2).filter(|n| n.contains('_')) {
+        assert!(tools.iter().any(|t| t == name), "/tcm:explore names `{name}`, which is no tool");
+    }
+}
+
 /// `/tcm:heal` explores a stale area again before repairing in it, and
 /// `/tcm:setup` names `/tcm:discover` as the way to find an area.
 #[test]
@@ -2010,7 +2039,7 @@ fn discover_and_heal_say_how_to_use_components() {
 /// first, and the full guide when something it does not cover comes up.
 #[test]
 fn the_commands_point_at_the_quick_guide() {
-    for stem in ["discover", "map-menus", "heal"] {
+    for stem in ["discover", "map-menus", "heal", "explore"] {
         let c = COMMANDS.iter().find(|c| c.stem == stem).unwrap();
         let flat = c.body.join("\n").split_whitespace().collect::<Vec<_>>().join(" ");
         for said in [
