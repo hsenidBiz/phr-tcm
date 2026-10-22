@@ -588,7 +588,9 @@ fn each_tool_belongs_to_its_module() {
             "autorun_capture",
             "autorun_har",
             "set_autorun_headers",
-            "autorun_cookies"
+            "autorun_cookies",
+            "record_explore_change",
+            "get_explore_changes"
         ]
     );
     assert_eq!(
@@ -600,7 +602,9 @@ fn each_tool_belongs_to_its_module() {
             "save_api_flow",
             "get_api_flow_progress",
             "save_api_fixture",
-            "run_api_fixture"
+            "run_api_fixture",
+            "send_api_request",
+            "undo_explore_creates"
         ]
     );
     assert_eq!(DB_TOOLS, ["db_lookup", "db_query"]);
@@ -2171,4 +2175,14 @@ fn the_discover_and_heal_commands_say_where_their_rules_come_from() {
         "{heal}"
     );
     assert!(!heal.contains("three"), "{heal}");
+}
+
+/// The explore tools ride in their modules: the change list with Auto Run,
+/// the one-off request and the undo with API Templates.
+#[test]
+fn the_explore_tools_belong_to_their_modules() {
+    assert_eq!(module_of_tool("send_api_request"), Some(Module::ApiTemplates));
+    assert_eq!(module_of_tool("undo_explore_creates"), Some(Module::ApiTemplates));
+    assert_eq!(module_of_tool("record_explore_change"), Some(Module::AutoRun));
+    assert_eq!(module_of_tool("get_explore_changes"), Some(Module::AutoRun));
 }

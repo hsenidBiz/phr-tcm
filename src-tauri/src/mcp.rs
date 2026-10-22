@@ -496,7 +496,7 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool, unlocked: bool) -> serde_j
         },
         {
             "name": "start_autorun_discovery",
-            "description": "Open the app's own Auto Run browser and sign in as a saved account, so you can explore the live application before you write a script. The app replays the recorded sign-in and types the password; you never see it. Answers the landing page as get_autorun_page shows it, and its address path. Refused while a run, a replay or a person's browser holds the Auto Run browser. It takes over a browser your own replay left open (its other tabs closed, not signing in again when it is signed in as the account you name) and goes home, and the answer says so. A failed sign-in closes the browser and says why: report it rather than trying again. Every locator you will put in a script must be seen on the live app first: a save refuses any locator the app has not seen. Never read the application's code to write scripts. For a case marked no_save, name it with `case_id` (or pass `no_save: true`): every save the page tries is blocked, not only reported, until the discovery ends. Call end_autorun_discovery when you are done. The first discovery start of a session that is not a mapping run opens its answer with the writer's rules; a later one opens with a line pointing back at them. Every answer that is not a mapping run's ends with the rules that apply at that moment.",
+            "description": "Open the app's own Auto Run browser and sign in as a saved account, so you can explore the live application before you write a script. The app replays the recorded sign-in and types the password; you never see it. Answers the landing page as get_autorun_page shows it, and its address path. Refused while a run, a replay or a person's browser holds the Auto Run browser. It takes over a browser your own replay left open (its other tabs closed, not signing in again when it is signed in as the account you name) and goes home, and the answer says so. A failed sign-in closes the browser and says why: report it rather than trying again. Every locator you will put in a script must be seen on the live app first: a save refuses any locator the app has not seen. Never read the application's code to write scripts. For a case marked no_save, name it with `case_id` (or pass `no_save: true`): every save the page tries is blocked, not only reported, until the discovery ends. Call end_autorun_discovery when you are done. The first discovery start of a session that is not a mapping run opens its answer with the writer's rules; a later one opens with a line pointing back at them. Every answer that is not a mapping run's ends with the rules that apply at that moment. An explore start (explore true) opens with the explorer's rules and ends with the explore rules.",
             "inputSchema": schema(serde_json::json!({
                 "account": { "type": "string", "description": "The KEY of the saved account to sign in as, from get_accounts. Never a username or a password." },
                 "area": { "type": "string", "description": "The recorded area you are exploring, by name; what you see is filed under it (with none, under no area)." },
@@ -506,6 +506,7 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool, unlocked: bool) -> serde_j
                 "case_id": { "type": "number", "description": "Optional: the case you explore for. When its script is marked no_save, every save the page tries is BLOCKED until the discovery ends (named in `blocked_writes`)." },
                 "page": { "type": "boolean", "description": "Optional: false leaves the landing page out of the answer (it is still recorded as seen; get_autorun_page reads it)." },
                 "no_save": { "type": "boolean", "description": "Optional: true blocks every save the page tries until the discovery ends, as for a case marked no_save." },
+                "explore": { "type": "boolean", "description": "Optional: true starts an explore session for a task with no test case: nothing is filed as seen, and every change goes on a change list (record_explore_change). Not with mapping." },
             }), &["account"]),
         },
         {
@@ -768,6 +769,31 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool, unlocked: bool) -> serde_j
             }), &["action"]),
         },
         {
+            "name": "record_explore_change",
+            "description": "Record every change of an explore session onto its change list: a record you created, changed or deleted. Call it as soon as the change is made, so it can be undone later and so the list outlives the chat. A created record is checked against the saves the session's own browser made, and only a create the app confirmed can be undone later. With `session` and `undone`, mark entries you set back by hand on a saved session, going or ended. Needs an explore session started with start_autorun_discovery (explore true), except for marking entries undone.",
+            "inputSchema": schema(serde_json::json!({
+                "change": { "type": "string", "enum": ["created", "changed", "deleted"], "description": "What happened to the record." },
+                "kind": { "type": "string", "description": "created or deleted: what the record is, such as a leave type or an employee." },
+                "id": { "type": "string", "description": "created or deleted: the record's id." },
+                "name": { "type": "string", "description": "created or deleted: the record's name." },
+                "record": { "type": "string", "description": "changed: which record was changed." },
+                "field": { "type": "string", "description": "changed: which field was changed." },
+                "before": { "description": "changed, optional: the value before, when you know it." },
+                "after": { "description": "changed: the new value." },
+                "held": { "description": "deleted, optional: what the record held, so it can be made again." },
+                "request": { "type": "string", "description": "Optional: the save request that made the change, as METHOD and path." },
+                "session": { "type": "string", "description": "With `undone`: the saved session's id, from get_explore_changes." },
+                "undone": { "type": "array", "items": { "type": "number" }, "description": "With `session`: the numbers of the entries you set back by hand." },
+            }), &[]),
+        },
+        {
+            "name": "get_explore_changes",
+            "description": "The saved explore sessions of this project, newest first, each with its account, environment and how many changes it made and how many are undone. With `session`, that session's whole change list and the saves its browser sent that no change names. Use it to pick up where an earlier chat stopped.",
+            "inputSchema": schema(serde_json::json!({
+                "session": { "type": "string", "description": "Optional: one session's id, from the list this tool gives with none." },
+            }), &[]),
+        },
+        {
             "name": "list_api_templates",
             "description": "The API templates saved for the current project, filtered and paged. Check here before building a template - the one you need may already exist; it is also the reference for real endpoints, paths and response fields when a script checks the API (never run from a script). When at most `limit` match and the answer stays under 40,000 characters, each comes in full (params, outputs, flow stage, whether it is proven on this site - prove an imported one before relying on it - and its newest run) with the project's flows and Test files; when more match, a compact index: narrow it with `module`, `search` or `flow`, or pass `id` for one template in full. With `id`, the other filters and the paging are ignored. While `paging.next_offset` is there, call again with `offset` set to it. With `kind: \"fixtures\"` it lists the saved fixtures instead: `id` for one in full, `full: true` for all. What each field means: get_guide (topic api_templates). Read-only; answers with the API templates switch off.",
             "inputSchema": schema(serde_json::json!({
@@ -835,6 +861,32 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool, unlocked: bool) -> serde_j
                 "id": { "type": "string", "description": "The fixture's id, from list_api_templates (kind fixtures)." },
                 "browser": { "type": "string", "description": "\"edge\" (the default) or \"chrome\"." },
             }), &["id"]),
+        },
+        {
+            "name": "send_api_request",
+            "description": "Send one API request from your own explore session's signed-in page, in the account it signed in as: GET or POST only. A POST needs the API templates switch on the AI Bridge tab and an `effect` (read, create, edit or delete). A create is put on the session's change list from the answer's own id. A call that worked is saved as an API template, or matched to one already saved; a delete is never saved, and it is sent only after the person said yes in this chat to a message naming what will be deleted (`person_said_yes`). The answer is redacted and cut at 64 KB. Refused without an explore session. Call get_guide (topic api_templates) for the step format.",
+            "inputSchema": schema(serde_json::json!({
+                "step": { "type": "object", "description": "One step in the API template step format that get_guide (topic api_templates) describes: method, path, and a query, json or form body." },
+                "effect": { "type": "string", "enum": ["read", "create", "edit", "delete"], "description": "What the call does. Needed for a POST." },
+                "created": { "type": "object", "description": "With effect create, when the answer carries no id: what it made, as kind, id and name.", "properties": { "kind": { "type": "string" }, "id": { "type": "string" }, "name": { "type": "string" } } },
+                "person_said_yes": { "type": "boolean", "description": "true only after the person said yes in this chat to a message naming what will be deleted. Needed for effect delete." },
+                "params": { "type": "array", "description": "Optional: the params the saved template declares, in the template format." },
+                "values": { "type": "object", "description": "Optional: one value per param, by name." },
+                "antiforgery_page": { "type": "string", "description": "Optional: a page of the app with a form on it, to read the anti-forgery token from, when the current page has none." },
+                "id": { "type": "string", "description": "Optional: the id to save the template under." },
+                "name": { "type": "string", "description": "Optional: the template's name." },
+                "description": { "type": "string", "description": "Optional: what the template does." },
+                "module": { "type": "string", "description": "Optional: the module the template belongs to." },
+            }), &["step"]),
+        },
+        {
+            "name": "undo_explore_creates",
+            "description": "Only when the person asks for it in the chat: delete what one explore session created. It deletes only the creates the app verified in that session, in the environment the session ran in, through proven delete templates, and refuses the whole undo if one id is not the session's. If your own explore session holds the account of a delete template, it is ended first and the answer says so. Each delete that worked marks its create undone on the change list. Needs the API templates switch on the AI Bridge tab.",
+            "inputSchema": schema(serde_json::json!({
+                "session": { "type": "string", "description": "The explore session's id, from get_explore_changes." },
+                "ids": { "type": "array", "items": { "type": "string" }, "description": "The ids of the creates to delete, from that session's change list." },
+                "kind": { "type": "string", "description": "Optional: the kind, only when an id is two kinds in the session." },
+            }), &["session", "ids"]),
         },
         {
             "name": "db_lookup",
@@ -2146,6 +2198,11 @@ fn tools_call_outcome(params: &serde_json::Value, call: BridgeCall) -> (serde_js
         // arguments object travels whole.
         "save_api_fixture" => call("POST", "/api-template-fixture-save", &args.to_string()),
         "run_api_fixture" => call("POST", "/api-template-fixture-run", &args.to_string()),
+        // The explore tools: each route reads its fields out of the body.
+        "send_api_request" => call("POST", "/api-template-send", &args.to_string()),
+        "undo_explore_creates" => call("POST", "/api-template-explore-undo", &args.to_string()),
+        "record_explore_change" => call("POST", "/autorun-explore-change", &args.to_string()),
+        "get_explore_changes" => call("POST", "/autorun-explore-changes", &args.to_string()),
         // Both bridge routes read their fields out of the body, so
         // forwarding the raw arguments object is structurally unable to
         // drop one - the same pattern as `check_spec_coverage`.

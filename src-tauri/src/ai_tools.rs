@@ -177,6 +177,8 @@ pub const AUTORUN_TOOLS: &[&str] = &[
     "autorun_har",
     "set_autorun_headers",
     "autorun_cookies",
+    "record_explore_change",
+    "get_explore_changes",
 ];
 
 /// The network tools: the Auto Run browser's captured requests, HAR files,
@@ -207,6 +209,8 @@ pub const API_TEMPLATE_TOOLS: &[&str] = &[
     "get_api_flow_progress",
     "save_api_fixture",
     "run_api_fixture",
+    "send_api_request",
+    "undo_explore_creates",
 ];
 
 /// The database tools: the Database Access module's. What they may do is
