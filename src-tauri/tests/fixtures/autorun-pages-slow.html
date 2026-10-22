@@ -1,0 +1,42 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Auto Run paged list fixture, pages that turn late</title>
+<style>
+  body { margin: 0; font-family: Arial, sans-serif; }
+  .card { border: 1px solid #999; margin: 8px; padding: 8px; width: 300px; }
+  a.next { display: inline-block; padding: 4px 8px; border: 1px solid #999; }
+  a.next.disabled { color: #aaa; }
+</style>
+</head>
+<body>
+  <div id="list"></div>
+  <p id="where"></p>
+  <a id="next" class="next" href="#" role="button">Next</a>
+  <script>
+    // Four pages whose turn is drawn 700 ms AFTER the click, with no
+    // request: a framework that renders a frame late. "Unpublished" is on
+    // page 3 only. Next carries the class "disabled" on the last page and
+    // does nothing there. With ?stuck, Next never turns the page.
+    var last = 4, page = 1, stuck = location.search.indexOf('stuck') >= 0, pending = 0;
+    function draw() {
+      var list = document.getElementById('list');
+      list.innerHTML = '';
+      var card = document.createElement('div');
+      card.className = 'card';
+      card.textContent = page === 3 ? 'Cycle 3 Unpublished' : 'Cycle ' + page;
+      list.appendChild(card);
+      document.getElementById('where').textContent = 'Page ' + page + ' of ' + last;
+      document.getElementById('next').className = page >= last ? 'next disabled' : 'next';
+    }
+    document.getElementById('next').addEventListener('click', function (e) {
+      e.preventDefault();
+      if (stuck || page >= last) return;
+      pending++;
+      setTimeout(function () { page++; pending--; draw(); }, 700);
+    });
+    draw();
+  </script>
+</body>
+</html>

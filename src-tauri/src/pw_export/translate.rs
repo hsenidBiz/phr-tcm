@@ -13,7 +13,7 @@ use super::ts::{lit, locator};
 use crate::autorun::recipe::{origin_of, RecipeStep};
 use crate::autorun::runner::WATCHED_DOWNLOAD_WAIT_MS;
 use crate::autorun::CaseScript;
-use crate::browser::actions::{Action, DropAt, SETTLE_CAP, TAB_WAIT_MS, WHEN_VISIBLE_FLOOR_MS, WHEN_VISIBLE_MS};
+use crate::browser::actions::{page_goals, url_rule, Action, DropAt, TAB_WAIT_MS, WHEN_VISIBLE_FLOOR_MS, WHEN_VISIBLE_MS};
 use crate::browser::expect::{READ_TEXT_JS, WRITTEN_TEXT_JS};
 use crate::browser::keys;
 use crate::browser::locator::Target;
@@ -98,9 +98,9 @@ fn check_action(a: &Action, origins: &[String]) -> Res<()> {
             check_target(selector)?;
             check_target(relative_to)
         }
-        Action::PageUntil { next, until, .. } => {
+        Action::PageUntil { next, until, until_all, .. } => {
             check_target(next)?;
-            until.0.iter().try_for_each(check_target)
+            page_goals(until, until_all).into_iter().try_for_each(check_target)
         }
         Action::Click { selector }
         | Action::Fill { selector, .. }
@@ -1172,15 +1172,18 @@ impl Em<'_> {
 
     /// `page_until`, written as the walk the app makes: look for what is
     /// not seen yet, stop when all of it has been, fail at `max_pages` or
-    /// when `next` is gone or disabled, otherwise click it and let the page
-    /// settle (never a fixed wait).
-    fn page_until(&mut self, indent: usize, next: &Target, until: &[Target], max_pages: u32) {
+    /// when `next` is gone or disabled (its `disabled` property,
+    /// `aria-disabled="true"` or a class token `disabled`), otherwise take
+    /// the page's text, click it and wait until that text differs (never
+    /// `networkidle`, which an in-page click has always reached).
+    fn page_until(&mut self, indent: usize, next: &Target, until: &[&Target], max_pages: u32) {
         let locators: Vec<String> = until.iter().map(|u| locator("cur", u)).collect();
         let names: Vec<String> = until.iter().map(|u| lit(&u.describe())).collect();
         self.line(indent, "{");
         self.line(indent + 2, &format!("const until = [{}];", locators.join(", ")));
         self.line(indent + 2, &format!("const names = [{}];", names.join(", ")));
         self.line(indent + 2, "const seen: number[] = until.map(() => 0);");
+        self.line(indent + 2, "const signature = () => cur.evaluate(() => { const b = document.body || document.documentElement; return b ? b.innerText : ''; });");
         self.line(indent + 2, "for (let p = 1; ; p++) {");
         self.line(indent + 4, "for (const [k, l] of until.entries()) if (!seen[k] && (await l.count()) > 0) seen[k] = p;");
         self.line(indent + 4, "if (seen.every((s) => s > 0)) break;");
@@ -1192,12 +1195,16 @@ impl Em<'_> {
         self.line(indent + 4, &format!("const next = {};", one(next)));
         self.line(
             indent + 4,
-            "if (!(await next.isVisible()) || !(await next.isEnabled())) throw new Error('walked ' + p + ' pages and never saw ' + missing + ': the next control is gone or disabled');",
+            "if (!(await next.isVisible()) || !(await next.isEnabled()) || (await next.evaluate((e) => e.classList.contains('disabled')))) throw new Error('walked ' + p + ' pages and never saw ' + missing + ': the next control is gone or disabled');",
         );
+        self.line(indent + 4, "const before = await signature();");
         self.line(indent + 4, "await next.click();");
         self.line(
             indent + 4,
-            &format!("await cur.waitForLoadState('networkidle', {{ timeout: {} }}).catch(() => {{}});", SETTLE_CAP.as_millis()),
+            &format!(
+                "await expect.poll(signature, {{ timeout: {} }}).not.toBe(before).catch(() => {{ throw new Error('Next did not turn the page (page ' + p + ').'); }});",
+                Timing::default().action_ms
+            ),
         );
         self.line(indent + 2, "}");
         self.line(indent, "}");
@@ -1220,20 +1227,21 @@ impl Em<'_> {
                 &format!("await expect(cur.locator('body')).toContainText({}, {{ ignoreCase: true, useInnerText: true }});", lit(value)),
             ),
             Action::CheckUrl { equals: Some(want), timeout_ms, .. } => {
-                let want = goto_target("check_url", want, self.input.origins)?;
+                // The same rule the app applies (`UrlRule`): never a full
+                // address turned into a path. The address must still be one
+                // the export can reach.
+                goto_target("check_url", want, self.input.origins)?;
+                let rule = url_rule(want);
                 let t = expect_timeout(*timeout_ms);
-                if want.starts_with('/') {
-                    // The app compares what follows the origin.
-                    self.line(
-                        indent,
-                        &format!(
-                            "await expect.poll(() => {{ const u = new URL(cur.url()); return u.pathname + u.search + u.hash; }}, {{ timeout: {t} }}).toBe({});",
-                            lit(&want)
-                        ),
-                    );
-                } else {
-                    self.line(indent, &format!("await expect.poll(() => cur.url(), {{ timeout: {t} }}).toBe({});", lit(&want)));
-                }
+                let origin = if rule.origin.is_some() { "u.origin + " } else { "" };
+                let hash = if rule.fragment.is_some() { " + u.hash" } else { "" };
+                self.line(
+                    indent,
+                    &format!(
+                        "await expect.poll(() => {{ const u = new URL(cur.url()); return {origin}u.pathname + u.search{hash}; }}, {{ timeout: {t} }}).toBe({});",
+                        lit(&rule.expected())
+                    ),
+                );
             }
             Action::CheckUrl { same_as: Some(name), timeout_ms, .. } => self.line(
                 indent,
@@ -1333,7 +1341,9 @@ impl Em<'_> {
                 self.each(indent, selector, *min, child.as_ref(), attribute.as_deref(), *visible, equals, contains, matches, *not_empty, *timeout_ms)?
             }
             Action::ExpectOrder { selector, texts, timeout_ms } => self.order(indent, selector, texts, *timeout_ms),
-            Action::PageUntil { next, until, max_pages } => self.page_until(indent, next, &until.0, *max_pages),
+            Action::PageUntil { next, until, until_all, max_pages } => {
+                self.page_until(indent, next, &page_goals(until, until_all), *max_pages)
+            }
             Action::ExpectPosition { selector, relative_to, relation, timeout_ms } => {
                 // The relation's serde name is what the helper switches on.
                 let name = serde_json::to_value(relation).ok().and_then(|v| v.as_str().map(str::to_string)).unwrap_or_default();

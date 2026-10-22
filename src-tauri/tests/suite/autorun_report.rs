@@ -900,7 +900,7 @@ fn page_until_reads_in_the_report() {
     assert_eq!(
         said(serde_json::json!({
             "kind": "page_until", "next": { "role": "button", "name": "Next" },
-            "until": [{ "text": "Published" }, { "text": "Unpublished" }], "max_pages": 5
+            "until_all": [{ "text": "Published" }, { "text": "Unpublished" }], "max_pages": 5
         })),
         "page with button \"Next\" until text \"Published\" and text \"Unpublished\" show, at most 5 pages"
     );

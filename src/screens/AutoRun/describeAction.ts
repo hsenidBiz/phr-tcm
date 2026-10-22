@@ -626,9 +626,12 @@ function describeKnown(a: Action): Sentence {
       ];
     }
     case "page_until": {
-      // `until` is one locator or a list of them (an item may itself be a
-      // chain written as a list); a list is never read as a chain.
-      const wanted = Array.isArray(a.until) ? (a.until as unknown[]) : [a.until];
+      // `until` is ONE target (a list of locators is a chain); `until_all` is
+      // a list of targets. Exactly one is given.
+      const one = a.until !== undefined && a.until !== null;
+      const all = a.until_all !== undefined && a.until_all !== null;
+      if (one === all) throw new Unreadable();
+      const wanted = one ? [a.until] : Array.isArray(a.until_all) ? (a.until_all as unknown[]) : [];
       if (wanted.length === 0) throw new Unreadable();
       const out: Sentence = [words("Click "), ...describeTarget(a.next), words(" page by page until ")];
       wanted.forEach((u, i) => {

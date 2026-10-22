@@ -4,7 +4,7 @@
 
 use serde_json::json;
 use v2_lib::browser::actions::{
-    Action, PageTargets, PAGE_UNTIL_MANY, PAGE_UNTIL_NONE, PAGE_UNTIL_PAGES,
+    page_goals, Action, PAGE_UNTIL_MANY, PAGE_UNTIL_NONE, PAGE_UNTIL_ONE_OF, PAGE_UNTIL_PAGES,
 };
 use v2_lib::browser::locator::{LocatorStep, Target};
 use v2_lib::browser::page_until::{Turn, Walk};
@@ -55,42 +55,72 @@ fn a_next_that_is_gone_ends_the_walk_with_the_pages_walked() {
     );
 }
 
-fn until_of(v: serde_json::Value) -> PageTargets {
-    match serde_json::from_value::<Action>(json!({ "kind": "page_until", "next": "n", "until": v, "max_pages": 5 })).unwrap() {
-        Action::PageUntil { until, .. } => until,
+#[test]
+fn a_page_that_did_not_turn_is_said_with_its_number() {
+    let mut w = walk(&["A"], 40);
+    assert_eq!(w.look(&[false]), Turn::Click);
+    assert_eq!(w.look(&[false]), Turn::Click);
+    assert_eq!(w.not_turned(), "Next did not turn the page (page 2).");
+}
+
+/// A `page_until` with the given `until` / `until_all` field.
+fn page_until_with(field: serde_json::Value) -> serde_json::Value {
+    let mut v = json!({ "kind": "page_until", "next": "n", "max_pages": 5 });
+    v.as_object_mut().unwrap().extend(field.as_object().unwrap().clone());
+    v
+}
+
+fn goals_of(field: serde_json::Value) -> Vec<Target> {
+    match serde_json::from_value::<Action>(page_until_with(field)).unwrap() {
+        Action::PageUntil { until, until_all, .. } => page_goals(&until, &until_all).into_iter().cloned().collect(),
         other => panic!("not a page_until: {other:?}"),
     }
 }
 
 #[test]
-fn page_until_takes_one_until_or_a_list() {
+fn until_is_one_target_and_a_list_of_locators_is_a_chain() {
+    let a = LocatorStep { text: Some("A".into()), ..Default::default() };
+    let card = LocatorStep { css: Some(".card".into()), ..Default::default() };
+    let icon = LocatorStep { css: Some("i.fa-lock".into()), ..Default::default() };
+
+    assert_eq!(goals_of(json!({ "until": { "text": "A" } })), vec![Target::One(a.clone())]);
+    assert_eq!(goals_of(json!({ "until": "#x" })), vec![Target::Legacy("#x".into())]);
+    // The usual way to write a chain, outermost first: ONE target, the icon
+    // inside the card, not two targets.
+    assert_eq!(
+        goals_of(json!({ "until": [{ "css": ".card" }, { "css": "i.fa-lock" }] })),
+        vec![Target::Chain(vec![card.clone(), icon])]
+    );
+}
+
+#[test]
+fn until_all_is_several_targets_each_of_which_may_be_a_chain() {
     let a = LocatorStep { text: Some("A".into()), ..Default::default() };
     let b = LocatorStep { text: Some("B".into()), ..Default::default() };
     let card = LocatorStep { css: Some(".card".into()), ..Default::default() };
-
-    assert_eq!(until_of(json!({ "text": "A" })), PageTargets(vec![Target::One(a.clone())]));
-    assert_eq!(until_of(json!("#x")), PageTargets(vec![Target::Legacy("#x".into())]));
     assert_eq!(
-        until_of(json!([{ "text": "A" }, { "text": "B" }])),
-        PageTargets(vec![Target::One(a.clone()), Target::One(b)])
+        goals_of(json!({ "until_all": [{ "text": "A" }, { "text": "B" }] })),
+        vec![Target::One(a.clone()), Target::One(b)]
     );
     assert_eq!(
-        until_of(json!([[{ "css": ".card" }, { "text": "A" }]])),
-        PageTargets(vec![Target::Chain(vec![card, a])])
+        goals_of(json!({ "until_all": [[{ "css": ".card" }, { "text": "A" }], { "text": "A" }] })),
+        vec![Target::Chain(vec![card, a.clone()]), Target::One(a)]
     );
-    assert_eq!(until_of(json!([])), PageTargets(vec![]));
+}
 
-    // Written, always an array, and read back equal.
-    for v in [
-        json!({ "text": "A" }),
-        json!([{ "text": "A" }, { "text": "B" }]),
-        json!([[{ "css": ".card" }, { "text": "A" }]]),
+#[test]
+fn a_page_until_is_written_and_read_back_equal() {
+    for until in [
+        json!({ "until": { "text": "A" } }),
+        json!({ "until": [{ "css": ".card" }, { "text": "A" }] }),
+        json!({ "until_all": [{ "text": "A" }, [{ "css": ".card" }, { "text": "B" }]] }),
     ] {
-        let action: Action =
-            serde_json::from_value(json!({ "kind": "page_until", "next": "n", "until": v, "max_pages": 5 })).unwrap();
+        let action: Action = serde_json::from_value(page_until_with(until.clone())).unwrap();
         let written = serde_json::to_value(&action).unwrap();
-        assert!(written["until"].is_array(), "until is written as an array: {written}");
-        assert_eq!(serde_json::from_value::<Action>(written).unwrap(), action);
+        assert_eq!(serde_json::from_value::<Action>(written.clone()).unwrap(), action, "{written}");
+        // Only the field that was given is written.
+        assert_eq!(written.get("until").is_some(), until.get("until").is_some(), "{written}");
+        assert_eq!(written.get("until_all").is_some(), until.get("until_all").is_some(), "{written}");
     }
 }
 
@@ -98,28 +128,38 @@ fn page_until_takes_one_until_or_a_list() {
 fn page_until_is_checked_before_it_runs() {
     let check = |v: serde_json::Value| serde_json::from_value::<Action>(v).unwrap().validate();
     let with = |max: u32, until: serde_json::Value| json!({ "kind": "page_until", "next": "n", "until": until, "max_pages": max });
+    let with_all = |max: u32, all: serde_json::Value| json!({ "kind": "page_until", "next": "n", "until_all": all, "max_pages": max });
     assert_eq!(check(with(0, json!({ "text": "A" }))).unwrap_err(), PAGE_UNTIL_PAGES);
     assert_eq!(check(with(101, json!({ "text": "A" }))).unwrap_err(), PAGE_UNTIL_PAGES);
-    assert_eq!(check(with(5, json!([]))).unwrap_err(), PAGE_UNTIL_NONE);
+    assert_eq!(check(with_all(5, json!([]))).unwrap_err(), PAGE_UNTIL_NONE);
     let eleven: Vec<serde_json::Value> = (0..11).map(|i| json!({ "text": format!("T{i}") })).collect();
-    assert_eq!(check(with(5, json!(eleven))).unwrap_err(), PAGE_UNTIL_MANY);
+    assert_eq!(check(with_all(5, json!(eleven))).unwrap_err(), PAGE_UNTIL_MANY);
     let ten: Vec<serde_json::Value> = (0..10).map(|i| json!({ "text": format!("T{i}") })).collect();
-    assert!(check(with(100, json!(ten))).is_ok());
+    assert!(check(with_all(100, json!(ten))).is_ok());
     assert!(check(with(1, json!({ "text": "A" }))).is_ok());
+    assert!(check(with(1, json!([{ "css": ".card" }, { "text": "A" }]))).is_ok());
+    // Both, or neither, is refused with a sentence that says how to write each.
+    let both = json!({ "kind": "page_until", "next": "n", "until": { "text": "A" }, "until_all": [{ "text": "B" }], "max_pages": 5 });
+    assert_eq!(check(both).unwrap_err(), PAGE_UNTIL_ONE_OF);
+    let neither = json!({ "kind": "page_until", "next": "n", "max_pages": 5 });
+    assert_eq!(check(neither).unwrap_err(), PAGE_UNTIL_ONE_OF);
+    assert!(PAGE_UNTIL_ONE_OF.contains("chain") && PAGE_UNTIL_ONE_OF.contains("until_all"));
     // A bad `next` locator is refused with its own sentence.
     let bad = json!({ "kind": "page_until", "next": "", "until": { "text": "A" }, "max_pages": 5 });
     assert_eq!(check(bad).unwrap_err(), "a selector is empty");
-    // And a bad `until` locator names where it was.
-    let bad = with(5, json!([{ "text": "A" }, ""]));
+    // And a bad `until_all` locator names where it was.
+    let bad = with_all(5, json!([{ "text": "A" }, ""]));
     assert_eq!(check(bad).unwrap_err(), "page_until until: a selector is empty");
 }
 
 #[test]
-fn page_until_lists_next_then_each_until_as_its_targets() {
+fn page_until_lists_next_then_each_goal_as_its_targets() {
     let mut action: Action =
-        serde_json::from_value(json!({ "kind": "page_until", "next": { "text": "N" }, "until": [{ "text": "A" }, { "text": "B" }], "max_pages": 5 }))
+        serde_json::from_value(json!({ "kind": "page_until", "next": { "text": "N" }, "until_all": [{ "text": "A" }, { "text": "B" }], "max_pages": 5 }))
             .unwrap();
     assert_eq!(action.targets().len(), 3);
     assert_eq!(action.targets_mut().len(), 3);
     assert!(action.is_check());
+    let one: Action = serde_json::from_value(json!({ "kind": "page_until", "next": { "text": "N" }, "until": [{ "text": "A" }, { "text": "B" }], "max_pages": 5 })).unwrap();
+    assert_eq!(one.targets().len(), 2);
 }

@@ -2064,9 +2064,32 @@ fn the_guide_explains_absence_on_the_cases_words() {
     let g = autorun_guide();
     let section = guide_section(&g, "Checking thoroughly").expect("a Checking thoroughly section");
     let flat = section.split_whitespace().collect::<Vec<_>>().join(" ");
-    assert!(flat.contains("from_case") && flat.contains("no lock icon"), "Checking thoroughly never explains from_case");
+    assert!(flat.contains("from_case") && flat.contains("no access-denied message"), "Checking thoroughly never explains from_case");
+    // An icon has no words: it needs a css locator with a sighting, and a
+    // chain's scope must be the case's words or seen.
+    assert!(flat.contains("An icon has no words to name it by"), "Checking thoroughly steers an icon to from_case");
+    assert!(!flat.contains("no lock icon"), "the from_case example is an icon, which no words name");
+    assert!(flat.contains("every link must be the case's own words or have been seen matching something"));
     let saving = guide_section(&g, "Saving it").expect("a Saving it section");
     assert!(saving.split_whitespace().collect::<Vec<_>>().join(" ").contains("listed as `from_case`"));
+}
+
+/// `page_until` says its `until` is one target (a chain is a list of locator
+/// objects), `until_all` is several, and what fails a walk.
+#[test]
+fn the_guide_teaches_page_until_as_one_target_or_several() {
+    let g = autorun_guide();
+    let flat = g.split_whitespace().collect::<Vec<_>>().join(" ");
+    for want in [
+        "`until` is ONE target",
+        "a chain written as a list of locator objects, outermost first",
+        "\"until_all\": [ <target>, ... ]",
+        "Give exactly one of `until` and `until_all`",
+        "Next did not turn the page (page 3).",
+        "a chain in `until` (the card, then the thing), never two separate targets",
+    ] {
+        assert!(flat.contains(want), "the guide never says: {want}");
+    }
 }
 
 /// The publish example is its bullets and then its two-line block; the

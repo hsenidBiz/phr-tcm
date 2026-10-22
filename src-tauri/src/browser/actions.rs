@@ -465,35 +465,28 @@ pub enum Action {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         timeout_ms: Option<u32>,
     },
-    /// Click `next` page by page until every `until` locator has been seen,
-    /// each on any page.
-    PageUntil { next: Target, until: PageTargets, max_pages: u32 },
+    /// Click `next` page by page until the target has been seen: `until`
+    /// is ONE target (a locator, or a chain written as a list of locator
+    /// objects, outermost first), `until_all` is several, each seen on any
+    /// page. Exactly one of the two is given.
+    PageUntil {
+        next: Target,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        until: Option<Target>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        until_all: Option<Vec<Target>>,
+        max_pages: u32,
+    },
 }
 
-/// `page_until`'s `until`. Read: a locator object or string is one; a JSON
-/// array is a list whose items are each a locator (an object, a string, or a
-/// chain written as a list of objects). Written: always an array.
-#[derive(Debug, Clone, PartialEq, serde::Serialize, specta::Type)]
-#[serde(transparent)]
-#[specta(transparent)]
-pub struct PageTargets(pub Vec<Target>);
+/// The targets a `page_until` walks to, in order: its one `until`, or each
+/// of its `until_all`.
+pub fn page_goals<'a>(until: &'a Option<Target>, until_all: &'a Option<Vec<Target>>) -> Vec<&'a Target> {
+    until.iter().chain(until_all.iter().flatten()).collect()
+}
 
-impl<'de> serde::Deserialize<'de> for PageTargets {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        use serde::de::Error as _;
-        let value: serde_json::Value = serde::Deserialize::deserialize(deserializer)?;
-        match value {
-            serde_json::Value::Array(items) => items
-                .into_iter()
-                .map(|item| serde_json::from_value::<Target>(item).map_err(D::Error::custom))
-                .collect::<Result<Vec<_>, _>>()
-                .map(PageTargets),
-            one => serde_json::from_value::<Target>(one).map(|t| PageTargets(vec![t])).map_err(D::Error::custom),
-        }
-    }
+fn page_goals_mut<'a>(until: &'a mut Option<Target>, until_all: &'a mut Option<Vec<Target>>) -> Vec<&'a mut Target> {
+    until.iter_mut().chain(until_all.iter_mut().flatten()).collect()
 }
 
 /// The most pages `page_until` may walk.
@@ -502,10 +495,12 @@ pub const PAGE_UNTIL_MAX_PAGES: u32 = 100;
 pub const PAGE_UNTIL_MAX_TARGETS: usize = 10;
 /// `page_until` with `max_pages` outside 1 to 100.
 pub const PAGE_UNTIL_PAGES: &str = "page_until needs \"max_pages\" from 1 to 100";
-/// `page_until` with no `until` locator.
-pub const PAGE_UNTIL_NONE: &str = "page_until needs at least one \"until\" locator";
-/// `page_until` with more than ten `until` locators.
-pub const PAGE_UNTIL_MANY: &str = "page_until takes at most 10 \"until\" locators";
+/// `page_until` with an empty `until_all`.
+pub const PAGE_UNTIL_NONE: &str = "page_until needs at least one target in \"until_all\"";
+/// `page_until` with more than ten `until_all` targets.
+pub const PAGE_UNTIL_MANY: &str = "page_until takes at most 10 targets in \"until_all\"";
+/// `page_until` with both `until` and `until_all`, or neither.
+pub const PAGE_UNTIL_ONE_OF: &str = "page_until takes \"until\" (one target; a chain is a list of locator objects, outermost first) or \"until_all\" (a list of targets), not both and not neither";
 
 /// How an `expect_dialog` answers: OK, or Cancel.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, specta::Type)]
@@ -1417,17 +1412,22 @@ impl Action {
                 }
                 Ok(())
             }
-            Action::PageUntil { next, until, max_pages } => {
+            Action::PageUntil { next, until, until_all, max_pages } => {
                 if !(1..=PAGE_UNTIL_MAX_PAGES).contains(max_pages) {
                     return Err(PAGE_UNTIL_PAGES.to_string());
                 }
-                match until.0.len() {
-                    0 => return Err(PAGE_UNTIL_NONE.to_string()),
-                    n if n > PAGE_UNTIL_MAX_TARGETS => return Err(PAGE_UNTIL_MANY.to_string()),
+                if until.is_some() == until_all.is_some() {
+                    return Err(PAGE_UNTIL_ONE_OF.to_string());
+                }
+                match until_all.as_ref().map(Vec::len) {
+                    Some(0) => return Err(PAGE_UNTIL_NONE.to_string()),
+                    Some(n) if n > PAGE_UNTIL_MAX_TARGETS => return Err(PAGE_UNTIL_MANY.to_string()),
                     _ => {}
                 }
                 next.validate()?;
-                until.0.iter().try_for_each(|u| u.validate().map_err(|why| format!("page_until until: {why}")))
+                page_goals(until, until_all)
+                    .into_iter()
+                    .try_for_each(|u| u.validate().map_err(|why| format!("page_until until: {why}")))
             }
             Action::CheckText { value } if value.trim().is_empty() => {
                 Err("check_text has an empty value".to_string())
@@ -1667,7 +1667,7 @@ impl Action {
             Action::ExpectEach { selector, child, .. } => std::iter::once(selector).chain(child.as_ref()).collect(),
             Action::ExpectOrder { selector, .. } => vec![selector],
             Action::ExpectPosition { selector, relative_to, .. } => vec![selector, relative_to],
-            Action::PageUntil { next, until, .. } => std::iter::once(next).chain(until.0.iter()).collect(),
+            Action::PageUntil { next, until, until_all, .. } => std::iter::once(next).chain(page_goals(until, until_all)).collect(),
             Action::WhenVisible { selector, then, .. } | Action::RepeatWhileVisible { selector, then, .. } => {
                 std::iter::once(selector).chain(then.iter().flat_map(Action::targets)).collect()
             }
@@ -1720,7 +1720,9 @@ impl Action {
             Action::ExpectEach { selector, child, .. } => std::iter::once(selector).chain(child.as_mut()).collect(),
             Action::ExpectOrder { selector, .. } => vec![selector],
             Action::ExpectPosition { selector, relative_to, .. } => vec![selector, relative_to],
-            Action::PageUntil { next, until, .. } => std::iter::once(next).chain(until.0.iter_mut()).collect(),
+            Action::PageUntil { next, until, until_all, .. } => {
+                std::iter::once(next).chain(page_goals_mut(until, until_all)).collect()
+            }
             Action::WhenVisible { selector, then, .. } | Action::RepeatWhileVisible { selector, then, .. } => {
                 std::iter::once(selector).chain(then.iter_mut().flat_map(Action::targets_mut)).collect()
             }
@@ -2148,31 +2150,120 @@ impl UrlWant<'_> {
             UrlWant::Contains(_) => format!("{URL_IS}{href}"),
             UrlWant::Equals(e) => format!("{URL_IS}{href}, not \"{e}\""),
             UrlWant::SameAs { name, noted } => {
-                format!("{URL_IS}{href}, not the address noted as \"{name}\" ({noted})")
+                format!("{URL_IS}{href}, not the address noted as \"{name}\" ({})", path_only(noted))
             }
         }
     }
 }
 
-/// Is the address `href` the one `want` names? A `want` starting with "/" is
-/// compared with the address's path, query and fragment (all after the
-/// origin); anything else with the whole address.
-pub fn url_equals(href: &str, want: &str) -> bool {
-    if !want.starts_with('/') {
-        return href == want;
-    }
-    let after_origin = match href.find("://") {
-        Some(i) => {
-            let rest = &href[i + 3..];
-            match rest.find(['/', '?', '#']) {
-                Some(j) if rest[j..].starts_with('/') => rest[j..].to_string(),
-                Some(j) => format!("/{}", &rest[j..]),
-                None => "/".to_string(),
-            }
-        }
-        None => href.to_string(),
+/// What `check_url` `equals` asks of an address, read from the trimmed
+/// `want` (`url_rule`): the one rule the app and the Playwright export share.
+///
+/// - A full address (`scheme://host/...`) must have the same origin (scheme,
+///   host lowercased, no default port), path (an empty one is `/`) and query.
+/// - A path (starting with `/`) must have the same path and query as the
+///   current address, whatever its origin.
+/// - A fragment is compared only when `want` names one (a page that routes
+///   by `#/...` can still be checked).
+/// - Anything else is compared as the whole trimmed string.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UrlRule {
+    /// The origin to match, for a full address.
+    pub origin: Option<String>,
+    /// Path and query, `?` included when there is a query.
+    pub path_query: String,
+    /// The fragment to match, `#` included, when `want` names one.
+    pub fragment: Option<String>,
+    /// `want` was neither a full address nor a path: compare it whole.
+    pub whole: bool,
+}
+
+/// An address read in parts: origin (None for a path), path, query without
+/// its `?`, fragment without its `#`.
+fn address_parts(address: &str) -> Option<(Option<String>, String, String, String)> {
+    let address = address.trim();
+    let (rest, fragment) = match address.find('#') {
+        Some(i) => (&address[..i], &address[i + 1..]),
+        None => (address, ""),
     };
-    after_origin == want
+    let (rest, query) = match rest.find('?') {
+        Some(i) => (&rest[..i], &rest[i + 1..]),
+        None => (rest, ""),
+    };
+    if let Some(i) = rest.find("://") {
+        let scheme = rest[..i].to_ascii_lowercase();
+        if scheme.is_empty() || !scheme.chars().all(|c| c.is_ascii_alphanumeric() || c == '+' || c == '-' || c == '.') {
+            return None;
+        }
+        let after = &rest[i + 3..];
+        let (authority, path) = match after.find('/') {
+            Some(j) => (&after[..j], after[j..].to_string()),
+            None => (after, "/".to_string()),
+        };
+        let mut host = authority.to_ascii_lowercase();
+        let default_port = match scheme.as_str() {
+            "http" => ":80",
+            "https" => ":443",
+            _ => "",
+        };
+        if !default_port.is_empty() && host.ends_with(default_port) {
+            host.truncate(host.len() - default_port.len());
+        }
+        return Some((Some(format!("{scheme}://{host}")), path, query.to_string(), fragment.to_string()));
+    }
+    if rest.starts_with('/') {
+        return Some((None, rest.to_string(), query.to_string(), fragment.to_string()));
+    }
+    None
+}
+
+fn path_and_query(path: &str, query: &str) -> String {
+    if query.is_empty() {
+        path.to_string()
+    } else {
+        format!("{path}?{query}")
+    }
+}
+
+/// The rule a `check_url` `equals` of `want` applies.
+pub fn url_rule(want: &str) -> UrlRule {
+    let want = want.trim();
+    match address_parts(want) {
+        Some((origin, path, query, fragment)) => UrlRule {
+            origin,
+            path_query: path_and_query(&path, &query),
+            fragment: (!fragment.is_empty()).then(|| format!("#{fragment}")),
+            whole: false,
+        },
+        None => UrlRule { origin: None, path_query: want.to_string(), fragment: None, whole: true },
+    }
+}
+
+impl UrlRule {
+    /// The address as a page reads it once reduced to what the rule
+    /// compares: origin (if any), path, query, and the fragment (if named).
+    /// What the export's `expect.poll` produces from `cur.url()` is
+    /// compared with exactly this.
+    pub fn expected(&self) -> String {
+        format!("{}{}{}", self.origin.as_deref().unwrap_or(""), self.path_query, self.fragment.as_deref().unwrap_or(""))
+    }
+}
+
+/// Is the address `href` the one `want` names (`UrlRule`)? Both sides are
+/// trimmed.
+pub fn url_equals(href: &str, want: &str) -> bool {
+    let rule = url_rule(want);
+    if rule.whole {
+        return href.trim() == rule.path_query;
+    }
+    let Some((origin, path, query, fragment)) = address_parts(href) else { return false };
+    if rule.origin.is_some() && origin != rule.origin {
+        return false;
+    }
+    if path_and_query(&path, &query) != rule.path_query {
+        return false;
+    }
+    rule.fragment.as_ref().is_none_or(|f| *f == format!("#{fragment}"))
 }
 
 /// `check_url`: does the address hold what `want` names? Looked at again
@@ -2449,8 +2540,8 @@ async fn run<D: Driver>(d: &mut D, action: &Action, timing: &Timing, policy: &Po
             let check = Check::Position { relative_to, relation: *relation };
             expect::expect(d, selector, check, wait(timeout_ms, timing), timing.poll_ms).await
         }
-        Action::PageUntil { next, until, max_pages } => {
-            super::page_until::page_until(d, next, &until.0, *max_pages, timing).await
+        Action::PageUntil { next, until, until_all, max_pages } => {
+            super::page_until::page_until(d, next, &page_goals(until, until_all), *max_pages, timing).await
         }
         Action::ExpectRowCount { table, equals, at_least, at_most, timeout_ms } => match table::row_count(*equals, *at_least, *at_most) {
             Ok(want) => table::expect_table(d, table, table::TableCheck::Count(want), wait(timeout_ms, timing), timing.poll_ms).await,

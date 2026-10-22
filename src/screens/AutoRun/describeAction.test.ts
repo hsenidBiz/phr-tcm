@@ -216,7 +216,7 @@ describe("a sentence for every action kind", () => {
       "Check the element #a is in the bottom-right of the element #b",
     ],
     [
-      { kind: "page_until", next: { role: "button", name: "Next" }, until: [{ text: "Published" }], max_pages: 40 },
+      { kind: "page_until", next: { role: "button", name: "Next" }, until: { text: "Published" }, max_pages: 40 },
       'Click the "Next" button page by page until the text "Published" show, at most 40 pages',
     ],
     [
@@ -337,22 +337,39 @@ describe("a sentence for every action kind", () => {
       say({
         kind: "page_until",
         next: { role: "button", name: "Next" },
-        until: [{ text: "Published" }, { text: "Unpublished" }],
+        until_all: [{ text: "Published" }, { text: "Unpublished" }],
         max_pages: 40,
-      }),
+      } as never),
     ).toBe('Click the "Next" button page by page until the text "Published" and the text "Unpublished" show, at most 40 pages');
-    // One locator in place of a list, and a chain as an item.
+    // One target in place of a list.
     expect(
       say({ kind: "page_until", next: { role: "button", name: "Next" }, until: { text: "Published" }, max_pages: 3 } as never),
     ).toBe('Click the "Next" button page by page until the text "Published" show, at most 3 pages');
+    // A list in `until` is a chain: one target, not two.
+    const chain = say({
+      kind: "page_until",
+      next: { role: "button", name: "Next" },
+      until: [{ role: "article", name: "Annual Review" }, { css: "i.fa-lock" }],
+      max_pages: 5,
+    } as never);
+    expect(chain).not.toContain(" and ");
+    expect(chain).toContain("inside");
+    // A chain as an item of `until_all`.
     expect(
       say({
         kind: "page_until",
         next: { role: "button", name: "Next" },
-        until: [[{ css: "iframe#goals" }, { text: "Add" }]],
+        until_all: [[{ css: "iframe#goals" }, { text: "Add" }]],
         max_pages: 5,
       } as never),
     ).toContain("until the text \"Add\" inside the frame");
+  });
+
+  test("page_until with both targets, or neither, is unreadable", () => {
+    const next = { role: "button", name: "Next" };
+    for (const rest of [{}, { until: { text: "A" }, until_all: [{ text: "B" }] }, { until_all: [] }]) {
+      expect(say({ kind: "page_until", next, max_pages: 3, ...rest } as never)).not.toContain("page by page");
+    }
   });
 
   test("every kind in the list above is covered", () => {

@@ -1589,6 +1589,27 @@ fn url_equals_compares_a_path_with_the_path_query_and_fragment() {
     assert!(url_equals("https://app.example?a=1", "/?a=1"));
 }
 
+#[test]
+fn url_equals_reads_both_sides_trimmed_and_a_full_address_by_origin_path_and_query() {
+    // An empty path is "/", and a trailing space is ignored.
+    assert!(url_equals("https://app.example/", "https://app.example"));
+    assert!(url_equals("https://app.example/hr/cycles", " /hr/cycles "));
+    assert!(url_equals(" https://app.example/hr/cycles ", "https://app.example/hr/cycles  "));
+    // The host's capitals and a default port are not a difference.
+    assert!(url_equals("https://app.example/hr", "https://APP.example:443/hr"));
+    // Another scheme, host or port is, even with the same path.
+    assert!(!url_equals("http://app.example/home", "https://app.example/home"));
+    assert!(!url_equals("https://other.example/home", "https://app.example/home"));
+    assert!(!url_equals("https://app.example:8443/home", "https://app.example/home"));
+    // A path compares the path and the query, on any origin.
+    assert!(url_equals("https://other.example/home?a=1", "/home?a=1"));
+    assert!(!url_equals("https://app.example/home?a=2", "/home?a=1"));
+    // A fragment counts only when the wanted address names one.
+    assert!(url_equals("https://app.example/home#top", "/home"));
+    assert!(url_equals("https://app.example/#/cycles", "/#/cycles"));
+    assert!(!url_equals("https://app.example/#/cycles", "/#/people"));
+}
+
 #[tokio::test]
 async fn check_url_equals_passes_only_on_the_exact_address() {
     let eq = |want: &str| Action::CheckUrl { contains: String::new(), equals: Some(want.into()), same_as: None, timeout_ms: None };
@@ -1623,6 +1644,8 @@ async fn check_url_same_as_fails_when_the_address_changed() {
     let out = execute_with(&mut d, &same("before"), &quick()).await;
     assert!(!out.ok && !out.harness, "{}", out.detail);
     assert!(out.detail.contains("not the address noted as \"before\""), "{}", out.detail);
+    // The noted address is said as its path, never in full.
+    assert!(out.detail.ends_with("(/start)") && !out.detail.contains("https://app.example/start"), "{}", out.detail);
     let calls = d.calls.len();
     let out = execute_with(&mut d, &same("never"), &quick()).await;
     assert!(!out.ok, "{}", out.detail);

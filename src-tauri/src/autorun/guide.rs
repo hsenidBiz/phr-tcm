@@ -281,7 +281,7 @@ no script step for it, and do not renumber the steps that come after it.
 - `{ "kind": "expect_each", "selector": { "css": "div[data-cycle-id]" }, "child": { "css": "h3" }, "matches": "^AUTOTEST " }` - every match of the selector (a list) passes one check: `"visible": true` (needs `child`), `equals`, `contains`, `matches` or `"not_empty": true`; with `child`, the check reads the one element `child` finds inside each item, and with `attribute`, that attribute instead of the text; `min` (default 1) is the fewest items there may be; at most 200 items are read, and the list must hold still for 750 ms before it passes, so a `timeout_ms` is at least 1500 (see "Checking thoroughly")
 - `{ "kind": "expect_order", "selector": { "role": "option" }, "texts": ["All", "Draft", "Published"] }` - the matches, in page order, contain these texts in this order (others may sit between); case matters, and an item only has to contain a text, so write enough of it to tell items apart (`All (`, not `All`); 2 to 50 texts, and the list must hold still for 750 ms before it passes, so a `timeout_ms` is at least 1500 (see "Checking thoroughly")
 - `{ "kind": "expect_position", "selector": ..., "relative_to": ..., "relation": "right_of" }` - where one element sits against another: `left_of`, `right_of`, `above`, `below`, `inside`, `in_top_left`, `in_top_right`, `in_bottom_left` or `in_bottom_right`; no pixel sizes. A corner means the centre of the element is in that quarter of `relative_to`, and a centre on a midline (within 1 px) counts for both halves, so a button centred up the middle of a bar is in its top-right when it is in the right half; both elements must hold still for 750 ms before it passes, so a `timeout_ms` is at least 1500 (see "Checking thoroughly")
-- `{ "kind": "page_until", "next": ..., "until": [ ..., ... ], "max_pages": 40 }` - click `next` page by page until every `until` locator has been seen, each on any page; it fails, naming the pages walked, when `max_pages` pages were looked at, or when `next` is gone or disabled first. `until` is one locator or a list of up to 10.
+- `{ "kind": "page_until", "next": ..., "until": ..., "max_pages": 40 }` - click `next` page by page until the `until` target has been seen on a page; it fails, naming the pages walked, when `max_pages` pages were looked at, when `next` is gone or disabled first (its disabled property, `aria-disabled="true"` or a class `disabled`), or when `next` did not turn the page ("Next did not turn the page (page 3)."). `until` is ONE target: a locator, or a chain written as a list of locator objects, outermost first (`"until": [ { "role": "article", "name": "Annual Review" }, { "css": "i.fa-lock" } ]` is the lock icon inside that card, on one page). For several targets, each seen on any page, give `"until_all": [ <target>, ... ]` (up to 10, each a locator or a chain) in place of `until`. Give exactly one of `until` and `until_all`.
 - `{ "kind": "drag", "from": ..., "to": ..., "position": "before" }` - pick `from` up and drop it on `to`: `before` it, `after` it, or `onto` it (the default); `within_ms` (default 10000) is optional (see "Dragging to reorder")
 - `{ "kind": "use_component", "component": "pick-date", "inputs": { "day": "5" } }` - runs a saved component with its inputs (see "Components")
 - `{ "kind": "expect_focused", "selector": ... }` - the focus is on this element, or on something inside it
@@ -1323,7 +1323,7 @@ only, no pixel sizes or distances: a layout moves a few pixels without being
 wrong. A corner puts the element's centre in that quarter of the other element.
 Give it a `timeout_ms` of at least 1500.
 
-**A list that pages.** When the case says a list shows something ("All shows every status") and the list is newest first, the cards may be pages in. Walk to them with `page_until` rather than narrowing the list with a search the case does not make: a search proves less than the case says.
+**A list that pages.** When the case says a list shows something ("All shows every status") and the list is newest first, the cards may be pages in. Walk to them with `page_until` rather than narrowing the list with a search the case does not make: a search proves less than the case says. A thing inside a card is a chain in `until` (the card, then the thing), never two separate targets.
 
 **Everything the expected result names.** Each thing a step's expected result names is checked: a
 message, a state, a column, and an icon too. An icon has no accessible name, so reach it by css
@@ -1348,11 +1348,13 @@ that is wrong passes forever. The save refuses one whose locator "was only
 ever seen matching nothing on the live app". There are three ways through:
 probe the locator where it is shown (in any area), or have the script check
 the same thing present somewhere else, with the same last part, or, for
-something the app never shows anywhere ("no access-denied message", "no lock
-icon"), name it by the case's own words, as a text or a role with a name: the
-save lets it through without a sighting and says so (`from_case`). A css or a
-role with no name still needs a sighting, and the same words in a click are
-refused. Say a
+something the app never shows anywhere ("no access-denied message"), name it
+by the case's own words, as a text or a role with a name: the save lets it
+through without a sighting and says so (`from_case`). In a chain, every link
+must be the case's own words or have been seen matching something: an unseen
+css or role scope still refuses it. A css or a role with no name still needs a
+sighting, and the same words in a click are refused. An icon has no words to
+name it by: reach it by css, and probe it on a record that shows it. Say a
 Draft cycle card has no Unpublish switch. The switch is seen on a Published
 card, so check it absent on the Draft card and present on the Published one:
 

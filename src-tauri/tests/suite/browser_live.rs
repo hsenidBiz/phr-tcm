@@ -4106,18 +4106,52 @@ async fn page_until_walks_a_real_list_until_the_card_shows() {
         json!({ "kind": "page_until", "next": next.clone(), "until": until, "max_pages": max })
     };
 
-    let out = run(&mut live, walk(json!([{ "text": "Unpublished" }]), 10)).await;
+    let out = run(&mut live, walk(json!({ "text": "Unpublished" }), 10)).await;
     assert!(out.ok, "{}", out.detail);
     assert!(out.detail.contains("on page 4"), "{}", out.detail);
 
     // Back to page 1, then a target that is on no page.
     must(run(&mut live, json!({ "kind": "navigate", "url": url })).await);
-    let out = run(&mut live, walk(json!([{ "text": "Archived" }]), 10)).await;
+    let out = run(&mut live, walk(json!({ "text": "Archived" }), 10)).await;
     assert!(!out.ok, "{}", out.detail);
     assert!(out.detail.contains("walked 5 pages and never saw"), "{}", out.detail);
     assert!(out.detail.contains("is disabled on page 5"), "{}", out.detail);
 
     // Fewer pages than the card is deep: the count at the limit.
     must(run(&mut live, json!({ "kind": "navigate", "url": fixture_url().replace("autorun-live.html", "autorun-pages.html") })).await);
-    refused(run(&mut live, walk(json!([{ "text": "Unpublished" }]), 2)).await, "walked 2 pages and never saw");
+    refused(run(&mut live, walk(json!({ "text": "Unpublished" }), 2)).await, "walked 2 pages and never saw");
+}
+
+/// A page that turns late (700 ms after the click, no request) is waited for:
+/// the walk never looks at the old page again and counts it as a new one.
+/// A Next that does nothing fails saying so, and a Next disabled only by a
+/// class ends the walk at once.
+#[tokio::test]
+#[ignore = "starts a real headless Edge"]
+async fn page_until_waits_for_a_page_that_turns_late() {
+    let mut live = open().await;
+    let url = fixture_url().replace("autorun-live.html", "autorun-pages-slow.html");
+    must(run(&mut live, json!({ "kind": "navigate", "url": url.clone() })).await);
+    let next = json!({ "role": "button", "name": "Next" });
+    let walk = |until: serde_json::Value, max: u32| {
+        json!({ "kind": "page_until", "next": next.clone(), "until": until, "max_pages": max })
+    };
+
+    // Page 3 is the third page, not a later one: no page was skipped.
+    let out = run(&mut live, walk(json!({ "text": "Unpublished" }), 10)).await;
+    assert!(out.ok, "{}", out.detail);
+    assert!(out.detail.contains("on page 3"), "{}", out.detail);
+
+    // A card that is on no page: the last page, where Next only has the class.
+    must(run(&mut live, json!({ "kind": "navigate", "url": url.clone() })).await);
+    let out = run(&mut live, walk(json!({ "text": "Archived" }), 10)).await;
+    assert!(!out.ok, "{}", out.detail);
+    assert!(out.detail.contains("walked 4 pages and never saw") && out.detail.contains("is disabled on page 4"), "{}", out.detail);
+
+    // A Next that turns nothing.
+    must(run(&mut live, json!({ "kind": "navigate", "url": format!("{url}?stuck") })).await);
+    let quick = Timing { action_ms: 1500, ..timing() };
+    let out = run_with(&mut live, walk(json!({ "text": "Unpublished" }), 10), &quick).await;
+    assert!(!out.ok, "{}", out.detail);
+    assert_eq!(out.detail, "Next did not turn the page (page 1).");
 }

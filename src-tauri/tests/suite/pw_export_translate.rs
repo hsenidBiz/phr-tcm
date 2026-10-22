@@ -1163,15 +1163,52 @@ fn the_address_checks_export_with_the_same_rules() {
     ]))
     .run()
     .unwrap();
-    assert!(got.contains("u.pathname + u.search + u.hash"), "{got}");
-    assert!(got.contains(".toBe('/hr/cycles');"), "{got}");
-    assert!(got.contains(".toBe('/hr/cycles?id=4#top');"), "{got}");
+    // A path compares the path and query; a full address keeps its origin
+    // and is never turned into a path.
+    assert!(got.contains("return u.pathname + u.search; }, { timeout: 10000 }).toBe('/hr/cycles');"), "{got}");
+    assert!(got.contains("return u.origin + u.pathname + u.search + u.hash; }, { timeout: 4000 }).toBe('https://app.example/hr/cycles?id=4#top');"), "{got}");
     assert_eq!(got.matches("const notedUrls: Record<string, string> = {};").count(), 1, "{got}");
     assert!(got.contains("notedUrls['before'] = cur.url();"), "{got}");
     assert!(got.contains("await expect.poll(() => cur.url(), { timeout: 10000 }).toBe(notedUrls['before']);"), "{got}");
     // Only a script that notes an address carries the notebook.
     let plain = one_step(json!([{ "kind": "check_url", "contains": "/x" }])).run().unwrap();
     assert!(!plain.contains("notedUrls"), "{plain}");
+}
+
+/// The export reduces `cur.url()` the way its emitted script does (origin if
+/// the rule names one, path, query, and the fragment if the rule names one)
+/// and compares it with `UrlRule::expected`: that must say what the app's
+/// `url_equals` says.
+#[test]
+fn the_exported_address_check_agrees_with_the_apps() {
+    use v2_lib::browser::actions::{url_equals, url_rule};
+    let exported = |href: &str, want: &str| {
+        let (rule, seen) = (url_rule(want), url_rule(href));
+        let reduced = format!(
+            "{}{}{}",
+            if rule.origin.is_some() { seen.origin.clone().unwrap_or_default() } else { String::new() },
+            seen.path_query,
+            if rule.fragment.is_some() { seen.fragment.clone().unwrap_or_default() } else { String::new() },
+        );
+        reduced == rule.expected()
+    };
+    for (href, want, agree) in [
+        ("https://app.example/", "https://app.example", true),
+        ("https://APP.example:443/hr", "https://app.example/hr", true),
+        ("https://app.example/hr?id=4#frag", "  /hr?id=4  ", true),
+        ("https://app.example/hr", "https://other.example/hr", false),
+        ("http://app.example/hr", "https://app.example/hr", false),
+        ("https://app.example/hr?id=5", "/hr?id=4", false),
+        ("https://app.example/hr#/a", "/hr#/b", false),
+    ] {
+        assert_eq!(url_equals(href, want), agree, "app: {href} vs {want:?}");
+        assert_eq!(exported(href, want), agree, "export: {href} vs {want:?}");
+    }
+    // The export keeps a full address as a full address.
+    let got = one_step(json!([{ "kind": "check_url", "equals": "https://app.example" }])).run().unwrap();
+    assert!(got.contains("return u.origin + u.pathname + u.search; }") && got.contains(".toBe('https://app.example/');"), "{got}");
+    let got = one_step(json!([{ "kind": "check_url", "equals": " /hr/cycles " }])).run().unwrap();
+    assert!(got.contains(".toBe('/hr/cycles');"), "{got}");
 }
 
 #[test]
@@ -1185,7 +1222,7 @@ fn an_exact_address_off_the_projects_origins_cannot_be_exported() {
 fn page_until_exports_the_same_walk() {
     let got = one_step(json!([
         { "kind": "page_until", "next": { "role": "button", "name": "Next" },
-          "until": [{ "text": "Published" }, [{ "css": ".card" }, { "text": "Unpublished" }]], "max_pages": 40 }
+          "until_all": [{ "text": "Published" }, [{ "css": ".card" }, { "text": "Unpublished" }]], "max_pages": 40 }
     ]))
     .run()
     .unwrap();
@@ -1197,10 +1234,21 @@ fn page_until_exports_the_same_walk() {
         "(await l.count()) > 0",
         "isEnabled()",
         "isVisible()",
+        "classList.contains('disabled')",
+        "const before = await signature();",
         "await next.click();",
-        "waitForLoadState('networkidle'",
+        "await expect.poll(signature, { timeout: 15000 }).not.toBe(before)",
+        "Next did not turn the page (page ' + p + ').",
     ] {
         assert!(got.contains(want), "missing {want}\n{got}");
     }
     assert!(!got.contains("waitForTimeout"), "a fixed wait is left:\n{got}");
+    assert!(!got.contains("networkidle"), "the page turn waits on networkidle, which an in-page click has already reached:\n{got}");
+    // One `until` is one target; a chain is a list of locator objects.
+    let one = one_step(json!([
+        { "kind": "page_until", "next": "#n", "until": [{ "css": ".card" }, { "text": "Unpublished" }], "max_pages": 3 }
+    ]))
+    .run()
+    .unwrap();
+    assert!(one.contains("const until = [cur.locator('.card').filter({ visible: true }).getByText('Unpublished').filter({ visible: true })];"), "{one}");
 }

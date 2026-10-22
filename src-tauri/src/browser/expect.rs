@@ -50,6 +50,10 @@ pub enum Check<'a> {
     Enabled,
     /// The one match is disabled (`DISABLED_JS`).
     Disabled,
+    /// The one match is a paging control that cannot be used: disabled by
+    /// `DISABLED_JS`, or carrying a class token `disabled` (`PAGER_DISABLED_JS`).
+    /// Only `page_until` asks.
+    PagerDisabled,
     /// The one match is ticked (true) or not (false), by `CHECKED_JS`.
     Checked(bool),
     /// The one match's computed style `property`, by `READ_STYLE_JS`,
@@ -73,6 +77,14 @@ pub enum Check<'a> {
 /// disabled fieldset holding a listed form control outside its first
 /// legend). A click waits out the same rule (`input::PROBE_JS`).
 pub const DISABLED_JS: &str = concat!("function() { return ", disabled_why_js!(), "(this); }");
+
+/// `DISABLED_JS`, and also a class token `disabled` on the element itself:
+/// how most paginators switch their Next off.
+pub const PAGER_DISABLED_JS: &str = concat!(
+    "function() { const why = ",
+    disabled_why_js!(),
+    "(this); if (why) return why; return this.classList && this.classList.contains('disabled') ? 'it has the class disabled' : ''; }"
+);
 
 /// `expect_enabled` on a disabled element, followed by why: one of
 /// "its disabled property is set", "it has aria-disabled=\"true\"", "an
@@ -509,10 +521,11 @@ async fn look_reading<D: Driver>(
                 }
             }
         },
-        Check::Enabled | Check::Disabled => match only(&handles) {
+        Check::Enabled | Check::Disabled | Check::PagerDisabled => match only(&handles) {
             Err(why) => Err(why),
             Ok(h) => {
-                let why = page::call_value(d, h, DISABLED_JS, &[]).await?;
+                let js = if matches!(check, Check::PagerDisabled) { PAGER_DISABLED_JS } else { DISABLED_JS };
+                let why = page::call_value(d, h, js, &[]).await?;
                 let why = why.as_str().unwrap_or("");
                 match (matches!(check, Check::Enabled), why.is_empty()) {
                     (true, true) => Ok(format!("{what} {IS_ENABLED}")),
