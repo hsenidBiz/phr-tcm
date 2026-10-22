@@ -3,7 +3,7 @@
 
 use serde_json::{json, Value};
 use std::cell::{Cell, RefCell};
-use v2_lib::autorun::roles::{self, Role, ROLE_MAX_CHARS};
+use v2_lib::autorun::roles::{self, Role};
 use v2_lib::mcp::{handle_message, handle_message_in};
 use v2_lib::mcp_session::{Session, IDLE_RESET_MS};
 
@@ -202,5 +202,7 @@ fn a_session_pays_each_role_once() {
         assert!(full || (n.starts_with("(The ") && n.chars().count() < 220), "{n}");
     }
     let total: usize = notes.iter().map(|n| n.chars().count()).sum();
-    assert!(total <= 3 * ROLE_MAX_CHARS + 5 * 220, "{total}");
+    // Three full role texts (each now holds the Playwright repo's files too) and the pointers.
+    let full: usize = [Role::Writer, Role::Healer, Role::CaseRewriter].iter().map(|r| r.text().chars().count()).sum();
+    assert!(total <= full + 5 * 220, "{total}");
 }

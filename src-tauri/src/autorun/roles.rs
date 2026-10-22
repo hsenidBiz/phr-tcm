@@ -1,13 +1,19 @@
-//! The rules each part of the scripting work follows, carried over from the
-//! Playwright pipeline's agent files (`.claude/agents/*.md` and `/gen-test`
-//! in the QA automation repo) and adapted to TCM's tools: the writer
-//! (playwright-test-planner and -generator), the healer
-//! (playwright-test-healer and the healer bounds), the case rewriter
-//! (test-refactorer and spec-editor) and the auditor (doc-drift-auditor);
-//! the explorer is this app's own, for a task done with no test case.
-//! Each role's text is in `roles/<key>.md`; an MCP session gets it ahead of
-//! the first answer of the tool that starts the role (`mcp_session`), and
-//! `get_guide` gives it by name. They hold whatever tools the assistant has.
+//! The rules each part of the scripting work follows. The writer, the healer
+//! and the case rewriter are built on the team's Playwright repo (the clone
+//! set on the Playwright tab): the text is TCM's own rules first
+//! (`roles/<key>.md`, which win wherever the repo says otherwise), then the
+//! repo's agent files read from the clone each time the text is wanted (the
+//! shipped snapshot when the clone is not there, said in the first line:
+//! `pw_rules`), then a note on how TCM's tools stand in for the Playwright
+//! tools those files name (`roles/<key>-tools.md`). The writer reads
+//! playwright-test-planner and -generator, the healer
+//! playwright-test-healer, the case rewriter spec-editor. The auditor and the
+//! explorer are this app's own, with no repo files and no note.
+//! An MCP session gets a role's text ahead of the first answer of the tool
+//! that starts the role (`mcp_session`), and `get_guide` gives it by name.
+//! They hold whatever tools the assistant has.
+
+use crate::autorun::pw_rules::{self, RepoFile, Why};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Role {
@@ -73,9 +79,9 @@ impl Role {
         }
     }
 
-    /// The role's rules: its `roles/<key>.md` through include_str!, with
+    /// Part 1: TCM's own rules, `roles/<key>.md` through include_str!, with
     /// "\r\n" read as "\n".
-    pub fn text(self) -> String {
+    pub fn tcm_rules(self) -> String {
         let raw = match self {
             Role::Writer => include_str!("roles/writer.md"),
             Role::Healer => include_str!("roles/healer.md"),
@@ -84,6 +90,90 @@ impl Role {
             Role::Explorer => include_str!("roles/explorer.md"),
         };
         raw.replace("\r\n", "\n")
+    }
+
+    /// Part 3: how TCM's tools stand in for the Playwright tools the repo's
+    /// files name, `roles/<key>-tools.md`; `None` for the auditor and the
+    /// explorer.
+    pub fn tool_note(self) -> Option<String> {
+        let raw = match self {
+            Role::Writer => include_str!("roles/writer-tools.md"),
+            Role::Healer => include_str!("roles/healer-tools.md"),
+            Role::CaseRewriter => include_str!("roles/case-rewriter-tools.md"),
+            Role::Auditor | Role::Explorer => return None,
+        };
+        Some(raw.replace("\r\n", "\n"))
+    }
+
+    /// The Playwright repo's agent files (names in `.claude/agents/`) this
+    /// role is built on, in the order they are given. Empty for the auditor
+    /// and the explorer.
+    pub fn repo_files(self) -> &'static [&'static str] {
+        match self {
+            Role::Writer => &["playwright-test-planner.md", "playwright-test-generator.md"],
+            Role::Healer => &["playwright-test-healer.md"],
+            Role::CaseRewriter => &["spec-editor.md"],
+            Role::Auditor | Role::Explorer => &[],
+        }
+    }
+
+    /// The whole text: when the role has repo files, a line saying so first
+    /// if any is the shipped copy, then TCM's rules, each repo file as a
+    /// section, and the tool note; otherwise TCM's rules exactly.
+    fn compose(self, files: &[RepoFile]) -> String {
+        let rules = self.tcm_rules();
+        let Some(note) = self.tool_note() else {
+            return rules;
+        };
+        let mut out = String::new();
+        let shipped: Vec<(&Why, &str)> = files
+            .iter()
+            .filter_map(|f| match &f.from {
+                pw_rules::From::Shipped(why) => Some((why, f.label.as_str())),
+                pw_rules::From::Live => None,
+            })
+            .collect();
+        if let Some((why, _)) = shipped.first() {
+            let labels: Vec<String> = shipped.iter().map(|(_, l)| (*l).to_string()).collect();
+            out.push_str(&pw_rules::shipped_line(why, &labels));
+            out.push_str("\n\n");
+        }
+        out.push_str(rules.trim_end());
+        for f in files {
+            out.push_str("\n\n");
+            out.push_str(&pw_rules::section(f));
+        }
+        out.push_str("\n\n");
+        out.push_str(note.trim_end());
+        out.push('\n');
+        out
+    }
+
+    /// The whole text, the repo's files read now from `clone`.
+    pub fn text_in(self, clone: &str) -> String {
+        let files: Vec<RepoFile> = self
+            .repo_files()
+            .iter()
+            .filter_map(|n| pw_rules::repo_path(n).and_then(|rel| pw_rules::read(clone, rel)))
+            .collect();
+        self.compose(&files)
+    }
+
+    /// `text_in` with the clone set on the Playwright tab: live in the app,
+    /// the shipped copy in the `--mcp` proxy and in tests (no settings
+    /// loaded).
+    pub fn text(self) -> String {
+        self.text_in(&crate::app_settings::current().playwright_clone)
+    }
+
+    /// The whole text with every repo file from the snapshot, marked `why`.
+    pub fn shipped_text(self, why: Why) -> String {
+        let files: Vec<RepoFile> = self
+            .repo_files()
+            .iter()
+            .filter_map(|n| pw_rules::repo_path(n).and_then(|rel| pw_rules::shipped(rel, why.clone())))
+            .collect();
+        self.compose(&files)
     }
 }
 

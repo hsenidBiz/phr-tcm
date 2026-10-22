@@ -2178,11 +2178,14 @@ fn removing_the_agents_takes_only_ours() {
 #[test]
 fn role_files_name_only_real_tools() {
     let tools = v2_lib::mcp::all_tool_names();
-    for (path, content) in agent_files_in(std::path::Path::new("x"), &[]) {
-        assert!(!content.contains('\u{2014}') && !content.contains('\u{2013}'), "{path:?} has a dash");
+    // The generated files now hold the Playwright repo's own text too, which is not ours to check:
+    // what is checked is each role's own rules and its tool note.
+    for role in v2_lib::autorun::roles::Role::ALL {
+        let content = format!("{}{}", role.tcm_rules(), role.tool_note().unwrap_or_default());
+        assert!(!content.contains('\u{2014}') && !content.contains('\u{2013}'), "{} has a dash", role.name());
         for (i, span) in content.split('`').enumerate() {
             if i % 2 == 1 && span.contains('_') {
-                assert!(tools.iter().any(|t| t == span), "{path:?} names `{span}`, which is no tool");
+                assert!(tools.iter().any(|t| t == span), "{} names `{span}`, which is no tool", role.name());
             }
         }
     }
