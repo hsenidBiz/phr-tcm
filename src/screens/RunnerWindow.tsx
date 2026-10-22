@@ -199,7 +199,7 @@ export default function RunnerWindow() {
     queryKey: ["run-history", session?.org, session?.project, session?.planId, session?.suiteId, historyCaseIds.join(",")],
     queryFn: () =>
       unwrap(commands.runHistory(session!.org, session!.project, session!.planId, historyCaseIds)),
-    enabled: Boolean(session && points.data),
+    enabled: Boolean(session && points.data && historyCaseIds.length > 0),
     staleTime: 5 * 60_000,
     retry: false,
   });

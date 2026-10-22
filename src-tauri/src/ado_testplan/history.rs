@@ -156,13 +156,16 @@ impl AdoClient {
                         Err(AdoError::Unauthorized) => return Err(AdoError::Unauthorized),
                         Err(e) => {
                             // Something other than a refusal (5xx, throttling,
-                            // network). With nothing gathered yet the caller
-                            // needs the error; otherwise keep what was read.
-                            if fetched + cached == 0 {
+                            // network). With no run read, or none of the read
+                            // runs holding an asked case, the caller needs the
+                            // error (an empty answer would overwrite a good
+                            // saved history); otherwise keep what was read.
+                            if fetched + cached == 0 || by_case.is_empty() {
                                 return Err(e);
                             }
                             crate::applog::warn(format!(
-                                "run history: plan {plan_id}: a run could not be read after {} run(s)                                  were read - the history may be incomplete",
+                                "run history: plan {plan_id}: a run could not be read after {} run(s) \
+                                 were read - the history may be incomplete",
                                 fetched + cached
                             ));
                             partial = true;

@@ -121,6 +121,34 @@ test("run history is asked for the suite's own cases", async () => {
   );
 });
 
+test("a suite with no cases never starts a history sweep", async () => {
+  let historyCalls = 0;
+  let pointCalls = 0;
+  mockIPC((cmd) => {
+    switch (cmd) {
+      case "plugin:event|listen":
+        return 1;
+      case "plugin:event|unlisten":
+        return null;
+      case "run_history":
+        historyCalls += 1;
+        return [];
+      case "ensure_pbi_suite":
+        return { plan_id: 9, plan_name: "Auth - Test Plan", suite_id: 91 };
+      case "list_test_points":
+        pointCalls += 1;
+        return [];
+    }
+  });
+  renderPanel();
+  await waitFor(() => expect(pointCalls).toBeGreaterThan(0));
+  await screen.findByText(/Auth - Test Plan/);
+  await act(async () => {
+    await new Promise((r) => setTimeout(r, 50));
+  });
+  expect(historyCalls).toBe(0);
+});
+
 test("expanding a row shows the case steps and the last failure detail", async () => {
   mockIPC((cmd, args) => {
     switch (cmd) {

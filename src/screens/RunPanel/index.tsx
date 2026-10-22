@@ -232,7 +232,7 @@ export default function RunPanel({
       fetcher: () => unwrap(commands.runHistory(org, project, suite.data!.plan_id, historyCaseIds)),
       ...CACHE.outcomes,
     }),
-    enabled: Boolean(suite.data && points.data),
+    enabled: Boolean(suite.data && points.data && historyCaseIds.length > 0),
     gcTime: 30 * 60_000,
     retry: false,
   });
