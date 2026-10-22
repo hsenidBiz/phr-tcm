@@ -2070,11 +2070,13 @@ pub fn absence_refusals(
 }
 
 /// `absence_refusals`' rule, plus one way through: an unproven absence
-/// check whose LAST link is named by the case's own words (`named_by_case`:
+/// check whose last link is named by the case's own words (`named_by_case`:
 /// a `text`, or a `role` with a `name`, whose words are whole words of
-/// `case_text`) is never refused. It is listed once in `from_case` as
-/// "step {n}: {locator} {ABSENT_FROM_CASE}". A css link, a role with no
-/// name and words the case does not say are refused as before.
+/// `case_text`) is not refused, when every other link of its locator is
+/// also named by the case or was seen matching something. It is listed once
+/// in `from_case` as "step {n}: {locator} {ABSENT_FROM_CASE}". A css link, a
+/// role with no name and words the case does not say are refused as before,
+/// as is a scope link that was never seen or only seen matching nothing.
 pub fn absence_review(
     map: &DiscoveryMap,
     script: &CaseScript,
@@ -2125,7 +2127,11 @@ pub fn absence_review(
             if proven {
                 continue;
             }
-            if named_by_case(&last, &case_text) {
+            // Every link must be the case's own words or have been seen
+            // matching something: a css or role-only scope never seen (or
+            // only seen matching nothing) would let the words pass for ever.
+            let scope_shown = target.links().iter().rev().skip(1).all(|l| named_by_case(l, &case_text) || present.has(l, true));
+            if scope_shown && named_by_case(&last, &case_text) {
                 let line = format!("step {step}: {} {ABSENT_FROM_CASE}", target.describe());
                 if !review.from_case.contains(&line) {
                     review.from_case.push(line);

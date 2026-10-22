@@ -3315,6 +3315,45 @@ fn css_and_role_only_absence_checks_still_need_a_sighting() {
     }
 }
 
+/// An absence check on a chain is from_case only when every link of it is
+/// the case's own words or was seen matching something: an unseen css or
+/// role-only scope would let the words pass for ever.
+#[test]
+fn an_absence_chain_with_an_unseen_scope_is_refused_even_on_the_cases_words() {
+    let case = vec!["Access denied is not shown".to_string()];
+    let chain = |scope: serde_json::Value| serde_json::json!([scope, { "text": "access denied" }]);
+    let check = |scope: serde_json::Value| {
+        two_steps(serde_json::json!([]), serde_json::json!([{ "kind": "expect_hidden", "selector": chain(scope) }]))
+    };
+    for (scope, map) in [
+        (serde_json::json!({ "css": ".alert" }), sighted_matching("Cycles", css(".alert"), 0)),
+        (serde_json::json!({ "css": ".alert" }), nothing_seen()),
+        (
+            serde_json::json!({ "role": "alertdialog" }),
+            sighted_matching("Cycles", LocatorStep { role: Some("alertdialog".to_string()), ..LocatorStep::default() }, 0),
+        ),
+    ] {
+        let described = serde_json::from_value::<Target>(chain(scope.clone())).unwrap().describe();
+        let review = absence_review(&map, &check(scope.clone()), &case, None, None);
+        assert_eq!(review.refusals, vec![format!("Step 2: {described} {ABSENCE_UNPROVEN}")], "{scope}");
+        assert!(review.from_case.is_empty(), "{scope}");
+    }
+
+    // The same scope seen matching something lets the words through.
+    let review = absence_review(&sighted_matching("Cycles", css(".alert"), 1), &check(serde_json::json!({ "css": ".alert" })), &case, None, None);
+    assert!(review.refusals.is_empty(), "{:?}", review.refusals);
+    assert_eq!(review.from_case.len(), 1);
+
+    // A scope that is itself the case's words needs no sighting.
+    let both = two_steps(
+        serde_json::json!([]),
+        serde_json::json!([{ "kind": "expect_hidden", "selector": [{ "role": "dialog", "name": "access denied" }, { "text": "access denied" }] }]),
+    );
+    let review = absence_review(&nothing_seen(), &both, &case, None, None);
+    assert!(review.refusals.is_empty(), "{:?}", review.refusals);
+    assert_eq!(review.from_case.len(), 1);
+}
+
 #[test]
 fn words_the_case_does_not_say_are_still_unproven() {
     let case = vec!["No access-denied message is shown".to_string()];
