@@ -14,6 +14,7 @@ import { resetBackgroundRun } from "../../lib/backgroundRun";
 import { clearPlaywrightExportRequest, playwrightExportSnapshot } from "../../lib/playwrightExport";
 import { resetModulesStore, setModulesForTest } from "../../lib/modules";
 import AutoRun from "./index";
+import { resetPlaywrightNoticeForTests } from "./PlaywrightNeededDialog";
 import ReplayPane from "./ReplayPane";
 
 vi.mock("../../lib/toast", () => ({ toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn(), info: vi.fn() } }));
@@ -24,6 +25,7 @@ let savedRecipe: unknown = null;
 // Auto Run's own screen is only ever open while Auto Run (and so Database
 // Access) is on; "Export to Playwright" also needs the Playwright module.
 beforeEach(() => {
+  resetPlaywrightNoticeForTests();
   setModulesForTest(["db_access", "auto_run", "playwright"]);
 });
 
@@ -1948,4 +1950,19 @@ test("run_buttons_are_disabled_while_discovery_is_active", async () => {
   expect(screen.getByRole("button", { name: "Run 1 unattended" })).toBeEnabled();
   expect(screen.getByRole("button", { name: "Run #1" })).toBeEnabled();
   expect(screen.getByRole("button", { name: "Run #1" })).not.toHaveAttribute("title");
+});
+
+test("opening Auto Run with no Playwright repo set says so, with or without a PBI, and the button goes to the Playwright tab", async () => {
+  mockIPC((cmd) => (cmd === "pw_rules_status" ? { clone_set: false } : undefined));
+  const onOpenPlaywright = vi.fn();
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  render(
+    <QueryClientProvider client={qc}>
+      <AutoRun org="acme" project="proj" pbi={null} onOpenPlaywright={onOpenPlaywright} />
+    </QueryClientProvider>,
+  );
+  expect(await screen.findByRole("dialog", { name: "Playwright is needed" })).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Open the Playwright tab" }));
+  expect(onOpenPlaywright).toHaveBeenCalledTimes(1);
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
 });

@@ -122,11 +122,14 @@ export default function Settings({
   org,
   project,
   onFillChange,
+  startOnModules = false,
 }: {
   org: string;
   project: string;
   /** Told whether a page that needs the whole height (Modules) is open. */
   onFillChange?: (fill: boolean) => void;
+  /** Open on the Modules page rather than the settings cards. */
+  startOnModules?: boolean;
 }) {
   const qc = useQueryClient();
   // The optional extras (settingsExtras.ts): the listener lives only
@@ -135,7 +138,7 @@ export default function Settings({
   useExtrasSequence(panelRef);
   const extrasUnlocked = useExtrasUnlocked();
   const [confirmReset, setConfirmReset] = useState(false);
-  const [modulesOpen, setModulesOpen] = useState(false);
+  const [modulesOpen, setModulesOpen] = useState(startOnModules);
   // The Modules board scrolls inside its own frame, so while it is open the
   // host must not scroll around it too; leaving Settings hands the scroll back.
   useEffect(() => {

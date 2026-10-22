@@ -1547,3 +1547,17 @@ test("Settings tells its host while the Modules page is open, so the host can gi
   unmount();
   expect(seen[seen.length - 1]).toBe(false);
 });
+
+test("startOnModules opens on Modules", async () => {
+  mockIPC(() => undefined);
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  render(
+    <QueryClientProvider client={qc}>
+      <Settings org="acme" project="Web" startOnModules />
+    </QueryClientProvider>,
+  );
+  expect(await screen.findAllByRole("switch")).toHaveLength(5);
+  expect(screen.queryByRole("heading", { name: "Appearance" })).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: /Back to Settings/ }));
+  expect(await screen.findByRole("heading", { name: "Appearance" })).toBeInTheDocument();
+});

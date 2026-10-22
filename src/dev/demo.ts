@@ -958,6 +958,9 @@ function applyPatches() {
     // site documents it); a click on a module is answered here and never
     // saved to this machine's modules.json.
     modulesGet: () => Promise.resolve(DEMO_MODULES),
+    // The sample app has a Playwright repo set, so Auto Run never opens
+    // the "Playwright is needed" dialog in it or in the docs shots.
+    pwRulesStatus: async () => ({ clone_set: true }),
     modulesSet: () => ok(DEMO_MODULES),
     // The extras switch reads locked whatever this machine holds, so the
     // sample app and the guide's shots never show the module held back
