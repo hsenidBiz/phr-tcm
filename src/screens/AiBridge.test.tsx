@@ -1361,12 +1361,13 @@ test("running changes without asking needs writes on, and says what each tool ne
 
 /// The Auto Run tools' "always allow" follows the Auto Run module, so the
 /// tab says so only while Auto Run is on.
-test("the tab says Claude Code is told to allow the Auto Run tools only while Auto Run is on", async () => {
+test("the tab says Claude Code and Cursor are told to allow the Auto Run tools only while Auto Run is on", async () => {
   localStorage.setItem("tcm-v2-db-selected", "dev-login");
   dbMocks();
   renderBridge(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
   await screen.findByText("Signs in as sgdev01db01_devlogin");
-  const line = "With Auto Run on, Claude Code is told to allow its Auto Run tools without asking.";
+  const line =
+    "With Auto Run on, Claude Code and Cursor are told to allow the Auto Run tools (and, with API Templates on, the template tools) without asking.";
   expect(screen.getByText(line)).toBeInTheDocument();
 
   act(() => setModulesForTest(["db_access", "writing_style"]));

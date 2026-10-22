@@ -997,7 +997,8 @@ export default function AiBridge() {
               shots, like the other Auto Run content (isCaptureMode). */}
           {autoRunOn && !isCaptureMode() && (
             <p className="text-[11px] text-faint">
-              With Auto Run on, Claude Code is told to allow its Auto Run tools without asking.
+              With Auto Run on, Claude Code and Cursor are told to allow the Auto Run tools (and, with
+              API Templates on, the template tools) without asking.
             </p>
           )}
         </div>
