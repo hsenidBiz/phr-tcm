@@ -3,10 +3,13 @@
 //! one fixture that carries data, static-band degradation for the ones that do not, from-scratch
 //! reports, determinism + edit sensitivity, and the golden PDF hash.
 //!
-//! Reproducibility has one deliberate exception: Print Date/Time special fields render at the
-//! wall clock (`default_as_of()`), exactly like Crystal's own preview — so determinism and the
-//! golden hash are pinned on World Sales Report, which prints no time-dependent field (verified:
-//! its render is byte-stable across processes and minutes).
+//! Reproducibility has one deliberate exception: date/time-valued content renders at the
+//! render's as-of instant (`default_as_of()` = the wall clock), exactly like Crystal's own
+//! preview — byte-stable within a day, moving across days. World Sales Report DOES render
+//! such values (its page-header ModificationTime/DataDate fields resolve from the as-of
+//! instant), so its golden hash pins a FIXED as_of: the pinned bytes are then a function of
+//! the pipeline and fonts only, never the calendar (found 2026-10-22, when the original
+//! wall-clock pin drifted six days after pinning).
 
 use rpt_core::edit::{apply_edits, EditOp, ObjSel};
 use rpt_core::preview::preview;
@@ -74,14 +77,30 @@ fn world_sales_renders_saved_data() {
     );
 }
 
-/// A report saved WITHOUT data degrades to static bands and says so in diagnostics (the byline
-/// formulas reference table columns that an empty row set cannot resolve) — a preview, not an
-/// error. This pins those semantics.
+/// A report saved WITHOUT data: the FIRST diagnostic says so in plain language, the
+/// empty-row "formula error: unknown name" noise is filtered out, and the group
+/// header/footer bands do not print at all (engine parity — Crystal suppresses every
+/// group band when there are no rows). A preview, not an error.
 #[test]
-fn no_saved_data_renders_static_bands_with_diagnostics() {
+fn no_saved_data_says_so_and_prints_no_group_bands() {
     let out = preview(&read_fixture("PMSV10_IndPerfOverview.rpt")).expect("render");
     assert_valid_pdf("PMSV10_IndPerfOverview.rpt", &out);
-    assert!(!out.diagnostics.is_empty(), "expected formula diagnostics over the empty row set");
+    let notice = out
+        .diagnostics
+        .iter()
+        .find(|d| d.starts_with("this report has no data to render"));
+    assert!(notice.is_some(), "the no-data notice is first: {:?}", out.diagnostics);
+    assert!(
+        !out.diagnostics.iter().any(|d| d.starts_with("formula error: unknown name")),
+        "empty-row unknown-name noise filtered: {:?}",
+        out.diagnostics
+    );
+    // Group-band suppression: the employee group's header/footer objects are gone from the
+    // page — only the page-level bands remain. The parsed page must carry far fewer text
+    // runs than the 30-column data-bearing fixture ever would.
+    let parsed = pdf::structure(&out.pdf);
+    let text_runs: usize = parsed.pages.iter().map(|p| p.shows.len()).sum();
+    assert!(text_runs < 60, "group bands suppressed over the empty row set: {text_runs} runs");
 }
 
 /// A from-scratch report (blank.rs) previews: one empty page.
@@ -117,19 +136,32 @@ fn preview_is_deterministic_and_edit_sensitive() {
     assert_ne!(b.pdf, c.pdf, "an edit must change the preview");
 }
 
-/// The golden pin: World Sales Report's preview PDF, SHA-256. Byte-reproducible rendering means
-/// this hash is stable across runs, profiles, and machines — it moves only when the render
-/// pipeline or the vendored fonts change, and any such movement is a review event. Provenance:
-/// cross-checked during vendoring against the upstream-built `rpt-render` binary, whose output
-/// differs only in the Producer version string and the absence of the #7-fixed logo picture.
+/// The golden pin — at a FIXED render clock. WSR's page header renders date-valued content
+/// from the render's as-of instant, so a wall-clock pin drifts with the calendar; pinning
+/// `as_of` makes the hash a function of the render pipeline and fonts only. The wall-clock
+/// `preview()` path is asserted structurally alongside it.
 #[test]
-fn world_sales_preview_pdf_sha256_pinned() {
-    let out = preview(&read_fixture("World Sales Report.rpt")).expect("render");
-    let hash = Sha256::digest(&out.pdf);
+fn world_sales_preview_pdf_sha256_pinned_at_fixed_asof() {
+    use sha2::{Digest, Sha256};
+
+    let bytes = read_fixture("World Sales Report.rpt");
+    let rpt = rpt_core::open_bytes(&bytes).expect("open");
+    const PINNED_ASOF: i64 = 1_760_000_000; // 2025-10-09 — any fixed instant pins
+    let opts = rpt_render::RenderOptions {
+        as_of: Some(rpt_render::DateTimeSpecials::from_unix_seconds(PINNED_ASOF)),
+        ..Default::default()
+    };
+    let doc = rpt_render::render_with(rpt.report(), opts);
+    assert_eq!(doc.pages.len(), 37, "saved-data page count");
+    let pdf = rpt_render::try_render_document(&doc, &rpt_render::PdfOptions::default())
+        .expect("pdf");
+    let hash = format!("{:x}", Sha256::digest(&pdf));
     assert_eq!(
-        format!("{hash:x}"),
-        "9ac03b109f3c0595a66a624daf5b252edd51dc4af159c202b88b6f543f5d913d",
-        "the WSR preview PDF changed — a render-pipeline or font update is a review event, \
-         re-pin deliberately (see docs/validation-log.md)"
+        hash,
+        "e4c221c37aaa2d3dd1130b28f20ce67dd7d7256f1b92b162bfb32a3d03dc9632",
+        "the WSR pin (fixed as_of) changed — a render-pipeline or font update is a review          event, re-pin deliberately (see docs/validation-log.md)"
     );
+    // The wall-clock preview() path must agree structurally.
+    let out = preview(&bytes).expect("render");
+    assert_eq!(out.page_count, 37);
 }

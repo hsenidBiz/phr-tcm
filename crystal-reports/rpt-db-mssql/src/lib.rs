@@ -1,4 +1,3 @@
-//! `rpt-db-mssql` — a live Microsoft SQL Server [`RowSource`] for the rpt render pipeline.
 //!
 //! The reports this editor serves (the PMSV10 family) bind to SQL Server **stored procedures**
 //! through OLE DB (ADO): each report's table is `usp_…;1`-shaped — a proc name plus the `;1`
@@ -8,7 +7,6 @@
 //! (name + value type), and the proc's actual result set is matched against that list by name.
 //!
 //! This crate implements the fetch at the seam the pipeline designed for it — the driver-free
-//! [`rpt_data::RowSource`] / [`rpt_data::ScopeData`] traits — so no vendored crate changes were
 //! needed. Upstream ships Postgres and SQLite drivers only; SQL Server is ours.
 //!
 //! ## Connection strings
@@ -37,6 +35,10 @@ pub mod conn;
 pub mod fetch;
 pub mod plan;
 pub mod scope;
+/// Row count of a fetched table, for callers that only need to know emptiness.
+pub fn row_count(data: &rpt_data::RowData) -> usize {
+    rpt_data::RowSource::rows(data).len()
+}
 
 pub use conn::{parse_connection_string, ConnectionConfig};
 pub use fetch::{connect, connect_cached, evict_cached, fetch_report_table, query_rows_text, MssqlError};

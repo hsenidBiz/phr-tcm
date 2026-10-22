@@ -286,3 +286,16 @@ Six follow-ups in one pass, each on the plan vocabulary + native ops (`rpt-tools
 - Tests: `rpt-core/tests/followups.rs` — 8 tests (exact-diff formula rewrites, refusal
   cases, the mint's read-back, Pm- creation end-to-end, RT mint + `{#}` placement + refusal,
   fixture cleanliness under the new check).
+
+
+## Empty-data preview semantics (2026-10-22)
+
+A report with no data to render (no saved data in the file, or a live fetch returning zero
+rows) now previews as: static bands only, NO group header/footer bands (engine parity —
+Crystal prints no group band over zero rows; the previous skeleton emission produced the
+13 "unknown name" errors TCM saw), and a single first-class diagnostic up front —
+"this report has no data to render … only its static bands are shown; render with the live
+preview to draw fresh rows" — with the empty-row unknown-name formula errors filtered out.
+The UI can key its empty-state screen on that notice's prefix. (Layout change documented as
+VENDORED.md #11; the WSR golden pin was re-based onto a fixed render clock the same day —
+see validation-log §24.)

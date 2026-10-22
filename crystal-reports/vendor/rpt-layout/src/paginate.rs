@@ -755,29 +755,6 @@ impl<'a> Formatter<'a> {
         self.refresh_group_summaries();
     }
 
-    /// Emit the group-band skeleton once for a report that defines groups but produced none (an empty
-    /// dataset). The engine still lays out the group headers (outermost→innermost) and footers
-    /// (innermost→outermost) a single time, so the static content authored into those bands — a
-    /// letterhead, column labels, totals captions — renders instead of a blank page. Field/formula
-    /// objects resolve against a synthetic empty row (falling to null), and no detail band is emitted
-    /// (there is no record).
-    pub(crate) fn emit_empty_group_skeleton(&mut self) {
-        let state = self.state(None);
-        let headers: Vec<Vec<&'a Section>> = self.bands.group_headers.clone();
-        let footers: Vec<Vec<&'a Section>> = self.bands.group_footers.clone();
-        for (level, hdr) in headers.iter().enumerate() {
-            for s in hdr {
-                self.emit_band(s, None, &state, Some(UnderlayEnd::GroupFooter(level)));
-            }
-        }
-        for (level, ftr) in footers.iter().enumerate().rev() {
-            self.close_underlay_spans(UnderlayEnd::GroupFooter(level));
-            for s in ftr {
-                self.emit_band(s, None, &state, None);
-            }
-        }
-    }
-
     pub(crate) fn emit_details(&mut self, rows: &'a [Row], summaries: &[rpt_data::Summary]) {
         let detail_bands: Vec<&Section> = self.bands.detail.clone();
         if let Some(mc) = self.multi_column {

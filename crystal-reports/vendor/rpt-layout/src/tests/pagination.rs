@@ -236,9 +236,11 @@ fn group_header_and_footer_resolve_against_group_first_and_last_record() {
 }
 
 #[test]
-fn empty_dataset_emits_group_band_skeleton() {
-    // A report that defines group bands but produced no group (empty dataset) still lays out its
-    // group header/footer skeleton once, so the static captions render instead of a blank page.
+fn empty_dataset_prints_no_group_bands() {
+    // Engine parity (VENDORED.md #11): a report that defines group bands but produced no group
+    // instance (an empty dataset) prints NO group header or footer — Crystal suppresses every
+    // group band when there are no rows. Static captions authored into group bands do not
+    // render; the page-level bands still do.
     let mut report = Report::default();
     report.print_options.content_width = Twips(12240);
     report.print_options.content_height = Twips(15840);
@@ -246,6 +248,15 @@ fn empty_dataset_emits_group_band_skeleton() {
     group.condition_field = "t.g".to_string();
     report.data_definition.groups = vec![group];
     report.report_definition.areas = vec![
+        area(
+            AreaSectionKind::PageHeader,
+            vec![section(
+                AreaSectionKind::PageHeader,
+                "PageHeaderArea1",
+                300,
+                vec![text_object("PgTitle", "PAGE TOP", 0)],
+            )],
+        ),
         area(
             AreaSectionKind::GroupHeader,
             vec![section(
@@ -274,7 +285,7 @@ fn empty_dataset_emits_group_band_skeleton() {
             )],
         ),
     ];
-    // No records → no group instance.
+    // No records -> no group instance.
     let saved = saved_data(
         &[
             ("t.g", FieldValueType::String),
@@ -296,15 +307,17 @@ fn empty_dataset_emits_group_band_skeleton() {
             _ => None,
         })
         .collect();
-    // Both the group-header and group-footer static captions render; the detail band (a record's
-    // value) does not, since there is no record.
     assert!(
-        texts.contains(&"STATEMENT"),
-        "group-header skeleton not emitted: {texts:?}"
+        !texts.contains(&"STATEMENT"),
+        "group header must not print with no rows: {texts:?}"
     );
     assert!(
-        texts.contains(&"TOTAL DUE"),
-        "group-footer skeleton not emitted: {texts:?}"
+        !texts.contains(&"TOTAL DUE"),
+        "group footer must not print with no rows: {texts:?}"
+    );
+    assert!(
+        texts.contains(&"PAGE TOP"),
+        "the page header still renders: {texts:?}"
     );
 }
 
