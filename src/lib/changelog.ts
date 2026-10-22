@@ -27,6 +27,17 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.2.3-beta.24",
+    date: "2026-10-22",
+    items: [
+      "Auto Run: a new page_until step clicks Next until the cards or rows a case names have shown, for lists where they sit many pages in.",
+      "Auto Run: text checks match a label as it is written in the page even when it is drawn in capitals, so Duration matches Duration exactly.",
+      "Auto Run: a script can check the page address is exactly a given one, or has not changed since an earlier step.",
+      "Auto Run: a check that something the case names is not shown can be saved even though the app never shows it.",
+      "Auto Run: once you have told the assistant how to rule on a difference between a case and the app, it can apply that ruling itself. The case card shows your words beside it, with Undo ruling.",
+    ],
+  },
+  {
     version: "2.2.3-beta.23",
     date: "2026-10-22",
     items: [
