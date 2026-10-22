@@ -282,7 +282,7 @@ fn a_changed_page_size_makes_an_exported_case_out_of_date() {
         assert!(sx.fx.read_clone(&sx.raw(20)).contains("viewport: { width: 1600, height: 900 }"));
 
         // Back to the default: the spec exported at 1600 x 900 is stale again.
-        reset_page_size();
+        reset_page_size().unwrap();
         assert_eq!(sx.state(20), SyncState::OutOfDate { why: "changed since the export: page size".into() });
         sx.export(&[20], &docs(&[(20, "Twenty")])).unwrap();
         assert_eq!(sx.state(20), SyncState::Current);

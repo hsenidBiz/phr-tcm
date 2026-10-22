@@ -122,15 +122,16 @@ pub fn set_page_size(size: PageSize) -> Result<PageSize, String> {
     Ok(size)
 }
 
-/// Put the page size back to what the app ships with.
+/// Put the page size back to what the app ships with. A save that fails says
+/// so, in the sentence a failed `set_page_size` uses.
 #[tauri::command]
 #[specta::specta]
-pub fn reset_page_size() -> PageSize {
-    match app_settings::update(|s| s.page_size = DEFAULT_PAGE) {
-        Ok(_) => {}
-        Err(e) => crate::applog::warn(format!("resetting the page size failed: {e}")),
-    }
-    viewport::current()
+pub fn reset_page_size() -> Result<PageSize, String> {
+    app_settings::update(|s| s.page_size = DEFAULT_PAGE).map_err(|e| {
+        crate::applog::warn(format!("resetting the page size failed: {e}"));
+        "The setting could not be saved. Settings → Logs has the details.".to_string()
+    })?;
+    Ok(viewport::current())
 }
 
 /// Stay signed in. Off removes the kept sign-in from Credential Manager at

@@ -94,11 +94,17 @@ pub fn window_size_arg() -> String {
     format!("--window-size={},{}", size.width + FRAME_WIDTH, size.height + FRAME_HEIGHT)
 }
 
-/// The parameters of `Emulation.setDeviceMetricsOverride`, sent on every
-/// page the app attaches to before the page is used. The override wins over
-/// the window: a person who resizes a headed window keeps the same page.
+/// The parameters of `Emulation.setDeviceMetricsOverride` for the size in
+/// force now.
 pub fn device_metrics_params() -> serde_json::Value {
-    let size = current();
+    device_metrics_for(current())
+}
+
+/// The parameters of `Emulation.setDeviceMetricsOverride` for `size`, sent on
+/// every page the app attaches to before the page is used. The override wins
+/// over the window: a person who resizes a headed window keeps the same page.
+/// A browser holds the size it opened with and gives it to its own tabs.
+pub fn device_metrics_for(size: PageSize) -> serde_json::Value {
     serde_json::json!({
         "width": size.width,
         "height": size.height,

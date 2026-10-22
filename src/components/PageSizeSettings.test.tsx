@@ -62,7 +62,7 @@ test("the row names itself, explains itself and labels both boxes", async () => 
   expect(width()).toBeInTheDocument();
   expect(height()).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Save" })).toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "Reset page size to default" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Reset to default: page size" })).toBeInTheDocument();
   await waitFor(() => expect(width()).not.toBeDisabled());
 });
 
@@ -108,7 +108,7 @@ test("Reset to default calls reset_page_size and shows the shipped size", async 
   const calls = rust({ width: 1920, height: 1080 });
   renderRow();
   await waitFor(() => expect(width()).toHaveValue(1920));
-  fireEvent.click(screen.getByRole("button", { name: "Reset page size to default" }));
+  fireEvent.click(screen.getByRole("button", { name: "Reset to default: page size" }));
   await waitFor(() => expect(calls).toEqual([{ cmd: "reset_page_size" }]));
   await waitFor(() => expect(width()).toHaveValue(1280));
   expect(height()).toHaveValue(720);
@@ -118,7 +118,72 @@ test("Reset has nothing to do while the shipped size is saved and untouched", as
   rust({ width: 1280, height: 720 });
   renderRow();
   await waitFor(() => expect(width()).not.toBeDisabled());
-  expect(screen.getByRole("button", { name: "Reset page size to default" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Reset to default: page size" })).toBeDisabled();
   fireEvent.change(height(), { target: { value: "800" } });
-  expect(screen.getByRole("button", { name: "Reset page size to default" })).not.toBeDisabled();
+  expect(screen.getByRole("button", { name: "Reset to default: page size" })).not.toBeDisabled();
+});
+
+test("a decimal, a negative, an exponent or an empty box shows the refusal sentence and sends nothing", async () => {
+  const calls = rust({ width: 1280, height: 720 });
+  renderRow();
+  await waitFor(() => expect(width()).not.toBeDisabled());
+  for (const [w, h] of [
+    ["1280.5", "720"],
+    ["1280", "-5"],
+    ["-1280", "720"],
+    ["", "720"],
+    ["1280", ""],
+    ["1e3", "720"],
+  ]) {
+    fireEvent.change(width(), { target: { value: w } });
+    fireEvent.change(height(), { target: { value: h } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(REFUSAL);
+    expect(screen.getByRole("alert")).not.toHaveTextContent(/invalid args|expected u32/i);
+  }
+  expect(calls).toEqual([]);
+  // A good size afterwards goes through and clears the sentence.
+  fireEvent.change(width(), { target: { value: "1024" } });
+  fireEvent.change(height(), { target: { value: "768" } });
+  fireEvent.click(screen.getByRole("button", { name: "Save" }));
+  await waitFor(() => expect(calls).toHaveLength(1));
+  await waitFor(() => expect(screen.queryByRole("alert")).not.toBeInTheDocument());
+});
+
+test("a whole number outside the range still goes to Rust, which refuses it in its own words", async () => {
+  const calls = rust({ width: 1280, height: 720 });
+  renderRow();
+  await waitFor(() => expect(width()).not.toBeDisabled());
+  fireEvent.change(width(), { target: { value: "99999" } });
+  fireEvent.click(screen.getByRole("button", { name: "Save" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(REFUSAL);
+  expect(calls).toHaveLength(1);
+});
+
+test("the reset button's accessible name holds its visible words", async () => {
+  rust({ width: 1920, height: 1080 });
+  renderRow();
+  await waitFor(() => expect(width()).toHaveValue(1920));
+  const reset = screen.getByRole("button", { name: "Reset to default: page size" });
+  // WCAG 2.5.3: speaking the visible words must reach the button.
+  expect(reset.getAttribute("aria-label")).toContain(reset.textContent ?? "never");
+  // And it is not the name another Reset to default button has.
+  expect(screen.queryByRole("button", { name: "Reset to default" })).not.toBeInTheDocument();
+});
+
+test("a reset that could not be saved says so inline, like a failed save, and keeps the boxes", async () => {
+  const SAVE_FAILED = "The setting could not be saved. Settings → Logs has the details.";
+  mockIPC((cmd) => {
+    if (cmd === "get_app_settings") {
+      return { close_to_tray: true, close_notice_shown: true, beta_updates: false, page_size: { width: 1920, height: 1080 } };
+    }
+    if (cmd === "reset_page_size") throw SAVE_FAILED;
+    return undefined;
+  });
+  renderRow();
+  await waitFor(() => expect(width()).toHaveValue(1920));
+  fireEvent.click(screen.getByRole("button", { name: "Reset to default: page size" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(SAVE_FAILED);
+  expect(width()).toHaveValue(1920);
+  expect(height()).toHaveValue(1080);
 });

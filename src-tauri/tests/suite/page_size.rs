@@ -228,7 +228,7 @@ fn saving_resetting_and_refusing_through_the_commands() {
         assert!(load(d.path()).close_to_tray);
 
         // Reset puts the shipped size back, in memory and on disk.
-        assert_eq!(reset_page_size(), DEFAULT_PAGE);
+        assert_eq!(reset_page_size(), Ok(DEFAULT_PAGE));
         assert_eq!(current(), DEFAULT_PAGE);
         assert_eq!(load(d.path()).page_size, DEFAULT_PAGE);
         assert_eq!(
@@ -237,5 +237,24 @@ fn saving_resetting_and_refusing_through_the_commands() {
         );
         assert!(autorun_guide().contains(AUTORUN_SENTENCE));
         assert!(!spec().contains("test.use("));
+    });
+}
+
+/// A reset that cannot be saved says so in the sentence a failed save uses,
+/// and the size in force is the one that was kept.
+#[test]
+fn a_reset_that_cannot_be_saved_says_so() {
+    in_own_process("a_reset_that_cannot_be_saved_says_so", || {
+        const NOT_SAVED: &str = "The setting could not be saved. Settings → Logs has the details.";
+        let d = tempfile::tempdir().unwrap();
+        app_settings::init(d.path().to_path_buf());
+        assert_eq!(set_page_size(size(1024, 768)), Ok(size(1024, 768)));
+
+        // The settings folder is gone, and a file stands where it was.
+        std::fs::remove_dir_all(d.path()).unwrap();
+        std::fs::write(d.path(), "not a folder").unwrap();
+        assert_eq!(reset_page_size(), Err(NOT_SAVED.to_string()));
+        assert_eq!(set_page_size(size(1600, 900)), Err(NOT_SAVED.to_string()), "a failed save is the same sentence");
+        assert_eq!(current(), size(1024, 768), "the size in force is still the one that was kept");
     });
 }

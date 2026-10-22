@@ -13,6 +13,21 @@ const SHIPPED: PageSize = { width: 1280, height: 720 };
 
 const same = (a: PageSize, b: PageSize) => a.width === b.width && a.height === b.height;
 
+/** The sentence for a size that cannot be used. Rust says the same when it
+ *  refuses a size outside the range (`viewport::OUT_OF_RANGE`); a box holding
+ *  something that is not a whole number never gets as far as Rust, because
+ *  Tauri would refuse its type with a message meant for developers. */
+const OUT_OF_RANGE = "The page size must be between 800 x 600 and 3840 x 2160.";
+
+/** The typed boxes as a size, or null when either is not a whole number
+ *  (empty, a decimal, a minus sign, an exponent). A whole number outside the
+ *  range is still returned: Rust refuses it in its own words. */
+function wholeSize(width: string, height: string): PageSize | null {
+  const whole = /^\d{1,9}$/;
+  if (!whole.test(width.trim()) || !whole.test(height.trim())) return null;
+  return { width: Number(width), height: Number(height) };
+}
+
 /** The "Browser page size" row of Settings' Auto Run card: the page every
  *  browser the app drives shows, kept by Rust with the other app settings
  *  (the `["app-settings"]` query). Rust refuses a size outside its range and
@@ -40,10 +55,15 @@ export default function PageSizeSettings() {
   };
 
   const save = async () => {
+    const size = wholeSize(width, height);
+    if (!size) {
+      setRefusal(OUT_OF_RANGE);
+      return;
+    }
     setBusy(true);
     setRefusal(null);
     try {
-      const r = await commands.setPageSize(typed);
+      const r = await commands.setPageSize(size);
       if (r.status === "error") setRefusal(r.error);
       else {
         remember(r.data);
@@ -61,10 +81,13 @@ export default function PageSizeSettings() {
     setBusy(true);
     setRefusal(null);
     try {
-      const size = await commands.resetPageSize();
-      remember(size);
-      setWidth(String(size.width));
-      setHeight(String(size.height));
+      const r = await commands.resetPageSize();
+      if (r.status === "error") setRefusal(r.error);
+      else {
+        remember(r.data);
+        setWidth(String(r.data.width));
+        setHeight(String(r.data.height));
+      }
     } catch (e) {
       toast.error(String(e));
     } finally {
@@ -112,7 +135,7 @@ export default function PageSizeSettings() {
             size="sm"
             variant="outline"
             disabled={!settings.data || busy || (same(saved, SHIPPED) && !edited)}
-            aria-label="Reset page size to default"
+            aria-label="Reset to default: page size"
             onClick={() => void reset()}
           >
             Reset to default
