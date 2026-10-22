@@ -59,6 +59,7 @@ macro_rules! disabled_why_js {
 }
 
 pub mod launch;
+pub mod viewport;
 pub mod tree;
 pub mod cdp;
 pub mod page_log;

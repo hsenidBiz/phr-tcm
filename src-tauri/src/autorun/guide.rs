@@ -1448,6 +1448,10 @@ acted on (see "Discovering the app").
 
 ## Seeing the page
 
+Every browser the app drives shows a 1280 x 720 page at scale 1, the same as
+Playwright's default, so a layout you see while writing a script is the layout a
+run sees.
+
 Three tools let you look before you write, against the Auto Run browser:
 the one the person has open on the Auto Run tab, or your own discovery
 browser (see "Discovering the app"):

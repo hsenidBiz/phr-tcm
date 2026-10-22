@@ -4,6 +4,7 @@
 //! test, like the updater's live download check.
 
 use v2_lib::browser::launch::{args_with, background_args, edge_candidates, free_port, launch_args};
+use v2_lib::browser::viewport::{device_metrics_params, DEVICE_SCALE, PAGE_HEIGHT, PAGE_WIDTH};
 use std::path::{Path, PathBuf};
 
 /// Both Program Files roots are searched, 64-bit first: an Edge in
@@ -183,16 +184,48 @@ fn a_browser_name_maps_to_its_enum_and_falls_back_to_edge() {
 
 // ---- Unattended replay runs in the background --------------------------
 
-/// An unattended run has nobody to watch it, so it opens headless at a
-/// fixed desktop size - a watched run (supervised, or unattended with
-/// "watch" asked for) gets neither switch.
+/// An unattended run has nobody to watch it, so it opens headless in the
+/// window every browser the app drives starts with (a 1280 x 720 page and
+/// the browser's frame around it, from the `viewport` constants) - a
+/// watched run (supervised, or unattended with "watch" asked for) is not
+/// headless.
 #[test]
-fn a_background_browser_is_headless_at_a_desktop_size() {
+fn a_background_browser_is_headless_in_the_window_the_page_size_asks_for() {
     let extra = background_args();
     let args = args_with(9333, Path::new("C:/tmp/p"), &extra);
     assert!(args.iter().any(|a| a == "--headless=new"));
-    assert!(args.iter().any(|a| a == "--window-size=1366,900"));
+    let want = format!("--window-size={},{}", PAGE_WIDTH + 16, PAGE_HEIGHT + 140);
+    assert!(args.iter().any(|a| *a == want), "{want} is missing from {args:?}");
+    assert!(!args.iter().any(|a| a == "--window-size=1366,900"), "{args:?}");
+    // Big enough for the page with the frame around it, never smaller.
+    let (w, h) = want["--window-size=".len()..].split_once(',').unwrap();
+    assert!(w.parse::<u32>().unwrap() > PAGE_WIDTH && h.parse::<u32>().unwrap() > PAGE_HEIGHT);
     // And a watched one has neither.
     let shown = args_with(9333, Path::new("C:/tmp/p"), &[]);
     assert!(!shown.iter().any(|a| a.starts_with("--headless")));
+}
+
+// ---- A 1280 x 720 page at scale 1 --------------------------------------
+
+/// A high-DPI screen must not scale the page, and a headed window must be
+/// big enough to hold the page with the browser's own frame around it.
+#[test]
+fn every_browser_launches_at_device_scale_one_in_a_window_that_holds_the_page() {
+    let args = launch_args(9333, Path::new(r"C:	mp\p"));
+    assert!(args.contains(&"--force-device-scale-factor=1".to_string()), "{args:?}");
+    let size = args.iter().find_map(|a| a.strip_prefix("--window-size=")).expect("no window size");
+    let (w, h) = size.split_once(',').unwrap();
+    assert!(w.parse::<u32>().unwrap() > PAGE_WIDTH && h.parse::<u32>().unwrap() > PAGE_HEIGHT, "{size}");
+    // Switches only: the start page stays last.
+    assert_eq!(args.last().map(String::as_str), Some("about:blank"));
+}
+
+/// The numbers are Playwright's default, and sit in one place.
+#[test]
+fn the_page_area_is_1280_by_720_at_scale_one() {
+    assert_eq!((PAGE_WIDTH, PAGE_HEIGHT, DEVICE_SCALE), (1280, 720, 1.0));
+    assert_eq!(
+        device_metrics_params(),
+        serde_json::json!({ "width": 1280, "height": 720, "deviceScaleFactor": 1.0, "mobile": false })
+    );
 }
