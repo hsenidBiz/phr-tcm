@@ -2330,6 +2330,63 @@ fn the_status_says_whether_a_clone_is_set() {
 }
 
 #[test]
+fn the_status_tells_a_repo_that_is_gone_from_one_never_set() {
+    use v2_lib::commands::pw_rules::pw_rules_status_for;
+    for unset in ["", "   "] {
+        let s = pw_rules_status_for(unset);
+        assert!(!s.clone_set && !s.clone_gone, "{unset:?}");
+    }
+    let gone = pw_rules_status_for("C:/no/such/folder");
+    assert!(!gone.clone_set && gone.clone_gone);
+    let d = TempDir::new();
+    assert!(!pw_rules_status_for(&path_str(&d)).clone_gone);
+    // A file where the folder should be is gone as a folder too.
+    let file = d.path().join("a-file");
+    std::fs::write(&file, "x").unwrap();
+    let s = pw_rules_status_for(&file.to_string_lossy());
+    assert!(!s.clone_set && s.clone_gone);
+}
+
+/// These two reach the disk (the repo's files, the agent files), so they must be async
+/// commands, run off the main thread. This stops compiling if either goes back to a sync fn.
+#[allow(dead_code)]
+fn the_commands_that_touch_the_disk_are_async(app: tauri::AppHandle) {
+    fn is_future<F: std::future::Future>(_: F) {}
+    is_future(v2_lib::commands::pw_rules::pw_rules_status(app.clone()));
+    is_future(v2_lib::commands::app_settings::set_playwright_clone(app, String::new()));
+}
+
+#[test]
+fn the_agent_files_are_synced_with_no_bridge_lock_held() {
+    use v2_lib::ai_bridge::{BridgeContext, BridgeState};
+    use v2_lib::commands::ai_bridge::BridgeHandle;
+    use v2_lib::commands::modules::resync_agents_with;
+
+    // No bridge running: nothing is synced.
+    let none = BridgeHandle::default();
+    let mut called = false;
+    resync_agents_with(&none, |_, _| called = true);
+    assert!(!called);
+
+    // A running bridge: its toggles and directory reach the sync, and neither lock is held then.
+    let ctx = BridgeContext {
+        disabled_tools: vec!["db_query".to_string()],
+        working_dir: Some("D:/repo".to_string()),
+        ..Default::default()
+    };
+    let shared = BridgeState::new(ctx, "1.0.0".to_string());
+    let handle = BridgeHandle::default();
+    *handle.running.lock().unwrap() = Some((std::sync::Arc::clone(&shared), 1234));
+    let mut seen: Option<(Vec<String>, Option<String>)> = None;
+    resync_agents_with(&handle, |disabled, dir| {
+        assert!(handle.running.try_lock().is_ok(), "the bridge handle is locked while files are written");
+        assert!(shared.ctx.try_lock().is_ok(), "the bridge context is locked while files are written");
+        seen = Some((disabled.to_vec(), dir.map(str::to_string)));
+    });
+    assert_eq!(seen, Some((vec!["db_query".to_string()], Some("D:/repo".to_string()))));
+}
+
+#[test]
 fn role_files_name_only_real_tools() {
     let tools = v2_lib::mcp::all_tool_names();
     // The generated files now hold the Playwright repo's own text too, which is not ours to check:

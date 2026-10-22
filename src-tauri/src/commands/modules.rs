@@ -79,13 +79,32 @@ pub fn resync_commands(app: &tauri::AppHandle) {
 /// Bring the generated agent files into line with the Playwright repo's rules
 /// as they are now, from the bridge's last-known context as `resync_commands`
 /// does. Nothing when the bridge is not running.
+///
+/// This reads and writes files, so it is called off the main thread; and it
+/// holds neither of the bridge's locks while it does (`resync_agents_with`).
 pub fn resync_agents(app: &tauri::AppHandle) {
     use tauri::Manager;
     let handle = app.state::<crate::commands::ai_bridge::BridgeHandle>();
-    let guard = handle.running.lock().unwrap_or_else(|e| e.into_inner());
-    if let Some((shared, _)) = guard.as_ref() {
-        let ctx = shared.ctx.lock().unwrap_or_else(|e| e.into_inner());
-        crate::commands::ai_tools::sync_agents(&ctx.disabled_tools, ctx.working_dir.as_deref());
+    resync_agents_with(&handle, crate::commands::ai_tools::sync_agents);
+}
+
+/// `resync_agents` on a handle of the caller's own, with `sync` given the
+/// bridge's disabled tools and working directory. Both are copied out and the
+/// bridge's locks let go before `sync` runs, so file I/O never keeps the bridge
+/// (every request it serves) waiting. Nothing when the bridge is not running.
+pub fn resync_agents_with(
+    handle: &crate::commands::ai_bridge::BridgeHandle,
+    sync: impl FnOnce(&[String], Option<&str>),
+) {
+    let wanted = {
+        let guard = handle.running.lock().unwrap_or_else(|e| e.into_inner());
+        guard.as_ref().map(|(shared, _)| {
+            let ctx = shared.ctx.lock().unwrap_or_else(|e| e.into_inner());
+            (ctx.disabled_tools.clone(), ctx.working_dir.clone())
+        })
+    };
+    if let Some((disabled, working_dir)) = wanted {
+        sync(&disabled, working_dir.as_deref());
     }
 }
 

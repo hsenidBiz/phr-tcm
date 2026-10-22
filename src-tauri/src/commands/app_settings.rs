@@ -22,14 +22,21 @@ pub fn set_close_to_tray(on: bool) -> Result<AppSettings, String> {
 /// The folder of the Playwright automation clone scripts export into.
 #[tauri::command]
 #[specta::specta]
-pub fn set_playwright_clone(app: tauri::AppHandle, path: String) -> Result<AppSettings, String> {
-    let saved = app_settings::update(|s| s.playwright_clone = path.trim().to_string()).map_err(|e| {
-        crate::applog::warn(format!("saving the Playwright clone setting failed: {e}"));
-        "The setting could not be saved. Settings → Logs has the details.".to_string()
-    })?;
-    // The agent files carry the repo's rules: a different clone gives different text.
-    crate::commands::modules::resync_agents(&app);
-    Ok(saved)
+pub async fn set_playwright_clone(app: tauri::AppHandle, path: String) -> Result<AppSettings, String> {
+    // The agent files carry the repo's rules: a different clone gives different
+    // text. Reading the repo and writing those files stays off the main thread.
+    let job = tauri::async_runtime::spawn_blocking(move || {
+        let saved = app_settings::update(|s| s.playwright_clone = path.trim().to_string()).map_err(|e| {
+            crate::applog::warn(format!("saving the Playwright clone setting failed: {e}"));
+            "The setting could not be saved. Settings → Logs has the details.".to_string()
+        })?;
+        crate::commands::modules::resync_agents(&app);
+        Ok::<AppSettings, String>(saved)
+    });
+    job.await.unwrap_or_else(|e| {
+        crate::applog::warn(format!("saving the Playwright clone setting stopped early: {e}"));
+        Err("The setting could not be saved. Settings → Logs has the details.".to_string())
+    })
 }
 
 /// Whether the app is registered to start at sign-in. Read from the

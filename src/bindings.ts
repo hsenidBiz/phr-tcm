@@ -1356,7 +1356,8 @@ export const commands = {
 	setPlaywrightClone: (path: string) => typedError<AppSettings, string>(__TAURI_INVOKE("set_playwright_clone", { path })),
 	/**
 	 *  Called when the Auto Run screen opens: the generated agent files catch up
-	 *  with the repo's rules, then the status. Never an error.
+	 *  with the repo's rules, then the status. Never an error. The files are read
+	 *  and written off the main thread.
 	 */
 	pwRulesStatus: () => __TAURI_INVOKE<PwRulesStatus>("pw_rules_status"),
 	/**
@@ -5351,6 +5352,8 @@ export type PwReport = {
 /**  Whether the Playwright tab has a clone set, for the Auto Run screen. */
 export type PwRulesStatus = {
 	clone_set: boolean,
+	/**  A path is set but is no longer a folder (so `clone_set` is false too). */
+	clone_gone: boolean,
 };
 
 /**

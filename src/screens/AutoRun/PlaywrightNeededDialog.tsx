@@ -24,7 +24,7 @@ export function resetPlaywrightNoticeForTests(): void {
 }
 
 /** Asks pwRulesStatus each time Auto Run mounts (it also refreshes the agent files); open once per app start when clone_set is false. */
-export function usePlaywrightNotice(): { open: boolean; close: () => void } {
+export function usePlaywrightNotice(): { open: boolean; gone: boolean; close: () => void } {
   const status = useQuery({
     queryKey: ["pw-rules-status"],
     queryFn: () => commands.pwRulesStatus(),
@@ -42,16 +42,20 @@ export function usePlaywrightNotice(): { open: boolean; close: () => void } {
       setOpen(true);
     }
   }, [missing]);
-  return { open, close: () => setOpen(false) };
+  // A repo that was set and whose folder is gone is not the same as none ever set.
+  return { open, gone: status.data?.clone_gone === true, close: () => setOpen(false) };
 }
 
 export default function PlaywrightNeededDialog({
   playwrightOn,
+  gone = false,
   onOpenPlaywright,
   onOpenModules,
   onClose,
 }: {
   playwrightOn: boolean;
+  /** A Playwright repo is set but its folder is no longer there. */
+  gone?: boolean;
   onOpenPlaywright: () => void;
   onOpenModules: () => void;
   onClose: () => void;
@@ -63,9 +67,11 @@ export default function PlaywrightNeededDialog({
         Playwright is needed
       </h2>
       <p className="text-xs text-muted">
-        Auto Run&apos;s assistant takes its scripting rules from the team&apos;s Playwright repo. No Playwright repo is
-        set on the Playwright tab, so the assistant is using the rules shipped with this version of Test Case Manager
-        until one is set.
+        Auto Run&apos;s assistant takes its scripting rules from the team&apos;s Playwright repo.{" "}
+        {gone
+          ? "The Playwright repo set on the Playwright tab is no longer there"
+          : "No Playwright repo is set on the Playwright tab"}
+        , so the assistant is using the rules shipped with this version of Test Case Manager until one is set.
       </p>
       {!playwrightOn && (
         <p className="text-xs text-muted">

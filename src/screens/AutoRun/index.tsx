@@ -248,6 +248,7 @@ export default function AutoRun({
   const playwrightNeeded = playwrightNotice.open && (
     <PlaywrightNeededDialog
       playwrightOn={playwrightOn}
+      gone={playwrightNotice.gone}
       onOpenPlaywright={() => onOpenPlaywright?.()}
       onOpenModules={() => onOpenModules?.()}
       onClose={playwrightNotice.close}

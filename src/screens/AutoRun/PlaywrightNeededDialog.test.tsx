@@ -22,8 +22,8 @@ afterEach(() => {
   resetModulesStore();
 });
 
-function answer(clone_set: boolean) {
-  mockIPC((cmd) => (cmd === "pw_rules_status" ? { clone_set } : undefined));
+function answer(clone_set: boolean, clone_gone = false) {
+  mockIPC((cmd) => (cmd === "pw_rules_status" ? { clone_set, clone_gone } : undefined));
 }
 
 /** What AutoRun does with the hook, with the module state the test wants. */
@@ -39,6 +39,7 @@ function Host({
   return notice.open ? (
     <PlaywrightNeededDialog
       playwrightOn={playwrightOn}
+      gone={notice.gone}
       onOpenPlaywright={onOpenPlaywright}
       onOpenModules={onOpenModules}
       onClose={notice.close}
@@ -65,6 +66,28 @@ test("says Playwright is needed and opens the Playwright tab", async () => {
   fireEvent.click(screen.getByRole("button", { name: "Open the Playwright tab" }));
   expect(onOpenPlaywright).toHaveBeenCalledTimes(1);
   expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+});
+
+test("says no repo is set when none ever was", async () => {
+  setModulesForTest(["playwright"]);
+  answer(false, false);
+  mount();
+  const dialog = await screen.findByRole("dialog", { name: "Playwright is needed" });
+  expect(dialog).toHaveTextContent("No Playwright repo is set on the Playwright tab, so the assistant is using the rules shipped");
+  expect(dialog).not.toHaveTextContent("no longer there");
+});
+
+test("says the repo is no longer there when one is set but its folder is gone", async () => {
+  setModulesForTest(["playwright"]);
+  answer(false, true);
+  mount();
+  const dialog = await screen.findByRole("dialog", { name: "Playwright is needed" });
+  expect(dialog).toHaveTextContent(
+    "The Playwright repo set on the Playwright tab is no longer there, so the assistant is using the rules shipped",
+  );
+  expect(dialog).not.toHaveTextContent("No Playwright repo is set");
+  // The way forward is the same: the Playwright tab.
+  expect(screen.getByRole("button", { name: "Open the Playwright tab" })).toBeInTheDocument();
 });
 
 test("with the Playwright module off it opens Modules", async () => {
