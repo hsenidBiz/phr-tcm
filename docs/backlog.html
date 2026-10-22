@@ -42,18 +42,29 @@
 <body>
 <main>
   <h1>Test Case Manager backlog</h1>
-  <p class="sub">Updated 22 October 2026, after 2.2.3-beta.22 (every browser shows a 1280 x 720 page). What is left is below.</p>
+  <p class="sub">Updated 22 October 2026, after 2.2.3-beta.23 (explore mode). What is left is below.</p>
 
   <h2>Agreed, not built yet</h2>
   <div class="item">
     <div class="head"><span class="title">Next builds</span><span class="status todo">Next</span></div>
     <ul>
+      <li>Backlog 37 and 38: page until seen, text as written, exact and unchanged addresses, absence of case words, and the assistant applying your rulings (plan written, 8 tasks).</li>
+      <li>The scripting rules read from the Playwright repo, with TCM's rules first, and /tcm:script-pbi renamed /tcm:gen-tests (spec and plan approved, 8 tasks).</li>
       <li>All projects as one (spec approved, 22 tasks, shipped as several betas).</li>
       <li>Several agents with their own browsers (spec approved; built last).</li>
     </ul>
   </div>
 
-  <h2>Explore mode (built on the feat/explore branch, not released)</h2>
+  <h2>Explore mode (2.2.3-beta.23, 22 October 2026)</h2>
+  <div class="item">
+    <div class="head"><span class="title">Not fully done</span><span class="status todo">Follow-ups</span></div>
+    <ul>
+      <li>A create is only verified when its id is new to the session; a small id that already appeared on an earlier page leaves the create unverified (removable in the browser, not by undo).</li>
+      <li>A first write sent with effect read is saved as a read template before the change list can show otherwise.</li>
+      <li>Saves the browser made that no action answer reported are not swept from the network record into the unrecorded list.</li>
+      <li>A one-off call uses the recipe's first site for its diagnostics; a recipe with several sites may adapt a path wrongly.</li>
+    </ul>
+  </div>
   <div class="item">
     <div class="head"><span class="title">Hand checks owed</span><span class="status todo">Waiting on you</span></div>
     <ul>
