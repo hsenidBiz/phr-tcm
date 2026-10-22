@@ -27,6 +27,13 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.2.3-beta.22",
+    date: "2026-10-22",
+    items: [
+      "Auto Run and API templates: every browser the app drives now shows the page at 1280 x 720 with no display scaling, the same as Playwright, so a page looks the same while a script is written, when it runs and on any screen.",
+    ],
+  },
+  {
     version: "2.2.3-beta.21",
     date: "2026-10-21",
     items: [
