@@ -439,24 +439,39 @@ fn cancelled(e: &NetEntry) -> bool {
 }
 
 /// The request the next check takes: among `entries` (the step's, oldest first) that match and are not in
-/// `taken`, the oldest, passing over one the page cancelled (`ABORTED`) while a later one matches. Its
-/// state gives Finished (answered or redirected) / Failed / PendingOnly; none left -> None { seen }.
+/// `taken`, passing over one the page cancelled (`ABORTED`) while a later one matches:
+/// - the OLDEST that has finished (answered or redirected), whether or not an older one is still going: a
+///   request that never finishes (a fetch whose body the page never reads stays going in the browser's
+///   record) must not hold up the check while a newer one has answered;
+/// - else the oldest that failed;
+/// - else the oldest, still going: the check waits only while none has finished.
+///
+/// None left -> None { seen }.
 pub fn pick_in_order(entries: &[NetEntry], method: Option<&str>, url_contains: &str, taken: &[String]) -> Pick {
     let pattern = url_contains.trim().to_lowercase();
     let found: Vec<&NetEntry> = entries.iter().filter(|e| matches(e, method, &pattern)).collect();
     let last = found.len().saturating_sub(1);
-    let next = found
+    let left: Vec<&NetEntry> = found
         .iter()
         .enumerate()
-        .find(|(i, e)| !taken.contains(&e.id) && !(cancelled(e) && *i < last))
-        .map(|(_, e)| (*e).clone());
-    match next {
-        Some(e) if answered(&e) => Pick::Finished(e),
-        Some(e) if matches!(e.state, NetState::Failed(_)) => Pick::Failed(e),
-        Some(e) => Pick::PendingOnly(e),
+        .filter(|(i, e)| !taken.contains(&e.id) && !(cancelled(e) && *i < last))
+        .map(|(_, e)| *e)
+        .collect();
+    if let Some(e) = left.iter().find(|e| answered(e)) {
+        return Pick::Finished((*e).clone());
+    }
+    if let Some(e) = left.iter().find(|e| matches!(e.state, NetState::Failed(_))) {
+        return Pick::Failed((*e).clone());
+    }
+    match left.first() {
+        Some(e) => Pick::PendingOnly((*e).clone()),
         None => Pick::None { seen: entries.len() },
     }
 }
+
+/// How long a lone cancelled request is waited on, in case the page sends it again (a debounced search
+/// cancels on each keystroke and resends after its delay): the check then judges the one resent.
+pub const RESEND_GRACE_MS: u64 = 1000;
 
 /// Where a sentence about the picked request says which one it was.
 pub const WHICH: &str = ": the step's matching request ";
@@ -761,6 +776,8 @@ async fn watch<D: Driver>(
     // Whether any call has come back - a page that never makes the request
     // is not the same failure as a browser that has stopped answering.
     let mut answered = false;
+    // Since when the only request left to judge has been one the page cancelled.
+    let mut cancelled_since: Option<Instant> = None;
     loop {
         match look(d).await {
             Ok(_) => answered = true,
@@ -773,10 +790,19 @@ async fn watch<D: Driver>(
         let still_going =
             entries.iter().any(|e| going(e) && matches(e, method, &pattern) && !step.taken.contains(&e.id));
         let picked = pick_in_order(&entries, method, url_contains, &step.taken);
-        match picked {
-            Pick::Finished(e) => return Ok(Waited::Judge(e)),
-            Pick::Failed(e) if !still_going => return Ok(Waited::Judge(e)),
-            _ => {}
+        match &picked {
+            Pick::Finished(e) => return Ok(Waited::Judge(e.clone())),
+            Pick::Failed(e) if !still_going && !cancelled(e) => return Ok(Waited::Judge(e.clone())),
+            // A page that cancels a request on the keystroke and sends it again after a delay
+            // is judged on the second: a lone cancelled one is given a moment (or the time
+            // the check has) before it is said to be cancelled.
+            Pick::Failed(e) if !still_going => {
+                let since = *cancelled_since.get_or_insert_with(Instant::now);
+                if since.elapsed() >= Duration::from_millis(RESEND_GRACE_MS) {
+                    return Ok(Waited::Judge(e.clone()));
+                }
+            }
+            _ => cancelled_since = None,
         }
         if Instant::now() >= deadline {
             if !answered {

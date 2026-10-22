@@ -84,6 +84,37 @@ fn stop_line() -> String {
     format!("STOP: {SAME_FAILURE_STOP}")
 }
 
+/// The ending that names which request an `expect_response` judged is not part of the failure: the same
+/// failure on a rerun, with the request sent a moment earlier or later, is the same failure - and one
+/// from before the ending existed is the same as one after it.
+#[test]
+fn the_ending_that_names_the_request_is_not_part_of_the_signature() {
+    let old = "POST /hr/Cycle/Save answered 500, expected 200";
+    let a = signature(&case_failing(2, 1, old)).unwrap();
+    let b = signature(&case_failing(
+        2,
+        1,
+        &format!("{old}: the step's matching request 2 of 3, sent after action 1 (click) began"),
+    ))
+    .unwrap();
+    let c = signature(&case_failing(2, 1, &format!("{old}: the step's matching request 1 of 1, sent as the step began")))
+        .unwrap();
+    assert_eq!(a, b);
+    assert_eq!(a, c);
+    assert_eq!(a.words, "post /hr/cycle/save answered #, expected #");
+    // What follows the ending (an excerpt of the body) still tells failures apart.
+    let with_body = |body: &str| {
+        signature(&case_failing(
+            2,
+            1,
+            &format!("{old}: the step's matching request 1 of 1, sent as the step began - the response began: {body}"),
+        ))
+        .unwrap()
+    };
+    assert_ne!(with_body("{\"error\":\"a\"}"), with_body("{\"error\":\"b\"}"));
+    assert_ne!(a, with_body("{\"error\":\"a\"}"));
+}
+
 #[test]
 fn the_signature_masks_digits_and_keeps_step_action_and_words() {
     let a = signature(&case_failing(3, 1, "Timed out 5000ms waiting for Save")).unwrap();

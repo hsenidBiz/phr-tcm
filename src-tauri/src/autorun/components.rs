@@ -425,16 +425,33 @@ pub fn expand_step(
     project: &str,
     actions: &[Action],
 ) -> Result<(Vec<(Action, Option<String>)>, Vec<ComponentUse>), (usize, String)> {
+    expand_step_placed(root, org, project, actions).map(|(out, uses, _)| (out, uses))
+}
+
+/// `expand_step`, and for each expanded action the index of the written
+/// action it came from (a component's actions all have the index of the
+/// `use_component` that gave them): how a sentence that counts a step's
+/// actions counts them as the script is written, not as they run.
+#[allow(clippy::type_complexity)]
+pub fn expand_step_placed(
+    root: &Path,
+    org: &str,
+    project: &str,
+    actions: &[Action],
+) -> Result<(Vec<(Action, Option<String>)>, Vec<ComponentUse>, Vec<usize>), (usize, String)> {
     let Some(first) = actions.iter().position(|a| uses_any(std::slice::from_ref(a))) else {
-        return Ok((actions.iter().cloned().map(|a| (a, None)).collect(), Vec::new()));
+        return Ok((actions.iter().cloned().map(|a| (a, None)).collect(), Vec::new(), (0..actions.len()).collect()));
     };
     let file = load_components(root, org, project).map_err(|why| (first, why))?;
     let mut uses = Vec::new();
     let mut out = Vec::with_capacity(actions.len());
+    let mut places = Vec::with_capacity(actions.len());
     for (i, a) in actions.iter().enumerate() {
-        out.extend(expand_one(&file, a, &mut uses).map_err(|why| (i, why))?);
+        let expanded = expand_one(&file, a, &mut uses).map_err(|why| (i, why))?;
+        places.extend(std::iter::repeat_n(i, expanded.len()));
+        out.extend(expanded);
     }
-    Ok((out, uses))
+    Ok((out, uses, places))
 }
 
 /// What one recorded outcome of a step ran, read back after the run.

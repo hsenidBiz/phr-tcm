@@ -187,18 +187,41 @@ fn pick_in_order_takes_the_oldest_untaken_match() {
     assert!(matches!(pick_in_order(&entries, None, "/a/save", &taken(&["r1", "r2", "r3"])), Pick::None { seen: 4 }));
     // Taking is by the request, not by the pattern: another pattern still sees it.
     assert!(matches!(pick_in_order(&entries, Some("get"), "/other", &taken(&["r1"])), Pick::Finished(e) if e.seq == 0));
-    // An older request still going is the one taken, whatever came after it.
+    // An older request still going is skipped once a newer match has finished: the oldest that
+    // FINISHED is taken, and the check waits only while none has.
     let slow_first = vec![
         entry(0, "GET", "/a/List", None, NetState::Pending),
         entry(1, "GET", "/a/List", Some(200), NetState::Finished),
     ];
-    assert!(matches!(pick_in_order(&slow_first, None, "/a/list", &[]), Pick::PendingOnly(e) if e.seq == 0));
-    // One that failed is judged when it is the oldest left.
+    assert!(matches!(pick_in_order(&slow_first, None, "/a/list", &[]), Pick::Finished(e) if e.seq == 1));
+    let both_going = vec![
+        entry(0, "GET", "/a/List", None, NetState::Pending),
+        entry(1, "GET", "/a/List", None, NetState::Pending),
+    ];
+    assert!(matches!(pick_in_order(&both_going, None, "/a/list", &[]), Pick::PendingOnly(e) if e.seq == 0));
+    // Of several that finished, the oldest still left; the older pending one is next once it finishes.
+    let two_done = vec![
+        entry(0, "GET", "/a/List", None, NetState::Pending),
+        entry(1, "GET", "/a/List", Some(200), NetState::Finished),
+        entry(2, "GET", "/a/List", Some(201), NetState::Finished),
+    ];
+    assert!(matches!(pick_in_order(&two_done, None, "/a/list", &[]), Pick::Finished(e) if e.seq == 1));
+    assert!(matches!(pick_in_order(&two_done, None, "/a/list", &["r1".to_string()]), Pick::Finished(e) if e.seq == 2));
+    assert!(matches!(
+        pick_in_order(&two_done, None, "/a/list", &["r1".to_string(), "r2".to_string()]),
+        Pick::PendingOnly(e) if e.seq == 0
+    ));
+    // A request that failed is judged when none left has finished, and a newer one that finished wins over it.
     let failing = vec![
         entry(0, "GET", "/a/List", None, NetState::Failed("net::ERR_FAILED".into())),
         entry(1, "GET", "/a/List", Some(200), NetState::Finished),
     ];
-    assert!(matches!(pick_in_order(&failing, None, "/a/list", &[]), Pick::Failed(e) if e.seq == 0));
+    assert!(matches!(pick_in_order(&failing, None, "/a/list", &[]), Pick::Finished(e) if e.seq == 1));
+    let failed_then_going = vec![
+        entry(0, "GET", "/a/List", None, NetState::Pending),
+        entry(1, "GET", "/a/List", None, NetState::Failed("net::ERR_FAILED".into())),
+    ];
+    assert!(matches!(pick_in_order(&failed_then_going, None, "/a/list", &[]), Pick::Failed(e) if e.seq == 1));
     assert!(matches!(pick_in_order(&[], None, "/a/list", &[]), Pick::None { seen: 0 }));
 }
 
@@ -896,6 +919,75 @@ async fn a_failure_ends_with_the_request_it_judged_before_any_excerpt() {
         "GET /hr/api/List answered 200, expected 201: the step's matching request 1 of 1, sent after action 1 (click) began"
     );
     assert_eq!(classify(&out[1].detail, None), ErrorClass::Api);
+}
+
+/// A click that sends one request that never finishes (a fetch whose body the page never reads stays
+/// going in the browser's record) and then one that is answered.
+fn clicking_sends_one_going_and_one_answered() -> ScriptedDriver {
+    let mut d = FakePage::default().driver().with_net_record();
+    for e in [
+        sent("L0", "GET", "https://hr.example/hr/api/List?page=1"),
+        sent("L1", "GET", "https://hr.example/hr/api/List?page=2"),
+        answered("L1", 200, "application/json"),
+        finished("L1"),
+    ] {
+        d.on_call_events.push(("Input.dispatchMouseEvent".into(), e));
+    }
+    d
+}
+
+#[tokio::test]
+async fn an_older_request_still_going_does_not_hold_up_a_newer_one_that_has_answered() {
+    let mut d = clicking_sends_one_going_and_one_answered();
+    let began = std::time::Instant::now();
+    let out = run(&mut d, vec![click_option(), expect(Some("GET"), "/api/List", 200, None, Some(5000))]).await;
+    assert!(out[1].ok, "{:?}", out[1]);
+    assert_eq!(
+        out[1].detail,
+        "GET /hr/api/List answered 200: the step's matching request 2 of 2, sent after action 1 (click) began"
+    );
+    assert!(began.elapsed() < std::time::Duration::from_millis(3000), "it waited for the older request: {:?}", began.elapsed());
+}
+
+#[tokio::test]
+async fn a_check_waits_only_while_no_matching_request_has_finished() {
+    let mut d = clicking_sends_one_going_and_one_answered();
+    let again = expect(Some("GET"), "/api/List", 200, None, Some(100));
+    let out = run(&mut d, vec![click_option(), again.clone(), again]).await;
+    assert!(out[1].ok, "{:?}", out[1]);
+    // The next check takes the one left, which never finished.
+    assert!(!out[2].ok, "{:?}", out[2]);
+    assert_eq!(
+        out[2].detail,
+        "GET /hr/api/List had not finished after 0.1 s: the step's matching request 1 of 2, sent after action 1 (click) began"
+    );
+}
+
+#[tokio::test]
+async fn a_debounced_search_that_cancels_and_resends_judges_the_resent_request() {
+    // The first request is cancelled before the page resends it: a moment later the resent one is
+    // answered. The check does not stop at the cancelled one.
+    let mut d = browser(|| Ok(json!({})));
+    on_first_look(
+        &mut d,
+        vec![sent("1", "GET", "https://hr.example/hr/api/Search?q=ab"), failed("1", "net::ERR_ABORTED")],
+    );
+    d.on_idle_events.extend([
+        sent("2", "GET", "https://hr.example/hr/api/Search?q=abc"),
+        answered("2", 200, "application/json"),
+        finished("2"),
+    ]);
+    let out = check(&mut d, &expect(Some("GET"), "/api/Search", 200, None, Some(5000))).await;
+    assert!(out.ok, "{out:?}");
+    assert_eq!(out.detail, "GET /hr/api/Search answered 200: the step's matching request 2 of 2, sent as the step began");
+
+    // One that is never resent is still said to have been cancelled - at the end of the wait, not at once.
+    let mut d = browser(|| Ok(json!({})));
+    on_first_look(&mut d, vec![sent("1", "GET", "https://hr.example/hr/api/Search?q=ab"), failed("1", "net::ERR_ABORTED")]);
+    let began = std::time::Instant::now();
+    let out = check(&mut d, &expect(Some("GET"), "/api/Search", 200, None, None)).await;
+    assert_eq!(out.detail, at_start("GET /hr/api/Search was cancelled by the page"));
+    assert!(began.elapsed() >= std::time::Duration::from_millis(100), "judged at once: {:?}", began.elapsed());
 }
 
 // --------------------------------------------------- patterns and recipes

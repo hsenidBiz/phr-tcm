@@ -109,7 +109,10 @@ pub fn signature(case: &CaseRecord) -> Option<FailureSignature> {
     for step in &case.steps {
         let failed = step.outcomes.iter().enumerate().find(|(_, o)| !o.ok && !o.detail.starts_with("not run:"));
         if let Some((action, outcome)) = failed {
-            let first = outcome.detail.lines().next().unwrap_or("").to_lowercase();
+            // Without the ending that names which request an `expect_response` judged: "the
+            // step's matching request 2 of 3, sent after action 4 began" can differ between
+            // two runs of the same failure on timing alone.
+            let first = super::api_checks::without_which(outcome.detail.lines().next().unwrap_or("")).to_lowercase();
             let mut masked = String::new();
             let mut in_digits = false;
             for c in first.chars() {

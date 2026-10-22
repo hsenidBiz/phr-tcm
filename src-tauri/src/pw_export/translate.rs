@@ -281,6 +281,9 @@ pub fn raw_spec(input: &RawSpecInput) -> Res<String> {
     if tabs {
         em.collector();
     }
+    if uses(input, &|a| matches!(a, Action::ExpectResponse { .. })) {
+        em.request_log();
+    }
     for name in tab_names(input) {
         em.line(4, &format!("let tab_{name}: typeof page;"));
     }
@@ -1020,6 +1023,64 @@ impl Em<'_> {
         }
     }
 
+    /// The requests the page sends, in the order they are sent, for `expect_response` to take from:
+    /// each with whether it is still going, finished (a redirect's own answer included) or failed, and
+    /// the page that sent it. `nextResponse` is the app's `api_checks::pick_in_order`: of the
+    /// step's requests that match and that no earlier check took, the OLDEST that has finished (so
+    /// the export takes them in the order they were sent, not the order the answers arrive), waiting
+    /// only while none has; one the page cancelled is passed over while a later one matches, and a lone
+    /// cancelled one is given a second in case the page sends it again.
+    fn request_log(&mut self) {
+        for l in [
+            "type Req = Awaited<ReturnType<typeof page.waitForRequest>>;",
+            "const sent: { request: Req; from: unknown; state: 'going' | 'done' | 'failed'; error: string }[] = [];",
+            "page.context().on('request', r => {",
+            "  if (r.redirectedFrom()) { return; }",
+            "  let from: unknown = null;",
+            "  try { from = r.frame().page(); } catch { from = null; }",
+            "  sent.push({ request: r, from, state: 'going', error: '' });",
+            "});",
+            "page.context().on('requestfinished', r => {",
+            "  const s = sent.find(e => e.request === r);",
+            "  if (s) { s.state = 'done'; }",
+            "});",
+            "page.context().on('requestfailed', r => {",
+            "  const s = sent.find(e => e.request === r);",
+            "  if (s) { s.state = 'failed'; s.error = r.failure()?.errorText ?? ''; }",
+            "});",
+            "const nextResponse = async (from: number, taken: Set<object>, matches: (r: Req) => boolean, timeout: number) => {",
+            "  const end = Date.now() + timeout;",
+            "  const cancelled = (e: { state: string; error: string }) => e.state === 'failed' && e.error.includes('ERR_ABORTED');",
+            "  const named = (e: { request: Req }) => `${e.request.method()} ${new URL(e.request.url()).pathname}`;",
+            "  let cancelledAt = 0;",
+            "  for (;;) {",
+            "    const mine = sent.slice(from).filter(e => e.from === cur && matches(e.request));",
+            "    const left = mine.filter((e, i) => !taken.has(e) && !(cancelled(e) && i < mine.length - 1));",
+            "    const done = left.find(e => e.state === 'done');",
+            "    if (done) {",
+            "      taken.add(done);",
+            "      return (await done.request.response())!;",
+            "    }",
+            "    const failed = left.find(e => e.state === 'failed');",
+            "    if (failed && !left.some(e => e.state === 'going')) {",
+            "      cancelledAt = cancelledAt || Date.now();",
+            "      if (!cancelled(failed) || Date.now() - cancelledAt >= 1000 || Date.now() >= end) {",
+            "        throw new Error(`${named(failed)} failed: ${failed.error}`);",
+            "      }",
+            "    } else {",
+            "      cancelledAt = 0;",
+            "    }",
+            "    if (Date.now() >= end) {",
+            "      throw new Error(left.length > 0 ? `${named(left[0])} had not finished after ${timeout} ms` : mine.length > 0 ? 'an earlier expect_response of this step took each matching request' : `no matching request in ${timeout} ms`);",
+            "    }",
+            "    await page.waitForTimeout(100);",
+            "  }",
+            "};",
+        ] {
+            self.line(4, l);
+        }
+    }
+
     /// A list of actions, with what they expect armed first.
     fn block(&mut self, scope: String, actions: &[Action], indent: usize) -> Res<()> {
         let saved_scope = std::mem::replace(&mut self.scope, scope);
@@ -1047,37 +1108,21 @@ impl Em<'_> {
     }
 
     fn arm(&mut self, actions: &[Action], indent: usize, n: &mut Counters) {
-        // Two or more waits share a set of the responses already taken, so each takes the next
-        // one in order, as the app does; a block with one keeps its plain line.
-        let shared = responses_in(actions) >= 2;
-        if shared {
+        // The step's `expect_response` checks all look at the requests the page sent from the
+        // step's start (`request_log`) and share the set of those already taken, so each takes the
+        // next one, as the app does.
+        if responses_in(actions) >= 1 {
             let sc = self.scope.clone();
-            self.line(indent, &format!("const claimed{sc} = new Set<object>();"));
+            self.line(indent, &format!("const sentFrom{sc} = sent.length;"));
+            self.line(indent, &format!("const taken{sc} = new Set<object>();"));
         }
-        self.arm_each(actions, indent, n, shared);
+        self.arm_each(actions, indent, n);
     }
 
-    fn arm_each(&mut self, actions: &[Action], indent: usize, n: &mut Counters, shared: bool) {
+    fn arm_each(&mut self, actions: &[Action], indent: usize, n: &mut Counters) {
         for a in actions {
             let sc = self.scope.clone();
             match a {
-                Action::ExpectResponse { method, url_contains, timeout_ms, .. } => {
-                    // Both the app and waitForResponse take the first match after the step
-                    // began; with several waits, each takes the next response no earlier one
-                    // took. Url and method are trimmed as the app does.
-                    let mut test = format!("r.url().toLowerCase().includes({})", lit(&url_contains.trim().to_lowercase()));
-                    if let Some(m) = method.as_deref().map(str::trim).filter(|m| !m.is_empty()) {
-                        let _ = write!(test, " && r.request().method() === {}", lit(&m.to_uppercase()));
-                    }
-                    if shared {
-                        let _ = write!(test, " && !claimed{sc}.has(r) && !!claimed{sc}.add(r)");
-                    }
-                    let opt = format!(", {{ timeout: {} }}", expect_timeout(*timeout_ms));
-                    let i = n.resp;
-                    n.resp += 1;
-                    self.line(indent, &format!("const resp{sc}_{i} = cur.waitForResponse(r => {test}{opt});"));
-                    self.settle(indent, &format!("resp{sc}_{i}"));
-                }
                 Action::ExpectDownload { within_ms, .. } => {
                     let i = n.dl;
                     n.dl += 1;
@@ -1086,7 +1131,7 @@ impl Em<'_> {
                     self.settle(indent, &format!("dl{sc}_{i}"));
                 }
                 Action::WhenVisible { then, .. } | Action::RepeatWhileVisible { then, .. } => {
-                    self.arm_each(then, indent, n, shared)
+                    self.arm_each(then, indent, n)
                 }
                 _ => {}
             }
@@ -1608,10 +1653,23 @@ impl Em<'_> {
                 self.line(indent, "}");
             }
             Action::RepeatWhileVisible { selector, max, except, then } => self.repeat(selector, *max, except, then, indent)?,
-            Action::ExpectResponse { status, json, .. } => {
+            Action::ExpectResponse { method, url_contains, status, json, timeout_ms, .. } => {
                 let i = self.cnt.resp;
                 self.cnt.resp += 1;
-                self.line(indent, &format!("const r{sc}_{i} = await resp{sc}_{i};"));
+                // The oldest matching request of the step that has finished and that no earlier
+                // check took, waiting only while none has (`nextResponse`): the app's own rule.
+                // Url and method are trimmed as the app does.
+                let mut test = format!("r.url().toLowerCase().includes({})", lit(&url_contains.trim().to_lowercase()));
+                if let Some(m) = method.as_deref().map(str::trim).filter(|m| !m.is_empty()) {
+                    let _ = write!(test, " && r.method() === {}", lit(&m.to_uppercase()));
+                }
+                self.line(
+                    indent,
+                    &format!(
+                        "const r{sc}_{i} = await nextResponse(sentFrom{sc}, taken{sc}, (r: Req) => {test}, {});",
+                        expect_timeout(*timeout_ms)
+                    ),
+                );
                 self.line(indent, &format!("expect(r{sc}_{i}.status()).toBe({status});"));
                 if let Some(j) = json {
                     self.line(

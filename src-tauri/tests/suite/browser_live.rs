@@ -1779,6 +1779,8 @@ async fn api_checks_read_the_requests_a_real_page_makes() {
 <button id="expired" onclick="fetch('/PerformanceCycle/Expired?token=hunter2', { method: 'POST' })">Save as an ended session</button>
 <button id="pair" onclick="fetch('/api/cycles/42?include=first').then(r => r.text()).then(() => fetch('/api/cycles/42?include=second')).then(r => r.text())">Two questions</button>
 <button id="debounce" onclick="const c = new AbortController(); fetch('/api/cycles/42?include=stale', { signal: c.signal }).catch(() => {}); c.abort(); fetch('/api/cycles/42?include=fresh').then(r => r.text())">Search</button>
+<button id="slowfirst" onclick="fetch('/api/cycles/42?include=slow').then(r => r.text()); fetch('/api/cycles/42?include=quick').then(r => r.text())">Slow first</button>
+<button id="resend" onclick="const c = new AbortController(); fetch('/api/cycles/42?include=stale', { signal: c.signal }).catch(() => {}); c.abort(); setTimeout(() => fetch('/api/cycles/42?include=resent').then(r => r.text()), 300)">Search later</button>
 <p id="out"></p>
 </body></html>"#;
     let listener = TcpListener::bind("127.0.0.1:0").expect("no free port");
@@ -1797,6 +1799,19 @@ async fn api_checks_read_the_requests_a_real_page_makes() {
             let head = String::from_utf8_lossy(&buf[..n]).into_owned();
             let line = head.lines().next().unwrap_or("").to_string();
             log.lock().unwrap().push(line.clone());
+            // A slow answer: it comes on its own thread, 2.5 s later, and the others are not held up.
+            if line.starts_with("GET /api/cycles/42?include=slow") {
+                std::thread::spawn(move || {
+                    std::thread::sleep(Duration::from_millis(2500));
+                    let body = r#"{"name":"Q4 Cycle","include":"slow","extra":1}"#;
+                    let _ = write!(
+                        stream,
+                        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nCache-Control: no-store\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                        body.len()
+                    );
+                });
+                continue;
+            }
             // An ended session: the save is sent on to the sign-in page.
             if line.starts_with("POST /PerformanceCycle/Expired") {
                 let _ = write!(
@@ -1911,6 +1926,30 @@ Connection: close
     must(out[0].clone());
     must(out[1].clone());
     assert!(out[1].detail.contains("matching request 2 of 2"), "the cancelled request was not recorded: {}", out[1].detail);
+
+    // The older request is slow (it answers 2.5 s later) and a newer one has answered: the newer one is
+    // judged at once, never waited behind the older.
+    let slow = step(2, vec![
+        json!({ "kind": "click", "selector": { "css": "#slowfirst" } }),
+        json!({ "kind": "expect_response", "method": "GET", "url_contains": "/api/cycles/42", "json": { "include": "quick" } }),
+    ]);
+    let began = std::time::Instant::now();
+    let out = run_step(&mut live.cdp, root.path(), "acme", "PMS", &slow, &timing(), &mut account).await.unwrap();
+    must(out[0].clone());
+    must(out[1].clone());
+    assert!(out[1].detail.contains("matching request 2 of 2"), "{}", out[1].detail);
+    assert!(began.elapsed() < Duration::from_millis(2400), "it waited for the slow one: {:?}", began.elapsed());
+
+    // A debounced search that cancels at once and sends again 300 ms later: judged on the resent one, never
+    // reported as cancelled in the gap.
+    let resend = step(2, vec![
+        json!({ "kind": "click", "selector": { "css": "#resend" } }),
+        json!({ "kind": "expect_response", "method": "GET", "url_contains": "/api/cycles/42", "json": { "include": "resent" } }),
+    ]);
+    let out = run_step(&mut live.cdp, root.path(), "acme", "PMS", &resend, &timing(), &mut account).await.unwrap();
+    must(out[0].clone());
+    must(out[1].clone());
+    assert!(out[1].detail.contains("matching request 2 of 2"), "{}", out[1].detail);
 
     // The earlier steps' requests are not this step's: nothing was sent here.
     let none = step(3, vec![json!({ "kind": "expect_response", "url_contains": "/PerformanceCycle/Save", "timeout_ms": 600 })]);
