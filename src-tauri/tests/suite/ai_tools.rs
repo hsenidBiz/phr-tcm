@@ -885,10 +885,39 @@ fn the_setup_command_is_an_auto_run_routine_offered_only_with_auto_run() {
         assert!(flat.contains(control), "the routine does not name {control:?}: {flat}");
     }
     assert!(flat.contains("Never use a hash"), "{flat}");
-    assert!(flat.contains("HS_SM_USER_ACCOUNT"), "{flat}");
+    assert!(!flat.contains("HS_SM_USER_ACCOUNT"), "the table is HR_SM_USER_ACCOUNT: {flat}");
+    for line in [
+        "On a test environment, look up each login's password in the same query that finds the login, and propose it with the account.",
+        "The user accounts are generally in the HR_SM_USER_ACCOUNT table: look there first (with `db_query`) for the logins and their passwords.",
+    ] {
+        assert!(flat.contains(line), "{line}: {flat}");
+    }
+    assert!(flat.contains("no_password"), "{flat}");
     assert!(flat.contains("You cannot record an area yourself"), "{flat}");
     assert!(flat.contains("Scripts never run templates"), "{flat}");
     assert!(flat.contains("supervised run of a single case"), "{flat}");
+}
+
+/// Everywhere the assistant is told to propose accounts it is also told to
+/// take each login's password in the same query, and where the logins are.
+/// (The writer role is at its size cap and only points at `propose_accounts`;
+/// the guide it reads holds the lines.)
+#[test]
+fn every_place_that_proposes_accounts_names_the_password_lookup_and_the_user_table() {
+    let flatten = |s: &str| s.split_whitespace().collect::<Vec<_>>().join(" ");
+    let places = [
+        ("ai_tools.rs", flatten(include_str!("../../src/ai_tools.rs").replace("\",\r\n", " ").replace("\"", "").as_str())),
+        ("autorun/guide.rs", flatten(include_str!("../../src/autorun/guide.rs"))),
+        ("api_templates/guide.rs", flatten(include_str!("../../src/api_templates/guide.rs"))),
+        ("roles/repo-tools.md", flatten(include_str!("../../src/autorun/roles/repo-tools.md"))),
+        ("roles/gen-test-tools.md", flatten(include_str!("../../src/autorun/roles/gen-test-tools.md"))),
+    ];
+    for (name, text) in &places {
+        assert!(text.contains("HR_SM_USER_ACCOUNT"), "{name} does not name the user table");
+        assert!(!text.contains("HS_SM_USER_ACCOUNT"), "{name} misspells the user table");
+        assert!(text.contains("look there first (with `db_query`) for the logins and their passwords"), "{name}");
+        assert!(text.contains("propose it with the account"), "{name}");
+    }
 }
 
 /// A command renamed or dropped from `COMMANDS` (this branch trimmed 17

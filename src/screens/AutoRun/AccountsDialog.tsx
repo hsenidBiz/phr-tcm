@@ -408,6 +408,9 @@ export default function AccountsDialog({ onClose }: { onClose: () => void }) {
                             </Button>
                           )}
                         </div>
+                        {p.no_password && (
+                          <p className="pl-6 text-xs text-muted">No password from the assistant: {p.no_password}</p>
+                        )}
                         {fieldOpen && (
                           <div className="flex items-center gap-2 pl-6">
                             <Input

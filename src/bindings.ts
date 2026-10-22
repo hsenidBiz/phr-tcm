@@ -5208,6 +5208,12 @@ export type ProposedAccount = {
 	username: string,
 	role: string | null,
 	has_password: boolean,
+	/**
+	 *  Why the assistant gave no password for this login (for example "the
+	 *  database holds only a hash"), when it said. Not a secret: the person
+	 *  sees it beside the account.
+	 */
+	no_password: string | null,
 };
 
 /**

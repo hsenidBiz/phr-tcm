@@ -926,6 +926,7 @@ mod accounts_for_the_assistant {
                 username: format!("{k}-user"),
                 role: None,
                 password: pw.map(str::to_string),
+                no_password: None,
             })
             .collect();
         save_proposals(root, &active_id(root).unwrap(), &list).unwrap();
@@ -934,6 +935,12 @@ mod accounts_for_the_assistant {
     fn with_password(key: &str, user: &str, password: &str) -> Value {
         let mut p = proposal(key, user);
         p["password"] = json!(password);
+        p
+    }
+
+    fn without_password(key: &str, user: &str, why: &str) -> Value {
+        let mut p = proposal(key, user);
+        p["no_password"] = json!(why);
         p
     }
 
@@ -998,6 +1005,7 @@ mod accounts_for_the_assistant {
                 username: "adm1".into(),
                 role: Some("Supervisor".into()),
                 has_password: false,
+                no_password: None,
             }]
         );
         assert!(proposals_path_for(root, &env_id).is_file(), "stored under the environment's id");
@@ -1017,7 +1025,7 @@ mod accounts_for_the_assistant {
         let root = dir.path();
         mark_test_environment(root);
 
-        let body = json!({ "accounts": [with_password("hr.sup", "sup1", "Db-Pw-7731"), proposal("hr.emp", "emp1")] });
+        let body = json!({ "accounts": [with_password("hr.sup", "sup1", "Db-Pw-7731"), without_password("hr.emp", "emp1", "the database holds only a hash")] });
         let (status, out) = call("POST", "/accounts-propose", &body.to_string()).await;
         assert_eq!(status, 200, "{out}");
         assert!(!out.contains("Db-Pw-7731"), "{out}");
@@ -1068,6 +1076,114 @@ mod accounts_for_the_assistant {
         // Nothing of it is kept: the earlier proposal stands untouched.
         assert_eq!(proposals_text(root), before);
         assert!(!proposals_text(root).contains("Db-Pw-7731"));
+    }
+
+    // ---- A test environment: each account has its password, or says why not
+
+    #[tokio::test]
+    async fn on_a_test_environment_a_proposal_missing_a_password_is_refused_naming_the_keys() {
+        let _root = crate::serial::autorun();
+        let dir = bridge_root();
+        let root = dir.path();
+        mark_test_environment(root);
+
+        // An earlier proposal stands untouched by a refused one.
+        let kept = json!({ "accounts": [with_password("hr.old", "old1", "Db-Pw-0")] });
+        assert_eq!(call("POST", "/accounts-propose", &kept.to_string()).await.0, 200);
+        let before = proposals_text(root);
+
+        let body = json!({ "accounts": [
+            with_password("hr.sup", "sup1", "Db-Pw-7731"),
+            proposal("hr.emp", "emp1"),
+            proposal("hr.adm", "adm1"),
+        ] });
+        let (status, out) = call("POST", "/accounts-propose", &body.to_string()).await;
+        assert_eq!(status, 400, "{out}");
+        assert_eq!(
+            out,
+            "This is a test environment: give each account its password from the same database lookup that found its login (never a hash), or say why there is none with no_password. Missing for: hr.emp, hr.adm."
+        );
+        assert!(!out.contains("Db-Pw-7731"), "{out}");
+        assert_eq!(proposals_text(root), before, "nothing of the refused call is saved");
+
+        // With no earlier proposal, nothing is written at all.
+        dismiss_proposals_with(root).unwrap();
+        let (status, _) = call("POST", "/accounts-propose", &json!({ "accounts": [proposal("hr.emp", "emp1")] }).to_string()).await;
+        assert_eq!(status, 400);
+        assert!(proposals_text(root).is_empty());
+    }
+
+    #[tokio::test]
+    async fn on_a_test_environment_a_password_or_a_reason_for_each_account_is_accepted() {
+        let _root = crate::serial::autorun();
+        let dir = bridge_root();
+        let root = dir.path();
+        mark_test_environment(root);
+
+        let body = json!({ "accounts": [
+            with_password("hr.sup", "sup1", "Db-Pw-7731"),
+            without_password("hr.emp", "emp1", "the database holds only a hash"),
+            without_password("hr.adm", "adm1", &"x".repeat(200)),
+        ] });
+        let (status, out) = call("POST", "/accounts-propose", &body.to_string()).await;
+        assert_eq!(status, 200, "{out}");
+        assert!(!out.contains("Db-Pw-7731"), "{out}");
+
+        let stored = load_proposals(root, &active_id(root).unwrap()).unwrap();
+        assert_eq!(stored[1].no_password.as_deref(), Some("the database holds only a hash"));
+        assert_eq!(stored[1].password, None);
+        assert_eq!(stored[0].no_password, None);
+
+        // The webview learns the reason, and still never a password.
+        let view = proposals_with(root).unwrap();
+        assert_eq!(view[1].no_password.as_deref(), Some("the database holds only a hash"));
+        assert!(!view[1].has_password && view[0].has_password);
+        let sent = serde_json::to_string(&view).unwrap();
+        assert!(!sent.contains("Db-Pw-7731"), "{sent}");
+        assert!(sent.contains("the database holds only a hash"), "{sent}");
+
+        // A reason is at most 200 characters.
+        let long = json!({ "accounts": [without_password("hr.emp", "emp1", &"x".repeat(201))] });
+        let (status, out) = call("POST", "/accounts-propose", &long.to_string()).await;
+        assert_eq!(status, 400, "{out}");
+        assert!(out.contains("hr.emp") && out.contains("200"), "{out}");
+    }
+
+    #[tokio::test]
+    async fn a_password_and_no_password_together_is_refused() {
+        let _root = crate::serial::autorun();
+        let dir = bridge_root();
+        let root = dir.path();
+        for test_env in [false, true] {
+            if test_env {
+                mark_test_environment(root);
+            }
+            let mut p = with_password("hr.sup", "sup1", "Db-Pw-7731");
+            p["no_password"] = json!("no column");
+            let (status, out) = call("POST", "/accounts-propose", &json!({ "accounts": [p] }).to_string()).await;
+            assert_eq!(status, 400, "{out}");
+            assert!(out.contains("hr.sup") && out.contains("no_password"), "{out}");
+            assert!(!out.contains("Db-Pw-7731"), "{out}");
+            assert!(proposals_text(root).is_empty());
+        }
+    }
+
+    #[tokio::test]
+    async fn outside_a_test_environment_a_password_is_still_refused_and_no_password_is_ignored() {
+        let _root = crate::serial::autorun();
+        let dir = bridge_root();
+        let root = dir.path();
+
+        let body = json!({ "accounts": [with_password("hr.sup", "sup1", "Db-Pw-7731")] });
+        let (status, out) = call("POST", "/accounts-propose", &body.to_string()).await;
+        assert_eq!((status, out.as_str()), (400, PROPOSED_PASSWORD_NOT_TEST));
+
+        // Neither is required here, and a reason is accepted without being kept.
+        let body = json!({ "accounts": [without_password("hr.sup", "sup1", "no column"), proposal("hr.emp", "emp1")] });
+        let (status, out) = call("POST", "/accounts-propose", &body.to_string()).await;
+        assert_eq!(status, 200, "{out}");
+        assert!(!proposals_text(root).contains("no column"), "ignored, not kept");
+        assert!(proposals_with(root).unwrap().iter().all(|p| p.no_password.is_none()));
     }
 
     #[tokio::test]

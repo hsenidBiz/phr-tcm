@@ -472,6 +472,10 @@ pub struct ProposedAccount {
     pub username: String,
     pub role: Option<String>,
     pub has_password: bool,
+    /// Why the assistant gave no password for this login (for example "the
+    /// database holds only a hash"), when it said. Not a secret: the person
+    /// sees it beside the account.
+    pub no_password: Option<String>,
 }
 
 /// A proposed account as it is kept in the proposals file. `password` is
@@ -479,7 +483,8 @@ pub struct ProposedAccount {
 /// accepted only for an environment marked as a test environment. Like an
 /// account's own password it is kept in plain JSON (the owner's decision
 /// for test logins, see `autorun::accounts`), and it leaves the file when
-/// its proposal is added, dismissed or replaced.
+/// its proposal is added, dismissed or replaced. `no_password` is the
+/// assistant's reason for giving none; it is kept so the person can see it.
 #[derive(Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct StoredProposal {
     pub key: String,
@@ -489,6 +494,8 @@ pub struct StoredProposal {
     pub role: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub password: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub no_password: Option<String>,
 }
 
 /// Hand-written so a password cannot reach a log line through `{:?}`.
@@ -513,6 +520,7 @@ impl StoredProposal {
             username: self.username.clone(),
             role: self.role.clone(),
             has_password: self.password.is_some(),
+            no_password: self.no_password.clone(),
         }
     }
 }
@@ -522,6 +530,19 @@ pub const MAX_PROPOSALS: usize = 100;
 
 /// The longest password a proposal may carry, in characters.
 pub const MAX_PROPOSED_PASSWORD: usize = 256;
+
+/// The longest reason a proposal may give for having no password, in
+/// characters.
+pub const MAX_NO_PASSWORD_REASON: usize = 200;
+
+/// Said, with the keys that lack one, when a proposal for a test environment
+/// has an account with neither a password nor a reason for having none.
+pub fn proposed_password_missing(keys: &[&str]) -> String {
+    format!(
+        "This is a test environment: give each account its password from the same database lookup that found its login (never a hash), or say why there is none with no_password. Missing for: {}.",
+        keys.join(", ")
+    )
+}
 
 /// Said when a proposal carries a password and the active environment is
 /// not marked as a test environment. The whole call is refused.
@@ -566,6 +587,23 @@ pub fn validate_proposals(list: &[StoredProposal]) -> Result<(), String> {
                 ))
             }
             _ => {}
+        }
+        if let Some(why) = &p.no_password {
+            if p.password.is_some() {
+                return Err(format!(
+                    "the account \"{}\" has both a password and no_password - give one or the other",
+                    p.key
+                ));
+            }
+            if why.trim().is_empty() {
+                return Err(format!("the no_password reason for \"{}\" is empty - say why there is no password", p.key));
+            }
+            if why.chars().count() > MAX_NO_PASSWORD_REASON {
+                return Err(format!(
+                    "the no_password reason for \"{}\" is longer than {MAX_NO_PASSWORD_REASON} characters",
+                    p.key
+                ));
+            }
         }
     }
     Ok(())

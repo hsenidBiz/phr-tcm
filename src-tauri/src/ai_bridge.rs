@@ -9906,7 +9906,9 @@ pub const PROPOSAL_SHAPE_REFUSED: &str = "each account needs a key, a label and 
 /// repeated in an answer, and nothing reaches the accounts until a person
 /// adds it in the app.
 fn accounts_propose(body: &str) -> (u16, String) {
-    use crate::environments::{active, save_proposals, StoredProposal, PROPOSED_PASSWORD_NOT_TEST};
+    use crate::environments::{
+        active, proposed_password_missing, save_proposals, StoredProposal, PROPOSED_PASSWORD_NOT_TEST,
+    };
     #[derive(serde::Deserialize)]
     #[serde(deny_unknown_fields)]
     struct Proposal {
@@ -9918,8 +9920,10 @@ fn accounts_propose(body: &str) -> (u16, String) {
         role: Option<String>,
         #[serde(default)]
         password: Option<String>,
+        #[serde(default)]
+        no_password: Option<String>,
     }
-    let shape = "{ \"accounts\": [{ \"key\": \"hr.supervisor\", \"label\": \"HR supervisor\", \"username\": \"sup1\", \"role\"?: \"Supervisor\", \"password\"?: \"(test environments only)\" }] }";
+    let shape = "{ \"accounts\": [{ \"key\": \"hr.supervisor\", \"label\": \"HR supervisor\", \"username\": \"sup1\", \"role\"?: \"Supervisor\", \"password\"?: \"(test environments only)\", \"no_password\"?: \"why there is none\" }] }";
     let raw = match body_field(body, "accounts", shape) {
         Ok(v) => v,
         Err(refused) => return refused,
@@ -9934,7 +9938,14 @@ fn accounts_propose(body: &str) -> (u16, String) {
     if list.is_empty() {
         return (400, format!("\"accounts\" needs at least one account. Expected {shape}."));
     }
-    let proposals: Vec<StoredProposal> = list
+    // A password and the reason for having none say opposite things.
+    if let Some(p) = list.iter().find(|p| p.password.is_some() && p.no_password.is_some()) {
+        return (
+            400,
+            format!("the account \"{}\" has both a password and no_password - give one or the other", p.key.trim()),
+        );
+    }
+    let mut proposals: Vec<StoredProposal> = list
         .into_iter()
         .map(|p| {
             let key = p.key.trim().to_string();
@@ -9944,7 +9955,15 @@ fn accounts_propose(body: &str) -> (u16, String) {
             };
             let role = p.role.map(|r| r.trim().to_string()).filter(|r| !r.is_empty());
             // Kept exactly as read: a password's spaces are its own.
-            StoredProposal { key, label, username: p.username.trim().to_string(), role, password: p.password }
+            let no_password = p.no_password.map(|r| r.trim().to_string()).filter(|r| !r.is_empty());
+            StoredProposal {
+                key,
+                label,
+                username: p.username.trim().to_string(),
+                role,
+                password: p.password,
+                no_password,
+            }
         })
         .collect();
     let with_password = proposals.iter().filter(|p| p.password.is_some()).count();
@@ -9956,8 +9975,25 @@ fn accounts_propose(body: &str) -> (u16, String) {
         Ok(e) => e,
         Err(e) => return (500, e),
     };
-    if with_password > 0 && !env.test_environment {
-        return (400, PROPOSED_PASSWORD_NOT_TEST.to_string());
+    if env.test_environment {
+        // Every account says what its password is, or why it has none.
+        let missing: Vec<&str> = proposals
+            .iter()
+            .filter(|p| p.password.is_none() && p.no_password.is_none())
+            .map(|p| p.key.as_str())
+            .collect();
+        if !missing.is_empty() {
+            return (400, proposed_password_missing(&missing));
+        }
+    } else {
+        if with_password > 0 {
+            return (400, PROPOSED_PASSWORD_NOT_TEST.to_string());
+        }
+        // Only a test environment keeps passwords, so only there is a
+        // reason for a missing one worth keeping.
+        for p in &mut proposals {
+            p.no_password = None;
+        }
     }
     if let Err(why) = save_proposals(&root, &env.id, &proposals) {
         return (400, why);

@@ -87,7 +87,7 @@ test("each field carries a visible label for when the row stacks, and keeps its 
 
 // ---- Proposed by the assistant -------------------------------------------
 
-type Proposal = { key: string; label: string; username: string; role?: string | null; has_password?: boolean };
+type Proposal = { key: string; label: string; username: string; role?: string | null; has_password?: boolean; no_password?: string | null };
 type Saved = { key: string; label: string; username: string; password: string };
 
 const PROPOSED: Proposal[] = [
@@ -382,6 +382,25 @@ test("Set password then Use database password clears what was typed and closes t
   fireEvent.click(screen.getByRole("button", { name: /^Add selected/ }));
   await waitFor(() => expect(m.adds).toHaveLength(1));
   expect(m.adds[0].picks).toEqual([{ key: "hr.admin", label: "HR Admin", username: "kim", password: "" }]);
+});
+
+test("the reason the assistant gave for having no password shows beside the account, and no password does", async () => {
+  mountWithProposals({
+    proposals: [
+      { key: "hr.admin", label: "HR Admin", username: "kim", has_password: true, no_password: null },
+      { key: "hr.sup", label: "Supervisor", username: "lee", has_password: false, no_password: "the database holds only a hash" },
+    ],
+    hasDefault: false,
+  });
+  await screen.findByRole("heading", { name: "Proposed by the assistant (2)" });
+  const row = screen.getByText("hr.sup").closest("li")!;
+  expect(within(row).getByText("No password from the assistant: the database holds only a hash")).toBeInTheDocument();
+  // The account with a password has no reason line, and nothing reveals a password.
+  const other = screen.getByText("hr.admin").closest("li")!;
+  expect(within(other).queryByText(/No password from the assistant/)).not.toBeInTheDocument();
+  expect(within(other).getByText("From database")).toBeInTheDocument();
+  expect(within(row).getByLabelText("Password for proposed hr.sup")).toHaveValue("");
+  expect(document.body.textContent).not.toMatch(/\$2a\$|Db-Pw/);
 });
 
 test("a login without a database password goes back to the default with Use default password", async () => {

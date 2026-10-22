@@ -1751,6 +1751,22 @@ fn the_account_tools_reach_their_routes() {
     let description = propose["description"].as_str().unwrap();
     assert!(description.contains("never a hash"), "{description}");
     assert!(description.contains("test environment"), "{description}");
+    // On a test environment each account carries its password or a reason.
+    assert_eq!(item["properties"]["no_password"]["type"], "string", "{item}");
+    assert_eq!(item["properties"]["no_password"]["maxLength"], 200, "{item}");
+    assert!(description.contains("no_password"), "{description}");
+    assert!(
+        description.contains(
+            "On a test environment each account's password from the same database lookup that found its login is required"
+        ),
+        "{description}"
+    );
+    assert!(
+        description.ends_with(
+            "The user accounts are generally in the HR_SM_USER_ACCOUNT table: look there first (with db_query) for the logins and their passwords."
+        ),
+        "{description}"
+    );
     assert_eq!(item["required"], serde_json::json!(["key", "label", "username"]));
 
     let calls = std::cell::RefCell::new(vec![]);

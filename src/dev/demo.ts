@@ -476,7 +476,7 @@ let autoRunAccounts: Account[] = [
 /** One login an assistant found for the environment, with only the fact
  * that a password exists for it. */
 let accountProposals: ProposedAccount[] = [
-  { key: "portal.reviewer", label: "Portal reviewer", username: "reviewer@example.test", role: "Reviewer", has_password: true },
+  { key: "portal.reviewer", label: "Portal reviewer", username: "reviewer@example.test", role: "Reviewer", has_password: true, no_password: null },
 ];
 
 let environments: EnvListView = {

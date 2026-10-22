@@ -318,7 +318,10 @@ and its database, and a proof records the environment's name. Account keys
 belong to an environment: `get_accounts` lists the active one's. When it
 has none for what you need, the Auto Run guide (`get_guide`, topic `autorun`) says
 how to find test users with the read-only database tools and offer them
-with `propose_accounts`. Never invent a password.
+with `propose_accounts`. Never invent a password. On a test environment, look up
+each login's password in the same query that finds the login, and propose it with
+the account. The user accounts are generally in the HR_SM_USER_ACCOUNT table: look
+there first (with `db_query`) for the logins and their passwords.
 
 ## Fixtures
 
