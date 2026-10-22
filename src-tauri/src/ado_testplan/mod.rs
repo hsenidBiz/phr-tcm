@@ -75,6 +75,46 @@ pub(crate) fn may_continue(pages: usize, prev: Option<&String>, next: &str, what
     true
 }
 
+/// Rows per page for the Test Management API's $top/$skip lists (runs,
+/// run results). That API sends no continuation header.
+pub(crate) const SKIP_PAGE: usize = 200;
+
+impl AdoClient {
+    /// Every row of a Test Management list that pages with $top/$skip.
+    /// `url` already carries its query (it contains `?`, ends with
+    /// `api-version=7.1`); this appends `&$top={SKIP_PAGE}&$skip={rows so far}`.
+    /// Stops on a page shorter than SKIP_PAGE, or at MAX_PAGES with a
+    /// warning. Returns the rows and how many pages were read. Errors
+    /// propagate. Takes an owned url and a `&'static str` so the future can
+    /// be built eagerly in a batch (closure-captured refs break the tauri
+    /// command macro).
+    pub(crate) async fn get_skip_paged(
+        &self,
+        url: String,
+        what: &'static str,
+    ) -> Result<(Vec<serde_json::Value>, usize), crate::ado::AdoError> {
+        let mut rows: Vec<serde_json::Value> = vec![];
+        let mut pages = 0usize;
+        loop {
+            let page_url = format!("{url}&$top={SKIP_PAGE}&$skip={}", rows.len());
+            let data = self.get_json(page_url).await?;
+            let page = data["value"].as_array().cloned().unwrap_or_default();
+            let got = page.len();
+            rows.extend(page);
+            pages += 1;
+            if got < SKIP_PAGE {
+                return Ok((rows, pages));
+            }
+            if pages >= MAX_PAGES {
+                crate::applog::warn(format!(
+                    "stopped paging {what} at the {MAX_PAGES}-page cap - results may be incomplete"
+                ));
+                return Ok((rows, pages));
+            }
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, specta::Type)]
 pub struct TestPlan {
     pub id: i32,

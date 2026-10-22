@@ -161,27 +161,20 @@ impl AdoClient {
         // paginated-testplan helper reads - so a run of more than one page
         // silently returned only the first, and every outcome beyond it was
         // dropped as "no matching result".
-        const PAGE: usize = 200;
-        let mut out: Vec<RunResultRef> = vec![];
-        loop {
-            let url = format!(
-                "{}/test/Runs/{}/results?$top={PAGE}&$skip={}&api-version=7.1",
-                self.tp_base(org, project),
-                run_id,
-                out.len()
-            );
-            let data = self.get_json(url).await?;
-            let page = data["value"].as_array().cloned().unwrap_or_default();
-            let got = page.len();
-            out.extend(page.iter().map(|r| RunResultRef {
+        let url = format!(
+            "{}/test/Runs/{}/results?api-version=7.1",
+            self.tp_base(org, project),
+            run_id
+        );
+        let (rows, _) = self.get_skip_paged(url, "run results").await?;
+        Ok(rows
+            .iter()
+            .map(|r| RunResultRef {
                 result_id: r["id"].as_i64().unwrap_or_default() as i32,
                 test_case_id: id_i32(&r["testCase"]["id"]),
                 point_id: id_i32(&r["testPoint"]["id"]),
-            }));
-            if got < PAGE {
-                return Ok(out);
-            }
-        }
+            })
+            .collect())
     }
 
     /// PATCH outcomes onto a run's results (plain JSON, marks each result

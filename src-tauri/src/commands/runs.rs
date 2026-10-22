@@ -291,7 +291,7 @@ pub async fn run_history(
 ) -> Result<Vec<ado_testplan::CaseHistory>, ado::AdoError> {
     let token = get_fresh_token(&app).await?;
     ado::AdoClient::new(token)
-        .run_history(&organization, &project, plan_id)
+        .run_history(&organization, &project, plan_id, &[])
         .await
 }
 
