@@ -276,6 +276,15 @@ pub fn new_token() -> String {
         .collect()
 }
 
+/// `GET /autorun-role?role=<key>`: the role's text, or a 400 naming the roles there are.
+pub fn autorun_role_answer(target: &str) -> (u16, String) {
+    let asked = q(target, "role").unwrap_or_default();
+    match crate::autorun::roles::Role::from_key(&asked) {
+        Some(role) => (200, role.text()),
+        None => (400, crate::autorun::roles::unknown_role(&asked)),
+    }
+}
+
 /// Query-string value by key from "a=1&b=2", percent-decoded ('+' -> space,
 /// arbitrary %XX -> the raw byte). `pub` so `tests/suite/ai_bridge.rs` can
 /// exercise it directly.
@@ -403,6 +412,8 @@ pub async fn route(
                 (200, autorun_guide_with_quirks(ctx, quick))
             }
         },
+        // A role's rules, read from the Playwright repo that is set: the proxy cannot, so it asks here.
+        ("GET", "/autorun-role") => autorun_role_answer(target),
         // A save that repairs (carries `edits`) ends with the repair rules, a refusal too.
         ("POST", "/autorun-script") => {
             let answer = save_autorun_scripts(ctx, client, body).await;

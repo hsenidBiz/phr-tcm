@@ -3261,8 +3261,8 @@ fn the_quirk_tool_offers_a_class_of_three() {
     assert!(save["inputSchema"]["properties"]["edits"]["description"].as_str().unwrap().contains("quirk_class"));
 }
 
-/// A fake bridge for the role tests: `/tools` answers a development app,
-/// the quick autorun guide answers a fixed text, and any other path fails.
+/// A fake bridge for the role tests: `/tools` answers a development app, the quick autorun guide answers
+/// a fixed text, a role route answers `APP RULES <key>`, and any other path fails.
 fn role_fake(
     seen: &std::cell::RefCell<Vec<String>>,
 ) -> impl Fn(&str, &str, &str) -> Result<(u16, String), String> + '_ {
@@ -3273,6 +3273,7 @@ fn role_fake(
         seen.borrow_mut().push(path.to_string());
         match path {
             "/autorun-guide?quick=true" => Ok((200, "the quick guide".to_string())),
+            role if role.starts_with("/autorun-role?role=") => Ok((200, format!("APP RULES {}", &role["/autorun-role?role=".len()..]))),
             other => panic!("no guide route is called for a role: {other}"),
         }
     }
@@ -3287,24 +3288,34 @@ fn guide_call(args: &str, call: &dyn Fn(&str, &str, &str) -> Result<(u16, String
 
 #[test]
 fn get_guide_answers_a_role_by_name() {
-    use v2_lib::autorun::roles::Role;
     let seen = std::cell::RefCell::new(vec![]);
     let call = role_fake(&seen);
     let v = guide_call(r#"{"topic":"autorun","role":"healer"}"#, &call);
     assert_ne!(v["result"]["isError"], true, "{v}");
-    assert_eq!(v["result"]["content"][0]["text"], Role::Healer.text());
-    assert!(seen.borrow().is_empty(), "no guide route was called: {:?}", seen.borrow());
+    assert_eq!(v["result"]["content"][0]["text"], "APP RULES healer");
+    assert_eq!(*seen.borrow(), vec!["/autorun-role?role=healer".to_string()]);
+}
+
+#[test]
+fn get_guide_role_asks_the_app_for_the_rules() {
+    let seen = std::cell::RefCell::new(vec![]);
+    let call = role_fake(&seen);
+    let v = guide_call(r#"{"topic":"autorun","role":"writer"}"#, &call);
+    assert_eq!(v["result"]["content"][0]["text"], "APP RULES writer", "{v}");
+    assert_eq!(*seen.borrow(), vec!["/autorun-role?role=writer".to_string()]);
 }
 
 #[test]
 fn a_role_with_quick_comes_first() {
-    use v2_lib::autorun::roles::Role;
     let seen = std::cell::RefCell::new(vec![]);
     let call = role_fake(&seen);
     let v = guide_call(r#"{"topic":"autorun","role":"writer","quick":true}"#, &call);
     let text = v["result"]["content"][0]["text"].as_str().unwrap();
-    assert_eq!(text, format!("{}\n\nthe quick guide", Role::Writer.text().trim_end()), "{v}");
-    assert_eq!(*seen.borrow(), vec!["/autorun-guide?quick=true".to_string()]);
+    assert_eq!(text, "APP RULES writer\n\nthe quick guide", "{v}");
+    assert_eq!(
+        *seen.borrow(),
+        vec!["/autorun-guide?quick=true".to_string(), "/autorun-role?role=writer".to_string()]
+    );
 }
 
 #[test]
@@ -3326,14 +3337,14 @@ fn an_explore_start_opens_with_the_explorers_rules() {
     let mut s = Session::new();
     s.tick(1_000);
     let args = serde_json::json!({"account": "a", "explore": true});
-    assert_eq!(s.note_for("start_autorun_discovery", &args), Some(Role::Explorer.text()));
+    assert_eq!(s.note_for("start_autorun_discovery", &args, &|r| r.text()), Some(Role::Explorer.text()));
     assert_eq!(
-        s.note_for("start_autorun_discovery", &args),
+        s.note_for("start_autorun_discovery", &args, &|r| r.text()),
         Some(v2_lib::autorun::roles::pointer(Role::Explorer))
     );
     // The writer's rules are a separate delivery: a plain start still brings them.
     assert_eq!(
-        s.note_for("start_autorun_discovery", &serde_json::json!({"account": "a"})),
+        s.note_for("start_autorun_discovery", &serde_json::json!({"account": "a"}), &|r| r.text()),
         Some(Role::Writer.text())
     );
 }

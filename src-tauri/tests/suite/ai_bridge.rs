@@ -4930,3 +4930,13 @@ async fn the_guide_teaches_formatting_sparingly_with_the_fence_rule() {
     assert!(!style.contains("AVOID markdown and asterisks in titles, steps"), "{style}");
     assert!(style.contains("titles"), "{style}");
 }
+
+#[test]
+fn the_role_route_gives_the_role_text() {
+    use v2_lib::ai_bridge::{autorun_role_answer, module_of_route};
+    use v2_lib::autorun::roles::{unknown_role, Role};
+    assert_eq!(autorun_role_answer("/autorun-role?role=healer"), (200, Role::Healer.text()));
+    assert_eq!(autorun_role_answer("/autorun-role?role=tester"), (400, unknown_role("tester")));
+    assert_eq!(autorun_role_answer("/autorun-role"), (400, unknown_role("")));
+    assert_eq!(module_of_route("/autorun-role"), Some(v2_lib::modules::Module::AutoRun));
+}

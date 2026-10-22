@@ -151,7 +151,7 @@ pub fn handle_message_in(msg: &str, version: &str, call: BridgeCall, session: &m
                 }
             }
             if reached {
-                if let Some(note) = session.note_for(name, &args) {
+                if let Some(note) = session.note_for(name, &args, &|r| role_text_via(r, call)) {
                     if let Some(items) = result["content"].as_array_mut() {
                         items.insert(0, serde_json::json!({ "type": "text", "text": note }));
                     }
@@ -1258,23 +1258,33 @@ fn autorun_guide_call(args: &serde_json::Value, call: BridgeCall) -> Result<(u16
     }
 }
 
-/// `get_guide` with a `role`: the role's rules, answered here with no call
-/// to the app. With `section`, `quick` or `full` too, the rules come first
-/// and the guide's answer follows.
+/// A role's rules as the app gives them: only the app knows the Playwright repo that is set, so the
+/// proxy asks it each time. When the app does not answer (an older app, or gone mid-session) the
+/// shipped copy is used and its first line says the app did not answer.
+pub fn role_text_via(role: crate::autorun::roles::Role, call: BridgeCall) -> String {
+    let path = format!("/autorun-role?role={}", urlencoding::encode(role.key()));
+    match call("GET", &path, "") {
+        Ok((200, body)) => body,
+        _ => role.shipped_text(crate::autorun::pw_rules::Why::NotRead),
+    }
+}
+
+/// `get_guide` with a `role`: the role's rules, asked of the app. With `section`, `quick` or `full`
+/// too, the rules come first and the guide's answer follows.
 fn role_guide(args: &serde_json::Value, call: BridgeCall) -> Result<(u16, String), String> {
     let asked = args["role"].as_str().unwrap_or_default();
     let Some(role) = crate::autorun::roles::Role::from_key(asked) else {
         return Ok((400, crate::autorun::roles::unknown_role(asked)));
     };
     if !["section", "quick", "full"].iter().any(|k| says(&args[*k])) {
-        return Ok((200, role.text()));
+        return Ok((200, role_text_via(role, call)));
     }
     let mut rest = args.clone();
     if let Some(o) = rest.as_object_mut() {
         o.remove("role");
     }
     match autorun_guide_call(&rest, call)? {
-        (status, body) if status < 400 => Ok((status, format!("{}\n\n{}", role.text().trim_end(), body))),
+        (status, body) if status < 400 => Ok((status, format!("{}\n\n{}", role_text_via(role, call).trim_end(), body))),
         other => Ok(other),
     }
 }

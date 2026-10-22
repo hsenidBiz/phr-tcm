@@ -54,14 +54,14 @@ impl Session {
 
     /// What goes ahead of the answer of `tool` called with `args`, when the call reached the app:
     /// None untracked or for a call that starts no role (`roles::role_for_call`); the role's text the first
-    /// time (and it is now delivered); `roles::pointer(role)` after.
-    pub fn note_for(&mut self, tool: &str, args: &serde_json::Value) -> Option<String> {
+    /// time (and it is now delivered), as `text` gives it; `roles::pointer(role)` after.
+    pub fn note_for(&mut self, tool: &str, args: &serde_json::Value, text: &dyn Fn(Role) -> String) -> Option<String> {
         if !self.tracked {
             return None;
         }
         let role = roles::role_for_call(tool, args)?;
         if self.delivered.insert(role) {
-            Some(role.text())
+            Some(text(role))
         } else {
             Some(roles::pointer(role))
         }
