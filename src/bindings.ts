@@ -1249,6 +1249,10 @@ export const commands = {
 	/**
 	 *  The frontend pushes its current org/project + detected field refs so
 	 *  bridge routes have defaults the AI never has to guess.
+	 * 
+	 *  The slash commands, agent files and "always allow" entries that follow the
+	 *  pushed state are files (and, for the tools found, a PATH search), so they
+	 *  are written on a blocking thread, with no bridge lock held.
 	 */
 	setBridgeContext: (organization: string, project: string, moduleRef: string | null, preconditionsRef: string | null, disabledTools: string[], workingDir: string | null, dbId: string | null, switches: BridgeSwitches) => __TAURI_INVOKE<void>("set_bridge_context", { organization, project, moduleRef, preconditionsRef, disabledTools, workingDir, dbId, switches }),
 	detectAiTools: (workingDir: string | null) => __TAURI_INVOKE<DetectedTool[]>("detect_ai_tools", { workingDir }),
@@ -1256,6 +1260,10 @@ export const commands = {
 	 *  `disabled_tools` is the AI Bridge tab's current on/off set: registering
 	 *  writes the repository's command files, and writing them from an empty
 	 *  set would hand back the commands for tools the user has switched off.
+	 * 
+	 *  Registering shells out (`claude mcp add`), looks for programs on PATH and
+	 *  writes the tools' settings files, so it runs on a blocking thread, not
+	 *  the main one.
 	 */
 	registerAiTool: (id: string, workingDir: string | null, disabledTools: string[], global: boolean) => typedError<null, string>(__TAURI_INVOKE("register_ai_tool", { id, workingDir, disabledTools, global })),
 	/**
@@ -1337,6 +1345,9 @@ export const commands = {
 	 *  Switch `module` on or off; the answer is every module now on. Refused
 	 *  while switching it off would stop a run or a repo command that is going
 	 *  (its cascade counts: Database Access off takes Auto Run with it).
+	 * 
+	 *  The slash commands and "always allow" entries that follow the switch are
+	 *  files (and a PATH search), so they are written on a blocking thread.
 	 */
 	modulesSet: (module: Module, on: boolean) => typedError<Module[], string>(__TAURI_INVOKE("modules_set", { module, on })),
 	/**  Whether How To Use is on disk and current, and the download's size. */
@@ -1354,6 +1365,12 @@ export const commands = {
 	setCloseToTray: (on: boolean) => typedError<AppSettings, string>(__TAURI_INVOKE("set_close_to_tray", { on })),
 	/**  The folder of the Playwright automation clone scripts export into. */
 	setPlaywrightClone: (path: string) => typedError<AppSettings, string>(__TAURI_INVOKE("set_playwright_clone", { path })),
+	/**
+	 *  Called when the Auto Run screen opens: the generated agent files catch up
+	 *  with the repo's rules, then the status. Never an error. The files are read
+	 *  and written off the main thread.
+	 */
+	pwRulesStatus: () => __TAURI_INVOKE<PwRulesStatus>("pw_rules_status"),
 	/**
 	 *  Which of `case_ids` can be exported, and why not for the rest, and which
 	 *  the repo already has (and whether this app exported them).
@@ -1500,6 +1517,19 @@ export const commands = {
 	 *  and in the supervised browser. Read when a run or a supervised step starts.
 	 */
 	setAutorunHighlight: (on: boolean) => typedError<AppSettings, string>(__TAURI_INVOKE("set_autorun_highlight", { on })),
+	/**  The page size every browser the app drives shows. */
+	getPageSize: () => __TAURI_INVOKE<PageSize>("get_page_size"),
+	/**
+	 *  Save the page size. A size outside `viewport::MIN_PAGE..=MAX_PAGE` is
+	 *  refused and nothing is saved. A browser already open keeps its size; the
+	 *  next one the app opens uses this one.
+	 */
+	setPageSize: (size: PageSize) => typedError<PageSize, string>(__TAURI_INVOKE("set_page_size", { size })),
+	/**
+	 *  Put the page size back to what the app ships with. A save that fails says
+	 *  so, in the sentence a failed `set_page_size` uses.
+	 */
+	resetPageSize: () => typedError<PageSize, string>(__TAURI_INVOKE("reset_page_size")),
 	/**
 	 *  The saved style. The starting one is created on the first read when
 	 *  this machine has none yet.
@@ -2427,6 +2457,12 @@ export type AppSettings = {
 	 *  pauses.
 	 */
 	autorun_highlight?: boolean,
+	/**
+	 *  The page every browser the app drives shows (`browser::viewport`).
+	 *  A missing, unreadable or out-of-range value reads as the default, and
+	 *  leaves the rest of the file alone.
+	 */
+	page_size?: PageSize,
 };
 
 /**  One area of the discovery map, as the Discovery card shows it. */
@@ -4691,6 +4727,12 @@ export type PagePalette = {
 	dark_first: boolean,
 };
 
+/**  A page area, in CSS pixels. */
+export type PageSize = {
+	width: number,
+	height: number,
+};
+
 export type Param = Param_Serialize | Param_Deserialize;
 
 export type ParamType = "string" | "number" | "boolean" | "date" | "list";
@@ -5180,6 +5222,12 @@ export type ProposedAccount = {
 	username: string,
 	role: string | null,
 	has_password: boolean,
+	/**
+	 *  Why the assistant gave no password for this login (for example "the
+	 *  database holds only a hash"), when it said. Not a secret: the person
+	 *  sees it beside the account.
+	 */
+	no_password: string | null,
 };
 
 /**
@@ -5341,6 +5389,13 @@ export type PwReport = {
 	run_id: string,
 	/**  From the sibling `<runId>.json`, when it reads. */
 	stats: ReportStats | null,
+};
+
+/**  Whether the Playwright tab has a clone set, for the Auto Run screen. */
+export type PwRulesStatus = {
+	clone_set: boolean,
+	/**  A path is set but is no longer a folder (so `clone_set` is false too). */
+	clone_gone: boolean,
 };
 
 /**

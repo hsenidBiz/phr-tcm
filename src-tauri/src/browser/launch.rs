@@ -96,8 +96,9 @@ pub fn edge_candidates(program_files: &str, program_files_x86: &str) -> Vec<Path
 /// answers only after a frame) then goes unanswered.
 ///
 /// `--force-device-scale-factor=1` keeps a high-DPI screen from scaling the
-/// page, and the window size holds a 1280 x 720 page with the browser's own
-/// frame and toolbar (`viewport`). The page area itself is fixed per tab
+/// page, and the window size holds the page size in force (1280 x 720 unless
+/// the person changed it) with the browser's own frame and toolbar
+/// (`viewport`). The page area itself is fixed per tab
 /// over CDP, which wins over the window.
 pub fn launch_args(port: u16, profile_dir: &Path) -> Vec<String> {
     vec![
@@ -111,7 +112,7 @@ pub fn launch_args(port: u16, profile_dir: &Path) -> Vec<String> {
         "--disable-renderer-backgrounding".to_string(),
         "--disable-sync".to_string(),
         "--force-device-scale-factor=1".to_string(),
-        super::viewport::window_size_arg().to_string(),
+        super::viewport::window_size_arg(),
         "about:blank".to_string(),
     ]
 }
@@ -131,8 +132,8 @@ pub fn args_with(port: u16, profile_dir: &Path, extra: &[&str]) -> Vec<String> {
 /// (`viewport::window_size_arg`), rather than whatever default a headless
 /// window happens to start at. The page itself is fixed per tab by
 /// `viewport::device_metrics_params`.
-pub fn background_args() -> [&'static str; 2] {
-    ["--headless=new", super::viewport::window_size_arg()]
+pub fn background_args() -> [String; 2] {
+    ["--headless=new".to_string(), super::viewport::window_size_arg()]
 }
 
 /// Ask the OS for a port, then let it go: the browser binds it a moment

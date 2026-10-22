@@ -80,7 +80,8 @@ pub(crate) const NEVER_ANSWERED: &str =
 /// module recorder and by `RealBrowsers`.
 pub(crate) async fn open_real(which: Browser, visible: bool) -> Result<(Cdp, LaunchedBrowser), String> {
     let extra = background_args();
-    let browser = launch_with(which, if visible { &[] } else { &extra })?;
+    let extra: Vec<&str> = extra.iter().map(String::as_str).collect();
+    let browser = launch_with(which, if visible { &[] } else { &extra[..] })?;
     // The debugging port answers when the browser is ready, which varies
     // with what else the machine is doing. Asking until it does beats a
     // fixed sleep that is either slow or flaky.
@@ -127,7 +128,8 @@ impl Launcher for RealLauncher {
 
     async fn launch(&mut self) -> Result<LaunchedBrowser, String> {
         let extra = background_args();
-        let browser = launch_with(self.which, if self.watch { &[] } else { &extra })?;
+        let extra: Vec<&str> = extra.iter().map(String::as_str).collect();
+        let browser = launch_with(self.which, if self.watch { &[] } else { &extra[..] })?;
         // Asked until it answers, as `open_real` does.
         let port = browser.port;
         let asked =

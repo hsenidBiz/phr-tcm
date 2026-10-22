@@ -1,6 +1,7 @@
 //! The app's own settings (`crate::app_settings`), for the Settings screen.
 
 use crate::app_settings::{self, AppSettings};
+use crate::browser::viewport::{self, PageSize, DEFAULT_PAGE};
 
 /// The settings as the app is using them now.
 #[tauri::command]
@@ -22,10 +23,20 @@ pub fn set_close_to_tray(on: bool) -> Result<AppSettings, String> {
 /// The folder of the Playwright automation clone scripts export into.
 #[tauri::command]
 #[specta::specta]
-pub fn set_playwright_clone(path: String) -> Result<AppSettings, String> {
-    app_settings::update(|s| s.playwright_clone = path.trim().to_string()).map_err(|e| {
-        crate::applog::warn(format!("saving the Playwright clone setting failed: {e}"));
-        "The setting could not be saved. Settings → Logs has the details.".to_string()
+pub async fn set_playwright_clone(app: tauri::AppHandle, path: String) -> Result<AppSettings, String> {
+    // The agent files carry the repo's rules: a different clone gives different
+    // text. Reading the repo and writing those files stays off the main thread.
+    let job = tauri::async_runtime::spawn_blocking(move || {
+        let saved = app_settings::update(|s| s.playwright_clone = path.trim().to_string()).map_err(|e| {
+            crate::applog::warn(format!("saving the Playwright clone setting failed: {e}"));
+            "The setting could not be saved. Settings → Logs has the details.".to_string()
+        })?;
+        crate::commands::modules::resync_agents(&app);
+        Ok::<AppSettings, String>(saved)
+    });
+    job.await.unwrap_or_else(|e| {
+        crate::applog::warn(format!("saving the Playwright clone setting stopped early: {e}"));
+        Err("The setting could not be saved. Settings → Logs has the details.".to_string())
     })
 }
 
@@ -88,6 +99,39 @@ pub fn set_autorun_highlight(on: bool) -> Result<AppSettings, String> {
         crate::applog::warn(format!("saving the highlight setting failed: {e}"));
         "The setting could not be saved. Settings → Logs has the details.".to_string()
     })
+}
+
+/// The page size every browser the app drives shows.
+#[tauri::command]
+#[specta::specta]
+pub fn get_page_size() -> PageSize {
+    viewport::current()
+}
+
+/// Save the page size. A size outside `viewport::MIN_PAGE..=MAX_PAGE` is
+/// refused and nothing is saved. A browser already open keeps its size; the
+/// next one the app opens uses this one.
+#[tauri::command]
+#[specta::specta]
+pub fn set_page_size(size: PageSize) -> Result<PageSize, String> {
+    let size = viewport::validate(size)?;
+    app_settings::update(|s| s.page_size = size).map_err(|e| {
+        crate::applog::warn(format!("saving the page size failed: {e}"));
+        "The setting could not be saved. Settings → Logs has the details.".to_string()
+    })?;
+    Ok(size)
+}
+
+/// Put the page size back to what the app ships with. A save that fails says
+/// so, in the sentence a failed `set_page_size` uses.
+#[tauri::command]
+#[specta::specta]
+pub fn reset_page_size() -> Result<PageSize, String> {
+    app_settings::update(|s| s.page_size = DEFAULT_PAGE).map_err(|e| {
+        crate::applog::warn(format!("resetting the page size failed: {e}"));
+        "The setting could not be saved. Settings → Logs has the details.".to_string()
+    })?;
+    Ok(viewport::current())
 }
 
 /// Stay signed in. Off removes the kept sign-in from Credential Manager at

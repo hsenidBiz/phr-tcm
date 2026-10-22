@@ -11,7 +11,7 @@ use v2_lib::ai_bridge::{route, still_allowed, BridgeContext, API_WRITES_MOVED};
 use v2_lib::ai_tools::CORE_TOOLS;
 use v2_lib::commands::ai_bridge::{hold_writes_while, push_context_with, release_writes};
 use v2_lib::commands::ai_tools::{
-    match_allow_files_with, repair_allow_files, set_auto_approve_with, ToolHome, AUTO_APPROVE_ENV_MOVED,
+    match_allow_files_in, match_allow_files_with, repair_allow_files, set_auto_approve_with, ToolHome, AUTO_APPROVE_ENV_MOVED,
 };
 use v2_lib::commands::environments::{env_list_with, list_adopting, move_bridge_to, switch_reconciler, switch_with};
 use v2_lib::db::credentials::MemoryStore;
@@ -561,11 +561,32 @@ fn user_settings(home: &tempfile::TempDir) -> String {
 fn the_repair_at_start_takes_out_entries_an_environment_with_no_ask_off_does_not_want() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
+    let (first, _) = two_envs(root);
+    let (home, tools) = tool_home(GRANTED);
+    let ctx = Mutex::new(BridgeContext::default());
+    // The app last ran with the environment's switch on: an older version
+    // wrote the entries, and the app, started, finds them there.
+    set_db_auto_approve(root, &first, true).unwrap();
+    repair_allow_files(Some(&ctx), root, None, &tools);
+    assert!(user_settings(&home).contains("db_query"), "{}", user_settings(&home));
+    // It was switched off meanwhile (a switch the app never finished): the
+    // repair at the next start takes the entries out.
+    set_db_auto_approve(root, &first, false).unwrap();
+    repair_allow_files(Some(&ctx), root, None, &tools);
+    assert!(!user_settings(&home).contains("db_query"), "{}", user_settings(&home));
+}
+
+/// The same entries, found with the switch off the first time the app looks,
+/// were not written by it: they are the person's, and the repair leaves them.
+#[test]
+fn the_repair_leaves_database_entries_it_cannot_have_written() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
     two_envs(root);
     let (home, tools) = tool_home(GRANTED);
     let ctx = Mutex::new(BridgeContext::default());
     repair_allow_files(Some(&ctx), root, None, &tools);
-    assert!(!user_settings(&home).contains("db_query"), "{}", user_settings(&home));
+    assert_eq!(user_settings(&home), GRANTED);
 }
 
 #[test]
@@ -590,6 +611,10 @@ async fn the_switch_takes_out_the_old_environments_entries_and_answers_what_it_d
     let (first, qa) = two_envs(&root);
     set_db_auto_approve(&root, &first, true).unwrap();
     let (home, tools) = tool_home(GRANTED);
+    // The app has run with the first environment's switch on, and found the
+    // entries an older version wrote.
+    match_allow_files_in(&root, None, &tools);
+    assert!(user_settings(&home).contains("db_query"));
     let (_, outcomes) = switch_with(&root, &store, &qa, None, switch_reconciler(root.clone(), None, tools)).await.unwrap();
     assert!(!user_settings(&home).contains("db_query"), "{}", user_settings(&home));
     let outcomes = outcomes.unwrap();
@@ -602,8 +627,12 @@ async fn a_removal_that_fails_is_in_the_switch_answer() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path().to_path_buf();
     let store = MemoryStore::default();
-    let (_, qa) = two_envs(&root);
-    let (_home, tools) = tool_home("{ this is not json");
+    let (first, qa) = two_envs(&root);
+    set_db_auto_approve(&root, &first, true).unwrap();
+    let (home, tools) = tool_home(GRANTED);
+    match_allow_files_in(&root, None, &tools);
+    // The settings file goes bad before the switch takes its entries out.
+    std::fs::write(home.path().join(".claude").join("settings.json"), "{ this is not json").unwrap();
     let (_, outcomes) = switch_with(&root, &store, &qa, None, switch_reconciler(root.clone(), None, tools)).await.unwrap();
     let outcomes = outcomes.unwrap();
     let cc = outcomes.iter().find(|o| o.tool == "Claude Code").expect("Claude Code is named");

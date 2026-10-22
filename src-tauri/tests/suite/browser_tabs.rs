@@ -1651,6 +1651,47 @@ async fn a_tab_the_page_opens_is_given_its_size_before_it_is_let_run() {
     assert_eq!(frame["params"], metrics());
 }
 
+/// A size saved while a browser is open is for the NEXT browser: a tab the
+/// open one opens afterwards keeps the size the browser opened with. The
+/// size in force is process-wide, so this runs in a copy of the test binary.
+#[tokio::test]
+async fn a_tab_keeps_the_size_its_browser_opened_with_when_a_new_size_is_saved() {
+    const IN_CHILD: &str = "TCM_TEST_TABS_PAGE_SIZE_CHILD";
+    let path = "browser_tabs::a_tab_keeps_the_size_its_browser_opened_with_when_a_new_size_is_saved";
+    if std::env::var_os(IN_CHILD).is_none() {
+        let out = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([path, "--exact", "--test-threads=1", "--nocapture"])
+            .env(IN_CHILD, "1")
+            .output()
+            .expect("start a copy of the test binary");
+        let said = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+        assert!(out.status.success(), "the check failed in its own process:\n{said}");
+        assert!(said.contains("1 passed"), "the child ran no check - is {path} still this test's path?\n{said}");
+        return;
+    }
+    use v2_lib::browser::viewport::PageSize;
+    let settings = tempfile::tempdir().unwrap();
+    v2_lib::app_settings::init(settings.path().to_path_buf());
+    v2_lib::commands::app_settings::set_page_size(PageSize { width: 1600, height: 900 }).unwrap();
+
+    let mut cdp = browser().await;
+    // Saved while the browser is open.
+    v2_lib::commands::app_settings::set_page_size(PageSize { width: 1024, height: 768 }).unwrap();
+    feed(&mut cdp, [attached("S-pop", "T-pop", "page", "https://hr.example/report", true)]);
+    settle(&mut cdp).await;
+
+    let want = json!({ "width": 1600, "height": 900, "deviceScaleFactor": 1.0, "mobile": false });
+    let first = sent(&cdp).iter().find(|f| f["method"] == METRICS && f["sessionId"] == MAIN).unwrap();
+    assert_eq!(first["params"], want);
+    let popup = sent(&cdp).iter().find(|f| f["method"] == METRICS && f["sessionId"] == "S-pop").unwrap();
+    assert_eq!(popup["params"], want, "the tab took the size saved after its browser opened");
+
+    // The next browser reads the new one.
+    let next = browser().await;
+    let frame = sent(&next).iter().find(|f| f["method"] == METRICS).unwrap();
+    assert_eq!(frame["params"]["width"], 1024);
+}
+
 #[tokio::test]
 async fn a_refused_page_size_is_logged_and_fails_neither_the_first_page_nor_a_new_tab() {
     let _log = crate::serial::log_tail();

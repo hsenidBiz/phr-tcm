@@ -9,6 +9,7 @@ use std::fs;
 use std::path::Path;
 use v2_lib::autorun::components::{self, Component};
 use v2_lib::autorun::{store, CaseScript, StepScript};
+use v2_lib::browser::viewport::{PageSize, DEFAULT_PAGE};
 use v2_lib::pw_export::export::{write_recorded, ExportResult};
 use v2_lib::pw_export::test_case::CaseDoc;
 use v2_lib::pw_repo::sync::{self, ExportRecord, SyncRow, SyncState};
@@ -140,6 +141,7 @@ fn the_fingerprint_ignores_key_order_and_names_each_part() {
         account: "admin".into(),
         user_key: Some("REPO_KEY".into()),
         handover: String::new(),
+        page: DEFAULT_PAGE,
     };
     let base = json!([{ "step_number": 1, "actions": [
         { "kind": "expect_response", "url_contains": "x", "json": { "a": 1, "b": { "c": 2, "d": 3 } } }
@@ -204,6 +206,89 @@ fn what_the_export_reads_decides_the_state() {
     assert_eq!(sx.state(40), SyncState::OutOfDate { why: "changed since the export: steps".into() });
 }
 
+/// The page size joins the fingerprint only when it is not the default, so an
+/// export made before the size was a setting is not turned out of date by it.
+#[test]
+fn the_page_size_joins_the_fingerprint_only_when_it_is_not_the_default() {
+    let input = |page: PageSize| sync::FingerprintInput {
+        title: "t".into(),
+        steps: json!([]),
+        area: "A".into(),
+        area_clicks: json!([]),
+        account: "admin".into(),
+        user_key: None,
+        handover: String::new(),
+        page,
+    };
+    // The same input, and the same pinned hash, as the handover test: at the
+    // default nothing about the page is in the hash or the parts.
+    const BEFORE_THE_SIZE_WAS_A_SETTING: &str = "8ef087babbbb503f2752829d8b906151eb23d340e248658bbb074bd12a2e97b4";
+    let default = sync::fingerprint(&input(DEFAULT_PAGE));
+    assert_eq!(default.hash, BEFORE_THE_SIZE_WAS_A_SETTING);
+    assert_eq!(default.parts.page, "");
+
+    let big = sync::fingerprint(&input(PageSize { width: 1600, height: 900 }));
+    let small = sync::fingerprint(&input(PageSize { width: 800, height: 600 }));
+    assert_ne!(big.hash, default.hash);
+    assert_ne!(small.hash, big.hash);
+    assert!(!big.parts.page.is_empty() && big.parts.page != small.parts.page);
+    // Nothing else moved.
+    assert_eq!((&big.parts.title, &big.parts.steps, &big.parts.area), (&default.parts.title, &default.parts.steps, &default.parts.area));
+    assert_eq!(big.parts.account, default.parts.account);
+    // An export from before the handover was part of the hash is still judged
+    // by what it read - and a page that is not the default is part of that.
+    assert_eq!(default.legacy_hash, BEFORE_THE_SIZE_WAS_A_SETTING);
+    assert_ne!(big.legacy_hash, BEFORE_THE_SIZE_WAS_A_SETTING);
+}
+
+/// Run `body` in a fresh copy of this test binary: it changes the page size
+/// in force, which every other test of the suite reads.
+fn in_own_process(name: &str, body: impl FnOnce()) {
+    const IN_CHILD: &str = "TCM_TEST_PW_SYNC_PAGE_CHILD";
+    let path = format!("pw_repo_sync::{name}");
+    if std::env::var_os(IN_CHILD).is_none() {
+        let out = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([path.as_str(), "--exact", "--test-threads=1", "--nocapture"])
+            .env(IN_CHILD, "1")
+            .output()
+            .expect("start a copy of the test binary");
+        let said = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+        assert!(out.status.success(), "the check failed in its own process:\n{said}");
+        assert!(said.contains("1 passed"), "the child ran no check - is {path} still this test's path?\n{said}");
+        return;
+    }
+    body();
+}
+
+#[test]
+fn a_changed_page_size_makes_an_exported_case_out_of_date() {
+    in_own_process("a_changed_page_size_makes_an_exported_case_out_of_date", || {
+        use v2_lib::commands::app_settings::{reset_page_size, set_page_size};
+        let settings = tempfile::tempdir().unwrap();
+        v2_lib::app_settings::init(settings.path().to_path_buf());
+
+        let sx = Sx::new();
+        sx.fx.good(20, "Twenty");
+        sx.export(&[20], &docs(&[(20, "Twenty")])).unwrap();
+        assert_eq!(sx.state(20), SyncState::Current);
+
+        // Another size: the spec would ask Playwright for it, so what was exported is stale.
+        set_page_size(PageSize { width: 1600, height: 900 }).unwrap();
+        assert_eq!(sx.state(20), SyncState::OutOfDate { why: "changed since the export: page size".into() });
+
+        // Exported again at that size, it is current - and `test.use` is in the spec.
+        sx.export(&[20], &docs(&[(20, "Twenty")])).unwrap();
+        assert_eq!(sx.state(20), SyncState::Current);
+        assert!(sx.fx.read_clone(&sx.raw(20)).contains("viewport: { width: 1600, height: 900 }"));
+
+        // Back to the default: the spec exported at 1600 x 900 is stale again.
+        reset_page_size().unwrap();
+        assert_eq!(sx.state(20), SyncState::OutOfDate { why: "changed since the export: page size".into() });
+        sx.export(&[20], &docs(&[(20, "Twenty")])).unwrap();
+        assert_eq!(sx.state(20), SyncState::Current);
+    });
+}
+
 #[test]
 fn a_record_that_cannot_be_read_is_kept_aside_and_sync_starts_again() {
     let sx = Sx::new();
@@ -236,6 +321,7 @@ fn the_handover_joins_the_fingerprint_only_when_it_says_something() {
         account: "admin".into(),
         user_key: None,
         handover: handover.into(),
+        page: DEFAULT_PAGE,
     };
     let none = sync::fingerprint(&input(""));
     let some = sync::fingerprint(&input("changes shared state: cycle published"));

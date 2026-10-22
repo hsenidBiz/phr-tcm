@@ -276,9 +276,13 @@ pub fn hold_writes_while<T>(bridge: Option<&std::sync::Mutex<BridgeContext>>, f:
 
 /// The frontend pushes its current org/project + detected field refs so
 /// bridge routes have defaults the AI never has to guess.
+///
+/// The slash commands, agent files and "always allow" entries that follow the
+/// pushed state are files (and, for the tools found, a PATH search), so they
+/// are written on a blocking thread, with no bridge lock held.
 #[tauri::command]
 #[specta::specta]
-pub fn set_bridge_context(
+pub async fn set_bridge_context(
     app: tauri::AppHandle,
     organization: String,
     project: String,
@@ -289,11 +293,45 @@ pub fn set_bridge_context(
     db_id: Option<String>,
     switches: BridgeSwitches,
 ) {
+    let (running, root) = push_context(
+        &app,
+        organization,
+        project,
+        module_ref,
+        preconditions_ref,
+        disabled_tools.clone(),
+        working_dir.clone(),
+        db_id,
+        switches,
+    );
+    let job = tauri::async_runtime::spawn_blocking(move || {
+        sync_files_after_push(running.as_ref(), root.as_deref(), disabled_tools, working_dir)
+    });
+    if let Err(e) = job.await {
+        crate::applog::warn(format!("syncing the AI tools' files after a push stopped early: {e}"));
+    }
+}
+
+/// The part of `set_bridge_context` that changes the bridge's context: quick,
+/// no file work. Answers the running bridge (if any) and the app's data folder.
+#[allow(clippy::too_many_arguments)]
+fn push_context(
+    app: &tauri::AppHandle,
+    organization: String,
+    project: String,
+    module_ref: Option<String>,
+    preconditions_ref: Option<String>,
+    disabled_tools: Vec<String>,
+    working_dir: Option<String>,
+    db_id: Option<String>,
+    switches: BridgeSwitches,
+) -> (Option<SharedBridge>, Option<std::path::PathBuf>) {
     use tauri::Manager;
     let secrets = std::sync::Arc::clone(&app.state::<crate::db::DbSecrets>().0);
-    let root = super::autorun::root(&app).ok();
+    let root = super::autorun::root(app).ok();
     let handle = app.state::<BridgeHandle>();
     let guard = handle.running.lock().unwrap();
+    let mut running: Option<SharedBridge> = None;
     if let Some((shared, _)) = guard.as_ref() {
         let next = BridgeContext {
             org: organization,
@@ -315,7 +353,33 @@ pub fn set_bridge_context(
             gate: Default::default(),
         };
         push_context_with(&shared.ctx, root.as_deref(), next, &switches.env_id);
+        running = Some(Arc::clone(shared));
     }
+    drop(guard);
+    (running, root)
+}
+
+/// The files that follow the state the bridge holds now: the slash commands
+/// and agent files, and the "always allow" entries. Runs on a blocking
+/// thread, and reads the tool list and repository from the bridge's context
+/// when it runs, not from the push that started it - so two pushes landing out
+/// of order still leave the files as the latest one says. The context's lock
+/// is let go before any file is touched.
+fn sync_files_after_push(
+    running: Option<&SharedBridge>,
+    root: Option<&std::path::Path>,
+    pushed_disabled: Vec<String>,
+    pushed_working_dir: Option<String>,
+) {
+    // The tool list the bridge now holds: a push for another environment
+    // than the active one leaves the context's own list in place.
+    let (disabled_tools, working_dir) = match running {
+        Some(shared) => {
+            let ctx = shared.ctx.lock().unwrap_or_else(|e| e.into_inner());
+            (ctx.disabled_tools.clone(), ctx.working_dir.clone())
+        }
+        None => (pushed_disabled, pushed_working_dir),
+    };
     // A tool switched off in the AI Bridge tab loses its slash command too.
     // The tool side already refuses a disabled tool twice - filtered from
     // tools/list, refused again on call - but the picker was still offering
@@ -335,11 +399,33 @@ pub fn set_bridge_context(
     // re-syncs even with the same toggles.
     type SyncKey = (Vec<String>, Option<String>, std::collections::BTreeSet<crate::modules::Module>);
     static LAST: std::sync::Mutex<Option<SyncKey>> = std::sync::Mutex::new(None);
-    let mut last = LAST.lock().unwrap();
+    let mut last = LAST.lock().unwrap_or_else(|e| e.into_inner());
     let key: SyncKey = (disabled_tools.clone(), working_dir.clone(), crate::modules::current());
     if last.as_ref() != Some(&key) {
         *last = Some(key);
         crate::commands::ai_tools::sync_commands(&disabled_tools, working_dir.as_deref());
+    }
+    drop(last);
+
+    // The "always allow" the app writes for the Auto Run and API template
+    // tools follows the same things - the tools switched off, the
+    // repository, the modules - and is written wherever the server is
+    // registered, whether or not the command folder exists. Judged on the
+    // list the bridge holds, and only when that, the repository or the
+    // modules have moved.
+    type AllowKey = (Vec<String>, Option<String>, std::collections::BTreeSet<crate::modules::Module>);
+    static LAST_ALLOW: std::sync::Mutex<Option<AllowKey>> = std::sync::Mutex::new(None);
+    let Some(root) = root else { return };
+    let mut last_allow = LAST_ALLOW.lock().unwrap_or_else(|e| e.into_inner());
+    let key: AllowKey = (disabled_tools.clone(), working_dir.clone(), crate::modules::current());
+    if last_allow.as_ref() != Some(&key) {
+        *last_allow = Some(key);
+        crate::commands::ai_tools::log_allow_outcomes(&crate::commands::ai_tools::sync_allow_rules_in(
+            root,
+            working_dir.as_deref(),
+            &crate::commands::ai_tools::ToolHome::real(),
+            Some(disabled_tools),
+        ));
     }
 }
 

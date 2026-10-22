@@ -3,7 +3,8 @@
 
 use serde_json::{json, Value};
 use std::cell::{Cell, RefCell};
-use v2_lib::autorun::roles::{self, Role, ROLE_MAX_CHARS};
+use v2_lib::autorun::pw_rules::Why;
+use v2_lib::autorun::roles::{self, Role};
 use v2_lib::mcp::{handle_message, handle_message_in};
 use v2_lib::mcp_session::{Session, IDLE_RESET_MS};
 
@@ -14,11 +15,20 @@ struct Fake {
     status: Cell<u16>,
     unreachable: Cell<bool>,
     calls: RefCell<Vec<String>>,
+    /// What `GET /autorun-role` answers with: the status, and a body in place of the role's own text.
+    role_status: Cell<u16>,
+    role_body: RefCell<Option<String>>,
 }
 
 impl Fake {
     fn new() -> Fake {
-        Fake { status: Cell::new(200), unreachable: Cell::new(false), calls: RefCell::new(vec![]) }
+        Fake {
+            status: Cell::new(200),
+            unreachable: Cell::new(false),
+            calls: RefCell::new(vec![]),
+            role_status: Cell::new(200),
+            role_body: RefCell::new(None),
+        }
     }
     fn answer(&self, method: &str, path: &str, _body: &str) -> Result<(u16, String), String> {
         if self.unreachable.get() {
@@ -29,6 +39,10 @@ impl Fake {
                     "disabled": [],
                     "modules": v2_lib::modules::Module::ALL.iter().map(|m| m.key()).collect::<Vec<_>>(),
                 }).to_string()));
+        }
+        if let ("GET", Some(key)) = (method, path.strip_prefix("/autorun-role?role=")) {
+            let body = self.role_body.borrow().clone().unwrap_or_else(|| Role::from_key(key).unwrap().text());
+            return Ok((self.role_status.get(), body));
         }
         self.calls.borrow_mut().push(path.to_string());
         Ok((self.status.get(), ANSWER.to_string()))
@@ -202,5 +216,54 @@ fn a_session_pays_each_role_once() {
         assert!(full || (n.starts_with("(The ") && n.chars().count() < 220), "{n}");
     }
     let total: usize = notes.iter().map(|n| n.chars().count()).sum();
-    assert!(total <= 3 * ROLE_MAX_CHARS + 5 * 220, "{total}");
+    // Three full role texts (each now holds the Playwright repo's files too) and the pointers.
+    let full: usize = [Role::Writer, Role::Healer, Role::CaseRewriter].iter().map(|r| r.text().chars().count()).sum();
+    assert!(total <= full + 5 * 220, "{total}");
+}
+
+#[test]
+fn a_role_text_comes_from_the_app() {
+    let fake = Fake::new();
+    *fake.role_body.borrow_mut() = Some("APP HEALER TEXT".into());
+    let mut s = Session::new();
+    s.tick(1_000);
+    assert_eq!(failures(&fake, &mut s), vec!["APP HEALER TEXT".to_string(), ANSWER.to_string()]);
+}
+
+#[test]
+fn when_the_app_does_not_give_the_rules_the_shipped_copy_says_so() {
+    let fake = Fake::new();
+    fake.role_status.set(404);
+    let mut s = Session::new();
+    s.tick(1_000);
+    let first = failures(&fake, &mut s);
+    assert_eq!(first[0], Role::Healer.shipped_text(Why::NotRead));
+    assert!(first[0].lines().next().unwrap().contains("did not answer"), "{}", first[0]);
+    assert_eq!(first[1], ANSWER);
+    // The role still counts as delivered.
+    s.tick(2_000);
+    assert_eq!(failures(&fake, &mut s)[0], roles::pointer(Role::Healer));
+}
+
+#[test]
+fn the_proxy_never_says_no_repo_is_set_when_it_cannot_know() {
+    // The proxy has no settings, so it cannot know whether a Playwright repo is set. Its role text is
+    // the app's answer, or the shipped copy whose own first line says the app did not answer.
+    let gone: &dyn Fn(&str, &str, &str) -> Result<(u16, String), String> = &|_, _, _| Err("connection refused".into());
+    let not_found: &dyn Fn(&str, &str, &str) -> Result<(u16, String), String> = &|_, _, _| Ok((404, "no route".into()));
+    let broken: &dyn Fn(&str, &str, &str) -> Result<(u16, String), String> = &|_, _, _| Ok((500, "oops".into()));
+    for role in [Role::Writer, Role::Healer, Role::CaseRewriter] {
+        for call in [gone, not_found, broken] {
+            let text = v2_lib::mcp::role_text_via(role, call);
+            assert_eq!(text, role.shipped_text(Why::NotRead), "{}", role.name());
+            let first = text.lines().next().unwrap();
+            assert!(first.contains("did not answer"), "{first}");
+            assert!(!text.contains("no Playwright repo is set"), "{}", role.name());
+        }
+    }
+    let app: &dyn Fn(&str, &str, &str) -> Result<(u16, String), String> = &|_, _, _| Ok((200, "APP TEXT".into()));
+    assert_eq!(v2_lib::mcp::role_text_via(Role::Healer, app), "APP TEXT");
+    // And nothing in the proxy reads a role through the app's own settings.
+    let src = include_str!("../../src/mcp.rs");
+    assert!(!src.contains("role.text()") && !src.contains(".text_in("), "the proxy must take a role through role_text_via");
 }

@@ -42,18 +42,47 @@
 <body>
 <main>
   <h1>Test Case Manager backlog</h1>
-  <p class="sub">Updated 22 October 2026, after 2.2.3-beta.24 (backlog 37 and 38). What is left is below.</p>
+  <p class="sub">Updated 22 October 2026, after 2.2.3-beta.25 (the scripting rules from the Playwright repo, page size setting, auto-allowed Auto Run tools, account passwords). What is left is below.</p>
 
   <h2>Agreed, not built yet</h2>
   <div class="item">
     <div class="head"><span class="title">Next builds</span><span class="status todo">Next</span></div>
     <ul>
+      <li>Backlog 39: unchecked expectations shown, the value check over every check kind, expect_no_change, expect_response armed at the step's start (plan written, 7 tasks; one decision of yours open, below).</li>
       <li>Backlog 36: timing and no-reload checks on a request (agreed, not planned yet).</li>
-      <li>The scripting rules read from the Playwright repo, with TCM's rules first, and /tcm:script-pbi renamed /tcm:gen-tests (spec and plan approved, 8 tasks).</li>
       <li>All projects as one (spec approved, 22 tasks, shipped as several betas).</li>
       <li>Several agents with their own browsers (spec approved; built last).</li>
     </ul>
   </div>
+  <h2>Scripting rules from the Playwright repo, page size, auto-allowed tools, account passwords (2.2.3-beta.25, 22 October 2026)</h2>
+  <div class="item">
+    <div class="head"><span class="title">Your decisions</span><span class="status todo">Waiting on you</span></div>
+    <ul>
+      <li>Backlog 39: values of the new check kinds taken from the page with no reason - flag them as assumed (the plan), or refuse them like texts?</li>
+      <li>reset_autorun_browser is auto-allowed in place of the retired release_autorun_browser, so a plain reset no longer asks. Keep it, or drop it?</li>
+    </ul>
+  </div>
+  <div class="item">
+    <div class="head"><span class="title">Hand checks owed</span><span class="status todo">Waiting on you</span></div>
+    <ul>
+      <li>With the Playwright tab set to your clone, the healer's role text starts with TCM's rules, then your repo's healer file, then the In TCM note; with the clone setting cleared, Auto Run shows the "Playwright is needed" modal once and the role text says it is the shipped copy.</li>
+      <li>Edit a file in your clone's .claude/agents (uncommitted): the next release refuses and names it; commit it and the release snapshot picks it up.</li>
+      <li>/tcm:gen-tests on one PBI; /tcm:script-pbi says it was renamed.</li>
+      <li>In a Claude Code session in your repo, the Auto Run tools run without a permission prompt; switch Auto Run off and on and your own hand-written rules are still there.</li>
+      <li>Set the page size to 1366 x 768: the next run's page is that size, and an exported spec shows out of date and carries the size.</li>
+      <li>Ask the assistant to propose accounts on a test environment: each comes with its password from HR_SM_USER_ACCOUNT, or a reason.</li>
+    </ul>
+  </div>
+  <div class="item">
+    <div class="head"><span class="title">Not fully done</span><span class="status todo">Follow-ups</span></div>
+    <ul>
+      <li>The settings-more screenshot no longer scrolls, so it looks the same as settings-main.</li>
+      <li>A rule Claude Code writes into the same settings file at the very moment TCM writes it can be lost, and TCM rewrites the file's formatting.</li>
+      <li>An allow file that cannot be written is retried only when the tool list, repository or modules change.</li>
+      <li>Remove the /tcm:script-pbi stand-in at the next stable release.</li>
+    </ul>
+  </div>
+
   <h2>Backlog 37 and 38 (2.2.3-beta.24, 22 October 2026)</h2>
   <div class="item">
     <div class="head"><span class="title">Your decision</span><span class="status todo">Waiting on you</span></div>
@@ -137,7 +166,8 @@
       <li>The Setup panel's rows on a narrow and a wide window: no label sits on top of its controls.</li>
       <li>An assistant reset during discovery keeps your sign-in. The log says either "the assistant's reset found the sign-in gone" or "the home page re-issued the sign-in's cookies".</li>
       <li>A case whose text disagrees with the app: the assistant reports it, the case card asks for your ruling, and each ruling does what it says. After "Rewrite the case", editing the case in Azure DevOps, saving the script in the editor, or Undo ruling releases it.</li>
-      <li>/tcm:script-pbi on one PBI: it loads the writer's rules first, stops at the bounds, and never fits a check to the page.</li>
+      <li>/tcm:gen-tests on one PBI: it loads the writer's rules first, stops at the bounds, and never fits a check to the page.</li>
+      <li>Playwright rules from the repo: with a clone set, a writer session's first rules are read from it (edit a line in the clone's healer file, see it in the next session) and with none, the modal shows once and the rules say they are the shipped copy.</li>
       <li>A repair that tries to add a when-visible guard without a quirk is refused; with an app-quirk quirk it saves.</li>
       <li>A product bug the assistant notes shows on its cases and at the top of the run report.</li>
       <li>The assistant makes an import spreadsheet with a bad row and saves it with save_test_file; an upload step then uses it. A .ps1 or .md is refused.</li>

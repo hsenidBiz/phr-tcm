@@ -2346,9 +2346,27 @@ fn the_guide_names_every_role_and_how_its_rules_arrive() {
         "tcm-<role>.md",
         "whatever tools",
         "20 minutes",
-        "/tcm:script-pbi reads the writer's rules first",
+        "/tcm:gen-tests reads the writer's rules first",
     ] {
         assert!(section.contains(needle), "the Roles section lacks {needle:?}");
+    }
+    assert!(!section.contains('\u{2014}') && !section.contains('\u{2013}'));
+}
+
+#[test]
+fn the_roles_section_says_where_the_rules_come_from() {
+    let guide = autorun_guide();
+    let section = guide.split_once("\n## Roles").unwrap().1.split("\n## ").next().unwrap();
+    let flat = flat_guide(section);
+    for needle in [
+        "read fresh each time they are given",
+        "which win wherever the two differ",
+        "the copy shipped with this version",
+        "`playwright_skills`",
+        "`playwright_repo`",
+        "The auditor and the explorer are Test Case Manager's own",
+    ] {
+        assert!(flat.contains(needle), "the Roles section lacks {needle:?}: {flat}");
     }
     assert!(!section.contains('\u{2014}') && !section.contains('\u{2013}'));
 }
@@ -2435,4 +2453,17 @@ fn the_guide_explains_assistant_rulings() {
     let wrong = repair[start..].split("\n## ").next().unwrap();
     assert!(wrong.contains("`clear_autorun_suspected_defect { case_id, said }`"), "{wrong}");
     assert!(!wrong.contains('\u{2014}') && !wrong.contains('\u{2013}'), "no em or en dashes");
+}
+
+/// The first thing the guide says about `propose_accounts` already carries the
+/// password rule, and a `no_password` is said to be words, never the value.
+#[test]
+fn the_guide_says_the_password_rule_in_its_first_propose_accounts_sentence() {
+    let g = autorun_guide();
+    let flat = g.split_whitespace().collect::<Vec<_>>().join(" ");
+    assert!(
+        flat.contains("call `propose_accounts` with a key, a label and a username for each, a role when you know it and, on a test environment, its password (or `no_password`)"),
+        "{flat}"
+    );
+    assert!(flat.contains("never the stored value: one that looks like a password or hash is refused"), "{flat}");
 }

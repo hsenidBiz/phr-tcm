@@ -75,7 +75,7 @@ pub fn autorun_guide() -> String {
     let mut out = String::from("# Writing an Auto Run action script\n\n");
     out.push_str(QUICK_RULES);
     out.push('\n');
-    out.push_str(GUIDE_BODY);
+    out.push_str(&crate::browser::viewport::size_in_force(GUIDE_BODY));
     out
 }
 
@@ -207,7 +207,7 @@ These are examples, not a rule:
 Scripting here is done in five roles, each with its own short rules:
 
 - writer: choosing what to script and writing it from the live app. Its rules come with your
-  first `start_autorun_discovery` of a session (a mapping run aside); /tcm:script-pbi reads the writer's rules first.
+  first `start_autorun_discovery` of a session (a mapping run aside); /tcm:gen-tests reads the writer's rules first.
 - healer: diagnosing and repairing a failed case. Its rules come with your first
   `get_autorun_failures` of a session.
 - case rewriter: changing a saved script or component, a repair or a rewritten case. Its rules
@@ -217,6 +217,16 @@ Scripting here is done in five roles, each with its own short rules:
   rules with `get_guide`.
 - explorer: doing a task the person names with no test case, in an explore session. Its rules come
   with your first `start_autorun_discovery` with `explore` true of a session.
+
+The writer's, healer's and case rewriter's rules are built on the team's Playwright repo, the one set
+on the Playwright tab, read fresh each time they are given: first Test Case Manager's own rules for
+the role, which win wherever the two differ, then the repo's own agent files (its planner and
+generator for the writer, its healer for the healer, spec-editor for the case rewriter), then a note
+on which Test Case Manager tools do what those files name. With no repo set, or a file missing from
+it, the copy shipped with this version is used, and the rules say so in their first line. The repo's
+skills come from `get_guide` with topic `playwright_skills` (and `skill`), and its CLAUDE.md and
+gen-test.md from topic `playwright_repo` (and `file`). The auditor and the explorer are Test Case
+Manager's own.
 
 A role's rules come once a session, ahead of that tool's answer, and a later answer of the tool opens
 with one line pointing back at them; a session starts over after 20 minutes without a call.
@@ -981,14 +991,24 @@ environment, so a key that exists in one may not exist in another.
   propose them. Look in the database with the read-only database tools
   (`db_lookup`, `db_query`), which use the active environment's database,
   and in seed scripts and specs. Then call `propose_accounts` with a key,
-  a label and a username for each, and a role when you know it. The tools
-  only read: never write to the database to create or change a user.
+  a label and a username for each, a role when you know it and, on a test
+  environment, its password (or `no_password`). The tools only read:
+  never write to the database to create or change a user.
+- On a test environment, look up each login's password in the same query
+  that finds the login, and propose it with the account.
+- The user accounts are generally in the HR_SM_USER_ACCOUNT table: look
+  there first (with `db_query`) for the logins and their passwords.
 - Every account's password can be different, so take each account's
   password from the same lookup and put it in the proposal, but
   never a hash: if the stored value is clearly a hash or an encrypted
-  value, leave that password out and say so. Passwords can only be proposed for an
-  environment marked as a test environment; otherwise propose the logins
-  without them.
+  value, do not propose it as a password; give `no_password` with the
+  reason in words instead (at most 200 characters, never the stored
+  value: one that looks like a password or hash is refused). On a test
+  environment every account must carry `password` or `no_password`, or the
+  whole proposal is refused naming the accounts that lack one; `password`
+  and `no_password` together is refused. Passwords can only be proposed
+  for an environment marked as a test environment; otherwise propose the
+  logins without them.
 - A proposal is only a suggestion. The person sees it in Auto Run, under
   Accounts, ticks the ones they want and adds them, and can type another
   password over a proposed one. Each call replaces your previous proposal

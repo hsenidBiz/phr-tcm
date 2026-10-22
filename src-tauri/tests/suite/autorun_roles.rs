@@ -4,6 +4,7 @@
 use serde_json::json;
 use v2_lib::ai_tools::AUTORUN_TOOLS;
 use v2_lib::autorun::failures::{CLASSIFY_FIRST, REPAIR_BOUNDS};
+use v2_lib::autorun::pw_rules::{shipped_line, Why, SHIPPED_COPY};
 use v2_lib::autorun::roles::{cases_repaired_by, role_for_call, Role, ROLE_MAX_CHARS, ROLE_MAX_LINES};
 
 /// A text with every run of whitespace read as one space, so a sentence
@@ -12,8 +13,26 @@ fn flat(s: &str) -> String {
     s.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
+/// A fake clone holding the writer's two agent files, where given.
+fn writer_clone(planner: Option<&str>, generator: Option<&str>) -> tempfile::TempDir {
+    let dir = tempfile::tempdir().unwrap();
+    let agents = dir.path().join(".claude/agents");
+    std::fs::create_dir_all(&agents).unwrap();
+    if let Some(p) = planner {
+        std::fs::write(agents.join("playwright-test-planner.md"), p).unwrap();
+    }
+    if let Some(g) = generator {
+        std::fs::write(agents.join("playwright-test-generator.md"), g).unwrap();
+    }
+    dir
+}
+
+fn path_of(dir: &tempfile::TempDir) -> String {
+    dir.path().to_string_lossy().into_owned()
+}
+
 fn holds(role: Role, needles: &[&str]) {
-    let text = flat(&role.text());
+    let text = flat(&role.tcm_rules());
     for n in needles {
         assert!(text.contains(&flat(n)), "the {} text lacks {n:?}", role.name());
     }
@@ -36,25 +55,37 @@ fn the_roles_have_keys_names_and_texts() {
     assert_eq!(Role::from_key(" Explorer "), Some(Role::Explorer));
     assert_eq!(Role::from_key("tester"), None);
     for r in Role::ALL {
-        let t = r.text();
-        assert!(t.starts_with(&format!("## The {}'s rules", r.name())), "{}", r.name());
+        let t = r.tcm_rules();
+        if matches!(r, Role::Writer | Role::Healer | Role::CaseRewriter) {
+            let first = format!(
+                "## TCM's rules come first: the {}'s rules. Where the Playwright repo's files below say otherwise, these win.",
+                r.name()
+            );
+            assert_eq!(t.lines().next(), Some(first.as_str()), "{}", r.name());
+        } else {
+            assert!(t.starts_with(&format!("## The {}'s rules", r.name())), "{}", r.name());
+        }
         assert!(!t.contains('\r'), "{}", r.name());
+        assert!(!r.text_in("").contains('\r'), "{}", r.name());
     }
 }
 
 #[test]
 fn each_role_is_short() {
     for r in Role::ALL {
-        let t = r.text();
-        assert!(t.lines().count() <= ROLE_MAX_LINES, "{} has {} lines", r.name(), t.lines().count());
-        assert!(t.chars().count() <= ROLE_MAX_CHARS, "{} has {} chars", r.name(), t.chars().count());
+        let rules = r.tcm_rules();
+        let note = r.tool_note().unwrap_or_default();
+        let lines = rules.lines().count() + note.lines().count();
+        let chars = rules.chars().count() + note.chars().count();
+        assert!(lines <= ROLE_MAX_LINES, "{} has {} lines", r.name(), lines);
+        assert!(chars <= ROLE_MAX_CHARS, "{} has {} chars", r.name(), chars);
     }
 }
 
 #[test]
 fn each_role_holds_whatever_the_tools() {
     for r in Role::ALL {
-        assert!(flat(&r.text()).contains("whatever tools you have"), "{}", r.name());
+        assert!(flat(&r.tcm_rules()).contains("whatever tools you have"), "{}", r.name());
     }
 }
 
@@ -93,7 +124,7 @@ fn the_writer_carries_the_owners_rules() {
 
 #[test]
 fn the_healer_carries_the_bounds_word_for_word() {
-    let text = flat(&Role::Healer.text());
+    let text = flat(&Role::Healer.tcm_rules());
     assert!(text.contains(&flat(CLASSIFY_FIRST)), "the classify-first sentence");
     let mut bullets = 0;
     for line in REPAIR_BOUNDS.lines().filter(|l| l.starts_with("- ")) {
@@ -187,7 +218,8 @@ fn the_explorer_carries_the_owners_rules() {
 fn every_backticked_name_in_a_role_is_a_tool() {
     let tools = v2_lib::mcp::all_tool_names();
     for r in Role::ALL {
-        for (i, span) in r.text().split('`').enumerate() {
+        let own = format!("{}{}", r.tcm_rules(), r.tool_note().unwrap_or_default());
+        for (i, span) in own.split('`').enumerate() {
             if i % 2 == 1 && span.contains('_') {
                 assert!(tools.iter().any(|t| t == span), "the {} text backticks {span:?}, which is no tool", r.name());
             }
@@ -198,7 +230,7 @@ fn every_backticked_name_in_a_role_is_a_tool() {
 #[test]
 fn no_role_text_has_an_em_or_en_dash() {
     for r in Role::ALL {
-        let t = r.text();
+        let t = format!("{}{}", r.tcm_rules(), r.tool_note().unwrap_or_default());
         assert!(!t.contains('\u{2014}') && !t.contains('\u{2013}'), "{}", r.name());
     }
 }
@@ -318,4 +350,87 @@ fn the_writer_and_healer_rule_only_on_the_persons_words() {
             "relayed by another",
         ],
     );
+}
+
+#[test]
+fn each_role_is_built_on_its_playwright_files() {
+    assert_eq!(Role::Writer.repo_files(), ["playwright-test-planner.md", "playwright-test-generator.md"]);
+    assert_eq!(Role::Healer.repo_files(), ["playwright-test-healer.md"]);
+    assert_eq!(Role::CaseRewriter.repo_files(), ["spec-editor.md"]);
+    assert!(Role::Auditor.repo_files().is_empty());
+    assert!(Role::Explorer.repo_files().is_empty());
+    assert!(Role::Auditor.tool_note().is_none());
+    assert!(Role::Explorer.tool_note().is_none());
+    for r in [Role::Writer, Role::Healer, Role::CaseRewriter] {
+        assert!(r.tool_note().is_some(), "{}", r.name());
+    }
+}
+
+#[test]
+fn a_role_text_is_its_rules_then_the_repo_files_then_the_note() {
+    let clone = writer_clone(
+        Some("---\nname: p\ntools: Glob\n---\nPLANNER BODY\n"),
+        Some("GENERATOR BODY\n"),
+    );
+    let text = Role::Writer.text_in(&path_of(&clone));
+    let rules = Role::Writer.tcm_rules();
+    assert!(text.starts_with(rules.trim_end()), "TCM's rules come first");
+    let planner = "## From the Playwright repo: playwright-test-planner.md, read from the repo just now\n\nPLANNER BODY";
+    let generator = "## From the Playwright repo: playwright-test-generator.md, read from the repo just now\n\nGENERATOR BODY";
+    let note = Role::Writer.tool_note().unwrap();
+    let at = |needle: &str| text.find(needle).unwrap_or_else(|| panic!("the text lacks {needle:?}"));
+    assert!(at(planner) > rules.trim_end().len());
+    assert!(at(generator) > at(planner));
+    assert!(at(note.trim_end()) > at(generator));
+    assert!(text.ends_with(&format!("{}\n", note.trim_end())));
+    assert!(!text.contains("tools: Glob"), "the frontmatter is dropped");
+    assert!(!text.contains(SHIPPED_COPY), "nothing here is the shipped copy");
+}
+
+#[test]
+fn with_no_clone_the_role_says_it_is_the_shipped_copy() {
+    let text = Role::Healer.text_in("");
+    let labels = vec!["playwright-test-healer.md".to_string()];
+    assert_eq!(text.lines().next(), Some(shipped_line(&Why::NoClone, &labels).as_str()));
+    assert!(text.contains("playwright-test-healer.md, the copy shipped with this version"), "{text}");
+    assert_eq!(Role::Auditor.text_in(""), Role::Auditor.tcm_rules());
+    assert_eq!(Role::Explorer.text_in(""), Role::Explorer.tcm_rules());
+}
+
+#[test]
+fn a_file_missing_from_the_clone_comes_from_the_shipped_copy() {
+    let clone = writer_clone(Some("PLANNER BODY\n"), None);
+    let text = Role::Writer.text_in(&path_of(&clone));
+    let first = text.lines().next().unwrap();
+    assert!(first.contains("has no readable playwright-test-generator.md"), "{first}");
+    assert!(
+        text.contains("## From the Playwright repo: playwright-test-planner.md, read from the repo just now\n\nPLANNER BODY")
+    );
+    assert!(text.contains("## From the Playwright repo: playwright-test-generator.md, the copy shipped with this version"));
+}
+
+#[test]
+fn the_shipped_text_says_the_app_did_not_answer() {
+    let text = Role::Writer.shipped_text(Why::NotRead);
+    assert!(text.lines().next().unwrap().contains("did not answer"), "{text}");
+    assert!(text.contains("playwright-test-planner.md, the copy shipped with this version"));
+    assert!(text.contains("playwright-test-generator.md, the copy shipped with this version"));
+    assert_eq!(Role::Explorer.shipped_text(Why::NotRead), Role::Explorer.tcm_rules());
+}
+
+#[test]
+fn the_healer_note_says_the_repo_healers_way_does_not_apply() {
+    let note = flat(&Role::Healer.tool_note().unwrap());
+    for n in ["Fixing expected values until it passes", "never asking", "test.fixme", "a stuck case stays failed"] {
+        assert!(note.contains(n), "the healer note lacks {n:?}");
+    }
+}
+
+#[test]
+fn every_note_says_never_edit_the_clone() {
+    for r in Role::ALL {
+        if let Some(note) = r.tool_note() {
+            assert!(flat(&note).contains("Never edit the Playwright clone"), "{}", r.name());
+        }
+    }
 }

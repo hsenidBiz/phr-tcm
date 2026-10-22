@@ -5,7 +5,8 @@
 param(
     [Parameter(Mandatory = $true)][string]$Version,
     [switch]$SkipChecks,
-    [switch]$DryRun
+    [switch]$DryRun,
+    [string]$PlaywrightClone
 )
 $ErrorActionPreference = "Stop"
 trap {
@@ -57,13 +58,31 @@ if ($IsBeta) { $uploadArgs += "--pre" }
 # installers (the MSI one refuses a non-numeric prerelease label).
 $buildArgs = @("run", "tauri", "build")
 if ($IsBeta) { $buildArgs += @("--", "--no-bundle") }
+# The Playwright repo's rule files are compiled into the app from
+# src-tauri/pw-rules (see snapshot-pw-rules.ps1). -PlaywrightClone overrides
+# the clone set on the Playwright tab.
+$snapshotArgs = @{}
+if ($PlaywrightClone) { $snapshotArgs["Clone"] = $PlaywrightClone }
 if ($DryRun) {
     Write-Host "Dry run: $Version (beta: $IsBeta)"
+    Write-Host "  scripts/snapshot-pw-rules.ps1 (refuses a missing or dirty Playwright repo)"
+    & (Join-Path $PSScriptRoot "snapshot-pw-rules.ps1") @snapshotArgs -Check
     Write-Host "  npm $($buildArgs -join ' ')"
     Write-Host "  scripts/pack.ps1 -Version $Version -DeltaFrom $repoUrl (downloads the previous release, packs full + delta)"
     Write-Host "  vpk $($uploadArgs -join ' ') --token *** --outputDir Releases"
     Write-Host "  then scripts/publish-guide.ps1 -Version ${Version} - zip src-tauri/help, write how-to-use.json, gh release upload to phr-tcm"
     return
+}
+
+# --- Playwright rules snapshot -----------------------------------------------
+# Before the gates and the push, whatever -SkipChecks says: the app compiles
+# src-tauri/pw-rules in, so a stale or uncommitted snapshot must stop the
+# release here, before anything is built, pushed or published. The script
+# itself refuses a missing or dirty Playwright repo.
+& (Join-Path $PSScriptRoot "snapshot-pw-rules.ps1") @snapshotArgs
+$snapshotChanged = @(git -C $v2 status --porcelain -- src-tauri/pw-rules)
+if ($snapshotChanged.Count -gt 0) {
+    throw "The Playwright rules snapshot changed: review src-tauri/pw-rules, commit it, and run the release again."
 }
 
 # --- Keep the machine usable -----------------------------------------------

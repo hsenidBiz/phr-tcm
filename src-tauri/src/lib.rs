@@ -24,6 +24,7 @@ pub mod browser;
 pub mod bugreport;
 pub mod ai_bridge;
 pub mod ai_tools;
+pub mod allow_record;
 pub mod api_templates;
 pub mod app_settings;
 pub mod assigned_watch;
@@ -81,7 +82,7 @@ pub use state::SubmitCancel;
 pub fn specta_builder() -> Builder<tauri::Wry> {
     use commands::{
         ai_bridge, ai_tools, api_templates, app_settings, auth, autorun, autorun_publish, autorun_record,
-        autorun_divergence, autorun_record_signin, autorun_replay, autorun_setup, board, bugs, cases, crystal, discovery, environments, guide, misc, modules, prs, pw_export, pw_repo, queue, run_order, runs,
+        autorun_divergence, autorun_record_signin, autorun_replay, autorun_setup, board, bugs, cases, crystal, discovery, environments, guide, misc, modules, prs, pw_export, pw_repo, pw_rules, queue, run_order, runs,
         test_files, testplan, workspace, writing_style,
     };
     Builder::<tauri::Wry>::new()
@@ -337,6 +338,7 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             app_settings::get_app_settings,
             app_settings::set_close_to_tray,
             app_settings::set_playwright_clone,
+            pw_rules::pw_rules_status,
             pw_export::pw_export_preview,
             pw_export::pw_export_save_map,
             pw_export::pw_export_write,
@@ -363,6 +365,9 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             app_settings::set_beta_updates,
             app_settings::set_stay_signed_in,
             app_settings::set_autorun_highlight,
+            app_settings::get_page_size,
+            app_settings::set_page_size,
+            app_settings::reset_page_size,
             writing_style::writing_style_get,
             writing_style::writing_style_save,
             writing_style::writing_style_read_file,

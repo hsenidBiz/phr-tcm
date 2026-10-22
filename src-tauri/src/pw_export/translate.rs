@@ -203,6 +203,17 @@ pub fn raw_spec(input: &RawSpecInput) -> Res<String> {
     let _ = write!(em.out, "// spec: {}\n", one_line(&input.md_path));
     em.out.push_str("// seed: suites/_generated/seed.spec.ts\n\n");
     em.out.push_str("import { test, expect } from '@playwright/test';\n\n");
+    // The page TCM runs at is 1280 x 720 unless the person changed it; the
+    // spec then asks Playwright for the same page, so it sees what TCM saw.
+    // At the default Playwright's own page is already that one.
+    let page = crate::browser::viewport::current();
+    if page != crate::browser::viewport::DEFAULT_PAGE {
+        let _ = write!(
+            em.out,
+            "test.use({{ viewport: {{ width: {}, height: {} }}, deviceScaleFactor: 1 }});\n\n",
+            page.width, page.height
+        );
+    }
     let _ = write!(em.out, "test.describe({}, () => {{\n", lit(&input.feature_title));
     let _ = write!(em.out, "  test({}, async ({{ page }}) => {{\n", lit(&input.script.title));
     // Playwright's conditional form: a single-string `test.fixme('...')`

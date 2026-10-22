@@ -192,6 +192,7 @@ fn a_browser_name_maps_to_its_enum_and_falls_back_to_edge() {
 #[test]
 fn a_background_browser_is_headless_in_the_window_the_page_size_asks_for() {
     let extra = background_args();
+    let extra: Vec<&str> = extra.iter().map(String::as_str).collect();
     let args = args_with(9333, Path::new("C:/tmp/p"), &extra);
     assert!(args.iter().any(|a| a == "--headless=new"));
     let want = format!("--window-size={},{}", PAGE_WIDTH + 16, PAGE_HEIGHT + 140);

@@ -151,7 +151,7 @@ pub fn handle_message_in(msg: &str, version: &str, call: BridgeCall, session: &m
                 }
             }
             if reached {
-                if let Some(note) = session.note_for(name, &args) {
+                if let Some(note) = session.note_for(name, &args, &|r| role_text_via(r, call)) {
                     if let Some(items) = result["content"].as_array_mut() {
                         items.insert(0, serde_json::json!({ "type": "text", "text": note }));
                     }
@@ -694,7 +694,7 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool, unlocked: bool) -> serde_j
         },
         {
             "name": "propose_accounts",
-            "description": "Propose test logins for the app's active environment - ones you found in a seed script, a spec or the database - so a person can add them as Auto Run accounts. Each entry is { key, label, username, role?, password? }. Include each account's password from the same database lookup that found its login, because every account's password can be different - but never a hash: a value that is clearly a hash or an encrypted blob is left out, and you say so. A proposal that carries any password is refused unless the environment is marked as a test environment. The person picks which to add in the app, and can type another password over a proposed one. Keys are lowercase letters, digits, dot, underscore or hyphen, e.g. hr.supervisor - the name a script or template uses. Each call REPLACES your previous proposal for this environment; at most 100 accounts.",
+            "description": "Propose test logins for the app's active environment - ones you found in a seed script, a spec or the database - so a person can add them as Auto Run accounts. Each entry is { key, label, username, role?, password?, no_password? }. On a test environment each account's password from the same database lookup that found its login is required, because every account's password can be different - or no_password with the reason there is none (at most 200 characters, in words, for example \"the database holds only a hash\" - never the stored value: a reason that looks like a password or a hash is refused); a proposal with neither for any account is refused, naming the keys. A password is never a hash: a value that is clearly a hash or an encrypted blob is not a password, so give no_password instead and say so. On any other environment a proposal that carries a password is refused, and no_password is ignored. A password and no_password together is refused. The person picks which to add in the app, sees each no_password reason beside its account, and can type another password over a proposed one. Keys are lowercase letters, digits, dot, underscore or hyphen, e.g. hr.supervisor - the name a script or template uses. Each call REPLACES your previous proposal for this environment; at most 100 accounts. The user accounts are generally in the HR_SM_USER_ACCOUNT table: look there first (with db_query) for the logins and their passwords.",
             "inputSchema": schema(serde_json::json!({
                 "accounts": {
                     "type": "array",
@@ -706,7 +706,8 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool, unlocked: bool) -> serde_j
                             "label": { "type": "string", "description": "What a person reads, e.g. HR supervisor." },
                             "username": { "type": "string", "description": "The login name." },
                             "role": { "type": "string", "description": "Optional: the role or permission set the login has." },
-                            "password": { "type": "string", "minLength": 1, "maxLength": 256, "description": "Optional: the login's password from the same database lookup, never a hash. Only for an environment marked as a test environment." },
+                            "password": { "type": "string", "minLength": 1, "maxLength": 256, "description": "The login's password from the same database lookup, never a hash. Required on a test environment unless no_password is given; refused on any other environment." },
+                            "no_password": { "type": "string", "minLength": 1, "maxLength": 200, "description": "Instead of password: why there is none, for example \"the database holds only a hash\" or \"no password column found for this login\". Not together with password." },
                         },
                         "required": ["key", "label", "username"],
                         "additionalProperties": false,
@@ -1134,7 +1135,7 @@ pub fn refusal_text_for(name: &str, on: &BTreeSet<Module>, unlocked: bool) -> St
 }
 
 /// The topics `get_guide` answers, in the order its description gives them.
-pub const GUIDE_TOPICS: [&str; 4] = ["writing", "autorun", "api_templates", "reports"];
+pub const GUIDE_TOPICS: [&str; 6] = ["writing", "autorun", "api_templates", "reports", "playwright_skills", "playwright_repo"];
 
 /// The module a guide topic belongs to - the module its own guide tool had
 /// before the four became `get_guide` - or None for Core's writing guide.
@@ -1142,7 +1143,7 @@ pub const GUIDE_TOPICS: [&str; 4] = ["writing", "autorun", "api_templates", "rep
 pub fn guide_topic_module(topic: &str) -> Result<Option<Module>, ()> {
     match topic {
         "writing" => Ok(None),
-        "autorun" => Ok(Some(Module::AutoRun)),
+        "autorun" | "playwright_skills" | "playwright_repo" => Ok(Some(Module::AutoRun)),
         "api_templates" => Ok(Some(Module::ApiTemplates)),
         "reports" => Ok(Some(Module::CrystalReports)),
         _ => Err(()),
@@ -1159,7 +1160,7 @@ fn guide_row(topic: &str) -> Vec<&'static str> {
         tools.iter().copied().filter(|t| *t != "record_quirk" && !NETWORK_TOOLS.contains(t)).collect()
     };
     match topic {
-        "autorun" => own(AUTORUN_TOOLS),
+        "autorun" | "playwright_skills" | "playwright_repo" => own(AUTORUN_TOOLS),
         "api_templates" => own(API_TEMPLATE_TOOLS),
         "reports" => own(CRYSTAL_TOOLS),
         _ => Vec::new(),
@@ -1187,6 +1188,8 @@ fn guide_sentence(topic: &str) -> &'static str {
     match topic {
         "writing" => "\"writing\": Test Case Manager import JSON - format rules, the org's allowed Module values, the workflow and the transform ops; call it first.",
         "autorun" => "\"autorun\": writing an Auto Run action script - the actions and checks, and which source decides what: locators come from the live app, every assertion from the case's own expected result, never from what the code does; read it before writing a script. Alone it answers the Quick rules, this project's live sections and every section title; `section` adds one section, `quick` only the Quick rules and live sections, `full` the whole guide. `role` gives one role's rules.",
+        "playwright_skills" => "\"playwright_skills\": the team's Playwright repo's skills, read fresh from the repo set on the Playwright tab: alone it lists them, `skill` gives one, with how its steps map onto Test Case Manager's tools.",
+        "playwright_repo" => "\"playwright_repo\": the team's Playwright repo's own files, read fresh: alone its CLAUDE.md (long: in pages, `page` picks one; the first says how many there are), `file` one of its agent files or gen-test.md, the per-case rules /tcm:gen-tests follows.",
         "api_templates" => "\"api_templates\": building an API template - the format, placeholders and captures, the workflow, this project's account keys and sign-in origin; read it before your first prove_api_template.",
         "reports" => "\"reports\": working with Crystal Reports - the IR, units (twips), edit ops, the layout plan and the limits; read it before your first edit_report.",
         _ => "",
@@ -1212,6 +1215,13 @@ fn guide_tool(off: &[String]) -> serde_json::Value {
         props["section"] = serde_json::json!({ "type": "string", "description": "autorun only. One section's title, e.g. \"Selectors\" or \"Saving it\" (case ignored): the Quick rules and that section. An unknown title answers the list of titles." });
         props["full"] = serde_json::json!({ "type": "boolean", "description": "autorun only. true: every section - over 100,000 characters; prefer `section`." });
         props["role"] = serde_json::json!({ "type": "string", "enum": ["writer", "healer", "case-rewriter", "auditor", "explorer"], "description": "autorun only. One role's rules, which hold whatever tools you have: writer (choosing what to script and writing it from the live app), healer (diagnosing and repairing a failed case), case-rewriter (changing a saved script or component, a repair or a rewritten case), auditor (checking saved scripts against their cases, reporting only) or explorer (doing a task in the live app with no test case, recording every change). With quick, section or full, the rules come first." });
+    }
+    if topics.contains(&"playwright_skills") {
+        props["skill"] = serde_json::json!({ "type": "string", "description": "playwright_skills only. One skill's name, e.g. \"edit-spec\"; without it the skills are listed." });
+    }
+    if topics.contains(&"playwright_repo") {
+        props["file"] = serde_json::json!({ "type": "string", "enum": crate::autorun::pw_rules::REPO_FILES, "description": "playwright_repo only. One of the repo's files; CLAUDE.md when not given." });
+        props["page"] = serde_json::json!({ "type": "integer", "minimum": 1, "description": "playwright_repo only. Which page of a long file (CLAUDE.md), from 1; the first page says how many there are." });
     }
     serde_json::json!({ "name": "get_guide", "description": description, "inputSchema": schema(props, &["topic"]) })
 }
@@ -1241,10 +1251,42 @@ pub fn guide_refusal_for(topic: Option<&str>, off: &[String], on: &BTreeSet<Modu
     }
 }
 
+/// Said when `skill` comes with a topic other than playwright_skills, or
+/// `file` or `page` with one other than playwright_repo.
+pub const GUIDE_SKILL_FILE_ONLY: &str = "`skill` is for topic \"playwright_skills\" and `file` and `page` for topic \"playwright_repo\" only";
+
 /// Said when `section`, `quick`, `full` or `role` comes with a topic other
 /// than autorun: only that guide is long enough to be read in parts, and
 /// only it has roles.
 pub const GUIDE_PARTS_AUTORUN_ONLY: &str = "`section`, `quick`, `full` and `role` are for topic \"autorun\" only - send the other topics with `topic` alone";
+
+/// A Playwright route, with `key` set to the trimmed value asked for when there is one.
+fn pw_route(path: &str, key: &str, value: &serde_json::Value) -> String {
+    match value.as_str().map(str::trim).filter(|v| !v.is_empty()) {
+        Some(v) => format!("{path}?{key}={}", urlencoding::encode(v)),
+        None => path.to_string(),
+    }
+}
+
+/// `/autorun-pw-repo`, with `file` and `page` set to the trimmed values asked for (a number or a string).
+fn pw_repo_route(file: &serde_json::Value, page: &serde_json::Value) -> String {
+    let page = match page {
+        serde_json::Value::Number(n) => Some(n.to_string()),
+        other => other.as_str().map(|p| p.trim().to_string()).filter(|p| !p.is_empty()),
+    };
+    let mut parts: Vec<String> = vec![];
+    if let Some(f) = file.as_str().map(str::trim).filter(|f| !f.is_empty()) {
+        parts.push(format!("file={}", urlencoding::encode(f)));
+    }
+    if let Some(p) = page {
+        parts.push(format!("page={}", urlencoding::encode(&p)));
+    }
+    if parts.is_empty() {
+        "/autorun-pw-repo".to_string()
+    } else {
+        format!("/autorun-pw-repo?{}", parts.join("&"))
+    }
+}
 
 /// The autorun guide as `section`, `quick` and `full` ask for it.
 fn autorun_guide_call(args: &serde_json::Value, call: BridgeCall) -> Result<(u16, String), String> {
@@ -1258,23 +1300,33 @@ fn autorun_guide_call(args: &serde_json::Value, call: BridgeCall) -> Result<(u16
     }
 }
 
-/// `get_guide` with a `role`: the role's rules, answered here with no call
-/// to the app. With `section`, `quick` or `full` too, the rules come first
-/// and the guide's answer follows.
+/// A role's rules as the app gives them: only the app knows the Playwright repo that is set, so the
+/// proxy asks it each time. When the app does not answer (an older app, or gone mid-session) the
+/// shipped copy is used and its first line says the app did not answer.
+pub fn role_text_via(role: crate::autorun::roles::Role, call: BridgeCall) -> String {
+    let path = format!("/autorun-role?role={}", urlencoding::encode(role.key()));
+    match call("GET", &path, "") {
+        Ok((200, body)) => body,
+        _ => role.shipped_text(crate::autorun::pw_rules::Why::NotRead),
+    }
+}
+
+/// `get_guide` with a `role`: the role's rules, asked of the app. With `section`, `quick` or `full`
+/// too, the rules come first and the guide's answer follows.
 fn role_guide(args: &serde_json::Value, call: BridgeCall) -> Result<(u16, String), String> {
     let asked = args["role"].as_str().unwrap_or_default();
     let Some(role) = crate::autorun::roles::Role::from_key(asked) else {
         return Ok((400, crate::autorun::roles::unknown_role(asked)));
     };
     if !["section", "quick", "full"].iter().any(|k| says(&args[*k])) {
-        return Ok((200, role.text()));
+        return Ok((200, role_text_via(role, call)));
     }
     let mut rest = args.clone();
     if let Some(o) = rest.as_object_mut() {
         o.remove("role");
     }
     match autorun_guide_call(&rest, call)? {
-        (status, body) if status < 400 => Ok((status, format!("{}\n\n{}", role.text().trim_end(), body))),
+        (status, body) if status < 400 => Ok((status, format!("{}\n\n{}", role_text_via(role, call).trim_end(), body))),
         other => Ok(other),
     }
 }
@@ -1915,6 +1967,12 @@ fn tools_call_outcome(params: &serde_json::Value, call: BridgeCall) -> (serde_js
             call("POST", &target, &body)
         }
         "get_guide"
+            if (says(&args["skill"]) && args["topic"].as_str().map(str::trim) != Some("playwright_skills"))
+                || ((says(&args["file"]) || says(&args["page"])) && args["topic"].as_str().map(str::trim) != Some("playwright_repo")) =>
+        {
+            Ok((400, GUIDE_SKILL_FILE_ONLY.to_string()))
+        }
+        "get_guide"
             if args["topic"].as_str().map(str::trim) != Some("autorun")
                 && ["section", "quick", "full", "role"].iter().any(|k| says(&args[*k])) =>
         {
@@ -1928,6 +1986,8 @@ fn tools_call_outcome(params: &serde_json::Value, call: BridgeCall) -> (serde_js
             "autorun" => autorun_guide_call(args, call),
             "api_templates" => call("GET", "/api-template-guide", ""),
             "reports" => call("GET", "/crystal-guide", ""),
+            "playwright_skills" => call("GET", &pw_route("/autorun-pw-skills", "skill", &args["skill"]), ""),
+            "playwright_repo" => call("GET", &pw_repo_route(&args["file"], &args["page"]), ""),
             // Refused before the match by `guide_refusal`; said again here
             // rather than trusted.
             _ => Ok((400, guide_refusal_for(args["topic"].as_str(), &off, &on, unlocked).unwrap_or_default())),

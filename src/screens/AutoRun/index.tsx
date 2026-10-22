@@ -60,6 +60,7 @@ import RunReview from "./RunReview";
 import ScriptEditor from "./ScriptEditor";
 import SetupPanel, { useAutoRunSetup } from "./SetupPanel";
 import SetupColumn from "./SetupColumn";
+import PlaywrightNeededDialog, { usePlaywrightNotice } from "./PlaywrightNeededDialog";
 import { HasScriptToggle, ResultToggleRow, SuspectedDefectToggle } from "./ResultFilterRow";
 import {
   RESULT_BUCKETS,
@@ -100,10 +101,16 @@ export default function AutoRun({
   org,
   project,
   pbi,
+  onOpenPlaywright,
+  onOpenModules,
 }: {
   org: string;
   project: string;
   pbi: PbiHit | null;
+  /** The Playwright tab, for the "Playwright is needed" dialog. */
+  onOpenPlaywright?: () => void;
+  /** Modules in Settings, for the same dialog when the module is off. */
+  onOpenModules?: () => void;
 }) {
   const { prefs } = useFieldRefs(org, project);
 
@@ -235,6 +242,18 @@ export default function AutoRun({
   const runCount = runs.data ? runs.data.length : null;
   // "Export to Playwright" belongs to the Playwright module: no item while it is off.
   const playwrightOn = useModule("playwright");
+  // Once per app start, when no Playwright repo is set (also refreshes the
+  // assistant's agent files, which is why it is asked on every mount).
+  const playwrightNotice = usePlaywrightNotice();
+  const playwrightNeeded = playwrightNotice.open && (
+    <PlaywrightNeededDialog
+      playwrightOn={playwrightOn}
+      gone={playwrightNotice.gone}
+      onOpenPlaywright={() => onOpenPlaywright?.()}
+      onOpenModules={() => onOpenModules?.()}
+      onClose={playwrightNotice.close}
+    />
+  );
 
   /** One file, many cases - the shape `save_autorun_script` writes, so an
    * assistant's whole-PBI output imports in one go. Every script
@@ -699,7 +718,12 @@ export default function AutoRun({
   };
 
   if (!org || !pbi) {
-    return <p className="max-w-prose text-sm text-muted">Pick a PBI in the bar above to auto-run its cases.</p>;
+    return (
+      <>
+        <p className="max-w-prose text-sm text-muted">Pick a PBI in the bar above to auto-run its cases.</p>
+        {playwrightNeeded}
+      </>
+    );
   }
 
   /** The Test cases tab's count: every case, or "12 of 60" while the
@@ -1061,6 +1085,8 @@ export default function AutoRun({
           </div>,
           document.body,
         )}
+
+      {playwrightNeeded}
 
       {orderingOpen && (
         <ExecutionOrderDialog

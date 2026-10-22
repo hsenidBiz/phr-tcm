@@ -509,9 +509,13 @@ export default function App() {
     setPbiRaw(null);
     setCaseSelection(null);
   };
+  // Settings opens on Modules when the "Playwright is needed" dialog sent
+  // the person there; any other navigation clears it.
+  const [startOnModules, setStartOnModules] = useState(false);
   const goToSection = (s: Section) => {
     logUi(`nav: ${s}`);
     setSection(s);
+    setStartOnModules(false);
     setWorkMode(false); // any tab click exits Work Manager mode
     setCaseSelection(null); // direct navigation returns Edit to PBI mode
   };
@@ -1452,7 +1456,16 @@ export default function App() {
                   />
                 )}
                 {modules.has("auto_run") && section === "autorun" && (
-                  <AutoRun org={org} project={project} pbi={pbi} />
+                  <AutoRun
+                    org={org}
+                    project={project}
+                    pbi={pbi}
+                    onOpenPlaywright={() => goToSection("playwright")}
+                    onOpenModules={() => {
+                      goToSection("settings");
+                      setStartOnModules(true);
+                    }}
+                  />
                 )}
                 {section === "manage" && (
                   <ManageCases
@@ -1469,7 +1482,14 @@ export default function App() {
                 )}
                 {modules.has("playwright") && section === "playwright" && <Playwright org={org} project={project} />}
                 {modules.has("crystal_reports") && section === "crystal-reports" && <CrystalReports />}
-                {section === "settings" && <Settings org={org} project={project} onFillChange={setSettingsFill} />}
+                {section === "settings" && (
+                  <Settings
+                    org={org}
+                    project={project}
+                    onFillChange={setSettingsFill}
+                    startOnModules={startOnModules}
+                  />
+                )}
               </div>
             )}
             </Suspense>

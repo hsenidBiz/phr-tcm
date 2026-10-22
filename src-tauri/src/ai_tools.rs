@@ -383,11 +383,16 @@ pub const COMMANDS: &[CommandSpec] = &[
             "   (Environment, or Edit environments).",
             "2. If there is no site address, ask them to set it in Auto Run, Setup, Site",
             "   address, Edit.",
-            "3. Accounts. Use `db_lookup` and `db_query` on that database to find the test",
-            "   users and their passwords (for example in the HS_SM_USER_ACCOUNT table).",
-            "   Never use a hash. Call `propose_accounts` with key, label, username, role",
-            "   and password. Passwords are accepted only for an environment marked as a",
-            "   test environment; if the call is refused, tell the person to switch Test",
+            "3. Accounts. On a test environment, look up each login's password in the same",
+            "   query that finds the login, and propose it with the account. The user",
+            "   accounts are generally in the HR_SM_USER_ACCOUNT table: look there first",
+            "   (with `db_query`) for the logins and their passwords. Use `db_lookup` and",
+            "   `db_query` on that database. Never use a hash. Call `propose_accounts` with",
+            "   key, label, username, role and password, or no_password with the reason when",
+            "   a login has none (for example the database holds only a hash). Passwords are",
+            "   accepted only for an environment marked as a test environment, and on one",
+            "   every account needs a password or a no_password; if the call is refused",
+            "   because the environment is not one, tell the person to switch Test",
             "   environment on for it in Edit environments on the AI Bridge tab. Then tell",
             "   them to open Auto Run, Setup, Accounts, Edit, tick the logins under",
             "   Proposed by the assistant, and press Add selected.",
@@ -645,7 +650,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         ],
     },
     CommandSpec {
-        stem: "script-pbi",
+        stem: "gen-tests",
         tool: "start_autorun_discovery",
         desc: "Script a batch of a PBI's test cases from the live app, within the bounds",
         hint: "[PBI id] [how many] [area or title prefix] [case ids]",
@@ -657,6 +662,10 @@ pub const COMMANDS: &[CommandSpec] = &[
             "PBI id when there is none.",
             "",
             "1. Call `get_guide` with topic autorun and `role` writer first, and follow the writer's rules.",
+            "   Then call `get_guide` with topic playwright_repo and `file` gen-test.md: the Playwright",
+            "   repo's per-case rules, which hold for each case under the writer's rules (the answer",
+            "   opens by saying Test Case Manager's rules win where they differ), with the note at its end on Test",
+            "   Case Manager's tools.",
             "2. Call `get_guide` with topic autorun and `quick` true and follow it; call it again with",
             "   `section` when something the quick rules do not cover comes up. Its \"Choosing a model for",
             "   the work\" section says which part suits which model: Sonnet for the scripting work.",
@@ -672,15 +681,19 @@ pub const COMMANDS: &[CommandSpec] = &[
             "   cases held back and the data or accounts each waits for.",
             "6. Setup checks, reported and never worked around: the area each case needs is recorded (the",
             "   guide's areas section); the accounts exist (propose missing ones with `propose_accounts`,",
-            "   as /tcm:setup does); the records the cases need exist (a published cycle, a subordinate),",
+            "   as /tcm:setup does: on a test environment, look up each login's password in the same",
+            "   query that finds the login, and propose it with the account. The user accounts are",
+            "   generally in the HR_SM_USER_ACCOUNT table: look there first (with `db_query`) for the",
+            "   logins and their passwords); the records the cases need exist (a published cycle, a subordinate),",
             "   offering an API template or fixture from `list_api_templates` for each that does not. A",
             "   file a case uploads is gathered from the project's test files (`get_accounts` lists them);",
             "   when one is missing, make it and save it with `save_test_file`. A case whose setup is",
             "   missing is held back, never scripted around it.",
             "7. If the project has a Playwright export folder, look there for an existing suite for the",
             "   same screen, and align names, records and clean-up with it.",
-            "8. Script each case as /tcm:discover does, with `start_autorun_discovery`,",
-            "   `discover_autorun_actions`, `probe_autorun_locator` and `save_autorun_script`. Every",
+            "8. Script each case as /tcm:discover does, following gen-test.md's per-case rules as its note",
+            "   maps them, with `start_autorun_discovery`, `discover_autorun_actions`,",
+            "   `probe_autorun_locator` and `save_autorun_script`. Every",
             "   check's value comes from the case as written: when the app or its data differs, call",
             "   `report_case_divergence` and keep the case's value, never fit the check to the page. A",
             "   value the case does not contain needs a because on its step; repeat each one the save",
@@ -957,9 +970,8 @@ pub const AGENT_PREFIX: &str = "tcm-";
 
 /// One role as a Claude Code agent file. Explicit lines, as
 /// `command_markdown` does.
-pub fn agent_markdown(role: crate::autorun::roles::Role) -> String {
+pub fn agent_markdown(role: crate::autorun::roles::Role, text: &str) -> String {
     let key = role.key();
-    let text = role.text();
     let mut lines: Vec<String> = vec![
         "---".into(),
         format!("name: {AGENT_PREFIX}{key}"),
@@ -981,14 +993,25 @@ pub fn agent_markdown(role: crate::autorun::roles::Role) -> String {
 
 /// Every role file for `dir`: none when `start_autorun_discovery` is
 /// disabled (Auto Run off takes every Auto Run tool, as `command_files_in`
-/// drops the discover command), else the four in `Role::ALL` order.
-pub fn agent_files_in(dir: &std::path::Path, disabled: &[String]) -> Vec<(PathBuf, String)> {
+/// drops the discover command), else the roles in `Role::ALL` order, each
+/// with its rules read now from `clone` (`Role::text_in`).
+pub fn agent_files_in(dir: &std::path::Path, disabled: &[String], clone: &str) -> Vec<(PathBuf, String)> {
+    agent_files_on(dir, disabled, clone, &chrono::Local::now().format("%Y-%m-%d").to_string())
+}
+
+/// `agent_files_in` on `date` (`YYYY-MM-DD`). A file on disk is not read again
+/// each time it is used, so a section read from the repo says the day it was
+/// read ("read from the repo on <date>"), never "just now".
+pub fn agent_files_on(dir: &std::path::Path, disabled: &[String], clone: &str, date: &str) -> Vec<(PathBuf, String)> {
     if disabled.iter().any(|d| d == "start_autorun_discovery") {
         return Vec::new();
     }
     crate::autorun::roles::Role::ALL
         .iter()
-        .map(|r| (dir.join(format!("{AGENT_PREFIX}{}.md", r.key())), agent_markdown(*r)))
+        .map(|r| {
+            let text = crate::autorun::pw_rules::dated_marks(&r.text_in(clone), date);
+            (dir.join(format!("{AGENT_PREFIX}{}.md", r.key())), agent_markdown(*r, &text))
+        })
         .collect()
 }
 
@@ -1029,13 +1052,56 @@ pub fn command_files_for(home: &str, disabled: &[String]) -> Vec<(PathBuf, Strin
     command_files_in(&command_dir(home), disabled)
 }
 
-/// Every command file for `dir` - the global or the repository set.
+/// Every command file for `dir` - the global or the repository set - then, for each renamed command
+/// whose new one is written, the old name as a stand-in that says it was renamed.
 pub fn command_files_in(dir: &std::path::Path, disabled: &[String]) -> Vec<(PathBuf, String)> {
-    COMMANDS
+    let mut files: Vec<(PathBuf, String)> = COMMANDS
         .iter()
         .filter(|c| !disabled.iter().any(|d| d == c.tool))
         .map(|c| (dir.join(format!("{}.md", c.stem)), command_markdown(c)))
-        .collect()
+        .collect();
+    for (old, new) in RENAMED_COMMANDS {
+        let Some(spec) = COMMANDS.iter().find(|c| c.stem == *new) else { continue };
+        if disabled.iter().any(|d| d == spec.tool) {
+            continue;
+        }
+        files.push((dir.join(format!("{old}.md")), renamed_command_markdown(old, spec)));
+    }
+    files
+}
+
+/// (old stem, new stem): an old command still answers, saying it was renamed, while it is listed here.
+/// An entry goes at the next stable release; the sweep in `write_commands` then removes the old file.
+pub const RENAMED_COMMANDS: &[(&str, &str)] = &[("script-pbi", "gen-tests")];
+
+/// The first line of a renamed command's body.
+pub fn renamed_line(old: &str, new: &str) -> String {
+    format!("/tcm:{old} is now /tcm:{new}: tell the person it was renamed, once, then do what /tcm:{new} does.")
+}
+
+/// A renamed command: frontmatter name `old`, description "Renamed: now /tcm:{new}", the new command's
+/// argument-hint, `COMMAND_MARKER`, then `renamed_line`, a blank line and the new command's body.
+pub fn renamed_command_markdown(old: &str, new: &CommandSpec) -> String {
+    let mut lines: Vec<String> = vec![
+        "---".into(),
+        format!("name: {old}"),
+        format!("description: {}", yaml_scalar(&format!("Renamed: now /tcm:{}", new.stem))),
+    ];
+    if !new.hint.is_empty() {
+        lines.push(format!("argument-hint: {}", yaml_scalar(new.hint)));
+    }
+    lines.push("---".into());
+    lines.push(String::new());
+    lines.push(COMMAND_MARKER.into());
+    lines.push(String::new());
+    lines.push(renamed_line(old, new.stem));
+    lines.push(String::new());
+    for l in new.body {
+        lines.push((*l).to_string());
+    }
+    let mut out = lines.join("\n");
+    out.push('\n');
+    out
 }
 
 /// Built from explicit lines, NOT from `\n\` string continuations: Rust
@@ -1333,6 +1399,135 @@ pub const CLAUDE_DB_RULES: &[&str] = &[CLAUDE_DB_QUERY_RULE, "mcp__tcm__preview_
 
 /// `CLAUDE_DB_RULES` as Cursor's allowlist entries.
 pub const CURSOR_DB_ENTRIES: &[&str] = &[CURSOR_DB_QUERY_ENTRY, "tcm:preview_report_live"];
+
+/// The Auto Run tools Claude Code is told to allow without asking while the
+/// Auto Run module is on: the ones that drive and save from the browser an
+/// assistant is exploring with (open the discovery, try and run actions,
+/// read the page, release the browser, save a script or component). Without
+/// them Claude Code stops at "Allow this tool?" in the middle of that work.
+///
+/// Only names the server offers today (a test pins it): the single-action
+/// `discover_autorun_action` is gone, `discover_autorun_actions` takes one
+/// action or a list; and `release_autorun_browser` is now
+/// `reset_autorun_browser` with `release` true (`mcp::RETIRED_TOOLS`).
+/// A rule goes in only while its tool is on - the module on, and the person's
+/// own switch for it on the AI Bridge tab - and comes out with it.
+pub const CLAUDE_AUTORUN_RULES: &[&str] = &[
+    "mcp__tcm__start_autorun_discovery",
+    "mcp__tcm__discover_autorun_actions",
+    "mcp__tcm__try_autorun_action",
+    "mcp__tcm__end_autorun_discovery",
+    "mcp__tcm__reset_autorun_browser",
+    "mcp__tcm__save_autorun_script",
+    "mcp__tcm__save_autorun_component",
+    "mcp__tcm__get_autorun_page",
+];
+
+/// The API template tools Claude Code is told to allow without asking while
+/// the API Templates module is on (and, as above, the person's own switch
+/// for each tool). Proving and running a template still needs the person's
+/// API templates switch: the bridge checks that, whatever Claude Code asks.
+pub const CLAUDE_API_TEMPLATE_RULES: &[&str] = &[
+    "mcp__tcm__run_api_template",
+    "mcp__tcm__prove_api_template",
+    "mcp__tcm__save_api_flow",
+];
+
+/// `CLAUDE_AUTORUN_RULES` as Cursor's allowlist entries.
+pub const CURSOR_AUTORUN_ENTRIES: &[&str] = &[
+    "tcm:start_autorun_discovery",
+    "tcm:discover_autorun_actions",
+    "tcm:try_autorun_action",
+    "tcm:end_autorun_discovery",
+    "tcm:reset_autorun_browser",
+    "tcm:save_autorun_script",
+    "tcm:save_autorun_component",
+    "tcm:get_autorun_page",
+];
+
+/// `CLAUDE_API_TEMPLATE_RULES` as Cursor's allowlist entries.
+pub const CURSOR_API_TEMPLATE_ENTRIES: &[&str] =
+    &["tcm:run_api_template", "tcm:prove_api_template", "tcm:save_api_flow"];
+
+/// The tool an allow entry is for: `mcp__tcm__<tool>` (Claude Code) or
+/// `tcm:<tool>` (Cursor). An entry of neither shape is returned whole.
+pub fn entry_tool(entry: &str) -> &str {
+    entry
+        .strip_prefix(&format!("mcp__{TCM_SERVER}__"))
+        .or_else(|| entry.strip_prefix(&format!("{TCM_SERVER}:")))
+        .unwrap_or(entry)
+}
+
+/// What the allow files should say about one entry.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RuleWant {
+    /// In the file.
+    Put,
+    /// Out of the file.
+    Take,
+    /// Neither is known yet: whatever the file holds stays.
+    Leave,
+}
+
+/// Everything that decides which of our entries the allow files hold: the
+/// database switch, the modules that are on, and the tools the person
+/// switched off on the AI Bridge tab. `disabled` is `None` until the app
+/// has been told that list (the first push of the tab's state): an entry
+/// for a tool of a module that is ON is then neither written nor taken out,
+/// so a start-up repair never writes a rule for a tool the person has
+/// switched off.
+#[derive(Debug, Clone)]
+pub struct AllowState {
+    pub db: bool,
+    pub modules: BTreeSet<crate::modules::Module>,
+    pub disabled: Option<Vec<String>>,
+}
+
+impl AllowState {
+    /// `tool`'s entry: out while its module is off or the person switched
+    /// the tool off, in otherwise (`Leave` while the person's list is not known).
+    pub fn want_tool(&self, tool: &str) -> RuleWant {
+        if effective_disabled_for(&[], &self.modules).iter().any(|t| t == tool) {
+            return RuleWant::Take;
+        }
+        match &self.disabled {
+            Some(off) if off.iter().any(|t| t == tool) => RuleWant::Take,
+            Some(_) => RuleWant::Put,
+            None => RuleWant::Leave,
+        }
+    }
+}
+
+/// The entries of one allow file to write and to take out.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct AllowPlan {
+    pub put: Vec<&'static str>,
+    pub take: Vec<&'static str>,
+}
+
+/// Which of a file's entries (`db`: the database switch's, `autorun` and
+/// `api_templates`: the modules') go in and which come out. The database
+/// switch decides its own entries alone; the module entries never depend
+/// on it.
+pub fn plan_allow(
+    state: &AllowState,
+    db: &[&'static str],
+    autorun: &[&'static str],
+    api_templates: &[&'static str],
+) -> AllowPlan {
+    let mut plan = AllowPlan::default();
+    for e in db {
+        if state.db { plan.put.push(e) } else { plan.take.push(e) }
+    }
+    for e in autorun.iter().chain(api_templates) {
+        match state.want_tool(entry_tool(e)) {
+            RuleWant::Put => plan.put.push(e),
+            RuleWant::Take => plan.take.push(e),
+            RuleWant::Leave => {}
+        }
+    }
+    plan
+}
 
 /// `merge` (`set_claude_allow` / `set_cursor_allow`) for each of `entries`
 /// in turn: the text with every one of them in (`on`) or out, or `None`

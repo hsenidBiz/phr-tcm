@@ -566,8 +566,9 @@ enum SetupStep {
     /// The page log, dialog handler or lifecycle events: a refusal only
     /// loses that, and is logged.
     Watch(&'static str),
-    /// The 1280 x 720 page at scale 1 (`viewport`): a refusal is logged and
-    /// the tab goes on at the browser's own size.
+    /// The page at the size this browser opened with, at scale 1
+    /// (`viewport`): a refusal is logged and the tab goes on at the
+    /// browser's own size.
     Viewport,
 }
 
@@ -643,6 +644,11 @@ pub struct Cdp<T: Transport = WsTransport> {
     /// Driving the whole browser over its own socket (`connect`), so a tab
     /// the page opens is attached, paused until it is set up.
     whole_browser: bool,
+    /// The page size this browser's pages are given: read once, when its
+    /// first page is driven, and kept for every tab it opens afterwards. A
+    /// size saved in Settings meanwhile is for the next browser the app
+    /// opens, not for a popup of one already open.
+    page: super::viewport::PageSize,
     /// When the wait loop that owns this connection runs out of time. See
     /// `set_deadline`.
     deadline: Option<Instant>,
@@ -883,6 +889,7 @@ impl<T: Transport> Cdp<T> {
             net_recording: false,
             tabs_seen: 1,
             whole_browser: false,
+            page: super::viewport::current(),
             deadline: None,
             armed: None,
             hold: false,
@@ -942,8 +949,10 @@ impl<T: Transport> Cdp<T> {
         self.call("Page.enable", serde_json::json!({})).await?;
         self.call("Page.setLifecycleEventsEnabled", serde_json::json!({ "enabled": true })).await?;
         // The page area, before anything is navigated or acted on. Never
-        // fatal: a run at the browser's own size is still a run.
-        if let Err(e) = self.call(super::viewport::SET_DEVICE_METRICS, super::viewport::device_metrics_params()).await {
+        // fatal: a run at the browser's own size is still a run. The size is
+        // read here, once, and held for the tabs this browser opens.
+        self.page = super::viewport::current();
+        if let Err(e) = self.call(super::viewport::SET_DEVICE_METRICS, super::viewport::device_metrics_for(self.page)).await {
             if matches!(e, CdpError::Closed) {
                 return Err(e);
             }
@@ -1765,7 +1774,7 @@ impl<T: Transport> Cdp<T> {
         }
         // The page area, before the tab runs and so before its first
         // navigation.
-        self.queue(s, super::viewport::SET_DEVICE_METRICS, super::viewport::device_metrics_params(), Some(SetupStep::Viewport));
+        self.queue(s, super::viewport::SET_DEVICE_METRICS, super::viewport::device_metrics_for(self.page), Some(SetupStep::Viewport));
         // The assistant's test headers, after the tab's Network domain is on
         // and before it runs: its first request carries them too.
         if !self.extra_headers.is_empty() {

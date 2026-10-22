@@ -8,6 +8,7 @@ import { CHANGELOG, isBetaVersion } from "../lib/changelog";
 import { RATE_LEVELS } from "../lib/adoRate";
 import { toast } from "../lib/toast";
 import { resetExtrasStore, setExtrasUnlocked } from "../lib/extras";
+import { resetModulesStore, setModulesForTest } from "../lib/modules";
 import { TILE_MS, TILE_SAFETY_MS, TILE_STAGGER_MS, WIDE_QUERY } from "../components/settings/useTileLayout";
 import { planClose, planOpen } from "../components/settings/tileSchedule";
 import { EASE, foldMs } from "../components/ui/collapse";
@@ -24,6 +25,7 @@ afterEach(() => {
   clearMocks();
   vi.clearAllMocks();
   resetExtrasStore();
+  resetModulesStore();
   localStorage.removeItem("tcm-v2-dev-capture");
 });
 
@@ -1210,6 +1212,8 @@ test("capture mode hides the Extras section on an unlocked machine; off, it show
   expect(onRender.queryByRole("heading", { name: "Extras" })).not.toBeInTheDocument();
   expect(onRender.queryByRole("button", { name: "Play the dino game" })).not.toBeInTheDocument();
   expect(onRender.queryByRole("button", { name: "Play the brick game" })).not.toBeInTheDocument();
+  // The Extras reset is gone. The Auto Run card's page-size reset has its own
+  // name, so this one is unambiguous even though capture mode shows that card.
   expect(onRender.queryByRole("button", { name: "Reset to default" })).not.toBeInTheDocument();
   onRender.unmount();
 
@@ -1546,4 +1550,32 @@ test("Settings tells its host while the Modules page is open, so the host can gi
   expect(seen[seen.length - 1]).toBe(true);
   unmount();
   expect(seen[seen.length - 1]).toBe(false);
+});
+
+test("startOnModules opens on Modules", async () => {
+  mockIPC(() => undefined);
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  render(
+    <QueryClientProvider client={qc}>
+      <Settings org="acme" project="Web" startOnModules />
+    </QueryClientProvider>,
+  );
+  expect(await screen.findAllByRole("switch")).toHaveLength(5);
+  expect(screen.queryByRole("heading", { name: "Appearance" })).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: /Back to Settings/ }));
+  expect(await screen.findByRole("heading", { name: "Appearance" })).toBeInTheDocument();
+});
+
+/// The page size is Auto Run's, so its card is there only with Auto Run on.
+test("the Auto Run card with the browser page size shows only while Auto Run is on", async () => {
+  mockIPC(() => undefined);
+  renderSettings(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+  await screen.findByRole("heading", { name: "Changelog" });
+  expect(screen.queryByRole("heading", { name: "Auto Run" })).not.toBeInTheDocument();
+  act(() => setModulesForTest(["db_access", "auto_run"]));
+  const card = (await screen.findByRole("heading", { name: "Auto Run" })).closest("section")!;
+  expect(within(card).getByText("Browser page size")).toBeInTheDocument();
+  expect(within(card).getByRole("spinbutton", { name: "Width" })).toBeInTheDocument();
+  act(() => setModulesForTest([]));
+  await waitFor(() => expect(screen.queryByRole("heading", { name: "Auto Run" })).not.toBeInTheDocument());
 });

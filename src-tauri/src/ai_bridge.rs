@@ -276,6 +276,29 @@ pub fn new_token() -> String {
         .collect()
 }
 
+/// `GET /autorun-role?role=<key>`: the role's text, or a 400 naming the roles there are.
+pub fn autorun_role_answer(target: &str) -> (u16, String) {
+    let asked = q(target, "role").unwrap_or_default();
+    match crate::autorun::roles::Role::from_key(&asked) {
+        Some(role) => (200, role.text()),
+        None => (400, crate::autorun::roles::unknown_role(&asked)),
+    }
+}
+
+/// `GET /autorun-pw-skills[?skill=<name>]`: the Playwright repo's skills, listed or one given, read from the clone set on the Playwright tab.
+pub fn autorun_pw_skills_answer(target: &str) -> (u16, String) {
+    crate::autorun::pw_rules::skills_answer(&crate::app_settings::current().playwright_clone, q(target, "skill").as_deref())
+}
+
+/// `GET /autorun-pw-repo[?file=<name>][&page=<n>]`: one of the Playwright repo's own files (its CLAUDE.md when none is named), in pages when long.
+pub fn autorun_pw_repo_answer(target: &str) -> (u16, String) {
+    crate::autorun::pw_rules::repo_answer_page(
+        &crate::app_settings::current().playwright_clone,
+        q(target, "file").as_deref(),
+        q(target, "page").as_deref(),
+    )
+}
+
 /// Query-string value by key from "a=1&b=2", percent-decoded ('+' -> space,
 /// arbitrary %XX -> the raw byte). `pub` so `tests/suite/ai_bridge.rs` can
 /// exercise it directly.
@@ -403,6 +426,11 @@ pub async fn route(
                 (200, autorun_guide_with_quirks(ctx, quick))
             }
         },
+        // A role's rules, read from the Playwright repo that is set: the proxy cannot, so it asks here.
+        ("GET", "/autorun-role") => autorun_role_answer(target),
+        // The Playwright repo's own skills and files, read from the clone that is set.
+        ("GET", "/autorun-pw-skills") => autorun_pw_skills_answer(target),
+        ("GET", "/autorun-pw-repo") => autorun_pw_repo_answer(target),
         // A save that repairs (carries `edits`) ends with the repair rules, a refusal too.
         ("POST", "/autorun-script") => {
             let answer = save_autorun_scripts(ctx, client, body).await;
@@ -9878,7 +9906,9 @@ pub const PROPOSAL_SHAPE_REFUSED: &str = "each account needs a key, a label and 
 /// repeated in an answer, and nothing reaches the accounts until a person
 /// adds it in the app.
 fn accounts_propose(body: &str) -> (u16, String) {
-    use crate::environments::{active, save_proposals, StoredProposal, PROPOSED_PASSWORD_NOT_TEST};
+    use crate::environments::{
+        active, proposed_password_missing, save_proposals, StoredProposal, PROPOSED_PASSWORD_NOT_TEST,
+    };
     #[derive(serde::Deserialize)]
     #[serde(deny_unknown_fields)]
     struct Proposal {
@@ -9890,8 +9920,10 @@ fn accounts_propose(body: &str) -> (u16, String) {
         role: Option<String>,
         #[serde(default)]
         password: Option<String>,
+        #[serde(default)]
+        no_password: Option<String>,
     }
-    let shape = "{ \"accounts\": [{ \"key\": \"hr.supervisor\", \"label\": \"HR supervisor\", \"username\": \"sup1\", \"role\"?: \"Supervisor\", \"password\"?: \"(test environments only)\" }] }";
+    let shape = "{ \"accounts\": [{ \"key\": \"hr.supervisor\", \"label\": \"HR supervisor\", \"username\": \"sup1\", \"role\"?: \"Supervisor\", \"password\"?: \"(test environments only)\", \"no_password\"?: \"why there is none\" }] }";
     let raw = match body_field(body, "accounts", shape) {
         Ok(v) => v,
         Err(refused) => return refused,
@@ -9906,7 +9938,14 @@ fn accounts_propose(body: &str) -> (u16, String) {
     if list.is_empty() {
         return (400, format!("\"accounts\" needs at least one account. Expected {shape}."));
     }
-    let proposals: Vec<StoredProposal> = list
+    // A password and the reason for having none say opposite things.
+    if let Some(p) = list.iter().find(|p| p.password.is_some() && p.no_password.is_some()) {
+        return (
+            400,
+            format!("the account \"{}\" has both a password and no_password - give one or the other", p.key.trim()),
+        );
+    }
+    let mut proposals: Vec<StoredProposal> = list
         .into_iter()
         .map(|p| {
             let key = p.key.trim().to_string();
@@ -9916,7 +9955,15 @@ fn accounts_propose(body: &str) -> (u16, String) {
             };
             let role = p.role.map(|r| r.trim().to_string()).filter(|r| !r.is_empty());
             // Kept exactly as read: a password's spaces are its own.
-            StoredProposal { key, label, username: p.username.trim().to_string(), role, password: p.password }
+            let no_password = p.no_password.map(|r| r.trim().to_string()).filter(|r| !r.is_empty());
+            StoredProposal {
+                key,
+                label,
+                username: p.username.trim().to_string(),
+                role,
+                password: p.password,
+                no_password,
+            }
         })
         .collect();
     let with_password = proposals.iter().filter(|p| p.password.is_some()).count();
@@ -9928,8 +9975,25 @@ fn accounts_propose(body: &str) -> (u16, String) {
         Ok(e) => e,
         Err(e) => return (500, e),
     };
-    if with_password > 0 && !env.test_environment {
-        return (400, PROPOSED_PASSWORD_NOT_TEST.to_string());
+    if env.test_environment {
+        // Every account says what its password is, or why it has none.
+        let missing: Vec<&str> = proposals
+            .iter()
+            .filter(|p| p.password.is_none() && p.no_password.is_none())
+            .map(|p| p.key.as_str())
+            .collect();
+        if !missing.is_empty() {
+            return (400, proposed_password_missing(&missing));
+        }
+    } else {
+        if with_password > 0 {
+            return (400, PROPOSED_PASSWORD_NOT_TEST.to_string());
+        }
+        // Only a test environment keeps passwords, so only there is a
+        // reason for a missing one worth keeping.
+        for p in &mut proposals {
+            p.no_password = None;
+        }
     }
     if let Err(why) = save_proposals(&root, &env.id, &proposals) {
         return (400, why);
