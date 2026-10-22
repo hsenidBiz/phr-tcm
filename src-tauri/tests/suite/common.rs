@@ -1240,6 +1240,7 @@ pub fn saved_on_stage(id: &str, title: &str, stage: &str) -> v2_lib::api_templat
         account: "admin".into(),
         outputs: Default::default(),
         environment: None,
+        via: None,
     });
     t
 }
@@ -1426,7 +1427,18 @@ pub async fn route_without_rules(
     let rules = match (method, path) {
         ("GET", "/autorun-failures") => roles::RULES_FAILURES,
         ("POST", "/autorun-replay") | ("POST", "/autorun-replay-stop") => roles::RULES_REPLAY,
-        ("POST", "/autorun-discover-start") => roles::RULES_DISCOVERY,
+        ("POST", "/autorun-discover-start") => {
+            // An explore start ends with its own rules (a mapping run has none; `without_rules` leaves it).
+            let explore = serde_json::from_str::<serde_json::Value>(body).is_ok_and(|v| {
+                v["explore"].as_bool() == Some(true)
+                    || v["explore"].as_str().is_some_and(|s| s.trim().eq_ignore_ascii_case("true"))
+            });
+            if explore {
+                roles::RULES_EXPLORE
+            } else {
+                roles::RULES_DISCOVERY
+            }
+        }
         ("POST", "/autorun-script") => roles::RULES_REPAIR_SAVE,
         _ => return (status, out),
     };

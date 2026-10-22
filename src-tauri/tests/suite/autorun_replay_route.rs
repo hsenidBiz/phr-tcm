@@ -166,7 +166,7 @@ impl ReplayHost for FakeHost {
             if let Some(why) = &self.open_failed {
                 return Err(after_ended_discovery(self.discovering, why));
             }
-            let discovery = DiscoveryEnded { ended: self.discovering, summary: self.summary.clone(), no_save: self.no_save };
+            let discovery = DiscoveryEnded { ended: self.discovering, summary: self.summary.clone(), no_save: self.no_save, explore: None };
             Ok(AssistantReplay {
                 end: self.end.clone(),
                 discovery,

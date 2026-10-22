@@ -79,9 +79,9 @@ fn every_tool_gets_a_command_and_each_describes_itself() {
     // Auto Run is still in development: its tools are hidden and its
     // commands (`setup`, `heal`) are left out with them wherever they are
     // off, so nothing in the picker points at it.
-    const TOOLS: [&str; 9] = [
+    const TOOLS: [&str; 10] = [
         "begin-test-case-writing", "optimize", "get-wiki-info", "page", "setup", "discover", "map-menus", "heal",
-        "script-pbi",
+        "script-pbi", "explore",
     ];
     let stems: Vec<&str> = COMMANDS.iter().map(|c| c.stem).collect();
     assert_eq!(stems, TOOLS, "one command per tool, in call order");
@@ -588,7 +588,9 @@ fn each_tool_belongs_to_its_module() {
             "autorun_capture",
             "autorun_har",
             "set_autorun_headers",
-            "autorun_cookies"
+            "autorun_cookies",
+            "record_explore_change",
+            "get_explore_changes"
         ]
     );
     assert_eq!(
@@ -600,7 +602,9 @@ fn each_tool_belongs_to_its_module() {
             "save_api_flow",
             "get_api_flow_progress",
             "save_api_fixture",
-            "run_api_fixture"
+            "run_api_fixture",
+            "send_api_request",
+            "undo_explore_creates"
         ]
     );
     assert_eq!(DB_TOOLS, ["db_lookup", "db_query"]);
@@ -1909,6 +1913,35 @@ fn the_script_pbi_command_scripts_a_batch_within_the_bounds() {
     assert!(!body.contains('\u{2014}') && !body.contains('\u{2013}'), "no em or en dashes");
 }
 
+/// `/tcm:explore` does a task with no test case, checks it, writes the summary, and undoes only on request.
+#[test]
+fn the_explore_command_does_a_task_and_ends_with_a_summary() {
+    let c = COMMANDS.iter().find(|c| c.stem == "explore").expect("an explore command");
+    assert_eq!(c.tool, "start_autorun_discovery");
+    assert_eq!(c.desc, "Do a task in the live app with no test case, check it, and report what changed");
+    assert_eq!(c.hint, "[the task, or undo <session> / remove <session>]");
+    let body = c.body.join("\n");
+    let flat = body.split_whitespace().collect::<Vec<_>>().join(" ");
+    for said in [
+        "explore true",
+        "`record_explore_change`",
+        "wait for their yes in this chat",
+        "`end_autorun_discovery`",
+        "tcm-explore/<date>-<short-task>.md",
+        "`undo_explore_creates`",
+        "only because the person asked",
+        "`send_api_request`",
+        "`get_explore_changes`",
+    ] {
+        assert!(flat.contains(said), "/tcm:explore never says {said:?}: {flat}");
+    }
+    assert!(!body.contains('\u{2014}') && !body.contains('\u{2013}'), "no em or en dashes");
+    let tools = v2_lib::mcp::all_tool_names();
+    for name in body.split('`').skip(1).step_by(2).filter(|n| n.contains('_')) {
+        assert!(tools.iter().any(|t| t == name), "/tcm:explore names `{name}`, which is no tool");
+    }
+}
+
 /// `/tcm:heal` explores a stale area again before repairing in it, and
 /// `/tcm:setup` names `/tcm:discover` as the way to find an area.
 #[test]
@@ -2006,7 +2039,7 @@ fn discover_and_heal_say_how_to_use_components() {
 /// first, and the full guide when something it does not cover comes up.
 #[test]
 fn the_commands_point_at_the_quick_guide() {
-    for stem in ["discover", "map-menus", "heal"] {
+    for stem in ["discover", "map-menus", "heal", "explore"] {
         let c = COMMANDS.iter().find(|c| c.stem == stem).unwrap();
         let flat = c.body.join("\n").split_whitespace().collect::<Vec<_>>().join(" ");
         for said in [
@@ -2060,7 +2093,7 @@ fn each_role_file_is_generated_with_the_marker() {
         .iter()
         .map(|(p, _)| p.file_name().unwrap().to_string_lossy().into_owned())
         .collect();
-    assert_eq!(names, ["tcm-writer.md", "tcm-healer.md", "tcm-case-rewriter.md", "tcm-auditor.md"]);
+    assert_eq!(names, ["tcm-writer.md", "tcm-healer.md", "tcm-case-rewriter.md", "tcm-auditor.md", "tcm-explorer.md"]);
     for (role, (_, content)) in Role::ALL.iter().zip(files.iter()) {
         let key = role.key();
         assert!(content.starts_with(&format!("---\nname: tcm-{key}\ndescription: ")), "{key}");
@@ -2078,7 +2111,7 @@ fn no_role_file_without_auto_run() {
     let dir = std::path::Path::new("D:/repo/.claude/agents");
     assert!(agent_files_in(dir, &["start_autorun_discovery".to_string()]).is_empty());
     assert!(agent_files_in(dir, &effective_disabled_for(&[], &mods(&[Module::DbAccess]))).is_empty());
-    assert_eq!(agent_files_in(dir, &effective_disabled_for(&[], &all_mods())).len(), 4);
+    assert_eq!(agent_files_in(dir, &effective_disabled_for(&[], &all_mods())).len(), 5);
 }
 
 #[test]
@@ -2096,7 +2129,7 @@ fn writing_the_agents_leaves_the_persons_files_alone() {
         std::fs::read_to_string(dir.path().join("tcm-healer.md")).unwrap(),
         "the person's own healer"
     );
-    for n in ["tcm-writer.md", "tcm-case-rewriter.md", "tcm-auditor.md"] {
+    for n in ["tcm-writer.md", "tcm-case-rewriter.md", "tcm-auditor.md", "tcm-explorer.md"] {
         let t = std::fs::read_to_string(dir.path().join(n)).unwrap();
         assert!(t.contains(COMMAND_MARKER), "{n}");
     }
@@ -2171,4 +2204,14 @@ fn the_discover_and_heal_commands_say_where_their_rules_come_from() {
         "{heal}"
     );
     assert!(!heal.contains("three"), "{heal}");
+}
+
+/// The explore tools ride in their modules: the change list with Auto Run,
+/// the one-off request and the undo with API Templates.
+#[test]
+fn the_explore_tools_belong_to_their_modules() {
+    assert_eq!(module_of_tool("send_api_request"), Some(Module::ApiTemplates));
+    assert_eq!(module_of_tool("undo_explore_creates"), Some(Module::ApiTemplates));
+    assert_eq!(module_of_tool("record_explore_change"), Some(Module::AutoRun));
+    assert_eq!(module_of_tool("get_explore_changes"), Some(Module::AutoRun));
 }

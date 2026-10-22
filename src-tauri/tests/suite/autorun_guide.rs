@@ -2316,6 +2316,42 @@ fn the_guide_names_every_role_and_how_its_rules_arrive() {
 }
 
 #[test]
+fn the_roles_section_names_the_explorer() {
+    let guide = autorun_guide();
+    let section = guide.split_once("\n## Roles").unwrap().1.split("\n## ").next().unwrap();
+    let flat = flat_guide(section);
+    assert!(flat.contains("five roles"), "{flat}");
+    assert!(flat.contains("- explorer:"), "{flat}");
+    assert!(flat.contains("`explore` true"), "{flat}");
+    assert!(flat.contains("`auditor` or `explorer`"), "{flat}");
+}
+
+#[test]
+fn the_guide_explains_exploring_a_task() {
+    let guide = autorun_guide();
+    let titles = v2_lib::autorun::guide::section_titles(&guide);
+    let at = |t: &str| titles.iter().position(|x| *x == t);
+    assert!(at("Exploring a task").unwrap() < at("Components").unwrap(), "{titles:?}");
+    let section = guide.split_once("\n## Exploring a task").expect("an Exploring a task section").1.split("\n## ").next().unwrap();
+    let flat = flat_guide(section);
+    for needle in [
+        "`explore` true",
+        "nothing is filed as seen",
+        "`record_explore_change`",
+        "verified",
+        "only in the browser",
+        "`get_explore_changes`",
+        "not on the change list",
+        "their yes in the chat",
+        "`undo_explore_creates`",
+        "tcm-explore/<date>-<short-task>.md",
+    ] {
+        assert!(flat.contains(needle), "{needle} not in: {flat}");
+    }
+    assert!(!section.contains('\u{2014}') && !section.contains('\u{2013}'), "no em or en dashes");
+}
+
+#[test]
 fn the_guide_says_a_delete_dialog_read_may_be_refused_in_auto_mode() {
     let g = autorun_guide();
     assert!(g.contains("can be refused as a deletion"), "the guide never says a delete-dialog read may be refused");

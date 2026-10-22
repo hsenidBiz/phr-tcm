@@ -135,6 +135,7 @@ impl Fx {
             account: "admin".into(),
             outputs: BTreeMap::new(),
             environment: None,
+            via: None,
         });
         template_store::save(r, ORG, PROJECT, &t).unwrap();
         let f = Fixture {

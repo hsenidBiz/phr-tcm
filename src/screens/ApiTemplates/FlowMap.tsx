@@ -24,6 +24,7 @@ const EDGE_TONE: Record<EdgeTone, string> = {
   create: "text-success",
   edit: "text-warning",
   delete: "text-danger",
+  read: "text-muted",
   none: "text-accent",
 };
 

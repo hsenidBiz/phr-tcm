@@ -59,8 +59,8 @@ with every problem listed together:
 - Unknown fields are refused, at every level.
 - `id`: lowercase ASCII letters, digits, `-` and `_`; 1 to 100 characters.
   It is the file name.
-- `effect`: `create`, `edit` or `delete` - what the template does to the
-  application's data. You declare it; the tab shows it as a badge.
+- `effect`: `create`, `edit`, `delete` or `read` - what the template does to the
+  application's data. You declare it; the tab shows it as a badge. A `read` template changes nothing; a fixture may use one, and nothing it finds counts as made by the tests.
 - `sources`: where in the application's code each request comes from, as
   `file:line`.
 - `params[].required`: true ONLY when the application refuses the request
@@ -422,10 +422,39 @@ what fixtures and setups made. Any other `id` is refused with `a delete
 template is only proven on a draft the tests made`. A prove that succeeds
 deleted that draft, and the record marks it deleted.
 
-`run_api_template` refuses a delete template, and so does a fixture. Only
-the person's Clean up test-made drafts, in the app, runs one: it previews
-the drafts, the person ticks and confirms, and each is deleted through its
-kind's proven delete template.
+`run_api_template` refuses a delete template, and so does a fixture. Only two things run one: the person's Clean up test-made drafts, in the app, which previews the drafts for the person to tick and confirm, and an undo of your own explore session (`undo_explore_creates`), which deletes only the creates the app verified in that session, through each kind's proven delete template.
+
+## One-off requests in an explore session
+
+In an explore session (`start_autorun_discovery` with `explore` true, see the Auto Run guide)
+`send_api_request` runs one GET or POST in your explore session's own page: no new browser, no
+sign-in, as the account the session signed in as. The anti-forgery token is read on the page you
+are on; when that page has none, pass `antiforgery_page`, a page of the app with a form on it,
+and the token is read there, in the same tab. The answer is redacted and cut at the first 64 KB.
+
+- A GET only reads. A POST needs an explore session, the person's API templates switch and an
+  `effect`: `read`, `create`, `edit` or `delete`. A save whose address (or `handler`) says delete
+  or remove is refused unless it is sent as a delete.
+- A create always names what it made, in `created`: `kind`, `name`, and `id`, which is the NAME of
+  one of the step's `capture`s, the one that takes the new record's id from the answer (for
+  example `"id": "cycleId"` with `"capture": { "cycleId": "$.cycleId" }`), never the id itself.
+  A create whose answer carries no id cannot be recorded here. It goes on the session's change
+  list, and an undo can delete it later only when the app shows the id is new to the session:
+  the call did not send it, and nothing the session saw or sent before carried it. Otherwise it
+  stays on the list as not verified, to remove in the browser.
+- `effect: delete` needs `person_said_yes` true, and only after you told the person what will be
+  deleted and they said yes in the chat. Without it the call is refused and nothing is sent. A
+  delete call is never saved as a template.
+- A call that worked in an explore session is saved as a template proven by that run, or matched
+  to a proven template already saved with the same method, path and body fields, which is reused
+  instead of saved again. A path segment that is all digits or a GUID becomes a `{{id}}` param, so
+  one template serves every record. A POST sent as `read` is saved as `read` only when the change
+  list shows it changed nothing. A GET from a plain discovery runs but is not saved.
+- A failed call, a delete call, a call with a secret written out in it (in its body, its query,
+  or the query of its token page), and a call from a page with no token are never saved: the
+  answer says which and why. Send a secret as a param.
+- `run_api_template` runs a saved template in your explore session when the session holds the
+  template's account; otherwise it opens its own browser as before.
 
 ## When a run fails
 

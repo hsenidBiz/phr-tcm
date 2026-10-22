@@ -415,6 +415,7 @@ async fn an_area_save_records_the_preferences_in_force() {
         no_save: false,
         call_no_save: false,
         call_case_id: None,
+        explore: None,
     });
     let mut browser = Some(FakeBrowser {
         d,
@@ -457,6 +458,7 @@ async fn an_area_save_records_the_mode_it_was_saved_in() {
         no_save: false,
         call_no_save: false,
         call_case_id: None,
+        explore: None,
     });
     let mut browser = Some(FakeBrowser {
         d,
@@ -624,6 +626,7 @@ async fn map_again(root: &std::path::Path, d: ScriptedDriver) -> (u16, Value) {
         no_save: false,
         call_no_save: false,
         call_case_id: None,
+        explore: None,
     });
     let mut browser = Some(FakeBrowser {
         d,
@@ -708,6 +711,7 @@ async fn a_repair_keeps_the_mode_and_preferences_it_read() {
         no_save: false,
         call_no_save: false,
         call_case_id: None,
+        explore: None,
     });
     let mut browser = Some(FakeBrowser {
         d,

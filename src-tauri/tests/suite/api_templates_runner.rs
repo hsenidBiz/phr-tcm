@@ -13,10 +13,11 @@ use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use v2_lib::api_templates::runner::{
-    claim, preflight, run_template_within, Mode, RunReport, RunRequest, FETCH_FN, RETRY_PAUSES, RUN_LIMIT, TOKEN_FN,
+    claim, deletes_refusal, preflight, run_in_page, run_template_within, InPage, Mode, RunReport, RunRequest,
+    TokenPage, FETCH_FN, NO_TOKEN_HERE, OFF_THE_APP, RETRY_PAUSES, RUN_LIMIT, SESSION_ENDED_IN_PAGE, TOKEN_FN,
 };
 use v2_lib::api_templates::held::{Keeps, NotKept};
-use v2_lib::api_templates::{ApiTemplate, Proven};
+use v2_lib::api_templates::{ApiTemplate, Effect, Proven};
 use v2_lib::autorun::accounts::save_accounts;
 use v2_lib::autorun::recipe::save_recipe;
 use v2_lib::autorun::replay::Browsers;
@@ -36,8 +37,8 @@ pub(crate) struct Script {
     /// navigated to.
     pub(crate) hrefs: VecDeque<String>,
     /// Answers to `TOKEN_FN`, in turn; once empty, `token`.
-    tokens: VecDeque<Option<String>>,
-    token: Option<String>,
+    pub(crate) tokens: VecDeque<Option<String>>,
+    pub(crate) token: Option<String>,
     /// Answers to `FETCH_FN`, in turn.
     pub(crate) responses: VecDeque<Value>,
     /// `FETCH_FN` never answers - the page is stuck.
@@ -49,8 +50,8 @@ pub(crate) struct Script {
     /// `Page.navigate` fails as a browser that has gone away does.
     pub(crate) browser_gone: bool,
     /// The arguments of every `FETCH_FN` call, in order.
-    fetched: Vec<Vec<Value>>,
-    navigated: String,
+    pub(crate) fetched: Vec<Vec<Value>>,
+    pub(crate) navigated: String,
     /// What `Network.getCookies` answers (its `cookies` array); `None` is
     /// an empty jar.
     cookies: Option<Value>,
@@ -154,6 +155,14 @@ impl Driver for App {
     fn set_deadline(&mut self, deadline: Option<Instant>) {
         self.inner.set_deadline(deadline)
     }
+
+    fn capture(&self) -> Option<&v2_lib::browser::net_capture::NetCapture> {
+        self.inner.capture()
+    }
+
+    fn capture_mut(&mut self) -> Option<&mut v2_lib::browser::net_capture::NetCapture> {
+        self.inner.capture_mut()
+    }
 }
 
 /// Hands out one prepared `App` and counts opens and closes; keeps the
@@ -213,6 +222,10 @@ impl Rig {
     }
     pub(crate) fn fetched(&self) -> Vec<Vec<Value>> {
         self.script.lock().unwrap().fetched.clone()
+    }
+    /// The address the page was last sent to; empty when it never was.
+    pub(crate) fn navigated(&self) -> String {
+        self.script.lock().unwrap().navigated.clone()
     }
     /// How many times the recipe was run: its one click per sign-in.
     pub(crate) fn sign_ins(&self) -> usize {
@@ -812,6 +825,7 @@ fn preflight_needs_replace_and_why_for_an_existing_id() {
         account: "admin".into(),
         outputs: BTreeMap::new(),
         environment: None,
+        via: None,
     });
     assert_eq!(preflight(root.path(), &request(saved.clone(), Mode::Run), Some(&saved)), Ok(()));
 
@@ -881,6 +895,7 @@ mod through_the_bridge {
             account: "admin".into(),
             outputs: BTreeMap::from([("cycleId".to_string(), json!(1))]),
             environment: None,
+            via: None,
         });
         t
     }
@@ -2269,4 +2284,342 @@ async fn a_template_run_holds_its_account_and_lets_it_go_on_every_path_out() {
     let env = env_of(&r);
     assert!(run(&mut r, template()).await.ok);
     assert!(!lease::is_held(&env, "admin"), "a run that passed kept the account");
+}
+
+// ---------------------------------------------------------------------
+// Explore: a one-off request sent from the page the session is on.
+// ---------------------------------------------------------------------
+
+/// A one-step template: `method` `/hr/pmsv10/performancecycle`, with
+/// whatever else the step says (`form`, `json`, `expect`, `capture`).
+fn one_off(method: &str, extra: Value) -> ApiTemplate {
+    let mut step = json!({
+        "name": "One-off", "method": method,
+        "path": "/hr/pmsv10/performancecycle", "query": { "handler": "SaveProgress" }
+    });
+    for (k, v) in extra.as_object().unwrap() {
+        step[k] = v.clone();
+    }
+    serde_json::from_value(json!({
+        "id": "explore-one-off",
+        "title": "A one-off request",
+        "module": "PMS / Performance Cycle",
+        "effect": "create",
+        "description": "A call made while exploring.",
+        "sources": [],
+        "antiforgery": { "page": PAGE },
+        "params": [],
+        "steps": [step],
+        "outputs": []
+    }))
+    .unwrap()
+}
+
+/// The explore browser is on `PAGE` of the application.
+fn on_the_app(r: &Rig) {
+    r.script.lock().unwrap().hrefs = VecDeque::from([format!("https://hr.example.internal{PAGE}")]);
+}
+
+/// Runs `req` in the rig's page; the page comes back for what it was asked.
+/// A request writes an activity record into the process-wide log, so the
+/// run holds its lock (`in_page_locked` is for a test that already does).
+async fn in_page(r: &mut Rig, req: &RunRequest, how: TokenPage) -> (InPage, App) {
+    let _act = crate::serial::activity_log();
+    in_page_locked(r, req, how).await
+}
+
+async fn in_page_locked(r: &mut Rig, req: &RunRequest, how: TokenPage) -> (InPage, App) {
+    let mut app = r.browsers.next.take().unwrap();
+    let out = run_in_page(&mut app, r.root.path(), req, &quick(), how, RUN_LIMIT, &QUICK_PAUSES).await;
+    (out, app)
+}
+
+/// What the page's `FETCH_FN` hands back for a plain-text answer.
+fn text_answer(status: u16, content_type: &str, text: String) -> Value {
+    json!({
+        "status": status,
+        "contentType": content_type,
+        "finalUrl": "https://hr.example.internal/hr/pmsv10/performancecycle?handler=x",
+        "redirected": false,
+        "text": text,
+    })
+}
+
+#[tokio::test]
+async fn a_one_off_runs_in_the_page_it_is_on_without_signing_in_or_navigating() {
+    let _act = crate::serial::activity_log();
+    let mut r = rig(vec![answer(200, json!({ "cycleId": 274 }))], None);
+    on_the_app(&r);
+    let t = one_off("POST", json!({ "form": { "CycleName": "x" }, "capture": { "cycleId": "$.cycleId" } }));
+    let (out, app) = in_page_locked(&mut r, &request(t, Mode::Explore), TokenPage::Here).await;
+    assert!(out.report.ok, "{:?}", out.report);
+    assert_eq!(out.report.created["cycleId"], json!(274));
+    assert_eq!(app.inner.calls_to("Page.navigate").len(), 0);
+    assert_eq!(r.sign_ins(), 0);
+    assert_eq!(r.fetched()[0][1], json!(TOKEN));
+    assert!(out.answer.unwrap().body.contains("274"));
+    assert_eq!(out.token_page.as_deref(), Some(PAGE));
+    assert!(out.token_found);
+}
+
+#[tokio::test]
+async fn a_one_off_on_a_page_off_the_app_sends_nothing() {
+    let mut r = rig(vec![], None);
+    r.script.lock().unwrap().hrefs = VecDeque::from(["https://elsewhere.example/x".to_string()]);
+    let t = one_off("POST", json!({ "form": { "CycleName": "x" } }));
+    let (out, app) = in_page(&mut r, &request(t, Mode::Explore), TokenPage::Here).await;
+    assert_eq!(out.report.failed.as_deref(), Some("Anti-forgery token"));
+    assert!(out.report.message().contains(OFF_THE_APP), "{}", out.report.message());
+    assert!(r.fetched().is_empty());
+    assert_eq!(app.inner.calls_to("Page.navigate").len(), 0);
+    assert_eq!(r.sign_ins(), 0);
+    assert_eq!(out.token_page, None);
+    assert!(out.answer.is_none());
+}
+
+#[tokio::test]
+async fn a_post_with_no_token_on_the_page_is_not_sent() {
+    let mut r = rig(vec![], None);
+    on_the_app(&r);
+    r.script.lock().unwrap().token = None;
+    let t = one_off("POST", json!({ "form": { "CycleName": "x" } }));
+    let (out, app) = in_page(&mut r, &request(t, Mode::Explore), TokenPage::Here).await;
+    assert_eq!(out.report.failed.as_deref(), Some("Anti-forgery token"));
+    assert!(out.report.message().contains(NO_TOKEN_HERE), "{}", out.report.message());
+    assert!(r.fetched().is_empty());
+    assert_eq!(app.inner.calls_to("Page.navigate").len(), 0);
+    assert_eq!(r.sign_ins(), 0);
+    assert!(!out.token_found);
+    assert_eq!(out.token_page.as_deref(), Some(PAGE));
+}
+
+#[tokio::test]
+async fn a_get_with_no_token_on_the_page_is_sent() {
+    let mut r = rig(vec![answer(200, json!({ "rows": [] }))], None);
+    on_the_app(&r);
+    r.script.lock().unwrap().token = None;
+    let (out, _app) = in_page(&mut r, &request(one_off("GET", json!({})), Mode::Explore), TokenPage::Here).await;
+    assert!(out.report.ok, "{:?}", out.report);
+    assert_eq!(r.fetched()[0][1], json!(""));
+    assert!(!out.token_found);
+}
+
+#[tokio::test]
+async fn a_one_off_with_no_expect_passes_on_any_2xx() {
+    // A 201 passes.
+    let mut r = rig(vec![answer(201, json!({ "id": 5 }))], None);
+    on_the_app(&r);
+    let t = one_off("POST", json!({ "form": { "CycleName": "x" } }));
+    let (out, _app) = in_page(&mut r, &request(t.clone(), Mode::Explore), TokenPage::Here).await;
+    assert!(out.report.ok, "{:?}", out.report);
+    assert_eq!(out.answer.unwrap().status, 201);
+
+    // A 400 with a body does not, and the answer is still kept.
+    let mut r = rig(vec![answer(400, json!({ "e": 1 }))], None);
+    on_the_app(&r);
+    let (out, _app) = in_page(&mut r, &request(t, Mode::Explore), TokenPage::Here).await;
+    assert!(!out.report.ok);
+    assert_eq!(out.answer.unwrap().status, 400);
+
+    // An expect that says something is held to as a template run holds it.
+    let mut r = rig(vec![answer(200, json!({ "id": 5 }))], None);
+    on_the_app(&r);
+    let t = one_off("POST", json!({ "form": { "CycleName": "x" }, "expect": { "status": 201 } }));
+    let (out, _app) = in_page(&mut r, &request(t, Mode::Explore), TokenPage::Here).await;
+    assert!(!out.report.ok, "{:?}", out.report);
+    assert!(out.report.message().contains("expected status 201, got 200"), "{}", out.report.message());
+}
+
+#[tokio::test]
+async fn a_named_token_page_opens_in_the_same_tab() {
+    let mut r = rig(vec![answer(200, json!({ "ok": true }))], None);
+    // Where the browser is before, then where the navigation landed.
+    r.script.lock().unwrap().hrefs = VecDeque::from([
+        format!("https://hr.example.internal{PAGE}"),
+        "https://hr.example.internal/hr/pmsv10/updatehub".to_string(),
+    ]);
+    let t = one_off("POST", json!({ "form": { "CycleName": "x" } }));
+    let how = TokenPage::Open("/hr/pmsv10/updatehub".to_string());
+    let (out, app) = in_page(&mut r, &request(t, Mode::Explore), how).await;
+    assert!(out.report.ok, "{:?}", out.report);
+    let navigations = app.inner.calls_to("Page.navigate");
+    assert_eq!(navigations.len(), 1, "{navigations:?}");
+    assert!(navigations[0]["url"].as_str().unwrap().ends_with("/hr/pmsv10/updatehub"));
+    assert_eq!(r.fetched().len(), 1);
+    assert_eq!(r.sign_ins(), 0);
+    assert_eq!(out.token_page.as_deref(), Some("/hr/pmsv10/updatehub"));
+}
+
+#[tokio::test]
+async fn a_token_page_that_sends_us_elsewhere_ends_without_signing_in() {
+    let mut r = rig(vec![], None);
+    r.script.lock().unwrap().hrefs = VecDeque::from([format!("https://hr.example.internal{PAGE}"), LOGIN.to_string()]);
+    let t = one_off("POST", json!({ "form": { "CycleName": "x" } }));
+    let how = TokenPage::Open("/hr/pmsv10/updatehub".to_string());
+    let (out, _app) = in_page(&mut r, &request(t, Mode::Explore), how).await;
+    assert_eq!(out.report.failed.as_deref(), Some("Anti-forgery token"));
+    assert!(out.report.message().contains(SESSION_ENDED_IN_PAGE), "{}", out.report.message());
+    assert_eq!(r.sign_ins(), 0);
+    assert!(r.fetched().is_empty());
+}
+
+#[tokio::test]
+async fn a_one_off_refused_unread_is_sent_again_on_the_same_page() {
+    let mut r = rig(vec![empty_400(), answer(200, json!({ "ok": true }))], None);
+    r.script.lock().unwrap().hrefs = VecDeque::from([
+        format!("https://hr.example.internal{PAGE}"),
+        format!("https://hr.example.internal{PAGE}"),
+    ]);
+    let t = one_off("POST", json!({ "form": { "CycleName": "x" } }));
+    let (out, app) = in_page(&mut r, &request(t, Mode::Explore), TokenPage::Here).await;
+    assert!(out.report.ok, "{:?}", out.report);
+    assert_eq!(r.fetched().len(), 2);
+    assert_eq!(app.inner.calls_to("Page.navigate").len(), 0);
+    assert_eq!(r.sign_ins(), 0);
+}
+
+#[tokio::test]
+async fn an_explore_requests_activity_record_has_no_secret() {
+    let _log = crate::serial::log_tail();
+    let _act = crate::serial::activity_log();
+    let activity = tempfile::tempdir().unwrap();
+    v2_lib::activity_log::init(activity.path().to_path_buf());
+
+    let mut r = rig(vec![answer(200, json!({ "ok": true, "password": "hunter2-back" }))], None);
+    on_the_app(&r);
+    let t = one_off("POST", json!({ "json": { "password": "hunter2", "name": "x" } }));
+    let (out, _app) = in_page_locked(&mut r, &request(t, Mode::Explore), TokenPage::Here).await;
+    assert!(out.report.ok, "{:?}", out.report);
+
+    let records = activity_records(activity.path(), "api");
+    for rec in &records {
+        assert!(!rec.to_string().contains("hunter2"), "a password reached an activity record: {rec}");
+        assert!(!rec.to_string().contains(TOKEN), "the token reached an activity record: {rec}");
+    }
+    let steps = step_records(&records);
+    assert_eq!(steps.len(), 1, "{records:?}");
+    assert_eq!(steps[0]["mode"], "explore");
+    assert!(steps[0]["request"].as_str().unwrap().contains("name"), "{}", steps[0]);
+}
+
+#[tokio::test]
+async fn a_long_answer_says_it_was_cut() {
+    let mut r = rig(vec![text_answer(200, "text/plain", "a".repeat(65_536))], None);
+    on_the_app(&r);
+    let (out, _app) = in_page(&mut r, &request(one_off("GET", json!({})), Mode::Explore), TokenPage::Here).await;
+    let a = out.answer.unwrap();
+    assert!(a.cut);
+    assert_eq!(a.content_type.as_deref(), Some("text/plain"));
+
+    let mut r = rig(vec![text_answer(200, "text/plain", "a".repeat(10))], None);
+    on_the_app(&r);
+    let (out, _app) = in_page(&mut r, &request(one_off("GET", json!({})), Mode::Explore), TokenPage::Here).await;
+    assert!(!out.answer.unwrap().cut);
+}
+
+#[tokio::test]
+async fn an_answer_carries_no_anti_forgery_token() {
+    let body = format!(r#"<input name="__RequestVerificationToken" value="other-{TOKEN}"> and {TOKEN}"#);
+    let mut r = rig(vec![text_answer(200, "text/html", body)], None);
+    on_the_app(&r);
+    let (out, _app) = in_page(&mut r, &request(one_off("GET", json!({})), Mode::Explore), TokenPage::Here).await;
+    let shown = out.answer.unwrap().body;
+    assert!(!shown.contains(TOKEN), "{shown}");
+}
+
+#[test]
+fn preflight_lets_a_one_off_delete_through_without_the_delete_template_shape() {
+    let r = rig(vec![], None);
+    let mut t = one_off("POST", json!({ "form": { "CycleName": "x" } }));
+    t.effect = Effect::Delete;
+    assert!(t.deletes_kind.is_none());
+    let mut explore = request(t.clone(), Mode::Explore);
+    explore.values.clear();
+    assert_eq!(preflight(r.root.path(), &explore, None), Ok(()));
+    let mut run = request(t.clone(), Mode::Run);
+    run.values.clear();
+    let refused = preflight(r.root.path(), &run, None).unwrap_err();
+    assert!(refused.contains(&deletes_refusal(&t.id)), "{refused:?}");
+}
+
+#[tokio::test]
+async fn a_named_token_page_is_not_opened_from_a_page_off_the_app() {
+    let mut r = rig(vec![], None);
+    r.script.lock().unwrap().hrefs = VecDeque::from(["https://elsewhere.example/x".to_string()]);
+    let t = one_off("POST", json!({ "form": { "CycleName": "x" } }));
+    let how = TokenPage::Open("/hr/pmsv10/updatehub".to_string());
+    let (out, app) = in_page(&mut r, &request(t, Mode::Explore), how).await;
+    assert_eq!(out.report.failed.as_deref(), Some("Anti-forgery token"));
+    assert!(out.report.message().contains(OFF_THE_APP), "{}", out.report.message());
+    assert_eq!(app.inner.calls_to("Page.navigate").len(), 0, "the tab was pulled onto the app");
+    assert!(r.fetched().is_empty());
+    assert_eq!(r.sign_ins(), 0);
+}
+
+#[tokio::test]
+async fn a_failing_one_off_quotes_the_response_redacted() {
+    let mut r = rig(vec![answer(400, json!({ "errors": ["bad"], "model": { "Password": "hunter2", "Name": "x" } }))], None);
+    on_the_app(&r);
+    let t = one_off("POST", json!({ "json": { "Password": "hunter2" } }));
+    let (out, _app) = in_page(&mut r, &request(t, Mode::Explore), TokenPage::Here).await;
+    assert!(!out.report.ok);
+    let said = out.report.message();
+    assert!(said.contains("the response began"), "{said}");
+    assert!(!said.contains("hunter2"), "a password reached the report: {said}");
+    assert!(!serde_json::to_string(&out.report).unwrap().contains("hunter2"));
+}
+
+#[tokio::test]
+async fn an_explore_requests_url_is_redacted_in_its_record() {
+    let _log = crate::serial::log_tail();
+    let _act = crate::serial::activity_log();
+    let activity = tempfile::tempdir().unwrap();
+    v2_lib::activity_log::init(activity.path().to_path_buf());
+    let mut r = rig(vec![answer(200, json!({ "ok": true }))], None);
+    on_the_app(&r);
+    let t = one_off("GET", json!({ "query": { "password": "hunter2", "page": "1" } }));
+    let (out, _app) = in_page_locked(&mut r, &request(t, Mode::Explore), TokenPage::Here).await;
+    assert!(out.report.ok, "{:?}", out.report);
+    let records = activity_records(activity.path(), "api");
+    for rec in &records {
+        assert!(!rec.to_string().contains("hunter2"), "a secret query value reached a record: {rec}");
+    }
+    assert_eq!(step_records(&records).len(), 1);
+}
+
+#[tokio::test]
+async fn an_account_that_is_not_on_this_machine_stops_at_sign_in() {
+    let mut r = rig(vec![], None);
+    on_the_app(&r);
+    let t = one_off("GET", json!({}));
+    let mut req = request(t, Mode::Explore);
+    req.account = "nobody".to_string();
+    let (out, app) = in_page(&mut r, &req, TokenPage::Here).await;
+    assert_eq!(out.report.failed.as_deref(), Some("Sign in"));
+    assert!(r.fetched().is_empty());
+    assert_eq!(app.inner.calls_to("Page.navigate").len(), 0);
+    assert_eq!(out.token_page, None);
+}
+
+#[tokio::test]
+async fn a_one_off_that_runs_out_of_time_says_so_and_clears_the_deadline() {
+    let mut r = rig(vec![], None);
+    on_the_app(&r);
+    r.script.lock().unwrap().hang_fetch = true;
+    let mut app = r.browsers.next.take().unwrap();
+    let _act = crate::serial::activity_log();
+    let t = one_off("GET", json!({}));
+    let out = run_in_page(
+        &mut app,
+        r.root.path(),
+        &request(t, Mode::Explore),
+        &quick(),
+        TokenPage::Here,
+        Duration::from_millis(300),
+        &QUICK_PAUSES,
+    )
+    .await;
+    assert!(!out.report.ok);
+    assert!(out.report.message().contains("3 minutes"), "{}", out.report.message());
+    assert!(out.answer.is_none());
 }

@@ -13,6 +13,7 @@ const EFFECT_SENTENCE: Record<Effect, string> = {
   create: "This template creates data.",
   edit: "This template edits data.",
   delete: "This template deletes data.",
+  read: "This template reads data.",
 };
 
 /**

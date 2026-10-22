@@ -231,6 +231,19 @@ test("a row shows its effect badge and last run, and keeps its parameters and pr
   expect(del.className).toContain("bg-danger/15");
 });
 
+test("a read template shows a read badge", async () => {
+  mockOverview({
+    ...OVERVIEW,
+    templates: [{ template: template({ id: "pms-look-up-cycle", title: "Look up a cycle", effect: "read" }), runs: [] }],
+  });
+  renderScreen();
+
+  const row = await screen.findByRole("listitem", { name: "Look up a cycle" });
+  const badge = within(row).getByText("read").parentElement!;
+  expect(badge.className).toContain("text-muted");
+  expect(badge.className).toContain("bg-muted/15");
+});
+
 // jsdom does no layout, so this pins the class that keeps the title from
 // being squeezed into a column of word fragments by a long stage line.
 test("a row's title keeps a readable width, so the items beside it wrap instead", async () => {

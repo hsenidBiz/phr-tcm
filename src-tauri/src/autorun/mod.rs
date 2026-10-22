@@ -20,6 +20,7 @@ pub mod components;
 pub mod discovery_map;
 pub mod downloads;
 pub mod edits;
+pub mod explore;
 pub mod failures;
 pub mod floor;
 pub mod forbidden_fixes;

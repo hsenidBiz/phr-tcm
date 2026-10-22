@@ -3,7 +3,8 @@
 //! in the QA automation repo) and adapted to TCM's tools: the writer
 //! (playwright-test-planner and -generator), the healer
 //! (playwright-test-healer and the healer bounds), the case rewriter
-//! (test-refactorer and spec-editor) and the auditor (doc-drift-auditor).
+//! (test-refactorer and spec-editor) and the auditor (doc-drift-auditor);
+//! the explorer is this app's own, for a task done with no test case.
 //! Each role's text is in `roles/<key>.md`; an MCP session gets it ahead of
 //! the first answer of the tool that starts the role (`mcp_session`), and
 //! `get_guide` gives it by name. They hold whatever tools the assistant has.
@@ -14,12 +15,13 @@ pub enum Role {
     Healer,
     CaseRewriter,
     Auditor,
+    Explorer,
 }
 
 impl Role {
-    pub const ALL: [Role; 4] = [Role::Writer, Role::Healer, Role::CaseRewriter, Role::Auditor];
+    pub const ALL: [Role; 5] = [Role::Writer, Role::Healer, Role::CaseRewriter, Role::Auditor, Role::Explorer];
 
-    /// "writer", "healer", "case-rewriter", "auditor": the role argument and
+    /// "writer", "healer", "case-rewriter", "auditor", "explorer": the role argument and
     /// the file name.
     pub fn key(self) -> &'static str {
         match self {
@@ -27,10 +29,11 @@ impl Role {
             Role::Healer => "healer",
             Role::CaseRewriter => "case-rewriter",
             Role::Auditor => "auditor",
+            Role::Explorer => "explorer",
         }
     }
 
-    /// "writer", "healer", "case rewriter", "auditor": how a sentence names
+    /// "writer", "healer", "case rewriter", "auditor", "explorer": how a sentence names
     /// it.
     pub fn name(self) -> &'static str {
         match self {
@@ -38,6 +41,7 @@ impl Role {
             Role::Healer => "healer",
             Role::CaseRewriter => "case rewriter",
             Role::Auditor => "auditor",
+            Role::Explorer => "explorer",
         }
     }
 
@@ -49,13 +53,14 @@ impl Role {
             Role::Healer => "Diagnose and repair failed Auto Run cases within the repair bounds, under Test Case Manager's healer rules",
             Role::CaseRewriter => "Change a saved Auto Run script or component, for a repair or a rewritten test case, under Test Case Manager's case rewriter rules",
             Role::Auditor => "Check saved Auto Run scripts against their test cases and report what they miss or fit, never editing, under Test Case Manager's auditor rules",
+            Role::Explorer => "Do a task the person names in the live app with no test case, record every change and report, under Test Case Manager's explorer rules",
         }
     }
 
     /// Trimmed and lowercased, with "_" and " " read as "-". Also the
     /// Playwright agents' names: "planner" and "generator" -> Writer;
     /// "refactorer" and "spec-editor" -> CaseRewriter; "doc-drift-auditor"
-    /// -> Auditor.
+    /// -> Auditor. "explore" -> Explorer.
     pub fn from_key(key: &str) -> Option<Role> {
         let k = key.trim().to_lowercase().replace(['_', ' '], "-");
         match k.as_str() {
@@ -63,6 +68,7 @@ impl Role {
             "healer" => Some(Role::Healer),
             "case-rewriter" | "refactorer" | "spec-editor" => Some(Role::CaseRewriter),
             "auditor" | "doc-drift-auditor" => Some(Role::Auditor),
+            "explorer" | "explore" => Some(Role::Explorer),
             _ => None,
         }
     }
@@ -75,6 +81,7 @@ impl Role {
             Role::Healer => include_str!("roles/healer.md"),
             Role::CaseRewriter => include_str!("roles/case-rewriter.md"),
             Role::Auditor => include_str!("roles/auditor.md"),
+            Role::Explorer => include_str!("roles/explorer.md"),
         };
         raw.replace("\r\n", "\n")
     }
@@ -95,7 +102,7 @@ pub fn pointer(role: Role) -> String {
 /// Said when `role` names no role.
 pub fn unknown_role(asked: &str) -> String {
     format!(
-        "There is no role \"{}\": role is one of \"writer\", \"healer\", \"case-rewriter\" and \"auditor\".",
+        "There is no role \"{}\": role is one of \"writer\", \"healer\", \"case-rewriter\", \"auditor\" and \"explorer\".",
         asked.trim()
     )
 }
@@ -178,13 +185,15 @@ fn is_true(v: &serde_json::Value) -> bool {
     v.as_bool() == Some(true) || v.as_str().map(|s| s.trim().eq_ignore_ascii_case("true")) == Some(true)
 }
 
-/// The role a call starts: `start_autorun_discovery` not a mapping run (its
-/// `mapping` is not true or "true") -> Writer; `get_autorun_failures` ->
+/// The role a call starts: `start_autorun_discovery` with `explore` true or
+/// "true" -> Explorer; otherwise, not a mapping run (its `mapping` is not
+/// true or "true") -> Writer; `get_autorun_failures` ->
 /// Healer; `save_autorun_script` with `cases_repaired_by` non-empty ->
 /// CaseRewriter; `save_autorun_component` -> CaseRewriter; anything else
 /// None. The auditor has no tool: `get_guide` gives it.
 pub fn role_for_call(tool: &str, args: &serde_json::Value) -> Option<Role> {
     match tool {
+        "start_autorun_discovery" if is_true(&args["explore"]) => Some(Role::Explorer),
         "start_autorun_discovery" if !is_true(&args["mapping"]) => Some(Role::Writer),
         "get_autorun_failures" => Some(Role::Healer),
         "save_autorun_script" if !cases_repaired_by(args).is_empty() => Some(Role::CaseRewriter),
@@ -197,7 +206,8 @@ pub fn role_for_call(tool: &str, args: &serde_json::Value) -> Option<Role> {
 pub const RULES_DISCOVERY: &str = "Rules now:\n- Every check's value is the case's own, as written: when the app or its data differs, call report_case_divergence and keep the case's value, never fit the check to the page.\n- Carry out each step live before you write it; never guess a locator, an address or a menu path.\n- A value the case does not hold needs a because, assumed or invented, saying where it comes from.";
 pub const RULES_REPAIR_SAVE: &str = "Rules now:\n- A repair keeps every check and every value the case gives; a check is given up only by naming it in gives_up with why, and the person sees it.\n- Prove the repair with a replay of the whole case: the script is not checked until one passes.\n- Repeat every assumed and invented value and every check given up in your report.";
 pub const RULES_FAILURES: &str = "Rules now:\n- Classify each failure first: a missing precondition or an app defect is reported with report_case_divergence, never healed.\n- At most 3 fix-run cycles per case; stop at cycle 2 when the failure is identical to cycle 1's.\n- A case Blocked with \"needs a ruling\" waits for the person: leave it alone.";
-pub const RULES_REPLAY: &str = "Rules now:\n- Diagnose a failure on this page before anything changes: a missing precondition or an app defect is reported, never healed.\n- Change only the locator, the waiting or the navigation; never a check's value, and never the number of checks without gives_up.\n- The case counts as checked only after a replay of the whole case passes.";
+pub const RULES_EXPLORE: &str = "Rules now:\n- Do only the task asked; read a value before you change it, and record every change with record_explore_change.\n- Check each outcome on the page, in the requests or with db_query; a mismatch is a finding for your summary, never a check bent to fit.\n- Before anything is deleted, name it to the person and wait for their yes in this chat; stop and report when a step fails twice the same way.";
+pub const RULES_REPLAY: &str ="Rules now:\n- Diagnose a failure on this page before anything changes: a missing precondition or an app defect is reported, never healed.\n- Change only the locator, the waiting or the navigation; never a check's value, and never the number of checks without gives_up.\n- The case counts as checked only after a replay of the whole case passes.";
 
 /// `answer` with "\n\n" + `rules` after its text (the text's trailing whitespace trimmed first); the status unchanged.
 pub fn with_rules(answer: (u16, String), rules: &str) -> (u16, String) {

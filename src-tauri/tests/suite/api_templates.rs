@@ -1027,3 +1027,78 @@ fn the_guide_with_no_origin_asks_for_the_site_address() {
     );
     assert!(!flat.contains("no sign-in recipe yet"), "{flat}");
 }
+
+#[test]
+fn a_read_template_parses_checks_and_round_trips() {
+    let mut v = draft();
+    v["effect"] = json!("read");
+    let t = parse_draft(&v).expect("a read template is a template");
+    assert_eq!(t.effect, v2_lib::api_templates::Effect::Read);
+    assert!(check(&t).is_empty(), "{:?}", check(&t));
+    assert_eq!(serde_json::to_value(&t).unwrap()["effect"], json!("read"));
+}
+
+/// A proof written before `via` existed.
+fn proof_json() -> Value {
+    json!({
+        "at": "2026-09-28 10:14:00",
+        "origin": "https://hr.example.internal",
+        "account": "hr.admin",
+        "outputs": { "cycleId": 273 }
+    })
+}
+
+#[test]
+fn a_proof_from_before_via_still_reads_and_writes_back_the_same() {
+    let mut v = draft();
+    v["proven"] = proof_json();
+    let t = parsed(&v);
+    assert_eq!(t.proven.as_ref().unwrap().via, None);
+    let back = serde_json::to_value(&t).unwrap();
+    assert!(back["proven"].get("via").is_none(), "{back}");
+    assert_eq!(back["proven"], proof_json());
+}
+
+#[test]
+fn an_explore_proof_says_so() {
+    use v2_lib::api_templates::{Proven, EXPLORE_PROOF};
+    let proof = Proven {
+        at: "2026-10-22 09:00:00".into(),
+        origin: "https://hr.example.internal".into(),
+        account: "hr.admin".into(),
+        outputs: BTreeMap::new(),
+        environment: None,
+        via: Some(EXPLORE_PROOF.into()),
+    };
+    assert_eq!(serde_json::to_value(&proof).unwrap()["via"], json!("explore session"));
+    let back: Proven = serde_json::from_value(serde_json::to_value(&proof).unwrap()).unwrap();
+    assert_eq!(back, proof);
+}
+
+#[test]
+fn the_template_guide_explains_one_off_requests() {
+    let text = v2_lib::api_templates::guide::text(&[], None);
+    let flat_all = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    assert!(
+        flat_all.contains("- `effect`: `create`, `edit`, `delete` or `read` - what the template does to the application's data. You declare it; the tab shows it as a badge. A `read` template changes nothing; a fixture may use one, and nothing it finds counts as made by the tests."),
+        "{flat_all}"
+    );
+    let start = text.find("## One-off requests in an explore session").expect("the section is missing");
+    assert!(start > text.find("## Delete templates").unwrap(), "after Delete templates");
+    assert!(start < text.find("## When a run fails").unwrap(), "before When a run fails");
+    let section = text[start..].split("\n## ").next().unwrap();
+    let flat = section.split_whitespace().collect::<Vec<_>>().join(" ");
+    for needle in [
+        "`send_api_request`",
+        "`antiforgery_page`",
+        "no new browser, no sign-in",
+        "never saved",
+        "same method, path and body fields",
+        "person_said_yes",
+        "yes",
+        "`run_api_template`",
+    ] {
+        assert!(flat.contains(needle), "{needle} not in: {flat}");
+    }
+    assert!(!section.contains('\u{2014}') && !section.contains('\u{2013}'), "no em or en dashes");
+}

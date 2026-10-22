@@ -44,6 +44,7 @@ fn template(id: &str, effect: &str, proven: bool) -> ApiTemplate {
             account: "admin".into(),
             outputs: BTreeMap::new(),
             environment: None,
+            via: None,
         });
     }
     t
@@ -289,6 +290,37 @@ fn lookup_with_readers(id: &str) -> Option<ApiTemplate> {
 }
 
 #[test]
+fn a_read_step_is_allowed_in_a_fixture_and_creates_nothing() {
+    use v2_lib::api_templates::fixture::creates_one_step;
+    let lookup_read = |id: &str| match id {
+        "look-up-cycle" => {
+            let mut t = template(id, "read", true);
+            t.steps[0].method = v2_lib::api_templates::Method::Get;
+            t.steps[0].form = None;
+            Some(t)
+        }
+        _ => lookup(id),
+    };
+    let reading = Fixture {
+        steps: vec![step("look-up-cycle", &[("cycleName", "{{prefix}} cycle")])],
+        outputs: BTreeMap::new(),
+        creates: vec![],
+        ..fixture()
+    };
+    validate(&reading, &lookup_read, &no_flow).unwrap();
+
+    let claiming = Fixture {
+        creates: vec![Creates {
+            kind: "cycle".into(),
+            id: "{{steps.1.cycleId}}".into(),
+            name: "{{steps.1.cycleName}}".into(),
+        }],
+        ..reading
+    };
+    assert_eq!(validate(&claiming, &lookup_read, &no_flow).unwrap_err(), vec![creates_one_step("cycle")]);
+}
+
+#[test]
 fn a_creates_entry_must_come_from_one_creating_step() {
     use v2_lib::api_templates::fixture::creates_one_step;
     assert_eq!(creates_one_step("cycle"), "creates: cycle must come from one step whose template creates");
@@ -353,6 +385,28 @@ fn saving_a_fixture_named_by_its_id_is_refused() {
     f.creates[0].name = "{{steps.1.cycleId}}".into();
     assert_eq!(fixture_store::save(root, ORG, PROJECT, &f), Err(vec![name_is_the_id("cycle", "{{steps.1.cycleId}}")]));
     assert_eq!(fixture_store::load(root, ORG, PROJECT, &f.id).unwrap(), None);
+}
+
+/// An explore session's creates are recorded under the fixture id
+/// `explore`, so no fixture may be saved under it.
+#[test]
+fn the_explore_fixture_id_is_reserved() {
+    use v2_lib::api_templates::fixture_store::RESERVED_ID_REFUSAL;
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    store::save(root, ORG, PROJECT, &template("make-cycle", "create", true)).unwrap();
+    store::save(root, ORG, PROJECT, &template("make-suite", "create", true)).unwrap();
+    let mut f = fixture();
+    f.id = "explore".into();
+    assert_eq!(fixture_store::save(root, ORG, PROJECT, &f), Err(vec![RESERVED_ID_REFUSAL.to_string()]));
+    assert_eq!(RESERVED_ID_REFUSAL, "the fixture id explore is kept for explore sessions - choose another id");
+    assert_eq!(fixture_store::load(root, ORG, PROJECT, "explore").unwrap(), None);
+    // Any case is refused too (an uppercase id is not a valid one anyway).
+    f.id = "Explore".into();
+    assert!(fixture_store::save(root, ORG, PROJECT, &f).is_err());
+    // Another id is unaffected.
+    f.id = "explore-two".into();
+    fixture_store::save(root, ORG, PROJECT, &f).unwrap();
 }
 
 #[test]
@@ -907,6 +961,7 @@ mod running {
             account: "admin".into(),
             outputs: BTreeMap::new(),
             environment: None,
+            via: None,
         });
         t
     }
@@ -1640,8 +1695,10 @@ mod running {
 }
 
 /// Review Focus 5: no bridge route and no MCP tool writes the record of
-/// test-made drafts itself. Only the fixture runner adds to the record and
-/// only Clean up changes a status.
+/// test-made drafts itself. Only the fixture runner and an explore
+/// session's own verified creates add to the record, and only Clean up (the
+/// person's, or an undo of the assistant's own explore session) changes a
+/// status.
 /// A source-scan tripwire, in the style of the other tripwires here: it
 /// lists every route and tool so a new one is in view, then checks that
 /// neither file reaches a writer.
@@ -1712,7 +1769,7 @@ fn the_guide_explains_delete_templates() {
         v2_lib::autorun::cleanup::PROVE_REFUSAL,
         "the record marks it deleted",
         "`run_api_template` refuses a delete template, and so does a fixture",
-        "Only the person's Clean up test-made drafts, in the app, runs one",
+        "Only two things run one: the person's Clean up test-made drafts, in the app, which previews the drafts for the person to tick and confirm, and an undo of your own explore session (`undo_explore_creates`), which deletes only the creates the app verified in that session, through each kind's proven delete template.",
     ] {
         assert!(flat.contains(needle), "{needle} not in: {flat}");
     }

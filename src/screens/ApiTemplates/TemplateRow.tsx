@@ -13,6 +13,7 @@ export const EFFECT_TONE: Record<Effect, string> = {
   create: "text-success bg-success/15",
   edit: "text-warning bg-warning/15",
   delete: "text-danger bg-danger/15",
+  read: "text-muted bg-muted/15",
 };
 
 /** What a run does to the application's data, as the list and the flow map

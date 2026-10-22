@@ -3711,7 +3711,12 @@ export type DraftStepView = {
  */
 export type DropAt = "before" | "after" | "onto";
 
-export type Effect = "create" | "edit" | "delete";
+export type Effect = "create" | "edit" | "delete" | 
+/**
+ *  Changes nothing: it only looks something up. Saved from an explore
+ *  session, where a call that reads is as worth keeping as one that writes.
+ */
+"read";
 
 export type EnsuredSuite = {
 	plan_id: number,
@@ -5107,6 +5112,13 @@ export type Proven_Deserialize = {
 	 *  then. `None` for a proof saved before environments existed.
 	 */
 	environment?: string | null,
+	/**
+	 *  How the proof was made when it was not a proving run: `EXPLORE_PROOF`
+	 *  for a template saved from an explore session. `None` for every proof
+	 *  a proving run made, and left out of the file then, so a template
+	 *  saved before this existed reads and writes back exactly as it was.
+	 */
+	via?: string | null,
 };
 
 export type Proven_Serialize = {
@@ -5119,6 +5131,13 @@ export type Proven_Serialize = {
 	 *  then. `None` for a proof saved before environments existed.
 	 */
 	environment?: string | null,
+	/**
+	 *  How the proof was made when it was not a proving run: `EXPLORE_PROOF`
+	 *  for a template saved from an explore session. `None` for every proof
+	 *  a proving run made, and left out of the file then, so a template
+	 *  saved before this existed reads and writes back exactly as it was.
+	 */
+	via?: string | null,
 };
 
 /**
