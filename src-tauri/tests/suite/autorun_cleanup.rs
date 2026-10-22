@@ -47,11 +47,11 @@ fn entry(env: &str, kind: &str, id: &str, name: &str, minutes_old: i64, status: 
 
 /// Writes the record as the fixture runner would have left it. The record's
 /// writers are the crate's own, so a test puts the file there itself.
-fn seed(root: &Path, entries: &[TestMade]) {
+pub(crate) fn seed(root: &Path, entries: &[TestMade]) {
     std::fs::write(root.join("test-made.json"), serde_json::to_string_pretty(entries).unwrap()).unwrap();
 }
 
-fn status_of(root: &Path, env: &str, kind: &str, id: &str) -> String {
+pub(crate) fn status_of(root: &Path, env: &str, kind: &str, id: &str) -> String {
     test_made::list(root)
         .into_iter()
         .find(|e| e.environment == env && e.kind == kind && e.id == id)
@@ -59,7 +59,7 @@ fn status_of(root: &Path, env: &str, kind: &str, id: &str) -> String {
         .expect("in the record")
 }
 
-fn active(root: &Path) -> v2_lib::environments::Environment {
+pub(crate) fn active(root: &Path) -> v2_lib::environments::Environment {
     v2_lib::environments::active(root).unwrap()
 }
 
@@ -578,7 +578,7 @@ async fn the_preview_and_the_run_use_the_same_delete_template() {
 
 /// A rig whose root holds a proven delete template for cycles and the
 /// record `entries` (each in the active environment).
-fn cleanup_rig(responses: Vec<Value>, entries: &[(&str, &str, i64)]) -> (Rig, String) {
+pub(crate) fn cleanup_rig(responses: Vec<Value>, entries: &[(&str, &str, i64)]) -> (Rig, String) {
     let r = rig(responses, None);
     let env = active(r.root.path());
     let t = proven(delete_draft("remove-cycle", Some("cycle")), "2026-10-01 09:00:00", Some(&env.name));
@@ -627,7 +627,7 @@ async fn clean(
     .await
 }
 
-fn deleted_ids(r: &Rig) -> Vec<Value> {
+pub(crate) fn deleted_ids(r: &Rig) -> Vec<Value> {
     r.fetched().iter().map(|f| f[0]["body"]["fields"]["Id"].clone()).collect()
 }
 
@@ -1302,13 +1302,9 @@ fn the_bridge_reaches_clean_up_only_to_undo_an_explore_session() {
     assert!(!mcp.contains("cleanup::"), "src/mcp.rs names the cleanup module");
 
     // The undo function is named in no file but cleanup.rs and one caller,
-    // in any form (see `files_naming_the_undo`).
-    //
-    // TASK 8: the route adds its one allowed site. "ai_bridge.rs" goes into
-    // `callers`, the name appears there exactly once (as
-    // `cleanup::undo_explore_session(`, inside `fn explore_undo_in`), and the
-    // `<= 1` below becomes `== 1`.
-    let callers: &[&str] = &[];
+    // in any form (see `files_naming_the_undo`): the explore undo route, once,
+    // as `cleanup::undo_explore_session(`, inside `fn explore_undo_in`.
+    let callers: &[&str] = &["ai_bridge.rs"];
     let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
     assert_eq!(files_naming_the_undo(&src), callers, "the undo function is named outside its one allowed caller");
 
@@ -1316,7 +1312,7 @@ fn the_bridge_reaches_clean_up_only_to_undo_an_explore_session() {
     // the call must be the same one thing.
     let named = bridge.matches("undo_explore_session").count();
     let calls = bridge.matches("cleanup::undo_explore_session(").count();
-    assert!(calls <= 1 && named == calls, "undo_explore_session is named {named} times, called {calls}");
+    assert!(calls == 1 && named == calls, "undo_explore_session is named {named} times, called {calls}");
     if let Some(at) = bridge.find("cleanup::undo_explore_session(") {
         // The nearest item start above the call, not a `fn` in a comment.
         let before = &bridge[..at];

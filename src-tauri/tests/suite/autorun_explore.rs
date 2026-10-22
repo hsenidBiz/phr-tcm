@@ -10,13 +10,17 @@ use crate::autorun_discovery::{
     exploring, leave_page, mapped_area, opened_for_discovery, parsed, root_with_recipe_and_account, sent, signin_app,
     slot, FakeBrowser, ORG, PROJECT,
 };
+use crate::api_templates_runner::{answer, Rig, ORG as RUN_ORG, PROJECT as RUN_PROJECT};
+use crate::autorun_cleanup::{cleanup_rig, deleted_ids, status_of};
 use crate::common::quick;
-use serde_json::json;
+use serde_json::{json, Value};
 use std::sync::atomic::Ordering;
 use v2_lib::ai_bridge::{
-    discover_action_in, discover_start_in, end_discovery_closing, end_discovery_in, explore_changes, page_read_in,
-    record_change_in, EXPLORE_NOT_MAPPING, EXPLORE_NOT_STARTED, READ_WITH_NO_AREA,
+    discover_action_in, discover_start_in, end_discovery_closing, end_discovery_in, explore_changes, explore_undo_in,
+    page_read_in, record_change_in, BridgeContext, API_WRITES_OFF, ENDED_FOR_UNDO, EXPLORE_NOT_MAPPING,
+    EXPLORE_NOT_STARTED, READ_WITH_NO_AREA,
 };
+use v2_lib::autorun::cleanup::not_this_sessions;
 use v2_lib::autorun::discovery_map::map_path;
 use v2_lib::autorun::cleanup::EXPLORE_MADE;
 use v2_lib::autorun::explore::{
@@ -705,4 +709,160 @@ fn a_change_args_shape_is_said() {
         change_from_args(&json!({ "change": "deleted", "kind": "k", "id": "1", "name": "n", "held": { "a": 1 } })),
         Ok(Change::Deleted { kind: "k".into(), id: "1".into(), name: "n".into(), held: Some(json!({ "a": 1 })) })
     );
+}
+
+// ---- Undo: the bridge route into Clean up ----
+
+/// Every process-wide thing an undo touches: the Auto Run root (an ended
+/// session's change list is closed under it), the template slot, the
+/// activity log, the held browsers and the account leases.
+fn undo_locks() -> impl Sized {
+    (
+        crate::serial::autorun(),
+        crate::serial::api_template_run(),
+        crate::serial::activity_log(),
+        crate::serial::held_browsers(),
+        crate::serial::account_leases(),
+    )
+}
+
+/// A cleanup rig (a proven delete template for cycles, proven as `admin`)
+/// and a saved explore session of `admin` that made, and verified, a cycle
+/// for each of `ids`.
+fn session_that_made(responses: Vec<Value>, ids: &[&str]) -> (Rig, String, String) {
+    let (r, env) = cleanup_rig(responses, &[]);
+    set_root(r.root.path().to_path_buf());
+    let session = made_session(&r, ids, 1_760_000_000_000);
+    (r, session, env)
+}
+
+/// Another explore session in `r`'s root, started at `started_ms`, that
+/// made and verified a cycle for each of `ids`.
+fn made_session(r: &Rig, ids: &[&str], started_ms: u64) -> String {
+    let session = begin(r.root.path(), RUN_ORG, RUN_PROJECT, "admin", started_ms).unwrap();
+    for id in ids {
+        let post = save("POST", "/hr/c?x=1", 2000, text(&format!("{{\"Id\":{id}}}")));
+        let recorded =
+            record_change(r.root.path(), &session, created("cycle", id, &format!("AUTOTEST {id}")), None, &[&post], 1000)
+                .unwrap();
+        assert_eq!(recorded.verified, Some(true), "{recorded:?}");
+    }
+    session
+}
+
+async fn undo_in(slot: &mut Option<FakeBrowser>, r: &mut Rig, writes: bool, body: Value) -> (u16, Value) {
+    let ctx = BridgeContext { org: RUN_ORG.into(), project: RUN_PROJECT.into(), api_writes: writes, ..Default::default() };
+    let (status, text) = explore_undo_in(slot, &mut r.browsers, &ctx, r.root.path(), &body.to_string(), &quick()).await;
+    (status, serde_json::from_str(&text).unwrap_or(Value::String(text)))
+}
+
+/// A going explore session of `account`, its browser holding `lease_key`.
+async fn exploring_as(r: &Rig, session: &str, account: &str, lease_key: &str) -> (Option<FakeBrowser>, std::sync::Arc<std::sync::atomic::AtomicBool>) {
+    let state = explore_going(session).map(|s| DiscoveryState { account: Some(account.to_string()), ..s });
+    let (mut browser, closed) = slot(signin_app(true), state);
+    browser.as_mut().unwrap().lease.hold(r.root.path(), lease_key).await.unwrap();
+    (browser, closed)
+}
+
+#[tokio::test]
+async fn undo_removes_this_sessions_verified_creates_and_marks_them_undone() {
+    let _locks = undo_locks();
+    let (mut r, session, env) = session_that_made(vec![answer(200, json!({ "success": true }))], &["274"]);
+    let mut none: Option<FakeBrowser> = None;
+
+    let (status, v) = undo_in(&mut none, &mut r, true, json!({ "session": session, "ids": ["274"] })).await;
+    assert_eq!(status, 200, "{v}");
+    assert_eq!(v["total"], json!(1), "{v}");
+    assert_eq!(v["stopped"], json!(false), "{v}");
+    assert_eq!(v["results"][0]["ok"], json!(true), "{v}");
+    assert_eq!(v["results"][0]["id"], json!("274"), "{v}");
+    assert!(v.get("ended_session").is_none(), "{v}");
+    assert!(v.get("not_marked_undone").is_none(), "{v}");
+    assert_eq!(deleted_ids(&r), vec![json!("274")]);
+    assert_eq!(status_of(r.root.path(), &env, "cycle", "274"), "deleted");
+
+    let s = load(r.root.path(), &session).unwrap();
+    assert_eq!(s.changes.len(), 1);
+    assert!(s.changes[0].undone, "{:?}", s.changes[0]);
+}
+
+#[tokio::test]
+async fn undo_refuses_an_id_the_session_did_not_verify() {
+    let _locks = undo_locks();
+    let (mut r, session, env) = session_that_made(vec![], &["274"]);
+    made_session(&r, &["275"], 1_760_000_100_000);
+    let mut none: Option<FakeBrowser> = None;
+
+    // Another session's create, and one the record never heard of.
+    for id in ["275", "999"] {
+        let (status, v) = undo_in(&mut none, &mut r, true, json!({ "session": session, "ids": [id] })).await;
+        assert_eq!((status, v), (400, json!(not_this_sessions(id))), "{id}");
+    }
+    // One id that is not the session's refuses the whole undo.
+    let (status, v) = undo_in(&mut none, &mut r, true, json!({ "session": session, "ids": ["274", "275"] })).await;
+    assert_eq!((status, v), (400, json!(not_this_sessions("275"))));
+    assert_eq!(r.browsers.opened, 0);
+    assert!(r.fetched().is_empty(), "something was sent");
+    assert_eq!(status_of(r.root.path(), &env, "cycle", "274"), "present");
+    assert!(!load(r.root.path(), &session).unwrap().changes[0].undone);
+}
+
+#[tokio::test]
+async fn undo_ends_your_explore_session_when_it_holds_the_delete_templates_account() {
+    let _locks = undo_locks();
+    let (mut r, session, env) = session_that_made(vec![answer(200, json!({ "success": true }))], &["274"]);
+    let (mut browser, closed) = exploring_as(&r, &session, "admin", "admin").await;
+
+    let (status, v) = undo_in(&mut browser, &mut r, true, json!({ "session": session, "ids": ["274"] })).await;
+    assert_eq!(status, 200, "{v}");
+    assert_eq!(v["ended_session"], json!(ENDED_FOR_UNDO), "{v}");
+    assert_eq!(v["results"][0]["ok"], json!(true), "{v}");
+    assert!(browser.is_none(), "the session's browser is still there");
+    assert!(closed.load(Ordering::SeqCst), "the session's browser was not closed");
+    assert!(load(r.root.path(), &session).unwrap().ended_at.is_some());
+    assert_eq!(status_of(r.root.path(), &env, "cycle", "274"), "deleted");
+    assert_eq!(
+        ENDED_FOR_UNDO,
+        "Ended your explore session and closed its browser first: Clean up signs in as the delete template's account."
+    );
+}
+
+#[tokio::test]
+async fn undo_leaves_a_session_on_another_account_alone() {
+    let _locks = undo_locks();
+    let (mut r, session, env) = session_that_made(vec![answer(200, json!({ "success": true }))], &["274"]);
+    let (mut browser, closed) = exploring_as(&r, &session, "other", "other").await;
+
+    let (status, v) = undo_in(&mut browser, &mut r, true, json!({ "session": session, "ids": ["274"] })).await;
+    assert_eq!(status, 200, "{v}");
+    assert!(v.get("ended_session").is_none(), "{v}");
+    assert_eq!(v["results"][0]["ok"], json!(true), "{v}");
+    assert!(browser.is_some(), "the other session's browser was taken");
+    assert!(!closed.load(Ordering::SeqCst));
+    assert!(load(r.root.path(), &session).unwrap().ended_at.is_none());
+    assert_eq!(status_of(r.root.path(), &env, "cycle", "274"), "deleted");
+}
+
+#[tokio::test]
+async fn undo_needs_the_switch_and_a_saved_session() {
+    let _locks = undo_locks();
+    let (mut r, session, env) = session_that_made(vec![], &["274"]);
+    let mut none: Option<FakeBrowser> = None;
+
+    let body = json!({ "session": session, "ids": ["274"] });
+    assert_eq!(undo_in(&mut none, &mut r, false, body).await, (400, json!(API_WRITES_OFF)));
+
+    let missing = "20251009-000000-admin";
+    let (status, v) = undo_in(&mut none, &mut r, true, json!({ "session": missing, "ids": ["274"] })).await;
+    assert_eq!((status, v), (404, json!(unknown_session(missing))));
+
+    // A body that does not read names the shape.
+    for body in [json!({ "ids": ["274"] }), json!({ "session": session }), json!({ "session": session, "ids": [{}] })] {
+        let (status, v) = undo_in(&mut none, &mut r, true, body).await;
+        assert_eq!(status, 400, "{v}");
+        assert!(v.as_str().unwrap().contains("Expected { \"session\""), "{v}");
+    }
+    assert_eq!(r.browsers.opened, 0);
+    assert!(r.fetched().is_empty());
+    assert_eq!(status_of(r.root.path(), &env, "cycle", "274"), "present");
 }

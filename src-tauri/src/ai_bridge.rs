@@ -601,6 +601,9 @@ pub async fn route(
             }
             (None, Err(refused)) => refused,
         },
+        // Takes back the creates one explore session verified, and only
+        // those; needs the person's API templates switch.
+        ("POST", "/api-template-explore-undo") => api_template_explore_undo(ctx, body).await,
         // Flows: saving one writes a local file and reads the database, and
         // progress only reads - neither writes to the application, so
         // neither needs the API templates switch.
@@ -6126,6 +6129,159 @@ pub async fn send_in<B: DiscoveryBrowser>(
         }
     }
     (if report.ok { 200 } else { 502 }, v.to_string())
+}
+
+/// Said, as `ended_session`, when an undo ended the going discovery first.
+pub const ENDED_FOR_UNDO: &str =
+    "Ended your explore session and closed its browser first: Clean up signs in as the delete template's account.";
+
+/// What `/api-template-explore-undo` expects.
+const UNDO_SHAPE: &str = "{ \"session\": \"<the session id>\", \"ids\": [\"<id>\", ...], \"kind\": \"<kind, only when an id is two kinds>\" }";
+
+/// `/api-template-explore-undo`: delete, through the proven delete templates,
+/// the creates `ids` of one explore session - and only those: an id must be
+/// one the session verified (its change list and the test-made list agree),
+/// made in the active environment. The person's ask is the gate, so it also
+/// needs the API templates switch. Every refusal comes before anything is
+/// deleted: the switch, the body, the session, the one-at-a-time slot, then
+/// the plan, which refuses the whole undo for one id that is not the
+/// session's.
+///
+/// Clean up signs in as the delete template's proven account, and an account
+/// is held by one browser at a time. A going discovery whose browser holds
+/// the account of a template this undo needs is therefore ended and its
+/// browser closed first (`ended_session`); one on another account is left
+/// alone. Each delete that worked marks its create undone on the change
+/// list. The answer is `{ results, total, stopped, ended_session? }`.
+pub async fn explore_undo_in<S: DiscoveryBrowser, B: crate::autorun::replay::Browsers>(
+    slot: &mut Option<S>,
+    browsers: &mut B,
+    ctx: &BridgeContext,
+    root: &std::path::Path,
+    body: &str,
+    timing: &crate::browser::timing::Timing,
+) -> (u16, String) {
+    use crate::autorun::explore as ex;
+    use serde_json::Value;
+    if !ctx.api_writes {
+        return (400, API_WRITES_OFF.to_string());
+    }
+    let shape = || (400, format!("that is not an undo. Expected {UNDO_SHAPE}."));
+    let Ok(v) = serde_json::from_str::<Value>(body) else {
+        return shape();
+    };
+    let Some(session) = v.get("session").and_then(Value::as_str).map(str::trim).filter(|s| !s.is_empty()) else {
+        return shape();
+    };
+    let ids: Option<Vec<String>> = v.get("ids").and_then(Value::as_array).and_then(|a| {
+        a.iter()
+            .map(|i| match i {
+                Value::String(s) => Some(s.trim().to_string()),
+                Value::Number(n) => Some(n.to_string()),
+                _ => None,
+            })
+            .collect()
+    });
+    let Some(ids) = ids else {
+        return shape();
+    };
+    let kind = match v.get("kind") {
+        None | Some(Value::Null) => None,
+        Some(Value::String(s)) => Some(s.trim().to_string()),
+        Some(_) => return shape(),
+    };
+    if let Err(why) = ex::load(root, session) {
+        return if ex::is_unknown_session(&why) {
+            (404, why)
+        } else {
+            crate::applog::warn(format!("Auto Run explore session: {why}"));
+            (409, ex::CHANGES_UNREADABLE.to_string())
+        };
+    }
+    // The slot first, as every run does: holding it is what refuses an
+    // environment switch while the plan and the deletes are going.
+    let Some(_claim) = crate::api_templates::runner::claim() else {
+        return (409, API_TEMPLATE_BUSY.to_string());
+    };
+    if let Err(moved) = assistant_may_still_write(ctx, root) {
+        return (409, moved);
+    }
+    let plan = match crate::autorun::cleanup::undo_plan(root, &ctx.org, &ctx.project, session, &ids, kind.as_deref()) {
+        Ok(plan) => plan,
+        Err(why) => return (400, why),
+    };
+
+    let accounts: Vec<String> = plan
+        .iter()
+        .filter_map(|(_, t)| t.as_ref().and_then(|t| t.proven.as_ref()).map(|p| p.account.clone()))
+        .collect();
+    let holds_one = slot.as_mut().is_some_and(|b| {
+        let p = b.parts();
+        p.discovery.is_some() && accounts.iter().any(|a| p.lease.holds(root, a))
+    });
+    let mut ended = None;
+    if holds_one {
+        end_discovery_closing(slot);
+        ended = Some(ENDED_FOR_UNDO);
+    }
+
+    let cancel = std::sync::atomic::AtomicBool::new(false);
+    let report = match crate::autorun::cleanup::undo_explore_session(
+        browsers,
+        root,
+        &ctx.org,
+        &ctx.project,
+        session,
+        &ids,
+        kind.as_deref(),
+        timing,
+        &cancel,
+        |_| {},
+    )
+    .await
+    {
+        Ok(report) => report,
+        Err(why) => return (400, why),
+    };
+
+    let mut not_marked = Vec::new();
+    for r in report.results.iter().filter(|r| r.ok) {
+        match ex::mark_create_undone(root, session, &r.kind, &r.id) {
+            Ok(true) => {}
+            Ok(false) => not_marked.push(r.id.clone()),
+            Err(why) => {
+                crate::applog::warn(format!("Auto Run explore session: an undone create could not be marked: {why}"));
+                not_marked.push(r.id.clone());
+            }
+        }
+    }
+    let mut answer = serde_json::json!({
+        "results": report.results,
+        "total": report.total,
+        "stopped": report.stopped,
+    });
+    if let Some(said) = ended {
+        answer["ended_session"] = serde_json::json!(said);
+    }
+    if !not_marked.is_empty() {
+        answer["not_marked_undone"] = serde_json::json!(not_marked);
+    }
+    (200, answer.to_string())
+}
+
+/// `POST /api-template-explore-undo` with the app's own slot and real
+/// browsers.
+async fn api_template_explore_undo(ctx: &BridgeContext, body: &str) -> (u16, String) {
+    if let Some(busy) = unattended_run_is_using_the_browser() {
+        return busy;
+    }
+    let root = match autorun_root() {
+        Ok(root) => root,
+        Err(refused) => return refused,
+    };
+    let mut slot = crate::commands::autorun::supervised().lock().await;
+    let mut browsers = real_template_browsers(crate::browser::launch::Browser::Edge);
+    explore_undo_in(&mut slot, &mut browsers, ctx, &root, body, &crate::commands::autorun_replay::replay_timing(false)).await
 }
 
 /// What `send_in` answers under `template` for a call that worked: it is
