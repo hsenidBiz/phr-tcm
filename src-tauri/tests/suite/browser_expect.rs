@@ -1724,3 +1724,109 @@ async fn an_ordinary_field_still_shows_its_value() {
     let out = on_input(true, Some("Your password"), json!({ "kind": "expect_attribute", "selector": sel, "name": "placeholder", "equals": "Pass" })).await;
     assert!(out.detail.ends_with("but saw \"Your password\""), "{}", out.detail);
 }
+
+/// The words a check compares are the drawn ones, unless CSS draws the page's
+/// words in other capitals: then the page's own words count. Only the letter
+/// case may differ; a hidden tooltip's words never pass.
+#[test]
+fn the_written_text_counts_only_when_only_the_letter_case_differs() {
+    use v2_lib::browser::expect::text_as_case;
+    assert_eq!(text_as_case("DURATION", "Duration", "Duration", true), ("Duration", true));
+    assert_eq!(text_as_case("Duration", "Duration", "Duration", true), ("Duration", false));
+    // Hidden text never passes.
+    assert_eq!(text_as_case("DURATION", "Duration (days)", "Duration (days)", true), ("DURATION", false));
+    assert_eq!(text_as_case("TOTAL DURATION", "Total Duration", "Duration", false), ("Total Duration", true));
+    assert_eq!(text_as_case("DURATION", "Duration", "Length", true), ("DURATION", false));
+}
+
+#[tokio::test]
+async fn expect_text_matches_the_case_words_as_written_when_css_draws_capitals() {
+    let mut d = FakePage { texts: vec!["DURATION"], written: Some("Duration"), ..FakePage::default() }.driver();
+    let out = execute_with(
+        &mut d,
+        &action(json!({ "kind": "expect_text", "selector": { "css": "label" }, "equals": "Duration" })),
+        &quick(),
+    )
+    .await;
+    assert!(out.ok, "{}", out.detail);
+    assert!(out.detail.contains("as written in the page; drawn \"DURATION\""), "{}", out.detail);
+}
+
+#[tokio::test]
+async fn expect_contains_text_matches_as_written_too() {
+    let mut d = FakePage { texts: vec!["TOTAL DURATION"], written: Some("Total Duration"), ..FakePage::default() }.driver();
+    let out = execute_with(
+        &mut d,
+        &action(json!({ "kind": "expect_contains_text", "selector": { "css": "label" }, "value": "Duration" })),
+        &quick(),
+    )
+    .await;
+    assert!(out.ok, "{}", out.detail);
+    assert!(out.detail.contains("as written in the page"), "{}", out.detail);
+}
+
+/// A text that already reads as the case says it never asks the page for
+/// anything more.
+#[tokio::test]
+async fn a_drawn_match_never_reads_the_written_text() {
+    use v2_lib::browser::expect::WRITTEN_TEXT_JS;
+    let mut d = FakePage { texts: vec!["Duration"], ..FakePage::default() }.driver();
+    let out = execute_with(
+        &mut d,
+        &action(json!({ "kind": "expect_text", "selector": { "css": "label" }, "equals": "Duration" })),
+        &quick(),
+    )
+    .await;
+    assert!(out.ok, "{}", out.detail);
+    assert!(!out.detail.contains("as written"), "{}", out.detail);
+    assert!(
+        !d.calls_to("Runtime.callFunctionOn").iter().any(|p| p["functionDeclaration"] == WRITTEN_TEXT_JS),
+        "the written text was read for a drawn match"
+    );
+}
+
+#[tokio::test]
+async fn a_text_that_differs_in_more_than_case_still_fails() {
+    let mut d = FakePage { texts: vec!["DURATION"], written: Some("Period"), ..FakePage::default() }.driver();
+    let out = execute_with(
+        &mut d,
+        &action(json!({ "kind": "expect_text", "selector": { "css": "label" }, "equals": "Duration" })),
+        &quick(),
+    )
+    .await;
+    assert!(!out.ok && out.detail.contains("DURATION"), "{}", out.detail);
+}
+
+/// A locator that found its element by the page's own words (CSS draws them in
+/// capitals) says so in the action's outcome, and in a check's.
+#[tokio::test]
+async fn an_action_found_by_the_words_as_written_says_so() {
+    // The page flags the array a text locator returned, as `TEXT_JS` does.
+    let flagged = || {
+        let page = FakePage::default();
+        common::ScriptedDriver::new(move |method, params| {
+            let mut answer = page.answer(method, params)?;
+            if method == "Runtime.getProperties" {
+                if let Some(list) = answer["result"].as_array_mut() {
+                    list.push(json!({ "name": "asWritten", "value": { "type": "boolean", "value": true } }));
+                }
+            }
+            Ok(answer)
+        })
+    };
+    let target = json!({ "text": "Save draft", "exact": true });
+    let mut d = flagged();
+    let out = execute_with(&mut d, &action(json!({ "kind": "click", "selector": target })), &quick()).await;
+    assert!(out.ok, "{}", out.detail);
+    assert!(out.detail.contains("as written in the page"), "{}", out.detail);
+    let mut d = flagged();
+    let out = execute_with(&mut d, &action(json!({ "kind": "fill", "selector": target, "value": "x" })), &quick()).await;
+    assert!(out.ok && out.detail.contains("as written in the page"), "{}", out.detail);
+    let mut d = flagged();
+    let out = execute_with(&mut d, &action(json!({ "kind": "expect_visible", "selector": target })), &quick()).await;
+    assert!(out.ok && out.detail.contains("as written in the page"), "{}", out.detail);
+    // And a locator that matched the drawn words says nothing of it.
+    let mut d = FakePage::default().driver();
+    let out = execute_with(&mut d, &action(json!({ "kind": "click", "selector": target })), &quick()).await;
+    assert!(out.ok && !out.detail.contains("as written"), "{}", out.detail);
+}

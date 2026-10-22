@@ -1403,6 +1403,12 @@ spaces. Add `"exact": true` when a near miss exists ("Save" and "Save as
 new"). Use `exact: true` when a name is part of another, such as
 "Continue" and "Save & Continue": without it "Continue" matches both.
 
+With `"exact": true`, and in `expect_text` and `expect_contains_text`, a
+text CSS draws in other capitals (`text-transform: uppercase` draws
+"Duration" as "DURATION") matches the case's words as written in the
+page: write the case's words, never the drawn capitals. A check that
+matched this way says `as written in the page`.
+
 A list narrows from left to right, each entry searching inside the one
 before it:
 

@@ -2069,6 +2069,16 @@ async fn keep_checking_url<D: Driver>(
     }
 }
 
+/// What an action's outcome adds when its locator found the element by the
+/// text as written in the page (CSS draws it in other capitals).
+fn written_note(ready: &input::Ready) -> String {
+    if ready.as_written {
+        format!(" ({})", expect::MATCHED_AS_WRITTEN)
+    } else {
+        String::new()
+    }
+}
+
 async fn run<D: Driver>(d: &mut D, action: &Action, timing: &Timing, policy: &Policy) -> ActionOutcome {
     match action {
         Action::Navigate { url } => navigate(d, url.trim(), timing, policy).await,
@@ -2082,7 +2092,7 @@ async fn run<D: Driver>(d: &mut D, action: &Action, timing: &Timing, policy: &Po
                 return failed_by(e);
             }
             match input::click(d, &ready).await {
-                Ok(()) => ActionOutcome::passed(format!("clicked {}", selector.describe())),
+                Ok(()) => ActionOutcome::passed(format!("clicked {}{}", selector.describe(), written_note(&ready))),
                 Err(b) => blocked(b),
             }
         }
@@ -2096,7 +2106,7 @@ async fn run<D: Driver>(d: &mut D, action: &Action, timing: &Timing, policy: &Po
                 return failed_by(e);
             }
             match input::fill(d, &ready, value).await {
-                Ok(()) => ActionOutcome::passed(format!("filled {}", selector.describe())),
+                Ok(()) => ActionOutcome::passed(format!("filled {}{}", selector.describe(), written_note(&ready))),
                 Err(b) => blocked(b),
             }
         }

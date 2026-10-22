@@ -37,6 +37,9 @@ pub struct Ready {
     /// Viewport coordinates of the element's centre, in CSS pixels.
     pub x: f64,
     pub y: f64,
+    /// The locator found the element by its text as written in the page, not
+    /// as CSS draws it: the action's outcome says so.
+    pub as_written: bool,
 }
 
 // `PROBE_JS`'s source, as one string literal, so `SHOWN_JS` can carry the
@@ -420,6 +423,7 @@ async fn look_with<D: Driver>(
     refuse_many: bool,
 ) -> Result<Look, CdpError> {
     let found = resolve_explained(d, target).await?;
+    let as_written = found.as_written;
     let handles = found.handles;
     if handles.is_empty() {
         return Ok(Look::NotYet(found.unreachable_frame.unwrap_or_else(|| NOT_FOUND.to_string())));
@@ -442,6 +446,7 @@ async fn look_with<D: Driver>(
         handle,
         x: p["x"].as_f64().unwrap_or(0.0),
         y: p["y"].as_f64().unwrap_or(0.0),
+        as_written,
     }))
 }
 

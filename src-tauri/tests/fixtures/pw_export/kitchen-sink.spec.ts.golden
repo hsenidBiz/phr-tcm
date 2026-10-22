@@ -12,6 +12,17 @@ test.describe('F', () => {
       if (this instanceof HTMLInputElement || this instanceof HTMLTextAreaElement) return norm(this.value);
       return norm(this.innerText);
     }).call(e as HTMLElement);
+    const readWritten = (e: Element) => (function (this: HTMLElement) {
+      const norm = (s) => (s || '').replace(/\s+/g, ' ').trim();
+      if (this instanceof HTMLSelectElement) return norm(this.selectedOptions[0] ? this.selectedOptions[0].label : '');
+      if (this instanceof HTMLInputElement || this instanceof HTMLTextAreaElement) return norm(this.value);
+      return norm(this.textContent);
+    }).call(e as HTMLElement);
+    const asCase = (drawn: string, written: string, want: string, whole: boolean): string => {
+  const holds = (t: string) => (whole ? t === want : t.includes(want));
+  if (holds(drawn)) return drawn;
+  return written.toLowerCase() === drawn.toLowerCase() && holds(written) ? written : drawn;
+};
     const opened: (typeof page)[] = [];
     const claimed = new Set<typeof page>();
     page.context().on('page', p => { opened.push(p); });
@@ -58,8 +69,8 @@ test.describe('F', () => {
     await expect(cur).toHaveURL(new RegExp('\\/hr\\/x\\?y=1'), { timeout: 10000 });
     await expect(cur.locator('#a').first()).toBeVisible({ timeout: 1000 });
     await expect(cur.locator('.toast').filter({ visible: true }).first()).toBeHidden({ timeout: 10000 });
-    await expect.poll(() => cur.locator('select#level').filter({ visible: true }).first().evaluate(readText), { timeout: 2000 }).toBe('Senior Expert');
-    await expect.poll(() => cur.locator('textarea#notes').filter({ visible: true }).first().evaluate(readText), { timeout: 10000 }).toContain('draft');
+    await expect.poll(async () => asCase(await cur.locator('select#level').filter({ visible: true }).first().evaluate(readText), await cur.locator('select#level').filter({ visible: true }).first().evaluate(readWritten), 'Senior Expert', true), { timeout: 2000 }).toBe('Senior Expert');
+    await expect.poll(async () => asCase(await cur.locator('textarea#notes').filter({ visible: true }).first().evaluate(readText), await cur.locator('textarea#notes').filter({ visible: true }).first().evaluate(readWritten), 'draft', false), { timeout: 10000 }).toContain('draft');
     await expect(cur.locator('tr.row').filter({ visible: true })).toHaveCount(3, { timeout: 10000 });
     await expect(cur.locator('#save').filter({ visible: true }).nth(1)).toHaveAttribute('aria-disabled', 'false', { timeout: 10000 });
     await expect(cur.locator('#name').first().and(cur.locator(':focus-within'))).toHaveCount(1, { timeout: 500 });

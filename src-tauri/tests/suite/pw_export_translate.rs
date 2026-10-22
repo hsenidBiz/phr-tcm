@@ -499,10 +499,10 @@ fn text_checks_read_the_element_the_way_auto_run_does() {
     .unwrap();
     // Whitespace collapsed on the wanted side too, compared whole or as a part, case kept.
     assert!(
-        got.contains("await expect.poll(() => cur.locator('#name').first().evaluate(readText), { timeout: 900 }).toBe('Senior Expert');"),
+        got.contains("await expect.poll(async () => asCase(await cur.locator('#name').first().evaluate(readText), await cur.locator('#name').first().evaluate(readWritten), 'Senior Expert', true), { timeout: 900 }).toBe('Senior Expert');"),
         "{got}"
     );
-    assert!(got.contains("await expect.poll(() => cur.locator('#list').first().evaluate(readText), { timeout: 10000 }).toContain('Step 2');"), "{got}");
+    assert!(got.contains("await expect.poll(async () => asCase(await cur.locator('#list').first().evaluate(readText), await cur.locator('#list').first().evaluate(readWritten), 'Step 2', false), { timeout: 10000 }).toContain('Step 2');"), "{got}");
     assert!(!got.contains("toHaveText") && !got.contains("toContainText"), "{got}");
     // The reader is declared once, before the steps.
     assert_eq!(got.matches("const readText = ").count(), 1, "{got}");
@@ -1118,4 +1118,37 @@ fn a_case_that_needs_a_ruling_exports_as_fixme_with_its_reason() {
     assert!(with.contains("#save"), "the body is still written: {with}");
     let without = fx.run().unwrap();
     assert!(!without.contains("test.fixme"), "{without}");
+}
+
+/// A text check passes on the words as written in the page when only the
+/// letter case differs from the drawn ones (`expect::text_as_case`); the
+/// export carries the same rule, once, beside `readText`.
+#[test]
+fn expect_text_exports_the_as_written_rule() {
+    use v2_lib::pw_export::translate::AS_CASE_TS;
+    let got = one_step(json!([{ "kind": "expect_text", "selector": "#d", "equals": "Duration" }])).run().unwrap();
+    assert!(got.contains("const readWritten = ("), "{got}");
+    assert!(got.contains(AS_CASE_TS), "{got}");
+    assert!(got.contains("asCase(await"), "{got}");
+    assert!(got.contains(".toBe('Duration')"), "{got}");
+    assert_eq!(got.matches("const readWritten = ").count(), 1, "{got}");
+    assert_eq!(got.matches("const asCase = ").count(), 1, "{got}");
+    assert!(got.find("const asCase = ").unwrap() < got.find("// 1.").unwrap(), "{got}");
+    // A text check by pattern has no as-written rule.
+    let got = one_step(json!([{ "kind": "expect_text", "selector": "#d", "matches": "^Dur" }])).run().unwrap();
+    assert!(!got.contains("readWritten") && !got.contains("asCase"), "{got}");
+    // Nor does a spec with no text check.
+    let got = one_step(json!([{ "kind": "click", "selector": "#a" }])).run().unwrap();
+    assert!(!got.contains("readWritten") && !got.contains("asCase"), "{got}");
+}
+
+#[test]
+fn the_exported_written_reader_is_the_apps_own() {
+    use v2_lib::browser::expect::WRITTEN_TEXT_JS;
+    use v2_lib::pw_export::translate::read_written_ts;
+    let ts = read_written_ts(0).join("\n");
+    let back = ts
+        .replacen("const readWritten = (e: Element) => (function (this: HTMLElement) {", "function() {", 1)
+        .replacen("}).call(e as HTMLElement);", "}", 1);
+    assert_eq!(back, WRITTEN_TEXT_JS.replace("\r\n", "\n"));
 }

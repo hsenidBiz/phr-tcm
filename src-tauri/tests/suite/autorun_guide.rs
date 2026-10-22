@@ -2356,3 +2356,16 @@ fn the_guide_says_a_delete_dialog_read_may_be_refused_in_auto_mode() {
     let g = autorun_guide();
     assert!(g.contains("can be refused as a deletion"), "the guide never says a delete-dialog read may be refused");
 }
+
+/// The Selectors section says a text CSS draws in other capitals matches the
+/// case's words as written in the page.
+#[test]
+fn the_guide_explains_text_as_written() {
+    use v2_lib::autorun::guide::guide_section;
+    let g = autorun_guide();
+    let section = guide_section(&g, "Selectors").expect("a Selectors section");
+    let flat = flat_guide(&section);
+    assert!(flat.contains("text-transform"), "{flat}");
+    assert!(flat.contains("as written in the page"), "{flat}");
+    assert!(!section.contains('\u{2014}') && !section.contains('\u{2013}'), "no em or en dashes");
+}

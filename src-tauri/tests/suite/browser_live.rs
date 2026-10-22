@@ -276,6 +276,38 @@ async fn a_saved_em_dash_finds_the_pages_en_dash_and_hyphen() {
     }
 }
 
+/// CSS draws a label and a button in capitals; the case writes their words as
+/// the page does, and the real `TEXT_JS`, the real accessibility tree and the
+/// real text reads all take them.
+#[tokio::test]
+#[ignore = "starts a real headless Edge"]
+async fn a_label_drawn_in_capitals_matches_the_case_words_exactly() {
+    let mut live = open().await;
+    let add = r#"(() => {
+      const label = document.createElement('label');
+      label.style.textTransform = 'uppercase';
+      label.textContent = 'Duration';
+      const button = document.createElement('button');
+      button.style.textTransform = 'uppercase';
+      button.textContent = 'Save draft';
+      const out = document.createElement('p');
+      out.id = 'out';
+      button.onclick = () => { out.textContent = 'clicked'; };
+      document.body.append(label, button, out);
+      return true;
+    })()"#;
+    page::eval_value(&mut live.cdp, add).await.expect("could not add the capitals");
+    let out = run(&mut live, json!({ "kind": "expect_text", "selector": { "text": "Duration", "exact": true }, "equals": "Duration" })).await;
+    assert!(out.ok, "{}", out.detail);
+    assert!(out.detail.contains("as written in the page"), "{}", out.detail);
+    // The drawn words pass too.
+    must(run(&mut live, json!({ "kind": "expect_text", "selector": { "text": "Duration", "exact": true }, "equals": "DURATION" })).await);
+    let out = run(&mut live, json!({ "kind": "click", "selector": { "role": "button", "name": "Save draft", "exact": true } })).await;
+    assert!(out.ok, "{}", out.detail);
+    assert!(out.detail.contains("as written in the page"), "{}", out.detail);
+    must(run(&mut live, json!({ "kind": "expect_text", "selector": "#out", "equals": "clicked" })).await);
+}
+
 #[tokio::test]
 #[ignore = "starts a real headless Edge"]
 async fn a_click_waits_out_disabled_and_covered() {

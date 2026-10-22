@@ -17,7 +17,7 @@ use v2_lib::browser::cdp::{
 use v2_lib::browser::dialogs::DialogBook;
 use v2_lib::browser::page_errors::PageErrorBook;
 use v2_lib::browser::downloads::DownloadEntry;
-use v2_lib::browser::expect::{CHECKED_JS, DISABLED_JS, IS_PASSWORD_JS, READ_ATTR_JS, READ_STYLE_JS, READ_TEXT_JS};
+use v2_lib::browser::expect::{CHECKED_JS, DISABLED_JS, IS_PASSWORD_JS, READ_ATTR_JS, READ_STYLE_JS, READ_TEXT_JS, WRITTEN_TEXT_JS};
 use v2_lib::browser::input::{FOCUS_JS, HAS_FOCUS_JS, PROBE_JS};
 use v2_lib::browser::locator::VISIBLE_JS;
 use v2_lib::browser::net_record::{NetEntry, NetRecord};
@@ -724,6 +724,10 @@ pub struct FakePage {
     pub navigate_reply: Value,
     /// Answers to "what does it say", in turn; the last repeats.
     pub texts: Vec<&'static str>,
+    /// What `WRITTEN_TEXT_JS` answers (the text as written in the page,
+    /// which CSS may draw in other capitals); `None` answers the text
+    /// `READ_TEXT_JS` last answered.
+    pub written: Option<&'static str>,
     pub attribute: Option<&'static str>,
     /// Is the element a password input (`IS_PASSWORD_JS`)?
     pub password: bool,
@@ -766,6 +770,7 @@ impl Default for FakePage {
             resolved_url: "https://app.example/dashboard",
             navigate_reply: json!({ "frameId": "F", "loaderId": "L" }),
             texts: vec!["Saved"],
+            written: None,
             attribute: None,
             password: false,
             disabled_why: "",
@@ -824,6 +829,10 @@ impl FakePage {
                 let i = self.read.get().min(self.texts.len() - 1);
                 self.read.set(self.read.get() + 1);
                 json!({ "result": { "value": self.texts[i] } })
+            }
+            "Runtime.callFunctionOn" if f == WRITTEN_TEXT_JS => {
+                let last = self.read.get().saturating_sub(1).min(self.texts.len() - 1);
+                json!({ "result": { "value": self.written.unwrap_or(self.texts[last]) } })
             }
             "Runtime.callFunctionOn" if f == READ_ATTR_JS => json!({ "result": { "value": self.attribute } }),
             "Runtime.callFunctionOn" if f == IS_PASSWORD_JS => json!({ "result": { "value": self.password } }),

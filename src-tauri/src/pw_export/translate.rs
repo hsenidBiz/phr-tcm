@@ -14,7 +14,7 @@ use crate::autorun::recipe::{origin_of, RecipeStep};
 use crate::autorun::runner::WATCHED_DOWNLOAD_WAIT_MS;
 use crate::autorun::CaseScript;
 use crate::browser::actions::{Action, DropAt, TAB_WAIT_MS, WHEN_VISIBLE_FLOOR_MS, WHEN_VISIBLE_MS};
-use crate::browser::expect::READ_TEXT_JS;
+use crate::browser::expect::{READ_TEXT_JS, WRITTEN_TEXT_JS};
 use crate::browser::keys;
 use crate::browser::locator::Target;
 use crate::browser::position::READ_BOX_JS;
@@ -218,6 +218,11 @@ pub fn raw_spec(input: &RawSpecInput) -> Res<String> {
     }) {
         em.read_text();
     }
+    // The text as written in the page, for the two checks that accept it
+    // when CSS draws the words in other capitals.
+    if uses(input, &|a| matches!(a, Action::ExpectText { equals: Some(_), .. } | Action::ExpectContainsText { .. })) {
+        em.read_written();
+    }
     if uses(input, &|a| {
         matches!(a, Action::ExpectRow { .. } | Action::ExpectNoRow { .. } | Action::ExpectSorted { .. } | Action::ExpectRowCount { .. })
     }) {
@@ -351,6 +356,29 @@ pub fn read_text_ts(indent: usize) -> Vec<String> {
     }
     lines
 }
+
+/// The text as written in the page (`WRITTEN_TEXT_JS`: textContent, which
+/// CSS `text-transform` does not change) as a TypeScript function of the
+/// element, built as [`read_text_ts`] builds `readText`.
+pub fn read_written_ts(indent: usize) -> Vec<String> {
+    let typed = WRITTEN_TEXT_JS.replacen("function() {", "function (this: HTMLElement) {", 1);
+    assert!(typed != WRITTEN_TEXT_JS, "WRITTEN_TEXT_JS no longer starts with `function() {{`");
+    let pad = " ".repeat(indent);
+    let mut lines: Vec<String> = typed.lines().map(|l| format!("{pad}{l}")).collect();
+    if let Some(first) = lines.first_mut() {
+        *first = format!("{pad}const readWritten = (e: Element) => ({}", first.trim_start());
+    }
+    if let Some(last) = lines.last_mut() {
+        last.push_str(").call(e as HTMLElement);");
+    }
+    lines
+}
+
+/// The app's rule for the text a check compares, in TypeScript
+/// (`expect::text_as_case`): the drawn text when it holds; else the text as
+/// written in the page when only its letter case differs from the drawn one
+/// and it holds; else the drawn text. `want` is already collapsed.
+pub const AS_CASE_TS: &str = "const asCase = (drawn: string, written: string, want: string, whole: boolean): string => {\n  const holds = (t: string) => (whole ? t === want : t.includes(want));\n  if (holds(drawn)) return drawn;\n  return written.toLowerCase() === drawn.toLowerCase() && holds(written) ? written : drawn;\n};";
 
 /// The app's own box reader (`READ_BOX_JS`) as a TypeScript function of the
 /// element, one line per entry: the body is the constant's, word for word
@@ -736,6 +764,17 @@ impl Em<'_> {
             self.out.push_str(&l);
             self.out.push('\n');
         }
+    }
+
+    /// The text as written in the page, and the app's rule for choosing
+    /// between it and the drawn text, for `expect_text` (equals) and
+    /// `expect_contains_text`. `asCase` goes out verbatim (`AS_CASE_TS`).
+    fn read_written(&mut self) {
+        for l in read_written_ts(4) {
+            self.out.push_str(&l);
+            self.out.push('\n');
+        }
+        self.line(4, AS_CASE_TS);
     }
 
     /// `expect_count` with `at_most` passes on too few, so it is not a poll:
@@ -1155,9 +1194,22 @@ impl Em<'_> {
             // and compares case-sensitively: whole, or as a substring.
             Action::ExpectText { selector, equals, matches, timeout_ms } => {
                 // `validate` holds the two to exactly one.
-                let want = match (equals, matches) {
-                    (Some(equals), _) => format!("toBe({})", lit(&collapse(equals))),
-                    (_, Some(p)) => format!("toMatch(new RegExp({}))", lit(p)),
+                if let Some(equals) = equals {
+                    // The drawn text, or the text as written in the page when
+                    // only the letter case differs (`asCase`).
+                    let w = lit(&collapse(equals));
+                    let l = one(selector);
+                    self.line(
+                        indent,
+                        &format!(
+                            "await expect.poll(async () => asCase(await {l}.evaluate(readText), await {l}.evaluate(readWritten), {w}, true){}).toBe({w});",
+                            poll_opts(*timeout_ms)
+                        ),
+                    );
+                    return Ok(());
+                }
+                let want = match matches {
+                    Some(p) => format!("toMatch(new RegExp({}))", lit(p)),
                     _ => return no("expect_text takes exactly one of equals or matches"),
                 };
                 self.line(
@@ -1169,15 +1221,17 @@ impl Em<'_> {
                     ),
                 )
             }
-            Action::ExpectContainsText { selector, value, timeout_ms } => self.line(
-                indent,
-                &format!(
-                    "await expect.poll(() => {}.evaluate(readText){}).toContain({});",
-                    one(selector),
-                    poll_opts(*timeout_ms),
-                    lit(&collapse(value))
-                ),
-            ),
+            Action::ExpectContainsText { selector, value, timeout_ms } => {
+                let w = lit(&collapse(value));
+                let l = one(selector);
+                self.line(
+                    indent,
+                    &format!(
+                        "await expect.poll(async () => asCase(await {l}.evaluate(readText), await {l}.evaluate(readWritten), {w}, false){}).toContain({w});",
+                        poll_opts(*timeout_ms)
+                    ),
+                )
+            }
             Action::ExpectCount { selector, equals, at_least, at_most, timeout_ms } => {
                 match table::row_count(*equals, *at_least, *at_most).map_err(Untranslatable)? {
                     table::RowCount::Equals(n) => self.line(

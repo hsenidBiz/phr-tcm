@@ -143,6 +143,40 @@ pub const READ_TEXT_JS: &str = r#"function() {
   return norm(this.innerText);
 }"#;
 
+/// `this` is the element. What the page holds as written: a field's value, a
+/// list's chosen option, otherwise its textContent (CSS text-transform does
+/// not change it).
+pub const WRITTEN_TEXT_JS: &str = r#"function() {
+  const norm = (s) => (s || '').replace(/\s+/g, ' ').trim();
+  if (this instanceof HTMLSelectElement) return norm(this.selectedOptions[0] ? this.selectedOptions[0].label : '');
+  if (this instanceof HTMLInputElement || this instanceof HTMLTextAreaElement) return norm(this.value);
+  return norm(this.textContent);
+}"#;
+
+/// Said after a pass on the written text: `Duration (as written in the page;
+/// drawn "DURATION")`.
+pub const AS_WRITTEN: &str = "as written in the page; drawn ";
+
+/// Said by an action or a check whose locator found its element by the text
+/// as written in the page, not as drawn.
+pub const MATCHED_AS_WRITTEN: &str = "matched as written in the page";
+
+/// The text a check compares, and whether it is the written one. Inputs are
+/// already collapsed. `holds(t)` is `t == want` when `whole`, else
+/// `t.contains(want)`. The drawn text when it holds; else the written text
+/// when it holds AND `written.to_lowercase() == drawn.to_lowercase()` (hidden
+/// words never pass); else the drawn text.
+pub fn text_as_case<'a>(drawn: &'a str, written: &'a str, want: &str, whole: bool) -> (&'a str, bool) {
+    let holds = |t: &str| if whole { t == want } else { t.contains(want) };
+    if holds(drawn) {
+        return (drawn, false);
+    }
+    if written.to_lowercase() == drawn.to_lowercase() && holds(written) {
+        return (written, true);
+    }
+    (drawn, false)
+}
+
 /// `this` is the element. Is it a password input? Asked only when a sentence
 /// would carry what the element holds, so that sentence can say
 /// [`A_PASSWORD_FIELD`] instead.
@@ -298,7 +332,8 @@ async fn look_reading<D: Driver>(
         return Ok(Err(why));
     }
     let handles = found.handles;
-    Ok(match check {
+    let as_written = found.as_written;
+    let result: Result<String, String> = match check {
         Check::Visible => match only(&handles) {
             // A locator keeps only what a person could see, so "nothing
             // resolved" cannot on its own tell "not there" from "there
@@ -410,6 +445,14 @@ async fn look_reading<D: Driver>(
                 if got == want {
                     // On a pass the wanted text IS what the field holds.
                     Ok(format!("{what} says {}", shown_value(&want, password)))
+                } else if got.to_lowercase() == want.to_lowercase() && {
+                    // Only the letter case differs: CSS may be drawing the
+                    // words in capitals. Ask for the written text now.
+                    let written = page::call_value(d, h, WRITTEN_TEXT_JS, &[]).await?;
+                    let written = collapse(written.as_str().unwrap_or(""));
+                    text_as_case(&got, &written, &want, true).1
+                } {
+                    Ok(format!("{what} says {} ({AS_WRITTEN}{})", shown_value(&want, password), shown_value(&got, password)))
                 } else {
                     Err(format!("{EXPECTED_TEXT}{want:?} but saw {}", shown_value(&got, password)))
                 }
@@ -424,6 +467,12 @@ async fn look_reading<D: Driver>(
                 if got.contains(&want) {
                     // On a pass the wanted text is part of what the field holds.
                     Ok(format!("{what} contains {}", shown_value(&want, password)))
+                } else if got.to_lowercase().contains(&want.to_lowercase()) && {
+                    let written = page::call_value(d, h, WRITTEN_TEXT_JS, &[]).await?;
+                    let written = collapse(written.as_str().unwrap_or(""));
+                    text_as_case(&got, &written, &want, false).1
+                } {
+                    Ok(format!("{what} contains {} ({AS_WRITTEN}{})", shown_value(&want, password), shown_value(&got, password)))
                 } else {
                     Err(format!("{EXPECTED_TO_CONTAIN}{want:?} but saw {}", shown_value(&got, password)))
                 }
@@ -559,6 +608,12 @@ async fn look_reading<D: Driver>(
                 }
             }
         },
+    };
+    // A locator that found its element by the words as written in the page
+    // (not as CSS draws them) says so on a pass.
+    Ok(match result {
+        Ok(detail) if as_written && !detail.contains(AS_WRITTEN) => Ok(format!("{detail} ({MATCHED_AS_WRITTEN})")),
+        other => other,
     })
 }
 
