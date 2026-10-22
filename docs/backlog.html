@@ -137,7 +137,8 @@
       <li>The Setup panel's rows on a narrow and a wide window: no label sits on top of its controls.</li>
       <li>An assistant reset during discovery keeps your sign-in. The log says either "the assistant's reset found the sign-in gone" or "the home page re-issued the sign-in's cookies".</li>
       <li>A case whose text disagrees with the app: the assistant reports it, the case card asks for your ruling, and each ruling does what it says. After "Rewrite the case", editing the case in Azure DevOps, saving the script in the editor, or Undo ruling releases it.</li>
-      <li>/tcm:script-pbi on one PBI: it loads the writer's rules first, stops at the bounds, and never fits a check to the page.</li>
+      <li>/tcm:gen-tests on one PBI: it loads the writer's rules first, stops at the bounds, and never fits a check to the page.</li>
+      <li>Playwright rules from the repo: with a clone set, a writer session's first rules are read from it (edit a line in the clone's healer file, see it in the next session) and with none, the modal shows once and the rules say they are the shipped copy.</li>
       <li>A repair that tries to add a when-visible guard without a quirk is refused; with an app-quirk quirk it saves.</li>
       <li>A product bug the assistant notes shows on its cases and at the top of the run report.</li>
       <li>The assistant makes an import spreadsheet with a bad row and saves it with save_test_file; an upload step then uses it. A .ps1 or .md is refused.</li>

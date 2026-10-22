@@ -207,7 +207,7 @@ These are examples, not a rule:
 Scripting here is done in five roles, each with its own short rules:
 
 - writer: choosing what to script and writing it from the live app. Its rules come with your
-  first `start_autorun_discovery` of a session (a mapping run aside); /tcm:script-pbi reads the writer's rules first.
+  first `start_autorun_discovery` of a session (a mapping run aside); /tcm:gen-tests reads the writer's rules first.
 - healer: diagnosing and repairing a failed case. Its rules come with your first
   `get_autorun_failures` of a session.
 - case rewriter: changing a saved script or component, a repair or a rewritten case. Its rules
@@ -217,6 +217,16 @@ Scripting here is done in five roles, each with its own short rules:
   rules with `get_guide`.
 - explorer: doing a task the person names with no test case, in an explore session. Its rules come
   with your first `start_autorun_discovery` with `explore` true of a session.
+
+The writer's, healer's and case rewriter's rules are built on the team's Playwright repo, the one set
+on the Playwright tab, read fresh each time they are given: first Test Case Manager's own rules for
+the role, which win wherever the two differ, then the repo's own agent files (its planner and
+generator for the writer, its healer for the healer, spec-editor for the case rewriter), then a note
+on which Test Case Manager tools do what those files name. With no repo set, or a file missing from
+it, the copy shipped with this version is used, and the rules say so in their first line. The repo's
+skills come from `get_guide` with topic `playwright_skills` (and `skill`), and its CLAUDE.md and
+gen-test.md from topic `playwright_repo` (and `file`). The auditor and the explorer are Test Case
+Manager's own.
 
 A role's rules come once a session, ahead of that tool's answer, and a later answer of the tool opens
 with one line pointing back at them; a session starts over after 20 minutes without a call.

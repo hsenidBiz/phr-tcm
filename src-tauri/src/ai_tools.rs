@@ -645,7 +645,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         ],
     },
     CommandSpec {
-        stem: "script-pbi",
+        stem: "gen-tests",
         tool: "start_autorun_discovery",
         desc: "Script a batch of a PBI's test cases from the live app, within the bounds",
         hint: "[PBI id] [how many] [area or title prefix] [case ids]",
@@ -657,6 +657,9 @@ pub const COMMANDS: &[CommandSpec] = &[
             "PBI id when there is none.",
             "",
             "1. Call `get_guide` with topic autorun and `role` writer first, and follow the writer's rules.",
+            "   Then call `get_guide` with topic playwright_repo and `file` gen-test.md: the Playwright",
+            "   repo's per-case rules, which hold for each case under the writer's rules, with the note at",
+            "   its end on Test Case Manager's tools.",
             "2. Call `get_guide` with topic autorun and `quick` true and follow it; call it again with",
             "   `section` when something the quick rules do not cover comes up. Its \"Choosing a model for",
             "   the work\" section says which part suits which model: Sonnet for the scripting work.",
@@ -679,8 +682,9 @@ pub const COMMANDS: &[CommandSpec] = &[
             "   missing is held back, never scripted around it.",
             "7. If the project has a Playwright export folder, look there for an existing suite for the",
             "   same screen, and align names, records and clean-up with it.",
-            "8. Script each case as /tcm:discover does, with `start_autorun_discovery`,",
-            "   `discover_autorun_actions`, `probe_autorun_locator` and `save_autorun_script`. Every",
+            "8. Script each case as /tcm:discover does, following gen-test.md's per-case rules as its note",
+            "   maps them, with `start_autorun_discovery`, `discover_autorun_actions`,",
+            "   `probe_autorun_locator` and `save_autorun_script`. Every",
             "   check's value comes from the case as written: when the app or its data differs, call",
             "   `report_case_divergence` and keep the case's value, never fit the check to the page. A",
             "   value the case does not contain needs a because on its step; repeat each one the save",
@@ -1029,13 +1033,56 @@ pub fn command_files_for(home: &str, disabled: &[String]) -> Vec<(PathBuf, Strin
     command_files_in(&command_dir(home), disabled)
 }
 
-/// Every command file for `dir` - the global or the repository set.
+/// Every command file for `dir` - the global or the repository set - then, for each renamed command
+/// whose new one is written, the old name as a stand-in that says it was renamed.
 pub fn command_files_in(dir: &std::path::Path, disabled: &[String]) -> Vec<(PathBuf, String)> {
-    COMMANDS
+    let mut files: Vec<(PathBuf, String)> = COMMANDS
         .iter()
         .filter(|c| !disabled.iter().any(|d| d == c.tool))
         .map(|c| (dir.join(format!("{}.md", c.stem)), command_markdown(c)))
-        .collect()
+        .collect();
+    for (old, new) in RENAMED_COMMANDS {
+        let Some(spec) = COMMANDS.iter().find(|c| c.stem == *new) else { continue };
+        if disabled.iter().any(|d| d == spec.tool) {
+            continue;
+        }
+        files.push((dir.join(format!("{old}.md")), renamed_command_markdown(old, spec)));
+    }
+    files
+}
+
+/// (old stem, new stem): an old command still answers, saying it was renamed, while it is listed here.
+/// An entry goes at the next stable release; the sweep in `write_commands` then removes the old file.
+pub const RENAMED_COMMANDS: &[(&str, &str)] = &[("script-pbi", "gen-tests")];
+
+/// The first line of a renamed command's body.
+pub fn renamed_line(old: &str, new: &str) -> String {
+    format!("/tcm:{old} is now /tcm:{new}: tell the person it was renamed, once, then do what /tcm:{new} does.")
+}
+
+/// A renamed command: frontmatter name `old`, description "Renamed: now /tcm:{new}", the new command's
+/// argument-hint, `COMMAND_MARKER`, then `renamed_line`, a blank line and the new command's body.
+pub fn renamed_command_markdown(old: &str, new: &CommandSpec) -> String {
+    let mut lines: Vec<String> = vec![
+        "---".into(),
+        format!("name: {old}"),
+        format!("description: {}", yaml_scalar(&format!("Renamed: now /tcm:{}", new.stem))),
+    ];
+    if !new.hint.is_empty() {
+        lines.push(format!("argument-hint: {}", yaml_scalar(new.hint)));
+    }
+    lines.push("---".into());
+    lines.push(String::new());
+    lines.push(COMMAND_MARKER.into());
+    lines.push(String::new());
+    lines.push(renamed_line(old, new.stem));
+    lines.push(String::new());
+    for l in new.body {
+        lines.push((*l).to_string());
+    }
+    let mut out = lines.join("\n");
+    out.push('\n');
+    out
 }
 
 /// Built from explicit lines, NOT from `\n\` string continuations: Rust

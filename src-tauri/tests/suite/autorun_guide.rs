@@ -2346,9 +2346,27 @@ fn the_guide_names_every_role_and_how_its_rules_arrive() {
         "tcm-<role>.md",
         "whatever tools",
         "20 minutes",
-        "/tcm:script-pbi reads the writer's rules first",
+        "/tcm:gen-tests reads the writer's rules first",
     ] {
         assert!(section.contains(needle), "the Roles section lacks {needle:?}");
+    }
+    assert!(!section.contains('\u{2014}') && !section.contains('\u{2013}'));
+}
+
+#[test]
+fn the_roles_section_says_where_the_rules_come_from() {
+    let guide = autorun_guide();
+    let section = guide.split_once("\n## Roles").unwrap().1.split("\n## ").next().unwrap();
+    let flat = flat_guide(section);
+    for needle in [
+        "read fresh each time they are given",
+        "which win wherever the two differ",
+        "the copy shipped with this version",
+        "`playwright_skills`",
+        "`playwright_repo`",
+        "The auditor and the explorer are Test Case Manager's own",
+    ] {
+        assert!(flat.contains(needle), "the Roles section lacks {needle:?}: {flat}");
     }
     assert!(!section.contains('\u{2014}') && !section.contains('\u{2013}'));
 }
