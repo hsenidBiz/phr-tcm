@@ -24,6 +24,7 @@ import { cn } from "../../lib/cn";
 import { caseTextLine } from "../../lib/markdown";
 import { sameAreaName } from "../../lib/areaName";
 import { floorOf } from "./floor";
+import { uncheckedText } from "./unchecked";
 import SetupSection from "./SetupSection";
 import { canPutBack, preconditionText, putBackPreconditions, repairText } from "./preconditionRepairs";
 import { describeAction, sentenceText, UNREADABLE, type Sentence } from "./describeAction";
@@ -599,8 +600,8 @@ function ReadableScript({
                 ) : (
                   <p className="text-muted">No actions</p>
                 )}
-                {typeof s.unchecked === "string" && s.unchecked && (
-                  <p className="mt-0.5 text-muted">Not checked: {s.unchecked}</p>
+                {uncheckedText(s.unchecked) && (
+                  <p className="mt-0.5 text-muted">Not checked: {uncheckedText(s.unchecked)}</p>
                 )}
               </div>
             </section>

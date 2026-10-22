@@ -1,6 +1,6 @@
 //! Scripts and runs on disk, under the app's own data directory.
 
-use super::{CaseScript, ClearedDefect, LocalRun, SuspectedDefect};
+use super::{unchecked, CaseScript, ClearedDefect, LocalRun, StepScript, SuspectedDefect, Unchecked, UncheckedItem};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
@@ -196,13 +196,17 @@ pub fn check_scripts(scripts: &[CaseScript]) -> Result<(), String> {
         // count: it may never run.
         let mut noted: std::collections::HashSet<&str> = std::collections::HashSet::new();
         for step in &sc.steps {
-            if let Some(reason) = &step.unchecked {
-                if reason.trim().is_empty() {
-                    return Err(format!(
-                        "case {} step {}: unchecked needs a reason, not an empty string",
-                        sc.case_id, step.step_number
-                    ));
+            match &step.unchecked {
+                None => {}
+                Some(Unchecked::Step(reason)) => {
+                    if reason.trim().is_empty() {
+                        return Err(format!(
+                            "case {} step {}: unchecked needs a reason, not an empty string",
+                            sc.case_id, step.step_number
+                        ));
+                    }
                 }
+                Some(Unchecked::Items(items)) => check_unchecked_items(sc.case_id, step, items)?,
             }
             for (i, action) in step.actions.iter().enumerate() {
                 let text = serde_json::to_string(action).unwrap_or_default();
@@ -242,6 +246,40 @@ pub fn check_scripts(scripts: &[CaseScript]) -> Result<(), String> {
     Ok(())
 }
 
+/// The entries of a step's `unchecked` list: at least one and at most
+/// `MAX_ITEMS`, each `item` and `why` one non-blank line of at most 200
+/// characters, and a `stand_in` naming the kind of one of the step's checks.
+fn check_unchecked_items(case_id: i32, step: &StepScript, items: &[UncheckedItem]) -> Result<(), String> {
+    let n = step.step_number;
+    if items.is_empty() {
+        return Err(format!("case {case_id} step {n}: an \"unchecked\" list needs at least one {{ \"item\", \"why\" }}"));
+    }
+    if items.len() > unchecked::MAX_ITEMS {
+        return Err(format!("case {case_id} step {n}: at most {} \"unchecked\" entries", unchecked::MAX_ITEMS));
+    }
+    let one_line = |s: &str| {
+        let t = s.trim();
+        !t.is_empty() && t.chars().count() <= 200 && !t.contains(['\n', '\r'])
+    };
+    if items.iter().any(|e| !one_line(&e.item) || !one_line(&e.why)) {
+        return Err(format!(
+            "case {case_id} step {n}: each \"unchecked\" entry is {{ \"item\", \"why\" }}, each one line of at most 200 characters"
+        ));
+    }
+    let kinds = super::case_values::check_kinds_of_step(step);
+    for e in items {
+        if let Some(kind) = &e.stand_in {
+            if !kinds.iter().any(|k| k == kind.trim()) {
+                return Err(format!(
+                    "case {case_id} step {n}: \"stand_in\": \"{kind}\" names no check of this step - name the kind of the check that stands in for \"{}\"",
+                    e.item.trim()
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
 /// A script's clean-up step, if it has one: at most one, the script's last
 /// and numbered after every other step, after at least one step of the
 /// case, `unchecked` with the reason and checking nothing - its failures
@@ -272,10 +310,16 @@ fn check_cleanup(sc: &CaseScript) -> Result<(), String> {
             "case {id} step {n}: the clean-up must be the script's last step, numbered after every other step"
         ));
     }
-    if step.unchecked.is_none() {
-        return Err(format!(
-            "case {id} step {n}: a clean-up step checks nothing, so it needs \"unchecked\" with the reason (what it removes)"
-        ));
+    match &step.unchecked {
+        None => {
+            return Err(format!(
+                "case {id} step {n}: a clean-up step checks nothing, so it needs \"unchecked\" with the reason (what it removes)"
+            ));
+        }
+        Some(Unchecked::Items(_)) => {
+            return Err(format!("case {id} step {n}: a clean-up's \"unchecked\" is one sentence saying what it removes"));
+        }
+        Some(Unchecked::Step(_)) => {}
     }
     if step.actions.iter().any(|a| a.each().iter().any(|e| super::checks_in_cleanup(e))) {
         return Err(format!(

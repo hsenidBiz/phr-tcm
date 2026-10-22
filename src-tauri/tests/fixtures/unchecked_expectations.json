@@ -1,0 +1,94 @@
+[
+  {
+    "name": "no unchecked",
+    "script": {
+      "case_id": 1,
+      "title": "t",
+      "steps": [
+        { "step_number": 1, "actions": [{ "kind": "check_text", "value": "Saved" }] }
+      ]
+    },
+    "lines": [],
+    "words": ""
+  },
+  {
+    "name": "a sentence on a case step",
+    "script": {
+      "case_id": 2,
+      "title": "t",
+      "steps": [
+        { "step_number": 1, "actions": [{ "kind": "check_text", "value": "Saved" }] },
+        { "step_number": 2, "actions": [{ "kind": "click", "selector": "#export" }], "unchecked": "the PDF cannot be read" }
+      ]
+    },
+    "lines": ["step 2: the step's expected result - the PDF cannot be read"],
+    "words": "1 expectation unchecked"
+  },
+  {
+    "name": "a sentence on the clean-up only",
+    "script": {
+      "case_id": 3,
+      "title": "t",
+      "steps": [
+        { "step_number": 1, "actions": [{ "kind": "check_text", "value": "Saved" }] },
+        { "step_number": 2, "actions": [{ "kind": "click", "selector": "#delete" }], "cleanup": true, "unchecked": "removes the record step 1 made" }
+      ]
+    },
+    "lines": [],
+    "words": ""
+  },
+  {
+    "name": "a list of two with one stand-in",
+    "script": {
+      "case_id": 141751,
+      "title": "t",
+      "steps": [
+        {
+          "step_number": 1,
+          "actions": [{ "kind": "expect_hidden", "selector": "#denied" }],
+          "unchecked": [
+            { "item": "no lock icon on the fields", "why": "no check reads an icon the app never shows (backlog 37)" },
+            { "item": "no access-denied message", "why": "no check reads words the app never shows (backlog 37)", "stand_in": "expect_hidden" }
+          ]
+        }
+      ]
+    },
+    "lines": [
+      "step 1: no lock icon on the fields - no check reads an icon the app never shows (backlog 37)",
+      "step 1: no access-denied message - no check reads words the app never shows (backlog 37) (stand-in: expect_hidden)"
+    ],
+    "words": "2 expectations unchecked"
+  },
+  {
+    "name": "a sentence over several lines",
+    "script": {
+      "case_id": 5,
+      "title": "t",
+      "steps": [
+        { "step_number": 1, "actions": [{ "kind": "click", "selector": "#a" }], "unchecked": "the PDF\n   cannot  be\nread" }
+      ]
+    },
+    "lines": ["step 1: the step's expected result - the PDF cannot be read"],
+    "words": "1 expectation unchecked"
+  },
+  {
+    "name": "a blank sentence and a blank entry are left out",
+    "script": {
+      "case_id": 6,
+      "title": "t",
+      "steps": [
+        { "step_number": 1, "actions": [{ "kind": "click", "selector": "#a" }], "unchecked": "   " },
+        {
+          "step_number": 2,
+          "actions": [{ "kind": "check_text", "value": "Saved" }],
+          "unchecked": [
+            { "item": "  ", "why": "nothing" },
+            { "item": "the   toast\ncolour", "why": "no check  reads a colour" }
+          ]
+        }
+      ]
+    },
+    "lines": ["step 2: the toast colour - no check reads a colour"],
+    "words": "1 expectation unchecked"
+  }
+]

@@ -147,7 +147,7 @@ Not covered here: call `get_guide` (topic `autorun`) with a `section`, or `full`
 - Try a component with `use_component` and `draft` before
   `save_autorun_component`, then save it unchanged from the draft that worked.
 - A step is either `unchecked` (no checks at all, and the reason) or
-  checked, never both. Check a ticked box with `expect_checked`, and any
+  checked, never both. A checked step lists what its checks leave out in an `unchecked` list of { item, why }. Check a ticked box with `expect_checked`, and any
   other state with `expect_attribute`, never by adding a state to its selector.
 - A `{{fixture.*}}` or `{{setup.*}}` placeholder may stand in a name or a
   text, in a quoted attribute value, or next to fixed text in an id or
@@ -335,6 +335,9 @@ Backspace.
 A step may carry `"unchecked": "<why>"` when its expected result
 genuinely cannot be checked (a PDF preview, an email). Use it rarely, say
 why in one sentence, and never to skip a check you could write.
+A step whose checks leave out part of its expected result lists each part in `unchecked` instead: `"unchecked": [{ "item": "no lock icon on the fields", "why": "no check reads an icon the app never shows (backlog 37)" }]`. Say in `why` what is missing, naming the backlog item of a tool that does not exist yet.
+A check that only stands in for the item stays in the step, and the item names its kind: `"stand_in": "expect_hidden"`.
+Each item shows on the case card and in the run report ("1 expectation unchecked" on a pass), and Export to Playwright writes each as a `// TODO unchecked` line.
 
 A script may end with one clean-up step that removes what the case made:
 `{ "step_number": <the case's last step + 1>, "cleanup": true, "unchecked": "<what it removes>", "actions": [ ... ] }`.
@@ -2140,7 +2143,7 @@ Before every save:
   its list, and is seen as a whole. A locator changed
   after its last probe is a guess.
 - A step is either `unchecked` (no checks at all, and the reason) or
-  checked, never both. A step marked `unchecked` that also checks
+  checked, never both. A checked step lists what its checks leave out in an `unchecked` list of { item, why }. A step whose `unchecked` is one sentence and that also checks
   something is refused.
 - Check a ticked box with `expect_checked` on the element you saw (a
   checkbox, radio or switch): it reads the box's live state, which

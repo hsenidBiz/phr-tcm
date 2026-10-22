@@ -65,6 +65,7 @@ pub mod store;
 pub mod test_made;
 pub mod timing;
 pub mod transient;
+pub mod unchecked;
 
 use crate::browser::actions::{Action, ActionOutcome};
 
@@ -72,16 +73,105 @@ fn is_zero(n: &u32) -> bool {
     *n == 0
 }
 
+/// What a step does not check: one sentence (the step checks nothing, and
+/// why; the clean-up's "what it removes"), or each item its checks leave
+/// out. Kept as written, so a file round-trips unchanged.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, specta::Type)]
+#[serde(untagged)]
+pub enum Unchecked {
+    Step(String),
+    Items(Vec<UncheckedItem>),
+}
+
+/// Said when an `unchecked` is neither a sentence nor a list of entries.
+pub const UNCHECKED_SHAPE: &str = "\"unchecked\" is one sentence (the step checks nothing, and why) or a list of { \"item\", \"why\" } entries, each with an optional \"stand_in\"";
+
+/// Hand-written, as `Target`'s is: the JSON shape is decided first, so a
+/// shape of neither kind gets one sentence, never serde's untagged "did not
+/// match any variant".
+impl<'de> serde::Deserialize<'de> for Unchecked {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        use serde::de::Error as _;
+        let value: serde_json::Value = serde::Deserialize::deserialize(deserializer)?;
+        match value {
+            serde_json::Value::String(s) => Ok(Unchecked::Step(s)),
+            serde_json::Value::Array(items) if items.iter().all(serde_json::Value::is_object) => items
+                .into_iter()
+                .map(serde_json::from_value::<UncheckedItem>)
+                .collect::<Result<Vec<_>, _>>()
+                .map(Unchecked::Items)
+                .map_err(|_| D::Error::custom(UNCHECKED_SHAPE)),
+            _ => Err(D::Error::custom(UNCHECKED_SHAPE)),
+        }
+    }
+}
+
+impl From<&str> for Unchecked {
+    fn from(s: &str) -> Self {
+        Unchecked::Step(s.to_string())
+    }
+}
+
+impl From<String> for Unchecked {
+    fn from(s: String) -> Self {
+        Unchecked::Step(s)
+    }
+}
+
+impl Unchecked {
+    /// The sentence of a step that checks nothing; `None` for a list.
+    pub fn reason(&self) -> Option<&str> {
+        match self {
+            Unchecked::Step(s) => Some(s),
+            Unchecked::Items(_) => None,
+        }
+    }
+
+    /// The entries of a list; none for a sentence.
+    pub fn items(&self) -> &[UncheckedItem] {
+        match self {
+            Unchecked::Items(v) => v,
+            Unchecked::Step(_) => &[],
+        }
+    }
+
+    /// What `step_signature` folds in: a sentence exactly as written (so
+    /// every step signed before lists existed is signed the same), a list as
+    /// its JSON.
+    pub fn signature(&self) -> String {
+        match self {
+            Unchecked::Step(s) => s.clone(),
+            Unchecked::Items(v) => serde_json::to_string(v).unwrap_or_default(),
+        }
+    }
+}
+
+/// One part of a step's expected result that its checks leave out.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, specta::Type)]
+#[serde(deny_unknown_fields)]
+pub struct UncheckedItem {
+    pub item: String,
+    pub why: String,
+    /// The kind of the step's check that stands in for the item (`expect_hidden`), when one does.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stand_in: Option<String>,
+}
+
 /// The actions that carry out one numbered step of a test case.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, specta::Type)]
 pub struct StepScript {
     pub step_number: i32,
     pub actions: Vec<Action>,
-    /// Why this step's expected result is not checked by the script, when
-    /// it is not. The floor accepts a step with an expected result and no
-    /// check only when this says why, and the app shows the sentence.
+    /// What this step's script does not check, when anything: one sentence
+    /// (the step checks nothing, and why) or each part of the expected
+    /// result its checks leave out. The floor accepts a step with an
+    /// expected result and no check only when this says why, and the app
+    /// shows it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub unchecked: Option<String>,
+    pub unchecked: Option<Unchecked>,
     /// The script's clean-up: no step of the case, but what removes what
     /// the case made. At most one, the script's last, numbered right after
     /// the case's last step and `unchecked`. It runs after the case's last

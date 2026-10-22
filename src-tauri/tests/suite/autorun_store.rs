@@ -1451,3 +1451,72 @@ fn a_same_as_needs_an_earlier_remember_url() {
         assert!(err.ends_with(refused), "{err}");
     }
 }
+
+/// A one-step script whose step carries `unchecked` and these actions.
+fn unchecked_script(actions: serde_json::Value, unchecked: serde_json::Value) -> CaseScript {
+    serde_json::from_value(serde_json::json!({ "case_id": 7, "title": "t",
+        "steps": [{ "step_number": 1, "actions": actions, "unchecked": unchecked }] })).unwrap()
+}
+
+fn refusal(sc: CaseScript) -> String {
+    v2_lib::autorun::store::check_scripts(&[sc]).unwrap_err()
+}
+
+#[test]
+fn an_empty_unchecked_list_is_refused() {
+    let sc = unchecked_script(serde_json::json!([{ "kind": "expect_visible", "selector": "#a" }]), serde_json::json!([]));
+    assert_eq!(refusal(sc), "case 7 step 1: an \"unchecked\" list needs at least one { \"item\", \"why\" }");
+}
+
+#[test]
+fn an_unchecked_entry_over_200_characters_or_on_two_lines_is_refused() {
+    let want = "case 7 step 1: each \"unchecked\" entry is { \"item\", \"why\" }, each one line of at most 200 characters";
+    let acts = || serde_json::json!([{ "kind": "expect_visible", "selector": "#a" }]);
+    let long = "x".repeat(201);
+    for entry in [
+        serde_json::json!({ "item": long, "why": "y" }),
+        serde_json::json!({ "item": "x", "why": long }),
+        serde_json::json!({ "item": "two
+lines", "why": "y" }),
+        serde_json::json!({ "item": "x", "why": "two
+lines" }),
+    ] {
+        assert_eq!(refusal(unchecked_script(acts(), serde_json::json!([entry]))), want);
+    }
+    // Exactly 200 characters on one line is fine.
+    let ok = unchecked_script(acts(), serde_json::json!([{ "item": "x".repeat(200), "why": "y" }]));
+    v2_lib::autorun::store::check_scripts(&[ok]).unwrap();
+}
+
+#[test]
+fn more_than_20_unchecked_entries_are_refused() {
+    let entries: Vec<_> = (0..21).map(|i| serde_json::json!({ "item": format!("item {i}"), "why": "y" })).collect();
+    let sc = unchecked_script(serde_json::json!([{ "kind": "expect_visible", "selector": "#a" }]), serde_json::Value::Array(entries.clone()));
+    assert_eq!(refusal(sc), "case 7 step 1: at most 20 \"unchecked\" entries");
+    let sc = unchecked_script(serde_json::json!([{ "kind": "expect_visible", "selector": "#a" }]), serde_json::Value::Array(entries[..20].to_vec()));
+    v2_lib::autorun::store::check_scripts(&[sc]).unwrap();
+}
+
+#[test]
+fn a_stand_in_must_name_a_check_of_the_step() {
+    let acts = || serde_json::json!([{ "kind": "expect_hidden", "selector": "#a" }]);
+    let sc = unchecked_script(acts(), serde_json::json!([{ "item": "no denied message", "why": "y", "stand_in": "expect_text" }]));
+    assert_eq!(
+        refusal(sc),
+        "case 7 step 1: \"stand_in\": \"expect_text\" names no check of this step - name the kind of the check that stands in for \"no denied message\""
+    );
+    let sc = unchecked_script(acts(), serde_json::json!([{ "item": "no denied message", "why": "y", "stand_in": "expect_hidden" }]));
+    v2_lib::autorun::store::check_scripts(&[sc]).unwrap();
+}
+
+#[test]
+fn a_cleanup_unchecked_is_one_sentence() {
+    let mut sc: CaseScript = serde_json::from_value(serde_json::json!({ "case_id": 7, "title": "t", "steps": [
+        { "step_number": 1, "actions": [{ "kind": "check_text", "value": "Saved" }] },
+        { "step_number": 2, "actions": [{ "kind": "click", "selector": "#delete" }], "cleanup": true,
+          "unchecked": [{ "item": "the record", "why": "removed" }] }
+    ] })).unwrap();
+    assert_eq!(refusal(sc.clone()), "case 7 step 2: a clean-up's \"unchecked\" is one sentence saying what it removes");
+    sc.steps[1].unchecked = Some("removes the record".into());
+    v2_lib::autorun::store::check_scripts(&[sc]).unwrap();
+}

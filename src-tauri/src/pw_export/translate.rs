@@ -294,7 +294,7 @@ pub fn raw_spec(input: &RawSpecInput) -> Res<String> {
             Some(t) => em.line(at, &format!("// {n}. {}", one_line(t))),
             None => em.line(at, &format!("// {n}.")),
         }
-        if let Some(why) = &step.unchecked {
+        if let Some(why) = step.unchecked.as_ref().and_then(crate::autorun::Unchecked::reason) {
             em.line(at, &format!("// Not checked: {}", one_line(why)));
         }
         if tabs {
@@ -308,7 +308,7 @@ pub fn raw_spec(input: &RawSpecInput) -> Res<String> {
     if let Some(step) = cleanup {
         let n = step.step_number;
         em.line(4, "} finally {");
-        match &step.unchecked {
+        match step.unchecked.as_ref().and_then(crate::autorun::Unchecked::reason) {
             Some(why) => em.line(6, &format!("// Clean-up: {}", one_line(why))),
             None => em.line(6, "// Clean-up"),
         }

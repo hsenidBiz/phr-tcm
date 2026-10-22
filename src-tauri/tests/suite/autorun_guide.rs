@@ -2467,3 +2467,22 @@ fn the_guide_says_the_password_rule_in_its_first_propose_accounts_sentence() {
     );
     assert!(flat.contains("never the stored value: one that looks like a password or hash is refused"), "{flat}");
 }
+
+/// A step whose checks leave out part of its expected result lists each part
+/// in `unchecked` as { item, why }; the guide says how, beside the rule that a
+/// step is either unchecked or checked.
+#[test]
+fn the_guide_says_how_a_checked_step_lists_what_its_checks_leave_out() {
+    let g = autorun_guide();
+    let flat = |text: &str| text.split_whitespace().collect::<Vec<_>>().join(" ");
+    let g = flat(&g);
+    for said in [
+        "A step whose checks leave out part of its expected result lists each part in `unchecked` instead: `\"unchecked\": [{ \"item\": \"no lock icon on the fields\", \"why\": \"no check reads an icon the app never shows (backlog 37)\" }]`. Say in `why` what is missing, naming the backlog item of a tool that does not exist yet.",
+        "A check that only stands in for the item stays in the step, and the item names its kind: `\"stand_in\": \"expect_hidden\"`.",
+        "Each item shows on the case card and in the run report (\"1 expectation unchecked\" on a pass), and Export to Playwright writes each as a `// TODO unchecked` line.",
+        "A step is either `unchecked` (no checks at all, and the reason) or checked, never both. A checked step lists what its checks leave out in an `unchecked` list of { item, why }.",
+        "A step whose `unchecked` is one sentence and that also checks something is refused.",
+    ] {
+        assert!(g.contains(said), "the autorun guide never says {said:?}");
+    }
+}

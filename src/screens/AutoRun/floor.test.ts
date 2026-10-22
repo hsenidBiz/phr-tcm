@@ -42,4 +42,13 @@ describe("floorOf", () => {
     );
     expect(out[0].state.kind).toBe("unchecked");
   });
+
+  it("explains a step with no check by its sentence or by its list", () => {
+    const sentence = [{ step_number: 1, actions: [], unchecked: "the PDF cannot be read" }] as unknown as StepScript[];
+    expect(floorOf(steps, sentence)[0].state).toEqual({ kind: "explained", reason: "the PDF cannot be read" });
+    const list = [
+      { step_number: 1, actions: [], unchecked: [{ item: "the PDF", why: "no check reads a PDF" }] },
+    ] as unknown as StepScript[];
+    expect(floorOf(steps, list)[0].state).toEqual({ kind: "explained", reason: "the PDF - no check reads a PDF" });
+  });
 });

@@ -9,7 +9,7 @@
 //! An undeclared step stays exactly as it was.
 
 use super::nav::module_key;
-use super::{CaseScript, Precondition, PreconditionOp, PreconditionRepair, StepScript};
+use super::{CaseScript, Precondition, PreconditionOp, PreconditionRepair, StepScript, Unchecked};
 use std::collections::{BTreeMap, BTreeSet};
 
 /// What an assistant declares before it may change an existing script.
@@ -224,7 +224,7 @@ pub fn step_signature(step: &StepScript) -> String {
     format!(
         "{}|{}{}{}",
         serde_json::to_string(&step.actions).unwrap_or_default(),
-        step.unchecked.as_deref().unwrap_or(""),
+        step.unchecked.as_ref().map(Unchecked::signature).unwrap_or_default(),
         if step.cleanup { "|cleanup" } else { "" },
         if step.because.is_empty() { String::new() } else { format!("|because:{}", serde_json::to_string(&step.because).unwrap_or_default()) }
     )

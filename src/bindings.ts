@@ -6648,11 +6648,13 @@ export type StepScript_Deserialize = {
 	step_number: number,
 	actions: Action_Deserialize[],
 	/**
-	 *  Why this step's expected result is not checked by the script, when
-	 *  it is not. The floor accepts a step with an expected result and no
-	 *  check only when this says why, and the app shows the sentence.
+	 *  What this step's script does not check, when anything: one sentence
+	 *  (the step checks nothing, and why) or each part of the expected
+	 *  result its checks leave out. The floor accepts a step with an
+	 *  expected result and no check only when this says why, and the app
+	 *  shows it.
 	 */
-	unchecked?: string | null,
+	unchecked?: Unchecked_Deserialize | null,
 	/**
 	 *  The script's clean-up: no step of the case, but what removes what
 	 *  the case made. At most one, the script's last, numbered right after
@@ -6675,11 +6677,13 @@ export type StepScript_Serialize = {
 	step_number: number,
 	actions: Action_Serialize[],
 	/**
-	 *  Why this step's expected result is not checked by the script, when
-	 *  it is not. The floor accepts a step with an expected result and no
-	 *  check only when this says why, and the app shows the sentence.
+	 *  What this step's script does not check, when anything: one sentence
+	 *  (the step checks nothing, and why) or each part of the expected
+	 *  result its checks leave out. The floor accepts a step with an
+	 *  expected result and no check only when this says why, and the app
+	 *  shows it.
 	 */
-	unchecked?: string | null,
+	unchecked?: Unchecked_Serialize | null,
 	/**
 	 *  The script's clean-up: no step of the case, but what removes what
 	 *  the case made. At most one, the script's last, numbered right after
@@ -7384,6 +7388,46 @@ export type TimelineTask = {
 	 */
 	log_id: number,
 };
+
+/**
+ *  What a step does not check: one sentence (the step checks nothing, and
+ *  why; the clean-up's "what it removes"), or each item its checks leave
+ *  out. Kept as written, so a file round-trips unchanged.
+ */
+export type Unchecked = Unchecked_Serialize | Unchecked_Deserialize;
+
+/**  One part of a step's expected result that its checks leave out. */
+export type UncheckedItem = UncheckedItem_Serialize | UncheckedItem_Deserialize;
+
+/**  One part of a step's expected result that its checks leave out. */
+export type UncheckedItem_Deserialize = {
+	item: string,
+	why: string,
+	/**  The kind of the step's check that stands in for the item (`expect_hidden`), when one does. */
+	stand_in?: string | null,
+};
+
+/**  One part of a step's expected result that its checks leave out. */
+export type UncheckedItem_Serialize = {
+	item: string,
+	why: string,
+	/**  The kind of the step's check that stands in for the item (`expect_hidden`), when one does. */
+	stand_in?: string | null,
+};
+
+/**
+ *  What a step does not check: one sentence (the step checks nothing, and
+ *  why; the clean-up's "what it removes"), or each item its checks leave
+ *  out. Kept as written, so a file round-trips unchanged.
+ */
+export type Unchecked_Deserialize = string | UncheckedItem_Deserialize[];
+
+/**
+ *  What a step does not check: one sentence (the step checks nothing, and
+ *  why; the clean-up's "what it removes"), or each item its checks leave
+ *  out. Kept as written, so a file round-trips unchanged.
+ */
+export type Unchecked_Serialize = string | UncheckedItem_Serialize[];
 
 /**  A screen the run could not reach, and why. */
 export type UnreachedArea = {
