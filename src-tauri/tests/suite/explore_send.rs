@@ -8,7 +8,10 @@ use crate::autorun_discovery::exploring;
 use crate::common::quick;
 use serde_json::{json, Value};
 use std::collections::VecDeque;
-use v2_lib::ai_bridge::{route, send_in, BridgeContext, DiscoveryBrowser, DiscoveryParts, API_WRITES_OFF};
+use v2_lib::ai_bridge::{
+    route, run_saved_in, send_in, BridgeContext, DiscoveryBrowser, DiscoveryParts, API_WRITES_OFF, RAN_IN_YOUR_SESSION,
+    RUN_REMINDER,
+};
 use v2_lib::api_templates::one_off::{
     delete_reminder, edit_reminder, not_a_capture, CREATED_NEEDED, EFFECT_NEEDED, GET_ONLY_READS, NO_SESSION_FOR_SEND,
     POST_NEEDS_EXPLORE, SESSION_NOT_SIGNED_IN,
@@ -521,4 +524,107 @@ fn only_send_records_a_create_by_itself() {
     assert_eq!(calls.len(), 1, "{calls:?}");
     assert_eq!(calls[0].0, "ai_bridge.rs");
     assert!(calls[0].1.contains("fn send_in<"), "{calls:?}");
+}
+
+/// A saved, proven copy of the runner suite's template, and the run request
+/// for it as `account`.
+fn saved_run(r: &Rig, account: &str, stage: bool) -> v2_lib::api_templates::runner::RunRequest {
+    use v2_lib::api_templates::runner::Mode;
+    use v2_lib::api_templates::Proven;
+    let mut t = crate::api_templates_runner::template();
+    t.proven = Some(Proven {
+        at: "2026-09-01 09:00:00".into(),
+        origin: "https://hr.example.internal".into(),
+        account: "admin".into(),
+        outputs: std::collections::BTreeMap::from([("cycleId".to_string(), json!(1))]),
+        environment: None,
+        via: None,
+    });
+    if stage {
+        t.stage = Some(v2_lib::api_templates::flow::StageRef { flow: "a-flow".into(), id: "a-stage".into() });
+    }
+    store::save(r.root.path(), ORG, PROJECT, &t).unwrap();
+    let mut req = crate::api_templates_runner::request(t, Mode::Run);
+    req.account = account.into();
+    req
+}
+
+async fn run_saved(
+    browser: &mut Option<PageBrowser>,
+    r: &Rig,
+    req: &v2_lib::api_templates::runner::RunRequest,
+) -> Option<(u16, String)> {
+    run_saved_in(browser, &ctx(true), r.root.path(), req, &quick(), RUN_LIMIT, &QUICK_PAUSES).await
+}
+
+#[tokio::test]
+async fn a_saved_template_runs_in_your_explore_session_when_it_holds_the_account() {
+    let _locks = locks();
+    let both = answer(200, json!({ "success": true, "cycleId": 274 }));
+    let mut r = rig(vec![both.clone(), both], None);
+    let (mut browser, session) = exploring_session(&mut r).await;
+    let req = saved_run(&r, "admin", false);
+
+    let (status, text) = run_saved(&mut browser, &r, &req).await.expect("the session ran it");
+    let v: Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(status, 200, "{v}");
+    assert_eq!(v["ok"], true, "{v}");
+    assert_eq!(v["ran_in"], RAN_IN_YOUR_SESSION, "{v}");
+    assert_eq!(v["record_change"], RUN_REMINDER, "{v}");
+    assert_eq!(v["outputs"]["cycleId"], json!(274), "{v}");
+
+    let d = &browser.as_ref().unwrap().d;
+    let navigations = d.inner.calls_to("Page.navigate");
+    assert_eq!(navigations.len(), 1, "{navigations:?}");
+    assert!(navigations[0]["url"].as_str().unwrap_or("").ends_with(PAGE), "{navigations:?}");
+    assert_eq!(r.sign_ins(), 0);
+
+    let runs = store::list(r.root.path(), ORG, PROJECT).unwrap().remove(0).runs;
+    assert_eq!(runs.len(), 1, "{runs:?}");
+    assert_eq!(runs[0].mode, "run");
+    assert!(runs[0].ok);
+
+    let s = load(r.root.path(), &session).unwrap();
+    let posted: Vec<(&str, &str)> = s.writes.iter().map(|w| (w.method.as_str(), w.path.as_str())).collect();
+    assert_eq!(posted, vec![("POST", "/hr/pmsv10/performancecycle"); 2], "{:?}", s.writes);
+}
+
+#[tokio::test]
+async fn another_account_or_a_flow_template_is_left_to_the_usual_run() {
+    let _locks = locks();
+    let mut r = rig(vec![], None);
+    let (mut browser, session) = exploring_session(&mut r).await;
+
+    let other = saved_run(&r, "other", false);
+    assert_eq!(run_saved(&mut browser, &r, &other).await, None);
+
+    let on_a_flow = saved_run(&r, "admin", true);
+    assert_eq!(run_saved(&mut browser, &r, &on_a_flow).await, None);
+
+    // Nor a slot with no explore session in it.
+    let plain = saved_run(&r, "admin", false);
+    let mut nobody: Option<PageBrowser> = None;
+    assert_eq!(run_saved(&mut nobody, &r, &plain).await, None);
+    // Nor a discovery that is not an explore session.
+    browser.as_mut().unwrap().discovery.as_mut().unwrap().explore = None;
+    assert_eq!(run_saved(&mut browser, &r, &plain).await, None);
+
+    assert!(r.fetched().is_empty(), "something was sent");
+    assert!(load(r.root.path(), &session).unwrap().writes.is_empty());
+}
+
+#[tokio::test]
+async fn a_post_template_in_a_no_save_session_is_refused() {
+    let _locks = locks();
+    let mut r = rig(vec![], None);
+    let (mut browser, session) = exploring_session(&mut r).await;
+    browser.as_mut().unwrap().discovery.as_mut().unwrap().no_save = true;
+    let req = saved_run(&r, "admin", false);
+
+    let answered = run_saved(&mut browser, &r, &req).await;
+    assert_eq!(answered, Some((409, save_guard::blocked("POST", "/hr/pmsv10/performancecycle"))));
+    assert!(r.fetched().is_empty(), "something was sent");
+    assert_eq!(browser.as_ref().unwrap().d.inner.calls_to("Page.navigate").len(), 0);
+    assert!(store::list(r.root.path(), ORG, PROJECT).unwrap().remove(0).runs.is_empty());
+    assert!(load(r.root.path(), &session).unwrap().writes.is_empty());
 }

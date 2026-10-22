@@ -571,6 +571,11 @@ pub async fn route(
             .await
         }
         ("POST", "/api-template-run") => {
+            // The assistant's own explore session runs it when that session
+            // holds the template's account; any other call goes the usual way.
+            if let Some(answer) = run_saved_in_session(ctx, body).await {
+                return answer;
+            }
             let answer = api_template_run(
                 ctx,
                 body,
@@ -1461,8 +1466,6 @@ pub async fn api_template_run<B: crate::api_templates::held::Keeps, D: crate::ap
     open_db: impl FnOnce(&BridgeContext) -> Result<D, (u16, String)>,
     timing: &crate::browser::timing::Timing,
 ) -> (u16, String) {
-    use crate::api_templates::runner::{Mode, RunRequest};
-    use crate::api_templates::store;
     if !ctx.api_writes {
         return (400, API_WRITES_OFF.to_string());
     }
@@ -1470,27 +1473,41 @@ pub async fn api_template_run<B: crate::api_templates::held::Keeps, D: crate::ap
         Ok(r) => r,
         Err(refused) => return refused,
     };
+    let (req, which) = match run_request_from(ctx, &root, body) {
+        Ok(read) => read,
+        Err(refused) => return refused,
+    };
+    run_api_template_request(ctx, &root, req, None, which, open, open_db, timing).await
+}
+
+/// What `api_template_run` reads of its call: the saved template, the
+/// account, the values and the browser asked for, as a run request. Every
+/// refusal is a 400 naming what was wrong.
+fn run_request_from(
+    ctx: &BridgeContext,
+    root: &std::path::Path,
+    body: &str,
+) -> Result<(crate::api_templates::runner::RunRequest, crate::browser::launch::Browser), (u16, String)> {
+    use crate::api_templates::runner::{Mode, RunRequest};
+    use crate::api_templates::store;
     let v: serde_json::Value = match serde_json::from_str(body) {
         Ok(v) => v,
-        Err(e) => return (400, format!("that is not readable JSON: {e}. Expected {RUN_SHAPE}.")),
+        Err(e) => return Err((400, format!("that is not readable JSON: {e}. Expected {RUN_SHAPE}."))),
     };
     let id = match v.get("id") {
         Some(serde_json::Value::String(s)) if !s.trim().is_empty() => s.trim().to_string(),
-        _ => return (400, format!("this call needs an \"id\". Expected {RUN_SHAPE}.")),
+        _ => return Err((400, format!("this call needs an \"id\". Expected {RUN_SHAPE}."))),
     };
-    let call = match template_call(&v, RUN_SHAPE) {
-        Ok(c) => c,
-        Err(refused) => return refused,
-    };
-    let template = match store::load(&root, &ctx.org, &ctx.project, &id) {
+    let call = template_call(&v, RUN_SHAPE)?;
+    let template = match store::load(root, &ctx.org, &ctx.project, &id) {
         Ok(Some(t)) => t,
         Ok(None) => {
-            return (
+            return Err((
                 400,
                 format!("no template called \"{id}\" is saved for this project - list_api_templates shows the ones that are"),
-            )
+            ))
         }
-        Err(e) => return (400, e),
+        Err(e) => return Err((400, e)),
     };
     let req = RunRequest {
         org: ctx.org.clone(),
@@ -1500,7 +1517,134 @@ pub async fn api_template_run<B: crate::api_templates::held::Keeps, D: crate::ap
         mode: Mode::Run,
         template,
     };
-    run_api_template_request(ctx, &root, req, None, call.browser, open, open_db, timing).await
+    Ok((req, call.browser))
+}
+
+/// Said beside the report of a saved template that ran in the assistant's
+/// own explore session instead of a browser of its own.
+pub const RAN_IN_YOUR_SESSION: &str = "Ran in your explore session's browser, as its account.";
+/// Said beside such a run when the template saves: what it created or
+/// changed is not on the change list until the assistant records it.
+pub const RUN_REMINDER: &str = "Record what this run created or changed with record_explore_change.";
+
+/// `/api-template-run` for a saved template, tried before the usual run: a
+/// template runs in the explore session's own browser, as the account that
+/// session holds, instead of signing in to a browser of its own. `None` -
+/// the usual run goes ahead - unless the slot holds an explore session
+/// whose lease holds the call's account and the template is on no flow.
+/// Then, in order: a template with a POST step in a session that must not
+/// save is refused before anything is sent; the one-at-a-time slot, the
+/// environment and the run's own checks; the run from the page the
+/// template's token page opens; the run on the template's history and the
+/// tab told; each POST step that was sent noted on the session's list of
+/// saves. The answer is the run's report with `"ran_in"` beside it (and
+/// `"record_change"` when it posts).
+#[allow(clippy::too_many_arguments)]
+pub async fn run_saved_in<B: DiscoveryBrowser>(
+    slot: &mut Option<B>,
+    ctx: &BridgeContext,
+    root: &std::path::Path,
+    req: &crate::api_templates::runner::RunRequest,
+    timing: &crate::browser::timing::Timing,
+    limit: std::time::Duration,
+    retry_pauses: &[std::time::Duration],
+) -> Option<(u16, String)> {
+    use crate::api_templates::runner::{claim, preflight, run_in_page, TokenPage};
+    use crate::api_templates::store::{self, RunRecord};
+    use crate::api_templates::Method;
+    use crate::autorun::explore as ex;
+    if !ctx.api_writes || req.template.stage.is_some() {
+        return None;
+    }
+    let browser = slot.as_mut()?;
+    let parts = browser.parts();
+    let state = parts.discovery.as_ref()?;
+    let session = state.explore_session()?.to_string();
+    if !parts.lease.holds(root, &req.account) {
+        return None;
+    }
+    let id = req.template.id.as_str();
+    let (org, project) = (req.org.as_str(), req.project.as_str());
+    let vars: std::collections::BTreeMap<String, serde_json::Value> =
+        crate::api_templates::with_defaults(&req.template, &req.values).into_iter().collect();
+    let posts = req.template.steps.iter().any(|s| s.method == Method::Post);
+    if posts && discovery_must_not_save(root, state) {
+        let first = req.template.steps.iter().find(|s| s.method == Method::Post)?;
+        let path = crate::api_templates::exec::substitute_str(&first.path, &vars);
+        return Some((409, crate::browser::save_guard::blocked("POST", &path)));
+    }
+    let Some(_claim) = claim() else {
+        return Some((409, API_TEMPLATE_BUSY.to_string()));
+    };
+    if let Err(moved) = assistant_may_still_write(ctx, root) {
+        return Some((409, moved));
+    }
+    if let Err(problems) = preflight(root, req, None) {
+        return Some((400, problems.join("\n")));
+    }
+    let how = TokenPage::Open(req.template.antiforgery.page.clone());
+    let out = run_in_page(parts.driver, root, req, timing, how, limit, retry_pauses).await;
+    let report = &out.report;
+
+    let record = RunRecord {
+        at: crate::applog::stamp(),
+        mode: req.mode.label().to_string(),
+        account: req.account.clone(),
+        ok: report.ok,
+        failed_step: report.failed.clone(),
+        detail: (!report.ok).then(|| report.message()),
+        outputs: if report.ok { report.outputs.clone() } else { report.created.clone() },
+    };
+    match store::append_run(root, org, project, id, record) {
+        Ok(()) => templates_changed(id),
+        Err(e) => crate::applog::warn(format!("api template {id}: the run could not be added to its history: {e}")),
+    }
+
+    // Each POST step that was sent, by its path with the values and what the
+    // run captured filled in.
+    let mut with_captures = vars;
+    with_captures.extend(report.created.clone());
+    let sent: Vec<(String, String)> = req
+        .template
+        .steps
+        .iter()
+        .filter(|s| s.method == Method::Post)
+        .filter(|s| report.steps.iter().any(|r| r.name == s.name && r.status.is_some()))
+        .map(|s| ("POST".to_string(), crate::api_templates::exec::substitute_str(&s.path, &with_captures)))
+        .collect();
+    if let Err(why) = ex::note_writes(root, &session, &sent) {
+        crate::applog::warn(format!("Auto Run explore session: a save could not be noted: {why}"));
+    }
+
+    let mut v = serde_json::to_value(report).unwrap_or_else(|_| serde_json::json!({ "ok": report.ok }));
+    v["ran_in"] = serde_json::json!(RAN_IN_YOUR_SESSION);
+    if posts {
+        v["record_change"] = serde_json::json!(RUN_REMINDER);
+    }
+    Some((if report.ok { 200 } else { 502 }, v.to_string()))
+}
+
+/// `POST /api-template-run` with the app's own slot: the explore session's
+/// browser when it can run the template (`run_saved_in`), and `None` when
+/// the usual run should go ahead.
+async fn run_saved_in_session(ctx: &BridgeContext, body: &str) -> Option<(u16, String)> {
+    if !ctx.api_writes || unattended_run_is_using_the_browser().is_some() {
+        return None;
+    }
+    let root = autorun_root().ok()?;
+    let (req, _) = run_request_from(ctx, &root, body).ok()?;
+    let mut slot = crate::commands::autorun::supervised().lock().await;
+    let answer = run_saved_in(
+        &mut slot,
+        ctx,
+        &root,
+        &req,
+        &crate::browser::timing::Timing::supervised(),
+        crate::api_templates::runner::RUN_LIMIT,
+        &crate::api_templates::runner::RETRY_PAUSES,
+    )
+    .await?;
+    Some(let_go_if_silent(&mut slot, answer).await)
 }
 
 /// An assistant's free text as one app-log line: every run of whitespace
