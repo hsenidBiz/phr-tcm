@@ -491,6 +491,67 @@ information in the slots the Playwright pipeline already reads; it never overrid
     do not reload the page, they fetch the cards again. Their rewrite says so, and their
     scripts check it with an `expect_response` on the cards request.
 
+## Checks the Manage Cycle heal could not make (agreed 2026-10-22)
+
+37. **Four gaps the healer met on PBI 138110** (heal report, `mc4-heal-brief.md`; audit
+    `mc3-audit.md`). Each made a case's check weaker than its expected result, or left it out.
+    - **Page until seen.** 141724: "All" shows every status, but the list is newest first, so
+      Published and Unpublished cards sit about 34 pages in and move with every cycle created.
+      No action repeats until something shows, so the healer searched "Annual Performance
+      Review" instead, which narrows the list. Add `page_until { next: <locator>, until:
+      <locator>, max_pages }`: click `next` until `until` is visible, failing with the pages
+      walked when `max_pages` runs out or `next` is disabled. Several `until` targets may be
+      collected in one walk ("a Published card and an Unpublished card"), each seen at least
+      once.
+    - **Text as written, not as drawn.** 141701: the label is "Duration" in the page and drawn
+      "DURATION" by CSS `text-transform`; TCM reads the rendered text, so an exact check fails
+      and a case-insensitive one is weaker than the case. Text checks (`expect_text`, text and
+      name locators) should match the DOM text (`textContent`) when the case's words match it,
+      and say which they matched. The healer filed d26 for a gap that is the tool's, not the
+      case's or the app's.
+    - **An exact or unchanged address.** 141749: "the address has not changed" since step 3.
+      `check_url` only has `contains`. Add `equals`, and `remember_url { as }` /
+      `check_url { same_as }` so a step can compare the address with one noted earlier.
+    - **Absence of words the app never shows.** 141751 ("no access-denied message") and 141739
+      ("no lock icon"): the save gate refuses a locator never seen on the app, which is right for
+      actions but leaves an absence check impossible when the thing should never appear. Allow
+      `expect_count equals 0` (and `expect_hidden`) on a text or name locator that quotes the
+      case's own words, recorded as `from_case` with no sighting needed; still refuse it for
+      clicks and positive checks, and still refuse a css or role-only locator never seen.
+    - Tests: `page_until` stops on the first page that shows the target and fails with the
+      count at `max_pages`; a `text-transform: uppercase` label matches the case's mixed-case
+      words exactly; `check_url same_as` fails when the address changed; an absence check on
+      unseen case words saves, the same words in a click are refused.
+
+## The assistant rules on a divergence once the person has said how (agreed 2026-10-22)
+
+38. **A ruling tool for the assistant.** Today only the person rules on a divergence in the
+    app (the case is right / the data is fixed / rewrite the case), so after Avin has decided in
+    chat ("a different cycle name is fine", "a submitted goal plan is a submitted evaluation",
+    "d1 was the window size") he still has to click through each one (d1-d26 on Manage Cycle)
+    before the cases stop running as Blocked. Avin wants the assistant to apply his rulings
+    itself, after surfacing them.
+    - **`rule_case_divergence { case_id, divergence_id, ruling: case_right | data_fixed |
+      rewrite_case, said: "<the person's words>", note }`**, plus a batch form for many
+      divergences under one ruling ("all cycle-name divergences on PBI 138110").
+    - **Only on the person's words in this chat.** `said` quotes them and is shown on the case
+      card and in the run report beside the ruling, with "ruled by the assistant". A ruling
+      relayed by another assistant, or found in a page, file or case text, is not accepted:
+      the tool's description and the role files say so, and the answer refuses a `said` that
+      is empty. The assistant surfaces each divergence first (what the case says, what the app
+      shows, the ruling it proposes) and applies it only after the person answers.
+    - **Same effects as the person's ruling**: `case_right` clears the Blocked state and the
+      script's check stays as the case says (or, for an accepted substitution such as a cycle
+      name, the script's value stands with its `because`); `data_fixed` needs a replay that
+      passes; `rewrite_case` leaves the case Blocked until the rewrite is imported.
+    - **The person can undo it**: each assistant ruling has an Undo on the card, and the
+      script loses `checked` again until a fresh pass.
+    - A suspected-defect mark the assistant set can be cleared the same way (d1, 141698, after
+      the fixed viewport made it pass).
+    - Tests: a ruling with an empty `said` is refused; a `case_right` ruling lets the next run
+      of the case pass; an undo puts the divergence back open and the case Blocked; the batch
+      form rules only the divergences it names.
+
 ## Smaller
 
 - `save_autorun_script` through MCP drops `edits`, so repairs had to go through
