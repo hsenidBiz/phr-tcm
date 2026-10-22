@@ -1212,11 +1212,9 @@ test("capture mode hides the Extras section on an unlocked machine; off, it show
   expect(onRender.queryByRole("heading", { name: "Extras" })).not.toBeInTheDocument();
   expect(onRender.queryByRole("button", { name: "Play the dino game" })).not.toBeInTheDocument();
   expect(onRender.queryByRole("button", { name: "Play the brick game" })).not.toBeInTheDocument();
-  // The Extras reset is gone. Capture mode shows every module, so the Auto Run
-  // card's own "Reset to default" (the page size) may be there - and only that.
-  for (const reset of onRender.queryAllByRole("button", { name: "Reset to default" })) {
-    expect(within(reset.closest("section")!).getByRole("heading", { name: "Auto Run" })).toBeInTheDocument();
-  }
+  // The Extras reset is gone. The Auto Run card's page-size reset has its own
+  // name, so this one is unambiguous even though capture mode shows that card.
+  expect(onRender.queryByRole("button", { name: "Reset to default" })).not.toBeInTheDocument();
   onRender.unmount();
 
   localStorage.removeItem("tcm-v2-dev-capture");

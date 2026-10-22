@@ -112,6 +112,7 @@ export default function PageSizeSettings() {
             size="sm"
             variant="outline"
             disabled={!settings.data || busy || (same(saved, SHIPPED) && !edited)}
+            aria-label="Reset page size to default"
             onClick={() => void reset()}
           >
             Reset to default

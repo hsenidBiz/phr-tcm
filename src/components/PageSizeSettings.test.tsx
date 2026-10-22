@@ -62,7 +62,7 @@ test("the row names itself, explains itself and labels both boxes", async () => 
   expect(width()).toBeInTheDocument();
   expect(height()).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Save" })).toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "Reset to default" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Reset page size to default" })).toBeInTheDocument();
   await waitFor(() => expect(width()).not.toBeDisabled());
 });
 
@@ -108,7 +108,7 @@ test("Reset to default calls reset_page_size and shows the shipped size", async 
   const calls = rust({ width: 1920, height: 1080 });
   renderRow();
   await waitFor(() => expect(width()).toHaveValue(1920));
-  fireEvent.click(screen.getByRole("button", { name: "Reset to default" }));
+  fireEvent.click(screen.getByRole("button", { name: "Reset page size to default" }));
   await waitFor(() => expect(calls).toEqual([{ cmd: "reset_page_size" }]));
   await waitFor(() => expect(width()).toHaveValue(1280));
   expect(height()).toHaveValue(720);
@@ -118,7 +118,7 @@ test("Reset has nothing to do while the shipped size is saved and untouched", as
   rust({ width: 1280, height: 720 });
   renderRow();
   await waitFor(() => expect(width()).not.toBeDisabled());
-  expect(screen.getByRole("button", { name: "Reset to default" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Reset page size to default" })).toBeDisabled();
   fireEvent.change(height(), { target: { value: "800" } });
-  expect(screen.getByRole("button", { name: "Reset to default" })).not.toBeDisabled();
+  expect(screen.getByRole("button", { name: "Reset page size to default" })).not.toBeDisabled();
 });
