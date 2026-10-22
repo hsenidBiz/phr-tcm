@@ -1,5 +1,3 @@
-Where gen-test.md and TCM's rules disagree, TCM's rules win: the writer's and healer's rules come first.
-
 ## In TCM, use these for the steps of /gen-test above
 
 /gen-test is the Playwright repo's per-case pipeline. /tcm:gen-tests follows its rules for each case,

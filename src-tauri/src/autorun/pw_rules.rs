@@ -376,6 +376,12 @@ pub fn gen_test_note() -> String {
     include_str!("roles/gen-test-tools.md").replace("\r\n", "\n")
 }
 
+/// The one sentence that comes before the repo's `gen-test` command, so the repo's
+/// text is read already knowing TCM's rules win where they differ.
+pub fn gen_test_lead() -> String {
+    include_str!("roles/gen-test-lead.md").replace("\r\n", "\n")
+}
+
 /// `"a", "b" and "c"`.
 fn quoted_list(names: &[String]) -> String {
     let q: Vec<String> = names.iter().map(|n| format!("\"{n}\"")).collect();
@@ -447,8 +453,9 @@ pub fn skills_answer(clone: &str, skill: Option<&str>) -> (u16, String) {
 }
 
 /// `None` or `""`: the repo's `CLAUDE.md`. A [`REPO_FILES`] name (exact): (200,
-/// [shipped line, blank line,] the section, blank line, the note: [`gen_test_note`]
-/// for `gen-test.md`, [`repo_note`] for the rest). Anything else: (404,
+/// [shipped line, blank line,] [for `gen-test.md`, [`gen_test_lead`] and a blank
+/// line,] the section, blank line, the note: [`gen_test_note`] for `gen-test.md`,
+/// [`repo_note`] for the rest). Anything else: (404,
 /// [`unknown_repo_file`]).
 pub fn repo_answer(clone: &str, file: Option<&str>) -> (u16, String) {
     repo_answer_page(clone, file, None)
@@ -519,7 +526,10 @@ pub fn repo_answer_page(clone: &str, file: Option<&str>, page: Option<&str>) -> 
         },
     };
     let note = if name == GEN_TEST { gen_test_note() } else { repo_note() };
-    let full = format!("{}{}\n\n{}", shipped_prefix(&file), section(&file), note.trim_end()) + "\n";
+    // gen-test.md is long and says to do things TCM does differently: its lead-in
+    // comes first (after the shipped line), the mapping last.
+    let lead = if name == GEN_TEST { format!("{}\n\n", gen_test_lead().trim_end()) } else { String::new() };
+    let full = format!("{}{lead}{}\n\n{}", shipped_prefix(&file), section(&file), note.trim_end()) + "\n";
     let pages = if name == REPO_CLAUDE { split_pages(&full, PAGE_CHARS - PAGE_HEADER_ROOM) } else { vec![full] };
     let n = pages.len();
     if want > n {

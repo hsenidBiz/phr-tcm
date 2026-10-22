@@ -8,7 +8,7 @@ use v2_lib::autorun::pw_rules::{
     Why, AGENT_FILES, GEN_TEST, READ_LIMIT, REPO_CLAUDE, SHIPPED_COPY, SNAPSHOT,
 };
 use v2_lib::autorun::pw_rules::{
-    gen_test_note, repo_answer, repo_answer_page, repo_note, skill_names, skills_answer, unknown_repo_file, unknown_skill,
+    gen_test_lead, gen_test_note, repo_answer, repo_answer_page, repo_note, skill_names, skills_answer, unknown_repo_file, unknown_skill,
     LIVE_MARK, PAGE_CHARS, REPO_FILES, SHIPPED_MARK,
 };
 
@@ -440,7 +440,7 @@ fn gen_test_is_labelled_with_its_repo_path() {
     std::fs::create_dir_all(dir.path().join(".claude/commands")).unwrap();
     std::fs::write(dir.path().join(".claude/commands/gen-test.md"), "LIVE GEN").unwrap();
     let (_, live) = repo_answer(&path_of(&dir), Some("gen-test.md"));
-    assert!(live.starts_with("## From the Playwright repo: .claude/commands/gen-test.md, read from the repo just now"), "{live}");
+    assert!(live.contains("\n\n## From the Playwright repo: .claude/commands/gen-test.md, read from the repo just now"), "{live}");
     // No clone path comes with it.
     assert!(!live.contains(&path_of(&dir)));
     // An agent file keeps its bare name.
@@ -448,12 +448,27 @@ fn gen_test_is_labelled_with_its_repo_path() {
 }
 
 #[test]
-fn the_gen_test_note_puts_tcms_rules_first_and_maps_the_heal_steps() {
+fn the_gen_test_answer_opens_with_tcms_rules_win_and_ends_with_the_heal_steps_mapped() {
+    const LEAD: &str =
+        "Where gen-test.md and TCM's rules disagree, TCM's rules win: the writer's and healer's rules come first.";
+    assert_eq!(gen_test_lead().trim_end(), LEAD);
+    // Ahead of the repo's text, not after 47 KB of it: first with a live file, and right after
+    // the shipped line with the shipped copy.
+    let dir = clone();
+    std::fs::create_dir_all(dir.path().join(".claude/commands")).unwrap();
+    std::fs::write(dir.path().join(".claude/commands/gen-test.md"), "LIVE GEN").unwrap();
+    let (_, live) = repo_answer(&path_of(&dir), Some("gen-test.md"));
+    assert!(live.starts_with(&format!("{LEAD}\n\n## From the Playwright repo: .claude/commands/gen-test.md")), "{live}");
+    let (_, shipped) = repo_answer("", Some("gen-test.md"));
+    let prefix = format!("{}\n\n{LEAD}\n\n## From the Playwright repo: ", shipped_line(&Why::NoClone, &[]));
+    assert!(shipped.starts_with(&prefix), "{}", &shipped[..shipped.len().min(400)]);
+    assert_eq!(live.matches(LEAD).count(), 1, "the sentence is said once");
+    assert_eq!(shipped.matches(LEAD).count(), 1);
+    // Other files do not carry it.
+    assert!(!repo_answer("", Some("spec-editor.md")).1.contains(LEAD));
+    assert!(!repo_answer("", None).1.contains(LEAD));
     let note = gen_test_note();
-    assert_eq!(
-        note.lines().next().unwrap(),
-        "Where gen-test.md and TCM's rules disagree, TCM's rules win: the writer's and healer's rules come first."
-    );
+    assert!(note.starts_with("## In TCM, use these for the steps of /gen-test above"), "{note}");
     let flat = note.split_whitespace().collect::<Vec<_>>().join(" ");
     for want in [
         // handing a case to the repo's healer
@@ -467,11 +482,11 @@ fn the_gen_test_note_puts_tcms_rules_first_and_maps_the_heal_steps() {
     ] {
         assert!(flat.contains(want), "the gen-test note lacks {want:?}:\n{note}");
     }
-    // It reaches the person after the repo's own text, and stays inside the caps the role notes keep.
-    let (_, answer) = repo_answer("", Some("gen-test.md"));
-    assert!(answer.trim_end().ends_with(note.trim_end()));
-    assert!(note.lines().count() <= v2_lib::autorun::roles::ROLE_MAX_LINES, "{}", note.lines().count());
-    assert!(note.chars().count() <= v2_lib::autorun::roles::ROLE_MAX_CHARS, "{}", note.chars().count());
+    // The mapping closes the answer, and lead-in plus mapping stay inside the caps the role notes keep.
+    assert!(shipped.trim_end().ends_with(note.trim_end()));
+    let both = format!("{}\n\n{}", gen_test_lead().trim_end(), note.trim_end());
+    assert!(both.lines().count() <= v2_lib::autorun::roles::ROLE_MAX_LINES, "{}", both.lines().count());
+    assert!(both.chars().count() <= v2_lib::autorun::roles::ROLE_MAX_CHARS, "{}", both.chars().count());
 }
 
 #[test]
@@ -504,7 +519,7 @@ fn an_unknown_repo_file_is_refused() {
 #[test]
 fn every_repo_note_names_only_real_tools() {
     let tools = v2_lib::mcp::all_tool_names();
-    for note in [repo_note(), gen_test_note()] {
+    for note in [repo_note(), gen_test_note(), gen_test_lead()] {
         for (i, span) in note.split('`').enumerate() {
             if i % 2 == 1 && span.contains('_') {
                 assert!(tools.iter().any(|t| t == span), "a repo note backticks {span:?}, which is no tool");
