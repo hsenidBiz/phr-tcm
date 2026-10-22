@@ -71,6 +71,7 @@ fn the_guide_names_every_action_the_executor_can_run() {
         serde_json::from_value(serde_json::json!({ "kind": "expect_each", "selector": "s", "not_empty": true })).unwrap(),
         serde_json::from_value(serde_json::json!({ "kind": "expect_order", "selector": "s", "texts": ["a", "b"] })).unwrap(),
         serde_json::from_value(serde_json::json!({ "kind": "expect_position", "selector": "s", "relative_to": "t", "relation": "inside" })).unwrap(),
+        serde_json::from_value(serde_json::json!({ "kind": "page_until", "next": "n", "until": "u", "max_pages": 2 })).unwrap(),
         serde_json::from_value(serde_json::json!({ "kind": "use_component", "component": "c" })).unwrap(),
     ];
     let emitted: Vec<String> = samples

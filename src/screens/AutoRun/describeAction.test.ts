@@ -216,6 +216,10 @@ describe("a sentence for every action kind", () => {
       "Check the element #a is in the bottom-right of the element #b",
     ],
     [
+      { kind: "page_until", next: { role: "button", name: "Next" }, until: [{ text: "Published" }], max_pages: 40 },
+      'Click the "Next" button page by page until the text "Published" show, at most 40 pages',
+    ],
+    [
       { kind: "expect_sorted", table: { role: "grid", name: "Employees" }, column: "Joined", order: "descending", as: "date" },
       'Check the "Employees" table is sorted by Joined, descending, as dates',
     ],
@@ -328,6 +332,29 @@ describe("a sentence for every action kind", () => {
     expect(say({ kind: "check_url", contains: "/home" })).toBe('Check the address contains "/home"');
   });
 
+  test("page_until reads as a sentence", () => {
+    expect(
+      say({
+        kind: "page_until",
+        next: { role: "button", name: "Next" },
+        until: [{ text: "Published" }, { text: "Unpublished" }],
+        max_pages: 40,
+      }),
+    ).toBe('Click the "Next" button page by page until the text "Published" and the text "Unpublished" show, at most 40 pages');
+    // One locator in place of a list, and a chain as an item.
+    expect(
+      say({ kind: "page_until", next: { role: "button", name: "Next" }, until: { text: "Published" }, max_pages: 3 } as never),
+    ).toBe('Click the "Next" button page by page until the text "Published" show, at most 3 pages');
+    expect(
+      say({
+        kind: "page_until",
+        next: { role: "button", name: "Next" },
+        until: [[{ css: "iframe#goals" }, { text: "Add" }]],
+        max_pages: 5,
+      } as never),
+    ).toContain("until the text \"Add\" inside the frame");
+  });
+
   test("every kind in the list above is covered", () => {
     const kinds = new Set(cases.map(([a]) => a.kind));
     expect([...kinds].sort()).toEqual(
@@ -338,7 +365,7 @@ describe("a sentence for every action kind", () => {
         "expect_response", "api_request", "when_visible", "reload", "expire_session", "return_to_area",
         "press_key", "expect_focused", "expect_download", "expect_tab", "open_tab", "switch_tab", "close_tab",
         "expect_tab_closed", "drag", "expect_dialog", "expect_row", "expect_no_row", "expect_sorted", "expect_row_count",
-        "expect_each", "expect_order", "expect_position",
+        "expect_each", "expect_order", "expect_position", "page_until",
       ].sort(),
     );
   });

@@ -3643,7 +3643,10 @@ fn matched_targets(action: &crate::browser::actions::Action) -> Vec<(&crate::bro
         | Action::SwitchTab { .. }
         | Action::CloseTab { .. }
         | Action::ExpectTabClosed { .. }
-        | Action::ExpectDialog { .. } => vec![],
+        | Action::ExpectDialog { .. }
+        // It may pass without ever clicking `next`, and says nothing of how
+        // many elements an `until` locator matched on the page it was seen.
+        | Action::PageUntil { .. } => vec![],
     }
 }
 
@@ -4186,6 +4189,8 @@ pub fn describe_action(action: &crate::browser::actions::Action) -> String {
         | Action::Upload { selector, .. }
         | Action::WhenVisible { selector, .. }
         | Action::RepeatWhileVisible { selector, .. } => selector.describe(),
+        // The control that pages: what the walk is about.
+        Action::PageUntil { next, .. } => next.describe(),
     };
     let target = if what.is_empty() { String::new() } else { format!(" {what}") };
     format!("{kind}{target}")

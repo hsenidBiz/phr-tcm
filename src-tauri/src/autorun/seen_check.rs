@@ -401,7 +401,10 @@ pub fn takes_many(action: &Action) -> bool {
         | Action::SwitchTab { .. }
         | Action::CloseTab { .. }
         | Action::ExpectTabClosed { .. }
-        | Action::ExpectDialog { .. } => false,
+        | Action::ExpectDialog { .. }
+        // Its `next` is clicked and its `until` locators looked for: held
+        // per target (`many_at`).
+        | Action::PageUntil { .. } => false,
     }
 }
 
@@ -427,6 +430,27 @@ pub fn takes_none(action: &Action) -> bool {
 /// (its `then` actions are held to their own rule)?
 fn seen_many(action: &Action) -> bool {
     takes_many(action) || matches!(action, Action::WhenVisible { .. })
+}
+
+/// `seen_many` for the target at `index` of `own_targets(action)`. The same
+/// for every action but a `page_until`, whose `next` is clicked (seen
+/// matching exactly one) and whose `until` locators are each looked for, so
+/// may have been seen matching several.
+fn many_at(action: &Action, index: usize) -> bool {
+    match action {
+        Action::PageUntil { .. } => index > 0,
+        _ => seen_many(action),
+    }
+}
+
+/// `is_check` for the target at `index` of `own_targets(action)`: a
+/// `page_until`'s `until` locators are looked for, so the case's own words
+/// exempt them as they do any check's; its `next` is acted on.
+fn check_at(action: &Action, index: usize) -> bool {
+    match action {
+        Action::PageUntil { .. } => index > 0,
+        _ => is_check(action),
+    }
 }
 
 /// `map` with no sighting or whole seen matching none (`matched` 0): what a
@@ -1563,21 +1587,21 @@ fn input_use(components: &ComponentFile, component: &str, name: &str) -> Option<
     for top in &c.actions {
         for w in top.each() {
             let in_loop = matches!(top, Action::RepeatWhileVisible { .. }) && !std::ptr::eq(top, w);
-            let feeds = own_targets(w)
-                .into_iter()
-                .any(|t| t.links().iter().any(|l| l.input.as_deref().is_some_and(|i| i.trim() == name)));
-            if !feeds {
-                continue;
-            }
-            let class = if takes_none(w) {
-                SavedUse::None
-            } else if in_loop || seen_many(w) {
-                SavedUse::Many
-            } else {
-                SavedUse::One
-            };
-            if strictest.is_none_or(|s| rank(class) > rank(s)) {
-                strictest = Some(class);
+            // Each target the input feeds, held as its own place in the action.
+            for (i, t) in own_targets(w).into_iter().enumerate() {
+                if !t.links().iter().any(|l| l.input.as_deref().is_some_and(|n| n.trim() == name)) {
+                    continue;
+                }
+                let class = if takes_none(w) {
+                    SavedUse::None
+                } else if in_loop || many_at(w, i) {
+                    SavedUse::Many
+                } else {
+                    SavedUse::One
+                };
+                if strictest.is_none_or(|s| rank(class) > rank(s)) {
+                    strictest = Some(class);
+                }
             }
         }
     }
@@ -1611,14 +1635,20 @@ enum SavedUse {
 fn script_links(script: &CaseScript, components: &ComponentFile) -> Vec<(Target, Vec<LocatorStep>, SavedUse)> {
     let mut out: Vec<(Target, Vec<LocatorStep>, SavedUse)> = Vec::new();
     for action in script.steps.iter().flat_map(|s| s.actions.iter()).flat_map(Action::each) {
-        let class = if takes_none(action) {
-            SavedUse::None
-        } else if takes_many(action) {
-            SavedUse::Many
-        } else {
-            SavedUse::One
-        };
-        let mut targets: Vec<(Target, SavedUse)> = own_targets(action).into_iter().map(|t| (t.clone(), class)).collect();
+        let mut targets: Vec<(Target, SavedUse)> = own_targets(action)
+            .into_iter()
+            .enumerate()
+            .map(|(i, t)| {
+                let class = if takes_none(action) {
+                    SavedUse::None
+                } else if many_at(action, i) {
+                    SavedUse::Many
+                } else {
+                    SavedUse::One
+                };
+                (t.clone(), class)
+            })
+            .collect();
         if let Action::UseComponent { component, inputs } = action {
             // Each target input as strictly as its uses inside the
             // component checked it; one the project cannot place vouches
@@ -2080,10 +2110,11 @@ pub fn loose_name_notes(
             for action in top.each() {
                 // A loop's own work runs once per row: not one element.
                 let in_loop = matches!(top, Action::RepeatWhileVisible { .. }) && !std::ptr::eq(top, action);
-                if in_loop || seen_many(action) {
+                if in_loop {
                     continue;
                 }
-                for link in own_targets(action).into_iter().flat_map(Target::links) {
+                let one_each = own_targets(action).into_iter().enumerate().filter(|(i, _)| !many_at(action, *i));
+                for link in one_each.flat_map(|(_, t)| t.links()) {
                     let (kind, raw) = match (&link.role, &link.name, &link.text) {
                         (Some(r), Some(n), _) => (fold_name(r), n.as_str()),
                         (None, _, Some(t)) => ("text".to_string(), t.as_str()),
@@ -2240,7 +2271,7 @@ fn input_locators(c: &Component, expanded: &[Action]) -> Vec<InputLocator> {
     let mut typed_before: Vec<String> = Vec::new();
     for (written, ran) in c.actions.iter().zip(expanded) {
         for (w, r) in written.each().into_iter().zip(ran.each()) {
-            for ((wt, whole), (rt, _)) in checked_targets(w).into_iter().zip(checked_targets(r)) {
+            for (i, ((wt, whole), (rt, _))) in checked_targets(w).into_iter().zip(checked_targets(r)).enumerate() {
                 if wt == rt {
                     continue;
                 }
@@ -2249,8 +2280,8 @@ fn input_locators(c: &Component, expanded: &[Action]) -> Vec<InputLocator> {
                 out.push(InputLocator {
                     target: rt,
                     links,
-                    check: is_check(r),
-                    many: seen_many(r),
+                    check: check_at(r, i),
+                    many: many_at(r, i),
                     none: takes_none(r),
                     typed_before: typed_before.clone(),
                     kind: r.kind(),
@@ -2355,13 +2386,14 @@ fn scan(
                 // went into.
                 let mut named: Vec<InputLocator> = own_targets(action)
                     .into_iter()
-                    .filter_map(|t| {
+                    .enumerate()
+                    .filter_map(|(i, t)| {
                         let (checked, in_row) = as_checked(top, action, t)?;
                         Some(InputLocator {
                             links: checked.links(),
                             target: checked,
-                            check: is_check(action),
-                            many: in_row || seen_many(action),
+                            check: check_at(action, i),
+                            many: in_row || many_at(action, i),
                             none: takes_none(action),
                             typed_before: Vec::new(),
                             kind: action.kind(),
@@ -2579,13 +2611,13 @@ fn component_unseen(map: &DiscoveryMap, area: Option<&str>, actions: &[Action]) 
                 }
             }
             let dates: Vec<Date> = typed.iter().filter_map(|v| parse_date(v)).collect();
-            let own = Own { typed: &typed, case_text: &[], check: is_check(a), files: &[], sizes: &[], dates: &dates };
-            for (written, whole) in &checked_targets(a) {
+            for (ti, (written, whole)) in checked_targets(a).iter().enumerate() {
+                let own = Own { typed: &typed, case_text: &[], check: check_at(a, ti), files: &[], sizes: &[], dates: &dates };
                 let Some((checked, in_row)) = as_checked(action, a, written) else { continue };
                 let t = &checked;
                 let chain = t.links();
                 let links: Vec<LocatorStep> = chain.iter().filter(|l| !input_link(l)).cloned().collect();
-                let many = in_row || seen_many(a);
+                let many = in_row || many_at(a, ti);
                 let none = takes_none(a);
                 let banner = guards(action, t);
                 let seen = if banner {
@@ -2714,19 +2746,19 @@ pub fn check_resolved_inputs_with(
                 let own = Own { typed, case_text: &[], check, files: &own_files, sizes: &sizes, dates: &dates };
                 !link_holds_placeholder(link) && (exempt(link, &own) || in_seen_date_picker(link, chain, seen))
             };
-            for ((st, _), (ft, _)) in checked_targets(sa).into_iter().zip(checked_targets(fa)) {
+            for (ti, ((st, _), (ft, _))) in checked_targets(sa).into_iter().zip(checked_targets(fa)).enumerate() {
                 let chain = ft.links();
                 // A placeholder chain or narrowed locator the save took as
                 // a whole (`SeenBoth::whole`) is fitted as a whole here too.
-                if both.whole_filled(&st.links(), &chain, seen_many(fa))
+                if both.whole_filled(&st.links(), &chain, many_at(fa, ti))
                     || both.none_whole_filled(&st.links(), &chain, takes_none(fa))
                 {
                     continue;
                 }
-                let seen = both.for_use(seen_many(fa), ft.is_legacy(), takes_none(fa));
+                let seen = both.for_use(many_at(fa, ti), ft.is_legacy(), takes_none(fa));
                 let off = st.links().iter().zip(&chain).any(|(sl, fl)| {
                     link_holds_placeholder(sl)
-                        && !own_data(fl, &chain, &so_far.typed, is_check(fa), seen)
+                        && !own_data(fl, &chain, &so_far.typed, check_at(fa, ti), seen)
                         && !seen.fills(sl, fl)
                 });
                 if off {
@@ -2756,17 +2788,17 @@ pub fn check_resolved_inputs_with(
                 // own actions typed before each of its locators.
                 let mut typed = so_far.typed.clone();
                 for (m, r) in as_saved.iter().flat_map(Action::each).zip(ran.iter().flat_map(Action::each)) {
-                    for ((mt, _), (rt, _)) in checked_targets(m).into_iter().zip(checked_targets(r)) {
+                    for (ti, ((mt, _), (rt, _))) in checked_targets(m).into_iter().zip(checked_targets(r)).enumerate() {
                         let chain = rt.links();
-                        if both.whole_filled(&mt.links(), &chain, seen_many(r))
+                        if both.whole_filled(&mt.links(), &chain, many_at(r, ti))
                             || both.none_whole_filled(&mt.links(), &chain, takes_none(r))
                         {
                             continue;
                         }
-                        let seen = both.for_use(seen_many(r), rt.is_legacy(), takes_none(r));
+                        let seen = both.for_use(many_at(r, ti), rt.is_legacy(), takes_none(r));
                         let fed = mt.links().iter().zip(&chain).any(|(ml, rl)| {
                             let changed = ml != rl || link_holds_placeholder(rl);
-                            changed && !own_data(rl, &chain, &typed, is_check(r), seen) && !seen.fills(ml, rl)
+                            changed && !own_data(rl, &chain, &typed, check_at(r, ti), seen) && !seen.fills(ml, rl)
                         });
                         if fed {
                             return Err(format!(

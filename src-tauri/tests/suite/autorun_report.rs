@@ -884,3 +884,21 @@ fn the_address_checks_read_in_the_report() {
     assert_eq!(said(serde_json::json!({ "kind": "remember_url", "as": "before" })), "note the address as \"before\"");
     assert_eq!(said(serde_json::json!({ "kind": "check_url", "contains": "/home" })), "check the address contains \"/home\"");
 }
+
+#[test]
+fn page_until_reads_in_the_report() {
+    let said = |v: serde_json::Value| action_words(&serde_json::from_value::<v2_lib::browser::actions::Action>(v).unwrap());
+    assert_eq!(
+        said(serde_json::json!({
+            "kind": "page_until", "next": { "role": "button", "name": "Next" }, "until": { "text": "Published" }, "max_pages": 40
+        })),
+        "page with button \"Next\" until text \"Published\" show, at most 40 pages"
+    );
+    assert_eq!(
+        said(serde_json::json!({
+            "kind": "page_until", "next": { "role": "button", "name": "Next" },
+            "until": [{ "text": "Published" }, { "text": "Unpublished" }], "max_pages": 5
+        })),
+        "page with button \"Next\" until text \"Published\" and text \"Unpublished\" show, at most 5 pages"
+    );
+}

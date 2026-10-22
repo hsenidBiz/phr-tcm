@@ -1179,3 +1179,28 @@ fn an_exact_address_off_the_projects_origins_cannot_be_exported() {
     let err = one_step(json!([{ "kind": "check_url", "equals": "https://elsewhere.example/x" }])).run().unwrap_err();
     assert!(err.contains("check_url"), "{err}");
 }
+
+
+#[test]
+fn page_until_exports_the_same_walk() {
+    let got = one_step(json!([
+        { "kind": "page_until", "next": { "role": "button", "name": "Next" },
+          "until": [{ "text": "Published" }, [{ "css": ".card" }, { "text": "Unpublished" }]], "max_pages": 40 }
+    ]))
+    .run()
+    .unwrap();
+    for want in [
+        "const until = [",
+        "const names = [",
+        "for (let p = 1; ; p++) {",
+        "if (p >= 40) throw new Error('walked '",
+        "(await l.count()) > 0",
+        "isEnabled()",
+        "isVisible()",
+        "await next.click();",
+        "waitForLoadState('networkidle'",
+    ] {
+        assert!(got.contains(want), "missing {want}\n{got}");
+    }
+    assert!(!got.contains("waitForTimeout"), "a fixed wait is left:\n{got}");
+}

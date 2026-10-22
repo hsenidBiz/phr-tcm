@@ -625,6 +625,19 @@ function describeKnown(a: Action): Sentence {
         words(upTo(a.timeout_ms)),
       ];
     }
+    case "page_until": {
+      // `until` is one locator or a list of them (an item may itself be a
+      // chain written as a list); a list is never read as a chain.
+      const wanted = Array.isArray(a.until) ? (a.until as unknown[]) : [a.until];
+      if (wanted.length === 0) throw new Unreadable();
+      const out: Sentence = [words("Click "), ...describeTarget(a.next), words(" page by page until ")];
+      wanted.forEach((u, i) => {
+        if (i > 0) out.push(words(" and "));
+        out.push(...describeTarget(u as Target));
+      });
+      out.push(words(` show, at most ${num(a.max_pages)} pages`));
+      return out;
+    }
     case "drag": {
       const position = optStr(a.position) ?? "onto";
       if (!["before", "after", "onto"].includes(position)) throw new Unreadable();

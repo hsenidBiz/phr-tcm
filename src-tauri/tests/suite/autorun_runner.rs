@@ -1083,6 +1083,7 @@ fn every_action_kind_says_whether_it_changes_the_page() {
         (json!({ "kind": "expect_each", "selector": css, "not_empty": true }), false),
         (json!({ "kind": "expect_order", "selector": css, "texts": ["a", "b"] }), false),
         (json!({ "kind": "expect_position", "selector": css, "relative_to": css, "relation": "inside" }), false),
+        (json!({ "kind": "page_until", "next": css, "until": [css], "max_pages": 3 }), true),
     ];
     let mut kinds = std::collections::BTreeSet::new();
     for (raw, changes) in &table {

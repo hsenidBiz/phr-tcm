@@ -2951,6 +2951,45 @@ fn a_position_check_takes_both_locators_seen_matching_one() {
     assert!(refused.contains("#bar was never seen on the live app"), "{refused}");
 }
 
+// ------------------------- page_until: the control that pages, and what is looked for
+
+/// `next` is clicked, so it is held to a click's rule; each `until` is looked
+/// for, so it may have been seen matching several and the case's own words
+/// exempt it as they do any check's.
+#[test]
+fn page_until_holds_next_to_a_click_and_until_to_a_check() {
+    let walk = |next: serde_json::Value, until: serde_json::Value| {
+        one_step("Cycles", serde_json::json!([{ "kind": "page_until", "next": next, "until": until, "max_pages": 10 }]))
+    };
+    let script = walk(serde_json::json!({ "css": "#new" }), serde_json::json!([{ "css": "#bar" }]));
+
+    // `next` never seen: refused, naming it.
+    let only_until = sighted_matching("Cycles", css("#bar"), 12);
+    assert_eq!(check_seen(&only_until, &none(), &script, &[], None), Err(refusal_as(1, "#new", "page_until")));
+
+    // `next` seen matching one, `until` seen matching several: passes.
+    assert_eq!(check_seen(&two_sighted(1, 12), &none(), &script, &[], None), Ok(()));
+
+    // `next` seen matching several is not one control.
+    assert_eq!(check_seen(&two_sighted(2, 12), &none(), &script, &[], None), Err(many_refusal(1, "#new")));
+
+    // `until` in the case's words, never seen: passes.
+    let by_words = walk(serde_json::json!({ "css": "#new" }), serde_json::json!([{ "text": "Published" }]));
+    let case_text = vec!["Published cards are listed".to_string()];
+    let next_only = sighted_matching("Cycles", css("#new"), 1);
+    assert_eq!(check_seen(&next_only, &none(), &by_words, &case_text, None), Ok(()));
+    // Without the case saying it, it is refused.
+    assert!(check_seen(&next_only, &none(), &by_words, &[], None).is_err());
+
+    // `next` in the case's words, never seen: still refused, as a click is.
+    let next_by_words = walk(serde_json::json!({ "text": "Next page" }), serde_json::json!([{ "css": "#bar" }]));
+    let case_text = vec!["Press Next page until it shows".to_string()];
+    assert_eq!(
+        check_seen(&only_until, &none(), &next_by_words, &case_text, None),
+        Err(refusal_as(1, "text \"Next page\"", "page_until"))
+    );
+}
+
 // ------------------------- expect_each: a list, and a child looked for in it
 
 /// The list an `expect_each` reads in these tests.

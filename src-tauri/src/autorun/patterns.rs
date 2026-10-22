@@ -606,6 +606,8 @@ pub fn action_target(action: &Action) -> Option<String> {
         | Action::ExpectRowCount { table, .. } => Some(table.describe()),
         // What is picked up: a drag that cannot start is about it.
         Action::Drag { from, .. } => Some(from.describe()),
+        // The control that pages: a walk that cannot go on is about it.
+        Action::PageUntil { next, .. } => Some(next.describe()),
         Action::ExpectDownload { name, .. } => Some(format!("the download \"{}\"", name.trim())),
         // A tab by the name the script gave it.
         Action::ExpectTab { name, .. }

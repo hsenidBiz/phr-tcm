@@ -125,6 +125,7 @@ mod browser_tree;
 mod browser_locator;
 mod browser_page;
 mod browser_page_log;
+mod browser_page_until;
 mod browser_session;
 mod browser_snapshot;
 mod browser_tabs;

@@ -465,7 +465,47 @@ pub enum Action {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         timeout_ms: Option<u32>,
     },
+    /// Click `next` page by page until every `until` locator has been seen,
+    /// each on any page.
+    PageUntil { next: Target, until: PageTargets, max_pages: u32 },
 }
+
+/// `page_until`'s `until`. Read: a locator object or string is one; a JSON
+/// array is a list whose items are each a locator (an object, a string, or a
+/// chain written as a list of objects). Written: always an array.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, specta::Type)]
+#[serde(transparent)]
+#[specta(transparent)]
+pub struct PageTargets(pub Vec<Target>);
+
+impl<'de> serde::Deserialize<'de> for PageTargets {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        use serde::de::Error as _;
+        let value: serde_json::Value = serde::Deserialize::deserialize(deserializer)?;
+        match value {
+            serde_json::Value::Array(items) => items
+                .into_iter()
+                .map(|item| serde_json::from_value::<Target>(item).map_err(D::Error::custom))
+                .collect::<Result<Vec<_>, _>>()
+                .map(PageTargets),
+            one => serde_json::from_value::<Target>(one).map(|t| PageTargets(vec![t])).map_err(D::Error::custom),
+        }
+    }
+}
+
+/// The most pages `page_until` may walk.
+pub const PAGE_UNTIL_MAX_PAGES: u32 = 100;
+/// The most `until` locators `page_until` may wait for.
+pub const PAGE_UNTIL_MAX_TARGETS: usize = 10;
+/// `page_until` with `max_pages` outside 1 to 100.
+pub const PAGE_UNTIL_PAGES: &str = "page_until needs \"max_pages\" from 1 to 100";
+/// `page_until` with no `until` locator.
+pub const PAGE_UNTIL_NONE: &str = "page_until needs at least one \"until\" locator";
+/// `page_until` with more than ten `until` locators.
+pub const PAGE_UNTIL_MANY: &str = "page_until takes at most 10 \"until\" locators";
 
 /// How an `expect_dialog` answers: OK, or Cancel.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, specta::Type)]
@@ -1377,6 +1417,18 @@ impl Action {
                 }
                 Ok(())
             }
+            Action::PageUntil { next, until, max_pages } => {
+                if !(1..=PAGE_UNTIL_MAX_PAGES).contains(max_pages) {
+                    return Err(PAGE_UNTIL_PAGES.to_string());
+                }
+                match until.0.len() {
+                    0 => return Err(PAGE_UNTIL_NONE.to_string()),
+                    n if n > PAGE_UNTIL_MAX_TARGETS => return Err(PAGE_UNTIL_MANY.to_string()),
+                    _ => {}
+                }
+                next.validate()?;
+                until.0.iter().try_for_each(|u| u.validate().map_err(|why| format!("page_until until: {why}")))
+            }
             Action::CheckText { value } if value.trim().is_empty() => {
                 Err("check_text has an empty value".to_string())
             }
@@ -1615,6 +1667,7 @@ impl Action {
             Action::ExpectEach { selector, child, .. } => std::iter::once(selector).chain(child.as_ref()).collect(),
             Action::ExpectOrder { selector, .. } => vec![selector],
             Action::ExpectPosition { selector, relative_to, .. } => vec![selector, relative_to],
+            Action::PageUntil { next, until, .. } => std::iter::once(next).chain(until.0.iter()).collect(),
             Action::WhenVisible { selector, then, .. } | Action::RepeatWhileVisible { selector, then, .. } => {
                 std::iter::once(selector).chain(then.iter().flat_map(Action::targets)).collect()
             }
@@ -1667,6 +1720,7 @@ impl Action {
             Action::ExpectEach { selector, child, .. } => std::iter::once(selector).chain(child.as_mut()).collect(),
             Action::ExpectOrder { selector, .. } => vec![selector],
             Action::ExpectPosition { selector, relative_to, .. } => vec![selector, relative_to],
+            Action::PageUntil { next, until, .. } => std::iter::once(next).chain(until.0.iter_mut()).collect(),
             Action::WhenVisible { selector, then, .. } | Action::RepeatWhileVisible { selector, then, .. } => {
                 std::iter::once(selector).chain(then.iter_mut().flat_map(Action::targets_mut)).collect()
             }
@@ -1745,6 +1799,7 @@ impl Action {
                 | Action::ExpectEach { .. }
                 | Action::ExpectOrder { .. }
                 | Action::ExpectPosition { .. }
+                | Action::PageUntil { .. }
         )
     }
 }
@@ -1854,7 +1909,7 @@ pub const CHECK_TEXT_JS: &str = r#"function(want) {
 /// argument and never concatenated into this source.
 pub const RESOLVE_URL_JS: &str = r#"function(rel) { return new URL(rel, location.href).href; }"#;
 
-async fn point_and_pause<D: Driver>(
+pub(crate) async fn point_and_pause<D: Driver>(
     d: &mut D,
     ready: &input::Ready,
     timing: &Timing,
@@ -2393,6 +2448,9 @@ async fn run<D: Driver>(d: &mut D, action: &Action, timing: &Timing, policy: &Po
         Action::ExpectPosition { selector, relative_to, relation, timeout_ms } => {
             let check = Check::Position { relative_to, relation: *relation };
             expect::expect(d, selector, check, wait(timeout_ms, timing), timing.poll_ms).await
+        }
+        Action::PageUntil { next, until, max_pages } => {
+            super::page_until::page_until(d, next, &until.0, *max_pages, timing).await
         }
         Action::ExpectRowCount { table, equals, at_least, at_most, timeout_ms } => match table::row_count(*equals, *at_least, *at_most) {
             Ok(want) => table::expect_table(d, table, table::TableCheck::Count(want), wait(timeout_ms, timing), timing.poll_ms).await,

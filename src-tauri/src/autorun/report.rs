@@ -207,6 +207,10 @@ pub fn action_words(action: &Action) -> String {
         Action::ExpectPosition { selector, relative_to, relation, .. } => {
             format!("expect {} to be {} {}", selector.describe(), relation.words(), relative_to.describe())
         }
+        Action::PageUntil { next, until, max_pages } => {
+            let names: Vec<String> = until.0.iter().map(|u| u.describe()).collect();
+            format!("page with {} until {} show, at most {max_pages} pages", next.describe(), names.join(" and "))
+        }
         Action::ExpectDialog { text, contains, answer, prompt_text, .. } => {
             let said = match (text, contains) {
                 (Some(t), _) => format!(" saying \"{t}\""),

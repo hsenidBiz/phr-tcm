@@ -4091,3 +4091,33 @@ async fn expect_order_and_position_read_a_real_page() {
     must(run(&mut live, place(fbtn.clone(), fbar.clone(), "in_top_right")).await);
     must(run(&mut live, place(fbtn, new, "left_of")).await);
 }
+
+/// `page_until` against a real list drawn five pages deep by a script:
+/// the walk clicks Next until the card shows, and one that never shows
+/// stops at the last page, where Next is disabled, naming the pages walked.
+#[tokio::test]
+#[ignore = "starts a real headless Edge"]
+async fn page_until_walks_a_real_list_until_the_card_shows() {
+    let mut live = open().await;
+    let url = fixture_url().replace("autorun-live.html", "autorun-pages.html");
+    must(run(&mut live, json!({ "kind": "navigate", "url": url.clone() })).await);
+    let next = json!({ "role": "button", "name": "Next" });
+    let walk = |until: serde_json::Value, max: u32| {
+        json!({ "kind": "page_until", "next": next.clone(), "until": until, "max_pages": max })
+    };
+
+    let out = run(&mut live, walk(json!([{ "text": "Unpublished" }]), 10)).await;
+    assert!(out.ok, "{}", out.detail);
+    assert!(out.detail.contains("on page 4"), "{}", out.detail);
+
+    // Back to page 1, then a target that is on no page.
+    must(run(&mut live, json!({ "kind": "navigate", "url": url })).await);
+    let out = run(&mut live, walk(json!([{ "text": "Archived" }]), 10)).await;
+    assert!(!out.ok, "{}", out.detail);
+    assert!(out.detail.contains("walked 5 pages and never saw"), "{}", out.detail);
+    assert!(out.detail.contains("is disabled on page 5"), "{}", out.detail);
+
+    // Fewer pages than the card is deep: the count at the limit.
+    must(run(&mut live, json!({ "kind": "navigate", "url": fixture_url().replace("autorun-live.html", "autorun-pages.html") })).await);
+    refused(run(&mut live, walk(json!([{ "text": "Unpublished" }]), 2)).await, "walked 2 pages and never saw");
+}
