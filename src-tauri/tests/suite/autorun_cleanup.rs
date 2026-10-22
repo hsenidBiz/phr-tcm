@@ -13,9 +13,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use v2_lib::api_templates::runner::RUN_LIMIT;
 use v2_lib::api_templates::{store, ApiTemplate, Proven};
 use v2_lib::autorun::cleanup::{
-    delete_template_for, no_delete_template, not_active, preview, run_cleanup_within, CleanupPick, CleanupProgress,
-    CleanupQuery,
-    NOTHING_TO_DELETE, NOT_IN_PREVIEW, NO_SUCH_ENVIRONMENT, OLDER_THAN_MIN, PREFIX_NEEDED, PROVE_REFUSAL,
+    delete_template_for, more_than_one_kind, no_delete_template, not_active, not_this_sessions, preview, ran_elsewhere,
+    run_cleanup_within, undo_explore_session_within, undo_plan, CleanupPick, CleanupProgress, CleanupQuery,
+    NOTHING_NAMED, NOTHING_TO_DELETE, NOT_IN_PREVIEW, NO_SUCH_ENVIRONMENT, OLDER_THAN_MIN, PREFIX_NEEDED, PROVE_REFUSAL,
 };
 use v2_lib::autorun::test_made::{self, TestMade};
 
@@ -938,11 +938,165 @@ async fn a_fixture_step_on_a_delete_template_is_refused() {
     assert!(r.fetched().is_empty());
 }
 
-/// Review Focus 5, for Clean up: it starts only from the app, by a person.
-/// No bridge route and no MCP tool reaches `run_cleanup` or names a cleanup
-/// command, and the commands are registered for the webview.
+/// An entry an explore session made, in `env`.
+fn explored(env: &str, kind: &str, id: &str, session: &str) -> TestMade {
+    TestMade {
+        fixture: "explore".into(),
+        run_id: session.into(),
+        ..entry(env, kind, id, &format!("explored {kind} {id}"), 5, "present")
+    }
+}
+
+async fn undo(
+    r: &mut Rig,
+    session: &str,
+    ids: &[&str],
+    kind: Option<&str>,
+) -> Result<v2_lib::autorun::cleanup::CleanupReport, String> {
+    let ids: Vec<String> = ids.iter().map(|s| s.to_string()).collect();
+    undo_explore_session_within(
+        &mut r.browsers,
+        r.root.path(),
+        ORG,
+        PROJECT,
+        session,
+        &ids,
+        kind,
+        &quick(),
+        RUN_LIMIT,
+        &QUICK_PAUSES,
+        &AtomicBool::new(false),
+        |_| {},
+    )
+    .await
+}
+
+/// An undo deletes the ids it names from its own session and nothing else:
+/// not another session's create, and not a fixture's.
+#[tokio::test]
+async fn undo_deletes_only_this_sessions_verified_creates() {
+    let _act = crate::serial::activity_log();
+    let _held = crate::serial::held_browsers();
+    let _leases = crate::serial::account_leases();
+    let (mut r, env) = cleanup_rig(vec![answer(200, json!({ "success": true }))], &[("276", "AUTOTEST fixture", 9)]);
+    let mut made = test_made::list(r.root.path());
+    made.push(explored(&env, "cycle", "274", "S1"));
+    made.push(explored(&env, "cycle", "275", "S2"));
+    seed(r.root.path(), &made);
+
+    let report = undo(&mut r, "S1", &["274"], None).await.unwrap();
+    assert_eq!(report.results.len(), 1, "{report:?}");
+    assert!(report.results[0].ok && report.results[0].id == "274" && report.results[0].outcome == "deleted");
+    assert_eq!(report.total, 1);
+    assert_eq!(deleted_ids(&r), vec![json!("274")]);
+    assert_eq!(status_of(r.root.path(), &env, "cycle", "274"), "deleted");
+    assert_eq!(status_of(r.root.path(), &env, "cycle", "275"), "present");
+    assert_eq!(status_of(r.root.path(), &env, "cycle", "276"), "present");
+}
+
+#[tokio::test]
+async fn undo_refuses_an_id_this_session_did_not_verify() {
+    let _act = crate::serial::activity_log();
+    let _held = crate::serial::held_browsers();
+    let _leases = crate::serial::account_leases();
+    let (mut r, env) = cleanup_rig(vec![], &[("276", "AUTOTEST fixture", 9)]);
+    let mut made = test_made::list(r.root.path());
+    made.push(explored(&env, "cycle", "274", "S1"));
+    made.push(explored(&env, "cycle", "275", "S2"));
+    seed(r.root.path(), &made);
+
+    for id in ["275", "276"] {
+        assert_eq!(undo(&mut r, "S1", &[id], None).await, Err(not_this_sessions(id)), "{id}");
+    }
+    // One id that is not the session's refuses all of them.
+    assert_eq!(undo(&mut r, "S1", &["274", "275"], None).await, Err(not_this_sessions("275")));
+    assert_eq!(r.browsers.opened, 0);
+    assert!(r.fetched().is_empty(), "nothing sent");
+    assert_eq!(status_of(r.root.path(), &env, "cycle", "274"), "present");
+    assert_eq!(
+        not_this_sessions("275"),
+        "275 is not one of the creates this explore session verified, so nothing was deleted"
+    );
+}
+
+/// Review Focus 3: an undo asked for after the person switched environment
+/// is refused with the environment the session ran in.
 #[test]
-fn no_bridge_route_or_mcp_tool_reaches_clean_up() {
+fn undo_says_which_environment_the_session_ran_in() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut staging = active(dir.path());
+    staging.id = String::new();
+    staging.name = "Staging".into();
+    let db = staging.db_id.clone();
+    let file = v2_lib::environments::save_env(dir.path(), staging, &[db]).unwrap();
+    let staging = file.environments.iter().find(|e| e.name == "Staging").unwrap().id.clone();
+    assert_ne!(staging, active(dir.path()).id);
+    seed(dir.path(), &[explored(&staging, "cycle", "274", "S1")]);
+
+    let ids = vec!["274".to_string()];
+    assert_eq!(undo_plan(dir.path(), ORG, PROJECT, "S1", &ids, None).unwrap_err(), ran_elsewhere("Staging"));
+    assert_eq!(ran_elsewhere("Staging"), "this session ran in Staging - switch to it, then undo");
+    // An id the session never made anywhere is still just not its own.
+    let other = vec!["999".to_string()];
+    assert_eq!(undo_plan(dir.path(), ORG, PROJECT, "S1", &other, None).unwrap_err(), not_this_sessions("999"));
+    // Another session's create in that environment says nothing of it.
+    assert_eq!(undo_plan(dir.path(), ORG, PROJECT, "S2", &ids, None).unwrap_err(), not_this_sessions("274"));
+}
+
+#[test]
+fn undo_needs_an_id_and_a_kind_when_one_id_has_two() {
+    let dir = tempfile::tempdir().unwrap();
+    let env = active(dir.path()).id;
+    seed(
+        dir.path(),
+        &[
+            explored(&env, "cycle", "9", "S1"),
+            explored(&env, "suite", "9", "S1"),
+            explored(&env, "cycle", "10", "S1"),
+            TestMade { status: "deleted".into(), ..explored(&env, "goal", "10", "S1") },
+        ],
+    );
+    assert_eq!(undo_plan(dir.path(), ORG, PROJECT, "S1", &[], None).unwrap_err(), NOTHING_NAMED);
+    assert_eq!(NOTHING_NAMED, "name at least one id to undo");
+
+    let nine = vec!["9".to_string()];
+    assert_eq!(undo_plan(dir.path(), ORG, PROJECT, "S1", &nine, None).unwrap_err(), more_than_one_kind("9"));
+    assert_eq!(more_than_one_kind("9"), "9 is on this session's list as more than one kind - send kind as well");
+    let plan = undo_plan(dir.path(), ORG, PROJECT, "S1", &nine, Some("suite")).unwrap();
+    assert_eq!(plan.len(), 1);
+    assert_eq!((plan[0].0.kind.as_str(), plan[0].0.id.as_str()), ("suite", "9"));
+    assert!(plan[0].1.is_none(), "no suite delete template");
+
+    // A deleted entry is not on the list any more, so 10 is a cycle only.
+    let ten = vec!["10".to_string(), "10".to_string()];
+    let plan = undo_plan(dir.path(), ORG, PROJECT, "S1", &ten, None).unwrap();
+    assert_eq!(plan.len(), 1, "an id named twice is planned once");
+}
+
+#[tokio::test]
+async fn undo_names_a_create_with_no_delete_template() {
+    let _act = crate::serial::activity_log();
+    let _held = crate::serial::held_browsers();
+    let _leases = crate::serial::account_leases();
+    let (mut r, env) = cleanup_rig(vec![], &[]);
+    seed(r.root.path(), &[explored(&env, "suite", "31", "S1")]);
+
+    let report = undo(&mut r, "S1", &["31"], None).await.unwrap();
+    assert_eq!(report.results.len(), 1, "{report:?}");
+    assert!(!report.results[0].ok);
+    assert_eq!(report.results[0].outcome, no_delete_template("suite"));
+    assert_eq!(report.total, 1);
+    assert_eq!(status_of(r.root.path(), &env, "suite", "31"), "present");
+    assert_eq!(r.browsers.opened, 0);
+    assert!(r.fetched().is_empty());
+}
+
+/// Review Focus 5, for Clean up: it starts from the app, by a person. The
+/// one way the bridge reaches it is to undo an explore session's own
+/// verified creates. No MCP tool reaches it, no bridge route or tool names
+/// a cleanup command, and the commands are registered for the webview.
+#[test]
+fn the_bridge_reaches_clean_up_only_to_undo_an_explore_session() {
     let read = |p: &str| {
         std::fs::read_to_string(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(p)).unwrap().replace("\r\n", "\n")
     };
@@ -961,6 +1115,26 @@ fn no_bridge_route_or_mcp_tool_reaches_clean_up() {
             assert!(!text.contains(forbidden), "{name} reaches {forbidden}");
         }
     }
+
+    // Every `cleanup::<name>` the bridge uses is one of these.
+    let allowed = ["proof_subject", "proof_deleted", "undo_plan", "undo_explore_session"];
+    for (i, _) in bridge.match_indices("cleanup::") {
+        let name: String =
+            bridge[i + "cleanup::".len()..].chars().take_while(|c| c.is_alphanumeric() || *c == '_').collect();
+        assert!(allowed.contains(&name.as_str()), "src/ai_bridge.rs reaches cleanup::{name}");
+    }
+    assert!(!mcp.contains("cleanup::"), "src/mcp.rs names the cleanup module");
+
+    // The delete itself is called from one place: the undo's own function.
+    let calls: Vec<usize> = bridge.match_indices("cleanup::undo_explore_session(").map(|(i, _)| i).collect();
+    assert!(calls.len() <= 1, "undo_explore_session is called from {} places", calls.len());
+    if let Some(&at) = calls.first() {
+        let before = &bridge[..at];
+        let f = before.rfind("fn ").map(|i| &before[i + 3..]).unwrap_or("");
+        let name: String = f.chars().take_while(|c| c.is_alphanumeric() || *c == '_').collect();
+        assert_eq!(name, "explore_undo_in", "undo_explore_session is called from fn {name}");
+    }
+
     let lib = read("src/lib.rs");
     for command in ["auto_run_cleanup_preview", "auto_run_cleanup_run", "auto_run_cleanup_stop"] {
         assert!(lib.contains(&format!("api_templates::{command},")), "{command} is not registered");

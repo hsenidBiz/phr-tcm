@@ -1640,8 +1640,10 @@ mod running {
 }
 
 /// Review Focus 5: no bridge route and no MCP tool writes the record of
-/// test-made drafts itself. Only the fixture runner adds to the record and
-/// only Clean up changes a status.
+/// test-made drafts itself. Only the fixture runner and an explore
+/// session's own verified creates add to the record, and only Clean up (the
+/// person's, or an undo of the assistant's own explore session) changes a
+/// status.
 /// A source-scan tripwire, in the style of the other tripwires here: it
 /// lists every route and tool so a new one is in view, then checks that
 /// neither file reaches a writer.

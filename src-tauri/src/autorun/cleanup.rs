@@ -13,6 +13,12 @@
 //! bridge route and no MCP tool reaches `run_cleanup` (a tripwire test
 //! scans for it).
 //!
+//! The one other way in is an undo of an explore session (`undo_plan`,
+//! `undo_explore_session`): the assistant's own verified creates of one
+//! session, named by id in the chat, go through the same delete loop. No
+//! prefix, age or preview check applies, since the person asked for it, but
+//! only entries that session made can be named.
+//!
 //! Proving a delete template is the other way an entry can go: the prove
 //! only accepts an `id` that is a `present` entry of the template's kind in
 //! the active environment (`proof_subject`), and a proof that deleted it
@@ -284,6 +290,26 @@ struct Tally<'a, F: FnMut(CleanupProgress)> {
 }
 
 impl<F: FnMut(CleanupProgress)> Tally<'_, F> {
+    /// Says that `entry` was not sent: a failed result and a progress line,
+    /// and the record entry left as it was.
+    fn unsent(&mut self, entry: &TestMade, why: String) {
+        applog::info(format!("clean up: {} {} not deleted", entry.kind, entry.id));
+        self.report.results.push(CleanupResult {
+            id: entry.id.clone(),
+            kind: entry.kind.clone(),
+            name: entry.name.clone(),
+            ok: false,
+            outcome: why.clone(),
+        });
+        (self.on_progress)(CleanupProgress {
+            done: self.report.results.len() as u32,
+            total: self.total,
+            kind: entry.kind.clone(),
+            id: entry.id.clone(),
+            outcome: why,
+        });
+    }
+
     fn done(&mut self, entry: &TestMade, outcome: Result<(), String>) {
         let (ok, said) = match outcome {
             Ok(()) => (true, DELETED.to_string()),
@@ -386,7 +412,6 @@ pub async fn run_cleanup_within<B: Browsers>(
     if chosen.is_empty() {
         return Err(NOTHING_TO_DELETE.to_string());
     }
-    let stopped = || cancel.load(Ordering::SeqCst);
     let mut tally = Tally {
         root,
         total: chosen.len() as u32,
@@ -394,6 +419,27 @@ pub async fn run_cleanup_within<B: Browsers>(
         on_progress,
     };
     applog::info(format!("clean up: {} drafts to delete in {}", chosen.len(), active.name));
+    delete_grouped(browsers, root, org, project, chosen, &mut tally, timing, limit, retry_pauses, cancel).await;
+    Ok(tally.report)
+}
+
+/// Deletes `chosen`, each entry through its own delete template, and
+/// writes each result through `tally`. Both Clean up and an undo of an
+/// explore session delete through this one loop.
+#[allow(clippy::too_many_arguments)]
+async fn delete_grouped<B: Browsers, F: FnMut(CleanupProgress)>(
+    browsers: &mut B,
+    root: &Path,
+    org: &str,
+    project: &str,
+    chosen: Vec<(TestMade, ApiTemplate)>,
+    tally: &mut Tally<'_, F>,
+    timing: &Timing,
+    limit: Duration,
+    retry_pauses: &[Duration],
+    cancel: &AtomicBool,
+) {
+    let stopped = || cancel.load(Ordering::SeqCst);
 
     // Every check a delete makes before anything is sent - the template's
     // shape, its `id`, the recipe and the account - for each entry first:
@@ -470,6 +516,164 @@ pub async fn run_cleanup_within<B: Browsers>(
         d.set_deadline(None);
         browsers.close(d).await;
     }
+}
+
+/// TestMade.fixture of everything an explore session made (the session
+/// writes them as it verifies each create).
+pub const EXPLORE_MADE: &str = "explore";
+
+/// Said when an undo names no id.
+pub const NOTHING_NAMED: &str = "name at least one id to undo";
+
+/// Said when an id is not on the session's list of verified creates.
+pub fn not_this_sessions(id: &str) -> String {
+    format!("{id} is not one of the creates this explore session verified, so nothing was deleted")
+}
+
+/// Said when one id is on the session's list as two kinds and no kind was
+/// sent.
+pub fn more_than_one_kind(id: &str) -> String {
+    format!("{id} is on this session's list as more than one kind - send kind as well")
+}
+
+/// Said when the session's creates were made in an environment that is not
+/// the active one: a delete goes to the active environment's site.
+pub fn ran_elsewhere(env_name: &str) -> String {
+    format!("this session ran in {env_name} - switch to it, then undo")
+}
+
+/// The entries an undo of `session` would delete, each with its kind's
+/// proven delete template (None: no template, so it is not deleted).
+///
+/// Only record entries made by an explore session (`EXPLORE_MADE`) under
+/// this `session`, still there or whose delete failed, are looked at; the
+/// prefix, age and preview checks of Clean up do not apply, since the
+/// person asked for this in the chat. Any id that is not one of them
+/// refuses the whole undo, before anything runs.
+pub fn undo_plan(
+    root: &Path,
+    org: &str,
+    project: &str,
+    session: &str,
+    ids: &[String],
+    kind: Option<&str>,
+) -> Result<Vec<(TestMade, Option<ApiTemplate>)>, String> {
+    if ids.is_empty() {
+        return Err(NOTHING_NAMED.to_string());
+    }
+    let envs = crate::environments::load_or_init(root, None).map_err(|e| {
+        applog::warn(format!("clean up: the environments could not be read: {e}"));
+        ENVIRONMENT_UNREADABLE.to_string()
+    })?;
+    let active = crate::environments::active(root).map_err(|e| {
+        applog::warn(format!("clean up: the active environment could not be read: {e}"));
+        ENVIRONMENT_UNREADABLE.to_string()
+    })?;
+    let kind = kind.map(str::trim).filter(|k| !k.is_empty());
+    let made: Vec<TestMade> = test_made::list(root)
+        .into_iter()
+        .filter(|e| e.fixture == EXPLORE_MADE && e.run_id == session)
+        .filter(|e| e.status == PRESENT || e.status.starts_with("delete failed"))
+        .filter(|e| kind.is_none_or(|k| e.kind == k))
+        .collect();
+    let templates: Vec<ApiTemplate> = template_store::list(root, org, project)
+        .unwrap_or_else(|e| {
+            applog::warn(format!("clean up: the api templates could not be listed: {e}"));
+            vec![]
+        })
+        .into_iter()
+        .map(|s| s.template)
+        .collect();
+    let mut plan: Vec<(TestMade, Option<ApiTemplate>)> = Vec::new();
+    for id in ids {
+        let id = id.trim();
+        let here: Vec<&TestMade> = made.iter().filter(|e| e.environment == active.id && e.id == id).collect();
+        let Some(first) = here.first() else {
+            return Err(match made.iter().find(|e| e.id == id) {
+                Some(other) => {
+                    let name = envs
+                        .environments
+                        .iter()
+                        .find(|e| e.id == other.environment)
+                        .map(|e| e.name.clone())
+                        .unwrap_or_else(|| other.environment.clone());
+                    ran_elsewhere(&name)
+                }
+                None => not_this_sessions(id),
+            });
+        };
+        if here.iter().any(|e| e.kind != first.kind) {
+            return Err(more_than_one_kind(id));
+        }
+        if !plan.iter().any(|(e, _)| e.kind == first.kind && e.id == first.id) {
+            let t = delete_template_for(&templates, &first.kind, &active.name).cloned();
+            plan.push(((*first).clone(), t));
+        }
+    }
+    Ok(plan)
+}
+
+/// Deletes the creates `ids` of explore session `session`, one at a time,
+/// through the same grouped loop Clean up uses (one lease and one browser
+/// per account and template). It plans again itself (`undo_plan`); a
+/// refusal there refuses the whole undo. An entry with no delete template
+/// is a result with `ok: false` and the record untouched. Each delete sets
+/// its entry `deleted` or `delete failed: <the runner's sentence>`.
+#[allow(clippy::too_many_arguments)]
+pub async fn undo_explore_session<B: Browsers>(
+    browsers: &mut B,
+    root: &Path,
+    org: &str,
+    project: &str,
+    session: &str,
+    ids: &[String],
+    kind: Option<&str>,
+    timing: &Timing,
+    cancel: &AtomicBool,
+    on_progress: impl FnMut(CleanupProgress),
+) -> Result<CleanupReport, String> {
+    undo_explore_session_within(
+        browsers, root, org, project, session, ids, kind, timing, RUN_LIMIT, &RETRY_PAUSES, cancel, on_progress,
+    )
+    .await
+}
+
+/// `undo_explore_session` with the per-delete limit and the retry pauses
+/// given - the way a test reaches a short one.
+#[allow(clippy::too_many_arguments)]
+pub async fn undo_explore_session_within<B: Browsers>(
+    browsers: &mut B,
+    root: &Path,
+    org: &str,
+    project: &str,
+    session: &str,
+    ids: &[String],
+    kind: Option<&str>,
+    timing: &Timing,
+    limit: Duration,
+    retry_pauses: &[Duration],
+    cancel: &AtomicBool,
+    on_progress: impl FnMut(CleanupProgress),
+) -> Result<CleanupReport, String> {
+    let plan = undo_plan(root, org, project, session, ids, kind)?;
+    let mut tally = Tally {
+        root,
+        total: plan.len() as u32,
+        report: CleanupReport { results: vec![], total: plan.len() as u32, stopped: false },
+        on_progress,
+    };
+    applog::info(format!("clean up: {} creates of an explore session to undo", plan.len()));
+    let mut chosen = Vec::new();
+    for (entry, t) in plan {
+        match t {
+            Some(t) => chosen.push((entry, t)),
+            None => {
+                let why = no_delete_template(&entry.kind);
+                tally.unsent(&entry, why);
+            }
+        }
+    }
+    delete_grouped(browsers, root, org, project, chosen, &mut tally, timing, limit, retry_pauses, cancel).await;
     Ok(tally.report)
 }
 

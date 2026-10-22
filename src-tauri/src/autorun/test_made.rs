@@ -4,8 +4,11 @@
 //! drafts works from, so it is the one list of things the tests may delete.
 //! See the design doc, "The record of test-made drafts" (section 3).
 //!
-//! Only the fixture runner adds entries (`record`), and only Clean up
-//! changes a status (`set_status`). Both writers are `pub(crate)`: no tool
+//! Only the fixture runner and an explore session's own verified creates
+//! add entries (`record`; an explore session's carry the fixture
+//! `explore` and its session as the run), and only Clean up - the
+//! person's, or an undo of the assistant's own explore session - changes a
+//! status (`set_status`). Both writers are `pub(crate)`: no tool
 //! and no IPC command can add, edit or remove an entry. `list` is the one
 //! public reader.
 //!
