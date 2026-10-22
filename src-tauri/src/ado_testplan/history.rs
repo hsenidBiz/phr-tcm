@@ -67,7 +67,9 @@ impl AdoClient {
     /// walks the newest 15 runs and returns every case seen. A completed
     /// run's outcomes are kept in the session cache, so a repeat sweep reads
     /// only new or unfinished runs; runs that 403/404 are skipped (and never
-    /// kept). One info line per sweep says what bit. Read only.
+    /// kept). A later non-auth failure ends the sweep with what was gathered
+    /// (logged, summary says partial); with nothing gathered it is returned.
+    /// One info line per sweep says what bit. Read only.
     pub async fn run_history(
         &self,
         org: &str,
@@ -109,8 +111,9 @@ impl AdoClient {
         let mut by_case: HashMap<i32, Vec<RunOutcome>> = HashMap::new();
         let (mut walked, mut fetched, mut cached, mut skipped, mut multi_page) = (0usize, 0, 0, 0, 0);
         let mut all_full = false;
+        let mut partial = false;
 
-        for chunk in runs[..listed.min(limit)].chunks(SUITE_SCAN_CONCURRENCY) {
+        'sweep: for chunk in runs[..listed.min(limit)].chunks(SUITE_SCAN_CONCURRENCY) {
             // Cache hits first; the misses are fetched concurrently (eager
             // futures - closure-captured refs break the tauri command macro).
             let mut per_run: Vec<Option<Result<(Vec<serde_json::Value>, usize), AdoError>>> =
@@ -150,7 +153,21 @@ impl AdoClient {
                             skipped += 1;
                             continue;
                         }
-                        Err(e) => return Err(e),
+                        Err(AdoError::Unauthorized) => return Err(AdoError::Unauthorized),
+                        Err(e) => {
+                            // Something other than a refusal (5xx, throttling,
+                            // network). With nothing gathered yet the caller
+                            // needs the error; otherwise keep what was read.
+                            if fetched + cached == 0 {
+                                return Err(e);
+                            }
+                            crate::applog::warn(format!(
+                                "run history: plan {plan_id}: a run could not be read after {} run(s)                                  were read - the history may be incomplete",
+                                fetched + cached
+                            ));
+                            partial = true;
+                            break 'sweep;
+                        }
                         Ok((rows, pages)) => {
                             fetched += 1;
                             if pages > 1 {
@@ -188,7 +205,9 @@ impl AdoClient {
             }
         }
 
-        let reason = if !targeted {
+        let reason = if partial {
+            "partial (a run failed)"
+        } else if !targeted {
             "untargeted (newest 15)"
         } else if all_full {
             "every asked case has 5"

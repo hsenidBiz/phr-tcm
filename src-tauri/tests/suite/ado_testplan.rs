@@ -1238,3 +1238,45 @@ async fn an_existing_suite_is_still_used_when_the_area_is_remembered_as_refused(
         assert_eq!(req.method.as_str(), "GET", "nothing is created: {}", req.url);
     }
 }
+
+#[tokio::test]
+async fn run_history_keeps_what_it_gathered_when_a_later_run_fails() {
+    let _log = crate::serial::log_tail();
+    let server = MockServer::start().await;
+    mount_runs(&server, (1..=3).map(|i| run_row(i, "Completed")).collect()).await;
+    mount_run_results(&server, 3, vec![passed_row("307")]).await;
+    mount_run_results(&server, 2, vec![passed_row("307")]).await;
+    Mock::given(method("GET"))
+        .and(path("/o/p/_apis/test/Runs/1/results"))
+        .respond_with(ResponseTemplate::new(500))
+        .with_priority(1)
+        .mount(&server)
+        .await;
+    let client = AdoClient::with_base_url("t".into(), server.uri());
+    let history = client.run_history("o", "p", 9307, &[307]).await.unwrap();
+    assert_eq!(history.len(), 1);
+    let ids: Vec<i32> = history[0].outcomes.iter().map(|o| o.run_id).collect();
+    assert_eq!(ids, vec![3, 2]);
+    let lines: Vec<String> = v2_lib::applog::recent(500)
+        .into_iter()
+        .map(|l| l.message)
+        .filter(|m| m.contains("run history") && m.contains("9307"))
+        .collect();
+    assert!(lines.iter().any(|l| l.contains("partial")), "{lines:?}");
+    assert!(lines.iter().all(|l| !l.contains("http")), "{lines:?}");
+}
+
+#[tokio::test]
+async fn run_history_still_fails_when_the_first_run_fails() {
+    let server = MockServer::start().await;
+    mount_runs(&server, (1..=3).map(|i| run_row(i, "Completed")).collect()).await;
+    Mock::given(method("GET"))
+        .and(path("/o/p/_apis/test/Runs/3/results"))
+        .respond_with(ResponseTemplate::new(500))
+        .with_priority(1)
+        .mount(&server)
+        .await;
+    mount_catch_all(&server, vec![passed_row("308")]).await;
+    let client = AdoClient::with_base_url("t".into(), server.uri());
+    assert!(client.run_history("o", "p", 9, &[308]).await.is_err());
+}
