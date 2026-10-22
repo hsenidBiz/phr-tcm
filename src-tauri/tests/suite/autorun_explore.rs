@@ -14,14 +14,19 @@ use crate::common::quick;
 use serde_json::json;
 use std::sync::atomic::Ordering;
 use v2_lib::ai_bridge::{
-    discover_action_in, discover_start_in, end_discovery_closing, end_discovery_in, page_read_in, EXPLORE_NOT_MAPPING,
-    EXPLORE_NOT_STARTED, READ_WITH_NO_AREA,
+    discover_action_in, discover_start_in, end_discovery_closing, end_discovery_in, explore_changes, page_read_in,
+    record_change_in, EXPLORE_NOT_MAPPING, EXPLORE_NOT_STARTED, READ_WITH_NO_AREA,
 };
 use v2_lib::autorun::discovery_map::map_path;
+use v2_lib::autorun::cleanup::EXPLORE_MADE;
 use v2_lib::autorun::explore::{
-    begin, load, safe_session_id, session_id, session_path, unaccounted, unknown_session, Change, ChangeEntry,
-    ExploreRun, ExploreSession, SeenWrite, UNRECORDED_SAVES,
+    begin, change_from_args, load, mark_create_undone, mark_undone, no_such_entry, note_writes, record_change,
+    safe_session_id, session_id, session_path, unaccounted, undone_by_the_tool, unknown_session, verify_create,
+    Change, ChangeEntry, ExploreRun, ExploreSession, SeenWrite, BEFORE_NOT_KNOWN, CHANGES_UNREADABLE, DELETED_STAYS,
+    NOT_VERIFIED, NO_EXPLORE_SESSION, SECRET_NOT_KEPT, UNRECORDED_SAVES,
 };
+use v2_lib::autorun::test_made;
+use v2_lib::browser::net_capture::{Body, Captured};
 use v2_lib::autorun::roles::{RULES_DISCOVERY, RULES_EXPLORE};
 use v2_lib::autorun::store::set_root;
 use v2_lib::browser::actions::Action;
@@ -338,4 +343,366 @@ async fn an_explore_start_ends_with_the_explore_rules() {
     let body = json!({ "account": "nobody-saved-this" }).to_string();
     let (_, out) = v2_lib::ai_bridge::route(&ctx, None, "POST", "/autorun-discover-start", &body, "1.0.0").await;
     assert!(out.ends_with(RULES_DISCOVERY) && !out.contains(RULES_EXPLORE), "{out}");
+}
+
+// ---- The change list: record, verify, read ----
+
+/// A save the page made, answered with `body`.
+fn save(method: &str, path: &str, started_ms: u64, body: Option<Body>) -> Captured {
+    Captured {
+        method: method.to_string(),
+        url_path_query: path.to_string(),
+        started_ms,
+        resp_body: body,
+        ..Default::default()
+    }
+}
+
+fn text(t: &str) -> Option<Body> {
+    Some(Body::Text(t.to_string()))
+}
+
+fn created(kind: &str, id: &str, name: &str) -> Change {
+    Change::Created { kind: kind.into(), id: id.into(), name: name.into(), verified: false }
+}
+
+fn changed(field: &str, before: Option<&str>, after: &str) -> Change {
+    Change::Changed {
+        record: "Cycle 274".into(),
+        field: field.into(),
+        before: before.map(|b| json!(b)),
+        after: Some(json!(after)),
+        hidden: false,
+    }
+}
+
+/// A fresh session's id in a fresh root.
+fn started() -> (crate::autorun_discovery::TempDir, String) {
+    let dir = root_with_recipe_and_account();
+    let id = begin(dir.path(), ORG, PROJECT, "admin", 1_760_000_000_000).unwrap();
+    (dir, id)
+}
+
+/// Review Focus 2.
+#[test]
+fn a_browser_create_is_verified_only_by_a_save_this_session_made() {
+    let since = 1000;
+    let post = save("POST", "/hr/c?x=1", 2000, text("{\"data\":{\"Id\":274}}"));
+    assert_eq!(verify_create(&[&post], since, "274"), Some("POST /hr/c".to_string()));
+
+    // The same response on a read, or on a save from before the session.
+    let get = save("GET", "/hr/c", 2000, text("{\"data\":{\"Id\":274}}"));
+    assert_eq!(verify_create(&[&get], since, "274"), None);
+    let old = save("POST", "/hr/c", 500, text("{\"data\":{\"Id\":274}}"));
+    assert_eq!(verify_create(&[&old], since, "274"), None);
+    // A save that started exactly when the session did counts.
+    let at = save("POST", "/hr/c", 1000, text("{\"Id\":274}"));
+    assert!(verify_create(&[&at], since, "274").is_some());
+
+    // A longer number is not the id.
+    let longer = save("POST", "/hr/c", 2000, text("{\"Id\":1274}"));
+    assert_eq!(verify_create(&[&longer], since, "274"), None);
+    let in_text = save("POST", "/hr/c", 2000, text("saved 1274."));
+    assert_eq!(verify_create(&[&in_text], since, "274"), None);
+
+    // A number or a string, either way.
+    let string = save("POST", "/hr/c", 2000, text("{\"Id\":\"274\"}"));
+    assert!(verify_create(&[&string], since, "274").is_some());
+    let number = save("POST", "/hr/c", 2000, text("{\"Id\":274}"));
+    assert!(verify_create(&[&number], since, "274").is_some());
+    let nested = save("PUT", "/hr/c", 2000, text("{\"rows\":[{\"a\":1},{\"b\":[274]}]}"));
+    assert!(verify_create(&[&nested], since, "274").is_some());
+
+    // A text body: the id as a whole word.
+    let sentence = save("POST", "/hr/c", 2000, text("saved 274."));
+    assert!(verify_create(&[&sentence], since, "274").is_some());
+
+    // The id as a key, or inside a longer string, is not the id.
+    let key = save("POST", "/hr/c", 2000, text("{\"274\":true}"));
+    assert_eq!(verify_create(&[&key], since, "274"), None);
+    let inside = save("POST", "/hr/c", 2000, text("{\"msg\":\"record 274 saved\"}"));
+    assert_eq!(verify_create(&[&inside], since, "274"), None);
+
+    // No body, a body that was dropped, and a save that failed verify nothing.
+    let none = save("POST", "/hr/c", 2000, None);
+    assert_eq!(verify_create(&[&none], since, "274"), None);
+    let dropped = save("POST", "/hr/c", 2000, Some(Body::Dropped));
+    assert_eq!(verify_create(&[&dropped], since, "274"), None);
+    let mut failed = save("POST", "/hr/c", 2000, text("{\"error\":\"no record 274\"}"));
+    failed.status = Some(500);
+    assert_eq!(verify_create(&[&failed], since, "274"), None);
+    let mut failed = save("POST", "/hr/c", 2000, text("{\"Id\":274}"));
+    failed.status = Some(409);
+    assert_eq!(verify_create(&[&failed], since, "274"), None);
+    let mut ok = save("POST", "/hr/c", 2000, text("{\"Id\":274}"));
+    ok.status = Some(201);
+    assert!(verify_create(&[&ok], since, "274").is_some());
+
+    // A delete never creates, whatever it answers with.
+    let delete = save("DELETE", "/hr/c/274", 2000, text("{\"Id\":274}"));
+    assert_eq!(verify_create(&[&delete], since, "274"), None);
+
+    // No id, no verification; the earliest matching save names the request.
+    assert_eq!(verify_create(&[&number], since, "  "), None);
+    let later = save("POST", "/hr/later", 3000, text("{\"Id\":274}"));
+    assert_eq!(verify_create(&[&later, &number], since, "274"), Some("POST /hr/c".to_string()));
+}
+
+#[test]
+fn a_verified_create_goes_on_the_test_made_list_and_an_unverified_one_does_not() {
+    let (dir, session) = started();
+    let post = save("POST", "/hr/cycles", 2000, text("{\"data\":{\"Id\":274}}"));
+    let env = v2_lib::environments::active(dir.path()).unwrap().id;
+
+    let ok = record_change(dir.path(), &session, created("cycle", "274", "Sprint 12"), None, &[&post], 1000).unwrap();
+    assert_eq!((ok.n, ok.verified, ok.note.as_deref()), (1, Some(true), None));
+    let made = test_made::list(dir.path());
+    assert_eq!(made.len(), 1, "{made:?}");
+    let m = &made[0];
+    assert_eq!((m.kind.as_str(), m.id.as_str(), m.name.as_str()), ("cycle", "274", "Sprint 12"));
+    assert_eq!(m.fixture, EXPLORE_MADE);
+    assert_eq!(m.run_id, session);
+    assert_eq!(m.environment, env);
+    assert_eq!(m.status, test_made::PRESENT);
+    // The entry names the save that proved it, not what the caller said.
+    let s = load(dir.path(), &session).unwrap();
+    assert_eq!(s.changes[0].request.as_deref(), Some("POST /hr/cycles"));
+    assert!(matches!(&s.changes[0].change, Change::Created { verified: true, .. }));
+
+    let no = record_change(dir.path(), &session, created("cycle", "999", "Ghost"), None, &[&post], 1000).unwrap();
+    assert_eq!((no.n, no.verified), (2, Some(false)));
+    assert_eq!(no.note.as_deref(), Some(NOT_VERIFIED));
+    assert_eq!(test_made::list(dir.path()).len(), 1, "an unverified create reached the test-made list");
+    let s = load(dir.path(), &session).unwrap();
+    assert!(matches!(&s.changes[1].change, Change::Created { verified: false, .. }));
+
+    // The same create told twice is on the test-made list once.
+    record_change(dir.path(), &session, created("cycle", "274", "Sprint 12"), None, &[&post], 1000).unwrap();
+    assert_eq!(test_made::list(dir.path()).len(), 1);
+}
+
+#[test]
+fn a_change_is_kept_in_order_with_what_it_lacks_said() {
+    let (dir, session) = started();
+    let first =
+        record_change(dir.path(), &session, changed("Status", Some("Draft"), "Published"), None, &[], 0).unwrap();
+    assert_eq!((first.n, first.verified, first.note), (1, None, None));
+    let second = record_change(
+        dir.path(),
+        &session,
+        changed("Name", None, "Sprint 13"),
+        Some("POST https://hr.example.internal/hr/cycles/274?a=1".into()),
+        &[],
+        0,
+    )
+    .unwrap();
+    assert_eq!(second.n, 2);
+    assert_eq!(second.note.as_deref(), Some(BEFORE_NOT_KNOWN));
+    let deleted = Change::Deleted {
+        kind: "cycle".into(),
+        id: "9".into(),
+        name: "Old".into(),
+        held: Some(json!({ "Name": "Old", "Password": "hunter2" })),
+    };
+    let third = record_change(dir.path(), &session, deleted, None, &[], 0).unwrap();
+    assert_eq!((third.n, third.note.as_deref()), (3, Some(DELETED_STAYS)));
+
+    let s = load(dir.path(), &session).unwrap();
+    assert_eq!(s.changes.iter().map(|c| c.n).collect::<Vec<_>>(), [1, 2, 3]);
+    // A request keeps its method and path only.
+    assert_eq!(s.changes[1].request.as_deref(), Some("POST /hr/cycles/274"));
+    let file = std::fs::read_to_string(session_path(dir.path(), &session)).unwrap();
+    assert!(!file.contains("hunter2") && !file.contains("hr.example.internal"), "{file}");
+    assert!(file.contains("\"Name\": \"Old\""), "what a delete held was not kept: {file}");
+    // A delete is never put on the test-made list.
+    assert!(test_made::list(dir.path()).is_empty());
+}
+
+#[test]
+fn a_secret_field_keeps_neither_value() {
+    let (dir, session) = started();
+    let out = record_change(dir.path(), &session, changed("Password", Some("a"), "b"), None, &[], 0).unwrap();
+    assert_eq!(out.note.as_deref(), Some(SECRET_NOT_KEPT));
+    let s = load(dir.path(), &session).unwrap();
+    match &s.changes[0].change {
+        Change::Changed { before, after, hidden, field, .. } => {
+            assert_eq!((before, after, *hidden), (&None, &None, true));
+            assert_eq!(field, "Password");
+        }
+        other => panic!("{other:?}"),
+    }
+    let file = std::fs::read_to_string(session_path(dir.path(), &session)).unwrap();
+    assert!(!file.contains("\"a\"") && !file.contains("\"b\""), "a secret reached the change list: {file}");
+}
+
+/// Review Focus 5.
+#[test]
+fn a_change_list_that_does_not_read_is_never_overwritten() {
+    let (dir, session) = started();
+    std::fs::write(session_path(dir.path(), &session), "not json").unwrap();
+    let out = record_change(dir.path(), &session, changed("Status", Some("a"), "b"), None, &[], 0);
+    assert_eq!(out, Err(CHANGES_UNREADABLE.to_string()));
+    assert_eq!(mark_undone(dir.path(), &session, &[1]), Err(CHANGES_UNREADABLE.to_string()));
+    assert_eq!(std::fs::read(session_path(dir.path(), &session)).unwrap(), b"not json");
+    // A create that would have been verified left nothing on the test-made list either.
+    let post = save("POST", "/hr/c", 2000, text("{\"Id\":5}"));
+    let out = record_change(dir.path(), &session, created("cycle", "5", "x"), None, &[&post], 0);
+    assert_eq!(out, Err(CHANGES_UNREADABLE.to_string()));
+    assert!(test_made::list(dir.path()).is_empty());
+    assert_eq!(std::fs::read(session_path(dir.path(), &session)).unwrap(), b"not json");
+}
+
+#[test]
+fn undone_marks_entries_and_leaves_a_verified_create_to_the_tool() {
+    let (dir, session) = started();
+    let post = save("POST", "/hr/cycles", 2000, text("{\"Id\":274}"));
+    record_change(dir.path(), &session, changed("Status", Some("Draft"), "Published"), None, &[], 0).unwrap();
+    record_change(dir.path(), &session, created("cycle", "274", "Sprint"), None, &[&post], 0).unwrap();
+    record_change(dir.path(), &session, created("cycle", "999", "Ghost"), None, &[], 0).unwrap();
+    let undone = |n: u32| load(dir.path(), &session).unwrap().changes[n as usize - 1].undone;
+
+    assert_eq!(mark_undone(dir.path(), &session, &[1]), Ok(()));
+    assert!(undone(1));
+    assert_eq!(mark_undone(dir.path(), &session, &[2]), Err(undone_by_the_tool(2)));
+    assert!(!undone(2));
+    assert_eq!(mark_undone(dir.path(), &session, &[99]), Err(no_such_entry(99)));
+    // One bad number refuses the lot.
+    assert_eq!(mark_undone(dir.path(), &session, &[3, 99]), Err(no_such_entry(99)));
+    assert!(!undone(3));
+    // An unverified create was only ever in the browser: the assistant sets it back by hand.
+    assert_eq!(mark_undone(dir.path(), &session, &[3]), Ok(()));
+    assert!(undone(3));
+
+    // The tool marks the verified create it removed.
+    assert_eq!(mark_create_undone(dir.path(), &session, "cycle", "274"), Ok(true));
+    assert!(undone(2));
+    assert_eq!(mark_create_undone(dir.path(), &session, "cycle", "1"), Ok(false));
+    assert_eq!(mark_undone(dir.path(), "../x", &[1]), Err(unknown_session("../x")));
+}
+
+#[tokio::test]
+async fn a_change_needs_the_going_explore_session() {
+    let (dir, session) = started();
+    let body = json!({ "change": "created", "kind": "cycle", "id": "5", "name": "x" }).to_string();
+
+    // A discovery that is not an explore session.
+    let (mut browser, _) = slot(signin_app(true), exploring("Leave"));
+    assert_eq!(record_change_in(&mut browser, dir.path(), &body), (409, NO_EXPLORE_SESSION.to_string()));
+    // An explore session whose change list was never made.
+    let (mut browser, _) = slot(signin_app(true), explore_opened());
+    assert_eq!(record_change_in(&mut browser, dir.path(), &body), (409, NO_EXPLORE_SESSION.to_string()));
+    // No browser at all.
+    let mut none: Option<FakeBrowser> = None;
+    assert_eq!(record_change_in(&mut none, dir.path(), &body), (409, NO_EXPLORE_SESSION.to_string()));
+    assert!(load(dir.path(), &session).unwrap().changes.is_empty());
+
+    // The going session takes it, and says the create is not verified (the fake browser captures nothing).
+    let (mut browser, _) = slot(signin_app(true), explore_going(&session));
+    let (status, out) = record_change_in(&mut browser, dir.path(), &body);
+    assert_eq!(status, 200, "{out}");
+    let v = parsed(&out);
+    assert_eq!((v["n"].clone(), v["verified"].clone(), v["note"].clone()), (json!(1), json!(false), json!(NOT_VERIFIED)));
+
+    // A change that is not one is refused with its shape.
+    let (status, out) = record_change_in(&mut browser, dir.path(), &json!({ "change": "made" }).to_string());
+    assert_eq!(status, 400, "{out}");
+    assert!(out.contains("created, changed or deleted"), "{out}");
+
+    // A change list that does not read is a conflict.
+    std::fs::write(session_path(dir.path(), &session), "nope").unwrap();
+    assert_eq!(record_change_in(&mut browser, dir.path(), &body), (409, CHANGES_UNREADABLE.to_string()));
+
+    // Entries set back by hand name their session and need no going one.
+    let (dir, session) = started();
+    let (mut browser, _) = slot(signin_app(true), explore_going(&session));
+    let by_hand = json!({ "change": "changed", "record": "Cycle 1", "field": "Status", "before": "A", "after": "B" });
+    assert_eq!(record_change_in(&mut browser, dir.path(), &by_hand.to_string()).0, 200);
+    let mut none: Option<FakeBrowser> = None;
+    let body = json!({ "session": session, "undone": [1] }).to_string();
+    let (status, out) = record_change_in(&mut none, dir.path(), &body);
+    assert_eq!(status, 200, "{out}");
+    assert!(load(dir.path(), &session).unwrap().changes[0].undone);
+    let body = json!({ "session": session, "undone": [7] }).to_string();
+    assert_eq!(record_change_in(&mut none, dir.path(), &body), (400, no_such_entry(7)));
+    let body = json!({ "session": "20200101-000000-nobody", "undone": [1] }).to_string();
+    assert_eq!(record_change_in(&mut none, dir.path(), &body).0, 404);
+}
+
+#[test]
+fn the_change_lists_come_newest_first_with_the_saves_they_miss() {
+    let dir = root_with_recipe_and_account();
+    let older = begin(dir.path(), ORG, PROJECT, "admin", 1_760_000_000_000).unwrap();
+    let newer = begin(dir.path(), ORG, PROJECT, "admin", 1_760_000_500_000).unwrap();
+    begin(dir.path(), "other-org", PROJECT, "admin", 1_760_000_900_000).unwrap();
+    record_change(dir.path(), &newer, changed("Status", Some("A"), "B"), None, &[], 0).unwrap();
+    record_change(dir.path(), &newer, changed("Name", Some("A"), "B"), None, &[], 0).unwrap();
+    mark_undone(dir.path(), &newer, &[1]).unwrap();
+    note_writes(dir.path(), &newer, &[("POST".into(), "/hr/cycles?x=1".into())]).unwrap();
+
+    let (status, out) = explore_changes(dir.path(), ORG, PROJECT, "{}");
+    assert_eq!(status, 200, "{out}");
+    let v = parsed(&out);
+    let sessions = v["sessions"].as_array().unwrap();
+    assert_eq!(sessions.len(), 2, "{out}");
+    assert_eq!(sessions[0]["session"], newer.as_str());
+    assert_eq!(sessions[1]["session"], older.as_str());
+    assert_eq!((sessions[0]["changes"].clone(), sessions[0]["undone"].clone()), (json!(2), json!(1)));
+    assert_eq!(sessions[0]["account"], "admin");
+    assert_eq!(sessions[0]["environment"], v2_lib::environments::active(dir.path()).unwrap().name.as_str());
+    assert!(sessions[0]["started_at"].is_string() && sessions[0]["ended_at"].is_null(), "{out}");
+
+    let (status, out) = explore_changes(dir.path(), ORG, PROJECT, &json!({ "session": newer }).to_string());
+    assert_eq!(status, 200, "{out}");
+    let v = parsed(&out);
+    assert_eq!(v["session"], newer.as_str());
+    assert_eq!(v["changes"].as_array().unwrap().len(), 2);
+    assert_eq!(v["saves_not_on_the_change_list"], json!(["POST /hr/cycles"]));
+    assert!(!out.contains("x=1"), "a query string reached the answer: {out}");
+
+    assert_eq!(
+        explore_changes(dir.path(), ORG, PROJECT, &json!({ "session": "../x" }).to_string()),
+        (404, unknown_session("../x"))
+    );
+    // A change list that does not read is a conflict, and the listing skips it.
+    std::fs::write(session_path(dir.path(), &older), "nope").unwrap();
+    assert_eq!(
+        explore_changes(dir.path(), ORG, PROJECT, &json!({ "session": older }).to_string()),
+        (409, CHANGES_UNREADABLE.to_string())
+    );
+    let v = parsed(&explore_changes(dir.path(), ORG, PROJECT, "{}").1);
+    assert_eq!(v["sessions"].as_array().unwrap().len(), 1);
+}
+
+#[test]
+fn a_change_args_shape_is_said() {
+    let err = change_from_args(&json!({ "change": "made" })).unwrap_err();
+    assert!(err.contains("created") && err.contains("changed") && err.contains("deleted"), "{err}");
+    let err = change_from_args(&json!({})).unwrap_err();
+    assert!(err.contains("created, changed or deleted"), "{err}");
+    let err = change_from_args(&json!({ "change": "created", "kind": "cycle", "name": "x" })).unwrap_err();
+    assert!(err.contains("kind, id and name"), "{err}");
+    let err = change_from_args(&json!({ "change": "changed", "record": "r", "field": "f" })).unwrap_err();
+    assert!(err.contains("record, field and after"), "{err}");
+    let err = change_from_args(&json!({ "change": "deleted", "kind": "cycle", "id": "1" })).unwrap_err();
+    assert!(err.contains("kind, id and name"), "{err}");
+
+    // An id is a string or a number, and a create is never verified by its caller.
+    assert_eq!(
+        change_from_args(&json!({ "change": "Created", "kind": "cycle", "id": 274, "name": "x", "verified": true })),
+        Ok(Change::Created { kind: "cycle".into(), id: "274".into(), name: "x".into(), verified: false })
+    );
+    assert_eq!(
+        change_from_args(&json!({ "change": "changed", "record": "r", "field": "f", "before": null, "after": 3 })),
+        Ok(Change::Changed {
+            record: "r".into(),
+            field: "f".into(),
+            before: None,
+            after: Some(json!(3)),
+            hidden: false
+        })
+    );
+    assert_eq!(
+        change_from_args(&json!({ "change": "deleted", "kind": "k", "id": "1", "name": "n", "held": { "a": 1 } })),
+        Ok(Change::Deleted { kind: "k".into(), id: "1".into(), name: "n".into(), held: Some(json!({ "a": 1 })) })
+    );
 }

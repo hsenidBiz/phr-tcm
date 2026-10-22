@@ -489,6 +489,23 @@ pub async fn route(
             Some(going) => with_overrides_seen(going, None),
             None => crate::commands::autorun::end_discovery(EndedBy::Assistant).await,
         },
+        // An explore session's change list, recorded and read back. Files
+        // on this machine only: nothing here sends a request to the
+        // application.
+        ("POST", "/autorun-explore-change") => {
+            match (unattended_run_is_using_the_browser(), autorun_root()) {
+                (Some(busy), _) => busy,
+                (None, Ok(root)) => {
+                    let mut slot = crate::commands::autorun::supervised().lock().await;
+                    record_change_in(&mut slot, &root, body)
+                }
+                (None, Err(refused)) => refused,
+            }
+        }
+        ("POST", "/autorun-explore-changes") => match autorun_root() {
+            Ok(root) => explore_changes(&root, &ctx.org, &ctx.project, body),
+            Err(refused) => refused,
+        },
         // Release: every Auto Run browser record the app holds is cleared
         // and the app's own browsers closed, for a browser held after it
         // is gone. Never a process outside the app's own jobs.
@@ -5853,6 +5870,108 @@ pub fn finish_mapping<B: DiscoveryBrowser>(slot: &mut Option<B>) -> Option<crate
     }
     crate::applog::info(log_line(&summary));
     Some(summary)
+}
+
+/// An explore change list refusal as the route says it: a file that does
+/// not read is a conflict, a change that could not be kept a server error,
+/// an id with no session unknown, and anything else (an entry number the
+/// list lacks, a verified create) a request that cannot be done.
+fn explore_refusal(why: String) -> (u16, String) {
+    use crate::autorun::explore as ex;
+    if why == ex::CHANGE_NOT_KEPT {
+        (500, why)
+    } else if why == ex::CHANGES_UNREADABLE {
+        (409, why)
+    } else if ex::is_unknown_session(&why) {
+        (404, why)
+    } else {
+        (400, why)
+    }
+}
+
+/// `/autorun-explore-change`: one change the going explore session made,
+/// onto its change list - `{ "change": "created" | "changed" | "deleted",
+/// ... }` - or, for any saved session, going or ended, the entries the
+/// assistant set back by hand: `{ "session": <id>, "undone": [<n>, ...] }`.
+/// A create is checked against the saves the session's own browser made
+/// (`explore::record_change`), never taken on the caller's word.
+pub fn record_change_in<B: DiscoveryBrowser>(slot: &mut Option<B>, root: &std::path::Path, body: &str) -> (u16, String) {
+    use crate::autorun::explore as ex;
+    let v: serde_json::Value = serde_json::from_str(body).unwrap_or(serde_json::Value::Null);
+    if let Some(undone) = v.get("undone") {
+        const SHAPE: &str = "{ \"session\": <the session id>, \"undone\": [<entry numbers>] }";
+        let entries: Option<Vec<u32>> = undone
+            .as_array()
+            .and_then(|a| a.iter().map(|n| n.as_u64().and_then(|n| u32::try_from(n).ok())).collect());
+        let (Some(session), Some(entries)) = (v.get("session").and_then(|s| s.as_str()), entries) else {
+            return (400, format!("that is not an undone list. Expected {SHAPE}."));
+        };
+        let session = session.trim();
+        return match ex::mark_undone(root, session, &entries) {
+            Ok(()) => (200, serde_json::json!({ "session": session, "undone": entries }).to_string()),
+            Err(why) => explore_refusal(why),
+        };
+    }
+    let Some(browser) = slot.as_mut() else {
+        return (409, ex::NO_EXPLORE_SESSION.to_string());
+    };
+    let parts = browser.parts();
+    let Some(state) = parts.discovery.as_ref() else {
+        return (409, ex::NO_EXPLORE_SESSION.to_string());
+    };
+    let Some(session) = state.explore_session().map(str::to_string) else {
+        return (409, ex::NO_EXPLORE_SESSION.to_string());
+    };
+    let since = state.started_at;
+    let change = match ex::change_from_args(&v) {
+        Ok(change) => change,
+        Err(why) => return (400, why),
+    };
+    let request = v.get("request").and_then(|r| r.as_str()).map(str::to_string);
+    let captured: Vec<&crate::browser::net_capture::Captured> = crate::browser::cdp::Driver::capture(&*parts.driver)
+        .map(|c| c.list(0, usize::MAX).0)
+        .unwrap_or_default();
+    match ex::record_change(root, &session, change, request, &captured, since) {
+        Ok(recorded) => (200, serde_json::to_string(&recorded).unwrap_or_default()),
+        Err(why) => explore_refusal(why),
+    }
+}
+
+/// `/autorun-explore-changes`: `{}` lists this project's explore sessions,
+/// newest first, each counted; `{ "session": <id> }` gives one session's
+/// whole change list and the saves its browser sent that no change names.
+pub fn explore_changes(root: &std::path::Path, org: &str, project: &str, body: &str) -> (u16, String) {
+    use crate::autorun::explore as ex;
+    let v: serde_json::Value = serde_json::from_str(body).unwrap_or(serde_json::Value::Null);
+    if let Some(id) = v.get("session").and_then(|s| s.as_str()) {
+        return match ex::load(root, id.trim()) {
+            Ok(s) => {
+                let mut out = serde_json::to_value(&s).unwrap_or_default();
+                out["saves_not_on_the_change_list"] = serde_json::json!(ex::unaccounted(&s));
+                (200, out.to_string())
+            }
+            Err(why) if ex::is_unknown_session(&why) => (404, why),
+            Err(why) => {
+                crate::applog::warn(format!("Auto Run explore session: {why}"));
+                (409, ex::CHANGES_UNREADABLE.to_string())
+            }
+        };
+    }
+    let sessions: Vec<serde_json::Value> = ex::list(root, org, project)
+        .iter()
+        .map(|s| {
+            serde_json::json!({
+                "session": s.session,
+                "started_at": s.started_at,
+                "ended_at": s.ended_at,
+                "account": s.account,
+                "environment": s.environment_name,
+                "changes": s.changes.len(),
+                "undone": s.changes.iter().filter(|c| c.undone).count(),
+            })
+        })
+        .collect();
+    (200, serde_json::json!({ "sessions": sessions }).to_string())
 }
 
 /// Close out the explore session in `slot`, if one is going, however it

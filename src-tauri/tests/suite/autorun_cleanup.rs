@@ -324,6 +324,7 @@ fn every_post_step_of_a_delete_template_uses_id() {
 fn only_the_fixture_runner_records_and_only_clean_up_sets_a_status() {
     let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
     let mut records = Vec::new();
+    let mut explore_records = Vec::new();
     let mut statuses = Vec::new();
     let mut stack = vec![src.clone()];
     while let Some(dir) = stack.pop() {
@@ -337,6 +338,9 @@ fn only_the_fixture_runner_records_and_only_clean_up_sets_a_status() {
                 if text.contains("test_made::record(") {
                     records.push(name.clone());
                 }
+                if text.contains("test_made::record_explore(") {
+                    explore_records.push(name.clone());
+                }
                 // The definition itself is not a call.
                 if text.lines().any(|l| l.contains("set_status(") && !l.contains("fn set_status(")) {
                     statuses.push(name);
@@ -345,6 +349,7 @@ fn only_the_fixture_runner_records_and_only_clean_up_sets_a_status() {
         }
     }
     assert_eq!(records, vec!["api_templates/fixture_run.rs"]);
+    assert_eq!(explore_records, vec!["autorun/explore.rs"]);
     assert_eq!(statuses, vec!["autorun/cleanup.rs"]);
 }
 
