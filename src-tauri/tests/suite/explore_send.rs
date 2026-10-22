@@ -13,7 +13,10 @@ use v2_lib::api_templates::one_off::{
     delete_reminder, edit_reminder, not_a_capture, CREATED_NEEDED, EFFECT_NEEDED, GET_ONLY_READS, NO_SESSION_FOR_SEND,
     POST_NEEDS_EXPLORE, SESSION_NOT_SIGNED_IN,
 };
+use v2_lib::api_templates::one_off::{DELETES_NOT_SAVED, EXPLORE_MODULE, NO_TOKEN_NOT_SAVED, SECRET_NOT_SAVED};
 use v2_lib::api_templates::runner::RUN_LIMIT;
+use v2_lib::api_templates::store;
+use v2_lib::api_templates::{Effect, EXPLORE_PROOF};
 use v2_lib::autorun::explore::{begin, load, Change, ExploreRun};
 use v2_lib::autorun::lease::Held;
 use v2_lib::autorun::store::set_root;
@@ -308,6 +311,174 @@ async fn a_session_that_no_longer_holds_its_account_sends_nothing() {
     assert_eq!((status, text.as_str()), (409, SESSION_NOT_SIGNED_IN));
     assert!(r.fetched().is_empty(), "something was sent");
     assert!(load(r.root.path(), &session).unwrap().changes.is_empty());
+}
+
+/// The create the saving tests send: a save of the cycle setup.
+fn save_progress() -> Value {
+    json!({
+        "step": { "method": "POST", "path": "/hr/pmsv10/PerformanceCycle", "query": { "handler": "SaveProgress" },
+                  "form": { "CycleName": "AUTOTEST cycle" }, "capture": { "cycleId": "$.cycleId" } },
+        "effect": "create",
+        "created": { "kind": "cycle", "id": "cycleId", "name": "AUTOTEST cycle" }
+    })
+}
+
+fn saved_ids(r: &Rig) -> Vec<String> {
+    store::list(r.root.path(), ORG, PROJECT).unwrap().into_iter().map(|s| s.template.id).collect()
+}
+
+#[tokio::test]
+async fn a_working_call_is_saved_once_and_matched_after() {
+    let _locks = locks();
+    let mut r = rig(vec![answer(200, json!({ "cycleId": 274 })), answer(200, json!({ "cycleId": 275 }))], None);
+    let (mut browser, _) = exploring_session(&mut r).await;
+    let id = "post-hr-pmsv10-performancecycle-saveprogress";
+
+    let (status, v) = send(&mut browser, &r, true, save_progress()).await;
+    assert_eq!(status, 200, "{v}");
+    assert_eq!(v["template"], json!({ "id": id, "saved": true }), "{v}");
+    let t = store::load(r.root.path(), ORG, PROJECT, id).unwrap().expect("the template was saved");
+    let proven = t.proven.clone().expect("proven");
+    assert_eq!(proven.via.as_deref(), Some(EXPLORE_PROOF));
+    assert_eq!(proven.account, "admin");
+    assert_eq!(t.antiforgery.page, PAGE);
+    assert_eq!(t.effect, Effect::Create);
+    assert_eq!(t.module, EXPLORE_MODULE);
+    assert_eq!(t.title, "POST /hr/pmsv10/PerformanceCycle (SaveProgress)");
+    assert_eq!(t.steps.len(), 1);
+    let runs = store::list(r.root.path(), ORG, PROJECT).unwrap().remove(0).runs;
+    assert_eq!(runs.len(), 1, "{runs:?}");
+    assert_eq!((runs[0].mode.as_str(), runs[0].ok), ("explore", true));
+    let before = saved_ids(&r).len();
+
+    on_the_app(&r);
+    let (status, v) = send(&mut browser, &r, true, save_progress()).await;
+    assert_eq!(status, 200, "{v}");
+    assert_eq!(v["template"], json!({ "id": id, "reused": true }), "{v}");
+    assert_eq!(saved_ids(&r).len(), before);
+}
+
+#[tokio::test]
+async fn a_get_is_saved_as_a_read_template() {
+    let _locks = locks();
+    let mut r = rig(vec![answer(200, json!({ "cycles": [ { "id": 7 } ] }))], None);
+    let (mut browser, _) = exploring_session(&mut r).await;
+    let get = json!({ "step": { "method": "GET", "path": "/hr/pmsv10/cycles", "capture": { "first": "$.cycles[0].id" } } });
+
+    let (status, v) = send(&mut browser, &r, false, get).await;
+    assert_eq!(status, 200, "{v}");
+    assert_eq!(v["template"], json!({ "id": "get-hr-pmsv10-cycles", "saved": true }), "{v}");
+    let t = store::load(r.root.path(), ORG, PROJECT, "get-hr-pmsv10-cycles").unwrap().unwrap();
+    assert_eq!(t.effect, Effect::Read);
+    assert_eq!(t.outputs, vec!["first".to_string()]);
+    assert_eq!(t.proven.unwrap().outputs["first"], json!(7));
+}
+
+#[tokio::test]
+async fn a_saved_call_expects_the_status_it_answered() {
+    let _locks = locks();
+    let mut r = rig(vec![answer(201, json!({ "cycleId": 274 }))], None);
+    let (mut browser, _) = exploring_session(&mut r).await;
+
+    let (status, v) = send(&mut browser, &r, true, save_progress()).await;
+    assert_eq!(status, 200, "{v}");
+    let id = v["template"]["id"].as_str().unwrap_or_default().to_string();
+    let t = store::load(r.root.path(), ORG, PROJECT, &id).unwrap().expect("saved");
+    assert_eq!(t.steps[0].expect.status, 201);
+}
+
+#[tokio::test]
+async fn a_call_from_a_page_with_no_token_is_not_saved() {
+    let _locks = locks();
+    let mut r = rig(vec![answer(200, json!({ "found": true }))], None);
+    r.script.lock().unwrap().token = None;
+    let (mut browser, _) = exploring_session(&mut r).await;
+    let get = json!({ "step": { "method": "GET", "path": "/hr/x" } });
+
+    let (status, v) = send(&mut browser, &r, false, get).await;
+    assert_eq!(status, 200, "{v}");
+    assert_eq!(v["ok"], true, "{v}");
+    assert_eq!(v["template"]["not_saved"], NO_TOKEN_NOT_SAVED, "{v}");
+    assert!(saved_ids(&r).is_empty());
+}
+
+#[tokio::test]
+async fn a_failed_call_and_a_delete_call_are_never_saved() {
+    let _locks = locks();
+    let mut r = rig(vec![answer(400, json!({ "error": "no" })), answer(200, json!({ "ok": true }))], None);
+    let (mut browser, _) = exploring_session(&mut r).await;
+
+    let (status, v) = send(&mut browser, &r, true, save_progress()).await;
+    assert_eq!(status, 502, "{v}");
+    assert!(v.get("template").is_none(), "{v}");
+    assert!(saved_ids(&r).is_empty());
+
+    on_the_app(&r);
+    let mut delete = post_to("/hr/x", "delete");
+    delete["person_said_yes"] = json!(true);
+    let (status, v) = send(&mut browser, &r, true, delete).await;
+    assert_eq!(status, 200, "{v}");
+    assert_eq!(v["template"]["not_saved"], DELETES_NOT_SAVED, "{v}");
+    assert!(saved_ids(&r).is_empty());
+}
+
+#[tokio::test]
+async fn a_call_that_sends_a_secret_as_written_is_not_saved() {
+    let _locks = locks();
+    let mut r = rig(vec![answer(200, json!({ "cycleId": 274 })), answer(200, json!({ "cycleId": 275 }))], None);
+    let (mut browser, _) = exploring_session(&mut r).await;
+
+    let mut written = save_progress();
+    written["step"]["form"]["Password"] = json!("hunter2");
+    let (status, v) = send(&mut browser, &r, true, written).await;
+    assert_eq!(status, 200, "{v}");
+    assert_eq!(v["template"]["not_saved"], SECRET_NOT_SAVED, "{v}");
+    assert!(saved_ids(&r).is_empty());
+    assert!(!v.to_string().contains("hunter2"), "{v}");
+
+    // The same call with the secret sent as a param is saved, holding the placeholder.
+    on_the_app(&r);
+    let mut as_param = save_progress();
+    as_param["step"]["form"]["Password"] = json!("{{pw}}");
+    as_param["params"] = json!([ { "name": "pw", "type": "string", "required": true } ]);
+    as_param["values"] = json!({ "pw": "hunter2" });
+    let (status, v) = send(&mut browser, &r, true, as_param).await;
+    assert_eq!(status, 200, "{v}");
+    assert_eq!(v["template"]["saved"], true, "{v}");
+    let saved = std::fs::read_dir(store::templates_dir(r.root.path(), ORG, PROJECT))
+        .unwrap()
+        .flatten()
+        .map(|e| std::fs::read_to_string(e.path()).unwrap())
+        .collect::<String>();
+    assert!(saved.contains("{{pw}}") && !saved.contains("hunter2"), "{saved}");
+}
+
+#[tokio::test]
+async fn the_assistants_id_and_name_are_used_and_made_unique() {
+    let _locks = locks();
+    let mut r = rig(vec![answer(200, json!({ "cycleId": 274 })), answer(200, json!({ "ok": true }))], None);
+    let (mut browser, _) = exploring_session(&mut r).await;
+
+    let mut first = save_progress();
+    first["id"] = json!("make-cycle");
+    let (_, v) = send(&mut browser, &r, true, first).await;
+    assert_eq!(v["template"], json!({ "id": "make-cycle", "saved": true }), "{v}");
+
+    on_the_app(&r);
+    let mut second = post_to("/hr/pmsv10/other", "edit");
+    second["id"] = json!("make-cycle");
+    second["name"] = json!("Make a cycle");
+    second["module"] = json!("PMS / Cycles");
+    second["description"] = json!("Makes one.");
+    let (_, v) = send(&mut browser, &r, true, second).await;
+    assert_eq!(v["template"], json!({ "id": "make-cycle-2", "saved": true }), "{v}");
+    let t = store::load(r.root.path(), ORG, PROJECT, "make-cycle-2").unwrap().unwrap();
+    assert_eq!(
+        (t.title.as_str(), t.module.as_str(), t.description.as_str()),
+        ("Make a cycle", "PMS / Cycles", "Makes one.")
+    );
+    assert_eq!(t.effect, Effect::Edit);
+    assert!(t.sources[0].starts_with("explore session "), "{:?}", t.sources);
 }
 
 /// A create goes on the change list from `send_in` alone: the id the

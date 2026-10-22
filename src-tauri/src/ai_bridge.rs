@@ -6118,7 +6118,109 @@ pub async fn send_in<B: DiscoveryBrowser>(
         (Effect::Delete, _, _) if sent => v["record_change"] = serde_json::json!(oo::delete_reminder(&request)),
         _ => {}
     }
+    if report.ok {
+        if let Some(session) = &session {
+            let status = out.answer.as_ref().map(|a| a.status);
+            let token = (out.token_page.as_deref(), out.token_found);
+            v["template"] = save_or_match_one_off(root, ctx, &req.account, session, &one, status, token, report);
+        }
+    }
     (if report.ok { 200 } else { 502 }, v.to_string())
+}
+
+/// What `send_in` answers under `template` for a call that worked: it is
+/// not saved (a delete, a secret written out, a page with no token), or it
+/// is the same call as a template already saved (`reused`), or it is saved
+/// now as a one-step template proven by the session that made it. A save
+/// that fails is logged and answered without a path.
+#[allow(clippy::too_many_arguments)]
+fn save_or_match_one_off(
+    root: &std::path::Path,
+    ctx: &BridgeContext,
+    account: &str,
+    session: &str,
+    one: &crate::api_templates::one_off::OneOff,
+    status: Option<u16>,
+    token: (Option<&str>, bool),
+    report: &crate::api_templates::runner::RunReport,
+) -> serde_json::Value {
+    use crate::api_templates::one_off as oo;
+    use crate::api_templates::store::{self, RunRecord};
+    use crate::api_templates::{Effect, Expect, Proven, EXPLORE_PROOF};
+    let not_saved = |why: &str| serde_json::json!({ "not_saved": why });
+    if one.effect == Effect::Delete {
+        return not_saved(oo::DELETES_NOT_SAVED);
+    }
+    if oo::sends_a_secret(&one.step) {
+        return not_saved(oo::SECRET_NOT_SAVED);
+    }
+    let token_page = match token {
+        (Some(page), true) => page,
+        _ => return not_saved(oo::NO_TOKEN_NOT_SAVED),
+    };
+    let could_not = || not_saved("the template could not be saved - see Settings, Logs");
+    let (org, project) = (ctx.org.as_str(), ctx.project.as_str());
+    let saved = match store::list(root, org, project) {
+        Ok(saved) => saved,
+        Err(e) => {
+            crate::applog::warn(format!("Auto Run explore session: the saved templates could not be read: {e}"));
+            return could_not();
+        }
+    };
+    let mut one = one.clone();
+    // A call that did not say what it expects keeps what it got, so a later
+    // run checks exactly that.
+    if one.step.expect == Expect::default() {
+        if let Some(status) = status {
+            one.step.expect.status = status;
+        }
+    }
+    if let Some(same) = oo::matching(&saved, &one.step) {
+        return serde_json::json!({ "id": same.id, "reused": true });
+    }
+    let taken = |id: &str| !matches!(store::load(root, org, project, id), Ok(None));
+    let id = match one.id.as_deref().filter(|id| crate::api_templates::valid_id(id)) {
+        Some(id) => oo::unique_id(id, &taken),
+        None => oo::derived_id(&one.step, &taken),
+    };
+    let mut t = oo::as_template(&one, &id, token_page);
+    t.title = one.name.clone().unwrap_or_else(|| oo::derived_title(&one.step));
+    t.module = one.module.clone().unwrap_or_else(|| oo::EXPLORE_MODULE.to_string());
+    t.description = one.description.clone().unwrap_or_else(|| {
+        format!("Saved from an explore session on {}.", crate::applog::stamp().split(' ').next().unwrap_or(""))
+    });
+    t.sources = vec![format!("explore session {session}")];
+    let problems = crate::api_templates::check(&t);
+    if !problems.is_empty() {
+        crate::applog::warn(format!("Auto Run explore session: the call is not a template: {}", problems.join("; ")));
+        return could_not();
+    }
+    t.proven = Some(Proven {
+        at: crate::applog::stamp(),
+        origin: recipe_origin(root, org, project).unwrap_or_default(),
+        account: account.to_string(),
+        outputs: report.outputs.clone(),
+        environment: crate::environments::active(root).ok().map(|e| e.name),
+        via: Some(EXPLORE_PROOF.to_string()),
+    });
+    if let Err(e) = store::save(root, org, project, &t) {
+        crate::applog::warn(format!("Auto Run explore session: the template could not be saved: {e}"));
+        return could_not();
+    }
+    let record = RunRecord {
+        at: crate::applog::stamp(),
+        mode: crate::api_templates::runner::Mode::Explore.label().to_string(),
+        account: account.to_string(),
+        ok: true,
+        failed_step: None,
+        detail: None,
+        outputs: report.outputs.clone(),
+    };
+    if let Err(e) = store::append_run(root, org, project, &id, record) {
+        crate::applog::warn(format!("api template {id}: the run could not be added to its history: {e}"));
+    }
+    templates_changed(&id);
+    serde_json::json!({ "id": id, "saved": true })
 }
 
 /// Close out the explore session in `slot`, if one is going, however it

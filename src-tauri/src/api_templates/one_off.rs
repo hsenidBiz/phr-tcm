@@ -208,3 +208,186 @@ pub fn request_of(o: &OneOff) -> String {
     };
     crate::autorun::explore::request_line(method, &filled_path(o))
 }
+
+/// The module a call saved from an explore session is filed under unless the
+/// assistant names one.
+pub const EXPLORE_MODULE: &str = "Explore";
+/// Said in place of a template id for a delete call that worked.
+pub const DELETES_NOT_SAVED: &str = "a delete call is never saved as an API template";
+/// Said for a call whose page had no anti-forgery token.
+pub const NO_TOKEN_NOT_SAVED: &str =
+    "not saved as a template: the page had no anti-forgery token, which a saved template needs to run later";
+/// Said for a call that writes a secret out.
+pub const SECRET_NOT_SAVED: &str = "not saved as a template: it sends a password, token or other secret as written, and a template never holds one - send that value as a param";
+
+/// The longest a derived id is before a "-2" is put on it.
+const ID_BASE_MAX: usize = 90;
+
+/// Whether `s` is wholly one `{{placeholder}}`.
+fn is_placeholder(s: &str) -> bool {
+    let t = s.trim();
+    t.len() > 4 && t.starts_with("{{") && t.ends_with("}}") && !t[2..t.len() - 2].contains(['{', '}'])
+}
+
+/// Body field names: json object keys and one level down ("a", "a.b"), an
+/// array looked into through its first element ("a[].b"); a form's keys plus
+/// its file fields; none for no body.
+pub fn body_field_names(step: &Step) -> std::collections::BTreeSet<String> {
+    let mut names = std::collections::BTreeSet::new();
+    if let Some(json) = &step.json {
+        match json {
+            Value::Object(m) => {
+                for (k, v) in m {
+                    names.insert(k.clone());
+                    match v {
+                        Value::Object(inner) => names.extend(inner.keys().map(|i| format!("{k}.{i}"))),
+                        Value::Array(items) => {
+                            if let Some(Value::Object(first)) = items.first() {
+                                names.extend(first.keys().map(|i| format!("{k}[].{i}")));
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            Value::Array(items) => {
+                if let Some(Value::Object(first)) = items.first() {
+                    names.extend(first.keys().map(|i| format!("[].{i}")));
+                }
+            }
+            _ => {}
+        }
+    }
+    if let Some(form) = &step.form {
+        names.extend(form.keys().cloned());
+    }
+    names.extend(step.files.keys().cloned());
+    names
+}
+
+#[derive(PartialEq)]
+enum Body {
+    None,
+    Json,
+    Form,
+}
+
+fn body_of(step: &Step) -> Body {
+    if step.json.is_some() {
+        Body::Json
+    } else if step.form.is_some() || !step.files.is_empty() {
+        Body::Form
+    } else {
+        Body::None
+    }
+}
+
+/// The value of a step's `handler` query key (the key's case ignored).
+fn handler_of(step: &Step) -> Option<&str> {
+    step.query.iter().find(|(k, _)| k.eq_ignore_ascii_case("handler")).map(|(_, v)| v.as_str())
+}
+
+/// The same call: one step, not a delete template, the same method, the same
+/// path segment by segment (ASCII case ignored; a segment that is wholly a
+/// {{placeholder}} on either side matches any), the same query keys with the
+/// same `handler` value (case ignored), json vs form alike, and equal
+/// `body_field_names`.
+pub fn same_call(saved: &ApiTemplate, step: &Step) -> bool {
+    let [one] = saved.steps.as_slice() else { return false };
+    if saved.effect == Effect::Delete || one.method != step.method {
+        return false;
+    }
+    let (a, b): (Vec<&str>, Vec<&str>) = (one.path.split('/').collect(), step.path.split('/').collect());
+    if a.len() != b.len()
+        || !a.iter().zip(&b).all(|(x, y)| x.eq_ignore_ascii_case(y) || is_placeholder(x) || is_placeholder(y))
+    {
+        return false;
+    }
+    let keys = |s: &Step| s.query.keys().cloned().collect::<std::collections::BTreeSet<_>>();
+    if keys(one) != keys(step) {
+        return false;
+    }
+    let same_handler = match (handler_of(one), handler_of(step)) {
+        (Some(x), Some(y)) => x.eq_ignore_ascii_case(y),
+        (None, None) => true,
+        _ => false,
+    };
+    same_handler && body_of(one) == body_of(step) && body_field_names(one) == body_field_names(step)
+}
+
+/// The saved template that is the same call as `step`, if there is one.
+pub fn matching<'a>(saved: &'a [super::store::SavedTemplate], step: &Step) -> Option<&'a ApiTemplate> {
+    saved.iter().map(|s| &s.template).find(|t| same_call(t, step))
+}
+
+/// `s` as lowercase `[a-z0-9]` words joined by single dashes.
+fn slug(s: &str) -> String {
+    s.to_ascii_lowercase()
+        .split(|c: char| !c.is_ascii_alphanumeric())
+        .filter(|w| !w.is_empty())
+        .collect::<Vec<_>>()
+        .join("-")
+}
+
+/// "<method>-<path slug>[-<handler slug>]", lowercase, [a-z0-9-] only, at
+/// most 90 chars before a "-2", "-3"... that `taken` refuses.
+pub fn derived_id(step: &Step, taken: &dyn Fn(&str) -> bool) -> String {
+    let method = match step.method {
+        Method::Get => "get",
+        Method::Post => "post",
+    };
+    let path = step.path.split('?').next().unwrap_or("");
+    let parts = [method.to_string(), slug(path), handler_of(step).map(slug).unwrap_or_default()];
+    let base = parts.iter().filter(|p| !p.is_empty()).cloned().collect::<Vec<_>>().join("-");
+    unique_id(&base, taken)
+}
+
+/// `base` (cut to 90 characters) or, when `taken` refuses it, the first of
+/// `base-2`, `base-3`... that it does not.
+pub fn unique_id(base: &str, taken: &dyn Fn(&str) -> bool) -> String {
+    let base: String = base.chars().take(ID_BASE_MAX).collect();
+    let base = base.trim_end_matches('-');
+    if !taken(base) {
+        return base.to_string();
+    }
+    (2..)
+        .map(|n| format!("{base}-{n}"))
+        .find(|id| !taken(id))
+        .expect("an unbounded count always reaches an id that is not taken")
+}
+
+/// "POST /hr/pmsv10/PerformanceCycle (Save)"; no "(..)" without a handler.
+pub fn derived_title(step: &Step) -> String {
+    let method = match step.method {
+        Method::Get => "GET",
+        Method::Post => "POST",
+    };
+    match handler_of(step).map(str::trim).filter(|h| !h.is_empty()) {
+        Some(h) => format!("{method} {} ({h})", step.path),
+        None => format!("{method} {}", step.path),
+    }
+}
+
+/// Whether a value of `v`, under a name that is (`secret`) or is not a
+/// secret's, is written out.
+fn writes_out(v: &Value, secret: bool) -> bool {
+    match v {
+        Value::Object(m) => m.iter().any(|(k, v)| writes_out(v, secret || crate::autorun::capture_redact::secret_name(k))),
+        Value::Array(items) => items.iter().any(|v| writes_out(v, secret)),
+        Value::String(s) => secret && !s.trim().is_empty() && !is_placeholder(s),
+        Value::Null => false,
+        _ => secret,
+    }
+}
+
+/// A json or form field whose name `secret_name()` matches and whose value
+/// is written out (not wholly a {{placeholder}}).
+pub fn sends_a_secret(step: &Step) -> bool {
+    use crate::autorun::capture_redact::secret_name;
+    let in_json = step.json.as_ref().is_some_and(|j| writes_out(j, false));
+    let in_form = step
+        .form
+        .as_ref()
+        .is_some_and(|f| f.iter().any(|(k, v)| secret_name(k) && !v.trim().is_empty() && !is_placeholder(v)));
+    in_json || in_form
+}
