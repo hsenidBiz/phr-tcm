@@ -27,7 +27,24 @@
   <div id="covered-card" class="card">Covered card</div>
   <div id="overlay"></div>
 </div>
+<div id="writer-card" class="card" role="button" tabindex="0" aria-disabled="true">Writer card</div>
+<div id="status-card" class="card" role="button" tabindex="0" aria-disabled="true">Status card</div>
+<div id="status-line" role="status"></div>
+<div id="hint-card" class="card">Hint card <span id="hint" hidden>Fill the required fields first</span></div>
 <script>
+  // A "disabled" card that sends a write anyway (to a port nothing listens
+  // on: the request is made and recorded, and fails).
+  document.getElementById('writer-card').addEventListener('click', () => {
+    fetch('http://127.0.0.1:9/hr/Cycle/Save?token=hunter2', { method: 'POST', body: 'x', mode: 'no-cors' }).catch(() => {});
+  });
+  // One that says so on the page instead.
+  document.getElementById('status-card').addEventListener('click', () => {
+    document.getElementById('status-line').textContent = 'Cycle saved';
+  });
+  // A hint that shows only while the pointer is over the card.
+  const hintCard = document.getElementById('hint-card');
+  hintCard.addEventListener('mouseenter', () => { document.getElementById('hint').hidden = false; });
+  hintCard.addEventListener('mouseleave', () => { document.getElementById('hint').hidden = true; });
   document.getElementById('aria-card').addEventListener('click', () => {
     document.getElementById('dlg').hidden = false;
   });

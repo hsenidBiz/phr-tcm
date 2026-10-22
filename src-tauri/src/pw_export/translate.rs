@@ -17,7 +17,7 @@ use crate::browser::actions::{page_goals, url_rule, Action, DropAt, TAB_WAIT_MS,
 use crate::browser::expect::{READ_TEXT_JS, WRITTEN_TEXT_JS};
 use crate::browser::keys;
 use crate::browser::locator::Target;
-use crate::browser::no_change::{DIALOGS_JS, STATE_JS, WAIT_MS as NO_CHANGE_WAIT_MS};
+use crate::browser::no_change::{COVERED_JS, DIALOGS_JS, MESSAGES_JS, STATE_JS, WAIT_MS as NO_CHANGE_WAIT_MS};
 use crate::browser::position::READ_BOX_JS;
 use crate::browser::table::{self, RowCount, SortAs, SortKind, TableCheck, SETTLE_MS, SETTLE_POLL_MS};
 use crate::browser::timing::Timing;
@@ -392,30 +392,50 @@ pub fn read_text_ts(indent: usize) -> Vec<String> {
     lines
 }
 
-/// `noChangeState` and `openDialogs` as TypeScript, built from `STATE_JS`
-/// and `DIALOGS_JS` as [`read_text_ts`] builds `readText`: the bodies are the
+/// `noChangeState`, `openDialogs`, `shownMessages`, `coveredBy` and `newTexts`
+/// as TypeScript, built from `STATE_JS`, `DIALOGS_JS`, `MESSAGES_JS` and
+/// `COVERED_JS` as [`read_text_ts`] builds `readText`: the bodies are the
 /// constants', word for word; only `this` is given a type. Emitted once per
 /// spec that uses `expect_no_change`.
 pub fn no_change_ts(indent: usize) -> Vec<String> {
-    let typed = STATE_JS.replacen("function() {", "function (this: HTMLElement) {", 1);
-    assert!(typed != STATE_JS, "STATE_JS no longer starts with `function() {{`");
-    assert!(DIALOGS_JS.starts_with("function() {"), "DIALOGS_JS no longer starts with `function() {{`");
     let pad = " ".repeat(indent);
-    let mut lines: Vec<String> = typed.lines().map(|l| format!("{pad}{l}")).collect();
-    if let Some(first) = lines.first_mut() {
-        *first = format!("{pad}const noChangeState = (e: Element) => ({}", first.trim_start());
+    // `const <name> = <head><js body><tail>`; `typed` gives `this` its type.
+    let wrap = |js: &str, name: &str, head: &str, tail: &str, typed: bool| -> Vec<String> {
+        let body = if typed {
+            let t = js.replacen("function() {", "function (this: HTMLElement) {", 1);
+            assert!(t != js, "{name}'s source no longer starts with `function() {{`");
+            t
+        } else {
+            assert!(js.starts_with("function() {"), "{name}'s source no longer starts with `function() {{`");
+            js.to_string()
+        };
+        let mut lines: Vec<String> = body.lines().map(|l| format!("{pad}{l}")).collect();
+        if let Some(first) = lines.first_mut() {
+            *first = format!("{pad}const {name} = {head}{}", first.trim_start());
+        }
+        if let Some(last) = lines.last_mut() {
+            last.push_str(tail);
+        }
+        lines
+    };
+    let mut lines = wrap(STATE_JS, "noChangeState", "(e: Element) => (", ").call(e as HTMLElement);", true);
+    lines.extend(wrap(DIALOGS_JS, "openDialogs", "() => (", ")();", false));
+    lines.extend(wrap(MESSAGES_JS, "shownMessages", "() => (", ")();", false));
+    lines.extend(wrap(COVERED_JS, "coveredBy", "(e: Element) => (", ").call(e as HTMLElement);", true));
+    // The app's `no_change::new_texts`.
+    for l in [
+        "const newTexts = (before: string[], after: string[]): string[] => {",
+        "  const had = new Map<string, number>();",
+        "  for (const t of before) had.set(t, (had.get(t) ?? 0) + 1);",
+        "  return after.filter((t) => {",
+        "    const n = had.get(t) ?? 0;",
+        "    if (n > 0) { had.set(t, n - 1); return false; }",
+        "    return true;",
+        "  });",
+        "};",
+    ] {
+        lines.push(format!("{pad}{l}"));
     }
-    if let Some(last) = lines.last_mut() {
-        last.push_str(").call(e as HTMLElement);");
-    }
-    let mut dialogs: Vec<String> = DIALOGS_JS.lines().map(|l| format!("{pad}{l}")).collect();
-    if let Some(first) = dialogs.first_mut() {
-        *first = format!("{pad}const openDialogs = () => ({}", first.trim_start());
-    }
-    if let Some(last) = dialogs.last_mut() {
-        last.push_str(")();");
-    }
-    lines.extend(dialogs);
     lines
 }
 
@@ -582,6 +602,16 @@ fn one(t: &Target) -> String {
         format!("{base}.first()")
     } else {
         base
+    }
+}
+
+/// `one`, except that a plain-string selector keeps every match: the app's
+/// forced look (`expect_no_change`) refuses a selector that matches several,
+/// and so does Playwright's strict mode when the locator is not narrowed.
+fn strict_one(t: &Target) -> String {
+    match t {
+        Target::Legacy(_) => locator("cur", t),
+        _ => one(t),
     }
 }
 
@@ -1503,31 +1533,51 @@ impl Em<'_> {
                     ),
                 );
             }
-            // A forced click, and the same three comparisons the app makes
+            // A forced click, and the same comparisons the app makes
             // (`browser::no_change`) after the same wait. Pass and fail
-            // match: the address, the open dialogs and any browser dialog,
-            // and the region's text and states.
+            // match: the control is waited for (visible) and must not be
+            // under another element, the pointer goes onto it before the
+            // page is read, and then the address, the open dialogs and any
+            // browser dialog, what the click sent (a POST, PUT, PATCH or
+            // DELETE), the messages the page shows, and the region's text and
+            // states are compared. A selector given as a plain string is
+            // never narrowed to its first match: several is a failure here as
+            // it is in the app.
             Action::ExpectNoChange { selector, region, within_ms } => {
                 let wait = within_ms.unwrap_or(NO_CHANGE_WAIT_MS);
+                let covered = format!("{} is covered by ", selector.describe());
                 self.line(indent, "{");
-                self.line(indent + 2, &format!("const target = {};", one(selector)));
-                self.line(indent + 2, &format!("const region = {};", one(region.as_ref().unwrap_or(selector))));
+                self.line(indent + 2, &format!("const target = {};", strict_one(selector)));
+                self.line(indent + 2, &format!("const region = {};", strict_one(region.as_ref().unwrap_or(selector))));
+                self.line(indent + 2, &format!("await expect(target).{};", call("toBeVisible", &[], None)));
+                self.line(indent + 2, "const covered = await target.evaluate(coveredBy);");
+                self.line(indent + 2, &format!("if (covered) {{ throw new Error({} + covered); }}", lit(&covered)));
+                self.line(indent + 2, "await target.hover({ force: true });");
                 self.line(
                     indent + 2,
-                    "const before = { url: cur.url(), dialogs: await cur.evaluate(openDialogs), state: await region.evaluate(noChangeState) };",
+                    "const before = { url: cur.url(), dialogs: await cur.evaluate(openDialogs), messages: await cur.evaluate(shownMessages), state: await region.evaluate(noChangeState) };",
                 );
                 self.line(indent + 2, "let browserDialog = false;");
                 self.line(
                     indent + 2,
                     "const onDialog = (d: { dismiss(): Promise<void> }) => { browserDialog = true; d.dismiss().catch(() => {}); };",
                 );
+                self.line(indent + 2, "const writes: string[] = [];");
+                self.line(
+                    indent + 2,
+                    "const onRequest = (r: Awaited<ReturnType<typeof cur.waitForRequest>>) => { if (/^(POST|PUT|PATCH|DELETE)$/.test(r.method())) { writes.push(`${r.method()} ${new URL(r.url()).pathname}`); } };",
+                );
                 self.line(indent + 2, "cur.on('dialog', onDialog);");
+                self.line(indent + 2, "cur.on('request', onRequest);");
                 self.line(indent + 2, "await target.click({ force: true });");
                 self.line(indent + 2, &format!("await cur.waitForTimeout({wait});"));
                 self.line(indent + 2, "cur.off('dialog', onDialog);");
+                self.line(indent + 2, "cur.off('request', onRequest);");
+                self.line(indent + 2, "expect(writes, 'what the click sent').toEqual([]);");
                 self.line(indent + 2, "expect(cur.url(), 'the address').toBe(before.url);");
                 self.line(indent + 2, "expect(browserDialog, 'a browser dialog').toBe(false);");
                 self.line(indent + 2, "expect(await cur.evaluate(openDialogs), 'open dialogs').toBe(before.dialogs);");
+                self.line(indent + 2, "expect(newTexts(before.messages, await cur.evaluate(shownMessages)), 'new messages').toEqual([]);");
                 self.line(indent + 2, "expect(await region.evaluate(noChangeState), 'the region').toEqual(before.state);");
                 self.line(indent, "}");
             }

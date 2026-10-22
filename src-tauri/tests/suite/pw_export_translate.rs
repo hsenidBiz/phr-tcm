@@ -260,14 +260,17 @@ fn checked_translates_to_to_be_checked() {
     assert!(!got.contains("#agree').first()).not.toHaveAttribute"), "{got}");
 }
 
-/// `expect_no_change` becomes one block: a forced click, the same wait, and
-/// the same three comparisons the app makes (the address, the open dialogs
-/// and any browser dialog, the region's text and states), so a case that
-/// passes here fails there only for a reason. The helpers go out once, and
-/// their bodies are the app's own (`no_change::STATE_JS`, `DIALOGS_JS`).
+/// `expect_no_change` becomes one block: the control waited for and checked
+/// not to be under another element, the pointer put on it, a forced click,
+/// the same wait, and the same comparisons the app makes (the address, the
+/// open dialogs and any browser dialog, what the click sent, the messages the
+/// page shows, the region's text and states), so a case that passes here
+/// fails there only for a reason. The helpers go out once, and their bodies
+/// are the app's own (`no_change::STATE_JS`, `DIALOGS_JS`, `MESSAGES_JS`,
+/// `COVERED_JS`).
 #[test]
-fn expect_no_change_exports_a_forced_click_and_the_same_three_comparisons() {
-    use v2_lib::browser::no_change::{DIALOGS_JS, STATE_JS};
+fn expect_no_change_exports_a_forced_click_and_the_same_comparisons() {
+    use v2_lib::browser::no_change::{COVERED_JS, DIALOGS_JS, MESSAGES_JS, STATE_JS};
     let got = one_step(json!([
         { "kind": "expect_no_change", "selector": "#save" },
         { "kind": "expect_no_change", "selector": "#card", "region": { "css": "#cards", "nth": 0 }, "within_ms": 2000 }
@@ -275,19 +278,24 @@ fn expect_no_change_exports_a_forced_click_and_the_same_three_comparisons() {
     .run()
     .unwrap();
     let got = lf(&got);
-    let block = |target: &str, region: &str, wait: u32| {
+    let block = |name: &str, target: &str, region: &str, wait: u32| {
         format!(
-            "    {{\n      const target = {target};\n      const region = {region};\n      const before = {{ url: cur.url(), dialogs: await cur.evaluate(openDialogs), state: await region.evaluate(noChangeState) }};\n      let browserDialog = false;\n      const onDialog = (d: {{ dismiss(): Promise<void> }}) => {{ browserDialog = true; d.dismiss().catch(() => {{}}); }};\n      cur.on('dialog', onDialog);\n      await target.click({{ force: true }});\n      await cur.waitForTimeout({wait});\n      cur.off('dialog', onDialog);\n      expect(cur.url(), 'the address').toBe(before.url);\n      expect(browserDialog, 'a browser dialog').toBe(false);\n      expect(await cur.evaluate(openDialogs), 'open dialogs').toBe(before.dialogs);\n      expect(await region.evaluate(noChangeState), 'the region').toEqual(before.state);\n    }}\n"
+            "    {{\n      const target = {target};\n      const region = {region};\n      await expect(target).toBeVisible({{ timeout: 10000 }});\n      const covered = await target.evaluate(coveredBy);\n      if (covered) {{ throw new Error('{name} is covered by ' + covered); }}\n      await target.hover({{ force: true }});\n      const before = {{ url: cur.url(), dialogs: await cur.evaluate(openDialogs), messages: await cur.evaluate(shownMessages), state: await region.evaluate(noChangeState) }};\n      let browserDialog = false;\n      const onDialog = (d: {{ dismiss(): Promise<void> }}) => {{ browserDialog = true; d.dismiss().catch(() => {{}}); }};\n      const writes: string[] = [];\n      const onRequest = (r: Awaited<ReturnType<typeof cur.waitForRequest>>) => {{ if (/^(POST|PUT|PATCH|DELETE)$/.test(r.method())) {{ writes.push(`${{r.method()}} ${{new URL(r.url()).pathname}}`); }} }};\n      cur.on('dialog', onDialog);\n      cur.on('request', onRequest);\n      await target.click({{ force: true }});\n      await cur.waitForTimeout({wait});\n      cur.off('dialog', onDialog);\n      cur.off('request', onRequest);\n      expect(writes, 'what the click sent').toEqual([]);\n      expect(cur.url(), 'the address').toBe(before.url);\n      expect(browserDialog, 'a browser dialog').toBe(false);\n      expect(await cur.evaluate(openDialogs), 'open dialogs').toBe(before.dialogs);\n      expect(newTexts(before.messages, await cur.evaluate(shownMessages)), 'new messages').toEqual([]);\n      expect(await region.evaluate(noChangeState), 'the region').toEqual(before.state);\n    }}\n"
         )
     };
-    assert!(got.contains(&block("cur.locator('#save').first()", "cur.locator('#save').first()", 1000)), "{got}");
-    assert!(got.contains(&block("cur.locator('#card').first()", "cur.locator('#cards').filter({ visible: true }).nth(0)", 2000)), "{got}");
+    // A plain-string selector is never narrowed to its first match: several is a failure, as in the app.
+    assert!(got.contains(&block("#save", "cur.locator('#save')", "cur.locator('#save')", 1000)), "{got}");
+    assert!(got.contains(&block("#card", "cur.locator('#card')", "cur.locator('#cards').filter({ visible: true }).nth(0)", 2000)), "{got}");
     // Once, before the first use, with the app's own bodies word for word.
     assert_eq!(got.matches("const noChangeState = (e: Element) =>").count(), 1, "{got}");
     assert_eq!(got.matches("const openDialogs = () =>").count(), 1, "{got}");
+    assert_eq!(got.matches("const shownMessages = () =>").count(), 1, "{got}");
+    assert_eq!(got.matches("const coveredBy = (e: Element) =>").count(), 1, "{got}");
+    assert_eq!(got.matches("const newTexts = ").count(), 1, "{got}");
     assert!(got.find("const noChangeState").unwrap() < got.find("const before").unwrap(), "{got}");
+    assert!(got.find("const coveredBy").unwrap() < got.find("const before").unwrap(), "{got}");
     // Every line between the function's first and last (those are wrapped).
-    for body in [STATE_JS, DIALOGS_JS] {
+    for body in [STATE_JS, DIALOGS_JS, MESSAGES_JS, COVERED_JS] {
         let lines: Vec<&str> = body.lines().collect();
         for line in &lines[1..lines.len() - 1] {
             assert!(got.contains(&format!("    {line}\n")), "the helper lost {line:?}: {got}");
@@ -298,6 +306,25 @@ fn expect_no_change_exports_a_forced_click_and_the_same_three_comparisons() {
     // A spec with no such action carries neither helper.
     let plain = lf(&one_step(json!([{ "kind": "click", "selector": "#a" }])).run().unwrap());
     assert!(!plain.contains("noChangeState") && !plain.contains("openDialogs"), "{plain}");
+}
+
+/// The check that the control is not under another element is the app's
+/// (`COVERED_JS`), run before the pointer goes on it and before the page is
+/// read: a covered control fails with the app's own words and is never clicked.
+#[test]
+fn expect_no_change_checks_the_control_is_ready_and_not_covered_before_it_clicks() {
+    let got = lf(&one_step(json!([{ "kind": "expect_no_change", "selector": "#save" }])).run().unwrap());
+    let at = |needle: &str| got.find(needle).unwrap_or_else(|| panic!("{needle} missing: {got}"));
+    assert!(at("toBeVisible") < at("evaluate(coveredBy)"), "{got}");
+    assert!(at("evaluate(coveredBy)") < at("target.hover({ force: true })"), "{got}");
+    assert!(at("target.hover({ force: true })") < at("const before ="), "{got}");
+    assert!(at("const before =") < at("target.click({ force: true })"), "{got}");
+    assert!(got.contains("throw new Error('#save is covered by ' + covered)"), "{got}");
+    // The wording is the app's: `<target> is covered by <what is there>`.
+    assert!(v2_lib::browser::input::COVERED_BY.starts_with("is covered by"));
+    // A selector with a form of its own (an object) keeps the first-match rule it always had.
+    let object = lf(&one_step(json!([{ "kind": "expect_no_change", "selector": { "css": "#save" } }])).run().unwrap());
+    assert!(object.contains("const target = cur.locator('#save').filter({ visible: true }).first();") || object.contains("const target = cur.locator('#save').first();"), "{object}");
 }
 
 #[test]

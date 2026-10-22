@@ -3846,6 +3846,41 @@ async fn a_forced_click_through_pointer_events_none_reaches_its_container() {
     assert!(card.ok, "{}", card.detail);
 }
 
+/// A card that looks switched off but sends a POST when clicked: nothing in
+/// the card changes, and the write is what is said (the path only).
+#[tokio::test]
+#[ignore = "starts a real headless Edge"]
+async fn a_forced_click_that_sends_a_post_fails_naming_it() {
+    use v2_lib::browser::no_change::NOTHING_EXPECTED;
+    let mut live = open_no_change().await;
+    let out = run(&mut live, no_change("#writer-card", json!({}))).await;
+    assert!(!out.ok, "{}", out.detail);
+    assert!(out.detail.starts_with(&format!("{NOTHING_EXPECTED}the click sent POST /hr/Cycle/Save")), "{}", out.detail);
+    assert!(!out.detail.contains("hunter2") && !out.detail.contains("127.0.0.1"), "{}", out.detail);
+}
+
+/// A card that only writes a status message elsewhere on the page.
+#[tokio::test]
+#[ignore = "starts a real headless Edge"]
+async fn a_forced_click_that_shows_a_status_message_fails_naming_it() {
+    use v2_lib::browser::no_change::NOTHING_EXPECTED;
+    let mut live = open_no_change().await;
+    let out = run(&mut live, no_change("#status-card", json!({}))).await;
+    assert!(!out.ok, "{}", out.detail);
+    assert_eq!(out.detail, format!("{NOTHING_EXPECTED}a message appeared: \"Cycle saved\""), "{}", out.detail);
+}
+
+/// A hint that shows only while the pointer is over the card is already
+/// showing when the page is read before the click: the pointer is put on the
+/// control first, so the hint is not the click's doing.
+#[tokio::test]
+#[ignore = "starts a real headless Edge"]
+async fn a_hint_shown_while_the_pointer_is_over_the_card_is_not_a_change() {
+    let mut live = open_no_change().await;
+    let out = run(&mut live, no_change("#hint-card", json!({}))).await;
+    assert!(out.ok, "{}", out.detail);
+}
+
 /// A class added under the pointer is how a card looks, not what it holds:
 /// only text and control or aria states are compared.
 #[tokio::test]

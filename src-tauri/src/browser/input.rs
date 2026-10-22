@@ -596,7 +596,8 @@ pub async fn click_forced<D: Driver>(d: &mut D, ready: &Ready) -> Result<(), Blo
     click_as(d, ready, true).await
 }
 
-async fn click_as<D: Driver>(d: &mut D, ready: &Ready, forced: bool) -> Result<(), Blocked> {
+/// `ready`'s element probed again, and the point a click would land on.
+async fn probe_point<D: Driver>(d: &mut D, ready: &Ready, forced: bool) -> Result<(f64, f64), Blocked> {
     let p = if forced {
         page::call_value(d, &ready.handle, PROBE_JS, &[json!(false), json!(false), json!(true)]).await
     } else {
@@ -606,8 +607,26 @@ async fn click_as<D: Driver>(d: &mut D, ready: &Ready, forced: bool) -> Result<(
     if let Some(why) = reason(&p, false, forced) {
         return Err(Blocked::Page(format!("{MOVED_BEFORE_CLICK}{why}")));
     }
-    let x = p["x"].as_f64().unwrap_or(ready.x);
-    let y = p["y"].as_f64().unwrap_or(ready.y);
+    Ok((p["x"].as_f64().unwrap_or(ready.x), p["y"].as_f64().unwrap_or(ready.y)))
+}
+
+/// The pointer moved to where `click_forced` will click, and no more: what a
+/// page does only because the pointer is over the control (a hint, a hover
+/// menu) is already showing when `expect_no_change` reads the page before
+/// its click, so that is never taken for what the click did.
+pub async fn hover_forced<D: Driver>(d: &mut D, ready: &Ready) -> Result<(), Blocked> {
+    let (x, y) = probe_point(d, ready, true).await?;
+    d.call(
+        "Input.dispatchMouseEvent",
+        json!({ "type": "mouseMoved", "x": x, "y": y, "button": "none", "clickCount": 0, "buttons": 0 }),
+    )
+    .await
+    .map_err(blame)?;
+    Ok(())
+}
+
+async fn click_as<D: Driver>(d: &mut D, ready: &Ready, forced: bool) -> Result<(), Blocked> {
+    let (x, y) = probe_point(d, ready, forced).await?;
     for (kind, button, count, buttons) in [
         ("mouseMoved", "none", 0, 0),
         ("mousePressed", "left", 1, 1),
