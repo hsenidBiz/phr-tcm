@@ -168,7 +168,9 @@ pub enum TokenPage {
 }
 
 /// What a one-off request came back with: the last request sent, its body
-/// with every anti-forgery token taken out.
+/// with every anti-forgery token taken out. The body is NOT redacted
+/// (`capture_redact::redact_body`): whoever shows it to the assistant does
+/// that.
 #[derive(Debug, Clone, PartialEq)]
 pub struct PageAnswer {
     pub status: u16,
@@ -1298,11 +1300,12 @@ fn path_and_query(href: &str) -> String {
 }
 
 /// `token`, for a run in the page the browser is on (`run_in_page`): it
-/// never signs in. `TokenPage::Here` reads the token on the current
-/// document, after checking that the browser is on one of the recipe's
-/// origins (anything else sends nothing - `OFF_THE_APP`). `TokenPage::Open`
-/// opens that page in the same tab first, and a browser that lands on any
-/// other page has lost its session (`SESSION_ENDED_IN_PAGE`). A page with no
+/// never signs in. First it checks that the browser is on one of the
+/// recipe's origins (anything else sends nothing and goes nowhere -
+/// `OFF_THE_APP`). `TokenPage::Here` then reads the token on the current
+/// document. `TokenPage::Open` opens that page in the same tab first, and a
+/// browser that lands on any other page has lost its session
+/// (`SESSION_ENDED_IN_PAGE`). A page with no
 /// token is fine for a run of GETs, which go with an empty one; a POST
 /// stops (`NO_TOKEN_HERE`). Where the token was read, and whether it was
 /// there, are left in `progress` for the caller.
@@ -1312,6 +1315,15 @@ async fn token_in_page<D: Driver>(
     how: &TokenPage,
     progress: &mut Progress,
 ) -> Option<(Handle, String)> {
+    let on_app = |href: &str| origin_of(href).is_some_and(|o| ctx.recipe.origins().contains(&o));
+    // Where the browser is is read first, for both ways: a browser that is
+    // not on the application sends nothing, and an `Open` is not allowed to
+    // pull it there.
+    let Some(mut href) = page_address(d, ctx, progress).await else { return None };
+    if !on_app(&href) {
+        progress.fail(None, OFF_THE_APP);
+        return None;
+    }
     if let TokenPage::Open(page) = how {
         if !is_safe_relative_path(page) {
             progress.fail(None, format!("the antiforgery page {page} is not a relative path on this origin"));
@@ -1321,33 +1333,22 @@ async fn token_in_page<D: Driver>(
         let policy = Policy::only(ctx.recipe.origins());
         let went = execute_in(d, &Action::Navigate { url }, ctx.timing, &policy).await;
         if !went.ok {
-            applog::warn(format!("api template {}: the token page did not open: {}", ctx.id(), went.detail));
+            applog::warn(format!(
+                "api template {}: the token page did not open: {}",
+                ctx.id(),
+                without_hosts(&went.detail)
+            ));
             progress.fail(None, format!("the token page {page} did not open - see Settings, Logs"));
             return None;
         }
-    }
-    let href = match eval_value(d, "location.href").await {
-        Ok(v) => v.as_str().unwrap_or("").to_string(),
-        Err(e) => {
-            applog::warn(format!("api template {}: reading the page's address: {e}", ctx.id()));
-            progress.fail(None, "the browser did not answer on the token page - see Settings, Logs");
-            return None;
-        }
-    };
-    let on_app = origin_of(&href).is_some_and(|o| ctx.recipe.origins().contains(&o));
-    match how {
-        TokenPage::Here if !on_app => {
-            progress.fail(None, OFF_THE_APP);
-            return None;
-        }
-        TokenPage::Open(page) if !(same_path(&href, page) && origin_of(&href).as_deref() == Some(ctx.origin.as_str())) => {
+        href = page_address(d, ctx, progress).await?;
+        if !(same_path(&href, page) && origin_of(&href).as_deref() == Some(ctx.origin.as_str())) {
             let cookies = cookies_for(d, ctx, &href).await;
             record_token_page(ctx, &path_and_query(&href), None, cookies, &progress.sign_ins);
             progress.session_ended = true;
             progress.fail(None, SESSION_ENDED_IN_PAGE);
             return None;
         }
-        _ => {}
     }
     let here = path_and_query(&href);
     progress.token_page = Some(here.clone());
@@ -1373,6 +1374,19 @@ async fn token_in_page<D: Driver>(
         None if ctx.req.template.steps.iter().all(|s| s.method == Method::Get) => Some((doc, String::new())),
         None => {
             progress.fail(None, NO_TOKEN_HERE);
+            None
+        }
+    }
+}
+
+/// Where the browser is now (`location.href`); `None` - with the run
+/// stopped - when it does not say.
+async fn page_address<D: Driver>(d: &mut D, ctx: &Ctx<'_>, progress: &mut Progress) -> Option<String> {
+    match eval_value(d, "location.href").await {
+        Ok(v) => Some(v.as_str().unwrap_or("").to_string()),
+        Err(e) => {
+            applog::warn(format!("api template {}: reading the page's address: {e}", ctx.id()));
+            progress.fail(None, "the browser did not answer on the token page - see Settings, Logs");
             None
         }
     }
@@ -1460,6 +1474,7 @@ async fn run_step<D: Driver>(
         status: None,
         duration_ms,
         response: "",
+        content_type: None,
         cookies: cookies_sent.as_deref(),
         path_case_adapted: adapted.as_ref(),
         attempt,
@@ -1473,7 +1488,7 @@ async fn run_step<D: Driver>(
     };
     let status = answer["status"].as_u64().and_then(|s| u16::try_from(s).ok());
     let text = answer["text"].as_str().unwrap_or("");
-    record(ctx, step, &built, handler, &Sent { status, response: text, ..sent }, token);
+    record(ctx, step, &built, handler, &Sent { status, response: text, content_type: answer["contentType"].as_str(), ..sent }, token);
 
     if let Some(err) = answer.get("error") {
         if err.as_str() == Some("timeout") {
@@ -1537,10 +1552,19 @@ async fn run_step<D: Driver>(
     } else {
         check_expect(&step.expect, status, text)
     };
+    let explore = matches!(ctx.req.mode, Mode::Explore);
     let parsed = judged.map_err(|e| {
-        // `e` can quote the answer's own values, so it is scrubbed too.
-        let e = scrub_tokens(&e, Some(token));
-        let shown = shown(text, token);
+        // `e` can quote the answer's own values, so it is scrubbed too. A
+        // one-off's answer is free-form: what it quotes goes through the
+        // same redaction as the answer's body (a validation error can echo
+        // the password that was posted), then the token scrub.
+        let (e, shown) = if explore {
+            let content_type = answer["contentType"].as_str();
+            let hidden = redact_body(content_type, text);
+            (scrub_tokens(&redact_body(None, &e), Some(token)), self::shown(&hidden, token))
+        } else {
+            (scrub_tokens(&e, Some(token)), shown(text, token))
+        };
         let detail = if shown.is_empty() { e } else { format!("{e} - the response began: {shown}") };
         (Some(status), detail)
     })?;
@@ -1580,6 +1604,8 @@ struct Sent<'a> {
     status: Option<u16>,
     duration_ms: u64,
     response: &'a str,
+    /// The response's content type, when it said.
+    content_type: Option<&'a str>,
     /// The names of the cookies the browser held for the request's
     /// address; `None` when it would not say.
     cookies: Option<&'a [Value]>,
@@ -1598,8 +1624,9 @@ struct Sent<'a> {
 fn record(ctx: &Ctx<'_>, step: &Step, built: &exec::BuiltRequest, handler: Option<&str>, sent: &Sent<'_>, token: &str) {
     // A one-off is the person's own call, with whatever it carries: its
     // bodies are redacted as the captured requests are before they show.
-    let (request, response) = if matches!(ctx.req.mode, Mode::Explore) {
-        (redact_body(None, &body_text(&built.body)), redact_body(None, sent.response))
+    let explore = matches!(ctx.req.mode, Mode::Explore);
+    let (request, response) = if explore {
+        (redact_body(None, &body_text(&built.body)), redact_body(sent.content_type, sent.response))
     } else {
         (body_text(&built.body), sent.response.to_string())
     };
@@ -1612,7 +1639,7 @@ fn record(ctx: &Ctx<'_>, step: &Step, built: &exec::BuiltRequest, handler: Optio
             "origin": ctx.origin,
             "step": step.name,
             "method": method_name(built.method),
-            "url": built.url,
+            "url": if explore { redact_body(None, &built.url) } else { built.url.clone() },
             "handler": handler,
             "status": sent.status,
             "duration_ms": sent.duration_ms,
@@ -1645,7 +1672,11 @@ fn record_token_page(
             "mode": ctx.req.mode.label(),
             "account": ctx.req.account,
             "origin": ctx.origin,
-            "requested": ctx.req.template.antiforgery.page,
+            "requested": match &ctx.in_page {
+                Some(TokenPage::Here) => "(the page the browser was on)",
+                Some(TokenPage::Open(page)) => page.as_str(),
+                None => ctx.req.template.antiforgery.page.as_str(),
+            },
             "final_url": scrub_tokens(final_url, token),
             "token_found": token.is_some(),
             "token_length": token.map(str::len),

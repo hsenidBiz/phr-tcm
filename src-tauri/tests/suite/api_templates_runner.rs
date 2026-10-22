@@ -2419,6 +2419,11 @@ async fn a_one_off_with_no_expect_passes_on_any_2xx() {
 #[tokio::test]
 async fn a_named_token_page_opens_in_the_same_tab() {
     let mut r = rig(vec![answer(200, json!({ "ok": true }))], None);
+    // Where the browser is before, then where the navigation landed.
+    r.script.lock().unwrap().hrefs = VecDeque::from([
+        format!("https://hr.example.internal{PAGE}"),
+        "https://hr.example.internal/hr/pmsv10/updatehub".to_string(),
+    ]);
     let t = one_off("POST", json!({ "form": { "CycleName": "x" } }));
     let how = TokenPage::Open("/hr/pmsv10/updatehub".to_string());
     let (out, app) = in_page(&mut r, &request(t, Mode::Explore), how).await;
@@ -2434,7 +2439,7 @@ async fn a_named_token_page_opens_in_the_same_tab() {
 #[tokio::test]
 async fn a_token_page_that_sends_us_elsewhere_ends_without_signing_in() {
     let mut r = rig(vec![], None);
-    r.script.lock().unwrap().hrefs = VecDeque::from([LOGIN.to_string()]);
+    r.script.lock().unwrap().hrefs = VecDeque::from([format!("https://hr.example.internal{PAGE}"), LOGIN.to_string()]);
     let t = one_off("POST", json!({ "form": { "CycleName": "x" } }));
     let how = TokenPage::Open("/hr/pmsv10/updatehub".to_string());
     let (out, _app) = in_page(&mut r, &request(t, Mode::Explore), how).await;
@@ -2521,4 +2526,86 @@ fn preflight_lets_a_one_off_delete_through_without_the_delete_template_shape() {
     run.values.clear();
     let refused = preflight(r.root.path(), &run, None).unwrap_err();
     assert!(refused.contains(&deletes_refusal(&t.id)), "{refused:?}");
+}
+
+#[tokio::test]
+async fn a_named_token_page_is_not_opened_from_a_page_off_the_app() {
+    let mut r = rig(vec![], None);
+    r.script.lock().unwrap().hrefs = VecDeque::from(["https://elsewhere.example/x".to_string()]);
+    let t = one_off("POST", json!({ "form": { "CycleName": "x" } }));
+    let how = TokenPage::Open("/hr/pmsv10/updatehub".to_string());
+    let (out, app) = in_page(&mut r, &request(t, Mode::Explore), how).await;
+    assert_eq!(out.report.failed.as_deref(), Some("Anti-forgery token"));
+    assert!(out.report.message().contains(OFF_THE_APP), "{}", out.report.message());
+    assert_eq!(app.inner.calls_to("Page.navigate").len(), 0, "the tab was pulled onto the app");
+    assert!(r.fetched().is_empty());
+    assert_eq!(r.sign_ins(), 0);
+}
+
+#[tokio::test]
+async fn a_failing_one_off_quotes_the_response_redacted() {
+    let mut r = rig(vec![answer(400, json!({ "errors": ["bad"], "model": { "Password": "hunter2", "Name": "x" } }))], None);
+    on_the_app(&r);
+    let t = one_off("POST", json!({ "json": { "Password": "hunter2" } }));
+    let (out, _app) = in_page(&mut r, &request(t, Mode::Explore), TokenPage::Here).await;
+    assert!(!out.report.ok);
+    let said = out.report.message();
+    assert!(said.contains("the response began"), "{said}");
+    assert!(!said.contains("hunter2"), "a password reached the report: {said}");
+    assert!(!serde_json::to_string(&out.report).unwrap().contains("hunter2"));
+}
+
+#[tokio::test]
+async fn an_explore_requests_url_is_redacted_in_its_record() {
+    let _log = crate::serial::log_tail();
+    let _act = crate::serial::activity_log();
+    let activity = tempfile::tempdir().unwrap();
+    v2_lib::activity_log::init(activity.path().to_path_buf());
+    let mut r = rig(vec![answer(200, json!({ "ok": true }))], None);
+    on_the_app(&r);
+    let t = one_off("GET", json!({ "query": { "password": "hunter2", "page": "1" } }));
+    let (out, _app) = in_page_locked(&mut r, &request(t, Mode::Explore), TokenPage::Here).await;
+    assert!(out.report.ok, "{:?}", out.report);
+    let records = activity_records(activity.path(), "api");
+    for rec in &records {
+        assert!(!rec.to_string().contains("hunter2"), "a secret query value reached a record: {rec}");
+    }
+    assert_eq!(step_records(&records).len(), 1);
+}
+
+#[tokio::test]
+async fn an_account_that_is_not_on_this_machine_stops_at_sign_in() {
+    let mut r = rig(vec![], None);
+    on_the_app(&r);
+    let t = one_off("GET", json!({}));
+    let mut req = request(t, Mode::Explore);
+    req.account = "nobody".to_string();
+    let (out, app) = in_page(&mut r, &req, TokenPage::Here).await;
+    assert_eq!(out.report.failed.as_deref(), Some("Sign in"));
+    assert!(r.fetched().is_empty());
+    assert_eq!(app.inner.calls_to("Page.navigate").len(), 0);
+    assert_eq!(out.token_page, None);
+}
+
+#[tokio::test]
+async fn a_one_off_that_runs_out_of_time_says_so_and_clears_the_deadline() {
+    let mut r = rig(vec![], None);
+    on_the_app(&r);
+    r.script.lock().unwrap().hang_fetch = true;
+    let mut app = r.browsers.next.take().unwrap();
+    let _act = crate::serial::activity_log();
+    let t = one_off("GET", json!({}));
+    let out = run_in_page(
+        &mut app,
+        r.root.path(),
+        &request(t, Mode::Explore),
+        &quick(),
+        TokenPage::Here,
+        Duration::from_millis(300),
+        &QUICK_PAUSES,
+    )
+    .await;
+    assert!(!out.report.ok);
+    assert!(out.report.message().contains("3 minutes"), "{}", out.report.message());
+    assert!(out.answer.is_none());
 }
