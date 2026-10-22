@@ -599,3 +599,61 @@ fn an_iframe_step_escapes_odd_ids_and_titles() {
     let step = frame_step("", &attrs(&["title", "two\nlines"]), 0);
     assert_eq!(matched_value(step["css"].as_str().unwrap(), "title").as_deref(), Some("two\nlines"), "{step}");
 }
+
+/// The names the runner takes as the same words in other capitals.
+#[test]
+fn differs_only_in_case_reads_names_as_the_runner_folds_them() {
+    use v2_lib::browser::locator::differs_only_in_case;
+    assert!(differs_only_in_case("DURATION", "Duration"));
+    assert!(!differs_only_in_case("Duration", "Duration"));
+    assert!(differs_only_in_case("DURATION ", "duration"));
+    assert!(!differs_only_in_case("Durations", "Duration"));
+}
+
+/// An exact name CSS draws in capitals (`text-transform`) still finds the
+/// element when the page's own words are the case's. A hidden word in the
+/// element's text, or another name, does not.
+#[tokio::test]
+async fn an_exact_role_name_matches_the_words_as_written_when_css_draws_capitals() {
+    use v2_lib::browser::expect::WRITTEN_TEXT_JS;
+    let mut d = ScriptedDriver::new(|method, params| match method {
+        "Runtime.evaluate" => Ok(json!({ "result": { "objectId": "doc" } })),
+        "Accessibility.queryAXTree" => Ok(json!({ "nodes": [
+            { "ignored": false, "name": { "value": "DURATION" }, "backendDOMNodeId": 7 },
+            { "ignored": false, "name": { "value": "DURATION" }, "backendDOMNodeId": 8 },
+            { "ignored": false, "name": { "value": "LENGTH" },   "backendDOMNodeId": 9 }
+        ] })),
+        "DOM.resolveNode" => Ok(json!({ "object": { "objectId": format!("el-{}", params["backendNodeId"]) } })),
+        "Runtime.callFunctionOn" if params["functionDeclaration"] == WRITTEN_TEXT_JS => {
+            // Node 8 holds more words than it draws.
+            let written = if params["objectId"] == "el-8" { "Duration (days)" } else { "Duration" };
+            Ok(json!({ "result": { "value": written } }))
+        }
+        "Runtime.callFunctionOn" => {
+            assert_eq!(params["functionDeclaration"], VISIBLE_JS);
+            Ok(json!({ "result": { "value": true } }))
+        }
+        other => panic!("unexpected {other}"),
+    });
+    let t: Target = serde_json::from_value(json!({ "role": "button", "name": "Duration", "exact": true })).unwrap();
+    let found = resolve_explained(&mut d, &t).await.unwrap();
+    assert_eq!(found.handles, vec!["el-7".to_string()]);
+    assert!(found.as_written, "the match was by the written words and the locator did not say so");
+    // Without exact the names already match loosely: no written text is read.
+    let loose: Target = serde_json::from_value(json!({ "role": "button", "name": "duration" })).unwrap();
+    let found = resolve_explained(&mut d, &loose).await.unwrap();
+    assert_eq!(found.handles.len(), 2);
+    assert!(!found.as_written);
+}
+
+/// An exact text locator keeps an element whose drawn text is in other
+/// capitals when its own text is the case's words (checked in a real page by
+/// `browser_live`; the fake cannot run `TEXT_JS`).
+#[test]
+fn the_exact_text_rule_accepts_the_written_words_in_other_capitals() {
+    use v2_lib::browser::locator::TEXT_JS;
+    assert!(
+        TEXT_JS.contains("t === needle || (norm(e.textContent) === needle && t.toLowerCase() === lower)"),
+        "the exact rule must also take the written words when only the capitals differ"
+    );
+}

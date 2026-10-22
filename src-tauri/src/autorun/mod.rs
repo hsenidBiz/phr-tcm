@@ -257,6 +257,11 @@ pub struct CaseScript {
     /// Every check a repair gave up, oldest first. Set by the save from the edits, never from what was sent.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub given_up: Vec<GivenUp>,
+    /// The suspected-defect mark the assistant cleared on the person's words (`clear_autorun_suspected_defect`),
+    /// kept so the case card can show what the person said. Set only by `store::clear_suspected_defect_with_words`;
+    /// gone when a mark is set again. Every save keeps the one on disk, like the mark.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cleared_defect: Option<ClearedDefect>,
 }
 
 /// A check a repair gave up, with why: shown to the person on the case. The person's own save in
@@ -338,6 +343,18 @@ pub struct SuspectedDefect {
     pub note: String,
     /// Epoch milliseconds as a string, like `LocalRun::started_at`.
     pub marked_at: String,
+}
+
+/// A suspected-defect mark the assistant cleared because the person said so in the chat: the step it was on,
+/// their words (scrubbed, never written to the app log), the assistant's own note, and when.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, specta::Type)]
+pub struct ClearedDefect {
+    pub step_number: i32,
+    pub said: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
+    /// Epoch milliseconds as a string, like `SuspectedDefect::marked_at`.
+    pub cleared_at: String,
 }
 
 /// What a clean-up step is called wherever a step's number would be.

@@ -316,7 +316,7 @@ test("only the switchable tools are left, as nine rows with every module on", ()
   expect(visibleRows().map((r) => r.key)).toEqual([
     "search_test_suites+get_suite_test_cases",
     "get_run_results",
-    "save_autorun_script+get_autorun_script+delete_autorun_script+get_autorun_page+probe_autorun_locator+try_autorun_action+replay_autorun_to_step+start_autorun_discovery+discover_autorun_actions+save_autorun_area+end_autorun_discovery+reset_autorun_browser+save_autorun_component+get_autorun_failures+record_quirk+record_validation_rule+mark_autorun_suspected_defect+report_case_divergence+set_autorun_order+propose_accounts+get_accounts+save_test_file+get_autorun_network_wait+search_autorun_requests+get_autorun_request+autorun_capture+autorun_har+set_autorun_headers+autorun_cookies+record_explore_change+get_explore_changes",
+    "save_autorun_script+get_autorun_script+delete_autorun_script+get_autorun_page+probe_autorun_locator+try_autorun_action+replay_autorun_to_step+start_autorun_discovery+discover_autorun_actions+save_autorun_area+end_autorun_discovery+reset_autorun_browser+save_autorun_component+get_autorun_failures+record_quirk+record_validation_rule+mark_autorun_suspected_defect+report_case_divergence+rule_case_divergence+clear_autorun_suspected_defect+set_autorun_order+propose_accounts+get_accounts+save_test_file+get_autorun_network_wait+search_autorun_requests+get_autorun_request+autorun_capture+autorun_har+set_autorun_headers+autorun_cookies+record_explore_change+get_explore_changes",
     "list_api_templates+prove_api_template+run_api_template+save_api_flow+get_api_flow_progress+save_api_fixture+run_api_fixture+send_api_request+undo_explore_creates+record_quirk",
     "db_lookup+db_query",
     "open_report+read_report+edit_report+compare_reports+check_report+preview_report+preview_report_live",
@@ -354,7 +354,7 @@ test("the two database tools are one switchable row, there while Database Access
 
 /// With Auto Run on, its group is offered as one row and its switch moves
 /// every tool in it together, the same as any other pair.
-test("the Auto Run scripts row carries all thirty-one tools", () => {
+test("the Auto Run scripts row carries all thirty-three tools", () => {
   const row = visibleRows().find((r) => r.label === "Auto Run scripts");
   expect(row, "the Auto Run scripts row exists").toBeTruthy();
   expect(row!.names).toEqual([
@@ -376,6 +376,8 @@ test("the Auto Run scripts row carries all thirty-one tools", () => {
     "record_validation_rule",
     "mark_autorun_suspected_defect",
     "report_case_divergence",
+    "rule_case_divergence",
+    "clear_autorun_suspected_defect",
     "set_autorun_order",
     "propose_accounts",
     "get_accounts",
@@ -634,4 +636,11 @@ test("the explore tools belong to their modules", () => {
   expect(moduleOfTool("undo_explore_creates")).toBe("api_templates");
   expect(moduleOfTool("record_explore_change")).toBe("auto_run");
   expect(moduleOfTool("get_explore_changes")).toBe("auto_run");
+});
+
+test("the ruling tools belong to auto run", () => {
+  expect(moduleOfTool("rule_case_divergence")).toBe("auto_run");
+  expect(moduleOfTool("clear_autorun_suspected_defect")).toBe("auto_run");
+  const names = MCP_TOOLS.map((t) => t.name);
+  expect(names.indexOf("rule_case_divergence")).toBe(names.indexOf("report_case_divergence") + 1);
 });

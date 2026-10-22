@@ -276,6 +276,38 @@ async fn a_saved_em_dash_finds_the_pages_en_dash_and_hyphen() {
     }
 }
 
+/// CSS draws a label and a button in capitals; the case writes their words as
+/// the page does, and the real `TEXT_JS`, the real accessibility tree and the
+/// real text reads all take them.
+#[tokio::test]
+#[ignore = "starts a real headless Edge"]
+async fn a_label_drawn_in_capitals_matches_the_case_words_exactly() {
+    let mut live = open().await;
+    let add = r#"(() => {
+      const label = document.createElement('label');
+      label.style.textTransform = 'uppercase';
+      label.textContent = 'Duration';
+      const button = document.createElement('button');
+      button.style.textTransform = 'uppercase';
+      button.textContent = 'Save draft';
+      const out = document.createElement('p');
+      out.id = 'out';
+      button.onclick = () => { out.textContent = 'clicked'; };
+      document.body.append(label, button, out);
+      return true;
+    })()"#;
+    page::eval_value(&mut live.cdp, add).await.expect("could not add the capitals");
+    let out = run(&mut live, json!({ "kind": "expect_text", "selector": { "text": "Duration", "exact": true }, "equals": "Duration" })).await;
+    assert!(out.ok, "{}", out.detail);
+    assert!(out.detail.contains("as written in the page"), "{}", out.detail);
+    // The drawn words pass too.
+    must(run(&mut live, json!({ "kind": "expect_text", "selector": { "text": "Duration", "exact": true }, "equals": "DURATION" })).await);
+    let out = run(&mut live, json!({ "kind": "click", "selector": { "role": "button", "name": "Save draft", "exact": true } })).await;
+    assert!(out.ok, "{}", out.detail);
+    assert!(out.detail.contains("as written in the page"), "{}", out.detail);
+    must(run(&mut live, json!({ "kind": "expect_text", "selector": "#out", "equals": "clicked" })).await);
+}
+
 #[tokio::test]
 #[ignore = "starts a real headless Edge"]
 async fn a_click_waits_out_disabled_and_covered() {
@@ -4058,4 +4090,68 @@ async fn expect_order_and_position_read_a_real_page() {
     );
     must(run(&mut live, place(fbtn.clone(), fbar.clone(), "in_top_right")).await);
     must(run(&mut live, place(fbtn, new, "left_of")).await);
+}
+
+/// `page_until` against a real list drawn five pages deep by a script:
+/// the walk clicks Next until the card shows, and one that never shows
+/// stops at the last page, where Next is disabled, naming the pages walked.
+#[tokio::test]
+#[ignore = "starts a real headless Edge"]
+async fn page_until_walks_a_real_list_until_the_card_shows() {
+    let mut live = open().await;
+    let url = fixture_url().replace("autorun-live.html", "autorun-pages.html");
+    must(run(&mut live, json!({ "kind": "navigate", "url": url.clone() })).await);
+    let next = json!({ "role": "button", "name": "Next" });
+    let walk = |until: serde_json::Value, max: u32| {
+        json!({ "kind": "page_until", "next": next.clone(), "until": until, "max_pages": max })
+    };
+
+    let out = run(&mut live, walk(json!({ "text": "Unpublished" }), 10)).await;
+    assert!(out.ok, "{}", out.detail);
+    assert!(out.detail.contains("on page 4"), "{}", out.detail);
+
+    // Back to page 1, then a target that is on no page.
+    must(run(&mut live, json!({ "kind": "navigate", "url": url })).await);
+    let out = run(&mut live, walk(json!({ "text": "Archived" }), 10)).await;
+    assert!(!out.ok, "{}", out.detail);
+    assert!(out.detail.contains("walked 5 pages and never saw"), "{}", out.detail);
+    assert!(out.detail.contains("is disabled on page 5"), "{}", out.detail);
+
+    // Fewer pages than the card is deep: the count at the limit.
+    must(run(&mut live, json!({ "kind": "navigate", "url": fixture_url().replace("autorun-live.html", "autorun-pages.html") })).await);
+    refused(run(&mut live, walk(json!({ "text": "Unpublished" }), 2)).await, "walked 2 pages and never saw");
+}
+
+/// A page that turns late (700 ms after the click, no request) is waited for:
+/// the walk never looks at the old page again and counts it as a new one.
+/// A Next that does nothing fails saying so, and a Next disabled only by a
+/// class ends the walk at once.
+#[tokio::test]
+#[ignore = "starts a real headless Edge"]
+async fn page_until_waits_for_a_page_that_turns_late() {
+    let mut live = open().await;
+    let url = fixture_url().replace("autorun-live.html", "autorun-pages-slow.html");
+    must(run(&mut live, json!({ "kind": "navigate", "url": url.clone() })).await);
+    let next = json!({ "role": "button", "name": "Next" });
+    let walk = |until: serde_json::Value, max: u32| {
+        json!({ "kind": "page_until", "next": next.clone(), "until": until, "max_pages": max })
+    };
+
+    // Page 3 is the third page, not a later one: no page was skipped.
+    let out = run(&mut live, walk(json!({ "text": "Unpublished" }), 10)).await;
+    assert!(out.ok, "{}", out.detail);
+    assert!(out.detail.contains("on page 3"), "{}", out.detail);
+
+    // A card that is on no page: the last page, where Next only has the class.
+    must(run(&mut live, json!({ "kind": "navigate", "url": url.clone() })).await);
+    let out = run(&mut live, walk(json!({ "text": "Archived" }), 10)).await;
+    assert!(!out.ok, "{}", out.detail);
+    assert!(out.detail.contains("walked 4 pages and never saw") && out.detail.contains("is disabled on page 4"), "{}", out.detail);
+
+    // A Next that turns nothing.
+    must(run(&mut live, json!({ "kind": "navigate", "url": format!("{url}?stuck") })).await);
+    let quick = Timing { action_ms: 1500, ..timing() };
+    let out = run_with(&mut live, walk(json!({ "text": "Unpublished" }), 10), &quick).await;
+    assert!(!out.ok, "{}", out.detail);
+    assert_eq!(out.detail, "Next did not turn the page (page 1).");
 }

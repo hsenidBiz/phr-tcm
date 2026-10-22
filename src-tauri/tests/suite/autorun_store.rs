@@ -71,7 +71,7 @@ fn script() -> CaseScript {
         needs_state: Default::default(),
         saved_at: None,
         fail_on_unexpected_dialog: false,
-        page_errors: None, ignore_page_errors: vec![], organization: None, project: None, checked: false, checks: 0, given_up: Vec::new(),
+        page_errors: None, ignore_page_errors: vec![], organization: None, project: None, checked: false, checks: 0, given_up: Vec::new(), cleared_defect: None,
     }
 }
 
@@ -227,7 +227,7 @@ fn one_step_script(case_id: i32, title: &str) -> CaseScript {
         needs_state: Default::default(),
         saved_at: None,
         fail_on_unexpected_dialog: false,
-        page_errors: None, ignore_page_errors: vec![], organization: None, project: None, checked: false, checks: 0, given_up: Vec::new(),
+        page_errors: None, ignore_page_errors: vec![], organization: None, project: None, checked: false, checks: 0, given_up: Vec::new(), cleared_defect: None,
     }
 }
 
@@ -274,7 +274,7 @@ fn a_duplicate_case_id_within_one_bundle_is_rejected() {
 #[test]
 fn a_script_with_no_steps_is_rejected() {
     let dir = TempDir::new();
-    let bundle = vec![CaseScript { case_id: 9, title: "Empty".to_string(), account: None, area: None, steps: vec![], repairs: 0, last_repair: None, suspected_defect: None, no_save: false, preconditions: vec![], precondition_repairs: vec![], setup: None, changes: vec![], needs_unchanged: vec![], needs_state: Default::default(), saved_at: None, fail_on_unexpected_dialog: false, page_errors: None, ignore_page_errors: vec![], organization: None, project: None, checked: false, checks: 0, given_up: Vec::new() }];
+    let bundle = vec![CaseScript { case_id: 9, title: "Empty".to_string(), account: None, area: None, steps: vec![], repairs: 0, last_repair: None, suspected_defect: None, no_save: false, preconditions: vec![], precondition_repairs: vec![], setup: None, changes: vec![], needs_unchanged: vec![], needs_state: Default::default(), saved_at: None, fail_on_unexpected_dialog: false, page_errors: None, ignore_page_errors: vec![], organization: None, project: None, checked: false, checks: 0, given_up: Vec::new(), cleared_defect: None }];
     let err = save_scripts_atomically(dir.path(), &bundle).expect_err("empty steps were accepted");
     assert!(matches!(err, SaveScriptsError::Invalid(_)));
 }
@@ -307,7 +307,7 @@ fn a_duplicate_step_number_within_one_script_is_rejected() {
         needs_state: Default::default(),
         saved_at: None,
         fail_on_unexpected_dialog: false,
-        page_errors: None, ignore_page_errors: vec![], organization: None, project: None, checked: false, checks: 0, given_up: Vec::new(),
+        page_errors: None, ignore_page_errors: vec![], organization: None, project: None, checked: false, checks: 0, given_up: Vec::new(), cleared_defect: None,
     }];
     let err = save_scripts_atomically(dir.path(), &bundle).expect_err("duplicate step number was accepted");
     assert!(matches!(err, SaveScriptsError::Invalid(_)));
@@ -342,7 +342,7 @@ fn a_step_with_no_actions_is_still_accepted() {
         needs_state: Default::default(),
         saved_at: None,
         fail_on_unexpected_dialog: false,
-        page_errors: None, ignore_page_errors: vec![], organization: None, project: None, checked: false, checks: 0, given_up: Vec::new(),
+        page_errors: None, ignore_page_errors: vec![], organization: None, project: None, checked: false, checks: 0, given_up: Vec::new(), cleared_defect: None,
     }];
     save_scripts_atomically(dir.path(), &bundle).unwrap();
     assert!(load_script(dir.path(), 60).unwrap().is_some());
@@ -1409,4 +1409,45 @@ fn an_unpublished_runs_clean_up_pictures_survive_pruning() {
     }
     assert!(root.join("shots").join(&step_shot).is_file(), "the clean-up's step picture was pruned");
     assert!(root.join("shots").join(&fail_shot).is_file(), "the clean-up's failure picture was pruned");
+}
+
+// ---- a same_as needs an earlier remember_url -------------------------------
+
+fn address_script(steps: serde_json::Value) -> CaseScript {
+    serde_json::from_value(serde_json::json!({ "case_id": 37, "title": "Address", "steps": steps })).unwrap()
+}
+
+#[test]
+fn a_same_as_needs_an_earlier_remember_url() {
+    let remember = serde_json::json!({ "kind": "remember_url", "as": "before" });
+    let same = serde_json::json!({ "kind": "check_url", "same_as": "before" });
+    let other = serde_json::json!({ "kind": "check_text", "value": "a" });
+    let refused = "check_url same_as \"before\" names no address an earlier remember_url of this case notes";
+
+    // Noted in step 1, compared in step 3; and noted earlier in the same step.
+    let sc = address_script(serde_json::json!([
+        { "step_number": 1, "actions": [remember.clone()], "unchecked": "notes the address" },
+        { "step_number": 2, "actions": [other.clone()] },
+        { "step_number": 3, "actions": [same.clone()] }
+    ]));
+    assert_eq!(v2_lib::autorun::store::check_scripts(&[sc]), Ok(()));
+    let sc = address_script(serde_json::json!([{ "step_number": 1, "actions": [remember.clone(), same.clone()] }]));
+    assert_eq!(v2_lib::autorun::store::check_scripts(&[sc]), Ok(()));
+
+    // Nothing noted, noted later, noted before it in the same step's list but after, or inside a guard.
+    for steps in [
+        serde_json::json!([{ "step_number": 1, "actions": [same.clone()] }]),
+        serde_json::json!([
+            { "step_number": 2, "actions": [same.clone()] },
+            { "step_number": 3, "actions": [remember.clone()], "unchecked": "notes the address" }
+        ]),
+        serde_json::json!([{ "step_number": 1, "actions": [same.clone(), remember.clone()] }]),
+        serde_json::json!([
+            { "step_number": 1, "actions": [{ "kind": "when_visible", "selector": "s", "then": [remember.clone()] }] },
+            { "step_number": 2, "actions": [same.clone()] }
+        ]),
+    ] {
+        let err = v2_lib::autorun::store::check_scripts(&[address_script(steps)]).unwrap_err();
+        assert!(err.ends_with(refused), "{err}");
+    }
 }

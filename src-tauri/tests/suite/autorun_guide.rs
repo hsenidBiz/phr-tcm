@@ -29,7 +29,8 @@ fn the_guide_names_every_action_the_executor_can_run() {
         Action::Fill { selector: "s".into(), value: "v".into() },
         Action::WaitFor { selector: "s".into(), timeout_ms: 1 },
         Action::CheckText { value: "v".into() },
-        Action::CheckUrl { contains: "c".into(), timeout_ms: None },
+        Action::CheckUrl { contains: "c".into(), equals: None, same_as: None, timeout_ms: None },
+        Action::RememberUrl { name: "a".into() },
         Action::ExpectVisible { selector: "s".into(), timeout_ms: None },
         Action::ExpectHidden { selector: "s".into(), timeout_ms: None },
         Action::ExpectText { selector: "s".into(), equals: Some("v".into()), matches: None, timeout_ms: None },
@@ -70,6 +71,7 @@ fn the_guide_names_every_action_the_executor_can_run() {
         serde_json::from_value(serde_json::json!({ "kind": "expect_each", "selector": "s", "not_empty": true })).unwrap(),
         serde_json::from_value(serde_json::json!({ "kind": "expect_order", "selector": "s", "texts": ["a", "b"] })).unwrap(),
         serde_json::from_value(serde_json::json!({ "kind": "expect_position", "selector": "s", "relative_to": "t", "relation": "inside" })).unwrap(),
+        serde_json::from_value(serde_json::json!({ "kind": "page_until", "next": "n", "until": "u", "max_pages": 2 })).unwrap(),
         serde_json::from_value(serde_json::json!({ "kind": "use_component", "component": "c" })).unwrap(),
     ];
     let emitted: Vec<String> = samples
@@ -2054,6 +2056,42 @@ fn the_saving_section_names_the_absence_refusal_and_the_notes() {
     assert!(pre.contains("names a test record and declares no"), "Preconditions never says the save notes it");
 }
 
+/// "Checking thoroughly" says an absence check can be named by the case's
+/// own words, and that the save lists it as `from_case`.
+#[test]
+fn the_guide_explains_absence_on_the_cases_words() {
+    use v2_lib::autorun::guide::guide_section;
+    let g = autorun_guide();
+    let section = guide_section(&g, "Checking thoroughly").expect("a Checking thoroughly section");
+    let flat = section.split_whitespace().collect::<Vec<_>>().join(" ");
+    assert!(flat.contains("from_case") && flat.contains("no access-denied message"), "Checking thoroughly never explains from_case");
+    // An icon has no words: it needs a css locator with a sighting, and a
+    // chain's scope must be the case's words or seen.
+    assert!(flat.contains("An icon has no words to name it by"), "Checking thoroughly steers an icon to from_case");
+    assert!(!flat.contains("no lock icon"), "the from_case example is an icon, which no words name");
+    assert!(flat.contains("every link must be the case's own words or have been seen matching something"));
+    let saving = guide_section(&g, "Saving it").expect("a Saving it section");
+    assert!(saving.split_whitespace().collect::<Vec<_>>().join(" ").contains("listed as `from_case`"));
+}
+
+/// `page_until` says its `until` is one target (a chain is a list of locator
+/// objects), `until_all` is several, and what fails a walk.
+#[test]
+fn the_guide_teaches_page_until_as_one_target_or_several() {
+    let g = autorun_guide();
+    let flat = g.split_whitespace().collect::<Vec<_>>().join(" ");
+    for want in [
+        "`until` is ONE target",
+        "a chain written as a list of locator objects, outermost first",
+        "\"until_all\": [ <target>, ... ]",
+        "Give exactly one of `until` and `until_all`",
+        "Next did not turn the page (page 3).",
+        "a chain in `until` (the card, then the thing), never two separate targets",
+    ] {
+        assert!(flat.contains(want), "the guide never says: {want}");
+    }
+}
+
 /// The publish example is its bullets and then its two-line block; the
 /// flip-back paragraph comes after the block, not between the two.
 #[test]
@@ -2355,4 +2393,46 @@ fn the_guide_explains_exploring_a_task() {
 fn the_guide_says_a_delete_dialog_read_may_be_refused_in_auto_mode() {
     let g = autorun_guide();
     assert!(g.contains("can be refused as a deletion"), "the guide never says a delete-dialog read may be refused");
+}
+
+/// The Selectors section says a text CSS draws in other capitals matches the
+/// case's words as written in the page.
+#[test]
+fn the_guide_explains_text_as_written() {
+    use v2_lib::autorun::guide::guide_section;
+    let g = autorun_guide();
+    let section = guide_section(&g, "Selectors").expect("a Selectors section");
+    let flat = flat_guide(&section);
+    assert!(flat.contains("text-transform"), "{flat}");
+    assert!(flat.contains("as written in the page"), "{flat}");
+    assert!(!section.contains('\u{2014}') && !section.contains('\u{2013}'), "no em or en dashes");
+}
+
+/// The guide explains the assistant's ruling: when it may be applied, what
+/// it records, what each ruling does, and how a mark is cleared.
+#[test]
+fn the_guide_explains_assistant_rulings() {
+    use v2_lib::autorun::guide::guide_section;
+    let g = autorun_guide();
+    let section = guide_section(&g, "When the case and the app disagree").expect("the section");
+    let flat = flat_guide(&section);
+    for needle in [
+        "`rule_case_divergence { case_id, divergence_id, ruling, said, note }`",
+        "`case_right`",
+        "`data_fixed`",
+        "`rewrite_case`",
+        "all are ruled or none is",
+        "ruled by the assistant",
+        "relayed by another assistant",
+        "undo your ruling",
+    ] {
+        assert!(flat.contains(needle), "the section never says {needle:?}: {flat}");
+    }
+    assert!(!section.contains('\u{2014}') && !section.contains('\u{2013}'), "no em or en dashes");
+
+    let repair = &g[g.find("## Repairing a script that failed").unwrap()..];
+    let start = repair.find("### When the application is wrong").expect("the subsection is missing");
+    let wrong = repair[start..].split("\n## ").next().unwrap();
+    assert!(wrong.contains("`clear_autorun_suspected_defect { case_id, said }`"), "{wrong}");
+    assert!(!wrong.contains('\u{2014}') && !wrong.contains('\u{2013}'), "no em or en dashes");
 }

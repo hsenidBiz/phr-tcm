@@ -23,6 +23,7 @@ describe("a sentence for every action kind", () => {
     ],
     [{ kind: "check_text", value: "Step 2 of 6" }, 'Check the page shows "Step 2 of 6"'],
     [{ kind: "check_url", contains: "/PerformanceCycle" }, 'Check the address contains "/PerformanceCycle"'],
+    [{ kind: "remember_url", as: "before" }, 'Note the address as "before"'],
     [
       { kind: "expect_visible", selector: { role: "heading", name: "Leave request" } },
       'Check the "Leave request" heading is showing',
@@ -215,6 +216,10 @@ describe("a sentence for every action kind", () => {
       "Check the element #a is in the bottom-right of the element #b",
     ],
     [
+      { kind: "page_until", next: { role: "button", name: "Next" }, until: { text: "Published" }, max_pages: 40 },
+      'Click the "Next" button page by page until the text "Published" show, at most 40 pages',
+    ],
+    [
       { kind: "expect_sorted", table: { role: "grid", name: "Employees" }, column: "Joined", order: "descending", as: "date" },
       'Check the "Employees" table is sorted by Joined, descending, as dates',
     ],
@@ -317,17 +322,67 @@ describe("a sentence for every action kind", () => {
     expect(say(action)).toBe(sentence);
   });
 
+  test("the address checks read as sentences", () => {
+    expect(say({ kind: "check_url", equals: "/hr/cycles" })).toBe('Check the address is "/hr/cycles"');
+    expect(say({ kind: "check_url", equals: "https://secret-host.example.test/hr/cycles?id=4" })).toBe(
+      'Check the address is "/hr/cycles"',
+    );
+    expect(say({ kind: "check_url", same_as: "before" })).toBe('Check the address is still the one noted as "before"');
+    expect(say({ kind: "remember_url", as: "before" })).toBe('Note the address as "before"');
+    expect(say({ kind: "check_url", contains: "/home" })).toBe('Check the address contains "/home"');
+  });
+
+  test("page_until reads as a sentence", () => {
+    expect(
+      say({
+        kind: "page_until",
+        next: { role: "button", name: "Next" },
+        until_all: [{ text: "Published" }, { text: "Unpublished" }],
+        max_pages: 40,
+      } as never),
+    ).toBe('Click the "Next" button page by page until the text "Published" and the text "Unpublished" show, at most 40 pages');
+    // One target in place of a list.
+    expect(
+      say({ kind: "page_until", next: { role: "button", name: "Next" }, until: { text: "Published" }, max_pages: 3 } as never),
+    ).toBe('Click the "Next" button page by page until the text "Published" show, at most 3 pages');
+    // A list in `until` is a chain: one target, not two.
+    const chain = say({
+      kind: "page_until",
+      next: { role: "button", name: "Next" },
+      until: [{ role: "article", name: "Annual Review" }, { css: "i.fa-lock" }],
+      max_pages: 5,
+    } as never);
+    expect(chain).not.toContain(" and ");
+    expect(chain).toContain("inside");
+    // A chain as an item of `until_all`.
+    expect(
+      say({
+        kind: "page_until",
+        next: { role: "button", name: "Next" },
+        until_all: [[{ css: "iframe#goals" }, { text: "Add" }]],
+        max_pages: 5,
+      } as never),
+    ).toContain("until the text \"Add\" inside the frame");
+  });
+
+  test("page_until with both targets, or neither, is unreadable", () => {
+    const next = { role: "button", name: "Next" };
+    for (const rest of [{}, { until: { text: "A" }, until_all: [{ text: "B" }] }, { until_all: [] }]) {
+      expect(say({ kind: "page_until", next, max_pages: 3, ...rest } as never)).not.toContain("page by page");
+    }
+  });
+
   test("every kind in the list above is covered", () => {
     const kinds = new Set(cases.map(([a]) => a.kind));
     expect([...kinds].sort()).toEqual(
       [
-        "navigate", "click", "fill", "wait_for", "check_text", "check_url", "expect_visible", "expect_hidden",
+        "navigate", "click", "fill", "wait_for", "check_text", "check_url", "remember_url", "expect_visible", "expect_hidden",
         "expect_text", "expect_contains_text", "expect_count", "expect_attribute", "expect_style", "expect_enabled", "expect_disabled",
         "expect_checked", "sign_in", "upload",
         "expect_response", "api_request", "when_visible", "reload", "expire_session", "return_to_area",
         "press_key", "expect_focused", "expect_download", "expect_tab", "open_tab", "switch_tab", "close_tab",
         "expect_tab_closed", "drag", "expect_dialog", "expect_row", "expect_no_row", "expect_sorted", "expect_row_count",
-        "expect_each", "expect_order", "expect_position",
+        "expect_each", "expect_order", "expect_position", "page_until",
       ].sort(),
     );
   });

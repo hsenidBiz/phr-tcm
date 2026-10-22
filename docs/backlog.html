@@ -42,16 +42,39 @@
 <body>
 <main>
   <h1>Test Case Manager backlog</h1>
-  <p class="sub">Updated 22 October 2026, after 2.2.3-beta.23 (explore mode). What is left is below.</p>
+  <p class="sub">Updated 22 October 2026, after 2.2.3-beta.24 (backlog 37 and 38). What is left is below.</p>
 
   <h2>Agreed, not built yet</h2>
   <div class="item">
     <div class="head"><span class="title">Next builds</span><span class="status todo">Next</span></div>
     <ul>
-      <li>Backlog 37 and 38: page until seen, text as written, exact and unchanged addresses, absence of case words, and the assistant applying your rulings (plan written, 8 tasks).</li>
+      <li>Backlog 36: timing and no-reload checks on a request (agreed, not planned yet).</li>
       <li>The scripting rules read from the Playwright repo, with TCM's rules first, and /tcm:script-pbi renamed /tcm:gen-tests (spec and plan approved, 8 tasks).</li>
       <li>All projects as one (spec approved, 22 tasks, shipped as several betas).</li>
       <li>Several agents with their own browsers (spec approved; built last).</li>
+    </ul>
+  </div>
+  <h2>Backlog 37 and 38 (2.2.3-beta.24, 22 October 2026)</h2>
+  <div class="item">
+    <div class="head"><span class="title">Your decision</span><span class="status todo">Waiting on you</span></div>
+    <p>A check that something IS shown, using the case's own words, still saves without that text having been seen on the app (as before). Should it be refused until it has been seen? Scripts that rely on it today would be refused the next time they are saved.</p>
+  </div>
+  <div class="item">
+    <div class="head"><span class="title">Not fully done</span><span class="status todo">Follow-ups</span></div>
+    <ul>
+      <li>Drag and file uploads found by text drawn in other capitals do not say "matched as written".</li>
+      <li>A locator with nth can say "as written" when a sibling it trimmed away was the one that matched that way (never a false pass).</li>
+      <li>page_until knows a page has turned from the whole page's text; a Next that changes nothing visible reads as "did not turn".</li>
+    </ul>
+  </div>
+  <div class="item">
+    <div class="head"><span class="title">Backlog 37-38 hand checks</span><span class="status todo">Waiting on you</span></div>
+    <ul>
+      <li>Manage Cycle 141724 walks to a Published and an Unpublished card with page_until.</li>
+      <li>141701 checks "Duration" exactly.</li>
+      <li>141749 checks the address is unchanged since step 3.</li>
+      <li>141751 and 141739 save their absence checks as from_case.</li>
+      <li>An assistant ruling from the chat shows on the card with the person's words, and Undo ruling releases it.</li>
     </ul>
   </div>
 

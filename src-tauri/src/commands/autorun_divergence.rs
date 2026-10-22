@@ -8,16 +8,20 @@ use std::path::Path;
 /// A ruled divergence stays visible this long.
 const SHOW_RULED_MS: u64 = 7 * 24 * 60 * 60 * 1000;
 
-/// Every open or awaiting-repair divergence, and the ruled ones of the last
-/// seven days.
+/// Every open or awaiting-repair divergence, the ruled ones of the last
+/// seven days, and every ruling the assistant made that can still be undone
+/// (`Divergence::undoable`) until the file prunes it: its Undo is on the
+/// card for as long as the ruling is.
 pub fn load_at(root: &Path, org: &str, project: &str, now_ms: u64) -> Result<Vec<Divergence>, String> {
     let mut list = divergences::load(root, org, project)?;
     list.retain(|d| match d.status {
-        DivergenceStatus::Ruled => d
-            .ruled_at
-            .as_deref()
-            .and_then(|s| s.parse::<u64>().ok())
-            .is_some_and(|at| now_ms.saturating_sub(at) <= SHOW_RULED_MS),
+        DivergenceStatus::Ruled => {
+            d.undoable()
+                || d.ruled_at
+                    .as_deref()
+                    .and_then(|s| s.parse::<u64>().ok())
+                    .is_some_and(|at| now_ms.saturating_sub(at) <= SHOW_RULED_MS)
+        }
         _ => true,
     });
     Ok(list)
@@ -37,9 +41,72 @@ pub fn rule_at(
     load_at(root, org, project, now_ms)
 }
 
-/// The pure half of [`auto_run_undo_divergence_ruling`].
+/// Why [`rule_by_assistant_at`] ruled nothing: a rule's refusal is the assistant's to read (a 400), a file that
+/// could not be read or written is the machine's (a 500).
+#[derive(Debug, Clone, PartialEq)]
+pub enum RulingFailure {
+    Refused(String),
+    Machine(String),
+}
+
+impl RulingFailure {
+    pub fn text(&self) -> &str {
+        match self {
+            RulingFailure::Refused(s) | RulingFailure::Machine(s) => s,
+        }
+    }
+}
+
+/// The assistant's ruling, on the person's words, on the divergences it
+/// names: [`divergences::rule_by_assistant_in`] under the file's lock, then
+/// each ruled case's script is set to not checked, so it counts as checked
+/// again only after a replay passes. Answers what the assistant is told.
+/// The person's words are never written to the log.
+#[allow(clippy::too_many_arguments)]
+pub fn rule_by_assistant_at(
+    root: &Path,
+    org: &str,
+    project: &str,
+    picks: &[(i32, String)],
+    ruling: Ruling,
+    said: &str,
+    note: Option<&str>,
+    now_ms: u64,
+) -> Result<String, RulingFailure> {
+    let mut refused: Option<String> = None;
+    let ruled = divergences::update(root, org, project, |list| {
+        let cases = divergences::rule_by_assistant_in(list, picks, ruling, said, note, now_ms)
+            .inspect_err(|why| refused = Some(why.clone()))?;
+        Ok((cases, divergences::ruling_answer(list, picks, ruling)))
+    });
+    let (cases, answer) = match ruled {
+        Ok(done) => done,
+        Err(e) if refused.is_some() => return Err(RulingFailure::Refused(e)),
+        Err(e) => return Err(RulingFailure::Machine(e)),
+    };
+    clear_checked(root, &cases);
+    crate::applog::info(format!(
+        "Auto Run: {} divergence(s) on case(s) {cases:?} ruled {ruling:?} by the assistant",
+        picks.len()
+    ));
+    Ok(answer)
+}
+
+/// A ruling changes what the script is allowed to claim: until a fresh pass
+/// it is not checked. A script that cannot be written is said in the log.
+fn clear_checked(root: &Path, cases: &[i32]) {
+    for case in cases {
+        if crate::autorun::store::set_checked(root, *case, false).is_err() {
+            crate::applog::warn(format!("Auto Run: could not clear whether case {case}'s script counts as checked"));
+        }
+    }
+}
+
+/// The pure half of [`auto_run_undo_divergence_ruling`]. The case's script
+/// counts as checked again only after a replay passes.
 pub fn undo_at(root: &Path, org: &str, project: &str, id: &str, now_ms: u64) -> Result<Vec<Divergence>, String> {
     let case = divergences::update(root, org, project, |list| divergences::undo_in(list, id))?;
+    clear_checked(root, &[case]);
     crate::applog::info(format!("Auto Run: the ruling on divergence {id} (case {case}) was undone in the app"));
     load_at(root, org, project, now_ms)
 }

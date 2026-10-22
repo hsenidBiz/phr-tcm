@@ -338,6 +338,7 @@ pub fn changes_the_page(action: &Action) -> bool {
         Action::WaitFor { .. }
             | Action::CheckText { .. }
             | Action::CheckUrl { .. }
+            | Action::RememberUrl { .. }
             | Action::ExpectVisible { .. }
             | Action::ExpectHidden { .. }
             | Action::ExpectText { .. }
