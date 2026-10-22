@@ -1,6 +1,7 @@
 import { mockIPC, clearMocks } from "@tauri-apps/api/mocks";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, fireEvent, render, screen, within } from "@testing-library/react";
+import { emit } from "@tauri-apps/api/event";
 import { toast } from "../lib/toast";
 import { afterEach, expect, test, vi } from "vitest";
 import { writeSuiteSeed } from "../lib/suiteSeed";
@@ -1085,4 +1086,66 @@ test("the chosen order is remembered for the suite across a remount, and My orde
   await vi.waitFor(() => expect(rowNames()).toEqual(["Alpha check", "Bravo check", "Charlie check"]));
   expect(localStorage.getItem(VIEW_KEY)).toBe("spec");
   expect(JSON.parse(localStorage.getItem(MY_KEY) as string)).toEqual([303, 302, 301]);
+});
+
+// The runner window saves an outcome and announces it; this window must show
+// it at once, from the announcement alone - the result is already saved, so
+// nothing may wait for a fetch from Azure DevOps.
+test("an outcome recorded in the runner repaints its row without fetching the points again", async () => {
+  let pointFetches = 0;
+  mockIPC(
+    (cmd) => {
+      switch (cmd) {
+        case "run_history":
+          return [];
+        case "ensure_pbi_suite":
+          return { plan_id: 9, plan_name: "Auth - Test Plan", suite_id: 91 };
+        case "list_test_points":
+          pointFetches += 1;
+          return [
+            {
+              point_id: 7,
+              test_case_id: 201,
+              test_case_name: "Valid login",
+              config_name: "Windows 10",
+              tester: "",
+              last_outcome: "Passed",
+              last_run_id: 3,
+              last_result_id: 30,
+            },
+            {
+              point_id: 8,
+              test_case_id: 202,
+              test_case_name: "Invalid login",
+              config_name: "Windows 10",
+              tester: "",
+              last_outcome: "",
+              last_run_id: null,
+              last_result_id: null,
+            },
+          ];
+      }
+    },
+    { shouldMockEvents: true },
+  );
+  renderPanel();
+  expect(await screen.findByText("Valid login")).toBeInTheDocument();
+  const cell = (name: string) => within(screen.getByText(name).closest("tr") as HTMLElement).getAllByRole("cell")[1];
+  expect(cell("Valid login")).toHaveTextContent("Passed");
+  // The panel may read the points more than once while it loads; what matters
+  // is that the announcement itself causes no read.
+  await vi.waitFor(() => expect(pointFetches).toBeGreaterThan(0));
+  const fetchedBefore = pointFetches;
+
+  const recorded = (testCaseId: number, outcome: string, resultId: number) =>
+    emit("runner:point-recorded", { org: "acme", project: "Web", planId: 9, suiteId: 91, testCaseId, outcome, runId: 11, resultId });
+
+  // Passed -> Failed on a case that was already run, and a first result on one that never was.
+  await act(async () => {
+    await recorded(201, "Failed", 110);
+    await recorded(202, "Passed", 111);
+  });
+  await vi.waitFor(() => expect(cell("Valid login")).toHaveTextContent("Failed"));
+  expect(cell("Invalid login")).toHaveTextContent("Passed");
+  expect(pointFetches).toBe(fetchedBefore);
 });

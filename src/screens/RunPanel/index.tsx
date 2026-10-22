@@ -5,6 +5,7 @@ import { createPortal } from "react-dom";
 import { toast } from "../../lib/toast";
 import { commands, events, type TestPoint } from "../../bindings";
 import { onPointRecorded, patchPointRows } from "../../lib/runnerBus";
+import { logUi } from "../../lib/uiLog";
 import { Button } from "../../components/ui/button";
 import { Checkbox } from "../../components/ui/checkbox";
 import { Collapse, useSettled } from "../../components/ui/collapse";
@@ -147,10 +148,14 @@ export default function RunPanel({
   // outcome column follow the session without refetching the whole suite.
   useEffect(() => {
     const un = onPointRecorded((p) => {
-      if (p.org !== org || p.project !== project) return;
-      qc.setQueriesData<TestPoint[] | undefined>({ queryKey: ["points"] }, (rows) =>
+      if (p.org !== org || p.project !== project) {
+        logUi(`run list: ignored an announcement for case ${p.testCaseId} (another project)`);
+        return;
+      }
+      const patched = qc.setQueriesData<TestPoint[] | undefined>({ queryKey: ["points"] }, (rows) =>
         patchPointRows(rows, p),
       );
+      logUi(`run list: case ${p.testCaseId} is now ${p.outcome || "not run"} (${patched.length} list(s) updated)`);
     });
     return () => {
       un.then((f) => f()).catch(() => {});

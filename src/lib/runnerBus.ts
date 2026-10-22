@@ -6,6 +6,7 @@
 
 import { emit, listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type { TestPoint } from "../bindings";
+import { logUi } from "./uiLog";
 
 export type PointRecorded = {
   org: string;
@@ -22,8 +23,12 @@ export type PointRecorded = {
 const EVENT = "runner:point-recorded";
 
 export function emitPointRecorded(p: PointRecorded): void {
-  // Fire-and-forget: a lost repaint self-heals on the next refetch.
-  emit(EVENT, p).catch(() => {});
+  // Fire-and-forget: a lost repaint self-heals on the next refetch. The log
+  // says when it was lost, so a table that did not follow a saved outcome
+  // can be told from one that was never told.
+  emit(EVENT, p)
+    .then(() => logUi(`runner: announced case ${p.testCaseId} as ${p.outcome || "not run"}`))
+    .catch((e) => logUi(`runner: could not announce case ${p.testCaseId}: ${String(e)}`));
 }
 
 export function onPointRecorded(cb: (p: PointRecorded) => void): Promise<UnlistenFn> {
