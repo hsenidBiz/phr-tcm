@@ -77,6 +77,9 @@ pub fn open_activity_log_dir() -> Result<(), String> {
 pub async fn check_update(app: tauri::AppHandle) -> updater::UpdateStatus {
     tauri::async_runtime::spawn_blocking(move || {
         use tauri::Manager;
+        // The launch check and the hourly one are also when the generated
+        // agent files catch up with the Playwright repo's rules.
+        crate::commands::modules::resync_agents(&app);
         let running = app.package_info().version.to_string();
         // Did the LAST "Restart to update" actually land? The apply runs
         // after that process died, so this launch is the first thing that

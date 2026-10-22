@@ -76,6 +76,19 @@ pub fn resync_commands(app: &tauri::AppHandle) {
     }
 }
 
+/// Bring the generated agent files into line with the Playwright repo's rules
+/// as they are now, from the bridge's last-known context as `resync_commands`
+/// does. Nothing when the bridge is not running.
+pub fn resync_agents(app: &tauri::AppHandle) {
+    use tauri::Manager;
+    let handle = app.state::<crate::commands::ai_bridge::BridgeHandle>();
+    let guard = handle.running.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some((shared, _)) = guard.as_ref() {
+        let ctx = shared.ctx.lock().unwrap_or_else(|e| e.into_inner());
+        crate::commands::ai_tools::sync_agents(&ctx.disabled_tools, ctx.working_dir.as_deref());
+    }
+}
+
 /// The testable half: the busy refusals, then `modules::set_in` on a state and
 /// directory of the caller's own (so a test needs no process-wide lock).
 pub fn modules_set_with(

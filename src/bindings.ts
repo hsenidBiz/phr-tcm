@@ -1355,6 +1355,11 @@ export const commands = {
 	/**  The folder of the Playwright automation clone scripts export into. */
 	setPlaywrightClone: (path: string) => typedError<AppSettings, string>(__TAURI_INVOKE("set_playwright_clone", { path })),
 	/**
+	 *  Called when the Auto Run screen opens: the generated agent files catch up
+	 *  with the repo's rules, then the status. Never an error.
+	 */
+	pwRulesStatus: () => __TAURI_INVOKE<PwRulesStatus>("pw_rules_status"),
+	/**
 	 *  Which of `case_ids` can be exported, and why not for the rest, and which
 	 *  the repo already has (and whether this app exported them).
 	 */
@@ -5341,6 +5346,11 @@ export type PwReport = {
 	run_id: string,
 	/**  From the sibling `<runId>.json`, when it reads. */
 	stats: ReportStats | null,
+};
+
+/**  Whether the Playwright tab has a clone set, for the Auto Run screen. */
+export type PwRulesStatus = {
+	clone_set: boolean,
 };
 
 /**

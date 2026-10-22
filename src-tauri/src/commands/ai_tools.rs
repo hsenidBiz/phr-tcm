@@ -677,7 +677,7 @@ fn register_server(
                 if let Err(e) = write_commands_in(&command_dir(&home_dir()), disabled) {
                     crate::applog::warn(format!("could not write the Claude Code commands: {e}"));
                 }
-                if let Err(e) = write_agents_in(&agent_dir(&home_dir()), disabled) {
+                if let Err(e) = write_agents_in(&agent_dir(&home_dir()), disabled, &clone_now()) {
                     crate::applog::warn(format!("could not write the Claude Code agents: {e}"));
                 }
             }
@@ -694,7 +694,7 @@ fn register_server(
             if let Err(e) = write_commands_in(&project_command_dir(r), disabled) {
                 crate::applog::warn(format!("could not write the Claude Code commands: {e}"));
             }
-            if let Err(e) = write_agents_in(&project_agent_dir(r), disabled) {
+            if let Err(e) = write_agents_in(&project_agent_dir(r), disabled, &clone_now()) {
                 crate::applog::warn(format!("could not write the Claude Code agents: {e}"));
             }
         }
@@ -866,17 +866,41 @@ fn unregister_server(
 /// Public so `set_bridge_context` can call it when the AI Bridge tab's
 /// toggles move.
 pub fn sync_commands(disabled: &[String], working_dir: Option<&str>) {
-    let (dir, agents) = match root_of(working_dir) {
-        Some(r) => (project_command_dir(r), project_agent_dir(r)),
-        None => (command_dir(&home_dir()), agent_dir(&home_dir())),
-    };
+    let (dir, _) = sync_folders(working_dir);
     if !dir.is_dir() {
         return;
     }
     if let Err(e) = write_commands_in(&dir, disabled) {
         crate::applog::warn(format!("could not sync the Claude Code commands: {e}"));
     }
-    if let Err(e) = write_agents_in(&agents, disabled) {
+    sync_agents(disabled, working_dir);
+}
+
+/// The command folder and the agents folder beside it that a sync picks:
+/// the repository's when one is set, else the global ones.
+fn sync_folders(working_dir: Option<&str>) -> (PathBuf, PathBuf) {
+    match root_of(working_dir) {
+        Some(r) => (project_command_dir(r), project_agent_dir(r)),
+        None => (command_dir(&home_dir()), agent_dir(&home_dir())),
+    }
+}
+
+/// The clone set on the Playwright tab, as the app has it now.
+fn clone_now() -> String {
+    crate::app_settings::current().playwright_clone
+}
+
+/// Bring the agents folder beside the command folder `sync_commands` picks
+/// into line with the rules as they are now (the Playwright repo's files are
+/// read afresh): only a file whose content changed is rewritten. A no-op
+/// unless that command folder exists, as `sync_commands` is. A failure is
+/// logged, never returned.
+pub fn sync_agents(disabled: &[String], working_dir: Option<&str>) {
+    let (dir, agents) = sync_folders(working_dir);
+    if !dir.is_dir() {
+        return;
+    }
+    if let Err(e) = write_agents_in(&agents, disabled, &clone_now()) {
         crate::applog::warn(format!("could not sync the Claude Code agents: {e}"));
     }
 }
@@ -895,9 +919,11 @@ fn is_our_agent_file(path: &std::path::Path) -> bool {
 
 /// Write the role files into `dir` (see `agent_files_in`), sweeping an old
 /// one of ours that is no longer wanted. Same refusals as `write_commands_in`
-/// for a wanted path holding somebody else's file.
-pub fn write_agents_in(dir: &std::path::Path, disabled: &[String]) -> Result<(), String> {
-    let wanted = agent_files_in(dir, &crate::ai_tools::effective_disabled(disabled));
+/// for a wanted path holding somebody else's file. A wanted file whose
+/// content already equals what is on disk is not written. Ok: the paths
+/// written.
+pub fn write_agents_in(dir: &std::path::Path, disabled: &[String], clone: &str) -> Result<Vec<PathBuf>, String> {
+    let wanted = agent_files_in(dir, &crate::ai_tools::effective_disabled(disabled), clone);
 
     if let Ok(entries) = std::fs::read_dir(dir) {
         for entry in entries.flatten() {
@@ -910,27 +936,36 @@ pub fn write_agents_in(dir: &std::path::Path, disabled: &[String]) -> Result<(),
     }
     if wanted.is_empty() {
         // Nothing to write: do not create the folder just to leave it empty.
-        return Ok(());
+        return Ok(Vec::new());
     }
 
     std::fs::create_dir_all(dir).map_err(|e| format!("failed to create {}: {e}", dir.display()))?;
     let mut first_error: Option<String> = None;
+    let mut written: Vec<PathBuf> = Vec::new();
     for (path, contents) in wanted {
-        if matches!(std::fs::read_to_string(&path), Ok(t) if !t.contains(COMMAND_MARKER)) {
-            let msg = format!(
-                "{} already exists and was not written by this app - left alone",
-                path.display()
-            );
-            first_error.get_or_insert(msg);
-            continue;
+        match std::fs::read_to_string(&path) {
+            Ok(t) if !t.contains(COMMAND_MARKER) => {
+                let msg = format!(
+                    "{} already exists and was not written by this app - left alone",
+                    path.display()
+                );
+                first_error.get_or_insert(msg);
+                continue;
+            }
+            // Ours, and already what it should be.
+            Ok(t) if t == contents => continue,
+            _ => {}
         }
-        if let Err(e) = atomic_write(&path, &contents) {
-            first_error.get_or_insert(e);
+        match atomic_write(&path, &contents) {
+            Ok(()) => written.push(path),
+            Err(e) => {
+                first_error.get_or_insert(e);
+            }
         }
     }
     match first_error {
         Some(e) => Err(e),
-        None => Ok(()),
+        None => Ok(written),
     }
 }
 

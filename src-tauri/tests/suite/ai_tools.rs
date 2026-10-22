@@ -2090,7 +2090,7 @@ fn the_agent_folders_sit_beside_the_command_folders() {
 #[test]
 fn each_role_file_is_generated_with_the_marker() {
     let dir = std::path::Path::new("D:/repo/.claude/agents");
-    let files = agent_files_in(dir, &[]);
+    let files = agent_files_in(dir, &[], "");
     let names: Vec<String> = files
         .iter()
         .map(|(p, _)| p.file_name().unwrap().to_string_lossy().into_owned())
@@ -2111,9 +2111,9 @@ fn each_role_file_is_generated_with_the_marker() {
 #[test]
 fn no_role_file_without_auto_run() {
     let dir = std::path::Path::new("D:/repo/.claude/agents");
-    assert!(agent_files_in(dir, &["start_autorun_discovery".to_string()]).is_empty());
-    assert!(agent_files_in(dir, &effective_disabled_for(&[], &mods(&[Module::DbAccess]))).is_empty());
-    assert_eq!(agent_files_in(dir, &effective_disabled_for(&[], &all_mods())).len(), 5);
+    assert!(agent_files_in(dir, &["start_autorun_discovery".to_string()], "").is_empty());
+    assert!(agent_files_in(dir, &effective_disabled_for(&[], &mods(&[Module::DbAccess])), "").is_empty());
+    assert_eq!(agent_files_in(dir, &effective_disabled_for(&[], &all_mods()), "").len(), 5);
 }
 
 #[test]
@@ -2122,7 +2122,7 @@ fn writing_the_agents_leaves_the_persons_files_alone() {
     std::fs::write(dir.path().join("my-agent.md"), "my own agent").unwrap();
     std::fs::write(dir.path().join("tcm-healer.md"), "the person's own healer").unwrap();
 
-    let err = write_agents_in(dir.path(), &[]).unwrap_err();
+    let err = write_agents_in(dir.path(), &[], "").unwrap_err();
     assert!(err.contains("tcm-healer.md"), "{err}");
     assert!(err.contains("was not written by this app"), "{err}");
 
@@ -2143,7 +2143,7 @@ fn an_old_role_file_is_swept_and_others_stay() {
     std::fs::write(dir.path().join("tcm-planner.md"), format!("{COMMAND_MARKER}\nan old role")).unwrap();
     std::fs::write(dir.path().join("notes.md"), format!("{COMMAND_MARKER}\nnot ours by name")).unwrap();
 
-    write_agents_in(dir.path(), &[]).unwrap();
+    write_agents_in(dir.path(), &[], "").unwrap();
 
     assert!(!dir.path().join("tcm-planner.md").exists());
     assert!(dir.path().join("notes.md").exists());
@@ -2153,7 +2153,7 @@ fn an_old_role_file_is_swept_and_others_stay() {
 #[test]
 fn removing_the_agents_takes_only_ours() {
     let dir = TempDir::new();
-    write_agents_in(dir.path(), &[]).unwrap();
+    write_agents_in(dir.path(), &[], "").unwrap();
     std::fs::write(dir.path().join("my-agent.md"), "mine").unwrap();
     std::fs::write(dir.path().join("tcm-mine.md"), "no marker").unwrap();
     std::fs::write(dir.path().join("notes.md"), format!("{COMMAND_MARKER}\nno prefix")).unwrap();
@@ -2170,9 +2170,91 @@ fn removing_the_agents_takes_only_ours() {
     // With only ours in it, the folder goes too.
     let lone = TempDir::new();
     let sub = lone.path().join("agents");
-    write_agents_in(&sub, &[]).unwrap();
+    write_agents_in(&sub, &[], "").unwrap();
     remove_agents_in(&sub).unwrap();
     assert!(!sub.exists());
+}
+
+/// A fake Playwright clone holding the healer's agent file with `body` after its frontmatter.
+fn clone_with_healer(body: &str) -> TempDir {
+    let clone = TempDir::new();
+    let agents = clone.path().join(".claude").join("agents");
+    std::fs::create_dir_all(&agents).unwrap();
+    std::fs::write(agents.join("playwright-test-healer.md"), format!("---
+tools: Edit
+---
+{body}
+")).unwrap();
+    clone
+}
+
+fn path_str(d: &TempDir) -> String {
+    d.path().to_string_lossy().into_owned()
+}
+
+#[test]
+fn the_agent_files_carry_the_live_rules() {
+    let clone = clone_with_healer("LIVE HEALER");
+    let files = agent_files_in(std::path::Path::new("D:/repo/.claude/agents"), &[], &path_str(&clone));
+    let (_, healer) = files.iter().find(|(p, _)| p.ends_with("tcm-healer.md")).unwrap();
+    assert!(healer.contains("LIVE HEALER"), "{healer}");
+    assert!(healer.contains("read from the repo just now"), "{healer}");
+    assert!(!healer.contains("tools: Edit"), "{healer}");
+    assert!(
+        healer.ends_with("These rules also come from `get_guide` with topic autorun and role healer.
+"),
+        "{healer}"
+    );
+}
+
+#[test]
+fn an_agent_file_is_rewritten_only_when_its_rules_changed() {
+    let clone = clone_with_healer("LIVE HEALER");
+    let c = path_str(&clone);
+    let d = TempDir::new();
+    assert_eq!(write_agents_in(d.path(), &[], &c).unwrap().len(), 5);
+    assert!(write_agents_in(d.path(), &[], &c).unwrap().is_empty());
+
+    clone_with_healer_rewrite(&clone, "A CHANGED HEALER");
+    assert_eq!(write_agents_in(d.path(), &[], &c).unwrap(), [d.path().join("tcm-healer.md")]);
+    let t = std::fs::read_to_string(d.path().join("tcm-healer.md")).unwrap();
+    assert!(t.contains("A CHANGED HEALER"), "{t}");
+}
+
+fn clone_with_healer_rewrite(clone: &TempDir, body: &str) {
+    let file = clone.path().join(".claude").join("agents").join("playwright-test-healer.md");
+    std::fs::write(file, format!("---
+tools: Edit
+---
+{body}
+")).unwrap();
+}
+
+#[test]
+fn a_persons_own_agent_file_stays_when_the_rules_change() {
+    let clone = clone_with_healer("LIVE HEALER");
+    let c = path_str(&clone);
+    let d = TempDir::new();
+    std::fs::write(d.path().join("tcm-healer.md"), "mine").unwrap();
+    clone_with_healer_rewrite(&clone, "A CHANGED HEALER");
+
+    let err = write_agents_in(d.path(), &[], &c).unwrap_err();
+    assert!(err.contains("tcm-healer.md"), "{err}");
+    assert_eq!(std::fs::read_to_string(d.path().join("tcm-healer.md")).unwrap(), "mine");
+    for n in ["tcm-writer.md", "tcm-case-rewriter.md", "tcm-auditor.md", "tcm-explorer.md"] {
+        assert!(std::fs::read_to_string(d.path().join(n)).unwrap().contains(COMMAND_MARKER), "{n}");
+    }
+}
+
+#[test]
+fn the_status_says_whether_a_clone_is_set() {
+    use v2_lib::commands::pw_rules::pw_rules_status_for;
+    assert!(!pw_rules_status_for("").clone_set);
+    assert!(!pw_rules_status_for("   ").clone_set);
+    assert!(!pw_rules_status_for("C:/no/such/folder").clone_set);
+    let d = TempDir::new();
+    assert!(pw_rules_status_for(&path_str(&d)).clone_set);
+    assert!(pw_rules_status_for(&format!("  {}  ", path_str(&d))).clone_set);
 }
 
 #[test]

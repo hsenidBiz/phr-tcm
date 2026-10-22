@@ -24,6 +24,7 @@ pub mod guide;
 pub mod misc;
 pub mod modules;
 pub mod pw_export;
+pub mod pw_rules;
 pub mod pw_repo;
 pub mod prs;
 pub mod queue;
