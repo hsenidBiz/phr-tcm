@@ -2184,12 +2184,20 @@ Before every save:
   `expect_text` (`equals`), `expect_contains_text`, `expect_order`'s `texts`, `expect_each` (`equals`,
   `contains`), `expect_dialog` and each cell value of `expect_row` and `expect_no_row`. A pattern
   (`matches`), an attribute's or a style's value, `true` and `false` (`expect_checked`, and an attribute
-  such as `aria-pressed`), a count of 0 or 1, a number written as text, and the `name` or `text` an
-  `expect_visible` locator ends with are compared too, exactly as text is: one the case does not hold and
+  such as `aria-pressed`), a count of 0 or 1, a number written as text, the `name` or `text` an
+  `expect_visible` locator ends with, and what an `expect_download` holds (`contains_text`, `headers`,
+  `cells`, a PDF's phrases and page counts) are compared too, exactly as text is: one the case does not hold and
   no `because` covers is refused, so give it a `because`. A pattern is from the case when every word of 3
-  or more letters or digits written in it is the case's; `true` and `false`, 0 and 1 are from the case
-  when the step's own words say so (selected, pressed, open; not, off, closed; no, none, only, hidden;
-  one, single). An address and a response are not compared. Exempt: `at_least` 0 or 1 and `min` 1, text
+  or more letters or digits written in it is the case's, an optional letter or group counting in either
+  form (`participants?` is held by "participant" or "participants"). `true` and `false`, 0 and 1 are from the
+  case when the step's own words say so. True: checked, ticked, selected, enabled, pressed, expanded,
+  shown, visible, active, or "is on", "turned on", "switched on". False: unchecked, unticked, disabled,
+  collapsed, hidden, inactive, or "is off", "turned off", "switched off". "not", "isn't" or "no longer" just
+  before a state word flips it, so "is not selected" says false only. Zero: 0, zero, none, nothing, or "no"
+  and a noun. One: 1, one, "a single". Words such as open, on, current, no and only say nothing alone.
+  A repair keeps every one of these values the case gives, and a value it changes is held like a new one.
+  An address and a response are not compared, nor are a downloaded file's name and sheet, an
+  `expect_sorted` column or a tab's address, which say where to look. Exempt: `at_least` 0 or 1 and `min` 1, text
   under 3 characters that is not a number, anything holding a `{{placeholder}}`, text starting with the
   environment's test name prefix, a value the script types or uploads, and a precondition's value. A
   range the case gives ("Level 1 to Level 4") counts each of its members.
