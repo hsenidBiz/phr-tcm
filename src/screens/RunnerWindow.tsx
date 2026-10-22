@@ -65,7 +65,10 @@ const outcomeBtn: Record<string, string> = {
   // yet", and it must not read as a sibling of pass/fail at a glance.
   Paused: "bg-muted text-on-status",
   Blocked: "bg-warning text-on-status",
-  NotApplicable: "bg-surface-2 text-muted",
+  // The theme's own ink as the fill: a light chip on a dark theme and a dark
+  // one on a light theme. Grey text on a grey surface could not be read once
+  // marked on a dark theme, and it must stay apart from Paused's grey.
+  NotApplicable: "bg-text text-surface",
 };
 
 const outcomeBadge: Record<string, string> = {
@@ -73,7 +76,7 @@ const outcomeBadge: Record<string, string> = {
   failed: "bg-danger/15 text-danger",
   paused: "bg-muted/15 text-muted",
   blocked: "bg-warning/15 text-warning",
-  notapplicable: "bg-surface-2 text-muted",
+  notapplicable: "bg-surface-2 text-text",
 };
 
 // Pre-selection identity for the verdict segments: each unset button is

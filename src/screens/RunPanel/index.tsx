@@ -42,7 +42,7 @@ const outcomeColor: Record<string, string> = {
   failed: "text-danger",
   paused: "text-muted",
   blocked: "text-warning",
-  notapplicable: "text-faint",
+  notapplicable: "text-muted",
 };
 
 /** v1 outcome_style parity: soft background tint per last outcome. */

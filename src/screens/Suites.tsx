@@ -23,7 +23,7 @@ const outcomeColor: Record<string, string> = {
   passed: "text-success",
   failed: "text-danger",
   blocked: "text-warning",
-  notapplicable: "text-faint",
+  notapplicable: "text-muted",
 };
 
 function descendantIds(n: SuiteNode): number[] {
