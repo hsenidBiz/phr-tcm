@@ -12,9 +12,16 @@
 #           app's app-settings.json.
 #   -Out    where the snapshot goes. Default: src-tauri\pw-rules in this repo.
 #   -Check  write nothing; say whether the snapshot is current, or what differs.
+#   -Registry  the Rust file that lists the shipped skills (SNAPSHOT). Default:
+#           src-tauri\src\autorun\pw_rules.rs in this repo.
+#
+# TCM's own generated agent files (.claude/agents/tcm-*.md, written there when
+# the AI Bridge is registered in the clone) are not rule files: they never
+# count as uncommitted changes and are never copied.
 param(
     [string]$Clone,
     [string]$Out,
+    [string]$Registry,
     [switch]$Check
 )
 $ErrorActionPreference = "Stop"
@@ -41,6 +48,7 @@ if (-not (Test-Path -LiteralPath $Clone -PathType Container)) {
 }
 if (-not $Out) { $Out = Join-Path $repoRoot "src-tauri\pw-rules" }
 $Out = Resolve-Full $Out
+if (-not $Registry) { $Registry = Join-Path $repoRoot "src-tauri\src\autorun\pw_rules.rs" }
 
 # --- The files, as the repo lays them out -> where the snapshot keeps them ----
 $agents = @(
@@ -65,7 +73,8 @@ if ($missing.Count -gt 0) {
 }
 
 # --- Uncommitted changes to the rule files are refused ------------------------
-$watched = @(".claude/agents", ".claude/commands/gen-test.md", ".claude/skills", "CLAUDE.md")
+# TCM's own tcm-*.md agent files are left out of the same one git command.
+$watched = @(".claude/agents", ".claude/commands/gen-test.md", ".claude/skills", "CLAUDE.md", ':(exclude).claude/agents/tcm-*.md')
 $gitLines = @()
 $gitExit = $null
 try {
@@ -121,7 +130,25 @@ foreach ($k in ($have.Keys | Sort-Object)) {
     if (-not $want.Contains($k)) { $changed += "no longer in the repo: $k" }
 }
 
+# The skills the app lists are named in pw_rules.rs (SNAPSHOT); a skill added to
+# or removed from the repo needs a code change there, so say so now and not as a
+# failing cargo test later.
+$skillChange = ""
+if (Test-Path -LiteralPath $Registry -PathType Leaf) {
+    $listed = @([regex]::Matches([System.IO.File]::ReadAllText($Registry), '"\.claude/skills/([A-Za-z0-9_-]+)/SKILL\.md"') | ForEach-Object { $_.Groups[1].Value } | Sort-Object -Unique)
+    $inRepo = @($want.Keys | Where-Object { $_ -like "skills/*/SKILL.md" } | ForEach-Object { $_.Split('/')[1] } | Sort-Object -Unique)
+    $added = @($inRepo | Where-Object { $listed -notcontains $_ })
+    $removed = @($listed | Where-Object { $inRepo -notcontains $_ })
+    if ($added.Count -gt 0 -or $removed.Count -gt 0) {
+        $parts = @()
+        if ($added.Count -gt 0) { $parts += "added: $($added -join ', ')" }
+        if ($removed.Count -gt 0) { $parts += "removed: $($removed -join ', ')" }
+        $skillChange = "The Playwright repo's skills changed ($($parts -join '; ')). Add or remove them in SNAPSHOT in src-tauri/src/autorun/pw_rules.rs, then run cargo test --test suite autorun_pw_rules:: before releasing."
+    }
+}
+
 if ($Check) {
+    if ($skillChange) { Write-Host $skillChange }
     if ($changed.Count -eq 0) {
         Write-Host "The Playwright rules snapshot is current."
     } else {
@@ -157,3 +184,5 @@ if ($changed.Count -eq 0) {
     Write-Host "The Playwright rules snapshot was updated:"
     foreach ($c in $changed) { Write-Host "  $c" }
 }
+# The snapshot is written; the release stops here so the code can follow it.
+if ($skillChange) { throw $skillChange }
