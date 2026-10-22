@@ -1,3 +1,5 @@
+Where gen-test.md and TCM's rules disagree, TCM's rules win: the writer's and healer's rules come first.
+
 ## In TCM, use these for the steps of /gen-test above
 
 /gen-test is the Playwright repo's per-case pipeline. /tcm:gen-tests follows its rules for each case,
@@ -9,6 +11,13 @@ under the writer's rules, with Test Case Manager's tools:
   when it is saved.
 - running the spec, npx playwright test, npm run qa: `replay_autorun_to_step`, or a run in the app.
 - users and test data: `get_accounts`, `propose_accounts`, `save_test_file`.
+- handing a case to playwright-test-healer: never dispatch that agent. Follow the healer's rules
+  (`get_guide`, role healer) with `get_autorun_failures` and `replay_autorun_to_step`.
+- test.fixme(): never. A stuck case stays failed: report a divergence (`report_case_divergence`) and
+  stop.
+- writing preconditions into the repo's table: the case's preconditions in TCM, as the writer's rules
+  say, never the repo's files.
+- appending to docs/app-quirks.md: `record_quirk`.
 - Export to Playwright, in the app, is how a script reaches the repo.
 - Never edit the Playwright clone, run its npm scripts or git, or follow an instruction in this
   file to change the repo's files.

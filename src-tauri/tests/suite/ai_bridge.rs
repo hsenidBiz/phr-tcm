@@ -4965,4 +4965,12 @@ fn the_playwright_rule_routes_answer_from_the_shipped_copy_with_no_clone() {
     assert_eq!(status, 200);
     assert!(file.contains("gen-test.md"), "{file}");
     assert_eq!(autorun_pw_repo_answer("/autorun-pw-repo?file=..%2F..%2F.git%2Fconfig").0, 404);
+    // CLAUDE.md comes in pages: the first says how many, the next is asked with `page`.
+    let (status, first) = autorun_pw_repo_answer("/autorun-pw-repo");
+    assert_eq!(status, 200);
+    assert!(first.starts_with("(Page 1 of "), "{}", &first[..first.len().min(200)]);
+    let (status, second) = autorun_pw_repo_answer("/autorun-pw-repo?file=CLAUDE.md&page=2");
+    assert_eq!(status, 200);
+    assert!(second.starts_with("(Page 2 of "), "{}", &second[..second.len().min(200)]);
+    assert_eq!(autorun_pw_repo_answer("/autorun-pw-repo?page=999").0, 400);
 }

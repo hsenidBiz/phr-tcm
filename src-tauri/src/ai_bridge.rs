@@ -290,9 +290,13 @@ pub fn autorun_pw_skills_answer(target: &str) -> (u16, String) {
     crate::autorun::pw_rules::skills_answer(&crate::app_settings::current().playwright_clone, q(target, "skill").as_deref())
 }
 
-/// `GET /autorun-pw-repo[?file=<name>]`: one of the Playwright repo's own files (its CLAUDE.md when none is named).
+/// `GET /autorun-pw-repo[?file=<name>][&page=<n>]`: one of the Playwright repo's own files (its CLAUDE.md when none is named), in pages when long.
 pub fn autorun_pw_repo_answer(target: &str) -> (u16, String) {
-    crate::autorun::pw_rules::repo_answer(&crate::app_settings::current().playwright_clone, q(target, "file").as_deref())
+    crate::autorun::pw_rules::repo_answer_page(
+        &crate::app_settings::current().playwright_clone,
+        q(target, "file").as_deref(),
+        q(target, "page").as_deref(),
+    )
 }
 
 /// Query-string value by key from "a=1&b=2", percent-decoded ('+' -> space,

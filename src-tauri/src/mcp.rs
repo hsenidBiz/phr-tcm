@@ -1188,7 +1188,7 @@ fn guide_sentence(topic: &str) -> &'static str {
         "writing" => "\"writing\": Test Case Manager import JSON - format rules, the org's allowed Module values, the workflow and the transform ops; call it first.",
         "autorun" => "\"autorun\": writing an Auto Run action script - the actions and checks, and which source decides what: locators come from the live app, every assertion from the case's own expected result, never from what the code does; read it before writing a script. Alone it answers the Quick rules, this project's live sections and every section title; `section` adds one section, `quick` only the Quick rules and live sections, `full` the whole guide. `role` gives one role's rules.",
         "playwright_skills" => "\"playwright_skills\": the team's Playwright repo's skills, read fresh from the repo set on the Playwright tab: alone it lists them, `skill` gives one, with how its steps map onto Test Case Manager's tools.",
-        "playwright_repo" => "\"playwright_repo\": the team's Playwright repo's own files, read fresh: alone its CLAUDE.md (long), `file` one of its agent files or gen-test.md, the per-case rules /tcm:gen-tests follows.",
+        "playwright_repo" => "\"playwright_repo\": the team's Playwright repo's own files, read fresh: alone its CLAUDE.md (long: in pages, `page` picks one; the first says how many there are), `file` one of its agent files or gen-test.md, the per-case rules /tcm:gen-tests follows.",
         "api_templates" => "\"api_templates\": building an API template - the format, placeholders and captures, the workflow, this project's account keys and sign-in origin; read it before your first prove_api_template.",
         "reports" => "\"reports\": working with Crystal Reports - the IR, units (twips), edit ops, the layout plan and the limits; read it before your first edit_report.",
         _ => "",
@@ -1220,6 +1220,7 @@ fn guide_tool(off: &[String]) -> serde_json::Value {
     }
     if topics.contains(&"playwright_repo") {
         props["file"] = serde_json::json!({ "type": "string", "enum": crate::autorun::pw_rules::REPO_FILES, "description": "playwright_repo only. One of the repo's files; CLAUDE.md when not given." });
+        props["page"] = serde_json::json!({ "type": "integer", "minimum": 1, "description": "playwright_repo only. Which page of a long file (CLAUDE.md), from 1; the first page says how many there are." });
     }
     serde_json::json!({ "name": "get_guide", "description": description, "inputSchema": schema(props, &["topic"]) })
 }
@@ -1250,8 +1251,8 @@ pub fn guide_refusal_for(topic: Option<&str>, off: &[String], on: &BTreeSet<Modu
 }
 
 /// Said when `skill` comes with a topic other than playwright_skills, or
-/// `file` with one other than playwright_repo.
-pub const GUIDE_SKILL_FILE_ONLY: &str = "`skill` is for topic \"playwright_skills\" and `file` for topic \"playwright_repo\" only";
+/// `file` or `page` with one other than playwright_repo.
+pub const GUIDE_SKILL_FILE_ONLY: &str = "`skill` is for topic \"playwright_skills\" and `file` and `page` for topic \"playwright_repo\" only";
 
 /// Said when `section`, `quick`, `full` or `role` comes with a topic other
 /// than autorun: only that guide is long enough to be read in parts, and
@@ -1263,6 +1264,26 @@ fn pw_route(path: &str, key: &str, value: &serde_json::Value) -> String {
     match value.as_str().map(str::trim).filter(|v| !v.is_empty()) {
         Some(v) => format!("{path}?{key}={}", urlencoding::encode(v)),
         None => path.to_string(),
+    }
+}
+
+/// `/autorun-pw-repo`, with `file` and `page` set to the trimmed values asked for (a number or a string).
+fn pw_repo_route(file: &serde_json::Value, page: &serde_json::Value) -> String {
+    let page = match page {
+        serde_json::Value::Number(n) => Some(n.to_string()),
+        other => other.as_str().map(|p| p.trim().to_string()).filter(|p| !p.is_empty()),
+    };
+    let mut parts: Vec<String> = vec![];
+    if let Some(f) = file.as_str().map(str::trim).filter(|f| !f.is_empty()) {
+        parts.push(format!("file={}", urlencoding::encode(f)));
+    }
+    if let Some(p) = page {
+        parts.push(format!("page={}", urlencoding::encode(&p)));
+    }
+    if parts.is_empty() {
+        "/autorun-pw-repo".to_string()
+    } else {
+        format!("/autorun-pw-repo?{}", parts.join("&"))
     }
 }
 
@@ -1946,7 +1967,7 @@ fn tools_call_outcome(params: &serde_json::Value, call: BridgeCall) -> (serde_js
         }
         "get_guide"
             if (says(&args["skill"]) && args["topic"].as_str().map(str::trim) != Some("playwright_skills"))
-                || (says(&args["file"]) && args["topic"].as_str().map(str::trim) != Some("playwright_repo")) =>
+                || ((says(&args["file"]) || says(&args["page"])) && args["topic"].as_str().map(str::trim) != Some("playwright_repo")) =>
         {
             Ok((400, GUIDE_SKILL_FILE_ONLY.to_string()))
         }
@@ -1965,7 +1986,7 @@ fn tools_call_outcome(params: &serde_json::Value, call: BridgeCall) -> (serde_js
             "api_templates" => call("GET", "/api-template-guide", ""),
             "reports" => call("GET", "/crystal-guide", ""),
             "playwright_skills" => call("GET", &pw_route("/autorun-pw-skills", "skill", &args["skill"]), ""),
-            "playwright_repo" => call("GET", &pw_route("/autorun-pw-repo", "file", &args["file"]), ""),
+            "playwright_repo" => call("GET", &pw_repo_route(&args["file"], &args["page"]), ""),
             // Refused before the match by `guide_refusal`; said again here
             // rather than trusted.
             _ => Ok((400, guide_refusal_for(args["topic"].as_str(), &off, &on, unlocked).unwrap_or_default())),

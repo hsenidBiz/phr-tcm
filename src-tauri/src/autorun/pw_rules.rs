@@ -130,7 +130,8 @@ pub enum From {
 /// One rule file, read.
 #[derive(Debug, Clone, PartialEq)]
 pub struct RepoFile {
-    /// The file's name, or `<skill>/SKILL.md` for a skill. Never a path.
+    /// The file's name, `<skill>/SKILL.md` for a skill, or `.claude/commands/gen-test.md`
+    /// for the command. Never a clone path.
     pub label: String,
     /// BOM dropped, `\r\n` read as `\n`, frontmatter kept.
     pub text: String,
@@ -148,6 +149,10 @@ fn plain_rel(rel: &str) -> bool {
 }
 
 fn label_of(rel: &str) -> String {
+    // The command carries its repo path, so it never reads like an agent file.
+    if rel == ".claude/commands/gen-test.md" {
+        return rel.to_string();
+    }
     let parts: Vec<&str> = rel.split('/').collect();
     match parts.as_slice() {
         [.., skill, "SKILL.md"] => format!("{skill}/SKILL.md"),
@@ -416,6 +421,58 @@ pub fn skills_answer(clone: &str, skill: Option<&str>) -> (u16, String) {
 /// for `gen-test.md`, [`repo_note`] for the rest). Anything else: (404,
 /// [`unknown_repo_file`]).
 pub fn repo_answer(clone: &str, file: Option<&str>) -> (u16, String) {
+    repo_answer_page(clone, file, None)
+}
+
+/// The most characters one page of a long repo file's answer holds.
+pub const PAGE_CHARS: usize = 40_000;
+/// Room kept in a page for the line that numbers it.
+const PAGE_HEADER_ROOM: usize = 300;
+
+/// `text` cut into pieces of at most `max` characters, at line ends where it
+/// can; joined again they are `text`.
+fn split_pages(text: &str, max: usize) -> Vec<String> {
+    let mut pages: Vec<String> = vec![];
+    let mut page = String::new();
+    let mut size = 0usize;
+    for line in text.split_inclusive('\n') {
+        let mut rest = line;
+        loop {
+            let len = rest.chars().count();
+            if size + len <= max {
+                page.push_str(rest);
+                size += len;
+                break;
+            }
+            if size > 0 && len <= max {
+                pages.push(std::mem::take(&mut page));
+                size = 0;
+                continue;
+            }
+            // A line longer than a page: fill this one and go on.
+            let take = max - size;
+            let cut = rest.char_indices().nth(take).map(|(i, _)| i).unwrap_or(rest.len());
+            page.push_str(&rest[..cut]);
+            pages.push(std::mem::take(&mut page));
+            size = 0;
+            rest = &rest[cut..];
+            if rest.is_empty() {
+                break;
+            }
+        }
+    }
+    if !page.is_empty() || pages.is_empty() {
+        pages.push(page);
+    }
+    pages
+}
+
+/// [`repo_answer`] in pages: the repo's `CLAUDE.md` answer is cut into pages of
+/// at most [`PAGE_CHARS`] characters (each with its line saying which page of
+/// how many it is, and how to ask for the next), and `page` (1 when not given)
+/// picks one. Every other file is one page. A `page` that is not a whole number
+/// from 1, or past the last, is (400, a sentence naming the pages there are).
+pub fn repo_answer_page(clone: &str, file: Option<&str>, page: Option<&str>) -> (u16, String) {
     let asked = file.filter(|f| !f.is_empty()).unwrap_or(REPO_CLAUDE);
     let found = REPO_FILES
         .iter()
@@ -424,6 +481,29 @@ pub fn repo_answer(clone: &str, file: Option<&str>) -> (u16, String) {
     let Some((name, file)) = found else {
         return (404, unknown_repo_file(asked));
     };
+    let want = match page.map(str::trim).filter(|p| !p.is_empty()) {
+        None => 1,
+        Some(p) => match p.parse::<usize>() {
+            Ok(n) if n >= 1 => n,
+            _ => return (400, format!("`page` is a whole number from 1, not \"{p}\".")),
+        },
+    };
     let note = if name == GEN_TEST { gen_test_note() } else { repo_note() };
-    (200, format!("{}{}\n\n{}", shipped_prefix(&file), section(&file), note.trim_end()) + "\n")
+    let full = format!("{}{}\n\n{}", shipped_prefix(&file), section(&file), note.trim_end()) + "\n";
+    let pages = if name == REPO_CLAUDE { split_pages(&full, PAGE_CHARS - PAGE_HEADER_ROOM) } else { vec![full] };
+    let n = pages.len();
+    if want > n {
+        let which = if n == 1 { "1 page: `page` is 1.".to_string() } else { format!("{n} pages: `page` is 1 to {n}.") };
+        return (400, format!("{name} has {which}"));
+    }
+    let body = &pages[want - 1];
+    if n == 1 {
+        return (200, body.clone());
+    }
+    let next = if want < n {
+        format!("Get the next with `get_guide`, topic playwright_repo, file {name} and `page` {}.", want + 1)
+    } else {
+        "This is the last page.".to_string()
+    };
+    (200, format!("(Page {want} of {n} of {name}. {next})\n\n{body}"))
 }

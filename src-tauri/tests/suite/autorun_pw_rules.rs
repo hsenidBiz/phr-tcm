@@ -8,8 +8,8 @@ use v2_lib::autorun::pw_rules::{
     Why, AGENT_FILES, GEN_TEST, READ_LIMIT, REPO_CLAUDE, SHIPPED_COPY, SNAPSHOT,
 };
 use v2_lib::autorun::pw_rules::{
-    gen_test_note, repo_answer, repo_note, skill_names, skills_answer, unknown_repo_file, unknown_skill, LIVE_MARK,
-    REPO_FILES, SHIPPED_MARK,
+    gen_test_note, repo_answer, repo_answer_page, repo_note, skill_names, skills_answer, unknown_repo_file, unknown_skill,
+    LIVE_MARK, PAGE_CHARS, REPO_FILES, SHIPPED_MARK,
 };
 
 const PLANNER: &str = ".claude/agents/playwright-test-planner.md";
@@ -338,9 +338,140 @@ fn the_repo_file_defaults_to_claude_md() {
         let (status, text) = repo_answer("", asked);
         assert_eq!(status, 200);
         assert!(text.contains("CLAUDE.md, the copy shipped"), "{text}");
-        assert!(text.contains(repo_note().trim_end()), "{text}");
-        assert!(text.starts_with(&shipped_line(&Why::NoClone, &[])), "{text}");
+        // CLAUDE.md is long: the first page opens with its page line, then the shipped line.
+        let first = text.lines().next().unwrap();
+        assert!(first.starts_with("(Page 1 of ") && first.contains(" of CLAUDE.md. "), "{first}");
+        assert!(text.contains(&format!("\n\n{}", shipped_line(&Why::NoClone, &[]))), "{text}");
+        // The note is last, so it is on the last page.
+        assert!(!text.contains(repo_note().trim_end()), "{text}");
     }
+}
+
+/// How many pages CLAUDE.md answers in, read from the first page's line.
+fn claude_pages(clone: &str) -> usize {
+    let (_, first) = repo_answer_page(clone, None, None);
+    let line = first.lines().next().unwrap();
+    line.strip_prefix("(Page 1 of ").and_then(|r| r.split(' ').next()).unwrap().parse().unwrap()
+}
+
+#[test]
+fn claude_md_comes_in_pages_of_at_most_40000_characters() {
+    let n = claude_pages("");
+    assert!(n >= 2, "the shipped CLAUDE.md should need more than one page");
+    let mut joined = String::new();
+    for p in 1..=n {
+        let (status, text) = repo_answer_page("", Some("CLAUDE.md"), Some(&p.to_string()));
+        assert_eq!(status, 200, "page {p}");
+        assert!(text.chars().count() <= PAGE_CHARS, "page {p} has {} characters", text.chars().count());
+        let (head, body) = text.split_once("\n\n").unwrap();
+        assert!(head.starts_with(&format!("(Page {p} of {n} of CLAUDE.md. ")), "{head}");
+        if p < n {
+            assert!(head.contains(&format!("`page` {}.", p + 1)), "{head}");
+        } else {
+            assert!(head.ends_with("This is the last page.)"), "{head}");
+        }
+        assert!(!head.contains('\u{2014}') && !head.contains('\u{2013}'));
+        joined.push_str(body);
+    }
+    // Nothing is lost between the pages: the note is last, and the file is whole.
+    assert!(joined.trim_end().ends_with(repo_note().trim_end()), "the note must close the last page");
+    let whole = normalised(snapshot("CLAUDE.md").unwrap());
+    assert!(joined.contains(strip_frontmatter(&whole).trim()), "the pages together lose part of CLAUDE.md");
+    // No page given is the first page.
+    assert_eq!(repo_answer_page("", None, None), repo_answer_page("", None, Some("1")));
+    assert_eq!(repo_answer_page("", None, None), repo_answer_page("", None, Some(" 1 ")));
+}
+
+#[test]
+fn a_page_past_the_last_or_not_a_number_is_refused() {
+    let n = claude_pages("");
+    let (status, text) = repo_answer_page("", None, Some(&(n + 1).to_string()));
+    assert_eq!((status, text.as_str()), (400, format!("CLAUDE.md has {n} pages: `page` is 1 to {n}.").as_str()));
+    for bad in ["0", "-1", "x", "1.5", "2 3"] {
+        let (status, text) = repo_answer_page("", None, Some(bad));
+        assert_eq!(status, 400, "{bad}");
+        assert!(text.starts_with("`page` is a whole number from 1"), "{text}");
+    }
+    // Another file is one page.
+    assert_eq!(repo_answer_page("", Some("spec-editor.md"), Some("1")), repo_answer("", Some("spec-editor.md")));
+    let (status, text) = repo_answer_page("", Some("spec-editor.md"), Some("2"));
+    assert_eq!((status, text.as_str()), (400, "spec-editor.md has 1 page: `page` is 1."));
+    assert!(!repo_answer("", Some("spec-editor.md")).1.starts_with("(Page"));
+}
+
+#[test]
+fn a_long_live_claude_md_is_paged_at_line_ends_and_a_huge_line_is_cut() {
+    let dir = clone();
+    // Lines of 1,000 characters: 120 of them are about three pages.
+    let line = "x".repeat(999) + "\n";
+    std::fs::write(dir.path().join("CLAUDE.md"), line.repeat(120)).unwrap();
+    let clone_path = path_of(&dir);
+    let n = claude_pages(&clone_path);
+    assert!(n >= 3, "{n}");
+    let mut total = 0;
+    for p in 1..=n {
+        let (_, text) = repo_answer_page(&clone_path, None, Some(&p.to_string()));
+        assert!(text.chars().count() <= PAGE_CHARS, "page {p}");
+        total += text.matches(&line).count();
+    }
+    assert_eq!(total, 120, "every line lands on exactly one page, whole");
+    // One line longer than a page is cut at the page size, losing nothing.
+    std::fs::write(dir.path().join("CLAUDE.md"), "y".repeat(100_000)).unwrap();
+    let n = claude_pages(&clone_path);
+    let mut joined = String::new();
+    for p in 1..=n {
+        let (status, text) = repo_answer_page(&clone_path, None, Some(&p.to_string()));
+        assert_eq!(status, 200);
+        assert!(text.chars().count() <= PAGE_CHARS, "page {p}");
+        joined.push_str(text.split_once("\n\n").unwrap().1);
+    }
+    assert!(joined.contains(&"y".repeat(100_000)), "the cut line loses characters");
+}
+
+#[test]
+fn gen_test_is_labelled_with_its_repo_path() {
+    let (_, text) = repo_answer("", Some("gen-test.md"));
+    assert!(
+        text.contains("## From the Playwright repo: .claude/commands/gen-test.md, the copy shipped with this version"),
+        "{}",
+        &text[..text.len().min(300)]
+    );
+    let dir = clone();
+    std::fs::create_dir_all(dir.path().join(".claude/commands")).unwrap();
+    std::fs::write(dir.path().join(".claude/commands/gen-test.md"), "LIVE GEN").unwrap();
+    let (_, live) = repo_answer(&path_of(&dir), Some("gen-test.md"));
+    assert!(live.starts_with("## From the Playwright repo: .claude/commands/gen-test.md, read from the repo just now"), "{live}");
+    // No clone path comes with it.
+    assert!(!live.contains(&path_of(&dir)));
+    // An agent file keeps its bare name.
+    assert_eq!(read("", PLANNER).unwrap().label, "playwright-test-planner.md");
+}
+
+#[test]
+fn the_gen_test_note_puts_tcms_rules_first_and_maps_the_heal_steps() {
+    let note = gen_test_note();
+    assert_eq!(
+        note.lines().next().unwrap(),
+        "Where gen-test.md and TCM's rules disagree, TCM's rules win: the writer's and healer's rules come first."
+    );
+    let flat = note.split_whitespace().collect::<Vec<_>>().join(" ");
+    for want in [
+        // handing a case to the repo's healer
+        "playwright-test-healer: never dispatch that agent. Follow the healer's rules (`get_guide`, role healer) with `get_autorun_failures` and `replay_autorun_to_step`.",
+        // test.fixme
+        "test.fixme(): never. A stuck case stays failed: report a divergence (`report_case_divergence`) and stop.",
+        // the repo's preconditions table
+        "writing preconditions into the repo's table: the case's preconditions in TCM, as the writer's rules say, never the repo's files.",
+        // the repo's quirk file
+        "appending to docs/app-quirks.md: `record_quirk`.",
+    ] {
+        assert!(flat.contains(want), "the gen-test note lacks {want:?}:\n{note}");
+    }
+    // It reaches the person after the repo's own text, and stays inside the caps the role notes keep.
+    let (_, answer) = repo_answer("", Some("gen-test.md"));
+    assert!(answer.trim_end().ends_with(note.trim_end()));
+    assert!(note.lines().count() <= v2_lib::autorun::roles::ROLE_MAX_LINES, "{}", note.lines().count());
+    assert!(note.chars().count() <= v2_lib::autorun::roles::ROLE_MAX_CHARS, "{}", note.chars().count());
 }
 
 #[test]

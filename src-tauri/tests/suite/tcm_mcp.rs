@@ -3626,6 +3626,9 @@ fn get_guide_reaches_the_playwright_topics() {
         (r#"{"topic":"playwright_skills","skill":"../x y"}"#, "/autorun-pw-skills?skill=..%2Fx%20y"),
         (r#"{"topic":"playwright_repo","file":"gen-test.md"}"#, "/autorun-pw-repo?file=gen-test.md"),
         (r#"{"topic":"playwright_repo"}"#, "/autorun-pw-repo"),
+        (r#"{"topic":"playwright_repo","page":2}"#, "/autorun-pw-repo?page=2"),
+        (r#"{"topic":"playwright_repo","file":"CLAUDE.md","page":" 2 "}"#, "/autorun-pw-repo?file=CLAUDE.md&page=2"),
+        (r#"{"topic":"playwright_repo","page":""}"#, "/autorun-pw-repo"),
     ] {
         seen.borrow_mut().clear();
         let v = guide_call(args, &call);
@@ -3643,6 +3646,8 @@ fn get_guide_describes_the_playwright_topics() {
     let props = &guide["inputSchema"]["properties"];
     assert_eq!(props["skill"]["type"], "string", "{guide}");
     assert_eq!(props["file"]["enum"], serde_json::json!(v2_lib::autorun::pw_rules::REPO_FILES), "{guide}");
+    assert_eq!(props["page"]["type"], "integer", "{guide}");
+    assert!(props["page"]["description"].as_str().unwrap().contains("playwright_repo only"), "{guide}");
     let d = guide["description"].as_str().unwrap();
     assert!(d.contains("\"playwright_skills\": the team's Playwright repo's skills, read fresh from the repo set on the Playwright tab"), "{d}");
     assert!(d.contains("\"playwright_repo\": the team's Playwright repo's own files, read fresh"), "{d}");
@@ -3658,6 +3663,8 @@ fn skill_and_file_are_for_their_topics_only() {
         r#"{"topic":"playwright_skills","file":"CLAUDE.md"}"#,
         r#"{"topic":"playwright_repo","skill":"edit-spec"}"#,
         r#"{"topic":"writing","file":"gen-test.md"}"#,
+        r#"{"topic":"playwright_skills","page":2}"#,
+        r#"{"topic":"autorun","page":1}"#,
     ] {
         let v = guide_call(args, &call);
         assert_eq!(v["result"]["isError"], true, "{args}: {v}");
