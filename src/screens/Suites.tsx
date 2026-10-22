@@ -19,11 +19,14 @@ import { unwrap, unwrapStr } from "../lib/ipc";
 import { buildTree, type SuiteNode } from "../lib/suiteTree";
 import { outcomeLabel } from "./RunPanel";
 
+// The same colours Run Tests and the runner give each outcome: Paused is
+// the muted grey and Not Applicable the theme's own ink, so the two differ.
 const outcomeColor: Record<string, string> = {
   passed: "text-success",
   failed: "text-danger",
+  paused: "text-muted",
   blocked: "text-warning",
-  notapplicable: "text-muted",
+  notapplicable: "text-text",
 };
 
 function descendantIds(n: SuiteNode): number[] {

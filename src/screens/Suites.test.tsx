@@ -530,3 +530,40 @@ test("an opened suite's cases sit past every guide line above them, however deep
   expect(table.style.width).toBe(`calc(100% - ${inset}px)`);
   expect(within(table).getByText("Windows 10")).toHaveClass("whitespace-nowrap");
 });
+
+/// Paused and Not Applicable are different verdicts and must not read as
+/// the same grey: Paused is the muted tone, Not Applicable the theme's ink
+/// (the colours the runner gives each).
+test("a Paused point and a Not Applicable point are not the same colour", async () => {
+  const point = (id: number, last_outcome: string) => ({
+    point_id: id,
+    test_case_id: 300 + id,
+    test_case_name: `Case ${id}`,
+    config_name: "Windows 10",
+    tester: "",
+    last_outcome,
+    last_run_id: null,
+    last_result_id: null,
+  });
+  baseMock((cmd, args) => {
+    if (cmd === "list_plans_with_suites")
+      return [
+        {
+          plan: PLAN,
+          suites: [
+            { id: 91, name: "PBI 42 suite", suite_type: "requirementTestSuite", requirement_id: 42, parent_id: null },
+          ],
+        },
+      ];
+    if (cmd === "list_test_points" && (args as { suiteId: number }).suiteId === 91)
+      return [point(1, "Paused"), point(2, "NotApplicable")];
+  });
+  renderSuites();
+  fireEvent.click(await screen.findByText("PBI 42 suite"));
+
+  const paused = await screen.findByText("Paused");
+  const notApplicable = screen.getByText("Not Applicable");
+  expect(paused).toHaveClass("text-muted");
+  expect(notApplicable).toHaveClass("text-text");
+  expect(notApplicable).not.toHaveClass("text-muted");
+});

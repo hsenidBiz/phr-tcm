@@ -5,7 +5,35 @@ import { afterEach, expect, test, vi } from "vitest";
 import BugDialog from "./BugDialog";
 import { renderCaseMarkdown } from "../lib/markdown";
 
-afterEach(() => clearMocks());
+// The toasts are asserted on (a broken paste must never claim success).
+const toastMock = vi.hoisted(() => ({
+  success: vi.fn(),
+  error: vi.fn(),
+  info: vi.fn(),
+  warning: vi.fn(),
+  dismiss: vi.fn(),
+}));
+vi.mock("../lib/toast", () => ({ toast: toastMock }));
+
+// jsdom cannot decode an image, so the decoder validImageB64 uses accepts
+// whatever the structural checks let through.
+vi.mock("../lib/blob", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../lib/blob")>();
+  return {
+    ...actual,
+    validImageB64: (b64: string, mime?: string) => actual.validImageB64(b64, mime, async () => true),
+  };
+});
+
+/** A real 1x1 PNG (69 bytes), base64. */
+const PNG_B64 =
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC";
+const pngBytes = () => Uint8Array.from(atob(PNG_B64), (c) => c.charCodeAt(0));
+
+afterEach(() => {
+  clearMocks();
+  for (const m of Object.values(toastMock)) m.mockClear();
+});
 
 const testCase = {
   steps_xml: "",
@@ -81,7 +109,7 @@ test("pasting an image into the dialog files it with the bug", async () => {
     </QueryClientProvider>,
   );
 
-  const file = new File([new Uint8Array([105, 109, 103])], "clip.png", { type: "image/png" });
+  const file = new File([pngBytes() as BlobPart], "clip.png", { type: "image/png" });
   fireEvent.paste(screen.getByLabelText("Bug title"), {
     clipboardData: { items: [{ type: "image/png", getAsFile: () => file }] },
   });
@@ -90,9 +118,9 @@ test("pasting an image into the dialog files it with the bug", async () => {
   expect(await screen.findByAltText("Pasted screenshot 1")).toBeInTheDocument();
   expect(screen.getByLabelText("Remove pasted screenshot 1")).toBeInTheDocument();
 
-  // ...and the filed bug carries the pasted bytes ("img" -> "aW1n").
+  // ...and the filed bug carries the pasted picture, whole.
   fireEvent.click(screen.getByRole("button", { name: "File bug" }));
-  await vi.waitFor(() => expect(filed.screenshotsB64).toEqual(["aW1n"]));
+  await vi.waitFor(() => expect(filed.screenshotsB64).toEqual([PNG_B64]));
 });
 
 test("a Shared Steps row goes into the repro as Shared steps #N, with its title when known", () => {
@@ -197,4 +225,71 @@ test("an expected result that starts with a fence is its own block under Expecte
   const items = doc.querySelectorAll("ol > li");
   expect(items).toHaveLength(2);
   expect(items[1].textContent?.trim()).toBe("Close the page");
+});
+
+// ---- A screenshot that has not reached the clipboard yet ----
+//
+// The same quick paste from a virtual machine, inside File a bug: the file
+// is empty or cut off. It used to be added as it came (a broken thumbnail,
+// "Screenshot added to the bug") and filed with the bug.
+
+function renderBugDialog() {
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return render(
+    <QueryClientProvider client={qc}>
+      <BugDialog
+        org="acme"
+        project="Web"
+        testCase={testCase}
+        pbiId={42}
+        screenshots={[]}
+        onClose={vi.fn()}
+        onFiled={vi.fn()}
+      />
+    </QueryClientProvider>,
+  );
+}
+
+function pasteImage(bytes: Uint8Array, type = "image/png") {
+  const file = new File([bytes as BlobPart], "clip", { type });
+  fireEvent.paste(screen.getByLabelText("Bug title"), {
+    clipboardData: { items: [{ type, getAsFile: () => file }] },
+  });
+}
+
+const NOT_YET = "The screenshot had not reached the clipboard yet - paste again.";
+
+test("an empty pasted image is not added to the bug and the person is told", async () => {
+  mockIPC(() => null);
+  renderBugDialog();
+
+  pasteImage(new Uint8Array(0));
+
+  await vi.waitFor(() => expect(toastMock.info).toHaveBeenCalledWith(NOT_YET));
+  expect(screen.queryByAltText("Pasted screenshot 1")).not.toBeInTheDocument();
+  expect(toastMock.success).not.toHaveBeenCalled();
+  expect(screen.queryByText(/screenshot\(s\) attached/)).not.toBeInTheDocument();
+});
+
+test("a cut-off pasted image is not added either", async () => {
+  mockIPC(() => null);
+  renderBugDialog();
+
+  pasteImage(pngBytes().slice(0, 40));
+
+  await vi.waitFor(() => expect(toastMock.info).toHaveBeenCalledWith(NOT_YET), { timeout: 5000 });
+  expect(screen.queryByAltText("Pasted screenshot 1")).not.toBeInTheDocument();
+  expect(toastMock.success).not.toHaveBeenCalled();
+});
+
+test("a pasted JPEG is added under its own type", async () => {
+  mockIPC(() => null);
+  renderBugDialog();
+  const jpeg = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 0, 16, 0x4a, 0x46, 0x49, 0x46, 0, 1, 1, 0, 0, 1, 0, 1, 0, 0, 0xff, 0xd9]);
+
+  pasteImage(jpeg, "image/jpeg");
+
+  const thumb = await screen.findByAltText("Pasted screenshot 1");
+  expect(thumb).toHaveAttribute("src", `data:image/jpeg;base64,${btoa(String.fromCharCode(...jpeg))}`);
+  expect(toastMock.success).toHaveBeenCalledWith("Screenshot added to the bug");
 });

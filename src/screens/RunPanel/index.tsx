@@ -42,7 +42,9 @@ const outcomeColor: Record<string, string> = {
   failed: "text-danger",
   paused: "text-muted",
   blocked: "text-warning",
-  notapplicable: "text-muted",
+  // The theme's own ink, as the runner's badge uses for it: Paused is the
+  // grey above, and the two must not read as the same "no verdict".
+  notapplicable: "text-text",
 };
 
 /** v1 outcome_style parity: soft background tint per last outcome. */

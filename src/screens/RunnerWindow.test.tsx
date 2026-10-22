@@ -37,13 +37,19 @@ vi.mock("../lib/toast", () => ({ toast: toastMock }));
 // swapped for one that accepts whatever the structural checks let through.
 // `decode.accepts` forces it fully open for the one test that reaches the
 // last-resort guard in addImage.
-const decode = vi.hoisted(() => ({ accepts: false }));
+const decode = vi.hoisted(() => ({
+  accepts: false,
+  // Every picture the runner asked to have checked, in order.
+  calls: [] as Array<{ b64: string; mime?: string }>,
+}));
 vi.mock("../lib/blob", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../lib/blob")>();
   return {
     ...actual,
-    validImageB64: (b64: string, mime?: string) =>
-      decode.accepts ? Promise.resolve(true) : actual.validImageB64(b64, mime, async () => true),
+    validImageB64: (b64: string, mime?: string) => {
+      decode.calls.push({ b64, mime });
+      return decode.accepts ? Promise.resolve(true) : actual.validImageB64(b64, mime, async () => true);
+    },
   };
 });
 
@@ -51,6 +57,10 @@ vi.mock("../lib/blob", async (importOriginal) => {
 const PNG_B64 =
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC";
 const pngBytes = () => Uint8Array.from(atob(PNG_B64), (c) => c.charCodeAt(0));
+const bytesToB64 = (bytes: Uint8Array) => btoa(String.fromCharCode(...bytes));
+/** A minimal whole JPEG: start of image, a JFIF header, end of image. */
+const jpegBytes = () =>
+  new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 0, 16, 0x4a, 0x46, 0x49, 0x46, 0, 1, 1, 0, 0, 1, 0, 1, 0, 0, 0xff, 0xd9]);
 
 beforeEach(() => {
   localStorage.setItem(
@@ -791,6 +801,7 @@ function noClipboardRead() {
 afterEach(() => {
   noClipboardRead();
   decode.accepts = false;
+  decode.calls.length = 0;
   for (const m of Object.values(toastMock)) m.mockClear();
 });
 
@@ -805,10 +816,10 @@ async function openRunnerForPaste() {
   await act(async () => {}); // the paste listener's effect has run
 }
 
-function pasteEvent(bytes: Uint8Array) {
-  const file = new File([bytes as BlobPart], "clip.png", { type: "image/png" });
+function pasteEvent(bytes: Uint8Array, type = "image/png") {
+  const file = new File([bytes as BlobPart], "clip", { type });
   fireEvent.paste(window, {
-    clipboardData: { items: [{ type: "image/png", getAsFile: () => file }] },
+    clipboardData: { items: [{ type, getAsFile: () => file }] },
   });
 }
 
@@ -853,7 +864,7 @@ test("an invalid then valid clipboard read attaches exactly one image after a re
   const read = mockClipboardReads([new Uint8Array(0), pngBytes()]);
   await openRunnerForPaste();
 
-  pasteEvent(truncatedPng());
+  pasteEvent(new Uint8Array(0));
 
   const thumbs = await screen.findAllByAltText("pasted-201-1.png", undefined, { timeout: 5000 });
   expect(thumbs[0]).toHaveAttribute("src", `data:image/png;base64,${PNG_B64}`);
@@ -861,6 +872,48 @@ test("an invalid then valid clipboard read attaches exactly one image after a re
   expect(screen.queryAllByAltText("pasted-201-2.png")).toHaveLength(0);
   expect(toastMock.success).toHaveBeenCalledTimes(1);
   expect(toastMock.info).not.toHaveBeenCalledWith(NOT_YET);
+});
+
+// The paste event hands over the image itself. Its retry goes back to that
+// file first; the async clipboard (which a WebView2 setup may prompt for,
+// and which holds whatever was copied LAST) is read only when the event
+// had nothing.
+test("a cut-off image in the paste event is retried from the event, never from the async clipboard", async () => {
+  const read = mockClipboardReads([pngBytes()]);
+  await openRunnerForPaste();
+
+  pasteEvent(truncatedPng());
+
+  await vi.waitFor(() => expect(toastMock.info).toHaveBeenCalledWith(NOT_YET), { timeout: 5000 });
+  expect(read).not.toHaveBeenCalled();
+  expect(screen.queryAllByAltText("pasted-201-1.png")).toHaveLength(0);
+  expect(successToasts()).toHaveLength(0);
+});
+
+// A copied image file (Explorer, a browser) is a JPEG or a GIF, not a PNG.
+// It used to be judged as a PNG and refused every time.
+test("pasting a whole JPEG attaches it with its own extension", async () => {
+  noClipboardRead();
+  await openRunnerForPaste();
+
+  pasteEvent(jpegBytes(), "image/jpeg");
+
+  const thumbs = await screen.findAllByAltText("pasted-201-1.jpg", undefined, { timeout: 5000 });
+  expect(thumbs[0]).toHaveAttribute("src", `data:image/jpeg;base64,${bytesToB64(jpegBytes())}`);
+  expect(decode.calls[decode.calls.length - 1]?.mime).toBe("image/jpeg");
+  expect(toastMock.success).toHaveBeenCalledWith("Pasted screenshot");
+  expect(toastMock.info).not.toHaveBeenCalledWith(NOT_YET);
+});
+
+test("a JPEG that is cut off is refused like any other picture", async () => {
+  noClipboardRead();
+  await openRunnerForPaste();
+
+  pasteEvent(jpegBytes().slice(0, 12), "image/jpeg");
+
+  await vi.waitFor(() => expect(toastMock.info).toHaveBeenCalledWith(NOT_YET));
+  expect(screen.queryAllByAltText("pasted-201-1.jpg")).toHaveLength(0);
+  expect(successToasts()).toHaveLength(0);
 });
 
 test("the Paste button waits for a screenshot that has not arrived, then attaches it once", async () => {
@@ -921,60 +974,107 @@ test("addImage ignores an empty image even if the decoder were to accept it", as
   expect(successToasts()).toHaveLength(0);
 });
 
-test("an attachment that is damaged when results are recorded is left out and said so", async () => {
-  const calls: Array<{ cmd: string; args: Record<string, unknown> }> = [];
+/** Mocks for a two-case run that records into a run, answering the Attach
+ * file dialog with `files` one after another. */
+function mockRecordingWithFiles(
+  calls: Array<{ cmd: string; args: Record<string, unknown> }>,
+  files: Array<{ file_name: string; b64: string }>,
+) {
+  let next = 0;
   mockIPC((cmd, args) => {
     if (cmd === "run_history") return [];
-    if (cmd === "pbi_test_cases_full") return [fullCase];
+    if (cmd === "pbi_test_cases_full") return [fullCase, { ...fullCase, id: 202, title: "Invalid login" }];
     if (cmd === "list_test_points")
-      return [
-        {
-          point_id: 7,
-          test_case_id: 201,
-          test_case_name: "Valid login",
-          config_name: "W10",
-          tester: "",
-          last_outcome: "",
-          last_run_id: null,
-          last_result_id: null,
-        },
-      ];
+      return [7, 8].map((id, i) => ({
+        point_id: id,
+        test_case_id: 201 + i,
+        test_case_name: i ? "Invalid login" : "Valid login",
+        config_name: "W10",
+        tester: "",
+        last_outcome: "",
+        last_run_id: null,
+        last_result_id: null,
+      }));
     if (cmd === "start_test_run")
       return {
         run_id: 300,
         web_url: "https://x/run/300",
-        results: [{ point_id: 7, result_id: 70 }],
+        results: [
+          { point_id: 7, result_id: 70 },
+          { point_id: 8, result_id: 80 },
+        ],
         unmatched: [],
       };
+    if (cmd === "plugin:dialog|open") return `C:/files/${files[next].file_name}`;
+    if (cmd === "read_file_b64") return files[next++];
     if (cmd === "record_result") {
       calls.push({ cmd, args: args as Record<string, unknown> });
       return [];
     }
     if (cmd === "finish_test_run") return null;
   });
+}
+
+const attachedTo = (call: { args: Record<string, unknown> }) =>
+  (call.args.outcome as { attachments: Array<{ file_name: string }> | null }).attachments;
+
+test("an image from Attach file that is damaged when results are recorded is left out and said so", async () => {
+  const calls: Array<{ cmd: string; args: Record<string, unknown> }> = [];
+  mockRecordingWithFiles(calls, [{ file_name: "cut.png", b64: bytesToB64(truncatedPng()) }]);
   renderRunner();
   await screen.findByText("Valid login");
   await act(async () => {});
 
-  // A cut-off image gets onto the case only because the check was open...
-  decode.accepts = true;
-  pasteEvent(truncatedPng());
-  await screen.findAllByAltText("pasted-201-1.png", undefined, { timeout: 5000 });
-  // ...and the real check is back by the time results go up.
-  decode.accepts = false;
+  // Attach file does not look at the picture: a cut-off one gets onto the case...
+  fireEvent.click(screen.getByRole("button", { name: /Attach file/ }));
+  await screen.findByLabelText("Remove cut.png");
 
+  // ...and the check at record time keeps it off the result.
   fireEvent.click(screen.getByRole("button", { name: "Passed" }));
-  fireEvent.click(screen.getByRole("button", { name: /Finish \(1\)/ }));
+  fireEvent.click(screen.getByRole("button", { name: "Next" }));
 
   await vi.waitFor(() => expect(calls.length).toBeGreaterThan(0), { timeout: 5000 });
-  const outcome = (calls[0].args as { outcome: { attachments: unknown } }).outcome;
-  expect(outcome.attachments).toBeNull();
+  expect(attachedTo(calls[0])).toBeNull();
   await vi.waitFor(() =>
-    expect(
-      toastMock.warning.mock.calls.some((c) => String(c[0]).includes("pasted-201-1.png")),
-    ).toBe(true),
+    expect(toastMock.warning.mock.calls.some((c) => String(c[0]).includes("cut.png"))).toBe(true),
   );
 });
+
+/// An image is decoded once, not at every sync. A picture pasted or
+/// snipped was checked whole when it was attached; one from Attach file is
+/// checked the first time it is synced; a later sync of the same case only
+/// reads the answer.
+test("each image is decoded once, however many times its case is recorded", async () => {
+  const calls: Array<{ cmd: string; args: Record<string, unknown> }> = [];
+  mockRecordingWithFiles(calls, [{ file_name: "photo.jpg", b64: bytesToB64(jpegBytes()) }]);
+  renderRunner();
+  await screen.findByText("Valid login");
+  await act(async () => {});
+
+  // A pasted picture is checked once, when it is pasted.
+  pasteEvent(pngBytes());
+  await screen.findAllByAltText("pasted-201-1.png", undefined, { timeout: 5000 });
+  const afterPaste = decode.calls.length;
+  fireEvent.click(screen.getByRole("button", { name: /Attach file/ }));
+  await screen.findByLabelText("Remove photo.jpg");
+
+  fireEvent.click(screen.getByRole("button", { name: "Passed" }));
+  fireEvent.click(screen.getByRole("button", { name: "Next" }));
+  await vi.waitFor(() => expect(calls).toHaveLength(1), { timeout: 5000 });
+  expect(attachedTo(calls[0])!.map((a) => a.file_name)).toEqual(["pasted-201-1.png", "photo.jpg"]);
+  // Only the file from Attach file was decoded at the sync; the pasted
+  // picture was answered from what the paste found.
+  expect(decode.calls.length - afterPaste).toBe(1);
+
+  // Change the case and record it again: nothing is decoded a second time.
+  fireEvent.click(screen.getByRole("button", { name: "Prev" }));
+  await screen.findByText("Valid login");
+  fireEvent.click(screen.getByRole("button", { name: "Failed" }));
+  fireEvent.click(screen.getByRole("button", { name: "Next" }));
+  await vi.waitFor(() => expect(calls).toHaveLength(2), { timeout: 5000 });
+  expect(attachedTo(calls[1])).toHaveLength(2);
+  expect(decode.calls.length - afterPaste).toBe(1);
+}, 20000);
 
 /** Single-screen snipping: the runner covers the very thing the tester
  * wants to capture, so Snip minimizes the window BEFORE the overlay

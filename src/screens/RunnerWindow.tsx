@@ -17,7 +17,14 @@ import { Textarea } from "../components/ui/input";
 import { cn } from "../lib/cn";
 import { useFieldRefs } from "../hooks/useFieldRefs";
 import { unwrap, unwrapStr } from "../lib/ipc";
-import { blobToB64, validImageB64 } from "../lib/blob";
+import { blobToB64, imageExt, imageMimeForName, validImageB64 } from "../lib/blob";
+import {
+  firstValidClipboardImage,
+  imageOfPasteFile,
+  NOT_ON_CLIPBOARD_YET,
+  readClipboardImage,
+  type ClipboardImage,
+} from "../lib/clipboardImage";
 import { emitPointRecorded } from "../lib/runnerBus";
 import { loadMyOrder, onMyOrderChanged, resortUpcoming, type OrderKey } from "../lib/runOrder";
 import { loadRunnerPinned, loadRunnerSession, saveRunnerPinned } from "../lib/runnerSession";
@@ -103,50 +110,10 @@ const outcomeLast: Record<string, string> = {
 
 const IMAGE_EXT = /\.(png|jpe?g|gif|bmp|webp)$/i;
 
-/** Data-URL mime from the attachment's extension (snips/pastes are png;
- * Attach file can bring the rest). */
-function mimeFor(name: string): string {
-  if (/\.jpe?g$/i.test(name)) return "image/jpeg";
-  if (/\.gif$/i.test(name)) return "image/gif";
-  if (/\.bmp$/i.test(name)) return "image/bmp";
-  if (/\.webp$/i.test(name)) return "image/webp";
-  return "image/png";
-}
-
-async function readClipboardImageB64(): Promise<string | null> {
-  const items = await navigator.clipboard.read();
-  for (const item of items) {
-    const type = item.types.find((t) => t.startsWith("image/"));
-    if (!type) continue;
-    const blob = await item.getType(type);
-    return blobToB64(blob);
-  }
-  return null;
-}
-
-/** A virtual machine's clipboard sync can offer image/png before the image
- * is ready, so the first read is empty or cut short and the data lands a
- * moment later. Reads the clipboard again, this many times this far apart. */
-const CLIPBOARD_RETRIES = 3;
-const CLIPBOARD_RETRY_MS = 300;
-
-/** Said when no whole image ever turned up. Nothing has been attached. */
-const NOT_ON_CLIPBOARD_YET = "The screenshot had not reached the clipboard yet - paste again.";
-
-/** The first whole image the clipboard yields: `first` if it is one, else
- * the first valid re-read within CLIPBOARD_RETRIES tries. Null when none
- * is - including where the async clipboard read is not available at all
- * (some WebView2 setups), which leaves `first` as the only candidate. */
-async function firstValidClipboardImage(first: string | null): Promise<string | null> {
-  if (first && (await validImageB64(first))) return first;
-  if (typeof navigator.clipboard?.read !== "function") return null;
-  for (let i = 0; i < CLIPBOARD_RETRIES; i++) {
-    await new Promise((res) => setTimeout(res, CLIPBOARD_RETRY_MS));
-    const again = await readClipboardImageB64().catch(() => null);
-    if (again && (await validImageB64(again))) return again;
-  }
-  return null;
-}
+/** How long the upload check lets a decode take. Longer than the paste's
+ * 2 s: a large picture from Attach file, on a machine whose webview draws
+ * in software, is not an empty paste and must not be dropped for being slow. */
+const UPLOAD_DECODE_TIMEOUT_MS = 10_000;
 
 export default function RunnerWindow() {
   const session = loadRunnerSession();
@@ -174,6 +141,11 @@ export default function RunnerWindow() {
   const recorderRef = useRef<MediaRecorder | null>(null);
   const startRef = useRef<number>(Date.now());
   const snipToken = useRef(0);
+  // Which attachments have been checked as images for upload, and what the
+  // check found. Keyed by the attachment object itself, so each picture is
+  // decoded once - when it is attached or, for a file from Attach file, the
+  // first sync after it was added - and a later sync only reads the answer.
+  const imageChecks = useRef(new WeakMap<RunAttachment, Promise<boolean>>());
 
   // Preconditions (and Module) live in org-specific CUSTOM fields - without
   // their reference names the fetch returns them empty, which is why the
@@ -432,7 +404,7 @@ export default function RunnerWindow() {
     .filter((a) => IMAGE_EXT.test(a.file_name));
   const sessionLightbox = useLightbox({
     media: sessionImages.map((a) => ({
-      src: `data:${mimeFor(a.file_name)};base64,${a.b64}`,
+      src: `data:${imageMimeForName(a.file_name)};base64,${a.b64}`,
       alt: a.file_name,
     })),
   });
@@ -463,16 +435,21 @@ export default function RunnerWindow() {
   const patch = (caseId: number, p: Partial<CaseState>) =>
     setStates((s) => ({ ...s, [caseId]: { ...emptyState(), ...s[caseId], ...p } }));
 
-  /** Attach an image to a case. The last guard: an empty image is never
-   * attached, whoever the caller is. True when it was attached. */
-  const addImage = (caseId: number, b64: string, kind: string): boolean => {
-    if (!b64) {
+  /** Attach an image to a case, named with the extension its real type
+   * calls for (a JPEG is .jpg), so the upload check reads it the same way.
+   * The last guard: an empty image is never attached, whoever the caller
+   * is. Every caller has already checked the picture whole, so that answer
+   * is kept and the upload does not decode it again. True when attached. */
+  const addImage = (caseId: number, img: ClipboardImage, kind: string): boolean => {
+    if (!img.b64) {
       if (import.meta.env.DEV) console.warn(`addImage: ignored an empty ${kind} image for case ${caseId}`);
       return false;
     }
+    const ext = imageExt(img.mime);
     setStates((s) => {
       const prev = s[caseId] ?? emptyState();
-      const att = { file_name: `${kind}-${caseId}-${prev.attachments.length + 1}.png`, b64 };
+      const att = { file_name: `${kind}-${caseId}-${prev.attachments.length + 1}.${ext}`, b64: img.b64 };
+      imageChecks.current.set(att, Promise.resolve(true));
       return { ...s, [caseId]: { ...prev, attachments: [...prev.attachments, att] } };
     });
     return true;
@@ -505,12 +482,15 @@ export default function RunnerWindow() {
       if (!item) return; // text paste - none of our business
       // An image the VM has offered but not yet delivered comes through as
       // no file or an empty/cut-off one: all of it goes the retry way below.
+      // The file is taken NOW: once this handler returns the event's item
+      // list is closed. A retry re-reads this same file (see
+      // firstValidClipboardImage), not the async clipboard.
       const blob = item.getAsFile();
       const caseId = current.id;
       void (async () => {
-        const first = blob ? await blobToB64(blob).catch(() => "") : "";
-        const b64 = await firstValidClipboardImage(first);
-        if (b64 && addImage(caseId, b64, "pasted")) toast.success("Pasted screenshot");
+        const first = await imageOfPasteFile(blob, item.type);
+        const img = await firstValidClipboardImage(first, () => imageOfPasteFile(blob, item.type));
+        if (img && addImage(caseId, img, "pasted")) toast.success("Pasted screenshot");
         else toast.info(NOT_ON_CLIPBOARD_YET);
       })();
     };
@@ -592,7 +572,7 @@ export default function RunnerWindow() {
   async function snip() {
     if (!current) return;
     const caseId = current.id;
-    const before = await readClipboardImageB64().catch(() => null);
+    const before = (await readClipboardImage().catch(() => null))?.b64 ?? null;
     // On a single screen the runner itself covers the thing the tester
     // wants to capture, and the overlay freezes the screen the moment it
     // opens - so get out of the way FIRST, give the compositor a beat to
@@ -614,9 +594,14 @@ export default function RunnerWindow() {
     const deadline = Date.now() + 60_000;
     while (Date.now() < deadline && snipToken.current === token) {
       await new Promise((res) => setTimeout(res, 1000));
-      const img = await readClipboardImageB64().catch(() => null);
+      const img = await readClipboardImage().catch(() => null);
       // A cut-off or empty read is "no new image yet": keep polling.
-      if (img && img !== before && (await validImageB64(img)) && addImage(caseId, img, "snip")) {
+      if (
+        img &&
+        img.b64 !== before &&
+        (await validImageB64(img.b64, img.mime)) &&
+        addImage(caseId, img, "snip")
+      ) {
         restoreFromSnip();
         toast.success("Snip attached");
         setSnipping(false);
@@ -643,13 +628,13 @@ export default function RunnerWindow() {
     if (!current) return;
     try {
       const caseId = current.id;
-      const first = await readClipboardImageB64();
+      const first = await readClipboardImage();
       if (first === null) {
         toast.info("No image on the clipboard.");
         return;
       }
-      const b64 = await firstValidClipboardImage(first);
-      if (b64 && addImage(caseId, b64, "pasted")) toast.success("Pasted screenshot");
+      const img = await firstValidClipboardImage(first);
+      if (img && addImage(caseId, img, "pasted")) toast.success("Pasted screenshot");
       else toast.info(NOT_ON_CLIPBOARD_YET);
     } catch {
       toast.error("Clipboard image paste is not available.");
@@ -820,16 +805,31 @@ export default function RunnerWindow() {
         // Last line of defence: an image that is empty or will not decode
         // is never uploaded - a broken file on the result helps no one. It
         // is left out and said so below. Files that are not images (a
-        // recording, anything from Attach file) go up as they are.
+        // recording, anything from Attach file) go up as they are. Each
+        // attachment is checked once, ever (imageChecks): a pasted or
+        // snipped picture was checked when it was attached, so a sync only
+        // decodes a file that arrived some other way, and only the first
+        // time it is synced.
         const unsent: string[] = [];
         const sendable: RunAttachment[] = [];
         for (const a of s.attachments) {
-          const isImage = IMAGE_EXT.test(a.file_name);
-          if (!a.b64 || (isImage && !(await validImageB64(a.b64, mimeFor(a.file_name))))) {
-            unsent.push(a.file_name);
-          } else {
-            sendable.push(a);
+          let ok = true;
+          if (!a.b64) ok = false;
+          else if (IMAGE_EXT.test(a.file_name)) {
+            let check = imageChecks.current.get(a);
+            if (!check) {
+              check = validImageB64(
+                a.b64,
+                imageMimeForName(a.file_name),
+                undefined,
+                UPLOAD_DECODE_TIMEOUT_MS,
+              );
+              imageChecks.current.set(a, check);
+            }
+            ok = await check;
           }
+          if (ok) sendable.push(a);
+          else unsent.push(a.file_name);
         }
         const extras = await unwrap(
           commands.recordResult(session!.org, session!.project, run.runId, resultId, {
@@ -1179,7 +1179,7 @@ export default function RunnerWindow() {
                         alt={a.file_name}
                         title={`${a.file_name} - click to view`}
                         className="h-16 cursor-zoom-in rounded border border-border object-cover"
-                        src={`data:${mimeFor(a.file_name)};base64,${a.b64}`}
+                        src={`data:${imageMimeForName(a.file_name)};base64,${a.b64}`}
                         {...sessionLightbox.getTriggerProps(si)}
                       />
                       <button

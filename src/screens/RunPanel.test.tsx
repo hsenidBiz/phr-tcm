@@ -1086,3 +1086,40 @@ test("the chosen order is remembered for the suite across a remount, and My orde
   expect(localStorage.getItem(VIEW_KEY)).toBe("spec");
   expect(JSON.parse(localStorage.getItem(MY_KEY) as string)).toEqual([303, 302, 301]);
 });
+
+/// Paused and Not Applicable are different verdicts and must not read as
+/// the same grey: Paused is the muted tone, Not Applicable the theme's ink
+/// (the colours the runner gives each).
+test("a Paused case and a Not Applicable case are not the same colour", async () => {
+  const point = (id: number, last_outcome: string) => ({
+    point_id: id,
+    test_case_id: 300 + id,
+    test_case_name: `Case ${id}`,
+    config_name: "Windows 10",
+    tester: "",
+    last_outcome,
+    last_run_id: null,
+    last_result_id: null,
+  });
+  mockIPC((cmd) => {
+    switch (cmd) {
+      case "plugin:event|listen":
+        return 1;
+      case "plugin:event|unlisten":
+        return null;
+      case "run_history":
+        return [];
+      case "ensure_pbi_suite":
+        return { plan_id: 9, plan_name: "Auth - Test Plan", suite_id: 91 };
+      case "list_test_points":
+        return [point(1, "Paused"), point(2, "NotApplicable")];
+    }
+  });
+  renderPanel();
+
+  await screen.findByText("Case 1");
+  const cell = (label: string) => screen.getAllByText(label).find((el) => el.tagName === "TD")!;
+  expect(cell("Paused")).toHaveClass("text-muted");
+  expect(cell("Not Applicable")).toHaveClass("text-text");
+  expect(cell("Not Applicable")).not.toHaveClass("text-muted");
+});
