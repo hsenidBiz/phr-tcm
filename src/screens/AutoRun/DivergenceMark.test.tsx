@@ -125,3 +125,44 @@ test("a failed undo says why and stays", async () => {
   fireEvent.click(screen.getByRole("button", { name: "Undo the ruling on #147556 step 2" }));
   expect(await screen.findByText("only a ruling that waits for a repair can be undone")).toBeInTheDocument();
 });
+
+const byAssistant: Divergence = {
+  ...base,
+  status: "ruled",
+  ruling: "case_stands",
+  ruled_by: "assistant",
+  said: "a different cycle name is fine",
+};
+
+test("an assistant's ruling shows the person's words and offers undo", () => {
+  show(byAssistant);
+  expect(screen.getByText('Ruled by the assistant, on your words: "a different cycle name is fine"')).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Undo the ruling on #147556 step 2" })).toBeInTheDocument();
+});
+
+test("an assistant's ruling shows its note after the person's words", () => {
+  show({ ...byAssistant, note: "Cycle names are free text." });
+  expect(
+    screen.getByText(
+      'Ruled by the assistant, on your words: "a different cycle name is fine" Its note: Cycle names are free text.',
+    ),
+  ).toBeInTheDocument();
+});
+
+test("undoing an assistant's ruling calls the undo command", async () => {
+  const calls = show(byAssistant);
+  fireEvent.click(screen.getByRole("button", { name: "Undo the ruling on #147556 step 2" }));
+  await waitFor(() =>
+    expect(calls.find((c) => c.cmd === "auto_run_undo_divergence_ruling")?.args).toEqual({
+      organization: "acme",
+      project: "Web",
+      id: "d1",
+    }),
+  );
+});
+
+test("a person's own ruling offers no undo", () => {
+  show({ ...byAssistant, ruled_by: null, said: null });
+  expect(screen.queryByRole("button", { name: /Undo the ruling/ })).not.toBeInTheDocument();
+  expect(screen.queryByText(/Ruled by the assistant/)).not.toBeInTheDocument();
+});

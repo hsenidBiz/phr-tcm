@@ -116,6 +116,9 @@ export function DivergenceRow({
   };
 
   const waiting = divergence.status === "awaiting_repair";
+  // An assistant's ruling carries the person's own words from the chat, and
+  // can be taken back; a ruling the person made with the buttons here cannot.
+  const byAssistant = divergence.ruled_by === "assistant";
   return (
     <div className="flex flex-wrap items-center gap-2 pt-1">
       <DivergenceBadge divergence={divergence} />
@@ -159,7 +162,13 @@ export function DivergenceRow({
           </Button>
         </>
       )}
-      {waiting && (
+      {byAssistant && (
+        <span className="w-full break-words text-xs text-muted">
+          Ruled by the assistant, on your words: &quot;{divergence.said}&quot;
+          {divergence.note ? ` Its note: ${divergence.note}` : ""}
+        </span>
+      )}
+      {(waiting || byAssistant) && (
         <Button
           size="sm"
           variant="outline"

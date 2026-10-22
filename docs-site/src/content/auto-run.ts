@@ -247,7 +247,7 @@ export const autoRun: Screen = {
       tips: [
         "To run the failed cases again: press **Failed**, then **Select all shown**.",
         "While any case is marked as a suspected defect, a **Suspected defects** button sits beside them and shows only those cases. It works together with the result buttons: **Suspected defects** and **Failed** show the marked cases that failed last time.",
-        "When an assistant finds that a case and the application disagree, the case shows **Needs a ruling** and waits. Open the card and choose **The case is right**, **Data fixed** or **Rewrite the case**; the case runs again, or waits for its script to be repaired.",
+        "When an assistant finds that a case and the application disagree, the case shows **Needs a ruling** and waits. Open the card and choose **The case is right**, **Data fixed** or **Rewrite the case**; the case runs again, or waits for its script to be repaired. When you have told the assistant in the chat how to rule, it can apply your ruling itself: the card then says **Ruled by the assistant** with your words, and **Undo ruling** puts the case back to needing a ruling.",
         "**Has a script**, after them, shows only the cases that already have a script, with how many there are. It works together with the result buttons, and the app remembers it for each project.",
       ],
     },
