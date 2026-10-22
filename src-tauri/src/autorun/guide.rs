@@ -75,7 +75,7 @@ pub fn autorun_guide() -> String {
     let mut out = String::from("# Writing an Auto Run action script\n\n");
     out.push_str(QUICK_RULES);
     out.push('\n');
-    out.push_str(GUIDE_BODY);
+    out.push_str(&crate::browser::viewport::size_in_force(GUIDE_BODY));
     out
 }
 

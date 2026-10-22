@@ -15,6 +15,8 @@ import { commands, events, type AppSettings, type GuideStatus } from "../binding
 import { copyText } from "../lib/clipboard";
 import AccountSettings from "../components/AccountSettings";
 import BackgroundSettings from "../components/BackgroundSettings";
+import PageSizeSettings from "../components/PageSizeSettings";
+import { useModule } from "../lib/modules";
 import Modules from "./Modules";
 import { SettingRow, SettingsCard } from "../components/settings/SettingsCard";
 import { useTileLayout } from "../components/settings/useTileLayout";
@@ -139,6 +141,7 @@ export default function Settings({
   const extrasUnlocked = useExtrasUnlocked();
   const [confirmReset, setConfirmReset] = useState(false);
   const [modulesOpen, setModulesOpen] = useState(startOnModules);
+  const autoRunOn = useModule("auto_run");
   // The Modules board scrolls inside its own frame, so while it is open the
   // host must not scroll around it too; leaving Settings hands the scroll back.
   useEffect(() => {
@@ -780,6 +783,13 @@ export default function Settings({
           }
         />
       </SettingsCard>
+
+      {/* Only with Auto Run on: it is the one module whose browsers this sets. */}
+      {autoRunOn && (
+        <SettingsCard title="Auto Run" data-settings-card="auto-run">
+          <PageSizeSettings />
+        </SettingsCard>
+      )}
 
       {!tiles.spareStack && aiToolsCard}
 

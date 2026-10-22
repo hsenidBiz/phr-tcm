@@ -477,7 +477,7 @@ pub fn active_environment_line(name: &str) -> String {
 /// The guide: `BASE`, then this project's account keys and the recipe's
 /// origin - or, for either that is missing, what the person has to set up.
 pub fn text(accounts: &[String], origin: Option<&str>) -> String {
-    let mut out = BASE.to_string();
+    let mut out = crate::browser::viewport::size_in_force(BASE);
     out.push_str("\n## This project\n\n");
     if accounts.is_empty() {
         out.push_str(

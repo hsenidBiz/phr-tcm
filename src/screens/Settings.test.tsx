@@ -8,6 +8,7 @@ import { CHANGELOG, isBetaVersion } from "../lib/changelog";
 import { RATE_LEVELS } from "../lib/adoRate";
 import { toast } from "../lib/toast";
 import { resetExtrasStore, setExtrasUnlocked } from "../lib/extras";
+import { resetModulesStore, setModulesForTest } from "../lib/modules";
 import { TILE_MS, TILE_SAFETY_MS, TILE_STAGGER_MS, WIDE_QUERY } from "../components/settings/useTileLayout";
 import { planClose, planOpen } from "../components/settings/tileSchedule";
 import { EASE, foldMs } from "../components/ui/collapse";
@@ -24,6 +25,7 @@ afterEach(() => {
   clearMocks();
   vi.clearAllMocks();
   resetExtrasStore();
+  resetModulesStore();
   localStorage.removeItem("tcm-v2-dev-capture");
 });
 
@@ -1210,7 +1212,11 @@ test("capture mode hides the Extras section on an unlocked machine; off, it show
   expect(onRender.queryByRole("heading", { name: "Extras" })).not.toBeInTheDocument();
   expect(onRender.queryByRole("button", { name: "Play the dino game" })).not.toBeInTheDocument();
   expect(onRender.queryByRole("button", { name: "Play the brick game" })).not.toBeInTheDocument();
-  expect(onRender.queryByRole("button", { name: "Reset to default" })).not.toBeInTheDocument();
+  // The Extras reset is gone. Capture mode shows every module, so the Auto Run
+  // card's own "Reset to default" (the page size) may be there - and only that.
+  for (const reset of onRender.queryAllByRole("button", { name: "Reset to default" })) {
+    expect(within(reset.closest("section")!).getByRole("heading", { name: "Auto Run" })).toBeInTheDocument();
+  }
   onRender.unmount();
 
   localStorage.removeItem("tcm-v2-dev-capture");
@@ -1560,4 +1566,18 @@ test("startOnModules opens on Modules", async () => {
   expect(screen.queryByRole("heading", { name: "Appearance" })).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: /Back to Settings/ }));
   expect(await screen.findByRole("heading", { name: "Appearance" })).toBeInTheDocument();
+});
+
+/// The page size is Auto Run's, so its card is there only with Auto Run on.
+test("the Auto Run card with the browser page size shows only while Auto Run is on", async () => {
+  mockIPC(() => undefined);
+  renderSettings(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+  await screen.findByRole("heading", { name: "Changelog" });
+  expect(screen.queryByRole("heading", { name: "Auto Run" })).not.toBeInTheDocument();
+  act(() => setModulesForTest(["db_access", "auto_run"]));
+  const card = (await screen.findByRole("heading", { name: "Auto Run" })).closest("section")!;
+  expect(within(card).getByText("Browser page size")).toBeInTheDocument();
+  expect(within(card).getByRole("spinbutton", { name: "Width" })).toBeInTheDocument();
+  act(() => setModulesForTest([]));
+  await waitFor(() => expect(screen.queryByRole("heading", { name: "Auto Run" })).not.toBeInTheDocument());
 });

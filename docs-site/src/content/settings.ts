@@ -113,7 +113,8 @@ export const settings: Screen = {
         "**Auto Run**: Script a test case once, then run it in a browser, watched or unattended, and review the results before they go to Azure DevOps. Includes environments, accounts, areas and test files. It needs Database Access, and adds Auto Run to the sidebar under Run Tests and the Environment card on the AI Bridge tab.",
         "**API Templates**: Create the test data a case needs, such as cycles, drafts and settings, through the app's own pages before the case runs, so every run starts from a known state. It needs Auto Run, and adds API Templates at the end of the sidebar.",
         "**Playwright**: Export passing Auto Run scripts into the team's Playwright repo, run its tests, manage its test accounts and keep exported cases in sync. It needs Auto Run, and adds Playwright to the sidebar under Auto Run.",
-        "With Auto Run on, the sidebar's shortcuts run from [[Ctrl+1]] to [[Ctrl+9]]: Auto Run takes [[Ctrl+6]] and the screens after it move down one.",
+        "With Auto Run on, the sidebar's shortcuts run from [[Ctrl+1]] to [[Ctrl+9]]: Auto Run takes [[Ctrl+6]] and the screens after it move down one.",
+        "With Auto Run on, Settings also shows an **Auto Run** card with **Browser page size**: the Width and Height of the page every browser the app drives shows, 1280 x 720 until you change it (800 x 600 to 3840 x 2160). **Save** keeps a new size and **Reset to default** puts 1280 x 720 back. A browser that is already open keeps its size; the next one the app opens uses the new one.",
       ],
     },
 

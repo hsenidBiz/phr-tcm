@@ -14,6 +14,8 @@ use std::sync::{Mutex, OnceLock};
 
 use serde::{Deserialize, Serialize};
 
+use crate::browser::viewport::{PageSize, DEFAULT_PAGE};
+
 const FILE: &str = "app-settings.json";
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, specta::Type)]
@@ -48,6 +50,10 @@ pub struct AppSettings {
     /// (`Timing::supervised`). Off skips the pause. An unwatched run never
     /// pauses.
     pub autorun_highlight: bool,
+    /// The page every browser the app drives shows (`browser::viewport`).
+    /// A missing, unreadable or out-of-range value reads as the default, and
+    /// leaves the rest of the file alone.
+    pub page_size: PageSize,
 }
 
 impl Default for AppSettings {
@@ -61,6 +67,7 @@ impl Default for AppSettings {
             stay_signed_in: true,
             playwright_clone: String::new(),
             autorun_highlight: true,
+            page_size: DEFAULT_PAGE,
         }
     }
 }
@@ -74,8 +81,24 @@ static CURRENT: Mutex<Option<AppSettings>> = Mutex::new(None);
 pub fn load(dir: &Path) -> AppSettings {
     std::fs::read_to_string(dir.join(FILE))
         .ok()
-        .and_then(|s| serde_json::from_str::<AppSettings>(&s).ok())
+        .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+        .map(without_unusable_page_size)
+        .and_then(|v| serde_json::from_value::<AppSettings>(v).ok())
         .unwrap_or_default()
+}
+
+/// `settings` with `page_size` dropped when it is not a size this build
+/// accepts (the wrong shape, or outside `MIN_PAGE..=MAX_PAGE`), so it reads
+/// as the default - a hand-edited file must not cost the person their other
+/// settings.
+fn without_unusable_page_size(mut settings: serde_json::Value) -> serde_json::Value {
+    if let Some(map) = settings.as_object_mut() {
+        let usable = map.get("page_size").is_none_or(|v| serde_json::from_value::<PageSize>(v.clone()).is_ok_and(PageSize::in_range));
+        if !usable {
+            map.remove("page_size");
+        }
+    }
+    settings
 }
 
 /// Write `s` into `dir` (created if missing), atomically.

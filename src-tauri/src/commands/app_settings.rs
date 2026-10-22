@@ -1,6 +1,7 @@
 //! The app's own settings (`crate::app_settings`), for the Settings screen.
 
 use crate::app_settings::{self, AppSettings};
+use crate::browser::viewport::{self, PageSize, DEFAULT_PAGE};
 
 /// The settings as the app is using them now.
 #[tauri::command]
@@ -98,6 +99,38 @@ pub fn set_autorun_highlight(on: bool) -> Result<AppSettings, String> {
         crate::applog::warn(format!("saving the highlight setting failed: {e}"));
         "The setting could not be saved. Settings → Logs has the details.".to_string()
     })
+}
+
+/// The page size every browser the app drives shows.
+#[tauri::command]
+#[specta::specta]
+pub fn get_page_size() -> PageSize {
+    viewport::current()
+}
+
+/// Save the page size. A size outside `viewport::MIN_PAGE..=MAX_PAGE` is
+/// refused and nothing is saved. A browser already open keeps its size; the
+/// next one the app opens uses this one.
+#[tauri::command]
+#[specta::specta]
+pub fn set_page_size(size: PageSize) -> Result<PageSize, String> {
+    let size = viewport::validate(size)?;
+    app_settings::update(|s| s.page_size = size).map_err(|e| {
+        crate::applog::warn(format!("saving the page size failed: {e}"));
+        "The setting could not be saved. Settings → Logs has the details.".to_string()
+    })?;
+    Ok(size)
+}
+
+/// Put the page size back to what the app ships with.
+#[tauri::command]
+#[specta::specta]
+pub fn reset_page_size() -> PageSize {
+    match app_settings::update(|s| s.page_size = DEFAULT_PAGE) {
+        Ok(_) => {}
+        Err(e) => crate::applog::warn(format!("resetting the page size failed: {e}")),
+    }
+    viewport::current()
 }
 
 /// Stay signed in. Off removes the kept sign-in from Credential Manager at

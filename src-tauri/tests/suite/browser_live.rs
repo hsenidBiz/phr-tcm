@@ -1265,6 +1265,7 @@ impl Browsers for LiveBrowsers {
     type D = Cdp;
     async fn open(&mut self) -> Result<Cdp, String> {
         let extra = background_args();
+        let extra: Vec<&str> = extra.iter().map(String::as_str).collect();
         let browser = launch_with(Browser::Edge, &extra)?;
         self.started += 1;
         let mut last = String::new();
@@ -3086,6 +3087,7 @@ impl v2_lib::autorun::one_browser::Launcher for LiveLauncher {
 
     async fn launch(&mut self) -> Result<LaunchedBrowser, String> {
         let extra = background_args();
+        let extra: Vec<&str> = extra.iter().map(String::as_str).collect();
         let mut browser = launch_with(Browser::Edge, &extra)?;
         self.launches.fetch_add(1, Ordering::SeqCst);
         let mut last = String::new();

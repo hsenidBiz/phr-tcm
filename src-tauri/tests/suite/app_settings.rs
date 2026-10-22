@@ -3,6 +3,7 @@
 //! cannot read is the defaults - never an error.
 
 use v2_lib::app_settings::{load, save, AppSettings};
+use v2_lib::browser::viewport::{PageSize, DEFAULT_PAGE};
 
 fn dir() -> tempfile::TempDir {
     tempfile::tempdir().unwrap()
@@ -23,6 +24,7 @@ fn a_missing_file_is_the_defaults() {
             stay_signed_in: true,
             playwright_clone: String::new(),
             autorun_highlight: true,
+            page_size: DEFAULT_PAGE,
         }
     );
 }
@@ -51,6 +53,7 @@ fn missing_fields_take_their_defaults_and_unknown_fields_are_ignored() {
             stay_signed_in: true,
             playwright_clone: String::new(),
             autorun_highlight: true,
+            page_size: DEFAULT_PAGE,
         }
     );
 }
@@ -67,6 +70,7 @@ fn saved_settings_read_back() {
         stay_signed_in: false,
         playwright_clone: "C:/clone".into(),
         autorun_highlight: false,
+        page_size: PageSize { width: 1920, height: 1080 },
     };
     save(d.path(), &s).unwrap();
     assert_eq!(load(d.path()), s);

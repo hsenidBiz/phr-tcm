@@ -1506,6 +1506,16 @@ export const commands = {
 	 *  and in the supervised browser. Read when a run or a supervised step starts.
 	 */
 	setAutorunHighlight: (on: boolean) => typedError<AppSettings, string>(__TAURI_INVOKE("set_autorun_highlight", { on })),
+	/**  The page size every browser the app drives shows. */
+	getPageSize: () => __TAURI_INVOKE<PageSize>("get_page_size"),
+	/**
+	 *  Save the page size. A size outside `viewport::MIN_PAGE..=MAX_PAGE` is
+	 *  refused and nothing is saved. A browser already open keeps its size; the
+	 *  next one the app opens uses this one.
+	 */
+	setPageSize: (size: PageSize) => typedError<PageSize, string>(__TAURI_INVOKE("set_page_size", { size })),
+	/**  Put the page size back to what the app ships with. */
+	resetPageSize: () => __TAURI_INVOKE<PageSize>("reset_page_size"),
 	/**
 	 *  The saved style. The starting one is created on the first read when
 	 *  this machine has none yet.
@@ -2433,6 +2443,12 @@ export type AppSettings = {
 	 *  pauses.
 	 */
 	autorun_highlight?: boolean,
+	/**
+	 *  The page every browser the app drives shows (`browser::viewport`).
+	 *  A missing, unreadable or out-of-range value reads as the default, and
+	 *  leaves the rest of the file alone.
+	 */
+	page_size?: PageSize,
 };
 
 /**  One area of the discovery map, as the Discovery card shows it. */
@@ -4695,6 +4711,12 @@ export type PagePalette = {
 	dark: ReportPalette,
 	/**  True when the app is currently dark, so the page opens to match. */
 	dark_first: boolean,
+};
+
+/**  A page area, in CSS pixels. */
+export type PageSize = {
+	width: number,
+	height: number,
 };
 
 export type Param = Param_Serialize | Param_Deserialize;

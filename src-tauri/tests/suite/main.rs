@@ -37,6 +37,7 @@ mod api_templates_one_off;
 mod api_templates_runner;
 mod api_templates_share;
 mod app_settings;
+mod page_size;
 mod area_groups;
 mod applog;
 mod assigned_watch;
