@@ -191,8 +191,9 @@ fn exempt_values_need_no_because() {
             { "kind": "upload", "selector": "#file", "file": "payslip.pdf" },
         ] },
         { "step_number": 2, "actions": [
-            { "kind": "expect_count", "selector": "#rows", "equals": 1 },
-            { "kind": "expect_count", "selector": "#rows", "equals": 0 },
+            { "kind": "expect_count", "selector": "#rows", "at_least": 1 },
+            { "kind": "expect_count", "selector": "#rows", "at_least": 0 },
+            { "kind": "expect_each", "selector": "#rows", "min": 1, "not_empty": true },
             { "kind": "expect_count", "selector": "#rows", "equals": 274 },
             { "kind": "expect_contains_text", "selector": "#a", "value": "{{setup.cycle_name}} Draft" },
             { "kind": "expect_contains_text", "selector": "#a", "value": "AUTOTEST Cycle 9" },
@@ -207,8 +208,11 @@ fn exempt_values_need_no_because() {
     assert!(r.refusals.is_empty(), "{:?}", r.refusals);
 }
 
+/// REPLACES `patterns_attributes_and_styles_are_not_compared` (item 39 reverses it): every check kind
+/// gives its values, a pattern, an attribute, a style, a state and a visible name included; an
+/// address is still not one.
 #[test]
-fn patterns_attributes_and_styles_are_not_compared() {
+fn every_check_kind_gives_its_values() {
     let case = case_147556();
     let s = script(json!([
         { "step_number": 1, "actions": [
@@ -217,13 +221,120 @@ fn patterns_attributes_and_styles_are_not_compared() {
             { "kind": "expect_style", "selector": "#a", "property": "color", "equals": "rgb(1, 2, 3)" },
             { "kind": "check_url", "contains": "/def/levels6" },
             { "kind": "expect_each", "selector": "#rows", "matches": "Level 6" },
+            { "kind": "expect_checked", "selector": "#a" },
+            { "kind": "expect_visible", "selector": { "role": "button", "name": "Save" } },
         ] },
         { "step_number": 2, "actions": [{ "kind": "click", "selector": "#go" }] },
     ]));
+    let values: Vec<(ValueKind, String, bool)> =
+        values_of_step(&s.steps[0]).into_iter().map(|v| (v.kind, v.value, v.strict)).collect();
+    let want = vec![
+        (ValueKind::Pattern, "Level (5|6)".to_string(), false),
+        (ValueKind::Text, "Six levels".to_string(), false),
+        (ValueKind::Text, "rgb(1, 2, 3)".to_string(), false),
+        (ValueKind::Pattern, "Level 6".to_string(), false),
+        (ValueKind::State, "true".to_string(), false),
+        (ValueKind::Text, "Save".to_string(), false),
+    ];
+    assert_eq!(values, want);
+    // The two patterns write only "level", which the case holds, and step 1's "Open" says the state is on;
+    // the other three are not the case's, so each is refused with the text sentence. The address is not
+    // among them.
     let r = check(&case, &s, None);
+    assert_eq!(r.refusals.len(), 3, "{:?}", r.refusals);
+    assert!(r.refusals.iter().all(|l| l.contains("is not in the case - take it from the case's steps")), "{:?}", r.refusals);
+    assert!(!r.refusals.iter().any(|l| l.contains("levels6")), "{:?}", r.refusals);
+    let from_case: Vec<&str> =
+        r.sourced.iter().filter(|v| v.provenance == Some(Provenance::FromCase)).map(|v| v.value.as_str()).collect();
+    assert_eq!(from_case, vec!["Level (5|6)", "Level 6", "true"]);
+}
+
+/// The last link of an `expect_visible` locator gives its `text` and its `name`; a chain's earlier links
+/// and a legacy string give none.
+#[test]
+fn expect_visible_gives_the_name_and_text_of_the_last_link_only() {
+    let s = script(json!([{ "step_number": 1, "actions": [
+        { "kind": "expect_visible", "selector": [{ "role": "dialog", "name": "Rate" }, { "role": "button", "name": "Save", "exact": true }] },
+        { "kind": "expect_visible", "selector": { "text": "Saved with a receipt" } },
+        { "kind": "expect_visible", "selector": "#toast" },
+    ] }]));
+    let v: Vec<(String, bool)> = values_of_step(&s.steps[0]).into_iter().map(|v| (v.value, v.exact)).collect();
+    assert_eq!(v, vec![("Save".to_string(), true), ("Saved with a receipt".to_string(), false)]);
+}
+
+/// A pattern taken from the page is refused like a text is; the same with a because saves, listed;
+/// an old step that already had it is not held again.
+#[test]
+fn a_matches_pattern_taken_from_the_page_with_no_because_is_refused() {
+    let case = case_of(9, "Rate", &[("Open the page", ""), ("Look at the heading", "A heading appears")], "");
+    let action = json!({ "kind": "expect_text", "selector": "h1", "matches": "^Customer Focus$" });
+    let bare = script(json!([{ "step_number": 1, "actions": [action.clone()] }]));
+    let r = check_case_values(&bare, &text_of(&case), None, "AUTOTEST");
+    assert_eq!(
+        r.refusals,
+        vec!["step 1: the text \"^Customer Focus$\" is not in the case - take it from the case's steps, expected results or preconditions as written, or give it a \"because\" on the step ({ \"value\": \"^Customer Focus$\", \"why\": \"where the case defines it\" })".to_string()]
+    );
+    let covered = script(json!([{ "step_number": 1, "actions": [action],
+        "because": [{ "value": "^Customer Focus$", "why": "the heading step 2 expects" }] }]));
+    let r = check_case_values(&covered, &text_of(&case), None, "AUTOTEST");
     assert!(r.refusals.is_empty(), "{:?}", r.refusals);
-    let values = values_of_step(&s.steps[0]);
-    assert!(values.is_empty(), "{values:?}");
+    assert_eq!(r.sourced, vec![sv(1, "^Customer Focus$", Some(Provenance::Assumed), "the heading step 2 expects")]);
+    assert_eq!(r.listed, vec!["step 1 \"^Customer Focus$\" - the heading step 2 expects".to_string()]);
+    // An old step that already had it is not held again, in the step the repair declares.
+    let r = check_case_values_against(&bare, &text_of(&case), Some(&[1]), "AUTOTEST", Some(&bare));
+    assert!(r.refusals.is_empty(), "{:?}", r.refusals);
+    // Nor is a step the save does not name.
+    let r = check_case_values_against(&bare, &text_of(&case), Some(&[2]), "AUTOTEST", None);
+    assert!(r.refusals.is_empty(), "{:?}", r.refusals);
+}
+
+#[test]
+fn a_pattern_whose_words_are_the_cases_is_from_the_case() {
+    let case = case_of(
+        9,
+        "Evaluations",
+        &[("Open the cycle", ""), ("Read the subtitle", "It shows the evaluation and the participants")],
+        "",
+    );
+    let s = script(json!([{ "step_number": 1, "actions": [
+        { "kind": "expect_text", "selector": "p", "matches": "^\\d+° Evaluation · \\d+ participants$" },
+    ] }]));
+    let r = check_case_values(&s, &text_of(&case), None, "AUTOTEST");
+    assert!(r.refusals.is_empty(), "{:?}", r.refusals);
+    assert_eq!(r.sourced.len(), 1);
+    assert_eq!(r.sourced[0].provenance, Some(Provenance::FromCase));
+    // One word the case does not hold and it is refused.
+    let s = script(json!([{ "step_number": 1, "actions": [
+        { "kind": "expect_text", "selector": "p", "matches": "^\\d+° Evaluation · \\d+ managers$" },
+    ] }]));
+    assert_eq!(check_case_values(&s, &text_of(&case), None, "AUTOTEST").refusals.len(), 1);
+}
+
+#[test]
+fn a_pattern_with_no_words_is_refused_unless_a_because_names_it() {
+    let case = case_of(9, "Weights", &[("Open", ""), ("Look", "A weight is shown")], "");
+    let action = json!({ "kind": "expect_text", "selector": "td", "matches": "^\\d+$" });
+    let bare = script(json!([{ "step_number": 1, "actions": [action.clone()] }]));
+    assert_eq!(check_case_values(&bare, &text_of(&case), None, "AUTOTEST").refusals.len(), 1);
+    let covered = script(json!([{ "step_number": 1, "actions": [action],
+        "because": [{ "value": "^\\d+$", "why": "a weight is a whole number", "provenance": "invented" }] }]));
+    let r = check_case_values(&covered, &text_of(&case), None, "AUTOTEST");
+    assert!(r.refusals.is_empty(), "{:?}", r.refusals);
+    assert_eq!(r.sourced, vec![sv(1, "^\\d+$", Some(Provenance::Invented), "a weight is a whole number")]);
+}
+
+#[test]
+fn literal_words_are_the_patterns_own_words() {
+    use v2_lib::browser::pattern::literal_words;
+    assert_eq!(literal_words("^\\d+° Evaluation · \\d+ participants$"), vec!["evaluation", "participants"]);
+    assert_eq!(literal_words("Level (5|6)"), vec!["level"]);
+    assert!(literal_words("^\\d+$").is_empty());
+    assert!(literal_words("[A-Z]{3}-\\d+").is_empty());
+    assert_eq!(literal_words("^Open .+$"), vec!["open"]);
+    assert!(literal_words("a\\.b").is_empty());
+    // A letter a quantifier follows is not required, and a word is listed once.
+    assert_eq!(literal_words("^Level fa?r Level$"), vec!["level"]);
+    assert_eq!(literal_words("Save|Cancel|save"), vec!["save", "cancel"]);
 }
 
 #[test]
@@ -557,15 +668,147 @@ fn bounds_above_a_stated_count_and_a_noun_in_the_step_text_are_hard_refused() {
     assert!(r.refusals[0].contains("the check counts 6 but the case says 4"), "{:?}", r.refusals);
 }
 
+/// REPLACES `expect_each_with_an_attribute_is_not_compared` (item 39 reverses it): an attribute's value
+/// is read, as a state when it is true or false and as a text otherwise, and refused like one unless
+/// the case holds it or a `because` covers it.
 #[test]
-fn expect_each_with_an_attribute_is_not_compared() {
-    let case = case_147556();
+fn expect_each_with_an_attribute_is_refused_unless_held_or_covered() {
+    let case = case_of(9, "Levels", &[("Go to the page", ""), ("Look at the list", "Rows are shown")], "");
     let s = script(json!([{ "step_number": 1, "actions": [
         { "kind": "expect_each", "selector": "#rows", "attribute": "aria-checked", "equals": "true" },
         { "kind": "expect_each", "selector": "#rows", "attribute": "class", "contains": "selected row" },
     ] }]));
-    assert!(values_of_step(&s.steps[0]).is_empty());
-    assert!(check(&case, &s, None).refusals.is_empty());
+    let kinds: Vec<(ValueKind, String)> = values_of_step(&s.steps[0]).into_iter().map(|v| (v.kind, v.value)).collect();
+    assert_eq!(kinds, vec![(ValueKind::State, "true".to_string()), (ValueKind::Text, "selected row".to_string())]);
+    assert_eq!(check(&case, &s, None).refusals.len(), 2);
+    let covered = script(json!([{ "step_number": 1, "actions": s.steps[0].actions,
+        "because": [
+            { "value": "true", "why": "every level row starts ticked" },
+            { "value": "selected row", "why": "the class the level list gives its picked row" },
+        ] }]));
+    let r = check(&case, &covered, None);
+    assert!(r.refusals.is_empty(), "{:?}", r.refusals);
+    assert_eq!(r.listed.len(), 2);
+}
+
+/// A state is from the case when the step's own words say it; a value the words do not say is refused.
+#[test]
+fn a_state_is_from_the_case_when_the_step_says_it() {
+    let case = case_of(
+        9,
+        "Rows",
+        &[("Open the list", ""), ("Pick a row", "The row stays selected"), ("Clear it", "The row is not selected"), ("Look", "A row shows")],
+        "",
+    );
+    let s = |step: i32, checked: bool| {
+        script(json!([{ "step_number": step, "actions": [{ "kind": "expect_checked", "selector": "#row", "checked": checked }] }]))
+    };
+    // Step 2: "stays selected" says true.
+    let r = check(&case, &s(2, true), None);
+    assert!(r.refusals.is_empty(), "{:?}", r.refusals);
+    assert_eq!(r.sourced[0].provenance, Some(Provenance::FromCase));
+    // Step 3: "is not selected" says false.
+    let r = check(&case, &s(3, false), None);
+    assert!(r.refusals.is_empty(), "{:?}", r.refusals);
+    assert_eq!(r.sourced[0].provenance, Some(Provenance::FromCase));
+    // Step 4 says neither; step 2 does not say false.
+    assert_eq!(check(&case, &s(4, true), None).refusals.len(), 1);
+    assert_eq!(check(&case, &s(2, false), None).refusals.len(), 1);
+}
+
+#[test]
+fn a_count_of_0_or_1_is_from_the_case_when_the_step_says_none_or_one() {
+    let case = case_of(
+        9,
+        "Rows",
+        &[("Open the list", ""), ("Search for a name nobody has", "No rows are shown"), ("Search again", "Only one row is shown"), ("Look", "A row shows")],
+        "",
+    );
+    let count = |step: i32, n: u32| {
+        script(json!([{ "step_number": step, "actions": [{ "kind": "expect_count", "selector": "#rows", "equals": n }] }]))
+    };
+    let r = check(&case, &count(2, 0), None);
+    assert!(r.refusals.is_empty(), "{:?}", r.refusals);
+    assert_eq!(r.sourced[0].provenance, Some(Provenance::FromCase));
+    let r = check(&case, &count(3, 1), None);
+    assert!(r.refusals.is_empty(), "{:?}", r.refusals);
+    assert_eq!(r.sourced[0].provenance, Some(Provenance::FromCase));
+    // A step that says neither is refused with the count sentence, and a because lifts it.
+    let r = check(&case, &count(4, 1), None);
+    assert!(r.refusals[0].starts_with("step 4: the count \"1\" is not in the case"), "{:?}", r.refusals);
+    assert_eq!(check(&case, &count(4, 0), None).refusals.len(), 1);
+    let upper = script(json!([{ "step_number": 4, "actions": [{ "kind": "expect_count", "selector": "#rows", "at_most": 1 }],
+        "because": [{ "value": "1", "why": "the row the search leaves" }] }]));
+    assert!(check(&case, &upper, None).refusals.is_empty());
+}
+
+#[test]
+fn at_least_1_and_min_1_stay_exempt_as_presence() {
+    let case = case_of(9, "Rows", &[("Open", ""), ("Look", "A row shows")], "");
+    let s = script(json!([{ "step_number": 2, "actions": [
+        { "kind": "expect_count", "selector": "#rows", "at_least": 1 },
+        { "kind": "expect_count", "selector": "#rows", "at_least": 0 },
+        { "kind": "expect_each", "selector": "#rows", "min": 1, "not_empty": true },
+    ] }]));
+    let r = check(&case, &s, None);
+    assert!(r.refusals.is_empty(), "{:?}", r.refusals);
+    assert!(r.sourced.iter().all(|v| v.provenance.is_none()), "{:?}", r.sourced);
+}
+
+#[test]
+fn a_number_written_as_text_is_sourced_however_short() {
+    let case = case_of(9, "Cards", &[("Open", ""), ("Look at the card", "It lists one participant"), ("Look again", "A card shows")], "");
+    let s = |step: i32| script(json!([{ "step_number": step, "actions": [{ "kind": "expect_text", "selector": "#n", "equals": "1" }] }]));
+    let r = check(&case, &s(2), None);
+    assert!(r.refusals.is_empty(), "{:?}", r.refusals);
+    assert_eq!(r.sourced[0].provenance, Some(Provenance::FromCase));
+    let r = check(&case, &s(3), None);
+    assert!(r.refusals[0].starts_with("step 3: the text \"1\" is not in the case"), "{:?}", r.refusals);
+    // A short word is still exempt.
+    let word = script(json!([{ "step_number": 3, "actions": [{ "kind": "expect_text", "selector": "#n", "equals": "OK" }] }]));
+    assert!(check(&case, &word, None).refusals.is_empty());
+    // "12" is held by the case's own number; "7%" is a number too and is not in the case.
+    let twelve = case_of(9, "Cards", &[("Open", ""), ("Look", "12 cards are listed")], "");
+    let t = script(json!([{ "step_number": 2, "actions": [{ "kind": "expect_text", "selector": "#n", "equals": "12" }] }]));
+    assert!(check(&twelve, &t, None).refusals.is_empty());
+    let pct = script(json!([{ "step_number": 2, "actions": [{ "kind": "expect_text", "selector": "#n", "equals": "7%" }] }]));
+    assert_eq!(check(&twelve, &pct, None).refusals.len(), 1);
+}
+
+/// A count of 0 is held by the step's words, not against a count the case states for something else:
+/// refused with the plain sentence, never as a contradiction, and a because lifts it.
+#[test]
+fn a_count_of_0_is_never_held_against_a_stated_count() {
+    let case = case_of(9, "Buttons", &[("Open the toolbar", ""), ("Look", "The toolbar shows 2 buttons")], "");
+    let action = json!({ "kind": "expect_count", "selector": { "role": "button", "name": "Save" }, "equals": 0 });
+    let r = check(&case, &two_steps(action.clone(), json!([])), None);
+    assert_eq!(r.refusals.len(), 1, "{:?}", r.refusals);
+    assert!(r.refusals[0].starts_with("step 2: the count \"0\" is not in the case"), "{:?}", r.refusals);
+    assert!(!r.refusals[0].contains("but the case says"), "{:?}", r.refusals);
+    let r = check(&case, &two_steps(action, json!([{ "value": "0", "why": "Save is hidden once the form is locked" }])), None);
+    assert!(r.refusals.is_empty(), "{:?}", r.refusals);
+}
+
+/// A repair keeps the values the check has always read; a value of a newly read kind it may change,
+/// and the new value is held by the save instead.
+#[test]
+fn a_listed_value_is_never_held_by_a_repair() {
+    let case = case_of(9, "Levels", &[("Open", ""), ("Look", "The level heading shows")], "");
+    let old = two_step_script(
+        json!([{ "kind": "click", "selector": "#a" }]),
+        json!([{ "kind": "expect_text", "selector": "h1", "matches": "^Level$" }]),
+    );
+    let new = two_step_script(
+        json!([{ "kind": "click", "selector": "#a" }]),
+        json!([{ "kind": "expect_text", "selector": "h1", "matches": "^Rating$" }]),
+    );
+    let r = check_repair_values(&old, &new, &text_of(&case), &[2], &[], "AUTOTEST");
+    assert!(r.is_empty(), "{r:?}");
+    // The save still holds what the repair wrote.
+    let held = check_case_values_against(&new, &text_of(&case), Some(&[2]), "AUTOTEST", Some(&old));
+    assert_eq!(held.refusals.len(), 1, "{:?}", held.refusals);
+    let held = check_case_values_against(&old, &text_of(&case), Some(&[2]), "AUTOTEST", Some(&old));
+    assert!(held.refusals.is_empty(), "{:?}", held.refusals);
 }
 
 #[test]
@@ -922,7 +1165,7 @@ fn a_value_the_rewritten_case_no_longer_holds_may_change() {
 }
 
 fn repair_case() -> v2_lib::ado::TestCaseFull {
-    case_of(7, "Save a rating", &[("Open", ""), ("Save", "A confirmation appears")], "")
+    case_of(7, "Save a rating", &[("Open", ""), ("Save", "A confirmation appears and one row is listed")], "")
 }
 
 fn two_check_body(second: Value) -> String {
@@ -1077,7 +1320,7 @@ fn five_step_script() -> CaseScript {
         ] },
         { "step_number": 4, "actions": [{ "kind": "expect_contains_text", "selector": "#toast", "value": "Record saved successfully" }],
           "because": [{ "value": "Record saved successfully", "why": "the confirmation step 3 expects" }] },
-        { "step_number": 5, "actions": [{ "kind": "expect_count", "selector": "#rows", "equals": 1 }] },
+        { "step_number": 5, "actions": [{ "kind": "expect_count", "selector": "#rows", "at_least": 1 }] },
     ]))
 }
 
@@ -1196,7 +1439,7 @@ async fn the_save_answer_gives_each_values_source() {
     let step_4 = json!({ "step_number": 4, "actions": [
         { "kind": "fill", "selector": "#rating", "value": "AUTOTEST Rating 1" },
         { "kind": "expect_text", "selector": "#rating", "equals": "AUTOTEST Rating 1" },
-        { "kind": "expect_count", "selector": "#rows", "equals": 1 },
+        { "kind": "expect_count", "selector": "#rows", "at_least": 1 },
     ] });
     let (status, out) = answer_for(&case_7(), bundle_7(step_3, step_4)).await;
     assert_eq!(status, 200, "{out}");
@@ -1219,7 +1462,7 @@ async fn the_value_lines_stop_at_forty() {
     let because: Vec<Value> =
         (1..=45).map(|i| json!({ "value": format!("Mango {i} stock"), "why": "the stock the case lists" })).collect();
     let step_3 = json!({ "step_number": 3, "actions": actions, "because": because });
-    let step_4 = json!({ "step_number": 4, "actions": [{ "kind": "expect_count", "selector": "#rows", "equals": 1 }] });
+    let step_4 = json!({ "step_number": 4, "actions": [{ "kind": "expect_count", "selector": "#rows", "at_least": 1 }] });
     let (status, out) = answer_for(&case_7(), bundle_7(step_3, step_4)).await;
     assert_eq!(status, 200, "{out}");
     assert_eq!(out.lines().filter(|l| l.starts_with("case 7: assumed: step 3")).count(), 40, "{out}");
@@ -1232,8 +1475,8 @@ async fn the_value_lines_stop_at_forty() {
 
 #[tokio::test]
 async fn a_save_with_only_case_values_lists_no_value_line() {
-    let step_3 = json!({ "step_number": 3, "actions": [{ "kind": "expect_count", "selector": "#rows", "equals": 1 }] });
-    let step_4 = json!({ "step_number": 4, "actions": [{ "kind": "expect_count", "selector": "#rows", "equals": 1 }] });
+    let step_3 = json!({ "step_number": 3, "actions": [{ "kind": "expect_count", "selector": "#rows", "at_least": 1 }] });
+    let step_4 = json!({ "step_number": 4, "actions": [{ "kind": "expect_count", "selector": "#rows", "at_least": 1 }] });
     let (status, out) = answer_for(&case_7(), bundle_7(step_3, step_4)).await;
     assert_eq!(status, 200, "{out}");
     assert!(out.lines().any(|l| l == "case 7: check values: 5 from the case, 0 assumed, 0 invented, 2 exempt"), "{out}");

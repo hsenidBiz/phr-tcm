@@ -176,6 +176,61 @@ pub fn compiled(p: &str) -> Result<regex::Regex, String> {
     })
 }
 
+/// The words written in a pattern's literal text, lowercased: runs of 3 or more letters or digits outside
+/// `[...]` classes and `{..}` counts, broken by any metacharacter or escape (`\d`, `\.`, `\b` ...); a letter
+/// a quantifier follows (`?`, `*`, `+`, `{`) ends the run before it. In order, each once.
+pub fn literal_words(p: &str) -> Vec<String> {
+    fn flush(run: &mut String, out: &mut Vec<String>) {
+        if run.chars().count() >= 3 {
+            let word = run.to_lowercase();
+            if !out.contains(&word) {
+                out.push(word);
+            }
+        }
+        run.clear();
+    }
+    let mut out: Vec<String> = Vec::new();
+    let mut run = String::new();
+    let mut chars = p.chars();
+    while let Some(c) = chars.next() {
+        match c {
+            // An escape is a class or a punctuation mark, never a word.
+            '\\' => {
+                chars.next();
+                flush(&mut run, &mut out);
+            }
+            '[' => {
+                flush(&mut run, &mut out);
+                while let Some(k) = chars.next() {
+                    match k {
+                        '\\' => {
+                            chars.next();
+                        }
+                        ']' => break,
+                        _ => {}
+                    }
+                }
+            }
+            '?' | '*' | '+' | '{' => {
+                // The letter the quantifier follows is not required to be there.
+                run.pop();
+                flush(&mut run, &mut out);
+                if c == '{' {
+                    for k in chars.by_ref() {
+                        if k == '}' {
+                            break;
+                        }
+                    }
+                }
+            }
+            c if c.is_alphanumeric() => run.push(c),
+            _ => flush(&mut run, &mut out),
+        }
+    }
+    flush(&mut run, &mut out);
+    out
+}
+
 /// `/p/`, how sentences show a pattern.
 pub fn shown(p: &str) -> String {
     format!("/{p}/")

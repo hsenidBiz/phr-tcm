@@ -2174,10 +2174,16 @@ Before every save:
   `expect_each` (`min`), how many `texts` an `expect_order` lists, and the text of `check_text`,
   `expect_text` (`equals`), `expect_contains_text`, `expect_order`'s `texts`, `expect_each` (`equals`,
   `contains`), `expect_dialog` and each cell value of `expect_row` and `expect_no_row`. A pattern
-  (`matches`), an attribute, a style, an address and a response are not compared. Exempt: 0 and 1, text
-  under 3 characters, anything holding a `{{placeholder}}`, text starting with the environment's test
-  name prefix, a value the script types or uploads, and a precondition's value. A range the case gives
-  ("Level 1 to Level 4") counts each of its members.
+  (`matches`), an attribute's or a style's value, `true` and `false` (`expect_checked`, and an attribute
+  such as `aria-pressed`), a count of 0 or 1, a number written as text, and the `name` or `text` an
+  `expect_visible` locator ends with are compared too, exactly as text is: one the case does not hold and
+  no `because` covers is refused, so give it a `because`. A pattern is from the case when every word of 3
+  or more letters or digits written in it is the case's; `true` and `false`, 0 and 1 are from the case
+  when the step's own words say so (selected, pressed, open; not, off, closed; no, none, only, hidden;
+  one, single). An address and a response are not compared. Exempt: `at_least` 0 or 1 and `min` 1, text
+  under 3 characters that is not a number, anything holding a `{{placeholder}}`, text starting with the
+  environment's test name prefix, a value the script types or uploads, and a precondition's value. A
+  range the case gives ("Level 1 to Level 4") counts each of its members.
   A value the case does not contain needs a `because` on its step saying where it comes from, one
   line of at most 200 characters, never what the app shows, with its `provenance`: `assumed` (the
   default: the case defines it indirectly,

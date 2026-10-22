@@ -12,13 +12,32 @@ use super::seen_check::has_phrase;
 use super::edits::GiveUp;
 use super::{Because, CaseScript, Provenance, StepScript};
 use crate::browser::actions::Action;
+use crate::browser::locator::Target;
+use crate::browser::pattern::literal_words;
 
 /// What kind of value a check carries.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ValueKind {
     Count,
     Text,
+    /// A `matches` pattern: held by the words written in it (`literal_words`).
+    Pattern,
+    /// `true` or `false`: a checked, pressed or other boolean state.
+    State,
 }
+
+/// Whole words in a step's own text that say a state is on.
+pub const STATE_TRUE_WORDS: &[&str] = &[
+    "checked", "ticked", "selected", "pressed", "on", "active", "expanded", "open", "opened", "current", "chosen",
+    "highlighted", "yes", "true",
+];
+/// ... and off.
+pub const STATE_FALSE_WORDS: &[&str] =
+    &["unchecked", "unticked", "unselected", "not", "off", "inactive", "collapsed", "closed", "no", "false", "cleared"];
+/// Whole words in a step's own text that say there are none.
+pub const NONE_WORDS: &[&str] = &["no", "not", "none", "never", "without", "only", "hidden", "absent", "removed", "nothing"];
+/// ... and that there is one.
+pub const ONE_WORDS: &[&str] = &["1", "one", "single", "only"];
 
 /// One literal value a check uses.
 #[derive(Debug, Clone, PartialEq)]
@@ -37,6 +56,12 @@ pub struct CheckValue {
     pub values_text: String,
     /// How a count bounds what the page shows.
     pub rel: Rel,
+    /// True for the values the check has always read (a count of 2 or more, a text of 3 characters
+    /// or more): a repair keeps one the case gives, and a count is held against a count the case
+    /// states. False for the rest (0 and 1, a number written as short text, a pattern, an
+    /// attribute's or a style's value, a state, the name or text of a visible locator): they are
+    /// held by the case or a `because` all the same, but a repair may change them.
+    pub strict: bool,
 }
 
 /// What a count claims about the number of things.
@@ -85,9 +110,24 @@ fn count(step: i32, n: u32, rel: Rel, s: &Seen) -> CheckValue {
         action_json: s.json.to_string(),
         values_text: s.values.to_string(),
         rel,
+        strict: n >= 2,
     }
 }
 
+/// A whole number, with a decimal part or a `%` perhaps: "5", "12.5", "3,5", "40%".
+fn is_number_text(value: &str) -> bool {
+    let v = value.trim();
+    let v = v.strip_suffix('%').unwrap_or(v);
+    let mut parts = v.splitn(2, ['.', ',']);
+    let digits = |p: &str| !p.is_empty() && p.chars().all(|c| c.is_ascii_digit());
+    match (parts.next(), parts.next()) {
+        (Some(whole), None) => digits(whole),
+        (Some(whole), Some(frac)) => digits(whole) && digits(frac),
+        _ => false,
+    }
+}
+
+/// A text the check has always read, except a number short enough to have been exempt as short.
 fn text(step: i32, value: &str, exact: bool, s: &Seen) -> CheckValue {
     CheckValue {
         step,
@@ -97,6 +137,48 @@ fn text(step: i32, value: &str, exact: bool, s: &Seen) -> CheckValue {
         action_json: s.json.to_string(),
         values_text: s.values.to_string(),
         rel: Rel::NotCount,
+        strict: !(is_number_text(value) && value.trim().chars().count() < 3),
+    }
+}
+
+/// A value of a kind the check did not read before item 39.
+fn loose(step: i32, kind: ValueKind, value: &str, exact: bool, s: &Seen) -> CheckValue {
+    CheckValue {
+        step,
+        kind,
+        value: value.to_string(),
+        exact,
+        action_json: s.json.to_string(),
+        values_text: s.values.to_string(),
+        rel: Rel::NotCount,
+        strict: false,
+    }
+}
+
+fn pattern(step: i32, value: &str, s: &Seen) -> CheckValue {
+    loose(step, ValueKind::Pattern, value, false, s)
+}
+
+/// An attribute's value: `true` or `false` (ignoring case and spaces) is a state, any other a text.
+fn attribute_value(step: i32, value: &str, s: &Seen) -> CheckValue {
+    match value.trim().to_lowercase().as_str() {
+        b @ ("true" | "false") => loose(step, ValueKind::State, b, true, s),
+        _ => loose(step, ValueKind::Text, value, true, s),
+    }
+}
+
+/// The name and the text the last link of an `expect_visible` locator ends with.
+fn visible_values(step: i32, selector: &Target, out: &mut Vec<CheckValue>, s: &Seen) {
+    let last = match selector {
+        Target::One(l) => l,
+        Target::Chain(links) => match links.last() {
+            Some(l) => l,
+            None => return,
+        },
+        Target::Legacy(_) => return,
+    };
+    for v in [&last.text, &last.name].into_iter().flatten() {
+        out.push(loose(step, ValueKind::Text, v, last.exact, s));
     }
 }
 
@@ -125,11 +207,10 @@ fn values_of_action(step: i32, action: &Action, out: &mut Vec<CheckValue>) {
             }
             out.extend(texts.iter().map(|t| text(step, t, false, s)));
         }
-        Action::ExpectEach { min, equals, contains, attribute, .. } => {
+        Action::ExpectEach { min, equals, contains, matches, attribute, .. } => {
             if let Some(n) = min {
                 out.push(count(step, *n, Rel::AtLeast, s));
             }
-            // An attribute's value is not the case's words, as for `expect_attribute`.
             if attribute.is_none() {
                 if let Some(v) = equals {
                     out.push(text(step, v, true, s));
@@ -137,10 +218,50 @@ fn values_of_action(step: i32, action: &Action, out: &mut Vec<CheckValue>) {
                 if let Some(v) = contains {
                     out.push(text(step, v, false, s));
                 }
+            } else {
+                if let Some(v) = equals {
+                    out.push(attribute_value(step, v, s));
+                }
+                if let Some(v) = contains {
+                    out.push(loose(step, ValueKind::Text, v, false, s));
+                }
+            }
+            if let Some(p) = matches {
+                out.push(pattern(step, p, s));
             }
         }
         Action::CheckText { value } => out.push(text(step, value, false, s)),
-        Action::ExpectText { equals: Some(v), .. } => out.push(text(step, v, true, s)),
+        Action::ExpectText { equals, matches, .. } => {
+            if let Some(v) = equals {
+                out.push(text(step, v, true, s));
+            }
+            if let Some(p) = matches {
+                out.push(pattern(step, p, s));
+            }
+        }
+        Action::ExpectAttribute { equals, matches, .. } => {
+            if let Some(v) = equals {
+                out.push(attribute_value(step, v, s));
+            }
+            if let Some(p) = matches {
+                out.push(pattern(step, p, s));
+            }
+        }
+        Action::ExpectStyle { equals, contains, not_equals, .. } => {
+            if let Some(v) = equals {
+                out.push(loose(step, ValueKind::Text, v, true, s));
+            }
+            if let Some(v) = contains {
+                out.push(loose(step, ValueKind::Text, v, false, s));
+            }
+            if let Some(v) = not_equals {
+                out.push(loose(step, ValueKind::Text, v, true, s));
+            }
+        }
+        Action::ExpectChecked { checked, .. } => {
+            out.push(loose(step, ValueKind::State, if *checked { "true" } else { "false" }, true, s));
+        }
+        Action::ExpectVisible { selector, .. } => visible_values(step, selector, out, s),
         Action::ExpectContainsText { value, .. } => out.push(text(step, value, false, s)),
         Action::ExpectDialog { text: t, contains, .. } => {
             if let Some(v) = t {
@@ -324,11 +445,17 @@ enum Exempt {
 fn exempt_kind(v: &CheckValue, ex: &Exemptions) -> Option<Exempt> {
     let folded = fold(&v.value);
     match v.kind {
+        // A bound that only asks for something to be there (`at_least` 0 or 1, `min` 1) is presence,
+        // not a number the case gives; an exact count or an upper bound of 0 or 1 is compared.
         ValueKind::Count => {
-            (matches!(v.value.as_str(), "0" | "1") || ex.precondition_values.contains(&folded)).then_some(Exempt::Bare)
+            let presence = v.rel == Rel::AtLeast && matches!(v.value.as_str(), "0" | "1");
+            (presence || ex.precondition_values.contains(&folded)).then_some(Exempt::Bare)
+        }
+        ValueKind::Pattern | ValueKind::State => {
+            (v.value.contains("{{") || ex.precondition_values.contains(&folded)).then_some(Exempt::Bare)
         }
         ValueKind::Text => {
-            if folded.chars().count() < 3 || v.value.contains("{{") {
+            if (folded.chars().count() < 3 && !is_number_text(&v.value)) || v.value.contains("{{") {
                 return Some(Exempt::Bare);
             }
             if ex.precondition_values.contains(&folded) {
@@ -347,6 +474,48 @@ fn exempt_kind(v: &CheckValue, ex: &Exemptions) -> Option<Exempt> {
 
 fn exempt(v: &CheckValue, ex: &Exemptions) -> bool {
     exempt_kind(v, ex).is_some()
+}
+
+/// Whether `word` is one of the whole words of the step's folded text.
+fn step_has_word(step_text: &str, words: &[&str]) -> bool {
+    step_text.split(|c: char| !c.is_alphanumeric()).any(|w| words.contains(&w))
+}
+
+/// Whether the case holds `v`: a strict count by `case_numbers`; a count 0 or 1, or the text "0" or
+/// "1", by the step's own words for none or one (`NONE_WORDS`, `ONE_WORDS`, or the digit written);
+/// a text by `CaseText::holds`; a pattern when it writes words and the case holds each
+/// (`literal_words`); `true` or `false` by the step's own words for on or off.
+pub fn held_by_case(v: &CheckValue, case: &CaseText) -> bool {
+    held_with(v, case, &case.case_numbers())
+}
+
+fn held_with(v: &CheckValue, case: &CaseText, numbers: &BTreeSet<u32>) -> bool {
+    // The digit and "zero" say none as well as the words for none do.
+    let by_step = || match v.value.as_str() {
+        "0" => {
+            let step = case.step_folded(v.step);
+            step_has_word(&step, NONE_WORDS) || step_has_word(&step, &["0", "zero"])
+        }
+        "1" => step_has_word(&case.step_folded(v.step), ONE_WORDS),
+        _ => false,
+    };
+    match v.kind {
+        ValueKind::Count if v.strict => v.value.parse::<u32>().is_ok_and(|c| numbers.contains(&c)),
+        ValueKind::Count => by_step(),
+        ValueKind::Text => by_step() || case.holds(&v.value),
+        ValueKind::Pattern => {
+            let words = literal_words(&v.value);
+            !words.is_empty() && words.iter().all(|w| case.holds(w))
+        }
+        ValueKind::State => {
+            let step = case.step_folded(v.step);
+            match v.value.as_str() {
+                "true" => step_has_word(&step, STATE_TRUE_WORDS),
+                "false" => step_has_word(&step, STATE_FALSE_WORDS),
+                _ => false,
+            }
+        }
+    }
 }
 
 /// The invented source of a value the script itself makes.
@@ -460,10 +629,7 @@ pub fn check_case_values_against(
             // Counted and listed as before, but never refused: the old step had it.
             let had_it = had.contains(&(v.kind, fold(&v.value)));
             let exempt_as = exempt_kind(v, &ex);
-            let in_case = match v.kind {
-                ValueKind::Count => v.value.parse::<u32>().is_ok_and(|c| numbers.contains(&c)),
-                ValueKind::Text => case.holds(&v.value),
-            };
+            let in_case = held_with(v, case, &numbers);
             let covered = step.because.iter().find(|b| fold(&b.value) == fold(&v.value));
             if exempt_as == Some(Exempt::Bare) {
                 source(&mut report, v, None, String::new());
@@ -483,7 +649,7 @@ pub fn check_case_values_against(
             // An order's own length follows from its texts, each held on its
             // own: only a stated count can contradict it.
             let order_length = v.rel == Rel::OrderLength;
-            if v.kind == ValueKind::Count && !had_it {
+            if v.kind == ValueKind::Count && v.strict && !had_it {
                 if let Some(r) = contradicts_stated_count(case, n, v) {
                     push_refusal(&mut report, r);
                     continue;
@@ -755,18 +921,16 @@ pub fn check_repair_values(
         let Some(o) = old_step(old, n) else { continue };
         let new_values = new.case_steps().find(|s| s.step_number == n).map(values_of_step).unwrap_or_default();
         for v in values_of_step(o) {
-            if exempt(&v, &ex) {
+            // Only the values the check has always read are kept; the rest a repair may change.
+            if !v.strict || exempt(&v, &ex) {
                 continue;
             }
-            let in_case = match v.kind {
-                ValueKind::Count => v.value.parse::<u32>().is_ok_and(|c| numbers.contains(&c)),
-                ValueKind::Text => case.holds(&v.value),
-            };
-            if !in_case {
+            if !held_with(&v, case, &numbers) {
                 continue;
             }
             let kept = match v.kind {
                 ValueKind::Count => new_values.iter().any(|w| w.kind == ValueKind::Count && w.value == v.value),
+                ValueKind::Pattern | ValueKind::State => true,
                 ValueKind::Text => {
                     let old_fold = fold(&v.value);
                     new_values.iter().any(|w| {

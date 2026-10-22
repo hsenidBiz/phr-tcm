@@ -2197,8 +2197,9 @@ fn the_guide_says_what_the_value_check_compares() {
     for said in [
         "Every check's literal value is compared with the case's steps, expected results and preconditions",
         "`expect_count` and `expect_row_count`",
-        "A pattern (`matches`), an attribute, a style, an address and a response are not compared.",
-        "Exempt: 0 and 1, text under 3 characters",
+        "A pattern (`matches`), an attribute's or a style's value, `true` and `false`",
+        "are compared too, exactly as text is: one the case does not hold and no `because` covers is refused",
+        "An address and a response are not compared. Exempt: `at_least` 0 or 1 and `min` 1, text under 3 characters that is not a number",
         "anything holding a `{{placeholder}}`",
         "a value the script types or uploads",
         "A range the case gives",
