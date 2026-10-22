@@ -3548,6 +3548,15 @@ export type Divergence_Deserialize = {
 	 *  taken: a rewrite that renumbers the step is still found by it.
 	 */
 	step_action?: string | null,
+	/**  Who ruled; `None` reads as the person. */
+	ruled_by?: RuledBy | null,
+	/**
+	 *  For an assistant's ruling: the person's own words from the chat that
+	 *  gave it, scrubbed (`defects::scrub_note`).
+	 */
+	said?: string | null,
+	/**  For an assistant's ruling: the assistant's own note, scrubbed. */
+	note?: string | null,
 };
 
 export type Divergence_Serialize = {
@@ -3576,6 +3585,15 @@ export type Divergence_Serialize = {
 	 *  taken: a rewrite that renumbers the step is still found by it.
 	 */
 	step_action?: string | null,
+	/**  Who ruled; `None` reads as the person. */
+	ruled_by?: RuledBy | null,
+	/**
+	 *  For an assistant's ruling: the person's own words from the chat that
+	 *  gave it, scrubbed (`defects::scrub_note`).
+	 */
+	said?: string | null,
+	/**  For an assistant's ruling: the assistant's own note, scrubbed. */
+	note?: string | null,
 };
 
 /**
@@ -5895,6 +5913,12 @@ export type ResultFailureDetail = {
 	comment: string,
 	bug_ids: number[],
 };
+
+/**
+ *  Who made a ruling. A ruling saved before the assistant could make one
+ *  has none, and reads as the person's.
+ */
+export type RuledBy = "person" | "assistant";
 
 export type Ruling = "case_stands" | "data_fixed" | "rewrite";
 

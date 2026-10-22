@@ -119,6 +119,9 @@ fn divergence(id: &str, case_id: i32, step: i32, kind: DivergenceKind, reported_
         ruled_at: None,
         case_fp: None,
         step_action: None,
+        ruled_by: None,
+        said: None,
+        note: None,
     }
 }
 
@@ -900,4 +903,266 @@ async fn the_divergence_routes_ado_error_names_no_address_and_is_logged_raw() {
         v2_lib::applog::recent(200).iter().any(|l| l.message.contains("a divergence's test case could not be read")),
         "the raw error is in the log"
     );
+}
+
+// ------------------------------------------- the assistant rules, on the person's words
+
+mod assistant {
+    use super::*;
+    use v2_lib::autorun::divergences::{
+        failures_lines, rule_by_assistant_in, ruling_answer, RuledBy, SAID_EMPTY, SAID_TOO_LONG,
+    };
+
+    const SAID: &str = "a different cycle name is fine";
+
+    fn pick(case_id: i32, id: &str) -> (i32, String) {
+        (case_id, id.to_string())
+    }
+
+    fn open_three() -> Vec<Divergence> {
+        vec![
+            divergence("d1", 147556, 2, DivergenceKind::Data, NOW),
+            divergence("d2", 147556, 3, DivergenceKind::Data, NOW + 1),
+            divergence("d3", 147556, 4, DivergenceKind::Data, NOW + 2),
+        ]
+    }
+
+    #[test]
+    fn an_assistant_ruling_needs_the_persons_words() {
+        let mut list = open_three();
+        let before = list.clone();
+        for said in ["", "   "] {
+            let err = rule_by_assistant_in(&mut list, &[pick(147556, "d1")], Ruling::CaseStands, said, None, NOW).unwrap_err();
+            assert_eq!(err, SAID_EMPTY);
+        }
+        let long = "x".repeat(301);
+        let err = rule_by_assistant_in(&mut list, &[pick(147556, "d1")], Ruling::CaseStands, &long, None, NOW).unwrap_err();
+        assert_eq!(err, SAID_TOO_LONG);
+        let err = rule_by_assistant_in(&mut list, &[pick(147556, "d1")], Ruling::CaseStands, "a\nb", None, NOW).unwrap_err();
+        assert_eq!(err, SAID_TOO_LONG);
+        assert_eq!(list, before, "nothing was ruled");
+        // No pick at all.
+        let err = rule_by_assistant_in(&mut list, &[], Ruling::CaseStands, SAID, None, NOW).unwrap_err();
+        assert_eq!(err, v2_lib::autorun::divergences::NO_PICK);
+        // A note over the limit.
+        let err = rule_by_assistant_in(&mut list, &[pick(147556, "d2")], Ruling::CaseStands, SAID, Some(&long), NOW).unwrap_err();
+        assert_eq!(err, v2_lib::autorun::divergences::NOTE_TOO_LONG);
+        assert_eq!(list, before);
+        // 300 characters is allowed.
+        let max = "y".repeat(300);
+        assert!(rule_by_assistant_in(&mut list, &[pick(147556, "d1")], Ruling::CaseStands, &max, None, NOW).is_ok());
+    }
+
+    #[test]
+    fn an_assistant_ruling_has_the_persons_effects() {
+        let mut list = open_three();
+        list.push(divergence("d4", 147556, 5, DivergenceKind::App, NOW + 3));
+        assert_eq!(
+            rule_by_assistant_in(&mut list, &[pick(147556, "d1")], Ruling::CaseStands, SAID, Some("per the chat"), NOW + 10),
+            Ok(vec![147556])
+        );
+        assert_eq!(list[0].status, DivergenceStatus::Ruled);
+        assert_eq!(list[0].ruling, Some(Ruling::CaseStands));
+        assert_eq!(list[0].ruled_by, Some(RuledBy::Assistant));
+        assert_eq!(list[0].said.as_deref(), Some(SAID));
+        assert_eq!(list[0].note.as_deref(), Some("per the chat"));
+        assert_eq!(list[0].ruled_at.as_deref(), Some((NOW + 10).to_string().as_str()));
+        assert_eq!(blocking(&list, 147556).map(|d| d.id.as_str()), Some("d2"), "d1 no longer blocks");
+
+        // The person's own rule_in gives the same fields, bar who ruled.
+        let mut persons = open_three();
+        rule_in(&mut persons, "d1", Ruling::CaseStands, NOW + 10).unwrap();
+        assert_eq!(persons[0].ruled_by, None);
+        let mut as_assistant = list[0].clone();
+        as_assistant.ruled_by = None;
+        as_assistant.said = None;
+        as_assistant.note = None;
+        assert_eq!(as_assistant, persons[0]);
+
+        // Data fixed is for a data divergence.
+        let err = rule_by_assistant_in(&mut list, &[pick(147556, "d4")], Ruling::DataFixed, SAID, None, NOW).unwrap_err();
+        assert!(err.contains("Data fixed is for a data divergence"), "{err}");
+        assert_eq!(list[3].status, DivergenceStatus::Open);
+        assert!(rule_by_assistant_in(&mut list, &[pick(147556, "d2")], Ruling::DataFixed, SAID, None, NOW).is_ok());
+
+        // Rewrite waits for the repair and still blocks.
+        assert!(rule_by_assistant_in(&mut list, &[pick(147556, "d3")], Ruling::Rewrite, SAID, None, NOW).is_ok());
+        assert_eq!(list[2].status, DivergenceStatus::AwaitingRepair);
+        assert!(blocking(&list, 147556).is_some());
+    }
+
+    #[test]
+    fn the_batch_form_rules_only_the_divergences_it_names() {
+        let mut list = open_three();
+        let picks = [pick(147556, "d1"), pick(147556, "d3"), pick(147556, "d1")];
+        assert_eq!(rule_by_assistant_in(&mut list, &picks, Ruling::CaseStands, SAID, None, NOW), Ok(vec![147556]));
+        assert_eq!(list[0].status, DivergenceStatus::Ruled);
+        assert_eq!(list[1].status, DivergenceStatus::Open);
+        assert_eq!(list[2].status, DivergenceStatus::Ruled);
+        let answer = ruling_answer(&list, &picks, Ruling::CaseStands);
+        assert_eq!(answer.matches("Ruled d1 ").count(), 1, "a duplicate counts once: {answer}");
+        assert!(answer.contains("Ruled d3 (case 147556 step 4): the case is right, on the person's words."), "{answer}");
+        assert!(answer.ends_with("The person can undo each of these on the case card in Auto Run."), "{answer}");
+    }
+
+    #[test]
+    fn a_batch_with_one_divergence_that_cannot_take_the_ruling_rules_none() {
+        let mut list = open_three();
+        rule_in(&mut list, "d2", Ruling::CaseStands, NOW).unwrap();
+        let before = list.clone();
+        let err = rule_by_assistant_in(
+            &mut list,
+            &[pick(147556, "d1"), pick(147556, "d2"), pick(147556, "nope")],
+            Ruling::CaseStands,
+            SAID,
+            None,
+            NOW,
+        )
+        .unwrap_err();
+        let lines: Vec<&str> = err.lines().collect();
+        assert_eq!(lines.len(), 2, "{err}");
+        assert!(lines[0].starts_with("d2: "), "{err}");
+        assert!(lines[1].starts_with("nope: "), "{err}");
+        assert_eq!(list, before, "d1 was left open");
+        assert_eq!(list[0].status, DivergenceStatus::Open);
+    }
+
+    #[test]
+    fn a_pick_names_its_own_case() {
+        let mut list = open_three();
+        let err = rule_by_assistant_in(&mut list, &[pick(147557, "d1")], Ruling::CaseStands, SAID, None, NOW).unwrap_err();
+        assert_eq!(err, "d1: d1 is case 147556's divergence, not case 147557's");
+        assert_eq!(list[0].status, DivergenceStatus::Open);
+    }
+
+    #[test]
+    fn said_is_scrubbed_like_a_note() {
+        let mut list = open_three();
+        rule_by_assistant_in(
+            &mut list,
+            &[pick(147556, "d1")],
+            Ruling::CaseStands,
+            "fine, see https://hr.example.internal/x?token=abc",
+            Some("also https://hr.example.internal/y?token=def"),
+            NOW,
+        )
+        .unwrap();
+        let (said, note) = (list[0].said.clone().unwrap(), list[0].note.clone().unwrap());
+        for kept in [&said, &note] {
+            assert!(!kept.contains("hr.example.internal") && !kept.contains("token="), "{kept}");
+        }
+        assert!(said.starts_with("fine, see"), "{said}");
+    }
+
+    #[test]
+    fn undoing_an_assistant_ruling_puts_the_case_back_to_needing_a_ruling() {
+        let mut list = open_three();
+        rule_by_assistant_in(&mut list, &[pick(147556, "d1")], Ruling::CaseStands, SAID, Some("n"), NOW).unwrap();
+        rule_by_assistant_in(&mut list, &[pick(147556, "d2")], Ruling::DataFixed, SAID, None, NOW).unwrap();
+        assert_eq!(undo_in(&mut list, "d1"), Ok(147556));
+        let d = &list[0];
+        assert_eq!(
+            (d.status, d.ruling, d.ruled_at.clone(), d.ruled_by, d.said.clone(), d.note.clone()),
+            (DivergenceStatus::Open, None, None, None, None, None)
+        );
+        assert!(blocking(&list, 147556).is_some());
+        assert_eq!(undo_in(&mut list, "d2"), Ok(147556), "a data_fixed ruling by the assistant is undone too");
+        // A person's own ruling is still refused.
+        let mut persons = open_three();
+        rule_in(&mut persons, "d1", Ruling::CaseStands, NOW).unwrap();
+        rule_in(&mut persons, "d2", Ruling::DataFixed, NOW).unwrap();
+        for id in ["d1", "d2"] {
+            assert_eq!(
+                undo_in(&mut persons, id).unwrap_err(),
+                "only a ruling that waits for a repair, or one the assistant made, can be undone"
+            );
+        }
+    }
+
+    fn checked_script(case_id: i32) -> v2_lib::autorun::CaseScript {
+        serde_json::from_value(serde_json::json!({ "case_id": case_id, "title": "t", "checked": true, "steps": [
+            { "step_number": 1, "actions": [{ "kind": "check_text", "value": "ok" }] }
+        ] }))
+        .unwrap()
+    }
+
+    #[test]
+    fn an_undo_in_the_app_clears_the_scripts_checked_mark() {
+        use v2_lib::autorun::store::{load_script, save_script};
+        use v2_lib::commands::autorun_divergence::undo_at;
+        let dir = TempDir::new();
+        let root = dir.path();
+        let now = v2_lib::autorun::sessions::now_ms();
+        save_script(root, &checked_script(147556)).unwrap();
+        update(root, "acme", "Web", |l| {
+            let mut d = divergence("d1", 147556, 2, DivergenceKind::Data, NOW);
+            rule_by_assistant_in(std::slice::from_mut(&mut d), &[pick(147556, "d1")], Ruling::CaseStands, SAID, None, now)?;
+            l.push(d);
+            Ok(())
+        })
+        .unwrap();
+        assert!(load_script(root, 147556).unwrap().unwrap().checked);
+        undo_at(root, "acme", "Web", "d1", now).unwrap();
+        assert!(!load_script(root, 147556).unwrap().unwrap().checked);
+    }
+
+    #[test]
+    fn an_assistant_ruling_in_the_store_clears_the_scripts_checked_mark_until_a_pass() {
+        use v2_lib::autorun::store::{load_script, save_script};
+        use v2_lib::commands::autorun_divergence::rule_by_assistant_at;
+        let dir = TempDir::new();
+        let root = dir.path();
+        let now = v2_lib::autorun::sessions::now_ms();
+        save_script(root, &checked_script(147556)).unwrap();
+        update(root, "acme", "Web", |l| {
+            l.extend(open_three());
+            Ok(())
+        })
+        .unwrap();
+        let answer =
+            rule_by_assistant_at(root, "acme", "Web", &[pick(147556, "d1")], Ruling::DataFixed, SAID, None, now).unwrap();
+        assert!(answer.contains("Replay the whole case with replay_autorun_to_step"), "{answer}");
+        assert!(!load_script(root, 147556).unwrap().unwrap().checked);
+        let kept = load(root, "acme", "Web").unwrap();
+        assert_eq!(kept[0].ruled_by, Some(RuledBy::Assistant));
+        // The words are not in the log.
+        assert!(!v2_lib::applog::recent(200).iter().any(|l| l.message.contains(SAID)));
+        // A refusal rules nothing and touches no script.
+        save_script(root, &checked_script(147556)).unwrap();
+        assert!(rule_by_assistant_at(root, "acme", "Web", &[pick(147556, "d1")], Ruling::CaseStands, SAID, None, now).is_err());
+        assert!(load_script(root, 147556).unwrap().unwrap().checked);
+    }
+
+    #[test]
+    fn a_case_stands_by_the_assistant_is_named_as_the_assistants() {
+        let mut list = vec![divergence("d1", 147556, 2, DivergenceKind::Data, NOW)];
+        rule_by_assistant_in(&mut list, &[pick(147556, "d1")], Ruling::CaseStands, SAID, None, NOW).unwrap();
+        let err = report_in(&mut list, 147556, 2, "exactly 4 levels", "6 levels", DivergenceKind::Data, NOW + 1).unwrap_err();
+        assert!(err.starts_with("the assistant ruled on "), "{err}");
+        assert!(err.contains(&format!("on the person's words \"{SAID}\", that the case stands at step 2")), "{err}");
+        let lines = failures_lines(&list, &[147556], NOW + 2);
+        assert_eq!(lines.len(), 1, "{lines:?}");
+        assert!(lines[0].contains("the assistant ruled on") && lines[0].contains(SAID), "{}", lines[0]);
+        // A person's keeps today's sentence.
+        let mut persons = vec![divergence("d1", 147556, 2, DivergenceKind::Data, NOW)];
+        rule_in(&mut persons, "d1", Ruling::CaseStands, NOW).unwrap();
+        let err = report_in(&mut persons, 147556, 2, "exactly 4 levels", "6 levels", DivergenceKind::Data, NOW + 1).unwrap_err();
+        assert!(err.starts_with("a person ruled on "), "{err}");
+        assert!(failures_lines(&persons, &[147556], NOW + 2)[0].contains("a person ruled on"));
+    }
+
+    #[test]
+    fn a_saved_file_from_before_the_assistant_ruled_still_loads() {
+        let dir = TempDir::new();
+        let p = path(dir.path(), "acme", "Web");
+        std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+        std::fs::write(
+            &p,
+            r#"[{"id":"d1","case_id":7,"step":2,"case_says":"a","app_shows":"b","kind":"data","reported_at":"1","status":"ruled","ruling":"case_stands","ruled_at":"2"}]"#,
+        )
+        .unwrap();
+        let list = load(dir.path(), "acme", "Web").unwrap();
+        assert_eq!((list[0].ruled_by, list[0].said.clone(), list[0].note.clone()), (None, None, None));
+        assert!(!serde_json::to_string(&list[0]).unwrap().contains("ruled_by"));
+    }
 }

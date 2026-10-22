@@ -50,6 +50,34 @@ pub enum Ruling {
     Rewrite,
 }
 
+/// Who made a ruling. A ruling saved before the assistant could make one
+/// has none, and reads as the person's.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, specta::Type)]
+#[serde(rename_all = "snake_case")]
+pub enum RuledBy {
+    Person,
+    Assistant,
+}
+
+/// The ruling the assistant names in `rule_case_divergence`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AssistantRuling {
+    CaseRight,
+    DataFixed,
+    RewriteCase,
+}
+
+impl AssistantRuling {
+    pub fn ruling(self) -> Ruling {
+        match self {
+            AssistantRuling::CaseRight => Ruling::CaseStands,
+            AssistantRuling::DataFixed => Ruling::DataFixed,
+            AssistantRuling::RewriteCase => Ruling::Rewrite,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, specta::Type)]
 pub struct Divergence {
     /// "d1", "d2"...: 1 + the highest number in the file.
@@ -77,9 +105,29 @@ pub struct Divergence {
     /// taken: a rewrite that renumbers the step is still found by it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub step_action: Option<String>,
+    /// Who ruled; `None` reads as the person.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ruled_by: Option<RuledBy>,
+    /// For an assistant's ruling: the person's own words from the chat that
+    /// gave it, scrubbed (`defects::scrub_note`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub said: Option<String>,
+    /// For an assistant's ruling: the assistant's own note, scrubbed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
+}
+
+impl Divergence {
+    fn by_assistant(&self) -> bool {
+        self.ruled_by == Some(RuledBy::Assistant)
+    }
 }
 
 pub const MAX_TEXT: usize = 300;
+pub const SAID_EMPTY: &str = "\"said\" quotes the person's own words from this chat that gave this ruling: a ruling is applied only on what the person said, never with an empty \"said\"";
+pub const SAID_TOO_LONG: &str = "\"said\" is one line of at most 300 characters: quote the words that gave the ruling";
+pub const NOTE_TOO_LONG: &str = "\"note\" is one line of at most 300 characters";
+pub const NO_PICK: &str = "name the divergence to rule: case_id and divergence_id, or divergences";
 pub const MAX_OPEN_PER_CASE: usize = 5;
 pub const KEEP_RULED_MS: u64 = 90 * 24 * 60 * 60 * 1000;
 pub const MAX_KEPT: usize = 200;
@@ -212,6 +260,12 @@ pub fn report_in(
             && fold(&d.app_shows) == fold_shows
     }) {
         let day = day_of(d.ruled_at.as_deref().unwrap_or("0"));
+        if d.by_assistant() {
+            let said = d.said.as_deref().unwrap_or("");
+            return Err(format!(
+                "the assistant ruled on {day}, on the person's words \"{said}\", that the case stands at step {step} - keep the check as the case says; a failure there is the data's or the application's"
+            ));
+        }
         return Err(format!(
             "a person ruled on {day} that the case stands at step {step} - keep the check as the case says; a failure there is the data's or the application's"
         ));
@@ -246,6 +300,9 @@ pub fn report_in(
         ruled_at: None,
         case_fp: None,
         step_action: None,
+        ruled_by: None,
+        said: None,
+        note: None,
     });
     Ok(Reported::New(id))
 }
@@ -265,6 +322,119 @@ pub fn rule_in(list: &mut [Divergence], id: &str, ruling: Ruling, now_ms: u64) -
     d.ruling = Some(ruling);
     d.ruled_at = Some(now_ms.to_string());
     Ok(d.case_id)
+}
+
+/// The person's words behind an assistant's ruling: trimmed, one line of at
+/// most `MAX_TEXT` characters, never empty, and answered scrubbed like a
+/// suspected defect's note (an address or token pasted from a page does not
+/// stay).
+pub fn check_said(said: &str) -> Result<String, String> {
+    let said = said.trim();
+    if said.is_empty() {
+        return Err(SAID_EMPTY.to_string());
+    }
+    if said.chars().count() > MAX_TEXT || said.contains('\n') || said.contains('\r') {
+        return Err(SAID_TOO_LONG.to_string());
+    }
+    Ok(super::defects::scrub_note(said))
+}
+
+/// The assistant's own note: empty is none, one line of at most
+/// `MAX_TEXT` characters, scrubbed.
+fn check_note(note: Option<&str>) -> Result<Option<String>, String> {
+    let Some(note) = note.map(str::trim).filter(|n| !n.is_empty()) else {
+        return Ok(None);
+    };
+    if note.chars().count() > MAX_TEXT || note.contains('\n') || note.contains('\r') {
+        return Err(NOTE_TOO_LONG.to_string());
+    }
+    Ok(Some(super::defects::scrub_note(note)))
+}
+
+/// The assistant rules, on the person's words, on the divergences it names
+/// (`(case_id, divergence_id)` picks). All or none: every pick is checked
+/// first, by [`rule_in`]'s own rules and by naming its own case, and any
+/// refusal rules nothing and answers each refused pick as `"{id}: {why}"`,
+/// one per line. Then each is ruled by [`rule_in`] itself, so the effect is
+/// exactly the person's, with who ruled and the words set. A pick named
+/// twice counts once. Answers the cases ruled, in pick order, each once.
+pub fn rule_by_assistant_in(
+    list: &mut [Divergence],
+    picks: &[(i32, String)],
+    ruling: Ruling,
+    said: &str,
+    note: Option<&str>,
+    now_ms: u64,
+) -> Result<Vec<i32>, String> {
+    if picks.is_empty() {
+        return Err(NO_PICK.to_string());
+    }
+    let said = check_said(said)?;
+    let note = check_note(note)?;
+    let mut distinct: Vec<&(i32, String)> = vec![];
+    for pick in picks {
+        if !distinct.iter().any(|p| p.1 == pick.1) {
+            distinct.push(pick);
+        }
+    }
+    // A trial on a copy: the same rules, so nothing is ruled unless every pick can be.
+    let mut trial = list.to_vec();
+    let mut refused: Vec<String> = vec![];
+    for (case_id, id) in distinct.iter().map(|p| (p.0, p.1.as_str())) {
+        let why = match trial.iter().find(|d| d.id == id) {
+            Some(d) if d.case_id != case_id => {
+                Some(format!("{id} is case {}'s divergence, not case {case_id}'s", d.case_id))
+            }
+            _ => rule_in(&mut trial, id, ruling, now_ms).err(),
+        };
+        if let Some(why) = why {
+            refused.push(format!("{id}: {why}"));
+        }
+    }
+    if !refused.is_empty() {
+        return Err(refused.join("\n"));
+    }
+    let mut cases: Vec<i32> = vec![];
+    for (_, id) in distinct.iter().map(|p| (p.0, p.1.as_str())) {
+        let case = rule_in(list, id, ruling, now_ms)?;
+        if let Some(d) = list.iter_mut().find(|d| d.id == id) {
+            d.ruled_by = Some(RuledBy::Assistant);
+            d.said = Some(said.clone());
+            d.note = note.clone();
+        }
+        if !cases.contains(&case) {
+            cases.push(case);
+        }
+    }
+    Ok(cases)
+}
+
+/// What `rule_case_divergence` answers: one line per pick, then where the
+/// person can take the ruling back.
+pub fn ruling_answer(list: &[Divergence], picks: &[(i32, String)], ruling: Ruling) -> String {
+    let mut seen: Vec<&str> = vec![];
+    let mut lines: Vec<String> = vec![];
+    for (_, id) in picks {
+        if seen.contains(&id.as_str()) {
+            continue;
+        }
+        seen.push(id);
+        let Some(d) = list.iter().find(|d| &d.id == id) else { continue };
+        let (c, s) = (d.case_id, d.step);
+        lines.push(match ruling {
+            Ruling::CaseStands => format!(
+                "Ruled {id} (case {c} step {s}): the case is right, on the person's words. Its runs are no longer Blocked by it, and the script's check stays as the case says."
+            ),
+            Ruling::DataFixed => format!(
+                "Ruled {id} (case {c} step {s}): the data was fixed, on the person's words. Replay the whole case with replay_autorun_to_step: the script counts as checked only after a replay passes."
+            ),
+            Ruling::Rewrite => format!(
+                "Ruled {id} (case {c} step {s}): the case is being rewritten, on the person's words. It stays Blocked until the rewrite is in Azure DevOps and the script is repaired to the case as it then reads."
+            ),
+        });
+    }
+    lines.push("The person can undo each of these on the case card in Auto Run.".to_string());
+    lines.join("\n")
 }
 
 /// What stops the case's runs: the first open `data` or `wording`
@@ -354,20 +524,25 @@ pub fn close_for_editor_save(list: &mut [Divergence], case_id: i32, now_ms: u64)
     closed
 }
 
-/// A person takes back a "Rewrite the case" ruling: the divergence is open
-/// again and needs a ruling; answers its case id.
+/// A person takes back a "Rewrite the case" ruling, or any ruling the
+/// assistant made: the divergence is open again and needs a ruling;
+/// answers its case id. A person's own "the case stands" or "data fixed"
+/// ruling is not undone.
 pub fn undo_in(list: &mut [Divergence], id: &str) -> Result<i32, String> {
     let Some(d) = list.iter_mut().find(|d| d.id == id) else {
         return Err(format!("no divergence {id}"));
     };
-    if d.status != DivergenceStatus::AwaitingRepair {
-        return Err("only a ruling that waits for a repair can be undone".to_string());
+    if d.status != DivergenceStatus::AwaitingRepair && !d.by_assistant() {
+        return Err("only a ruling that waits for a repair, or one the assistant made, can be undone".to_string());
     }
     d.status = DivergenceStatus::Open;
     d.ruling = None;
     d.ruled_at = None;
     d.case_fp = None;
     d.step_action = None;
+    d.ruled_by = None;
+    d.said = None;
+    d.note = None;
     Ok(d.case_id)
 }
 
@@ -440,12 +615,20 @@ pub fn failures_lines(list: &[Divergence], case_ids: &[i32], now_ms: u64) -> Vec
                 (DivergenceStatus::Ruled, Some(Ruling::CaseStands))
                     if now_ms.saturating_sub(d.ruled_at.as_deref().map(ms_of).unwrap_or(0)) <= KEEP_RULED_MS =>
                 {
-                    out.push(format!(
-                        "- case {case_id} step {} ({}): a person ruled on {} that the case stands - leave the check as it is; a failure there is the data's or the application's (mark_autorun_suspected_defect, or tell the person).",
-                        d.step,
-                        d.id,
-                        day_of(d.ruled_at.as_deref().unwrap_or("0"))
-                    ));
+                    let day = day_of(d.ruled_at.as_deref().unwrap_or("0"));
+                    if d.by_assistant() {
+                        out.push(format!(
+                            "- case {case_id} step {} ({}): the assistant ruled on {day}, on the person's words \"{}\", that the case stands - leave the check as it is; a failure there is the data's or the application's (mark_autorun_suspected_defect, or tell the person).",
+                            d.step,
+                            d.id,
+                            d.said.as_deref().unwrap_or("")
+                        ));
+                    } else {
+                        out.push(format!(
+                            "- case {case_id} step {} ({}): a person ruled on {day} that the case stands - leave the check as it is; a failure there is the data's or the application's (mark_autorun_suspected_defect, or tell the person).",
+                            d.step, d.id
+                        ));
+                    }
                 }
                 _ => {}
             }

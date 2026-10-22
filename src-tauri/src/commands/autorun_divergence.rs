@@ -37,9 +37,49 @@ pub fn rule_at(
     load_at(root, org, project, now_ms)
 }
 
-/// The pure half of [`auto_run_undo_divergence_ruling`].
+/// The assistant's ruling, on the person's words, on the divergences it
+/// names: [`divergences::rule_by_assistant_in`] under the file's lock, then
+/// each ruled case's script is set to not checked, so it counts as checked
+/// again only after a replay passes. Answers what the assistant is told.
+/// The person's words are never written to the log.
+#[allow(clippy::too_many_arguments)]
+pub fn rule_by_assistant_at(
+    root: &Path,
+    org: &str,
+    project: &str,
+    picks: &[(i32, String)],
+    ruling: Ruling,
+    said: &str,
+    note: Option<&str>,
+    now_ms: u64,
+) -> Result<String, String> {
+    let (cases, answer) = divergences::update(root, org, project, |list| {
+        let cases = divergences::rule_by_assistant_in(list, picks, ruling, said, note, now_ms)?;
+        Ok((cases, divergences::ruling_answer(list, picks, ruling)))
+    })?;
+    clear_checked(root, &cases);
+    crate::applog::info(format!(
+        "Auto Run: {} divergence(s) on case(s) {cases:?} ruled {ruling:?} by the assistant",
+        picks.len()
+    ));
+    Ok(answer)
+}
+
+/// A ruling changes what the script is allowed to claim: until a fresh pass
+/// it is not checked. A script that cannot be written is said in the log.
+fn clear_checked(root: &Path, cases: &[i32]) {
+    for case in cases {
+        if crate::autorun::store::set_checked(root, *case, false).is_err() {
+            crate::applog::warn(format!("Auto Run: could not clear whether case {case}'s script counts as checked"));
+        }
+    }
+}
+
+/// The pure half of [`auto_run_undo_divergence_ruling`]. The case's script
+/// counts as checked again only after a replay passes.
 pub fn undo_at(root: &Path, org: &str, project: &str, id: &str, now_ms: u64) -> Result<Vec<Divergence>, String> {
     let case = divergences::update(root, org, project, |list| divergences::undo_in(list, id))?;
+    clear_checked(root, &[case]);
     crate::applog::info(format!("Auto Run: the ruling on divergence {id} (case {case}) was undone in the app"));
     load_at(root, org, project, now_ms)
 }

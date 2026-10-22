@@ -840,6 +840,9 @@ fn a_divergence_shows_on_its_case_in_the_report() {
         ruled_at: ruled_at.map(|t| t.to_string()),
         case_fp: None,
         step_action: None,
+        ruled_by: None,
+        said: None,
+        note: None,
     };
     let day = 24 * 60 * 60 * 1000;
     let list = vec![
@@ -901,4 +904,42 @@ fn page_until_reads_in_the_report() {
         })),
         "page with button \"Next\" until text \"Published\" and text \"Unpublished\" show, at most 5 pages"
     );
+}
+
+#[test]
+fn the_report_names_an_assistant_ruling_and_the_persons_words() {
+    use v2_lib::autorun::divergences::{Divergence, DivergenceKind, DivergenceStatus, RuledBy, Ruling};
+    use v2_lib::autorun::report::{build_with_extras, ReportExtras};
+    let run = run_of(SHOT);
+    let started: i64 = run.started_at.parse().unwrap();
+    let list = vec![Divergence {
+        id: "d1".into(),
+        case_id: 201,
+        step: 2,
+        case_says: "4 levels".into(),
+        app_shows: "6 levels".into(),
+        kind: DivergenceKind::Data,
+        reported_at: started.to_string(),
+        status: DivergenceStatus::Ruled,
+        ruling: Some(Ruling::CaseStands),
+        ruled_at: Some(started.to_string()),
+        case_fp: None,
+        step_action: None,
+        ruled_by: Some(RuledBy::Assistant),
+        said: Some("a different cycle name is fine".into()),
+        note: None,
+    }];
+    let html = build_with_extras(
+        &run,
+        &[],
+        &Default::default(),
+        "2 Oct 2026",
+        &no_shots,
+        &|_| None,
+        &ReportExtras { divergences: &list },
+    );
+    let section = product_section_of(&html, 201);
+    assert!(section.contains("ruled by the assistant"), "{section}");
+    assert!(section.contains("a different cycle name is fine"), "{section}");
+    assert!(section.contains("ruled: the case stands"), "{section}");
 }

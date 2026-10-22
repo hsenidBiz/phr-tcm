@@ -18,7 +18,7 @@
 
 use super::components::{ran_actions, ComponentFile, Ran};
 use super::replay::{MODULE_STEP, SIGN_IN_STEP};
-use super::divergences::{Divergence, DivergenceStatus, Ruling};
+use super::divergences::{Divergence, DivergenceStatus, RuledBy, Ruling};
 use super::{CaseRecord, CaseScript, LocalRun, ResetRecord, StepRecord};
 use crate::browser::actions::{Action, ActionOutcome, DialogAnswer};
 use crate::html_escape::esc_attr;
@@ -613,8 +613,14 @@ fn divergence_words(d: &Divergence) -> String {
         (DivergenceStatus::Ruled, Some(Ruling::Rewrite)) => "ruled: the case is being rewritten",
         (DivergenceStatus::Ruled, _) => "ruled: the case stands",
     };
+    let by = match (d.ruled_by, d.said.as_deref()) {
+        (Some(RuledBy::Assistant), said) => {
+            format!(", ruled by the assistant: the person said \"{}\"", said.unwrap_or(""))
+        }
+        _ => String::new(),
+    };
     format!(
-        "step {}: the case says \"{}\", the app shows \"{}\" ({}, {status})",
+        "step {}: the case says \"{}\", the app shows \"{}\" ({}, {status}{by})",
         d.step,
         d.case_says,
         d.app_shows,
