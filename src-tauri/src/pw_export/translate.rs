@@ -285,6 +285,7 @@ pub fn raw_spec(input: &RawSpecInput) -> Res<String> {
         em.line(4, "try {");
     }
     let mut prev_mark: Option<String> = None;
+    let unchecked = crate::autorun::unchecked::expectations(input.script);
     for (i, step) in input.script.case_steps().enumerate() {
         if cleanup.is_none() || i > 0 {
             em.out.push('\n');
@@ -294,8 +295,8 @@ pub fn raw_spec(input: &RawSpecInput) -> Res<String> {
             Some(t) => em.line(at, &format!("// {n}. {}", one_line(t))),
             None => em.line(at, &format!("// {n}.")),
         }
-        if let Some(why) = step.unchecked.as_ref().and_then(crate::autorun::Unchecked::reason) {
-            em.line(at, &format!("// Not checked: {}", one_line(why)));
+        for e in unchecked.iter().filter(|e| e.step == n) {
+            em.line(at, &one_line(&crate::autorun::unchecked::todo_line(e)));
         }
         if tabs {
             let mark = format!("mark{n}");

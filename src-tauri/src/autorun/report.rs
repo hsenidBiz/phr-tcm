@@ -19,6 +19,7 @@
 use super::components::{ran_actions, ComponentFile, Ran};
 use super::replay::{MODULE_STEP, SIGN_IN_STEP};
 use super::divergences::{Divergence, DivergenceStatus, RuledBy, Ruling};
+use super::unchecked::{count_words, expectations, line as unchecked_line};
 use super::{CaseRecord, CaseScript, LocalRun, ResetRecord, StepRecord};
 use crate::browser::actions::{Action, ActionOutcome, DialogAnswer};
 use crate::html_escape::esc_attr;
@@ -491,6 +492,17 @@ fn downloads_line(case: &CaseRecord, size_of: &dyn Fn(&str) -> Option<u64>) -> S
     format!("<p><strong>Downloads:</strong> {}</p>", each.join(", "))
 }
 
+/// A case's result as the report words it: its bucket, and for a pass that
+/// leaves expectations unchecked, how many ("Passed, 2 expectations
+/// unchecked"). Any other bucket is its word alone.
+fn result_words(bucket: &str, unchecked: usize) -> String {
+    if bucket == "Passed" && unchecked > 0 {
+        format!("{bucket}, {}", count_words(unchecked))
+    } else {
+        bucket.to_string()
+    }
+}
+
 /// One case's collapsible section. Open for Failed and Blocked, closed for
 /// Passed and Not run - a reader lands on what needs them and can still
 /// expand the rest. `<details>` needs no script.
@@ -503,6 +515,8 @@ fn case_section(
     divergences: &[&Divergence],
 ) -> String {
     let b = case_bucket(case);
+    let unchecked = script.map(expectations).unwrap_or_default();
+    let result = result_words(b, unchecked.len());
     let open = if matches!(b, "Failed" | "Blocked") { " open" } else { "" };
     let mut h = String::new();
     h.push_str(&format!("<details class=\"case\"{open}>"));
@@ -514,10 +528,11 @@ fn case_section(
         n => format!(" <span class=\"retried\">page errors seen: {n}</span>"),
     };
     h.push_str(&format!(
-        "<summary><span class=\"id\">#{}</span> {} <span class=\"b-{}\">{b}</span>{retried}{flagged}</summary>",
+        "<summary><span class=\"id\">#{}</span> {} <span class=\"b-{}\">{}</span>{retried}{flagged}</summary>",
         case.case_id,
         esc_attr(&case.title),
-        css_key(b)
+        css_key(b),
+        esc_attr(&result)
     ));
     if matches!(b, "Failed" | "Blocked") {
         h.push_str(&stopped_summary(case, script, components));
@@ -536,6 +551,10 @@ fn case_section(
     }
     for d in divergences {
         h.push_str(&format!("<p><strong>Divergence:</strong> {}</p>", esc_attr(&divergence_words(d))));
+    }
+    // What the script's checks leave out, whatever the case's own verdict.
+    for e in &unchecked {
+        h.push_str(&format!("<p><strong>Unchecked:</strong> {}</p>", esc_attr(&unchecked_line(e))));
     }
     // A clean-up that failed, whatever the case's own verdict.
     if let Some(line) = case.cleanup_line() {
@@ -817,6 +836,17 @@ pub fn build_with_extras(
         h.push_str(&format!("<td class=\"b-{}\">{}</td>", css_key(b), c[i]));
     }
     h.push_str(&format!("<td>{}</td></tr></tbody></table>", run.cases.len()));
+    // How much of what the passes claim their checks leave out.
+    let (mut total, mut passed_with) = (0usize, 0usize);
+    for case in run.cases.iter().filter(|c| case_bucket(c) == "Passed") {
+        let n = script_for(case.case_id).map(|s| expectations(s).len()).unwrap_or(0);
+        total += n;
+        passed_with += usize::from(n > 0);
+    }
+    if total > 0 {
+        let cases = if passed_with == 1 { "case" } else { "cases" };
+        h.push_str(&format!("<p class=\"unchecked\">{} in {passed_with} passed {cases}</p>", count_words(total)));
+    }
 
     h.push_str("<h2>Cases</h2><table class=\"cases\"><thead><tr><th>ID</th><th>Title</th><th>Result</th><th>Decided by</th><th>Account</th><th>Area</th></tr></thead><tbody>");
     for case in &run.cases {
@@ -835,11 +865,13 @@ pub fn build_with_extras(
             "-"
         };
         let area = script_for(case.case_id).and_then(CaseScript::area_name).unwrap_or("");
+        let result = result_words(b, script_for(case.case_id).map(|s| expectations(s).len()).unwrap_or(0));
         h.push_str(&format!(
-            "<tr><td class=\"id\">#{}</td><td>{}</td><td class=\"b-{}\">{b}</td><td>{decided}</td><td>{}</td><td>{}</td></tr>",
+            "<tr><td class=\"id\">#{}</td><td>{}</td><td class=\"b-{}\">{}</td><td>{decided}</td><td>{}</td><td>{}</td></tr>",
             case.case_id,
             esc_attr(&case.title),
             css_key(b),
+            esc_attr(&result),
             esc_attr(case.account.as_deref().unwrap_or("")),
             esc_attr(area)
         ));

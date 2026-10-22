@@ -64,6 +64,16 @@ pub fn count_words(n: usize) -> String {
     }
 }
 
+/// "// TODO unchecked: no lock icon - why", plus " (stand-in: expect_hidden)"
+/// when it has one: the line Export to Playwright writes under the step.
+pub fn todo_line(e: &UncheckedExpectation) -> String {
+    let mut s = format!("// TODO unchecked: {} - {}", e.item, e.why);
+    if let Some(kind) = &e.stand_in {
+        s.push_str(&format!(" (stand-in: {kind})"));
+    }
+    s
+}
+
 /// "step 3: no lock icon - why", plus " (stand-in: expect_hidden)" when it has one.
 pub fn line(e: &UncheckedExpectation) -> String {
     let mut s = format!("step {}: {} - {}", e.step, e.item, e.why);

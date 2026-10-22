@@ -331,7 +331,7 @@ fn the_header_comes_first_and_a_missing_text_leaves_the_number_alone() {
     assert!(got.starts_with(
         "// spec: suites/sl/admin/m/f/test-cases/f.md\n// seed: suites/_generated/seed.spec.ts\n\nimport { test, expect } from '@playwright/test';\n\ntest.describe('F', () => {\n  test('A case', async ({ page }) => {\n    let cur = page;\n    await page.goto('/');\n"
     ), "{got}");
-    assert!(got.contains("    // 7. first second\n    // Not checked: line one line two\n"), "{got}");
+    assert!(got.contains("    // 7. first second\n    // TODO unchecked: the step's expected result - line one line two\n"), "{got}");
     assert!(got.contains("\n    // 8.\n"), "{got}");
     assert!(got.ends_with("  });\n});\n"));
     assert!(!got.contains("fixme") && !got.contains("skip"));
@@ -1251,4 +1251,46 @@ fn page_until_exports_the_same_walk() {
     .run()
     .unwrap();
     assert!(one.contains("const until = [cur.locator('.card').filter({ visible: true }).getByText('Unpublished').filter({ visible: true })];"), "{one}");
+}
+
+#[test]
+fn each_unchecked_expectation_is_a_todo_line() {
+    let mut fx = Fx::new(script(json!([
+        { "step_number": 1, "actions": [], "unchecked": [
+            { "item": "no lock icon", "why": "no check reads an icon" },
+            { "item": "no access-denied message", "why": "no check reads words the app never shows (backlog 37)", "stand_in": "expect_hidden" }
+        ] },
+        { "step_number": 2, "actions": [] }
+    ])));
+    fx.texts.insert(1, "first".into());
+    let got = fx.run().unwrap();
+    assert!(
+        got.contains(
+            "    // 1. first\n    // TODO unchecked: no lock icon - no check reads an icon\n    // TODO unchecked: no access-denied message - no check reads words the app never shows (backlog 37) (stand-in: expect_hidden)\n"
+        ),
+        "{got}"
+    );
+    assert!(!got.contains("Not checked"), "{got}");
+}
+
+#[test]
+fn the_todo_lines_are_the_cards_expectations() {
+    use v2_lib::autorun::unchecked::{expectations, todo_line};
+    #[derive(serde::Deserialize)]
+    struct Entry {
+        name: String,
+        script: v2_lib::autorun::CaseScript,
+    }
+    let entries: Vec<Entry> = serde_json::from_str(include_str!("../fixtures/unchecked_expectations.json")).unwrap();
+    for e in entries {
+        let want: Vec<String> = expectations(&e.script).iter().map(todo_line).collect();
+        let spec = Fx::new(e.script.clone()).run().unwrap();
+        let got: Vec<String> = spec
+            .lines()
+            .map(str::trim)
+            .filter(|l| l.starts_with("// TODO unchecked:"))
+            .map(str::to_string)
+            .collect();
+        assert_eq!(got, want, "{}", e.name);
+    }
 }

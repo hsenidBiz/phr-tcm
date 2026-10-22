@@ -63,7 +63,7 @@ test.describe('F', () => {
     await cur.locator('iframe#body').filter({ visible: true }).contentFrame().getByText('Ready', { exact: true }).filter({ visible: true }).first().waitFor({ timeout: 4000 });
 
     // 2. Check what it shows.
-    // Not checked: A person checks the colour.
+    // TODO unchecked: the step's expected result - A person checks the colour.
     const mark2 = opened.length;
     await expect(cur.locator('body')).toContainText('Welcome', { ignoreCase: true, useInnerText: true });
     await expect(cur).toHaveURL(new RegExp('\\/hr\\/x\\?y=1'), { timeout: 10000 });
