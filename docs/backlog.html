@@ -42,26 +42,44 @@
 <body>
 <main>
   <h1>Test Case Manager backlog</h1>
-  <p class="sub">Updated 22 October 2026, after 2.2.3-beta.25 (the scripting rules from the Playwright repo, page size setting, auto-allowed Auto Run tools, account passwords). What is left is below.</p>
+  <p class="sub">Updated 23 October 2026, after 2.2.3-beta.26 (backlog 39, screenshot paste, Not Applicable on a dark theme). What is left is below.</p>
 
   <h2>Agreed, not built yet</h2>
   <div class="item">
     <div class="head"><span class="title">Next builds</span><span class="status todo">Next</span></div>
     <ul>
-      <li>Backlog 39: unchecked expectations shown, the value check over every check kind, expect_no_change, expect_response armed at the step's start (plan written, 7 tasks; one decision of yours open, below).</li>
+      <li>Refresh the report engine copy from its updated source (your request of 22 October; next beta).</li>
       <li>Backlog 36: timing and no-reload checks on a request (agreed, not planned yet).</li>
       <li>All projects as one (spec approved, 22 tasks, shipped as several betas).</li>
       <li>Several agents with their own browsers (spec approved; built last).</li>
+      <li>From the Manage Cycle comparison, not in item 39 (yours to pick): expect_response cannot require a query parameter to be absent; absence checks have no run-time positive control; precondition records not tied to the case's names; components still wait for "Showing 1-1 of 1" rather than the search response; nothing flags nth where a label exists; script fixes for 141706, 142514, 141708, 141727.</li>
     </ul>
   </div>
-  <h2>Scripting rules from the Playwright repo, page size, auto-allowed tools, account passwords (2.2.3-beta.25, 22 October 2026)</h2>
+
+  <h2>Backlog 39, screenshot paste, Not Applicable (2.2.3-beta.26, 23 October 2026)</h2>
   <div class="item">
-    <div class="head"><span class="title">Your decisions</span><span class="status todo">Waiting on you</span></div>
+    <div class="head"><span class="title">Hand checks owed</span><span class="status todo">Waiting on you</span></div>
     <ul>
-      <li>Backlog 39: values of the new check kinds taken from the page with no reason - flag them as assumed (the plan), or refuse them like texts?</li>
-      <li>reset_autorun_browser is auto-allowed in place of the retired release_autorun_browser, so a plain reset no longer asks. Keep it, or drop it?</li>
+      <li>Not Applicable, marked in the runner, is easy to read on the dark theme, and still distinct from Paused.</li>
+      <li>Paste a normal screenshot and a copied JPEG in the runner and in File a bug: both attach. Paste quickly from your VM: it retries or asks you to paste again, never a broken image.</li>
+      <li>A Manage Cycle case with an unchecked expectation (141717's timing) shows "1 expectation unchecked" on a pass, in the run report, and as a TODO line in its Playwright export.</li>
+      <li>141739 with expect_no_change: clicking another card while disabled passes when nothing happens.</li>
+      <li>141724's filter-then-check step: expect_response matches the filter's own request and says which one.</li>
+      <li>Save a script whose check takes a colour or state from the page with no because: refused, naming the kind; add a because and it saves.</li>
     </ul>
   </div>
+  <div class="item">
+    <div class="head"><span class="title">Not fully done</span><span class="status todo">Follow-ups</span></div>
+    <ul>
+      <li>A repair that renames a button the case itself names is now refused: report it as a divergence.</li>
+      <li>"no &lt;something&gt;" in a step counts as stating 0 for every count in that step.</li>
+      <li>A page that polls with a POST every second fails expect_no_change (it cannot tell that save from one the click caused).</li>
+      <li>The exported expect_no_change does not wait for the control to hold still, and its covered-control check looks only inside the control's own frame.</li>
+      <li>Run-result attachments are checked in the app before upload; only the bug dialog's upload checks again on the Rust side.</li>
+    </ul>
+  </div>
+
+  <h2>Scripting rules from the Playwright repo, page size, auto-allowed tools, account passwords (2.2.3-beta.25, 22 October 2026)</h2>
   <div class="item">
     <div class="head"><span class="title">Hand checks owed</span><span class="status todo">Waiting on you</span></div>
     <ul>
