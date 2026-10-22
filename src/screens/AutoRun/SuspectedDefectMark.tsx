@@ -8,7 +8,7 @@
 
 import { useQueryClient } from "@tanstack/react-query";
 import { useId, useState } from "react";
-import { commands, type SuspectedDefect } from "../../bindings";
+import { commands, type ClearedDefect, type SuspectedDefect } from "../../bindings";
 import { Button } from "../../components/ui/button";
 import { IconCancel, IconClearDefect, IconClear } from "../../lib/actionIcons";
 
@@ -49,6 +49,20 @@ export function SuspectedDefectBadge({
         Clear
       </Button>
     </>
+  );
+}
+
+/** A mark the assistant cleared on the person's words from the chat: where it
+ * was, their words, and when. A record only - there is nothing to undo, and a
+ * new mark replaces it. */
+export function ClearedDefectNote({ cleared }: { cleared: ClearedDefect }) {
+  const at = Number(cleared.cleared_at);
+  const when = Number.isFinite(at) ? new Date(at).toLocaleString() : null;
+  return (
+    <p className="break-words pt-1 text-xs text-muted">
+      {`Cleared by the assistant${when ? ` on ${when}` : ""}, on your words: "${cleared.said}". `}
+      {`It had marked step ${cleared.step_number}.${cleared.note ? ` Its note: ${cleared.note}` : ""}`}
+    </p>
   );
 }
 

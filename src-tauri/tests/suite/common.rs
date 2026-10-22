@@ -17,7 +17,7 @@ use v2_lib::browser::cdp::{
 use v2_lib::browser::dialogs::DialogBook;
 use v2_lib::browser::page_errors::PageErrorBook;
 use v2_lib::browser::downloads::DownloadEntry;
-use v2_lib::browser::expect::{CHECKED_JS, DISABLED_JS, IS_PASSWORD_JS, READ_ATTR_JS, READ_STYLE_JS, READ_TEXT_JS};
+use v2_lib::browser::expect::{CHECKED_JS, DISABLED_JS, IS_PASSWORD_JS, READ_ATTR_JS, READ_STYLE_JS, READ_TEXT_JS, WRITTEN_TEXT_JS};
 use v2_lib::browser::input::{FOCUS_JS, HAS_FOCUS_JS, PROBE_JS};
 use v2_lib::browser::locator::VISIBLE_JS;
 use v2_lib::browser::net_record::{NetEntry, NetRecord};
@@ -157,6 +157,9 @@ pub struct ScriptedDriver {
     /// The page's captured requests, when a test gives it some
     /// (`with_capture`): what the capture tools read.
     pub capture: Option<v2_lib::browser::net_capture::NetCapture>,
+    /// The addresses a `remember_url` noted, by name (`noted_addresses`):
+    /// emptied with the case's tabs, as `Cdp` empties its own.
+    pub noted: std::collections::BTreeMap<String, String>,
 }
 
 /// A test's yes or no to a call, by method and parameters.
@@ -257,6 +260,7 @@ impl ScriptedDriver {
             no_record: false,
             capture_notes: vec![],
             capture: None,
+            noted: std::collections::BTreeMap::new(),
         }
     }
 
@@ -319,6 +323,9 @@ impl ScriptedDriver {
 }
 
 impl Driver for ScriptedDriver {
+    fn noted_addresses(&mut self) -> Option<&mut std::collections::BTreeMap<String, String>> {
+        Some(&mut self.noted)
+    }
     fn capture(&self) -> Option<&v2_lib::browser::net_capture::NetCapture> {
         self.capture.as_ref()
     }
@@ -684,6 +691,7 @@ impl Driver for ScriptedDriver {
     }
     async fn close_other_tabs(&mut self) {
         self.tabs.closed_others += 1;
+        self.noted.clear();
         self.tabs.open.clear();
         self.tabs.closed_by_page.clear();
         self.tabs.unnamed = 0;
@@ -724,6 +732,10 @@ pub struct FakePage {
     pub navigate_reply: Value,
     /// Answers to "what does it say", in turn; the last repeats.
     pub texts: Vec<&'static str>,
+    /// What `WRITTEN_TEXT_JS` answers (the text as written in the page,
+    /// which CSS may draw in other capitals); `None` answers the text
+    /// `READ_TEXT_JS` last answered.
+    pub written: Option<&'static str>,
     pub attribute: Option<&'static str>,
     /// Is the element a password input (`IS_PASSWORD_JS`)?
     pub password: bool,
@@ -766,6 +778,7 @@ impl Default for FakePage {
             resolved_url: "https://app.example/dashboard",
             navigate_reply: json!({ "frameId": "F", "loaderId": "L" }),
             texts: vec!["Saved"],
+            written: None,
             attribute: None,
             password: false,
             disabled_why: "",
@@ -824,6 +837,10 @@ impl FakePage {
                 let i = self.read.get().min(self.texts.len() - 1);
                 self.read.set(self.read.get() + 1);
                 json!({ "result": { "value": self.texts[i] } })
+            }
+            "Runtime.callFunctionOn" if f == WRITTEN_TEXT_JS => {
+                let last = self.read.get().saturating_sub(1).min(self.texts.len() - 1);
+                json!({ "result": { "value": self.written.unwrap_or(self.texts[last]) } })
             }
             "Runtime.callFunctionOn" if f == READ_ATTR_JS => json!({ "result": { "value": self.attribute } }),
             "Runtime.callFunctionOn" if f == IS_PASSWORD_JS => json!({ "result": { "value": self.password } }),
@@ -1240,6 +1257,7 @@ pub fn saved_on_stage(id: &str, title: &str, stage: &str) -> v2_lib::api_templat
         account: "admin".into(),
         outputs: Default::default(),
         environment: None,
+        via: None,
     });
     t
 }
@@ -1426,7 +1444,18 @@ pub async fn route_without_rules(
     let rules = match (method, path) {
         ("GET", "/autorun-failures") => roles::RULES_FAILURES,
         ("POST", "/autorun-replay") | ("POST", "/autorun-replay-stop") => roles::RULES_REPLAY,
-        ("POST", "/autorun-discover-start") => roles::RULES_DISCOVERY,
+        ("POST", "/autorun-discover-start") => {
+            // An explore start ends with its own rules (a mapping run has none; `without_rules` leaves it).
+            let explore = serde_json::from_str::<serde_json::Value>(body).is_ok_and(|v| {
+                v["explore"].as_bool() == Some(true)
+                    || v["explore"].as_str().is_some_and(|s| s.trim().eq_ignore_ascii_case("true"))
+            });
+            if explore {
+                roles::RULES_EXPLORE
+            } else {
+                roles::RULES_DISCOVERY
+            }
+        }
         ("POST", "/autorun-script") => roles::RULES_REPAIR_SAVE,
         _ => return (status, out),
     };

@@ -13,8 +13,8 @@ use super::ts::{lit, locator};
 use crate::autorun::recipe::{origin_of, RecipeStep};
 use crate::autorun::runner::WATCHED_DOWNLOAD_WAIT_MS;
 use crate::autorun::CaseScript;
-use crate::browser::actions::{Action, DropAt, TAB_WAIT_MS, WHEN_VISIBLE_FLOOR_MS, WHEN_VISIBLE_MS};
-use crate::browser::expect::READ_TEXT_JS;
+use crate::browser::actions::{page_goals, url_rule, Action, DropAt, TAB_WAIT_MS, WHEN_VISIBLE_FLOOR_MS, WHEN_VISIBLE_MS};
+use crate::browser::expect::{READ_TEXT_JS, WRITTEN_TEXT_JS};
 use crate::browser::keys;
 use crate::browser::locator::Target;
 use crate::browser::position::READ_BOX_JS;
@@ -78,13 +78,16 @@ fn check_action(a: &Action, origins: &[String]) -> Res<()> {
     match a {
         Action::Navigate { url } => goto_target("navigate", url, origins).map(|_| ()),
         Action::CheckText { .. }
-        | Action::CheckUrl { .. }
+        | Action::RememberUrl { .. }
         | Action::Reload
         | Action::ExpireSession
         | Action::ReturnToArea { .. }
         | Action::ExpectTab { .. }
         | Action::SwitchTab { .. }
         | Action::ExpectTabClosed { .. } => Ok(()),
+        // An `equals` goes through the same address rules as a navigation.
+        Action::CheckUrl { equals: Some(want), .. } => goto_target("check_url", want, origins).map(|_| ()),
+        Action::CheckUrl { .. } => Ok(()),
         Action::PressKey { key, .. } => key_name(key).map(|_| ()),
         Action::ExpectEach { selector, child, .. } => {
             check_target(selector)?;
@@ -94,6 +97,10 @@ fn check_action(a: &Action, origins: &[String]) -> Res<()> {
         Action::ExpectPosition { selector, relative_to, .. } => {
             check_target(selector)?;
             check_target(relative_to)
+        }
+        Action::PageUntil { next, until, until_all, .. } => {
+            check_target(next)?;
+            page_goals(until, until_all).into_iter().try_for_each(check_target)
         }
         Action::Click { selector }
         | Action::Fill { selector, .. }
@@ -205,6 +212,10 @@ pub fn raw_spec(input: &RawSpecInput) -> Res<String> {
     }
 
     em.line(4, "let cur = page;");
+    // The addresses a `remember_url` notes, for a later `same_as`.
+    if uses(input, &|a| matches!(a, Action::RememberUrl { .. })) {
+        em.line(4, "const notedUrls: Record<string, string> = {};");
+    }
     // The app's text reader: `expect_text`, `expect_contains_text`, an
     // `expect_each` that reads text and an `expect_order`.
     if uses(input, &|a| {
@@ -217,6 +228,11 @@ pub fn raw_spec(input: &RawSpecInput) -> Res<String> {
         )
     }) {
         em.read_text();
+    }
+    // The text as written in the page, for the two checks that accept it
+    // when CSS draws the words in other capitals.
+    if uses(input, &|a| matches!(a, Action::ExpectText { equals: Some(_), .. } | Action::ExpectContainsText { .. })) {
+        em.read_written();
     }
     if uses(input, &|a| {
         matches!(a, Action::ExpectRow { .. } | Action::ExpectNoRow { .. } | Action::ExpectSorted { .. } | Action::ExpectRowCount { .. })
@@ -351,6 +367,29 @@ pub fn read_text_ts(indent: usize) -> Vec<String> {
     }
     lines
 }
+
+/// The text as written in the page (`WRITTEN_TEXT_JS`: textContent, which
+/// CSS `text-transform` does not change) as a TypeScript function of the
+/// element, built as [`read_text_ts`] builds `readText`.
+pub fn read_written_ts(indent: usize) -> Vec<String> {
+    let typed = WRITTEN_TEXT_JS.replacen("function() {", "function (this: HTMLElement) {", 1);
+    assert!(typed != WRITTEN_TEXT_JS, "WRITTEN_TEXT_JS no longer starts with `function() {{`");
+    let pad = " ".repeat(indent);
+    let mut lines: Vec<String> = typed.lines().map(|l| format!("{pad}{l}")).collect();
+    if let Some(first) = lines.first_mut() {
+        *first = format!("{pad}const readWritten = (e: Element) => ({}", first.trim_start());
+    }
+    if let Some(last) = lines.last_mut() {
+        last.push_str(").call(e as HTMLElement);");
+    }
+    lines
+}
+
+/// The app's rule for the text a check compares, in TypeScript
+/// (`expect::text_as_case`): the drawn text when it holds; else the text as
+/// written in the page when only its letter case differs from the drawn one
+/// and it holds; else the drawn text. `want` is already collapsed.
+pub const AS_CASE_TS: &str = "const asCase = (drawn: string, written: string, want: string, whole: boolean): string => {\n  const holds = (t: string) => (whole ? t === want : t.includes(want));\n  if (holds(drawn)) return drawn;\n  return written.toLowerCase() === drawn.toLowerCase() && holds(written) ? written : drawn;\n};";
 
 /// The app's own box reader (`READ_BOX_JS`) as a TypeScript function of the
 /// element, one line per entry: the body is the constant's, word for word
@@ -738,6 +777,17 @@ impl Em<'_> {
         }
     }
 
+    /// The text as written in the page, and the app's rule for choosing
+    /// between it and the drawn text, for `expect_text` (equals) and
+    /// `expect_contains_text`. `asCase` goes out verbatim (`AS_CASE_TS`).
+    fn read_written(&mut self) {
+        for l in read_written_ts(4) {
+            self.out.push_str(&l);
+            self.out.push('\n');
+        }
+        self.line(4, AS_CASE_TS);
+    }
+
     /// `expect_count` with `at_most` passes on too few, so it is not a poll:
     /// the app's own loop (`expect::keep_looking`) - the count must stay at
     /// or under the bound, the same, for `SETTLE_MS`, or time runs out on a
@@ -1120,6 +1170,46 @@ impl Em<'_> {
         self.line(indent, &format!("}}, {})).toBeNull();", expect_timeout(timeout_ms)));
     }
 
+    /// `page_until`, written as the walk the app makes: look for what is
+    /// not seen yet, stop when all of it has been, fail at `max_pages` or
+    /// when `next` is gone or disabled (its `disabled` property,
+    /// `aria-disabled="true"` or a class token `disabled`), otherwise take
+    /// the page's text, click it and wait until that text differs (never
+    /// `networkidle`, which an in-page click has always reached).
+    fn page_until(&mut self, indent: usize, next: &Target, until: &[&Target], max_pages: u32) {
+        let locators: Vec<String> = until.iter().map(|u| locator("cur", u)).collect();
+        let names: Vec<String> = until.iter().map(|u| lit(&u.describe())).collect();
+        self.line(indent, "{");
+        self.line(indent + 2, &format!("const until = [{}];", locators.join(", ")));
+        self.line(indent + 2, &format!("const names = [{}];", names.join(", ")));
+        self.line(indent + 2, "const seen: number[] = until.map(() => 0);");
+        self.line(indent + 2, "const signature = () => cur.evaluate(() => { const b = document.body || document.documentElement; return b ? b.innerText : ''; });");
+        self.line(indent + 2, "for (let p = 1; ; p++) {");
+        self.line(indent + 4, "for (const [k, l] of until.entries()) if (!seen[k] && (await l.count()) > 0) seen[k] = p;");
+        self.line(indent + 4, "if (seen.every((s) => s > 0)) break;");
+        self.line(indent + 4, "const missing = names.filter((_, k) => !seen[k]).join(' and ');");
+        self.line(
+            indent + 4,
+            &format!("if (p >= {max_pages}) throw new Error('walked ' + p + ' pages and never saw ' + missing);"),
+        );
+        self.line(indent + 4, &format!("const next = {};", one(next)));
+        self.line(
+            indent + 4,
+            "if (!(await next.isVisible()) || !(await next.isEnabled()) || (await next.evaluate((e) => e.classList.contains('disabled')))) throw new Error('walked ' + p + ' pages and never saw ' + missing + ': the next control is gone or disabled');",
+        );
+        self.line(indent + 4, "const before = await signature();");
+        self.line(indent + 4, "await next.click();");
+        self.line(
+            indent + 4,
+            &format!(
+                "await expect.poll(signature, {{ timeout: {} }}).not.toBe(before).catch(() => {{ throw new Error('Next did not turn the page (page ' + p + ').'); }});",
+                Timing::default().action_ms
+            ),
+        );
+        self.line(indent + 2, "}");
+        self.line(indent, "}");
+    }
+
     fn action(&mut self, a: &Action, indent: usize) -> Res<()> {
         check_action(a, self.input.origins)?;
         let sc = self.scope.clone();
@@ -1136,7 +1226,32 @@ impl Em<'_> {
                 indent,
                 &format!("await expect(cur.locator('body')).toContainText({}, {{ ignoreCase: true, useInnerText: true }});", lit(value)),
             ),
-            Action::CheckUrl { contains, timeout_ms } => self.line(
+            Action::CheckUrl { equals: Some(want), timeout_ms, .. } => {
+                // The same rule the app applies (`UrlRule`): never a full
+                // address turned into a path. The address must still be one
+                // the export can reach.
+                goto_target("check_url", want, self.input.origins)?;
+                let rule = url_rule(want);
+                let t = expect_timeout(*timeout_ms);
+                let origin = if rule.origin.is_some() { "u.origin + " } else { "" };
+                let hash = if rule.fragment.is_some() { " + u.hash" } else { "" };
+                self.line(
+                    indent,
+                    &format!(
+                        "await expect.poll(() => {{ const u = new URL(cur.url()); return {origin}u.pathname + u.search{hash}; }}, {{ timeout: {t} }}).toBe({});",
+                        lit(&rule.expected())
+                    ),
+                );
+            }
+            Action::CheckUrl { same_as: Some(name), timeout_ms, .. } => self.line(
+                indent,
+                &format!(
+                    "await expect.poll(() => cur.url(), {{ timeout: {} }}).toBe(notedUrls[{}]);",
+                    expect_timeout(*timeout_ms),
+                    lit(name)
+                ),
+            ),
+            Action::CheckUrl { contains, timeout_ms, .. } => self.line(
                 indent,
                 &format!(
                     "await expect(cur).toHaveURL(new RegExp({}), {{ timeout: {} }});",
@@ -1144,6 +1259,7 @@ impl Em<'_> {
                     expect_timeout(*timeout_ms)
                 ),
             ),
+            Action::RememberUrl { name } => self.line(indent, &format!("notedUrls[{}] = cur.url();", lit(name))),
             Action::ExpectVisible { selector, timeout_ms } => {
                 self.line(indent, &format!("await expect({}).{};", one(selector), call("toBeVisible", &[], *timeout_ms)))
             }
@@ -1155,9 +1271,22 @@ impl Em<'_> {
             // and compares case-sensitively: whole, or as a substring.
             Action::ExpectText { selector, equals, matches, timeout_ms } => {
                 // `validate` holds the two to exactly one.
-                let want = match (equals, matches) {
-                    (Some(equals), _) => format!("toBe({})", lit(&collapse(equals))),
-                    (_, Some(p)) => format!("toMatch(new RegExp({}))", lit(p)),
+                if let Some(equals) = equals {
+                    // The drawn text, or the text as written in the page when
+                    // only the letter case differs (`asCase`).
+                    let w = lit(&collapse(equals));
+                    let l = one(selector);
+                    self.line(
+                        indent,
+                        &format!(
+                            "await expect.poll(async () => asCase(await {l}.evaluate(readText), await {l}.evaluate(readWritten), {w}, true){}).toBe({w});",
+                            poll_opts(*timeout_ms)
+                        ),
+                    );
+                    return Ok(());
+                }
+                let want = match matches {
+                    Some(p) => format!("toMatch(new RegExp({}))", lit(p)),
                     _ => return no("expect_text takes exactly one of equals or matches"),
                 };
                 self.line(
@@ -1169,15 +1298,17 @@ impl Em<'_> {
                     ),
                 )
             }
-            Action::ExpectContainsText { selector, value, timeout_ms } => self.line(
-                indent,
-                &format!(
-                    "await expect.poll(() => {}.evaluate(readText){}).toContain({});",
-                    one(selector),
-                    poll_opts(*timeout_ms),
-                    lit(&collapse(value))
-                ),
-            ),
+            Action::ExpectContainsText { selector, value, timeout_ms } => {
+                let w = lit(&collapse(value));
+                let l = one(selector);
+                self.line(
+                    indent,
+                    &format!(
+                        "await expect.poll(async () => asCase(await {l}.evaluate(readText), await {l}.evaluate(readWritten), {w}, false){}).toContain({w});",
+                        poll_opts(*timeout_ms)
+                    ),
+                )
+            }
             Action::ExpectCount { selector, equals, at_least, at_most, timeout_ms } => {
                 match table::row_count(*equals, *at_least, *at_most).map_err(Untranslatable)? {
                     table::RowCount::Equals(n) => self.line(
@@ -1210,6 +1341,9 @@ impl Em<'_> {
                 self.each(indent, selector, *min, child.as_ref(), attribute.as_deref(), *visible, equals, contains, matches, *not_empty, *timeout_ms)?
             }
             Action::ExpectOrder { selector, texts, timeout_ms } => self.order(indent, selector, texts, *timeout_ms),
+            Action::PageUntil { next, until, until_all, max_pages } => {
+                self.page_until(indent, next, &page_goals(until, until_all), *max_pages)
+            }
             Action::ExpectPosition { selector, relative_to, relation, timeout_ms } => {
                 // The relation's serde name is what the helper switches on.
                 let name = serde_json::to_value(relation).ok().and_then(|v| v.as_str().map(str::to_string)).unwrap_or_default();

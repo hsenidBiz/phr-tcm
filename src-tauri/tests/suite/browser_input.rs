@@ -249,7 +249,7 @@ async fn a_click_re_probes_then_sends_three_real_mouse_events() {
         }
         _ => Ok(json!({})),
     });
-    click(&mut d, &Ready { handle: "el".into(), x: 999.0, y: 999.0 }).await.unwrap();
+    click(&mut d, &Ready { handle: "el".into(), x: 999.0, y: 999.0, as_written: false }).await.unwrap();
 
     let probed = &d.calls_to("Runtime.callFunctionOn")[0];
     assert_eq!(probed["functionDeclaration"], PROBE_JS);
@@ -274,7 +274,7 @@ async fn a_click_is_refused_when_the_re_probe_finds_it_covered() {
         })),
         _ => Ok(json!({})),
     });
-    match click(&mut d, &Ready { handle: "el".into(), x: 40.5, y: 12.0 }).await {
+    match click(&mut d, &Ready { handle: "el".into(), x: 40.5, y: 12.0, as_written: false }).await {
         Err(Blocked::Page(msg)) => {
             assert!(msg.contains("just before the click"), "{msg}");
             assert!(msg.contains("is covered by div.overlay"), "{msg}");
@@ -289,7 +289,7 @@ async fn a_click_is_refused_when_the_re_probe_finds_it_covered() {
 #[tokio::test]
 async fn a_fill_selects_what_is_there_and_types_over_it() {
     let mut d = field("text");
-    fill(&mut d, &Ready { handle: "el".into(), x: 0.0, y: 0.0 }, "Custom 4-Point").await.ok().unwrap();
+    fill(&mut d, &Ready { handle: "el".into(), x: 0.0, y: 0.0, as_written: false }, "Custom 4-Point").await.ok().unwrap();
     let focus = &d.calls_to("Runtime.callFunctionOn")[0];
     assert_eq!(focus["functionDeclaration"], FOCUS_JS);
     assert_eq!(focus["objectId"], "el");
@@ -299,7 +299,7 @@ async fn a_fill_selects_what_is_there_and_types_over_it() {
 #[tokio::test]
 async fn filling_with_nothing_clears_the_field() {
     let mut d = field("text");
-    fill(&mut d, &Ready { handle: "el".into(), x: 0.0, y: 0.0 }, "").await.ok().unwrap();
+    fill(&mut d, &Ready { handle: "el".into(), x: 0.0, y: 0.0, as_written: false }, "").await.ok().unwrap();
     assert!(d.calls_to("Input.insertText").is_empty());
     let keys = d.calls_to("Input.dispatchKeyEvent");
     assert_eq!(keys.len(), 2);
@@ -318,7 +318,7 @@ async fn a_date_like_field_is_set_directly_not_typed() {
         "Runtime.callFunctionOn" => Ok(json!({ "result": { "value": "set" } })),
         _ => Ok(json!({})),
     });
-    fill(&mut d, &Ready { handle: "el".into(), x: 0.0, y: 0.0 }, "2026-09-21").await.ok().unwrap();
+    fill(&mut d, &Ready { handle: "el".into(), x: 0.0, y: 0.0, as_written: false }, "2026-09-21").await.ok().unwrap();
     assert!(d.calls_to("Input.insertText").is_empty());
     assert!(d.calls_to("Input.dispatchKeyEvent").is_empty());
 }
@@ -332,14 +332,14 @@ async fn a_native_select_is_chosen_not_typed() {
         "Runtime.callFunctionOn" => Ok(json!({ "result": { "value": "select-ok" } })),
         _ => Ok(json!({})),
     });
-    fill(&mut d, &Ready { handle: "el".into(), x: 0.0, y: 0.0 }, "Numeric").await.ok().unwrap();
+    fill(&mut d, &Ready { handle: "el".into(), x: 0.0, y: 0.0, as_written: false }, "Numeric").await.ok().unwrap();
     assert!(d.calls_to("Input.insertText").is_empty());
 
     let mut d = ScriptedDriver::new(|method, _| match method {
         "Runtime.callFunctionOn" => Ok(json!({ "result": { "value": "select-missing" } })),
         _ => Ok(json!({})),
     });
-    match fill(&mut d, &Ready { handle: "el".into(), x: 0.0, y: 0.0 }, "Nope").await {
+    match fill(&mut d, &Ready { handle: "el".into(), x: 0.0, y: 0.0, as_written: false }, "Nope").await {
         Err(Blocked::Page(msg)) => assert!(msg.contains("no option") && msg.contains("Nope"), "{msg}"),
         _ => panic!("expected a page reason"),
     }
@@ -348,7 +348,7 @@ async fn a_native_select_is_chosen_not_typed() {
         "Runtime.callFunctionOn" => Ok(json!({ "result": { "value": "select-disabled" } })),
         _ => Ok(json!({})),
     });
-    match fill(&mut d, &Ready { handle: "el".into(), x: 0.0, y: 0.0 }, "Archived").await {
+    match fill(&mut d, &Ready { handle: "el".into(), x: 0.0, y: 0.0, as_written: false }, "Archived").await {
         Err(Blocked::Page(msg)) => {
             assert!(msg.contains("is disabled") && msg.contains("Archived"), "{msg}")
         }
@@ -364,7 +364,7 @@ async fn a_page_refusal_during_fill_is_blamed_on_the_page() {
             message: "no such element".into(),
         })
     });
-    match fill(&mut d, &Ready { handle: "el".into(), x: 0.0, y: 0.0 }, "x").await {
+    match fill(&mut d, &Ready { handle: "el".into(), x: 0.0, y: 0.0, as_written: false }, "x").await {
         Err(Blocked::Page(msg)) => {
             assert!(msg.contains("the page refused"), "{msg}");
             assert!(!msg.contains("browser"), "{msg}");
@@ -376,7 +376,7 @@ async fn a_page_refusal_during_fill_is_blamed_on_the_page() {
 #[tokio::test]
 async fn a_dead_browser_during_fill_is_blamed_on_the_browser() {
     let mut d = ScriptedDriver::new(|_, _| Err(CdpError::Closed));
-    match fill(&mut d, &Ready { handle: "el".into(), x: 0.0, y: 0.0 }, "x").await {
+    match fill(&mut d, &Ready { handle: "el".into(), x: 0.0, y: 0.0, as_written: false }, "x").await {
         Err(Blocked::Harness(msg)) => assert!(msg.contains("browser"), "{msg}"),
         other => panic!("expected a harness failure, got {other:?}"),
     }
@@ -397,7 +397,7 @@ async fn nothing_is_typed_when_the_field_lost_the_focus() {
             "Runtime.callFunctionOn" => Ok(json!({ "result": { "value": "text" } })),
             _ => Ok(json!({})),
         });
-        match fill(&mut d, &Ready { handle: "el".into(), x: 0.0, y: 0.0 }, value).await {
+        match fill(&mut d, &Ready { handle: "el".into(), x: 0.0, y: 0.0, as_written: false }, value).await {
             Err(Blocked::Page(msg)) => {
                 assert!(msg.contains("lost focus before it could be typed into"), "{msg}");
                 assert!(!msg.contains('\u{2014}'), "no em dashes in what a person reads: {msg}");
@@ -414,7 +414,7 @@ async fn nothing_is_typed_when_the_field_lost_the_focus() {
 #[tokio::test]
 async fn the_focus_is_checked_on_the_element_just_before_typing() {
     let mut d = field("text");
-    fill(&mut d, &Ready { handle: "el".into(), x: 0.0, y: 0.0 }, "hello").await.ok().unwrap();
+    fill(&mut d, &Ready { handle: "el".into(), x: 0.0, y: 0.0, as_written: false }, "hello").await.ok().unwrap();
     let called: Vec<&str> = d
         .calls_to("Runtime.callFunctionOn")
         .iter()

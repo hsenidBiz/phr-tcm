@@ -4,10 +4,13 @@
 //! drafts works from, so it is the one list of things the tests may delete.
 //! See the design doc, "The record of test-made drafts" (section 3).
 //!
-//! Only the fixture runner adds entries (`record`), and only Clean up
-//! changes a status (`set_status`). Both writers are `pub(crate)`: no tool
-//! and no IPC command can add, edit or remove an entry. `list` is the one
-//! public reader.
+//! Two writers add entries, both `pub(crate)`: the fixture runner
+//! (`record`) and an explore session's own verified creates
+//! (`record_explore`, called only by `autorun::explore`; its entries carry
+//! the fixture `explore` and the session as the run). Only Clean up - the
+//! person's, or an undo of the assistant's own explore session - changes a
+//! status (`set_status`). No tool and no IPC command can add, edit or remove
+//! an entry. `list` is the one public reader.
 //!
 //! An entry holds ids and names only - never a password, a cookie, a host
 //! or a query string.
@@ -91,7 +94,7 @@ pub fn list(root: &Path) -> Vec<TestMade> {
 }
 
 /// Adds `entries` after the ones already recorded. Only the fixture runner
-/// calls this.
+/// calls this; an explore session adds its own through `record_explore`.
 pub(crate) fn record(root: &Path, entries: &[TestMade]) -> Result<(), String> {
     if entries.is_empty() {
         return Ok(());
@@ -102,9 +105,20 @@ pub(crate) fn record(root: &Path, entries: &[TestMade]) -> Result<(), String> {
     write(root, &all)
 }
 
+/// Adds one entry an explore session verified it made (fixture
+/// `cleanup::EXPLORE_MADE`, the session as the run). Only
+/// `autorun::explore` calls this.
+pub(crate) fn record_explore(root: &Path, entry: TestMade) -> Result<(), String> {
+    let _held = lock();
+    let mut all = load(root)?;
+    all.push(entry);
+    write(root, &all)
+}
+
 /// Sets the status of the entry for `kind` `id` in `environment`. `Ok(false)`
 /// when there is no such entry. Only Clean up calls this (`autorun::cleanup`:
-/// a cleanup's delete, and a proof that deleted an entry).
+/// a cleanup's delete, a proof that deleted an entry, and an undo of one
+/// explore session's own verified creates).
 pub(crate) fn set_status(root: &Path, environment: &str, kind: &str, id: &str, status: &str) -> Result<bool, String> {
     let _held = lock();
     let mut all = load(root)?;

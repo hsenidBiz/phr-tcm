@@ -20,7 +20,7 @@ import { plural } from "../../lib/plural";
 import { badgeText, DivergenceRow, needsAttention } from "./DivergenceMark";
 import RunDownloads from "./RunDownloads";
 import { loadSetupView, setupViewKey } from "./setupView";
-import { ClearConfirm, SuspectedDefectBadge } from "./SuspectedDefectMark";
+import { ClearConfirm, ClearedDefectNote, SuspectedDefectBadge } from "./SuspectedDefectMark";
 import { bucketTone, type ResultBucket } from "./verdicts";
 
 /** Every action of a script, the ones nested in a `when_visible` too. */
@@ -272,6 +272,7 @@ function CaseCard({
                     {confirmingClear && <ClearConfirm caseId={c.id} onDone={onClearDone} />}
                   </div>
                 )}
+                {!defect && script.cleared_defect && <ClearedDefectNote cleared={script.cleared_defect} />}
               </div>
 
               <div className="space-y-1">

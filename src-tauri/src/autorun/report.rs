@@ -18,7 +18,7 @@
 
 use super::components::{ran_actions, ComponentFile, Ran};
 use super::replay::{MODULE_STEP, SIGN_IN_STEP};
-use super::divergences::{Divergence, DivergenceStatus, Ruling};
+use super::divergences::{Divergence, DivergenceStatus, RuledBy, Ruling};
 use super::{CaseRecord, CaseScript, LocalRun, ResetRecord, StepRecord};
 use crate::browser::actions::{Action, ActionOutcome, DialogAnswer};
 use crate::html_escape::esc_attr;
@@ -81,7 +81,14 @@ pub fn action_words(action: &Action) -> String {
         Action::Fill { selector, .. } => format!("fill in {}", selector.describe()),
         Action::WaitFor { selector, .. } => format!("wait for {}", selector.describe()),
         Action::CheckText { value } => format!("check the page says \"{value}\""),
+        Action::CheckUrl { equals: Some(want), .. } => {
+            format!("expect the address to be \"{}\"", crate::browser::actions::path_only(want))
+        }
+        Action::CheckUrl { same_as: Some(name), .. } => {
+            format!("expect the address to be the one noted as \"{name}\"")
+        }
         Action::CheckUrl { contains, .. } => format!("check the address contains \"{contains}\""),
+        Action::RememberUrl { name } => format!("note the address as \"{name}\""),
         Action::ExpectVisible { selector, .. } => format!("expect {} to be visible", selector.describe()),
         Action::ExpectHidden { selector, .. } => format!("expect {} to be hidden", selector.describe()),
         Action::ExpectText { selector, matches: Some(p), .. } => {
@@ -199,6 +206,10 @@ pub fn action_words(action: &Action) -> String {
         }
         Action::ExpectPosition { selector, relative_to, relation, .. } => {
             format!("expect {} to be {} {}", selector.describe(), relation.words(), relative_to.describe())
+        }
+        Action::PageUntil { next, until, until_all, max_pages } => {
+            let names: Vec<String> = crate::browser::actions::page_goals(until, until_all).iter().map(|u| u.describe()).collect();
+            format!("page with {} until {} show, at most {max_pages} pages", next.describe(), names.join(" and "))
         }
         Action::ExpectDialog { text, contains, answer, prompt_text, .. } => {
             let said = match (text, contains) {
@@ -602,8 +613,14 @@ fn divergence_words(d: &Divergence) -> String {
         (DivergenceStatus::Ruled, Some(Ruling::Rewrite)) => "ruled: the case is being rewritten",
         (DivergenceStatus::Ruled, _) => "ruled: the case stands",
     };
+    let by = match (d.ruled_by, d.said.as_deref()) {
+        (Some(RuledBy::Assistant), said) => {
+            format!(", ruled by the assistant: the person said \"{}\"", said.unwrap_or(""))
+        }
+        _ => String::new(),
+    };
     format!(
-        "step {}: the case says \"{}\", the app shows \"{}\" ({}, {status})",
+        "step {}: the case says \"{}\", the app shows \"{}\" ({}, {status}{by})",
         d.step,
         d.case_says,
         d.app_shows,

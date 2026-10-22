@@ -34,13 +34,13 @@ use v2_lib::browser::snapshot::DEFAULT_LIMIT;
 use v2_lib::autorun::mapping_summary::{load_summary, summarize, summary_path, MappingSummary};
 use v2_lib::commands::autorun::{busy_browser_sentence, DiscoveryState, GuardOwner, MappingPlace, MappingRun, MappingScreen};
 
-const ORG: &str = "acme";
-const PROJECT: &str = "Web";
+pub(crate) const ORG: &str = "acme";
+pub(crate) const PROJECT: &str = "Web";
 
-struct TempDir(std::path::PathBuf);
+pub(crate) struct TempDir(std::path::PathBuf);
 
 impl TempDir {
-    fn new() -> Self {
+    pub(crate) fn new() -> Self {
         use std::sync::atomic::AtomicU64;
         static N: AtomicU64 = AtomicU64::new(0);
         let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
@@ -49,7 +49,7 @@ impl TempDir {
         std::fs::create_dir_all(&dir).unwrap();
         TempDir(dir)
     }
-    fn path(&self) -> &std::path::Path {
+    pub(crate) fn path(&self) -> &std::path::Path {
         &self.0
     }
 }
@@ -60,7 +60,7 @@ impl Drop for TempDir {
     }
 }
 
-fn ctx() -> BridgeContext {
+pub(crate) fn ctx() -> BridgeContext {
     BridgeContext { org: ORG.into(), project: PROJECT.into(), ..BridgeContext::default() }
 }
 
@@ -76,7 +76,7 @@ fn recipe() -> SignInRecipe {
 
 /// A root holding the project's recipe and the `admin` account (login
 /// `kim`).
-fn root_with_recipe_and_account() -> TempDir {
+pub(crate) fn root_with_recipe_and_account() -> TempDir {
     let dir = TempDir::new();
     save_recipe(dir.path(), ORG, PROJECT, &recipe()).unwrap();
     save_accounts(dir.path(), &[account()]).unwrap();
@@ -86,20 +86,20 @@ fn root_with_recipe_and_account() -> TempDir {
 /// The Auto Run browser as the `_in` functions see it: a driver, its lease,
 /// its signed-in account and the discovery under way. `closed` says
 /// whether the slot closed it; `gone` makes it a browser that has gone.
-struct FakeBrowser {
-    d: ScriptedDriver,
-    lease: Held,
-    account: Option<String>,
-    discovery: Option<DiscoveryState>,
+pub(crate) struct FakeBrowser {
+    pub(crate) d: ScriptedDriver,
+    pub(crate) lease: Held,
+    pub(crate) account: Option<String>,
+    pub(crate) discovery: Option<DiscoveryState>,
     /// The case whose guard it holds and who owns the guard, as the
     /// session keeps them.
-    guarded_case: Option<i32>,
-    guard_owner: Option<GuardOwner>,
-    closed: Arc<AtomicBool>,
-    gone: Arc<AtomicBool>,
+    pub(crate) guarded_case: Option<i32>,
+    pub(crate) guard_owner: Option<GuardOwner>,
+    pub(crate) closed: Arc<AtomicBool>,
+    pub(crate) gone: Arc<AtomicBool>,
     /// The assistant opened it, as `open_for_discovery` does; a test's
     /// slot is the person's unless it says otherwise.
-    assistant: bool,
+    pub(crate) assistant: bool,
 }
 
 impl DiscoveryBrowser for FakeBrowser {
@@ -128,7 +128,7 @@ impl DiscoveryBrowser for FakeBrowser {
 
 /// A browser slot holding `d`, opened for a discovery (no account yet)
 /// when `discovering`, else the person's own browser.
-fn slot(d: ScriptedDriver, discovery: Option<DiscoveryState>) -> (Option<FakeBrowser>, Arc<AtomicBool>) {
+pub(crate) fn slot(d: ScriptedDriver, discovery: Option<DiscoveryState>) -> (Option<FakeBrowser>, Arc<AtomicBool>) {
     let closed = Arc::new(AtomicBool::new(false));
     let gone = Arc::new(AtomicBool::new(false));
     let b = FakeBrowser {
@@ -145,7 +145,7 @@ fn slot(d: ScriptedDriver, discovery: Option<DiscoveryState>) -> (Option<FakeBro
     (Some(b), closed)
 }
 
-fn opened_for_discovery() -> Option<DiscoveryState> {
+pub(crate) fn opened_for_discovery() -> Option<DiscoveryState> {
     Some(DiscoveryState {
         area: None,
         account: None,
@@ -156,10 +156,11 @@ fn opened_for_discovery() -> Option<DiscoveryState> {
         no_save: false,
         call_no_save: false,
         call_case_id: None,
+        explore: None,
     })
 }
 
-fn exploring(area: &str) -> Option<DiscoveryState> {
+pub(crate) fn exploring(area: &str) -> Option<DiscoveryState> {
     Some(DiscoveryState {
         area: Some(area.to_string()),
         account: Some("admin".to_string()),
@@ -170,6 +171,7 @@ fn exploring(area: &str) -> Option<DiscoveryState> {
         no_save: false,
         call_no_save: false,
         call_case_id: None,
+        explore: None,
     })
 }
 
@@ -179,7 +181,7 @@ fn mapping(state: Option<DiscoveryState>, modules: &[&str]) -> Option<DiscoveryS
     state.map(|s| DiscoveryState { mapping: Some(MappingRun::new(&modules)), ..s })
 }
 
-fn mapped_area(root: &std::path::Path, area: &str) -> Option<AreaMap> {
+pub(crate) fn mapped_area(root: &std::path::Path, area: &str) -> Option<AreaMap> {
     load_map(root, ORG, PROJECT).unwrap().areas.into_iter().find(|a| a.area == area)
 }
 
@@ -187,7 +189,7 @@ fn mapped_area(root: &std::path::Path, area: &str) -> Option<AreaMap> {
 /// `/hr/home/index`, and a page with a Name field and a Save button. Its
 /// address always carries a query string, which nothing may keep. `#marker`
 /// is found only when `marker_shows`.
-fn signin_app(marker_shows: bool) -> ScriptedDriver {
+pub(crate) fn signin_app(marker_shows: bool) -> ScriptedDriver {
     let path = Arc::new(Mutex::new("/".to_string()));
     let mut last_css = String::new();
     let mut d = ScriptedDriver::new(move |method, params| {
@@ -248,7 +250,7 @@ fn signin_app(marker_shows: bool) -> ScriptedDriver {
 
 /// A page on which every locator finds one ready element. Once `moves_on`
 /// has been called its address is `after`; before, `/hr/leave/new`.
-fn leave_page(moves_on: &'static str, after: &'static str) -> ScriptedDriver {
+pub(crate) fn leave_page(moves_on: &'static str, after: &'static str) -> ScriptedDriver {
     let page = FakePage::default();
     let moved = AtomicBool::new(false);
     ScriptedDriver::new(move |method, params| {
@@ -264,14 +266,14 @@ fn leave_page(moves_on: &'static str, after: &'static str) -> ScriptedDriver {
     .with_net_record()
 }
 
-fn sent(id: &str, method: &str, url: &str) -> Event {
+pub(crate) fn sent(id: &str, method: &str, url: &str) -> Event {
     Event {
         method: "Network.requestWillBeSent".into(),
         params: json!({ "requestId": id, "request": { "url": url, "method": method } }),
     }
 }
 
-fn parsed(body: &str) -> Value {
+pub(crate) fn parsed(body: &str) -> Value {
     serde_json::from_str(body).unwrap_or_else(|e| panic!("not JSON ({e}): {body}"))
 }
 
@@ -1336,6 +1338,7 @@ async fn a_discovery_page_read_stamps_explored_at_and_the_account_key() {
         no_save: false,
         call_no_save: false,
         call_case_id: None,
+        explore: None,
     };
     let at = discovery_sighting(dir.path(), ORG, PROJECT, Some(&state), None, Some("manager"))
         .expect("a project is chosen, so there is somewhere to file it");

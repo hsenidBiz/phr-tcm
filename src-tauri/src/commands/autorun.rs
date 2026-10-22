@@ -315,14 +315,28 @@ pub struct DiscoveryState {
     /// one the discovery is for: the guard that call puts on is that case's
     /// (`GuardOwner::Call`). Set by every discovery call, for that call only.
     pub call_case_id: Option<i32>,
+    /// Set when this discovery is an explore session: the assistant does a
+    /// plain task with no test case, nothing is filed in the discovery map,
+    /// and its change list is its own file (`autorun::explore`).
+    pub explore: Option<crate::autorun::explore::ExploreRun>,
 }
 
-/// The case a discovery is for, as its start named it, and whether it must
-/// not save (`DiscoveryState::no_save`).
+impl DiscoveryState {
+    /// The id of the explore session this discovery is, once its change
+    /// list file exists.
+    pub fn explore_session(&self) -> Option<&str> {
+        self.explore.as_ref().and_then(|e| e.session.as_deref())
+    }
+}
+
+/// The case a discovery is for, as its start named it, whether it must not
+/// save (`DiscoveryState::no_save`), and whether it is an explore session
+/// (`DiscoveryState::explore`).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct DiscoveryFor {
     pub case_id: Option<i32>,
     pub no_save: bool,
+    pub explore: bool,
 }
 
 /// A mapping run: a discovery that walks the menus of `modules` and saves
@@ -606,6 +620,7 @@ pub(crate) async fn open_for_discovery(
             no_save: no_save.no_save,
             call_no_save: false,
             call_case_id: None,
+            explore: no_save.explore.then(crate::autorun::explore::ExploreRun::default),
         });
     }
     publish_discovery(&slot);
@@ -1468,7 +1483,7 @@ pub async fn reset_in_for_assistant<B: crate::ai_bridge::DiscoveryBrowser>(
     let summary = match ended {
         // Its guard would not lift, so its browser was closed.
         Some(ended) if !ended.kept => {
-            return crate::ai_bridge::ended_answer(crate::ai_bridge::DISCOVERY_ENDED_CLOSED, ended.summary);
+            return crate::ai_bridge::ended_answer(crate::ai_bridge::DISCOVERY_ENDED_CLOSED, ended.summary, ended.explore);
         }
         Some(ended) => Some(ended.summary),
         None => None,
@@ -1740,6 +1755,8 @@ pub async fn close_autorun_browsers() {
     let mut slot = SESSION.lock().await;
     // A mapping run going keeps its summary, as any other ending does.
     crate::ai_bridge::finish_mapping(&mut slot);
+    // An explore session going has its change list closed the same way.
+    crate::ai_bridge::finish_explore(&mut slot);
     let session = slot.take();
     drop(slot);
     // Closing waits for the browser's processes to go: on a blocking
@@ -2668,6 +2685,7 @@ pub fn save_script_from_editor(
         checked: false,
         checks: 0,
         given_up: Vec::new(),
+        cleared_defect: None,
     });
     let CaseScript {
         // The editor's own.
@@ -2697,6 +2715,8 @@ pub fn save_script_from_editor(
         // Stamped below: the person's save is the acceptance of what was given up.
         checks: _,
         given_up: _,
+        // Kept by the store like the mark.
+        cleared_defect: _,
         // The stored script's. Only the assistant writes a setup, so the
         // webview can never change a fixture or write an old one back.
         setup,

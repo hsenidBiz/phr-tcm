@@ -499,10 +499,10 @@ fn text_checks_read_the_element_the_way_auto_run_does() {
     .unwrap();
     // Whitespace collapsed on the wanted side too, compared whole or as a part, case kept.
     assert!(
-        got.contains("await expect.poll(() => cur.locator('#name').first().evaluate(readText), { timeout: 900 }).toBe('Senior Expert');"),
+        got.contains("await expect.poll(async () => asCase(await cur.locator('#name').first().evaluate(readText), await cur.locator('#name').first().evaluate(readWritten), 'Senior Expert', true), { timeout: 900 }).toBe('Senior Expert');"),
         "{got}"
     );
-    assert!(got.contains("await expect.poll(() => cur.locator('#list').first().evaluate(readText), { timeout: 10000 }).toContain('Step 2');"), "{got}");
+    assert!(got.contains("await expect.poll(async () => asCase(await cur.locator('#list').first().evaluate(readText), await cur.locator('#list').first().evaluate(readWritten), 'Step 2', false), { timeout: 10000 }).toContain('Step 2');"), "{got}");
     assert!(!got.contains("toHaveText") && !got.contains("toContainText"), "{got}");
     // The reader is declared once, before the steps.
     assert_eq!(got.matches("const readText = ").count(), 1, "{got}");
@@ -1118,4 +1118,137 @@ fn a_case_that_needs_a_ruling_exports_as_fixme_with_its_reason() {
     assert!(with.contains("#save"), "the body is still written: {with}");
     let without = fx.run().unwrap();
     assert!(!without.contains("test.fixme"), "{without}");
+}
+
+/// A text check passes on the words as written in the page when only the
+/// letter case differs from the drawn ones (`expect::text_as_case`); the
+/// export carries the same rule, once, beside `readText`.
+#[test]
+fn expect_text_exports_the_as_written_rule() {
+    use v2_lib::pw_export::translate::AS_CASE_TS;
+    let got = one_step(json!([{ "kind": "expect_text", "selector": "#d", "equals": "Duration" }])).run().unwrap();
+    assert!(got.contains("const readWritten = ("), "{got}");
+    assert!(got.contains(AS_CASE_TS), "{got}");
+    assert!(got.contains("asCase(await"), "{got}");
+    assert!(got.contains(".toBe('Duration')"), "{got}");
+    assert_eq!(got.matches("const readWritten = ").count(), 1, "{got}");
+    assert_eq!(got.matches("const asCase = ").count(), 1, "{got}");
+    assert!(got.find("const asCase = ").unwrap() < got.find("// 1.").unwrap(), "{got}");
+    // A text check by pattern has no as-written rule.
+    let got = one_step(json!([{ "kind": "expect_text", "selector": "#d", "matches": "^Dur" }])).run().unwrap();
+    assert!(!got.contains("readWritten") && !got.contains("asCase"), "{got}");
+    // Nor does a spec with no text check.
+    let got = one_step(json!([{ "kind": "click", "selector": "#a" }])).run().unwrap();
+    assert!(!got.contains("readWritten") && !got.contains("asCase"), "{got}");
+}
+
+#[test]
+fn the_exported_written_reader_is_the_apps_own() {
+    use v2_lib::browser::expect::WRITTEN_TEXT_JS;
+    use v2_lib::pw_export::translate::read_written_ts;
+    let ts = read_written_ts(0).join("\n");
+    let back = ts
+        .replacen("const readWritten = (e: Element) => (function (this: HTMLElement) {", "function() {", 1)
+        .replacen("}).call(e as HTMLElement);", "}", 1);
+    assert_eq!(back, WRITTEN_TEXT_JS.replace("\r\n", "\n"));
+}
+
+#[test]
+fn the_address_checks_export_with_the_same_rules() {
+    let got = one_step(json!([
+        { "kind": "check_url", "equals": "/hr/cycles" },
+        { "kind": "check_url", "equals": "https://app.example/hr/cycles?id=4#top", "timeout_ms": 4000 },
+        { "kind": "remember_url", "as": "before" },
+        { "kind": "check_url", "same_as": "before" }
+    ]))
+    .run()
+    .unwrap();
+    // A path compares the path and query; a full address keeps its origin
+    // and is never turned into a path.
+    assert!(got.contains("return u.pathname + u.search; }, { timeout: 10000 }).toBe('/hr/cycles');"), "{got}");
+    assert!(got.contains("return u.origin + u.pathname + u.search + u.hash; }, { timeout: 4000 }).toBe('https://app.example/hr/cycles?id=4#top');"), "{got}");
+    assert_eq!(got.matches("const notedUrls: Record<string, string> = {};").count(), 1, "{got}");
+    assert!(got.contains("notedUrls['before'] = cur.url();"), "{got}");
+    assert!(got.contains("await expect.poll(() => cur.url(), { timeout: 10000 }).toBe(notedUrls['before']);"), "{got}");
+    // Only a script that notes an address carries the notebook.
+    let plain = one_step(json!([{ "kind": "check_url", "contains": "/x" }])).run().unwrap();
+    assert!(!plain.contains("notedUrls"), "{plain}");
+}
+
+/// The export reduces `cur.url()` the way its emitted script does (origin if
+/// the rule names one, path, query, and the fragment if the rule names one)
+/// and compares it with `UrlRule::expected`: that must say what the app's
+/// `url_equals` says.
+#[test]
+fn the_exported_address_check_agrees_with_the_apps() {
+    use v2_lib::browser::actions::{url_equals, url_rule};
+    let exported = |href: &str, want: &str| {
+        let (rule, seen) = (url_rule(want), url_rule(href));
+        let reduced = format!(
+            "{}{}{}",
+            if rule.origin.is_some() { seen.origin.clone().unwrap_or_default() } else { String::new() },
+            seen.path_query,
+            if rule.fragment.is_some() { seen.fragment.clone().unwrap_or_default() } else { String::new() },
+        );
+        reduced == rule.expected()
+    };
+    for (href, want, agree) in [
+        ("https://app.example/", "https://app.example", true),
+        ("https://APP.example:443/hr", "https://app.example/hr", true),
+        ("https://app.example/hr?id=4#frag", "  /hr?id=4  ", true),
+        ("https://app.example/hr", "https://other.example/hr", false),
+        ("http://app.example/hr", "https://app.example/hr", false),
+        ("https://app.example/hr?id=5", "/hr?id=4", false),
+        ("https://app.example/hr#/a", "/hr#/b", false),
+    ] {
+        assert_eq!(url_equals(href, want), agree, "app: {href} vs {want:?}");
+        assert_eq!(exported(href, want), agree, "export: {href} vs {want:?}");
+    }
+    // The export keeps a full address as a full address.
+    let got = one_step(json!([{ "kind": "check_url", "equals": "https://app.example" }])).run().unwrap();
+    assert!(got.contains("return u.origin + u.pathname + u.search; }") && got.contains(".toBe('https://app.example/');"), "{got}");
+    let got = one_step(json!([{ "kind": "check_url", "equals": " /hr/cycles " }])).run().unwrap();
+    assert!(got.contains(".toBe('/hr/cycles');"), "{got}");
+}
+
+#[test]
+fn an_exact_address_off_the_projects_origins_cannot_be_exported() {
+    let err = one_step(json!([{ "kind": "check_url", "equals": "https://elsewhere.example/x" }])).run().unwrap_err();
+    assert!(err.contains("check_url"), "{err}");
+}
+
+
+#[test]
+fn page_until_exports_the_same_walk() {
+    let got = one_step(json!([
+        { "kind": "page_until", "next": { "role": "button", "name": "Next" },
+          "until_all": [{ "text": "Published" }, [{ "css": ".card" }, { "text": "Unpublished" }]], "max_pages": 40 }
+    ]))
+    .run()
+    .unwrap();
+    for want in [
+        "const until = [",
+        "const names = [",
+        "for (let p = 1; ; p++) {",
+        "if (p >= 40) throw new Error('walked '",
+        "(await l.count()) > 0",
+        "isEnabled()",
+        "isVisible()",
+        "classList.contains('disabled')",
+        "const before = await signature();",
+        "await next.click();",
+        "await expect.poll(signature, { timeout: 15000 }).not.toBe(before)",
+        "Next did not turn the page (page ' + p + ').",
+    ] {
+        assert!(got.contains(want), "missing {want}\n{got}");
+    }
+    assert!(!got.contains("waitForTimeout"), "a fixed wait is left:\n{got}");
+    assert!(!got.contains("networkidle"), "the page turn waits on networkidle, which an in-page click has already reached:\n{got}");
+    // One `until` is one target; a chain is a list of locator objects.
+    let one = one_step(json!([
+        { "kind": "page_until", "next": "#n", "until": [{ "css": ".card" }, { "text": "Unpublished" }], "max_pages": 3 }
+    ]))
+    .run()
+    .unwrap();
+    assert!(one.contains("const until = [cur.locator('.card').filter({ visible: true }).getByText('Unpublished').filter({ visible: true })];"), "{one}");
 }

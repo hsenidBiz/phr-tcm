@@ -37,6 +37,9 @@ pub enum Tone {
     Create,
     Edit,
     Delete,
+    /// The stage's templates only look something up: muted, since nothing
+    /// changes.
+    Read,
     /// No template performs it yet, or its templates disagree.
     Open,
 }
@@ -48,6 +51,7 @@ impl Tone {
             Tone::Create => "--success",
             Tone::Edit => "--warning",
             Tone::Delete => "--danger",
+            Tone::Read => "--muted",
             Tone::Open => "--accent",
         }
     }
@@ -57,6 +61,7 @@ impl Tone {
             Tone::Create => "create",
             Tone::Edit => "edit",
             Tone::Delete => "delete",
+            Tone::Read => "read",
             Tone::Open => "open",
         }
     }
@@ -75,6 +80,7 @@ pub fn tone_of(templates: &[&ApiTemplate]) -> Tone {
         Effect::Create => Tone::Create,
         Effect::Edit => Tone::Edit,
         Effect::Delete => Tone::Delete,
+        Effect::Read => Tone::Read,
     }
 }
 
@@ -149,6 +155,7 @@ fn effect_word(e: &Effect) -> &'static str {
         Effect::Create => "create",
         Effect::Edit => "edit",
         Effect::Delete => "delete",
+        Effect::Read => "read",
     }
 }
 
@@ -276,6 +283,7 @@ pub fn page_html(flow: &Flow, templates: &[SavedTemplate], palette: &PagePalette
          <p class='subtitle'>{module} \u{b7} Tracks {subject} \u{b7} {stages} stage{s}</p>\
          <ul class='key' aria-label='Colours'>\
          <li class='create'>Create</li><li class='edit'>Edit</li><li class='delete'>Delete</li>\
+         <li class='read'>Read</li>\
          <li class='open'>No template yet, or mixed</li></ul></header>\
          <main class='viewport'><div id='canvas' class='canvas'>\
          <svg aria-hidden='true'><defs>{defs}</defs>{paths}</svg>\
@@ -321,7 +329,7 @@ body{margin:0;background:var(--bg);color:var(--text);font:14px/1.45 system-ui,-a
 .key{display:flex;flex-wrap:wrap;gap:8px 18px;margin:0;padding:0;list-style:none;color:var(--muted);font-size:12px}
 .key li{display:flex;align-items:center;gap:6px}
 .key li::before{content:'';width:22px;height:6px;border-radius:3px;background:var(--k)}
-.key .create{--k:var(--success)}.key .edit{--k:var(--warning)}.key .delete{--k:var(--danger)}
+.key .create{--k:var(--success)}.key .edit{--k:var(--warning)}.key .delete{--k:var(--danger)}.key .read{--k:var(--muted)}
 .key .open::before{background:transparent;border:2px solid var(--accent);height:10px;width:18px}
 .viewport{overflow:auto;padding:28px 40px 48px}
 .canvas svg{position:absolute;inset:0;overflow:visible;pointer-events:none}
@@ -331,7 +339,7 @@ body{margin:0;background:var(--bg);color:var(--text);font:14px/1.45 system-ui,-a
 .stage{position:relative;z-index:1;display:flex;flex-direction:column;padding:12px 14px;border-radius:14px;color:#fff;
  background:linear-gradient(135deg,var(--tone),color-mix(in srgb,var(--tone) 72%,#000));
  box-shadow:0 10px 28px color-mix(in srgb,var(--tone) 35%,transparent),0 2px 6px color-mix(in srgb,#000 25%,transparent)}
-.stage.open,.stage.optional{background:color-mix(in srgb,var(--tone) 10%,var(--surface));color:var(--text);border:2.5px solid var(--tone);box-shadow:none}
+.stage.open,.stage.optional,.stage.read{background:color-mix(in srgb,var(--tone) 10%,var(--surface));color:var(--text);border:2.5px solid var(--tone);box-shadow:none}
 .stage.optional{border-style:dashed}
 .stage h2{margin:0;font-size:14px;font-weight:800;line-height:1.3;letter-spacing:.06em;text-transform:uppercase;overflow-wrap:anywhere}
 .under{margin:2px 0 8px;font-size:11px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;opacity:.85}
@@ -339,7 +347,7 @@ body{margin:0;background:var(--bg);color:var(--text);font:14px/1.45 system-ui,-a
 .stage li{display:flex;align-items:flex-start;gap:8px;padding:3px 0;font-size:12px;line-height:1.35}
 .stage li .name{flex:1;min-width:0;overflow-wrap:anywhere}
 .stage li .fx{flex:none;margin-top:1px;padding:1px 7px;border-radius:999px;font-size:10px;font-weight:700;text-transform:uppercase;background:color-mix(in srgb,#000 22%,transparent)}
-.stage.open li .fx,.stage.optional li .fx{background:color-mix(in srgb,var(--tone) 18%,transparent);color:var(--text)}
+.stage.open li .fx,.stage.optional li .fx,.stage.read li .fx{background:color-mix(in srgb,var(--tone) 18%,transparent);color:var(--text)}
 .stage li.none{opacity:.8;font-style:italic}
 .sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
 @media (prefers-reduced-motion:no-preference){

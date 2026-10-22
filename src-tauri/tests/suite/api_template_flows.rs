@@ -880,6 +880,18 @@ mod page_tests {
     }
 
     #[test]
+    fn a_read_stage_is_drawn_muted() {
+        let read = ApiTemplate { effect: Effect::Read, ..crate::common::saved_on_stage("x", "X", "rules") };
+        assert_eq!(tone_of(&[&read]), Tone::Read);
+        assert_eq!(Tone::Read.var(), "--muted");
+        let templates = [on("pms-look-up", "Look up the rules", Effect::Read, "rules")];
+        let html = page_html(&flow(), &templates, &PagePalette::default());
+        assert!(html.contains("class='stage read' data-stage='rules'"), "{html}");
+        assert!(html.contains("--tone:var(--muted)"), "{html}");
+        assert!(html.contains("class='read'"), "the key names it: {html}");
+    }
+
+    #[test]
     fn the_page_colours_each_stage_and_blends_each_connector() {
         let templates = [
             on("pms-create-cycle", "Create a cycle", Effect::Create, "setup"),

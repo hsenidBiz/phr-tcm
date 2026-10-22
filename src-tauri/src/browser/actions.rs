@@ -47,13 +47,26 @@ pub enum Action {
     Fill { selector: Target, value: String },
     WaitFor { selector: Target, timeout_ms: u32 },
     CheckText { value: String },
-    /// The address holds `contains`. Looked at again until it does, like
-    /// every `expect_` check: a page that is still redirecting is not a
-    /// failure yet.
+    /// The address holds `contains`, or is exactly `equals` (a value
+    /// starting with / is compared with the path, query and fragment), or is
+    /// the one `remember_url` noted as `same_as` - exactly one of the three.
+    /// Looked at again until it does, like every `expect_` check: a page
+    /// that is still redirecting is not a failure yet.
     CheckUrl {
+        #[serde(default, skip_serializing_if = "String::is_empty")]
         contains: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
+        equals: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        same_as: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         timeout_ms: Option<u32>,
+    },
+    /// Note the address the page is on now as `name`, for a later
+    /// `check_url` `same_as` in the same case.
+    RememberUrl {
+        #[serde(rename = "as")]
+        name: String,
     },
     ExpectVisible {
         selector: Target,
@@ -452,7 +465,42 @@ pub enum Action {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         timeout_ms: Option<u32>,
     },
+    /// Click `next` page by page until the target has been seen: `until`
+    /// is ONE target (a locator, or a chain written as a list of locator
+    /// objects, outermost first), `until_all` is several, each seen on any
+    /// page. Exactly one of the two is given.
+    PageUntil {
+        next: Target,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        until: Option<Target>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        until_all: Option<Vec<Target>>,
+        max_pages: u32,
+    },
 }
+
+/// The targets a `page_until` walks to, in order: its one `until`, or each
+/// of its `until_all`.
+pub fn page_goals<'a>(until: &'a Option<Target>, until_all: &'a Option<Vec<Target>>) -> Vec<&'a Target> {
+    until.iter().chain(until_all.iter().flatten()).collect()
+}
+
+fn page_goals_mut<'a>(until: &'a mut Option<Target>, until_all: &'a mut Option<Vec<Target>>) -> Vec<&'a mut Target> {
+    until.iter_mut().chain(until_all.iter_mut().flatten()).collect()
+}
+
+/// The most pages `page_until` may walk.
+pub const PAGE_UNTIL_MAX_PAGES: u32 = 100;
+/// The most `until` locators `page_until` may wait for.
+pub const PAGE_UNTIL_MAX_TARGETS: usize = 10;
+/// `page_until` with `max_pages` outside 1 to 100.
+pub const PAGE_UNTIL_PAGES: &str = "page_until needs \"max_pages\" from 1 to 100";
+/// `page_until` with an empty `until_all`.
+pub const PAGE_UNTIL_NONE: &str = "page_until needs at least one target in \"until_all\"";
+/// `page_until` with more than ten `until_all` targets.
+pub const PAGE_UNTIL_MANY: &str = "page_until takes at most 10 targets in \"until_all\"";
+/// `page_until` with both `until` and `until_all`, or neither.
+pub const PAGE_UNTIL_ONE_OF: &str = "page_until takes \"until\" (one target; a chain is a list of locator objects, outermost first) or \"until_all\" (a list of targets), not both and not neither";
 
 /// How an `expect_dialog` answers: OK, or Cancel.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, specta::Type)]
@@ -504,6 +552,14 @@ fn check_tab_name(kind: &str, name: &str) -> Result<(), String> {
     }
     let shown: String = name.chars().take(40).collect();
     Err(format!("{kind}: {TAB_NAME_RULE}, not \"{shown}\""))
+}
+
+fn check_note_name(kind: &str, name: &str) -> Result<(), String> {
+    if valid_tab_name(name) {
+        return Ok(());
+    }
+    let shown: String = name.chars().take(40).collect();
+    Err(format!("{kind}: {NOTE_NAME_RULE}, not \"{shown}\""))
 }
 
 fn check_tab_wait(kind: &str, within_ms: &Option<u32>) -> Result<(), String> {
@@ -1070,6 +1126,19 @@ pub const ALLOWED_ORIGINS: &str = "this project's allowed origins";
 pub const PAGE_LACKS: &str = "page does NOT contain ";
 /// `check_url` - followed by the address actually showing.
 pub const URL_IS: &str = "url is ";
+/// A `check_url` that names two of `contains`, `equals` and `same_as`.
+pub const URL_ONE_OF: &str = "check_url takes one of \"contains\", \"equals\" or \"same_as\", not two";
+/// The rule a noted address's name follows.
+pub const NOTE_NAME_RULE: &str = "a noted address's name is 1 to 30 letters, digits, - or _";
+/// A `remember_url` on a browser that keeps no notebook.
+pub const NO_NOTEBOOK: &str = "this browser cannot note an address";
+
+/// A `check_url` `same_as` with nothing noted under `name`.
+pub fn not_noted(name: &str) -> String {
+    format!(
+        "no address was noted as \"{name}\" in this case: a remember_url with \"as\": \"{name}\" must come before this check"
+    )
+}
 /// What an upload's click opened instead of a file chooser.
 pub const FILE_CHOOSER: &str = "file chooser";
 /// Appended, in run files from before `dialogs`, when a page raised
@@ -1343,13 +1412,43 @@ impl Action {
                 }
                 Ok(())
             }
+            Action::PageUntil { next, until, until_all, max_pages } => {
+                if !(1..=PAGE_UNTIL_MAX_PAGES).contains(max_pages) {
+                    return Err(PAGE_UNTIL_PAGES.to_string());
+                }
+                if until.is_some() == until_all.is_some() {
+                    return Err(PAGE_UNTIL_ONE_OF.to_string());
+                }
+                match until_all.as_ref().map(Vec::len) {
+                    Some(0) => return Err(PAGE_UNTIL_NONE.to_string()),
+                    Some(n) if n > PAGE_UNTIL_MAX_TARGETS => return Err(PAGE_UNTIL_MANY.to_string()),
+                    _ => {}
+                }
+                next.validate()?;
+                page_goals(until, until_all)
+                    .into_iter()
+                    .try_for_each(|u| u.validate().map_err(|why| format!("page_until until: {why}")))
+            }
             Action::CheckText { value } if value.trim().is_empty() => {
                 Err("check_text has an empty value".to_string())
             }
-            Action::CheckUrl { contains, .. } if contains.trim().is_empty() => {
-                Err("check_url has an empty value".to_string())
+            Action::CheckUrl { contains, equals, same_as, .. } => {
+                let given = usize::from(!contains.trim().is_empty())
+                    + usize::from(equals.is_some())
+                    + usize::from(same_as.is_some());
+                if given > 1 {
+                    return Err(URL_ONE_OF.to_string());
+                }
+                if given == 0 || equals.as_deref().is_some_and(|e| e.trim().is_empty()) {
+                    return Err("check_url has an empty value".to_string());
+                }
+                match same_as {
+                    Some(name) => check_note_name("check_url same_as", name),
+                    None => Ok(()),
+                }
             }
-            Action::CheckText { .. } | Action::CheckUrl { .. } => Ok(()),
+            Action::RememberUrl { name } => check_note_name("remember_url", name),
+            Action::CheckText { .. } => Ok(()),
             Action::SignIn { account } if !crate::autorun::accounts::valid_key(account) => {
                 Err(format!("sign_in names \"{account}\", which is not a usable account key"))
             }
@@ -1568,6 +1667,7 @@ impl Action {
             Action::ExpectEach { selector, child, .. } => std::iter::once(selector).chain(child.as_ref()).collect(),
             Action::ExpectOrder { selector, .. } => vec![selector],
             Action::ExpectPosition { selector, relative_to, .. } => vec![selector, relative_to],
+            Action::PageUntil { next, until, until_all, .. } => std::iter::once(next).chain(page_goals(until, until_all)).collect(),
             Action::WhenVisible { selector, then, .. } | Action::RepeatWhileVisible { selector, then, .. } => {
                 std::iter::once(selector).chain(then.iter().flat_map(Action::targets)).collect()
             }
@@ -1580,6 +1680,7 @@ impl Action {
             | Action::UseComponent { .. }
             | Action::CheckText { .. }
             | Action::CheckUrl { .. }
+            | Action::RememberUrl { .. }
             | Action::SignIn { .. }
             | Action::ExpectResponse { .. }
             | Action::ApiRequest { .. }
@@ -1619,6 +1720,9 @@ impl Action {
             Action::ExpectEach { selector, child, .. } => std::iter::once(selector).chain(child.as_mut()).collect(),
             Action::ExpectOrder { selector, .. } => vec![selector],
             Action::ExpectPosition { selector, relative_to, .. } => vec![selector, relative_to],
+            Action::PageUntil { next, until, until_all, .. } => {
+                std::iter::once(next).chain(page_goals_mut(until, until_all)).collect()
+            }
             Action::WhenVisible { selector, then, .. } | Action::RepeatWhileVisible { selector, then, .. } => {
                 std::iter::once(selector).chain(then.iter_mut().flat_map(Action::targets_mut)).collect()
             }
@@ -1631,6 +1735,7 @@ impl Action {
             | Action::UseComponent { .. }
             | Action::CheckText { .. }
             | Action::CheckUrl { .. }
+            | Action::RememberUrl { .. }
             | Action::SignIn { .. }
             | Action::ExpectResponse { .. }
             | Action::ApiRequest { .. }
@@ -1696,6 +1801,7 @@ impl Action {
                 | Action::ExpectEach { .. }
                 | Action::ExpectOrder { .. }
                 | Action::ExpectPosition { .. }
+                | Action::PageUntil { .. }
         )
     }
 }
@@ -1805,7 +1911,7 @@ pub const CHECK_TEXT_JS: &str = r#"function(want) {
 /// argument and never concatenated into this source.
 pub const RESOLVE_URL_JS: &str = r#"function(rel) { return new URL(rel, location.href).href; }"#;
 
-async fn point_and_pause<D: Driver>(
+pub(crate) async fn point_and_pause<D: Driver>(
     d: &mut D,
     ready: &input::Ready,
     timing: &Timing,
@@ -2018,23 +2124,165 @@ pub async fn settle<D: Driver>(d: &mut D, timing: &Timing) -> Duration {
     began.elapsed()
 }
 
-/// `check_url`: does the address hold `contains`? Looked at again until it
-/// does or time runs out, like every `expect_` check - a page still
+/// What `check_url` waits for the address to be.
+#[derive(Debug, Clone, Copy)]
+pub enum UrlWant<'a> {
+    /// The address holds these words.
+    Contains(&'a str),
+    /// The address is exactly this (`url_equals`).
+    Equals(&'a str),
+    /// The address is the one noted as `name`, which was `noted`.
+    SameAs { name: &'a str, noted: &'a str },
+}
+
+impl UrlWant<'_> {
+    fn holds(&self, href: &str) -> bool {
+        match self {
+            UrlWant::Contains(c) => href.contains(c),
+            UrlWant::Equals(e) => url_equals(href, e),
+            UrlWant::SameAs { noted, .. } => href == *noted,
+        }
+    }
+
+    /// What a failure says: the address showing, and what it was not.
+    fn missed(&self, href: &str) -> String {
+        match self {
+            UrlWant::Contains(_) => format!("{URL_IS}{href}"),
+            UrlWant::Equals(e) => format!("{URL_IS}{href}, not \"{e}\""),
+            UrlWant::SameAs { name, noted } => {
+                format!("{URL_IS}{href}, not the address noted as \"{name}\" ({})", path_only(noted))
+            }
+        }
+    }
+}
+
+/// What `check_url` `equals` asks of an address, read from the trimmed
+/// `want` (`url_rule`): the one rule the app and the Playwright export share.
+///
+/// - A full address (`scheme://host/...`) must have the same origin (scheme,
+///   host lowercased, no default port), path (an empty one is `/`) and query.
+/// - A path (starting with `/`) must have the same path and query as the
+///   current address, whatever its origin.
+/// - A fragment is compared only when `want` names one (a page that routes
+///   by `#/...` can still be checked).
+/// - Anything else is compared as the whole trimmed string.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UrlRule {
+    /// The origin to match, for a full address.
+    pub origin: Option<String>,
+    /// Path and query, `?` included when there is a query.
+    pub path_query: String,
+    /// The fragment to match, `#` included, when `want` names one.
+    pub fragment: Option<String>,
+    /// `want` was neither a full address nor a path: compare it whole.
+    pub whole: bool,
+}
+
+/// An address read in parts: origin (None for a path), path, query without
+/// its `?`, fragment without its `#`.
+fn address_parts(address: &str) -> Option<(Option<String>, String, String, String)> {
+    let address = address.trim();
+    let (rest, fragment) = match address.find('#') {
+        Some(i) => (&address[..i], &address[i + 1..]),
+        None => (address, ""),
+    };
+    let (rest, query) = match rest.find('?') {
+        Some(i) => (&rest[..i], &rest[i + 1..]),
+        None => (rest, ""),
+    };
+    if let Some(i) = rest.find("://") {
+        let scheme = rest[..i].to_ascii_lowercase();
+        if scheme.is_empty() || !scheme.chars().all(|c| c.is_ascii_alphanumeric() || c == '+' || c == '-' || c == '.') {
+            return None;
+        }
+        let after = &rest[i + 3..];
+        let (authority, path) = match after.find('/') {
+            Some(j) => (&after[..j], after[j..].to_string()),
+            None => (after, "/".to_string()),
+        };
+        let mut host = authority.to_ascii_lowercase();
+        let default_port = match scheme.as_str() {
+            "http" => ":80",
+            "https" => ":443",
+            _ => "",
+        };
+        if !default_port.is_empty() && host.ends_with(default_port) {
+            host.truncate(host.len() - default_port.len());
+        }
+        return Some((Some(format!("{scheme}://{host}")), path, query.to_string(), fragment.to_string()));
+    }
+    if rest.starts_with('/') {
+        return Some((None, rest.to_string(), query.to_string(), fragment.to_string()));
+    }
+    None
+}
+
+fn path_and_query(path: &str, query: &str) -> String {
+    if query.is_empty() {
+        path.to_string()
+    } else {
+        format!("{path}?{query}")
+    }
+}
+
+/// The rule a `check_url` `equals` of `want` applies.
+pub fn url_rule(want: &str) -> UrlRule {
+    let want = want.trim();
+    match address_parts(want) {
+        Some((origin, path, query, fragment)) => UrlRule {
+            origin,
+            path_query: path_and_query(&path, &query),
+            fragment: (!fragment.is_empty()).then(|| format!("#{fragment}")),
+            whole: false,
+        },
+        None => UrlRule { origin: None, path_query: want.to_string(), fragment: None, whole: true },
+    }
+}
+
+impl UrlRule {
+    /// The address as a page reads it once reduced to what the rule
+    /// compares: origin (if any), path, query, and the fragment (if named).
+    /// What the export's `expect.poll` produces from `cur.url()` is
+    /// compared with exactly this.
+    pub fn expected(&self) -> String {
+        format!("{}{}{}", self.origin.as_deref().unwrap_or(""), self.path_query, self.fragment.as_deref().unwrap_or(""))
+    }
+}
+
+/// Is the address `href` the one `want` names (`UrlRule`)? Both sides are
+/// trimmed.
+pub fn url_equals(href: &str, want: &str) -> bool {
+    let rule = url_rule(want);
+    if rule.whole {
+        return href.trim() == rule.path_query;
+    }
+    let Some((origin, path, query, fragment)) = address_parts(href) else { return false };
+    if rule.origin.is_some() && origin != rule.origin {
+        return false;
+    }
+    if path_and_query(&path, &query) != rule.path_query {
+        return false;
+    }
+    rule.fragment.as_ref().is_none_or(|f| *f == format!("#{fragment}"))
+}
+
+/// `check_url`: does the address hold what `want` names? Looked at again
+/// until it does or time runs out, like every `expect_` check - a page still
 /// redirecting is not a failure yet. The deadline is cleared on every way
 /// out, each look releases what it held, a transient error counts as a
 /// look, and a call the browser did not answer keeps going until the
 /// deadline decides.
-pub async fn check_url<D: Driver>(d: &mut D, contains: &str, timeout_ms: u64, poll_ms: u64) -> ActionOutcome {
+pub async fn check_url<D: Driver>(d: &mut D, want: UrlWant<'_>, timeout_ms: u64, poll_ms: u64) -> ActionOutcome {
     let deadline = Instant::now() + Duration::from_millis(timeout_ms);
     d.set_deadline(Some(deadline));
-    let out = keep_checking_url(d, contains, timeout_ms, poll_ms, deadline).await;
+    let out = keep_checking_url(d, want, timeout_ms, poll_ms, deadline).await;
     d.set_deadline(None);
     out
 }
 
 async fn keep_checking_url<D: Driver>(
     d: &mut D,
-    contains: &str,
+    want: UrlWant<'_>,
     timeout_ms: u64,
     poll_ms: u64,
     deadline: Instant,
@@ -2049,7 +2297,7 @@ async fn keep_checking_url<D: Driver>(
         match page::eval_value(d, "location.href").await {
             Ok(v) => {
                 let href = v.as_str().unwrap_or("").to_string();
-                if href.contains(contains) {
+                if want.holds(&href) {
                     return ActionOutcome::passed(format!("{URL_IS}{href}"));
                 }
                 last = Some(href);
@@ -2060,12 +2308,42 @@ async fn keep_checking_url<D: Driver>(
         }
         if Instant::now() >= deadline {
             return match (last, refused) {
-                (Some(href), _) => ActionOutcome::failed(format!("{URL_IS}{href}")),
+                (Some(href), _) => ActionOutcome::failed(want.missed(&href)),
                 (None, Some(why)) => why,
                 (None, None) => harness_timeout(timeout_ms, "the page address"),
             };
         }
         d.idle(Duration::from_millis(poll_ms)).await;
+    }
+}
+
+/// `remember_url`: note the address the page is on now as `name`.
+async fn remember_url<D: Driver>(d: &mut D, name: &str) -> ActionOutcome {
+    if d.noted_addresses().is_none() {
+        return ActionOutcome::failed(NO_NOTEBOOK.to_string());
+    }
+    page::release(d).await;
+    let href = match page::eval_value(d, "location.href").await {
+        Ok(v) => v.as_str().unwrap_or("").to_string(),
+        Err(e) => return failed_by(e),
+    };
+    let shown = path_only(&href);
+    match d.noted_addresses() {
+        Some(book) => {
+            book.insert(name.to_string(), href);
+            ActionOutcome::passed(format!("noted the address as \"{name}\": {shown}"))
+        }
+        None => ActionOutcome::failed(NO_NOTEBOOK.to_string()),
+    }
+}
+
+/// What an action's outcome adds when its locator found the element by the
+/// text as written in the page (CSS draws it in other capitals).
+fn written_note(ready: &input::Ready) -> String {
+    if ready.as_written {
+        format!(" ({})", expect::MATCHED_AS_WRITTEN)
+    } else {
+        String::new()
     }
 }
 
@@ -2082,7 +2360,7 @@ async fn run<D: Driver>(d: &mut D, action: &Action, timing: &Timing, policy: &Po
                 return failed_by(e);
             }
             match input::click(d, &ready).await {
-                Ok(()) => ActionOutcome::passed(format!("clicked {}", selector.describe())),
+                Ok(()) => ActionOutcome::passed(format!("clicked {}{}", selector.describe(), written_note(&ready))),
                 Err(b) => blocked(b),
             }
         }
@@ -2096,7 +2374,7 @@ async fn run<D: Driver>(d: &mut D, action: &Action, timing: &Timing, policy: &Po
                 return failed_by(e);
             }
             match input::fill(d, &ready, value).await {
-                Ok(()) => ActionOutcome::passed(format!("filled {}", selector.describe())),
+                Ok(()) => ActionOutcome::passed(format!("filled {}{}", selector.describe(), written_note(&ready))),
                 Err(b) => blocked(b),
             }
         }
@@ -2114,9 +2392,23 @@ async fn run<D: Driver>(d: &mut D, action: &Action, timing: &Timing, policy: &Po
                 Err(e) => failed_by(e),
             }
         }
-        Action::CheckUrl { contains, timeout_ms } => {
-            check_url(d, contains, wait(timeout_ms, timing), timing.poll_ms).await
+        Action::CheckUrl { contains, equals, same_as, timeout_ms } => {
+            let within = wait(timeout_ms, timing);
+            if let Some(want) = equals {
+                return check_url(d, UrlWant::Equals(want), within, timing.poll_ms).await;
+            }
+            if let Some(name) = same_as {
+                let noted = d.noted_addresses().and_then(|book| book.get(name).cloned());
+                return match noted {
+                    Some(noted) => {
+                        check_url(d, UrlWant::SameAs { name, noted: &noted }, within, timing.poll_ms).await
+                    }
+                    None => ActionOutcome::failed(not_noted(name)),
+                };
+            }
+            check_url(d, UrlWant::Contains(contains), within, timing.poll_ms).await
         }
+        Action::RememberUrl { name } => remember_url(d, name).await,
         Action::ExpectVisible { selector, timeout_ms } => {
             expect::expect(d, selector, Check::Visible, wait(timeout_ms, timing), timing.poll_ms).await
         }
@@ -2247,6 +2539,9 @@ async fn run<D: Driver>(d: &mut D, action: &Action, timing: &Timing, policy: &Po
         Action::ExpectPosition { selector, relative_to, relation, timeout_ms } => {
             let check = Check::Position { relative_to, relation: *relation };
             expect::expect(d, selector, check, wait(timeout_ms, timing), timing.poll_ms).await
+        }
+        Action::PageUntil { next, until, until_all, max_pages } => {
+            super::page_until::page_until(d, next, &page_goals(until, until_all), *max_pages, timing).await
         }
         Action::ExpectRowCount { table, equals, at_least, at_most, timeout_ms } => match table::row_count(*equals, *at_least, *at_most) {
             Ok(want) => table::expect_table(d, table, table::TableCheck::Count(want), wait(timeout_ms, timing), timing.poll_ms).await,

@@ -287,6 +287,13 @@ pub fn name_matches(got: &str, want: &str, exact: bool) -> bool {
     }
 }
 
+/// Both collapsed (`collapse`): not equal, but equal once lowercased. A name
+/// the runner would take as the same words in other capitals.
+pub fn differs_only_in_case(got: &str, want: &str) -> bool {
+    let (got, want) = (collapse(got), collapse(want));
+    got != want && got.to_lowercase() == want.to_lowercase()
+}
+
 /// `this` is the root. Arguments: selector, visibleOnly. What counts as
 /// seen is `VISIBLE_JS`'s rule.
 pub const CSS_JS: &str = concat!(
@@ -318,8 +325,9 @@ pub const TEXT_JS: &str = concat!(
   const hit = (e) => {
     if (!isButtonInput(e) && !norm(e.textContent).toLowerCase().includes(lower)) return false;
     const t = textOf(e);
-    return exact ? t === needle : t.toLowerCase().includes(lower);
+    return exact ? (t === needle || (norm(e.textContent) === needle && t.toLowerCase() === lower)) : t.toLowerCase().includes(lower);
   };
+  const writtenOnly = (e) => exact && !isButtonInput(e) && textOf(e) !== needle;
   const seen = (e) => !visibleOnly || isSeen(e);
   const skip = /^(SCRIPT|STYLE|HEAD|HTML|BODY|NOSCRIPT|TEMPLATE)$/;
   const all = Array.from(this.querySelectorAll('*'))
@@ -329,9 +337,15 @@ pub const TEXT_JS: &str = concat!(
   for (const e of all) {
     for (let p = e.parentElement; p; p = p.parentElement) if (matched.has(p)) parents.add(p);
   }
-  return all.filter((e) => !parents.has(e) && seen(e));
+  const kept = all.filter((e) => !parents.has(e) && seen(e));
+  kept.asWritten = kept.some(writtenOnly);
+  return kept;
 }"#
 );
+
+/// The property `TEXT_JS` sets on the array it returns: some element in it
+/// was found by its text as written in the page, not as drawn.
+pub const AS_WRITTEN_FLAG: &str = "asWritten";
 
 /// The selector strings scripts have always used: CSS (first match), or
 /// `text=words` (last match). No visibility filter, exactly as before.
@@ -396,50 +410,78 @@ async fn by_role<D: Driver>(
     step: &LocatorStep,
     role: &str,
     visible_only: bool,
-) -> Result<Vec<Handle>, CdpError> {
+) -> Result<(Vec<Handle>, bool), CdpError> {
     // Role only. The protocol's own name filter is exact-match, and names
     // carry stray whitespace, so the name is matched here.
     let r = d
         .call("Accessibility.queryAXTree", json!({ "objectId": root, "role": role }))
         .await?;
     let mut out = vec![];
+    let mut as_written = false;
     for node in r["nodes"].as_array().into_iter().flatten() {
         if node["ignored"].as_bool().unwrap_or(false) {
             continue;
         }
+        // Whether this node is kept on its text as written in the page: the
+        // name CSS draws is in other capitals (`text-transform`), the page's
+        // own words are the case's.
+        let mut by_written = false;
+        let mut resolved = None;
         if let Some(want) = &step.name {
             let got = node["name"]["value"].as_str().unwrap_or("");
             if !name_matches(got, want, step.exact) {
-                continue;
+                if !(step.exact && differs_only_in_case(got, want)) {
+                    continue;
+                }
+                let Some(backend) = node["backendDOMNodeId"].as_i64() else { continue };
+                let handle = page::resolve_backend(d, backend).await?;
+                let written = page::call_value(d, &handle, super::expect::WRITTEN_TEXT_JS, &[]).await?;
+                if collapse(written.as_str().unwrap_or("")) != collapse(want) {
+                    continue;
+                }
+                by_written = true;
+                resolved = Some(handle);
             }
         }
-        let Some(backend) = node["backendDOMNodeId"].as_i64() else { continue };
-        let handle = page::resolve_backend(d, backend).await?;
+        let handle = match resolved {
+            Some(h) => h,
+            None => {
+                let Some(backend) = node["backendDOMNodeId"].as_i64() else { continue };
+                page::resolve_backend(d, backend).await?
+            }
+        };
         if visible_only
             && !page::call_value(d, &handle, VISIBLE_JS, &[]).await?.as_bool().unwrap_or(false)
         {
             continue;
         }
+        as_written |= by_written;
         out.push(handle);
     }
-    Ok(out)
+    Ok((out, as_written))
 }
 
 async fn find_in<D: Driver>(
     d: &mut D,
     root: &Handle,
     step: &LocatorStep,
-) -> Result<Vec<Handle>, CdpError> {
+) -> Result<(Vec<Handle>, bool), CdpError> {
     let visible_only = step.visible.unwrap_or(true);
     if let Some(role) = &step.role {
         return by_role(d, root, step, role, visible_only).await;
     }
     if let Some(text) = &step.text {
-        return page::call_elements(d, root, TEXT_JS, &[json!(text), json!(step.exact), json!(visible_only)])
-            .await;
+        return page::call_elements_flagged(
+            d,
+            root,
+            TEXT_JS,
+            &[json!(text), json!(step.exact), json!(visible_only)],
+            AS_WRITTEN_FLAG,
+        )
+        .await;
     }
     let css = step.css.as_deref().unwrap_or("");
-    page::call_elements(d, root, CSS_JS, &[json!(css), json!(visible_only)]).await
+    Ok((page::call_elements(d, root, CSS_JS, &[json!(css), json!(visible_only)]).await?, false))
 }
 
 /// Later handles that name the same backend node as an earlier one are
@@ -482,6 +524,10 @@ pub async fn resolve<D: Driver>(d: &mut D, target: &Target) -> Result<Vec<Handle
 pub struct Resolved {
     pub handles: Vec<Handle>,
     pub unreachable_frame: Option<String>,
+    /// Some step kept an element on its text as written in the page, not as
+    /// CSS draws it (`text-transform`): an exact text or name the case wrote
+    /// in other capitals. Actions and checks say so on a pass.
+    pub as_written: bool,
 }
 
 /// `this` is an element. "frame" for an iframe/frame whose document the
@@ -507,7 +553,7 @@ pub async fn resolve_explained<D: Driver>(d: &mut D, target: &Target) -> Result<
     let doc = page::document(d).await?;
     if let Target::Legacy(sel) = target {
         let handles = page::call_elements(d, &doc, LEGACY_JS, &[json!(sel)]).await?;
-        return Ok(Resolved { handles, unreachable_frame: None });
+        return Ok(Resolved { handles, unreachable_frame: None, as_written: false });
     }
     walk(d, vec![doc], target.steps()).await
 }
@@ -525,11 +571,14 @@ pub async fn resolve_within<D: Driver>(d: &mut D, root: &Handle, target: &Target
 /// The chain's steps, one after another, from these roots.
 async fn walk<D: Driver>(d: &mut D, roots: Vec<Handle>, steps: &[LocatorStep]) -> Result<Resolved, CdpError> {
     let mut unreachable_frame = None;
+    let mut as_written = false;
     let mut roots = roots;
     for (i, step) in steps.iter().enumerate() {
         let mut next = vec![];
         for root in &roots {
-            next.extend(find_in(d, root, step).await?);
+            let (found, written) = find_in(d, root, step).await?;
+            as_written |= written;
+            next.extend(found);
         }
         if roots.len() > 1 {
             next = dedupe_by_backend(d, next).await?;
@@ -573,5 +622,6 @@ async fn walk<D: Driver>(d: &mut D, roots: Vec<Handle>, steps: &[LocatorStep]) -
             break;
         }
     }
-    Ok(Resolved { handles: roots, unreachable_frame })
+    let as_written = as_written && !roots.is_empty();
+    Ok(Resolved { handles: roots, unreachable_frame, as_written })
 }

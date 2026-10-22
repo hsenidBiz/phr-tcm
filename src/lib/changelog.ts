@@ -27,6 +27,27 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.2.3-beta.24",
+    date: "2026-10-22",
+    items: [
+      "Auto Run: a new page_until step clicks Next until the cards or rows a case names have shown, for lists where they sit many pages in.",
+      "Auto Run: text checks match a label as it is written in the page even when it is drawn in capitals, so Duration matches Duration exactly.",
+      "Auto Run: a script can check the page address is exactly a given one, or has not changed since an earlier step.",
+      "Auto Run: a check that something the case names is not shown can be saved even though the app never shows it.",
+      "Auto Run: once you have told the assistant how to rule on a difference between a case and the app, it can apply that ruling itself. The case card shows your words beside it, with Undo ruling.",
+    ],
+  },
+  {
+    version: "2.2.3-beta.23",
+    date: "2026-10-22",
+    items: [
+      "Explore mode: new /tcm:explore command. Give the assistant a plain task with no test case, such as setting up data and checking what happens, and it does it in the Auto Run browser as a saved account, checks the result, and ends with a written summary.",
+      "Explore mode: the assistant can send one-off API calls from the page it already has open, with no new sign-in. Every call that works is saved as an API template, or matched to one you already have, so it can be reused later.",
+      "Explore mode: the assistant keeps a list of every record it created, every value it changed and every record it deleted. When you ask, it undoes what it made, after showing you exactly what will be removed and waiting for your yes. It also asks before deleting anything as part of a task.",
+      "API templates: a new read kind for templates that only look things up.",
+    ],
+  },
+  {
     version: "2.2.3-beta.22",
     date: "2026-10-22",
     items: [

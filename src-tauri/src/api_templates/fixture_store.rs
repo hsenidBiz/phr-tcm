@@ -28,6 +28,14 @@ fn runs_path(root: &Path, org: &str, project: &str, id: &str) -> PathBuf {
     fixtures_dir(root, org, project).join(format!("{id}.runs.json"))
 }
 
+/// The fixture id an explore session's creates are recorded under
+/// (`autorun::cleanup::EXPLORE_MADE`): no fixture may take it, or its drafts
+/// would look like an explore session's.
+pub const RESERVED_ID: &str = "explore";
+
+/// Said when a fixture is saved under `RESERVED_ID`.
+pub const RESERVED_ID_REFUSAL: &str = "the fixture id explore is kept for explore sessions - choose another id";
+
 fn invalid_id(id: &str) -> String {
     format!("'{id}' is not a valid fixture id")
 }
@@ -70,6 +78,9 @@ pub fn load(root: &Path, org: &str, project: &str, id: &str) -> Result<Option<Fi
 pub fn save(root: &Path, org: &str, project: &str, f: &Fixture) -> Result<(), Vec<String>> {
     if !valid_id(&f.id) {
         return Err(vec![invalid_id(&f.id)]);
+    }
+    if f.id.trim().eq_ignore_ascii_case(RESERVED_ID) {
+        return Err(vec![RESERVED_ID_REFUSAL.to_string()]);
     }
     let lookup = |id: &str| template_store::load(root, org, project, id).ok().flatten();
     let flows = |id: &str| super::flow_store::load(root, org, project, id).ok().flatten();

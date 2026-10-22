@@ -132,6 +132,19 @@ pub async fn call_elements<D: Driver>(
     function: &str,
     values: &[Value],
 ) -> Result<Vec<Handle>, CdpError> {
+    Ok(call_elements_flagged(d, on, function, values, "").await?.0)
+}
+
+/// [`call_elements`], also reading the boolean property `flag` the function
+/// set on the array it returned (false when it did not set one). The flag
+/// rides on the array the answer already is, so reading it costs no call.
+pub async fn call_elements_flagged<D: Driver>(
+    d: &mut D,
+    on: &Handle,
+    function: &str,
+    values: &[Value],
+    flag: &str,
+) -> Result<(Vec<Handle>, bool), CdpError> {
     let r = d
         .call(
             "Runtime.callFunctionOn",
@@ -164,7 +177,13 @@ pub async fn call_elements<D: Driver>(
         })
         .collect();
     indexed.sort_by_key(|(i, _)| *i);
-    Ok(indexed.into_iter().map(|(_, h)| h).collect())
+    let flagged = !flag.is_empty()
+        && props["result"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .any(|p| p["name"].as_str() == Some(flag) && p["value"]["value"].as_bool() == Some(true));
+    Ok((indexed.into_iter().map(|(_, h)| h).collect(), flagged))
 }
 
 /// An accessibility node names its element by backend node id; this turns

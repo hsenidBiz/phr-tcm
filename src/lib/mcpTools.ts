@@ -137,6 +137,16 @@ export const MCP_TOOLS: McpToolInfo[] = [
     summary: "The Auto Run browser's cookies for the application's own site (the one TCM's sign-in confirmed), with the sign-in's values hidden; set one that is not the sign-in's, or clear them all: a real sign-out.",
   },
   {
+    name: "record_explore_change",
+    label: "Record a change",
+    summary: "Note a record the assistant created, changed or deleted while exploring, so it can be undone later.",
+  },
+  {
+    name: "get_explore_changes",
+    label: "Explore change lists",
+    summary: "The assistant's explore sessions, newest first, or one session's change list and the saves it did not record.",
+  },
+  {
     name: "get_autorun_failures",
     label: "Auto Run failures",
     summary: "What failed in a run on this machine, and when the script must be left alone.",
@@ -160,6 +170,16 @@ export const MCP_TOOLS: McpToolInfo[] = [
     name: "report_case_divergence",
     label: "Report a case divergence",
     summary: "Tell the person where the live app or its data differs from a case, and keep the script as the case says.",
+  },
+  {
+    name: "rule_case_divergence",
+    label: "Rule on a divergence",
+    summary: "Apply the ruling you gave in the chat on a divergence, quoting your words, as you would on the case card. You can undo it there.",
+  },
+  {
+    name: "clear_autorun_suspected_defect",
+    label: "Clear a suspected defect",
+    summary: "Clear the assistant's suspected-defect mark on a case when you say so in the chat.",
   },
   {
     name: "set_autorun_order",
@@ -216,6 +236,16 @@ export const MCP_TOOLS: McpToolInfo[] = [
     name: "run_api_fixture",
     label: "Run a fixture",
     summary: "Run or rebuild a fixture and return its outputs, what it made and any warnings.",
+  },
+  {
+    name: "send_api_request",
+    label: "Send one API request",
+    summary: "Send one request from the assistant's explore session's own signed-in page, and save a call that worked as an API template.",
+  },
+  {
+    name: "undo_explore_creates",
+    label: "Undo an explore session's creates",
+    summary: "Delete what the assistant's own explore session created, through the proven delete templates, when you ask it to in the chat.",
   },
   {
     name: "db_lookup",
@@ -306,6 +336,8 @@ export const AUTORUN_TOOLS = [
   "record_validation_rule",
   "mark_autorun_suspected_defect",
   "report_case_divergence",
+  "rule_case_divergence",
+  "clear_autorun_suspected_defect",
   "set_autorun_order",
   "propose_accounts",
   "get_accounts",
@@ -317,6 +349,8 @@ export const AUTORUN_TOOLS = [
   "autorun_har",
   "set_autorun_headers",
   "autorun_cookies",
+  "record_explore_change",
+  "get_explore_changes",
 ] as const;
 
 /** The network tools: Auto Run's (in AUTORUN_TOOLS and its row), and
@@ -339,6 +373,8 @@ export const API_TEMPLATE_TOOLS = [
   "get_api_flow_progress",
   "save_api_fixture",
   "run_api_fixture",
+  "send_api_request",
+  "undo_explore_creates",
 ] as const;
 
 export const DB_TOOLS = ["db_lookup", "db_query"] as const;
@@ -433,6 +469,8 @@ export const TOOL_PAIRS: readonly (readonly string[])[] = [
     "record_validation_rule",
     "mark_autorun_suspected_defect",
     "report_case_divergence",
+    "rule_case_divergence",
+    "clear_autorun_suspected_defect",
     "set_autorun_order",
     "propose_accounts",
     "get_accounts",
@@ -444,6 +482,8 @@ export const TOOL_PAIRS: readonly (readonly string[])[] = [
     "autorun_har",
     "set_autorun_headers",
     "autorun_cookies",
+    "record_explore_change",
+    "get_explore_changes",
   ],
   // Building an API template is one job too: read the format, see what
   // is saved, prove a draft, run it. A list with no way to run what it
@@ -462,6 +502,11 @@ export const TOOL_PAIRS: readonly (readonly string[])[] = [
     // A fixture is built from the proven templates, and run like one.
     "save_api_fixture",
     "run_api_fixture",
+    // One-off calls from an explore session, and the undo of what it
+    // created, belong to the same job: the calls that worked become
+    // templates here.
+    "send_api_request",
+    "undo_explore_creates",
     // What a template's author learns about the application goes on the
     // project's one quirks list, through the Auto Run row's own tool: it
     // rides in both rows (SHARED_TOOLS), so switching Auto Run off does not

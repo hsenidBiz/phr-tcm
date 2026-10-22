@@ -3388,7 +3388,7 @@ fn scripted(case_id: i32) -> CaseScript {
         needs_state: Default::default(),
         saved_at: None,
         fail_on_unexpected_dialog: false,
-        page_errors: None, ignore_page_errors: vec![], organization: None, project: None, checked: false, checks: 0, given_up: Vec::new(),
+        page_errors: None, ignore_page_errors: vec![], organization: None, project: None, checked: false, checks: 0, given_up: Vec::new(), cleared_defect: None,
     }
 }
 
@@ -4365,6 +4365,37 @@ async fn a_new_absence_check_on_a_locator_only_ever_probed_as_none_is_refused() 
     let (status, out) = route(&ctx(), Some(&client), "POST", "/autorun-script", &body, "1.0.0").await;
     assert_eq!(status, 200, "{out}");
     assert!(load_script(dir.path(), 7).unwrap().is_some());
+}
+
+/// An absence check named by the case's own words is saved with no
+/// sighting, and the answer says it was never seen.
+#[tokio::test]
+async fn a_save_with_an_absence_check_on_the_cases_words_says_from_case() {
+    let dir = TempDir::new();
+    let _root = crate::serial::autorun();
+    set_root(dir.path().to_path_buf());
+    let (_server, client) = client_with_cases(&[(7, "Save a rating", &["", "No lock icon is shown"])]).await;
+    see_scripts(dir.path(), &case_7(".toast", "Saved").to_string());
+    let body = serde_json::json!([{
+        "case_id": 7,
+        "title": "Save a rating",
+        "steps": [
+            { "step_number": 1, "actions": [{ "kind": "navigate", "url": "https://app.example/ratings" }] },
+            { "step_number": 2, "actions": [
+                { "kind": "click", "selector": "#save" },
+                { "kind": "expect_hidden", "selector": { "role": "img", "name": "lock icon" } }
+            ]}
+        ]
+    }])
+    .to_string();
+
+    let (status, out) = route(&ctx(), Some(&client), "POST", "/autorun-script", &body, "1.0.0").await;
+    assert_eq!(status, 200, "{out}");
+    assert!(load_script(dir.path(), 7).unwrap().is_some());
+    assert!(
+        out.contains("case 7: note: step 2: img \"lock icon\" is checked absent on the case's own words (from_case)"),
+        "{out}"
+    );
 }
 
 /// A script saved before the rule keeps going through when it is sent

@@ -1,0 +1,35 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Auto Run paged list fixture</title>
+<style>
+  body { margin: 0; font-family: Arial, sans-serif; }
+  .card { border: 1px solid #999; margin: 8px; padding: 8px; width: 300px; }
+</style>
+</head>
+<body>
+  <div id="list"></div>
+  <p id="where"></p>
+  <button id="next" type="button">Next</button>
+  <script>
+    // Five pages, drawn by a script. "Unpublished" is on page 4 only, and
+    // Next is disabled on the last page.
+    var last = 5, page = 1;
+    function draw() {
+      var list = document.getElementById('list');
+      list.innerHTML = '';
+      var card = document.createElement('div');
+      card.className = 'card';
+      card.textContent = page === 4 ? 'Cycle 4 Unpublished' : 'Cycle ' + page;
+      list.appendChild(card);
+      document.getElementById('where').textContent = 'Page ' + page + ' of ' + last;
+      document.getElementById('next').disabled = page >= last;
+    }
+    document.getElementById('next').addEventListener('click', function () {
+      if (page < last) { page++; draw(); }
+    });
+    draw();
+  </script>
+</body>
+</html>

@@ -217,6 +217,30 @@ test("a suspected defect shows on the open card, with its step and note", () => 
   expect(onAskClear).toHaveBeenCalledWith(7);
 });
 
+test("a mark the assistant cleared shows the person's words and when, with no undo", () => {
+  const at = Date.UTC(2026, 9, 22, 8, 30);
+  renderCard({
+    open: true,
+    script: {
+      ...BARE,
+      cleared_defect: { step_number: 3, said: "that is not a defect, it is by design", note: "Agreed.", cleared_at: String(at) },
+    } as CaseScript,
+  });
+  const note = screen.getByText(/Cleared by the assistant/);
+  expect(note).toHaveTextContent(`on ${new Date(at).toLocaleString()}, on your words: "that is not a defect, it is by design".`);
+  expect(note).toHaveTextContent("It had marked step 3. Its note: Agreed.");
+  expect(screen.queryByText("Suspected defect")).toBeNull();
+  expect(screen.queryByRole("button", { name: /Undo/ })).toBeNull();
+});
+
+test("a case with a suspected defect and no cleared mark says nothing was cleared", () => {
+  renderCard({
+    open: true,
+    script: { ...BARE, suspected_defect: { step_number: 1, note: "No lockout message", marked_at: "1" } } as CaseScript,
+  });
+  expect(screen.queryByText(/Cleared by the assistant/)).toBeNull();
+});
+
 test("a collapsed card with a suspected defect shows an icon marker, and still no extra button", () => {
   renderCard({
     open: false,

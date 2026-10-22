@@ -606,6 +606,8 @@ pub fn action_target(action: &Action) -> Option<String> {
         | Action::ExpectRowCount { table, .. } => Some(table.describe()),
         // What is picked up: a drag that cannot start is about it.
         Action::Drag { from, .. } => Some(from.describe()),
+        // The control that pages: a walk that cannot go on is about it.
+        Action::PageUntil { next, .. } => Some(next.describe()),
         Action::ExpectDownload { name, .. } => Some(format!("the download \"{}\"", name.trim())),
         // A tab by the name the script gave it.
         Action::ExpectTab { name, .. }
@@ -619,7 +621,7 @@ pub fn action_target(action: &Action) -> Option<String> {
             Some(url[..end].to_string())
         }
         Action::CheckText { .. } => Some("the page text".to_string()),
-        Action::CheckUrl { .. } => Some("the page address".to_string()),
+        Action::CheckUrl { .. } | Action::RememberUrl { .. } => Some("the page address".to_string()),
         Action::SignIn { .. } => None,
         // An address fragment or a path: its query string can carry a
         // token, so it is dropped here as a navigation's is.

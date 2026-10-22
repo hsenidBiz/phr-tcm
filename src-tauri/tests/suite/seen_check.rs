@@ -2951,6 +2951,45 @@ fn a_position_check_takes_both_locators_seen_matching_one() {
     assert!(refused.contains("#bar was never seen on the live app"), "{refused}");
 }
 
+// ------------------------- page_until: the control that pages, and what is looked for
+
+/// `next` is clicked, so it is held to a click's rule; each `until` is looked
+/// for, so it may have been seen matching several and the case's own words
+/// exempt it as they do any check's.
+#[test]
+fn page_until_holds_next_to_a_click_and_until_to_a_check() {
+    let walk = |next: serde_json::Value, until: serde_json::Value| {
+        one_step("Cycles", serde_json::json!([{ "kind": "page_until", "next": next, "until": until, "max_pages": 10 }]))
+    };
+    let script = walk(serde_json::json!({ "css": "#new" }), serde_json::json!([{ "css": "#bar" }]));
+
+    // `next` never seen: refused, naming it.
+    let only_until = sighted_matching("Cycles", css("#bar"), 12);
+    assert_eq!(check_seen(&only_until, &none(), &script, &[], None), Err(refusal_as(1, "#new", "page_until")));
+
+    // `next` seen matching one, `until` seen matching several: passes.
+    assert_eq!(check_seen(&two_sighted(1, 12), &none(), &script, &[], None), Ok(()));
+
+    // `next` seen matching several is not one control.
+    assert_eq!(check_seen(&two_sighted(2, 12), &none(), &script, &[], None), Err(many_refusal(1, "#new")));
+
+    // `until` in the case's words, never seen: passes.
+    let by_words = walk(serde_json::json!({ "css": "#new" }), serde_json::json!([{ "text": "Published" }]));
+    let case_text = vec!["Published cards are listed".to_string()];
+    let next_only = sighted_matching("Cycles", css("#new"), 1);
+    assert_eq!(check_seen(&next_only, &none(), &by_words, &case_text, None), Ok(()));
+    // Without the case saying it, it is refused.
+    assert!(check_seen(&next_only, &none(), &by_words, &[], None).is_err());
+
+    // `next` in the case's words, never seen: still refused, as a click is.
+    let next_by_words = walk(serde_json::json!({ "text": "Next page" }), serde_json::json!([{ "css": "#bar" }]));
+    let case_text = vec!["Press Next page until it shows".to_string()];
+    assert_eq!(
+        check_seen(&only_until, &none(), &next_by_words, &case_text, None),
+        Err(refusal_as(1, "text \"Next page\"", "page_until"))
+    );
+}
+
 // ------------------------- expect_each: a list, and a child looked for in it
 
 /// The list an `expect_each` reads in these tests.
@@ -3090,7 +3129,7 @@ fn an_each_child_with_a_placeholder_is_checked_at_run_time() {
 
 // ------------------------- the save's own rules: absence needs a control
 
-use v2_lib::autorun::seen_check::{absence_refusals, loose_name_notes, ABSENCE_UNPROVEN};
+use v2_lib::autorun::seen_check::{absence_refusals, absence_review, loose_name_notes, ABSENCE_UNPROVEN, ABSENT_FROM_CASE};
 
 fn two_steps(first: serde_json::Value, second: serde_json::Value) -> CaseScript {
     script(
@@ -3226,6 +3265,115 @@ fn an_absence_check_whose_locator_is_seen_present_is_never_refused() {
     let present = sighted_matching("Cycles", css(".x"), 1);
     let hidden = one_step("Cycles", serde_json::json!([{ "kind": "expect_hidden", "selector": { "css": ".x" } }]));
     assert!(absence_refusals(&present, &hidden, None, None).is_empty());
+}
+
+/// A map in which nothing was ever seen.
+fn nothing_seen() -> DiscoveryMap {
+    map_with("Cycles", "/cycles", &[])
+}
+
+#[test]
+fn an_absence_check_on_unseen_case_words_is_from_case() {
+    let case = vec!["No access-denied message is shown".to_string()];
+    let counted = two_steps(
+        serde_json::json!([]),
+        serde_json::json!([{ "kind": "expect_count", "selector": { "text": "access-denied message" }, "equals": 0 }]),
+    );
+    let review = absence_review(&nothing_seen(), &counted, &case, None, None);
+    assert!(review.refusals.is_empty(), "{:?}", review.refusals);
+    assert_eq!(
+        review.from_case,
+        vec!["step 2: text \"access-denied message\" is checked absent on the case's own words (from_case): it was never seen on the live app".to_string()]
+    );
+    assert!(review.from_case[0].ends_with(ABSENT_FROM_CASE));
+
+    let icon = vec!["no lock icon".to_string()];
+    let hidden = two_steps(
+        serde_json::json!([]),
+        serde_json::json!([{ "kind": "expect_hidden", "selector": { "role": "img", "name": "lock" } }]),
+    );
+    let review = absence_review(&nothing_seen(), &hidden, &icon, None, None);
+    assert!(review.refusals.is_empty(), "{:?}", review.refusals);
+    assert_eq!(review.from_case, vec![format!("step 2: img \"lock\" {ABSENT_FROM_CASE}")]);
+
+    // The wrapper keeps its old rule: with no case text it still refuses.
+    assert_eq!(absence_refusals(&nothing_seen(), &hidden, None, None).len(), 1);
+}
+
+#[test]
+fn css_and_role_only_absence_checks_still_need_a_sighting() {
+    let case = vec!["no lock icon".to_string()];
+    for (selector, map) in [
+        (serde_json::json!({ "css": ".lock" }), filed(serde_json::json!({ "css": ".lock" }), 0)),
+        (serde_json::json!({ "role": "alert" }), filed(serde_json::json!({ "role": "alert" }), 0)),
+    ] {
+        let described = serde_json::from_value::<Target>(selector.clone()).unwrap().describe();
+        let hidden = two_steps(serde_json::json!([]), serde_json::json!([{ "kind": "expect_hidden", "selector": selector }]));
+        let review = absence_review(&map, &hidden, &case, None, None);
+        assert_eq!(review.refusals, vec![format!("Step 2: {described} {ABSENCE_UNPROVEN}")]);
+        assert!(review.from_case.is_empty());
+    }
+}
+
+/// An absence check on a chain is from_case only when every link of it is
+/// the case's own words or was seen matching something: an unseen css or
+/// role-only scope would let the words pass for ever.
+#[test]
+fn an_absence_chain_with_an_unseen_scope_is_refused_even_on_the_cases_words() {
+    let case = vec!["Access denied is not shown".to_string()];
+    let chain = |scope: serde_json::Value| serde_json::json!([scope, { "text": "access denied" }]);
+    let check = |scope: serde_json::Value| {
+        two_steps(serde_json::json!([]), serde_json::json!([{ "kind": "expect_hidden", "selector": chain(scope) }]))
+    };
+    for (scope, map) in [
+        (serde_json::json!({ "css": ".alert" }), sighted_matching("Cycles", css(".alert"), 0)),
+        (serde_json::json!({ "css": ".alert" }), nothing_seen()),
+        (
+            serde_json::json!({ "role": "alertdialog" }),
+            sighted_matching("Cycles", LocatorStep { role: Some("alertdialog".to_string()), ..LocatorStep::default() }, 0),
+        ),
+    ] {
+        let described = serde_json::from_value::<Target>(chain(scope.clone())).unwrap().describe();
+        let review = absence_review(&map, &check(scope.clone()), &case, None, None);
+        assert_eq!(review.refusals, vec![format!("Step 2: {described} {ABSENCE_UNPROVEN}")], "{scope}");
+        assert!(review.from_case.is_empty(), "{scope}");
+    }
+
+    // The same scope seen matching something lets the words through.
+    let review = absence_review(&sighted_matching("Cycles", css(".alert"), 1), &check(serde_json::json!({ "css": ".alert" })), &case, None, None);
+    assert!(review.refusals.is_empty(), "{:?}", review.refusals);
+    assert_eq!(review.from_case.len(), 1);
+
+    // A scope that is itself the case's words needs no sighting.
+    let both = two_steps(
+        serde_json::json!([]),
+        serde_json::json!([{ "kind": "expect_hidden", "selector": [{ "role": "dialog", "name": "access denied" }, { "text": "access denied" }] }]),
+    );
+    let review = absence_review(&nothing_seen(), &both, &case, None, None);
+    assert!(review.refusals.is_empty(), "{:?}", review.refusals);
+    assert_eq!(review.from_case.len(), 1);
+}
+
+#[test]
+fn words_the_case_does_not_say_are_still_unproven() {
+    let case = vec!["No access-denied message is shown".to_string()];
+    let hidden = two_steps(
+        serde_json::json!([]),
+        serde_json::json!([{ "kind": "expect_hidden", "selector": { "text": "Forbidden" } }]),
+    );
+    let review = absence_review(&nothing_seen(), &hidden, &case, None, None);
+    assert_eq!(review.refusals, vec![format!("Step 2: text \"Forbidden\" {ABSENCE_UNPROVEN}")]);
+    assert!(review.from_case.is_empty());
+}
+
+#[test]
+fn the_same_case_words_in_a_click_are_refused() {
+    let case = vec!["No access-denied message is shown".to_string()];
+    let clicking = two_steps(serde_json::json!([]), serde_json::json!([click(serde_json::json!({ "text": "access-denied message" }))]));
+    match seen_verdict(&nothing_seen(), &none(), &clicking, &case, None, &[]) {
+        SeenVerdict::Unseen(lines) => assert!(lines.iter().any(|l| l.contains("access-denied message")), "{lines:?}"),
+        other => panic!("a click on the case's words was not refused: {other:?}"),
+    }
 }
 
 // ------------------------- loose record names

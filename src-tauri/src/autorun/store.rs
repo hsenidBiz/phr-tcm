@@ -1,6 +1,6 @@
 //! Scripts and runs on disk, under the app's own data directory.
 
-use super::{CaseScript, LocalRun, SuspectedDefect};
+use super::{CaseScript, ClearedDefect, LocalRun, SuspectedDefect};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
@@ -107,6 +107,11 @@ fn mark_on_disk(root: &Path, case_id: i32) -> Option<SuspectedDefect> {
     load_script(root, case_id).ok().flatten().and_then(|s| s.suspected_defect)
 }
 
+/// The assistant's cleared mark already on disk for this case, kept by every save like the mark itself.
+fn cleared_on_disk(root: &Path, case_id: i32) -> Option<ClearedDefect> {
+    load_script(root, case_id).ok().flatten().and_then(|s| s.cleared_defect)
+}
+
 /// A raw write of one script, exactly as given - the mark included. The
 /// app's own save paths go through `save_scripts_atomically`, which keeps
 /// the mark on disk; this one is for setting up a store by hand.
@@ -186,6 +191,10 @@ pub fn check_scripts(scripts: &[CaseScript]) -> Result<(), String> {
                 ));
             }
         }
+        // The addresses a top-level `remember_url` has noted so far, in the
+        // order the case runs. One inside a guard or a component does not
+        // count: it may never run.
+        let mut noted: std::collections::HashSet<&str> = std::collections::HashSet::new();
         for step in &sc.steps {
             if let Some(reason) = &step.unchecked {
                 if reason.trim().is_empty() {
@@ -210,6 +219,22 @@ pub fn check_scripts(scripts: &[CaseScript]) -> Result<(), String> {
                         step.step_number,
                         i + 1
                     ));
+                }
+                match action {
+                    crate::browser::actions::Action::RememberUrl { name } => {
+                        noted.insert(name.as_str());
+                    }
+                    crate::browser::actions::Action::CheckUrl { same_as: Some(name), .. }
+                        if !noted.contains(name.as_str()) =>
+                    {
+                        return Err(format!(
+                            "case {} step {} action {}: check_url same_as \"{name}\" names no address an earlier remember_url of this case notes",
+                            sc.case_id,
+                            step.step_number,
+                            i + 1
+                        ));
+                    }
+                    _ => {}
                 }
             }
         }
@@ -313,7 +338,12 @@ pub fn save_scripts_atomically(root: &Path, scripts: &[CaseScript]) -> Result<()
         });
         // Every save is stamped with when it happened, whatever it was sent:
         // a later repair reads the test case as of this moment.
-        let kept = CaseScript { suspected_defect: disk_mark, saved_at: Some(saved_at.clone()), ..sc.clone() };
+        let kept = CaseScript {
+            suspected_defect: disk_mark,
+            cleared_defect: cleared_on_disk(root, sc.case_id),
+            saved_at: Some(saved_at.clone()),
+            ..sc.clone()
+        };
         let json = serde_json::to_string_pretty(&kept).map_err(|e| SaveScriptsError::Io(e.to_string()))?;
         entries.push((dir.join(format!("case-{}.json", sc.case_id)), json));
     }
@@ -354,6 +384,10 @@ pub fn set_suspected_defect(root: &Path, case_id: i32, mark: Option<SuspectedDef
     if script.suspected_defect == mark {
         return Ok(());
     }
+    // A new mark ends the story of the one the assistant cleared.
+    if mark.is_some() {
+        script.cleared_defect = None;
+    }
     script.suspected_defect = mark;
     write_script(root, &script)
 }
@@ -378,27 +412,54 @@ pub fn set_checked(root: &Path, case_id: i32, checked: bool) -> Result<(), Strin
 /// step since the caller read it is left alone. `Ok(false)` when there is
 /// no mark or it is on another step; an error for a case with no script.
 pub fn clear_suspected_defect_at(root: &Path, case_id: i32, step_number: i32) -> Result<bool, String> {
-    clear_mark(root, case_id, Some(step_number))
+    Ok(clear_mark(root, case_id, Some(step_number), None)?.is_some())
 }
 
 /// A person's Clear: remove the case's mark whichever step it is on, and
 /// say whether there was one to remove.
 pub fn clear_suspected_defect_any(root: &Path, case_id: i32) -> Result<bool, String> {
-    clear_mark(root, case_id, None)
+    Ok(clear_mark(root, case_id, None, None)?.is_some())
 }
 
-fn clear_mark(root: &Path, case_id: i32, step_number: Option<i32>) -> Result<bool, String> {
+/// The assistant's Clear on the person's words: the mark goes whichever step it is on, and the script keeps a
+/// `ClearedDefect` (the step, `said`, the note, `now_ms`) so the case card can show what the person said.
+/// `said` and `note` are stored as given: the caller has scrubbed them. Answers the step the mark was on, or
+/// `None` when there was no mark (nothing is written then).
+pub fn clear_suspected_defect_with_words(
+    root: &Path,
+    case_id: i32,
+    said: &str,
+    note: Option<&str>,
+    now_ms: u64,
+) -> Result<Option<i32>, String> {
+    clear_mark(root, case_id, None, Some((said, note, now_ms)))
+}
+
+fn clear_mark(
+    root: &Path,
+    case_id: i32,
+    step_number: Option<i32>,
+    words: Option<(&str, Option<&str>, u64)>,
+) -> Result<Option<i32>, String> {
     let _held = scripts_lock();
     let Some(mut script) = load_script(root, case_id)? else {
         return Err(format!("case {case_id} has no script on this machine"));
     };
-    match &script.suspected_defect {
-        Some(d) if step_number.is_none_or(|n| n == d.step_number) => {}
-        _ => return Ok(false),
-    }
+    let step = match &script.suspected_defect {
+        Some(d) if step_number.is_none_or(|n| n == d.step_number) => d.step_number,
+        _ => return Ok(None),
+    };
     script.suspected_defect = None;
+    if let Some((said, note, now_ms)) = words {
+        script.cleared_defect = Some(ClearedDefect {
+            step_number: step,
+            said: said.to_string(),
+            note: note.map(str::to_string),
+            cleared_at: now_ms.to_string(),
+        });
+    }
     write_script(root, &script)?;
-    Ok(true)
+    Ok(Some(step))
 }
 
 /// Write one script by a temp sibling and a rename. The caller holds the

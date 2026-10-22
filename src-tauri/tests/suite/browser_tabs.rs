@@ -1027,7 +1027,7 @@ async fn a_current_tab_that_closes_itself_fails_the_next_call_with_its_name() {
 
     // An action that acts in the page says so plainly, not as the browser
     // having stopped answering.
-    let out = execute(&mut cdp, &Action::CheckUrl { contains: "x".into(), timeout_ms: None }).await;
+    let out = execute(&mut cdp, &Action::CheckUrl { contains: "x".into(), equals: None, same_as: None, timeout_ms: None }).await;
     assert!(!out.ok && !out.harness, "{out:?}");
     assert_eq!(out.detail, "there is no tab preview");
 
@@ -1671,4 +1671,16 @@ async fn a_refused_page_size_is_logged_and_fails_neither_the_first_page_nor_a_ne
     assert!(lines.iter().any(|l| l.contains("could not set the size of a tab") && l.ends_with(": /report")), "{lines:?}");
     let ours: Vec<&String> = lines.iter().filter(|l| l.contains("setDeviceMetricsOverride")).collect();
     assert!(ours.iter().all(|l| !l.contains("hr.example") && !l.contains("hunter2")), "{ours:?}");
+}
+
+/// An address noted in one case is not there for the next one's `same_as`.
+#[tokio::test]
+async fn a_noted_address_does_not_outlive_its_case() {
+    use v2_lib::browser::cdp::Driver;
+    let mut cdp = with_named("report").await;
+    Driver::noted_addresses(&mut cdp).unwrap().insert("before".into(), "https://hr.example/a".into());
+    assert_eq!(Driver::noted_addresses(&mut cdp).unwrap().len(), 1);
+    cdp.close_other_tabs().await;
+    let book = Driver::noted_addresses(&mut cdp).expect("a Cdp keeps a notebook");
+    assert!(book.is_empty(), "{book:?}");
 }

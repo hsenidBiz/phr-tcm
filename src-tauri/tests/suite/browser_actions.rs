@@ -7,7 +7,10 @@ use crate::common;
 
 use common::{ready_probe, FakePage, ScriptedDriver};
 use serde_json::json;
-use v2_lib::browser::actions::{execute_in, execute_with, Action, DialogAnswer, Policy, HIGHLIGHT_JS, RESOLVE_URL_JS};
+use v2_lib::browser::actions::{
+    execute_in, execute_with, not_noted, url_equals, Action, DialogAnswer, Policy, HIGHLIGHT_JS, NOTE_NAME_RULE, RESOLVE_URL_JS,
+    URL_ONE_OF,
+};
 use v2_lib::browser::cdp::{CdpError, Event};
 use v2_lib::browser::input::PROBE_JS;
 use v2_lib::browser::timing::Timing;
@@ -316,13 +319,13 @@ async fn navigate_refuses_a_javascript_url_without_touching_the_browser() {
 async fn check_text_and_check_url_answer_from_the_page() {
     let mut d = FakePage::default().driver();
     assert!(execute_with(&mut d, &Action::CheckText { value: "Dashboard".into() }, &quick()).await.ok);
-    let out = execute_with(&mut d, &Action::CheckUrl { contains: "/home".into(), timeout_ms: None }, &quick()).await;
+    let out = execute_with(&mut d, &Action::CheckUrl { contains: "/home".into(), equals: None, same_as: None, timeout_ms: None }, &quick()).await;
     assert!(out.ok && out.detail.contains("https://app.example/home"), "{}", out.detail);
 
     let mut d = FakePage { body_has_text: false, ..FakePage::default() }.driver();
     let out = execute_with(&mut d, &Action::CheckText { value: "Dashboard".into() }, &quick()).await;
     assert!(!out.ok && out.detail.contains("does NOT contain"), "{}", out.detail);
-    assert!(!execute_with(&mut d, &Action::CheckUrl { contains: "/login".into(), timeout_ms: None }, &quick()).await.ok);
+    assert!(!execute_with(&mut d, &Action::CheckUrl { contains: "/login".into(), equals: None, same_as: None, timeout_ms: None }, &quick()).await.ok);
 }
 
 /// A page that pops an alert no longer freezes the run; the person is told
@@ -381,7 +384,7 @@ async fn a_page_refusal_during_a_check_is_the_pages_doing() {
     };
     for action in [
         Action::CheckText { value: "Dashboard".into() },
-        Action::CheckUrl { contains: "/home".into(), timeout_ms: None },
+        Action::CheckUrl { contains: "/home".into(), equals: None, same_as: None, timeout_ms: None },
     ] {
         let mut d = refusing();
         let out = execute_with(&mut d, &action, &quick()).await;
@@ -398,7 +401,7 @@ async fn a_closed_browser_at_those_same_sites_is_still_the_harness() {
     for action in [
         Action::Click { selector: "#go".into() },
         Action::CheckText { value: "Dashboard".into() },
-        Action::CheckUrl { contains: "/home".into(), timeout_ms: None },
+        Action::CheckUrl { contains: "/home".into(), equals: None, same_as: None, timeout_ms: None },
         Action::Navigate { url: "https://app.example/x".into() },
     ] {
         let mut d = ScriptedDriver::new(|_, _| Err(CdpError::Closed));
@@ -621,7 +624,8 @@ fn only_checks_and_expectations_are_checks() {
         Action::Fill { selector: "s".into(), value: "v".into() },
         Action::WaitFor { selector: "s".into(), timeout_ms: 1 },
         Action::CheckText { value: "v".into() },
-        Action::CheckUrl { contains: "c".into(), timeout_ms: None },
+        Action::CheckUrl { contains: "c".into(), equals: None, same_as: None, timeout_ms: None },
+        Action::RememberUrl { name: "a".into() },
         Action::ExpectVisible { selector: "s".into(), timeout_ms: None },
         Action::ExpectHidden { selector: "s".into(), timeout_ms: None },
         Action::ExpectText { selector: "s".into(), equals: Some("v".into()), matches: None, timeout_ms: None },
@@ -663,6 +667,7 @@ fn only_checks_and_expectations_are_checks() {
         serde_json::from_value(serde_json::json!({ "kind": "expect_each", "selector": "s", "not_empty": true })).unwrap(),
         serde_json::from_value(serde_json::json!({ "kind": "expect_order", "selector": "s", "texts": ["a", "b"] })).unwrap(),
         serde_json::from_value(serde_json::json!({ "kind": "expect_position", "selector": "s", "relative_to": "t", "relation": "inside" })).unwrap(),
+        serde_json::from_value(serde_json::json!({ "kind": "page_until", "next": "n", "until": "u", "max_pages": 2 })).unwrap(),
         Action::UseComponent { component: "c".into(), inputs: serde_json::Map::new() },
     ];
     assert_eq!(samples.len(), ACTION_KINDS.len(), "this list has drifted from ACTION_KINDS");
@@ -695,6 +700,7 @@ fn only_checks_and_expectations_are_checks() {
                 | "expect_each"
                 | "expect_order"
                 | "expect_position"
+                | "page_until"
         )
     };
     for (action, kind) in samples.iter().zip(ACTION_KINDS.iter()) {
@@ -1457,7 +1463,7 @@ async fn check_url_looks_again_until_the_address_holds() {
             _ => json!({}),
         })
     });
-    let out = execute_with(&mut d, &Action::CheckUrl { contains: "/home".into(), timeout_ms: Some(2000) }, &quick()).await;
+    let out = execute_with(&mut d, &Action::CheckUrl { contains: "/home".into(), equals: None, same_as: None, timeout_ms: Some(2000) }, &quick()).await;
     assert!(out.ok, "{}", out.detail);
     assert_eq!(out.detail, "url is https://app.example/home");
     assert_eq!(reads.load(std::sync::atomic::Ordering::SeqCst), 3);
@@ -1466,7 +1472,7 @@ async fn check_url_looks_again_until_the_address_holds() {
 #[tokio::test]
 async fn check_url_still_fails_naming_the_address_it_last_saw() {
     let mut d = FakePage::default().driver();
-    let out = execute_with(&mut d, &Action::CheckUrl { contains: "/login".into(), timeout_ms: None }, &quick()).await;
+    let out = execute_with(&mut d, &Action::CheckUrl { contains: "/login".into(), equals: None, same_as: None, timeout_ms: None }, &quick()).await;
     assert!(!out.ok && !out.harness, "{}", out.detail);
     assert_eq!(out.detail, "url is https://app.example/home");
 }
@@ -1511,7 +1517,7 @@ async fn check_url_waits_for_its_own_timeout() {
             _ => json!({}),
         })
     });
-    let out = execute_with(&mut d, &Action::CheckUrl { contains: "/home".into(), timeout_ms: Some(2000) }, &quick()).await;
+    let out = execute_with(&mut d, &Action::CheckUrl { contains: "/home".into(), equals: None, same_as: None, timeout_ms: Some(2000) }, &quick()).await;
     assert!(out.ok, "{}", out.detail);
     assert!(began.elapsed() >= std::time::Duration::from_millis(450), "{:?}", began.elapsed());
 
@@ -1526,7 +1532,7 @@ async fn check_url_waits_for_its_own_timeout() {
             _ => json!({}),
         })
     });
-    let out = execute_with(&mut d, &Action::CheckUrl { contains: "/home".into(), timeout_ms: None }, &quick()).await;
+    let out = execute_with(&mut d, &Action::CheckUrl { contains: "/home".into(), equals: None, same_as: None, timeout_ms: None }, &quick()).await;
     assert!(!out.ok && out.detail == "url is https://app.example/login", "{}", out.detail);
     assert!(began.elapsed() < std::time::Duration::from_millis(450), "{:?}", began.elapsed());
 }
@@ -1536,7 +1542,7 @@ async fn check_url_waits_for_its_own_timeout() {
 async fn check_url_that_never_holds_fails_after_its_own_timeout() {
     let mut d = FakePage::default().driver();
     let began = std::time::Instant::now();
-    let out = execute_with(&mut d, &Action::CheckUrl { contains: "/login".into(), timeout_ms: Some(700) }, &quick()).await;
+    let out = execute_with(&mut d, &Action::CheckUrl { contains: "/login".into(), equals: None, same_as: None, timeout_ms: Some(700) }, &quick()).await;
     let took = began.elapsed();
     assert!(!out.ok && out.detail == "url is https://app.example/home", "{}", out.detail);
     assert!(took >= std::time::Duration::from_millis(700) && took < std::time::Duration::from_millis(1500), "{took:?}");
@@ -1547,7 +1553,102 @@ async fn check_url_that_never_holds_fails_after_its_own_timeout() {
 #[tokio::test]
 async fn check_url_on_a_browser_that_never_answers_is_a_harness_failure() {
     let mut d = ScriptedDriver::new(|method, _| Err(CdpError::Timeout { what: method.to_string(), ms: 50 }));
-    let out = execute_with(&mut d, &Action::CheckUrl { contains: "/home".into(), timeout_ms: Some(300) }, &quick()).await;
+    let out = execute_with(&mut d, &Action::CheckUrl { contains: "/home".into(), equals: None, same_as: None, timeout_ms: Some(300) }, &quick()).await;
     assert!(!out.ok && out.harness, "{}", out.detail);
     assert!(out.detail.contains("the page address") && out.detail.contains("300ms"), "{}", out.detail);
+}
+
+// ---- check_url equals and same_as, and remember_url ------------------------
+
+#[test]
+fn check_url_takes_exactly_one_of_contains_equals_and_same_as() {
+    let check = |v: serde_json::Value| serde_json::from_value::<Action>(v).unwrap().validate();
+    assert_eq!(check(json!({ "kind": "check_url", "contains": "/a", "equals": "/a" })).unwrap_err(), URL_ONE_OF);
+    assert_eq!(check(json!({ "kind": "check_url", "equals": "/a", "same_as": "before" })).unwrap_err(), URL_ONE_OF);
+    assert!(check(json!({ "kind": "check_url" })).unwrap_err().contains("empty"));
+    assert!(check(json!({ "kind": "check_url", "equals": "" })).unwrap_err().contains("empty"));
+    assert!(check(json!({ "kind": "check_url", "same_as": "has space" }))
+        .unwrap_err()
+        .starts_with("check_url same_as: a noted address's name"));
+    assert!(check(json!({ "kind": "remember_url", "as": "" })).unwrap_err().contains(NOTE_NAME_RULE));
+    assert!(check(json!({ "kind": "check_url", "equals": "/a" })).is_ok());
+    assert!(check(json!({ "kind": "check_url", "same_as": "before" })).is_ok());
+    assert!(check(json!({ "kind": "remember_url", "as": "before" })).is_ok());
+    let back = serde_json::to_value(serde_json::from_value::<Action>(json!({ "kind": "check_url", "contains": "/home" })).unwrap()).unwrap();
+    assert_eq!(back, json!({ "kind": "check_url", "contains": "/home" }));
+    assert!(back.get("equals").is_none() && back.get("same_as").is_none());
+}
+
+#[test]
+fn url_equals_compares_a_path_with_the_path_query_and_fragment() {
+    assert!(url_equals("https://app.example/hr/cycles?id=4#top", "/hr/cycles?id=4#top"));
+    assert!(!url_equals("https://app.example/hr/cycles?id=4", "/hr/cycles"));
+    assert!(url_equals("https://app.example/x", "https://app.example/x"));
+    assert!(!url_equals("https://app.example/x/", "https://app.example/x"));
+    assert!(url_equals("https://app.example", "/"));
+    assert!(url_equals("https://app.example?a=1", "/?a=1"));
+}
+
+#[test]
+fn url_equals_reads_both_sides_trimmed_and_a_full_address_by_origin_path_and_query() {
+    // An empty path is "/", and a trailing space is ignored.
+    assert!(url_equals("https://app.example/", "https://app.example"));
+    assert!(url_equals("https://app.example/hr/cycles", " /hr/cycles "));
+    assert!(url_equals(" https://app.example/hr/cycles ", "https://app.example/hr/cycles  "));
+    // The host's capitals and a default port are not a difference.
+    assert!(url_equals("https://app.example/hr", "https://APP.example:443/hr"));
+    // Another scheme, host or port is, even with the same path.
+    assert!(!url_equals("http://app.example/home", "https://app.example/home"));
+    assert!(!url_equals("https://other.example/home", "https://app.example/home"));
+    assert!(!url_equals("https://app.example:8443/home", "https://app.example/home"));
+    // A path compares the path and the query, on any origin.
+    assert!(url_equals("https://other.example/home?a=1", "/home?a=1"));
+    assert!(!url_equals("https://app.example/home?a=2", "/home?a=1"));
+    // A fragment counts only when the wanted address names one.
+    assert!(url_equals("https://app.example/home#top", "/home"));
+    assert!(url_equals("https://app.example/#/cycles", "/#/cycles"));
+    assert!(!url_equals("https://app.example/#/cycles", "/#/people"));
+}
+
+#[tokio::test]
+async fn check_url_equals_passes_only_on_the_exact_address() {
+    let eq = |want: &str| Action::CheckUrl { contains: String::new(), equals: Some(want.into()), same_as: None, timeout_ms: None };
+    let mut d = FakePage::default().driver();
+    let out = execute_with(&mut d, &eq("/home"), &quick()).await;
+    assert!(out.ok, "{}", out.detail);
+    assert_eq!(out.detail, "url is https://app.example/home");
+    let out = execute_with(&mut d, &eq("/hom"), &quick()).await;
+    assert!(!out.ok && !out.harness, "{}", out.detail);
+    assert!(out.detail.starts_with("url is https://app.example/home"), "{}", out.detail);
+    assert_eq!(out.detail, "url is https://app.example/home, not \"/hom\"");
+}
+
+#[tokio::test]
+async fn remember_url_notes_the_address_for_a_later_same_as() {
+    let mut d = FakePage::default().driver();
+    let remember = Action::RememberUrl { name: "before".into() };
+    let same = Action::CheckUrl { contains: String::new(), equals: None, same_as: Some("before".into()), timeout_ms: None };
+    let out = execute_with(&mut d, &remember, &quick()).await;
+    assert!(out.ok, "{}", out.detail);
+    assert_eq!(out.detail, "noted the address as \"before\": /home");
+    assert_eq!(d.noted.get("before").map(String::as_str), Some("https://app.example/home"));
+    let out = execute_with(&mut d, &same, &quick()).await;
+    assert!(out.ok, "{}", out.detail);
+}
+
+#[tokio::test]
+async fn check_url_same_as_fails_when_the_address_changed() {
+    let same = |name: &str| Action::CheckUrl { contains: String::new(), equals: None, same_as: Some(name.into()), timeout_ms: None };
+    let mut d = FakePage::default().driver();
+    d.noted.insert("before".into(), "https://app.example/start".into());
+    let out = execute_with(&mut d, &same("before"), &quick()).await;
+    assert!(!out.ok && !out.harness, "{}", out.detail);
+    assert!(out.detail.contains("not the address noted as \"before\""), "{}", out.detail);
+    // The noted address is said as its path, never in full.
+    assert!(out.detail.ends_with("(/start)") && !out.detail.contains("https://app.example/start"), "{}", out.detail);
+    let calls = d.calls.len();
+    let out = execute_with(&mut d, &same("never"), &quick()).await;
+    assert!(!out.ok, "{}", out.detail);
+    assert_eq!(out.detail, not_noted("never"));
+    assert_eq!(d.calls.len(), calls, "nothing noted is no look at the page");
 }
