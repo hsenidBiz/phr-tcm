@@ -244,3 +244,26 @@ fn when_the_app_does_not_give_the_rules_the_shipped_copy_says_so() {
     s.tick(2_000);
     assert_eq!(failures(&fake, &mut s)[0], roles::pointer(Role::Healer));
 }
+
+#[test]
+fn the_proxy_never_says_no_repo_is_set_when_it_cannot_know() {
+    // The proxy has no settings, so it cannot know whether a Playwright repo is set. Its role text is
+    // the app's answer, or the shipped copy whose own first line says the app did not answer.
+    let gone: &dyn Fn(&str, &str, &str) -> Result<(u16, String), String> = &|_, _, _| Err("connection refused".into());
+    let not_found: &dyn Fn(&str, &str, &str) -> Result<(u16, String), String> = &|_, _, _| Ok((404, "no route".into()));
+    let broken: &dyn Fn(&str, &str, &str) -> Result<(u16, String), String> = &|_, _, _| Ok((500, "oops".into()));
+    for role in [Role::Writer, Role::Healer, Role::CaseRewriter] {
+        for call in [gone, not_found, broken] {
+            let text = v2_lib::mcp::role_text_via(role, call);
+            assert_eq!(text, role.shipped_text(Why::NotRead), "{}", role.name());
+            let first = text.lines().next().unwrap();
+            assert!(first.contains("did not answer"), "{first}");
+            assert!(!text.contains("no Playwright repo is set"), "{}", role.name());
+        }
+    }
+    let app: &dyn Fn(&str, &str, &str) -> Result<(u16, String), String> = &|_, _, _| Ok((200, "APP TEXT".into()));
+    assert_eq!(v2_lib::mcp::role_text_via(Role::Healer, app), "APP TEXT");
+    // And nothing in the proxy reads a role through the app's own settings.
+    let src = include_str!("../../src/mcp.rs");
+    assert!(!src.contains("role.text()") && !src.contains(".text_in("), "the proxy must take a role through role_text_via");
+}

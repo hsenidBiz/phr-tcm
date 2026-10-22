@@ -2232,7 +2232,10 @@ fn the_agent_files_carry_the_live_rules() {
     let files = agent_files_in(std::path::Path::new("D:/repo/.claude/agents"), &[], &path_str(&clone));
     let (_, healer) = files.iter().find(|(p, _)| p.ends_with("tcm-healer.md")).unwrap();
     assert!(healer.contains("LIVE HEALER"), "{healer}");
-    assert!(healer.contains("read from the repo just now"), "{healer}");
+    // A file on disk says the day it was read, never "just now".
+    let today = chrono::Local::now().format("%Y-%m-%d").to_string();
+    assert!(healer.contains(&format!("playwright-test-healer.md, read from the repo on {today}")), "{healer}");
+    assert!(!healer.contains("just now"), "{healer}");
     assert!(!healer.contains("tools: Edit"), "{healer}");
     assert!(
         healer.ends_with("These rules also come from `get_guide` with topic autorun and role healer.
@@ -2253,6 +2256,41 @@ fn an_agent_file_is_rewritten_only_when_its_rules_changed() {
     assert_eq!(write_agents_in(d.path(), &[], &c).unwrap(), [d.path().join("tcm-healer.md")]);
     let t = std::fs::read_to_string(d.path().join("tcm-healer.md")).unwrap();
     assert!(t.contains("A CHANGED HEALER"), "{t}");
+}
+
+#[test]
+fn the_date_in_an_agent_file_moves_only_when_the_rules_do() {
+    use v2_lib::commands::ai_tools::write_agents_on;
+    let clone = clone_with_healer("LIVE HEALER");
+    let c = path_str(&clone);
+    let d = TempDir::new();
+    assert_eq!(write_agents_on(d.path(), &[], &c, "2026-10-01").unwrap().len(), 5);
+    let first = std::fs::read_to_string(d.path().join("tcm-healer.md")).unwrap();
+    assert!(first.contains("read from the repo on 2026-10-01"), "{first}");
+    // A later day with the same rules writes nothing: the file keeps the day it was read.
+    assert!(write_agents_on(d.path(), &[], &c, "2026-10-09").unwrap().is_empty());
+    assert_eq!(std::fs::read_to_string(d.path().join("tcm-healer.md")).unwrap(), first);
+    // The rules change: that file is rewritten with the new day, the others stay.
+    clone_with_healer_rewrite(&clone, "A CHANGED HEALER");
+    assert_eq!(write_agents_on(d.path(), &[], &c, "2026-10-12").unwrap(), [d.path().join("tcm-healer.md")]);
+    let t = std::fs::read_to_string(d.path().join("tcm-healer.md")).unwrap();
+    assert!(t.contains("A CHANGED HEALER") && t.contains("read from the repo on 2026-10-12"), "{t}");
+    // The shipped copy has no live mark to date.
+    let shipped = std::fs::read_to_string(d.path().join("tcm-writer.md")).unwrap();
+    assert!(!shipped.contains("read from the repo on"), "{shipped}");
+}
+
+#[test]
+fn only_a_date_shaped_day_is_ignored_when_comparing() {
+    use v2_lib::autorun::pw_rules::without_read_dates;
+    assert_eq!(
+        without_read_dates("a, read from the repo on 2026-10-01\nb, read from the repo on 1999-01-31."),
+        "a, read from the repo on DATE\nb, read from the repo on DATE."
+    );
+    // Anything else after the words is kept as it is.
+    assert_eq!(without_read_dates("read from the repo on tuesday"), "read from the repo on tuesday");
+    assert_eq!(without_read_dates("read from the repo on 2026-1"), "read from the repo on 2026-1");
+    assert_eq!(without_read_dates("read from the repo just now"), "read from the repo just now");
 }
 
 fn clone_with_healer_rewrite(clone: &TempDir, body: &str) {

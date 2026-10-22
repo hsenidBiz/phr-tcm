@@ -31,6 +31,36 @@ pub const READ_LIMIT: u64 = 262_144;
 pub const SHIPPED_COPY: &str = "the copy shipped with this version of Test Case Manager";
 /// The mark on a section whose file was read from the clone.
 pub const LIVE_MARK: &str = "read from the repo just now";
+/// What [`LIVE_MARK`] becomes in a file written to disk (an agent file), which is
+/// not read again each time it is used: [`DATED_MARK_PREFIX`] and the date it was read.
+pub const DATED_MARK_PREFIX: &str = "read from the repo on ";
+
+/// `text` with [`LIVE_MARK`] said as a date: `read from the repo on <date>`.
+pub fn dated_marks(text: &str, date: &str) -> String {
+    text.replace(LIVE_MARK, &format!("{DATED_MARK_PREFIX}{date}"))
+}
+
+/// `text` with each `read from the repo on YYYY-MM-DD` date made `DATE`, so two
+/// texts that differ only in the day they were read compare equal.
+pub fn without_read_dates(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(at) = rest.find(DATED_MARK_PREFIX) {
+        let end = at + DATED_MARK_PREFIX.len();
+        out.push_str(&rest[..end]);
+        rest = &rest[end..];
+        let b = rest.as_bytes();
+        let date = b.len() >= 10
+            && b[..10].iter().enumerate().all(|(i, c)| if i == 4 || i == 7 { *c == b'-' } else { c.is_ascii_digit() });
+        if date {
+            out.push_str("DATE");
+            rest = &rest[10..];
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
 /// The mark on a section whose file is the compiled-in copy.
 pub const SHIPPED_MARK: &str = "the copy shipped with this version";
 

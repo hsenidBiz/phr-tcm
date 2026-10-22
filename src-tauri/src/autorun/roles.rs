@@ -159,9 +159,12 @@ impl Role {
         self.compose(&files)
     }
 
-    /// `text_in` with the clone set on the Playwright tab: live in the app,
-    /// the shipped copy in the `--mcp` proxy and in tests (no settings
-    /// loaded).
+    /// `text_in` with the clone set on the Playwright tab. For the app only
+    /// (its bridge answer and its tests): the settings are loaded there. The
+    /// `--mcp` proxy has no settings, so this would give it a first line that
+    /// says no Playwright repo is set whatever the person has set; it takes a
+    /// role's text from the app, or `shipped_text(Why::NotRead)` when the app
+    /// does not answer (`mcp::role_text_via`).
     pub fn text(self) -> String {
         self.text_in(&crate::app_settings::current().playwright_clone)
     }

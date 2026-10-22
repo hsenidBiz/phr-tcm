@@ -987,12 +987,22 @@ pub fn agent_markdown(role: crate::autorun::roles::Role, text: &str) -> String {
 /// drops the discover command), else the roles in `Role::ALL` order, each
 /// with its rules read now from `clone` (`Role::text_in`).
 pub fn agent_files_in(dir: &std::path::Path, disabled: &[String], clone: &str) -> Vec<(PathBuf, String)> {
+    agent_files_on(dir, disabled, clone, &chrono::Local::now().format("%Y-%m-%d").to_string())
+}
+
+/// `agent_files_in` on `date` (`YYYY-MM-DD`). A file on disk is not read again
+/// each time it is used, so a section read from the repo says the day it was
+/// read ("read from the repo on <date>"), never "just now".
+pub fn agent_files_on(dir: &std::path::Path, disabled: &[String], clone: &str, date: &str) -> Vec<(PathBuf, String)> {
     if disabled.iter().any(|d| d == "start_autorun_discovery") {
         return Vec::new();
     }
     crate::autorun::roles::Role::ALL
         .iter()
-        .map(|r| (dir.join(format!("{AGENT_PREFIX}{}.md", r.key())), agent_markdown(*r, &r.text_in(clone))))
+        .map(|r| {
+            let text = crate::autorun::pw_rules::dated_marks(&r.text_in(clone), date);
+            (dir.join(format!("{AGENT_PREFIX}{}.md", r.key())), agent_markdown(*r, &text))
+        })
         .collect()
 }
 

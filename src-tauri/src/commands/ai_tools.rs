@@ -12,11 +12,12 @@ use tauri::State;
 use crate::ai_tools::{
     atomic_write, command_dir, command_files_in, config_carries, config_for, detect_in, is_installed,
     legacy_command_path, merge_all, merge_entry, migrate_claude_permissions, migrate_cursor_permissions,
-    project_command_dir, agent_dir, agent_files_in, project_agent_dir, AGENT_PREFIX,
+    project_command_dir, agent_dir, project_agent_dir, AGENT_PREFIX,
     remove_entry, remove_legacy_command, set_claude_allow, set_cursor_allow, superseded_by,
     tcm_server, DetectedTool, McpServer, ToolSpec, CLAUDE_DB_RULES, CURSOR_DB_ENTRIES,
     COMMAND_MARKER, LEGACY_DB_SERVER, MANAGED_SERVERS, TCM_SERVER, TOOL_SPECS,
 };
+use crate::autorun::pw_rules::without_read_dates;
 use crate::db::credentials::{self, DbCredentialsForm, DbDatabase, DbSecrets};
 
 #[cfg(windows)]
@@ -923,7 +924,14 @@ fn is_our_agent_file(path: &std::path::Path) -> bool {
 /// content already equals what is on disk is not written. Ok: the paths
 /// written.
 pub fn write_agents_in(dir: &std::path::Path, disabled: &[String], clone: &str) -> Result<Vec<PathBuf>, String> {
-    let wanted = agent_files_in(dir, &crate::ai_tools::effective_disabled(disabled), clone);
+    write_agents_on(dir, disabled, clone, &chrono::Local::now().format("%Y-%m-%d").to_string())
+}
+
+/// `write_agents_in` on `date` (`YYYY-MM-DD`). A file that differs from the
+/// wanted one only in the day it says it read the repo is already what it
+/// should be, so the date moves only when the rules do.
+pub fn write_agents_on(dir: &std::path::Path, disabled: &[String], clone: &str, date: &str) -> Result<Vec<PathBuf>, String> {
+    let wanted = crate::ai_tools::agent_files_on(dir, &crate::ai_tools::effective_disabled(disabled), clone, date);
 
     if let Ok(entries) = std::fs::read_dir(dir) {
         for entry in entries.flatten() {
@@ -953,7 +961,7 @@ pub fn write_agents_in(dir: &std::path::Path, disabled: &[String], clone: &str) 
                 continue;
             }
             // Ours, and already what it should be.
-            Ok(t) if t == contents => continue,
+            Ok(t) if t == contents || without_read_dates(&t) == without_read_dates(&contents) => continue,
             _ => {}
         }
         match atomic_write(&path, &contents) {
