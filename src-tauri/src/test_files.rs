@@ -242,6 +242,14 @@ pub fn not_what_it_says(name: &str) -> String {
     format!("\"{name}\" does not hold what its extension says - write a real file of that kind (an .xlsx is a zipped workbook, not text) and save it again. If you meant a broken file for a negative test, pass malformed: true.")
 }
 
+/// Every save of a test file holds this from its "already there" check through the rename: the
+/// person's add and several assistants' saves can land at once. Coordination, not a cache, and
+/// never held across an `.await` (`commit` is synchronous).
+fn write_lock() -> std::sync::MutexGuard<'static, ()> {
+    static L: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    L.lock().unwrap_or_else(|e| e.into_inner())
+}
+
 fn already_there(name: &str) -> String {
     format!("\"{name}\" is already in Test files - replace it, or rename your copy first")
 }
@@ -262,12 +270,18 @@ fn commit(folder: &Path, name: &str, bytes: &[u8], replace: bool, check_content:
     if check_content && !looks_like(name, bytes) {
         return Err(not_what_it_says(name));
     }
+    // From the "already there" check to the rename, one save at a time: two assistants' saves of
+    // one name must not both pass the check, and the later one silently replace the earlier.
+    let _one_at_a_time = write_lock();
     if dest.exists() && !replace {
         return Err(already_there(name));
     }
     std::fs::create_dir_all(folder).map_err(|e| failed("added", name, e))?;
-    // A leading dot is not a test file name, so `list` never shows this.
-    let part = folder.join(format!(".{name}.part"));
+    // A leading dot is not a test file name, so `list` never shows this. Its own name per call,
+    // so no two writers can ever share a part file, locked or not.
+    static NEXT_PART: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let n = NEXT_PART.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    let part = folder.join(format!(".{name}.part-{}-{n}", std::process::id()));
     if let Err(e) = std::fs::write(&part, bytes) {
         let _ = std::fs::remove_file(&part);
         return Err(failed("added", name, e));

@@ -47,6 +47,46 @@ pub fn load(root: &Path, org: &str, project: &str, id: &str) -> Result<Option<Fl
 /// id. Refuses before touching the disk if `f.id` is not a valid filename
 /// component.
 pub fn save(root: &Path, org: &str, project: &str, f: &Flow) -> Result<(), String> {
+    let _held = flows_lock();
+    write(root, org, project, f)
+}
+
+/// Why `save_if` did not write.
+#[derive(Debug, Clone, PartialEq)]
+pub enum SaveIfError {
+    /// A flow of that id was there at the moment of writing (a file that no
+    /// longer reads counts, as it does for the early check). Nothing was written.
+    Appeared,
+    /// The write itself failed.
+    Failed(String),
+}
+
+/// `save`, but when `expect_absent` and a flow of that id is there now,
+/// writes nothing and says `Appeared`. The check and the write happen under
+/// one lock, so two calls that each found no flow cannot both save: the
+/// later one finds the earlier one's. With `expect_absent` false it is `save`.
+pub fn save_if(root: &Path, org: &str, project: &str, f: &Flow, expect_absent: bool) -> Result<(), SaveIfError> {
+    if !valid_id(&f.id) {
+        return Err(SaveIfError::Failed(invalid_id(&f.id)));
+    }
+    let _held = flows_lock();
+    if expect_absent && !matches!(load(root, org, project, &f.id), Ok(None)) {
+        return Err(SaveIfError::Appeared);
+    }
+    write(root, org, project, f).map_err(SaveIfError::Failed)
+}
+
+/// Every check-then-write and every delete of a flow file holds this: two
+/// assistants' saves of one flow id, the person's import and a removal can
+/// land at once. It is coordination, not a cache, and is never held across
+/// an await (every function that takes it is synchronous).
+fn flows_lock() -> std::sync::MutexGuard<'static, ()> {
+    static L: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    L.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// The write both savers share; the caller holds the lock.
+fn write(root: &Path, org: &str, project: &str, f: &Flow) -> Result<(), String> {
     if !valid_id(&f.id) {
         return Err(invalid_id(&f.id));
     }
@@ -96,6 +136,7 @@ pub fn remove(root: &Path, org: &str, project: &str, id: &str) -> Result<(), Str
     if !valid_id(id) {
         return Err(invalid_id(id));
     }
+    let _held = flows_lock();
     match std::fs::remove_file(flow_path(root, org, project, id)) {
         Ok(()) => Ok(()),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),

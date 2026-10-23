@@ -400,6 +400,62 @@ fn save_then_load_round_trips() {
 }
 
 #[test]
+fn save_if_expecting_absent_writes_when_absent_and_refuses_when_a_flow_appeared() {
+    use flow_store::SaveIfError;
+    let dir = tempfile::tempdir().unwrap();
+    let mut first = flow();
+    first.title = "First".into();
+    flow_store::save_if(dir.path(), "Org", "Proj", &first, true).unwrap();
+    assert_eq!(flow_store::load(dir.path(), "Org", "Proj", &first.id).unwrap(), Some(first.clone()));
+
+    // A flow written after the caller's own look is not replaced.
+    let mut second = flow();
+    second.title = "Second".into();
+    assert_eq!(flow_store::save_if(dir.path(), "Org", "Proj", &second, true), Err(SaveIfError::Appeared));
+    assert_eq!(flow_store::load(dir.path(), "Org", "Proj", &first.id).unwrap(), Some(first.clone()));
+
+    // A copy that no longer reads still stands for that id.
+    std::fs::write(flow_store::flows_dir(dir.path(), "Org", "Proj").join("pms-performance-cycle.json"), "{").unwrap();
+    assert_eq!(flow_store::save_if(dir.path(), "Org", "Proj", &second, true), Err(SaveIfError::Appeared));
+
+    // Not expecting it absent is a plain save.
+    flow_store::save_if(dir.path(), "Org", "Proj", &second, false).unwrap();
+    assert_eq!(flow_store::load(dir.path(), "Org", "Proj", &second.id).unwrap(), Some(second));
+}
+
+#[test]
+fn eight_saves_of_one_new_flow_at_once_keep_exactly_one() {
+    use flow_store::SaveIfError;
+    let dir = tempfile::tempdir().unwrap();
+    let flows: Vec<Flow> = (0..8)
+        .map(|i| {
+            let mut f = flow();
+            f.title = format!("Writer {i}");
+            f
+        })
+        .collect();
+    let start = std::sync::Barrier::new(flows.len());
+    let answers: Vec<Result<(), SaveIfError>> = std::thread::scope(|s| {
+        let handles: Vec<_> = flows
+            .iter()
+            .map(|f| {
+                let (root, start) = (dir.path(), &start);
+                s.spawn(move || {
+                    start.wait();
+                    flow_store::save_if(root, "Org", "Proj", f, true)
+                })
+            })
+            .collect();
+        handles.into_iter().map(|h| h.join().unwrap()).collect()
+    });
+    let ok = answers.iter().filter(|a| a.is_ok()).count();
+    let appeared = answers.iter().filter(|a| **a == Err(SaveIfError::Appeared)).count();
+    assert_eq!((ok, appeared), (1, 7), "{answers:?}");
+    let kept = flow_store::load(dir.path(), "Org", "Proj", &flows[0].id).unwrap().expect("one was kept");
+    assert!(flows.contains(&kept), "the kept flow is one of the eight, whole");
+}
+
+#[test]
 fn list_skips_a_file_that_does_not_parse() {
     let dir = tempfile::tempdir().unwrap();
     assert!(flow_store::list(dir.path(), "Org", "Proj").unwrap().is_empty());

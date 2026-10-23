@@ -2192,6 +2192,12 @@ pub async fn api_fixture_run<B: crate::autorun::replay::Browsers>(
 const FLOW_SAVE_SHAPE: &str = "{ \"flow\": <the flow>, \"sample\": <the subject of a real record>, \"replace\"?: true, \"why\"?: \"<reason>\" }";
 const FLOW_PROGRESS_SHAPE: &str = "{ \"flow\": \"<flow id>\", \"subject\": <the record's id> }";
 
+/// What a flow save is told when it would replace a flow without `replace: true` and a why,
+/// whether that is found before the database checks or at the moment of writing.
+fn flow_already_exists(id: &str) -> String {
+    format!("a flow called \"{id}\" already exists - send replace: true and a why to change it")
+}
+
 /// `POST /api-template-flow-save` (design doc "API template flows" §6): a
 /// flow is saved only once every stage's check has run on `sample`, a real
 /// record - done or not done both fine, a check that could not run is not.
@@ -2248,6 +2254,7 @@ pub async fn api_template_flow_save<D: crate::api_templates::gate::StageDb>(
         (None, Some(_)) => {}
     }
     let mut replacing = false;
+    let may_replace = replace && why.as_deref().is_some_and(|w| !w.trim().is_empty());
     if let Some(f) = &parsed {
         replacing = match flow_store::load(&root, org, project, &f.id) {
             Ok(found) => found.is_some(),
@@ -2258,12 +2265,8 @@ pub async fn api_template_flow_save<D: crate::api_templates::gate::StageDb>(
                 true
             }
         };
-        let has_why = why.as_deref().is_some_and(|w| !w.trim().is_empty());
-        if replacing && !(replace && has_why) {
-            problems.push(format!(
-                "a flow called \"{}\" already exists - send replace: true and a why to change it",
-                f.id
-            ));
+        if replacing && !may_replace {
+            problems.push(flow_already_exists(&f.id));
         }
     }
     let (Some(mut f), Some(sample), true) = (parsed, sample, problems.is_empty()) else {
@@ -2296,9 +2299,19 @@ pub async fn api_template_flow_save<D: crate::api_templates::gate::StageDb>(
     }
 
     f.saved = Some(FlowSaved { at: crate::applog::stamp(), sample: sample.clone() });
-    if let Err(e) = flow_store::save(&root, org, project, &f) {
-        crate::applog::warn(format!("api template flow {}: it could not be saved: {e}", f.id));
-        return (500, "the flow could not be saved - see Settings, Logs".to_string());
+    // The early check ran before the database awaits above; a second call may have saved this
+    // id since. Looked at again at the moment of writing, under the store's lock, so a call that
+    // did not say replace with a why never replaces a flow it did not see.
+    match flow_store::save_if(&root, org, project, &f, !may_replace) {
+        Ok(()) => {}
+        Err(flow_store::SaveIfError::Appeared) => {
+            crate::applog::warn(format!("api template flow {}: another call saved it while this one was checked", f.id));
+            return (409, flow_already_exists(&f.id));
+        }
+        Err(flow_store::SaveIfError::Failed(e)) => {
+            crate::applog::warn(format!("api template flow {}: it could not be saved: {e}", f.id));
+            return (500, "the flow could not be saved - see Settings, Logs".to_string());
+        }
     }
     if replacing {
         crate::applog::info(format!(

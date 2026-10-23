@@ -3677,6 +3677,61 @@ mod api_template_routes {
         );
     }
 
+    /// The early "already exists" check runs before the database is opened and its checks
+    /// awaited. `open_db` runs in between, so a flow written there is one that appeared
+    /// meanwhile.
+    fn written_meanwhile(
+        root: &std::path::Path,
+        db: &crate::common::FakeStageDb,
+    ) -> impl FnOnce(&BridgeContext) -> Result<crate::common::FakeStageDb, (u16, String)> {
+        let (root, db) = (root.to_path_buf(), db.clone());
+        move |c| {
+            let mut other = cycle_flow();
+            other.title = "Saved by the other call".into();
+            v2_lib::api_templates::flow_store::save(&root, &c.org, &c.project, &other).unwrap();
+            Ok(db)
+        }
+    }
+
+    #[tokio::test]
+    async fn a_flow_that_appeared_while_the_checks_ran_is_not_replaced_without_replace_and_why() {
+        use v2_lib::ai_bridge::api_template_flow_save;
+        let _log = crate::serial::log_tail();
+        let _root = crate::serial::autorun();
+        let _act = crate::serial::activity_log();
+        let dir = root_with_recipe_and_account();
+        let c = ctx();
+        let db = db_answering(true, &[]);
+        let refused = "a flow called \"pms-performance-cycle\" already exists - send replace: true and a why to change it";
+        for extra in [json!({}), json!({ "replace": true }), json!({ "why": "rules moved" }), json!({ "replace": true, "why": "  " })] {
+            let mut b = json!({ "flow": crate::common::cycle_flow_json(), "sample": 274 });
+            for (k, v) in extra.as_object().unwrap() {
+                b[k] = v.clone();
+            }
+            let (status, out) = api_template_flow_save(&c, &b.to_string(), written_meanwhile(dir.path(), &db)).await;
+            assert_eq!((status, out.as_str()), (409, refused), "{extra}");
+            let kept = v2_lib::api_templates::flow_store::load(dir.path(), &c.org, &c.project, FLOW).unwrap().unwrap();
+            assert_eq!(kept.title, "Saved by the other call", "{extra}: the other call's flow was replaced");
+            v2_lib::api_templates::flow_store::remove(dir.path(), &c.org, &c.project, FLOW).unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn a_flow_that_appeared_meanwhile_is_replaced_when_the_call_said_replace_with_a_why() {
+        use v2_lib::ai_bridge::api_template_flow_save;
+        let _log = crate::serial::log_tail();
+        let _root = crate::serial::autorun();
+        let _act = crate::serial::activity_log();
+        let dir = root_with_recipe_and_account();
+        let c = ctx();
+        let db = db_answering(true, &[]);
+        let b = json!({ "flow": crate::common::cycle_flow_json(), "sample": 274, "replace": true, "why": "reworked" });
+        let (status, out) = api_template_flow_save(&c, &b.to_string(), written_meanwhile(dir.path(), &db)).await;
+        assert_eq!(status, 200, "{out}");
+        let kept = v2_lib::api_templates::flow_store::load(dir.path(), &c.org, &c.project, FLOW).unwrap().unwrap();
+        assert_ne!(kept.title, "Saved by the other call");
+    }
+
     #[tokio::test]
     async fn progress_answers_each_stage() {
         use v2_lib::ai_bridge::api_template_flow_progress;
