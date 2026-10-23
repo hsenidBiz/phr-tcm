@@ -3785,28 +3785,51 @@ fn the_agent_name_is_held_for_the_call_only() {
     // Nothing the assistant named outlives its call.
     assert_eq!(v2_lib::mcp::calling_agent(), None);
 
-    // A route that carries the arguments in a body gets them without `agent`.
-    let (_, reached) = call_recorded("get_test_cases", serde_json::json!({ "pbi_id": 1, "agent": "writer-1" }));
+    // A tool that forwards its whole arguments object as the body gets it
+    // without `agent`, and with everything else.
+    let (_, reached) = call_recorded("get_explore_changes", serde_json::json!({ "marker": 7, "agent": "writer-1" }));
     assert_eq!(reached.len(), 1, "{reached:?}");
     let (_, path, body) = &reached[0];
-    assert!(!path.contains("writer-1") && !path.contains("agent"), "{path}");
-    assert!(!body.contains("writer-1") && !body.contains("agent"), "{body}");
+    assert_eq!(path, "/autorun-explore-changes");
+    let sent: serde_json::Value = serde_json::from_str(body).unwrap();
+    assert_eq!(sent, serde_json::json!({ "marker": 7 }), "{body}");
+}
+
+/// How long a test listener waits for anything: a request that never comes
+/// fails its test; it never hangs the suite.
+const LISTEN_FOR: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// The next connection on `listener`, or None once `LISTEN_FOR` has passed.
+fn accept_within(listener: &std::net::TcpListener) -> Option<std::net::TcpStream> {
+    listener.set_nonblocking(true).unwrap();
+    let until = std::time::Instant::now() + LISTEN_FOR;
+    while std::time::Instant::now() < until {
+        match listener.accept() {
+            Ok((stream, _)) => {
+                stream.set_nonblocking(false).unwrap();
+                return Some(stream);
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => std::thread::sleep(std::time::Duration::from_millis(10)),
+            Err(e) => panic!("accept failed: {e}"),
+        }
+    }
+    None
 }
 
 /// Reads one request off `stream` up to the end of its head, answers `{}`,
-/// and returns the raw bytes.
+/// and returns the raw bytes (what had arrived, if the head never finished).
 fn serve_one(stream: &mut std::net::TcpStream) -> Vec<u8> {
     use std::io::{Read, Write};
+    stream.set_read_timeout(Some(LISTEN_FOR)).unwrap();
     let mut raw = Vec::new();
     let mut chunk = [0u8; 4096];
     while !raw.windows(4).any(|w| w == b"\r\n\r\n") {
-        let n = stream.read(&mut chunk).unwrap();
-        if n == 0 {
-            break;
+        match stream.read(&mut chunk) {
+            Ok(n) if n > 0 => raw.extend_from_slice(&chunk[..n]),
+            _ => break,
         }
-        raw.extend_from_slice(&chunk[..n]);
     }
-    stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}").unwrap();
+    let _ = stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}");
     raw
 }
 
@@ -3823,7 +3846,7 @@ fn send_to_bridge_carries_the_agent_headers() {
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let port = listener.local_addr().unwrap().port();
     let server = std::thread::spawn(move || {
-        let (mut stream, _) = listener.accept().unwrap();
+        let mut stream = accept_within(&listener).expect("no request reached the listener");
         serve_one(&mut stream)
     });
     let (status, _) = v2_lib::mcp::send_to_bridge(port, "tok", "GET", "/guide", "").unwrap();
@@ -3847,15 +3870,17 @@ fn a_tool_call_for_a_subagent_names_it_on_every_request() {
     // The `/tools` read first, then the route the tool is for.
     let server = std::thread::spawn(move || {
         let mut all = Vec::new();
-        loop {
-            let (mut stream, _) = listener.accept().unwrap();
+        // A refusal means no `/autorun-page` ever comes: the wait ends and
+        // the assertions below fail, rather than the suite hanging.
+        while let Some(mut stream) = accept_within(&listener) {
             let raw = serve_one(&mut stream);
             let last = String::from_utf8_lossy(&raw).starts_with("GET /autorun-page");
             all.push(raw);
             if last {
-                return all;
+                break;
             }
         }
+        all
     });
     let send = |m: &str, p: &str, b: &str| v2_lib::mcp::send_to_bridge(port, "tok", m, p, b);
     let req = serde_json::json!({
@@ -3866,12 +3891,47 @@ fn a_tool_call_for_a_subagent_names_it_on_every_request() {
     assert_ne!(v["result"]["isError"], true, "{v}");
     let requests = server.join().unwrap();
     assert!(requests.len() >= 2, "the policy read and the route: {}", requests.len());
+    assert!(
+        String::from_utf8_lossy(requests.last().unwrap()).starts_with("GET /autorun-page"),
+        "the route was never asked"
+    );
     for raw in &requests {
         let seen = agent_headers_of(raw);
         assert_eq!(seen.id.as_deref(), Some(v2_lib::mcp::proxy_agent_id()));
         assert_eq!(seen.name.as_deref(), Some("writer-1"), "{}", String::from_utf8_lossy(raw));
     }
     assert_eq!(v2_lib::mcp::calling_agent(), None);
+}
+
+/// A closing proxy is not held by an app that does not answer: the goodbye
+/// gives up after about two seconds, and an app that is not there is not an
+/// error.
+#[test]
+fn the_goodbye_gives_up_on_an_app_that_never_answers() {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    // Accepts, reads nothing, answers nothing, until the test is done.
+    let (done, wait) = std::sync::mpsc::channel::<()>();
+    let holder = std::thread::spawn(move || {
+        let held = accept_within(&listener);
+        let _ = wait.recv_timeout(LISTEN_FOR);
+        drop(held);
+    });
+    let started = std::time::Instant::now();
+    v2_lib::mcp::send_bye_to(port, "tok");
+    let took = started.elapsed();
+    let _ = done.send(());
+    holder.join().unwrap();
+    assert!(took < std::time::Duration::from_secs(3), "the goodbye held the proxy for {took:?}");
+
+    // Nothing listening at all: back at once, no panic.
+    let closed = {
+        let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        l.local_addr().unwrap().port()
+    };
+    let started = std::time::Instant::now();
+    v2_lib::mcp::send_bye_to(closed, "tok");
+    assert!(started.elapsed() < std::time::Duration::from_secs(3), "{:?}", started.elapsed());
 }
 
 #[test]

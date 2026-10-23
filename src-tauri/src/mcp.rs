@@ -151,9 +151,23 @@ pub fn take_agent_arg(args: &serde_json::Value) -> Result<(serde_json::Value, Op
 
 /// Tells the app this proxy's session is over, so its entry can end at once
 /// rather than after the sweep. Best effort: an app that is not running, or
-/// an answer of any kind, changes nothing.
+/// an answer of any kind, changes nothing. It gives up after two seconds, so
+/// a session that is closing is never held by an app that does not answer.
 pub fn send_bye() {
-    let _ = bridge_request("POST", "/agent-bye", "");
+    let Ok(text) = std::fs::read_to_string(crate::ai_bridge::handshake_path()) else { return };
+    let Ok(hs) = serde_json::from_str::<serde_json::Value>(&text) else { return };
+    let (Some(port), Some(token)) = (hs["port"].as_u64().and_then(|p| u16::try_from(p).ok()), hs["token"].as_str()) else {
+        return;
+    };
+    send_bye_to(port, token);
+}
+
+/// How long `send_bye` waits, to connect and to be answered.
+const BYE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
+
+/// `send_bye` to the bridge on `port`.
+pub fn send_bye_to(port: u16, token: &str) {
+    let _ = send_to_bridge_within(port, token, "POST", "/agent-bye", "", BYE_TIMEOUT);
 }
 
 /// What to say when this proxy and the running app are different builds,
@@ -2648,7 +2662,24 @@ fn bridge_request(method: &str, path: &str, body: &str) -> Result<(u16, String),
 /// (the handshake file belongs to a live app). A request made during a
 /// tool call carries the tool's name in `TOOL_HEADER`.
 pub fn send_to_bridge(port: u16, token: &str, method: &str, path: &str, body: &str) -> Result<(u16, String), String> {
-    let client = reqwest::blocking::Client::new();
+    // 300s, not 30: get_run_results resolves a PBI's suite by
+    // scanning every test plan in the project, throttle-paced - ~60s
+    // against a large org on a cold cache. At 30s the proxy gave up
+    // mid-scan and reported the app as unreachable, which it wasn't.
+    send_to_bridge_within(port, token, method, path, body, std::time::Duration::from_secs(300))
+}
+
+/// `send_to_bridge` that gives up after `timeout`, for connecting and for
+/// the whole exchange.
+pub fn send_to_bridge_within(
+    port: u16,
+    token: &str,
+    method: &str,
+    path: &str,
+    body: &str,
+    timeout: std::time::Duration,
+) -> Result<(u16, String), String> {
+    let client = reqwest::blocking::Client::builder().connect_timeout(timeout).build().map_err(|e| e.to_string())?;
     let url = format!("http://127.0.0.1:{port}{path}");
     let mut req = match method {
         "POST" => client.post(&url).body(body.to_string()),
@@ -2669,11 +2700,7 @@ pub fn send_to_bridge(port: u16, token: &str, method: &str, path: &str, body: &s
     let resp = req
         .header("x-bridge-token", token)
         .header(PROXY_VERSION_HEADER, PROXY_VERSION)
-        // 300s, not 30: get_run_results resolves a PBI's suite by
-        // scanning every test plan in the project, throttle-paced - ~60s
-        // against a large org on a cold cache. At 30s the proxy gave up
-        // mid-scan and reported the app as unreachable, which it wasn't.
-        .timeout(std::time::Duration::from_secs(300))
+        .timeout(timeout)
         .send()
         .map_err(|e| e.to_string())?;
     let status = resp.status().as_u16();
