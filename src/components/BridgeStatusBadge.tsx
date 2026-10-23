@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { commands } from "../bindings";
-import { cn } from "../lib/cn";
 import { unwrapStr } from "../lib/ipc";
+import StatusPill from "./StatusPill";
 
 /** The bridge's state as a glowing dot beside the AI Bridge title: green
  * while it listens, red when it does not. Replaces a whole "Status" card
@@ -16,20 +16,14 @@ export default function BridgeStatusBadge() {
   if (bridge.isPending) return null;
   const up = Boolean(bridge.data);
   return (
-    <span
-      role="status"
+    <StatusPill
+      tone={up ? "success" : "danger"}
+      label={up ? "Running" : "Not running"}
       title={
         up
           ? `Bridge listening on port ${bridge.data?.port}. It only runs while this app is open and signed in.`
           : "The bridge only runs while this app is open and signed in - AI tools can't reach it otherwise."
       }
-      className={cn(
-        "inline-flex items-center gap-1.5 rounded-full border border-border px-2 py-0.5 text-[11px] font-medium",
-        up ? "text-success" : "text-danger",
-      )}
-    >
-      <span aria-hidden className="status-glow size-2 rounded-full bg-current" />
-      <span className="label-trim">{up ? "Running" : "Not running"}</span>
-    </span>
+    />
   );
 }

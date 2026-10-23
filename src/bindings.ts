@@ -1395,6 +1395,12 @@ export const commands = {
 	/**  What the clone at `clone` holds, and the health line. Read only. */
 	pwRepoStructure: (clone: string) => typedError<RepoStructure, string>(__TAURI_INVOKE("pw_repo_structure", { clone })),
 	/**
+	 *  How many spec files the clone holds and a fingerprint of them. A walk of
+	 *  file metadata only: it opens no file and starts no process, so the header
+	 *  can ask it every minute.
+	 */
+	pwRepoSpecsStatus: (clone: string) => typedError<SpecsStatus, string>(__TAURI_INVOKE("pw_repo_specs_status", { clone })),
+	/**
 	 *  Makes the feature folder `path` (under `suites/`) in the clone, with
 	 *  `test-cases/` and `specs/` kept in git by a `.gitkeep` each. Writes
 	 *  nothing when it refuses (`new_folder::create_feature`).
@@ -6564,6 +6570,14 @@ export type SortKind = "text" | "number" | "date";
 
 /**  Ascending or descending. */
 export type SortOrder = "ascending" | "descending";
+
+/**  What the walk found. */
+export type SpecsStatus = {
+	/**  How many `*.spec.ts` / `*.spec.js` files `suites/` holds. */
+	count: number,
+	/**  SHA-256 (hex) of each spec's relative path, size and modified time. */
+	fingerprint: string,
+};
 
 export type Stage = {
 	id: string,

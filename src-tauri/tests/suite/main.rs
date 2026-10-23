@@ -193,6 +193,7 @@ mod pw_repo_presence;
 mod pw_repo_rename_folder;
 mod pw_repo_process;
 mod pw_repo_runner;
+mod pw_repo_specs_status;
 mod pw_repo_structure;
 mod pw_repo_sync;
 mod pw_repo_timing;

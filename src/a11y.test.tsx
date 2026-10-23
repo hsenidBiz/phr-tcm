@@ -13,7 +13,7 @@
  */
 import { mockIPC, clearMocks } from "@tauri-apps/api/mocks";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import axe from "axe-core";
 import { afterEach, expect, test, vi } from "vitest";
 import type { ReactElement } from "react";
@@ -23,6 +23,8 @@ import Settings from "./screens/Settings";
 import SignIn from "./screens/SignIn";
 import WorkBoard from "./screens/WorkBoard";
 import QueueSection from "./components/QueueSection";
+import SpecsStatusPill from "./components/SpecsStatusPill";
+import { setSpecsPill } from "./lib/pwSpecs";
 
 // axe walks the whole rendered tree of a real screen, which is slow by
 // nature: Settings sits around 4.5s idle and has crossed vitest's 5s
@@ -160,4 +162,18 @@ test("the Queue, grouped by area with a case selected, is accessible", async () 
       expect(screen.getByText("1 selected")).toBeInTheDocument();
     },
   );
+});
+
+test("the Playwright specs pill is accessible in each of its states", async () => {
+  for (const pill of [
+    { tone: "success" as const, label: "4 specs ready", why: "4 specs found and read." },
+    { tone: "warning" as const, label: "Updating specs…", why: "The spec files changed." },
+    { tone: "danger" as const, label: "No specs found", why: "The clone has no suites folder." },
+  ]) {
+    setSpecsPill(pill);
+    await expectAccessible(<SpecsStatusPill />);
+    expect(screen.getByRole("status", { name: `Playwright specs: ${pill.label}. ${pill.why}` })).toBeInTheDocument();
+    cleanup();
+  }
+  setSpecsPill(null);
 });
