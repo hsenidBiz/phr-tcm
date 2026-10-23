@@ -35,6 +35,15 @@ pub fn autorun() -> MutexGuard<'static, ()> {
     hold(&L)
 }
 
+/// The agent registry (`autorun::agents`): which assistants are connected,
+/// their labels and numbers. Taken by every test that registers a caller and
+/// calls `agents::clear()` first. When a test also needs `autorun()`, take
+/// this one first.
+pub fn agents() -> MutexGuard<'static, ()> {
+    static L: Mutex<()> = Mutex::new(());
+    hold(&L)
+}
+
 /// The `SQLCMD_OVERRIDE` environment variable, which decides where (or
 /// whether) sqlcmd is found for everything in the process.
 pub fn sqlcmd_env() -> MutexGuard<'static, ()> {

@@ -28,6 +28,7 @@ mod ado_git;
 mod ado_network;
 mod ado_share;
 mod ado_testplan;
+mod agents;
 mod ai_bridge;
 mod ai_tools;
 mod allow_rules;

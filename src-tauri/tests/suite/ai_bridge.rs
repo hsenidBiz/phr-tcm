@@ -2898,13 +2898,185 @@ fn parse_http_reads_the_proxys_version() {
     }
 }
 
+const AGENT_ID: &str = "0123456789abcdef0123456789abcdef";
+
+/// The proxy names its caller on every request: an id, its pid, its client
+/// and (for a subagent) its name - read, not judged, here.
+#[test]
+fn parse_http_reads_the_agent_headers() {
+    use v2_lib::ai_bridge::{parse_http, Parsed};
+    use v2_lib::autorun::agents::AgentHeaders;
+    let raw = format!(
+        "GET /ping HTTP/1.1\r\nx-bridge-token: t\r\nX-TCM-Agent: {AGENT_ID}\r\nx-tcm-agent-pid: 4242\r\n\
+         x-tcm-agent-client: claude-code\r\nX-Tcm-Agent-Name: writer-1\r\n\r\n"
+    );
+    match parse_http(raw.as_bytes()) {
+        Parsed::Complete { agent, .. } => assert_eq!(
+            agent,
+            AgentHeaders {
+                id: Some(AGENT_ID.to_string()),
+                pid: Some(4242),
+                client: Some("claude-code".to_string()),
+                name: Some("writer-1".to_string()),
+            }
+        ),
+        _ => panic!("expected a complete request"),
+    }
+}
+
+#[test]
+fn parse_http_without_agent_headers_gives_none() {
+    use v2_lib::ai_bridge::{parse_http, Parsed};
+    match parse_http(b"GET /ping HTTP/1.1\r\nx-bridge-token: t\r\n\r\n") {
+        Parsed::Complete { agent, .. } => assert_eq!(agent, v2_lib::autorun::agents::AgentHeaders::default()),
+        _ => panic!("expected a complete request"),
+    }
+}
+
+/// A pid that is not a number costs the agent its pid, never the request.
+#[test]
+fn a_bad_pid_header_is_ignored_not_refused() {
+    use v2_lib::ai_bridge::{parse_http, Parsed};
+    let raw = format!("GET /ping HTTP/1.1\r\nx-bridge-token: t\r\nx-tcm-agent: {AGENT_ID}\r\nx-tcm-agent-pid: abc\r\n\r\n");
+    match parse_http(raw.as_bytes()) {
+        Parsed::Complete { agent, .. } => {
+            assert_eq!(agent.pid, None);
+            assert_eq!(agent.id.as_deref(), Some(AGENT_ID));
+        }
+        _ => panic!("a bad pid refused the request"),
+    }
+}
+
+/// Pid 0 is not a process: it is no pid.
+#[test]
+fn a_pid_header_of_zero_is_no_pid() {
+    use v2_lib::ai_bridge::{parse_http, Parsed};
+    let raw = format!("GET /ping HTTP/1.1\r\nx-bridge-token: t\r\nx-tcm-agent: {AGENT_ID}\r\nx-tcm-agent-pid: 0\r\n\r\n");
+    match parse_http(raw.as_bytes()) {
+        Parsed::Complete { agent, .. } => assert_eq!(agent.pid, None),
+        _ => panic!("a zero pid refused the request"),
+    }
+}
+
+#[test]
+fn tool_call_line_names_the_label() {
+    use v2_lib::ai_bridge::{tool_call_line, tool_call_line_for};
+    assert_eq!(
+        tool_call_line_for(Some("try_autorun_action"), Some("Assistant 2"), "/autorun-try", 200, "").as_deref(),
+        Some("AI tool try_autorun_action (Assistant 2): ok")
+    );
+    assert_eq!(
+        tool_call_line_for(Some("try_autorun_action"), Some("Assistant 2"), "/autorun-try", 503, "").as_deref(),
+        Some("AI tool try_autorun_action (Assistant 2): tool error, HTTP 503")
+    );
+    // No label: exactly the line there has always been.
+    assert_eq!(
+        tool_call_line_for(Some("try_autorun_action"), None, "/autorun-try", 200, ""),
+        tool_call_line(Some("try_autorun_action"), "/autorun-try", 200, "")
+    );
+    assert_eq!(tool_call_line_for(None, Some("Assistant 1"), "/validate", 200, ""), None);
+}
+
+#[tokio::test]
+async fn route_as_the_default_caller_answers_as_route() {
+    use v2_lib::autorun::agents::Caller;
+    let a = route(&ctx(), None, "GET", "/ping", "", "1.10.3").await;
+    let b = v2_lib::ai_bridge::route_as(&Caller::Default, &ctx(), None, "GET", "/ping", "", "1.10.3").await;
+    assert_eq!(a, b);
+    assert_eq!(a.0, 200);
+}
+
+/// A request that carries the token and the agent headers registers its
+/// caller; one without the token registers nobody.
+#[tokio::test]
+async fn the_listener_registers_the_caller() {
+    let _agents = crate::serial::agents();
+    v2_lib::autorun::agents::clear();
+    let shared = v2_lib::ai_bridge::BridgeState::new(ctx(), "0.0.0-test".into());
+    let (port, token) = v2_lib::ai_bridge::start_listener(Arc::clone(&shared), None, None).await.unwrap();
+    async fn send(port: u16, req: String) -> String {
+        let mut s = tokio::net::TcpStream::connect(("127.0.0.1", port)).await.unwrap();
+        s.write_all(req.as_bytes()).await.unwrap();
+        let mut buf = Vec::new();
+        s.read_to_end(&mut buf).await.unwrap();
+        String::from_utf8_lossy(&buf).to_string()
+    }
+    let headers = format!(
+        "x-tcm-agent: {AGENT_ID}\r\nx-tcm-agent-pid: 4242\r\nx-tcm-agent-client: claude-code\r\nx-tcm-agent-name: writer-1\r\n"
+    );
+    // Wrong token: refused, and nobody is registered.
+    let resp = send(
+        port,
+        format!("GET /ping HTTP/1.1\r\nHost: x\r\nx-bridge-token: wrong\r\n{headers}Connection: close\r\n\r\n"),
+    )
+    .await;
+    assert!(resp.starts_with("HTTP/1.1 401"), "got: {resp}");
+    assert!(v2_lib::autorun::agents::live().is_empty());
+
+    let resp = send(
+        port,
+        format!("GET /ping HTTP/1.1\r\nHost: x\r\nx-bridge-token: {token}\r\n{headers}Connection: close\r\n\r\n"),
+    )
+    .await;
+    assert!(resp.starts_with("HTTP/1.1 200"), "got: {resp}");
+    let live = v2_lib::autorun::agents::live();
+    assert_eq!(live.len(), 1, "{live:?}");
+    assert_eq!(live[0].label, "Assistant 1");
+    assert_eq!(live[0].client.as_deref(), Some("claude-code"));
+    assert_eq!(live[0].pid, Some(4242));
+
+    // A request with no agent headers is the default caller: not registered.
+    let resp = send(
+        port,
+        format!("GET /ping HTTP/1.1\r\nHost: x\r\nx-bridge-token: {token}\r\nConnection: close\r\n\r\n"),
+    )
+    .await;
+    assert!(resp.starts_with("HTTP/1.1 200"), "got: {resp}");
+    assert_eq!(v2_lib::autorun::agents::live().len(), 1);
+    v2_lib::autorun::agents::clear();
+}
+
+/// A proxy's goodbye is answered whatever modules are on, ends only an
+/// agent's entries, and is harmless from the default caller.
+#[tokio::test]
+async fn agent_bye_marks_the_agent_gone_even_with_auto_run_off() {
+    use v2_lib::autorun::agents::{self, AgentHeaders, Caller};
+    let _agents = crate::serial::agents();
+    agents::clear();
+    // Auto Run (and every other module) off: the guard has nothing to say.
+    let none: std::collections::BTreeSet<v2_lib::modules::Module> = Default::default();
+    assert_eq!(v2_lib::ai_bridge::module_guard("/agent-bye", "", &none), None);
+
+    let h = AgentHeaders { id: Some(AGENT_ID.to_string()), pid: Some(4242), client: None, name: None };
+    let caller = h.caller();
+    agents::note_call(&caller, &h, 1_000);
+    let Caller::Agent(k) = caller.clone() else { panic!("a valid id is an agent") };
+    assert!(agents::is_live(&k));
+
+    let (status, body) = v2_lib::ai_bridge::route_as(&caller, &ctx(), None, "POST", "/agent-bye", "", "1.10.3").await;
+    assert_eq!((status, body.as_str()), (200, "{}"));
+    assert!(!agents::is_live(&k));
+
+    // The default caller is answered and ends nothing.
+    agents::note_call(&caller, &h, 2_000);
+    assert!(agents::is_live(&k));
+    let (status, body) =
+        v2_lib::ai_bridge::route_as(&Caller::Default, &ctx(), None, "POST", "/agent-bye", "", "1.10.3").await;
+    assert_eq!((status, body.as_str()), (200, "{}"));
+    assert!(agents::is_live(&k));
+    agents::clear();
+}
+
 /// Every MCP tool call writes ONE app-log line: the tool's name and how the
 /// call ended (ok, refused, or the HTTP status of a tool error) - and
 /// nothing of its arguments, its answer, an id or a path. Driven end to end:
 /// the proxy's dispatcher, its real transport and a listener of the test's
-/// own.
+/// own. The proxy names itself on every request, so the app registers it and
+/// each line carries its label ("Assistant 1"), never its id or pid.
 #[test]
 fn a_tool_call_writes_one_log_line_with_its_name_and_status_only() {
+    let _agents = crate::serial::agents();
+    v2_lib::autorun::agents::clear();
     let _log = crate::serial::log_tail();
     let mut context = ctx();
     context.disabled_tools = vec!["get_tags".into()];
@@ -2913,7 +3085,7 @@ fn a_tool_call_writes_one_log_line_with_its_name_and_status_only() {
         tauri::async_runtime::block_on(v2_lib::ai_bridge::start_listener(Arc::clone(&shared), None, None)).unwrap();
     let send = |m: &str, p: &str, b: &str| v2_lib::mcp::send_to_bridge(port, &token, m, p, b);
     let lines = |tool: &str| -> Vec<String> {
-        let mark = format!("AI tool {tool}:");
+        let mark = format!("AI tool {tool} (Assistant 1):");
         v2_lib::applog::recent(6000).into_iter().map(|l| l.message).filter(|m| m.starts_with(&mark)).collect()
     };
     let call = |tool: &str, args: serde_json::Value| -> serde_json::Value {
@@ -2930,20 +3102,22 @@ fn a_tool_call_writes_one_log_line_with_its_name_and_status_only() {
 
     // An answered call: ok.
     let ok = call("validate_cases", serde_json::json!({ "json": format!("[{{\"title\":\"{SECRET}\",\"steps\":[]}}]") }));
-    assert_eq!(ok["line"], "AI tool validate_cases: ok", "{ok}");
+    assert_eq!(ok["line"], "AI tool validate_cases (Assistant 1): ok", "{ok}");
     assert!(ok["result"]["isError"].is_null(), "{ok}");
 
     // A switched-off tool: refused on the `/tools` read, no route reached.
     let refused = call("get_tags", serde_json::json!({ "query": SECRET }));
-    assert_eq!(refused["line"], "AI tool get_tags: refused", "{refused}");
+    assert_eq!(refused["line"], "AI tool get_tags (Assistant 1): refused", "{refused}");
     assert_eq!(refused["result"]["isError"], true, "{refused}");
 
     // A route that answers an error: its HTTP status, never its path or ids.
     let failed = call("get_test_cases", serde_json::json!({ "case_ids": [987654321], "pbi_id": 987654322 }));
-    assert_eq!(failed["line"], "AI tool get_test_cases: tool error, HTTP 503", "{failed}");
+    assert_eq!(failed["line"], "AI tool get_test_cases (Assistant 1): tool error, HTTP 503", "{failed}");
 
+    let id = v2_lib::mcp::proxy_agent_id();
     for m in v2_lib::applog::recent(6000).into_iter().map(|l| l.message) {
         assert!(!m.contains(SECRET) && !m.contains("98765432"), "an argument reached the log: {m}");
+        assert!(!m.contains(id), "the proxy's id reached the log: {m}");
     }
     // The call is over: nothing names a tool any more.
     assert_eq!(v2_lib::mcp::calling_tool(), None);
@@ -3501,6 +3675,61 @@ mod api_template_routes {
             "the reason was not logged: {:?}",
             log.iter().map(|l| &l.message).collect::<Vec<_>>()
         );
+    }
+
+    /// The early "already exists" check runs before the database is opened and its checks
+    /// awaited. `open_db` runs in between, so a flow written there is one that appeared
+    /// meanwhile.
+    fn written_meanwhile(
+        root: &std::path::Path,
+        db: &crate::common::FakeStageDb,
+    ) -> impl FnOnce(&BridgeContext) -> Result<crate::common::FakeStageDb, (u16, String)> {
+        let (root, db) = (root.to_path_buf(), db.clone());
+        move |c| {
+            let mut other = cycle_flow();
+            other.title = "Saved by the other call".into();
+            v2_lib::api_templates::flow_store::save(&root, &c.org, &c.project, &other).unwrap();
+            Ok(db)
+        }
+    }
+
+    #[tokio::test]
+    async fn a_flow_that_appeared_while_the_checks_ran_is_not_replaced_without_replace_and_why() {
+        use v2_lib::ai_bridge::api_template_flow_save;
+        let _log = crate::serial::log_tail();
+        let _root = crate::serial::autorun();
+        let _act = crate::serial::activity_log();
+        let dir = root_with_recipe_and_account();
+        let c = ctx();
+        let db = db_answering(true, &[]);
+        let refused = "a flow called \"pms-performance-cycle\" already exists - send replace: true and a why to change it";
+        for extra in [json!({}), json!({ "replace": true }), json!({ "why": "rules moved" }), json!({ "replace": true, "why": "  " })] {
+            let mut b = json!({ "flow": crate::common::cycle_flow_json(), "sample": 274 });
+            for (k, v) in extra.as_object().unwrap() {
+                b[k] = v.clone();
+            }
+            let (status, out) = api_template_flow_save(&c, &b.to_string(), written_meanwhile(dir.path(), &db)).await;
+            assert_eq!((status, out.as_str()), (409, refused), "{extra}");
+            let kept = v2_lib::api_templates::flow_store::load(dir.path(), &c.org, &c.project, FLOW).unwrap().unwrap();
+            assert_eq!(kept.title, "Saved by the other call", "{extra}: the other call's flow was replaced");
+            v2_lib::api_templates::flow_store::remove(dir.path(), &c.org, &c.project, FLOW).unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn a_flow_that_appeared_meanwhile_is_replaced_when_the_call_said_replace_with_a_why() {
+        use v2_lib::ai_bridge::api_template_flow_save;
+        let _log = crate::serial::log_tail();
+        let _root = crate::serial::autorun();
+        let _act = crate::serial::activity_log();
+        let dir = root_with_recipe_and_account();
+        let c = ctx();
+        let db = db_answering(true, &[]);
+        let b = json!({ "flow": crate::common::cycle_flow_json(), "sample": 274, "replace": true, "why": "reworked" });
+        let (status, out) = api_template_flow_save(&c, &b.to_string(), written_meanwhile(dir.path(), &db)).await;
+        assert_eq!(status, 200, "{out}");
+        let kept = v2_lib::api_templates::flow_store::load(dir.path(), &c.org, &c.project, FLOW).unwrap().unwrap();
+        assert_ne!(kept.title, "Saved by the other call");
     }
 
     #[tokio::test]
@@ -4973,4 +5202,41 @@ fn the_playwright_rule_routes_answer_from_the_shipped_copy_with_no_clone() {
     assert_eq!(status, 200);
     assert!(second.starts_with("(Page 2 of "), "{}", &second[..second.len().min(200)]);
     assert_eq!(autorun_pw_repo_answer("/autorun-pw-repo?page=999").0, 400);
+}
+
+/// The agent headers a proxy sends take their room from a head allowance, not
+/// from the body's: a body that fit under the 64 KiB cap before still fits with
+/// them, and a body over the cap is still refused.
+#[tokio::test]
+async fn the_agent_headers_do_not_take_room_from_the_body() {
+    let shared = v2_lib::ai_bridge::BridgeState::new(ctx(), "0.0.0-test".into());
+    let (port, token) = v2_lib::ai_bridge::start_listener(Arc::clone(&shared), None, None).await.unwrap();
+    async fn post(port: u16, token: &str, body_len: usize) -> String {
+        let body = "x".repeat(body_len);
+        let head = [
+            "POST /ping HTTP/1.1".to_string(),
+            "Host: x".to_string(),
+            format!("x-bridge-token: {token}"),
+            "x-tcm-tool: save_test_file".to_string(),
+            format!("x-tcm-agent: {AGENT_ID}"),
+            "x-tcm-agent-pid: 4242".to_string(),
+            "x-tcm-agent-client: claude-code".to_string(),
+            "x-tcm-agent-name: writer-1".to_string(),
+            format!("Content-Length: {body_len}"),
+            "Connection: close".to_string(),
+        ]
+        .join("\r\n");
+        let req = format!("{head}\r\n\r\n{body}");
+        let mut s = tokio::net::TcpStream::connect(("127.0.0.1", port)).await.unwrap();
+        // The listener may answer 413 before it has read it all: a reset is then fine.
+        let _ = s.write_all(req.as_bytes()).await;
+        let mut buf = Vec::new();
+        let _ = s.read_to_end(&mut buf).await;
+        String::from_utf8_lossy(&buf).to_string()
+    }
+    let fits = post(port, &token, 65536 - 100).await;
+    assert!(fits.starts_with("HTTP/1.1 "), "no answer: {fits:?}");
+    assert!(!fits.starts_with("HTTP/1.1 413"), "a body under the old cap was refused: {fits}");
+    let over = post(port, &token, 65536 + 1024).await;
+    assert!(over.starts_with("HTTP/1.1 413"), "a body over the cap was not refused: {over:?}");
 }

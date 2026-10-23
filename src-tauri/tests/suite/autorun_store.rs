@@ -9,10 +9,10 @@
 use v2_lib::autorun::store::{
     clear_order, clear_runs, clear_scripts, downloads_dir, load_order, save_order, empty_supervised_downloads, list_runs, load_run, load_script,
     load_shot, new_run_id, supervised_downloads_dir, sweep_orphan_downloads,
-    safe_shot_name, save_run, save_script, save_scripts_atomically, prune_shots_to, save_shot,
-    SaveScriptsError,
+    safe_shot_name, save_run, save_script, save_scripts_atomically, save_scripts_checked, prune_shots_to, save_shot,
+    script_version, set_checked, set_suspected_defect, SaveScriptsError, ScriptReads,
 };
-use v2_lib::autorun::{CaseRecord, CaseScript, LocalRun, PublishedRun, StepRecord, StepScript};
+use v2_lib::autorun::{CaseRecord, CaseScript, LocalRun, PublishedRun, StepRecord, StepScript, SuspectedDefect};
 use v2_lib::browser::actions::{Action, ActionOutcome};
 
 struct TempDir(std::path::PathBuf);
@@ -389,6 +389,210 @@ fn a_write_failure_for_one_entry_leaves_none_of_the_bundle_behind() {
         load_script(dir.path(), 100).unwrap().is_none(),
         "case 100 was written even though case 101 in the same bundle could not be"
     );
+}
+
+/// A script as the store holds it: written raw, with the moment it was saved.
+fn stamped(case_id: i32, at: &str) -> CaseScript {
+    CaseScript { saved_at: Some(at.to_string()), ..one_step_script(case_id, "Stamped") }
+}
+
+/// What a save's gates read of a case: its version now, `None` for no script.
+fn read_of(root: &std::path::Path, case_id: i32) -> (i32, Option<String>) {
+    (case_id, load_script(root, case_id).unwrap().map(|s| script_version(&s)))
+}
+
+/// Two saves of one case can overlap: both read the script, one writes, the
+/// other would then overwrite it unseen. The write re-checks what was read.
+#[test]
+fn a_script_changed_after_its_gates_read_it_is_not_saved() {
+    let dir = TempDir::new();
+    save_script(dir.path(), &stamped(70, "2026-10-23T10:00:00Z")).unwrap();
+    let read = vec![read_of(dir.path(), 70)];
+    save_script(dir.path(), &stamped(70, "2026-10-23T10:00:05Z")).unwrap();
+
+    let err = save_scripts_checked(dir.path(), &[one_step_script(70, "Mine")], &read).expect_err("the changed script was overwritten");
+    assert!(
+        matches!(&err, SaveScriptsError::Changed { case_id: 70, saved_at: Some(t) } if t == "2026-10-23T10:00:05Z"),
+        "{err:?}"
+    );
+    assert_eq!(
+        err.to_string(),
+        "case 70 changed while this save was checked (saved at 2026-10-23T10:00:05Z) - read it again and save again"
+    );
+    let on_disk = load_script(dir.path(), 70).unwrap().unwrap();
+    assert_eq!(on_disk.saved_at.as_deref(), Some("2026-10-23T10:00:05Z"), "the other save must still be there");
+    assert_eq!(on_disk.title, "Stamped");
+}
+
+/// Two saves inside one second carry the same stamp; they are still told apart.
+#[test]
+fn two_saves_in_the_same_second_are_told_apart() {
+    let dir = TempDir::new();
+    save_script(dir.path(), &stamped(78, "2026-10-23T10:00:00Z")).unwrap();
+    let read = vec![read_of(dir.path(), 78)];
+    save_script(dir.path(), &CaseScript { title: "Theirs".into(), ..stamped(78, "2026-10-23T10:00:00Z") }).unwrap();
+    let err = save_scripts_checked(dir.path(), &[one_step_script(78, "Mine")], &read).expect_err("a same-second change was overwritten");
+    assert!(matches!(&err, SaveScriptsError::Changed { case_id: 78, .. }), "{err:?}");
+    assert_eq!(load_script(dir.path(), 78).unwrap().unwrap().title, "Theirs");
+}
+
+/// A run's outcome flips `checked` without moving the stamp; a save that
+/// read the old flag must not write it back over the new one.
+#[test]
+fn a_checked_flip_after_the_read_is_a_change() {
+    let dir = TempDir::new();
+    save_script(dir.path(), &CaseScript { checked: true, ..stamped(79, "2026-10-23T10:00:00Z") }).unwrap();
+    let read = vec![read_of(dir.path(), 79)];
+    set_checked(dir.path(), 79, false).unwrap();
+    let err = save_scripts_checked(dir.path(), &[CaseScript { checked: true, ..one_step_script(79, "Mine") }], &read)
+        .expect_err("a failed run's flag was overwritten");
+    assert!(matches!(&err, SaveScriptsError::Changed { case_id: 79, saved_at: Some(t) } if t == "2026-10-23T10:00:00Z"), "{err:?}");
+    assert!(!load_script(dir.path(), 79).unwrap().unwrap().checked);
+}
+
+/// A suspected-defect mark is re-read from disk by the write itself, so a
+/// mark set meanwhile is kept and is no reason to refuse.
+#[test]
+fn a_mark_set_after_the_read_is_not_a_change() {
+    let dir = TempDir::new();
+    save_script(dir.path(), &stamped(80, "2026-10-23T10:00:00Z")).unwrap();
+    let read = vec![read_of(dir.path(), 80)];
+    let mark = SuspectedDefect { step_number: 1, note: "the app".into(), marked_at: "1".into() };
+    set_suspected_defect(dir.path(), 80, Some(mark.clone())).unwrap();
+    save_scripts_checked(dir.path(), &[one_step_script(80, "Mine")], &read).unwrap();
+    let on_disk = load_script(dir.path(), 80).unwrap().unwrap();
+    assert_eq!(on_disk.title, "Mine");
+    assert_eq!(on_disk.suspected_defect, Some(mark), "the mark set meanwhile was dropped");
+}
+
+/// A save whose bundle was built from an older read of the script (a repair's
+/// patch is merged onto the saved script before the gates run) is refused
+/// even though the gates themselves read a newer one.
+#[test]
+fn a_bundle_built_from_an_older_read_is_refused_though_its_gate_read_is_newer() {
+    let dir = TempDir::new();
+    save_script(dir.path(), &stamped(81, "2026-10-23T10:00:00Z")).unwrap();
+    let reads = ScriptReads::new();
+    // The request is parsed: the saved script is read for the patch.
+    reads.load(dir.path(), 81).unwrap().unwrap();
+    // Another save lands; then the gates read the script.
+    save_script(dir.path(), &CaseScript { title: "Theirs".into(), ..stamped(81, "2026-10-23T10:00:07Z") }).unwrap();
+    let gate_read = reads.load(dir.path(), 81).unwrap();
+    assert_eq!(gate_read.unwrap().title, "Theirs");
+    let existing = load_script(dir.path(), 81).unwrap();
+    let token = reads.first_version(81, existing.as_ref());
+    assert_ne!(token, existing.as_ref().map(script_version), "the later read replaced the first");
+    let err = save_scripts_checked(dir.path(), &[one_step_script(81, "Mine")], &[(81, token)])
+        .expect_err("a bundle built from an older read was saved");
+    assert!(matches!(&err, SaveScriptsError::Changed { case_id: 81, .. }), "{err:?}");
+    assert_eq!(load_script(dir.path(), 81).unwrap().unwrap().title, "Theirs");
+}
+
+/// A case nothing read before the gates takes its version from the gate's read;
+/// a case with no script has none.
+#[test]
+fn a_case_not_read_early_takes_the_gates_read() {
+    let dir = TempDir::new();
+    save_script(dir.path(), &stamped(82, "2026-10-23T10:00:00Z")).unwrap();
+    let reads = ScriptReads::new();
+    let existing = load_script(dir.path(), 82).unwrap();
+    assert_eq!(reads.first_version(82, existing.as_ref()), existing.as_ref().map(script_version));
+    assert_eq!(reads.first_version(83, None), None);
+    // A case with no script, read early, stays "none" though one is made after.
+    assert!(reads.load(dir.path(), 84).unwrap().is_none());
+    save_script(dir.path(), &stamped(84, "2026-10-23T10:00:00Z")).unwrap();
+    let now = load_script(dir.path(), 84).unwrap();
+    assert_eq!(reads.first_version(84, now.as_ref()), None);
+}
+
+/// One changed case refuses the whole bundle: nothing of it lands.
+#[test]
+fn a_refused_checked_save_writes_none_of_its_bundle() {
+    let dir = TempDir::new();
+    save_script(dir.path(), &stamped(71, "2026-10-23T10:00:00Z")).unwrap();
+    let read = vec![(72, None), read_of(dir.path(), 71)];
+    save_script(dir.path(), &stamped(71, "2026-10-23T10:00:05Z")).unwrap();
+    let err = save_scripts_checked(dir.path(), &[one_step_script(72, "New"), one_step_script(71, "Old")], &read)
+        .expect_err("a changed case was saved over");
+    assert!(matches!(err, SaveScriptsError::Changed { case_id: 71, .. }), "{err:?}");
+    assert!(load_script(dir.path(), 72).unwrap().is_none(), "case 72 landed beside a refused case");
+}
+
+/// A script that did not exist when the gates looked, and does now, is a change.
+#[test]
+fn a_script_made_meanwhile_is_a_change() {
+    let dir = TempDir::new();
+    let read = vec![(73, None)];
+    save_script(dir.path(), &stamped(73, "2026-10-23T10:00:00Z")).unwrap();
+    let err = save_scripts_checked(dir.path(), &[one_step_script(73, "Mine")], &read).expect_err("saved over a new script");
+    assert!(
+        matches!(&err, SaveScriptsError::Changed { case_id: 73, saved_at: Some(t) } if t == "2026-10-23T10:00:00Z"),
+        "{err:?}"
+    );
+}
+
+/// A script the gates read and that is gone now says it was deleted.
+#[test]
+fn a_script_deleted_meanwhile_is_a_change() {
+    let dir = TempDir::new();
+    save_script(dir.path(), &stamped(74, "2026-10-23T10:00:00Z")).unwrap();
+    let read = vec![read_of(dir.path(), 74)];
+    clear_scripts(dir.path(), &[74]).unwrap();
+    let err = save_scripts_checked(dir.path(), &[one_step_script(74, "Mine")], &read).expect_err("saved over a deleted script");
+    assert!(matches!(&err, SaveScriptsError::Changed { case_id: 74, saved_at: None }), "{err:?}");
+    assert_eq!(
+        err.to_string(),
+        "case 74 changed while this save was checked (it was deleted) - read it again and save again"
+    );
+    assert!(load_script(dir.path(), 74).unwrap().is_none());
+}
+
+/// A script saved before saves were stamped is still a script: deleting it
+/// between the read and the write is a change, like any other.
+#[test]
+fn an_unstamped_script_deleted_meanwhile_is_a_change() {
+    let dir = TempDir::new();
+    save_script(dir.path(), &CaseScript { saved_at: None, ..one_step_script(85, "Old") }).unwrap();
+    let read = vec![read_of(dir.path(), 85)];
+    assert!(read[0].1.is_some(), "an unstamped script must still have a version");
+    clear_scripts(dir.path(), &[85]).unwrap();
+    let err = save_scripts_checked(dir.path(), &[one_step_script(85, "Mine")], &read).expect_err("a deleted legacy script came back");
+    assert!(matches!(&err, SaveScriptsError::Changed { case_id: 85, saved_at: None }), "{err:?}");
+    assert!(load_script(dir.path(), 85).unwrap().is_none());
+}
+
+#[test]
+fn an_unchanged_script_saves() {
+    let dir = TempDir::new();
+    save_script(dir.path(), &stamped(75, "2026-10-23T10:00:00Z")).unwrap();
+    let read = vec![read_of(dir.path(), 75), (76, None)];
+    save_scripts_checked(dir.path(), &[one_step_script(75, "Again"), one_step_script(76, "New")], &read).unwrap();
+    assert_eq!(load_script(dir.path(), 75).unwrap().unwrap().title, "Again");
+    assert!(load_script(dir.path(), 76).unwrap().is_some());
+}
+
+/// A script saved before saves were stamped still saves while it stays as read.
+#[test]
+fn an_unstamped_script_that_stays_as_read_saves() {
+    let dir = TempDir::new();
+    save_script(dir.path(), &CaseScript { saved_at: None, ..one_step_script(77, "Old") }).unwrap();
+    let read = vec![read_of(dir.path(), 77)];
+    save_scripts_checked(dir.path(), &[one_step_script(77, "Again")], &read).unwrap();
+    assert_eq!(load_script(dir.path(), 77).unwrap().unwrap().title, "Again");
+}
+
+/// A script that cannot be read when the save is checked is not "deleted":
+/// the save says so, and writes nothing.
+#[test]
+fn a_script_that_cannot_be_read_is_said_so() {
+    let dir = TempDir::new();
+    save_script(dir.path(), &stamped(86, "2026-10-23T10:00:00Z")).unwrap();
+    let read = vec![read_of(dir.path(), 86)];
+    std::fs::write(dir.path().join("scripts").join("case-86.json"), "{ not json").unwrap();
+    let err = save_scripts_checked(dir.path(), &[one_step_script(86, "Mine")], &read).expect_err("saved over an unreadable script");
+    assert!(matches!(&err, SaveScriptsError::Unreadable { case_id: 86 }), "{err:?}");
+    assert_eq!(err.to_string(), "case 86 could not be read while this save was checked - try again");
+    assert_eq!(std::fs::read_to_string(dir.path().join("scripts").join("case-86.json")).unwrap(), "{ not json");
 }
 
 #[test]
@@ -1628,4 +1832,66 @@ fn a_cleanup_unchecked_is_one_sentence() {
     assert_eq!(refusal(sc.clone()), "case 7 step 2: a clean-up's \"unchecked\" is one sentence saying what it removes");
     sc.steps[1].unchecked = Some("removes the record".into());
     v2_lib::autorun::store::check_scripts(&[sc]).unwrap();
+}
+
+#[test]
+fn order_saves_from_many_threads_lose_none() {
+    let dir = TempDir::new();
+    let root = dir.path().to_path_buf();
+    // The threads start together, and each saves several ids, so their
+    // read-merge-write steps overlap if nothing orders them.
+    let start = std::sync::Arc::new(std::sync::Barrier::new(8));
+    let threads: Vec<_> = (0..8)
+        .map(|i| {
+            let (root, start) = (root.clone(), std::sync::Arc::clone(&start));
+            std::thread::spawn(move || {
+                start.wait();
+                for n in 0..5 {
+                    v2_lib::autorun::store::save_order_merged(&root, 4242, &[i * 5 + n]).unwrap();
+                }
+            })
+        })
+        .collect();
+    for t in threads {
+        t.join().unwrap();
+    }
+    let mut held = load_order(&root, 4242).expect("an order was saved");
+    held.sort();
+    assert_eq!(held, (0..40).collect::<Vec<i32>>());
+}
+
+/// A clear that comes while an append holds the order lock waits for it and
+/// then removes the order: it is not lost, and the append's write is not
+/// put back over it.
+#[test]
+fn a_clear_while_an_order_is_being_saved_is_not_lost() {
+    let dir = TempDir::new();
+    let root = dir.path().to_path_buf();
+    save_order(&root, 7, &[1, 2]).unwrap();
+    let (held_tx, held_rx) = std::sync::mpsc::channel::<()>();
+    let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
+    let (saver_root, clearer_root) = (root.clone(), root.clone());
+    // An append: reads the order, then holds the lock until told.
+    let saver = std::thread::spawn(move || {
+        v2_lib::autorun::store::with_order_locked(|| {
+            let mut ids = load_order(&saver_root, 7).unwrap();
+            ids.push(3);
+            held_tx.send(()).unwrap();
+            release_rx.recv().unwrap();
+            save_order(&saver_root, 7, &ids).unwrap();
+        });
+    });
+    held_rx.recv().unwrap();
+    let cleared = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let flag = std::sync::Arc::clone(&cleared);
+    let clearer = std::thread::spawn(move || {
+        clear_order(&clearer_root, 7).unwrap();
+        flag.store(true, std::sync::atomic::Ordering::SeqCst);
+    });
+    std::thread::sleep(std::time::Duration::from_millis(300));
+    assert!(!cleared.load(std::sync::atomic::Ordering::SeqCst), "the clear ran while the order lock was held");
+    release_tx.send(()).unwrap();
+    saver.join().unwrap();
+    clearer.join().unwrap();
+    assert!(load_order(&root, 7).is_none(), "the clear came after the append and removed the order");
 }

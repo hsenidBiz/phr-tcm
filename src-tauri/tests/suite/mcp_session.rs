@@ -267,3 +267,84 @@ fn the_proxy_never_says_no_repo_is_set_when_it_cannot_know() {
     let src = include_str!("../../src/mcp.rs");
     assert!(!src.contains("role.text()") && !src.contains(".text_in("), "the proxy must take a role through role_text_via");
 }
+
+#[test]
+fn each_agent_name_gets_the_role_rules_once() {
+    use v2_lib::mcp_session::{Note, SessionBook};
+    let book = SessionBook::new();
+    let (tool, args) = ("get_autorun_failures", json!({}));
+    let role = roles::role_for_call(tool, &args).expect("a call that starts a role");
+    book.tick(None, 1_000);
+    assert_eq!(book.note_kind(None, tool, &args), Some(Note::Rules(role)));
+    assert_eq!(book.note_kind(None, tool, &args), Some(Note::Pointer(role)));
+    // Another name has been told nothing yet, and then it has.
+    book.tick(Some("writer-1"), 1_500);
+    assert_eq!(book.note_kind(Some("writer-1"), tool, &args), Some(Note::Rules(role)));
+    assert_eq!(book.note_kind(Some("writer-1"), tool, &args), Some(Note::Pointer(role)));
+    // The first name is still told only the pointer.
+    assert_eq!(book.note_kind(None, tool, &args), Some(Note::Pointer(role)));
+    // A call that starts no role has no note.
+    assert_eq!(book.note_kind(None, "get_tags", &json!({})), None);
+}
+
+#[test]
+fn reset_all_clears_every_agent() {
+    use v2_lib::mcp_session::{Note, SessionBook};
+    let book = SessionBook::new();
+    let (tool, args) = ("get_autorun_failures", json!({}));
+    let role = roles::role_for_call(tool, &args).unwrap();
+    for agent in [None, Some("a"), Some("b")] {
+        book.tick(agent, 1_000);
+        assert_eq!(book.note_kind(agent, tool, &args), Some(Note::Rules(role)));
+    }
+    book.reset_all();
+    for agent in [None, Some("a"), Some("b")] {
+        assert_eq!(book.note_kind(agent, tool, &args), Some(Note::Rules(role)), "{agent:?}");
+    }
+}
+
+#[test]
+fn a_reading_of_the_rules_and_the_idle_reset_are_per_agent_name() {
+    use v2_lib::mcp_session::{Note, SessionBook};
+    let book = SessionBook::new();
+    let (tool, args) = ("get_autorun_failures", json!({}));
+    let role = roles::role_for_call(tool, &args).unwrap();
+    book.tick(Some("a"), 1_000);
+    book.tick(Some("b"), 1_000);
+    book.mark_read(Some("a"), role);
+    assert_eq!(book.note_kind(Some("a"), tool, &args), Some(Note::Pointer(role)));
+    assert_eq!(book.note_kind(Some("b"), tool, &args), Some(Note::Rules(role)));
+    // Twenty idle minutes starts over only the name that was idle.
+    book.tick(Some("a"), 1_000 + IDLE_RESET_MS);
+    assert_eq!(book.note_kind(Some("a"), tool, &args), Some(Note::Rules(role)));
+    assert_eq!(book.note_kind(Some("b"), tool, &args), Some(Note::Pointer(role)));
+}
+
+#[test]
+fn the_shared_body_gives_each_agent_name_the_rules_once() {
+    use v2_lib::mcp::handle_message_shared;
+    use v2_lib::mcp_session::SessionBook;
+    let fake = Fake::new();
+    let book = SessionBook::new();
+    let call = |m: &str, p: &str, b: &str| fake.answer(m, p, b);
+    let ask = |agent: Option<&str>| -> Vec<String> {
+        let mut arguments = json!({});
+        if let Some(a) = agent {
+            arguments["agent"] = json!(a);
+        }
+        let msg = json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": { "name": "get_autorun_failures", "arguments": arguments } })
+            .to_string();
+        book.tick(agent, 1_000);
+        let out = handle_message_shared(&msg, "1.0.0", &call, &book).expect("an answer");
+        texts(&serde_json::from_str::<Value>(&out).unwrap()["result"])
+    };
+    assert_eq!(ask(None), vec![Role::Healer.text(), ANSWER.to_string()]);
+    assert_eq!(ask(None), vec![roles::pointer(Role::Healer), ANSWER.to_string()]);
+    assert_eq!(ask(Some("healer-1")), vec![Role::Healer.text(), ANSWER.to_string()]);
+    assert_eq!(ask(Some("healer-1")), vec![roles::pointer(Role::Healer), ANSWER.to_string()]);
+    // An initialize starts every name over.
+    let init = json!({ "jsonrpc": "2.0", "id": 2, "method": "initialize", "params": {} }).to_string();
+    handle_message_shared(&init, "1.0.0", &call, &book).unwrap();
+    assert_eq!(ask(None)[0], Role::Healer.text());
+    assert_eq!(ask(Some("healer-1"))[0], Role::Healer.text());
+}

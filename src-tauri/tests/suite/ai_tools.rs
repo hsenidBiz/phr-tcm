@@ -2487,3 +2487,36 @@ fn the_ruling_tools_belong_to_auto_run() {
     assert_eq!(module_of_tool("rule_case_divergence"), Some(Module::AutoRun));
     assert_eq!(module_of_tool("clear_autorun_suspected_defect"), Some(Module::AutoRun));
 }
+
+/// Writers of one path from several threads at once (an assistant's parallel
+/// subagents) must never share a temp file: every read in between, and the
+/// last one, is exactly one of the documents written, and no temp file stays.
+#[test]
+fn eight_threads_writing_one_path_never_tear_it() {
+    let dir = TempDir::new();
+    let target = dir.path().join("runs.json");
+    let doc = |n: usize| format!("{{\"writer\":{n},\"pad\":\"{}\"}}", "x".repeat(2000 + n * 700));
+    let all: Vec<String> = (0..8).map(doc).collect();
+    atomic_write(&target, &all[0]).unwrap();
+    let barrier = std::sync::Barrier::new(9);
+    std::thread::scope(|s| {
+        for n in 0..8 {
+            let (barrier, target, mine) = (&barrier, &target, &all[n]);
+            s.spawn(move || {
+                barrier.wait();
+                for _ in 0..40 {
+                    atomic_write(target, mine).unwrap();
+                }
+            });
+        }
+        barrier.wait();
+        for _ in 0..200 {
+            if let Ok(text) = std::fs::read_to_string(&target) {
+                assert!(all.contains(&text), "a read saw a torn file: {} bytes", text.len());
+            }
+        }
+    });
+    let last = std::fs::read_to_string(&target).unwrap();
+    assert!(all.contains(&last), "the file is one of the written documents");
+    assert!(temp_files_in(dir.path()).is_empty(), "no temp file left: {:?}", temp_files_in(dir.path()));
+}

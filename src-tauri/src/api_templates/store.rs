@@ -192,6 +192,15 @@ pub fn remove(root: &Path, org: &str, project: &str, id: &str) -> Result<(), Str
     Ok(())
 }
 
+/// Every load-insert-save of a run history holds this: two assistants (or an
+/// assistant and the person) running templates at once would each read the
+/// same history, and the later save would drop the earlier run. It is
+/// coordination, not a cache, and is never held across an await.
+fn runs_lock() -> std::sync::MutexGuard<'static, ()> {
+    static L: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    L.lock().unwrap_or_else(|e| e.into_inner())
+}
+
 /// Appends one run to a template's history, newest first, keeping the
 /// most recent `MAX_RUNS`. The template file itself is never touched -
 /// only `save` (a successful prove) writes it.
@@ -199,6 +208,7 @@ pub fn append_run(root: &Path, org: &str, project: &str, id: &str, r: RunRecord)
     if !valid_id(id) {
         return Err(invalid_id(id));
     }
+    let _held = runs_lock();
     let mut runs = load_runs(root, org, project, id)?;
     runs.insert(0, r);
     runs.truncate(MAX_RUNS);

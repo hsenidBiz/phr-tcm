@@ -359,6 +359,21 @@ pub async fn route(
     body: &str,
     version: &str,
 ) -> (u16, String) {
+    route_as(&crate::autorun::agents::Caller::Default, ctx, client, method, target, body, version).await
+}
+
+/// `route` for one caller: what the listener calls, with the caller read from
+/// the request's `x-tcm-agent*` headers. `route` is this for the default
+/// caller (an older proxy, a test, the person).
+pub async fn route_as(
+    caller: &crate::autorun::agents::Caller,
+    ctx: &BridgeContext,
+    client: Option<&crate::ado::AdoClient>,
+    method: &str,
+    target: &str,
+    body: &str,
+    version: &str,
+) -> (u16, String) {
     let path = target.split_once('?').map(|(p, _)| p).unwrap_or(target);
     // Every route that belongs to a module is answered only while that
     // module is on, and the check runs ONCE here, by path, before the
@@ -380,6 +395,16 @@ pub async fn route(
             })
             .to_string(),
         ),
+        // A proxy saying goodbye as it exits. It belongs to no module, so
+        // the guard above lets it through even with Auto Run off. Only an
+        // agent's goodbye ends anything; the default caller is answered and
+        // nothing more.
+        ("POST", "/agent-bye") => {
+            if let crate::autorun::agents::Caller::Agent(key) = caller {
+                crate::autorun::agents::note_bye(&key.id, crate::autorun::sessions::now_ms());
+            }
+            (200, "{}".to_string())
+        }
         ("POST", "/optimize") => optimize_json(body, target, ctx),
         ("POST", "/transform") => transform_json(body, ctx),
         ("POST", "/validate") => (200, validate_json(body, target, ctx, client).await),
@@ -2167,6 +2192,12 @@ pub async fn api_fixture_run<B: crate::autorun::replay::Browsers>(
 const FLOW_SAVE_SHAPE: &str = "{ \"flow\": <the flow>, \"sample\": <the subject of a real record>, \"replace\"?: true, \"why\"?: \"<reason>\" }";
 const FLOW_PROGRESS_SHAPE: &str = "{ \"flow\": \"<flow id>\", \"subject\": <the record's id> }";
 
+/// What a flow save is told when it would replace a flow without `replace: true` and a why,
+/// whether that is found before the database checks or at the moment of writing.
+fn flow_already_exists(id: &str) -> String {
+    format!("a flow called \"{id}\" already exists - send replace: true and a why to change it")
+}
+
 /// `POST /api-template-flow-save` (design doc "API template flows" §6): a
 /// flow is saved only once every stage's check has run on `sample`, a real
 /// record - done or not done both fine, a check that could not run is not.
@@ -2223,6 +2254,7 @@ pub async fn api_template_flow_save<D: crate::api_templates::gate::StageDb>(
         (None, Some(_)) => {}
     }
     let mut replacing = false;
+    let may_replace = replace && why.as_deref().is_some_and(|w| !w.trim().is_empty());
     if let Some(f) = &parsed {
         replacing = match flow_store::load(&root, org, project, &f.id) {
             Ok(found) => found.is_some(),
@@ -2233,12 +2265,8 @@ pub async fn api_template_flow_save<D: crate::api_templates::gate::StageDb>(
                 true
             }
         };
-        let has_why = why.as_deref().is_some_and(|w| !w.trim().is_empty());
-        if replacing && !(replace && has_why) {
-            problems.push(format!(
-                "a flow called \"{}\" already exists - send replace: true and a why to change it",
-                f.id
-            ));
+        if replacing && !may_replace {
+            problems.push(flow_already_exists(&f.id));
         }
     }
     let (Some(mut f), Some(sample), true) = (parsed, sample, problems.is_empty()) else {
@@ -2271,9 +2299,19 @@ pub async fn api_template_flow_save<D: crate::api_templates::gate::StageDb>(
     }
 
     f.saved = Some(FlowSaved { at: crate::applog::stamp(), sample: sample.clone() });
-    if let Err(e) = flow_store::save(&root, org, project, &f) {
-        crate::applog::warn(format!("api template flow {}: it could not be saved: {e}", f.id));
-        return (500, "the flow could not be saved - see Settings, Logs".to_string());
+    // The early check ran before the database awaits above; a second call may have saved this
+    // id since. Looked at again at the moment of writing, under the store's lock, so a call that
+    // did not say replace with a why never replaces a flow it did not see.
+    match flow_store::save_if(&root, org, project, &f, !may_replace) {
+        Ok(()) => {}
+        Err(flow_store::SaveIfError::Appeared) => {
+            crate::applog::warn(format!("api template flow {}: another call saved it while this one was checked", f.id));
+            return (409, flow_already_exists(&f.id));
+        }
+        Err(flow_store::SaveIfError::Failed(e)) => {
+            crate::applog::warn(format!("api template flow {}: it could not be saved: {e}", f.id));
+            return (500, "the flow could not be saved - see Settings, Logs".to_string());
+        }
     }
     if replacing {
         crate::applog::info(format!(
@@ -7343,7 +7381,7 @@ async fn save_discovered_area<B: DiscoveryBrowser>(
             let mut updated = old.clone();
             updated.preferences = path.preferences.clone();
             updated.mode = path.mode.clone();
-            if let Err(why) = nav::put_path(root, organization, project, updated) {
+            if let Err(why) = nav::put_path_if(root, organization, project, updated, nav::AreaExpect::Was(old)) {
                 return (409, why);
             }
             stand_in_saved_area(d, p.discovery, p.signed_in.as_deref(), root, organization, project, kept.clone()).await;
@@ -7378,7 +7416,12 @@ async fn save_discovered_area<B: DiscoveryBrowser>(
             note.at.clone(),
             Some((path.preferences.clone(), path.mode.clone())),
         ),
-        _ => nav::put_path(root, organization, project, path),
+        // The area as it was read before the trips decides the write: an
+        // area saved or changed since is not written over.
+        _ => match existing.as_ref() {
+            Some(old) => nav::put_path_if(root, organization, project, path, nav::AreaExpect::Was(old)),
+            None => nav::put_path_if(root, organization, project, path, nav::AreaExpect::New),
+        },
     };
     if let Err(why) = written {
         return (409, why);
@@ -9830,17 +9873,24 @@ async fn autorun_order(ctx: &BridgeContext, client: Option<&crate::ado::AdoClien
     if !not_on_pbi.is_empty() {
         return (400, not_on_pbi.join("; "));
     }
-    // Appending keeps the saved order's other cases after the given ones.
-    let kept: Vec<i32> = match (append, crate::autorun::store::load_order(&root, o.pbi_id)) {
-        (true, Some(existing)) => {
-            crate::autorun::store::append_order(&existing, &o.case_ids).into_iter().filter(|id| !o.case_ids.contains(id)).collect()
-        }
-        _ => Vec::new(),
+    // The Azure DevOps read is done: only the file's read and write hold the
+    // order lock (never across an await), so another call's append cannot
+    // be read past and then overwritten here.
+    let (kept, saved): (Vec<i32>, Vec<i32>) = match crate::autorun::store::with_order_locked(|| {
+        // Appending keeps the saved order's other cases after the given ones.
+        let kept: Vec<i32> = match (append, crate::autorun::store::load_order(&root, o.pbi_id)) {
+            (true, Some(existing)) => crate::autorun::store::append_order(&existing, &o.case_ids)
+                .into_iter()
+                .filter(|id| !o.case_ids.contains(id))
+                .collect(),
+            _ => Vec::new(),
+        };
+        let saved: Vec<i32> = o.case_ids.iter().chain(&kept).copied().collect();
+        crate::autorun::store::save_order(&root, o.pbi_id, &saved).map(|()| (kept, saved))
+    }) {
+        Ok(both) => both,
+        Err(e) => return (500, format!("could not save the order: {e}")),
     };
-    let saved: Vec<i32> = o.case_ids.iter().chain(&kept).copied().collect();
-    if let Err(e) = crate::autorun::store::save_order(&root, o.pbi_id, &saved) {
-        return (500, format!("could not save the order: {e}"));
-    }
     let how = if append { "appended" } else { "replaced" };
     crate::applog::info(format!("AI set Auto Run's order for PBI {} ({how}): {} case(s)", o.pbi_id, saved.len()));
     let ids = |list: &[i32]| list.iter().map(|id| id.to_string()).collect::<Vec<_>>().join(", ");
@@ -10909,7 +10959,9 @@ pub const DRY_RUN_NOTHING_SAVED: &str = "Dry run: nothing was saved.";
 /// ALL OR NOTHING, for real. Every gate below runs for every script
 /// before a single byte is written: the body parses, each change to a
 /// script that already exists is declared, and each script meets its test case's expected results. Only
-/// then does `store::save_scripts_atomically` run - and it validates and
+/// then does `store::save_scripts_checked` run - and it re-checks, under the
+/// scripts lock, that every script the gates read is still the one they
+/// read (409 if not), then validates and
 /// serialises every entry before writing any of them, so a bad case id
 /// or a filesystem error on entry 16 of 30 can never leave the other 29
 /// half-applied. An unknown action `kind` fails here rather than
@@ -10925,8 +10977,12 @@ async fn save_autorun_scripts(
     client: Option<&crate::ado::AdoClient>,
     body: &str,
 ) -> (u16, String) {
+    // Parsing reads the saved script of a repair (to merge its patch onto
+    // it); that read, not the later one at Gate 1, is the version the
+    // bundle is built from, so it is the one the write checks against.
+    let reads = crate::autorun::store::ScriptReads::new();
     let load = |id: i32| match autorun_root() {
-        Ok(root) => crate::autorun::store::load_script(&root, id),
+        Ok(root) => reads.load(&root, id),
         Err((_, why)) => Err(why),
     };
     let SaveRequest { scripts, edits, dry_run } = match parse_save_request(body, &load) {
@@ -11020,11 +11076,17 @@ async fn save_autorun_scripts(
     } else {
         Vec::new()
     };
+    // The version of each case's script this bundle was built from (`None`:
+    // there was none): the first read of it, else the one below. The write
+    // re-checks these under the scripts lock, so a save that overlaps this
+    // one cannot be overwritten unseen.
+    let mut read: Vec<(i32, Option<String>)> = Vec::with_capacity(scripts.len());
     for sent in &scripts {
         let existing = match crate::autorun::store::load_script(&root, sent.case_id) {
             Ok(v) => v,
             Err(e) => return (500, e),
         };
+        read.push((sent.case_id, reads.first_version(sent.case_id, existing.as_ref())));
         let declared = edits.iter().find(|e| e.case_id == sent.case_id);
         // An unchanged re-send never lowers the floor it was stored with.
         let mut stored_floor: u32 = 0;
@@ -11402,9 +11464,15 @@ async fn save_autorun_scripts(
                 .map(|()| notes)
                 .map_err(|e| SaveRefusal::Other(400, e));
         }
-        match crate::autorun::store::save_scripts_atomically(&root, &prepared) {
+        match crate::autorun::store::save_scripts_checked(&root, &prepared, &read) {
             Ok(()) => Ok(notes),
             Err(crate::autorun::store::SaveScriptsError::Invalid(e)) => Err(SaveRefusal::Other(400, e)),
+            Err(changed @ crate::autorun::store::SaveScriptsError::Changed { .. }) => {
+                Err(SaveRefusal::Other(409, changed.to_string()))
+            }
+            Err(unread @ crate::autorun::store::SaveScriptsError::Unreadable { .. }) => {
+                Err(SaveRefusal::Other(500, unread.to_string()))
+            }
             Err(crate::autorun::store::SaveScriptsError::Io(e)) => {
                 Err(SaveRefusal::Other(500, format!("could not save the bundle: {e}")))
             }
@@ -13861,9 +13929,28 @@ pub fn handshake_path() -> std::path::PathBuf {
     std::env::temp_dir().join("tcm-v2-mcp-bridge.json")
 }
 
+/// After an answer sent before the request was all read (a body over the cap): half-closes the socket so the
+/// caller sees the answer end, then reads and discards what is still coming, at most 1 MiB and 2 s. Closing
+/// with unread bytes makes Windows reset the connection, and the caller then reads the reset, not the answer.
+async fn drain_unread_request(sock: &mut tokio::net::TcpStream) {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let _ = sock.shutdown().await;
+    let drain = async {
+        let mut sink = [0u8; 8192];
+        let mut drained = 0usize;
+        while drained < 1024 * 1024 {
+            match sock.read(&mut sink).await {
+                Ok(0) | Err(_) => break,
+                Ok(n) => drained += n,
+            }
+        }
+    };
+    let _ = tokio::time::timeout(std::time::Duration::from_secs(2), drain).await;
+}
+
 /// Bind 127.0.0.1:0, optionally write the handshake file, serve forever on
 /// the tokio runtime. Returns (port, token). Requests: tiny HTTP/1.1, one
-/// request per connection, 64 KiB body cap. `handshake` is Some in the real
+/// request per connection, 64 KiB body cap (and 1 KiB more for the headers). `handshake` is Some in the real
 /// app and None in tests - a test run must never clobber a live app's
 /// handshake file (it did once: proxies then saw a dead port + test token).
 pub async fn start_listener(
@@ -13906,7 +13993,9 @@ pub async fn start_listener(
             let make_client = make_client.clone();
             tauri::async_runtime::spawn(async move {
                 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-                let mut buf = vec![0u8; 65536];
+                // 64 KiB for the request plus a kilobyte for its head: the agent
+                // headers a proxy now sends must not take room a body had before.
+                let mut buf = vec![0u8; 65536 + 1024];
                 let mut used = 0usize;
                 // Read until headers+body are complete (or the cap). Every
                 // read is bounded: a client that opens a connection, sends
@@ -13919,8 +14008,8 @@ pub async fn start_listener(
                     if n == 0 { return; }
                     used += n;
                     match parse_http(&buf[..used]) {
-                        Parsed::Complete { method, target, token, body, proxy_version, tool } => {
-                            break (method, target, token, body, proxy_version, tool)
+                        Parsed::Complete { method, target, token, body, proxy_version, tool, agent } => {
+                            break (method, target, token, body, proxy_version, tool, agent)
                         }
                         // Answer rather than close in silence: the proxy on
                         // the other end is waiting on a response, and "the
@@ -13938,10 +14027,11 @@ pub async fn start_listener(
                         let _ = sock
                             .write_all(b"HTTP/1.1 413 Payload Too Large\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
                             .await;
+                        drain_unread_request(&mut sock).await;
                         return;
                     }
                 };
-                let (method, target, tok, body, proxy_version, tool) = parsed;
+                let (method, target, tok, body, proxy_version, tool, agent) = parsed;
                 let (status, payload) = if tok.as_deref() != Some(state.token.as_str()) {
                     (401, String::new())
                 } else {
@@ -13951,9 +14041,13 @@ pub async fn start_listener(
                         Some(f) => f().await,
                         None => None,
                     };
+                    // Who is calling is known only after the token check: a
+                    // request without the token registers nobody.
+                    let caller = agent.caller();
+                    let label = crate::autorun::agents::note_call(&caller, &agent, crate::autorun::sessions::now_ms());
                     let (status, payload) =
-                        route(&ctx, client.as_ref(), &method, &target, &body, &state.version).await;
-                    if let Some(line) = tool_call_line(tool.as_deref(), &target, status, &payload) {
+                        route_as(&caller, &ctx, client.as_ref(), &method, &target, &body, &state.version).await;
+                    if let Some(line) = tool_call_line_for(tool.as_deref(), label.as_deref(), &target, status, &payload) {
                         crate::applog::debug(line);
                     }
                     (status, payload)
@@ -14000,6 +14094,10 @@ pub enum Parsed {
         /// The `x-tcm-tool` header: the MCP tool this request was made for
         /// (`mcp::TOOL_HEADER`). None outside a tool call.
         tool: Option<String>,
+        /// The `x-tcm-agent*` headers (`mcp::AGENT_HEADER` and its three
+        /// companions), each None when absent or unreadable. A bad value is
+        /// ignored, never a reason to refuse the request.
+        agent: crate::autorun::agents::AgentHeaders,
     },
     Incomplete,
     Malformed,
@@ -14031,6 +14129,7 @@ pub fn parse_http(raw: &[u8]) -> Parsed {
     let mut token = None;
     let mut proxy_version = None;
     let mut tool = None;
+    let mut agent = crate::autorun::agents::AgentHeaders::default();
     let mut content_len = 0usize;
     for line in lines {
         // A header we cannot read is not a reason to reject the request -
@@ -14046,6 +14145,20 @@ pub fn parse_http(raw: &[u8]) -> Parsed {
         }
         if k.eq_ignore_ascii_case(crate::mcp::TOOL_HEADER) {
             tool = Some(v.to_string());
+        }
+        if k.eq_ignore_ascii_case(crate::mcp::AGENT_HEADER) {
+            agent.id = Some(v.to_string());
+        }
+        if k.eq_ignore_ascii_case(crate::mcp::AGENT_PID_HEADER) {
+            // Not a number, or 0 (no process has it): left out, the request
+            // is still served.
+            agent.pid = v.parse().ok().filter(|p| *p != 0);
+        }
+        if k.eq_ignore_ascii_case(crate::mcp::AGENT_CLIENT_HEADER) {
+            agent.client = Some(v.to_string());
+        }
+        if k.eq_ignore_ascii_case(crate::mcp::AGENT_NAME_HEADER) {
+            agent.name = Some(v.to_string());
         }
         if k.eq_ignore_ascii_case("content-length") {
             match v.parse() {
@@ -14065,6 +14178,7 @@ pub fn parse_http(raw: &[u8]) -> Parsed {
         body: String::from_utf8_lossy(&raw[body_start..end]).to_string(),
         proxy_version,
         tool,
+        agent,
     }
 }
 
@@ -14085,6 +14199,19 @@ pub fn parse_http(raw: &[u8]) -> Parsed {
 /// `get_guide` part sent with another topic, a quirk or cookie shape), a
 /// `get_guide` topic the proxy refuses, and a call to a retired tool name.
 pub fn tool_call_line(tool: Option<&str>, target: &str, status: u16, payload: &str) -> Option<String> {
+    tool_call_line_for(tool, None, target, status, payload)
+}
+
+/// `tool_call_line` for a caller with a label: "AI tool {tool} ({label}):
+/// {outcome}". With no label it is exactly `tool_call_line`'s line. The label
+/// is the registry's ("Assistant 2"), never an id or a pid.
+pub fn tool_call_line_for(
+    tool: Option<&str>,
+    label: Option<&str>,
+    target: &str,
+    status: u16,
+    payload: &str,
+) -> Option<String> {
     static NAMES: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
     let tool = tool?;
     if !NAMES.get_or_init(crate::mcp::all_tool_names).iter().any(|t| t == tool) {
@@ -14102,7 +14229,10 @@ pub fn tool_call_line(tool: Option<&str>, target: &str, status: u16, payload: &s
     } else {
         format!("tool error, HTTP {status}")
     };
-    Some(format!("AI tool {tool}: {outcome}"))
+    Some(match label {
+        Some(label) => format!("AI tool {tool} ({label}): {outcome}"),
+        None => format!("AI tool {tool}: {outcome}"),
+    })
 }
 
 /// Logs - once per proxy version, not once per call - an MCP proxy that is

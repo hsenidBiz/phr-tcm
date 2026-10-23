@@ -134,12 +134,32 @@ pub enum SaveScriptsError {
     Invalid(String),
     /// The filesystem said no. A retry might succeed.
     Io(String),
+    /// A script the save was checked against is no longer the one its
+    /// gates read ([`save_scripts_checked`]). `saved_at` is the script's
+    /// moment NOW; `None` means it is gone. Reading it again and saving
+    /// again is the fix.
+    Changed { case_id: i32, saved_at: Option<String> },
+    /// A script the save was checked against could not be read at check
+    /// time (the file is damaged or the disk said no), so nothing can be
+    /// said of whether it changed. Nothing is written; a retry might work.
+    Unreadable { case_id: i32 },
 }
 
 impl std::fmt::Display for SaveScriptsError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             SaveScriptsError::Invalid(s) | SaveScriptsError::Io(s) => write!(f, "{s}"),
+            SaveScriptsError::Changed { case_id, saved_at: Some(t) } => write!(
+                f,
+                "case {case_id} changed while this save was checked (saved at {t}) - read it again and save again"
+            ),
+            SaveScriptsError::Changed { case_id, saved_at: None } => write!(
+                f,
+                "case {case_id} changed while this save was checked (it was deleted) - read it again and save again"
+            ),
+            SaveScriptsError::Unreadable { case_id } => {
+                write!(f, "case {case_id} could not be read while this save was checked - try again")
+            }
         }
     }
 }
@@ -466,7 +486,100 @@ fn check_cleanup(sc: &CaseScript) -> Result<(), String> {
 /// `set_suspected_defect` changes a mark, so a stale copy from the editor
 /// or a file can neither drop one nor bring back one that was cleared.
 pub fn save_scripts_atomically(root: &Path, scripts: &[CaseScript]) -> Result<(), SaveScriptsError> {
-    let _held = scripts_lock();
+    let held = scripts_lock();
+    write_scripts_held(&held, root, scripts)
+}
+
+/// [`save_scripts_atomically`] for a save whose gates read the scripts on
+/// disk first (the AI bridge's): under `scripts_lock`, every `(case id,
+/// version)` in `read` must still be that script's [`script_version`] -
+/// `None` meaning there was no script then, and none now. The first that
+/// differs is `Changed` (with the script's `saved_at` now, `None` once it
+/// is gone) and nothing is written; a script that cannot be read now is
+/// `Unreadable`, also with nothing written. Otherwise it is written exactly
+/// as `save_scripts_atomically` writes it.
+///
+/// Two saves of one case can overlap now that one session's tool calls are
+/// answered together: both read the script, both pass their gates against
+/// it, and the second to write would replace the first unseen. The gates
+/// ran without the lock (they await), so this is the one place that can
+/// close that. `scripts_lock` is coordination, not a cache, and is never
+/// held across an `.await`.
+pub fn save_scripts_checked(
+    root: &Path,
+    scripts: &[CaseScript],
+    read: &[(i32, Option<String>)],
+) -> Result<(), SaveScriptsError> {
+    let held = scripts_lock();
+    for (case_id, was) in read {
+        let now = load_script(root, *case_id).map_err(|_| SaveScriptsError::Unreadable { case_id: *case_id })?;
+        if now.as_ref().map(script_version) != *was {
+            return Err(SaveScriptsError::Changed { case_id: *case_id, saved_at: now.and_then(|s| s.saved_at) });
+        }
+    }
+    write_scripts_held(&held, root, scripts)
+}
+
+/// A token for one version of a script, to tell whether it changed between
+/// a read and a write: its whole content, except the two defect marks,
+/// which a bundle write re-reads from disk anyway (so a mark set meanwhile
+/// is kept and is no reason to refuse). Not just `saved_at`: that is whole
+/// seconds, and a run's outcome flips `checked` without moving it. In
+/// memory only, never stored: equal only within one build of the app.
+pub fn script_version(script: &CaseScript) -> String {
+    use std::hash::{Hash, Hasher};
+    let whole = CaseScript { suspected_defect: None, cleared_defect: None, ..script.clone() };
+    let json = serde_json::to_string(&whole).unwrap_or_default();
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    json.hash(&mut hasher);
+    format!("{:016x}:{}", hasher.finish(), json.len())
+}
+
+/// The saved scripts one save request read, as the request is parsed: the
+/// first read of each case is its [`script_version`] for
+/// [`save_scripts_checked`]. A repair's patch is merged onto the saved
+/// script when the request is parsed, before the gates read it again; a
+/// later read must not stand in for the one the bundle was built from.
+/// Coordination for one request, not a cache: its lock is held only inside
+/// a method, never across an `.await`.
+#[derive(Default)]
+pub struct ScriptReads {
+    first: Mutex<Vec<(i32, Option<String>)>>,
+}
+
+impl ScriptReads {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// [`load_script`], noting the version of the first read of this case.
+    pub fn load(&self, root: &Path, case_id: i32) -> Result<Option<CaseScript>, String> {
+        let script = load_script(root, case_id)?;
+        let mut first = self.first.lock().unwrap_or_else(|e| e.into_inner());
+        if !first.iter().any(|(id, _)| *id == case_id) {
+            first.push((case_id, script.as_ref().map(script_version)));
+        }
+        Ok(script)
+    }
+
+    /// The version this case was first read at, or, for a case nothing read
+    /// before, the version of `existing` (what the gates read).
+    pub fn first_version(&self, case_id: i32, existing: Option<&CaseScript>) -> Option<String> {
+        let first = self.first.lock().unwrap_or_else(|e| e.into_inner());
+        match first.iter().find(|(id, _)| *id == case_id) {
+            Some((_, version)) => version.clone(),
+            None => existing.map(script_version),
+        }
+    }
+}
+
+/// The writing half of a bundle save, for a caller that holds `scripts_lock`
+/// (the guard is the proof).
+fn write_scripts_held(
+    _held: &std::sync::MutexGuard<'static, ()>,
+    root: &Path,
+    scripts: &[CaseScript],
+) -> Result<(), SaveScriptsError> {
     let dir = scripts_dir(root);
     std::fs::create_dir_all(&dir).map_err(|e| SaveScriptsError::Io(e.to_string()))?;
 
@@ -1528,22 +1641,35 @@ pub fn append_order(existing: &[i32], given: &[i32]) -> Vec<i32> {
 /// (`merge_order`) so the rest of it is kept. With no saved order, it is
 /// saved as given.
 pub fn save_order_merged(root: &Path, pbi_id: i32, case_ids: &[i32]) -> Result<(), String> {
-    match load_order(root, pbi_id) {
+    with_order_locked(|| match load_order(root, pbi_id) {
         Some(existing) => save_order(root, pbi_id, &merge_order(&existing, case_ids)),
         None => save_order(root, pbi_id, case_ids),
-    }
+    })
+}
+
+/// Every read-change-write of an order file holds this: two assistants (or
+/// an assistant and the person) saving the order of one PBI at once would
+/// each read the same order, and the later save would drop the earlier
+/// one's cases. It is coordination, not a cache, and is never held across an
+/// await. Not reentrant: `f` must not call `save_order_merged`.
+pub fn with_order_locked<R>(f: impl FnOnce() -> R) -> R {
+    static L: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let _one_at_a_time = L.lock().unwrap_or_else(|e| e.into_inner());
+    f()
 }
 
 /// Remove Auto Run's own order for a PBI, so the suggested order is used
 /// again. Only that one file goes; a PBI with no order is left as it is.
 pub fn clear_order(root: &Path, pbi_id: i32) -> Result<(), String> {
     let path = order_path(root, pbi_id);
-    match std::fs::remove_file(&path) {
+    // Under the order lock, so a clear cannot land between an append's read
+    // and its write and then be written back over.
+    with_order_locked(|| match std::fs::remove_file(&path) {
         Ok(()) => Ok(()),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
         Err(e) => {
             crate::applog::warn(format!("auto-run: the order for PBI {pbi_id} could not be removed from {}: {e}", path.display()));
             Err(ORDER_NOT_CLEARED.to_string())
         }
-    }
+    })
 }

@@ -109,7 +109,36 @@ pub async fn bridge_status(app: tauri::AppHandle) -> Result<BridgeStatus, String
     )
     .await?;
     *handle.running.lock().unwrap() = Some((shared, port));
+    spawn_agent_sweeper();
     Ok(BridgeStatus { port, mcp_exe: mcp_exe_path() })
+}
+
+/// Every `agents::SWEEP_EVERY`, ask whether each assistant's process still
+/// runs (`agents::sweep`), on a blocking thread because the check is a system
+/// call per agent. Each agent found gone is logged by label only. Started
+/// once, where the bridge starts; a second call does nothing.
+pub fn spawn_agent_sweeper() {
+    static STARTED: std::sync::Once = std::sync::Once::new();
+    STARTED.call_once(|| {
+        tauri::async_runtime::spawn(async {
+            loop {
+                tokio::time::sleep(crate::autorun::agents::SWEEP_EVERY).await;
+                let swept = tauri::async_runtime::spawn_blocking(|| {
+                    crate::autorun::agents::sweep(
+                        crate::autorun::sessions::now_ms(),
+                        &crate::browser::tree::process_running,
+                    )
+                })
+                .await;
+                let Ok(swept) = swept else { continue };
+                for key in &swept.newly_gone {
+                    if let Some(info) = crate::autorun::agents::info(key) {
+                        crate::applog::info(crate::autorun::agents::ended_line(&info.label));
+                    }
+                }
+            }
+        });
+    });
 }
 
 /// The app behind the bridge's `/autorun-replay`. The replay takes the

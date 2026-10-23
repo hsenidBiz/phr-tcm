@@ -639,6 +639,56 @@ mod assistant_saves {
         assert_eq!(on_disk, ["a.csv"], "no .part left");
     }
 
+    type Saved = Result<v2_lib::test_files::TestFile, String>;
+
+    /// Eight saves of one name, each with its own large content, all released together.
+    /// Returns the folder, what each save was given, and what each answered.
+    fn eight_saves_at_once(replace: bool) -> (tempfile::TempDir, std::path::PathBuf, Vec<Vec<u8>>, Vec<Saved>) {
+        let root = tempfile::tempdir().unwrap();
+        let dir = folder(root.path(), ORG, PROJECT);
+        std::fs::create_dir_all(&dir).unwrap();
+        let contents: Vec<Vec<u8>> = (0..8u8).map(|i| vec![b'a' + i; 4 * 1024 * 1024]).collect();
+        let start = std::sync::Barrier::new(contents.len());
+        let answers: Vec<Saved> = std::thread::scope(|s| {
+            let handles: Vec<_> = contents
+                .iter()
+                .map(|bytes| {
+                    let (dir, start) = (&dir, &start);
+                    s.spawn(move || {
+                        start.wait();
+                        save_bytes(dir, "race.csv", bytes, replace, false)
+                    })
+                })
+                .collect();
+            handles.into_iter().map(|h| h.join().unwrap()).collect()
+        });
+        (root, dir, contents, answers)
+    }
+
+    fn names_in(dir: &std::path::Path) -> Vec<String> {
+        std::fs::read_dir(dir).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect()
+    }
+
+    #[test]
+    fn eight_saves_of_one_name_without_replace_give_one_success_and_a_whole_file() {
+        let (_root, dir, contents, answers) = eight_saves_at_once(false);
+        let ok = answers.iter().filter(|a| a.is_ok()).count();
+        let refused = answers.iter().filter(|a| matches!(a, Err(e) if e.contains("is already in Test files"))).count();
+        assert_eq!((ok, refused), (1, 7), "{answers:?}");
+        let on_disk = std::fs::read(dir.join("race.csv")).unwrap();
+        assert!(contents.contains(&on_disk), "the file is not one of the written contents, whole");
+        assert_eq!(names_in(&dir), ["race.csv"], "no part file left");
+    }
+
+    #[test]
+    fn eight_saves_of_one_name_with_replace_leave_one_whole_content_and_no_part_file() {
+        let (_root, dir, contents, answers) = eight_saves_at_once(true);
+        assert!(answers.iter().all(|a| a.is_ok()), "{answers:?}");
+        let on_disk = std::fs::read(dir.join("race.csv")).unwrap();
+        assert!(contents.contains(&on_disk), "the file is not one of the written contents, whole");
+        assert_eq!(names_in(&dir), ["race.csv"], "no part file left");
+    }
+
     #[test]
     fn the_log_line_names_no_path() {
         let _log = crate::serial::log_tail();

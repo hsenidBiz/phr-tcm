@@ -125,6 +125,9 @@ pub fn save_repair_recording(
     at: String,
     read: Option<(std::collections::BTreeMap<String, bool>, Option<String>)>,
 ) -> Result<NavFile, String> {
+    // The whole load-check-save holds the areas lock: a save of another
+    // area between them would otherwise be written over.
+    let _one_writer = nav::nav_lock();
     let mut nav = nav::load_nav(root, org, project)?;
     let key = nav::module_key(tried.name());
     let Some(slot) = nav.modules.iter_mut().find(|m| nav::module_key(m.name()) == key) else {
@@ -157,6 +160,7 @@ pub fn save_repair_recording(
 /// and the page they began on - and clear the note. Nothing is replayed:
 /// the person chose it.
 pub fn put_old_path_back(root: &Path, org: &str, project: &str, area: &str) -> Result<NavFile, String> {
+    let _one_writer = nav::nav_lock();
     let mut nav = nav::load_nav(root, org, project)?;
     let key = nav::module_key(area);
     let slot = nav

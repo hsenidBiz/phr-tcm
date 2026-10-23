@@ -3705,3 +3705,460 @@ fn the_playwright_topics_go_with_auto_run() {
         assert_eq!(guide_refusal(Some(topic), &[], &all), None, "{topic}");
     }
 }
+
+#[test]
+fn take_agent_arg_splits_the_name_out() {
+    use v2_lib::mcp::{take_agent_arg, AGENT_SHAPE};
+    let (rest, name) = take_agent_arg(&serde_json::json!({ "case_id": 1, "agent": "writer-1" })).unwrap();
+    assert_eq!(rest, serde_json::json!({ "case_id": 1 }));
+    assert_eq!(name.as_deref(), Some("writer-1"));
+    // Trimmed, as the registry keeps it.
+    let (_, name) = take_agent_arg(&serde_json::json!({ "agent": "  writer 2 " })).unwrap();
+    assert_eq!(name.as_deref(), Some("writer 2"));
+
+    // No agent: the arguments come back as they were, with no name.
+    let (rest, name) = take_agent_arg(&serde_json::json!({ "case_id": 1 })).unwrap();
+    assert_eq!((rest, name), (serde_json::json!({ "case_id": 1 }), None));
+    // Arguments that are not an object are left alone.
+    let (rest, name) = take_agent_arg(&serde_json::Value::Null).unwrap();
+    assert_eq!((rest, name), (serde_json::Value::Null, None));
+
+    // Null and blank are no name, and the key is gone either way.
+    for blank in [serde_json::Value::Null, serde_json::json!("  "), serde_json::json!("")] {
+        let (rest, name) = take_agent_arg(&serde_json::json!({ "case_id": 1, "agent": blank })).unwrap();
+        assert_eq!((rest, name), (serde_json::json!({ "case_id": 1 }), None), "{blank}");
+    }
+
+    // Not a string, or a name the registry refuses.
+    for bad in [
+        serde_json::json!(7),
+        serde_json::json!(true),
+        serde_json::json!(["a"]),
+        serde_json::json!({ "n": "a" }),
+        serde_json::json!("a/b"),
+        serde_json::json!("a\"b"),
+        serde_json::json!("a".repeat(33)),
+        serde_json::json!("caf\u{e9}"),
+    ] {
+        assert_eq!(take_agent_arg(&serde_json::json!({ "agent": bad })), Err(AGENT_SHAPE.to_string()), "{bad}");
+    }
+}
+
+#[test]
+fn a_malformed_agent_is_refused_before_the_app_is_asked() {
+    for bad in [serde_json::json!("a/b"), serde_json::json!(5), serde_json::json!("x".repeat(40))] {
+        let call = |_m: &str, _p: &str, _b: &str| -> Result<(u16, String), String> {
+            panic!("a malformed agent reached the app")
+        };
+        let req = serde_json::json!({
+            "jsonrpc": "2.0", "id": 4, "method": "tools/call",
+            "params": { "name": "get_autorun_page", "arguments": { "agent": bad } },
+        });
+        let v: serde_json::Value = serde_json::from_str(&handle_message(&req.to_string(), "1.0.0", &call).unwrap()).unwrap();
+        assert_eq!(v["result"]["isError"], true, "{bad}: {v}");
+        assert_eq!(v["result"]["content"][0]["text"], v2_lib::mcp::AGENT_SHAPE, "{bad}: {v}");
+        assert_eq!(v2_lib::mcp::calling_agent(), None);
+    }
+}
+
+#[test]
+fn the_agent_name_is_held_for_the_call_only() {
+    let seen = std::cell::RefCell::new(Vec::<(Option<String>, String, String)>::new());
+    let call = |_m: &str, path: &str, body: &str| -> Result<(u16, String), String> {
+        seen.borrow_mut().push((v2_lib::mcp::calling_agent(), path.to_string(), body.to_string()));
+        Ok((200, "{}".into()))
+    };
+    assert_eq!(v2_lib::mcp::calling_agent(), None);
+    let req = serde_json::json!({
+        "jsonrpc": "2.0", "id": 5, "method": "tools/call",
+        "params": { "name": "get_autorun_page", "arguments": { "agent": "writer-1" } },
+    });
+    let v: serde_json::Value = serde_json::from_str(&handle_message(&req.to_string(), "1.0.0", &call).unwrap()).unwrap();
+    assert_ne!(v["result"]["isError"], true, "{v}");
+    let seen = seen.into_inner();
+    let page: Vec<_> = seen.iter().filter(|(_, path, _)| path.starts_with("/autorun-page")).collect();
+    assert_eq!(page.len(), 1, "{seen:?}");
+    assert_eq!(page[0].0.as_deref(), Some("writer-1"), "{seen:?}");
+    // The route sees the call as if the argument had never been sent.
+    assert_eq!(page[0].1, "/autorun-page", "{seen:?}");
+    assert_eq!(page[0].2, "", "{seen:?}");
+    // Nothing the assistant named outlives its call.
+    assert_eq!(v2_lib::mcp::calling_agent(), None);
+
+    // A tool that forwards its whole arguments object as the body gets it
+    // without `agent`, and with everything else.
+    let (_, reached) = call_recorded("get_explore_changes", serde_json::json!({ "marker": 7, "agent": "writer-1" }));
+    assert_eq!(reached.len(), 1, "{reached:?}");
+    let (_, path, body) = &reached[0];
+    assert_eq!(path, "/autorun-explore-changes");
+    let sent: serde_json::Value = serde_json::from_str(body).unwrap();
+    assert_eq!(sent, serde_json::json!({ "marker": 7 }), "{body}");
+}
+
+/// How long a test listener waits for anything: a request that never comes
+/// fails its test; it never hangs the suite.
+const LISTEN_FOR: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// The next connection on `listener`, or None once `LISTEN_FOR` has passed.
+fn accept_within(listener: &std::net::TcpListener) -> Option<std::net::TcpStream> {
+    listener.set_nonblocking(true).unwrap();
+    let until = std::time::Instant::now() + LISTEN_FOR;
+    while std::time::Instant::now() < until {
+        match listener.accept() {
+            Ok((stream, _)) => {
+                stream.set_nonblocking(false).unwrap();
+                return Some(stream);
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => std::thread::sleep(std::time::Duration::from_millis(10)),
+            Err(e) => panic!("accept failed: {e}"),
+        }
+    }
+    None
+}
+
+/// Reads one request off `stream` up to the end of its head, answers `{}`,
+/// and returns the raw bytes (what had arrived, if the head never finished).
+fn serve_one(stream: &mut std::net::TcpStream) -> Vec<u8> {
+    use std::io::{Read, Write};
+    stream.set_read_timeout(Some(LISTEN_FOR)).unwrap();
+    let mut raw = Vec::new();
+    let mut chunk = [0u8; 4096];
+    while !raw.windows(4).any(|w| w == b"\r\n\r\n") {
+        match stream.read(&mut chunk) {
+            Ok(n) if n > 0 => raw.extend_from_slice(&chunk[..n]),
+            _ => break,
+        }
+    }
+    let _ = stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}");
+    raw
+}
+
+fn agent_headers_of(raw: &[u8]) -> v2_lib::autorun::agents::AgentHeaders {
+    match v2_lib::ai_bridge::parse_http(raw) {
+        v2_lib::ai_bridge::Parsed::Complete { agent, .. } => agent,
+        _ => panic!("not a whole request: {}", String::from_utf8_lossy(raw)),
+    }
+}
+
+#[test]
+fn send_to_bridge_carries_the_agent_headers() {
+    let _agents = crate::serial::agents();
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let server = std::thread::spawn(move || {
+        let mut stream = accept_within(&listener).expect("no request reached the listener");
+        serve_one(&mut stream)
+    });
+    let (status, _) = v2_lib::mcp::send_to_bridge(port, "tok", "GET", "/guide", "").unwrap();
+    assert_eq!(status, 200);
+    let seen = agent_headers_of(&server.join().unwrap());
+    assert_eq!(seen.id.as_deref(), Some(v2_lib::mcp::proxy_agent_id()));
+    assert_eq!(seen.pid, Some(std::process::id()));
+    assert_eq!(seen.client, v2_lib::mcp::client_name());
+    // No subagent is being called for: no name.
+    assert_eq!(seen.name, None);
+    // The id is one the app accepts as an agent's.
+    assert!(v2_lib::autorun::agents::valid_id(v2_lib::mcp::proxy_agent_id()));
+    assert_eq!(v2_lib::mcp::proxy_agent_id(), v2_lib::mcp::proxy_agent_id());
+}
+
+#[test]
+fn a_tool_call_for_a_subagent_names_it_on_every_request() {
+    let _agents = crate::serial::agents();
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    // The `/tools` read first, then the route the tool is for.
+    let server = std::thread::spawn(move || {
+        let mut all = Vec::new();
+        // A refusal means no `/autorun-page` ever comes: the wait ends and
+        // the assertions below fail, rather than the suite hanging.
+        while let Some(mut stream) = accept_within(&listener) {
+            let raw = serve_one(&mut stream);
+            let last = String::from_utf8_lossy(&raw).starts_with("GET /autorun-page");
+            all.push(raw);
+            if last {
+                break;
+            }
+        }
+        all
+    });
+    let send = |m: &str, p: &str, b: &str| v2_lib::mcp::send_to_bridge(port, "tok", m, p, b);
+    let req = serde_json::json!({
+        "jsonrpc": "2.0", "id": 6, "method": "tools/call",
+        "params": { "name": "get_autorun_page", "arguments": { "agent": "writer-1" } },
+    });
+    let v: serde_json::Value = serde_json::from_str(&handle_message(&req.to_string(), "1.0.0", &send).unwrap()).unwrap();
+    assert_ne!(v["result"]["isError"], true, "{v}");
+    let requests = server.join().unwrap();
+    assert!(requests.len() >= 2, "the policy read and the route: {}", requests.len());
+    assert!(
+        String::from_utf8_lossy(requests.last().unwrap()).starts_with("GET /autorun-page"),
+        "the route was never asked"
+    );
+    for raw in &requests {
+        let seen = agent_headers_of(raw);
+        assert_eq!(seen.id.as_deref(), Some(v2_lib::mcp::proxy_agent_id()));
+        assert_eq!(seen.name.as_deref(), Some("writer-1"), "{}", String::from_utf8_lossy(raw));
+    }
+    assert_eq!(v2_lib::mcp::calling_agent(), None);
+}
+
+/// A closing proxy is not held by an app that does not answer: the goodbye
+/// gives up after about two seconds, far short of the 300 s it guards against.
+#[test]
+fn the_goodbye_gives_up_on_an_app_that_never_answers() {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    // Accepts, reads nothing, answers nothing, until the test is done.
+    let (done, wait) = std::sync::mpsc::channel::<()>();
+    let holder = std::thread::spawn(move || {
+        let held = accept_within(&listener);
+        let _ = wait.recv_timeout(LISTEN_FOR);
+        drop(held);
+    });
+    let started = std::time::Instant::now();
+    v2_lib::mcp::send_bye_to(port, "tok");
+    let took = started.elapsed();
+    let _ = done.send(());
+    holder.join().unwrap();
+    assert!(took < std::time::Duration::from_secs(6), "the goodbye held the proxy for {took:?}");
+}
+
+#[test]
+fn initialize_keeps_the_client_name() {
+    let _agents = crate::serial::agents();
+    let req = r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","clientInfo":{"name":"claude-code","version":"2.0"}}}"#;
+    handle_message(req, "1.10.3", &stub(200, "")).unwrap();
+    assert_eq!(v2_lib::mcp::client_name().as_deref(), Some("claude-code"));
+    // Only what a name may hold is kept.
+    v2_lib::mcp::set_client_name("Claude <b>Desktop</b>/1");
+    assert_eq!(v2_lib::mcp::client_name().as_deref(), Some("Claude bDesktopb1"));
+    // An initialize that names no client leaves the last one.
+    let bare = r#"{"jsonrpc":"2.0","id":2,"method":"initialize","params":{"protocolVersion":"2025-03-26"}}"#;
+    handle_message(bare, "1.10.3", &stub(200, "")).unwrap();
+    assert_eq!(v2_lib::mcp::client_name().as_deref(), Some("Claude bDesktopb1"));
+    v2_lib::mcp::set_client_name("   ");
+    assert_eq!(v2_lib::mcp::client_name(), None);
+    v2_lib::mcp::set_client_name("claude-code");
+}
+
+// ---- The proxy's loop: tool calls answered concurrently, one whole line per response ----
+
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
+use v2_lib::mcp::{serve_lines, SharedCall};
+use v2_lib::mcp_session::SessionBook;
+
+/// The longest any wait in these tests lasts: a failure is a failed assertion, never a hang.
+const SERVE_DEADLINE: Duration = Duration::from_secs(30);
+
+/// A writer that gives up the thread between bytes, so a response written in pieces under separate
+/// locks of the output would be mixed with another's.
+struct YieldingWriter(Arc<Mutex<Vec<u8>>>);
+
+impl std::io::Write for YieldingWriter {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        for b in buf {
+            self.0.lock().unwrap().push(*b);
+            std::thread::yield_now();
+        }
+        Ok(buf.len())
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+fn all_modules_policy() -> String {
+    let names: Vec<&str> = Module::ALL.iter().map(|m| m.key()).collect();
+    serde_json::json!({ "disabled": [], "modules": names }).to_string()
+}
+
+fn tool_call_line(id: u64, tool: &str, arguments: serde_json::Value) -> String {
+    serde_json::json!({ "jsonrpc": "2.0", "id": id, "method": "tools/call", "params": { "name": tool, "arguments": arguments } }).to_string()
+}
+
+/// The complete lines written so far (those ending in a newline): a line still being written is not one yet.
+fn response_lines(bytes: &Arc<Mutex<Vec<u8>>>) -> Vec<String> {
+    let text = String::from_utf8_lossy(&bytes.lock().unwrap()).into_owned();
+    text.split_inclusive('\n').filter(|l| l.ends_with('\n')).map(|l| l.trim_end_matches(['\r', '\n']).to_string()).collect()
+}
+
+/// `serve_lines` over `lines` on a thread of its own; the output it writes, and the channel that says it returned.
+fn start_serving(lines: &[String], call: SharedCall) -> (Arc<Mutex<Vec<u8>>>, std::sync::mpsc::Receiver<()>) {
+    let bytes = Arc::new(Mutex::new(Vec::new()));
+    let output = Arc::new(Mutex::new(YieldingWriter(bytes.clone())));
+    let input = std::io::Cursor::new(lines.join("\n").into_bytes());
+    let (done_tx, done_rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        serve_lines(input, output, "1.0.0".to_string(), call, Arc::new(SessionBook::new()));
+        let _ = done_tx.send(());
+    });
+    (bytes, done_rx)
+}
+
+fn ids_of(lines: &[String]) -> Vec<u64> {
+    lines
+        .iter()
+        .map(|l| serde_json::from_str::<serde_json::Value>(l).unwrap_or_else(|e| panic!("not a whole JSON line ({e}): {l}"))["id"].as_u64().unwrap())
+        .collect()
+}
+
+#[test]
+fn a_slow_call_does_not_hold_up_a_quick_one() {
+    let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
+    let release_rx = Mutex::new(release_rx);
+    let call: SharedCall = Arc::new(move |_m: &str, path: &str, _b: &str| {
+        if path == "/tools" {
+            return Ok((200, all_modules_policy()));
+        }
+        if path == "/autorun-replay" {
+            // Held until the test lets go; gives up on its own so a broken test cannot hang the suite.
+            let _ = release_rx.lock().unwrap().recv_timeout(SERVE_DEADLINE);
+            return Ok((200, "{\"replayed\":true}".into()));
+        }
+        Ok((200, "{}".into()))
+    });
+    let lines = [
+        tool_call_line(1, "replay_autorun_to_step", serde_json::json!({ "case_id": 7, "step": 3 })),
+        tool_call_line(2, "get_autorun_page", serde_json::json!({})),
+    ];
+    let (bytes, done) = start_serving(&lines, call);
+    // The quick call answers while the replay is still waiting.
+    let started = Instant::now();
+    while response_lines(&bytes).is_empty() {
+        assert!(started.elapsed() < SERVE_DEADLINE, "the quick call never answered while the replay waited");
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert_eq!(ids_of(&response_lines(&bytes)), vec![2]);
+    assert!(done.try_recv().is_err(), "serve_lines returned before the replay answered");
+    release_tx.send(()).unwrap();
+    done.recv_timeout(SERVE_DEADLINE).expect("serve_lines returns once every call has answered");
+    assert_eq!(ids_of(&response_lines(&bytes)), vec![2, 1]);
+}
+
+#[test]
+fn responses_are_whole_lines() {
+    let call: SharedCall = Arc::new(|_m: &str, path: &str, _b: &str| {
+        if path == "/tools" {
+            return Ok((200, all_modules_policy()));
+        }
+        std::thread::sleep(Duration::from_millis(3));
+        Ok((200, "{\"a\":\"some text to make the line longer\"}".into()))
+    });
+    let lines: Vec<String> = (1..=20).map(|id| tool_call_line(id, "get_autorun_page", serde_json::json!({}))).collect();
+    let (bytes, done) = start_serving(&lines, call);
+    done.recv_timeout(SERVE_DEADLINE).expect("serve_lines returns");
+    let out = response_lines(&bytes);
+    assert_eq!(out.len(), 20);
+    let mut ids = ids_of(&out);
+    ids.sort_unstable();
+    assert_eq!(ids, (1..=20).collect::<Vec<u64>>());
+}
+
+#[test]
+fn initialize_and_list_are_answered_in_order() {
+    let call: SharedCall = Arc::new(|_m: &str, path: &str, _b: &str| {
+        if path == "/tools" {
+            return Ok((200, all_modules_policy()));
+        }
+        Ok((200, "{}".into()))
+    });
+    let lines = [
+        r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26"}}"#.to_string(),
+        r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#.to_string(),
+        r#"{"jsonrpc":"2.0","id":2,"method":"tools/list"}"#.to_string(),
+    ];
+    let (bytes, done) = start_serving(&lines, call);
+    done.recv_timeout(SERVE_DEADLINE).expect("serve_lines returns");
+    assert_eq!(ids_of(&response_lines(&bytes)), vec![1, 2]);
+}
+
+#[test]
+fn each_concurrent_call_names_its_own_agent() {
+    let seen: Arc<Mutex<Vec<(String, Option<String>)>>> = Arc::new(Mutex::new(Vec::new()));
+    let recorded = seen.clone();
+    let call: SharedCall = Arc::new(move |_m: &str, path: &str, _b: &str| {
+        if path == "/tools" {
+            return Ok((200, all_modules_policy()));
+        }
+        // Long enough for the other calls to be in the middle of theirs.
+        std::thread::sleep(Duration::from_millis(20));
+        recorded.lock().unwrap().push((path.to_string(), v2_lib::mcp::calling_agent()));
+        Ok((200, "{}".into()))
+    });
+    let lines: Vec<String> = (1..=8u64)
+        .map(|id| {
+            let mut arguments = serde_json::json!({ "limit": id });
+            match id % 3 {
+                0 => arguments["agent"] = serde_json::json!("alpha"),
+                1 => arguments["agent"] = serde_json::json!("beta"),
+                _ => {}
+            }
+            tool_call_line(id, "get_autorun_page", arguments)
+        })
+        .collect();
+    let (bytes, done) = start_serving(&lines, call);
+    done.recv_timeout(SERVE_DEADLINE).expect("serve_lines returns");
+    assert_eq!(response_lines(&bytes).len(), 8);
+    let seen = seen.lock().unwrap();
+    assert_eq!(seen.len(), 8);
+    for id in 1..=8u64 {
+        let want = match id % 3 {
+            0 => Some("alpha".to_string()),
+            1 => Some("beta".to_string()),
+            _ => None,
+        };
+        let (_, got) = seen.iter().find(|(p, _)| p.contains(&format!("limit={id}"))).unwrap_or_else(|| panic!("no request for call {id}"));
+        assert_eq!(got, &want, "call {id}");
+    }
+    // The loop's own thread was never given a name.
+    assert_eq!(v2_lib::mcp::calling_agent(), None);
+}
+
+#[test]
+fn a_call_that_panics_is_answered_as_an_internal_error() {
+    let call: SharedCall = Arc::new(|_m: &str, path: &str, _b: &str| {
+        if path == "/tools" {
+            return Ok((200, all_modules_policy()));
+        }
+        panic!("a bridge call that goes wrong");
+    });
+    let lines = [tool_call_line(5, "get_autorun_page", serde_json::json!({}))];
+    let (bytes, done) = start_serving(&lines, call);
+    done.recv_timeout(SERVE_DEADLINE).expect("serve_lines returns");
+    let out = response_lines(&bytes);
+    assert_eq!(ids_of(&out), vec![5]);
+    let v: serde_json::Value = serde_json::from_str(&out[0]).unwrap();
+    assert_eq!(v["error"]["code"], -32603, "{v}");
+}
+
+/// A burst of calls from one client is answered a few at a time: never more than the cap run at once, and
+/// every one of them is answered.
+#[test]
+fn no_more_than_the_cap_of_calls_run_at_once() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    assert_eq!(v2_lib::mcp::MAX_CALLS_IN_FLIGHT, 8);
+    let running = Arc::new(AtomicUsize::new(0));
+    let most = Arc::new(AtomicUsize::new(0));
+    let (r, m) = (running.clone(), most.clone());
+    let call: SharedCall = Arc::new(move |_m: &str, path: &str, _b: &str| {
+        if path == "/tools" {
+            return Ok((200, all_modules_policy()));
+        }
+        let now = r.fetch_add(1, Ordering::SeqCst) + 1;
+        m.fetch_max(now, Ordering::SeqCst);
+        std::thread::sleep(Duration::from_millis(150));
+        r.fetch_sub(1, Ordering::SeqCst);
+        Ok((200, "{}".into()))
+    });
+    let lines: Vec<String> = (1..=10).map(|id| tool_call_line(id, "get_autorun_page", serde_json::json!({}))).collect();
+    let (bytes, done) = start_serving(&lines, call);
+    done.recv_timeout(SERVE_DEADLINE).expect("serve_lines returns");
+    let mut ids = ids_of(&response_lines(&bytes));
+    ids.sort_unstable();
+    assert_eq!(ids, (1..=10).collect::<Vec<u64>>(), "every call is answered");
+    let most = most.load(Ordering::SeqCst);
+    assert!(most <= v2_lib::mcp::MAX_CALLS_IN_FLIGHT, "{most} calls ran at once");
+    assert!(most > 1, "the calls still overlap: {most}");
+}

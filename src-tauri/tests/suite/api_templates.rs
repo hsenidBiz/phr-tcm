@@ -1102,3 +1102,32 @@ fn the_template_guide_explains_one_off_requests() {
     }
     assert!(!section.contains('\u{2014}') && !section.contains('\u{2013}'), "no em or en dashes");
 }
+
+/// Several assistants of one session can run the same template at once. Every
+/// run lands in the history: none is lost to a read-then-write race, and the
+/// file still parses.
+#[test]
+fn runs_appended_at_the_same_time_are_all_kept() {
+    let dir = tempfile::tempdir().unwrap();
+    let t = parsed(&draft());
+    store::save(dir.path(), "Org", "Proj", &t).unwrap();
+    let barrier = std::sync::Barrier::new(8);
+    std::thread::scope(|s| {
+        for n in 0..8 {
+            let (barrier, root, id) = (&barrier, dir.path(), &t.id);
+            s.spawn(move || {
+                barrier.wait();
+                for k in 0..2 {
+                    let mut r = run_record(true);
+                    r.account = format!("account-{n}-{k}");
+                    store::append_run(root, "Org", "Proj", id, r).unwrap();
+                }
+            });
+        }
+    });
+    let mut accounts: Vec<String> =
+        store::list(dir.path(), "Org", "Proj").unwrap()[0].runs.iter().map(|r| r.account.clone()).collect();
+    accounts.sort();
+    accounts.dedup();
+    assert_eq!(accounts.len(), 16, "every run is in the history: {accounts:?}");
+}

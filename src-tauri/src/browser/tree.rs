@@ -488,6 +488,26 @@ impl Drop for Tree {
     }
 }
 
+/// Does this process still run? For an assistant's proxy, whose pid is all
+/// the app has to know it by (`autorun::agents::sweep`).
+///
+/// Windows: the process is opened with query-only rights. One that opens is
+/// running unless it has exited; one that will not open is taken to run only
+/// when Windows refused for lack of rights (someone else's process, still
+/// there), and not when no such process exists. Pid 0 is never a process
+/// here. Elsewhere there is no way to ask, so it is taken to run.
+pub fn process_running(pid: u32) -> bool {
+    #[cfg(windows)]
+    {
+        job::process_running(pid)
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = pid;
+        true
+    }
+}
+
 #[cfg(windows)]
 pub(crate) mod job {
     //! The Windows job object a browser runs in. The Playwright tab's repo
@@ -496,7 +516,7 @@ pub(crate) mod job {
     use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle, RawHandle};
     use windows_sys::Wdk::System::Threading::{NtQueryInformationProcess, ProcessCommandLineInformation};
     use windows_sys::Win32::Foundation::{
-        CloseHandle, ERROR_INVALID_PARAMETER, HANDLE, INVALID_HANDLE_VALUE, STILL_ACTIVE, UNICODE_STRING,
+        CloseHandle, ERROR_ACCESS_DENIED, ERROR_INVALID_PARAMETER, HANDLE, INVALID_HANDLE_VALUE, STILL_ACTIVE, UNICODE_STRING,
     };
     use windows_sys::Win32::System::Diagnostics::ToolHelp::{
         CreateToolhelp32Snapshot, Thread32First, Thread32Next, TH32CS_SNAPTHREAD, THREADENTRY32,
@@ -545,6 +565,17 @@ pub(crate) mod job {
         fn drop(&mut self) {
             // SAFETY: opened by `Process::open`, closed once.
             unsafe { CloseHandle(self.0) };
+        }
+    }
+
+    /// See `super::process_running`.
+    pub fn process_running(pid: u32) -> bool {
+        if pid == 0 {
+            return false;
+        }
+        match Process::open(PROCESS_QUERY_LIMITED_INFORMATION, pid) {
+            Some(p) => !p.ended(),
+            None => std::io::Error::last_os_error().raw_os_error() == Some(ERROR_ACCESS_DENIED as i32),
         }
     }
 

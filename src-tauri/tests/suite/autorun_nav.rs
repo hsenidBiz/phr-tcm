@@ -5,9 +5,10 @@ use crate::common;
 
 use serde_json::json;
 use v2_lib::autorun::nav::{
-    check_areas, check_no_addresses, find_area, find_path, go_home, go_to_module, guide_section, is_setup_problem, load_nav,
-    module_key, nav_path, no_address, no_default_area, no_path, path_of, put_path, remove_path, route_for, same_page, save_nav,
-    set_direct_urls, view, AssistantRepair, MadeBy, ModulePath, NavFile, PathFailure, Route, TripFrom, Where, NO_ACCOUNT, NO_MODULE,
+    area_changed, area_taken_meanwhile, check_areas, check_no_addresses, find_area, find_path, go_home, go_to_module,
+    guide_section, is_setup_problem, load_nav, module_key, nav_path, no_address, no_default_area, no_path, path_of, put_path,
+    put_path_if, remove_path, route_for, same_page, save_nav, set_direct_urls, view, AreaExpect, AssistantRepair, MadeBy, ModulePath,
+    NavFile, PathFailure, Route, TripFrom, Where, NO_ACCOUNT, NO_MODULE,
 };
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -150,6 +151,129 @@ fn removing_a_path_and_turning_the_switch_change_only_their_own_part() {
     assert_eq!(nav.modules.iter().map(|m| m.module.as_str()).collect::<Vec<_>>(), vec!["Payroll"]);
     let again = remove_path(dir.path(), "Acme", "Web", "Leave").unwrap();
     assert_eq!(again, nav, "removing what is not there changes nothing");
+}
+
+/// A named area whose last click is `last`, so two of one name differ in
+/// their clicks.
+fn area_clicking(name: &str, last: &str) -> ModulePath {
+    let mut p = area(name, "Leave", "/hr/leave/apply");
+    p.clicks = serde_json::from_value(json!([
+        { "role": "link", "name": "Leave", "exact": true },
+        { "role": "link", "name": last, "exact": true }
+    ]))
+    .unwrap();
+    p
+}
+
+#[test]
+fn put_path_if_refuses_an_area_changed_meanwhile() {
+    let dir = tempfile::tempdir().unwrap();
+    put_path(dir.path(), "Acme", "Web", area_clicking("A", "x")).unwrap();
+    // What the save read before its browser trips.
+    let e = load_nav(dir.path(), "Acme", "Web").unwrap().modules[0].clone();
+    // Another call changed the area meanwhile.
+    put_path(dir.path(), "Acme", "Web", area_clicking("A", "y")).unwrap();
+    let err = put_path_if(dir.path(), "Acme", "Web", area_clicking("A", "z"), AreaExpect::Was(&e)).unwrap_err();
+    assert_eq!(err, area_changed("A"));
+    assert_eq!(err, "area A changed while it was being saved - nothing was saved; look at it again");
+    assert_eq!(load_nav(dir.path(), "Acme", "Web").unwrap().modules, vec![area_clicking("A", "y")], "the file holds the other call's area");
+}
+
+#[test]
+fn put_path_if_refuses_an_area_removed_meanwhile() {
+    let dir = tempfile::tempdir().unwrap();
+    put_path(dir.path(), "Acme", "Web", area_clicking("A", "x")).unwrap();
+    let e = load_nav(dir.path(), "Acme", "Web").unwrap().modules[0].clone();
+    remove_path(dir.path(), "Acme", "Web", "A").unwrap();
+    let err = put_path_if(dir.path(), "Acme", "Web", area_clicking("A", "z"), AreaExpect::Was(&e)).unwrap_err();
+    assert_eq!(err, area_changed("A"));
+    assert!(load_nav(dir.path(), "Acme", "Web").unwrap().modules.is_empty());
+}
+
+#[test]
+fn put_path_if_refuses_a_new_area_whose_name_was_taken() {
+    let dir = tempfile::tempdir().unwrap();
+    // The save began with no area A; another call saved one meanwhile.
+    put_path(dir.path(), "Acme", "Web", area_clicking("A", "y")).unwrap();
+    let err = put_path_if(dir.path(), "Acme", "Web", area_clicking("a", "z"), AreaExpect::New).unwrap_err();
+    assert_eq!(err, area_taken_meanwhile("a"));
+    assert_eq!(
+        err,
+        "area a was saved by another call while this one was being saved - nothing was saved; look at it again"
+    );
+    assert_eq!(load_nav(dir.path(), "Acme", "Web").unwrap().modules, vec![area_clicking("A", "y")]);
+}
+
+#[test]
+fn put_path_if_writes_when_nothing_changed() {
+    let dir = tempfile::tempdir().unwrap();
+    // New, and still no such area.
+    let nav = put_path_if(dir.path(), "Acme", "Web", area_clicking("A", "x"), AreaExpect::New).unwrap();
+    assert_eq!(nav.modules, vec![area_clicking("A", "x")]);
+    // Was, and still exactly that.
+    let e = nav.modules[0].clone();
+    let nav = put_path_if(dir.path(), "Acme", "Web", area_clicking("A", "y"), AreaExpect::Was(&e)).unwrap();
+    assert_eq!(nav.modules, vec![area_clicking("A", "y")]);
+    assert_eq!(load_nav(dir.path(), "Acme", "Web").unwrap(), nav);
+    // Any adds and replaces as put_path does.
+    let nav = put_path_if(dir.path(), "Acme", "Web", area_clicking("B", "x"), AreaExpect::Any).unwrap();
+    assert_eq!(nav.modules.len(), 2);
+}
+
+#[test]
+fn area_writes_from_many_threads_lose_none() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().to_path_buf();
+    // The threads start together, and each saves several areas, so their
+    // load-change-save steps overlap if nothing orders them.
+    let start = Arc::new(std::sync::Barrier::new(8));
+    let threads: Vec<_> = (0..8)
+        .map(|i| {
+            let (root, start) = (root.clone(), Arc::clone(&start));
+            std::thread::spawn(move || {
+                start.wait();
+                for n in 0..5 {
+                    put_path(&root, "Acme", "Web", area_clicking(&format!("Area {i}-{n}"), "x")).unwrap();
+                }
+            })
+        })
+        .collect();
+    for t in threads {
+        t.join().unwrap();
+    }
+    let nav = load_nav(&root, "Acme", "Web").unwrap();
+    let mut names: Vec<String> = nav.modules.iter().map(|m| m.name().to_string()).collect();
+    names.sort();
+    let mut expected: Vec<String> = (0..8).flat_map(|i| (0..5).map(move |n| format!("Area {i}-{n}"))).collect();
+    expected.sort();
+    assert_eq!(names, expected);
+}
+
+#[test]
+fn put_path_if_refuses_an_area_re_recorded_with_the_same_clicks() {
+    let dir = tempfile::tempdir().unwrap();
+    // An assistant's mapping run saved the area; this save read it so.
+    let mut mapped = area_clicking("A", "x");
+    mapped.made_by = MadeBy::Mapping;
+    put_path(dir.path(), "Acme", "Web", mapped).unwrap();
+    let e = load_nav(dir.path(), "Acme", "Web").unwrap().modules[0].clone();
+    // The person recorded it again with the very same clicks.
+    let mut again = area_clicking("A", "x");
+    again.made_by = MadeBy::Person;
+    again.recorded = "2026-10-23T09:00:00Z".to_string();
+    put_path(dir.path(), "Acme", "Web", again.clone()).unwrap();
+    let err = put_path_if(dir.path(), "Acme", "Web", area_clicking("A", "z"), AreaExpect::Was(&e)).unwrap_err();
+    assert_eq!(err, area_changed("A"));
+    assert_eq!(load_nav(dir.path(), "Acme", "Web").unwrap().modules, vec![again], "the person's recording stands");
+    // Only the time differs: caught as well.
+    let e = load_nav(dir.path(), "Acme", "Web").unwrap().modules[0].clone();
+    let mut later = area_clicking("A", "x");
+    later.recorded = "2026-10-23T09:05:00Z".to_string();
+    put_path(dir.path(), "Acme", "Web", later).unwrap();
+    assert_eq!(
+        put_path_if(dir.path(), "Acme", "Web", area_clicking("A", "z"), AreaExpect::Was(&e)).unwrap_err(),
+        area_changed("A")
+    );
 }
 
 #[test]
