@@ -74,6 +74,60 @@ pub fn pw_repo_create_folder(clone: String, path: String) -> Result<crate::pw_re
     crate::pw_repo::new_folder::create_feature(&clone, &path)
 }
 
+/// What renaming the folder `from` to `to` (both under `suites/`) would break
+/// in the clone, and which of the app's own export settings move with it.
+/// Read only (`rename_folder::check`).
+#[tauri::command(async)]
+#[specta::specta]
+pub fn pw_repo_rename_folder_check(
+    app: tauri::AppHandle,
+    clone: String,
+    from: String,
+    to: String,
+) -> Result<crate::pw_repo::rename_folder::RenameCheck, String> {
+    let _t = crate::pw_repo::timed("pw_repo_rename_folder_check");
+    let clone = chosen(&clone)?;
+    crate::pw_export::clone::open(&clone)?;
+    let maps = super::autorun::root(&app).ok();
+    let sync = super::pw_export::sync_dir(&app).ok();
+    crate::pw_repo::rename_folder::check(&clone, maps.as_deref(), sync.as_deref(), &from, &to)
+}
+
+/// Renames the folder `from` to `to` (both under `suites/`) on disk. With
+/// anything the check lists and `confirmed` false it refuses with the list
+/// and moves nothing. The app's own export placements move with the folder;
+/// the repo's files are never rewritten and nothing is deleted. Refused while
+/// a repo command is running, which may be reading the folder.
+#[tauri::command(async)]
+#[specta::specta]
+pub fn pw_repo_rename_folder(
+    app: tauri::AppHandle,
+    clone: String,
+    from: String,
+    to: String,
+    confirmed: bool,
+) -> Result<crate::pw_repo::rename_folder::RenameDone, String> {
+    let _t = crate::pw_repo::timed("pw_repo_rename_folder");
+    let clone = chosen(&clone)?;
+    crate::pw_export::clone::open(&clone)?;
+    // The repo command slot is held while the folder is read and moved, so a
+    // run cannot start in the middle of it; it is freed on every path out.
+    let _slot = process::hold("Renaming a folder")
+        .map_err(|_| "A Playwright command is running. Wait for it to finish, then rename the folder.".to_string())?;
+    let maps = super::autorun::root(&app).ok();
+    let sync = super::pw_export::sync_dir(&app).ok();
+    let done = crate::pw_repo::rename_folder::rename(&clone, maps.as_deref(), sync.as_deref(), &from, &to, confirmed)?;
+    // Folder names only: the clone's own path stays out of the log.
+    let last = |p: &str| p.rsplit('/').next().unwrap_or(p).to_string();
+    crate::applog::info(format!(
+        "pw-repo: renamed folder {} to {} ({} export placements moved)",
+        last(&done.from),
+        last(&done.to),
+        done.placements_updated
+    ));
+    Ok(done)
+}
+
 /// The repo command going now: its run id, how it is named, and whether it
 /// is a short command (a listing, a dry count, an accounts command) rather
 /// than a test run.

@@ -518,10 +518,11 @@ struct Current {
     label: String,
     brief: bool,
     state: Mutex<RunState>,
+    /// `None` for a `Hold`, which has no process.
     #[cfg(windows)]
-    job: crate::browser::tree::job::Job,
+    job: Option<crate::browser::tree::job::Job>,
     #[cfg(not(windows))]
-    child: Arc<Mutex<std::process::Child>>,
+    child: Option<Arc<Mutex<std::process::Child>>>,
 }
 
 /// Whether the run's process was seen to end, and whether Stop came first.
@@ -547,13 +548,15 @@ impl Current {
         state.stopped = true;
         #[cfg(windows)]
         {
-            if !self.job.terminate_all() {
+            if self.job.as_ref().is_some_and(|j| !j.terminate_all()) {
                 crate::applog::warn(format!("pw-repo: run {} could not be ended: {}", self.id, std::io::Error::last_os_error()));
             }
         }
         #[cfg(not(windows))]
         {
-            let _ = self.child.lock().unwrap_or_else(|e| e.into_inner()).kill();
+            if let Some(child) = &self.child {
+                let _ = child.lock().unwrap_or_else(|e| e.into_inner()).kill();
+            }
         }
     }
 }
@@ -579,6 +582,44 @@ pub fn running_now() -> Option<(RunId, String, bool)> {
 /// The refusal a start meets while `label` runs.
 pub fn busy_sentence(label: &str) -> String {
     format!("{label} is still running. Stop it, or wait for it to finish, before starting another.")
+}
+
+/// The run slot held by something that is not a process (a folder rename
+/// reading and moving the clone): while it lives every start is refused, and
+/// a start that waits for a short command waits for it. Dropping it frees
+/// the slot, on every path out.
+#[derive(Debug)]
+pub struct Hold {
+    id: RunId,
+}
+
+impl Drop for Hold {
+    fn drop(&mut self) {
+        let mut current = slot();
+        if current.as_ref().is_some_and(|c| c.id == self.id) {
+            *current = None;
+        }
+    }
+}
+
+/// Takes the run slot for `label`, or the sentence saying what holds it.
+pub fn hold(label: &str) -> Result<Hold, String> {
+    let mut current = slot();
+    if let Some(c) = current.as_ref() {
+        return Err(busy_sentence(&c.label));
+    }
+    let id = NEXT_ID.fetch_add(1, Ordering::SeqCst) + 1;
+    *current = Some(Arc::new(Current {
+        id,
+        label: label.to_string(),
+        brief: true,
+        state: Mutex::new(RunState::default()),
+        #[cfg(windows)]
+        job: None,
+        #[cfg(not(windows))]
+        child: None,
+    }));
+    Ok(Hold { id })
 }
 
 /// Start `launch` in a job of its own, streaming its output to `sink`.
@@ -674,9 +715,9 @@ pub fn start_split(launch: Launch, out: Sink, err: Sink) -> Result<RunId, String
         brief: launch.brief,
         state: Mutex::new(RunState::default()),
         #[cfg(windows)]
-        job,
+        job: Some(job),
         #[cfg(not(windows))]
-        child: child.clone(),
+        child: Some(child.clone()),
     });
     *current = Some(run.clone());
     drop(current);
@@ -699,7 +740,9 @@ pub fn start_split(launch: Launch, out: Sink, err: Sink) -> Result<RunId, String
         // Whatever it left running goes with it, which also closes the
         // output pipes those processes held.
         #[cfg(windows)]
-        run.job.terminate_all();
+        if let Some(job) = &run.job {
+            job.terminate_all();
+        }
         // The rest of the output, for a while: Done always comes.
         let deadline = std::time::Instant::now() + OUTPUT_GRACE;
         for _ in 0..readers {
@@ -762,7 +805,7 @@ pub fn stop_all() -> bool {
 pub fn running_pids() -> Vec<u32> {
     #[cfg(windows)]
     {
-        slot().as_ref().and_then(|c| c.job.pids()).unwrap_or_default()
+        slot().as_ref().and_then(|c| c.job.as_ref().and_then(|j| j.pids())).unwrap_or_default()
     }
     #[cfg(not(windows))]
     {

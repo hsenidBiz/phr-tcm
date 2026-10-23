@@ -197,7 +197,9 @@ pub async fn render_wiki(client: &AdoClient, url: &str) -> SpecDoc {
 /// so no case ever names a URL.
 fn user_sentence(e: &AdoError) -> String {
     match e {
-        AdoError::NotFound => "the page was not found, or you do not have access to it.".into(),
+        AdoError::NotFound | AdoError::RepositoryUnavailable => {
+            "the page was not found, or you do not have access to it.".into()
+        }
         AdoError::Unauthorized | AdoError::Forbidden => "Azure DevOps refused the request - sign in again.".into(),
         AdoError::RateLimited { .. } => "Azure DevOps is rate-limiting requests right now - try again shortly.".into(),
         AdoError::Http { .. } | AdoError::Network(_) => e.to_string(),

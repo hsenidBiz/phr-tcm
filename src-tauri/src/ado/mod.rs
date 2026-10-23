@@ -17,7 +17,7 @@ pub mod deletion;
 pub mod permissions;
 pub mod throttle;
 mod transport;
-pub use transport::{network_error, said, NET_GENERIC, NET_TIMEOUT, NET_UNREACHABLE};
+pub use transport::{network_error, said, NET_GENERIC, NET_TIMEOUT, NET_UNREACHABLE, REPO_UNAVAILABLE};
 pub(crate) use transport::tidy;
 
 use serde::{Deserialize, Serialize};
@@ -189,6 +189,13 @@ pub enum AdoError {
     Forbidden,
     #[error("not found")]
     NotFound,
+    /// A git repository that Azure DevOps answers for with TF401019 /
+    /// `GitRepositoryNotFoundException`: it is disabled, or the signed-in
+    /// person cannot read it. Azure DevOps uses one 404 for both, so the
+    /// sentence says both. Only `transport::handle_json` makes this, from
+    /// the body of a 404; the body itself goes to the log, never here.
+    #[error("{}", REPO_UNAVAILABLE)]
+    RepositoryUnavailable,
     #[error("http {status}")]
     Http { status: u16, body: String },
     #[error("network: {0}")]

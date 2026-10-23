@@ -57,7 +57,7 @@ function Overview({ s, clone, shown, onCreated }: { s: RepoStructure; clone: str
         />
       </div>
       <NewFolder clone={clone} paths={s.features.map((f) => f.path.join("/"))} disabled={s.health.includes("NotTheRepo")} onCreated={onCreated} />
-      {s.features.length === 0 ? <Hint>No features under suites yet.</Hint> : <FeatureTree features={s.features} />}
+      {s.features.length === 0 ? <Hint>No features under suites yet.</Hint> : <FeatureTree features={s.features} clone={s.health.includes("NotTheRepo") ? "" : clone} onChanged={onCreated} />}
     </section>
   );
 }
@@ -183,8 +183,9 @@ export default function Playwright({ org, project }: { org: string; project: str
     // section tabs take what the header leaves, and scroll inside.
     <div className="flex min-h-0 flex-1 flex-col gap-5">
       <header className="shrink-0 space-y-2">
-        <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
-          <h2 className="text-lg font-semibold text-text">Playwright</h2>
+        {/* The page's own title already says Playwright, so the row carries
+            no second heading; the group name is what a screen reader gets. */}
+        <div role="group" aria-label="Playwright repository" className="flex flex-wrap items-center gap-x-4 gap-y-2">
           <div className="flex min-w-0 flex-1 basis-64 items-center gap-2 rounded-md border border-border bg-surface px-2.5 py-1.5">
             <IconBrowse aria-hidden className="size-4 shrink-0 text-muted" />
             <span className="min-w-0 flex-1 truncate font-mono text-xs text-text" title={clone || undefined}>

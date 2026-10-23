@@ -190,6 +190,7 @@ mod pw_repo_handoff;
 mod pw_repo_layout;
 mod pw_repo_new_folder;
 mod pw_repo_presence;
+mod pw_repo_rename_folder;
 mod pw_repo_process;
 mod pw_repo_runner;
 mod pw_repo_structure;

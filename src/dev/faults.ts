@@ -61,6 +61,7 @@ export const FAULTS = [
   { id: "unauthorized", label: "401 expired", error: { kind: "Unauthorized" } },
   { id: "forbidden", label: "403", error: { kind: "Forbidden" } },
   { id: "notfound", label: "404", error: { kind: "NotFound" } },
+  { id: "repo-unavailable", label: "Repository unavailable", error: { kind: "RepositoryUnavailable" } },
   {
     id: "ratelimited",
     label: "429",

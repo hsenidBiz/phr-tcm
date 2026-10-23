@@ -787,6 +787,68 @@ test("on a roomy window Show more slides AI tools and Extras with the moving car
   }
 });
 
+/// Owner (2026-10-23): the Auto Run card fills the right-hand layout when
+/// there is room, under AI tools, instead of sitting alone on the left.
+test("on a roomy window the Auto Run card stacks under AI tools beside Updates", async () => {
+  wideWindow();
+  const grid = gridWidth(ROOMY_PX);
+  try {
+    await renderUnlocked();
+    act(() => setModulesForTest(["db_access", "auto_run"]));
+    await screen.findByRole("heading", { name: "Auto Run" });
+    const spare = holder("AI tools");
+    expect(holder("Auto Run")).toBe(spare);
+    expect(holder("Updates").parentElement).toBe(spare.parentElement);
+    expect(headings(spare)).toEqual(["AI tools", "Auto Run", "Extras"]);
+    expect(headings(columns().left)).toEqual(["Appearance", "General"]);
+    // The same width as the cards it sits with.
+    const card = screen.getByRole("heading", { name: "Auto Run" }).closest("section")!;
+    expect(card.className).toBe(screen.getByRole("heading", { name: "AI tools" }).closest("section")!.className);
+  } finally {
+    act(() => setModulesForTest([]));
+    grid.restore();
+  }
+});
+
+/// ...and it slides with the others: Show more times it as a moving card.
+test("on a roomy window Show more slides the Auto Run card with the moving cards", async () => {
+  wideWindow();
+  const grid = gridWidth(ROOMY_PX);
+  const motion = stubMotion({ foldHeight: 300 });
+  try {
+    await renderUnlocked();
+    act(() => setModulesForTest(["db_access", "auto_run"]));
+    await screen.findByRole("heading", { name: "Auto Run" });
+    fireEvent.click(screen.getByRole("button", { name: /^Show more/ }));
+    expect(headings(columns().left)).toEqual([...ALL_CARDS.slice(0, 3), "Auto Run", ...MOVERS, "Extras"]);
+
+    const slides = motion.cards();
+    const ids = slides.map((s) => s.el.getAttribute("data-settings-card"));
+    expect([...ids].sort()).toEqual(["ai-tools", "auto-run", "backup", "extras", "help", "updates"]);
+    const run = slides[ids.indexOf("auto-run")];
+    expect((run.el as HTMLElement).style.zIndex).toBe("1");
+  } finally {
+    motion.restore();
+    act(() => setModulesForTest([]));
+    grid.restore();
+  }
+});
+
+/// Without room for two across it keeps its old place in the left column.
+test("without room for two cards the Auto Run card stays in the left column", async () => {
+  wideWindow();
+  const grid = gridWidth(SNUG_PX);
+  try {
+    await renderUnlocked();
+    act(() => setModulesForTest(["db_access", "auto_run"]));
+    await screen.findByRole("heading", { name: "Auto Run" });
+    expect(headings(columns().left)).toEqual([...LOOKS, "Auto Run", "Extras"]);
+  } finally {
+    act(() => setModulesForTest([]));
+    grid.restore();
+  }
+});
+
 /// The request rate is a compact three-way choice: only the chosen level's
 /// explanation shows, and picking another level swaps it.
 test("the request rate shows only the chosen level's explanation, and switching changes it", async () => {

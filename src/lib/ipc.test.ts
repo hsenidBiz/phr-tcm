@@ -60,6 +60,9 @@ test("the typed errors keep their own wording", () => {
   expect(describeAdoError({ kind: "Unauthorized" } as AdoError)).toMatch(/sign in again/i);
   expect(describeAdoError({ kind: "Forbidden" } as AdoError)).toMatch(/permission/i);
   expect(describeAdoError({ kind: "NotFound" } as AdoError)).toBe("Not found.");
+  expect(describeAdoError({ kind: "RepositoryUnavailable" } as AdoError)).toBe(
+    "Azure DevOps says this repository is disabled or you cannot read it.",
+  );
   expect(
     describeAdoError({ kind: "RateLimited", detail: { retry_after_secs: 7 } } as AdoError),
   ).toContain("7s");

@@ -51,6 +51,25 @@ fn no_message_can_carry_a_url() {
     }
 }
 
+/// The repository sentence has a copy in the webview's error formatter
+/// (`describeAdoError`). A drifted copy would show a different sentence
+/// than the one this crate vets, so it is checked against the original, and
+/// against the same no-URL rule as the transport sentences.
+#[test]
+fn the_webview_quotes_the_repository_sentence_exactly() {
+    use v2_lib::ado::REPO_UNAVAILABLE;
+    assert!(!REPO_UNAVAILABLE.contains("http"), "{REPO_UNAVAILABLE}");
+    assert!(!REPO_UNAVAILABLE.contains("dev.azure.com"), "{REPO_UNAVAILABLE}");
+    assert!(!REPO_UNAVAILABLE.contains("_apis"), "{REPO_UNAVAILABLE}");
+    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../src/lib/ipc.ts");
+    let src = std::fs::read_to_string(path).expect("read src/lib/ipc.ts");
+    assert!(
+        src.contains(REPO_UNAVAILABLE),
+        "src/lib/ipc.ts no longer quotes this verbatim:
+  {REPO_UNAVAILABLE}"
+    );
+}
+
 /// The dev fault injector reproduces these three sentences so a developer
 /// can see them without unplugging the network. A copy that drifts would
 /// demonstrate a message the app no longer sends - worse than no simulator

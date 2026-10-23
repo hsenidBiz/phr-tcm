@@ -134,6 +134,19 @@ pub struct PrLink {
     pub web_url: String,
 }
 
+/// One entry of the repository list, or `None` when it should not be
+/// offered. A disabled repository answers every read with a 404, so it is
+/// dropped here rather than listed and tracked into an error.
+fn parse_repo(r: &serde_json::Value) -> Option<RepoRef> {
+    if r["isDisabled"].as_bool().unwrap_or(false) {
+        return None;
+    }
+    Some(RepoRef {
+        id: r["id"].as_str()?.to_string(),
+        name: r["name"].as_str().unwrap_or_default().to_string(),
+    })
+}
+
 fn branch(refname: &str) -> String {
     refname.strip_prefix("refs/heads/").unwrap_or(refname).to_string()
 }
@@ -226,12 +239,7 @@ impl AdoClient {
             .cloned()
             .unwrap_or_default()
             .iter()
-            .filter_map(|r| {
-                Some(RepoRef {
-                    id: r["id"].as_str()?.to_string(),
-                    name: r["name"].as_str().unwrap_or_default().to_string(),
-                })
-            })
+            .filter_map(parse_repo)
             .collect();
         repos.sort_by_key(|r| r.name.to_lowercase());
         Ok(repos)
