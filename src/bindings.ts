@@ -5706,6 +5706,11 @@ export type RenameDone = {
 	to: string,
 	/**  How many Export to Playwright placements were moved with the folder. */
 	placements_updated: number,
+	/**
+	 *  Set when the folder moved but the app could not update some of its
+	 *  own export settings: the sentence says so and names the files.
+	 */
+	warning: string | null,
 };
 
 /**

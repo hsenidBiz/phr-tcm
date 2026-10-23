@@ -89,7 +89,8 @@ pub fn pw_repo_rename_folder_check(
     let clone = chosen(&clone)?;
     crate::pw_export::clone::open(&clone)?;
     let maps = super::autorun::root(&app).ok();
-    crate::pw_repo::rename_folder::check(&clone, maps.as_deref(), &from, &to)
+    let sync = super::pw_export::sync_dir(&app).ok();
+    crate::pw_repo::rename_folder::check(&clone, maps.as_deref(), sync.as_deref(), &from, &to)
 }
 
 /// Renames the folder `from` to `to` (both under `suites/`) on disk. With
@@ -109,11 +110,13 @@ pub fn pw_repo_rename_folder(
     let _t = crate::pw_repo::timed("pw_repo_rename_folder");
     let clone = chosen(&clone)?;
     crate::pw_export::clone::open(&clone)?;
-    if process::running_now().is_some() {
-        return Err("A Playwright command is running. Wait for it to finish, then rename the folder.".into());
-    }
+    // The repo command slot is held while the folder is read and moved, so a
+    // run cannot start in the middle of it; it is freed on every path out.
+    let _slot = process::hold("Renaming a folder")
+        .map_err(|_| "A Playwright command is running. Wait for it to finish, then rename the folder.".to_string())?;
     let maps = super::autorun::root(&app).ok();
-    let done = crate::pw_repo::rename_folder::rename(&clone, maps.as_deref(), &from, &to, confirmed)?;
+    let sync = super::pw_export::sync_dir(&app).ok();
+    let done = crate::pw_repo::rename_folder::rename(&clone, maps.as_deref(), sync.as_deref(), &from, &to, confirmed)?;
     // Folder names only: the clone's own path stays out of the log.
     let last = |p: &str| p.rsplit('/').next().unwrap_or(p).to_string();
     crate::applog::info(format!(
