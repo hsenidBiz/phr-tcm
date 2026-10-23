@@ -2794,6 +2794,10 @@ pub fn run_stdio_proxy() {
 /// A bridge call that several tool-call threads can share.
 pub type SharedCall = std::sync::Arc<dyn Fn(&str, &str, &str) -> Result<(u16, String), String> + Send + Sync>;
 
+/// How many tool calls one proxy answers at once. Each costs two threads and a connection and task in the
+/// app (and a `db_query` its own sqlcmd), so a burst from a client waits on stdin instead.
+pub const MAX_CALLS_IN_FLIGHT: usize = 8;
+
 /// How many tool calls are being answered, so the end of the input can wait for them.
 #[derive(Default)]
 struct InFlight {
@@ -2808,6 +2812,14 @@ impl InFlight {
     fn enter(this: &std::sync::Arc<InFlight>) -> InFlightCall {
         *this.count.lock().unwrap_or_else(|e| e.into_inner()) += 1;
         InFlightCall(this.clone())
+    }
+
+    /// Blocks until fewer than `MAX_CALLS_IN_FLIGHT` calls are running.
+    fn wait_for_room(&self) {
+        let mut count = self.count.lock().unwrap_or_else(|e| e.into_inner());
+        while *count >= MAX_CALLS_IN_FLIGHT {
+            count = self.idle.wait(count).unwrap_or_else(|e| e.into_inner());
+        }
     }
 
     fn wait_idle(&self) {
@@ -2855,7 +2867,8 @@ fn answer_call_line<W: Write>(
 /// The proxy's loop over its input. Every `tools/call` line runs on its own thread, with blocking sends (the
 /// calling agent is thread-local, so a call must never move between threads); every other line is answered
 /// inline, in order. Each response is one line, written whole with `output` locked. Returns at the end of
-/// the input once every call has answered.
+/// the input once every call has answered. Reading the next line waits while `MAX_CALLS_IN_FLIGHT` calls are
+/// running, so a burst of calls is back-pressure on the client's pipe, not a pile of threads.
 pub fn serve_lines<R: BufRead, W: Write + Send + 'static>(
     input: R,
     output: std::sync::Arc<std::sync::Mutex<W>>,
@@ -2865,8 +2878,10 @@ pub fn serve_lines<R: BufRead, W: Write + Send + 'static>(
 ) {
     let version = std::sync::Arc::new(version);
     let in_flight = std::sync::Arc::new(InFlight::default());
-    for line in input.lines() {
-        let Ok(line) = line else { break };
+    let mut lines = input.lines();
+    loop {
+        in_flight.wait_for_room();
+        let Some(Ok(line)) = lines.next() else { break };
         if line.trim().is_empty() {
             continue;
         }

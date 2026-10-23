@@ -4142,3 +4142,33 @@ fn a_call_that_panics_is_answered_as_an_internal_error() {
     let v: serde_json::Value = serde_json::from_str(&out[0]).unwrap();
     assert_eq!(v["error"]["code"], -32603, "{v}");
 }
+
+/// A burst of calls from one client is answered a few at a time: never more than the cap run at once, and
+/// every one of them is answered.
+#[test]
+fn no_more_than_the_cap_of_calls_run_at_once() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    assert_eq!(v2_lib::mcp::MAX_CALLS_IN_FLIGHT, 8);
+    let running = Arc::new(AtomicUsize::new(0));
+    let most = Arc::new(AtomicUsize::new(0));
+    let (r, m) = (running.clone(), most.clone());
+    let call: SharedCall = Arc::new(move |_m: &str, path: &str, _b: &str| {
+        if path == "/tools" {
+            return Ok((200, all_modules_policy()));
+        }
+        let now = r.fetch_add(1, Ordering::SeqCst) + 1;
+        m.fetch_max(now, Ordering::SeqCst);
+        std::thread::sleep(Duration::from_millis(150));
+        r.fetch_sub(1, Ordering::SeqCst);
+        Ok((200, "{}".into()))
+    });
+    let lines: Vec<String> = (1..=10).map(|id| tool_call_line(id, "get_autorun_page", serde_json::json!({}))).collect();
+    let (bytes, done) = start_serving(&lines, call);
+    done.recv_timeout(SERVE_DEADLINE).expect("serve_lines returns");
+    let mut ids = ids_of(&response_lines(&bytes));
+    ids.sort_unstable();
+    assert_eq!(ids, (1..=10).collect::<Vec<u64>>(), "every call is answered");
+    let most = most.load(Ordering::SeqCst);
+    assert!(most <= v2_lib::mcp::MAX_CALLS_IN_FLIGHT, "{most} calls ran at once");
+    assert!(most > 1, "the calls still overlap: {most}");
+}
