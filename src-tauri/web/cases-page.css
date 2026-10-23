@@ -10,19 +10,20 @@ h1 { font-size: 22px; margin: 0 0 4px; }
 .case { background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
         padding: 18px 22px; margin-bottom: 18px; box-shadow: var(--shadow);
         position: relative; page-break-inside: avoid; }
-.case h2 { font-size: 16px; margin: 0 0 8px; padding-right: 26px; overflow-wrap: anywhere; }
+.case h2 { font-size: 16px; margin: 0 0 8px; padding-right: 44px; overflow-wrap: anywhere; }
 /* Where the review stopped: one mark per page, on the case's own heading.
-   Quiet until the card is hovered, like the notes' and findings' own x's,
-   so a page of twenty cases is not a page of twenty buttons - and always
-   visible on the marked one, which is the whole point of it. */
-.tc-mark { position: absolute; top: 14px; right: 14px; line-height: 0; padding: 4px;
-           cursor: pointer; border: 0; border-radius: 6px; background: none;
-           color: var(--faint); opacity: 0; transition: opacity .15s ease; }
-.case:hover .tc-mark, .tc-mark:focus-visible, .case.marked .tc-mark { opacity: 1; }
-.tc-mark svg { width: 13px; height: 17px; fill: none; stroke: currentColor; stroke-width: 1.8; }
-.tc-mark:hover { color: var(--accent);
-                 background: color-mix(in srgb, var(--accent) 12%, transparent); }
-.case.marked .tc-mark { color: var(--accent); }
+   Always shown, as an outlined button in the muted ink, so a reviewer can
+   find it on any card without hovering first (it was the faintest grey and
+   hover-only, which was too hard to see); the marked one is filled in the
+   accent colour. */
+.tc-mark { position: absolute; top: 12px; right: 12px; line-height: 0; padding: 6px;
+           cursor: pointer; border: 1px solid color-mix(in srgb, var(--muted) 60%, transparent);
+           border-radius: 8px; background: var(--surface-2); color: var(--text);
+           transition: color .15s ease, border-color .15s ease, background .15s ease; }
+.tc-mark svg { width: 16px; height: 20px; fill: none; stroke: currentColor; stroke-width: 2; }
+.tc-mark:hover, .tc-mark:focus-visible { color: var(--accent); border-color: var(--accent);
+                 background: color-mix(in srgb, var(--accent) 12%, var(--surface)); }
+.case.marked .tc-mark { color: var(--accent); border-color: var(--accent); }
 .case.marked .tc-mark svg { fill: currentColor; }
 /* The left border is what finds the marked case while scrolling past it;
    the mark alone is too small to be seen from the other end of the page. */
