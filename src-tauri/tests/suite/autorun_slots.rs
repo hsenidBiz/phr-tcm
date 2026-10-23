@@ -189,15 +189,14 @@ fn a_session_knows_its_slot() {
     let persons = body(&source, "pub(crate) async fn make_persons(");
     assert!(persons.contains("show_overrides_in(self.slot, &self.overrides);"), "{persons}");
 
-    // Every caller opens main in this phase.
-    let calls: Vec<&str> = source
+    // The person's Open browser opens main.
+    let person = body(&source, "pub async fn auto_run_open_browser(");
+    let calls: Vec<&str> = person
         .lines()
-        .filter(|l| l.contains("open_into(") && !l.contains("fn open_into(") && !l.trim_start().starts_with("//"))
+        .filter(|l| l.contains("open_into(") && !l.trim_start().starts_with("//"))
         .collect();
-    assert!(calls.len() >= 3, "the callers of open_into moved: {calls:?}");
-    for call in calls {
-        assert!(call.contains("SlotNo::MAIN"), "an open into a slot other than main: {call}");
-    }
+    assert_eq!(calls.len(), 1, "the person's Open browser moved: {calls:?}");
+    assert!(calls[0].contains("SlotNo::MAIN"), "the person's Open browser opens a slot other than main: {}", calls[0]);
     assert!(source.contains("tokio::sync::Mutex::const_new(None);"));
     assert!(source.contains("static SESSION: tokio::sync::Mutex<Option<Session>>"), "SESSION is renamed");
 }

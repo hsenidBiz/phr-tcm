@@ -22,8 +22,9 @@ use tauri::Manager;
 static SESSION: tokio::sync::Mutex<Option<Session>> = tokio::sync::Mutex::const_new(None);
 
 /// The browsers beside the main one, slot 1 first. Each is its own lock:
-/// no path holds two slots' locks at once (Release all, the app's exit and
-/// the environment save and switch lock them in slot order).
+/// no path holds two slots' locks at once. The rule for the few that must
+/// (Release all, the app's exit and the environment save and switch) is to
+/// lock them in slot order, 0, 1, 2, once extra browsers can open.
 static EXTRA_SESSIONS: [tokio::sync::Mutex<Option<Session>>; EXTRA_CAP] =
     [const { tokio::sync::Mutex::const_new(None) }; EXTRA_CAP];
 
