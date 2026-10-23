@@ -12,7 +12,7 @@ use v2_lib::autorun::lease::{Held, Holder};
 use v2_lib::autorun::nav::{self, check_areas, check_project_rules, save_nav, ModulePath, NavFile, Route};
 use v2_lib::autorun::preconditions::PreconditionDb;
 use v2_lib::autorun::recipe::save_recipe;
-use v2_lib::autorun::replay_to::{replay_to_checked, ReplayEnd, ReplayRequest};
+use v2_lib::autorun::replay_to::{replay_to_checked, ReplayEnd, ReplayRequest, ReplayState};
 use v2_lib::autorun::runner::{
     area_routes, named_areas, run_step_in_run, AreaRoute, InRun, NamedAreas, AFTER_NAMED_AREA_UNREACHED,
 };
@@ -370,7 +370,7 @@ async fn a_replay_to_a_step_goes_to_the_named_area_and_back() {
     );
     store::save_script(dir.path(), &s).unwrap();
     let (mut d, app) = menu();
-    let (mut account, mut guarded, cancel) = (None, None, AtomicBool::new(false));
+    let (mut account, mut guarded, state) = (None, None, ReplayState::new());
     let mut held = Held::supervised();
     let end = replay_to_checked(
         &mut d,
@@ -384,7 +384,7 @@ async fn a_replay_to_a_step_goes_to_the_named_area_and_back() {
         &mut guarded,
         true,
         &quick(),
-        &cancel,
+        &state,
         || -> PreconditionDb<FakeStageDb> { PreconditionDb::ReadingOff },
         |_, _| {},
     )

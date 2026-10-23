@@ -316,8 +316,8 @@ fn every_refusal_for_a_held_browser_asks_first_whether_it_is_alive() {
     assert!(body("pub async fn auto_run_step").contains("let_go_if_gone(&mut slot)"));
     assert!(body("pub async fn open_session_refusal").contains("let_go_if_gone(&mut slot)"));
     let bridge = include_str!("../../src/ai_bridge.rs").replace("\r\n", "\n");
-    // `supervised_page` hands its read to `supervised_page_within`.
-    let page = &bridge[bridge.find("pub async fn supervised_page_within").unwrap()..];
+    // `supervised_page` hands its read to `supervised_page_within_in`.
+    let page = &bridge[bridge.find("pub async fn supervised_page_within_in").unwrap()..];
     assert!(page[..page.find("\n}\n").unwrap()].contains("let_go_if_silent"), "the page read keeps a dead browser");
 }
 
@@ -710,7 +710,7 @@ fn the_browser_is_marked_with_who_opened_it() {
     assert!(persons.contains("overrides::take_for_person"), "{persons}");
     assert!(step.contains("session.make_persons().await?;"), "{step}");
     let replay = body("pub(crate) async fn replay_supervised");
-    assert!(replay.contains("open_if_none(app, &mut slot, by.opens_as())"), "{replay}");
+    assert!(replay.contains("open_if_none(app, &mut slot, n, by.opens_as())"), "{replay}");
     assert!(replay.contains("if by == ReplayBy::Person {\n        if let Err(why) = session.make_persons().await {"), "{replay}");
     use v2_lib::commands::autorun::{OpenedBy, ReplayBy};
     assert_eq!((ReplayBy::Person.opens_as(), ReplayBy::Assistant.opens_as()), (OpenedBy::Person, OpenedBy::Assistant));
@@ -750,7 +750,7 @@ async fn the_assistants_release_never_stops_a_replay() {
     // The person's replay (no call of the assistant's waits on it): the
     // stop tool, which never stops it, is not offered.
     assert!(!said.contains("stop: true"), "{said}");
-    assert!(!v2_lib::autorun::replay_to::CANCEL.load(Ordering::SeqCst), "the replay was asked to stop");
+    assert!(!v2_lib::autorun::replay_to::state(v2_lib::autorun::slots::SlotNo::MAIN).cancel.load(Ordering::SeqCst), "the replay was asked to stop");
     drop(replay);
 }
 
@@ -887,7 +887,7 @@ async fn a_reset_during_a_replay_is_refused() {
         .expect("the reset waited on the replay");
     assert_eq!(answer, (409, REPLAY_RUNNING_AT_RESET.to_string()));
     assert_eq!(REPLAY_RUNNING_AT_RESET, "A replay is running: try again when it has finished.");
-    assert!(!v2_lib::autorun::replay_to::CANCEL.load(Ordering::SeqCst), "the replay was asked to stop");
+    assert!(!v2_lib::autorun::replay_to::state(v2_lib::autorun::slots::SlotNo::MAIN).cancel.load(Ordering::SeqCst), "the replay was asked to stop");
     drop(replay);
 }
 

@@ -148,13 +148,14 @@ struct AppReplayHost(tauri::AppHandle);
 impl crate::ai_bridge::ReplayHost for AppReplayHost {
     fn replay(
         &self,
+        slot: crate::autorun::slots::SlotNo,
         organization: String,
         project: String,
         req: crate::autorun::replay_to::ReplayRequest,
     ) -> crate::ai_bridge::HostFuture<'_, Result<crate::ai_bridge::AssistantReplay, String>> {
         Box::pin(async move {
             use crate::commands::autorun::{replay_supervised, ReplayBy};
-            replay_supervised(&self.0, &organization, &project, req, ReplayBy::Assistant)
+            replay_supervised(&self.0, slot, &organization, &project, req, ReplayBy::Assistant)
                 .await
                 .map(|(end, _tabs, discovery, left_open, from, reuse, overrides)| crate::ai_bridge::AssistantReplay {
                     end,
@@ -168,9 +169,15 @@ impl crate::ai_bridge::ReplayHost for AppReplayHost {
         })
     }
 
-    fn page(&self, organization: String, project: String) -> crate::ai_bridge::HostFuture<'_, (u16, String)> {
+    fn page(
+        &self,
+        slot: crate::autorun::slots::SlotNo,
+        organization: String,
+        project: String,
+    ) -> crate::ai_bridge::HostFuture<'_, (u16, String)> {
         Box::pin(async move {
-            crate::ai_bridge::supervised_page(&organization, &project, crate::browser::snapshot::PAGE_LINES_DEFAULT).await
+            crate::ai_bridge::supervised_page_in(slot, &organization, &project, crate::browser::snapshot::PAGE_LINES_DEFAULT)
+                .await
         })
     }
 }

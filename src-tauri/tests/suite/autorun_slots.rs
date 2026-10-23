@@ -200,3 +200,29 @@ fn a_session_knows_its_slot() {
     assert!(source.contains("tokio::sync::Mutex::const_new(None);"));
     assert!(source.contains("static SESSION: tokio::sync::Mutex<Option<Session>>"), "SESSION is renamed");
 }
+
+/// Release all and the app's exit stop the replay of every slot and every
+/// batch before they wait for a browser; a replay for a slot locks that
+/// slot's session and claims that slot's replay; the person's Stop and Close
+/// are main's.
+#[test]
+fn release_all_and_exit_stop_every_slots_replay_and_batch() {
+    let source = norm(include_str!("../../src/commands/autorun.rs"));
+    for start in ["pub async fn release_autorun_browsers()", "pub async fn close_autorun_browsers()"] {
+        let from = &source[source.find(start).unwrap_or_else(|| panic!("{start} is gone"))..];
+        let before_lock = &from[..from.find("SESSION.lock()").unwrap()];
+        assert!(before_lock.contains("for n in SlotNo::all() {"), "{start} does not walk the slots: {before_lock}");
+        assert!(before_lock.contains("crate::autorun::replay_to::state(n).stop();"), "{start}: {before_lock}");
+        assert!(before_lock.contains("crate::ai_bridge::stop_all_batches();"), "{start}: {before_lock}");
+    }
+    let replay = body(&source, "pub(crate) async fn replay_supervised(");
+    assert!(replay.contains("OneReplay::claim_for_assistant_in(n)") && replay.contains("OneReplay::claim_in(n)"), "{replay}");
+    assert!(replay.contains("replay_to::stopped_before_opening(&replay_to::state(n).cancel)"), "{replay}");
+    assert!(replay.contains("session_slot(n).lock().await"), "{replay}");
+    assert!(replay.contains("open_if_none(app, &mut slot, n, by.opens_as())"), "{replay}");
+    assert!(replay.contains("note_session_use_in(n);") && replay.contains("overrides_now_in(n)"), "{replay}");
+    assert!(!replay.contains("replay_to::CANCEL") && !replay.contains("OneReplay::claim()"), "{replay}");
+    // The person's own Stop and Close are the main browser's.
+    let stop = body(&source, "pub fn auto_run_stop_replay(");
+    assert!(stop.contains("crate::autorun::replay_to::stop();"), "{stop}");
+}

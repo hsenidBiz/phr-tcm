@@ -17,6 +17,7 @@ use v2_lib::autorun::accounts::save_accounts;
 use v2_lib::autorun::nav::{save_nav, ModulePath, NavFile};
 use v2_lib::autorun::recipe::save_recipe;
 use v2_lib::autorun::replay_to::{OneReplay, ReplayEnd, ReplayRequest, ALREADY_RUNNING};
+use v2_lib::autorun::slots::SlotNo;
 use v2_lib::autorun::{store, CaseScript};
 
 const ID: i32 = 77;
@@ -69,6 +70,9 @@ fn ctx() -> BridgeContext {
 /// What the app ran and what the page said.
 struct FakeHost {
     replays: Mutex<Vec<(String, String, ReplayRequest)>>,
+    /// The slot each replay was asked for, and each page read.
+    slots: Mutex<Vec<SlotNo>>,
+    page_slots: Mutex<Vec<SlotNo>>,
     end: ReplayEnd,
     /// A discovery holds the browser: the replay ends it first.
     discovering: bool,
@@ -86,7 +90,8 @@ struct FakeHost {
     /// the gap between the replay freeing its slot and its answer.
     hold_page: Option<tokio::sync::Notify>,
     /// The replay holds the one replay slot, as the app's does, and runs
-    /// on action 1 of step 2 until it is asked to stop (`replay_to::CANCEL`);
+    /// on action 1 of step 2 until it is asked to stop (its slot's
+    /// `replay_to::state(..).cancel`);
     /// then it ends as stopped at step 2.
     until_stopped: bool,
     /// The browser the replay leaves open, as the app says it.
@@ -104,6 +109,8 @@ impl FakeHost {
     fn ending(end: ReplayEnd) -> Self {
         FakeHost {
             replays: Mutex::new(vec![]),
+            slots: Mutex::new(vec![]),
+            page_slots: Mutex::new(vec![]),
             end,
             discovering: false,
             summary: None,
@@ -124,29 +131,34 @@ impl FakeHost {
     fn replays(&self) -> Vec<ReplayRequest> {
         self.replays.lock().unwrap().iter().map(|r| r.2.clone()).collect()
     }
+    fn slots(&self) -> Vec<SlotNo> {
+        self.slots.lock().unwrap().clone()
+    }
 }
 
 impl ReplayHost for FakeHost {
     fn replay(
         &self,
+        slot: SlotNo,
         organization: String,
         project: String,
         req: ReplayRequest,
     ) -> HostFuture<'_, Result<AssistantReplay, String>> {
         Box::pin(async move {
             self.replays.lock().unwrap().push((organization, project, req));
+            self.slots.lock().unwrap().push(slot);
             if self.until_stopped {
                 use std::sync::atomic::Ordering;
-                use v2_lib::autorun::replay_to::{note_progress, OneReplay, ACTIONS, CANCEL};
-                let _one = OneReplay::claim_for_assistant().expect("a replay was already going");
-                note_progress(2, 2);
+                use v2_lib::autorun::replay_to::{state, OneReplay};
+                let _one = OneReplay::claim_for_assistant_in(slot).expect("a replay was already going");
+                state(slot).note_progress(2, 2);
                 let action: v2_lib::browser::actions::Action =
                     serde_json::from_value(json!({ "kind": "click", "selector": { "css": "#s2" } })).unwrap();
-                ACTIONS.began(1, 1, &action);
-                while !CANCEL.load(Ordering::SeqCst) {
+                state(slot).actions.began(1, 1, &action);
+                while !state(slot).cancel.load(Ordering::SeqCst) {
                     tokio::time::sleep(Duration::from_millis(5)).await;
                 }
-                ACTIONS.ended(true);
+                state(slot).actions.ended(true);
                 return Ok(AssistantReplay {
                     end: ReplayEnd::Stopped { step: 2 },
                     discovery: DiscoveryEnded::default(),
@@ -157,8 +169,8 @@ impl ReplayHost for FakeHost {
                 });
             }
             if let Some(release) = &self.release {
-                let _one = OneReplay::claim_for_assistant().expect("a replay was already going");
-                v2_lib::autorun::replay_to::note_progress(2, 2);
+                let _one = OneReplay::claim_for_assistant_in(slot).expect("a replay was already going");
+                v2_lib::autorun::replay_to::state(slot).note_progress(2, 2);
                 release.notified().await;
             }
             // As `replay_supervised` says a browser that would not open
@@ -177,8 +189,9 @@ impl ReplayHost for FakeHost {
             })
         })
     }
-    fn page(&self, _organization: String, _project: String) -> HostFuture<'_, (u16, String)> {
+    fn page(&self, slot: SlotNo, _organization: String, _project: String) -> HostFuture<'_, (u16, String)> {
         Box::pin(async move {
+            self.page_slots.lock().unwrap().push(slot);
             if let Some(hold) = &self.hold_page {
                 hold.notified().await;
             }
@@ -210,7 +223,7 @@ async fn a_must_not_save_script_replays_without_asking() {
     store::set_root(dir.path().to_path_buf());
     project(dir.path(), &script(true));
     let host = leak(FakeHost::ready());
-    let (status, text) = autorun_replay_with(&ctx(), &body(3), host, WAIT).await;
+    let (status, text) = autorun_replay_with(&ctx(), SlotNo::MAIN, &body(3), host, WAIT).await;
     assert_eq!(status, 200, "{text}");
     let v: Value = serde_json::from_str(&text).unwrap();
     assert_eq!(v["sentence"], "Started from the beginning. Replayed case 77 to step 3 - the browser is on the page before step 3 runs");
@@ -244,7 +257,7 @@ async fn a_normal_script_runs_without_asking() {
     store::set_root(dir.path().to_path_buf());
     project(dir.path(), &script(false));
     let host = leak(FakeHost::ready());
-    let (status, text) = autorun_replay_with(&ctx(), &body(3), host, WAIT).await;
+    let (status, text) = autorun_replay_with(&ctx(), SlotNo::MAIN, &body(3), host, WAIT).await;
     assert_eq!(status, 200, "{text}");
     assert_eq!(host.replays().len(), 1);
     let v: Value = serde_json::from_str(&text).unwrap();
@@ -262,7 +275,7 @@ async fn a_replay_that_skipped_the_sign_in_says_it_went_straight_to_the_area() {
     project(dir.path(), &script(false));
     let mut ready = FakeHost::ready();
     ready.reuse.went = Some("Leave".into());
-    let (status, text) = autorun_replay_with(&ctx(), &body(3), leak(ready), WAIT).await;
+    let (status, text) = autorun_replay_with(&ctx(), SlotNo::MAIN, &body(3), leak(ready), WAIT).await;
     assert_eq!(status, 200, "{text}");
     let v: Value = serde_json::from_str(&text).unwrap();
     assert_eq!(
@@ -276,7 +289,7 @@ async fn a_replay_that_skipped_the_sign_in_says_it_went_straight_to_the_area() {
         outcomes: vec![],
     });
     stopped.reuse.went = Some("Leave".into());
-    let (_, text) = autorun_replay_with(&ctx(), &body(3), leak(stopped), WAIT).await;
+    let (_, text) = autorun_replay_with(&ctx(), SlotNo::MAIN, &body(3), leak(stopped), WAIT).await;
     let v: Value = serde_json::from_str(&text).unwrap();
     assert_eq!(v["sentence"], "Started from the beginning. Signed in already: went to Leave. Replay stopped at step 2: nothing matched #s2");
 }
@@ -293,7 +306,7 @@ async fn a_save_stopped_on_the_way_to_the_area_is_said() {
     let sentence = v2_lib::browser::save_guard::blocked("POST", "https://hr.example.internal/api/leave/save");
     let mut ready = FakeHost::ready();
     ready.reuse.save_stopped = Some(save_stopped_line("Leave", &sentence));
-    let (status, text) = autorun_replay_with(&ctx(), &body(3), leak(ready), WAIT).await;
+    let (status, text) = autorun_replay_with(&ctx(), SlotNo::MAIN, &body(3), leak(ready), WAIT).await;
     assert_eq!(status, 200, "{text}");
     let v: Value = serde_json::from_str(&text).unwrap();
     assert_eq!(
@@ -318,7 +331,7 @@ async fn a_replay_that_stops_at_a_failure_answers_the_page_there() {
         why: "waited 15000ms and never saw heading \"Ready to Publish\"".into(),
         outcomes: vec![],
     }));
-    let answer = autorun_replay_with(&ctx(), &body(3), host, WAIT).await;
+    let answer = autorun_replay_with(&ctx(), SlotNo::MAIN, &body(3), host, WAIT).await;
     assert_eq!(answer.0, 200, "{}", answer.1);
     let v: Value = serde_json::from_str(&answer.1).unwrap();
     assert_eq!(
@@ -349,7 +362,7 @@ async fn a_replay_that_stops_signing_in_answers_no_page() {
         why: "the signed-in marker never appeared".into(),
         outcomes: vec![],
     }));
-    let (status, text) = autorun_replay_with(&ctx(), &body(3), host, WAIT).await;
+    let (status, text) = autorun_replay_with(&ctx(), SlotNo::MAIN, &body(3), host, WAIT).await;
     assert_eq!(status, 200, "{text}");
     let v: Value = serde_json::from_str(&text).unwrap();
     assert_eq!(
@@ -375,14 +388,14 @@ async fn a_replay_that_stops_answers_its_sentence_without_a_page() {
         ),
     ] {
         let host = leak(FakeHost::ending(end));
-        let (status, text) = autorun_replay_with(&ctx(), &body(3), host, WAIT).await;
+        let (status, text) = autorun_replay_with(&ctx(), SlotNo::MAIN, &body(3), host, WAIT).await;
         assert_eq!(status, 200, "{text}");
         let v: Value = serde_json::from_str(&text).unwrap();
         assert_eq!(v, json!({ "sentence": sentence }));
     }
     // A refusal the engine itself gives is the usual refusal.
     let host = leak(FakeHost::ending(ReplayEnd::Refused(ALREADY_RUNNING.into())));
-    let (status, text) = autorun_replay_with(&ctx(), &body(3), host, WAIT).await;
+    let (status, text) = autorun_replay_with(&ctx(), SlotNo::MAIN, &body(3), host, WAIT).await;
     assert_eq!((status, text.as_str()), (409, ALREADY_RUNNING));
 }
 
@@ -394,24 +407,24 @@ async fn refusals_before_running_never_ask_or_run() {
 
     // No saved script.
     let host = leak(FakeHost::ready());
-    let (status, text) = autorun_replay_with(&ctx(), &body(3), host, WAIT).await;
+    let (status, text) = autorun_replay_with(&ctx(), SlotNo::MAIN, &body(3), host, WAIT).await;
     assert_eq!((status, text.as_str()), (409, "case 77 has no saved script"));
 
     // A step outside the script, on a must-not-save one: refused before
     // the person is asked.
     project(dir.path(), &script(true));
-    let (status, text) = autorun_replay_with(&ctx(), &body(5), host, WAIT).await;
+    let (status, text) = autorun_replay_with(&ctx(), SlotNo::MAIN, &body(5), host, WAIT).await;
     assert_eq!((status, text.as_str()), (409, "step 5 is not in case 77's script (it has steps 1 to 3)"));
 
     // A replay already running.
     let one = OneReplay::claim().unwrap();
-    let (status, text) = autorun_replay_with(&ctx(), &body(3), host, WAIT).await;
+    let (status, text) = autorun_replay_with(&ctx(), SlotNo::MAIN, &body(3), host, WAIT).await;
     assert_eq!((status, text.as_str()), (409, ALREADY_RUNNING));
     drop(one);
 
     // A body without its fields.
     for bad in [json!({ "step": 3 }), json!({ "case_id": ID }), json!({ "case_id": "x", "step": 3 })] {
-        let (status, _) = autorun_replay_with(&ctx(), &bad.to_string(), host, WAIT).await;
+        let (status, _) = autorun_replay_with(&ctx(), SlotNo::MAIN, &bad.to_string(), host, WAIT).await;
         assert_eq!(status, 400, "{bad}");
     }
 
@@ -426,7 +439,7 @@ async fn database_read_access_follows_the_db_query_switch() {
     project(dir.path(), &script(false));
     let off = BridgeContext { disabled_tools: vec!["db_lookup".into(), "db_query".into()], ..ctx() };
     let host = leak(FakeHost::ready());
-    let (status, _) = autorun_replay_with(&off, &body(2), host, WAIT).await;
+    let (status, _) = autorun_replay_with(&off, SlotNo::MAIN, &body(2), host, WAIT).await;
     assert_eq!(status, 200);
     assert_eq!(host.replays(), vec![ReplayRequest { case_id: ID, step: 2, db_read_access: false }]);
 }
@@ -463,7 +476,7 @@ async fn the_replay_answer_says_the_discovery_was_ended() {
     let ready = "Started from the beginning. Replayed case 77 to step 3 - the browser is on the page before step 3 runs";
 
     let host = leak(FakeHost { discovering: true, ..FakeHost::ready() });
-    let (status, text) = autorun_replay_with(&ctx(), &body(3), host, WAIT).await;
+    let (status, text) = autorun_replay_with(&ctx(), SlotNo::MAIN, &body(3), host, WAIT).await;
     assert_eq!(status, 200, "{text}");
     let v: Value = serde_json::from_str(&text).unwrap();
     assert_eq!(v["sentence"], format!("{ENDED_DISCOVERY_FIRST} {ready}"));
@@ -473,12 +486,12 @@ async fn the_replay_answer_says_the_discovery_was_ended() {
     // A stop after the end still says the discovery is over.
     let stopped = ReplayEnd::Stopped { step: 2 };
     let host = leak(FakeHost { discovering: true, ..FakeHost::ending(stopped) });
-    let (_, text) = autorun_replay_with(&ctx(), &body(3), host, WAIT).await;
+    let (_, text) = autorun_replay_with(&ctx(), SlotNo::MAIN, &body(3), host, WAIT).await;
     let v: Value = serde_json::from_str(&text).unwrap();
     assert_eq!(v["sentence"], format!("{ENDED_DISCOVERY_FIRST} Started from the beginning. The replay was stopped at step 2: it was asked to stop (Stop, Close browser or Release Auto Run browser)"));
 
     let host = leak(FakeHost::ready());
-    let (_, text) = autorun_replay_with(&ctx(), &body(3), host, WAIT).await;
+    let (_, text) = autorun_replay_with(&ctx(), SlotNo::MAIN, &body(3), host, WAIT).await;
     let v: Value = serde_json::from_str(&text).unwrap();
     assert_eq!(v["sentence"], ready);
 }
@@ -499,7 +512,7 @@ async fn the_replay_answer_says_a_no_save_discoverys_guard_stays_on() {
     );
     let ready = "Started from the beginning. Replayed case 77 to step 3 - the browser is on the page before step 3 runs";
     let host = leak(FakeHost { discovering: true, no_save: true, ..FakeHost::ready() });
-    let (status, text) = autorun_replay_with(&ctx(), &body(3), host, WAIT).await;
+    let (status, text) = autorun_replay_with(&ctx(), SlotNo::MAIN, &body(3), host, WAIT).await;
     assert_eq!(status, 200, "{text}");
     let v: Value = serde_json::from_str(&text).unwrap();
     assert_eq!(v["sentence"], format!("{ENDED_DISCOVERY_FIRST} {DISCOVERY_GUARD_KEPT} {ready}"));
@@ -518,7 +531,7 @@ async fn a_replay_that_ended_a_mapping_run_answers_its_summary() {
     }))
     .unwrap();
     let host = leak(FakeHost { discovering: true, summary: Some(summary.clone()), ..FakeHost::ready() });
-    let (status, text) = autorun_replay_with(&ctx(), &body(3), host, WAIT).await;
+    let (status, text) = autorun_replay_with(&ctx(), SlotNo::MAIN, &body(3), host, WAIT).await;
     assert_eq!(status, 200, "{text}");
     let v: Value = serde_json::from_str(&text).unwrap();
     assert!(v["sentence"].as_str().unwrap().starts_with(ENDED_DISCOVERY_FIRST), "{v}");
@@ -528,12 +541,12 @@ async fn a_replay_that_ended_a_mapping_run_answers_its_summary() {
     // A stop after the end carries it too.
     let stopped = ReplayEnd::Stopped { step: 2 };
     let host = leak(FakeHost { discovering: true, summary: Some(summary.clone()), ..FakeHost::ending(stopped) });
-    let (_, text) = autorun_replay_with(&ctx(), &body(3), host, WAIT).await;
+    let (_, text) = autorun_replay_with(&ctx(), SlotNo::MAIN, &body(3), host, WAIT).await;
     let v: Value = serde_json::from_str(&text).unwrap();
     assert_eq!(v["summary"], serde_json::to_value(&summary).unwrap());
 
     let host = leak(FakeHost { discovering: true, ..FakeHost::ready() });
-    let (_, text) = autorun_replay_with(&ctx(), &body(3), host, WAIT).await;
+    let (_, text) = autorun_replay_with(&ctx(), SlotNo::MAIN, &body(3), host, WAIT).await;
     let v: Value = serde_json::from_str(&text).unwrap();
     assert!(v.get("summary").is_none(), "{v}");
 }
@@ -554,14 +567,14 @@ async fn a_browser_that_would_not_open_after_the_end_still_says_the_discovery_wa
         [(true, format!("{ENDED_DISCOVERY_FIRST} {WOULD_NOT_OPEN}")), (false, WOULD_NOT_OPEN.to_string())]
     {
         let host = leak(FakeHost { discovering, open_failed: Some(WOULD_NOT_OPEN.into()), ..FakeHost::ready() });
-        let (status, text) = autorun_replay_with(&ctx(), &body(3), host, WAIT).await;
+        let (status, text) = autorun_replay_with(&ctx(), SlotNo::MAIN, &body(3), host, WAIT).await;
         assert_eq!((status, text), (503, said));
     }
 
     // The app's own replay says it the same way.
     let source = include_str!("../../src/commands/autorun.rs");
     let replay = &source[source.find("pub(crate) async fn replay_supervised").unwrap()..];
-    let open = &replay[replay.find("open_if_none(app, &mut slot, by.opens_as())").unwrap()..];
+    let open = &replay[replay.find("open_if_none(app, &mut slot, n, by.opens_as())").unwrap()..];
     let open = &open[..open.len().min(300)];
     assert!(open.contains("after_ended_discovery(discovery.ended, &why)"), "{open}");
 }
@@ -592,7 +605,7 @@ async fn a_replay_past_the_wait_answers_still_running_and_a_second_call_attaches
     assert_eq!(v2_lib::ai_bridge::REPLAY_ANSWER_WAIT, Duration::from_secs(45));
     let host = slow();
     let short = Duration::from_millis(50);
-    let (status, text) = autorun_replay_with(&ctx(), &body(3), host, short).await;
+    let (status, text) = autorun_replay_with(&ctx(), SlotNo::MAIN, &body(3), host, short).await;
     assert_eq!(status, 202, "{text}");
     let v = still_running_answer(&text);
     assert_eq!(
@@ -602,12 +615,12 @@ async fn a_replay_past_the_wait_answers_still_running_and_a_second_call_attaches
     assert_eq!((v["step"].as_i64(), v["of"].as_i64()), (Some(2), Some(2)));
 
     // Asked again: still running, still the same replay.
-    let (status, _) = autorun_replay_with(&ctx(), &body(3), host, short).await;
+    let (status, _) = autorun_replay_with(&ctx(), SlotNo::MAIN, &body(3), host, short).await;
     assert_eq!(status, 202);
 
     // Asked again while it ends: this call takes its answer.
     let (c, b) = (ctx(), body(3));
-    let (answered, ()) = tokio::join!(autorun_replay_with(&c, &b, host, WAIT), async {
+    let (answered, ()) = tokio::join!(autorun_replay_with(&c, SlotNo::MAIN, &b, host, WAIT), async {
         tokio::time::sleep(Duration::from_millis(30)).await;
         host.release.as_ref().unwrap().notify_one();
     });
@@ -626,20 +639,78 @@ async fn a_replay_of_another_step_while_one_runs_is_refused() {
     store::set_root(dir.path().to_path_buf());
     project(dir.path(), &script(false));
     let host = slow();
-    let (status, _) = autorun_replay_with(&ctx(), &body(3), host, Duration::from_millis(30)).await;
+    let (status, _) = autorun_replay_with(&ctx(), SlotNo::MAIN, &body(3), host, Duration::from_millis(30)).await;
     assert_eq!(status, 202);
     let other = leak(FakeHost::ready());
-    let (status, text) = autorun_replay_with(&ctx(), &body(2), other, WAIT).await;
+    let (status, text) = autorun_replay_with(&ctx(), SlotNo::MAIN, &body(2), other, WAIT).await;
     assert_eq!((status, text.as_str()), (409, v2_lib::ai_bridge::replay_running_elsewhere(77, 3).as_str()));
     assert!(text.contains("case 77 to step 3"), "{text}");
     assert!(other.replays().is_empty(), "a second replay ran beside the first");
 
     // Let it end, and take its answer, so the slot is free again.
     host.release.as_ref().unwrap().notify_one();
-    let (status, _) = autorun_replay_with(&ctx(), &body(3), host, WAIT).await;
+    let (status, _) = autorun_replay_with(&ctx(), SlotNo::MAIN, &body(3), host, WAIT).await;
     assert_eq!(status, 200);
-    let (status, _) = autorun_replay_with(&ctx(), &body(2), other, WAIT).await;
+    let (status, _) = autorun_replay_with(&ctx(), SlotNo::MAIN, &body(2), other, WAIT).await;
     assert_eq!(status, 200, "the slot was not freed once the answer was taken");
+}
+
+/// A replay asked for in a slot runs in that slot: the host is handed the
+/// slot, the slot's own replay is the one claimed, kept and stopped, and
+/// another slot's replay, stop and answer are not touched by it.
+#[tokio::test]
+async fn an_assistant_replay_runs_and_answers_in_its_own_slot() {
+    use v2_lib::ai_bridge::{assistant_replay_of, autorun_replay_stop_with, NO_REPLAY_RUNNING};
+    use v2_lib::autorun::replay_to::state;
+    let _a = crate::serial::autorun();
+    let _l = crate::serial::account_leases();
+    let dir = tempfile::tempdir().unwrap();
+    store::set_root(dir.path().to_path_buf());
+    project(dir.path(), &script(false));
+    let one = SlotNo(1);
+    // An answer an earlier test left in main is taken first.
+    let _ = autorun_replay_with(&ctx(), SlotNo::MAIN, &body(3), leak(FakeHost::ready()), WAIT).await;
+    assert_eq!(assistant_replay_of(SlotNo::MAIN), None);
+
+    let main_progress = v2_lib::autorun::replay_to::progress();
+    let host = slow();
+    let (status, text) = autorun_replay_with(&ctx(), one, &body(3), host, Duration::from_millis(50)).await;
+    assert_eq!(status, 202, "{text}");
+    assert_eq!(host.slots(), vec![one], "the host was not handed the slot");
+    assert_eq!(assistant_replay_of(one), Some((ID, 3)));
+    assert_eq!(assistant_replay_of(SlotNo::MAIN), None, "main keeps slot 1's replay");
+    assert!(state(one).assistants_replay_running());
+    assert!(!v2_lib::autorun::replay_to::is_running(), "main reads slot 1's replay as its own");
+    assert_eq!(state(one).progress(), (2, 2));
+    assert_eq!(v2_lib::autorun::replay_to::progress(), main_progress, "main's progress moved with slot 1's");
+    // The 202 says where slot 1's replay is.
+    let v = still_running_answer(&text);
+    assert_eq!((v["step"].as_i64(), v["of"].as_i64()), (Some(2), Some(2)));
+
+    // Main has nothing to stop, and slot 1's replay is not asked to.
+    assert_eq!(autorun_replay_stop_with(SlotNo::MAIN, WAIT).await, (404, NO_REPLAY_RUNNING.to_string()));
+    assert!(!state(one).cancel.load(std::sync::atomic::Ordering::SeqCst), "main's stop reached slot 1");
+
+    // Main replays beside it: not refused for the other slot's replay.
+    let beside = slow();
+    let (status, _) = autorun_replay_with(&ctx(), SlotNo::MAIN, &body(2), beside, Duration::from_millis(50)).await;
+    assert_eq!(status, 202);
+    assert_eq!(beside.slots(), vec![SlotNo::MAIN]);
+    assert!(v2_lib::autorun::replay_to::is_running() && state(one).is_running());
+
+    // Each ends and answers in its own slot.
+    host.release.as_ref().unwrap().notify_one();
+    beside.release.as_ref().unwrap().notify_one();
+    let (status, text) = autorun_replay_with(&ctx(), one, &body(3), host, WAIT).await;
+    assert_eq!(status, 200, "{text}");
+    assert!(text.contains("Replayed case 77 to step 3"), "{text}");
+    assert_eq!(host.page_slots.lock().unwrap().clone(), vec![one], "the page was read in another slot");
+    let (status, text) = autorun_replay_with(&ctx(), SlotNo::MAIN, &body(2), beside, WAIT).await;
+    assert_eq!(status, 200, "{text}");
+    assert!(text.contains("Replayed case 77 to step"), "{text}");
+    assert_eq!(beside.page_slots.lock().unwrap().clone(), vec![SlotNo::MAIN]);
+    assert_eq!(assistant_replay_of(one), None, "the answer was taken");
+    assert_eq!(autorun_replay_stop_with(one, WAIT).await, (404, NO_REPLAY_RUNNING.to_string()));
 }
 
 /// A replay that ends while no call is waiting keeps its answer for the
@@ -652,13 +723,13 @@ async fn the_answer_of_a_replay_that_ended_unwatched_goes_to_the_next_call() {
     store::set_root(dir.path().to_path_buf());
     project(dir.path(), &script(false));
     let host = slow();
-    let (status, _) = autorun_replay_with(&ctx(), &body(3), host, Duration::from_millis(30)).await;
+    let (status, _) = autorun_replay_with(&ctx(), SlotNo::MAIN, &body(3), host, Duration::from_millis(30)).await;
     assert_eq!(status, 202);
     host.release.as_ref().unwrap().notify_one();
     // Nobody waits while it ends.
     tokio::time::sleep(Duration::from_millis(50)).await;
     let (c, b) = (ctx(), body(3));
-    let (status, text) = tokio::time::timeout(Duration::from_millis(500), autorun_replay_with(&c, &b, host, WAIT))
+    let (status, text) = tokio::time::timeout(Duration::from_millis(500), autorun_replay_with(&c, SlotNo::MAIN, &b, host, WAIT))
         .await
         .expect("the kept answer was not handed over at once");
     assert_eq!(status, 200, "{text}");
@@ -686,7 +757,7 @@ async fn a_replay_going_is_stopped_on_request_and_says_where() {
     use v2_lib::autorun::replay_to::{left_open_line, LeftOpen};
     let left = LeftOpen { account: Some("admin".into()), by_assistant: true };
     let host = leak(FakeHost { until_stopped: true, left_open: Some(left.clone()), ..FakeHost::ready() });
-    let (status, _) = autorun_replay_with(&ctx(), &body(3), host, Duration::from_millis(50)).await;
+    let (status, _) = autorun_replay_with(&ctx(), SlotNo::MAIN, &body(3), host, Duration::from_millis(50)).await;
     assert_eq!(status, 202, "the replay should still be going");
 
     // While the assistant's own replay goes, a reset and a release that
@@ -698,7 +769,7 @@ async fn a_replay_going_is_stopped_on_request_and_says_where() {
     assert_eq!(status, 409, "{said}");
     assert!(said.contains("or replay_autorun_to_step with stop: true to stop it"), "{said}");
 
-    let (status, text) = autorun_replay_stop_with(WAIT).await;
+    let (status, text) = autorun_replay_stop_with(SlotNo::MAIN, WAIT).await;
     assert_eq!(status, 200, "{text}");
     let v: Value = serde_json::from_str(&text).unwrap();
     // The browser stays open, holding its account: said, as after any
@@ -714,10 +785,10 @@ async fn a_replay_going_is_stopped_on_request_and_says_where() {
     assert!(!v2_lib::autorun::replay_to::is_running());
 
     // Nothing runs now, and the answer was taken: the next replay is new.
-    let (status, _) = autorun_replay_stop_with(WAIT).await;
+    let (status, _) = autorun_replay_stop_with(SlotNo::MAIN, WAIT).await;
     assert_eq!(status, 404);
     let again = leak(FakeHost::ready());
-    let (status, _) = autorun_replay_with(&ctx(), &body(3), again, WAIT).await;
+    let (status, _) = autorun_replay_with(&ctx(), SlotNo::MAIN, &body(3), again, WAIT).await;
     assert_eq!(status, 200);
     assert_eq!(again.replays().len(), 1, "the stopped replay's answer was handed over again");
 }
@@ -746,16 +817,16 @@ fn a_stop_on_request_says_after_which_action_of_which_step() {
 #[tokio::test]
 async fn stopping_with_no_replay_going_answers_404() {
     use v2_lib::ai_bridge::{autorun_replay_stop_with, NO_REPLAY_RUNNING};
-    use v2_lib::autorun::replay_to::CANCEL;
+    use v2_lib::autorun::replay_to::state;
     let _a = crate::serial::autorun();
     let dir = tempfile::tempdir().unwrap();
     store::set_root(dir.path().to_path_buf());
     project(dir.path(), &script(false));
     // A replay of another test may have left its answer: taken first.
-    let _ = autorun_replay_with(&ctx(), &body(3), leak(FakeHost::ready()), WAIT).await;
-    CANCEL.store(false, std::sync::atomic::Ordering::SeqCst);
-    assert_eq!(autorun_replay_stop_with(WAIT).await, (404, NO_REPLAY_RUNNING.to_string()));
-    assert!(!CANCEL.load(std::sync::atomic::Ordering::SeqCst), "a stop was asked with nothing going");
+    let _ = autorun_replay_with(&ctx(), SlotNo::MAIN, &body(3), leak(FakeHost::ready()), WAIT).await;
+    state(SlotNo::MAIN).cancel.store(false, std::sync::atomic::Ordering::SeqCst);
+    assert_eq!(autorun_replay_stop_with(SlotNo::MAIN, WAIT).await, (404, NO_REPLAY_RUNNING.to_string()));
+    assert!(!state(SlotNo::MAIN).cancel.load(std::sync::atomic::Ordering::SeqCst), "a stop was asked with nothing going");
     assert_eq!(NO_REPLAY_RUNNING, "no replay is running - there is nothing to stop");
     // Through the bridge's route table too.
     let answer = route(&ctx(), None, "POST", "/autorun-replay-stop", "{}", "1.0.0").await;
@@ -763,14 +834,14 @@ async fn stopping_with_no_replay_going_answers_404() {
 
     // Ended, its answer not yet collected: said, and kept for the replay call.
     let host = slow();
-    let (status, _) = autorun_replay_with(&ctx(), &body(3), host, Duration::from_millis(30)).await;
+    let (status, _) = autorun_replay_with(&ctx(), SlotNo::MAIN, &body(3), host, Duration::from_millis(30)).await;
     assert_eq!(status, 202);
     host.release.as_ref().unwrap().notify_one();
     tokio::time::sleep(Duration::from_millis(50)).await;
-    let (status, text) = autorun_replay_stop_with(WAIT).await;
+    let (status, text) = autorun_replay_stop_with(SlotNo::MAIN, WAIT).await;
     assert_eq!(status, 404, "{text}");
     assert!(text.contains("call replay_autorun_to_step with case 77 and step 3 for its answer"), "{text}");
-    let (status, text) = autorun_replay_with(&ctx(), &body(3), host, WAIT).await;
+    let (status, text) = autorun_replay_with(&ctx(), SlotNo::MAIN, &body(3), host, WAIT).await;
     assert_eq!(status, 200, "{text}");
     assert_eq!(host.replays().len(), 1);
 }
@@ -780,15 +851,15 @@ async fn stopping_with_no_replay_going_answers_404() {
 #[tokio::test]
 async fn the_persons_replay_is_not_stopped_by_the_assistant() {
     use v2_lib::ai_bridge::{autorun_replay_stop_with, PERSONS_REPLAY_GOING};
-    use v2_lib::autorun::replay_to::CANCEL;
+    use v2_lib::autorun::replay_to::state;
     let _a = crate::serial::autorun();
     let dir = tempfile::tempdir().unwrap();
     store::set_root(dir.path().to_path_buf());
     project(dir.path(), &script(false));
-    let _ = autorun_replay_with(&ctx(), &body(3), leak(FakeHost::ready()), WAIT).await;
+    let _ = autorun_replay_with(&ctx(), SlotNo::MAIN, &body(3), leak(FakeHost::ready()), WAIT).await;
     let persons = OneReplay::claim().unwrap();
-    assert_eq!(autorun_replay_stop_with(WAIT).await, (409, PERSONS_REPLAY_GOING.to_string()));
-    assert!(!CANCEL.load(std::sync::atomic::Ordering::SeqCst), "the person's replay was asked to stop");
+    assert_eq!(autorun_replay_stop_with(SlotNo::MAIN, WAIT).await, (409, PERSONS_REPLAY_GOING.to_string()));
+    assert!(!state(SlotNo::MAIN).cancel.load(std::sync::atomic::Ordering::SeqCst), "the person's replay was asked to stop");
     drop(persons);
 }
 
@@ -801,20 +872,20 @@ async fn the_persons_replay_is_not_stopped_by_the_assistant() {
 async fn a_stop_between_the_replays_end_and_its_answer_stops_nothing() {
     use std::sync::atomic::Ordering;
     use v2_lib::ai_bridge::autorun_replay_stop_with;
-    use v2_lib::autorun::replay_to::{is_running, stop_was_requested, CANCEL};
+    use v2_lib::autorun::replay_to::{is_running, state, stop_was_requested};
     let _a = crate::serial::autorun();
     let _l = crate::serial::account_leases();
     let dir = tempfile::tempdir().unwrap();
     store::set_root(dir.path().to_path_buf());
     project(dir.path(), &script(false));
     let host = leak(FakeHost { hold_page: Some(tokio::sync::Notify::new()), ..FakeHost::ready() });
-    let (status, _) = autorun_replay_with(&ctx(), &body(3), host, Duration::from_millis(50)).await;
+    let (status, _) = autorun_replay_with(&ctx(), SlotNo::MAIN, &body(3), host, Duration::from_millis(50)).await;
     assert_eq!(status, 202, "the answer should still be on its way");
     assert!(!is_running(), "the replay itself has ended");
-    CANCEL.store(false, Ordering::SeqCst);
+    state(SlotNo::MAIN).cancel.store(false, Ordering::SeqCst);
 
     // Nothing runs: nothing is asked to stop.
-    let (status, text) = autorun_replay_stop_with(Duration::from_millis(30)).await;
+    let (status, text) = autorun_replay_stop_with(SlotNo::MAIN, Duration::from_millis(30)).await;
     assert_eq!(status, 202, "{text}");
     let v: Value = serde_json::from_str(&text).unwrap();
     assert_eq!(v["status"], "not_stopped", "{v}");
@@ -822,18 +893,18 @@ async fn a_stop_between_the_replays_end_and_its_answer_stops_nothing() {
         v["sentence"],
         "not asked to stop: the replay of case 77 to step 3 was not running a step (it was starting, or had ended and its answer was being made ready) - send replay_autorun_to_step stop: true again to stop it, or replay_autorun_to_step with case 77 and step 3 for its answer"
     );
-    assert!(!CANCEL.load(Ordering::SeqCst), "a stop was asked with nothing of the assistant's going");
+    assert!(!state(SlotNo::MAIN).cancel.load(Ordering::SeqCst), "a stop was asked with nothing of the assistant's going");
 
     // The person presses Replay in that gap: their replay never hears it.
     let persons = OneReplay::claim().unwrap();
-    let (status, _) = autorun_replay_stop_with(Duration::from_millis(30)).await;
+    let (status, _) = autorun_replay_stop_with(SlotNo::MAIN, Duration::from_millis(30)).await;
     assert_eq!(status, 202);
-    assert!(!CANCEL.load(Ordering::SeqCst), "the person's replay was asked to stop");
+    assert!(!state(SlotNo::MAIN).cancel.load(Ordering::SeqCst), "the person's replay was asked to stop");
     assert!(!stop_was_requested(), "the person's replay would say it was stopped on request");
     drop(persons);
 
     // The page read ends: the stop call collects the finished answer.
-    let (got, ()) = tokio::join!(autorun_replay_stop_with(WAIT), async {
+    let (got, ()) = tokio::join!(autorun_replay_stop_with(SlotNo::MAIN, WAIT), async {
         tokio::time::sleep(Duration::from_millis(30)).await;
         host.hold_page.as_ref().unwrap().notify_one();
     });
@@ -858,9 +929,9 @@ async fn a_stop_not_heard_within_the_wait_says_it_was_asked_and_how_to_wait() {
     store::set_root(dir.path().to_path_buf());
     project(dir.path(), &script(false));
     let host = slow();
-    let (status, _) = autorun_replay_with(&ctx(), &body(3), host, Duration::from_millis(30)).await;
+    let (status, _) = autorun_replay_with(&ctx(), SlotNo::MAIN, &body(3), host, Duration::from_millis(30)).await;
     assert_eq!(status, 202);
-    let (status, text) = autorun_replay_stop_with(Duration::from_millis(50)).await;
+    let (status, text) = autorun_replay_stop_with(SlotNo::MAIN, Duration::from_millis(50)).await;
     assert_eq!(status, 202, "{text}");
     let v: Value = serde_json::from_str(&text).unwrap();
     assert_eq!(v["status"], "stopping", "{v}");
@@ -868,9 +939,9 @@ async fn a_stop_not_heard_within_the_wait_says_it_was_asked_and_how_to_wait() {
         v["sentence"],
         "asked to stop: the replay of case 77 to step 3 ends once the action it is on finishes (now at step 2 of 2) - send replay_autorun_to_step stop: true again to wait for it"
     );
-    assert!(v2_lib::autorun::replay_to::CANCEL.load(std::sync::atomic::Ordering::SeqCst));
+    assert!(v2_lib::autorun::replay_to::state(SlotNo::MAIN).cancel.load(std::sync::atomic::Ordering::SeqCst));
     host.release.as_ref().unwrap().notify_one();
-    let (status, text) = autorun_replay_stop_with(WAIT).await;
+    let (status, text) = autorun_replay_stop_with(SlotNo::MAIN, WAIT).await;
     assert_eq!(status, 200, "{text}");
     assert!(text.contains("Replayed case 77 to step 3"), "{text}");
 }
@@ -887,12 +958,12 @@ async fn an_answer_collected_by_the_stop_keeps_the_replay_calls_page_choice() {
     project(dir.path(), &script(false));
     let host = slow();
     let no_page = json!({ "case_id": ID, "step": 3, "page": false }).to_string();
-    let (status, _) = autorun_replay_with(&ctx(), &no_page, host, Duration::from_millis(30)).await;
+    let (status, _) = autorun_replay_with(&ctx(), SlotNo::MAIN, &no_page, host, Duration::from_millis(30)).await;
     assert_eq!(status, 202);
-    let (status, _) = autorun_replay_stop_with(Duration::from_millis(30)).await;
+    let (status, _) = autorun_replay_stop_with(SlotNo::MAIN, Duration::from_millis(30)).await;
     assert_eq!(status, 202);
     host.release.as_ref().unwrap().notify_one();
-    let (status, text) = autorun_replay_stop_with(WAIT).await;
+    let (status, text) = autorun_replay_stop_with(SlotNo::MAIN, WAIT).await;
     assert_eq!(status, 200, "{text}");
     let v: Value = serde_json::from_str(&text).unwrap();
     assert!(v.get("page").is_none(), "{v}");
@@ -930,7 +1001,7 @@ async fn a_replay_that_leaves_the_browser_open_says_what_it_blocks() {
     );
 
     let host = leak(FakeHost { left_open: Some(mine.clone()), ..FakeHost::ready() });
-    let (status, text) = autorun_replay_with(&ctx(), &body(3), host, WAIT).await;
+    let (status, text) = autorun_replay_with(&ctx(), SlotNo::MAIN, &body(3), host, WAIT).await;
     assert_eq!(status, 200, "{text}");
     let v: Value = serde_json::from_str(&text).unwrap();
     assert_eq!(
@@ -945,17 +1016,17 @@ async fn a_replay_that_leaves_the_browser_open_says_what_it_blocks() {
         outcomes: vec![],
     };
     let host = leak(FakeHost { left_open: Some(theirs.clone()), ..FakeHost::ending(stopped) });
-    let (_, text) = autorun_replay_with(&ctx(), &body(3), host, WAIT).await;
+    let (_, text) = autorun_replay_with(&ctx(), SlotNo::MAIN, &body(3), host, WAIT).await;
     let v: Value = serde_json::from_str(&text).unwrap();
     assert!(v["sentence"].as_str().unwrap().ends_with(&left_open_line(&theirs)), "{v}");
 
     let host = leak(FakeHost { left_open: Some(mine), ..FakeHost::ending(ReplayEnd::Refused("no".into())) });
-    let (status, text) = autorun_replay_with(&ctx(), &body(3), host, WAIT).await;
+    let (status, text) = autorun_replay_with(&ctx(), SlotNo::MAIN, &body(3), host, WAIT).await;
     assert_eq!((status, text.as_str()), (409, "no"));
     // A replay that was stopped (Stop, Close, Release) says nothing of a
     // browser that may be closing behind the answer.
     let host = leak(FakeHost { left_open: Some(left_open_mine()), ..FakeHost::ending(ReplayEnd::Stopped { step: 2 }) });
-    let (_, text) = autorun_replay_with(&ctx(), &body(3), host, WAIT).await;
+    let (_, text) = autorun_replay_with(&ctx(), SlotNo::MAIN, &body(3), host, WAIT).await;
     let v: Value = serde_json::from_str(&text).unwrap();
     assert!(!v["sentence"].as_str().unwrap().contains("stays open"), "{v}");
 }
@@ -978,7 +1049,7 @@ async fn the_answer_says_where_the_replay_started() {
     project(dir.path(), &script(false));
 
     let host = leak(FakeHost { from: ReplayFrom::CarriedOn(2), ..FakeHost::ready() });
-    let (status, text) = autorun_replay_with(&ctx(), &body(3), host, WAIT).await;
+    let (status, text) = autorun_replay_with(&ctx(), SlotNo::MAIN, &body(3), host, WAIT).await;
     assert_eq!(status, 200, "{text}");
     let v: Value = serde_json::from_str(&text).unwrap();
     assert_eq!(
@@ -987,7 +1058,7 @@ async fn the_answer_says_where_the_replay_started() {
     );
 
     let host = leak(FakeHost { from: ReplayFrom::AlreadyThere, ..FakeHost::ready() });
-    let (status, text) = autorun_replay_with(&ctx(), &body(3), host, WAIT).await;
+    let (status, text) = autorun_replay_with(&ctx(), SlotNo::MAIN, &body(3), host, WAIT).await;
     assert_eq!(status, 200, "{text}");
     let v: Value = serde_json::from_str(&text).unwrap();
     assert_eq!(
@@ -1003,7 +1074,7 @@ async fn the_answer_says_where_the_replay_started() {
 /// let end while nobody waits.
 async fn ended_unwatched(wait: Duration) -> &'static FakeHost {
     let host = slow();
-    let (status, _) = autorun_replay_with(&ctx(), &body(3), host, wait).await;
+    let (status, _) = autorun_replay_with(&ctx(), SlotNo::MAIN, &body(3), host, wait).await;
     assert_eq!(status, 202);
     host.release.as_ref().unwrap().notify_one();
     tokio::time::sleep(Duration::from_millis(20)).await;
@@ -1026,7 +1097,7 @@ async fn an_answer_nobody_took_is_handed_over_only_while_fresh() {
     let first = ended_unwatched(short).await;
     tokio::time::sleep(Duration::from_millis(80)).await;
     let again = leak(FakeHost::ready());
-    let (status, _) = autorun_replay_with(&ctx(), &body(3), again, short).await;
+    let (status, _) = autorun_replay_with(&ctx(), SlotNo::MAIN, &body(3), again, short).await;
     assert_eq!(status, 200);
     assert_eq!((first.replays().len(), again.replays().len()), (1, 1), "an old answer was handed over");
 
@@ -1036,7 +1107,7 @@ async fn an_answer_nobody_took_is_handed_over_only_while_fresh() {
     resaved.saved_at = Some("2026-10-13T00:00:00Z".into());
     store::save_script(dir.path(), &resaved).unwrap();
     let again = leak(FakeHost::ready());
-    let (status, _) = autorun_replay_with(&ctx(), &body(3), again, WAIT).await;
+    let (status, _) = autorun_replay_with(&ctx(), SlotNo::MAIN, &body(3), again, WAIT).await;
     assert_eq!(status, 200);
     assert_eq!((first.replays().len(), again.replays().len()), (1, 1), "an answer from before a save was handed over");
 
@@ -1044,14 +1115,14 @@ async fn an_answer_nobody_took_is_handed_over_only_while_fresh() {
     let first = ended_unwatched(short).await;
     v2_lib::commands::autorun::note_session_use();
     let again = leak(FakeHost::ready());
-    let (status, _) = autorun_replay_with(&ctx(), &body(3), again, WAIT).await;
+    let (status, _) = autorun_replay_with(&ctx(), SlotNo::MAIN, &body(3), again, WAIT).await;
     assert_eq!(status, 200);
     assert_eq!((first.replays().len(), again.replays().len()), (1, 1), "an answer from before a use was handed over");
 
     // Fresh: handed over, and nothing new runs.
     let first = ended_unwatched(short).await;
     let again = leak(FakeHost::ready());
-    let (status, _) = autorun_replay_with(&ctx(), &body(3), again, WAIT).await;
+    let (status, _) = autorun_replay_with(&ctx(), SlotNo::MAIN, &body(3), again, WAIT).await;
     assert_eq!(status, 200);
     assert_eq!((first.replays().len(), again.replays().len()), (1, 0));
 }
@@ -1150,7 +1221,7 @@ async fn a_replay_that_passes_with_test_changes_says_so_and_after_a_reset_is_pla
 
     let mut ready = FakeHost::ready();
     ready.overrides = changed.clone();
-    let (status, text) = autorun_replay_with(&ctx(), &body(3), leak(ready), WAIT).await;
+    let (status, text) = autorun_replay_with(&ctx(), SlotNo::MAIN, &body(3), leak(ready), WAIT).await;
     assert_eq!(status, 200, "{text}");
     let v: Value = serde_json::from_str(&text).unwrap();
     let sentence = v["sentence"].as_str().unwrap();
@@ -1167,7 +1238,7 @@ async fn a_replay_that_passes_with_test_changes_says_so_and_after_a_reset_is_pla
         outcomes: vec![],
     });
     stopped.overrides = changed.clone();
-    let (_, text) = autorun_replay_with(&ctx(), &body(2), leak(stopped), WAIT).await;
+    let (_, text) = autorun_replay_with(&ctx(), SlotNo::MAIN, &body(2), leak(stopped), WAIT).await;
     let v: Value = serde_json::from_str(&text).unwrap();
     assert_eq!(
         v["sentence"],
@@ -1177,14 +1248,14 @@ async fn a_replay_that_passes_with_test_changes_says_so_and_after_a_reset_is_pla
     // A replay the app refused names them too, read under its lock.
     let mut refused = FakeHost::ending(ReplayEnd::Refused("the person's Auto Run browser is open".into()));
     refused.overrides = changed.clone();
-    let (status, text) = autorun_replay_with(&ctx(), &body(4), leak(refused), WAIT).await;
+    let (status, text) = autorun_replay_with(&ctx(), SlotNo::MAIN, &body(4), leak(refused), WAIT).await;
     assert_eq!(status, 409);
     assert_eq!(text, "the person's Auto Run browser is open\nChanged for testing: header X-Feature; cookie culture.");
 
     // A refusal before the replay took the browser names them as last
     // published.
     v2_lib::commands::autorun::show_overrides(&changed);
-    let (status, text) = autorun_replay_with(&ctx(), &json!({ "case_id": 999, "step": 1 }).to_string(), leak(FakeHost::ready()), WAIT).await;
+    let (status, text) = autorun_replay_with(&ctx(), SlotNo::MAIN, &json!({ "case_id": 999, "step": 1 }).to_string(), leak(FakeHost::ready()), WAIT).await;
     v2_lib::commands::autorun::show_overrides(&Overrides::default());
     assert_eq!(status, 409, "{text}");
     assert!(text.ends_with("\nChanged for testing: header X-Feature; cookie culture."), "{text}");
@@ -1196,7 +1267,7 @@ async fn a_replay_that_passes_with_test_changes_says_so_and_after_a_reset_is_pla
     assert!(after.is_empty(), "{after:?}");
     let mut ready = FakeHost::ending(ReplayEnd::Ready { case_id: ID, step: 1, notice: None, whole: None, cleanup: None });
     ready.overrides = after;
-    let (status, text) = autorun_replay_with(&ctx(), &body(1), leak(ready), WAIT).await;
+    let (status, text) = autorun_replay_with(&ctx(), SlotNo::MAIN, &body(1), leak(ready), WAIT).await;
     assert_eq!(status, 200, "{text}");
     let v: Value = serde_json::from_str(&text).unwrap();
     assert_eq!(v["sentence"], "Started from the beginning. Replayed case 77 to step 1 - the browser is on the page before step 1 runs");
@@ -1214,7 +1285,7 @@ async fn the_answer_says_why_it_did_not_carry_on_from_another_case() {
     project(dir.path(), &script(false));
     let reuse = Reuse { not_carried: Some("case 12 saved something after the shared steps.".into()), ..Reuse::default() };
     let host = leak(FakeHost { from: ReplayFrom::Beginning, reuse, ..FakeHost::ready() });
-    let (status, text) = autorun_replay_with(&ctx(), &body(3), host, WAIT).await;
+    let (status, text) = autorun_replay_with(&ctx(), SlotNo::MAIN, &body(3), host, WAIT).await;
     assert_eq!(status, 200, "{text}");
     let v: Value = serde_json::from_str(&text).unwrap();
     assert_eq!(

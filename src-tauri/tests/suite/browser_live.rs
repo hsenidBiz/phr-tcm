@@ -3363,7 +3363,7 @@ async fn expect_download_reads_a_downloaded_pdf() {
 async fn a_replay_to_step_3_leaves_the_page_where_step_2_left_it() {
     use v2_lib::autorun::nav::{save_nav, NavFile};
     use v2_lib::autorun::preconditions::{NoDb, PreconditionDb};
-    use v2_lib::autorun::replay_to::{replay_to_checked, ReplayEnd, ReplayRequest};
+    use v2_lib::autorun::replay_to::{replay_to_checked, ReplayEnd, ReplayRequest, ReplayState};
     let app = App::start();
     let root = tempfile::tempdir().unwrap();
     save_recipe(root.path(), "acme", "Web", &recipe_for(&app)).unwrap();
@@ -3390,7 +3390,7 @@ async fn a_replay_to_step_3_leaves_the_page_where_step_2_left_it() {
     let mut live = open().await;
     let (mut account, mut guarded) = (None, None);
     let mut lease = v2_lib::autorun::lease::Held::supervised();
-    let cancel = AtomicBool::new(false);
+    let state = ReplayState::new();
     let end = replay_to_checked(
         &mut live.cdp,
         &mut v2_lib::autorun::setup::NoBrowsers::<crate::common::ScriptedDriver>::default(),
@@ -3403,7 +3403,7 @@ async fn a_replay_to_step_3_leaves_the_page_where_step_2_left_it() {
         &mut guarded,
         true,
         &timing(),
-        &cancel,
+        &state,
         || -> PreconditionDb<NoDb> { PreconditionDb::ReadingOff },
         |_, _| {},
     )
