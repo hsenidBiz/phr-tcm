@@ -42,7 +42,7 @@
 <body>
 <main>
   <h1>Test Case Manager backlog</h1>
-  <p class="sub">Updated 23 October 2026, after 2.3.1-beta.3 (several assistants, phase 1: who is calling). What is left is below.</p>
+  <p class="sub">Updated 24 October 2026, after 2.3.1-beta.4 (several assistants, phase 2: one slot table). Paused here on the owner's word: phase 3 waits for the go-ahead. What is left is below.</p>
 
   <h2>Agreed, not built yet</h2>
   <div class="item">
@@ -54,8 +54,8 @@
     </ul>
   </div>
   <div class="item">
-    <div class="head"><span class="title">Several assistants at once: a browser each</span><span class="status todo">Phase 1 in 2.3.1-beta.3</span></div>
-    <p>Phase 1 (who is calling): the proxy names each caller, the log shows which assistant made each call, and one assistant's calls no longer wait for each other (at most 8 at once). Because those calls now overlap, saves that could collide take turns: writes of the areas, the run order, the run histories, test files and flows never lose one another. An area save is refused (409) when the area changed or its name was taken while it was being saved, a script save is refused (409) when the script changed since its checks first read it, and a second first save of one flow is refused unless it says replace with a why. Phases 2 to 5 (one slot table, the Assistants card, extra browsers, idle release) are still to build.</p>
+    <div class="head"><span class="title">Several assistants at once: a browser each</span><span class="status todo">Phases 1-2 shipped, paused</span></div>
+    <p>Phase 1 (who is calling): the proxy names each caller, the log shows which assistant made each call, and one assistant's calls no longer wait for each other (at most 8 at once). Because those calls now overlap, saves that could collide take turns: writes of the areas, the run order, the run histories, test files and flows never lose one another. An area save is refused (409) when the area changed or its name was taken while it was being saved, a script save is refused (409) when the script changed since its checks first read it, and a second first save of one flow is refused unless it says replace with a why (2.3.1-beta.3). Phase 2 (one slot table, 2.3.1-beta.4): the browser state is held per numbered slot and every browser route picks its slot once, still always the main one, so nothing changes yet. Phases 3 to 5 (the Assistants card, extra browsers, idle release) are still to build; the plan's later tasks carry the review notes for them (the pane hears only the main browser, Release all and exit close every slot, template runs check the caller's own browser).</p>
     <ul>
       <li>Hand check owed: two Claude Code sessions calling Auto Run tools. Settings, Logs shows "AI tool ... (Assistant 1)" and "(Assistant 2)". In one session, a quick call answers while its replay is still waiting.</li>
       <li>Hand check owed: one assistant in the dev app, everything as before: discovery, try, replay (carry-on included), reset, release, an explore session's send_api_request and undo, and the person's Open browser, Close browser, Replay to step and Release Auto Run browser.</li>
