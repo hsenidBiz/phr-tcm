@@ -310,7 +310,9 @@ fn same_document_compares_the_window_token() {
     let click = at("await cur.locator('#refetch')");
     assert!(at("const doc1 = await docOf(cur);") < click, "{got}");
     assert_eq!(lines[click + 2], "expect(r1_0.status()).toBe(200);", "{got}");
-    assert_eq!(lines[click + 3], "expect(await docOf(cur), 'the page reloaded during the step').toBe(doc1);", "{got}");
+    // A short settle first, as the app takes, so a reload begun when the response came has committed.
+    assert_eq!(lines[click + 3], "await cur.waitForTimeout(300);", "{got}");
+    assert_eq!(lines[click + 4], "expect(await docOf(cur), 'the page reloaded during the step').toBe(doc1);", "{got}");
     assert_eq!(got.matches("const docOf = ").count(), 1, "{got}");
     assert!(!got.contains("startedOk") && !got.contains("began1"), "{got}");
 }
@@ -348,8 +350,10 @@ fn the_timing_and_document_helpers_judge_as_the_app_does() {
     ]))
     .run()
     .unwrap());
-    let from = got.find("    const startedOk = ").expect("the timing helper");
-    let end = from + got[from..].find("\n    };\n").expect("its end") + "\n    };\n".len();
+    let from = got.find("    const CLOCK_TOLERANCE_MS = ").expect("the tolerance");
+    let end = got.find("    const startedOk = ").expect("the timing helper");
+    let end = end + got[end..].find("\n    };\n").expect("its end") + "\n    };\n".len();
+    assert!(got.contains("const CLOCK_TOLERANCE_MS = 25;"), "{got}");
     let doc_at = got.find("    const docOf = ").expect("the document helper");
     let doc_end = doc_at + got[doc_at..].find('\n').unwrap() + 1;
     let helpers = format!("{}{}", &got[from..end], &got[doc_at..doc_end]);
@@ -373,6 +377,21 @@ fn the_timing_and_document_helpers_judge_as_the_app_does() {
         (Some(1020), 1000, 1050, None, Some(300)),
         (Some(1020), 1000, 1050, Some(600), None),
         (Some(1000), 1000, 1000, None, Some(0)),
+        // The 25 ms clock tolerance, at its edges: a start a tick before the action began is the action's own,
+        // and each bound is met with 25 ms to spare.
+        (Some(995), 1000, 1000, None, Some(300)),
+        (Some(995), 1000, 1000, Some(600), None),
+        (Some(975), 1000, 1000, None, Some(300)),
+        (Some(974), 1000, 1000, None, Some(300)),
+        (Some(1325), 1000, 1000, None, Some(300)),
+        (Some(1326), 1000, 1000, None, Some(300)),
+        (Some(1575), 1000, 1000, Some(600), None),
+        (Some(1574), 1000, 1000, Some(600), None),
+        // A navigate is done when it returned (the app: when the action finished), so a request the load made
+        // 1.2 s in, before that, is the action's own doing: 0 ms after it, in both.
+        (Some(2200), 1000, 2500, Some(500), None),
+        (Some(2200), 1000, 2500, None, Some(300)),
+        (Some(2700), 1000, 2500, Some(500), None),
     ];
     let js_rows: Vec<Value> = rows.iter().map(|(s, b, a, nb, sw)| json!([s.unwrap_or(0), b, a, nb, sw])).collect();
     let script = format!(
@@ -400,6 +419,57 @@ fn the_timing_and_document_helpers_judge_as_the_app_does() {
     assert_eq!(said["none"], "error");
 }
 
+/// Where the export stamps the action before a timed check: `began` before the Playwright call, `acted` after it
+/// returned (the app: when the action's input was answered, or when a no-input action finished).
+#[test]
+fn the_export_stamps_the_action_around_its_playwright_call() {
+    let got = lf(&one_step(json!([
+        { "kind": "navigate", "url": "/hr/cards" },
+        { "kind": "expect_response", "url_contains": "/api/cards", "status": 200, "not_before_ms": 500 }
+    ]))
+    .run()
+    .unwrap());
+    let lines: Vec<&str> = got.lines().map(str::trim).collect();
+    let began = lines.iter().position(|l| *l == "began1 = Date.now();").expect("began is stamped");
+    let acted = lines.iter().position(|l| *l == "acted1 = Date.now();").expect("acted is stamped");
+    let goto = lines.iter().rposition(|l| l.starts_with("await cur.goto(")).expect("the navigation");
+    assert!(began < goto && goto < acted, "began, the navigation, then acted:\n{got}");
+}
+
+/// A timed check takes the request that started first and waits for it; an untimed one keeps taking the
+/// oldest that has finished (the app: `pick_timed` and `pick_in_order`).
+#[test]
+fn a_timed_check_in_the_export_takes_the_request_that_started_first() {
+    use std::process::Command;
+    if Command::new("node").arg("--version").output().is_err() {
+        eprintln!("node is not installed: the generated helpers were not run");
+        return;
+    }
+    let got = lf(&one_step(json!([
+        { "kind": "fill", "selector": "#q", "value": "abc" },
+        { "kind": "expect_response", "url_contains": "/api/cards", "status": 200, "started_within_ms": 300 }
+    ]))
+    .run()
+    .unwrap());
+    let from = got.find("    type Req = ").expect("the log");
+    let at = got.find("    const nextResponse = ").expect("the helper");
+    let end = at + got[at..].find("\n    };\n").expect("its end") + "\n    };\n".len();
+    let helper = &got[from..end];
+    assert!(helper.contains("const pool = early ? left.slice(0, 1) : left;"), "{helper}");
+    // A started first and is slow; B started later and finished first.
+    let script = format!(
+        "const handlers: Record<string, ((r: any) => void)[]> = {{}};\nconst context = {{ on: (ev: string, f: (r: any) => void) => {{ (handlers[ev] ||= []).push(f); }} }};\nconst page: any = {{ context: () => context, waitForTimeout: (ms: number) => new Promise(r => setTimeout(r, ms)) }};\nlet cur = page;\n{helper}\nconst made: Record<string, any> = {{}};\nconst req = (name: string) => made[name] ||= {{ name, method: () => 'GET', url: () => 'https://hr.example/hr/api/cards', redirectedFrom: () => null, frame: () => ({{ page: () => page }}), failure: () => ({{ errorText: '' }}), timing: () => ({{ startTime: 0 }}), response: async () => ({{ name }}) }};\nconst send = (n: string) => handlers.request.forEach(f => f(req(n)));\nconst finish = (n: string) => handlers.requestfinished.forEach(f => f(req(n)));\nconst results: Record<string, string> = {{}};\n(async () => {{\n  send('A'); send('B'); finish('B');\n  const untimed: any = await nextResponse(0, new Set<object>(), () => true, 300);\n  results.untimed = untimed.name;\n  const taken = new Set<object>();\n  setTimeout(() => finish('A'), 150);\n  const timed: any = await nextResponse(0, taken, () => true, 1000, () => {{}});\n  results.timed = timed.name;\n  console.log(JSON.stringify(results));\n}})();\n"
+    );
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("first.ts");
+    std::fs::write(&file, script).unwrap();
+    let out = Command::new("node").arg(&file).output().unwrap();
+    assert!(out.status.success(), "{}\n{}", String::from_utf8_lossy(&out.stderr), String::from_utf8_lossy(&out.stdout));
+    let said: Value = serde_json::from_str(String::from_utf8_lossy(&out.stdout).trim()).unwrap();
+    assert_eq!(said["untimed"], "B", "{said}");
+    assert_eq!(said["timed"], "A", "{said}");
+}
+
 /// A request still going when the check gives up is judged on its start first, as the app does
 /// (`expect_response` judges the start before "had not finished"): out of its window it fails on that, and
 /// inside it (or with no start time yet) it did not finish.
@@ -419,9 +489,10 @@ fn a_request_still_going_is_judged_on_its_start_first_in_the_export_too() {
     let from = got.find("    type Req = ").expect("the log");
     let at = got.find("    const nextResponse = ").expect("the helper");
     let end = at + got[at..].find("\n    };\n").expect("its end") + "\n    };\n".len();
+    let tolerance = got.find("    const CLOCK_TOLERANCE_MS = ").expect("the tolerance");
     let timed = got.find("    const startedOk = ").expect("the timing helper");
     let timed_end = timed + got[timed..].find("\n    };\n").expect("its end") + "\n    };\n".len();
-    let helper = format!("{}{}", &got[from..end], &got[timed..timed_end]);
+    let helper = format!("{}{}", &got[from..end], &got[tolerance..timed_end]);
     // The callback the check hands the wait, as the spec writes it.
     let lambda_at = got.find(", (r: Req) => { const t = r.timing().startTime;").expect("the early judge") + 2;
     let lambda = &got[lambda_at..lambda_at + got[lambda_at..].find(");\n").unwrap()];

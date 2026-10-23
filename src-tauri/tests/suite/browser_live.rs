@@ -2177,6 +2177,95 @@ async fn same_document_fails_a_real_reload_and_passes_a_refetch() {
     }
 }
 
+/// `same_document: true` reads the top frame's document a moment after the response: a hash change keeps it
+/// and an iframe that navigates leaves the top frame alone (both pass), and a page that answers an XHR and
+/// then calls `location.reload()` has a new document by then, so the check fails.
+#[tokio::test]
+#[ignore = "starts a real headless Edge"]
+async fn same_document_passes_a_hash_change_and_an_iframe_and_fails_a_reload_after_the_answer() {
+    const PAGE: &str = r#"<!doctype html><html><body>
+<iframe id="f" name="f" src="about:blank"></iframe>
+<button id="hash" onclick="fetch('/api/cards?q=h').then(r => r.text()).then(() => { location.hash = 'done'; })">Hash</button>
+<button id="frame" onclick="fetch('/api/cards?q=f').then(r => r.text()).then(() => { document.getElementById('f').src = '/?inframe=1'; })">Frame</button>
+<button id="reload" onclick="fetch('/api/cards?q=rl').then(r => r.text()).then(() => location.reload())">Reload</button>
+</body></html>"#;
+    let port = serve_timing_page(PAGE);
+    let mut live = open().await;
+    v2_lib::browser::page_log::watch(&mut live.cdp).await.expect("the network domain did not switch on");
+    must(run(&mut live, json!({ "kind": "navigate", "url": format!("http://127.0.0.1:{port}/") })).await);
+    let root = tempfile::tempdir().unwrap();
+    let mut account: Option<String> = None;
+    let step = |number: i32, button: &str, request: &str| StepScript {
+        step_number: number,
+        actions: vec![
+            action_of(json!({ "kind": "click", "selector": { "css": button } })),
+            action_of(json!({ "kind": "expect_response", "url_contains": request, "same_document": true })),
+        ],
+        unchecked: None,
+        cleanup: false,
+        because: Vec::new(),
+    };
+    for (number, button, request) in [(1, "#hash", "q=h"), (2, "#frame", "q=f")] {
+        let s = step(number, button, request);
+        let out = run_step(&mut live.cdp, root.path(), "acme", "PMS", &s, &timing(), &mut account).await.unwrap();
+        must(out[0].clone());
+        must(out[1].clone());
+        assert!(out[1].detail.contains("in the same document"), "{}", out[1].detail);
+    }
+    let s = step(3, "#reload", "q=rl");
+    let out = run_step(&mut live.cdp, root.path(), "acme", "PMS", &s, &timing(), &mut account).await.unwrap();
+    must(out[0].clone());
+    refused(out[1].clone(), "the page reloaded during the step: its top frame loaded a new document");
+}
+
+/// An action that sends no input is timed from when it finished, and a watched run's highlight never counts:
+/// a `<select>` the run highlights for 400 ms before it sets its value passes `started_within_ms` 300, and
+/// a keydown handler that fetches while the Enter is still being delivered counts as starting at once.
+#[tokio::test]
+#[ignore = "starts a real headless Edge"]
+async fn timing_counts_from_the_act_not_from_the_highlight() {
+    const PAGE: &str = r#"<!doctype html><html><body>
+<select id="status" onchange="fetch('/api/cards?q=' + this.value).then(r => r.text())"><option>All</option><option>Published</option></select>
+<input id="k" onkeydown="if (event.key === 'Enter') fetch('/api/cards?q=enter').then(r => r.text())">
+</body></html>"#;
+    let port = serve_timing_page(PAGE);
+    let mut live = open().await;
+    v2_lib::browser::page_log::watch(&mut live.cdp).await.expect("the network domain did not switch on");
+    must(run(&mut live, json!({ "kind": "navigate", "url": format!("http://127.0.0.1:{port}/") })).await);
+    let root = tempfile::tempdir().unwrap();
+    let mut account: Option<String> = None;
+    let step = |number: i32, actions: Vec<serde_json::Value>| StepScript {
+        step_number: number,
+        actions: actions.into_iter().map(action_of).collect(),
+        unchecked: None,
+        cleanup: false,
+        because: Vec::new(),
+    };
+    let watched = Timing { highlight_ms: 400, ..timing() };
+
+    let select = step(1, vec![
+        json!({ "kind": "fill", "selector": { "css": "#status" }, "value": "Published" }),
+        json!({ "kind": "expect_response", "url_contains": "q=Published", "started_within_ms": 300 }),
+    ]);
+    let began = std::time::Instant::now();
+    let out = run_step(&mut live.cdp, root.path(), "acme", "PMS", &select, &watched, &mut account).await.unwrap();
+    must(out[0].clone());
+    must(out[1].clone());
+    assert!(began.elapsed() >= Duration::from_millis(400), "the run did not highlight: {:?}", began.elapsed());
+    assert!(started_ms(&out[1].detail) < 300, "{}", out[1].detail);
+
+    let enter = step(2, vec![
+        json!({ "kind": "click", "selector": { "css": "#k" } }),
+        json!({ "kind": "press_key", "key": "Enter" }),
+        json!({ "kind": "expect_response", "url_contains": "q=enter", "started_within_ms": 300 }),
+    ]);
+    let out = run_step(&mut live.cdp, root.path(), "acme", "PMS", &enter, &watched, &mut account).await.unwrap();
+    for o in &out {
+        must(o.clone());
+    }
+    assert!(out[2].detail.contains(" ms after action 2 (press_key)"), "{}", out[2].detail);
+}
+
 /// Spike: can Chrome's role lookup reach inside a same-origin frame when it
 /// is handed the frame's DOCUMENT, and does role `Iframe` find the frame
 /// element itself? The answers decide how a role step searches inside a

@@ -1056,7 +1056,9 @@ impl Em<'_> {
     /// the export takes them in the order they were sent, not the order the answers arrive), waiting
     /// only while none has; one the page cancelled is passed over while a later one matches, and a lone
     /// cancelled one is given a second in case the page sends it again. `early`: some check times its request,
-    /// so the wait takes a function to judge the request it is about to give up on (see `started_ok`).
+    /// so the wait takes a function to judge the request it is about to give up on (see `started_ok`); a timed
+    /// check also takes the request that STARTED first (`api_checks::pick_timed`) and waits for it if it is
+    /// still going, where an untimed one takes the oldest that has finished.
     fn request_log(&mut self, early: bool) {
         for l in [
             "type Req = Awaited<ReturnType<typeof page.waitForRequest>>;",
@@ -1083,6 +1085,7 @@ impl Em<'_> {
             "  for (;;) {",
             "    const mine = sent.slice(from).filter(e => e.from === cur && matches(e.request));",
             "    const left = mine.filter((e, i) => !taken.has(e) && !(cancelled(e) && i < mine.length - 1));",
+            "    const pool = early ? left.slice(0, 1) : left;",
             "    const done = left.find(e => e.state === 'done');",
             "    if (done) {",
             "      taken.add(done);",
@@ -1109,8 +1112,9 @@ impl Em<'_> {
             // The hook a timed check hands the wait is written only for a script that has one: every other
             // export carries the helper it always did.
             if early {
-                self.line(4, l);
-            } else if !l.contains("early?.(") {
+                // A timed check looks only at the first unclaimed match (`pool`); an untimed one, handed no hook, at all.
+                self.line(4, &l.replace("left.find(", "pool.find("));
+            } else if !l.contains("early?.(") && !l.contains("const pool") {
                 self.line(4, &l.replace(", early?: (r: Req) => void", ""));
             }
         }
@@ -1118,17 +1122,21 @@ impl Em<'_> {
 
     /// `api_checks::judge_start` for `not_before_ms` and `started_within_ms`: `start` is the browser's own start
     /// time of the request (epoch ms, as the app reads it), `began` and `acted` are when the action before the
-    /// check began and when it ended. A start between them is the action's own doing, 0 ms after it.
+    /// check began and when its act was done (after the Playwright call returned). A start between them is the
+    /// action's own doing, 0 ms after it. `CLOCK_TOLERANCE_MS` is the app's: a start that little before the
+    /// action began counts as at it, and the bounds are met with that much to spare.
     fn started_ok(&mut self) {
+        let tolerance = format!("const CLOCK_TOLERANCE_MS = {};", crate::autorun::api_checks::CLOCK_TOLERANCE_MS);
         for l in [
+            tolerance.as_str(),
             "const startedOk = (start: number, began: number, acted: number, notBefore: number | undefined, within: number | undefined) => {",
             "  if (!(start > 0)) throw new Error('the request has no start time from the browser');",
             "  if (!acted) throw new Error('no action before this check in its step to time the request from');",
             "  const s = Math.round(start);",
-            "  if (s < began) throw new Error(`the request started ${began - s} ms before the action before it began`);",
+            "  if (s + CLOCK_TOLERANCE_MS < began) throw new Error(`the request started ${began - s} ms before the action before it began`);",
             "  const after = Math.max(0, s - acted);",
-            "  if (notBefore !== undefined && after < notBefore) throw new Error(`the request started ${after} ms after the action before it, sooner than not_before_ms ${notBefore}`);",
-            "  if (within !== undefined && after > within) throw new Error(`the request started ${after} ms after the action before it, later than started_within_ms ${within}`);",
+            "  if (notBefore !== undefined && after + CLOCK_TOLERANCE_MS < notBefore) throw new Error(`the request started ${after} ms after the action before it, sooner than not_before_ms ${notBefore}`);",
+            "  if (within !== undefined && after > within + CLOCK_TOLERANCE_MS) throw new Error(`the request started ${after} ms after the action before it, later than started_within_ms ${within}`);",
             "  return after;",
             "};",
         ] {
@@ -1780,6 +1788,8 @@ impl Em<'_> {
                 }
                 // Judged last, as the app does: the window the step began on is still the one shown.
                 if *same_document {
+                    // A short settle first, as the app takes, so a reload begun when the response came has committed.
+                    self.line(indent, &format!("await cur.waitForTimeout({});", crate::autorun::api_checks::DOCUMENT_SETTLE_MS));
                     self.line(indent, &format!("expect(await docOf(cur), 'the page reloaded during the step').toBe(doc{sc});"));
                 }
             }

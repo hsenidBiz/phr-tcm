@@ -61,6 +61,19 @@ pub fn wall_ms() -> u64 {
         .unwrap_or(0)
 }
 
+/// Whether a DevTools command puts input into the page: a key, a pointer event, typed text or a drop. The
+/// commands that only switch drag interception on or off deliver nothing.
+pub fn delivers_input(method: &str) -> bool {
+    matches!(
+        method,
+        "Input.dispatchKeyEvent"
+            | "Input.dispatchMouseEvent"
+            | "Input.dispatchTouchEvent"
+            | "Input.dispatchDragEvent"
+            | "Input.insertText"
+    )
+}
+
 /// A screenshot is best effort evidence, not part of the action's own
 /// result - it must never hold the run up waiting for a browser that is
 /// already in trouble.

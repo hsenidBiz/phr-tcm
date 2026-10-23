@@ -1398,10 +1398,15 @@ async fn run_expanded<D: Driver>(
             }
         };
         // A timed `expect_response` later in the step measures from the action that sent the
-        // request: when it began, and when its last input went out (never before it began).
+        // request: when it began, and when its act was done. An action that sent input is done when the
+        // browser answered the last of it; one that sent none (a script-set `fill`, a `navigate`, a guard
+        // that did not fire) is done when it finished. Neither moment includes a highlight or a wait for
+        // the element, which come before the act.
         if api_checks::times_from(action) {
             if let Some(book) = requests.as_mut() {
-                book.note_action_done(began_ms, d.last_input_ms().map_or(began_ms, |t| t.max(began_ms)));
+                let finished_ms = wall_ms();
+                let at_ms = d.last_input_ms().filter(|t| *t >= began_ms).unwrap_or(finished_ms);
+                book.note_action_done(began_ms, at_ms);
             }
         }
         // A save the page tried while this action ran is the step's

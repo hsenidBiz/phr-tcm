@@ -747,9 +747,13 @@ fn step(actions: Vec<Action>) -> StepScript {
 }
 
 async fn run(d: &mut ScriptedDriver, actions: Vec<Action>) -> Vec<ActionOutcome> {
+    run_with(d, actions, &quick()).await
+}
+
+async fn run_with(d: &mut ScriptedDriver, actions: Vec<Action>, timing: &Timing) -> Vec<ActionOutcome> {
     let dir = tempfile::tempdir().unwrap();
     let mut acc: Option<String> = None;
-    run_step(d, dir.path(), "Acme", "Web", &step(actions), &quick(), &mut acc).await.unwrap()
+    run_step(d, dir.path(), "Acme", "Web", &step(actions), timing, &mut acc).await.unwrap()
 }
 
 #[tokio::test]
@@ -1573,13 +1577,34 @@ fn judge_start_measures_from_the_action_before_the_check() {
         // The bound itself passes.
         (Some(1600), base.clone(), Some(600), None, Ok("started 600 ms after action 1 (fill)")),
         (Some(1300), base.clone(), None, Some(300), Ok("started 300 ms after action 1 (fill)")),
+        // The bounds are met with the 25 ms clock tolerance in the request's favour.
+        (Some(1325), base.clone(), None, Some(300), Ok("started 325 ms after action 1 (fill)")),
         (
-            Some(1301),
+            Some(1326),
             base.clone(),
             None,
             Some(300),
-            Err("started 301 ms after action 1 (fill), later than started_within_ms 300"),
+            Err("started 326 ms after action 1 (fill), later than started_within_ms 300"),
         ),
+        (Some(1575), base.clone(), Some(600), None, Ok("started 575 ms after action 1 (fill)")),
+        (
+            Some(1574),
+            base.clone(),
+            Some(600),
+            None,
+            Err("started 574 ms after action 1 (fill), sooner than not_before_ms 600"),
+        ),
+        // A start a clock tick before the action began is the action's own: 0 ms after it.
+        (Some(995), base.clone(), None, Some(300), Ok("started 0 ms after action 1 (fill)")),
+        (
+            Some(995),
+            base.clone(),
+            Some(600),
+            None,
+            Err("started 0 ms after action 1 (fill), sooner than not_before_ms 600"),
+        ),
+        (Some(975), base.clone(), None, Some(300), Ok("started 0 ms after action 1 (fill)")),
+        (Some(974), base.clone(), None, Some(300), Err("started 26 ms before action 1 (fill) began")),
         (Some(900), base.clone(), Some(600), None, Err("started 100 ms before action 1 (fill) began")),
         (Some(900), base.clone(), None, Some(300), Err("started 100 ms before action 1 (fill) began")),
         (None, base.clone(), Some(600), None, Err(NO_START)),
@@ -1719,6 +1744,43 @@ async fn a_request_still_going_is_judged_on_its_start_before_it_is_said_not_to_h
 }
 
 #[tokio::test]
+async fn a_timed_check_takes_the_request_that_started_first_and_waits_for_it() {
+    // A started at once and is slow; B started 800 ms later and finished first.
+    let events = |a_done: bool| {
+        let mut e = vec![sent_at("7", "POST", SAVE, 1100), sent_at("8", "POST", SAVE, 1900)];
+        e.extend([answered("8", 200, "application/json"), finished("8")]);
+        if a_done {
+            e.extend([answered("7", 200, "application/json"), finished("7")]);
+        }
+        e
+    };
+    // Still going when the wait ends: A is judged on its start, which is in the window, and had not finished.
+    let mut d = browser(|| Ok(json!({})));
+    on_first_look(&mut d, events(false));
+    let out = check_in(&mut d, &timed_for(None, Some(300), 100), acted(1000, 1000), None).await;
+    assert!(!out.ok, "{out:?}");
+    assert!(out.detail.contains("had not finished"), "B is not taken in A's place: {}", out.detail);
+    assert!(out.detail.contains("request 1 of 2"), "{}", out.detail);
+    assert!(!out.detail.contains("later than started_within_ms"), "{}", out.detail);
+
+    // Finishing on a later round: A passes, measured from its own start.
+    let mut d = browser(|| Ok(json!({})));
+    on_first_look(&mut d, events(false));
+    d.on_idle_events.extend([answered("7", 200, "application/json"), finished("7")]);
+    let out = check_in(&mut d, &timed(None, Some(300), false), acted(1000, 1000), None).await;
+    assert!(out.ok, "{out:?}");
+    assert!(out.detail.contains("started 100 ms after action 1 (fill)"), "{}", out.detail);
+    assert!(out.detail.contains("request 1 of 2"), "{}", out.detail);
+
+    // An untimed check keeps the oldest-finished rule: it takes B, as beta.26 did.
+    let mut d = browser(|| Ok(json!({})));
+    on_first_look(&mut d, events(false));
+    let out = check_in(&mut d, &timed(None, None, false), acted(1000, 1000), None).await;
+    assert!(out.ok, "{out:?}");
+    assert!(out.detail.contains("request 2 of 2"), "{}", out.detail);
+}
+
+#[tokio::test]
 async fn a_timed_check_with_no_action_before_it_cannot_run() {
     let mut d = browser(|| Ok(json!({})));
     on_first_look(&mut d, save_started_at(1800));
@@ -1801,10 +1863,10 @@ fn an_action_done_is_noted_once_per_written_action() {
     // Before any action began there is still a first one to name.
     book.note_action_done(100, 110);
     assert_eq!(book.acted_at, Some(ActedAt { number: 1, kind: "fill".into(), began_ms: 100, at_ms: 110 }));
-    // A later inner action of the same written action keeps its beginning.
+    // A later inner action of the same written action (a component's last one) is the one that counts.
     book.action_began(0);
     book.note_action_done(120, 150);
-    assert_eq!(book.acted_at, Some(ActedAt { number: 1, kind: "fill".into(), began_ms: 100, at_ms: 150 }));
+    assert_eq!(book.acted_at, Some(ActedAt { number: 1, kind: "fill".into(), began_ms: 120, at_ms: 150 }));
     book.action_began(1);
     book.note_action_done(200, 230);
     assert_eq!(book.acted_at, Some(ActedAt { number: 2, kind: "click".into(), began_ms: 200, at_ms: 230 }));
@@ -1839,6 +1901,35 @@ async fn the_runner_times_from_the_action_before_the_check() {
     let mut d = clicking_saves(150);
     let out = run(&mut d, vec![timed(Some(600), None, false)]).await;
     assert_eq!(out[0].detail, format!("{CANNOT_RUN}{NOTHING_TO_TIME_FROM}"));
+}
+
+#[tokio::test]
+async fn a_watched_runs_highlight_never_counts_toward_started_within_ms() {
+    // The run highlights the target for 400 ms before it clicks; the click makes the save request.
+    let mut d = clicking_saves(420);
+    let watched = Timing { highlight_ms: 400, ..quick() };
+    let out = run_with(&mut d, vec![click_option(), timed(None, Some(300), false)], &watched).await;
+    assert!(out[1].ok, "{:?}", out[1]);
+    assert!(out[1].detail.contains(" ms after action 1 (click)"), "{}", out[1].detail);
+}
+
+#[tokio::test]
+async fn an_action_that_sends_no_input_is_timed_from_when_it_finished_not_from_its_highlight() {
+    // A status filter that is a <select>: the run highlights it for 400 ms, then sets the value by script
+    // (no Input command), and the page's change handler makes the save request at once.
+    let fill: Action =
+        serde_json::from_value(json!({ "kind": "fill", "selector": { "css": "#status" }, "value": "Published" })).unwrap();
+    let page = FakePage { fill_kind: "select-ok", ..FakePage::default() };
+    let mut d = page.driver().with_net_record();
+    for e in [sent_at("9", "POST", SAVE, wall_ms() + 420), answered("9", 200, "application/json"), finished("9")] {
+        d.on_call_events.push(("Runtime.callFunctionOn".into(), e));
+    }
+    let watched = Timing { highlight_ms: 400, ..quick() };
+    let out = run_with(&mut d, vec![fill.clone(), timed(None, Some(300), false)], &watched).await;
+    assert!(out[0].ok, "{:?}", out[0]);
+    assert!(d.calls_to("Input.insertText").is_empty(), "no input was sent: {:?}", d.calls);
+    assert!(out[1].ok, "{:?}", out[1]);
+    assert!(out[1].detail.contains(" ms after action 1 (fill)"), "{}", out[1].detail);
 }
 
 /// A page showing the document `loader`, whose click makes the save request.

@@ -366,12 +366,14 @@ fn only_an_application_page_is_driven() {
 }
 
 #[tokio::test]
-async fn an_input_call_notes_when_it_was_sent() {
-    let t = FakeTransport::new(&[r#"{"id":1,"result":{}}"#, r#"{"id":2,"result":{}}"#]);
+async fn an_input_call_notes_when_the_browser_answered_it() {
+    let t = FakeTransport::new(&[r#"{"id":1,"result":{}}"#, r#"{"id":2,"result":{}}"#, r#"{"id":3,"result":{}}"#]);
     let mut cdp = Cdp::over(t);
     assert_eq!(Driver::last_input_ms(&cdp), None);
     cdp.call("Runtime.evaluate", serde_json::json!({ "expression": "1" })).await.unwrap();
     assert_eq!(Driver::last_input_ms(&cdp), None, "only an Input command is noted");
+    cdp.call("Input.setInterceptDrags", serde_json::json!({ "enabled": false })).await.unwrap();
+    assert_eq!(Driver::last_input_ms(&cdp), None, "a command that delivers no input is not noted");
     let before = wall_ms();
     cdp.call("Input.dispatchKeyEvent", serde_json::json!({ "type": "keyDown", "key": "Enter" })).await.unwrap();
     let after = wall_ms();
