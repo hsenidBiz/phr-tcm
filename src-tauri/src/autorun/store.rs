@@ -134,12 +134,25 @@ pub enum SaveScriptsError {
     Invalid(String),
     /// The filesystem said no. A retry might succeed.
     Io(String),
+    /// A script the save was checked against is no longer the one its
+    /// gates read ([`save_scripts_checked`]). `saved_at` is the script's
+    /// moment NOW; `None` means it is gone. Reading it again and saving
+    /// again is the fix.
+    Changed { case_id: i32, saved_at: Option<String> },
 }
 
 impl std::fmt::Display for SaveScriptsError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             SaveScriptsError::Invalid(s) | SaveScriptsError::Io(s) => write!(f, "{s}"),
+            SaveScriptsError::Changed { case_id, saved_at: Some(t) } => write!(
+                f,
+                "case {case_id} changed while this save was checked (saved at {t}) - read it again and save again"
+            ),
+            SaveScriptsError::Changed { case_id, saved_at: None } => write!(
+                f,
+                "case {case_id} changed while this save was checked (it was deleted) - read it again and save again"
+            ),
         }
     }
 }
@@ -466,7 +479,50 @@ fn check_cleanup(sc: &CaseScript) -> Result<(), String> {
 /// `set_suspected_defect` changes a mark, so a stale copy from the editor
 /// or a file can neither drop one nor bring back one that was cleared.
 pub fn save_scripts_atomically(root: &Path, scripts: &[CaseScript]) -> Result<(), SaveScriptsError> {
-    let _held = scripts_lock();
+    let held = scripts_lock();
+    write_scripts_held(&held, root, scripts)
+}
+
+/// [`save_scripts_atomically`] for a save whose gates read the scripts on
+/// disk first (the AI bridge's): under `scripts_lock`, every `(case id,
+/// saved_at)` in `read` must still be that script's `saved_at` - `None`
+/// meaning there was no script then, and none now. The first that differs
+/// is `Changed` (with the script's moment now, `None` once it is gone) and
+/// nothing is written; otherwise it is written exactly as
+/// `save_scripts_atomically` writes it.
+///
+/// Two saves of one case can overlap now that one session's tool calls are
+/// answered together: both read the script, both pass their gates against
+/// it, and the second to write would replace the first unseen. The gates
+/// ran without the lock (they await), so this is the one place that can
+/// close that. `scripts_lock` is coordination, not a cache, and is never
+/// held across an `.await`.
+///
+/// `saved_at` is whole seconds, so a change in the same second as the read
+/// is not seen; a script saved before saves were stamped has none, and
+/// compares equal to `None` while it stays so.
+pub fn save_scripts_checked(
+    root: &Path,
+    scripts: &[CaseScript],
+    read: &[(i32, Option<String>)],
+) -> Result<(), SaveScriptsError> {
+    let held = scripts_lock();
+    for (case_id, was) in read {
+        let now = load_script(root, *case_id).ok().flatten().and_then(|s| s.saved_at);
+        if now != *was {
+            return Err(SaveScriptsError::Changed { case_id: *case_id, saved_at: now });
+        }
+    }
+    write_scripts_held(&held, root, scripts)
+}
+
+/// The writing half of a bundle save, for a caller that holds `scripts_lock`
+/// (the guard is the proof).
+fn write_scripts_held(
+    _held: &std::sync::MutexGuard<'static, ()>,
+    root: &Path,
+    scripts: &[CaseScript],
+) -> Result<(), SaveScriptsError> {
     let dir = scripts_dir(root);
     std::fs::create_dir_all(&dir).map_err(|e| SaveScriptsError::Io(e.to_string()))?;
 

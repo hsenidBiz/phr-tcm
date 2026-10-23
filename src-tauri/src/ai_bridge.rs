@@ -10946,7 +10946,9 @@ pub const DRY_RUN_NOTHING_SAVED: &str = "Dry run: nothing was saved.";
 /// ALL OR NOTHING, for real. Every gate below runs for every script
 /// before a single byte is written: the body parses, each change to a
 /// script that already exists is declared, and each script meets its test case's expected results. Only
-/// then does `store::save_scripts_atomically` run - and it validates and
+/// then does `store::save_scripts_checked` run - and it re-checks, under the
+/// scripts lock, that every script the gates read is still the one they
+/// read (409 if not), then validates and
 /// serialises every entry before writing any of them, so a bad case id
 /// or a filesystem error on entry 16 of 30 can never leave the other 29
 /// half-applied. An unknown action `kind` fails here rather than
@@ -11057,11 +11059,16 @@ async fn save_autorun_scripts(
     } else {
         Vec::new()
     };
+    // When each case's script was saved as the gates below read it (`None`:
+    // there was none). The write re-checks these under the scripts lock, so
+    // a save that overlaps this one cannot be overwritten unseen.
+    let mut read: Vec<(i32, Option<String>)> = Vec::with_capacity(scripts.len());
     for sent in &scripts {
         let existing = match crate::autorun::store::load_script(&root, sent.case_id) {
             Ok(v) => v,
             Err(e) => return (500, e),
         };
+        read.push((sent.case_id, existing.as_ref().and_then(|s| s.saved_at.clone())));
         let declared = edits.iter().find(|e| e.case_id == sent.case_id);
         // An unchanged re-send never lowers the floor it was stored with.
         let mut stored_floor: u32 = 0;
@@ -11439,9 +11446,12 @@ async fn save_autorun_scripts(
                 .map(|()| notes)
                 .map_err(|e| SaveRefusal::Other(400, e));
         }
-        match crate::autorun::store::save_scripts_atomically(&root, &prepared) {
+        match crate::autorun::store::save_scripts_checked(&root, &prepared, &read) {
             Ok(()) => Ok(notes),
             Err(crate::autorun::store::SaveScriptsError::Invalid(e)) => Err(SaveRefusal::Other(400, e)),
+            Err(changed @ crate::autorun::store::SaveScriptsError::Changed { .. }) => {
+                Err(SaveRefusal::Other(409, changed.to_string()))
+            }
             Err(crate::autorun::store::SaveScriptsError::Io(e)) => {
                 Err(SaveRefusal::Other(500, format!("could not save the bundle: {e}")))
             }

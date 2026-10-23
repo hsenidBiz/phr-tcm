@@ -9,7 +9,7 @@
 use v2_lib::autorun::store::{
     clear_order, clear_runs, clear_scripts, downloads_dir, load_order, save_order, empty_supervised_downloads, list_runs, load_run, load_script,
     load_shot, new_run_id, supervised_downloads_dir, sweep_orphan_downloads,
-    safe_shot_name, save_run, save_script, save_scripts_atomically, prune_shots_to, save_shot,
+    safe_shot_name, save_run, save_script, save_scripts_atomically, save_scripts_checked, prune_shots_to, save_shot,
     SaveScriptsError,
 };
 use v2_lib::autorun::{CaseRecord, CaseScript, LocalRun, PublishedRun, StepRecord, StepScript};
@@ -389,6 +389,93 @@ fn a_write_failure_for_one_entry_leaves_none_of_the_bundle_behind() {
         load_script(dir.path(), 100).unwrap().is_none(),
         "case 100 was written even though case 101 in the same bundle could not be"
     );
+}
+
+/// A script as the store holds it: written raw, with the moment it was saved.
+fn stamped(case_id: i32, at: &str) -> CaseScript {
+    CaseScript { saved_at: Some(at.to_string()), ..one_step_script(case_id, "Stamped") }
+}
+
+/// Two saves of one case can overlap: both read the script, one writes, the
+/// other would then overwrite it unseen. The write re-checks what was read.
+#[test]
+fn a_script_changed_after_its_gates_read_it_is_not_saved() {
+    let dir = TempDir::new();
+    save_script(dir.path(), &stamped(70, "2026-10-23T10:00:00Z")).unwrap();
+    let read = vec![(70, Some("2026-10-23T10:00:00Z".to_string()))];
+    save_script(dir.path(), &stamped(70, "2026-10-23T10:00:05Z")).unwrap();
+
+    let err = save_scripts_checked(dir.path(), &[one_step_script(70, "Mine")], &read).expect_err("the changed script was overwritten");
+    assert!(
+        matches!(&err, SaveScriptsError::Changed { case_id: 70, saved_at: Some(t) } if t == "2026-10-23T10:00:05Z"),
+        "{err:?}"
+    );
+    assert_eq!(
+        err.to_string(),
+        "case 70 changed while this save was checked (saved at 2026-10-23T10:00:05Z) - read it again and save again"
+    );
+    let on_disk = load_script(dir.path(), 70).unwrap().unwrap();
+    assert_eq!(on_disk.saved_at.as_deref(), Some("2026-10-23T10:00:05Z"), "the other save must still be there");
+    assert_eq!(on_disk.title, "Stamped");
+}
+
+/// One changed case refuses the whole bundle: nothing of it lands.
+#[test]
+fn a_refused_checked_save_writes_none_of_its_bundle() {
+    let dir = TempDir::new();
+    save_script(dir.path(), &stamped(71, "2026-10-23T10:00:05Z")).unwrap();
+    let read = vec![(72, None), (71, Some("2026-10-23T10:00:00Z".to_string()))];
+    let err = save_scripts_checked(dir.path(), &[one_step_script(72, "New"), one_step_script(71, "Old")], &read)
+        .expect_err("a changed case was saved over");
+    assert!(matches!(err, SaveScriptsError::Changed { case_id: 71, .. }), "{err:?}");
+    assert!(load_script(dir.path(), 72).unwrap().is_none(), "case 72 landed beside a refused case");
+}
+
+/// A script that did not exist when the gates looked, and does now, is a change.
+#[test]
+fn a_script_made_meanwhile_is_a_change() {
+    let dir = TempDir::new();
+    let read = vec![(73, None)];
+    save_script(dir.path(), &stamped(73, "2026-10-23T10:00:00Z")).unwrap();
+    let err = save_scripts_checked(dir.path(), &[one_step_script(73, "Mine")], &read).expect_err("saved over a new script");
+    assert!(
+        matches!(&err, SaveScriptsError::Changed { case_id: 73, saved_at: Some(t) } if t == "2026-10-23T10:00:00Z"),
+        "{err:?}"
+    );
+}
+
+/// A script the gates read and that is gone now says it was deleted.
+#[test]
+fn a_script_deleted_meanwhile_is_a_change() {
+    let dir = TempDir::new();
+    let read = vec![(74, Some("2026-10-23T10:00:00Z".to_string()))];
+    let err = save_scripts_checked(dir.path(), &[one_step_script(74, "Mine")], &read).expect_err("saved over a deleted script");
+    assert!(matches!(&err, SaveScriptsError::Changed { case_id: 74, saved_at: None }), "{err:?}");
+    assert_eq!(
+        err.to_string(),
+        "case 74 changed while this save was checked (it was deleted) - read it again and save again"
+    );
+    assert!(load_script(dir.path(), 74).unwrap().is_none());
+}
+
+#[test]
+fn an_unchanged_script_saves() {
+    let dir = TempDir::new();
+    save_script(dir.path(), &stamped(75, "2026-10-23T10:00:00Z")).unwrap();
+    let read = vec![(75, Some("2026-10-23T10:00:00Z".to_string())), (76, None)];
+    save_scripts_checked(dir.path(), &[one_step_script(75, "Again"), one_step_script(76, "New")], &read).unwrap();
+    assert_eq!(load_script(dir.path(), 75).unwrap().unwrap().title, "Again");
+    assert!(load_script(dir.path(), 76).unwrap().is_some());
+}
+
+/// A script saved before saves were stamped has no moment to compare; it
+/// still saves while it stays unstamped.
+#[test]
+fn an_unstamped_script_that_stays_unstamped_saves() {
+    let dir = TempDir::new();
+    save_script(dir.path(), &CaseScript { saved_at: None, ..one_step_script(77, "Old") }).unwrap();
+    save_scripts_checked(dir.path(), &[one_step_script(77, "Again")], &[(77, None)]).unwrap();
+    assert_eq!(load_script(dir.path(), 77).unwrap().unwrap().title, "Again");
 }
 
 #[test]

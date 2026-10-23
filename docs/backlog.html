@@ -54,9 +54,10 @@
   </div>
   <div class="item">
     <div class="head"><span class="title">Several assistants at once: a browser each</span><span class="status todo">Phase 1 shipped</span></div>
-    <p>Phase 1 (who is calling): the proxy names each caller, the log shows which assistant made each call, and one assistant's calls no longer wait for each other. Phases 2 to 5 (one slot table, the Assistants card, extra browsers, idle release) are still to build.</p>
+    <p>Phase 1 (who is calling): the proxy names each caller, the log shows which assistant made each call, and one assistant's calls no longer wait for each other. Because those calls now overlap, two saves of the same area or run order at once each wait for the other, and a script save that finds the script changed since its checks read it answers 409 and asks for it to be read again. Phases 2 to 5 (one slot table, the Assistants card, extra browsers, idle release) are still to build.</p>
     <ul>
       <li>Hand check owed: two Claude Code sessions calling Auto Run tools. Settings, Logs shows "AI tool ... (Assistant 1)" and "(Assistant 2)". In one session, a quick call answers while its replay is still waiting.</li>
+      <li>Hand check owed: one assistant in the dev app, everything as before: discovery, try, replay (carry-on included), reset, release, an explore session's send_api_request and undo, and the person's Open browser, Close browser, Replay to step and Release Auto Run browser.</li>
     </ul>
   </div>
 
