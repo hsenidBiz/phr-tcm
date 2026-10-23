@@ -226,3 +226,222 @@ fn release_all_and_exit_stop_every_slots_replay_and_batch() {
     let stop = body(&source, "pub fn auto_run_stop_replay(");
     assert!(stop.contains("crate::autorun::replay_to::stop();"), "{stop}");
 }
+
+// ---------------------------------------------------------------------------
+// slot_for: which browser a bridge route uses (Task 7)
+// ---------------------------------------------------------------------------
+
+mod routing {
+    use super::*;
+    use v2_lib::autorun::agents::{AgentKey, Caller};
+    use v2_lib::commands::autorun_slots::{need_of, slot_for, slot_if_any, Need};
+
+    /// Every route that uses a supervised browser names what it does with
+    /// it; every other route names nothing.
+    #[test]
+    fn need_of_names_every_browser_route() {
+        for path in ["/autorun-discover-start", "/autorun-replay"] {
+            assert_eq!(need_of("POST", path), Some(Need::Open), "{path}");
+        }
+        for path in [
+            "/autorun-try",
+            "/autorun-discover-action",
+            "/autorun-discover-actions",
+            "/autorun-discover-area",
+            "/autorun-discover-end",
+            "/autorun-replay-stop",
+            "/autorun-release",
+            "/autorun-reset",
+            "/autorun-cookies-clear",
+            "/autorun-headers",
+            "/autorun-cookies",
+            "/autorun-cookie",
+            "/api-template-send",
+            "/api-template-explore-undo",
+        ] {
+            assert_eq!(need_of("POST", path), Some(Need::Act), "{path}");
+        }
+        for path in [
+            "/autorun-probe",
+            "/autorun-inspect",
+            "/autorun-requests",
+            "/autorun-requests-search",
+            "/autorun-request",
+            "/autorun-response",
+            "/autorun-response-body",
+            "/autorun-requests-export",
+            "/autorun-component-save",
+            "/autorun-validation-rule",
+            "/autorun-explore-change",
+        ] {
+            assert_eq!(need_of("POST", path), Some(Need::Read), "{path}");
+        }
+        assert_eq!(need_of("GET", "/autorun-page"), Some(Need::Read));
+        assert_eq!(need_of("GET", "/autorun-capture"), Some(Need::Read));
+        assert_eq!(need_of("POST", "/autorun-capture"), Some(Need::Read));
+        // Every other route uses no supervised browser.
+        for (method, path) in [
+            ("GET", "/ping"),
+            ("POST", "/autorun-requests-import"),
+            ("POST", "/autorun-explore-changes"),
+            ("POST", "/api-template-run"),
+            ("POST", "/autorun-script"),
+            ("GET", "/autorun-guide"),
+            ("POST", "/autorun-order"),
+            ("POST", "/agent-bye"),
+        ] {
+            assert_eq!(need_of(method, path), None, "{method} {path}");
+        }
+        // A method a route does not answer to is no browser route either.
+        assert_eq!(need_of("POST", "/autorun-page"), None);
+        assert_eq!(need_of("GET", "/autorun-try"), None);
+    }
+
+    /// In this phase every caller, whatever it needs, gets the main browser.
+    #[test]
+    fn slot_for_is_main_for_now() {
+        let agent = Caller::Agent(AgentKey { id: "a".repeat(32), name: Some("writer".to_string()) });
+        for caller in [Caller::Default, agent] {
+            for need in [Need::Open, Need::Act, Need::Read] {
+                assert_eq!(slot_for(&caller, need), Ok(SlotNo::MAIN), "{caller:?} {need:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn slot_if_any_is_main_for_now() {
+        let agent = Caller::Agent(AgentKey { id: "b".repeat(32), name: None });
+        assert_eq!(slot_if_any(&Caller::Default), Some(SlotNo::MAIN));
+        assert_eq!(slot_if_any(&agent), Some(SlotNo::MAIN));
+    }
+
+    /// `route_as` picks the slot once, after the guards, and no browser route
+    /// or handler of the bridge locks main's session by name any more.
+    #[test]
+    fn route_as_picks_the_slot_once_and_no_handler_locks_main() {
+        let bridge = include_str!("../../src/ai_bridge.rs");
+        let head = bridge.find("pub async fn route_as(").expect("route_as");
+        let after = &bridge[head..];
+        let end = after.find("\n}").expect("end of route_as");
+        let route_as = &after[..end];
+        assert_eq!(route_as.matches("slot_for(caller,").count(), 1, "slot_for is called once");
+        let guard = route_as.find("network_guard(").expect("network guard");
+        assert!(route_as.find("slot_for(caller,").unwrap() > guard, "slot_for comes after the guards");
+        assert!(route_as.contains("need_of(method, path)"));
+        assert!(!route_as.contains("supervised().lock()"), "route_as locks a slot, not main's session");
+        // Past the router, every lock of a session names its slot.
+        assert!(
+            !bridge.contains("autorun::supervised()"),
+            "the bridge locks session_slot(n), never supervised()"
+        );
+    }
+
+    /// Each handler the brief names takes its slot and locks THAT slot's
+    /// session, not main's; the assistant's commands tell the panes only
+    /// when the browser is main's.
+    #[test]
+    fn every_browser_handler_locks_the_slot_it_was_given() {
+        fn body<'a>(source: &'a str, head: &str) -> &'a str {
+            let from = &source[source.find(head).unwrap_or_else(|| panic!("{head} is gone"))..];
+            &from[..from.find("\n}").unwrap_or(from.len())]
+        }
+        let bridge = include_str!("../../src/ai_bridge.rs").replace("\r\n", "\n");
+        for head in [
+            "async fn autorun_capture(",
+            "async fn autorun_override(",
+            "async fn autorun_probe(",
+            "async fn autorun_inspect(",
+            "async fn autorun_try(",
+            "async fn autorun_discover_start(",
+            "async fn autorun_discover_action(",
+            "async fn autorun_discover_actions(",
+            "async fn autorun_component_save(",
+            "async fn autorun_discover_area(",
+            "async fn record_validation_rule(",
+            "async fn api_template_explore_undo(",
+            "async fn record_refused_on_page(",
+            "async fn run_saved_in_session(",
+            "pub async fn supervised_page_within_in(",
+        ] {
+            let b = body(&bridge, head);
+            assert!(b.contains("session_slot(n).lock()"), "{head} does not lock its slot's session");
+            assert!(!b.contains("SESSION"), "{head} names main's session");
+        }
+        let commands = include_str!("../../src/commands/autorun.rs").replace("\r\n", "\n");
+        for head in [
+            "pub(crate) async fn open_for_discovery(",
+            "pub(crate) async fn end_discovery(",
+            "pub async fn assistant_browser_holds(",
+            "pub async fn release_for_assistant(",
+            "pub async fn reset_for_assistant(",
+            "pub async fn clear_cookies_for_assistant(",
+        ] {
+            let b = body(&commands, head);
+            assert!(b.contains("session_slot(n).lock()"), "{head} does not lock its slot's session");
+            assert!(!b.contains("SESSION.lock()") && !b.contains("tell_panes_closed()"), "{head} acts on main");
+            assert!(!b.contains("publish_discovery(") && !b.contains("publish_overrides("), "{head} publishes to main");
+        }
+        // The people's panes hear only the main browser.
+        assert!(body(&commands, "pub(crate) fn tell_panes_closed_in(").contains("is_main()"));
+        assert!(body(&commands, "pub(crate) fn tell_panes_in(").contains("is_main()"));
+        // The replay-going sentences read the run kept in the slot asked about.
+        for head in ["fn call_the_replay_going(", "pub fn assistant_replay_going("] {
+            assert!(body(&bridge, head).contains("assistant_run(n)"), "{head} reads main's run");
+        }
+    }
+
+    fn ctx() -> v2_lib::ai_bridge::BridgeContext {
+        v2_lib::ai_bridge::BridgeContext { org: "acme".into(), project: "Web".into(), ..Default::default() }
+    }
+
+    /// An agent's calls land in main, and are answered word for word as the
+    /// default caller's are.
+    #[tokio::test]
+    async fn an_agent_is_answered_as_the_default_caller_is() {
+        use v2_lib::ai_bridge::{route, route_as};
+        let _a = crate::serial::autorun();
+        let agent = Caller::Agent(AgentKey { id: "c".repeat(32), name: Some("writer".to_string()) });
+        let probe = serde_json::json!({ "selector": "#save" }).to_string();
+        for (method, path, body) in [
+            ("GET", "/autorun-page", ""),
+            ("POST", "/autorun-probe", probe.as_str()),
+            ("POST", "/autorun-release", ""),
+            ("POST", "/autorun-discover-end", ""),
+            ("POST", "/autorun-cookies-clear", ""),
+            ("POST", "/autorun-replay-stop", ""),
+        ] {
+            let by_default = route(&ctx(), None, method, path, body, "1.0.0").await;
+            let by_agent = route_as(&agent, &ctx(), None, method, path, body, "1.0.0").await;
+            assert_eq!(by_agent, by_default, "{method} {path}");
+        }
+    }
+
+    /// The assistant's commands publish what changed to the slot they were
+    /// given: a release or a reset in slot 1 never clears what is published
+    /// for main.
+    #[tokio::test]
+    async fn the_assistants_commands_publish_to_their_own_slot() {
+        use v2_lib::commands::autorun::{
+            clear_cookies_for_assistant, release_for_assistant, reset_for_assistant, NO_BROWSER_OPEN,
+        };
+        let _a = crate::serial::autorun();
+        let one = SlotNo(1);
+        show_overrides(&changed());
+        show_overrides_in(one, &changed());
+
+        let (status, said) = release_for_assistant(one).await;
+        assert_eq!(status, 200, "{said}");
+        assert_eq!(overrides_now_in(one), Overrides::new(), "slot 1's release left its changes published");
+        assert_eq!(overrides_now(), changed(), "slot 1's release unpublished main's changes");
+
+        show_overrides_in(one, &changed());
+        let (status, said) = clear_cookies_for_assistant(one).await;
+        assert_eq!((status, said.as_str()), (404, NO_BROWSER_OPEN), "no browser is open in slot 1");
+        let (status, said) = reset_for_assistant(one, "acme", "Web").await;
+        assert_eq!((status, said.as_str()), (404, NO_BROWSER_OPEN));
+        assert_eq!(overrides_now(), changed(), "a command of slot 1 reached main's published changes");
+
+        show_overrides(&Overrides::new());
+        show_overrides_in(one, &Overrides::new());
+    }
+}

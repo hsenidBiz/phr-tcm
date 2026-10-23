@@ -713,6 +713,64 @@ async fn an_assistant_replay_runs_and_answers_in_its_own_slot() {
     assert_eq!(autorun_replay_stop_with(one, WAIT).await, (404, NO_REPLAY_RUNNING.to_string()));
 }
 
+/// A refusal for a replay going in a slot other than main names THAT slot's
+/// case and step, and a slot with no replay is refused for nothing: the
+/// sentences read the run kept in the slot of the browser asked about.
+#[tokio::test]
+async fn a_refusal_for_a_replay_in_another_slot_names_that_slots_case_and_step() {
+    use v2_lib::ai_bridge::{
+        assistant_replay_going, replay_going_for_a_page_read, replay_going_for_a_release, replay_is_holding_the_browser,
+        replay_running_refusal, supervised_page_within_in, REPLAY_GOING,
+    };
+    use v2_lib::autorun::replay_to::state;
+    let _a = crate::serial::autorun();
+    let _l = crate::serial::account_leases();
+    let dir = tempfile::tempdir().unwrap();
+    store::set_root(dir.path().to_path_buf());
+    project(dir.path(), &script(false));
+    let one = SlotNo(1);
+    // An answer an earlier test left in main is taken first.
+    let _ = autorun_replay_with(&ctx(), SlotNo::MAIN, &body(3), leak(FakeHost::ready()), WAIT).await;
+
+    let host = slow();
+    let (status, text) = autorun_replay_with(&ctx(), one, &body(3), host, Duration::from_millis(50)).await;
+    assert_eq!(status, 202, "{text}");
+    assert!(state(one).is_running() && !state(SlotNo::MAIN).is_running());
+
+    // The page read, in slot 1, waits on slot 1's replay: its case and step.
+    let (status, said) = supervised_page_within_in(one, "acme", "Web", 50, None).await;
+    assert_eq!(status, 409, "{said}");
+    assert_eq!(said, replay_going_for_a_page_read(one));
+    assert!(said.contains(&format!("call replay_autorun_to_step with case {ID} and step 3")), "{said}");
+    // Main has no replay: nothing is refused for slot 1's, and its sentence
+    // names no case.
+    assert!(replay_going_for_a_page_read(SlotNo::MAIN).contains("with the same case and step"));
+    let (_, said) = supervised_page_within_in(SlotNo::MAIN, "acme", "Web", 50, None).await;
+    assert_ne!(said, replay_going_for_a_page_read(SlotNo::MAIN), "main was refused for slot 1's replay");
+
+    // The release and the reset, in slot 1: the same case and step, and the
+    // assistant's own stop.
+    let (status, said) = v2_lib::commands::autorun::release_for_assistant(one).await;
+    assert_eq!((status, said.as_str()), (409, replay_going_for_a_release(one).as_str()));
+    assert!(said.contains(&format!("case {ID} and step 3")) && said.contains("stop: true"), "{said}");
+    assert!(assistant_replay_going(one) && !assistant_replay_going(SlotNo::MAIN));
+    assert!(replay_running_refusal(one).ends_with("Or stop it first with replay_autorun_to_step and stop: true."));
+    assert_eq!(replay_running_refusal(SlotNo::MAIN), v2_lib::commands::autorun::REPLAY_RUNNING_AT_RESET);
+    let (status, said) = v2_lib::commands::autorun::reset_for_assistant(one, "acme", "Web").await;
+    assert_eq!((status, said.as_str()), (409, replay_running_refusal(one).as_str()));
+    // Main's release is not refused for slot 1's replay.
+    let (status, said) = v2_lib::commands::autorun::release_for_assistant(SlotNo::MAIN).await;
+    assert_eq!(status, 200, "{said}");
+
+    // The probe-style refusal is slot 1's too.
+    assert_eq!(replay_is_holding_the_browser(one), Some((409, REPLAY_GOING.to_string())));
+    assert_eq!(replay_is_holding_the_browser(SlotNo::MAIN), None);
+
+    host.release.as_ref().unwrap().notify_one();
+    let (status, text) = autorun_replay_with(&ctx(), one, &body(3), host, WAIT).await;
+    assert_eq!(status, 200, "{text}");
+}
+
 /// A replay that ends while no call is waiting keeps its answer for the
 /// next call with the same case and step, which gets it at once; it is
 /// handed over once.
@@ -762,10 +820,10 @@ async fn a_replay_going_is_stopped_on_request_and_says_where() {
 
     // While the assistant's own replay goes, a reset and a release that
     // refuse name the stop tool.
-    let (status, said) = v2_lib::commands::autorun::reset_for_assistant("acme", "Web").await;
+    let (status, said) = v2_lib::commands::autorun::reset_for_assistant(v2_lib::autorun::slots::SlotNo::MAIN, "acme", "Web").await;
     assert_eq!(status, 409, "{said}");
     assert!(said.ends_with("Or stop it first with replay_autorun_to_step and stop: true."), "{said}");
-    let (status, said) = v2_lib::commands::autorun::release_for_assistant().await;
+    let (status, said) = v2_lib::commands::autorun::release_for_assistant(v2_lib::autorun::slots::SlotNo::MAIN).await;
     assert_eq!(status, 409, "{said}");
     assert!(said.contains("or replay_autorun_to_step with stop: true to stop it"), "{said}");
 
@@ -1149,7 +1207,7 @@ async fn calls_that_need_the_browser_are_refused_at_once_while_a_replay_runs() {
             .unwrap_or_else(|_| panic!("{path} waited on the replay"));
         if path == "/autorun-page" {
             // A page read says what to call instead, and why it is not read.
-            assert_eq!(answer, (409, v2_lib::ai_bridge::replay_going_for_a_page_read()), "{path}");
+            assert_eq!(answer, (409, v2_lib::ai_bridge::replay_going_for_a_page_read(v2_lib::autorun::slots::SlotNo::MAIN)), "{path}");
             assert!(answer.1.contains("call replay_autorun_to_step"), "{}", answer.1);
             assert!(answer.1.contains("hands back the page"), "{}", answer.1);
             continue;

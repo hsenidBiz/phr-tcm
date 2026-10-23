@@ -3232,7 +3232,7 @@ async fn the_end_discovery_command_ends_like_the_route() {
     let source = include_str!("../../src/commands/autorun.rs");
     let cmd = &source[source.find("pub async fn auto_run_end_discovery").unwrap()..];
     assert!(
-        cmd[..cmd.find('}').unwrap()].contains("end_discovery(crate::ai_bridge::EndedBy::Person).await"),
+        cmd[..cmd.find('}').unwrap()].contains("end_discovery(crate::ai_bridge::EndedBy::Person, SlotNo::MAIN).await"),
         "not the route's own ending, as the person"
     );
 }
@@ -5102,22 +5102,23 @@ async fn end_discovery_is_not_stuck_behind_a_long_batch() {
     // to give way before it waits for the browser.
     let source = include_str!("../../src/commands/autorun.rs").replace("\r\n", "\n");
     for (start, stops) in [
-        ("pub(crate) async fn end_discovery(", "crate::ai_bridge::stop_batch();"),
+        ("pub(crate) async fn end_discovery(", "crate::ai_bridge::stop_batch_in(n);"),
         ("pub async fn auto_run_close_browser()", "crate::ai_bridge::stop_batch();"),
         ("pub async fn release_autorun_browsers()", "crate::ai_bridge::stop_all_batches();"),
-        ("pub async fn release_for_assistant()", "crate::ai_bridge::stop_batch();"),
-        ("pub async fn reset_for_assistant(", "crate::ai_bridge::stop_batch();"),
+        ("pub async fn release_for_assistant(", "crate::ai_bridge::stop_batch_in(n);"),
+        ("pub async fn reset_for_assistant(", "crate::ai_bridge::stop_batch_in(n);"),
         ("pub async fn close_autorun_browsers()", "crate::ai_bridge::stop_all_batches();"),
     ] {
         let body = &source[source.find(start).unwrap_or_else(|| panic!("{start} is gone"))..];
-        let body = &body[..body.find("SESSION.lock()").unwrap()];
+        let lock = ["SESSION.lock()", "session_slot(n).lock()"].iter().filter_map(|l| body.find(l)).min().unwrap();
+        let body = &body[..lock];
         assert!(body.contains(stops), "{start} does not stop a batch before it waits");
     }
     // And the route clears an earlier stop before it takes the browser.
     let bridge = include_str!("../../src/ai_bridge.rs").replace("\r\n", "\n");
     let route = &bridge[bridge.find("async fn autorun_discover_actions(").unwrap()..];
-    let route = &route[..route.find("supervised().lock()").unwrap()];
-    assert!(route.contains("batch_stop(SlotNo::MAIN).store(false"), "an old stop would end the next batch");
+    let route = &route[..route.find("session_slot(n).lock()").unwrap()];
+    assert!(route.contains("batch_stop(n).store(false"), "an old stop would end the next batch");
 }
 
 /// A draft is tried only by the `use_component` that names it: another

@@ -1574,7 +1574,7 @@ fn every_other_use_of_the_browser_clears_the_stand() {
     let try_body = body(&bridge, "async fn autorun_try(");
     assert!(
         (try_body.contains("session.replay_stand = None;") || try_body.contains("session.used_otherwise();"))
-            && try_body.contains("note_session_use()"),
+            && try_body.contains("note_session_use_in(n)"),
         "a try is not a use"
     );
     // `used_otherwise` is what most uses call: it must still clear the stand.

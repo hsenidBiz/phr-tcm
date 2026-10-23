@@ -385,6 +385,17 @@ pub async fn route_as(
     if let Some(refused) = network_guard(path, ctx.network_tools) {
         return refused;
     }
+    // The browser this call uses, found ONCE: every handler below locks,
+    // publishes to and answers for that slot. A route that uses no
+    // supervised browser (or one the caller must not be refused for) is
+    // main's, as everything was before there were slots.
+    let slot = match crate::commands::autorun_slots::need_of(method, path) {
+        Some(need) => match crate::commands::autorun_slots::slot_for(caller, need) {
+            Ok(slot) => slot,
+            Err(refused) => return refused,
+        },
+        None => SlotNo::MAIN,
+    };
     match (method, path) {
         ("GET", "/ping") => (
             200,
@@ -435,23 +446,30 @@ pub async fn route_as(
         // document a format, drive the browser the person opened, or read
         // files this machine already wrote - so none of them needs a
         // signed-in client. All were let through by the guard above.
-        ("GET", "/autorun-guide") => match q(target, "section").filter(|s| !s.trim().is_empty()) {
-            // One section of the live guide, after the Quick rules.
-            Some(title) => match crate::autorun::guide::guide_section(&autorun_guide_with_quirks(ctx, false), &title) {
-                Ok(text) => (200, text),
-                Err(titles) => (404, titles),
-            },
-            // Without arguments the MCP tool asks for the overview: the
-            // Quick rules, the live sections and the section titles.
-            None if matches!(q(target, "overview").as_deref(), Some("true") | Some("1")) => {
-                let full = autorun_guide_with_quirks(ctx, false);
-                (200, crate::autorun::guide::guide_overview(&autorun_guide_with_quirks(ctx, true), &full))
+        ("GET", "/autorun-guide") => {
+            // The guide lists the rules of the area the CALLER's discovery is
+            // exploring, if it has one, never another assistant's.
+            let asker = crate::commands::autorun_slots::slot_if_any(caller).unwrap_or(SlotNo::MAIN);
+            match q(target, "section").filter(|s| !s.trim().is_empty()) {
+                // One section of the live guide, after the Quick rules.
+                Some(title) => {
+                    match crate::autorun::guide::guide_section(&autorun_guide_with_quirks(ctx, false, asker), &title) {
+                        Ok(text) => (200, text),
+                        Err(titles) => (404, titles),
+                    }
+                }
+                // Without arguments the MCP tool asks for the overview: the
+                // Quick rules, the live sections and the section titles.
+                None if matches!(q(target, "overview").as_deref(), Some("true") | Some("1")) => {
+                    let full = autorun_guide_with_quirks(ctx, false, asker);
+                    (200, crate::autorun::guide::guide_overview(&autorun_guide_with_quirks(ctx, true, asker), &full))
+                }
+                None => {
+                    let quick = matches!(q(target, "quick").as_deref(), Some("true") | Some("1"));
+                    (200, autorun_guide_with_quirks(ctx, quick, asker))
+                }
             }
-            None => {
-                let quick = matches!(q(target, "quick").as_deref(), Some("true") | Some("1"));
-                (200, autorun_guide_with_quirks(ctx, quick))
-            }
-        },
+        }
         // A role's rules, read from the Playwright repo that is set: the proxy cannot, so it asks here.
         ("GET", "/autorun-role") => autorun_role_answer(target),
         // The Playwright repo's own skills and files, read from the clone that is set.
@@ -459,7 +477,8 @@ pub async fn route_as(
         ("GET", "/autorun-pw-repo") => autorun_pw_repo_answer(target),
         // A save that repairs (carries `edits`) ends with the repair rules, a refusal too.
         ("POST", "/autorun-script") => {
-            let answer = save_autorun_scripts(ctx, client, body).await;
+            let answer =
+                save_autorun_scripts(ctx, client, body, crate::commands::autorun_slots::slot_if_any(caller)).await;
             let parsed: serde_json::Value = serde_json::from_str(body).unwrap_or_default();
             if crate::autorun::roles::cases_repaired_by(&parsed).is_empty() {
                 answer
@@ -471,7 +490,7 @@ pub async fn route_as(
         // machine only, never Azure DevOps.
         ("GET", "/autorun-script") => autorun_script_read(target),
         ("POST", "/autorun-script-delete") => autorun_script_delete(body),
-        ("GET", "/autorun-page") => autorun_page(ctx, target).await,
+        ("GET", "/autorun-page") => autorun_page(ctx, target, slot).await,
         // Read only: whether an unattended run is paused for the network.
         // Nothing here stops or answers the wait.
         ("GET", "/autorun-network-wait") => (200, autorun_network_wait_answer()),
@@ -479,40 +498,40 @@ pub async fn route_as(
         // filtered, exported to TCM's own captures folder and imported from
         // it. Read only - nothing here sends a request to the application,
         // and every value shown is redacted.
-        ("POST", "/autorun-requests") => autorun_capture(CaptureTool::List, body).await,
-        ("POST", "/autorun-requests-search") => autorun_capture(CaptureTool::Search, body).await,
-        ("POST", "/autorun-request") => autorun_capture(CaptureTool::Request, body).await,
-        ("POST", "/autorun-response") => autorun_capture(CaptureTool::Response, body).await,
-        ("POST", "/autorun-response-body") => autorun_capture(CaptureTool::ResponseBody, body).await,
-        ("GET", "/autorun-capture") => autorun_capture(CaptureTool::GetFilter, body).await,
-        ("POST", "/autorun-capture") => autorun_capture(CaptureTool::SetFilter, body).await,
-        ("POST", "/autorun-requests-export") => autorun_capture(CaptureTool::Export, body).await,
-        ("POST", "/autorun-requests-import") => autorun_capture(CaptureTool::Import, body).await,
+        ("POST", "/autorun-requests") => autorun_capture(CaptureTool::List, body, slot).await,
+        ("POST", "/autorun-requests-search") => autorun_capture(CaptureTool::Search, body, slot).await,
+        ("POST", "/autorun-request") => autorun_capture(CaptureTool::Request, body, slot).await,
+        ("POST", "/autorun-response") => autorun_capture(CaptureTool::Response, body, slot).await,
+        ("POST", "/autorun-response-body") => autorun_capture(CaptureTool::ResponseBody, body, slot).await,
+        ("GET", "/autorun-capture") => autorun_capture(CaptureTool::GetFilter, body, slot).await,
+        ("POST", "/autorun-capture") => autorun_capture(CaptureTool::SetFilter, body, slot).await,
+        ("POST", "/autorun-requests-export") => autorun_capture(CaptureTool::Export, body, slot).await,
+        ("POST", "/autorun-requests-import") => autorun_capture(CaptureTool::Import, body, slot).await,
         // The assistant's test headers and cookies (`autorun::overrides`):
         // set only in a browser it opened, never while a replay runs, and
         // named in every try, discovery and replay answer while in place.
         // Raw CDP only - nothing here sends a request to the application.
-        ("POST", "/autorun-headers") => autorun_override(OverrideTool::SetHeaders, body).await,
-        ("POST", "/autorun-cookies") => autorun_override(OverrideTool::Cookies, body).await,
-        ("POST", "/autorun-cookie") => autorun_override(OverrideTool::SetCookie, body).await,
+        ("POST", "/autorun-headers") => autorun_override(OverrideTool::SetHeaders, body, slot).await,
+        ("POST", "/autorun-cookies") => autorun_override(OverrideTool::Cookies, body, slot).await,
+        ("POST", "/autorun-cookie") => autorun_override(OverrideTool::SetCookie, body, slot).await,
         // A real sign-out: the panes hear it, as they hear the reset's.
-        ("POST", "/autorun-cookies-clear") => crate::commands::autorun::clear_cookies_for_assistant().await,
-        ("POST", "/autorun-probe") => autorun_probe(ctx, body).await,
+        ("POST", "/autorun-cookies-clear") => crate::commands::autorun::clear_cookies_for_assistant(slot).await,
+        ("POST", "/autorun-probe") => autorun_probe(ctx, body, slot).await,
         // One element's styles, listeners, animations and structure. Read
         // only: nothing is clicked, typed, focused or scrolled.
-        ("POST", "/autorun-inspect") => autorun_inspect(body).await,
+        ("POST", "/autorun-inspect") => autorun_inspect(body, slot).await,
         ("POST", "/autorun-try") => {
             let mut seen = None;
-            let answer = autorun_try(ctx, body, &mut seen).await;
-            with_overrides_seen(answer, seen)
+            let answer = autorun_try(ctx, body, &mut seen, slot).await;
+            with_overrides_seen(answer, seen, slot)
         }
         // Discovery: the assistant opens the Auto Run browser itself, signs
         // in as a saved account (the app types the password) and explores
         // the live application, one action at a time.
         ("POST", "/autorun-discover-start") => {
             let mut seen = None;
-            let answer = without_page(autorun_discover_start(ctx, body, &mut seen).await, body);
-            let answer = with_overrides_seen(with_no_save_note(answer, discovery_no_save()), seen);
+            let answer = without_page(autorun_discover_start(ctx, body, &mut seen, slot).await, body);
+            let answer = with_overrides_seen(with_no_save_note(answer, discovery_no_save(slot)), seen, slot);
             // A mapping run records areas and writes no check: no rules.
             let mapping = serde_json::from_str::<serde_json::Value>(body)
                 .map(|v| v["mapping"].as_bool() == Some(true) || v["mapping"].as_str().map(|s| s.trim().eq_ignore_ascii_case("true")) == Some(true))
@@ -529,19 +548,19 @@ pub async fn route_as(
         }
         ("POST", "/autorun-discover-action") => {
             let mut seen = None;
-            let answer = without_page(autorun_discover_action(ctx, body, &mut seen).await, body);
-            with_overrides_seen(with_no_save_note(answer, discovery_no_save()), seen)
+            let answer = without_page(autorun_discover_action(ctx, body, &mut seen, slot).await, body);
+            with_overrides_seen(with_no_save_note(answer, discovery_no_save(slot)), seen, slot)
         }
         ("POST", "/autorun-discover-actions") => {
             let mut seen = None;
-            let answer = without_page(autorun_discover_actions(ctx, body, &mut seen).await, body);
-            with_overrides_seen(with_no_save_note(answer, discovery_no_save()), seen)
+            let answer = without_page(autorun_discover_actions(ctx, body, &mut seen, slot).await, body);
+            with_overrides_seen(with_no_save_note(answer, discovery_no_save(slot)), seen, slot)
         }
         // A replay going has already ended any discovery, and holds the
         // browser: said at once rather than waited for.
-        ("POST", "/autorun-discover-end") => match replay_is_holding_the_browser() {
-            Some(going) => with_overrides_seen(going, None),
-            None => crate::commands::autorun::end_discovery(EndedBy::Assistant).await,
+        ("POST", "/autorun-discover-end") => match replay_is_holding_the_browser(slot) {
+            Some(going) => with_overrides_seen(going, None, slot),
+            None => crate::commands::autorun::end_discovery(EndedBy::Assistant, slot).await,
         },
         // An explore session's change list, recorded and read back. Files
         // on this machine only: nothing here sends a request to the
@@ -550,8 +569,8 @@ pub async fn route_as(
             match (unattended_run_is_using_the_browser(), autorun_root()) {
                 (Some(busy), _) => busy,
                 (None, Ok(root)) => {
-                    let mut slot = crate::commands::autorun::supervised().lock().await;
-                    record_change_in(&mut slot, &root, &ctx.org, &ctx.project, body)
+                    let mut held = crate::commands::autorun::session_slot(slot).lock().await;
+                    record_change_in(&mut held, &root, &ctx.org, &ctx.project, body)
                 }
                 (None, Err(refused)) => refused,
             }
@@ -563,23 +582,23 @@ pub async fn route_as(
         // Release: every Auto Run browser record the app holds is cleared
         // and the app's own browsers closed, for a browser held after it
         // is gone. Never a process outside the app's own jobs.
-        ("POST", "/autorun-release") => crate::commands::autorun::release_for_assistant().await,
+        ("POST", "/autorun-release") => crate::commands::autorun::release_for_assistant(slot).await,
         // Reset: a clean page in the assistant's own browser - other tabs
         // closed, dialogs and its guard cleared, back home - keeping the
         // sign-in. Never the person's browser, never while a replay runs.
-        ("POST", "/autorun-reset") => crate::commands::autorun::reset_for_assistant(&ctx.org, &ctx.project).await,
-        ("POST", "/autorun-discover-area") => autorun_discover_area(ctx, body).await,
+        ("POST", "/autorun-reset") => crate::commands::autorun::reset_for_assistant(slot, &ctx.org, &ctx.project).await,
+        ("POST", "/autorun-discover-area") => autorun_discover_area(ctx, body, slot).await,
         ("POST", "/autorun-replay") => {
             release_rewritten_cases(ctx, client).await;
             crate::autorun::roles::with_rules(
-                without_page(autorun_replay(ctx, body).await, body),
+                without_page(autorun_replay(ctx, body, slot).await, body),
                 crate::autorun::roles::RULES_REPLAY,
             )
         }
         // The assistant's replay going, stopped through the same stop the
         // person's Stop sets, and its answer once it has ended.
         ("POST", "/autorun-replay-stop") => {
-            crate::autorun::roles::with_rules(autorun_replay_stop_with(SlotNo::MAIN, REPLAY_ANSWER_WAIT).await, crate::autorun::roles::RULES_REPLAY)
+            crate::autorun::roles::with_rules(autorun_replay_stop_with(slot, REPLAY_ANSWER_WAIT).await, crate::autorun::roles::RULES_REPLAY)
         }
         ("GET", "/autorun-failures") => {
             release_rewritten_cases(ctx, client).await;
@@ -587,7 +606,7 @@ pub async fn route_as(
         }
         ("POST", "/autorun-quirk") => autorun_quirk(ctx, body),
         ("POST", "/autorun-quirk-retire") => autorun_quirk_retire(ctx, body),
-        ("POST", "/autorun-validation-rule") => record_validation_rule(ctx, body).await,
+        ("POST", "/autorun-validation-rule") => record_validation_rule(ctx, body, slot).await,
         ("POST", "/autorun-defect") => autorun_defect(body),
         // A place the live app or its data differs from the case: stored for a
         // person to rule on, quoting the case, checked against it.
@@ -598,7 +617,7 @@ pub async fn route_as(
         ("POST", "/autorun-defect-clear") => autorun_defect_clear(body),
         // Components: saved only once the open discovery has tried them
         // live, and retired only while no saved script uses them.
-        ("POST", "/autorun-component-save") => autorun_component_save(ctx, client, body).await,
+        ("POST", "/autorun-component-save") => autorun_component_save(ctx, client, body, slot).await,
         ("POST", "/autorun-component-retire") => autorun_component_retire(ctx, body),
         // Auto Run's own order for a PBI. Reads the PBI's cases from Azure
         // DevOps (a read) to refuse an id the PBI is not tested by.
@@ -631,7 +650,9 @@ pub async fn route_as(
         ("POST", "/api-template-run") => {
             // The assistant's own explore session runs it when that session
             // holds the template's account; any other call goes the usual way.
-            if let Some(answer) = run_saved_in_session(ctx, body).await {
+            // A caller with no browser of its own is refused nothing here.
+            let slot = crate::commands::autorun_slots::slot_if_any(caller);
+            if let Some(answer) = run_saved_in_session(ctx, slot, body).await {
                 return answer;
             }
             let answer = api_template_run(
@@ -642,16 +663,16 @@ pub async fn route_as(
                 &crate::commands::autorun_replay::replay_timing(false),
             )
             .await;
-            with_discovery_hint(answer, crate::commands::autorun::auto_run_discovery_active(), false)
+            with_discovery_hint(answer, crate::commands::autorun::discovery_active_in(slot.unwrap_or(SlotNo::MAIN)), false)
         }
         // One GET or POST from the assistant's own explore session, sent
         // from the page that session's browser is on.
         ("POST", "/api-template-send") => match (unattended_run_is_using_the_browser(), autorun_root()) {
             (Some(busy), _) => busy,
             (None, Ok(root)) => {
-                let mut slot = crate::commands::autorun::supervised().lock().await;
+                let mut held = crate::commands::autorun::session_slot(slot).lock().await;
                 let answer = send_in(
-                    &mut slot,
+                    &mut held,
                     ctx,
                     &root,
                     body,
@@ -660,13 +681,13 @@ pub async fn route_as(
                     &crate::api_templates::runner::RETRY_PAUSES,
                 )
                 .await;
-                let_go_if_silent(&mut slot, answer).await
+                let_go_if_silent(&mut held, answer).await
             }
             (None, Err(refused)) => refused,
         },
         // Takes back the creates one explore session verified, and only
         // those; needs the person's API templates switch.
-        ("POST", "/api-template-explore-undo") => api_template_explore_undo(ctx, body).await,
+        ("POST", "/api-template-explore-undo") => api_template_explore_undo(ctx, body, slot).await,
         // Flows: saving one writes a local file and reads the database, and
         // progress only reads - neither writes to the application, so
         // neither needs the API templates switch.
@@ -683,7 +704,8 @@ pub async fn route_as(
             let answer =
                 api_fixture_run(ctx, body, real_template_browsers, &crate::commands::autorun_replay::replay_timing(false))
                     .await;
-            with_discovery_hint(answer, crate::commands::autorun::auto_run_discovery_active(), true)
+            let asker = crate::commands::autorun_slots::slot_if_any(caller).unwrap_or(SlotNo::MAIN);
+            with_discovery_hint(answer, crate::commands::autorun::discovery_active_in(asker), true)
         }
         // The database routes: Database Access's (the guard above). Beyond
         // that, what they may do is decided by the connection the person
@@ -1067,11 +1089,11 @@ pub fn with_no_save_note(answer: (u16, String), on: bool) -> (u16, String) {
     }
 }
 
-/// Whether the discovery holding the Auto Run browser must not save. Only
+/// Whether the discovery holding slot `n`'s Auto Run browser must not save. Only
 /// looks: a browser someone else holds right now (a run, a replay) is
 /// never waited for, and then there is no discovery to speak of.
-fn discovery_no_save() -> bool {
-    match crate::commands::autorun::supervised().try_lock() {
+fn discovery_no_save(n: SlotNo) -> bool {
+    match crate::commands::autorun::session_slot(n).try_lock() {
         Ok(slot) => slot.as_ref().and_then(|s| s.discovery.as_ref()).is_some_and(|d| d.no_save),
         Err(_) => false,
     }
@@ -1693,16 +1715,18 @@ pub async fn run_saved_in<B: DiscoveryBrowser>(
     Some((if report.ok { 200 } else { 502 }, v.to_string()))
 }
 
-/// `POST /api-template-run` with the app's own slot: the explore session's
-/// browser when it can run the template (`run_saved_in`), and `None` when
-/// the usual run should go ahead.
-async fn run_saved_in_session(ctx: &BridgeContext, body: &str) -> Option<(u16, String)> {
+/// `POST /api-template-run` with the caller's own browser (`n`, when it has
+/// one): the explore session's browser when it can run the template
+/// (`run_saved_in`), and `None` when the usual run should go ahead - at once
+/// for a caller with no browser.
+async fn run_saved_in_session(ctx: &BridgeContext, n: Option<SlotNo>, body: &str) -> Option<(u16, String)> {
+    let n = n?;
     if !ctx.api_writes || unattended_run_is_using_the_browser().is_some() {
         return None;
     }
     let root = autorun_root().ok()?;
     let (req, _) = run_request_from(ctx, &root, body).ok()?;
-    let mut slot = crate::commands::autorun::supervised().lock().await;
+    let mut slot = crate::commands::autorun::session_slot(n).lock().await;
     let answer = run_saved_in(
         &mut slot,
         ctx,
@@ -1958,7 +1982,9 @@ async fn run_api_template_request<B: crate::api_templates::held::Keeps, D: crate
     }
     let mut text = serde_json::to_string(&report).unwrap_or_default();
     if !report.ok && held_by_the_auto_run_browser(&text, &req.account) {
-        let holds = crate::commands::autorun::assistant_browser_holds(&req.account).await;
+        // A template run is not the caller's own browser's: it asks main's,
+        // the only one an assistant can hold today.
+        let holds = crate::commands::autorun::assistant_browser_holds(SlotNo::MAIN, &req.account).await;
         text = template_report_hint(text, &req.account, holds);
     }
     (if report.ok { 200 } else { 502 }, text)
@@ -2503,8 +2529,9 @@ fn environment_database(ctx: &BridgeContext, env: &crate::environments::Environm
 /// so the guide can never go stale on a live project.
 ///
 /// `quick` answers the Quick rules section in place of the full text, with
-/// the same live sections after it.
-fn autorun_guide_with_quirks(ctx: &BridgeContext, quick: bool) -> String {
+/// the same live sections after it. `n` is the asker's browser: the rules
+/// listed are those of the area its discovery is exploring.
+fn autorun_guide_with_quirks(ctx: &BridgeContext, quick: bool, n: SlotNo) -> String {
     let mut out =
         if quick { crate::autorun::guide::quick_rules() } else { crate::autorun::guide::autorun_guide() };
     let Some(root) = crate::autorun::store::configured_root() else {
@@ -2534,7 +2561,7 @@ fn autorun_guide_with_quirks(ctx: &BridgeContext, quick: bool) -> String {
     for section in [
         crate::autorun::nav::guide_section(&nav),
         crate::autorun::discovery_map::explore_section(&areas, &map, crate::autorun::sessions::now_ms()),
-        crate::autorun::discovery_map::rules_section(&map, running_discovery_area().as_deref()),
+        crate::autorun::discovery_map::rules_section(&map, running_discovery_area(n).as_deref()),
         crate::autorun::components::guide_section(&components),
         crate::autorun::quirks::quirks_section(&quirks),
         crate::test_files::guide_section(&files),
@@ -2547,11 +2574,11 @@ fn autorun_guide_with_quirks(ctx: &BridgeContext, quick: bool) -> String {
     out
 }
 
-/// The area of the discovery going on now, for the guide's rules. It never
-/// waits: a call that holds the browser is busy, and the guide then lists
-/// every area's rules, which is still true.
-fn running_discovery_area() -> Option<String> {
-    let slot = crate::commands::autorun::supervised().try_lock().ok()?;
+/// The area of the discovery going on now in slot `n`'s browser, for the
+/// guide's rules. It never waits: a call that holds the browser is busy, and
+/// the guide then lists every area's rules, which is still true.
+fn running_discovery_area(n: SlotNo) -> Option<String> {
+    let slot = crate::commands::autorun::session_slot(n).try_lock().ok()?;
     slot.as_ref()?.discovery.as_ref()?.area.clone()
 }
 
@@ -2606,8 +2633,8 @@ pub const CAPTURE_BUSY: &str =
 /// reads and parses its file before it changes the imported sets (one
 /// import at a time, `commands::autorun::change_imported_captures`); a
 /// read naming `from` is checked, and its set looked for, before anything
-/// else, and never takes the browser's lock.
-async fn autorun_capture(tool: CaptureTool, body: &str) -> (u16, String) {
+/// else, and never takes the browser's lock. The browser is slot `n`'s.
+async fn autorun_capture(tool: CaptureTool, body: &str, n: SlotNo) -> (u16, String) {
     use crate::autorun::capture_tools as ct;
     let root = crate::autorun::store::configured_root();
     let args = match ct::args_of(body) {
@@ -2640,11 +2667,11 @@ async fn autorun_capture(tool: CaptureTool, body: &str) -> (u16, String) {
         };
         return phase.finish();
     }
-    if crate::autorun::replay_to::is_running() {
+    if crate::autorun::replay_to::state(n).is_running() {
         return (409, CAPTURE_BUSY.to_string());
     }
     let phase = {
-        let Ok(mut slot) = tokio::time::timeout(CAPTURE_LOCK_WAIT, crate::commands::autorun::supervised().lock()).await
+        let Ok(mut slot) = tokio::time::timeout(CAPTURE_LOCK_WAIT, crate::commands::autorun::session_slot(n).lock()).await
         else {
             return (409, CAPTURE_BUSY.to_string());
         };
@@ -2658,12 +2685,13 @@ async fn autorun_capture(tool: CaptureTool, body: &str) -> (u16, String) {
 /// Auto Run browser (`overrides::with_note`): as `seen` under the session
 /// lock the moment the call finished, or - for an answer given before the
 /// browser was taken (a refusal) - as last published
-/// (`commands::autorun::overrides_now`).
+/// (`commands::autorun::overrides_now_in`, slot `n`'s).
 fn with_overrides_seen(
     answer: (u16, String),
     seen: Option<crate::autorun::overrides::Overrides>,
+    n: SlotNo,
 ) -> (u16, String) {
-    let changed = seen.unwrap_or_else(crate::commands::autorun::overrides_now);
+    let changed = seen.unwrap_or_else(|| crate::commands::autorun::overrides_now_in(n));
     crate::autorun::overrides::with_note(answer, &changed)
 }
 
@@ -2701,20 +2729,20 @@ pub const KEEPS_NO_OVERRIDES: &str = "this Auto Run browser keeps no record of t
 /// over the supervised browser (`override_tool_in`). Refused at once while
 /// a replay runs (one going holds the browser); the browser's lock is
 /// waited for 5 s at most. What is changed is published for the replay's
-/// answer (`publish_overrides`). The sign-out is
-/// `commands::autorun::clear_cookies_for_assistant`.
-async fn autorun_override(tool: OverrideTool, body: &str) -> (u16, String) {
-    if crate::autorun::replay_to::is_running() {
-        return (409, replay_running_refusal());
+/// answer (`publish_overrides_in`). The sign-out is
+/// `commands::autorun::clear_cookies_for_assistant`. The browser is slot `n`'s.
+async fn autorun_override(tool: OverrideTool, body: &str, n: SlotNo) -> (u16, String) {
+    if crate::autorun::replay_to::state(n).is_running() {
+        return (409, replay_running_refusal(n));
     }
-    let Ok(mut slot) = tokio::time::timeout(CAPTURE_LOCK_WAIT, crate::commands::autorun::supervised().lock()).await else {
+    let Ok(mut slot) = tokio::time::timeout(CAPTURE_LOCK_WAIT, crate::commands::autorun::session_slot(n).lock()).await else {
         return (409, OVERRIDES_BUSY.to_string());
     };
     // Only the sign-out has news for the panes, and it is answered by
     // `commands::autorun::clear_cookies_for_assistant`, not here.
-    let (answer, _) = override_tool_in(&mut slot, tool, body).await;
+    let (answer, _) = override_tool_in(n, &mut slot, tool, body).await;
     let answer = let_go_if_silent(&mut slot, answer).await;
-    crate::commands::autorun::publish_overrides(&slot);
+    crate::commands::autorun::publish_overrides_in(n, &slot);
     if tool != OverrideTool::Cookies {
         // Names only - never a value.
         let now = slot.as_ref().and_then(|s| s.overrides.names()).unwrap_or_else(|| "nothing".to_string());
@@ -2725,7 +2753,9 @@ async fn autorun_override(tool: OverrideTool, body: &str) -> (u16, String) {
 
 /// A header or cookie call over the browser `slot` holds (the app's
 /// session, or a test's fake), with what the panes must hear (a sign-out).
+/// `n` is the slot the browser is in: a replay going there refuses the call.
 pub async fn override_tool_in<B: DiscoveryBrowser>(
+    n: SlotNo,
     slot: &mut Option<B>,
     tool: OverrideTool,
     body: &str,
@@ -2738,20 +2768,20 @@ pub async fn override_tool_in<B: DiscoveryBrowser>(
         },
     };
     match tool {
-        OverrideTool::SetHeaders => (set_headers_in(slot, &args).await, None),
+        OverrideTool::SetHeaders => (set_headers_in(n, slot, &args).await, None),
         OverrideTool::Cookies => (cookies_in(slot, &args).await, None),
-        OverrideTool::SetCookie => (set_cookie_in(slot, &args).await, None),
-        OverrideTool::ClearCookies => crate::commands::autorun::clear_cookies_in_for_assistant(slot).await,
+        OverrideTool::SetCookie => (set_cookie_in(n, slot, &args).await, None),
+        OverrideTool::ClearCookies => crate::commands::autorun::clear_cookies_in_for_assistant(n, slot).await,
     }
 }
 
 /// Refused unless `slot` holds a live browser the assistant opened, with no
 /// replay going and no guard of the person's on it - the checks the
 /// assistant's reset makes (spec decision 4). A browser that has gone is
-/// let go first.
-pub(crate) async fn refuse_acting<B: DiscoveryBrowser>(slot: &mut Option<B>) -> Result<(), (u16, String)> {
-    if crate::autorun::replay_to::is_running() {
-        return Err((409, replay_running_refusal()));
+/// let go first. A replay going in slot `n`, where the browser is, refuses it.
+pub(crate) async fn refuse_acting<B: DiscoveryBrowser>(n: SlotNo, slot: &mut Option<B>) -> Result<(), (u16, String)> {
+    if crate::autorun::replay_to::state(n).is_running() {
+        return Err((409, replay_running_refusal(n)));
     }
     if forget_gone_browser(slot).await {
         return Err((404, crate::commands::autorun::NO_BROWSER_OPEN.to_string()));
@@ -2789,13 +2819,13 @@ const LASTS_UNTIL: &str = "Every try, discovery and replay answer names it until
 /// the page opens (`Driver::set_extra_headers`), never through `Fetch`.
 /// A refused name (`overrides::REFUSED_HEADERS`) refuses the whole call
 /// before the browser is touched.
-pub async fn set_headers_in<B: DiscoveryBrowser>(slot: &mut Option<B>, args: &serde_json::Value) -> (u16, String) {
+pub async fn set_headers_in<B: DiscoveryBrowser>(n: SlotNo, slot: &mut Option<B>, args: &serde_json::Value) -> (u16, String) {
     use crate::autorun::overrides as ov;
     let changes = match ov::header_changes(args) {
         Ok(c) => c,
         Err(why) => return (400, why),
     };
-    if let Err(refused) = refuse_acting(slot).await {
+    if let Err(refused) = refuse_acting(n, slot).await {
         return refused;
     }
     let Some(b) = slot.as_mut() else {
@@ -2896,7 +2926,7 @@ pub async fn cookies_in<B: DiscoveryBrowser>(slot: &mut Option<B>, args: &serde_
 /// (`Held::ignore_in_print`), so it never makes the sign-in look changed.
 /// Refused for the sign-in's cookies (`overrides::protected_cookie`), an
 /// HttpOnly cookie of that name (in any case) on the site included.
-pub async fn set_cookie_in<B: DiscoveryBrowser>(slot: &mut Option<B>, args: &serde_json::Value) -> (u16, String) {
+pub async fn set_cookie_in<B: DiscoveryBrowser>(n: SlotNo, slot: &mut Option<B>, args: &serde_json::Value) -> (u16, String) {
     use crate::autorun::overrides as ov;
     let ask = match ov::cookie_ask(args) {
         Ok(a) => a,
@@ -2905,7 +2935,7 @@ pub async fn set_cookie_in<B: DiscoveryBrowser>(slot: &mut Option<B>, args: &ser
     if ov::protected_cookie(&ask.name, false) {
         return (403, ov::protected_cookie_sentence(&ask.name));
     }
-    if let Err(refused) = refuse_acting(slot).await {
+    if let Err(refused) = refuse_acting(n, slot).await {
         return refused;
     }
     let Some(b) = slot.as_mut() else {
@@ -3065,7 +3095,7 @@ pub fn capture_tool_begin<B: DiscoveryBrowser>(
 /// chain), its `nth` (`within_target_nth`) and `limit`
 /// (`PAGE_LINES_DEFAULT` when left out, at most `PAGE_LINES_MAX`) are read
 /// from the query.
-async fn autorun_page(ctx: &BridgeContext, target: &str) -> (u16, String) {
+async fn autorun_page(ctx: &BridgeContext, target: &str, n: SlotNo) -> (u16, String) {
     if let Some(busy) = unattended_run_is_using_the_browser() {
         return busy;
     }
@@ -3074,7 +3104,7 @@ async fn autorun_page(ctx: &BridgeContext, target: &str) -> (u16, String) {
         Ok(t) => t,
         Err(why) => return (400, why),
     };
-    supervised_page_within(&ctx.org, &ctx.project, page_limit(q(target, "limit").as_deref()), within.as_ref()).await
+    supervised_page_within_in(n, &ctx.org, &ctx.project, page_limit(q(target, "limit").as_deref()), within.as_ref()).await
 }
 
 /// The line limit a page read was asked for: `PAGE_LINES_DEFAULT` when
@@ -3198,7 +3228,7 @@ pub async fn supervised_page_within_in(
     within: Option<&crate::browser::locator::Target>,
 ) -> (u16, String) {
     if crate::autorun::replay_to::state(n).is_running() {
-        return (409, replay_going_for_a_page_read());
+        return (409, replay_going_for_a_page_read(n));
     }
     // The lock is held for exactly one protocol job - whoever holds it
     // holds the browser, and the person may be using it.
@@ -3988,11 +4018,12 @@ async fn record_refused_on_page(
     root: &std::path::Path,
     script_areas: &[Option<&str>],
     targets: &[crate::browser::locator::Target],
+    n: SlotNo,
 ) -> Option<Vec<String>> {
-    if unattended_run_is_using_the_browser().is_some() || crate::autorun::replay_to::is_running() {
+    if unattended_run_is_using_the_browser().is_some() || crate::autorun::replay_to::state(n).is_running() {
         return None;
     }
-    let mut slot = crate::commands::autorun::supervised().lock().await;
+    let mut slot = crate::commands::autorun::session_slot(n).lock().await;
     record_refused_for_scripts_in(&mut slot, root, &ctx.org, &ctx.project, script_areas, targets).await
 }
 
@@ -4053,9 +4084,10 @@ pub const REPLAY_GOING: &str =
 /// page's dialogs and the requests a no-save guard pauses, so a second
 /// reader would either wait out the replay or act behind it. The replay's
 /// own call says where it is, and hands back the page once it stands
-/// before its step.
-pub fn replay_going_for_a_page_read() -> String {
-    let call = call_the_replay_going();
+/// before its step. It is slot `n`'s replay that is going, and slot `n`'s
+/// run that names the case and step.
+pub fn replay_going_for_a_page_read(n: SlotNo) -> String {
+    let call = call_the_replay_going(n);
     format!(
         "the page cannot be read while a replay drives the browser - {call}: it waits for the replay, says the step and the action it is on, and hands back the page once the browser stands before the step"
     )
@@ -4063,8 +4095,9 @@ pub fn replay_going_for_a_page_read() -> String {
 
 /// How to wait on the replay going: the assistant's own names its case and
 /// step; the person's, or one not known, says "the same case and step".
-fn call_the_replay_going() -> String {
-    let which = assistant_run(SlotNo::MAIN).as_ref().filter(|r| r.answer.borrow().is_none()).map(|r| (r.case_id, r.step));
+/// Read from the run kept in slot `n`, the one whose replay is going.
+fn call_the_replay_going(n: SlotNo) -> String {
+    let which = assistant_run(n).as_ref().filter(|r| r.answer.borrow().is_none()).map(|r| (r.case_id, r.step));
     match which {
         Some((case_id, step)) => format!("call replay_autorun_to_step with case {case_id} and step {step}"),
         None => "call replay_autorun_to_step with the same case and step".to_string(),
@@ -4073,19 +4106,19 @@ fn call_the_replay_going() -> String {
 
 /// Said, with 409, to the assistant's release while a replay holds the
 /// browser: a release never stops a replay, so it says how to wait for it.
-pub fn replay_going_for_a_release() -> String {
-    let stop = if assistant_replay_going() { ", or replay_autorun_to_step with stop: true to stop it" } else { "" };
+pub fn replay_going_for_a_release(n: SlotNo) -> String {
+    let stop = if assistant_replay_going(n) { ", or replay_autorun_to_step with stop: true to stop it" } else { "" };
     format!(
         "a replay is going and holds the browser, and a release never stops one - {} to wait for it{stop}, then release",
-        call_the_replay_going()
+        call_the_replay_going(n)
     )
 }
 
-/// Whether the replay going is the assistant's own: its call's slot holds
-/// no answer yet. Only then does a refusal point at the replay tool's `stop`,
-/// which never stops the person's.
-pub fn assistant_replay_going() -> bool {
-    assistant_run(SlotNo::MAIN).as_ref().is_some_and(|r| r.answer.borrow().is_none())
+/// Whether the replay going in slot `n` is the assistant's own: its call's
+/// slot holds no answer yet. Only then does a refusal point at the replay
+/// tool's `stop`, which never stops the person's.
+pub fn assistant_replay_going(n: SlotNo) -> bool {
+    assistant_run(n).as_ref().is_some_and(|r| r.answer.borrow().is_none())
 }
 
 /// The case and step, `(case_id, step)`, of the assistant's replay kept in
@@ -4098,22 +4131,22 @@ pub fn assistant_replay_of(n: SlotNo) -> Option<(i32, i32)> {
 /// `commands::autorun::REPLAY_RUNNING_AT_RESET`, as the assistant's reset,
 /// cookie and header tools say it: naming the replay tool's `stop` when the
 /// replay going is the assistant's own.
-pub fn replay_running_refusal() -> String {
+pub fn replay_running_refusal(n: SlotNo) -> String {
     let said = crate::commands::autorun::REPLAY_RUNNING_AT_RESET;
-    if assistant_replay_going() {
+    if assistant_replay_going(n) {
         format!("{said} Or stop it first with replay_autorun_to_step and stop: true.")
     } else {
         said.to_string()
     }
 }
 
-/// `REPLAY_GOING` while a replay to a step holds the browser.
-pub fn replay_is_holding_the_browser() -> Option<(u16, String)> {
-    crate::autorun::replay_to::is_running().then(|| (409, REPLAY_GOING.to_string()))
+/// `REPLAY_GOING` while a replay to a step holds slot `n`'s browser.
+pub fn replay_is_holding_the_browser(n: SlotNo) -> Option<(u16, String)> {
+    crate::autorun::replay_to::state(n).is_running().then(|| (409, REPLAY_GOING.to_string()))
 }
 
 /// What a locator matches on the open page right now.
-async fn autorun_probe(ctx: &BridgeContext, body: &str) -> (u16, String) {
+async fn autorun_probe(ctx: &BridgeContext, body: &str, n: SlotNo) -> (u16, String) {
     let selector = match body_field(body, "selector", PROBE_SHAPE) {
         Ok(v) => v,
         Err(refused) => return refused,
@@ -4125,17 +4158,17 @@ async fn autorun_probe(ctx: &BridgeContext, body: &str) -> (u16, String) {
     if let Some(busy) = unattended_run_is_using_the_browser() {
         return busy;
     }
-    if let Some(going) = replay_is_holding_the_browser() {
+    if let Some(going) = replay_is_holding_the_browser(n) {
         return going;
     }
-    let mut slot = crate::commands::autorun::supervised().lock().await;
+    let mut slot = crate::commands::autorun::session_slot(n).lock().await;
     let Some(session) = slot.as_mut() else {
         return (409, NO_SUPERVISED_BROWSER.to_string());
     };
     let at = supervised_sighting(session, &ctx.org, &ctx.project);
     let answer = probe_page(&mut session.cdp, &target, at.as_ref()).await;
     let answer = let_go_if_silent(&mut slot, answer).await;
-    crate::commands::autorun::publish_discovery(&slot);
+    crate::commands::autorun::publish_discovery_in(n, &slot);
     answer
 }
 
@@ -4183,7 +4216,7 @@ async fn inspected<D: crate::browser::cdp::Driver>(
 /// `/autorun-inspect`: one element in the supervised browser, as a probe
 /// reaches it - any supervised browser, the person's too, since nothing is
 /// changed. Refused at once while an unattended run or a replay holds it.
-async fn autorun_inspect(body: &str) -> (u16, String) {
+async fn autorun_inspect(body: &str, n: SlotNo) -> (u16, String) {
     let (target, ask) = match inspect_ask(body) {
         Ok(asked) => asked,
         Err(refused) => return refused,
@@ -4191,17 +4224,17 @@ async fn autorun_inspect(body: &str) -> (u16, String) {
     if let Some(busy) = unattended_run_is_using_the_browser() {
         return busy;
     }
-    if let Some(going) = replay_is_holding_the_browser() {
+    if let Some(going) = replay_is_holding_the_browser(n) {
         return going;
     }
-    let mut slot = crate::commands::autorun::supervised().lock().await;
+    let mut slot = crate::commands::autorun::session_slot(n).lock().await;
     let Some(session) = slot.as_mut() else {
         return (409, NO_SUPERVISED_BROWSER.to_string());
     };
     let answer = inspected(&mut session.cdp, &target, &ask).await;
     let answer = let_go_if_silent(&mut slot, answer).await;
     // A browser let go above may have ended a discovery: the window hears.
-    crate::commands::autorun::publish_discovery(&slot);
+    crate::commands::autorun::publish_discovery_in(n, &slot);
     // Never the locator: it is the assistant's writing and can hold an address.
     crate::applog::info(format!("AI inspected an element in the supervised browser: {}", answer.0));
     answer
@@ -4336,6 +4369,7 @@ async fn autorun_try(
     ctx: &BridgeContext,
     body: &str,
     seen: &mut Option<crate::autorun::overrides::Overrides>,
+    n: SlotNo,
 ) -> (u16, String) {
     let raw = match body_field(body, "action", "{ \"action\": <one script action> }") {
         Ok(v) => v,
@@ -4366,7 +4400,7 @@ async fn autorun_try(
     if let Some(busy) = unattended_run_is_using_the_browser() {
         return busy;
     }
-    if let Some(going) = replay_is_holding_the_browser() {
+    if let Some(going) = replay_is_holding_the_browser(n) {
         return going;
     }
     // Everything that can fail without the browser is settled BEFORE the
@@ -4377,14 +4411,14 @@ async fn autorun_try(
         Ok(r) => r,
         Err(refused) => return refused,
     };
-    let mut slot = crate::commands::autorun::supervised().lock().await;
+    let mut slot = crate::commands::autorun::session_slot(n).lock().await;
     let Some(session) = slot.as_mut() else {
         return (409, NO_SUPERVISED_BROWSER.to_string());
     };
     // A try uses the browser: no replay carries on from where it stood, and
     // no watched step names what happened before it.
     session.used_otherwise();
-    crate::commands::autorun::note_session_use();
+    crate::commands::autorun::note_session_use_in(n);
     // Another case's tabs go first, before its unreported stop is read by
     // the guard below (`try_for_case` does this too).
     crate::autorun::runner::tabs_for_case(&mut session.cdp, &mut session.tabs_case, case_id).await;
@@ -4413,7 +4447,7 @@ async fn autorun_try(
     )
     .await;
     let answer = let_go_if_silent(&mut slot, answer).await;
-    crate::commands::autorun::publish_discovery(&slot);
+    crate::commands::autorun::publish_discovery_in(n, &slot);
     *seen = Some(crate::commands::autorun::overrides_of(&slot));
     answer
 }
@@ -6719,9 +6753,9 @@ pub async fn explore_undo_in<S: DiscoveryBrowser, B: crate::autorun::replay::Bro
     (200, answer.to_string())
 }
 
-/// `POST /api-template-explore-undo` with the app's own slot and real
+/// `POST /api-template-explore-undo` with slot `n`'s own session and real
 /// browsers.
-async fn api_template_explore_undo(ctx: &BridgeContext, body: &str) -> (u16, String) {
+async fn api_template_explore_undo(ctx: &BridgeContext, body: &str, n: SlotNo) -> (u16, String) {
     if let Some(busy) = unattended_run_is_using_the_browser() {
         return busy;
     }
@@ -6729,7 +6763,7 @@ async fn api_template_explore_undo(ctx: &BridgeContext, body: &str) -> (u16, Str
         Ok(root) => root,
         Err(refused) => return refused,
     };
-    let mut slot = crate::commands::autorun::supervised().lock().await;
+    let mut slot = crate::commands::autorun::session_slot(n).lock().await;
     // Looked at again now the lock is held: a run may have started while
     // this call waited for it.
     if let Some(busy) = unattended_run_is_using_the_browser() {
@@ -7516,6 +7550,7 @@ async fn autorun_discover_start(
     ctx: &BridgeContext,
     body: &str,
     seen: &mut Option<crate::autorun::overrides::Overrides>,
+    n: SlotNo,
 ) -> (u16, String) {
     const SHAPE: &str = "{ \"account\": <an account key>, \"area\": <an area name, optional>, \"browser\": \"edge\" | \"chrome\", optional, \"mapping\": true | false, optional, \"modules\": [<a module name>], for a mapping run, \"case_id\": <the case explored for, optional>, \"no_save\": true | false, optional, \"explore\": true | false, optional }";
     let v: serde_json::Value = match serde_json::from_str(body) {
@@ -7571,7 +7606,7 @@ async fn autorun_discover_start(
     } else {
         None
     };
-    if let Err(why) = crate::commands::autorun::refuse_discovery_while_busy() {
+    if let Err(why) = crate::commands::autorun::refuse_discovery_while_busy(n) {
         return (409, why);
     }
     let root = match autorun_root() {
@@ -7592,11 +7627,11 @@ async fn autorun_discover_start(
     // new one is the one last chosen (`open_for_discovery`). A guarded
     // discovery's guard is on in a browser it took over before the lock goes.
     let from = GuardFrom { root: &root, organization: &ctx.org, project: &ctx.project };
-    let made_way = match crate::commands::autorun::open_for_discovery(browser.as_deref(), mapping, asked, from).await {
+    let made_way = match crate::commands::autorun::open_for_discovery(browser.as_deref(), mapping, asked, from, n).await {
         Ok(made_way) => made_way,
         Err(why) => return (409, why),
     };
-    let mut slot = crate::commands::autorun::supervised().lock().await;
+    let mut slot = crate::commands::autorun::session_slot(n).lock().await;
     let answer = discover_start_in(
         &mut slot,
         &root,
@@ -7608,11 +7643,11 @@ async fn autorun_discover_start(
     )
     .await;
     // A sign-in that failed closed the browser, and the discovery with it.
-    crate::commands::autorun::publish_discovery(&slot);
+    crate::commands::autorun::publish_discovery_in(n, &slot);
     // A mapping run's guard pauses every request: the browser is answered
     // between the assistant's calls too.
     if slot.as_ref().is_some_and(|s| s.cdp.is_guarding_saves()) {
-        crate::commands::autorun::answer_between_commands();
+        crate::commands::autorun::answer_between_commands_in(n);
     }
     *seen = Some(crate::commands::autorun::overrides_of(&slot));
     said_made_way(made_way, answer)
@@ -7704,6 +7739,7 @@ async fn autorun_discover_action(
     ctx: &BridgeContext,
     body: &str,
     seen: &mut Option<crate::autorun::overrides::Overrides>,
+    n: SlotNo,
 ) -> (u16, String) {
     const SHAPE: &str = "{ \"action\": <one script action>, \"draft\": <a component, optional, for a use_component>, \"area\": <an area name, optional>, \"case_id\": <the case explored for, optional>, \"no_save\": true | false, optional }";
     let raw = match body_field(body, "action", SHAPE) {
@@ -7757,11 +7793,11 @@ async fn autorun_discover_action(
         Ok(asked) => asked,
         Err(refused) => return refused,
     };
-    let mut slot = crate::commands::autorun::supervised().lock().await;
+    let mut slot = crate::commands::autorun::session_slot(n).lock().await;
     mark_discovery_for(&mut slot, asked);
     let answer = discover_action_in(&mut slot, &root, &ctx.org, &ctx.project, &action, draft.as_ref(), area.as_deref()).await;
     let answer = let_go_if_silent(&mut slot, answer).await;
-    crate::commands::autorun::publish_discovery(&slot);
+    crate::commands::autorun::publish_discovery_in(n, &slot);
     *seen = Some(crate::commands::autorun::overrides_of(&slot));
     answer
 }
@@ -7776,6 +7812,7 @@ async fn autorun_discover_actions(
     ctx: &BridgeContext,
     body: &str,
     seen: &mut Option<crate::autorun::overrides::Overrides>,
+    n: SlotNo,
 ) -> (u16, String) {
     const SHAPE: &str = concat!("{ \"actions\": [<script actions, at most ", max_batch!(), ">], \"stop_on_failure\": <true or false, optional, true by default>, \"draft\": <a component, optional, for a use_component>, \"area\": <an area name, optional>, \"case_id\": <the case explored for, optional>, \"no_save\": true | false, optional }");
     let raw = match body_field(body, "actions", SHAPE) {
@@ -7861,12 +7898,12 @@ async fn autorun_discover_actions(
         Err(refused) => return refused,
     };
     // A stop asked for before this batch is not this batch's.
-    batch_stop(SlotNo::MAIN).store(false, std::sync::atomic::Ordering::SeqCst);
+    batch_stop(n).store(false, std::sync::atomic::Ordering::SeqCst);
     // Held for the whole batch: nothing else drives the browser between
     // its actions. End discovery, Close browser or a release asks it to
     // give way (`BATCH_STOPS`). A gone browser is let go inside, keeping
     // the lines of the actions that ran.
-    let mut slot = crate::commands::autorun::supervised().lock().await;
+    let mut slot = crate::commands::autorun::session_slot(n).lock().await;
     mark_discovery_for(&mut slot, asked);
     let answer = discover_actions_paged(
         &mut slot,
@@ -7877,11 +7914,11 @@ async fn autorun_discover_actions(
         draft.as_ref(),
         area.as_deref(),
         stop_on_failure,
-        batch_stop(SlotNo::MAIN),
+        batch_stop(n),
         page_wanted(body),
     )
     .await;
-    crate::commands::autorun::publish_discovery(&slot);
+    crate::commands::autorun::publish_discovery_in(n, &slot);
     *seen = Some(crate::commands::autorun::overrides_of(&slot));
     answer
 }
@@ -7897,6 +7934,7 @@ async fn autorun_component_save(
     ctx: &BridgeContext,
     client: Option<&crate::ado::AdoClient>,
     body: &str,
+    n: SlotNo,
 ) -> (u16, String) {
     use crate::autorun::components::{users_of, Component, UserCases};
     const SHAPE: &str = "{ \"name\": <its name>, \"description\": <what it does>, \"inputs\": [{ \"name\", \"kind\": \"text\" or \"target\", \"description\" }], \"actions\": [<script actions>], \"why\": <why it changes, for a saved one> }";
@@ -7967,7 +8005,7 @@ async fn autorun_component_save(
         return save_component_in(&mut none, &root, &ctx.org, &ctx.project, draft, why.as_deref(), now, cases.as_ref())
             .await;
     }
-    let mut slot = crate::commands::autorun::supervised().lock().await;
+    let mut slot = crate::commands::autorun::session_slot(n).lock().await;
     if dry_run {
         return dry_run_component_in(&mut slot, &root, &ctx.org, &ctx.project, draft, why.as_deref(), now, cases.as_ref());
     }
@@ -8210,7 +8248,7 @@ fn refuse_outside_the_recipe(
 
 /// `/autorun-discover-area`: save the clicks a discovery found as an area
 /// (`discover_area_in`), once a replay of them arrives.
-async fn autorun_discover_area(ctx: &BridgeContext, body: &str) -> (u16, String) {
+async fn autorun_discover_area(ctx: &BridgeContext, body: &str, n: SlotNo) -> (u16, String) {
     const SHAPE: &str = "{ \"name\": <the area's name>, \"module\": <the test-case Module it belongs to>, \"clicks\": [<a script's click selector>, ...], \"repair\": <optional: { \"reason\": <one line> } to replace an existing area's path> }";
     let v: serde_json::Value = match serde_json::from_str(body) {
         Ok(v) => v,
@@ -8252,7 +8290,7 @@ async fn autorun_discover_area(ctx: &BridgeContext, body: &str) -> (u16, String)
         Ok(r) => r,
         Err(refused) => return refused,
     };
-    let mut slot = crate::commands::autorun::supervised().lock().await;
+    let mut slot = crate::commands::autorun::session_slot(n).lock().await;
     if let Some(reason) = repair {
         return repair_area_in(
             &mut slot,
@@ -8337,11 +8375,11 @@ pub fn set_replay_host(host: Box<dyn ReplayHost>) {
 const NO_REPLAY_HOST: &str = "the app could not start replays this session - restart the app";
 
 /// Replay a case to a step in the supervised browser, for the assistant.
-async fn autorun_replay(ctx: &BridgeContext, body: &str) -> (u16, String) {
+async fn autorun_replay(ctx: &BridgeContext, body: &str, n: SlotNo) -> (u16, String) {
     let Some(host) = REPLAY_HOST.get() else {
         return (503, NO_REPLAY_HOST.to_string());
     };
-    autorun_replay_with(ctx, SlotNo::MAIN, body, host.as_ref(), REPLAY_ANSWER_WAIT).await
+    autorun_replay_with(ctx, n, body, host.as_ref(), REPLAY_ANSWER_WAIT).await
 }
 
 /// How long `replay_autorun_to_step` waits for its replay to reach its stop
@@ -9454,15 +9492,15 @@ const PRODUCT_BUG_ANSWER: &str = " A product bug is shown on every result of the
 /// assistant judged it (`record_validation_rule`). Reads the open
 /// discovery's area and the page the browser is on, the way `try` does,
 /// without waiting for a browser an unattended run holds.
-async fn record_validation_rule(ctx: &BridgeContext, body: &str) -> (u16, String) {
+async fn record_validation_rule(ctx: &BridgeContext, body: &str, n: SlotNo) -> (u16, String) {
     let root = match autorun_root() {
         Ok(r) => r,
         Err(refused) => return refused,
     };
-    if unattended_run_is_using_the_browser().is_some() || crate::autorun::replay_to::is_running() {
+    if unattended_run_is_using_the_browser().is_some() || crate::autorun::replay_to::state(n).is_running() {
         return rule_in_area(&root, &ctx.org, &ctx.project, body, None, "");
     }
-    let mut slot = crate::commands::autorun::supervised().lock().await;
+    let mut slot = crate::commands::autorun::session_slot(n).lock().await;
     record_validation_rule_in(&mut slot, &root, &ctx.org, &ctx.project, body).await
 }
 
@@ -11031,6 +11069,7 @@ async fn save_autorun_scripts(
     ctx: &BridgeContext,
     client: Option<&crate::ado::AdoClient>,
     body: &str,
+    asker: Option<SlotNo>,
 ) -> (u16, String) {
     // Parsing reads the saved script of a repair (to merge its patch onto
     // it); that read, not the later one at Gate 1, is the version the
@@ -11574,8 +11613,9 @@ async fn save_autorun_scripts(
             .iter()
             .map(|(case_id, _)| prepared.iter().find(|s| s.case_id == *case_id).and_then(|s| s.area_name()))
             .collect();
-        if let Some(targets) = targets.filter(|t| !t.is_empty()) {
-            if let Some(found) = record_refused_on_page(ctx, &root, &areas, &targets).await {
+        // On the page of the caller's own browser, if it has one.
+        if let (Some(n), Some(targets)) = (asker, targets.filter(|t| !t.is_empty())) {
+            if let Some(found) = record_refused_on_page(ctx, &root, &areas, &targets, n).await {
                 if !found.is_empty() {
                     checked = check_and_save_locked();
                 }

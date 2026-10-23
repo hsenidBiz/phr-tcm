@@ -21,6 +21,7 @@ use v2_lib::autorun::overrides::{
     protected_cookie, refused_header, take_for_person, undo, with_note, Overrides, SetCookie, COOKIE_REFUSED,
     REFUSED_HEADERS, ROUTING_OVERRIDE_HEADERS, SITE_NOT_CONFIRMED, TEST_CHANGES_STUCK,
 };
+use v2_lib::autorun::slots::SlotNo;
 use v2_lib::browser::cdp::Driver;
 use v2_lib::browser::net_capture::NetCapture;
 use v2_lib::commands::autorun::{
@@ -213,17 +214,17 @@ async fn refused_header_names() {
         headers.insert("X-Feature".into(), json!("beta"));
         headers.insert(name.into(), json!("PUT"));
         let args = json!({ "headers": headers });
-        let (status, said) = set_headers_in(&mut slot, &args).await;
+        let (status, said) = set_headers_in(SlotNo::MAIN, &mut slot, &args).await;
         assert_eq!(status, 400, "{name}: {said}");
         assert!(said.starts_with(&format!("{name} is never set as a test header")), "{said}");
         assert!(methods(&slot).is_empty(), "{name}: the browser was asked {:?}", methods(&slot));
         assert!(slot.unwrap().overrides.is_empty());
     }
     let mut slot = browser(true);
-    let (_, said) = set_headers_in(&mut slot, &json!({ "headers": { "X-HTTP-Method-Override": "DELETE" } })).await;
+    let (_, said) = set_headers_in(SlotNo::MAIN, &mut slot, &json!({ "headers": { "X-HTTP-Method-Override": "DELETE" } })).await;
     assert!(said.contains("save or delete"), "{said}");
     let mut slot = browser(true);
-    let (status, said) = set_headers_in(&mut slot, &json!({ "headers": { "X-Original-URL": "/Leave/Save" } })).await;
+    let (status, said) = set_headers_in(SlotNo::MAIN, &mut slot, &json!({ "headers": { "X-Original-URL": "/Leave/Save" } })).await;
     assert_eq!(status, 400, "{said}");
     assert!(said.contains("another path or method") && said.contains("save or delete"), "{said}");
     assert!(!said.contains("/Leave/Save"), "the asked value is not echoed: {said}");
@@ -236,13 +237,13 @@ async fn headers_are_merged_sent_whole_and_named() {
     // A replay another module's test claims would refuse these calls.
     let _a = crate::serial::autorun();
     let mut slot = browser(true);
-    let (status, said) = set_headers_in(&mut slot, &json!({ "headers": { "X-Feature": "beta", "Accept-Language": "fr" } })).await;
+    let (status, said) = set_headers_in(SlotNo::MAIN, &mut slot, &json!({ "headers": { "X-Feature": "beta", "Accept-Language": "fr" } })).await;
     assert_eq!(status, 200, "{said}");
     let v = parsed(&said);
     assert_eq!(v["changed_for_testing"], "Changed for testing: header Accept-Language, X-Feature.");
     assert!(!said.contains("beta"), "a value was echoed: {said}");
 
-    let (status, said) = set_headers_in(&mut slot, &json!({ "headers": { "x-feature": "gamma", "Accept-Language": null } })).await;
+    let (status, said) = set_headers_in(SlotNo::MAIN, &mut slot, &json!({ "headers": { "x-feature": "gamma", "Accept-Language": null } })).await;
     assert_eq!(status, 200, "{said}");
     assert_eq!(parsed(&said)["changed_for_testing"], "Changed for testing: header x-feature.");
     let b = slot.as_ref().unwrap();
@@ -251,7 +252,7 @@ async fn headers_are_merged_sent_whole_and_named() {
     assert_eq!(sent[1]["headers"], json!({ "x-feature": "gamma" }), "the set is not sent whole");
 
     // Removing the last one sends none, and nothing is changed.
-    let (status, said) = set_headers_in(&mut slot, &json!({ "headers": { "X-FEATURE": null } })).await;
+    let (status, said) = set_headers_in(SlotNo::MAIN, &mut slot, &json!({ "headers": { "X-FEATURE": null } })).await;
     assert_eq!(status, 200, "{said}");
     assert_eq!(parsed(&said)["changed_for_testing"], "Nothing is changed for testing now.");
     assert_eq!(slot.as_ref().unwrap().d.calls_to("Network.setExtraHTTPHeaders")[2]["headers"], json!({}));
@@ -272,7 +273,7 @@ async fn a_set_header_leaves_the_save_guard_alone() {
         b.d.saves_on_call.push(("Input.dispatchMouseEvent".into(), "POST".into(), "https://hr.example/api/Save".into()));
         b.d.calls.len()
     };
-    let (status, said) = set_headers_in(&mut slot, &json!({ "headers": { "X-Tenant": "acme" } })).await;
+    let (status, said) = set_headers_in(SlotNo::MAIN, &mut slot, &json!({ "headers": { "X-Tenant": "acme" } })).await;
     assert_eq!(status, 200, "{said}");
     let b = slot.as_mut().unwrap();
     let since: Vec<&str> = b.d.calls[before..].iter().map(|(m, _)| m.as_str()).collect();
@@ -315,7 +316,7 @@ async fn the_sign_in_cookies_are_refused_and_culture_is_set() {
         "TENANT",
     ] {
         let mut slot = browser(true);
-        let (status, said) = set_cookie_in(&mut slot, &json!({ "name": name, "value": "x" })).await;
+        let (status, said) = set_cookie_in(SlotNo::MAIN, &mut slot, &json!({ "name": name, "value": "x" })).await;
         assert_eq!(status, 403, "{name}: {said}");
         assert!(said.starts_with(&format!("{name} is the sign-in's cookie")), "{said}");
         assert!(slot.as_ref().unwrap().d.calls_to("Network.setCookie").is_empty(), "{name} was set");
@@ -327,11 +328,11 @@ async fn the_sign_in_cookies_are_refused_and_culture_is_set() {
     }
 
     let mut slot = browser(true);
-    let (status, said) = set_cookie_in(&mut slot, &json!({ "name": "author", "value": "kim" })).await;
+    let (status, said) = set_cookie_in(SlotNo::MAIN, &mut slot, &json!({ "name": "author", "value": "kim" })).await;
     assert_eq!(status, 200, "author: {said}");
 
     let mut slot = browser(true);
-    let (status, said) = set_cookie_in(&mut slot, &json!({ "name": "culture", "value": "fr-FR", "same_site": "lax" })).await;
+    let (status, said) = set_cookie_in(SlotNo::MAIN, &mut slot, &json!({ "name": "culture", "value": "fr-FR", "same_site": "lax" })).await;
     assert_eq!(status, 200, "{said}");
     assert_eq!(parsed(&said)["changed_for_testing"], "Changed for testing: cookie culture.");
     let b = slot.unwrap();
@@ -350,7 +351,7 @@ async fn a_cookie_is_set_on_the_apps_confirmed_site_never_the_page_showing() {
     // A replay another module's test claims would refuse these calls.
     let _a = crate::serial::autorun();
     let mut slot = browser_with(page_on(IDP, jar()), true);
-    let (status, said) = set_cookie_in(&mut slot, &json!({ "name": "culture", "value": "fr-FR" })).await;
+    let (status, said) = set_cookie_in(SlotNo::MAIN, &mut slot, &json!({ "name": "culture", "value": "fr-FR" })).await;
     assert_eq!(status, 200, "{said}");
     let b = slot.unwrap();
     assert_eq!(b.d.calls_to("Network.setCookie")[0]["url"], "https://hr.example/");
@@ -362,7 +363,7 @@ async fn a_cookie_is_set_on_the_apps_confirmed_site_never_the_page_showing() {
     })
     .with_capture(NetCapture::default());
     let mut slot = browser_with(unconfirmed, true);
-    let (status, said) = set_cookie_in(&mut slot, &json!({ "name": "culture", "value": "fr-FR" })).await;
+    let (status, said) = set_cookie_in(SlotNo::MAIN, &mut slot, &json!({ "name": "culture", "value": "fr-FR" })).await;
     assert_eq!((status, said.as_str()), (409, SITE_NOT_CONFIRMED));
     assert_eq!(SITE_NOT_CONFIRMED, "The app's site is not confirmed yet: sign in through a replay or a discovery first.");
     assert!(methods(&slot).is_empty());
@@ -380,7 +381,7 @@ async fn a_cookie_the_browser_refuses_is_not_recorded() {
     })
     .with_capture(confirmed());
     let mut slot = browser_with(refusing, true);
-    let (status, said) = set_cookie_in(&mut slot, &json!({ "name": "flag", "value": "1", "same_site": "None" })).await;
+    let (status, said) = set_cookie_in(SlotNo::MAIN, &mut slot, &json!({ "name": "flag", "value": "1", "same_site": "None" })).await;
     assert_eq!((status, said.as_str()), (400, COOKIE_REFUSED));
     assert!(slot.unwrap().overrides.is_empty());
 }
@@ -544,7 +545,7 @@ async fn a_test_cookie_never_makes_the_sign_in_look_changed() {
     assert!(!lease.same_sign_in(&mut changed("en-GB", Some("globex"), SESSION_VALUE), &origins).await);
     assert!(!lease.same_sign_in(&mut changed("en-GB", None, SESSION_VALUE), &origins).await);
 
-    let (status, said) = set_cookie_in(&mut slot, &json!({ "name": "Culture", "value": "fr-FR" })).await;
+    let (status, said) = set_cookie_in(SlotNo::MAIN, &mut slot, &json!({ "name": "Culture", "value": "fr-FR" })).await;
     assert_eq!(status, 200, "{said}");
     let lease = &slot.as_ref().unwrap().lease;
     assert!(lease.same_sign_in(&mut changed("fr-FR", Some("acme"), SESSION_VALUE), &origins).await, "the test cookie changed the sign-in");
@@ -554,7 +555,7 @@ async fn a_test_cookie_never_makes_the_sign_in_look_changed() {
 
     // A reset deleted Tenant; the assistant set one of its own in its place.
     slot.as_mut().unwrap().d = changed("en-GB", None, SESSION_VALUE);
-    let (status, said) = set_cookie_in(&mut slot, &json!({ "name": "Tenant", "value": "test" })).await;
+    let (status, said) = set_cookie_in(SlotNo::MAIN, &mut slot, &json!({ "name": "Tenant", "value": "test" })).await;
     assert_eq!(status, 200, "{said}");
     let lease = &slot.as_ref().unwrap().lease;
     assert!(lease.same_sign_in(&mut changed("en-GB", None, SESSION_VALUE), &origins).await, "the deleted test cookie changed the sign-in");
@@ -674,7 +675,7 @@ async fn acting_tools_refuse_in_the_persons_browser() {
     ];
     for (tool, args) in &calls {
         let mut slot = browser(false);
-        let ((status, said), event) = override_tool_in(&mut slot, *tool, &args.to_string()).await;
+        let ((status, said), event) = override_tool_in(SlotNo::MAIN, &mut slot, *tool, &args.to_string()).await;
         assert_eq!((status, said.as_str()), (409, refused.as_str()), "{tool:?}");
         assert!(event.is_none());
         assert!(methods(&slot).is_empty(), "{tool:?} reached the person's browser: {:?}", methods(&slot));
@@ -683,12 +684,12 @@ async fn acting_tools_refuse_in_the_persons_browser() {
         // The assistant's browser, but the person's guard is on it.
         let mut slot = browser(true);
         slot.as_mut().unwrap().guard_owner = Some(GuardOwner::Person);
-        let ((status, _), _) = override_tool_in(&mut slot, *tool, &args.to_string()).await;
+        let ((status, _), _) = override_tool_in(SlotNo::MAIN, &mut slot, *tool, &args.to_string()).await;
         assert_eq!(status, 409, "{tool:?}");
         assert!(methods(&slot).is_empty());
 
         let mut none: Option<Browser> = None;
-        let ((status, said), _) = override_tool_in(&mut none, *tool, &args.to_string()).await;
+        let ((status, said), _) = override_tool_in(SlotNo::MAIN, &mut none, *tool, &args.to_string()).await;
         assert_eq!((status, said.as_str()), (404, NO_BROWSER_OPEN), "{tool:?}");
     }
     assert!(refused.contains("the person's Auto Run browser is open"), "{refused}");
@@ -696,7 +697,7 @@ async fn acting_tools_refuse_in_the_persons_browser() {
     let replay = v2_lib::autorun::replay_to::OneReplay::claim().unwrap();
     for (tool, args) in &calls {
         let mut slot = browser(true);
-        let ((status, said), _) = override_tool_in(&mut slot, *tool, &args.to_string()).await;
+        let ((status, said), _) = override_tool_in(SlotNo::MAIN, &mut slot, *tool, &args.to_string()).await;
         assert_eq!((status, said.as_str()), (409, REPLAY_RUNNING_AT_RESET), "{tool:?}");
         assert!(methods(&slot).is_empty());
     }
@@ -763,7 +764,7 @@ async fn clear_cookies_signs_out_and_lets_the_lease_go() {
     }
     assert!(v2_lib::autorun::lease::is_held(&env, "admin"));
 
-    let ((status, said), event) = clear_cookies_in(&mut slot).await;
+    let ((status, said), event) = clear_cookies_in(SlotNo::MAIN, &mut slot).await;
     assert_eq!(status, 200, "{said}");
     let v = parsed(&said);
     assert!(v["said"].as_str().unwrap().starts_with("Signed out: deleted 4 cookies of hr.example"), "{said}");
@@ -786,7 +787,7 @@ async fn clear_cookies_signs_out_and_lets_the_lease_go() {
     assert_eq!(b.taken_over, 1, "a replay could still carry on from where it stood");
 
     // Nobody was signed in: the panes hear nothing new.
-    let ((status, _), event) = clear_cookies_in(&mut slot).await;
+    let ((status, _), event) = clear_cookies_in(SlotNo::MAIN, &mut slot).await;
     assert_eq!(status, 200);
     assert_eq!(event, None);
 
@@ -797,7 +798,7 @@ async fn clear_cookies_signs_out_and_lets_the_lease_go() {
     })
     .with_capture(NetCapture::default());
     let mut slot = browser_with(unconfirmed, true);
-    let ((status, said), event) = clear_cookies_in(&mut slot).await;
+    let ((status, said), event) = clear_cookies_in(SlotNo::MAIN, &mut slot).await;
     assert_eq!((status, said.as_str(), event), (409, SITE_NOT_CONFIRMED, None));
     assert!(methods(&slot).is_empty());
     assert_eq!(slot.unwrap().account.as_deref(), Some("admin"));
@@ -938,5 +939,5 @@ fn the_answers_read_what_is_changed_under_the_lock() {
     assert!(body(&commands, "pub(crate) async fn end_discovery(").contains("with_note(answer, &overrides_of(&slot))"));
     let replay = body(&commands, "pub(crate) async fn replay_supervised(");
     assert!(replay.contains("let changed = slot.as_ref().map(|s| s.overrides.clone()).unwrap_or_default();"), "{replay}");
-    assert!(!host.contains("overrides_now()"), "the replay host reads the published copy");
+    assert!(!host.contains("overrides_now"), "the replay host reads the published copy");
 }

@@ -311,8 +311,8 @@ fn every_refusal_for_a_held_browser_asks_first_whether_it_is_alive() {
     // its guard goes on under this same lock.
     assert!(body("pub(crate) async fn open_for_discovery").contains("(mapping.is_some() || no_save.no_save).then_some(from)"));
     assert!(body("pub async fn auto_run_open_browser").contains("let_go_if_gone(&mut slot)"));
-    assert!(body("async fn open_if_none").contains("let_go_if_gone(slot)"));
-    assert!(body("pub(crate) async fn replay_supervised").contains("let_go_if_gone(&mut slot)"));
+    assert!(body("async fn open_if_none").contains("let_go_if_gone_in(n, slot)"));
+    assert!(body("pub(crate) async fn replay_supervised").contains("let_go_if_gone_in(n, &mut slot)"));
     assert!(body("pub async fn auto_run_step").contains("let_go_if_gone(&mut slot)"));
     assert!(body("pub async fn open_session_refusal").contains("let_go_if_gone(&mut slot)"));
     let bridge = include_str!("../../src/ai_bridge.rs").replace("\r\n", "\n");
@@ -616,10 +616,10 @@ async fn the_persons_end_closes_the_discovery_browser_and_the_assistants_keeps_i
     // end_autorun_discovery the assistant's.
     let source = include_str!("../../src/commands/autorun.rs").replace("\r\n", "\n");
     let button = &source[source.find("pub async fn auto_run_end_discovery").unwrap()..];
-    assert!(button[..button.find("\n}\n").unwrap()].contains("end_discovery(crate::ai_bridge::EndedBy::Person)"));
+    assert!(button[..button.find("\n}\n").unwrap()].contains("end_discovery(crate::ai_bridge::EndedBy::Person, SlotNo::MAIN)"));
     let bridge = include_str!("../../src/ai_bridge.rs").replace("\r\n", "\n");
     let route = &bridge[bridge.find("(\"POST\", \"/autorun-discover-end\")").unwrap()..];
-    assert!(route[..route.find("},").unwrap()].contains("end_discovery(EndedBy::Assistant)"));
+    assert!(route[..route.find("},").unwrap()].contains("end_discovery(EndedBy::Assistant, slot)"));
 }
 
 /// A browser that has gone is still let go first, through its normal
@@ -744,8 +744,8 @@ fn a_template_held_off_by_the_assistants_browser_names_the_release() {
 async fn the_assistants_release_never_stops_a_replay() {
     let _a = crate::serial::autorun();
     let replay = v2_lib::autorun::replay_to::OneReplay::claim().unwrap();
-    let (status, said) = release_for_assistant().await;
-    assert_eq!((status, said.clone()), (409, v2_lib::ai_bridge::replay_going_for_a_release()));
+    let (status, said) = release_for_assistant(v2_lib::autorun::slots::SlotNo::MAIN).await;
+    assert_eq!((status, said.clone()), (409, v2_lib::ai_bridge::replay_going_for_a_release(v2_lib::autorun::slots::SlotNo::MAIN)));
     assert!(said.contains("call replay_autorun_to_step"), "{said}");
     // The person's replay (no call of the assistant's waits on it): the
     // stop tool, which never stops it, is not offered.
@@ -882,7 +882,7 @@ async fn a_reset_during_a_replay_is_refused() {
     use v2_lib::commands::autorun::{reset_for_assistant, REPLAY_RUNNING_AT_RESET};
     let _a = crate::serial::autorun();
     let replay = v2_lib::autorun::replay_to::OneReplay::claim().unwrap();
-    let answer = tokio::time::timeout(std::time::Duration::from_secs(2), reset_for_assistant("acme", "Web"))
+    let answer = tokio::time::timeout(std::time::Duration::from_secs(2), reset_for_assistant(v2_lib::autorun::slots::SlotNo::MAIN, "acme", "Web"))
         .await
         .expect("the reset waited on the replay");
     assert_eq!(answer, (409, REPLAY_RUNNING_AT_RESET.to_string()));
@@ -927,10 +927,10 @@ async fn the_assistant_resets_through_its_route() {
     // A replay is refused before it waits for the browser.
     let source = include_str!("../../src/commands/autorun.rs").replace("\r\n", "\n");
     let body = body_of(&source, "pub async fn reset_for_assistant(");
-    let before_lock = &body[..body.find("SESSION.lock()").expect("the reset never takes the browser")];
-    assert!(before_lock.contains("replay_to::is_running()"), "a replay is not refused first");
+    let before_lock = &body[..body.find("session_slot(n).lock()").expect("the reset never takes the browser")];
+    assert!(before_lock.contains("replay_to::state(n).is_running()"), "a replay is not refused first");
     // With no data directory and no browser, none is open - not a 503.
-    let after_lock = &body[body.find("SESSION.lock()").unwrap()..];
+    let after_lock = &body[body.find("session_slot(n).lock()").unwrap()..];
     let no_root = &after_lock[after_lock.find("configured_root()").expect("the data directory is read before the lock")..];
     let no_root = &no_root[..no_root.find("NO_DATA_DIRECTORY").unwrap()];
     assert!(no_root.contains("if slot.is_none() {") && no_root.contains("(404, NO_BROWSER_OPEN.to_string())"), "{no_root}");

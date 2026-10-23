@@ -182,12 +182,6 @@ pub fn show_overrides_in(n: SlotNo, o: &crate::autorun::overrides::Overrides) {
     *OVERRIDES_SHOWN[n.index()].lock().unwrap_or_else(|e| e.into_inner()) = o.clone();
 }
 
-/// Publish the overrides of the main browser `slot` holds (none without
-/// one), after anything that may have changed them.
-pub(crate) fn publish_overrides(slot: &Option<Session>) {
-    publish_overrides_in(SlotNo::MAIN, slot);
-}
-
 /// Publish the overrides of the browser `slot` holds (none without one) as
 /// slot `n`'s, after anything that may have changed them.
 pub(crate) fn publish_overrides_in(n: SlotNo, slot: &Option<Session>) {
@@ -204,7 +198,7 @@ pub(crate) fn overrides_of(slot: &Option<Session>) -> crate::autorun::overrides:
 }
 
 /// The main browser's overrides as last published
-/// (`publish_overrides`).
+/// (`publish_overrides_in`).
 pub fn overrides_now() -> crate::autorun::overrides::Overrides {
     overrides_now_in(SlotNo::MAIN)
 }
@@ -591,7 +585,7 @@ const UNATTENDED_GOING: &str = "an unattended run is going - wait for it, or sto
 /// browser, marked as opened `by`. Called with the session lock held.
 async fn open_if_none(app: &tauri::AppHandle, slot: &mut Option<Session>, n: SlotNo, by: OpenedBy) -> Result<(), String> {
     // A held browser that has gone is let go, and a new one opened.
-    let_go_if_gone(slot).await;
+    let_go_if_gone_in(n, slot).await;
     if slot.is_some() {
         return Ok(());
     }
@@ -607,14 +601,14 @@ pub const NO_DATA_DIRECTORY: &str = "the app could not set up its data directory
 
 /// What a discovery is refused for before anything is looked at under the
 /// session's lock: an unattended run, a recording or check, a replay to a
-/// step. A replay holds the lock while it goes, so it is heard here, not
-/// waited for.
-pub(crate) fn refuse_discovery_while_busy() -> Result<(), String> {
+/// step in slot `n`. A replay holds the lock while it goes, so it is heard
+/// here, not waited for.
+pub(crate) fn refuse_discovery_while_busy(n: SlotNo) -> Result<(), String> {
     if crate::commands::autorun_replay::replay_is_running() {
         return Err(UNATTENDED_GOING.to_string());
     }
     crate::commands::autorun_record::refuse_while_recording()?;
-    if crate::autorun::replay_to::is_running() {
+    if crate::autorun::replay_to::state(n).is_running() {
         return Err(crate::autorun::replay_to::ALREADY_RUNNING.to_string());
     }
     Ok(())
@@ -635,30 +629,31 @@ pub(crate) fn refuse_discovery_while_busy() -> Result<(), String> {
 /// between here and the start finds it unguarded. Unless `browser_name`
 /// names the other browser: that one is closed, and the one named opened.
 /// With none named a new browser is the one last chosen. Says which
-/// (`MadeWay`).
+/// (`MadeWay`). It all happens in slot `n`'s browser, under that slot's lock.
 pub(crate) async fn open_for_discovery(
     browser_name: Option<&str>,
     mapping: Option<MappingRun>,
     no_save: DiscoveryFor,
     from: crate::ai_bridge::GuardFrom<'_>,
+    n: SlotNo,
 ) -> Result<crate::ai_bridge::MadeWay, String> {
     use crate::ai_bridge::MadeWay;
-    refuse_discovery_while_busy()?;
+    refuse_discovery_while_busy(n)?;
     let wanted = browser_name.map(Browser::from_name);
     let guarded = (mapping.is_some() || no_save.no_save).then_some(from);
-    let mut slot = SESSION.lock().await;
+    let mut slot = session_slot(n).lock().await;
     // Refused only for a browser that is really there: one that has gone
     // is let go, and the discovery opens.
     let made_way = crate::ai_bridge::make_way_for_discovery(&mut slot, wanted, guarded).await;
-    publish_discovery(&slot);
+    publish_discovery_in(n, &slot);
     let made_way = made_way?;
     if made_way == MadeWay::Closed {
-        tell_panes_closed();
+        tell_panes_closed_in(n);
     }
     if made_way != MadeWay::TookOver {
         let root = store::configured_root().ok_or_else(|| NO_DATA_DIRECTORY.to_string())?;
         let which = wanted.unwrap_or_else(|| Browser::from_name(&store::last_browser(&root)));
-        open_into(Ok(root), &mut slot, SlotNo::MAIN, which, OpenedBy::Assistant).await?;
+        open_into(Ok(root), &mut slot, n, which, OpenedBy::Assistant).await?;
     }
     if let Some(session) = slot.as_mut() {
         session.discovery = Some(DiscoveryState {
@@ -674,28 +669,29 @@ pub(crate) async fn open_for_discovery(
             explore: no_save.explore.then(crate::autorun::explore::ExploreRun::default),
         });
     }
-    publish_discovery(&slot);
+    publish_discovery_in(n, &slot);
     Ok(made_way)
 }
 
-/// End the discovery under way as `by` ends it (`ai_bridge::end_discovery_as`):
+/// End the discovery under way in slot `n`'s browser as `by` ends it
+/// (`ai_bridge::end_discovery_as`):
 /// the assistant's `end_autorun_discovery` keeps its browser signed in for
 /// its next replay or discovery, its guard lifted; the person's End
 /// discovery closes it so Auto Run can run again. With no discovery going
 /// this does nothing.
-pub(crate) async fn end_discovery(by: crate::ai_bridge::EndedBy) -> (u16, String) {
+pub(crate) async fn end_discovery(by: crate::ai_bridge::EndedBy, n: SlotNo) -> (u16, String) {
     // A batch of actions holding the browser gives way before its next
     // action, so this is not kept waiting behind it.
-    crate::ai_bridge::stop_batch();
-    let mut slot = SESSION.lock().await;
+    crate::ai_bridge::stop_batch_in(n);
+    let mut slot = session_slot(n).lock().await;
     // A discovery browser that has gone ends with it, as any other does.
-    let gone = slot.as_ref().is_some_and(|s| s.discovery.is_some()) && let_go_if_gone(&mut slot).await;
+    let gone = slot.as_ref().is_some_and(|s| s.discovery.is_some()) && let_go_if_gone_in(n, &mut slot).await;
     if gone {
         return (200, DISCOVERY_BROWSER_HAD_GONE.to_string());
     }
     let held = slot.is_some();
     let answer = crate::ai_bridge::end_discovery_as(&mut slot, by).await;
-    publish_discovery(&slot);
+    publish_discovery_in(n, &slot);
     // The assistant's end names what it changed for testing, read here
     // under the lock: the browser it keeps still has it.
     let answer = match by {
@@ -703,7 +699,7 @@ pub(crate) async fn end_discovery(by: crate::ai_bridge::EndedBy) -> (u16, String
         _ => answer,
     };
     if held && slot.is_none() {
-        tell_panes_closed();
+        tell_panes_closed_in(n);
     }
     answer
 }
@@ -716,7 +712,7 @@ pub(crate) async fn end_discovery(by: crate::ai_bridge::EndedBy) -> (u16, String
 #[tauri::command]
 #[specta::specta]
 pub async fn auto_run_end_discovery() -> Result<(), String> {
-    end_discovery(crate::ai_bridge::EndedBy::Person).await;
+    end_discovery(crate::ai_bridge::EndedBy::Person, SlotNo::MAIN).await;
     Ok(())
 }
 
@@ -1019,10 +1015,16 @@ const ALIVE_WITHIN: std::time::Duration = std::time::Duration::from_secs(2);
 /// (`ai_bridge::forget_gone_browser`), saying so to the window when a
 /// discovery went with it. True when it did. Called with the lock held.
 pub(crate) async fn let_go_if_gone(slot: &mut Option<Session>) -> bool {
+    let_go_if_gone_in(SlotNo::MAIN, slot).await
+}
+
+/// `let_go_if_gone` for slot `n`'s session: the discovery flag is that
+/// slot's, and the panes are told only when it is the main browser that went.
+pub(crate) async fn let_go_if_gone_in(n: SlotNo, slot: &mut Option<Session>) -> bool {
     let gone = crate::ai_bridge::forget_gone_browser(slot).await;
     if gone {
-        publish_discovery(slot);
-        tell_panes_closed();
+        publish_discovery_in(n, slot);
+        tell_panes_closed_in(n);
     }
     gone
 }
@@ -1315,8 +1317,8 @@ pub const BROWSER_BUSY: &str = "the Auto Run browser is busy - press Release Aut
 /// refused that account names the release (`reset_autorun_browser`) for. Asked without
 /// waiting on a replay or a step holding the lock: a busy browser answers
 /// no.
-pub async fn assistant_browser_holds(key: &str) -> bool {
-    match tokio::time::timeout(std::time::Duration::from_millis(500), SESSION.lock()).await {
+pub async fn assistant_browser_holds(n: SlotNo, key: &str) -> bool {
+    match tokio::time::timeout(std::time::Duration::from_millis(500), session_slot(n).lock()).await {
         Ok(slot) => slot.as_ref().is_some_and(|s| {
             s.opened_by == OpenedBy::Assistant && s.discovery.is_none() && s.lease.account() == Some(key)
         }),
@@ -1339,6 +1341,14 @@ pub(crate) fn tell_panes_closed() {
     }
 }
 
+/// `tell_panes_closed` for the browser of slot `n`: the panes show the main
+/// browser only, so another slot's closing tells them nothing.
+pub(crate) fn tell_panes_closed_in(n: SlotNo) {
+    if n.is_main() {
+        tell_panes_closed();
+    }
+}
+
 /// Tell the panes of a change to the supervised browser (`changed`, when
 /// there is one), as `tell_panes_closed` tells them it went. Nothing to tell
 /// in the test binaries, which set up no window.
@@ -1346,6 +1356,14 @@ pub(crate) fn tell_panes(changed: Option<crate::events::AutorunSessionChanged>) 
     use tauri_specta::Event as _;
     if let (Some(app), Some(changed)) = (DISCOVERY_EVENTS.get(), changed) {
         let _ = changed.emit(app);
+    }
+}
+
+/// `tell_panes` for the browser of slot `n`: only the main browser's changes
+/// reach the panes.
+pub(crate) fn tell_panes_in(n: SlotNo, changed: Option<crate::events::AutorunSessionChanged>) {
+    if n.is_main() {
+        tell_panes(changed);
     }
 }
 
@@ -1392,19 +1410,19 @@ pub async fn auto_run_release_browser() -> Result<String, String> {
 /// browser the person opened is never closed - the answer asks for the
 /// person. A replay going is never stopped: one going holds the lock, and
 /// the answer says to wait.
-pub async fn release_for_assistant() -> (u16, String) {
-    if crate::autorun::replay_to::is_running() {
-        return (409, crate::ai_bridge::replay_going_for_a_release());
+pub async fn release_for_assistant(n: SlotNo) -> (u16, String) {
+    if crate::autorun::replay_to::state(n).is_running() {
+        return (409, crate::ai_bridge::replay_going_for_a_release(n));
     }
-    crate::ai_bridge::stop_batch();
-    let Ok(mut slot) = tokio::time::timeout(RELEASE_WAIT, SESSION.lock()).await else {
+    crate::ai_bridge::stop_batch_in(n);
+    let Ok(mut slot) = tokio::time::timeout(RELEASE_WAIT, session_slot(n).lock()).await else {
         return (409, BROWSER_BUSY.to_string());
     };
     let answer = release_in_for_assistant(&mut slot).await;
-    publish_discovery(&slot);
-    publish_overrides(&slot);
+    publish_discovery_in(n, &slot);
+    publish_overrides_in(n, &slot);
     if slot.is_none() {
-        tell_panes_closed();
+        tell_panes_closed_in(n);
     }
     crate::applog::info(format!("Auto Run: the assistant's release: {}", answer.1));
     answer
@@ -1467,12 +1485,12 @@ pub fn reset_sentence(account: &str) -> String {
 /// (`reset_in_for_assistant`). Refused while a replay runs (one going holds
 /// the lock, and a reset never stops it); a batch of discovery actions is
 /// asked to give way first, as release asks.
-pub async fn reset_for_assistant(organization: &str, project: &str) -> (u16, String) {
-    if crate::autorun::replay_to::is_running() {
-        return (409, crate::ai_bridge::replay_running_refusal());
+pub async fn reset_for_assistant(n: SlotNo, organization: &str, project: &str) -> (u16, String) {
+    if crate::autorun::replay_to::state(n).is_running() {
+        return (409, crate::ai_bridge::replay_running_refusal(n));
     }
-    crate::ai_bridge::stop_batch();
-    let Ok(mut slot) = tokio::time::timeout(RELEASE_WAIT, SESSION.lock()).await else {
+    crate::ai_bridge::stop_batch_in(n);
+    let Ok(mut slot) = tokio::time::timeout(RELEASE_WAIT, session_slot(n).lock()).await else {
         return (409, BUSY_AT_RESET.to_string());
     };
     // With no browser there is nothing to reset, data directory or not.
@@ -1487,19 +1505,19 @@ pub async fn reset_for_assistant(organization: &str, project: &str) -> (u16, Str
     let timing = crate::browser::timing::Timing::supervised();
     let answer = reset_in_for_assistant(&mut slot, &root, organization, project, &timing).await;
     let answer = crate::ai_bridge::let_go_if_silent(&mut slot, answer).await;
-    publish_discovery(&slot);
-    publish_overrides(&slot);
+    publish_discovery_in(n, &slot);
+    publish_overrides_in(n, &slot);
     if held && slot.is_none() {
-        tell_panes_closed();
+        tell_panes_closed_in(n);
     } else if let Some(s) = slot.as_ref() {
         // A sign-in the reset found gone is forgotten: the panes hear that
         // nobody is signed in now, as they hear a replay's sign-in.
-        tell_panes(crate::autorun::replay_to::sign_in_forgotten_event(&account_before, &s.account));
+        tell_panes_in(n, crate::autorun::replay_to::sign_in_forgotten_event(&account_before, &s.account));
     }
     // A guard the browser would not lift pauses every request: the browser
     // is answered between the assistant's calls too.
     if slot.as_ref().is_some_and(|s| s.cdp.is_guarding_saves()) {
-        answer_between_commands();
+        answer_between_commands_in(n);
     }
     crate::applog::info(format!("Auto Run: the assistant's reset: {}", answer.1));
     answer
@@ -1671,17 +1689,17 @@ fn with_changes_left(said: String, left: &[String]) -> String {
 /// Refused while a replay runs; the browser's lock is waited for 5 s at
 /// most. The panes hear that nobody is signed in now, as they hear the
 /// reset's sign-in gone (`sign_in_forgotten_event`).
-pub async fn clear_cookies_for_assistant() -> (u16, String) {
-    if crate::autorun::replay_to::is_running() {
-        return (409, crate::ai_bridge::replay_running_refusal());
+pub async fn clear_cookies_for_assistant(n: SlotNo) -> (u16, String) {
+    if crate::autorun::replay_to::state(n).is_running() {
+        return (409, crate::ai_bridge::replay_running_refusal(n));
     }
-    let Ok(mut slot) = tokio::time::timeout(crate::ai_bridge::CAPTURE_LOCK_WAIT, SESSION.lock()).await else {
+    let Ok(mut slot) = tokio::time::timeout(crate::ai_bridge::CAPTURE_LOCK_WAIT, session_slot(n).lock()).await else {
         return (409, crate::ai_bridge::OVERRIDES_BUSY.to_string());
     };
-    let (answer, event) = clear_cookies_in_for_assistant(&mut slot).await;
+    let (answer, event) = clear_cookies_in_for_assistant(n, &mut slot).await;
     let answer = crate::ai_bridge::let_go_if_silent(&mut slot, answer).await;
-    publish_overrides(&slot);
-    tell_panes(event);
+    publish_overrides_in(n, &slot);
+    tell_panes_in(n, event);
     crate::applog::info(format!("Auto Run: the assistant's clear of the cookies answered {}", answer.0));
     answer
 }
@@ -1697,10 +1715,11 @@ pub async fn clear_cookies_for_assistant() -> (u16, String) {
 /// discovery going keeps going, signed out; no replay carries on from where
 /// one stood (`DiscoveryBrowser::taken_over`).
 pub async fn clear_cookies_in_for_assistant<B: crate::ai_bridge::DiscoveryBrowser>(
+    n: SlotNo,
     slot: &mut Option<B>,
 ) -> ((u16, String), Option<crate::events::AutorunSessionChanged>) {
     use crate::autorun::overrides as ov;
-    if let Err(refused) = crate::ai_bridge::refuse_acting(slot).await {
+    if let Err(refused) = crate::ai_bridge::refuse_acting(n, slot).await {
         return (refused, None);
     }
     let Some(b) = slot.as_mut() else {
@@ -2117,7 +2136,7 @@ pub(crate) async fn replay_supervised(
     // A held browser that has gone - a discovery's, or one an earlier replay
     // or the person left - is let go before anything is refused for it or
     // replayed in it (`open_if_none` then opens a new one).
-    let_go_if_gone(&mut slot).await;
+    let_go_if_gone_in(n, &mut slot).await;
     let mut discovery = DiscoveryEnded::default();
     if by.ends_discovery() {
         discovery = crate::ai_bridge::end_discovery_for_replay(&mut slot, &root).await;
@@ -2319,7 +2338,7 @@ pub(crate) async fn replay_supervised(
             true
         }
         ReplayEnd::Ready { .. } => false,
-        _ => let_go_if_gone(&mut slot).await,
+        _ => let_go_if_gone_in(n, &mut slot).await,
     };
     if gone {
         // Said as the browser closing, keeping a failure's reason and rows.
