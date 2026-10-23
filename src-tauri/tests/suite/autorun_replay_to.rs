@@ -1275,7 +1275,7 @@ fn the_panes_hear_a_browser_a_replay_opened_and_the_account_it_signed_in() {
     assert!(replay.contains("signed_in_event(") && !replay.contains("sign_in_forgotten_event("), "{replay}");
     assert!(body("pub async fn reset_for_assistant").contains("sign_in_forgotten_event("));
     let bridge = include_str!("../../src/ai_bridge.rs").replace("\r\n", "\n");
-    assert!(!bridge.contains("sign_in_forgotten_event(") && !bridge.contains("tell_panes("), "a try tells the panes of a session it ended");
+    assert!(!bridge.contains("sign_in_forgotten_event(") && !bridge.contains("tell_panes"), "a try tells the panes of a session it ended");
 }
 
 /// The reuse trip's stopped-save line ends the guard's sentence with one

@@ -448,8 +448,9 @@ pub async fn route_as(
         // signed-in client. All were let through by the guard above.
         ("GET", "/autorun-guide") => {
             // The guide lists the rules of the area the CALLER's discovery is
-            // exploring, if it has one, never another assistant's.
-            let asker = crate::commands::autorun_slots::slot_if_any(caller).unwrap_or(SlotNo::MAIN);
+            // exploring, if it has one, never another assistant's: a caller
+            // with no browser has no area, and the guide lists every area's.
+            let asker = crate::commands::autorun_slots::slot_if_any(caller);
             match q(target, "section").filter(|s| !s.trim().is_empty()) {
                 // One section of the live guide, after the Quick rules.
                 Some(title) => {
@@ -2529,9 +2530,9 @@ fn environment_database(ctx: &BridgeContext, env: &crate::environments::Environm
 /// so the guide can never go stale on a live project.
 ///
 /// `quick` answers the Quick rules section in place of the full text, with
-/// the same live sections after it. `n` is the asker's browser: the rules
-/// listed are those of the area its discovery is exploring.
-fn autorun_guide_with_quirks(ctx: &BridgeContext, quick: bool, n: SlotNo) -> String {
+/// the same live sections after it. `n` is the asker's browser, when it has
+/// one: the rules listed are those of the area its discovery is exploring.
+fn autorun_guide_with_quirks(ctx: &BridgeContext, quick: bool, n: Option<SlotNo>) -> String {
     let mut out =
         if quick { crate::autorun::guide::quick_rules() } else { crate::autorun::guide::autorun_guide() };
     let Some(root) = crate::autorun::store::configured_root() else {
@@ -2575,9 +2576,11 @@ fn autorun_guide_with_quirks(ctx: &BridgeContext, quick: bool, n: SlotNo) -> Str
 }
 
 /// The area of the discovery going on now in slot `n`'s browser, for the
-/// guide's rules. It never waits: a call that holds the browser is busy, and
-/// the guide then lists every area's rules, which is still true.
-fn running_discovery_area(n: SlotNo) -> Option<String> {
+/// guide's rules; none for a caller with no browser (`n` is `None`). It never
+/// waits: a call that holds the browser is busy, and the guide then lists
+/// every area's rules, which is still true.
+pub fn running_discovery_area(n: Option<SlotNo>) -> Option<String> {
+    let n = n?;
     let slot = crate::commands::autorun::session_slot(n).try_lock().ok()?;
     slot.as_ref()?.discovery.as_ref()?.area.clone()
 }

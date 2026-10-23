@@ -2529,7 +2529,7 @@ pub(crate) async fn guard_supervised(
         guard_for_case(&mut session.cdp, &mut session.guarded_case, root, organization, project, case_id, may_lift).await;
     settle_guard_owner(&session.cdp, session.guarded_case, &mut session.guard_owner, case_id, who);
     if session.cdp.is_guarding_saves() {
-        answer_between_commands();
+        answer_between_commands_in(session.slot);
     }
     out
 }

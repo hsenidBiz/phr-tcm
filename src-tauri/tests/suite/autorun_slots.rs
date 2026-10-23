@@ -388,6 +388,26 @@ mod routing {
         for head in ["fn call_the_replay_going(", "pub fn assistant_replay_going("] {
             assert!(body(&bridge, head).contains("assistant_run(n)"), "{head} reads main's run");
         }
+        // A guarded try or step answers the paused requests in the slot of
+        // the session it guards, never main's.
+        let guard = body(&commands, "pub(crate) async fn guard_supervised(");
+        assert!(guard.contains("answer_between_commands_in(session.slot)"), "{guard}");
+        assert!(!guard.contains("answer_between_commands()"), "{guard}");
+    }
+
+    /// The guide lists the rules of the area the CALLER's own discovery is
+    /// exploring. A caller with no browser has none: it is never lent main's.
+    #[test]
+    fn the_guide_reads_only_the_callers_own_discovery_area() {
+        assert_eq!(v2_lib::ai_bridge::running_discovery_area(None), None);
+        let bridge = include_str!("../../src/ai_bridge.rs").replace("\r\n", "\n");
+        let route = &bridge[bridge.find("(\"GET\", \"/autorun-guide\")").unwrap()..];
+        let route = &route[..route.find("(\"GET\", \"/autorun-role\")").unwrap()];
+        assert!(route.contains("let asker = crate::commands::autorun_slots::slot_if_any(caller);"), "{route}");
+        assert!(!route.contains("unwrap_or(SlotNo::MAIN)"), "a caller with no browser is lent main's area");
+        assert!(bridge.contains("fn autorun_guide_with_quirks(ctx: &BridgeContext, quick: bool, n: Option<SlotNo>)"));
+        let area = &bridge[bridge.find("fn running_discovery_area(").unwrap()..];
+        assert!(area[..area.find("\n}").unwrap()].contains("let n = n?;"));
     }
 
     fn ctx() -> v2_lib::ai_bridge::BridgeContext {
