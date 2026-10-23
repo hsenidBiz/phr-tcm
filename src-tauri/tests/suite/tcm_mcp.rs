@@ -3962,8 +3962,8 @@ use v2_lib::mcp_session::SessionBook;
 /// The longest any wait in these tests lasts: a failure is a failed assertion, never a hang.
 const SERVE_DEADLINE: Duration = Duration::from_secs(30);
 
-/// A writer that gives up the thread between bytes, so a response written without the output locked
-/// would be mixed with another's.
+/// A writer that gives up the thread between bytes, so a response written in pieces under separate
+/// locks of the output would be mixed with another's.
 struct YieldingWriter(Arc<Mutex<Vec<u8>>>);
 
 impl std::io::Write for YieldingWriter {
@@ -3988,9 +3988,10 @@ fn tool_call_line(id: u64, tool: &str, arguments: serde_json::Value) -> String {
     serde_json::json!({ "jsonrpc": "2.0", "id": id, "method": "tools/call", "params": { "name": tool, "arguments": arguments } }).to_string()
 }
 
+/// The complete lines written so far (those ending in a newline): a line still being written is not one yet.
 fn response_lines(bytes: &Arc<Mutex<Vec<u8>>>) -> Vec<String> {
-    let text = String::from_utf8(bytes.lock().unwrap().clone()).expect("utf-8 output");
-    text.lines().map(str::to_string).collect()
+    let text = String::from_utf8_lossy(&bytes.lock().unwrap()).into_owned();
+    text.split_inclusive('\n').filter(|l| l.ends_with('\n')).map(|l| l.trim_end_matches(['\r', '\n']).to_string()).collect()
 }
 
 /// `serve_lines` over `lines` on a thread of its own; the output it writes, and the channel that says it returned.
