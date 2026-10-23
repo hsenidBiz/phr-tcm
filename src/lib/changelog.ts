@@ -27,6 +27,15 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.3.1-beta.2",
+    date: "2026-10-23",
+    items: [
+      "Auto Run: a response check can say when its request may start: not before a pause after the last keystroke, or at once, timed by the browser's own clock so a slow server does not fail it. The answer and the run report give the measured start.",
+      "Auto Run: a response check can also require that the page did not fully reload, for filters that fetch new data instead of reloading.",
+      "Playwright: the header shows whether your repo's specs are found and ready, and refreshes them by itself when they change.",
+    ],
+  },
+  {
     version: "2.3.1-beta.1",
     date: "2026-10-23",
     items: [
