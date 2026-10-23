@@ -27,6 +27,13 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.3.1-beta.4",
+    date: "2026-10-24",
+    items: [
+      "Auto Run: groundwork for several assistants working at once, each in a browser of its own. Nothing changes yet: every assistant still uses the one Auto Run browser.",
+    ],
+  },
+  {
     version: "2.3.1-beta.3",
     date: "2026-10-23",
     items: [
