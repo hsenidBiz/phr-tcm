@@ -420,7 +420,7 @@ fn the_route_publishes_the_discovery_after_letting_a_dead_browser_go() {
     let route = &source[source.find("async fn autorun_inspect(").unwrap()..];
     let route = &route[..route.find("\n}").unwrap()];
     let let_go = route.find("let_go_if_silent(&mut slot, answer)").expect("a dead browser is let go");
-    let publish = route.find("publish_discovery(&slot)").expect("the window is not told");
+    let publish = route.find("publish_discovery_in(n, &slot)").expect("the window is not told");
     assert!(let_go < publish, "published before the let-go");
 }
 

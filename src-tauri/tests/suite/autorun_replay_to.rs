@@ -17,7 +17,7 @@ use v2_lib::autorun::preconditions::{PreconditionDb, NEED_DB, NOT_CHECKED};
 use v2_lib::autorun::recipe::save_recipe;
 use v2_lib::autorun::replay_to::{
     guarding_other_case, opened_event, replay_to, replay_to_checked, signed_in_event, stopped_before_opening, OneReplay,
-    Marks, ReplayAnswer, ReplayEnd, ReplayPhase, ReplayRequest, Reuse, ALREADY_RUNNING, CANCEL,
+    Marks, ReplayAnswer, ReplayEnd, ReplayPhase, ReplayRequest, ReplayState, Reuse, ALREADY_RUNNING,
 };
 use v2_lib::ai_bridge::{DiscoveryBrowser, DiscoveryParts};
 use v2_lib::commands::autorun::{
@@ -102,7 +102,7 @@ async fn replay(
     r: &ReplayRequest,
     account: &mut Option<String>,
     guarded: &mut Option<i32>,
-    cancel: &AtomicBool,
+    state: &ReplayState,
     progress: impl FnMut(i32, i32),
 ) -> ReplayEnd {
     let mut held = Held::supervised();
@@ -118,7 +118,7 @@ async fn replay(
         guarded,
         true,
         &quick(),
-        cancel,
+        state,
         || -> PreconditionDb<FakeStageDb> { PreconditionDb::ReadingOff },
         progress,
     )
@@ -131,8 +131,8 @@ async fn replay(
 async fn a_case_with_no_saved_script_is_refused() {
     let dir = tempfile::tempdir().unwrap();
     let mut d = common::FakePage::default().driver();
-    let (mut account, mut held, cancel) = (None, Held::supervised(), AtomicBool::new(false));
-    let end = replay_to(&mut d, dir.path(), "acme", "Web", &req(2), &mut account, &mut held, &cancel, |_, _| {}).await;
+    let (mut account, mut held, state) = (None, Held::supervised(), ReplayState::new());
+    let end = replay_to(&mut d, dir.path(), "acme", "Web", &req(2), &mut account, &mut held, &state, |_, _| {}).await;
     assert_eq!(end, ReplayEnd::Refused("case 77 has no saved script".into()));
     assert_eq!(end.sentence(), "case 77 has no saved script");
     assert!(d.calls.is_empty(), "the browser was used: {:?}", d.methods());
@@ -144,9 +144,9 @@ async fn a_step_outside_the_script_is_refused() {
     project(dir.path(), &script(three_steps()));
     for step in [0, -1, 5] {
         let mut d = common::FakePage::default().driver();
-        let (mut account, mut held, cancel) = (None, Held::supervised(), AtomicBool::new(false));
+        let (mut account, mut held, state) = (None, Held::supervised(), ReplayState::new());
         let end =
-            replay_to(&mut d, dir.path(), "acme", "Web", &req(step), &mut account, &mut held, &cancel, |_, _| {}).await;
+            replay_to(&mut d, dir.path(), "acme", "Web", &req(step), &mut account, &mut held, &state, |_, _| {}).await;
         assert_eq!(
             end.sentence(),
             format!("step {step} is not in case 77's script (it has steps 1 to 3)"),
@@ -164,8 +164,8 @@ async fn a_script_with_no_area_stops_before_step_1_with_the_area_sentence() {
     s.area = None;
     project(dir.path(), &s);
     let (mut d, app) = app();
-    let (mut account, mut guarded, cancel) = (None, None, AtomicBool::new(false));
-    let end = replay(&mut d, dir.path(), &req(3), &mut account, &mut guarded, &cancel, |_, _| {}).await;
+    let (mut account, mut guarded, state) = (None, None, ReplayState::new());
+    let end = replay(&mut d, dir.path(), &req(3), &mut account, &mut guarded, &state, |_, _| {}).await;
     assert_eq!(end, ReplayEnd::Refused(NEEDS_SCRIPT_AREA.into()));
     assert!(log(&app).is_empty(), "nothing should have happened in the browser: {:?}", log(&app));
     assert_eq!(account, None);
@@ -179,9 +179,9 @@ async fn steps_before_n_run_after_the_sign_in_and_the_trip_and_step_n_does_not()
     let dir = tempfile::tempdir().unwrap();
     project(dir.path(), &script(three_steps()));
     let (mut d, app) = app();
-    let (mut account, mut guarded, cancel) = (None, None, AtomicBool::new(false));
+    let (mut account, mut guarded, state) = (None, None, ReplayState::new());
     let mut heard = vec![];
-    let end = replay(&mut d, dir.path(), &req(3), &mut account, &mut guarded, &cancel, |k, of| heard.push((k, of))).await;
+    let end = replay(&mut d, dir.path(), &req(3), &mut account, &mut guarded, &state, |k, of| heard.push((k, of))).await;
     assert_eq!(end, ReplayEnd::Ready { case_id: ID, step: 3, notice: None, whole: None, cleanup: None });
     assert_eq!(end.sentence(), "replayed case 77 to step 3 - the browser is on the page before step 3 runs");
     let seen = log(&app);
@@ -199,9 +199,9 @@ async fn the_last_step_plus_1_replays_every_step() {
     let dir = tempfile::tempdir().unwrap();
     project(dir.path(), &script(three_steps()));
     let (mut d, app) = app();
-    let (mut account, mut guarded, cancel) = (None, None, AtomicBool::new(false));
+    let (mut account, mut guarded, state) = (None, None, ReplayState::new());
     let mut heard = vec![];
-    let end = replay(&mut d, dir.path(), &req(4), &mut account, &mut guarded, &cancel, |k, of| heard.push((k, of))).await;
+    let end = replay(&mut d, dir.path(), &req(4), &mut account, &mut guarded, &state, |k, of| heard.push((k, of))).await;
     // Past the last step: the whole case ran, said as such, never as a
     // replay that stopped partway.
     assert_eq!(end, ReplayEnd::Ready { case_id: ID, step: 4, notice: None, whole: Some(3), cleanup: None });
@@ -236,8 +236,8 @@ async fn a_replayed_components_wait_for_files_the_text_it_found() {
         ])),
     );
     let (mut d, app) = app();
-    let (mut account, mut guarded, cancel) = (None, None, AtomicBool::new(false));
-    let end = replay(&mut d, dir.path(), &req(2), &mut account, &mut guarded, &cancel, |_, _| {}).await;
+    let (mut account, mut guarded, state) = (None, None, ReplayState::new());
+    let end = replay(&mut d, dir.path(), &req(2), &mut account, &mut guarded, &state, |_, _| {}).await;
     assert_eq!(end, ReplayEnd::Ready { case_id: ID, step: 2, notice: None, whole: None, cleanup: None }, "{:?}", log(&app));
     let map = v2_lib::autorun::discovery_map::load_map(dir.path(), "acme", "Web").unwrap();
     let area = map.areas.iter().find(|a| a.area == "Leave").expect("nothing filed under the case's area");
@@ -262,7 +262,7 @@ async fn a_replayed_step_in_a_second_tab_carries_its_tab() {
     let (mut d, app) = app();
     // A click opens a tab, as the case's link does.
     d.tabs.opens_on = Some("Input.dispatchMouseEvent".into());
-    let (mut account, mut guarded, cancel) = (None, None, AtomicBool::new(false));
+    let (mut account, mut guarded, state) = (None, None, ReplayState::new());
     let mut held = Held::supervised();
     let mut tabs = Vec::new();
     let end = replay_to_traced(
@@ -277,7 +277,7 @@ async fn a_replayed_step_in_a_second_tab_carries_its_tab() {
         &mut guarded,
         true,
         &quick(),
-        &cancel,
+        &state,
         || -> PreconditionDb<FakeStageDb> { PreconditionDb::ReadingOff },
         |_, _| {},
         &mut tabs,
@@ -305,8 +305,8 @@ async fn a_failing_step_stops_the_replay_there_with_its_outcomes() {
     ]);
     project(dir.path(), &script(steps));
     let (mut d, app) = app();
-    let (mut account, mut guarded, cancel) = (None, None, AtomicBool::new(false));
-    let end = replay(&mut d, dir.path(), &req(4), &mut account, &mut guarded, &cancel, |_, _| {}).await;
+    let (mut account, mut guarded, state) = (None, None, ReplayState::new());
+    let end = replay(&mut d, dir.path(), &req(4), &mut account, &mut guarded, &state, |_, _| {}).await;
     let ReplayEnd::StoppedAt { phase, step, why, outcomes } = &end else { panic!("{end:?}") };
     assert_eq!((*phase, *step), (ReplayPhase::Step, 2));
     assert_eq!(outcomes.len(), 2);
@@ -323,11 +323,11 @@ async fn a_stop_mid_replay_ends_it_before_the_next_step() {
     let dir = tempfile::tempdir().unwrap();
     project(dir.path(), &script(three_steps()));
     let (mut d, app) = app();
-    let (mut account, mut guarded, cancel) = (None, None, AtomicBool::new(false));
+    let (mut account, mut guarded, state) = (None, None, ReplayState::new());
     // Asked as step 2 is about to run: heard before its first action.
-    let end = replay(&mut d, dir.path(), &req(4), &mut account, &mut guarded, &cancel, |k, _| {
+    let end = replay(&mut d, dir.path(), &req(4), &mut account, &mut guarded, &state, |k, _| {
         if k == 2 {
-            cancel.store(true, Ordering::SeqCst);
+            state.cancel.store(true, Ordering::SeqCst);
         }
     })
     .await;
@@ -336,20 +336,20 @@ async fn a_stop_mid_replay_ends_it_before_the_next_step() {
     assert!(clicked(&app, "#s1") && !clicked(&app, "#s2"), "{:?}", log(&app));
 }
 
-/// A browser that sets `cancel` once `what` has been clicked: a stop asked
+/// A browser that sets `state.cancel` once `what` has been clicked: a stop asked
 /// for while a step's action runs.
 struct StopsAfterClick {
     inner: ScriptedDriver,
     app: common::MenuApp,
     what: &'static str,
-    cancel: Arc<AtomicBool>,
+    state: Arc<ReplayState>,
 }
 
 impl Driver for StopsAfterClick {
     async fn call(&mut self, method: &str, params: Value) -> Result<Value, CdpError> {
         let answer = self.inner.call(method, params).await;
         if clicked(&self.app, self.what) {
-            self.cancel.store(true, Ordering::SeqCst);
+            self.state.cancel.store(true, Ordering::SeqCst);
         }
         answer
     }
@@ -376,12 +376,12 @@ async fn a_stop_on_the_way_to_the_area_is_heard_before_step_1_begins() {
     let dir = tempfile::tempdir().unwrap();
     project(dir.path(), &script(three_steps()));
     let (inner, app) = app();
-    let cancel = Arc::new(AtomicBool::new(false));
+    let state = Arc::new(ReplayState::new());
     let watched = common::MenuApp { log: app.log.clone(), path: app.path.clone() };
-    let mut d = StopsAfterClick { inner, app: watched, what: "Leave", cancel: cancel.clone() };
+    let mut d = StopsAfterClick { inner, app: watched, what: "Leave", state: state.clone() };
     let (mut account, mut guarded) = (None, None);
     let began = std::cell::RefCell::new(Vec::new());
-    let end = replay(&mut d, dir.path(), &req(4), &mut account, &mut guarded, &cancel, |k, _| began.borrow_mut().push(k)).await;
+    let end = replay(&mut d, dir.path(), &req(4), &mut account, &mut guarded, &state, |k, _| began.borrow_mut().push(k)).await;
     assert_eq!(end, ReplayEnd::Stopped { step: 1 });
     assert!(clicked(&app, "Leave"), "the trip to the area ran: {:?}", log(&app));
     assert!(began.borrow().is_empty(), "step 1 began: {:?}", began.borrow());
@@ -402,11 +402,11 @@ async fn a_stop_during_an_action_ends_the_replay_before_the_steps_next_action() 
     ]);
     project(dir.path(), &script(steps));
     let (inner, app) = app();
-    let cancel = Arc::new(AtomicBool::new(false));
+    let state = Arc::new(ReplayState::new());
     let watched = common::MenuApp { log: app.log.clone(), path: app.path.clone() };
-    let mut d = StopsAfterClick { inner, app: watched, what: "#a", cancel: cancel.clone() };
+    let mut d = StopsAfterClick { inner, app: watched, what: "#a", state: state.clone() };
     let (mut account, mut guarded) = (None, None);
-    let end = replay(&mut d, dir.path(), &req(4), &mut account, &mut guarded, &cancel, |_, _| {}).await;
+    let end = replay(&mut d, dir.path(), &req(4), &mut account, &mut guarded, &state, |_, _| {}).await;
     assert_eq!(end, ReplayEnd::Stopped { step: 2 });
     assert!(clicked(&app, "#s1") && clicked(&app, "#a"), "{:?}", log(&app));
     assert!(!clicked(&app, "#b") && !clicked(&app, "#c"), "the step ran on after the stop: {:?}", log(&app));
@@ -432,9 +432,9 @@ async fn a_failed_action_ends_the_replay_at_once() {
     ]);
     project(dir.path(), &script(steps));
     let (mut d, app) = app();
-    let (mut account, mut guarded, cancel) = (None, None, AtomicBool::new(false));
+    let (mut account, mut guarded, state) = (None, None, ReplayState::new());
     let began = std::time::Instant::now();
-    let end = replay(&mut d, dir.path(), &req(4), &mut account, &mut guarded, &cancel, |_, _| {}).await;
+    let end = replay(&mut d, dir.path(), &req(4), &mut account, &mut guarded, &state, |_, _| {}).await;
     let ReplayEnd::StoppedAt { phase, step, outcomes, .. } = &end else { panic!("{end:?}") };
     assert_eq!((*phase, *step), (ReplayPhase::Step, 2));
     assert!(!outcomes[0].ok, "{outcomes:?}");
@@ -482,8 +482,8 @@ async fn the_browser_closing_mid_replay_ends_it_saying_the_browser_closed() {
     let (inner, app) = app();
     let dead = Arc::new(AtomicBool::new(false));
     let mut d = Dies { inner, dead: dead.clone() };
-    let (mut account, mut guarded, cancel) = (None, None, AtomicBool::new(false));
-    let end = replay(&mut d, dir.path(), &req(4), &mut account, &mut guarded, &cancel, |k, _| {
+    let (mut account, mut guarded, state) = (None, None, ReplayState::new());
+    let end = replay(&mut d, dir.path(), &req(4), &mut account, &mut guarded, &state, |k, _| {
         if k == 2 {
             dead.store(true, Ordering::SeqCst);
         }
@@ -505,8 +505,8 @@ async fn a_replay_in_a_browser_already_gone_says_why_it_stopped_at_step_1() {
     let (inner, app) = app();
     let dead = Arc::new(AtomicBool::new(true));
     let mut d = Dies { inner, dead };
-    let (mut account, mut guarded, cancel) = (None, None, AtomicBool::new(false));
-    let end = replay(&mut d, dir.path(), &req(4), &mut account, &mut guarded, &cancel, |_, _| {}).await;
+    let (mut account, mut guarded, state) = (None, None, ReplayState::new());
+    let end = replay(&mut d, dir.path(), &req(4), &mut account, &mut guarded, &state, |_, _| {}).await;
     let said = end.sentence();
     assert!(said.contains("step 1"), "{said}");
     assert_ne!(said, "the replay was stopped at step 1", "no reason given");
@@ -534,7 +534,7 @@ async fn a_precondition_not_met_stops_it_with_its_blocked_sentence_and_signs_nob
     let flow: Flow = serde_json::from_value(cycle_flow_json()).unwrap();
     flow_store::save(dir.path(), "acme", "Web", &flow).unwrap();
     let (mut d, app) = app();
-    let (mut account, mut guarded, cancel) = (None, None, AtomicBool::new(false));
+    let (mut account, mut guarded, state) = (None, None, ReplayState::new());
     let mut held = Held::supervised();
     let db = FakeStageDb::new().answer("/*publish*/", Ok(false));
     let end = replay_to_checked(
@@ -549,7 +549,7 @@ async fn a_precondition_not_met_stops_it_with_its_blocked_sentence_and_signs_nob
         &mut guarded,
         true,
         &quick(),
-        &cancel,
+        &state,
         || PreconditionDb::Ready(db.clone()),
         |_, _| {},
     )
@@ -568,7 +568,7 @@ async fn with_database_read_access_off_no_database_is_asked_and_the_notice_is_ca
     let dir = tempfile::tempdir().unwrap();
     project(dir.path(), &with_precondition());
     let (mut d, app) = app();
-    let (mut account, mut guarded, cancel) = (None, None, AtomicBool::new(false));
+    let (mut account, mut guarded, state) = (None, None, ReplayState::new());
     let mut held = Held::supervised();
     let db = FakeStageDb::new();
     let r = ReplayRequest { case_id: ID, step: 2, db_read_access: false };
@@ -584,7 +584,7 @@ async fn with_database_read_access_off_no_database_is_asked_and_the_notice_is_ca
         &mut guarded,
         true,
         &quick(),
-        &cancel,
+        &state,
         || if r.db_read_access { PreconditionDb::Ready(db.clone()) } else { PreconditionDb::ReadingOff },
         |_, _| {},
     )
@@ -599,9 +599,9 @@ async fn with_no_database_to_ask_the_plain_replay_says_so() {
     let dir = tempfile::tempdir().unwrap();
     project(dir.path(), &with_precondition());
     let (mut d, app) = app();
-    let (mut account, mut held, cancel) = (None, Held::supervised(), AtomicBool::new(false));
+    let (mut account, mut held, state) = (None, Held::supervised(), ReplayState::new());
     let r = ReplayRequest { case_id: ID, step: 2, db_read_access: true };
-    let end = replay_to(&mut d, dir.path(), "acme", "Web", &r, &mut account, &mut held, &cancel, |_, _| {}).await;
+    let end = replay_to(&mut d, dir.path(), "acme", "Web", &r, &mut account, &mut held, &state, |_, _| {}).await;
     assert_eq!(end, ReplayEnd::Blocked(NEED_DB.into()), "Blocked, as a watched start with no database to ask is");
     assert!(log(&app).is_empty());
 }
@@ -614,8 +614,8 @@ async fn an_account_something_else_holds_is_refused_with_the_lease_sentence() {
     let env = v2_lib::environments::active_id(dir.path()).unwrap();
     let _theirs = lease::try_acquire(&env, "admin", Holder::Template).unwrap();
     let (mut d, app) = app();
-    let (mut account, mut guarded, cancel) = (None, None, AtomicBool::new(false));
-    let end = replay(&mut d, dir.path(), &req(3), &mut account, &mut guarded, &cancel, |_, _| {}).await;
+    let (mut account, mut guarded, state) = (None, None, ReplayState::new());
+    let end = replay(&mut d, dir.path(), &req(3), &mut account, &mut guarded, &state, |_, _| {}).await;
     let ReplayEnd::Refused(why) = &end else { panic!("{end:?}") };
     assert!(lease::is_in_use(why), "{why}");
     assert!(why.contains("an API template run"), "{why}");
@@ -631,8 +631,8 @@ async fn a_must_not_save_script_is_guarded_before_step_1() {
     s.no_save = true;
     project(dir.path(), &s);
     let (mut d, app) = app();
-    let (mut account, mut guarded, cancel) = (None, None, AtomicBool::new(false));
-    let end = replay(&mut d, dir.path(), &req(2), &mut account, &mut guarded, &cancel, |_, _| {}).await;
+    let (mut account, mut guarded, state) = (None, None, ReplayState::new());
+    let end = replay(&mut d, dir.path(), &req(2), &mut account, &mut guarded, &state, |_, _| {}).await;
     assert!(matches!(end, ReplayEnd::Ready { .. }), "{end:?}");
     assert_eq!(guarded, Some(ID));
     let methods = d.methods();
@@ -650,13 +650,96 @@ fn a_second_replay_is_refused_while_one_is_running() {
     let _a = crate::serial::autorun();
     v2_lib::autorun::replay_to::stop();
     let first = OneReplay::claim().expect("the first replay");
-    assert!(!CANCEL.load(Ordering::SeqCst), "a new replay starts with no stop pending");
+    assert!(
+        !v2_lib::autorun::replay_to::state(v2_lib::autorun::slots::SlotNo::MAIN).cancel.load(Ordering::SeqCst),
+        "a new replay starts with no stop pending"
+    );
     assert!(v2_lib::autorun::replay_to::is_running());
     assert_eq!(OneReplay::claim().err().as_deref(), Some(ALREADY_RUNNING));
     assert_eq!(ALREADY_RUNNING, "a replay is already running - wait for it to finish");
     drop(first);
     assert!(!v2_lib::autorun::replay_to::is_running());
     assert!(OneReplay::claim().is_ok(), "the slot frees once the replay ends");
+}
+
+/// Each browser slot has its replay to claim: one replay at a time in a slot,
+/// not one in all. The person's `is_running` is main's alone; `any_running`
+/// hears every slot.
+#[test]
+fn each_slot_claims_its_own_replay() {
+    use v2_lib::autorun::replay_to::any_running;
+    use v2_lib::autorun::slots::SlotNo;
+    let _a = crate::serial::autorun();
+    let one = SlotNo(1);
+    let main = OneReplay::claim_in(SlotNo::MAIN).expect("main's replay");
+    let extra = OneReplay::claim_in(one).expect("slot 1's replay, beside main's");
+    assert_eq!(OneReplay::claim_in(one).err().as_deref(), Some(ALREADY_RUNNING));
+    assert_eq!(OneReplay::claim_in(SlotNo::MAIN).err().as_deref(), Some(ALREADY_RUNNING));
+    drop(extra);
+    assert!(v2_lib::autorun::replay_to::is_running(), "main's replay is still going");
+    assert!(any_running());
+    assert!(OneReplay::claim_in(one).is_ok(), "slot 1 frees once its replay ends");
+    drop(main);
+    // Only slot 1's is going now (the claim above was dropped at once).
+    let extra = OneReplay::claim_for_assistant_in(one).expect("slot 1 again");
+    assert!(!v2_lib::autorun::replay_to::is_running(), "is_running is main's alone");
+    assert!(any_running(), "a replay in slot 1 is a replay going");
+    assert!(v2_lib::autorun::replay_to::state(one).assistants_replay_running());
+    assert!(!v2_lib::autorun::replay_to::assistants_replay_running(), "main's is not the assistant's");
+    drop(extra);
+    assert!(!any_running());
+    assert!(!v2_lib::autorun::replay_to::state(one).is_running());
+}
+
+/// A stop asked of one slot's replay is not heard by another's, and a new
+/// claim clears only its own slot's stop.
+#[test]
+fn a_stop_in_one_slot_is_not_heard_in_another() {
+    use v2_lib::autorun::replay_to::state;
+    use v2_lib::autorun::slots::SlotNo;
+    let _a = crate::serial::autorun();
+    let one = SlotNo(1);
+    state(SlotNo::MAIN).cancel.store(false, Ordering::SeqCst);
+    state(one).stop();
+    assert!(state(one).cancel.load(Ordering::SeqCst));
+    assert!(!state(SlotNo::MAIN).cancel.load(Ordering::SeqCst), "main heard slot 1's stop");
+    state(SlotNo::MAIN).stop_on_request();
+    assert!(state(SlotNo::MAIN).stop_was_requested());
+    assert!(!state(one).stop_was_requested(), "slot 1 heard a stop on request meant for main");
+    state(SlotNo::MAIN).forget_stop_request();
+    // Claiming slot 1 clears slot 1's stop and leaves main's alone.
+    state(SlotNo::MAIN).stop();
+    let claimed = OneReplay::claim_in(one).expect("slot 1's replay");
+    assert!(!state(one).cancel.load(Ordering::SeqCst), "a new replay starts with no stop pending");
+    assert!(state(SlotNo::MAIN).cancel.load(Ordering::SeqCst), "slot 1's claim cleared main's stop");
+    drop(claimed);
+    // The free functions are main's.
+    state(SlotNo::MAIN).cancel.store(false, Ordering::SeqCst);
+    v2_lib::autorun::replay_to::stop();
+    assert!(state(SlotNo::MAIN).cancel.load(Ordering::SeqCst));
+    assert!(!state(one).cancel.load(Ordering::SeqCst));
+    state(SlotNo::MAIN).cancel.store(false, Ordering::SeqCst);
+}
+
+/// How far a replay has got is its slot's own.
+#[test]
+fn progress_is_per_slot() {
+    use v2_lib::autorun::replay_to::{progress, state};
+    use v2_lib::autorun::slots::SlotNo;
+    let _a = crate::serial::autorun();
+    let one = SlotNo(1);
+    let before = progress();
+    state(one).note_progress(2, 5);
+    state(one).note_cleanup(Some(7));
+    assert_eq!(state(one).progress(), (2, 5));
+    assert_eq!(state(one).cleanup_at(), Some(7));
+    assert_eq!(progress(), before, "main's progress moved with slot 1's");
+    assert_eq!(v2_lib::autorun::replay_to::cleanup_at(), state(SlotNo::MAIN).cleanup_at());
+    // A claim of slot 1 starts its progress afresh.
+    let claimed = OneReplay::claim_in(one).unwrap();
+    assert_eq!(state(one).progress(), (0, 0));
+    assert_eq!(state(one).cleanup_at(), None);
+    drop(claimed);
 }
 
 // ---- the remembered browser ----------------------------------------------
@@ -697,7 +780,7 @@ async fn an_assistants_replay_never_lifts_a_guard_held_for_another_case() {
         .await
         .unwrap();
     assert!(!may_lift, "the assistant's replay may lift the person's guard");
-    let (mut account, cancel) = (None, AtomicBool::new(false));
+    let (mut account, state) = (None, ReplayState::new());
     let mut held = Held::supervised();
     let end = replay_to_checked(
         &mut d,
@@ -711,7 +794,7 @@ async fn an_assistants_replay_never_lifts_a_guard_held_for_another_case() {
         &mut guarded,
         may_lift,
         &quick(),
-        &cancel,
+        &state,
         || -> PreconditionDb<FakeStageDb> { PreconditionDb::ReadingOff },
         |_, _| {},
     )
@@ -727,7 +810,7 @@ async fn an_assistants_replay_never_lifts_a_guard_held_for_another_case() {
     // The person's own replay of the same case does lift it. (`replay`
     // brings its own lease, so this one lets the account go first.)
     drop(held);
-    let end = replay(&mut d, dir.path(), &req(2), &mut account, &mut guarded, &cancel, |_, _| {}).await;
+    let end = replay(&mut d, dir.path(), &req(2), &mut account, &mut guarded, &state, |_, _| {}).await;
     assert!(matches!(end, ReplayEnd::Ready { .. }), "{end:?}");
     assert!(!d.is_guarding_saves());
     assert_eq!(guarded, None);
@@ -826,7 +909,7 @@ async fn assistant_replay(b: &mut Supervised, root: &Path, armed: &Arc<AtomicBoo
         Ok(may_lift) => may_lift,
         Err(why) => return ReplayEnd::Refused(why),
     };
-    let (mut account, cancel) = (b.account.take(), AtomicBool::new(false));
+    let (mut account, state) = (b.account.take(), ReplayState::new());
     let end = replay_to_checked(
         &mut b.d,
         &mut v2_lib::autorun::setup::NoBrowsers::<crate::common::ScriptedDriver>::default(),
@@ -839,7 +922,7 @@ async fn assistant_replay(b: &mut Supervised, root: &Path, armed: &Arc<AtomicBoo
         &mut b.guarded_case,
         may_lift,
         &quick(),
-        &cancel,
+        &state,
         || -> PreconditionDb<FakeStageDb> { PreconditionDb::ReadingOff },
         |k, _| {
             if k == 1 {
@@ -1032,8 +1115,8 @@ async fn an_area_that_cannot_be_reached_stops_the_replay_while_going_there_not_a
     project(dir.path(), &script(three_steps()));
     // A menu with no Leave link: the trip to the area cannot be made.
     let (mut d, app) = common::menu_app(&[("link", "Payroll", "/hr/payroll")], "/hr/home/index", 0);
-    let (mut account, mut guarded, cancel) = (None, None, AtomicBool::new(false));
-    let end = replay(&mut d, dir.path(), &req(3), &mut account, &mut guarded, &cancel, |_, _| {}).await;
+    let (mut account, mut guarded, state) = (None, None, ReplayState::new());
+    let end = replay(&mut d, dir.path(), &req(3), &mut account, &mut guarded, &state, |_, _| {}).await;
     let ReplayEnd::StoppedAt { phase, why, outcomes, .. } = &end else { panic!("{end:?}") };
     assert_eq!(*phase, ReplayPhase::Area);
     assert_eq!(outcomes.len(), 1);
@@ -1124,7 +1207,7 @@ async fn a_save_stopped_for_another_cases_guard_says_whose_draft_it_guards() {
     let (inner, app) = app();
     let armed = Arc::new(AtomicBool::new(false));
     let mut d = SavesWhenArmed { inner, armed: armed.clone(), blocked: None };
-    let (mut account, cancel) = (None, AtomicBool::new(false));
+    let (mut account, state) = (None, ReplayState::new());
     let mut guarded = Some(5);
     let mut held = Held::supervised();
     let end = replay_to_checked(
@@ -1139,7 +1222,7 @@ async fn a_save_stopped_for_another_cases_guard_says_whose_draft_it_guards() {
         &mut guarded,
         ReplayBy::Assistant.may_lift(Some(&GuardOwner::Person)),
         &quick(),
-        &cancel,
+        &state,
         || -> PreconditionDb<FakeStageDb> { PreconditionDb::ReadingOff },
         |k, _| {
             if k == 2 {
@@ -1192,7 +1275,7 @@ fn the_panes_hear_a_browser_a_replay_opened_and_the_account_it_signed_in() {
     assert!(replay.contains("signed_in_event(") && !replay.contains("sign_in_forgotten_event("), "{replay}");
     assert!(body("pub async fn reset_for_assistant").contains("sign_in_forgotten_event("));
     let bridge = include_str!("../../src/ai_bridge.rs").replace("\r\n", "\n");
-    assert!(!bridge.contains("sign_in_forgotten_event(") && !bridge.contains("tell_panes("), "a try tells the panes of a session it ended");
+    assert!(!bridge.contains("sign_in_forgotten_event(") && !bridge.contains("tell_panes"), "a try tells the panes of a session it ended");
 }
 
 /// The reuse trip's stopped-save line ends the guard's sentence with one
@@ -1222,10 +1305,10 @@ async fn a_replay_closes_the_tabs_left_from_before_and_recreates_the_cases_own()
     let (mut d, app) = app();
     d.tabs.open.push("left-over".into());
     d.tabs.current = "left-over".into();
-    let (mut account, mut guarded, cancel) = (None, None, AtomicBool::new(false));
+    let (mut account, mut guarded, state) = (None, None, ReplayState::new());
     // A click opens a tab, as the case's link does.
     d.tabs.opens_on = Some("Input.dispatchMouseEvent".into());
-    let end = replay(&mut d, dir.path(), &req(3), &mut account, &mut guarded, &cancel, |_, _| {}).await;
+    let end = replay(&mut d, dir.path(), &req(3), &mut account, &mut guarded, &state, |_, _| {}).await;
     assert_eq!(end, ReplayEnd::Ready { case_id: ID, step: 3, notice: None, whole: None, cleanup: None }, "{:?}", log(&app));
     assert_eq!(d.tabs.closed_others, 1, "the tabs from before were not closed first");
     assert_eq!(d.tabs.open, ["report"], "the case's own tab was not opened again");
@@ -1273,8 +1356,8 @@ async fn carry(
     held: &mut Held,
     guarded: &mut Option<i32>,
 ) -> ReplayEnd {
-    let cancel = AtomicBool::new(false);
-    carry_on(d, root, "acme", "Web", r, from, account, held, guarded, &quick(), &cancel, |_, _| {}, &mut Vec::new(), false, &mut Marks::default())
+    let state = ReplayState::new();
+    carry_on(d, root, "acme", "Web", r, from, account, held, guarded, &quick(), &state, |_, _| {}, &mut Vec::new(), false, &mut Marks::default())
         .await
 }
 
@@ -1288,7 +1371,7 @@ async fn a_replay_carries_on_from_where_the_last_one_stood() {
     project(dir.path(), &saved);
     let (mut d, app) = app();
     let mut held = Held::supervised();
-    let (mut account, mut guarded, cancel) = (None, None, AtomicBool::new(false));
+    let (mut account, mut guarded, state) = (None, None, ReplayState::new());
     let end = replay_to_checked(
         &mut d,
         &mut v2_lib::autorun::setup::NoBrowsers::<crate::common::ScriptedDriver>::default(),
@@ -1301,7 +1384,7 @@ async fn a_replay_carries_on_from_where_the_last_one_stood() {
         &mut guarded,
         true,
         &quick(),
-        &cancel,
+        &state,
         || -> PreconditionDb<FakeStageDb> { PreconditionDb::ReadingOff },
         |_, _| {},
     )
@@ -1491,7 +1574,7 @@ fn every_other_use_of_the_browser_clears_the_stand() {
     let try_body = body(&bridge, "async fn autorun_try(");
     assert!(
         (try_body.contains("session.replay_stand = None;") || try_body.contains("session.used_otherwise();"))
-            && try_body.contains("note_session_use()"),
+            && try_body.contains("note_session_use_in(n)"),
         "a try is not a use"
     );
     // `used_otherwise` is what most uses call: it must still clear the stand.
@@ -1553,7 +1636,7 @@ async fn replay_guarded(
     guarded: &mut Option<i32>,
 ) -> (ReplayEnd, Reuse) {
     use v2_lib::autorun::replay_to::replay_to_traced;
-    let cancel = AtomicBool::new(false);
+    let state = ReplayState::new();
     let mut reuse = Reuse::default();
     let end = replay_to_traced(
         d,
@@ -1567,7 +1650,7 @@ async fn replay_guarded(
         guarded,
         true,
         &quick(),
-        &cancel,
+        &state,
         || -> PreconditionDb<FakeStageDb> { PreconditionDb::ReadingOff },
         |_, _| {},
         &mut Vec::new(),
@@ -2846,8 +2929,8 @@ async fn a_replay_to_the_clean_up_runs_the_whole_case_but_not_the_clean_up() {
     let dir = tempfile::tempdir().unwrap();
     project(dir.path(), &script(three_steps_and_a_clean_up()));
     let (mut d, app) = app();
-    let (mut account, mut guarded, cancel) = (None, None, AtomicBool::new(false));
-    let end = replay(&mut d, dir.path(), &req(4), &mut account, &mut guarded, &cancel, |_, _| {}).await;
+    let (mut account, mut guarded, state) = (None, None, ReplayState::new());
+    let end = replay(&mut d, dir.path(), &req(4), &mut account, &mut guarded, &state, |_, _| {}).await;
     assert_eq!(end, ReplayEnd::Ready { case_id: ID, step: 4, notice: None, whole: Some(3), cleanup: Some(4) });
     assert_eq!(
         end.sentence(),
@@ -2863,8 +2946,8 @@ async fn a_replay_past_the_clean_up_runs_it_last() {
     let dir = tempfile::tempdir().unwrap();
     project(dir.path(), &script(three_steps_and_a_clean_up()));
     let (mut d, app) = app();
-    let (mut account, mut guarded, cancel) = (None, None, AtomicBool::new(false));
-    let end = replay(&mut d, dir.path(), &req(5), &mut account, &mut guarded, &cancel, |_, _| {}).await;
+    let (mut account, mut guarded, state) = (None, None, ReplayState::new());
+    let end = replay(&mut d, dir.path(), &req(5), &mut account, &mut guarded, &state, |_, _| {}).await;
     assert_eq!(end, ReplayEnd::Ready { case_id: ID, step: 5, notice: None, whole: Some(3), cleanup: Some(4) });
     assert_eq!(
         end.sentence(),
@@ -2880,22 +2963,22 @@ async fn a_replay_past_the_clean_up_runs_it_last() {
 /// that has three.
 #[tokio::test]
 async fn a_replay_stopped_at_the_clean_up_names_it() {
-    use v2_lib::autorun::replay_to::{cleanup_at, ASKED_TO_STOP};
+    use v2_lib::autorun::replay_to::ASKED_TO_STOP;
     let _l = crate::serial::account_leases();
     let dir = tempfile::tempdir().unwrap();
     project(dir.path(), &script(three_steps_and_a_clean_up()));
     let (mut d, app) = app();
-    let (mut account, mut guarded, cancel) = (None, None, AtomicBool::new(false));
+    let (mut account, mut guarded, state) = (None, None, ReplayState::new());
     // Asked to stop as the clean-up begins: heard before its first action.
-    let end = replay(&mut d, dir.path(), &req(5), &mut account, &mut guarded, &cancel, |k, _| {
+    let end = replay(&mut d, dir.path(), &req(5), &mut account, &mut guarded, &state, |k, _| {
         if k == 4 {
-            cancel.store(true, Ordering::SeqCst);
+            state.cancel.store(true, Ordering::SeqCst);
         }
     })
     .await;
     assert_eq!(end, ReplayEnd::Stopped { step: 4 });
-    assert_eq!(cleanup_at(), Some(4));
-    assert_eq!(end.sentence_in(cleanup_at()), format!("the replay was stopped at the clean-up: {ASKED_TO_STOP}"));
+    assert_eq!(state.cleanup_at(), Some(4));
+    assert_eq!(end.sentence_in(state.cleanup_at()), format!("the replay was stopped at the clean-up: {ASKED_TO_STOP}"));
     assert!(!clicked(&app, "#tidy"), "{:?}", log(&app));
 }
 
@@ -2938,8 +3021,8 @@ async fn a_replay_to_an_earlier_step_runs_no_clean_up() {
     let dir = tempfile::tempdir().unwrap();
     project(dir.path(), &script(three_steps_and_a_clean_up()));
     let (mut d, app) = app();
-    let (mut account, mut guarded, cancel) = (None, None, AtomicBool::new(false));
-    let end = replay(&mut d, dir.path(), &req(3), &mut account, &mut guarded, &cancel, |_, _| {}).await;
+    let (mut account, mut guarded, state) = (None, None, ReplayState::new());
+    let end = replay(&mut d, dir.path(), &req(3), &mut account, &mut guarded, &state, |_, _| {}).await;
     assert_eq!(end, ReplayEnd::Ready { case_id: ID, step: 3, notice: None, whole: None, cleanup: None });
     assert!(!clicked(&app, "#tidy"), "{:?}", log(&app));
 }
@@ -2959,8 +3042,8 @@ async fn the_hint_names_the_step_past_the_clean_up_itself() {
         ])),
     );
     let (mut d, app) = app();
-    let (mut account, mut guarded, cancel) = (None, None, AtomicBool::new(false));
-    let end = replay(&mut d, dir.path(), &req(3), &mut account, &mut guarded, &cancel, |_, _| {}).await;
+    let (mut account, mut guarded, state) = (None, None, ReplayState::new());
+    let end = replay(&mut d, dir.path(), &req(3), &mut account, &mut guarded, &state, |_, _| {}).await;
     assert_eq!(
         end.sentence(),
         "replayed the whole of case 77 (all 2 steps; its clean-up did not run - replay to step 7 to run it too) - the browser is on the page its last step left"
@@ -3115,7 +3198,7 @@ async fn whole_replay(
     held: &mut Held,
     guarded: &mut Option<i32>,
 ) -> (ReplayEnd, Marks) {
-    let cancel = AtomicBool::new(false);
+    let state = ReplayState::new();
     let mut marks = Marks::default();
     let r = ReplayRequest { case_id: case.case_id, step: 5, db_read_access: false };
     let end = replay_to_traced(
@@ -3130,7 +3213,7 @@ async fn whole_replay(
         guarded,
         true,
         &quick(),
-        &cancel,
+        &state,
         || -> PreconditionDb<FakeStageDb> { PreconditionDb::ReadingOff },
         |_, _| {},
         &mut Vec::new(),
@@ -3170,10 +3253,10 @@ async fn a_second_case_carries_on_from_the_first_cases_checkpoint() {
 
     let before = log(&app).len();
     let r = ReplayRequest { case_id: 78, step: 5, db_read_access: false };
-    let cancel = AtomicBool::new(false);
+    let state = ReplayState::new();
     let mut marks_b = Marks::default();
     let end = carry_on(
-        &mut d, dir.path(), "acme", "Web", &r, 4, &mut account, &mut held, &mut guarded, &quick(), &cancel, |_, _| {},
+        &mut d, dir.path(), "acme", "Web", &r, 4, &mut account, &mut held, &mut guarded, &quick(), &state, |_, _| {},
         &mut Vec::new(), false, &mut marks_b,
     )
     .await;
@@ -3212,10 +3295,10 @@ async fn a_case_that_ends_off_the_checkpoint_loses_it_for_the_next() {
     assert_eq!(from, ReplayFrom::CarriedOnFrom { case_id: 77, k: 3 });
 
     let r = ReplayRequest { case_id: 78, step: 5, db_read_access: false };
-    let cancel = AtomicBool::new(false);
+    let state = ReplayState::new();
     let mut marks_b = Marks::default();
     let end = carry_on(
-        &mut d, dir.path(), "acme", "Web", &r, 4, &mut account, &mut held, &mut guarded, &quick(), &cancel, |_, _| {},
+        &mut d, dir.path(), "acme", "Web", &r, 4, &mut account, &mut held, &mut guarded, &quick(), &state, |_, _| {},
         &mut Vec::new(), false, &mut marks_b,
     )
     .await;

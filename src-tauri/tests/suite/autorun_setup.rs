@@ -24,7 +24,7 @@ use v2_lib::autorun::lease::{self, Held};
 use v2_lib::autorun::nav::{check_project_rules, save_nav, ModulePath, NavFile};
 use v2_lib::autorun::preconditions::{NoDb, PreconditionDb};
 use v2_lib::autorun::replay::{run_cases, Browsers, CaseToRun};
-use v2_lib::autorun::replay_to::{replay_to_checked, ReplayEnd, ReplayRequest};
+use v2_lib::autorun::replay_to::{replay_to_checked, ReplayEnd, ReplayRequest, ReplayState};
 use v2_lib::autorun::setup::{
     self, check_saved, not_built, prepare_case, prepare_case_within, resolve, FixtureValues,
 };
@@ -739,7 +739,7 @@ async fn a_replay_to_a_step_runs_the_setup_first() {
 
     let (mut d, app) = common::menu_app(&[("link", "Leave", "/hr/leave")], "/hr/home/index", 0);
     let req = ReplayRequest { case_id: 9, step: 2, db_read_access: false };
-    let (mut account, mut guarded, cancel) = (None, None, AtomicBool::new(false));
+    let (mut account, mut guarded, state) = (None, None, ReplayState::new());
     let mut held = Held::supervised();
 
     // What an earlier start gave, which the replay replaces.
@@ -760,7 +760,7 @@ async fn a_replay_to_a_step_runs_the_setup_first() {
         &mut guarded,
         true,
         &quick(),
-        &cancel,
+        &state,
         || -> PreconditionDb<NoDb> { PreconditionDb::ReadingOff },
         |_, _| {},
     )
@@ -814,7 +814,7 @@ async fn a_setup_as_the_supervised_browsers_account_runs_and_the_case_signs_in_a
 
     let (mut d, app) = common::menu_app(&[("link", "Leave", "/hr/leave")], "/hr/home/index", 0);
     let req = ReplayRequest { case_id: 17, step: 2, db_read_access: false };
-    let (mut guarded, cancel) = (None, AtomicBool::new(false));
+    let (mut guarded, state) = (None, ReplayState::new());
     let end = replay_to_checked(
         &mut d,
         &mut r.browsers,
@@ -827,7 +827,7 @@ async fn a_setup_as_the_supervised_browsers_account_runs_and_the_case_signs_in_a
         &mut guarded,
         true,
         &quick(),
-        &cancel,
+        &state,
         || -> PreconditionDb<NoDb> { PreconditionDb::ReadingOff },
         |_, _| {},
     )
@@ -966,7 +966,7 @@ async fn replay_signed_in(r: &mut Rig, sc: &CaseScript) -> (ReplayEnd, Option<St
     let mut account = Some("admin".to_string());
     let (mut d, _app) = common::menu_app(&[("link", "Leave", "/hr/leave")], "/hr/home/index", 0);
     let req = ReplayRequest { case_id: sc.case_id, step: 2, db_read_access: false };
-    let (mut guarded, cancel) = (None, AtomicBool::new(false));
+    let (mut guarded, state) = (None, ReplayState::new());
     let end = replay_to_checked(
         &mut d,
         &mut r.browsers,
@@ -979,7 +979,7 @@ async fn replay_signed_in(r: &mut Rig, sc: &CaseScript) -> (ReplayEnd, Option<St
         &mut guarded,
         true,
         &quick(),
-        &cancel,
+        &state,
         || -> PreconditionDb<NoDb> { PreconditionDb::ReadingOff },
         |_, _| {},
     )

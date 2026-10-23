@@ -49,6 +49,7 @@ mod autorun_accounts;
 mod autorun_api_checks;
 mod autorun_refusals;
 mod autorun_roles;
+mod autorun_slots;
 mod autorun_area_trip;
 mod autorun_batches;
 mod autorun_cleanup;

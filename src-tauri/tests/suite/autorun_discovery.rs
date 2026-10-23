@@ -500,6 +500,9 @@ async fn navigate_outside_the_allowed_sites_is_refused() {
 /// discovery goes: both refused with `/autorun-try`'s own sentences.
 #[tokio::test]
 async fn sign_in_and_file_urls_are_refused_as_actions() {
+    // The refusals are compared word for word, and the route ends every
+    // answer with what main's browser has changed for testing.
+    let _g = crate::serial::autorun();
     let body = json!({ "action": { "kind": "sign_in", "account": "admin" } }).to_string();
     let (status, out) = route(&ctx(), None, "POST", "/autorun-discover-action", &body, "1.0.0").await;
     assert_eq!(status, 400, "{out}");
@@ -573,6 +576,9 @@ async fn end_is_idempotent() {
 /// false.
 #[tokio::test]
 async fn a_mapping_run_needs_a_module() {
+    // The refusal is compared word for word, and the route ends every
+    // answer with what main's browser has changed for testing.
+    let _g = crate::serial::autorun();
     for body in [
         json!({ "account": "admin", "mapping": true }),
         json!({ "account": "admin", "mapping": true, "modules": [] }),
@@ -3232,7 +3238,7 @@ async fn the_end_discovery_command_ends_like_the_route() {
     let source = include_str!("../../src/commands/autorun.rs");
     let cmd = &source[source.find("pub async fn auto_run_end_discovery").unwrap()..];
     assert!(
-        cmd[..cmd.find('}').unwrap()].contains("end_discovery(crate::ai_bridge::EndedBy::Person).await"),
+        cmd[..cmd.find('}').unwrap()].contains("end_discovery(crate::ai_bridge::EndedBy::Person, SlotNo::MAIN).await"),
         "not the route's own ending, as the person"
     );
 }
@@ -3966,13 +3972,14 @@ async fn a_replay_requested_during_a_discovery_ends_it_and_replays() {
     let source = include_str!("../../src/commands/autorun.rs");
     let replay = &source[source.find("pub(crate) async fn replay_supervised").unwrap()..];
     let replay = &replay[..replay.find("replay_to_traced(").unwrap()];
-    let lock = replay.find("SESSION.lock().await").unwrap();
+    let lock = replay.find("session_slot(n).lock().await").unwrap();
     let end = replay.find("end_discovery_for_replay(&mut slot, &root)").expect("the assistant's replay does not end it");
     let ended = replay.find("if discovery.ended {").expect("the window is told even when nothing ended");
-    let publish = replay.find("publish_discovery(&slot)").expect("the window is not told");
+    let publish = replay.find("publish_discovery_in(n, &slot)").expect("the window is not told");
     let open = replay.find("open_if_none(").unwrap();
     assert!(lock < end && end < ended && ended < publish && publish < open, "the end is not under the replay's lock");
-    assert_eq!(replay.matches("SESSION.lock()").count(), 1, "the lock is let go between the end and the replay");
+    assert_eq!(replay.matches("session_slot(n).lock()").count(), 1, "the lock is let go between the end and the replay");
+    assert_eq!(replay.matches("SESSION.lock()").count(), 0, "the replay locks main's session whichever slot it is for");
 }
 
 /// A mapping run ended by the assistant's replay keeps its summary, as
@@ -4023,14 +4030,14 @@ async fn the_person_open_browser_is_still_refused_while_discovering() {
     assert!(ReplayBy::Assistant.may_lift(Some(&call)) && ReplayBy::Assistant.may_lift(None));
     let person = &source[source.find("pub async fn auto_run_replay_to_step").unwrap()..];
     let person = &person[..person.find("pub(crate) async fn replay_supervised").unwrap()];
-    assert!(person.contains("replay_supervised(&app, &organization, &project, req, ReplayBy::Person)"), "{person}");
+    assert!(person.contains("replay_supervised(&app, SlotNo::MAIN, &organization, &project, req, ReplayBy::Person)"), "{person}");
     let replay = &source[source.find("pub(crate) async fn replay_supervised").unwrap()..];
     let replay = &replay[..replay.find("open_if_none(").unwrap()];
     assert!(replay.contains("if by.ends_discovery() {"), "{replay}");
     assert!(replay.contains("} else if let Err(why) = crate::ai_bridge::refuse_while_discovering(&mut slot) {"));
     // And the assistant's host is the only caller that ends a discovery.
     let host = include_str!("../../src/commands/ai_bridge.rs");
-    assert!(host.contains("replay_supervised(&self.0, &organization, &project, req, ReplayBy::Assistant)"));
+    assert!(host.contains("replay_supervised(&self.0, slot, &organization, &project, req, ReplayBy::Assistant)"));
     assert_eq!(source.matches("ReplayBy::Assistant)").count(), 0, "a person's path replays as the assistant");
     assert_eq!(source.matches("refuse_while_discovering(&mut slot)").count(), 3, "a refusal went missing");
 }
@@ -5100,23 +5107,24 @@ async fn end_discovery_is_not_stuck_behind_a_long_batch() {
     // Each way the person or the assistant ends the discovery asks a batch
     // to give way before it waits for the browser.
     let source = include_str!("../../src/commands/autorun.rs").replace("\r\n", "\n");
-    for start in [
-        "pub(crate) async fn end_discovery(",
-        "pub async fn auto_run_close_browser()",
-        "pub async fn release_autorun_browsers()",
-        "pub async fn release_for_assistant()",
-        "pub async fn reset_for_assistant(",
-        "pub async fn close_autorun_browsers()",
+    for (start, stops) in [
+        ("pub(crate) async fn end_discovery(", "crate::ai_bridge::stop_batch_in(n);"),
+        ("pub async fn auto_run_close_browser()", "crate::ai_bridge::stop_batch();"),
+        ("pub async fn release_autorun_browsers()", "crate::ai_bridge::stop_all_batches();"),
+        ("pub async fn release_for_assistant(", "crate::ai_bridge::stop_batch_in(n);"),
+        ("pub async fn reset_for_assistant(", "crate::ai_bridge::stop_batch_in(n);"),
+        ("pub async fn close_autorun_browsers()", "crate::ai_bridge::stop_all_batches();"),
     ] {
         let body = &source[source.find(start).unwrap_or_else(|| panic!("{start} is gone"))..];
-        let body = &body[..body.find("SESSION.lock()").unwrap()];
-        assert!(body.contains("crate::ai_bridge::stop_batch();"), "{start} does not stop a batch before it waits");
+        let lock = ["SESSION.lock()", "session_slot(n).lock()"].iter().filter_map(|l| body.find(l)).min().unwrap();
+        let body = &body[..lock];
+        assert!(body.contains(stops), "{start} does not stop a batch before it waits");
     }
     // And the route clears an earlier stop before it takes the browser.
     let bridge = include_str!("../../src/ai_bridge.rs").replace("\r\n", "\n");
     let route = &bridge[bridge.find("async fn autorun_discover_actions(").unwrap()..];
-    let route = &route[..route.find("supervised().lock()").unwrap()];
-    assert!(route.contains("BATCH_STOP.store(false"), "an old stop would end the next batch");
+    let route = &route[..route.find("session_slot(n).lock()").unwrap()];
+    assert!(route.contains("batch_stop(n).store(false"), "an old stop would end the next batch");
 }
 
 /// A draft is tried only by the `use_component` that names it: another

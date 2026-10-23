@@ -23,6 +23,7 @@ use crate::browser::cdp::{CdpError, Driver};
 use crate::browser::timing::Timing;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
+use super::slots::{SlotNo, SLOT_COUNT};
 
 /// Said when a replay is asked for while one is already going.
 pub const ALREADY_RUNNING: &str = "a replay is already running - wait for it to finish";
@@ -263,45 +264,159 @@ pub fn stopped_before_opening(cancel: &AtomicBool) -> Option<ReplayEnd> {
     cancel.load(Ordering::SeqCst).then_some(ReplayEnd::Stopped { step: 1 })
 }
 
-/// Whether a replay is going, and whose: `NOBODY`, `PERSON` or
-/// `ASSISTANT`. Only `OneReplay` sets it.
-static RUNNING: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(NOBODY);
 const NOBODY: u8 = 0;
 const PERSON: u8 = 1;
 const ASSISTANT: u8 = 2;
 
-/// The replay's stop control: set by `stop`, and by anything that closes
-/// the supervised browser. Read before each part of the replay and by the
-/// step's own waits, never under the session's lock, so a stop is heard
-/// while the replay holds the browser.
-pub static CANCEL: AtomicBool = AtomicBool::new(false);
+/// One browser slot's replay: whether one is going and whose, its stop
+/// control, how far it has got and the action it is on. Every slot has its
+/// own (`state`), so a stop, a step or an action in one slot is never read
+/// as another's. Coordination only, nothing a restart keeps.
+pub struct ReplayState {
+    /// Whether a replay is going, and whose: `NOBODY`, `PERSON` or
+    /// `ASSISTANT`. Only `OneReplay` sets it.
+    running: std::sync::atomic::AtomicU8,
+    /// The replay's stop control: set by `stop`, and by anything that closes
+    /// the slot's browser. Read before each part of the replay and by the
+    /// step's own waits, never under the session's lock, so a stop is heard
+    /// while the replay holds the browser.
+    pub cancel: AtomicBool,
+    /// Whether the replay going was asked to stop by the assistant's
+    /// the replay tool's `stop` (`stop_on_request`), not by the person's Stop,
+    /// Close or Release. Cleared by a claim, and when the assistant starts a
+    /// replay (`forget_stop_request`).
+    on_request: AtomicBool,
+    /// Where the replay going is: the step it is running and how many steps
+    /// it runs in all, packed as `(step << 32) | of`. Zero before step 1
+    /// (signing in, going to the area). Set by `note_progress`, cleared by a
+    /// claim.
+    progress: std::sync::atomic::AtomicU64,
+    /// The step number of the clean-up of the case the replay going (or
+    /// ended last) runs, 0 when it has none: noted as its steps start
+    /// (`run_steps`), cleared by a claim, so its sentences say "the clean-up".
+    cleanup_at: std::sync::atomic::AtomicI32,
+    /// The action the replay going is on, within its step
+    /// (`runner::StepProgress`).
+    pub actions: runner::StepProgress,
+}
 
-/// Ask the replay that is going, if any, to stop.
+impl ReplayState {
+    pub const fn new() -> ReplayState {
+        ReplayState {
+            running: std::sync::atomic::AtomicU8::new(NOBODY),
+            cancel: AtomicBool::new(false),
+            on_request: AtomicBool::new(false),
+            progress: std::sync::atomic::AtomicU64::new(0),
+            cleanup_at: std::sync::atomic::AtomicI32::new(0),
+            actions: runner::StepProgress::new(),
+        }
+    }
+
+    /// Ask the replay that is going, if any, to stop.
+    pub fn stop(&self) {
+        self.cancel.store(true, Ordering::SeqCst);
+    }
+
+    /// The assistant's replay `stop`: the same stop as `stop`, noted
+    /// as asked for, so the replay's answer says it was stopped on request.
+    pub fn stop_on_request(&self) {
+        self.on_request.store(true, Ordering::SeqCst);
+        self.stop();
+    }
+
+    /// Whether the replay that ended last was asked to stop by the assistant.
+    pub fn stop_was_requested(&self) -> bool {
+        self.on_request.load(Ordering::SeqCst)
+    }
+
+    /// A new replay of the assistant's starts with no stop asked of it.
+    pub fn forget_stop_request(&self) {
+        self.on_request.store(false, Ordering::SeqCst);
+    }
+
+    /// The replay going is about to run step `step` of `of`: kept for whoever
+    /// asks how far it has got (`progress`).
+    pub fn note_progress(&self, step: i32, of: i32) {
+        let packed = (u64::from(step.max(0) as u32) << 32) | u64::from(of.max(0) as u32);
+        self.progress.store(packed, Ordering::SeqCst);
+        self.actions.reset();
+    }
+
+    /// The case the replay runs has its clean-up at step `step` (`None`: none).
+    pub fn note_cleanup(&self, step: Option<i32>) {
+        self.cleanup_at.store(step.unwrap_or(0).max(0), Ordering::SeqCst);
+    }
+
+    /// The clean-up step of the case the replay going (or ended last) runs.
+    pub fn cleanup_at(&self) -> Option<i32> {
+        let k = self.cleanup_at.load(Ordering::SeqCst);
+        (k > 0).then_some(k)
+    }
+
+    /// The action the replay going is on, and how many of its step's actions
+    /// have failed: none before its first step's first action.
+    pub fn action_now(&self) -> runner::ActionNow {
+        self.actions.now()
+    }
+
+    /// The step the replay going is running and how many it runs, `(0, 0)`
+    /// before its first step.
+    pub fn progress(&self) -> (i32, i32) {
+        let packed = self.progress.load(Ordering::SeqCst);
+        ((packed >> 32) as i32, (packed & 0xFFFF_FFFF) as i32)
+    }
+
+    /// Whether a replay to a step is going in this slot right now.
+    pub fn is_running(&self) -> bool {
+        self.running.load(Ordering::SeqCst) != NOBODY
+    }
+
+    /// Whether the replay going in this slot right now is the assistant's
+    /// own (`OneReplay::claim_for_assistant_in`). False while nothing runs -
+    /// before its replay has claimed the slot, or once it has ended and its
+    /// page is still being read - and while the person's replay runs.
+    pub fn assistants_replay_running(&self) -> bool {
+        self.running.load(Ordering::SeqCst) == ASSISTANT
+    }
+}
+
+impl Default for ReplayState {
+    fn default() -> Self {
+        ReplayState::new()
+    }
+}
+
+/// Every browser slot's replay state, indexed by `SlotNo`.
+static REPLAYS: [ReplayState; SLOT_COUNT] = [const { ReplayState::new() }; SLOT_COUNT];
+
+/// Slot `n`'s replay state.
+pub fn state(n: SlotNo) -> &'static ReplayState {
+    &REPLAYS[n.index()]
+}
+
+/// Whether a replay is going in any slot.
+pub fn any_running() -> bool {
+    REPLAYS.iter().any(ReplayState::is_running)
+}
+
+/// Ask the main slot's replay, if any, to stop.
 pub fn stop() {
-    CANCEL.store(true, Ordering::SeqCst);
+    state(SlotNo::MAIN).stop();
 }
 
-/// Whether the replay going was asked to stop by the assistant's
-/// the replay tool's `stop` (`stop_on_request`), not by the person's Stop,
-/// Close or Release. Cleared by a claim, and when the assistant starts a
-/// replay (`forget_stop_request`).
-static ON_REQUEST: AtomicBool = AtomicBool::new(false);
-
-/// The assistant's replay `stop`: the same stop as `stop`, noted
-/// as asked for, so the replay's answer says it was stopped on request.
+/// The main slot's `ReplayState::stop_on_request`.
 pub fn stop_on_request() {
-    ON_REQUEST.store(true, Ordering::SeqCst);
-    stop();
+    state(SlotNo::MAIN).stop_on_request();
 }
 
-/// Whether the replay that ended last was asked to stop by the assistant.
+/// The main slot's `ReplayState::stop_was_requested`.
 pub fn stop_was_requested() -> bool {
-    ON_REQUEST.load(Ordering::SeqCst)
+    state(SlotNo::MAIN).stop_was_requested()
 }
 
-/// A new replay of the assistant's starts with no stop asked of it.
+/// The main slot's `ReplayState::forget_stop_request`.
 pub fn forget_stop_request() {
-    ON_REQUEST.store(false, Ordering::SeqCst);
+    state(SlotNo::MAIN).forget_stop_request();
 }
 
 /// What the assistant's replay that its `stop` stopped answers:
@@ -323,98 +438,87 @@ pub fn stopped_on_request(case_id: i32, at: i32, action: usize, inside: bool, cl
     }
 }
 
-/// The one replay going. Taking it clears an earlier stop; dropping it - an
-/// end, an error or a panic - frees the slot.
-pub struct OneReplay(());
+/// The one replay going in a slot. Taking it clears an earlier stop; dropping
+/// it - an end, an error or a panic - frees that slot, and only that slot.
+pub struct OneReplay(SlotNo);
 
 impl OneReplay {
-    /// The person's replay (Replay to step in the pane) takes the slot.
+    /// The person's replay (Replay to step in the pane) takes the main slot.
     pub fn claim() -> Result<OneReplay, String> {
-        Self::claim_as(PERSON)
+        Self::claim_as(SlotNo::MAIN, PERSON)
     }
 
-    /// The assistant's replay (`replay_autorun_to_step`) takes the slot:
+    /// The assistant's replay (`replay_autorun_to_step`) takes the main slot:
     /// the only replay the replay tool's `stop` may stop
     /// (`assistants_replay_running`).
     pub fn claim_for_assistant() -> Result<OneReplay, String> {
-        Self::claim_as(ASSISTANT)
+        Self::claim_as(SlotNo::MAIN, ASSISTANT)
     }
 
-    fn claim_as(owner: u8) -> Result<OneReplay, String> {
-        RUNNING
+    /// The person's replay takes slot `n`.
+    pub fn claim_in(n: SlotNo) -> Result<OneReplay, String> {
+        Self::claim_as(n, PERSON)
+    }
+
+    /// The assistant's replay takes slot `n`.
+    pub fn claim_for_assistant_in(n: SlotNo) -> Result<OneReplay, String> {
+        Self::claim_as(n, ASSISTANT)
+    }
+
+    fn claim_as(n: SlotNo, owner: u8) -> Result<OneReplay, String> {
+        let s = state(n);
+        s.running
             .compare_exchange(NOBODY, owner, Ordering::SeqCst, Ordering::SeqCst)
             .map_err(|_| ALREADY_RUNNING.to_string())?;
-        CANCEL.store(false, Ordering::SeqCst);
-        ON_REQUEST.store(false, Ordering::SeqCst);
-        PROGRESS.store(0, Ordering::SeqCst);
-        CLEANUP_AT.store(0, Ordering::SeqCst);
-        ACTIONS.reset();
-        Ok(OneReplay(()))
+        s.cancel.store(false, Ordering::SeqCst);
+        s.on_request.store(false, Ordering::SeqCst);
+        s.progress.store(0, Ordering::SeqCst);
+        s.cleanup_at.store(0, Ordering::SeqCst);
+        s.actions.reset();
+        Ok(OneReplay(n))
     }
 }
 
 impl Drop for OneReplay {
     fn drop(&mut self) {
-        RUNNING.store(NOBODY, Ordering::SeqCst);
+        state(self.0).running.store(NOBODY, Ordering::SeqCst);
     }
 }
 
-/// Where the replay going is: the step it is running and how many steps it
-/// runs in all, packed as `(step << 32) | of`. Zero before step 1 (signing
-/// in, going to the area). Set by `note_progress`, cleared by a claim.
-static PROGRESS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-
-/// The replay going is about to run step `step` of `of`: kept for whoever
-/// asks how far it has got (`progress`).
+/// The main slot's `ReplayState::note_progress`.
 pub fn note_progress(step: i32, of: i32) {
-    let packed = (u64::from(step.max(0) as u32) << 32) | u64::from(of.max(0) as u32);
-    PROGRESS.store(packed, Ordering::SeqCst);
-    ACTIONS.reset();
+    state(SlotNo::MAIN).note_progress(step, of);
 }
 
-/// The step number of the clean-up of the case the replay going (or ended
-/// last) runs, 0 when it has none: noted as its steps start
-/// (`run_steps`), cleared by a claim, so its sentences say "the clean-up".
-static CLEANUP_AT: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
-
-/// The case the replay runs has its clean-up at step `step` (`None`: none).
+/// The main slot's `ReplayState::note_cleanup`.
 pub fn note_cleanup(step: Option<i32>) {
-    CLEANUP_AT.store(step.unwrap_or(0).max(0), Ordering::SeqCst);
+    state(SlotNo::MAIN).note_cleanup(step);
 }
 
-/// The clean-up step of the case the replay going (or ended last) runs.
+/// The main slot's `ReplayState::cleanup_at`.
 pub fn cleanup_at() -> Option<i32> {
-    let k = CLEANUP_AT.load(Ordering::SeqCst);
-    (k > 0).then_some(k)
+    state(SlotNo::MAIN).cleanup_at()
 }
 
-/// The action the replay going is on, within its step (`runner::StepProgress`).
-pub static ACTIONS: runner::StepProgress = runner::StepProgress::new();
-
-/// The action the replay going is on, and how many of its step's actions
-/// have failed: none before its first step's first action.
+/// The main slot's `ReplayState::action_now`.
 pub fn action_now() -> runner::ActionNow {
-    ACTIONS.now()
+    state(SlotNo::MAIN).action_now()
 }
 
-/// The step the replay going is running and how many it runs, `(0, 0)`
-/// before its first step.
+/// The main slot's `ReplayState::progress`.
 pub fn progress() -> (i32, i32) {
-    let packed = PROGRESS.load(Ordering::SeqCst);
-    ((packed >> 32) as i32, (packed & 0xFFFF_FFFF) as i32)
+    state(SlotNo::MAIN).progress()
 }
 
-/// Whether a replay to a step is going right now.
+/// Whether a replay to a step is going in the main slot right now.
 pub fn is_running() -> bool {
-    RUNNING.load(Ordering::SeqCst) != NOBODY
+    state(SlotNo::MAIN).is_running()
 }
 
-/// Whether the replay going right now is the assistant's own
-/// (`OneReplay::claim_for_assistant`). False while nothing runs - before
-/// its replay has claimed the slot, or once it has ended and its page is
-/// still being read - and while the person's replay runs.
+/// Whether the replay going in the main slot right now is the assistant's
+/// own (`OneReplay::claim_for_assistant`).
 pub fn assistants_replay_running() -> bool {
-    RUNNING.load(Ordering::SeqCst) == ASSISTANT
+    state(SlotNo::MAIN).assistants_replay_running()
 }
 
 /// What the checks before anything opens found: the case's script and the
@@ -464,7 +568,7 @@ pub async fn replay_to<D: Driver>(
     req: &ReplayRequest,
     account: &mut Option<String>,
     lease: &mut Held,
-    cancel: &AtomicBool,
+    replay: &ReplayState,
     progress: impl FnMut(i32, i32),
 ) -> ReplayEnd {
     let mut guarded_case = None;
@@ -488,7 +592,7 @@ pub async fn replay_to<D: Driver>(
         &mut guarded_case,
         true,
         &Timing::supervised(),
-        cancel,
+        replay,
         db,
         progress,
     )
@@ -508,7 +612,8 @@ pub async fn replay_to<D: Driver>(
 /// setup runs in (`setup::prepare_case`), after the preconditions and
 /// before anything is signed in; what the setup gave is kept for the steps
 /// the person runs after the replay (`setup::remember`). `progress(k, total)` is called before each
-/// step runs, `total` being `req.step - 1`. `cancel` is the stop control.
+/// step runs, `total` being `req.step - 1`. `replay` is the slot's replay
+/// state: its stop control, how far it has got and the action it is on.
 #[allow(clippy::too_many_arguments)]
 pub async fn replay_to_checked<D: Driver, P: StageDb, B: Browsers>(
     d: &mut D,
@@ -522,7 +627,7 @@ pub async fn replay_to_checked<D: Driver, P: StageDb, B: Browsers>(
     guarded_case: &mut Option<i32>,
     may_lift: bool,
     timing: &Timing,
-    cancel: &AtomicBool,
+    replay: &ReplayState,
     db: impl FnOnce() -> PreconditionDb<P>,
     progress: impl FnMut(i32, i32),
 ) -> ReplayEnd {
@@ -539,7 +644,7 @@ pub async fn replay_to_checked<D: Driver, P: StageDb, B: Browsers>(
         guarded_case,
         may_lift,
         timing,
-        cancel,
+        replay,
         db,
         progress,
         &mut tabs,
@@ -580,7 +685,7 @@ pub async fn replay_to_traced<D: Driver, P: StageDb, B: Browsers>(
     guarded_case: &mut Option<i32>,
     may_lift: bool,
     timing: &Timing,
-    cancel: &AtomicBool,
+    replay: &ReplayState,
     db: impl FnOnce() -> PreconditionDb<P>,
     mut progress: impl FnMut(i32, i32),
     tabs: &mut Vec<ReplayedTab>,
@@ -594,7 +699,7 @@ pub async fn replay_to_traced<D: Driver, P: StageDb, B: Browsers>(
         Err(why) => return ReplayEnd::Refused(why),
     };
     let (id, n) = (req.case_id, req.step);
-    let stopped = || cancel.load(Ordering::SeqCst);
+    let stopped = || replay.cancel.load(Ordering::SeqCst);
     if stopped() {
         return ReplayEnd::Stopped { step: 1 };
     }
@@ -631,7 +736,7 @@ pub async fn replay_to_traced<D: Driver, P: StageDb, B: Browsers>(
     let (way_d, way_account, way_lease) = (&mut *d, &mut *account, &mut *lease);
     let make_way = |key: String| async move { setup::make_way(way_d, way_account, way_lease, &key, timing).await };
     let prepared =
-        setup::prepare_case_hooked(setup_browsers, root, organization, project, &script, timing, cancel, make_way).await;
+        setup::prepare_case_hooked(setup_browsers, root, organization, project, &script, timing, &replay.cancel, make_way).await;
     let script = match prepared {
         Ok(prepared) => {
             setup::remember(id, prepared.setup_outputs);
@@ -755,7 +860,7 @@ pub async fn replay_to_traced<D: Driver, P: StageDb, B: Browsers>(
 
     // Steps 1 to N-1, in the script's order.
     if let Some(stopped) =
-        run_steps(d, root, organization, project, &script, &route, 1, n, account, lease, timing, cancel, &mut progress, tabs, guarding_other, marks, false)
+        run_steps(d, root, organization, project, &script, &route, 1, n, account, lease, timing, replay, &mut progress, tabs, guarding_other, marks, false)
             .await
     {
         return stopped;
@@ -1037,7 +1142,7 @@ async fn run_steps<D: Driver>(
     account: &mut Option<String>,
     lease: &mut Held,
     timing: &Timing,
-    cancel: &AtomicBool,
+    replay: &ReplayState,
     progress: &mut impl FnMut(i32, i32),
     tabs: &mut Vec<ReplayedTab>,
     guarding_other: Option<i32>,
@@ -1049,7 +1154,7 @@ async fn run_steps<D: Driver>(
     let mark = d.net_mark();
     let tabs_before = d.tabs_opened();
     let ended = run_steps_marked(
-        d, root, organization, project, script, route, from, n, account, lease, timing, cancel, progress, tabs,
+        d, root, organization, project, script, route, from, n, account, lease, timing, replay, progress, tabs,
         guarding_other, marks, wrote_before, mark, tabs_before,
     )
     .await;
@@ -1070,7 +1175,7 @@ async fn run_steps_marked<D: Driver>(
     account: &mut Option<String>,
     lease: &mut Held,
     timing: &Timing,
-    cancel: &AtomicBool,
+    replay: &ReplayState,
     progress: &mut impl FnMut(i32, i32),
     tabs: &mut Vec<ReplayedTab>,
     guarding_other: Option<i32>,
@@ -1079,7 +1184,7 @@ async fn run_steps_marked<D: Driver>(
     mark: u64,
     tabs_before: u64,
 ) -> Option<ReplayEnd> {
-    let stopped = || cancel.load(Ordering::SeqCst);
+    let stopped = || replay.cancel.load(Ordering::SeqCst);
     let in_range = |k: i32| k >= from && k < n;
     // The other areas their `return_to_area` actions name are read once,
     // before the first.
@@ -1096,7 +1201,7 @@ async fn run_steps_marked<D: Driver>(
     let mut noted = runner::Noted::default();
     noted.in_case(script.area.as_deref());
     // Its sentences name the clean-up as such.
-    note_cleanup(script.cleanup_step().map(|s| s.step_number));
+    replay.note_cleanup(script.cleanup_step().map(|s| s.step_number));
     // The case's steps, then its clean-up: a replay past the clean-up runs
     // it last, and only once every step before it passed.
     for (at, step) in script.in_run_order().filter(|s| in_range(s.step_number)).enumerate() {
@@ -1104,19 +1209,19 @@ async fn run_steps_marked<D: Driver>(
         if stopped() {
             return Some(ReplayEnd::Stopped { step: k });
         }
-        note_progress(k, n - 1);
+        replay.note_progress(k, n - 1);
         progress(k, n - 1);
         noted.step = at;
         noted.take_late();
         let mut in_run = InRun {
-            cancel: Some(cancel),
+            cancel: Some(&replay.cancel),
             stop_before_each_action: true,
             areas: Some(&areas),
             files: Some(&files),
             fail_on_unexpected_dialog: script.fail_on_unexpected_dialog,
             page_errors: script.page_errors,
             ignore_page_errors: script.ignore_page_errors.clone(),
-            progress: Some(&ACTIONS),
+            progress: Some(&replay.actions),
             noted: Some(&mut noted),
             ..Default::default()
         };
@@ -1568,7 +1673,7 @@ pub async fn carry_on<D: Driver>(
     lease: &mut Held,
     guarded_case: &mut Option<i32>,
     timing: &Timing,
-    cancel: &AtomicBool,
+    replay: &ReplayState,
     mut progress: impl FnMut(i32, i32),
     tabs: &mut Vec<ReplayedTab>,
     wrote_before: bool,
@@ -1607,7 +1712,7 @@ pub async fn carry_on<D: Driver>(
         account,
         lease,
         timing,
-        cancel,
+        replay,
         &mut progress,
         tabs,
         guarding_other,
