@@ -13888,7 +13888,7 @@ pub fn handshake_path() -> std::path::PathBuf {
 
 /// Bind 127.0.0.1:0, optionally write the handshake file, serve forever on
 /// the tokio runtime. Returns (port, token). Requests: tiny HTTP/1.1, one
-/// request per connection, 64 KiB body cap. `handshake` is Some in the real
+/// request per connection, 64 KiB body cap (and 1 KiB more for the headers). `handshake` is Some in the real
 /// app and None in tests - a test run must never clobber a live app's
 /// handshake file (it did once: proxies then saw a dead port + test token).
 pub async fn start_listener(
@@ -13931,7 +13931,9 @@ pub async fn start_listener(
             let make_client = make_client.clone();
             tauri::async_runtime::spawn(async move {
                 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-                let mut buf = vec![0u8; 65536];
+                // 64 KiB for the request plus a kilobyte for its head: the agent
+                // headers a proxy now sends must not take room a body had before.
+                let mut buf = vec![0u8; 65536 + 1024];
                 let mut used = 0usize;
                 // Read until headers+body are complete (or the cap). Every
                 // read is bounded: a client that opens a connection, sends

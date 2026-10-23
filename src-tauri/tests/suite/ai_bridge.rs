@@ -5148,3 +5148,40 @@ fn the_playwright_rule_routes_answer_from_the_shipped_copy_with_no_clone() {
     assert!(second.starts_with("(Page 2 of "), "{}", &second[..second.len().min(200)]);
     assert_eq!(autorun_pw_repo_answer("/autorun-pw-repo?page=999").0, 400);
 }
+
+/// The agent headers a proxy sends take their room from a head allowance, not
+/// from the body's: a body that fit under the 64 KiB cap before still fits with
+/// them, and a body over the cap is still refused.
+#[tokio::test]
+async fn the_agent_headers_do_not_take_room_from_the_body() {
+    let shared = v2_lib::ai_bridge::BridgeState::new(ctx(), "0.0.0-test".into());
+    let (port, token) = v2_lib::ai_bridge::start_listener(Arc::clone(&shared), None, None).await.unwrap();
+    async fn post(port: u16, token: &str, body_len: usize) -> String {
+        let body = "x".repeat(body_len);
+        let head = [
+            "POST /ping HTTP/1.1".to_string(),
+            "Host: x".to_string(),
+            format!("x-bridge-token: {token}"),
+            "x-tcm-tool: save_test_file".to_string(),
+            format!("x-tcm-agent: {AGENT_ID}"),
+            "x-tcm-agent-pid: 4242".to_string(),
+            "x-tcm-agent-client: claude-code".to_string(),
+            "x-tcm-agent-name: writer-1".to_string(),
+            format!("Content-Length: {body_len}"),
+            "Connection: close".to_string(),
+        ]
+        .join("\r\n");
+        let req = format!("{head}\r\n\r\n{body}");
+        let mut s = tokio::net::TcpStream::connect(("127.0.0.1", port)).await.unwrap();
+        // The listener may answer 413 before it has read it all: a reset is then fine.
+        let _ = s.write_all(req.as_bytes()).await;
+        let mut buf = Vec::new();
+        let _ = s.read_to_end(&mut buf).await;
+        String::from_utf8_lossy(&buf).to_string()
+    }
+    let fits = post(port, &token, 65536 - 100).await;
+    assert!(fits.starts_with("HTTP/1.1 "), "no answer: {fits:?}");
+    assert!(!fits.starts_with("HTTP/1.1 413"), "a body under the old cap was refused: {fits}");
+    let over = post(port, &token, 65536 + 1024).await;
+    assert!(over.starts_with("HTTP/1.1 413"), "a body over the cap was not refused: {over:?}");
+}
