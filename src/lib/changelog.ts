@@ -27,6 +27,14 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.3.1-beta.3",
+    date: "2026-10-23",
+    items: [
+      "Assistants: calls from one assistant session no longer wait for each other, and the app's log names which assistant made each call.",
+      "Auto Run: two saves of the same area, run order, test file or API template flow at once no longer lose one of them, and a script save that finds the script changed meanwhile asks for it to be read again.",
+    ],
+  },
+  {
     version: "2.3.1-beta.2",
     date: "2026-10-23",
     items: [
