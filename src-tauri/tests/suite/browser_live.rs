@@ -2013,6 +2013,170 @@ Connection: close
     );
 }
 
+/// Serve `page` at `GET /` on a free port, JSON for `/api/...` at once, and `/api/slow` after 1.5 s. Every
+/// connection has its own thread, so a connection the browser opens ahead of time and never uses holds
+/// nothing up. The threads end with the test process.
+fn serve_timing_page(page: &'static str) -> u16 {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("no free port");
+    let port = listener.local_addr().unwrap().port();
+    std::thread::spawn(move || {
+        for stream in listener.incoming() {
+            let Ok(mut stream) = stream else { continue };
+            std::thread::spawn(move || {
+                let _ = stream.set_read_timeout(Some(Duration::from_secs(30)));
+                let mut buf = [0u8; 4096];
+                let Ok(n) = stream.read(&mut buf) else { return };
+                let head = String::from_utf8_lossy(&buf[..n]).into_owned();
+                let line = head.lines().next().unwrap_or("").to_string();
+                if line.starts_with("GET /api/slow") {
+                    std::thread::sleep(Duration::from_millis(1500));
+                }
+                let (kind, body) = if line.starts_with("GET /api/") {
+                    ("application/json", r#"{"ok":true}"#.to_string())
+                } else if line.starts_with("GET /?") || line.starts_with("GET / ") {
+                    ("text/html; charset=utf-8", page.to_string())
+                } else {
+                    let _ = write!(stream, "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+                    return;
+                };
+                let _ = write!(
+                    stream,
+                    "HTTP/1.1 200 OK\r\nContent-Type: {kind}\r\nCache-Control: no-store\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+            });
+        }
+    });
+    port
+}
+
+/// The number a timing sentence gives after `started `.
+fn started_ms(detail: &str) -> u64 {
+    let rest = detail.split("started ").nth(1).unwrap_or_else(|| panic!("no start time in: {detail}"));
+    rest.split(' ').next().unwrap().parse().unwrap_or_else(|_| panic!("no number after `started ` in: {detail}"))
+}
+
+/// `not_before_ms` and `started_within_ms` against a real page and a real server: the debounced search
+/// (asks 800 ms after the input) passes a floor of 600 ms, the one that asks at once fails it, a request
+/// whose ANSWER takes 1.5 s still passes `started_within_ms` (the start is measured, not the answer), and
+/// one that starts 900 ms after the click fails a 300 ms ceiling. The margins are wide on purpose.
+#[tokio::test]
+#[ignore = "starts a real headless Edge"]
+async fn timing_checks_read_when_a_real_request_started() {
+    const PAGE: &str = r#"<!doctype html><html><body>
+<input id="q" oninput="clearTimeout(window.t); const v = this.value; window.t = setTimeout(() => fetch('/api/cards?q=' + v).then(r => r.text()), 800)">
+<input id="eager" oninput="fetch('/api/cards?q=' + this.value).then(r => r.text())">
+<button id="slow" onclick="fetch('/api/slow').then(r => r.text())">Slow answer</button>
+<button id="late" onclick="setTimeout(() => fetch('/api/cards?q=late').then(r => r.text()), 900)">Late</button>
+</body></html>"#;
+    let port = serve_timing_page(PAGE);
+    let mut live = open().await;
+    v2_lib::browser::page_log::watch(&mut live.cdp).await.expect("the network domain did not switch on");
+    must(run(&mut live, json!({ "kind": "navigate", "url": format!("http://127.0.0.1:{port}/") })).await);
+    let root = tempfile::tempdir().unwrap();
+    let mut account: Option<String> = None;
+    let step = |number: i32, actions: Vec<serde_json::Value>| StepScript {
+        step_number: number,
+        actions: actions.into_iter().map(action_of).collect(),
+        unchecked: None,
+        cleanup: false,
+        because: Vec::new(),
+    };
+
+    // 1. The debounced search asks about 800 ms after the input: past the 600 ms floor.
+    let debounced = step(1, vec![
+        json!({ "kind": "fill", "selector": { "css": "#q" }, "value": "abc" }),
+        json!({ "kind": "expect_response", "url_contains": "/api/cards", "not_before_ms": 600, "timeout_ms": 2000 }),
+    ]);
+    let out = run_step(&mut live.cdp, root.path(), "acme", "PMS", &debounced, &timing(), &mut account).await.unwrap();
+    must(out[0].clone());
+    must(out[1].clone());
+    let started = started_ms(&out[1].detail);
+    assert!((600..2000).contains(&started), "started {started} ms: {}", out[1].detail);
+    assert!(out[1].detail.contains(" ms after action 1 (fill)"), "{}", out[1].detail);
+
+    // 2. The one that asks at once starts sooner than the floor.
+    let eager = step(2, vec![
+        json!({ "kind": "fill", "selector": { "css": "#eager" }, "value": "abc" }),
+        json!({ "kind": "expect_response", "url_contains": "/api/cards", "not_before_ms": 600, "timeout_ms": 2000 }),
+    ]);
+    let out_eager = run_step(&mut live.cdp, root.path(), "acme", "PMS", &eager, &timing(), &mut account).await.unwrap();
+    must(out_eager[0].clone());
+    refused(out_eager[1].clone(), "sooner than not_before_ms 600");
+    assert!(out_eager[1].detail.contains("GET /api/cards started "), "{}", out_eager[1].detail);
+
+    // 3. The answer takes 1.5 s; the request started at once. The start is what is measured.
+    let slow = step(3, vec![
+        json!({ "kind": "click", "selector": { "css": "#slow" } }),
+        json!({ "kind": "expect_response", "url_contains": "/api/slow", "started_within_ms": 300 }),
+    ]);
+    let began = std::time::Instant::now();
+    let out_slow = run_step(&mut live.cdp, root.path(), "acme", "PMS", &slow, &timing(), &mut account).await.unwrap();
+    let took = began.elapsed();
+    must(out_slow[0].clone());
+    must(out_slow[1].clone());
+    let slow_started = started_ms(&out_slow[1].detail);
+    assert!(slow_started < 300, "started {slow_started} ms: {}", out_slow[1].detail);
+    assert!(took >= Duration::from_millis(1400), "the step did not wait for the answer: {took:?}");
+
+    // 4. Started 900 ms after the click: past the 300 ms ceiling.
+    let late = step(4, vec![
+        json!({ "kind": "click", "selector": { "css": "#late" } }),
+        json!({ "kind": "expect_response", "url_contains": "q=late", "started_within_ms": 300 }),
+    ]);
+    let out_late = run_step(&mut live.cdp, root.path(), "acme", "PMS", &late, &timing(), &mut account).await.unwrap();
+    must(out_late[0].clone());
+    refused(out_late[1].clone(), "later than started_within_ms 300");
+
+    for o in [&out[1], &out_eager[1], &out_slow[1], &out_late[1]] {
+        assert!(!o.detail.contains("127.0.0.1") && !o.detail.contains("q=abc"), "{}", o.detail);
+    }
+}
+
+/// `same_document: true` against a real page: a `fetch` re-fetch keeps the document and passes, a GET form
+/// submit loads a new one and fails, saying so.
+#[tokio::test]
+#[ignore = "starts a real headless Edge"]
+async fn same_document_fails_a_real_reload_and_passes_a_refetch() {
+    const PAGE: &str = r#"<!doctype html><html><body>
+<form action="/" method="get"><input name="q" value="x"><button id="submit">Search</button></form>
+<button id="refetch" onclick="fetch('/api/cards?q=r').then(r => r.text())">Refetch</button>
+</body></html>"#;
+    let port = serve_timing_page(PAGE);
+    let mut live = open().await;
+    v2_lib::browser::page_log::watch(&mut live.cdp).await.expect("the network domain did not switch on");
+    must(run(&mut live, json!({ "kind": "navigate", "url": format!("http://127.0.0.1:{port}/") })).await);
+    let root = tempfile::tempdir().unwrap();
+    let mut account: Option<String> = None;
+    let step = |number: i32, actions: Vec<serde_json::Value>| StepScript {
+        step_number: number,
+        actions: actions.into_iter().map(action_of).collect(),
+        unchecked: None,
+        cleanup: false,
+        because: Vec::new(),
+    };
+
+    let refetch = step(1, vec![
+        json!({ "kind": "click", "selector": { "css": "#refetch" } }),
+        json!({ "kind": "expect_response", "url_contains": "/api/cards", "same_document": true }),
+    ]);
+    let out = run_step(&mut live.cdp, root.path(), "acme", "PMS", &refetch, &timing(), &mut account).await.unwrap();
+    must(out[0].clone());
+    must(out[1].clone());
+    assert!(out[1].detail.contains("answered 200, in the same document: the step's matching request"), "{}", out[1].detail);
+
+    let submit = step(2, vec![
+        json!({ "kind": "click", "selector": { "css": "#submit" } }),
+        json!({ "kind": "expect_response", "url_contains": "/?q=", "same_document": true }),
+    ]);
+    let out_submit = run_step(&mut live.cdp, root.path(), "acme", "PMS", &submit, &timing(), &mut account).await.unwrap();
+    must(out_submit[0].clone());
+    refused(out_submit[1].clone(), "the page reloaded during the step: its top frame loaded a new document");
+    for o in [&out[1], &out_submit[1]] {
+        assert!(!o.detail.contains("127.0.0.1") && !o.detail.contains("q=r"), "{}", o.detail);
+    }
+}
+
 /// Spike: can Chrome's role lookup reach inside a same-origin frame when it
 /// is handed the frame's DOCUMENT, and does role `Iframe` find the frame
 /// element itself? The answers decide how a role step searches inside a
