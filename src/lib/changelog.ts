@@ -27,6 +27,16 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.3.1-beta.1",
+    date: "2026-10-23",
+    items: [
+      "Settings: the Auto Run card sits with the other cards on the right when there is room, and slides with them.",
+      "Playwright: right-click a folder in the Overview to make a new feature folder in it or rename it. Before a rename, TCM lists anything it would break, such as imports, aliases and navigation entries, and updates its own export settings.",
+      "Playwright: the tab no longer repeats its title above the repository path.",
+      "Pull Requests: a disabled repository is no longer offered, a tracked one that is gone can be cleared with Stop tracking, and a repository Azure DevOps will not open says so instead of Not found.",
+    ],
+  },
+  {
     version: "2.3.0",
     date: "2026-10-23",
     items: [
