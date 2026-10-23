@@ -124,6 +124,16 @@ test("a healthy clone shows one All good badge, and what it holds", async () => 
   expect(calls.find((c) => c.cmd === "pw_repo_structure")?.args).toEqual({ clone: "C:/repo" });
 });
 
+test("the clone row is named for the region and does not repeat the page title as a heading", async () => {
+  mount("C:/repo");
+  await screen.findByText("All good");
+  const row = screen.getByRole("group", { name: "Playwright repository" });
+  expect(within(row).getByText("C:/repo")).toBeInTheDocument();
+  expect(within(row).getByRole("button", { name: "Refresh everything" })).toBeInTheDocument();
+  expect(within(row).getByRole("button", { name: /^Change/ })).toBeInTheDocument();
+  expect(screen.queryByRole("heading", { name: "Playwright" })).not.toBeInTheDocument();
+});
+
 test("the features are a folder tree: each folder under its parent, each feature under its folder", async () => {
   mount("C:/repo");
   await screen.findByText("All good");
