@@ -3705,3 +3705,189 @@ fn the_playwright_topics_go_with_auto_run() {
         assert_eq!(guide_refusal(Some(topic), &[], &all), None, "{topic}");
     }
 }
+
+#[test]
+fn take_agent_arg_splits_the_name_out() {
+    use v2_lib::mcp::{take_agent_arg, AGENT_SHAPE};
+    let (rest, name) = take_agent_arg(&serde_json::json!({ "case_id": 1, "agent": "writer-1" })).unwrap();
+    assert_eq!(rest, serde_json::json!({ "case_id": 1 }));
+    assert_eq!(name.as_deref(), Some("writer-1"));
+    // Trimmed, as the registry keeps it.
+    let (_, name) = take_agent_arg(&serde_json::json!({ "agent": "  writer 2 " })).unwrap();
+    assert_eq!(name.as_deref(), Some("writer 2"));
+
+    // No agent: the arguments come back as they were, with no name.
+    let (rest, name) = take_agent_arg(&serde_json::json!({ "case_id": 1 })).unwrap();
+    assert_eq!((rest, name), (serde_json::json!({ "case_id": 1 }), None));
+    // Arguments that are not an object are left alone.
+    let (rest, name) = take_agent_arg(&serde_json::Value::Null).unwrap();
+    assert_eq!((rest, name), (serde_json::Value::Null, None));
+
+    // Null and blank are no name, and the key is gone either way.
+    for blank in [serde_json::Value::Null, serde_json::json!("  "), serde_json::json!("")] {
+        let (rest, name) = take_agent_arg(&serde_json::json!({ "case_id": 1, "agent": blank })).unwrap();
+        assert_eq!((rest, name), (serde_json::json!({ "case_id": 1 }), None), "{blank}");
+    }
+
+    // Not a string, or a name the registry refuses.
+    for bad in [
+        serde_json::json!(7),
+        serde_json::json!(true),
+        serde_json::json!(["a"]),
+        serde_json::json!({ "n": "a" }),
+        serde_json::json!("a/b"),
+        serde_json::json!("a\"b"),
+        serde_json::json!("a".repeat(33)),
+        serde_json::json!("caf\u{e9}"),
+    ] {
+        assert_eq!(take_agent_arg(&serde_json::json!({ "agent": bad })), Err(AGENT_SHAPE.to_string()), "{bad}");
+    }
+}
+
+#[test]
+fn a_malformed_agent_is_refused_before_the_app_is_asked() {
+    for bad in [serde_json::json!("a/b"), serde_json::json!(5), serde_json::json!("x".repeat(40))] {
+        let call = |_m: &str, _p: &str, _b: &str| -> Result<(u16, String), String> {
+            panic!("a malformed agent reached the app")
+        };
+        let req = serde_json::json!({
+            "jsonrpc": "2.0", "id": 4, "method": "tools/call",
+            "params": { "name": "get_autorun_page", "arguments": { "agent": bad } },
+        });
+        let v: serde_json::Value = serde_json::from_str(&handle_message(&req.to_string(), "1.0.0", &call).unwrap()).unwrap();
+        assert_eq!(v["result"]["isError"], true, "{bad}: {v}");
+        assert_eq!(v["result"]["content"][0]["text"], v2_lib::mcp::AGENT_SHAPE, "{bad}: {v}");
+        assert_eq!(v2_lib::mcp::calling_agent(), None);
+    }
+}
+
+#[test]
+fn the_agent_name_is_held_for_the_call_only() {
+    let seen = std::cell::RefCell::new(Vec::<(Option<String>, String, String)>::new());
+    let call = |_m: &str, path: &str, body: &str| -> Result<(u16, String), String> {
+        seen.borrow_mut().push((v2_lib::mcp::calling_agent(), path.to_string(), body.to_string()));
+        Ok((200, "{}".into()))
+    };
+    assert_eq!(v2_lib::mcp::calling_agent(), None);
+    let req = serde_json::json!({
+        "jsonrpc": "2.0", "id": 5, "method": "tools/call",
+        "params": { "name": "get_autorun_page", "arguments": { "agent": "writer-1" } },
+    });
+    let v: serde_json::Value = serde_json::from_str(&handle_message(&req.to_string(), "1.0.0", &call).unwrap()).unwrap();
+    assert_ne!(v["result"]["isError"], true, "{v}");
+    let seen = seen.into_inner();
+    let page: Vec<_> = seen.iter().filter(|(_, path, _)| path.starts_with("/autorun-page")).collect();
+    assert_eq!(page.len(), 1, "{seen:?}");
+    assert_eq!(page[0].0.as_deref(), Some("writer-1"), "{seen:?}");
+    // The route sees the call as if the argument had never been sent.
+    assert_eq!(page[0].1, "/autorun-page", "{seen:?}");
+    assert_eq!(page[0].2, "", "{seen:?}");
+    // Nothing the assistant named outlives its call.
+    assert_eq!(v2_lib::mcp::calling_agent(), None);
+
+    // A route that carries the arguments in a body gets them without `agent`.
+    let (_, reached) = call_recorded("get_test_cases", serde_json::json!({ "pbi_id": 1, "agent": "writer-1" }));
+    assert_eq!(reached.len(), 1, "{reached:?}");
+    let (_, path, body) = &reached[0];
+    assert!(!path.contains("writer-1") && !path.contains("agent"), "{path}");
+    assert!(!body.contains("writer-1") && !body.contains("agent"), "{body}");
+}
+
+/// Reads one request off `stream` up to the end of its head, answers `{}`,
+/// and returns the raw bytes.
+fn serve_one(stream: &mut std::net::TcpStream) -> Vec<u8> {
+    use std::io::{Read, Write};
+    let mut raw = Vec::new();
+    let mut chunk = [0u8; 4096];
+    while !raw.windows(4).any(|w| w == b"\r\n\r\n") {
+        let n = stream.read(&mut chunk).unwrap();
+        if n == 0 {
+            break;
+        }
+        raw.extend_from_slice(&chunk[..n]);
+    }
+    stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}").unwrap();
+    raw
+}
+
+fn agent_headers_of(raw: &[u8]) -> v2_lib::autorun::agents::AgentHeaders {
+    match v2_lib::ai_bridge::parse_http(raw) {
+        v2_lib::ai_bridge::Parsed::Complete { agent, .. } => agent,
+        _ => panic!("not a whole request: {}", String::from_utf8_lossy(raw)),
+    }
+}
+
+#[test]
+fn send_to_bridge_carries_the_agent_headers() {
+    let _agents = crate::serial::agents();
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let server = std::thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        serve_one(&mut stream)
+    });
+    let (status, _) = v2_lib::mcp::send_to_bridge(port, "tok", "GET", "/guide", "").unwrap();
+    assert_eq!(status, 200);
+    let seen = agent_headers_of(&server.join().unwrap());
+    assert_eq!(seen.id.as_deref(), Some(v2_lib::mcp::proxy_agent_id()));
+    assert_eq!(seen.pid, Some(std::process::id()));
+    assert_eq!(seen.client, v2_lib::mcp::client_name());
+    // No subagent is being called for: no name.
+    assert_eq!(seen.name, None);
+    // The id is one the app accepts as an agent's.
+    assert!(v2_lib::autorun::agents::valid_id(v2_lib::mcp::proxy_agent_id()));
+    assert_eq!(v2_lib::mcp::proxy_agent_id(), v2_lib::mcp::proxy_agent_id());
+}
+
+#[test]
+fn a_tool_call_for_a_subagent_names_it_on_every_request() {
+    let _agents = crate::serial::agents();
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    // The `/tools` read first, then the route the tool is for.
+    let server = std::thread::spawn(move || {
+        let mut all = Vec::new();
+        loop {
+            let (mut stream, _) = listener.accept().unwrap();
+            let raw = serve_one(&mut stream);
+            let last = String::from_utf8_lossy(&raw).starts_with("GET /autorun-page");
+            all.push(raw);
+            if last {
+                return all;
+            }
+        }
+    });
+    let send = |m: &str, p: &str, b: &str| v2_lib::mcp::send_to_bridge(port, "tok", m, p, b);
+    let req = serde_json::json!({
+        "jsonrpc": "2.0", "id": 6, "method": "tools/call",
+        "params": { "name": "get_autorun_page", "arguments": { "agent": "writer-1" } },
+    });
+    let v: serde_json::Value = serde_json::from_str(&handle_message(&req.to_string(), "1.0.0", &send).unwrap()).unwrap();
+    assert_ne!(v["result"]["isError"], true, "{v}");
+    let requests = server.join().unwrap();
+    assert!(requests.len() >= 2, "the policy read and the route: {}", requests.len());
+    for raw in &requests {
+        let seen = agent_headers_of(raw);
+        assert_eq!(seen.id.as_deref(), Some(v2_lib::mcp::proxy_agent_id()));
+        assert_eq!(seen.name.as_deref(), Some("writer-1"), "{}", String::from_utf8_lossy(raw));
+    }
+    assert_eq!(v2_lib::mcp::calling_agent(), None);
+}
+
+#[test]
+fn initialize_keeps_the_client_name() {
+    let _agents = crate::serial::agents();
+    let req = r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","clientInfo":{"name":"claude-code","version":"2.0"}}}"#;
+    handle_message(req, "1.10.3", &stub(200, "")).unwrap();
+    assert_eq!(v2_lib::mcp::client_name().as_deref(), Some("claude-code"));
+    // Only what a name may hold is kept.
+    v2_lib::mcp::set_client_name("Claude <b>Desktop</b>/1");
+    assert_eq!(v2_lib::mcp::client_name().as_deref(), Some("Claude bDesktopb1"));
+    // An initialize that names no client leaves the last one.
+    let bare = r#"{"jsonrpc":"2.0","id":2,"method":"initialize","params":{"protocolVersion":"2025-03-26"}}"#;
+    handle_message(bare, "1.10.3", &stub(200, "")).unwrap();
+    assert_eq!(v2_lib::mcp::client_name().as_deref(), Some("Claude bDesktopb1"));
+    v2_lib::mcp::set_client_name("   ");
+    assert_eq!(v2_lib::mcp::client_name(), None);
+    v2_lib::mcp::set_client_name("claude-code");
+}

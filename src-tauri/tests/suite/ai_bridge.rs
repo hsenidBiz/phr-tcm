@@ -3071,9 +3071,12 @@ async fn agent_bye_marks_the_agent_gone_even_with_auto_run_off() {
 /// call ended (ok, refused, or the HTTP status of a tool error) - and
 /// nothing of its arguments, its answer, an id or a path. Driven end to end:
 /// the proxy's dispatcher, its real transport and a listener of the test's
-/// own.
+/// own. The proxy names itself on every request, so the app registers it and
+/// each line carries its label ("Assistant 1"), never its id or pid.
 #[test]
 fn a_tool_call_writes_one_log_line_with_its_name_and_status_only() {
+    let _agents = crate::serial::agents();
+    v2_lib::autorun::agents::clear();
     let _log = crate::serial::log_tail();
     let mut context = ctx();
     context.disabled_tools = vec!["get_tags".into()];
@@ -3082,7 +3085,7 @@ fn a_tool_call_writes_one_log_line_with_its_name_and_status_only() {
         tauri::async_runtime::block_on(v2_lib::ai_bridge::start_listener(Arc::clone(&shared), None, None)).unwrap();
     let send = |m: &str, p: &str, b: &str| v2_lib::mcp::send_to_bridge(port, &token, m, p, b);
     let lines = |tool: &str| -> Vec<String> {
-        let mark = format!("AI tool {tool}:");
+        let mark = format!("AI tool {tool} (Assistant 1):");
         v2_lib::applog::recent(6000).into_iter().map(|l| l.message).filter(|m| m.starts_with(&mark)).collect()
     };
     let call = |tool: &str, args: serde_json::Value| -> serde_json::Value {
@@ -3099,20 +3102,22 @@ fn a_tool_call_writes_one_log_line_with_its_name_and_status_only() {
 
     // An answered call: ok.
     let ok = call("validate_cases", serde_json::json!({ "json": format!("[{{\"title\":\"{SECRET}\",\"steps\":[]}}]") }));
-    assert_eq!(ok["line"], "AI tool validate_cases: ok", "{ok}");
+    assert_eq!(ok["line"], "AI tool validate_cases (Assistant 1): ok", "{ok}");
     assert!(ok["result"]["isError"].is_null(), "{ok}");
 
     // A switched-off tool: refused on the `/tools` read, no route reached.
     let refused = call("get_tags", serde_json::json!({ "query": SECRET }));
-    assert_eq!(refused["line"], "AI tool get_tags: refused", "{refused}");
+    assert_eq!(refused["line"], "AI tool get_tags (Assistant 1): refused", "{refused}");
     assert_eq!(refused["result"]["isError"], true, "{refused}");
 
     // A route that answers an error: its HTTP status, never its path or ids.
     let failed = call("get_test_cases", serde_json::json!({ "case_ids": [987654321], "pbi_id": 987654322 }));
-    assert_eq!(failed["line"], "AI tool get_test_cases: tool error, HTTP 503", "{failed}");
+    assert_eq!(failed["line"], "AI tool get_test_cases (Assistant 1): tool error, HTTP 503", "{failed}");
 
+    let id = v2_lib::mcp::proxy_agent_id();
     for m in v2_lib::applog::recent(6000).into_iter().map(|l| l.message) {
         assert!(!m.contains(SECRET) && !m.contains("98765432"), "an argument reached the log: {m}");
+        assert!(!m.contains(id), "the proxy's id reached the log: {m}");
     }
     // The call is over: nothing names a tool any more.
     assert_eq!(v2_lib::mcp::calling_tool(), None);

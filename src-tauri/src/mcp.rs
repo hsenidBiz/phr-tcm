@@ -70,6 +70,92 @@ pub fn calling_tool() -> Option<String> {
     CALLING.with(|c| c.borrow().clone())
 }
 
+/// The id this proxy names itself with on every bridge request: made once
+/// per process, 32 lower-case hex digits. It is never logged or shown; the
+/// app turns it into a label.
+pub fn proxy_agent_id() -> &'static str {
+    static ID: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    ID.get_or_init(crate::ai_bridge::new_token)
+}
+
+/// This proxy's client, as `initialize` named it: kept only as
+/// `autorun::agents::clean_client` allows. Per-process state of the proxy,
+/// not a cache.
+static CLIENT: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+
+/// Keeps the cleaned client name (None when nothing of `raw` is left).
+pub fn set_client_name(raw: &str) {
+    *CLIENT.lock().unwrap_or_else(|e| e.into_inner()) = crate::autorun::agents::clean_client(raw);
+}
+
+/// The client name the proxy sends in `AGENT_CLIENT_HEADER`, if it has one.
+pub fn client_name() -> Option<String> {
+    CLIENT.lock().unwrap_or_else(|e| e.into_inner()).clone()
+}
+
+thread_local! {
+    /// The subagent a tool call on this thread is being made for, for
+    /// `AGENT_NAME_HEADER`.
+    static CALLING_AGENT: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Names the calling subagent for as long as it lives, and puts back what
+/// was there before when it ends (a guard inside a guard leaves the outer
+/// one in force).
+struct CallingAgent(Option<String>);
+
+impl CallingAgent {
+    fn set(name: Option<String>) -> CallingAgent {
+        CallingAgent(CALLING_AGENT.with(|c| c.replace(name)))
+    }
+}
+
+impl Drop for CallingAgent {
+    fn drop(&mut self) {
+        CALLING_AGENT.with(|c| *c.borrow_mut() = self.0.take());
+    }
+}
+
+/// The subagent a call on this thread is being made for, if any.
+pub fn calling_agent() -> Option<String> {
+    CALLING_AGENT.with(|c| c.borrow().clone())
+}
+
+/// The argument a tool call names its calling subagent in.
+pub const AGENT_ARG: &str = "agent";
+
+/// What a refused `agent` argument is answered with.
+pub const AGENT_SHAPE: &str =
+    "agent must be 1 to 32 letters, digits, spaces, dots, underscores or hyphens - the name your caller gave you";
+
+/// `args` without `agent`, and the name it held. Absent, null or blank gives
+/// no name; present but not a string, or a name `agents::clean_name` refuses,
+/// is `Err(AGENT_SHAPE)`.
+pub fn take_agent_arg(args: &serde_json::Value) -> Result<(serde_json::Value, Option<String>), String> {
+    let Some(map) = args.as_object() else {
+        return Ok((args.clone(), None));
+    };
+    let Some(given) = map.get(AGENT_ARG) else {
+        return Ok((args.clone(), None));
+    };
+    let name = match given {
+        serde_json::Value::Null => None,
+        serde_json::Value::String(s) if s.trim().is_empty() => None,
+        serde_json::Value::String(s) => Some(crate::autorun::agents::clean_name(s).ok_or_else(|| AGENT_SHAPE.to_string())?),
+        _ => return Err(AGENT_SHAPE.to_string()),
+    };
+    let mut rest = map.clone();
+    rest.remove(AGENT_ARG);
+    Ok((serde_json::Value::Object(rest), name))
+}
+
+/// Tells the app this proxy's session is over, so its entry can end at once
+/// rather than after the sweep. Best effort: an app that is not running, or
+/// an answer of any kind, changes nothing.
+pub fn send_bye() {
+    let _ = bridge_request("POST", "/agent-bye", "");
+}
+
 /// What to say when this proxy and the running app are different builds,
 /// or None when they match or the app's version is not known (not running
 /// yet is not a mismatch).
@@ -131,6 +217,11 @@ pub fn handle_message_in(msg: &str, version: &str, call: BridgeCall, session: &m
     let result = match method {
         "initialize" => {
             session.reset();
+            // The client names itself here; the name rides on every later
+            // bridge request. Left as it was when this initialize names none.
+            if let Some(client) = v["params"]["clientInfo"]["name"].as_str() {
+                set_client_name(client);
+            }
             // `version` is the RUNNING APP's; serverInfo reports this proxy's
             // own, so the two can be compared at all.
             let mut result = serde_json::json!({
@@ -154,7 +245,14 @@ pub fn handle_message_in(msg: &str, version: &str, call: BridgeCall, session: &m
         "tools/call" => {
             let params = &v["params"];
             let name = params["name"].as_str().unwrap_or_default();
-            let args = coerce_args(name, &params["arguments"]);
+            // The arguments as the call sees them: without `agent`. A refused
+            // `agent` is answered by `tools_call_outcome`; here it only means
+            // the arguments are left as sent.
+            let (bare, agent) = take_agent_arg(&params["arguments"]).unwrap_or_else(|_| (params["arguments"].clone(), None));
+            let args = coerce_args(name, &bare);
+            // Held through the role text below too, which is fetched for the
+            // same subagent.
+            let _holding = CallingAgent::set(agent);
             let (mut result, reached) = tools_call_outcome(params, call);
             if reached && result["isError"] != serde_json::Value::Bool(true) && name == "get_guide" {
                 if let Some(role) = args["role"].as_str().and_then(crate::autorun::roles::Role::from_key) {
@@ -1915,10 +2013,20 @@ pub fn coerce_args(name: &str, args: &serde_json::Value) -> serde_json::Value {
 /// The answer to a tool call, and whether the call reached the app (the dispatch answered, with any status).
 fn tools_call_outcome(params: &serde_json::Value, call: BridgeCall) -> (serde_json::Value, bool) {
     let name = params["name"].as_str().unwrap_or_default();
-    let args = &params["arguments"];
     // Every bridge request from here on names the tool, so the app logs the
     // call once: a refusal on the `/tools` read, otherwise the route's answer.
     let _naming = CallingTool::set(name);
+    // Before any other check: a malformed `agent` is refused here and never
+    // reaches the app. Otherwise every request of this call names the
+    // subagent, and nothing below sees the argument.
+    let (bare, agent) = match take_agent_arg(&params["arguments"]) {
+        Ok(taken) => taken,
+        Err(text) => {
+            return (serde_json::json!({ "content": [{ "type": "text", "text": text }], "isError": true }), false);
+        }
+    };
+    let _calling = CallingAgent::set(agent);
+    let args = &bare;
     // A tool that was merged away answers with where it went, before any
     // name-based refusal can misread it.
     if let Some(text) = retired_tool_answer(name) {
@@ -2549,6 +2657,15 @@ pub fn send_to_bridge(port: u16, token: &str, method: &str, path: &str, body: &s
     if let Some(tool) = calling_tool() {
         req = req.header(TOOL_HEADER, tool);
     }
+    // Who is calling: this proxy's id and process, its client, and the
+    // subagent this call is for.
+    req = req.header(AGENT_HEADER, proxy_agent_id()).header(AGENT_PID_HEADER, std::process::id().to_string());
+    if let Some(client) = client_name() {
+        req = req.header(AGENT_CLIENT_HEADER, client);
+    }
+    if let Some(agent) = calling_agent() {
+        req = req.header(AGENT_NAME_HEADER, agent);
+    }
     let resp = req
         .header("x-bridge-token", token)
         .header(PROXY_VERSION_HEADER, PROXY_VERSION)
@@ -2605,4 +2722,6 @@ pub fn run_stdio_proxy() {
             let _ = stdout.flush();
         }
     }
+    // The client closed the pipe: this session is over.
+    send_bye();
 }
