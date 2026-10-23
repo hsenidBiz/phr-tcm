@@ -1,4 +1,4 @@
-use v2_lib::ado::AdoClient;
+use v2_lib::ado::{AdoClient, AdoError, REPO_UNAVAILABLE};
 use wiremock::matchers::{method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -407,4 +407,85 @@ async fn pr_comments_carry_the_authors_identity_id() {
 
     assert_eq!(out[0].comments[0].author_id, "u-priya");
     assert_eq!(out[0].comments[1].author_id, "");
+}
+
+#[tokio::test]
+async fn list_repos_drops_a_disabled_repository() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/org/proj/_apis/git/repositories"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "value": [
+                {"id": "a", "name": "web", "isDisabled": false},
+                {"id": "b", "name": "HRM-PMS-NET", "isDisabled": true},
+                {"id": "c", "name": "api"}
+            ]
+        })))
+        .mount(&server)
+        .await;
+
+    let client = AdoClient::with_base_urls("tok".into(), server.uri(), server.uri());
+    let repos = client.list_repos("org", "proj").await.unwrap();
+    assert_eq!(
+        repos.iter().map(|r| r.name.as_str()).collect::<Vec<_>>(),
+        vec!["api", "web"],
+        "a disabled repository must not be offered"
+    );
+}
+
+/// Azure DevOps answers a disabled repository (and one the person cannot
+/// read) with a 404 whose body is the only thing telling it from a missing
+/// page. It becomes its own error, and what the person is shown names no URL.
+#[tokio::test]
+async fn a_repository_azure_devops_will_not_serve_is_its_own_error() {
+    let server = MockServer::start().await;
+    mount_connection_data(&server).await;
+    Mock::given(method("GET"))
+        .and(path("/org/proj/_apis/git/repositories/dead-guid/pullrequests"))
+        .respond_with(ResponseTemplate::new(404).set_body_json(serde_json::json!({
+            "$id": "1",
+            "innerException": null,
+            "message": "TF401019: The Git repository with name or identifier dead-guid does not exist or you do not have permissions for the operation you are attempting.",
+            "typeName": "Microsoft.TeamFoundation.Git.Server.GitRepositoryNotFoundException, Microsoft.TeamFoundation.Git.Server",
+            "typeKey": "GitRepositoryNotFoundException",
+            "errorCode": 0,
+            "eventId": 3000
+        })))
+        .mount(&server)
+        .await;
+
+    let client = AdoClient::with_base_urls("tok".into(), server.uri(), server.uri());
+    let err = client
+        .repo_pull_requests("org", "proj", "dead-guid", "active", 0)
+        .await
+        .expect_err("the repository is not served");
+
+    assert!(matches!(err, AdoError::RepositoryUnavailable), "got {err:?}");
+    let text = err.user_text();
+    assert_eq!(text, REPO_UNAVAILABLE);
+    assert!(!text.contains("http"), "{text}");
+    assert!(!text.contains(&server.uri()), "the URL leaked into the user's message: {text}");
+    assert!(!text.contains("127.0.0.1"), "{text}");
+    assert!(!text.contains("_apis"), "{text}");
+    assert!(!text.contains("TF401019"), "the raw body belongs in the log only: {text}");
+}
+
+/// A 404 that is not about a repository stays the bodiless NotFound every
+/// caller already matches on.
+#[tokio::test]
+async fn an_ordinary_404_is_still_not_found() {
+    let server = MockServer::start().await;
+    mount_connection_data(&server).await;
+    Mock::given(method("GET"))
+        .and(path("/org/proj/_apis/git/repositories/gone/pullrequests"))
+        .respond_with(ResponseTemplate::new(404).set_body_string("{\"message\":\"Nothing here.\"}"))
+        .mount(&server)
+        .await;
+
+    let client = AdoClient::with_base_urls("tok".into(), server.uri(), server.uri());
+    let err = client
+        .repo_pull_requests("org", "proj", "gone", "active", 0)
+        .await
+        .expect_err("404");
+    assert!(matches!(err, AdoError::NotFound), "got {err:?}");
 }

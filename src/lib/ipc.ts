@@ -17,6 +17,11 @@ export function describeAdoError(e: AdoError): string {
       return "You don't have permission for this resource.";
     case "NotFound":
       return "Not found.";
+    case "RepositoryUnavailable":
+      // Azure DevOps answers a disabled repository, and one the person
+      // cannot read, with the same 404. Quoted from REPO_UNAVAILABLE in
+      // ado/transport.rs (tests/suite/ado_network.rs keeps them equal).
+      return "Azure DevOps says this repository is disabled or you cannot read it.";
     case "Http": {
       // The body usually carries ADO's real explanation ("Rule Error for
       // field Remaining Work...") - surface it instead of a bare status,

@@ -333,7 +333,7 @@ impl AdoClient {
             }
             401 => Err(refused(resp, AdoError::Unauthorized).await),
             403 => Err(refused(resp, AdoError::Forbidden).await),
-            404 => Err(refused(resp, AdoError::NotFound).await),
+            404 => Err(refused_not_found(resp).await),
             429 => Err(AdoError::RateLimited { retry_after_secs: retry_after(&resp) }),
             s => {
                 let url = tidy(resp.url().as_str());
@@ -385,6 +385,39 @@ pub(crate) async fn refused(resp: reqwest::Response, err: AdoError) -> AdoError 
         crate::applog::warn(format!("{url} -> {status} said: {body}"));
     }
     err
+}
+
+/// What a person is told when Azure DevOps answers 404 with
+/// `GitRepositoryNotFoundException` (TF401019). That one answer covers a
+/// disabled repository and one the person has no Read permission on, so the
+/// sentence names both and no URL (tests/suite/ado_network.rs checks).
+/// `src/lib/ipc.ts` quotes it for the webview; a test keeps the two equal.
+pub const REPO_UNAVAILABLE: &str =
+    "Azure DevOps says this repository is disabled or you cannot read it.";
+
+/// Whether a 404 body is Azure DevOps naming a git repository it will not
+/// serve - the `TF401019` code, or the exception it travels with.
+fn names_unavailable_repo(body: &str) -> bool {
+    body.contains("TF401019") || body.contains("GitRepositoryNotFoundException")
+}
+
+/// `refused` for a 404, which can be one of two things: a thing that is not
+/// there (`NotFound`, bodiless as ever) or a git repository Azure DevOps
+/// will not serve (`RepositoryUnavailable`). The body is logged the same
+/// way either time; it is only read here to tell the two apart.
+pub(crate) async fn refused_not_found(resp: reqwest::Response) -> AdoError {
+    let status = resp.status().as_u16();
+    let url = tidy(resp.url().as_str());
+    let raw = resp.text().await.unwrap_or_default();
+    let body = said(&raw);
+    if !body.is_empty() {
+        crate::applog::warn(format!("{url} -> {status} said: {body}"));
+    }
+    if names_unavailable_repo(&raw) {
+        AdoError::RepositoryUnavailable
+    } else {
+        AdoError::NotFound
+    }
 }
 
 /// The delay ADO asked for on THIS response, if any.

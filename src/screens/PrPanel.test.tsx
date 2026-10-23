@@ -840,3 +840,54 @@ test("a focused pull request that is one of yours, with the group hidden, says s
   );
   expect(handled).toHaveBeenCalledTimes(1);
 });
+
+test("a saved repository the fresh list no longer offers is not requested, and says why", async () => {
+  // r9 was ticked once; the project's list no longer carries it (disabled,
+  // or gone). The tick stays in storage for the person to remove.
+  localStorage.setItem("tcm-v2-pr-repos:acme/Web", JSON.stringify(["r9"]));
+  const asked: string[] = [];
+  mockIPC((cmd, args) => {
+    if (cmd === "pr_overview") return { awaiting: [], mine: [] };
+    if (cmd === "list_repos") return [{ id: "r1", name: "web" }];
+    if (cmd === "repo_pull_requests") {
+      asked.push((args as { repoId: string }).repoId);
+      return [];
+    }
+  });
+  renderPanel();
+
+  expect(
+    await screen.findByText(
+      "A repository you tracked is disabled in Azure DevOps, or no longer in this project.",
+    ),
+  ).toBeInTheDocument();
+  expect(asked).toEqual([]);
+  expect(screen.queryByText(/Active on/)).not.toBeInTheDocument();
+  expect(localStorage.getItem("tcm-v2-pr-repos:acme/Web")).toBe(JSON.stringify(["r9"]));
+});
+
+test("a failing repository section keeps its heading, and the others still render", async () => {
+  localStorage.setItem("tcm-v2-pr-repos:acme/Web", JSON.stringify(["r1", "r2"]));
+  mockIPC((cmd, args) => {
+    if (cmd === "pr_overview") return { awaiting: [], mine: [] };
+    if (cmd === "list_repos")
+      return [
+        { id: "r1", name: "web" },
+        { id: "r2", name: "api" },
+      ];
+    if (cmd === "repo_pull_requests") {
+      if ((args as { repoId: string }).repoId === "r1") throw { kind: "RepositoryUnavailable" };
+      return [pr(12, { repo: "api" })];
+    }
+  });
+  renderPanel();
+
+  const failing = (await screen.findByText("Active on web")).closest("section")!;
+  expect(
+    await within(failing).findByText(
+      "Azure DevOps says this repository is disabled or you cannot read it.",
+    ),
+  ).toBeInTheDocument();
+  expect(await screen.findByText("Active on api")).toBeInTheDocument();
+  expect(await screen.findByText("!12")).toBeInTheDocument();
+});

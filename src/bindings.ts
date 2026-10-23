@@ -2297,7 +2297,15 @@ pdf?: PdfSpec_Serialize | null }) & { absent?: never; account?: never; answer?: 
 
 export type AdoError = { kind: "Unauthorized" } | { kind: "RateLimited"; detail: {
 	retry_after_secs: number,
-} } | { kind: "Forbidden" } | { kind: "NotFound" } | { kind: "Http"; detail: {
+} } | { kind: "Forbidden" } | { kind: "NotFound" } | 
+/**
+ *  A git repository that Azure DevOps answers for with TF401019 /
+ *  `GitRepositoryNotFoundException`: it is disabled, or the signed-in
+ *  person cannot read it. Azure DevOps uses one 404 for both, so the
+ *  sentence says both. Only `transport::handle_json` makes this, from
+ *  the body of a 404; the body itself goes to the log, never here.
+ */
+{ kind: "RepositoryUnavailable" } | { kind: "Http"; detail: {
 	status: number,
 	body: string,
 } } | { kind: "Network"; detail: string };

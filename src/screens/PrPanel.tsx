@@ -686,6 +686,7 @@ function PrGroup({
   prs,
   emphasize = false,
   empty,
+  error,
   org,
   project,
   focus = null,
@@ -695,6 +696,9 @@ function PrGroup({
   prs: PullRequest[];
   emphasize?: boolean;
   empty: string;
+  /** Why this group could not load. Shown under the heading in place of
+   * the list, so a failing group still says which one it is. */
+  error?: string;
   org: string;
   project: string;
   focus?: PrFocus | null;
@@ -712,10 +716,13 @@ function PrGroup({
         {title}
         {prs.length > 0 && <span className="ml-2 text-xs font-normal text-faint">{prs.length}</span>}
       </h2>
+      {error && <p className="text-sm text-danger">{error}</p>}
       {prs.length === 0 ? (
-        <p className="rounded-md border border-dashed border-border px-3 py-2 text-xs text-faint">
-          {empty}
-        </p>
+        !error && (
+          <p className="rounded-md border border-dashed border-border px-3 py-2 text-xs text-faint">
+            {empty}
+          </p>
+        )
       ) : (
         <div className="space-y-1.5">
           {prs.map((pr) => (
@@ -890,6 +897,16 @@ export default function PrPanel({
     return () => window.clearTimeout(timer);
   }, [focus, overview.isSuccess, overview.data, showYours, trackedRepos]);
 
+  // A tick whose repository the fresh list no longer offers - disabled in
+  // Azure DevOps, or gone from the project. It is not requested at all (it
+  // never reaches trackedRepos) and the tick is left alone for the person
+  // to remove. Only judged once the list has actually loaded: while it is
+  // loading or failed, every saved repository would look missing.
+  const missingRepoIds = useMemo(
+    () => (repos.isSuccess ? repoIds.filter((id) => !repos.data.some((r) => r.id === id)) : []),
+    [repos.isSuccess, repos.data, repoIds],
+  );
+
   // Repo NAMES face the MultiSelect (they are what a person recognises,
   // and ADO keeps them unique within a project); ids face storage and the
   // API, which survive a repo being renamed.
@@ -982,6 +999,16 @@ export default function PrPanel({
         </>
       )}
 
+      {missingRepoIds.map((id) => (
+        <p
+          key={id}
+          className="rounded-md border border-dashed border-border px-3 py-2 text-xs text-faint"
+        >
+          {/* Only the id is saved, so the name is not known here. */}
+          A repository you tracked is disabled in Azure DevOps, or no longer in this project.
+        </p>
+      ))}
+
       {trackedRepos.map((r) => (
         <RepoPrSection
           key={r.id}
@@ -1043,14 +1070,12 @@ function RepoPrSection({
   const repoPrs =
     prStatus === "active" ? fetched.filter((pr) => !shownAbove.has(pr.id)) : fetched;
 
-  if (active.isError) {
-    return <p className="text-sm text-danger">{active.error.message}</p>;
-  }
   return (
     <>
       <PrGroup
         title={`${prStatus === "active" ? "Active" : "Completed"} on ${repoName}`}
         prs={repoPrs}
+        error={active.isError ? active.error.message : undefined}
         empty={
           active.isLoading
             ? "Loading…"
