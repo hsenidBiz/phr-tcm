@@ -184,7 +184,7 @@ fn the_commands_land_in_their_own_namespace() {
     assert_eq!(dir, "C:/Users/Sam/.claude/commands/tcm");
 
     let files = command_files("C:/Users/Sam");
-    assert_eq!(files.len(), COMMANDS.len() + RENAMED_COMMANDS.len());
+    assert_eq!(files.len(), COMMANDS.len());
     let first = files[0].0.display().to_string().replace(std::path::MAIN_SEPARATOR, "/");
     assert_eq!(first, "C:/Users/Sam/.claude/commands/tcm/begin-test-case-writing.md");
 }
@@ -530,7 +530,7 @@ fn the_repo_commands_land_under_the_repos_dot_claude() {
     let dir = project_command_dir("D:/repo").display().to_string().replace(std::path::MAIN_SEPARATOR, "/");
     assert_eq!(dir, "D:/repo/.claude/commands/tcm");
     let files = command_files_in(&project_command_dir("D:/repo"), &[]);
-    assert_eq!(files.len(), COMMANDS.len() + RENAMED_COMMANDS.len());
+    assert_eq!(files.len(), COMMANDS.len());
     let first = files[0].0.display().to_string().replace(std::path::MAIN_SEPARATOR, "/");
     assert_eq!(first, "D:/repo/.claude/commands/tcm/begin-test-case-writing.md");
     assert!(files[0].1.contains(COMMAND_MARKER), "still ours to remove later");
@@ -1946,36 +1946,56 @@ fn the_gen_tests_command_scripts_a_batch_within_the_bounds() {
     assert!(!body.contains('\u{2014}') && !body.contains('\u{2013}'), "no em or en dashes");
 }
 
-/// The old name still answers while `RENAMED_COMMANDS` lists it: it says it was renamed, once, then does
-/// what the new command does, and it goes when the new command's tool is off.
+/// `RENAMED_COMMANDS` is empty since 2.3.0: the `script-pbi` stand-in for `gen-tests` is gone, so no
+/// install is offered the old name any more.
 #[test]
-fn the_old_script_pbi_command_says_it_was_renamed() {
-    assert_eq!(RENAMED_COMMANDS, &[("script-pbi", "gen-tests")]);
-    let dir = std::path::Path::new("D:/repo/.claude/commands/tcm");
-    let files = command_files_in(dir, &[]);
-    let (_, old) = files
-        .iter()
-        .find(|(p, _)| p.file_name().unwrap() == "script-pbi.md")
-        .expect("script-pbi.md is still written");
+fn no_renamed_command_stand_in_is_written_any_more() {
+    assert!(RENAMED_COMMANDS.is_empty(), "{RENAMED_COMMANDS:?}");
+    let files = command_files_in(std::path::Path::new("D:/repo/.claude/commands/tcm"), &[]);
+    assert!(files.iter().all(|(p, _)| p.file_name().unwrap() != "script-pbi.md"));
+    assert!(files.iter().any(|(p, _)| p.file_name().unwrap() == "gen-tests.md"), "/tcm:gen-tests is the command");
+}
+
+/// The generator for a future rename still builds the stand-in file: the old name, the marker, the
+/// renamed line, then the new command's body.
+#[test]
+fn a_renamed_command_stand_in_is_built_from_the_new_command() {
     let new = COMMANDS.iter().find(|c| c.stem == "gen-tests").unwrap();
+    let old = renamed_command_markdown("old-name", new);
     assert!(old.contains(COMMAND_MARKER), "{old}");
-    assert!(old.contains("name: script-pbi"), "{old}");
+    assert!(old.contains("name: old-name"), "{old}");
     assert!(old.contains("description: \"Renamed: now /tcm:gen-tests\""), "{old}");
     assert!(old.contains(&format!("argument-hint: \"{}\"", new.hint)), "{old}");
-    assert!(old.contains(&renamed_line("script-pbi", "gen-tests")), "{old}");
-    assert!(old.contains(&new.body.join("\n")), "the old command carries the new one's body: {old}");
-    assert_eq!(*old, renamed_command_markdown("script-pbi", new));
+    assert!(old.contains(&renamed_line("old-name", "gen-tests")), "{old}");
+    assert!(old.contains(&new.body.join("\n")), "the stand-in carries the new one's body: {old}");
     assert_eq!(
-        renamed_line("script-pbi", "gen-tests"),
-        "/tcm:script-pbi is now /tcm:gen-tests: tell the person it was renamed, once, then do what /tcm:gen-tests does."
+        renamed_line("old-name", "gen-tests"),
+        "/tcm:old-name is now /tcm:gen-tests: tell the person it was renamed, once, then do what /tcm:gen-tests does."
     );
     assert!(!old.contains('\u{2014}') && !old.contains('\u{2013}'), "no em or en dashes");
+}
 
-    let off = command_files_in(dir, &["start_autorun_discovery".to_string()]);
-    assert!(off.iter().all(|(p, _)| {
-        let n = p.file_name().unwrap();
-        n != "gen-tests.md" && n != "script-pbi.md"
-    }));
+/// An install that still has the 2.2.x stand-in loses it on the next sync, but only when it is ours: a
+/// `script-pbi.md` without the marker belongs to somebody else and stays.
+#[test]
+fn the_old_script_pbi_stand_in_is_swept_on_the_next_sync_unless_it_is_not_ours() {
+    use v2_lib::commands::ai_tools::write_commands_in;
+
+    let new = COMMANDS.iter().find(|c| c.stem == "gen-tests").unwrap();
+    let ours = TempDir::new();
+    std::fs::write(ours.path().join("script-pbi.md"), renamed_command_markdown("script-pbi", new)).unwrap();
+    write_commands_in(ours.path(), &[]).unwrap();
+    assert!(!ours.path().join("script-pbi.md").exists(), "our stand-in goes on the next sync");
+    assert!(ours.path().join("gen-tests.md").exists(), "/tcm:gen-tests is written");
+
+    let theirs = TempDir::new();
+    std::fs::write(theirs.path().join("script-pbi.md"), "my own command").unwrap();
+    write_commands_in(theirs.path(), &[]).unwrap();
+    assert_eq!(
+        std::fs::read_to_string(theirs.path().join("script-pbi.md")).unwrap(),
+        "my own command",
+        "a script-pbi.md without the marker is left alone"
+    );
 }
 
 /// `/tcm:explore` does a task with no test case, checks it, writes the summary, and undoes only on request.

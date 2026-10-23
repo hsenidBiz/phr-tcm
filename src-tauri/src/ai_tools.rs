@@ -1071,8 +1071,9 @@ pub fn command_files_in(dir: &std::path::Path, disabled: &[String]) -> Vec<(Path
 }
 
 /// (old stem, new stem): an old command still answers, saying it was renamed, while it is listed here.
-/// An entry goes at the next stable release; the sweep in `write_commands` then removes the old file.
-pub const RENAMED_COMMANDS: &[(&str, &str)] = &[("script-pbi", "gen-tests")];
+/// An entry goes at the next stable release; the sweep in `write_commands_in` then removes the old file.
+/// Empty since 2.3.0, when the `script-pbi` stand-in (now `gen-tests`) was dropped.
+pub const RENAMED_COMMANDS: &[(&str, &str)] = &[];
 
 /// The first line of a renamed command's body.
 pub fn renamed_line(old: &str, new: &str) -> String {
