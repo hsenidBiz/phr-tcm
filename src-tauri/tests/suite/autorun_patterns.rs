@@ -526,3 +526,22 @@ fn an_item_prefix_inside_other_page_text_is_not_read() {
     let detail = "waited 5000ms: button \"Save\" is covered by div#x item 1 of 2 (\"a\"): x is not on the page";
     assert!(matches!(classify(detail, Some("button \"Save\"")), ErrorClass::CoveredBy(_)), "{:?}", classify(detail, Some("button \"Save\"")));
 }
+
+/// A timing or reload failure of an `expect_response` is the request's, not the page's.
+#[test]
+fn the_timing_and_reload_failures_are_api_failures() {
+    use v2_lib::autorun::api_checks::{RELOADED, RELOAD_UNKNOWN};
+    let which = ": the step's matching request 1 of 1, sent as the step began";
+    for s in [
+        format!("GET /api/cards started 300 ms after action 1 (fill), sooner than not_before_ms 600{which}"),
+        format!("GET /api/cards started 900 ms after action 1 (fill), later than started_within_ms 300{which}"),
+        format!("GET /api/cards started 100 ms before action 1 (fill) began{which}"),
+        format!("GET /api/cards has no start time from the browser{which}"),
+        format!("{RELOADED}{which}"),
+        format!("{RELOAD_UNKNOWN}{which}"),
+        RELOADED.to_string(),
+        RELOAD_UNKNOWN.to_string(),
+    ] {
+        assert_eq!(classify(&s, None), ErrorClass::Api, "{s}");
+    }
+}

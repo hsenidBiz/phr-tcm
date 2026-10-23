@@ -61,6 +61,21 @@ pub const REDIRECTED: &str = " was redirected to ";
 pub const REDACTED: &str = "[redacted]";
 /// Between a failure's sentence and the excerpt of the body it read.
 pub const BODY_BEGAN: &str = " - the response began: ";
+/// `<METHOD> <path> started <n> ms after action <k> (<kind>), sooner than not_before_ms <n>` and its
+/// other timing forms.
+pub const STARTED: &str = " started ";
+/// `<METHOD> <path> has no start time from the browser`.
+pub const NO_START: &str = "has no start time from the browser";
+/// A `same_document` check whose step loaded a new document in the top frame.
+pub const RELOADED: &str = "the page reloaded during the step: its top frame loaded a new document";
+/// A `same_document` check that could not tell.
+pub const RELOAD_UNKNOWN: &str =
+    "could not tell whether the page reloaded during the step: the browser did not name the document it showed";
+/// A timed check in a step with no action before it to time from.
+pub const NOTHING_TO_TIME_FROM: &str =
+    "not_before_ms and started_within_ms time the request from the action before the check in its step, and this step has none";
+/// What a passing `same_document` check adds to its sentence.
+pub const SAME_DOCUMENT: &str = ", in the same document";
 
 /// Chrome's reason for a request the page itself called off (a navigation
 /// leaving, an `AbortController`) - not the server failing.
@@ -418,18 +433,88 @@ pub struct StepRequests {
     pub seen_at_action: Vec<usize>,
     /// The step's actions' kinds (`patterns::action_kind`), in order.
     pub kinds: Vec<String>,
+    /// The step's latest action `times_from` holds for, so far.
+    pub acted_at: Option<ActedAt>,
+    /// The main frame's `loaderId` at the step's start, read only when a check of the step asks `same_document`.
+    pub document: Option<String>,
+}
+
+/// The action a timed check measures from: which one it was, when it began and when its last input went out
+/// (epoch ms, the scale of a request's `started_ms`).
+#[derive(Debug, Clone, PartialEq)]
+pub struct ActedAt {
+    /// The action's place in the step, from 1.
+    pub number: usize,
+    pub kind: String,
+    pub began_ms: u64,
+    pub at_ms: u64,
 }
 
 impl StepRequests {
     /// `kinds`: the step's actions' kinds (`patterns::action_kind`), in order.
     pub fn new(mark: u64, kinds: Vec<String>) -> Self {
-        StepRequests { mark, taken: Vec::new(), seen_at_action: Vec::new(), kinds }
+        StepRequests { mark, taken: Vec::new(), seen_at_action: Vec::new(), kinds, acted_at: None, document: None }
     }
 
     /// The next action begins with `seen` of the step's requests recorded.
     pub fn action_began(&mut self, seen: usize) {
         self.seen_at_action.push(seen);
     }
+
+    /// The action just carried out (the latest written one `action_began` noted) began at `began_ms` and
+    /// sent its last input at `at_ms`. A later inner action of the same component keeps the first `began_ms`.
+    pub fn note_action_done(&mut self, began_ms: u64, at_ms: u64) {
+        let number = self.seen_at_action.len().max(1);
+        match &mut self.acted_at {
+            Some(acted) if acted.number == number => acted.at_ms = at_ms,
+            _ => {
+                let kind = self.kinds.get(number - 1).cloned().unwrap_or_else(|| "action".to_string());
+                self.acted_at = Some(ActedAt { number, kind, began_ms, at_ms });
+            }
+        }
+    }
+}
+
+/// Whether a request started when a timed check wants, measured from `acted` (`started_ms` is the browser's
+/// own start time for it). `Ok` is the measure (`started <n> ms after action <k> (<kind>)`), `Err` the
+/// reason, without the request's name.
+pub fn judge_start(
+    started_ms: Option<u64>,
+    acted: &ActedAt,
+    not_before_ms: Option<u32>,
+    started_within_ms: Option<u32>,
+) -> Result<String, String> {
+    let Some(start) = started_ms else { return Err(NO_START.to_string()) };
+    let (k, kind) = (acted.number, acted.kind.as_str());
+    if start < acted.began_ms {
+        return Err(format!("started {} ms before action {k} ({kind}) began", acted.began_ms - start));
+    }
+    // A start between the action's beginning and its last input is the action's own doing: 0 ms after it.
+    let after = start.saturating_sub(acted.at_ms);
+    if let Some(nb) = not_before_ms.filter(|nb| after < u64::from(*nb)) {
+        return Err(format!("started {after} ms after action {k} ({kind}), sooner than not_before_ms {nb}"));
+    }
+    if let Some(sw) = started_within_ms.filter(|sw| after > u64::from(*sw)) {
+        return Err(format!("started {after} ms after action {k} ({kind}), later than started_within_ms {sw}"));
+    }
+    Ok(format!("started {after} ms after action {k} ({kind})"))
+}
+
+/// Is the page's top frame still the document the step began on? `at_start` and `now` are the main frame's
+/// `loaderId`s; either missing is "cannot tell", never a pass.
+pub fn judge_document(at_start: Option<&str>, now: Option<&str>) -> Result<(), String> {
+    match (at_start, now) {
+        (Some(a), Some(b)) if a == b => Ok(()),
+        (Some(_), Some(_)) => Err(RELOADED.to_string()),
+        _ => Err(RELOAD_UNKNOWN.to_string()),
+    }
+}
+
+/// The main frame's `loaderId` (`Page.getFrameTree`): it changes with every new document the top frame loads,
+/// and not with a request the page makes. None on any error or an empty answer.
+pub async fn main_document<D: Driver>(d: &mut D) -> Option<String> {
+    let tree = d.call("Page.getFrameTree", json!({})).await.ok()?;
+    tree["frameTree"]["frame"]["loaderId"].as_str().filter(|id| !id.is_empty()).map(str::to_string)
 }
 
 /// A match the page called off itself: not the server failing, and not a request to judge while a later
@@ -634,11 +719,19 @@ pub fn times_from(a: &Action) -> bool {
 /// It takes the step's oldest matching request no earlier check took, records it in `step.taken`, and ends
 /// its pass or failure sentence with which request that was and after which action it was sent.
 pub async fn expect_response<D: Driver>(d: &mut D, a: &Action, step: &mut StepRequests, timing: &Timing) -> ActionOutcome {
-    let Action::ExpectResponse { method, url_contains, status, json, timeout_ms, .. } = a else {
+    let Action::ExpectResponse {
+        method, url_contains, status, json, timeout_ms, not_before_ms, started_within_ms, same_document, ..
+    } = a
+    else {
         return ActionOutcome::failed(format!("{CANNOT_RUN}this is not an expect_response"));
     };
     if let Err(why) = a.validate() {
         return ActionOutcome::failed(format!("{CANNOT_RUN}{why}"));
+    }
+    let timed = not_before_ms.is_some() || started_within_ms.is_some();
+    // Timed from the action before the check in its step: with none, there is nothing to measure from.
+    if timed && step.acted_at.is_none() {
+        return ActionOutcome::failed(format!("{CANNOT_RUN}{NOTHING_TO_TIME_FROM}"));
     }
     let wait_ms = timeout_ms.map(u64::from).unwrap_or(timing.expect_ms);
     // The deadline is pushed down into the driver so no single call can
@@ -658,6 +751,15 @@ pub async fn expect_response<D: Driver>(d: &mut D, a: &Action, step: &mut StepRe
     if !finished {
         return ActionOutcome::failed(format!("{}{which}", not_finished(&entry, wait_ms)));
     }
+    // When it started is judged before anything it answered: a request out of its window is the failure,
+    // whatever it said.
+    let measured = match (&step.acted_at, timed) {
+        (Some(acted), true) => match judge_start(entry.started_ms, acted, *not_before_ms, *started_within_ms) {
+            Ok(measure) => format!(", {measure}"),
+            Err(clause) => return ActionOutcome::failed(format!("{} {clause}{which}", named(&entry))),
+        },
+        _ => String::new(),
+    };
     // Read only for a JSON check, or for an unexpected 400 - whether it
     // said why is what tells a refused request from a transient one
     // (`transient`) - and never for a redirected request (what Chrome
@@ -670,10 +772,20 @@ pub async fn expect_response<D: Driver>(d: &mut D, a: &Action, step: &mut StepRe
         },
         _ => Body::Gone,
     };
-    match judge_body(&entry, *status, json.as_ref(), &body) {
-        Ok(()) => ActionOutcome::passed(format!("{}{ANSWERED}{status}{which}", named(&entry))),
-        Err(why) => failed_showing(format!("{why}{which}"), body.text()),
+    if let Err(why) = judge_body(&entry, *status, json.as_ref(), &body) {
+        return failed_showing(format!("{why}{which}"), body.text());
     }
+    // Judged last, once everything else passed: one look first, so a document the page loaded since the
+    // last one is recorded, then the document the top frame shows now.
+    if *same_document {
+        let _ = look(d).await;
+        let now = main_document(d).await;
+        if let Err(why) = judge_document(step.document.as_deref(), now.as_deref()) {
+            return ActionOutcome::failed(format!("{why}{which}"));
+        }
+    }
+    let same = if *same_document { SAME_DOCUMENT } else { "" };
+    ActionOutcome::passed(format!("{}{ANSWERED}{status}{measured}{same}{which}", named(&entry)))
 }
 
 /// Carry out an `api_request`: the page sends the GET itself (`GET_FN`,
