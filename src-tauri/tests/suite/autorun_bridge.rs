@@ -1771,6 +1771,10 @@ fn describe_try_names_the_kind_the_target_and_whether_it_worked() {
 /// however the case is written or trimmed.
 #[tokio::test]
 async fn try_refuses_a_file_navigate() {
+    // The refusal is compared word for word, and the route ends every answer
+    // with what main's browser has changed for testing: a test that
+    // publishes some must not do it in the middle of this one.
+    let _root = crate::serial::autorun();
     for url in ["file:///etc/passwd", "  FILE://C:/secrets.txt"] {
         let body = serde_json::json!({ "action": { "kind": "navigate", "url": url } }).to_string();
         let (status, out) = route(&ctx(), None, "POST", "/autorun-try", &body, "1.0.0").await;
@@ -1784,6 +1788,8 @@ async fn try_refuses_a_file_navigate() {
 /// looks for anything.
 #[tokio::test]
 async fn try_refuses_a_file_navigate_inside_a_when_visible() {
+    // Word for word again: see `try_refuses_a_file_navigate`.
+    let _root = crate::serial::autorun();
     for url in ["file:///etc/passwd", "  FILE://C:/secrets.txt"] {
         let body = serde_json::json!({ "action": {
             "kind": "when_visible",

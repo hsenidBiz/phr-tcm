@@ -593,6 +593,20 @@ fn still_running_answer(text: &str) -> Value {
     v
 }
 
+/// Wait, up to 2 s in 5 ms steps, until `claimed` holds: the detached task a
+/// call spawned has taken its slot and noted where it is. A fixed pause
+/// passes on an idle machine and fails when the task is not polled for a
+/// while, and the call answers 202 either way.
+async fn until(what: &str, mut claimed: impl FnMut() -> bool) {
+    for _ in 0..400 {
+        if claimed() {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+    assert!(claimed(), "{what} did not happen within 2 s");
+}
+
 /// The call times out, says where the replay is, and a second call for the
 /// same case and step waits on that same replay and takes its answer: the
 /// replay ran once, and is never refused as already running.
@@ -605,6 +619,15 @@ async fn a_replay_past_the_wait_answers_still_running_and_a_second_call_attaches
     assert_eq!(v2_lib::ai_bridge::REPLAY_ANSWER_WAIT, Duration::from_secs(45));
     let host = slow();
     let short = Duration::from_millis(50);
+    let (status, text) = autorun_replay_with(&ctx(), SlotNo::MAIN, &body(3), host, short).await;
+    assert_eq!(status, 202, "{text}");
+    // The 202 above was given after `short`, whether or not the replay's task
+    // had run by then. Once it has claimed the slot and noted where it is,
+    // asking again attaches to it and says where it is now.
+    until("the replay claiming its slot", || {
+        v2_lib::autorun::replay_to::assistants_replay_running() && v2_lib::autorun::replay_to::progress() == (2, 2)
+    })
+    .await;
     let (status, text) = autorun_replay_with(&ctx(), SlotNo::MAIN, &body(3), host, short).await;
     assert_eq!(status, 202, "{text}");
     let v = still_running_answer(&text);
@@ -641,6 +664,7 @@ async fn a_replay_of_another_step_while_one_runs_is_refused() {
     let host = slow();
     let (status, _) = autorun_replay_with(&ctx(), SlotNo::MAIN, &body(3), host, Duration::from_millis(30)).await;
     assert_eq!(status, 202);
+    until("the replay claiming its slot", || v2_lib::autorun::replay_to::assistants_replay_running()).await;
     let other = leak(FakeHost::ready());
     let (status, text) = autorun_replay_with(&ctx(), SlotNo::MAIN, &body(2), other, WAIT).await;
     assert_eq!((status, text.as_str()), (409, v2_lib::ai_bridge::replay_running_elsewhere(77, 3).as_str()));
@@ -676,6 +700,12 @@ async fn an_assistant_replay_runs_and_answers_in_its_own_slot() {
     let host = slow();
     let (status, text) = autorun_replay_with(&ctx(), one, &body(3), host, Duration::from_millis(50)).await;
     assert_eq!(status, 202, "{text}");
+    // The 202 was given after 50 ms whether or not the replay's task had run;
+    // wait for it to claim slot 1 and note where it is, then ask again for the
+    // 202 that says so. Every check below is unchanged.
+    until("slot 1's replay claiming its slot", || state(one).assistants_replay_running() && state(one).progress() == (2, 2)).await;
+    let (status, text) = autorun_replay_with(&ctx(), one, &body(3), host, Duration::from_millis(50)).await;
+    assert_eq!(status, 202, "{text}");
     assert_eq!(host.slots(), vec![one], "the host was not handed the slot");
     assert_eq!(assistant_replay_of(one), Some((ID, 3)));
     assert_eq!(assistant_replay_of(SlotNo::MAIN), None, "main keeps slot 1's replay");
@@ -695,6 +725,10 @@ async fn an_assistant_replay_runs_and_answers_in_its_own_slot() {
     let beside = slow();
     let (status, _) = autorun_replay_with(&ctx(), SlotNo::MAIN, &body(2), beside, Duration::from_millis(50)).await;
     assert_eq!(status, 202);
+    until("main's replay claiming its slot", || {
+        v2_lib::autorun::replay_to::is_running() && v2_lib::autorun::replay_to::progress() == (2, 2)
+    })
+    .await;
     assert_eq!(beside.slots(), vec![SlotNo::MAIN]);
     assert!(v2_lib::autorun::replay_to::is_running() && state(one).is_running());
 

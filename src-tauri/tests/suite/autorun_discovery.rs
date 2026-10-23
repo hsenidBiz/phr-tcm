@@ -500,6 +500,9 @@ async fn navigate_outside_the_allowed_sites_is_refused() {
 /// discovery goes: both refused with `/autorun-try`'s own sentences.
 #[tokio::test]
 async fn sign_in_and_file_urls_are_refused_as_actions() {
+    // The refusals are compared word for word, and the route ends every
+    // answer with what main's browser has changed for testing.
+    let _g = crate::serial::autorun();
     let body = json!({ "action": { "kind": "sign_in", "account": "admin" } }).to_string();
     let (status, out) = route(&ctx(), None, "POST", "/autorun-discover-action", &body, "1.0.0").await;
     assert_eq!(status, 400, "{out}");
@@ -573,6 +576,9 @@ async fn end_is_idempotent() {
 /// false.
 #[tokio::test]
 async fn a_mapping_run_needs_a_module() {
+    // The refusal is compared word for word, and the route ends every
+    // answer with what main's browser has changed for testing.
+    let _g = crate::serial::autorun();
     for body in [
         json!({ "account": "admin", "mapping": true }),
         json!({ "account": "admin", "mapping": true, "modules": [] }),
