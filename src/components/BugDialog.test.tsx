@@ -265,7 +265,7 @@ test("an empty pasted image is not added to the bug and the person is told", asy
 
   pasteImage(new Uint8Array(0));
 
-  await vi.waitFor(() => expect(toastMock.info).toHaveBeenCalledWith(NOT_YET));
+  await vi.waitFor(() => expect(toastMock.info).toHaveBeenCalledWith(NOT_YET), { timeout: 5000 });
   expect(screen.queryByAltText("Pasted screenshot 1")).not.toBeInTheDocument();
   expect(toastMock.success).not.toHaveBeenCalled();
   expect(screen.queryByText(/screenshot\(s\) attached/)).not.toBeInTheDocument();

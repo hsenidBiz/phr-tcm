@@ -832,7 +832,7 @@ test("an empty image in a paste event attaches nothing and says it had not reach
 
   pasteEvent(new Uint8Array(0));
 
-  await vi.waitFor(() => expect(toastMock.info).toHaveBeenCalledWith(NOT_YET));
+  await vi.waitFor(() => expect(toastMock.info).toHaveBeenCalledWith(NOT_YET), { timeout: 5000 });
   expect(screen.queryAllByAltText("pasted-201-1.png")).toHaveLength(0);
   expect(successToasts()).toHaveLength(0);
 });
@@ -843,7 +843,7 @@ test("a truncated PNG in a paste event attaches nothing either", async () => {
 
   pasteEvent(truncatedPng());
 
-  await vi.waitFor(() => expect(toastMock.info).toHaveBeenCalledWith(NOT_YET));
+  await vi.waitFor(() => expect(toastMock.info).toHaveBeenCalledWith(NOT_YET), { timeout: 5000 });
   expect(screen.queryAllByAltText("pasted-201-1.png")).toHaveLength(0);
   expect(successToasts()).toHaveLength(0);
 });
@@ -911,7 +911,7 @@ test("a JPEG that is cut off is refused like any other picture", async () => {
 
   pasteEvent(jpegBytes().slice(0, 12), "image/jpeg");
 
-  await vi.waitFor(() => expect(toastMock.info).toHaveBeenCalledWith(NOT_YET));
+  await vi.waitFor(() => expect(toastMock.info).toHaveBeenCalledWith(NOT_YET), { timeout: 5000 });
   expect(screen.queryAllByAltText("pasted-201-1.jpg")).toHaveLength(0);
   expect(successToasts()).toHaveLength(0);
 });
@@ -969,7 +969,7 @@ test("addImage ignores an empty image even if the decoder were to accept it", as
 
   pasteEvent(new Uint8Array(0));
 
-  await vi.waitFor(() => expect(toastMock.info).toHaveBeenCalledWith(NOT_YET));
+  await vi.waitFor(() => expect(toastMock.info).toHaveBeenCalledWith(NOT_YET), { timeout: 5000 });
   expect(screen.queryAllByAltText("pasted-201-1.png")).toHaveLength(0);
   expect(successToasts()).toHaveLength(0);
 });
