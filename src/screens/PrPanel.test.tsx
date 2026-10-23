@@ -891,3 +891,39 @@ test("a failing repository section keeps its heading, and the others still rende
   expect(await screen.findByText("Active on api")).toBeInTheDocument();
   expect(await screen.findByText("!12")).toBeInTheDocument();
 });
+
+test("Stop tracking removes every saved repository the list no longer offers, and the line goes", async () => {
+  localStorage.setItem("tcm-v2-pr-repos:acme/Web", JSON.stringify(["r1", "r8", "r9"]));
+  mockIPC((cmd) => {
+    if (cmd === "pr_overview") return { awaiting: [], mine: [] };
+    if (cmd === "list_repos") return [{ id: "r1", name: "web" }];
+    if (cmd === "repo_pull_requests") return [];
+  });
+  renderPanel();
+
+  const line = "A repository you tracked is disabled in Azure DevOps, or no longer in this project.";
+  // Two missing, one line.
+  expect(await screen.findAllByText(line)).toHaveLength(1);
+  fireEvent.click(screen.getByRole("button", { name: "Stop tracking" }));
+  expect(screen.queryByText(line)).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Stop tracking" })).not.toBeInTheDocument();
+  // The one still on the list stays tracked.
+  expect(localStorage.getItem("tcm-v2-pr-repos:acme/Web")).toBe(JSON.stringify(["r1"]));
+  expect(await screen.findByText("Active on web")).toBeInTheDocument();
+});
+
+test("when the repository list fails, the panel says so once instead of dropping the tracked sections silently", async () => {
+  localStorage.setItem("tcm-v2-pr-repos:acme/Web", JSON.stringify(["r1", "r2"]));
+  mockIPC((cmd) => {
+    if (cmd === "pr_overview") return { awaiting: [], mine: [] };
+    if (cmd === "list_repos") throw { kind: "RepositoryUnavailable" };
+  });
+  renderPanel();
+
+  expect(
+    await screen.findAllByText("Azure DevOps says this repository is disabled or you cannot read it."),
+  ).toHaveLength(1);
+  // No "tracked but missing" line is invented from a list that never loaded.
+  expect(screen.queryByText(/is disabled in Azure DevOps, or no longer/)).not.toBeInTheDocument();
+  expect(localStorage.getItem("tcm-v2-pr-repos:acme/Web")).toBe(JSON.stringify(["r1", "r2"]));
+});

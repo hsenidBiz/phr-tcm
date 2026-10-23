@@ -32,6 +32,7 @@ import MultiSelect from "../components/ui/multiselect";
 import { Modal } from "../components/ui/modal";
 import { Skeleton } from "../components/ui/skeleton";
 import { cn } from "../lib/cn";
+import { IconStopWatching } from "../lib/actionIcons";
 import { unwrap } from "../lib/ipc";
 import { CACHE, cacheKeys, cacheRead, cacheWrite } from "../lib/cache";
 import AstryxIsland from "../components/AstryxIsland";
@@ -999,15 +1000,27 @@ export default function PrPanel({
         </>
       )}
 
-      {missingRepoIds.map((id) => (
-        <p
-          key={id}
-          className="rounded-md border border-dashed border-border px-3 py-2 text-xs text-faint"
-        >
-          {/* Only the id is saved, so the name is not known here. */}
-          A repository you tracked is disabled in Azure DevOps, or no longer in this project.
-        </p>
-      ))}
+      {/* The list failing is said once, where the tracked sections would be:
+          without it they just vanish. */}
+      {repos.isError && <p className="text-sm text-danger">{repos.error.message}</p>}
+
+      {missingRepoIds.length > 0 && (
+        <div className="flex items-center gap-2 rounded-md border border-dashed border-border px-3 py-2 text-xs text-faint">
+          {/* Only the ids are saved, so the names are not known here. */}
+          <p className="min-w-0 flex-1">
+            A repository you tracked is disabled in Azure DevOps, or no longer in this project.
+          </p>
+          {/* A repository the list no longer offers has no tick to remove. */}
+          <button
+            type="button"
+            className="inline-flex shrink-0 items-center gap-1 rounded border border-border px-2 py-1 text-xs font-medium text-muted transition-colors hover:text-accent [&_svg]:size-3.5"
+            onClick={() => setRepoIds(repoIds.filter((id) => !missingRepoIds.includes(id)))}
+          >
+            <IconStopWatching aria-hidden />
+            Stop tracking
+          </button>
+        </div>
+      )}
 
       {trackedRepos.map((r) => (
         <RepoPrSection
