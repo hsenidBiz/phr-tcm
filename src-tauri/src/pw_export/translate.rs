@@ -282,7 +282,14 @@ pub fn raw_spec(input: &RawSpecInput) -> Res<String> {
         em.collector();
     }
     if uses(input, &|a| matches!(a, Action::ExpectResponse { .. })) {
-        em.request_log();
+        em.request_log(uses(input, &|a| is_timed(a)));
+    }
+    // When a request started, and which document a page is: only for the checks that ask.
+    if uses(input, &|a| is_timed(a)) {
+        em.started_ok();
+    }
+    if uses(input, &|a| is_same_document(a)) {
+        em.doc_of();
     }
     for name in tab_names(input) {
         em.line(4, &format!("let tab_{name}: typeof page;"));
@@ -808,6 +815,25 @@ fn key_name(key: &str) -> Res<String> {
 // ---------------------------------------------------------------------
 // Emission
 
+/// An `expect_response` that judges when its request started (`not_before_ms` or `started_within_ms`).
+fn is_timed(a: &Action) -> bool {
+    matches!(a, Action::ExpectResponse { not_before_ms, started_within_ms, .. }
+        if not_before_ms.is_some() || started_within_ms.is_some())
+}
+
+/// An `expect_response` that fails a step whose top frame loaded a new document.
+fn is_same_document(a: &Action) -> bool {
+    matches!(a, Action::ExpectResponse { same_document: true, .. })
+}
+
+/// Whether any of the actions, the ones inside a `when_visible` or `repeat_while_visible` included, holds `pred`.
+fn any_in(actions: &[Action], pred: &dyn Fn(&Action) -> bool) -> bool {
+    actions.iter().any(|a| match a {
+        Action::WhenVisible { then, .. } | Action::RepeatWhileVisible { then, .. } => any_in(then, pred),
+        _ => pred(a),
+    })
+}
+
 /// How many `expect_response` the actions arm, the ones inside a `when_visible` or `repeat_while_visible`
 /// included.
 fn responses_in(actions: &[Action]) -> usize {
@@ -1029,8 +1055,9 @@ impl Em<'_> {
     /// step's requests that match and that no earlier check took, the OLDEST that has finished (so
     /// the export takes them in the order they were sent, not the order the answers arrive), waiting
     /// only while none has; one the page cancelled is passed over while a later one matches, and a lone
-    /// cancelled one is given a second in case the page sends it again.
-    fn request_log(&mut self) {
+    /// cancelled one is given a second in case the page sends it again. `early`: some check times its request,
+    /// so the wait takes a function to judge the request it is about to give up on (see `started_ok`).
+    fn request_log(&mut self, early: bool) {
         for l in [
             "type Req = Awaited<ReturnType<typeof page.waitForRequest>>;",
             "const sent: { request: Req; from: unknown; state: 'going' | 'done' | 'failed'; error: string }[] = [];",
@@ -1048,7 +1075,7 @@ impl Em<'_> {
             "  const s = sent.find(e => e.request === r);",
             "  if (s) { s.state = 'failed'; s.error = r.failure()?.errorText ?? ''; }",
             "});",
-            "const nextResponse = async (from: number, taken: Set<object>, matches: (r: Req) => boolean, timeout: number) => {",
+            "const nextResponse = async (from: number, taken: Set<object>, matches: (r: Req) => boolean, timeout: number, early?: (r: Req) => void) => {",
             "  const end = Date.now() + timeout;",
             "  const cancelled = (e: { state: string; error: string }) => e.state === 'failed' && e.error.includes('ERR_ABORTED');",
             "  const named = (e: { request: Req }) => `${e.request.method()} ${new URL(e.request.url()).pathname}`;",
@@ -1065,20 +1092,56 @@ impl Em<'_> {
             "    if (failed && !left.some(e => e.state === 'going')) {",
             "      cancelledAt = cancelledAt || Date.now();",
             "      if (!cancelled(failed) || Date.now() - cancelledAt >= 1000 || Date.now() >= end) {",
+            "        early?.(failed.request);",
             "        throw new Error(`${named(failed)} failed: ${failed.error}`);",
             "      }",
             "    } else {",
             "      cancelledAt = 0;",
             "    }",
             "    if (Date.now() >= end) {",
+            "      if (left.length > 0) { early?.(left[0].request); }",
             "      throw new Error(left.length > 0 ? `${named(left[0])} had not finished after ${timeout} ms` : mine.length > 0 ? 'an earlier expect_response of this step took each matching request' : `no matching request in ${timeout} ms`);",
             "    }",
             "    await page.waitForTimeout(100);",
             "  }",
             "};",
         ] {
+            // The hook a timed check hands the wait is written only for a script that has one: every other
+            // export carries the helper it always did.
+            if early {
+                self.line(4, l);
+            } else if !l.contains("early?.(") {
+                self.line(4, &l.replace(", early?: (r: Req) => void", ""));
+            }
+        }
+    }
+
+    /// `api_checks::judge_start` for `not_before_ms` and `started_within_ms`: `start` is the browser's own start
+    /// time of the request (epoch ms, as the app reads it), `began` and `acted` are when the action before the
+    /// check began and when it ended. A start between them is the action's own doing, 0 ms after it.
+    fn started_ok(&mut self) {
+        for l in [
+            "const startedOk = (start: number, began: number, acted: number, notBefore: number | undefined, within: number | undefined) => {",
+            "  if (!(start > 0)) throw new Error('the request has no start time from the browser');",
+            "  if (!acted) throw new Error('no action before this check in its step to time the request from');",
+            "  const s = Math.round(start);",
+            "  if (s < began) throw new Error(`the request started ${began - s} ms before the action before it began`);",
+            "  const after = Math.max(0, s - acted);",
+            "  if (notBefore !== undefined && after < notBefore) throw new Error(`the request started ${after} ms after the action before it, sooner than not_before_ms ${notBefore}`);",
+            "  if (within !== undefined && after > within) throw new Error(`the request started ${after} ms after the action before it, later than started_within_ms ${within}`);",
+            "  return after;",
+            "};",
+        ] {
             self.line(4, l);
         }
+    }
+
+    /// `api_checks::judge_document` for `same_document`: a token the window keeps until a new document replaces it.
+    fn doc_of(&mut self) {
+        self.line(
+            4,
+            "const docOf = (p: typeof page) => p.evaluate(() => { const w = window as any; return (w.__tcmDocument ??= `${Date.now()}-${Math.random()}`) as string; });",
+        );
     }
 
     /// A list of actions, with what they expect armed first.
@@ -1087,11 +1150,22 @@ impl Em<'_> {
         let saved_cnt = std::mem::take(&mut self.cnt);
         let mut armed = Counters::default();
         self.arm(actions, indent, &mut armed);
+        // A timed `expect_response` measures from the action before it: when that action began and when it
+        // ended (`api_checks::times_from` says which actions count; the latest one counts).
+        let timed = any_in(actions, &is_timed);
         let mut r = Ok(());
         for a in actions {
+            let sc = self.scope.clone();
+            let marks = timed && crate::autorun::api_checks::times_from(a);
+            if marks {
+                self.line(indent, &format!("began{sc} = Date.now();"));
+            }
             r = self.action(a, indent);
             if r.is_err() {
                 break;
+            }
+            if marks {
+                self.line(indent, &format!("acted{sc} = Date.now();"));
             }
         }
         self.scope = saved_scope;
@@ -1115,6 +1189,15 @@ impl Em<'_> {
             let sc = self.scope.clone();
             self.line(indent, &format!("const sentFrom{sc} = sent.length;"));
             self.line(indent, &format!("const taken{sc} = new Set<object>();"));
+        }
+        if any_in(actions, &is_timed) {
+            let sc = self.scope.clone();
+            self.line(indent, &format!("let began{sc} = 0;"));
+            self.line(indent, &format!("let acted{sc} = 0;"));
+        }
+        if any_in(actions, &is_same_document) {
+            let sc = self.scope.clone();
+            self.line(indent, &format!("const doc{sc} = await docOf(cur);"));
         }
         self.arm_each(actions, indent, n);
     }
@@ -1653,7 +1736,9 @@ impl Em<'_> {
                 self.line(indent, "}");
             }
             Action::RepeatWhileVisible { selector, max, except, then } => self.repeat(selector, *max, except, then, indent)?,
-            Action::ExpectResponse { method, url_contains, status, json, timeout_ms, .. } => {
+            Action::ExpectResponse {
+                method, url_contains, status, json, timeout_ms, not_before_ms, started_within_ms, same_document, ..
+            } => {
                 let i = self.cnt.resp;
                 self.cnt.resp += 1;
                 // The oldest matching request of the step that has finished and that no earlier
@@ -1663,19 +1748,39 @@ impl Em<'_> {
                 if let Some(m) = method.as_deref().map(str::trim).filter(|m| !m.is_empty()) {
                     let _ = write!(test, " && r.method() === {}", lit(&m.to_uppercase()));
                 }
+                // A timed check judges when the request started (`startedOk`) before it judges what it
+                // answered, and also when the request is still going or failed, as the app does: the
+                // wait hands it the request it is about to give up on.
+                let timed = not_before_ms.is_some() || started_within_ms.is_some();
+                let ms = |v: &Option<u32>| v.map_or("undefined".to_string(), |n| n.to_string());
+                let judge = format!("startedOk(START, began{sc}, acted{sc}, {}, {})", ms(not_before_ms), ms(started_within_ms));
+                let early = if timed {
+                    let early = judge.replace("START", "t");
+                    format!(", (r: Req) => {{ const t = r.timing().startTime; if (t > 0) {{ {early}; }} }}")
+                } else {
+                    String::new()
+                };
                 self.line(
                     indent,
                     &format!(
-                        "const r{sc}_{i} = await nextResponse(sentFrom{sc}, taken{sc}, (r: Req) => {test}, {});",
+                        "const r{sc}_{i} = await nextResponse(sentFrom{sc}, taken{sc}, (r: Req) => {test}, {}{early});",
                         expect_timeout(*timeout_ms)
                     ),
                 );
+                if timed {
+                    let start = format!("r{sc}_{i}.request().timing().startTime");
+                    self.line(indent, &format!("{};", judge.replace("START", &start)));
+                }
                 self.line(indent, &format!("expect(r{sc}_{i}.status()).toBe({status});"));
                 if let Some(j) = json {
                     self.line(
                         indent,
                         &format!("expect(await r{sc}_{i}.json()).toMatchObject({});", match_json(j, "expect_response")?),
                     );
+                }
+                // Judged last, as the app does: the window the step began on is still the one shown.
+                if *same_document {
+                    self.line(indent, &format!("expect(await docOf(cur), 'the page reloaded during the step').toBe(doc{sc});"));
                 }
             }
             Action::ApiRequest { path, query, expect, .. } => {

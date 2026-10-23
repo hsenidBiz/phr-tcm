@@ -260,6 +260,196 @@ fn the_export_takes_requests_in_the_order_the_app_does() {
 }
 
 #[test]
+fn a_timed_response_marks_the_action_and_judges_its_start() {
+    let got = lf(&one_step(json!([
+        { "kind": "fill", "selector": "#q", "value": "abc" },
+        { "kind": "expect_response", "url_contains": "/api/cards", "status": 200, "not_before_ms": 600, "timeout_ms": 2000 }
+    ]))
+    .run()
+    .unwrap());
+    let lines: Vec<&str> = got.lines().map(str::trim).collect();
+    let at = |starts: &str| lines.iter().position(|l| l.starts_with(starts)).unwrap_or_else(|| panic!("no line {starts}\n{got}"));
+    let fill = at("await cur.locator('#q')");
+    let (began, acted) = (at("let began1 = 0;"), at("let acted1 = 0;"));
+    assert!(at("const taken1") < began && began < acted && acted < fill, "{got}");
+    // The action is bracketed by the two stamps, and the check judges the start before the status.
+    assert_eq!(lines[fill - 1], "began1 = Date.now();", "{got}");
+    assert_eq!(lines[fill + 1], "acted1 = Date.now();", "{got}");
+    assert!(lines[fill + 2].starts_with("const r1_0 = await nextResponse(sentFrom1, taken1, "), "{got}");
+    assert!(
+        lines[fill + 2].ends_with(", 2000, (r: Req) => { const t = r.timing().startTime; if (t > 0) { startedOk(t, began1, acted1, 600, undefined); } });"),
+        "{got}"
+    );
+    assert_eq!(lines[fill + 3], "startedOk(r1_0.request().timing().startTime, began1, acted1, 600, undefined);", "{got}");
+    assert_eq!(lines[fill + 4], "expect(r1_0.status()).toBe(200);", "{got}");
+    assert_eq!(got.matches("const startedOk = (").count(), 1, "{got}");
+    assert!(!got.contains("docOf"), "{got}");
+    // The helper sits right after the request log, before the first page load.
+    assert!(at("const nextResponse") < at("const startedOk = (") && at("const startedOk = (") < at("await page.goto('/');"), "{got}");
+
+    // A started_within_ms alone is passed on as it is written.
+    let within = lf(&one_step(json!([
+        { "kind": "click", "selector": "#go" },
+        { "kind": "expect_response", "url_contains": "/api/cards", "status": 200, "started_within_ms": 300 }
+    ]))
+    .run()
+    .unwrap());
+    assert!(within.contains("startedOk(r1_0.request().timing().startTime, began1, acted1, undefined, 300);"), "{within}");
+}
+
+#[test]
+fn same_document_compares_the_window_token() {
+    let got = lf(&one_step(json!([
+        { "kind": "click", "selector": "#refetch" },
+        { "kind": "expect_response", "url_contains": "/api/cards", "status": 200, "same_document": true }
+    ]))
+    .run()
+    .unwrap());
+    let lines: Vec<&str> = got.lines().map(str::trim).collect();
+    let at = |starts: &str| lines.iter().position(|l| l.starts_with(starts)).unwrap_or_else(|| panic!("no line {starts}\n{got}"));
+    let click = at("await cur.locator('#refetch')");
+    assert!(at("const doc1 = await docOf(cur);") < click, "{got}");
+    assert_eq!(lines[click + 2], "expect(r1_0.status()).toBe(200);", "{got}");
+    assert_eq!(lines[click + 3], "expect(await docOf(cur), 'the page reloaded during the step').toBe(doc1);", "{got}");
+    assert_eq!(got.matches("const docOf = ").count(), 1, "{got}");
+    assert!(!got.contains("startedOk") && !got.contains("began1"), "{got}");
+}
+
+#[test]
+fn an_untimed_response_exports_as_before() {
+    let got = one_step(json!([
+        { "kind": "click", "selector": "#save" },
+        { "kind": "expect_response", "method": "post", "url_contains": "API/Save", "status": 201 }
+    ]))
+    .run()
+    .unwrap();
+    for gone in ["startedOk", "docOf", "began1", "acted1", "early"] {
+        assert!(!got.contains(gone), "{gone}\n{got}");
+    }
+    assert!(
+        got.contains("(r: Req) => r.url().toLowerCase().includes('api/save') && r.method() === 'POST', 10000);"),
+        "{got}"
+    );
+}
+
+/// `startedOk` and `docOf` as the spec carries them, run in node, judge as `judge_start` and `judge_document`
+/// do: row by row, the same pass or failure.
+#[test]
+fn the_timing_and_document_helpers_judge_as_the_app_does() {
+    use std::process::Command;
+    use v2_lib::autorun::api_checks::{judge_document, judge_start, ActedAt};
+    if Command::new("node").arg("--version").output().is_err() {
+        eprintln!("node is not installed: the generated helpers were not run");
+        return;
+    }
+    let got = lf(&one_step(json!([
+        { "kind": "fill", "selector": "#q", "value": "abc" },
+        { "kind": "expect_response", "url_contains": "/api/cards", "status": 200, "not_before_ms": 600, "same_document": true }
+    ]))
+    .run()
+    .unwrap());
+    let from = got.find("    const startedOk = ").expect("the timing helper");
+    let end = from + got[from..].find("\n    };\n").expect("its end") + "\n    };\n".len();
+    let doc_at = got.find("    const docOf = ").expect("the document helper");
+    let doc_end = doc_at + got[doc_at..].find('\n').unwrap() + 1;
+    let helpers = format!("{}{}", &got[from..end], &got[doc_at..doc_end]);
+
+    // (start, action began, action ended, not_before_ms, started_within_ms): the rows of `judge_start`'s own
+    // table, and the two that sit between the action's beginning and its last input.
+    type Row = (Option<u64>, u64, u64, Option<u32>, Option<u32>);
+    let rows: Vec<Row> = vec![
+        (Some(1800), 1000, 1000, Some(600), None),
+        (Some(1300), 1000, 1000, Some(600), None),
+        (Some(1600), 1000, 1000, Some(600), None),
+        (Some(1599), 1000, 1000, Some(600), None),
+        (Some(1300), 1000, 1000, None, Some(300)),
+        (Some(1301), 1000, 1000, None, Some(300)),
+        (Some(900), 1000, 1000, Some(600), None),
+        (Some(900), 1000, 1000, None, Some(300)),
+        (None, 1000, 1000, Some(600), None),
+        (None, 1000, 1000, None, Some(300)),
+        (Some(1700), 1000, 1000, Some(600), Some(1000)),
+        (Some(2100), 1000, 1000, Some(600), Some(1000)),
+        (Some(1020), 1000, 1050, None, Some(300)),
+        (Some(1020), 1000, 1050, Some(600), None),
+        (Some(1000), 1000, 1000, None, Some(0)),
+    ];
+    let js_rows: Vec<Value> = rows.iter().map(|(s, b, a, nb, sw)| json!([s.unwrap_or(0), b, a, nb, sw])).collect();
+    let script = format!(
+        "const page: any = {{}};\n{helpers}\n(async () => {{\n  const rows: any[] = {rows};\n  const timing: string[] = [];\n  for (const [s, b, a, nb, sw] of rows) {{\n    try {{ startedOk(s, b, a, nb ?? undefined, sw ?? undefined); timing.push('pass'); }} catch (e) {{ timing.push('error'); }}\n  }}\n  const fake: any = {{ evaluate: async (f: any) => f() }};\n  const g: any = globalThis;\n  g.window = {{}};\n  const first = await docOf(fake);\n  const refetch = (await docOf(fake)) === first ? 'the same' : 'differs';\n  g.window = {{}};\n  const reload = (await docOf(fake)) === first ? 'the same' : 'differs';\n  let none = 'pass';\n  try {{ startedOk(1800, 1000, 0, 600, undefined); }} catch (e) {{ none = 'error'; }}\n  console.log(JSON.stringify({{ timing, refetch, reload, none }}));\n}})();\n",
+        rows = serde_json::to_string(&js_rows).unwrap()
+    );
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("helpers.ts");
+    std::fs::write(&file, script).unwrap();
+    let out = Command::new("node").arg(&file).output().unwrap();
+    assert!(out.status.success(), "{}\n{}", String::from_utf8_lossy(&out.stderr), String::from_utf8_lossy(&out.stdout));
+    let said: Value = serde_json::from_str(String::from_utf8_lossy(&out.stdout).trim()).unwrap();
+
+    for (i, (start, began, at, nb, sw)) in rows.iter().enumerate() {
+        let acted = ActedAt { number: 1, kind: "fill".into(), began_ms: *began, at_ms: *at };
+        let app = judge_start(*start, &acted, *nb, *sw).is_ok();
+        let export = said["timing"][i].as_str().unwrap() == "pass";
+        assert_eq!(export, app, "row {i}: start {start:?} began {began} acted {at} nb {nb:?} sw {sw:?}");
+    }
+    assert_eq!(said["refetch"], "the same");
+    assert_eq!(said["reload"], "differs");
+    assert_eq!(said["refetch"] == "the same", judge_document(Some("L1"), Some("L1")).is_ok());
+    assert_eq!(said["reload"] == "the same", judge_document(Some("L1"), Some("L2")).is_ok());
+    // No action stamped before the check: nothing to time from, never a pass (the app: NOTHING_TO_TIME_FROM).
+    assert_eq!(said["none"], "error");
+}
+
+/// A request still going when the check gives up is judged on its start first, as the app does
+/// (`expect_response` judges the start before "had not finished"): out of its window it fails on that, and
+/// inside it (or with no start time yet) it did not finish.
+#[test]
+fn a_request_still_going_is_judged_on_its_start_first_in_the_export_too() {
+    use std::process::Command;
+    if Command::new("node").arg("--version").output().is_err() {
+        eprintln!("node is not installed: the generated helpers were not run");
+        return;
+    }
+    let got = lf(&one_step(json!([
+        { "kind": "fill", "selector": "#q", "value": "abc" },
+        { "kind": "expect_response", "url_contains": "/api/cards", "status": 200, "started_within_ms": 300 }
+    ]))
+    .run()
+    .unwrap());
+    let from = got.find("    type Req = ").expect("the log");
+    let at = got.find("    const nextResponse = ").expect("the helper");
+    let end = at + got[at..].find("\n    };\n").expect("its end") + "\n    };\n".len();
+    let timed = got.find("    const startedOk = ").expect("the timing helper");
+    let timed_end = timed + got[timed..].find("\n    };\n").expect("its end") + "\n    };\n".len();
+    let helper = format!("{}{}", &got[from..end], &got[timed..timed_end]);
+    // The callback the check hands the wait, as the spec writes it.
+    let lambda_at = got.find(", (r: Req) => { const t = r.timing().startTime;").expect("the early judge") + 2;
+    let lambda = &got[lambda_at..lambda_at + got[lambda_at..].find(");\n").unwrap()];
+
+    let scenarios = [("early", 900), ("late", 1500), ("inside", 1100), ("unknown", 0)];
+    let mut ran = String::new();
+    for (name, start) in scenarios {
+        ran.push_str(&format!(
+            "  {{ reset(); send('{name}', {start}); try {{ await nextResponse(0, new Set<object>(), () => true, 300, {lambda}); results['{name}'] = 'passed'; }} catch (e: any) {{ results['{name}'] = e.message; }} }}\n"
+        ));
+    }
+    let script = format!(
+        "const handlers: Record<string, ((r: any) => void)[]> = {{}};\nconst context = {{ on: (ev: string, f: (r: any) => void) => {{ (handlers[ev] ||= []).push(f); }} }};\nconst page: any = {{ context: () => context, waitForTimeout: (ms: number) => new Promise(r => setTimeout(r, ms)) }};\nlet cur = page;\nlet began1 = 1000, acted1 = 1000;\n{helper}\nconst reset = () => {{ sent.length = 0; }};\nconst send = (name: string, start: number) => handlers.request.forEach(f => f({{ name, method: () => 'GET', url: () => 'https://hr.example/hr/api/cards', redirectedFrom: () => null, frame: () => ({{ page: () => page }}), failure: () => null, timing: () => ({{ startTime: start }}), response: async () => ({{ name }}) }}));\nconst results: Record<string, string> = {{}};\n(async () => {{\n{ran}  console.log(JSON.stringify(results));\n}})();\n"
+    );
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("early.ts");
+    std::fs::write(&file, script).unwrap();
+    let out = Command::new("node").arg(&file).output().unwrap();
+    assert!(out.status.success(), "{}\n{}", String::from_utf8_lossy(&out.stderr), String::from_utf8_lossy(&out.stdout));
+    let said: Value = serde_json::from_str(String::from_utf8_lossy(&out.stdout).trim()).unwrap();
+    assert!(said["early"].as_str().unwrap().contains("100 ms before the action before it began"), "{said}");
+    assert!(said["late"].as_str().unwrap().contains("500 ms after the action before it, later than started_within_ms 300"), "{said}");
+    for name in ["inside", "unknown"] {
+        assert_eq!(said[name], "GET /hr/api/cards had not finished after 300 ms", "{name}: {said}");
+    }
+}
+
+#[test]
 fn a_list_of_objects_in_a_json_check_is_refused() {
     let why = one_step(json!([
         { "kind": "expect_response", "url_contains": "x", "json": { "rows": [{ "a": 1 }] } }

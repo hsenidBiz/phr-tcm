@@ -1677,6 +1677,47 @@ async fn a_request_from_before_the_action_began_fails_both_timings() {
     }
 }
 
+/// A timed check with a short wait of its own.
+fn timed_for(nb: Option<u32>, sw: Option<u32>, wait_ms: u32) -> Action {
+    let mut a = timed(nb, sw, false);
+    if let Action::ExpectResponse { timeout_ms, .. } = &mut a {
+        *timeout_ms = Some(wait_ms);
+    }
+    a
+}
+
+#[tokio::test]
+async fn a_request_still_going_is_judged_on_its_start_before_it_is_said_not_to_have_finished() {
+    // Started 100 ms before the action began, and never answered: its start is the failure.
+    let mut d = browser(|| Ok(json!({})));
+    on_first_look(&mut d, vec![sent_at("7", "POST", SAVE, 900)]);
+    let out = check_in(&mut d, &timed_for(None, Some(300), 100), acted(1000, 1000), None).await;
+    assert!(!out.ok && !out.harness, "{out:?}");
+    assert!(out.detail.contains("started 100 ms before action 1 (fill) began"), "{}", out.detail);
+    assert!(!out.detail.contains("had not finished"), "{}", out.detail);
+
+    // Started too late for started_within_ms, and never answered.
+    let mut d = browser(|| Ok(json!({})));
+    on_first_look(&mut d, vec![sent_at("7", "POST", SAVE, 1500)]);
+    let out = check_in(&mut d, &timed_for(None, Some(300), 100), acted(1000, 1000), None).await;
+    assert!(!out.ok, "{out:?}");
+    assert!(out.detail.contains("started 500 ms after action 1 (fill), later than started_within_ms 300"), "{}", out.detail);
+
+    // Started inside its window and never answered: it did not finish, as before.
+    let mut d = browser(|| Ok(json!({})));
+    on_first_look(&mut d, vec![sent_at("7", "POST", SAVE, 1100)]);
+    let out = check_in(&mut d, &timed_for(None, Some(300), 100), acted(1000, 1000), None).await;
+    assert!(!out.ok, "{out:?}");
+    assert!(out.detail.contains("had not finished after 0.1 s"), "{}", out.detail);
+    assert!(!out.detail.contains("started_within_ms"), "{}", out.detail);
+
+    // No start time from the browser: nothing to judge, so just not finished.
+    let mut d = browser(|| Ok(json!({})));
+    on_first_look(&mut d, vec![sent("7", "POST", SAVE)]);
+    let out = check_in(&mut d, &timed_for(None, Some(300), 100), acted(1000, 1000), None).await;
+    assert!(out.detail.contains("had not finished after 0.1 s"), "{}", out.detail);
+}
+
 #[tokio::test]
 async fn a_timed_check_with_no_action_before_it_cannot_run() {
     let mut d = browser(|| Ok(json!({})));

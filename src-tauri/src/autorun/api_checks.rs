@@ -748,16 +748,23 @@ pub async fn expect_response<D: Driver>(d: &mut D, a: &Action, step: &mut StepRe
     };
     step.taken.push(entry.id.clone());
     let which = which_request(&d.net_since(step.mark), &entry, method.as_deref(), url_contains, step);
+    // When it started is judged before anything it answered, and before it is said not to have finished: a
+    // request out of its window is the failure, whatever it said and wherever it got to. A request still
+    // going whose start the browser has not reported has nothing to judge yet, so it is just not finished.
+    let started = match (&step.acted_at, timed) {
+        (Some(acted), true) if finished || entry.started_ms.is_some() => {
+            Some(judge_start(entry.started_ms, acted, *not_before_ms, *started_within_ms))
+        }
+        _ => None,
+    };
+    if let Some(Err(clause)) = &started {
+        return ActionOutcome::failed(format!("{} {clause}{which}", named(&entry)));
+    }
     if !finished {
         return ActionOutcome::failed(format!("{}{which}", not_finished(&entry, wait_ms)));
     }
-    // When it started is judged before anything it answered: a request out of its window is the failure,
-    // whatever it said.
-    let measured = match (&step.acted_at, timed) {
-        (Some(acted), true) => match judge_start(entry.started_ms, acted, *not_before_ms, *started_within_ms) {
-            Ok(measure) => format!(", {measure}"),
-            Err(clause) => return ActionOutcome::failed(format!("{} {clause}{which}", named(&entry))),
-        },
+    let measured = match started {
+        Some(Ok(measure)) => format!(", {measure}"),
         _ => String::new(),
     };
     // Read only for a JSON check, or for an unexpected 400 - whether it
