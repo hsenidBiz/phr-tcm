@@ -802,8 +802,19 @@ fn expect_response_timings_are_validated() {
     );
     assert_eq!(
         err(with(json!({ "not_before_ms": 3000, "timeout_ms": 3000 }))),
-        "expect_response not_before_ms must be less than timeout_ms: the check waits timeout_ms for the request"
+        "not_before_ms must be shorter than the time the check waits."
     );
+    // With no timeout_ms the check waits the default 10 s: 12000 can never pass, 9000 can.
+    assert_eq!(
+        err(with(json!({ "not_before_ms": 12000 }))),
+        "not_before_ms must be shorter than the time the check waits."
+    );
+    assert_eq!(
+        err(with(json!({ "not_before_ms": 10000 }))),
+        "not_before_ms must be shorter than the time the check waits."
+    );
+    let ok: Action = serde_json::from_value(with(json!({ "not_before_ms": 9000 }))).unwrap();
+    assert!(ok.validate().is_ok());
     let ok: Action = serde_json::from_value(with(
         json!({ "not_before_ms": 600, "started_within_ms": 2000, "timeout_ms": 3000 }),
     ))

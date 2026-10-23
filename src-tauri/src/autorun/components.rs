@@ -411,6 +411,20 @@ fn expand_one(
     }
 }
 
+/// `actions` with every `use_component` expanded, and for each action of the result the number (from 0) of the
+/// written action it came from. Pure: nothing is read, and the usage is not counted.
+pub fn expand_actions(file: &ComponentFile, actions: &[Action]) -> Result<(Vec<Action>, Vec<usize>), String> {
+    let mut out = Vec::with_capacity(actions.len());
+    let mut places = Vec::with_capacity(actions.len());
+    let mut uses = Vec::new();
+    for (i, a) in actions.iter().enumerate() {
+        let expanded = expand_one(file, a, &mut uses)?;
+        places.extend(std::iter::repeat_n(i, expanded.len()));
+        out.extend(expanded.into_iter().map(|(a, _)| a));
+    }
+    Ok((out, places))
+}
+
 /// A step's actions as they run: each `use_component` replaced by its
 /// component's actions with the inputs put in, each tagged with the
 /// component's name, and every use in order with the version it had. The

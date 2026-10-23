@@ -645,7 +645,9 @@ it (a click, usually) and then check it, in the same step:
   step took, passing over one the page cancelled when a later one matches,
   and its answer says which: `the step's matching request 2 of 3, sent
   after action 3 (press_key) began`. A request that never finishes within
-  the time fails, and the answer says it had not finished.
+  the time fails, and the answer says it had not finished. A timed check
+  (below) takes the request that started first instead, and waits for it
+  if it is still going.
 - When the case says when a request starts, time it from the action before
   the check in its step (the last keystroke, the Enter, the click):
   `not_before_ms` fails a request that started sooner than that ("about
@@ -655,20 +657,40 @@ it (a click, usually) and then check it, in the same step:
   when the request was sent, never when it was answered, so a slow server
   does not fail it. The answer gives the measured start, `started 812 ms
   after action 2 (fill)`, so a near miss shows before it turns flaky.
-- A timing is a check value. One the case states ("800 ms", "0.8 s") is
-  held by the case; a margin around it (600 for "about 800 ms")
-  needs a because naming the duration the case gives.
+- The time counts from when the action's input was delivered (the last
+  key or click), or for an action that sends none (a select or date
+  `fill`, `navigate`, `reload`) from when it finished. A highlight or a
+  wait for the element never counts. After a `use_component` it counts
+  from the component's last action.
+- The app's clock and the browser's can differ by a few milliseconds, so
+  the start is judged with 25 ms to spare: a request that started up to
+  25 ms before the action began counts as starting at it, and each bound
+  is met 25 ms early or late.
+- `not_before_ms` must be shorter than the time the check waits
+  (`timeout_ms`, or the default 10 seconds).
+- A timing is a check value. One the case states ("800 ms", "0.8 s",
+  "1,000 ms"; a range such as "600 to 900 ms" holds both ends) is held by
+  the case; a margin around it (600 for "about 800 ms") needs a because
+  naming the duration the case gives.
 - `"same_document": true` fails when the page loaded a new document during
-  the step (a full reload) instead of fetching again. The step's own words
-  hold it when they say the page does not reload; otherwise it
-  needs a because.
+  the step (a full reload) instead of fetching again. It looks at the top
+  frame only, a moment (300 ms) after the response, so a reload the page
+  starts when the response comes is caught. The step's own words hold it
+  when they say the page does not reload ("does not refresh", "without a
+  full page reload"; a reload of something else, such as "no data
+  reload", does not); otherwise it needs a because.
 - These three go on an `expect_response` of the step itself (not inside
-  `when_visible`), after the action that sends the request, in a step that
-  goes to no other page. A timed check cannot be tried on its own with
-  `try_autorun_action`: it has no action before it to time from.
-- Export to Playwright judges the three as the app does: from the
-  browser's own request start time, the start judged before "had not
-  finished", and no full reload by comparing the page's document.
+  `when_visible`), after the action that sends the request (a
+  `when_visible` or `repeat_while_visible` between them is refused, and a
+  component counts as the actions it runs), in a step that goes to no
+  other page. A timed or `same_document` check cannot be tried on its own
+  with `try_autorun_action`: it needs the step's earlier action. Try it as
+  part of its step with replay_autorun_to_step.
+- Export to Playwright judges the three as the app does, with the same
+  25 ms to spare. Playwright knows a request's start time only once a
+  response arrives, so an unanswered request reports "had not finished" in
+  the export, where the app reports its start. The start is judged before
+  "had not finished", and no full reload by comparing the page's document.
 - A request the server redirected is judged on the redirect it answered:
   give that status (302, say) to check a form that saves and then moves
   on. Any other status fails, naming the path it was sent to.

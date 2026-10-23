@@ -2102,6 +2102,32 @@ async fn a_probe_with_one_visible_and_one_hidden_records_one() {
     assert_eq!(archive_matched(first_hidden.path()), None, "a legacy target whose first match is hidden was filed");
 }
 
+/// A timed or same_document check tried alone has no earlier action of its step to measure from: it says so
+/// and where to try it, and sends the browser nothing.
+#[tokio::test]
+async fn a_lone_timed_or_same_document_check_says_it_needs_its_step() {
+    for extra in [
+        serde_json::json!({ "not_before_ms": 600 }),
+        serde_json::json!({ "started_within_ms": 300 }),
+        serde_json::json!({ "same_document": true }),
+    ] {
+        let mut value = serde_json::json!({ "kind": "expect_response", "url_contains": "/api/cards", "timeout_ms": 2000 });
+        for (k, v) in extra.as_object().unwrap() {
+            value[k] = v.clone();
+        }
+        let action: Action = serde_json::from_value(value).unwrap();
+        let dir = TempDir::new();
+        let mut account = None;
+        let mut lease = v2_lib::autorun::lease::Held::supervised();
+        let mut d = crate::common::FakePage::default().driver();
+        let (status, text) = try_in(&mut d, &mut account, &mut lease, dir.path(), "acme", "Web", 7, &action).await;
+        assert_eq!(status, 200, "{text}");
+        assert!(text.starts_with("failed:"), "{text}");
+        assert!(text.contains("Try it as part of its step with replay_autorun_to_step."), "{text}");
+        assert!(d.calls.is_empty(), "nothing was sent to the browser: {:?}", d.calls);
+    }
+}
+
 /// A tried legacy string target is probed once the try worked and filed
 /// with every match the probe counts (a run does not leave hidden ones
 /// out), never stamped as one.

@@ -1516,12 +1516,12 @@ impl Action {
                         return Err("expect_response not_before_ms must be less than started_within_ms".to_string());
                     }
                 }
-                if let (Some(nb), Some(t)) = (not_before_ms, timeout_ms) {
-                    if nb >= t {
-                        return Err(
-                            "expect_response not_before_ms must be less than timeout_ms: the check waits timeout_ms for the request"
-                                .to_string(),
-                        );
+                // A request that may not start before `nb` ms cannot be waited for by a check that waits less:
+                // `timeout_ms`, or the run's default wait when it gives none.
+                if let Some(nb) = not_before_ms {
+                    let waits = timeout_ms.map_or(crate::browser::timing::Timing::default().expect_ms, u64::from);
+                    if u64::from(*nb) >= waits {
+                        return Err("not_before_ms must be shorter than the time the check waits.".to_string());
                     }
                 }
                 Ok(())

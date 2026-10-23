@@ -1477,6 +1477,60 @@ fn a_timed_check_needs_an_action_before_it() {
 }
 
 #[test]
+fn a_guard_between_the_action_and_a_timed_check_is_refused() {
+    let click = serde_json::json!({ "kind": "click", "selector": "#a" });
+    let guard = serde_json::json!({ "kind": "when_visible", "selector": { "css": "#b" }, "then": [click.clone()] });
+    let repeat = serde_json::json!({ "kind": "repeat_while_visible", "selector": { "css": "#b" }, "max": 3, "then": [click.clone()] });
+    let nb = serde_json::json!({ "kind": "expect_response", "url_contains": "/api/x", "not_before_ms": 600 });
+    let refused = "case 7 step 1 action 3: not_before_ms and started_within_ms time the request from the action before it in its step - put the action that sends it (a fill, a click, a press_key) before this expect_response in the same step";
+    for g in [guard, repeat] {
+        let err = v2_lib::autorun::store::check_scripts(&[timing_script(serde_json::json!([click.clone(), g, nb.clone()]))])
+            .unwrap_err();
+        assert_eq!(err, refused);
+    }
+}
+
+fn component_file(name: &str, actions: serde_json::Value) -> v2_lib::autorun::components::ComponentFile {
+    serde_json::from_value(serde_json::json!({ "components": [{
+        "name": name, "description": "d", "inputs": [], "actions": actions
+    }] }))
+    .unwrap()
+}
+
+#[test]
+fn the_placement_rules_look_at_a_components_actions() {
+    use v2_lib::autorun::store::check_expanded_response_timings;
+    let use_it = serde_json::json!({ "kind": "use_component", "component": "Go" });
+    let nb = serde_json::json!({ "kind": "expect_response", "url_contains": "/api/x", "not_before_ms": 600 });
+    let same = serde_json::json!({ "kind": "expect_response", "url_contains": "/api/x", "same_document": true });
+    let click = serde_json::json!({ "kind": "click", "selector": "#a" });
+    let check_only = component_file("Go", serde_json::json!([{ "kind": "expect_visible", "selector": "#a" }]));
+    let navigates = component_file("Go", serde_json::json!([{ "kind": "navigate", "url": "https://app.example/x" }]));
+    let guarded = component_file(
+        "Go",
+        serde_json::json!([{ "kind": "when_visible", "selector": { "css": "#b" }, "then": [click.clone()] }]),
+    );
+    let clicks = component_file("Go", serde_json::json!([click.clone()]));
+
+    // A component made only of checks is not an action to time from.
+    let script = timing_script(serde_json::json!([use_it.clone(), nb.clone()]));
+    assert_eq!(v2_lib::autorun::store::check_scripts(&[script.clone()]), Ok(()), "written, it looks like an action");
+    let err = check_expanded_response_timings(&script, None, &check_only).unwrap_err();
+    assert!(err.starts_with("case 7 step 1 action 2: not_before_ms and started_within_ms time the request from the action before it"), "{err}");
+    // A component that navigates loads a page before a same_document check.
+    let script = timing_script(serde_json::json!([use_it.clone(), same.clone()]));
+    assert_eq!(v2_lib::autorun::store::check_scripts(&[script.clone()]), Ok(()));
+    let err = check_expanded_response_timings(&script, None, &navigates).unwrap_err();
+    assert_eq!(err, "case 7 step 1 action 2: same_document checks the step loads no new page, and action 1 of this step (navigate) does");
+    // A component whose last action is a guard cannot be timed from.
+    let script = timing_script(serde_json::json!([use_it.clone(), nb.clone()]));
+    assert!(check_expanded_response_timings(&script, None, &guarded).is_err());
+    // A component that clicks is fine, and so is a step that was not changed.
+    assert_eq!(check_expanded_response_timings(&script, None, &clicks), Ok(()));
+    assert_eq!(check_expanded_response_timings(&script, Some(&[2]), &check_only), Ok(()));
+}
+
+#[test]
 fn same_document_refuses_a_step_that_loads_a_page() {
     let same = serde_json::json!({ "kind": "expect_response", "url_contains": "/api/x", "same_document": true });
     let click = serde_json::json!({ "kind": "click", "selector": "#a" });

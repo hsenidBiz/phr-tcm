@@ -273,36 +273,9 @@ fn check_response_timings(case_id: i32, step: &StepScript, i: usize, action: &cr
     let (guard, then) = match action {
         Action::WhenVisible { then, .. } => ("when_visible", then),
         Action::RepeatWhileVisible { then, .. } => ("repeat_while_visible", then),
-        Action::ExpectResponse { not_before_ms, started_within_ms, same_document, .. } => {
-            if (not_before_ms.is_some() || started_within_ms.is_some())
-                && !step.actions[..i].iter().any(crate::autorun::api_checks::times_from)
-            {
-                return Err(format!(
-                    "case {case_id} step {n} action {at}: not_before_ms and started_within_ms time the request from the action before it in its step - put the action that sends it (a fill, a click, a press_key) before this expect_response in the same step"
-                ));
-            }
-            if *same_document {
-                let loads = step.actions[..i].iter().enumerate().find(|(_, a)| {
-                    matches!(
-                        a,
-                        Action::Navigate { .. }
-                            | Action::Reload
-                            | Action::SignIn { .. }
-                            | Action::ReturnToArea { .. }
-                            | Action::OpenTab { .. }
-                            | Action::SwitchTab { .. }
-                            | Action::CloseTab { .. }
-                    )
-                });
-                if let Some((j, other)) = loads {
-                    return Err(format!(
-                        "case {case_id} step {n} action {at}: same_document checks the step loads no new page, and action {} of this step ({}) does",
-                        j + 1,
-                        crate::autorun::patterns::action_kind(other)
-                    ));
-                }
-            }
-            return Ok(());
+        Action::ExpectResponse { .. } => {
+            let places: Vec<usize> = (0..step.actions.len()).collect();
+            return check_placement(case_id, n, &step.actions, &places, i);
         }
         _ => return Ok(()),
     };
@@ -310,6 +283,75 @@ fn check_response_timings(case_id: i32, step: &StepScript, i: usize, action: &cr
         return Err(format!(
             "case {case_id} step {n} action {at}: not_before_ms, started_within_ms and same_document go on an expect_response of the step itself, not inside {guard}"
         ));
+    }
+    Ok(())
+}
+
+/// The placement rules for the `expect_response` at `actions[i]`: `actions` are the step's, as written or with
+/// every component expanded, and `places[j]` is the number (from 0) of the written action `actions[j]` came
+/// from, which is what a sentence names.
+fn check_placement(case_id: i32, n: i32, actions: &[crate::browser::actions::Action], places: &[usize], i: usize) -> Result<(), String> {
+    use crate::browser::actions::Action;
+    let Action::ExpectResponse { not_before_ms, started_within_ms, same_document, .. } = &actions[i] else { return Ok(()) };
+    let at = places[i] + 1;
+    if not_before_ms.is_some() || started_within_ms.is_some() {
+        // The action it is timed from is the nearest one before it that can send the request; a guard
+        // that may not run cannot be it.
+        let from = actions[..i].iter().rev().find(|a| crate::autorun::api_checks::times_from(a));
+        if from.is_none_or(|a| matches!(a, Action::WhenVisible { .. } | Action::RepeatWhileVisible { .. })) {
+            return Err(format!(
+                "case {case_id} step {n} action {at}: not_before_ms and started_within_ms time the request from the action before it in its step - put the action that sends it (a fill, a click, a press_key) before this expect_response in the same step"
+            ));
+        }
+    }
+    if *same_document {
+        let loads = actions[..i].iter().enumerate().find(|(_, a)| {
+            matches!(
+                a,
+                Action::Navigate { .. }
+                    | Action::Reload
+                    | Action::SignIn { .. }
+                    | Action::ReturnToArea { .. }
+                    | Action::OpenTab { .. }
+                    | Action::SwitchTab { .. }
+                    | Action::CloseTab { .. }
+            )
+        });
+        if let Some((j, other)) = loads {
+            return Err(format!(
+                "case {case_id} step {n} action {at}: same_document checks the step loads no new page, and action {} of this step ({}) does",
+                places[j] + 1,
+                crate::autorun::patterns::action_kind(other)
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// The placement rules again, on the steps of `script` named in `only` (every step when `None`) that use a
+/// component, with each component expanded: a component that navigates, or that holds only checks, counts as
+/// what it runs. A component the file does not hold is left to the checks that name it.
+pub fn check_expanded_response_timings(
+    script: &CaseScript,
+    only: Option<&[i32]>,
+    file: &crate::autorun::components::ComponentFile,
+) -> Result<(), String> {
+    for step in &script.steps {
+        if only.is_some_and(|o| !o.contains(&step.step_number)) {
+            continue;
+        }
+        let uses_one = step
+            .actions
+            .iter()
+            .flat_map(crate::browser::actions::Action::each)
+            .any(|a| matches!(a, crate::browser::actions::Action::UseComponent { .. }));
+        if !uses_one {
+            continue;
+        }
+        let Ok((expanded, places)) = crate::autorun::components::expand_actions(file, &step.actions) else { continue };
+        for i in 0..expanded.len() {
+            check_placement(script.case_id, step.step_number, &expanded, &places, i)?;
+        }
     }
     Ok(())
 }
