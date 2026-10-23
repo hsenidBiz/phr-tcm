@@ -508,9 +508,15 @@ function describeKnown(a: Action): Sentence {
     case "expect_response": {
       const method = optStr(a.method);
       const json = a.json != null ? " with the expected data" : "";
+      const notBefore = optNum(a.not_before_ms);
+      const within = optNum(a.started_within_ms);
+      const timing =
+        (notBefore != null ? `, starting at least ${notBefore} ms after the action before it` : "") +
+        (within != null ? `, starting within ${within} ms of the action before it` : "") +
+        (a.same_document === true ? ", with no page reload" : "");
       return [
         words(
-          `Check the ${method ? `${method.toUpperCase()} ` : ""}request to ${pathOnly(str(a.url_contains), true)} answers ${optNum(a.status) ?? 200}${json}`,
+          `Check the ${method ? `${method.toUpperCase()} ` : ""}request to ${pathOnly(str(a.url_contains), true)} answers ${optNum(a.status) ?? 200}${json}${timing}`,
         ),
       ];
     }

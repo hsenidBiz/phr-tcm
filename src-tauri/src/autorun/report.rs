@@ -139,9 +139,19 @@ pub fn action_words(action: &Action) -> String {
         }
         Action::SignIn { account } => format!("sign in as {account}"),
         Action::Upload { selector, file } => format!("upload {file} into {}", selector.describe()),
-        Action::ExpectResponse { method, url_contains, status, .. } => {
+        Action::ExpectResponse { method, url_contains, status, not_before_ms, started_within_ms, same_document, .. } => {
             let which = method.as_deref().map(|m| format!("{} ", m.trim().to_ascii_uppercase())).unwrap_or_default();
-            format!("expect a {which}request to {} to answer {status}", without_query(url_contains))
+            let mut words = format!("expect a {which}request to {} to answer {status}", without_query(url_contains));
+            if let Some(nb) = not_before_ms {
+                words.push_str(&format!(", starting at least {nb} ms after the action before it"));
+            }
+            if let Some(sw) = started_within_ms {
+                words.push_str(&format!(", starting within {sw} ms of the action before it"));
+            }
+            if *same_document {
+                words.push_str(", with no page reload");
+            }
+            words
         }
         Action::ApiRequest { path, expect, .. } => {
             format!("ask {} and expect {}", without_query(path), expect.status)

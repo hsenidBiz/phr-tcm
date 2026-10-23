@@ -393,6 +393,29 @@ fn an_api_checks_address_is_reported_without_its_query_string() {
 }
 
 #[test]
+fn a_timed_request_check_says_its_timing_and_the_measured_start_reaches_the_report() {
+    let said = |v: serde_json::Value| action_words(&serde_json::from_value::<v2_lib::browser::actions::Action>(v).unwrap());
+    assert_eq!(
+        said(serde_json::json!({
+            "kind": "expect_response", "method": "GET", "url_contains": "/api/cards",
+            "not_before_ms": 600, "timeout_ms": 2000
+        })),
+        "expect a GET request to /api/cards to answer 200, starting at least 600 ms after the action before it"
+    );
+    assert_eq!(
+        said(serde_json::json!({
+            "kind": "expect_response", "method": "GET", "url_contains": "/api/cards",
+            "started_within_ms": 300, "same_document": true
+        })),
+        "expect a GET request to /api/cards to answer 200, starting within 300 ms of the action before it, with no page reload"
+    );
+    let mut run = run_of(SHOT);
+    run.cases[3].steps[0].outcomes[0].detail = "GET /api/cards answered 200, started 812 ms after action 1 (fill): the step's matching request 1 of 1, sent after action 1 (fill) began".to_string();
+    let html = build(&run, &[], "x", &no_shots);
+    assert!(html.contains("started 812 ms after action 1 (fill)"));
+}
+
+#[test]
 fn a_navigate_address_is_reported_without_its_query_string() {
     let go: v2_lib::browser::actions::Action = serde_json::from_value(serde_json::json!({
         "kind": "navigate", "url": "https://app.example.test/login?token=s3cr3t-value&x=1#frag"
