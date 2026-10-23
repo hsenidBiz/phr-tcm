@@ -314,6 +314,20 @@ export function playwrightPatches(real: { getAppSettings: () => Promise<AppSetti
       );
       return ok({ path: p, files: ["test-cases", "specs"].map((c) => `suites/${p}/${c}/.gitkeep`) });
     },
+    // Rename folder: the sample clone has no files to break, so the check is
+    // empty and the rename re-paths the sample features.
+    pwRepoRenameFolderCheck: (_clone: string, from: string, to: string) => {
+      if (STRUCTURE.features.some((f) => f.path.join("/") === to)) return Promise.resolve({ status: "error" as const, error: `"${to}" is already there, so "${from}" cannot be renamed to it.` });
+      return ok({ from, to, breaks: [], tcm_updates: [] });
+    },
+    pwRepoRenameFolder: (_clone: string, from: string, to: string, _confirmed: boolean) => {
+      const at = (f: string[]) => f.join("/") === from || f.join("/").startsWith(`${from}/`);
+      STRUCTURE.features = STRUCTURE.features
+        .map((f) => (at(f.path) ? { ...f, path: [...to.split("/"), ...f.path.slice(from.split("/").length)] } : f))
+        .map((f) => ({ ...f, navigation_key: f.path.slice(-2).join("/") }))
+        .sort((a, b) => a.path.join("/").localeCompare(b.path.join("/")));
+      return ok({ from, to, placements_updated: 0 });
+    },
     pwRepoRunning: () => ok(null),
     pwRepoStop: (run: number) => {
       void events.pwDone.emit({ run, code: null });

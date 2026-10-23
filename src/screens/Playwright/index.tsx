@@ -57,7 +57,7 @@ function Overview({ s, clone, shown, onCreated }: { s: RepoStructure; clone: str
         />
       </div>
       <NewFolder clone={clone} paths={s.features.map((f) => f.path.join("/"))} disabled={s.health.includes("NotTheRepo")} onCreated={onCreated} />
-      {s.features.length === 0 ? <Hint>No features under suites yet.</Hint> : <FeatureTree features={s.features} />}
+      {s.features.length === 0 ? <Hint>No features under suites yet.</Hint> : <FeatureTree features={s.features} clone={s.health.includes("NotTheRepo") ? "" : clone} onChanged={onCreated} />}
     </section>
   );
 }

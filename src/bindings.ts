@@ -1400,6 +1400,20 @@ export const commands = {
 	 *  nothing when it refuses (`new_folder::create_feature`).
 	 */
 	pwRepoCreateFolder: (clone: string, path: string) => typedError<NewFolder, string>(__TAURI_INVOKE("pw_repo_create_folder", { clone, path })),
+	/**
+	 *  What renaming the folder `from` to `to` (both under `suites/`) would break
+	 *  in the clone, and which of the app's own export settings move with it.
+	 *  Read only (`rename_folder::check`).
+	 */
+	pwRepoRenameFolderCheck: (clone: string, from: string, to: string) => typedError<RenameCheck, string>(__TAURI_INVOKE("pw_repo_rename_folder_check", { clone, from, to })),
+	/**
+	 *  Renames the folder `from` to `to` (both under `suites/`) on disk. With
+	 *  anything the check lists and `confirmed` false it refuses with the list
+	 *  and moves nothing. The app's own export placements move with the folder;
+	 *  the repo's files are never rewritten and nothing is deleted. Refused while
+	 *  a repo command is running, which may be reading the folder.
+	 */
+	pwRepoRenameFolder: (clone: string, from: string, to: string, confirmed: boolean) => typedError<RenameDone, string>(__TAURI_INVOKE("pw_repo_rename_folder", { clone, from, to, confirmed })),
 	/**  End run `run` and every process it started. A run already over is fine. */
 	pwRepoStop: (run: number) => typedError<null, string>(__TAURI_INVOKE("pw_repo_stop", { run })),
 	/**  The repo command going now, if any. */
@@ -5656,6 +5670,34 @@ export type RelinkOutcome = {
 	 *  frontend's describeAdoError can lift Azure DevOps' own sentence.
 	 */
 	error: AdoError | null,
+};
+
+/**  One thing a rename would break. */
+export type RenameBreak = {
+	/**  The file, relative to the clone, forward slashes. */
+	file: string,
+	/**  A short plain sentence saying what it does with the folder. */
+	what: string,
+};
+
+/**  What renaming a folder would break, and what the app updates itself. */
+export type RenameCheck = {
+	/**  The folder's path under `suites/`, as it is now. */
+	from: string,
+	/**  The path it would have. */
+	to: string,
+	/**  Files in the repo that would stop working until they are fixed. */
+	breaks: RenameBreak[],
+	/**  What the app itself changes with the folder, one sentence each. */
+	tcm_updates: string[],
+};
+
+/**  What `rename` did. */
+export type RenameDone = {
+	from: string,
+	to: string,
+	/**  How many Export to Playwright placements were moved with the folder. */
+	placements_updated: number,
 };
 
 /**

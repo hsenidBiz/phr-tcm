@@ -119,8 +119,27 @@ pub fn path(root: &Path, org: &str, project: &str) -> PathBuf {
 }
 
 pub fn load(root: &Path, org: &str, project: &str) -> Result<ExportMap, String> {
-    let p = path(root, org, project);
-    match std::fs::read_to_string(&p) {
+    load_at(&path(root, org, project))
+}
+
+/// Every project's export file under `root`, sorted: what a folder rename
+/// reads to move the placements that name the folder.
+pub fn files(root: &Path) -> Vec<PathBuf> {
+    let mut out: Vec<PathBuf> = std::fs::read_dir(root.join("projects"))
+        .map(|rd| {
+            rd.flatten()
+                .map(|e| e.path())
+                .filter(|p| p.is_file() && p.file_name().is_some_and(|n| n.to_string_lossy().ends_with(".pwexport.json")))
+                .collect()
+        })
+        .unwrap_or_default();
+    out.sort();
+    out
+}
+
+/// The export file at `p`; none there is an empty map.
+pub fn load_at(p: &Path) -> Result<ExportMap, String> {
+    match std::fs::read_to_string(p) {
         Ok(s) => {
             let s = s.strip_prefix('\u{feff}').unwrap_or(&s);
             serde_json::from_str(s).map_err(|e| format!("could not read {}: {e}", p.display()))
@@ -131,10 +150,14 @@ pub fn load(root: &Path, org: &str, project: &str) -> Result<ExportMap, String> 
 }
 
 pub fn save(root: &Path, org: &str, project: &str, map: &ExportMap) -> Result<(), String> {
-    let p = path(root, org, project);
+    save_at(&path(root, org, project), map)
+}
+
+/// Writes the export file at `p`, replacing it whole.
+pub fn save_at(p: &Path, map: &ExportMap) -> Result<(), String> {
     if let Some(dir) = p.parent() {
         std::fs::create_dir_all(dir).map_err(|e| format!("failed to create {}: {e}", dir.display()))?;
     }
     let body = serde_json::to_string_pretty(map).map_err(|e| e.to_string())?;
-    crate::ai_tools::atomic_write(&p, &body)
+    crate::ai_tools::atomic_write(p, &body)
 }

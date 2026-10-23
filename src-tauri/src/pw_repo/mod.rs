@@ -23,6 +23,9 @@
 //! `new_folder` makes a feature folder in the clone (New folder): the one
 //! write here outside an export, Sync or an accounts command.
 //!
+//! `rename_folder` renames a folder under `suites/` and says first what the
+//! rename would break in the repo (it never rewrites the repo's files).
+//!
 //! `presence` finds which ADO ids the clone already has, and where: what
 //! Export skips by default and what Sync's Add new leaves alone.
 //!
@@ -34,6 +37,7 @@ pub mod layout;
 pub mod new_folder;
 pub mod presence;
 pub mod process;
+pub mod rename_folder;
 pub mod runner;
 pub mod structure;
 pub mod sync;

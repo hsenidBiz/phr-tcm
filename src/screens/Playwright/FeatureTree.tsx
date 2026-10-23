@@ -7,11 +7,28 @@
 // a screen reader hears each level, and the fold buttons are in the Tab
 // order, each named by its folder's full path (two folders can share a
 // name) with aria-expanded saying whether it is open.
+//
+// Given a clone, each folder row also has a right-click menu (Shift+F10 or
+// the context-menu key on a focused row), as a code editor's file tree has:
+// New folder puts a name box under the row, Rename turns the row's name into
+// one. Rename asks Rust what it would break first (pw_repo_rename_folder_check)
+// and lists that for confirming; the app never rewrites the repo's files.
 
-import { useState } from "react";
-import type { RepoStructure } from "../../bindings";
-import { IconHideDetails, IconRepoFeature, IconRepoFolder, IconShowDetails } from "../../lib/actionIcons";
+import { useEffect, useRef, useState, type KeyboardEvent, type MouseEvent } from "react";
+import { commands, type RenameCheck, type RepoStructure } from "../../bindings";
+import ContextMenu from "../../components/ContextMenu";
+import { Input } from "../../components/ui/input";
+import {
+  IconAdd,
+  IconHideDetails,
+  IconRename,
+  IconRepoFeature,
+  IconRepoFolder,
+  IconShowDetails,
+} from "../../lib/actionIcons";
 import { cn } from "../../lib/cn";
+import { unwrapStr } from "../../lib/ipc";
+import RenameFolderDialog from "./RenameFolderDialog";
 import { NESTED } from "./RunnerTree";
 
 type Feature = RepoStructure["features"][number];
@@ -69,8 +86,87 @@ function Count({ n, one, many, className }: { n: number; one: string; many: stri
   );
 }
 
-export default function FeatureTree({ features }: { features: Feature[] }) {
+const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
+
+/** The folder a path sits in ("" at the top). */
+const parentOf = (id: string) => id.slice(0, Math.max(0, id.lastIndexOf("/")));
+const joinPath = (parent: string, name: string) => (parent ? `${parent}/${name}` : name);
+
+/**
+ * The inline name box of New folder and Rename: focused (with the current
+ * name selected) on appearing. Enter hands the name on and Escape cancels;
+ * leaving it empty or unchanged cancels too, while a name typed and left
+ * stays.
+ */
+function NameBox({
+  label,
+  initial,
+  hold,
+  onSubmit,
+  onCancel,
+}: {
+  label: string;
+  initial: string;
+  /** A dialog over it has the focus: leaving the box is not a cancel. */
+  hold: boolean;
+  onSubmit: (name: string) => void;
+  onCancel: () => void;
+}) {
+  const [value, setValue] = useState(initial);
+  const field = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    field.current?.focus();
+    field.current?.select();
+  }, []);
+  return (
+    <Input
+      ref={field}
+      aria-label={label}
+      className="h-6 min-w-0 flex-1 px-1.5 py-0 text-sm"
+      value={value}
+      spellCheck={false}
+      onChange={(e) => setValue(e.target.value)}
+      // The field keeps its own copy and paste menu.
+      onContextMenu={(e) => e.stopPropagation()}
+      onKeyDown={(e) => {
+        e.stopPropagation();
+        if (e.key === "Enter") {
+          e.preventDefault();
+          onSubmit(value.trim());
+        } else if (e.key === "Escape") {
+          e.preventDefault();
+          onCancel();
+        }
+      }}
+      onBlur={() => {
+        const v = value.trim();
+        if (!hold && (v === "" || v === initial)) onCancel();
+      }}
+    />
+  );
+}
+
+export default function FeatureTree({
+  features,
+  clone = "",
+  onChanged,
+}: {
+  features: Feature[];
+  /** The clone the folders are in. Without it the rows have no menu. */
+  clone?: string;
+  /** A folder was made or renamed: read the clone again. */
+  onChanged?: () => void;
+}) {
   const [folded, setFolded] = useState<Set<string>>(() => new Set());
+  const [menu, setMenu] = useState<{ id: string; x: number; y: number; row: HTMLElement | null } | null>(null);
+  /** The folder a new one is being named under, and the one being renamed. */
+  const [creating, setCreating] = useState<string | null>(null);
+  const [renaming, setRenaming] = useState<string | null>(null);
+  const [confirm, setConfirm] = useState<RenameCheck | null>(null);
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+  const editable = clone !== "";
+
   const toggle = (id: string) =>
     setFolded((f) => {
       const next = new Set(f);
@@ -78,6 +174,78 @@ export default function FeatureTree({ features }: { features: Feature[] }) {
       else next.add(id);
       return next;
     });
+  const unfold = (id: string) =>
+    setFolded((f) => {
+      if (!f.has(id)) return f;
+      const next = new Set(f);
+      next.delete(id);
+      return next;
+    });
+  const stopEditing = () => {
+    setCreating(null);
+    setRenaming(null);
+    setConfirm(null);
+    setError("");
+  };
+
+  const create = async (parent: string, name: string) => {
+    if (!name) return stopEditing();
+    setBusy(true);
+    setError("");
+    try {
+      await unwrapStr(commands.pwRepoCreateFolder(clone, joinPath(parent, name)));
+      stopEditing();
+      onChanged?.();
+    } catch (e) {
+      setError(message(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  /** Renames for real. The folds follow the folder to its new path. */
+  const rename = async (check: RenameCheck, confirmed: boolean) => {
+    setBusy(true);
+    setError("");
+    try {
+      await unwrapStr(commands.pwRepoRenameFolder(clone, check.from, check.to, confirmed));
+      setFolded((f) => {
+        const next = new Set<string>();
+        for (const id of f) {
+          const inside = id === check.from || id.startsWith(`${check.from}/`);
+          next.add(inside ? check.to + id.slice(check.from.length) : id);
+        }
+        return next;
+      });
+      stopEditing();
+      onChanged?.();
+    } catch (e) {
+      setError(message(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  /** Enter in the rename box: ask what it would break, and go ahead at once
+   * when it breaks nothing. */
+  const askRename = async (from: string, name: string, current: string) => {
+    if (!name || name === current) return stopEditing();
+    setBusy(true);
+    setError("");
+    try {
+      const check = await unwrapStr(commands.pwRepoRenameFolderCheck(clone, from, joinPath(parentOf(from), name)));
+      if (check.breaks.length > 0) {
+        setConfirm(check);
+        setBusy(false);
+        return;
+      }
+      setBusy(false);
+      await rename(check, false);
+    } catch (e) {
+      setError(message(e));
+      setBusy(false);
+    }
+  };
 
   const row = (n: FolderNode) => {
     const shut = folded.has(n.id);
@@ -86,9 +254,39 @@ export default function FeatureTree({ features }: { features: Feature[] }) {
      * it shows the totals, faint. */
     const leaf = isFeature && n.children.length === 0;
     const Glyph = isFeature ? IconRepoFeature : IconRepoFolder;
+    // The suites folder itself (a feature with no folders above it) is not
+    // a folder the menu can act on.
+    const menuRow = editable && n.id !== "";
+    const isRenaming = renaming === n.id && menuRow;
+    const isCreating = creating === n.id && menuRow;
+    const openMenu = (x: number, y: number, row: HTMLElement) => setMenu({ id: n.id, x, y, row });
+    const menuProps = menuRow
+      ? {
+          role: "group",
+          tabIndex: 0,
+          "aria-label": `Folder ${n.id}`,
+          "aria-keyshortcuts": "Shift+F10",
+          onContextMenu: (e: MouseEvent<HTMLDivElement>) => {
+            e.preventDefault();
+            openMenu(e.clientX, e.clientY, e.currentTarget);
+          },
+          onKeyDown: (e: KeyboardEvent<HTMLDivElement>) => {
+            if (e.key !== "ContextMenu" && !(e.shiftKey && e.key === "F10")) return;
+            e.preventDefault();
+            const r = e.currentTarget.getBoundingClientRect();
+            openMenu(r.left + 28, r.bottom - 4, e.currentTarget);
+          },
+        }
+      : {};
     return (
       <li key={n.id}>
-        <div className="flex items-center gap-1.5 rounded px-1 py-0.5 hover:bg-surface-2">
+        <div
+          {...menuProps}
+          className={cn(
+            "flex items-center gap-1.5 rounded px-1 py-0.5 hover:bg-surface-2",
+            menuRow && "focus-visible:bg-surface-2 focus-visible:outline focus-visible:outline-1 focus-visible:outline-accent",
+          )}
+        >
           {n.children.length > 0 ? (
             <button
               type="button"
@@ -104,12 +302,22 @@ export default function FeatureTree({ features }: { features: Feature[] }) {
             <span className="w-5 shrink-0" aria-hidden />
           )}
           <Glyph aria-hidden className={cn("size-4 shrink-0", isFeature ? "text-accent" : "text-muted")} />
-          <span
-            className={cn("min-w-0 flex-1 truncate text-sm text-text", isFeature && "font-medium")}
-            title={n.id || SUITES}
-          >
-            {n.name}
-          </span>
+          {isRenaming ? (
+            <NameBox
+              label={`New name for ${n.id}`}
+              initial={n.name}
+              hold={confirm !== null || busy}
+              onSubmit={(name) => void askRename(n.id, name, n.name)}
+              onCancel={stopEditing}
+            />
+          ) : (
+            <span
+              className={cn("min-w-0 flex-1 truncate text-sm text-text", isFeature && "font-medium")}
+              title={n.id || SUITES}
+            >
+              {n.name}
+            </span>
+          )}
           <Count n={n.specs} one="spec" many="specs" className={leaf ? "text-text" : "text-faint"} />
           <Count
             n={n.cases}
@@ -118,7 +326,28 @@ export default function FeatureTree({ features }: { features: Feature[] }) {
             className={leaf && n.cases ? "text-text" : "text-faint"}
           />
         </div>
-        {n.children.length > 0 && !shut && <ul className={NESTED}>{n.children.map(row)}</ul>}
+        {isRenaming && error && !confirm && <p className="ml-7 text-xs text-danger">{error}</p>}
+        {((n.children.length > 0 && !shut) || isCreating) && (
+          <ul className={NESTED}>
+            {!shut && n.children.map(row)}
+            {isCreating && (
+              <li>
+                <div className="flex items-center gap-1.5 rounded px-1 py-0.5">
+                  <span className="w-5 shrink-0" aria-hidden />
+                  <IconRepoFolder aria-hidden className="size-4 shrink-0 text-muted" />
+                  <NameBox
+                    label={`New folder name under ${n.id}`}
+                    initial=""
+                    hold={busy}
+                    onSubmit={(name) => void create(n.id, name)}
+                    onCancel={stopEditing}
+                  />
+                </div>
+                {error && <p className="ml-7 text-xs text-danger">{error}</p>}
+              </li>
+            )}
+          </ul>
+        )}
       </li>
     );
   };
@@ -133,6 +362,48 @@ export default function FeatureTree({ features }: { features: Feature[] }) {
       <ul aria-label="Features" className="p-2">
         {buildFolders(features).map(row)}
       </ul>
+      {menu && (
+        <ContextMenu
+          x={menu.x}
+          y={menu.y}
+          label={`Actions for ${menu.id}`}
+          returnTo={menu.row}
+          onClose={() => setMenu(null)}
+          actions={[
+            {
+              label: "New folder",
+              icon: <IconAdd aria-hidden />,
+              onSelect: () => {
+                setRenaming(null);
+                setError("");
+                unfold(menu.id);
+                setCreating(menu.id);
+              },
+            },
+            {
+              label: "Rename",
+              icon: <IconRename aria-hidden />,
+              onSelect: () => {
+                setCreating(null);
+                setError("");
+                setRenaming(menu.id);
+              },
+            },
+          ]}
+        />
+      )}
+      {confirm && (
+        <RenameFolderDialog
+          check={confirm}
+          busy={busy}
+          error={error}
+          onConfirm={() => void rename(confirm, true)}
+          onCancel={() => {
+            setConfirm(null);
+            setError("");
+          }}
+        />
+      )}
     </div>
   );
 }
