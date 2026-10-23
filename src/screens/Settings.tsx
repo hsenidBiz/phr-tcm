@@ -83,8 +83,10 @@ const ACCENT_TITLE: Record<Accent, string> = {
 const MOVING_CARDS = ["updates", "backup", "help"] as const;
 
 /** The cards that stack beside those under the changelog when its column
- * has room for two cards across, and otherwise sit in the left column. */
-const SPARE_CARDS = ["ai-tools", "extras"] as const;
+ * has room for two cards across, and otherwise sit in the left column.
+ * Auto Run's card is one of them while that module is on (a card the screen
+ * does not show has no journey and is left out of the slide). */
+const SPARE_CARDS = ["ai-tools", "auto-run", "extras"] as const;
 
 /** The left track's width - min(32rem, the grid less the 2rem gap and the
  * right track's 24rem floor) - for the cards under the changelog, so a
@@ -583,6 +585,20 @@ export default function Settings({
     </SettingsCard>
   );
 
+  // Only with Auto Run on: it is the one module whose browsers this sets.
+  // Under AI tools, in the same stack and slide as it: with room for two
+  // cards across it fills the right column beside Updates instead of
+  // sitting alone at the foot of the left one.
+  const autoRunCard = autoRunOn && (
+    <SettingsCard
+      title="Auto Run"
+      data-settings-card="auto-run"
+      className={cn(tiles.spareStack && LEFT_TRACK_WIDTH)}
+    >
+      <PageSizeSettings />
+    </SettingsCard>
+  );
+
   // Only on a machine where the optional extras are unlocked (a key sequence
   // typed on this screen - see settingsExtras.ts). The heading stays neutral
   // on purpose. Capture mode: the owner's machine can be unlocked, but a shot
@@ -784,14 +800,9 @@ export default function Settings({
         />
       </SettingsCard>
 
-      {/* Only with Auto Run on: it is the one module whose browsers this sets. */}
-      {autoRunOn && (
-        <SettingsCard title="Auto Run" data-settings-card="auto-run">
-          <PageSizeSettings />
-        </SettingsCard>
-      )}
-
       {!tiles.spareStack && aiToolsCard}
+
+      {!tiles.spareStack && autoRunCard}
 
       {tiles.placement !== "right" && movingCards}
 
@@ -948,6 +959,7 @@ export default function Settings({
             <div className="space-y-4">{movingCards}</div>
             <div className="space-y-4">
               {aiToolsCard}
+              {autoRunCard}
               {extrasCard}
             </div>
           </div>
