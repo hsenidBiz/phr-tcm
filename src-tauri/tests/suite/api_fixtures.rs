@@ -1834,3 +1834,30 @@ fn a_skip_names_one_stage_in_the_flow_that_owns_it() {
     let p = validate(&with("other-flow/checks"), &two_flow_lookup, &two_flows).unwrap_err();
     assert!(p.iter().any(|l| l.contains("must perform Evaluation rules")), "{p:?}");
 }
+
+/// Several assistants of one session can run the same fixture at once. Every
+/// run lands in the history: none is lost to a read-then-write race.
+#[test]
+fn fixture_runs_appended_at_the_same_time_are_all_kept() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    store::save(root, ORG, PROJECT, &template("make-cycle", "create", true)).unwrap();
+    store::save(root, ORG, PROJECT, &template("make-suite", "create", true)).unwrap();
+    fixture_store::save(root, ORG, PROJECT, &fixture()).unwrap();
+    let barrier = std::sync::Barrier::new(8);
+    std::thread::scope(|s| {
+        for n in 0..8 {
+            let barrier = &barrier;
+            s.spawn(move || {
+                barrier.wait();
+                for k in 0..2 {
+                    fixture_store::append_run(root, ORG, PROJECT, "cycle-fixture", run(n * 2 + k, true)).unwrap();
+                }
+            });
+        }
+    });
+    let mut at: Vec<String> = fixture_store::list(root, ORG, PROJECT).unwrap()[0].runs.iter().map(|r| r.at.clone()).collect();
+    at.sort();
+    at.dedup();
+    assert_eq!(at.len(), 16, "every run is in the history: {at:?}");
+}

@@ -1701,7 +1701,11 @@ pub fn atomic_write_with(
         .file_name()
         .ok_or_else(|| format!("{} has no file name", path.display()))?
         .to_string_lossy();
-    let tmp_path = parent.join(format!("{file_name}.tcm-tmp-{}", std::process::id()));
+    // Its own name per call: two threads of this process writing one path at
+    // once must never share a temp file, or each renames the other's half.
+    static NEXT_TEMP: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let n = NEXT_TEMP.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    let tmp_path = parent.join(format!("{file_name}.tcm-tmp-{}-{n}", std::process::id()));
 
     if let Err(e) = write(&tmp_path, contents) {
         let _ = std::fs::remove_file(&tmp_path);

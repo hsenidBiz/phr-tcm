@@ -513,13 +513,17 @@ fn run_evidence_is_written_and_a_write_failure_does_not_fail_the_run() {
     assert!(record_run_evidence(dir.path(), "Acme", "Web", &cases, 77));
     assert_eq!(load_quirks(dir.path(), "Acme", "Web").unwrap()[0].confirmed, 1);
 
-    // A directory where the temporary file would go (`ai_tools::atomic_write`
-    // names it after the file and this process): the write fails.
+    // A read-only quirks file (`ai_tools::atomic_write` cannot move its temp
+    // file over it): the write fails.
     let file = quirks_path(dir.path(), "Acme", "Web");
-    let name = file.file_name().unwrap().to_string_lossy().into_owned();
-    let tmp = file.with_file_name(format!("{name}.tcm-tmp-{}", std::process::id()));
-    std::fs::create_dir_all(&tmp).unwrap();
-    assert!(!record_run_evidence(dir.path(), "Acme", "Web", &cases, 78));
+    let mut perms = std::fs::metadata(&file).unwrap().permissions();
+    perms.set_readonly(true);
+    std::fs::set_permissions(&file, perms.clone()).unwrap();
+    let wrote = record_run_evidence(dir.path(), "Acme", "Web", &cases, 78);
+    #[allow(clippy::permissions_set_readonly_false)]
+    perms.set_readonly(false);
+    std::fs::set_permissions(&file, perms).unwrap();
+    assert!(!wrote);
     assert_eq!(load_quirks(dir.path(), "Acme", "Web").unwrap()[0].confirmed, 1, "the file is as it was");
 
     // No project, or no quirks file at all: nothing to do, nothing written.

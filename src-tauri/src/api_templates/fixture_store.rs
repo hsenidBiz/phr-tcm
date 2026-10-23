@@ -140,12 +140,22 @@ pub fn list(root: &Path, org: &str, project: &str) -> Result<Vec<SavedFixture>, 
     Ok(out)
 }
 
+/// Every load-insert-save of a run history holds this: two assistants (or an
+/// assistant and the person) running fixtures at once would each read the
+/// same history, and the later save would drop the earlier run. It is
+/// coordination, not a cache, and is never held across an await.
+fn runs_lock() -> std::sync::MutexGuard<'static, ()> {
+    static L: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    L.lock().unwrap_or_else(|e| e.into_inner())
+}
+
 /// Appends one run to a fixture's history, newest first, keeping the most
 /// recent `MAX_RUNS`. The fixture file itself is never touched.
 pub fn append_run(root: &Path, org: &str, project: &str, id: &str, r: FixtureRun) -> Result<(), String> {
     if !valid_id(id) {
         return Err(invalid_id(id));
     }
+    let _held = runs_lock();
     let mut runs = load_runs(root, org, project, id)?;
     runs.insert(0, r);
     runs.truncate(MAX_RUNS);
