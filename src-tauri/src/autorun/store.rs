@@ -1,5 +1,6 @@
 //! Scripts and runs on disk, under the app's own data directory.
 
+use super::slots::SlotNo;
 use super::{unchecked, CaseScript, ClearedDefect, LocalRun, StepScript, SuspectedDefect, Unchecked, UncheckedItem};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
@@ -925,16 +926,34 @@ fn all_downloads_dir(root: &Path) -> PathBuf {
     root.join("downloads")
 }
 
-/// The supervised browser's folder in `downloads/`.
+/// The main supervised browser's folder in `downloads/`; the other slots'
+/// are this and `-<number>` (`slot_downloads_folder`).
 const SUPERVISED_DOWNLOADS: &str = "supervised";
+
+/// The folder in `downloads/` slot `slot`'s browser saves into: today's
+/// `supervised` for main, `supervised-<number>` for the others.
+fn slot_downloads_folder(slot: SlotNo) -> String {
+    if slot.is_main() {
+        SUPERVISED_DOWNLOADS.to_string()
+    } else {
+        format!("{SUPERVISED_DOWNLOADS}-{}", slot.0)
+    }
+}
+
+/// Whether `name` is the folder of any slot's supervised browser (matched
+/// without regard to case, as Windows matches folder names). No run's
+/// folder may be one of these: a browser empties its own when it closes.
+fn is_supervised_folder(name: &str) -> bool {
+    SlotNo::all().iter().any(|s| name.eq_ignore_ascii_case(&slot_downloads_folder(*s)))
+}
 
 /// Where an unattended run's browsers save their downloads, beside the
 /// run's screenshots. An id that is not a safe file name (`safe_run_id`)
 /// never becomes part of a path: it gets a folder of its own inside
-/// `downloads/`, never the supervised one (matched without regard to case,
-/// as Windows matches folder names).
+/// `downloads/`, never a supervised browser's (matched without regard to
+/// case, as Windows matches folder names).
 pub fn downloads_dir(root: &Path, run_id: &str) -> PathBuf {
-    let ours = safe_run_id(run_id) && !run_id.eq_ignore_ascii_case(SUPERVISED_DOWNLOADS);
+    let ours = safe_run_id(run_id) && !is_supervised_folder(run_id);
     let folder = if ours { run_id } else { "unnamed-run" };
     all_downloads_dir(root).join(folder)
 }
@@ -971,7 +990,7 @@ fn plain_download_name(name: &str) -> bool {
 /// handles unreliably.
 pub fn download_file(root: &Path, run_id: &str, name: &str) -> Result<PathBuf, String> {
     let refused = || NOT_THIS_RUNS_DOWNLOAD.to_string();
-    if !safe_run_id(run_id) || run_id.eq_ignore_ascii_case(SUPERVISED_DOWNLOADS) || !plain_download_name(name) {
+    if !safe_run_id(run_id) || is_supervised_folder(run_id) || !plain_download_name(name) {
         return Err(refused());
     }
     let dir = downloads_dir(root, run_id);
@@ -997,7 +1016,7 @@ pub fn download_size(root: &Path, run_id: &str, name: &str) -> Option<u64> {
 /// with its size, sorted by name. Empty for a run with no folder or an id
 /// that is not a run's own.
 pub fn download_files(root: &Path, run_id: &str) -> Vec<super::DownloadFile> {
-    if !safe_run_id(run_id) || run_id.eq_ignore_ascii_case(SUPERVISED_DOWNLOADS) {
+    if !safe_run_id(run_id) || is_supervised_folder(run_id) {
         return Vec::new();
     }
     let Ok(entries) = std::fs::read_dir(downloads_dir(root, run_id)) else { return Vec::new() };
@@ -1016,14 +1035,31 @@ pub fn download_files(root: &Path, run_id: &str) -> Vec<super::DownloadFile> {
 /// Where the supervised browser saves its downloads. Emptied when that
 /// browser opens and when it closes (`empty_supervised_downloads`).
 pub fn supervised_downloads_dir(root: &Path) -> PathBuf {
-    all_downloads_dir(root).join(SUPERVISED_DOWNLOADS)
+    supervised_downloads_dir_for(root, SlotNo::MAIN)
+}
+
+/// Where slot `slot`'s browser saves its downloads: main's is
+/// `supervised_downloads_dir`, slot `n`'s is `downloads/supervised-<n>`.
+/// Emptied when that browser opens and when it closes.
+pub fn supervised_downloads_dir_for(root: &Path, slot: SlotNo) -> PathBuf {
+    all_downloads_dir(root).join(slot_downloads_folder(slot))
 }
 
 /// Remove the files the supervised browser downloaded, and return how many
 /// went. The same sweep as clearing runs: files only, never through a link.
 pub fn empty_supervised_downloads(root: &Path) -> Result<usize, String> {
+    sweep_slot_downloads(root, SlotNo::MAIN)
+}
+
+/// `empty_supervised_downloads` for slot `slot`'s folder: the other slots'
+/// files stay.
+pub fn empty_supervised_downloads_for(root: &Path, slot: SlotNo) -> Result<(), String> {
+    sweep_slot_downloads(root, slot).map(|_| ())
+}
+
+fn sweep_slot_downloads(root: &Path, slot: SlotNo) -> Result<usize, String> {
     let mut problems = Vec::new();
-    let removed = sweep_files(&supervised_downloads_dir(root), None, &mut problems);
+    let removed = sweep_files(&supervised_downloads_dir_for(root, slot), None, &mut problems);
     if problems.is_empty() {
         Ok(removed)
     } else {
@@ -1046,7 +1082,7 @@ fn sweep_downloads(root: &Path, problems: &mut Vec<String>) {
     }
     let Ok(entries) = std::fs::read_dir(&dir) else { return };
     for entry in entries.flatten() {
-        if entry.file_name().to_string_lossy().eq_ignore_ascii_case(SUPERVISED_DOWNLOADS) {
+        if is_supervised_folder(&entry.file_name().to_string_lossy()) {
             continue;
         }
         let path = entry.path();
@@ -1080,7 +1116,7 @@ pub fn sweep_orphan_downloads(root: &Path) -> usize {
     let mut removed = 0usize;
     for entry in entries.flatten() {
         let name = entry.file_name().to_string_lossy().to_string();
-        if name.eq_ignore_ascii_case(SUPERVISED_DOWNLOADS) {
+        if is_supervised_folder(&name) {
             continue;
         }
         let path = entry.path();

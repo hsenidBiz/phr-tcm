@@ -62,6 +62,7 @@ pub mod sessions;
 pub mod setup;
 pub mod signin;
 pub mod signin_recorder;
+pub mod slots;
 pub mod store;
 pub mod test_made;
 pub mod timing;
