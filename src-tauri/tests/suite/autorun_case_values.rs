@@ -1945,3 +1945,274 @@ fn a_repair_holds_only_the_values_new_or_changed_in_its_steps() {
     let held = check_case_values_against(&moved, &text, Some(&[3]), "AUTOTEST", Some(&old));
     assert_eq!(held.refusals.len(), 1, "{:?}", held.refusals);
 }
+
+// ------------------------------------------- timings and same_document (item 36)
+
+/// Step 3 of the search case states 800 ms and says the page does not reload.
+fn search_case() -> v2_lib::ado::TestCaseFull {
+    case_of(
+        147600,
+        "Search",
+        &[
+            ("Open the app", ""),
+            ("Open the Search page", ""),
+            ("Type a name in Search", "The list refreshes about 800 ms after the last keystroke, without reloading the page"),
+        ],
+        "",
+    )
+}
+
+/// The search script: step 3 types, then checks the request with `response` (merged into an
+/// `expect_response` of `/api/search`).
+fn search_script(response: Value, because: Value) -> CaseScript {
+    let mut check = json!({ "kind": "expect_response", "url_contains": "/api/search" });
+    for (k, v) in response.as_object().unwrap() {
+        check[k] = v.clone();
+    }
+    script(json!([
+        { "step_number": 1, "actions": [{ "kind": "navigate", "url": "https://app.example/" }] },
+        { "step_number": 2, "actions": [{ "kind": "click", "selector": "#search" }] },
+        {
+            "step_number": 3,
+            "actions": [{ "kind": "fill", "selector": "#q", "value": "Ann" }, check],
+            "because": because,
+        },
+    ]))
+}
+
+fn found(case: &v2_lib::ado::TestCaseFull, s: &CaseScript) -> v2_lib::autorun::case_values::ValueReport {
+    check_case_values(s, &text_of(case), Some(&[3]), "AUTOTEST")
+}
+
+fn search_case_saying(expected: &str, preconditions: &str) -> v2_lib::ado::TestCaseFull {
+    case_of(
+        147601,
+        "Search",
+        &[("Open the app", ""), ("Open the Search page", ""), ("Type a name in Search", expected)],
+        preconditions,
+    )
+}
+
+#[test]
+fn a_timing_the_case_states_is_held() {
+    let r = found(&search_case(), &search_script(json!({ "not_before_ms": 800 }), json!([])));
+    assert!(r.refusals.is_empty(), "{:?}", r.refusals);
+    assert_eq!(r.sourced, vec![sv(3, "800", Some(Provenance::FromCase), "")]);
+    // started_within_ms is held the same way.
+    let r = found(&search_case(), &search_script(json!({ "started_within_ms": 800 }), json!([])));
+    assert!(r.refusals.is_empty(), "{:?}", r.refusals);
+    // "0.8 s" states 800 too.
+    let seconds = search_case_saying("The list refreshes 0.8 s after the last keystroke", "");
+    let r = found(&seconds, &search_script(json!({ "not_before_ms": 800 }), json!([])));
+    assert!(r.refusals.is_empty(), "{:?}", r.refusals);
+    // A duration stated in the preconditions holds it as well.
+    let pre = search_case_saying("", "The debounce is 800ms");
+    let r = found(&pre, &search_script(json!({ "not_before_ms": 800 }), json!([])));
+    assert!(r.refusals.is_empty(), "{:?}", r.refusals);
+}
+
+#[test]
+fn durations_the_case_states_are_read_as_whole_ms() {
+    use std::collections::BTreeSet;
+    use v2_lib::autorun::case_text::stated_durations;
+    let set = |v: &[u64]| v.iter().copied().collect::<BTreeSet<u64>>();
+    assert_eq!(stated_durations("about 800ms, then 1.5 seconds"), set(&[800, 1500]));
+    assert_eq!(stated_durations("800 ms and 0.8 s and 800 milliseconds"), set(&[800]));
+    assert_eq!(stated_durations("wait 2 sec, then 3,5 secs, or 40 msec"), set(&[2000, 3500, 40]));
+    // A number with no unit, or beside a letter, or with another word after it, is not a duration.
+    assert_eq!(stated_durations("level 4 of 12 sessions, q4 ms, 5 sessions"), set(&[]));
+    let text = text_of(&search_case_saying("Wait 1.5 seconds", "The debounce is 800ms"));
+    assert_eq!(text.stated_durations(), set(&[800, 1500]));
+}
+
+#[test]
+fn a_margin_needs_a_because() {
+    let case = search_case();
+    let r = found(&case, &search_script(json!({ "not_before_ms": 600 }), json!([])));
+    assert_eq!(r.refusals.len(), 1, "{:?}", r.refusals);
+    assert!(r.refusals[0].starts_with("step 3: the timing \"600\" is not in the case"), "{:?}", r.refusals);
+    assert!(r.refusals[0].contains("a timing is held when the case states that duration"), "{:?}", r.refusals);
+    let because = json!([{ "value": "600", "why": "the case says about 800 ms; 600 allows for the browser" }]);
+    let r = found(&case, &search_script(json!({ "not_before_ms": 600 }), because));
+    assert!(r.refusals.is_empty(), "{:?}", r.refusals);
+    assert_eq!(
+        r.listed,
+        vec!["step 3 \"600\" - the case says about 800 ms; 600 allows for the browser".to_string()]
+    );
+    assert_eq!(
+        r.sourced,
+        vec![sv(3, "600", Some(Provenance::Assumed), "the case says about 800 ms; 600 allows for the browser")]
+    );
+}
+
+#[test]
+fn a_timing_is_never_exempt_as_a_short_number() {
+    // 2 ms is not in the case: not a bare value.
+    let r = found(&search_case(), &search_script(json!({ "started_within_ms": 2 }), json!([])));
+    assert_eq!(r.refusals.len(), 1, "{:?}", r.refusals);
+    assert!(r.refusals[0].contains("the timing \"2\" is not in the case"), "{:?}", r.refusals);
+}
+
+#[test]
+fn same_document_is_held_by_the_steps_words() {
+    let case = search_case();
+    let r = found(&case, &search_script(json!({ "same_document": true }), json!([])));
+    assert!(r.refusals.is_empty(), "{:?}", r.refusals);
+    assert_eq!(r.sourced, vec![sv(3, "same_document", Some(Provenance::FromCase), "")]);
+    // A step that says nothing about reloading does not hold it.
+    let silent = search_case_saying("The list refreshes", "");
+    let r = found(&silent, &search_script(json!({ "same_document": true }), json!([])));
+    assert_eq!(r.refusals.len(), 1, "{:?}", r.refusals);
+    assert!(r.refusals[0].starts_with("step 3: the no-reload check \"same_document\" is not in the case"), "{:?}", r.refusals);
+    assert!(r.refusals[0].contains("does not reload"), "{:?}", r.refusals);
+    // A because covers it.
+    let because = json!([{ "value": "same_document", "why": "step 3 is a search as you type, the case means no page load" }]);
+    let r = found(&silent, &search_script(json!({ "same_document": true }), because));
+    assert!(r.refusals.is_empty(), "{:?}", r.refusals);
+    assert_eq!(r.listed.len(), 1, "{:?}", r.listed);
+    // false is not a check at all.
+    let r = found(&silent, &search_script(json!({ "same_document": false }), json!([])));
+    assert!(r.refusals.is_empty(), "{:?}", r.refusals);
+    assert!(r.sourced.is_empty(), "{:?}", r.sourced);
+}
+
+#[test]
+fn the_words_that_say_the_page_does_not_reload() {
+    let held = |expected: &str| {
+        let case = search_case_saying(expected, "");
+        found(&case, &search_script(json!({ "same_document": true }), json!([]))).refusals.is_empty()
+    };
+    for yes in [
+        "The page does not reload",
+        "The page doesn't reload",
+        "The list refreshes without reloading",
+        "No full page reload happens",
+        "It never reloads",
+        "The user stays on the page",
+        "The user remains on the same page",
+    ] {
+        assert!(held(yes), "{yes}");
+    }
+    for no in ["The page reloads", "The list refreshes", "Reload the page", "The user is on the page"] {
+        assert!(!held(no), "{no}");
+    }
+    // The negation must sit within 3 words before the reload.
+    assert!(!held("There is no sign that anything at all happens before the page reloads"));
+}
+
+#[test]
+fn a_changed_timing_on_repair_needs_a_source() {
+    let case = search_case();
+    let text = text_of(&case);
+    let because = json!([{ "value": "600", "why": "the case says about 800 ms; 600 allows for the browser" }]);
+    let old = search_script(json!({ "not_before_ms": 600 }), because);
+    // Lowered to 300 with no because: refused.
+    let lowered = search_script(json!({ "not_before_ms": 300 }), json!([]));
+    let r = check_case_values_against(&lowered, &text, Some(&[3]), "AUTOTEST", Some(&old));
+    assert_eq!(r.refusals.len(), 1, "{:?}", r.refusals);
+    assert!(r.refusals[0].starts_with("step 3: the timing \"300\" is not in the case"), "{:?}", r.refusals);
+    // Still at 600 with no because (as the old one had it): not refused.
+    let kept = search_script(json!({ "not_before_ms": 600 }), json!([]));
+    let r = check_case_values_against(&kept, &text, Some(&[3]), "AUTOTEST", Some(&old));
+    assert!(r.refusals.is_empty(), "{:?}", r.refusals);
+    // Held whole, with no old step, it is refused.
+    let r = check_case_values_against(&kept, &text, Some(&[3]), "AUTOTEST", None);
+    assert_eq!(r.refusals.len(), 1, "{:?}", r.refusals);
+}
+
+#[test]
+fn an_old_step_without_a_source_for_same_document_is_not_held_again() {
+    let silent = search_case_saying("The list refreshes", "");
+    let old = search_script(json!({ "same_document": true }), json!([]));
+    let r = check_case_values_against(&old, &text_of(&silent), Some(&[3]), "AUTOTEST", Some(&old));
+    assert!(r.refusals.is_empty(), "{:?}", r.refusals);
+}
+
+fn search_repair(old: &CaseScript, new: &CaseScript, gives_up: &[GiveUp]) -> Vec<String> {
+    check_repair_values(old, new, &text_of(&search_case()), &[3], gives_up, "AUTOTEST")
+}
+
+#[test]
+fn a_repair_that_removes_a_timing_must_name_it_in_gives_up() {
+    let old = search_script(
+        json!({ "not_before_ms": 800, "started_within_ms": 900 }),
+        json!([{ "value": "900", "why": "the case says about 800 ms" }]),
+    );
+    let plain = search_script(json!({}), json!([]));
+    let r = search_repair(&old, &plain, &[]);
+    assert!(
+        r.iter().any(|l| l.starts_with("step 3: the repair removes not_before_ms from an expect_response and gives_up does not name it")),
+        "{r:?}"
+    );
+    assert!(
+        r.iter().any(|l| l.starts_with("step 3: the repair removes started_within_ms from an expect_response and gives_up does not name it")),
+        "{r:?}"
+    );
+    // Naming each one passes.
+    let r = search_repair(
+        &old,
+        &plain,
+        &[give(3, "not_before_ms", "step 5 times it"), give(3, " Started_Within_Ms ", "step 5 times it")],
+    );
+    assert!(r.is_empty(), "{r:?}");
+    // Naming one leaves the other.
+    let r = search_repair(&old, &plain, &[give(3, "not_before_ms", "step 5 times it")]);
+    assert!(r.iter().any(|l| l.contains("removes started_within_ms")), "{r:?}");
+    assert!(!r.iter().any(|l| l.contains("removes not_before_ms")), "{r:?}");
+    // Keeping both asks for nothing.
+    assert!(search_repair(&old, &old, &[]).is_empty());
+}
+
+#[test]
+fn a_repair_that_removes_same_document_must_name_it_in_gives_up() {
+    let old = search_script(json!({ "same_document": true }), json!([]));
+    let plain = search_script(json!({}), json!([]));
+    let r = search_repair(&old, &plain, &[]);
+    assert!(
+        r.iter().any(|l| l.starts_with("step 3: the repair removes same_document from an expect_response and gives_up does not name it")),
+        "{r:?}"
+    );
+    let r = search_repair(&old, &plain, &[give(3, "same_document", "step 5 already proves it")]);
+    assert!(r.is_empty(), "{r:?}");
+    // Giving one up for what the app shows is refused like any check.
+    let r = search_repair(&old, &plain, &[give(3, "same_document", "the app shows a reload")]);
+    assert!(r.iter().any(|l| l.contains("a check is never given up because of what the app shows")), "{r:?}");
+    assert!(r.iter().any(|l| l.contains("removes same_document")), "{r:?}");
+}
+
+#[test]
+fn gives_up_cannot_name_a_timing_the_repair_keeps_or_the_old_step_never_had() {
+    let old = search_script(json!({ "not_before_ms": 800 }), json!([]));
+    let r = search_repair(&old, &old, &[give(3, "not_before_ms", "step 5 times it")]);
+    assert!(
+        r.iter().any(|l| l.starts_with("step 3: gives_up names a not_before_ms check, and the old step 3 has none")),
+        "{r:?}"
+    );
+    let r = search_repair(&old, &old, &[give(3, "same_document", "step 5 proves it")]);
+    assert!(
+        r.iter().any(|l| l.starts_with("step 3: gives_up names a same_document check, and the old step 3 has none")),
+        "{r:?}"
+    );
+}
+
+#[test]
+fn giving_up_a_whole_timed_check_needs_only_the_check() {
+    let old = search_script(json!({ "not_before_ms": 800, "same_document": true }), json!([]));
+    // The expect_response goes, its fields with it: one entry, the check's kind.
+    let gone = script(json!([
+        { "step_number": 1, "actions": [{ "kind": "navigate", "url": "https://app.example/" }] },
+        { "step_number": 2, "actions": [{ "kind": "click", "selector": "#search" }] },
+        { "step_number": 3, "actions": [{ "kind": "fill", "selector": "#q", "value": "Ann" }] },
+    ]));
+    let r = search_repair(&old, &gone, &[give(3, "expect_response", "step 6 checks the same request")]);
+    assert!(r.is_empty(), "{r:?}");
+}
+
+#[test]
+fn a_timing_moved_to_another_field_loses_the_field() {
+    let old = search_script(json!({ "not_before_ms": 800 }), json!([]));
+    let moved = search_script(json!({ "started_within_ms": 800 }), json!([]));
+    let r = search_repair(&old, &moved, &[]);
+    assert_eq!(r.len(), 1, "{r:?}");
+    assert!(r[0].contains("removes not_before_ms"), "{r:?}");
+}

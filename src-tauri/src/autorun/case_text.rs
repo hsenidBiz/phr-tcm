@@ -104,6 +104,63 @@ impl CaseText {
         );
         set
     }
+
+    /// Every duration the case states, in whole ms (`stated_durations`).
+    pub fn stated_durations(&self) -> BTreeSet<u64> {
+        stated_durations(&self.all_folded())
+    }
+}
+
+/// Every duration the text states: a number (digits, with an optional `.` or `,` and more digits),
+/// optional spaces, then a unit word. `ms`, `msec`, `msecs`, `millisecond` and `milliseconds` are ms;
+/// `s`, `sec`, `secs`, `second` and `seconds` are x 1000. Each is rounded to whole ms, so "800 ms",
+/// "800ms" and "0.8 s" all give 800. A number that sits against a letter ("q4 ms") is not one.
+pub fn stated_durations(folded: &str) -> BTreeSet<u64> {
+    let chars: Vec<char> = folded.chars().collect();
+    let mut out = BTreeSet::new();
+    let mut i = 0;
+    while i < chars.len() {
+        if !chars[i].is_ascii_digit() {
+            i += 1;
+            continue;
+        }
+        let start = i;
+        while i < chars.len() && chars[i].is_ascii_digit() {
+            i += 1;
+        }
+        if i + 1 < chars.len() && matches!(chars[i], '.' | ',') && chars[i + 1].is_ascii_digit() {
+            i += 1;
+            while i < chars.len() && chars[i].is_ascii_digit() {
+                i += 1;
+            }
+        }
+        let end = i;
+        if start > 0 && chars[start - 1].is_alphabetic() {
+            continue;
+        }
+        let mut j = end;
+        while j < chars.len() && chars[j] == ' ' {
+            j += 1;
+        }
+        let unit_start = j;
+        while j < chars.len() && chars[j].is_alphabetic() {
+            j += 1;
+        }
+        let unit: String = chars[unit_start..j].iter().collect();
+        let per_unit = match unit.as_str() {
+            "ms" | "msec" | "msecs" | "millisecond" | "milliseconds" => 1.0,
+            "s" | "sec" | "secs" | "second" | "seconds" => 1000.0,
+            _ => continue,
+        };
+        let number: String = chars[start..end].iter().map(|c| if *c == ',' { '.' } else { *c }).collect();
+        if let Ok(n) = number.parse::<f64>() {
+            let ms = (n * per_unit).round();
+            if ms.is_finite() && (0.0..9.0e15).contains(&ms) {
+                out.insert(ms as u64);
+            }
+        }
+    }
+    out
 }
 
 /// Every maximal ASCII digit run whose neighbours are not alphabetic ("level

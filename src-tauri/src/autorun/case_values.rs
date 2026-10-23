@@ -25,6 +25,12 @@ pub enum ValueKind {
     Pattern,
     /// `true` or `false`: a checked, pressed or other boolean state.
     State,
+    /// A request's timing (`not_before_ms`, `started_within_ms`), as whole ms: held by a duration the
+    /// case states, or a `because`.
+    Timing,
+    /// `same_document: true` on an `expect_response`: held by the step's own words saying the page
+    /// does not reload, or a `because`.
+    NoReload,
 }
 
 /// Whole words in a step's own text that say a state is on. `on` says it only in "is on", "turned on"
@@ -168,6 +174,21 @@ fn loose(step: i32, kind: ValueKind, value: &str, exact: bool, what: &'static st
     }
 }
 
+/// A value of an `expect_response` that is held strictly (never exempt): a timing or the no-reload check.
+fn response_value(step: i32, kind: ValueKind, value: String, what: &'static str, s: &Seen) -> CheckValue {
+    CheckValue {
+        step,
+        kind,
+        value,
+        exact: true,
+        action_json: s.json.to_string(),
+        values_text: s.values.to_string(),
+        rel: Rel::NotCount,
+        strict: true,
+        what,
+    }
+}
+
 fn pattern(step: i32, value: &str, s: &Seen) -> CheckValue {
     loose(step, ValueKind::Pattern, value, false, "the pattern", s)
 }
@@ -276,6 +297,14 @@ fn values_of_action(step: i32, action: &Action, out: &mut Vec<CheckValue>) {
         }
         Action::ExpectVisible { selector, .. } => visible_values(step, selector, out, s),
         Action::ExpectContainsText { value, .. } => out.push(text(step, value, false, s)),
+        Action::ExpectResponse { not_before_ms, started_within_ms, same_document, .. } => {
+            for ms in [not_before_ms, started_within_ms].into_iter().flatten() {
+                out.push(response_value(step, ValueKind::Timing, ms.to_string(), "the timing", s));
+            }
+            if *same_document {
+                out.push(response_value(step, ValueKind::NoReload, "same_document".to_string(), "the no-reload check", s));
+            }
+        }
         // What a downloaded file must hold. The file's name and its sheet say where to look, not what
         // is there, so they are not values.
         Action::ExpectDownload { headers, cells, contains_text, pdf, .. } => {
@@ -513,6 +542,9 @@ fn exempt_kind(v: &CheckValue, ex: &Exemptions) -> Option<Exempt> {
         ValueKind::State => {
             (v.value.contains("{{") || ex.precondition_values.contains(&folded)).then_some(Exempt::Bare)
         }
+        // Never exempt: the case or a because holds a timing, and the step's words or a because hold
+        // the no-reload check.
+        ValueKind::Timing | ValueKind::NoReload => None,
         ValueKind::Text => {
             if (folded.chars().count() < 3 && !is_number_text(&v.value)) || v.value.contains("{{") {
                 return Some(Exempt::Bare);
@@ -643,13 +675,40 @@ fn held_with(v: &CheckValue, case: &CaseText, numbers: &BTreeSet<u32>) -> bool {
             "false" => step_says_state(&case.step_folded(v.step), false),
             _ => false,
         },
+        ValueKind::Timing => v.value.parse::<u64>().is_ok_and(|ms| case.stated_durations().contains(&ms)),
+        ValueKind::NoReload => step_says_no_reload(&case.step_folded(v.step)),
     }
+}
+
+/// Words that negate a reload when one sits within 3 words before it.
+const NO_RELOAD_NEGATORS: &[&str] = &["not", "no", "without", "never", "doesnt", "dont", "isnt", "wont", "cannot"];
+
+/// Whether the step's own words say the page does not reload: a word starting with "reload" with a
+/// negator (`NO_RELOAD_NEGATORS`) within 3 words before it ("does not reload", "without reloading", "no
+/// full reload"), or "stays on the page" ("stay", "stays", "remain" and "remains" with "on" and then
+/// "page" within 3 words).
+fn step_says_no_reload(step_text: &str) -> bool {
+    let words = words_of(step_text);
+    words.iter().enumerate().any(|(i, w)| {
+        let reload = w.starts_with("reload") && (1..=3).any(|d| i >= d && NO_RELOAD_NEGATORS.contains(&words[i - d].as_str()));
+        let stays = matches!(w.as_str(), "stay" | "stays" | "remain" | "remains")
+            && words.get(i + 1).is_some_and(|n| n == "on")
+            && (2..=4).any(|d| words.get(i + d).is_some_and(|n| n == "page"));
+        reload || stays
+    })
 }
 
 /// What a step's own words must say to hold a state the case lacks: the words, so the writer can see why.
 fn state_hint(v: &CheckValue) -> String {
-    if v.kind != ValueKind::State {
-        return String::new();
+    match v.kind {
+        ValueKind::Timing => {
+            return "; a timing is held when the case states that duration (\"800 ms\", \"0.8 s\"); a margin around it needs a because naming the duration the case states".to_string()
+        }
+        ValueKind::NoReload => {
+            return "; the step's own words hold it when they say the page does not reload (\"does not reload\", \"without reloading\", \"stays on the page\")".to_string()
+        }
+        ValueKind::State => {}
+        _ => return String::new(),
     }
     if v.value == "true" {
         format!(
@@ -936,8 +995,55 @@ fn old_step(script: &CaseScript, n: i32) -> Option<&StepScript> {
     script.steps.iter().find(|s| s.step_number == n)
 }
 
+/// What an `expect_response` may be timed or held to: each is a check of its own, so a repair that
+/// removes one gives it up by name, like a whole check.
+const TIMING_FIELDS: [&str; 3] = ["not_before_ms", "started_within_ms", "same_document"];
+
+fn is_timing_field(kind: &str) -> bool {
+    TIMING_FIELDS.contains(&kind)
+}
+
+/// The timing fields each `expect_response` of a step sets (nested ones included), one entry per field.
+fn timing_fields_of_step(step: &StepScript) -> Vec<&'static str> {
+    let mut out = Vec::new();
+    walk(&step.actions, &mut |a| {
+        if let Action::ExpectResponse { not_before_ms, started_within_ms, same_document, .. } = a {
+            if not_before_ms.is_some() {
+                out.push(TIMING_FIELDS[0]);
+            }
+            if started_within_ms.is_some() {
+                out.push(TIMING_FIELDS[1]);
+            }
+            if *same_document {
+                out.push(TIMING_FIELDS[2]);
+            }
+        }
+    });
+    out
+}
+
+/// The timing fields step `n` loses: the old step's minus the new step's, each new one cancelling one
+/// old one of its name. A step that loses a whole `expect_response` is not asked about its timings: the
+/// check given up carries them.
+fn removed_timings(old: &CaseScript, new: &CaseScript, n: i32) -> Vec<&'static str> {
+    let Some(o) = old_step(old, n) else { return Vec::new() };
+    let new_step = new.steps.iter().find(|s| s.step_number == n);
+    let responses = |s: &StepScript| check_kinds_of_step(s).iter().filter(|k| *k == "expect_response").count();
+    if new_step.map_or(0, responses) < responses(o) {
+        return Vec::new();
+    }
+    let mut removed = timing_fields_of_step(o);
+    for f in new_step.map(timing_fields_of_step).unwrap_or_default() {
+        if let Some(i) = removed.iter().position(|r| *r == f) {
+            removed.remove(i);
+        }
+    }
+    removed
+}
+
 /// The kinds of the checks step `n` loses: the old step's kinds minus the
-/// new step's, each new one cancelling one old one of its kind.
+/// new step's, each new one cancelling one old one of its kind. A timing
+/// field taken off an `expect_response` that stays is lost under its own name.
 fn removed_kinds(old: &CaseScript, new: &CaseScript, n: i32) -> Vec<String> {
     let mut removed = old_step(old, n).map(check_kinds_of_step).unwrap_or_default();
     for k in new.steps.iter().find(|s| s.step_number == n).map(check_kinds_of_step).unwrap_or_default() {
@@ -945,6 +1051,7 @@ fn removed_kinds(old: &CaseScript, new: &CaseScript, n: i32) -> Vec<String> {
             removed.remove(i);
         }
     }
+    removed.extend(removed_timings(old, new, n).into_iter().map(str::to_string));
     removed
 }
 
@@ -970,7 +1077,8 @@ fn gives_up_refusal(old: &CaseScript, declared_steps: &[i32], g: &GiveUp) -> Opt
     }
     let kind = gives_up_kind(g);
     let has = declared_steps.contains(&n)
-        && old_step(old, n).is_some_and(|s| check_kinds_of_step(s).iter().any(|k| *k == kind));
+        && old_step(old, n)
+            .is_some_and(|s| check_kinds_of_step(s).iter().any(|k| *k == kind) || timing_fields_of_step(s).iter().any(|f| *f == kind));
     (!has).then(|| {
         format!("step {n}: gives_up names a {kind} check, and the old step {n} has none - name the kind of a check the repair removes")
     })
@@ -1035,7 +1143,10 @@ pub fn check_repair_values(
     let floor = if old.checks > 0 { old.checks as usize } else { check_count(old) };
     let kept = check_count(new);
     // A clean-up step's checks are not in the count, so giving one up lowers nothing.
-    let named = valid.iter().filter(|g| old.case_steps().any(|s| s.step_number == g.step)).count();
+    let named = valid
+        .iter()
+        .filter(|g| !is_timing_field(&gives_up_kind(g)) && old.case_steps().any(|s| s.step_number == g.step))
+        .count();
     if kept + named < floor {
         push(
             &mut out,
@@ -1058,7 +1169,7 @@ pub fn check_repair_values(
         let before = check_kinds_of_step(o).len();
         let after = new.steps.iter().find(|s| s.step_number == n).map_or(0, |s| check_kinds_of_step(s).len());
         let lost = before.saturating_sub(after);
-        let given = valid.iter().filter(|g| g.step == n).count();
+        let given = valid.iter().filter(|g| g.step == n && !is_timing_field(&gives_up_kind(g))).count();
         if given < lost {
             push(
                 &mut out,
@@ -1070,6 +1181,22 @@ pub fn check_repair_values(
             push(
                 &mut out,
                 format!("step {n}: gives_up names {given} checks but the repair removes {lost} there - name only the checks it removes"),
+            );
+        }
+        // A timing field taken off a check that stays is given up by its own name.
+        let mut unnamed = removed_timings(old, new, n);
+        for g in valid.iter().filter(|g| g.step == n) {
+            let kind = gives_up_kind(g);
+            if let Some(i) = unnamed.iter().position(|f| *f == kind) {
+                unnamed.remove(i);
+            }
+        }
+        for field in unnamed {
+            push(
+                &mut out,
+                format!(
+                    "step {n}: the repair removes {field} from an expect_response and gives_up does not name it - add {{ \"step\": {n}, \"kind\": \"{field}\", \"why\": \"...\" }}, or keep it"
+                ),
             );
         }
     }
@@ -1094,6 +1221,8 @@ pub fn check_repair_values(
                 ValueKind::Count => new_values.iter().any(|w| w.kind == ValueKind::Count && w.value == v.value),
                 ValueKind::State => new_values.iter().any(|w| w.kind == ValueKind::State && w.value == v.value),
                 ValueKind::Pattern => new_values.iter().any(|w| w.kind == ValueKind::Pattern && pattern_keeps(&v.value, &w.value)),
+                ValueKind::Timing => new_values.iter().any(|w| w.kind == ValueKind::Timing && w.value == v.value),
+                ValueKind::NoReload => new_values.iter().any(|w| w.kind == ValueKind::NoReload),
                 ValueKind::Text => {
                     let old_fold = fold(&v.value);
                     new_values.iter().any(|w| {
@@ -1111,7 +1240,17 @@ pub fn check_repair_values(
                 .ok()
                 .and_then(|j| j.get("kind").and_then(|k| k.as_str().map(str::to_string)))
                 .unwrap_or_default();
-            if valid.iter().any(|g| g.step == n && gives_up_kind(g) == held_by) {
+            if valid.iter().any(|g| {
+                g.step == n
+                    && match v.kind {
+                        // The timing or no-reload check is given up by its own name, or with the whole check.
+                        ValueKind::Timing => {
+                            gives_up_kind(g) == held_by || matches!(gives_up_kind(g).as_str(), "not_before_ms" | "started_within_ms")
+                        }
+                        ValueKind::NoReload => gives_up_kind(g) == held_by || gives_up_kind(g) == "same_document",
+                        _ => gives_up_kind(g) == held_by,
+                    }
+            }) {
                 continue;
             }
             push(
