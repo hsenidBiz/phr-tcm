@@ -383,6 +383,7 @@ fn net_entry(method: &str, path_query: &str) -> NetEntry {
         kind: Some("XHR".into()),
         same_site: true,
         polling: false,
+        started_ms: None,
     }
 }
 

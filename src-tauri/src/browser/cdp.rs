@@ -727,6 +727,9 @@ pub struct Cdp<T: Transport = WsTransport> {
     /// (`Driver::noted_addresses`). Emptied with the case's tabs
     /// (`close_other_tabs`), so one case never reads another's.
     noted: std::collections::BTreeMap<String, String>,
+    /// When (epoch ms, `timing::wall_ms`) the last `Input.*` command was
+    /// sent, for a request timed from the input that caused it.
+    last_input_ms: Option<u64>,
 }
 
 /// A browser's downloads: the folder they land in, and every download in
@@ -913,6 +916,7 @@ impl<T: Transport> Cdp<T> {
             capture_pause: None,
             extra_headers: std::collections::BTreeMap::new(),
             noted: std::collections::BTreeMap::new(),
+            last_input_ms: None,
         }
     }
 
@@ -2234,6 +2238,9 @@ impl<T: Transport> Cdp<T> {
         let seeding = method == "Page.addScriptToEvaluateOnNewDocument";
         let unseeding = method == "Page.removeScriptToEvaluateOnNewDocument";
         let seed = if seeding || unseeding { Some(params.clone()) } else { None };
+        if method.starts_with("Input.") {
+            self.last_input_ms = Some(super::timing::wall_ms());
+        }
         let answer = match self.call_on(Some(session.clone()), method, params, limit).await {
             // The current tab closed while it was asked.
             Err(CdpError::Closed) if !self.has_tab(&session) => Err(self.gone(&session)),
@@ -2869,6 +2876,11 @@ pub trait Driver {
     fn net_since(&self, _mark: u64) -> Vec<super::net_record::NetEntry> {
         Vec::new()
     }
+    /// When (epoch ms) this driver last sent an `Input.*` command. A driver
+    /// that does not note it (a test's fake) has none.
+    fn last_input_ms(&self) -> Option<u64> {
+        None
+    }
     /// `net_since`, or `None` for a mark no longer held
     /// (`Cdp::net_since_held`). A driver that never lets a mark go always
     /// holds it.
@@ -3138,6 +3150,9 @@ impl<T: Transport> Driver for Cdp<T> {
     }
     fn net_since(&self, mark: u64) -> Vec<super::net_record::NetEntry> {
         Cdp::net_since(self, mark)
+    }
+    fn last_input_ms(&self) -> Option<u64> {
+        self.last_input_ms
     }
     fn net_since_held(&self, mark: u64) -> Option<Vec<super::net_record::NetEntry>> {
         Cdp::net_since_held(self, mark)

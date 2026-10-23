@@ -54,6 +54,10 @@ pub struct NetEntry {
     pub same_site: bool,
     /// The page asked this again within `POLL_REPEAT` (mirrors `Times`).
     pub polling: bool,
+    /// When the browser says the request first started: `wallTime` of its
+    /// first `Network.requestWillBeSent`, in epoch milliseconds. A redirect
+    /// never changes it. `None` when the event carried none.
+    pub started_ms: Option<u64>,
 }
 
 /// A request's first redirect: the 3xx it answered and where it was sent.
@@ -208,6 +212,7 @@ impl NetRecord {
             kind: p["type"].as_str().map(str::to_string),
             same_site,
             polling,
+            started_ms: p["wallTime"].as_f64().filter(|s| *s >= 0.0).map(|s| (s * 1000.0).round() as u64),
         });
         while self.entries.len() > MAX_REQUESTS {
             if let Some(old) = self.entries.pop_front() {

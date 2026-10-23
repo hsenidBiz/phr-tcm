@@ -55,6 +55,7 @@ fn entry(seq: u64, method: &str, path_query: &str, status: Option<u16>, state: N
         kind: Some("XHR".to_string()),
         same_site: true,
         polling: false,
+        started_ms: None,
     }
 }
 

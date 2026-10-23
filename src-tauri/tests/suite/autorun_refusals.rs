@@ -26,6 +26,7 @@ fn entry(kind: &str, status: Option<u16>) -> NetEntry {
         kind: Some(kind.to_string()),
         same_site: true,
         polling: false,
+        started_ms: None,
     }
 }
 

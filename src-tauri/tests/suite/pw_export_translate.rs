@@ -223,6 +223,7 @@ fn the_export_takes_requests_in_the_order_the_app_does() {
         kind: Some("XHR".into()),
         same_site: true,
         polling: false,
+        started_ms: None,
     };
     let took = |entries: &[NetEntry], taken: &[String]| match pick_in_order(entries, None, "api/list", taken) {
         Pick::Finished(e) | Pick::Failed(e) | Pick::PendingOnly(e) => e.id,
