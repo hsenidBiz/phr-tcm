@@ -27,6 +27,7 @@ import { Hint, STRUCTURE_KEY, Stat, SubTabs, type TabSpec } from "./parts";
 import PlaywrightExportDialog from "./PlaywrightExportDialog";
 import Runner, { REPORTS_KEY, TESTS_KEY } from "./Runner";
 import Sync, { SYNC_KEY } from "./Sync";
+import { useSpecsWatch } from "./useSpecsWatch";
 
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
@@ -36,6 +37,10 @@ type Tab = "overview" | "runner" | "accounts" | "sync";
 /** The tab last chosen, kept for the session: coming back to Playwright
  * opens where the person left it. */
 let lastTab: Tab = "overview";
+
+/** The queries that read the clone's spec files: if one of these fails to
+ * read again, the specs pill says the specs could not be read. */
+const READS_SPECS: ReadonlySet<string> = new Set([STRUCTURE_KEY, TESTS_KEY, SYNC_KEY]);
 
 /** What the clone holds: the counts (counting up each time the tab is
  * `shown`), New folder, and the folder tree under suites. */
@@ -141,10 +146,23 @@ export default function Playwright({ org, project }: { org: string; project: str
     void qc.invalidateQueries({ queryKey: [STRUCTURE_KEY, clone] });
     void qc.invalidateQueries({ queryKey: [TESTS_KEY, clone] });
   };
-  /** Refresh: every Playwright query is read again, the shown ones now. */
-  const refreshAll = () => {
-    for (const k of [STRUCTURE_KEY, TESTS_KEY, REPORTS_KEY, ACCOUNTS_KEY, SYNC_KEY]) void qc.invalidateQueries({ queryKey: [k] });
+  /** Refresh: every Playwright query is read again, the shown ones now.
+   * Rejects when one that reads the spec files (the structure, the test
+   * listing, Sync) failed; the specs pill (`useSpecsWatch`) says so. The pill
+   * runs this too when the spec files change, and only then. */
+  const rereadAll = async () => {
+    const keys = [STRUCTURE_KEY, TESTS_KEY, REPORTS_KEY, ACCOUNTS_KEY, SYNC_KEY];
+    const done = await Promise.allSettled(keys.map((k) => qc.invalidateQueries({ queryKey: [k] }, { throwOnError: true })));
+    const bad = done.find((r, i) => r.status === "rejected" && READS_SPECS.has(keys[i]));
+    if (bad && bad.status === "rejected") throw bad.reason;
   };
+  const specs = useSpecsWatch({
+    clone,
+    ready: settings.isSuccess,
+    busy: runnerBusy || accountsBusy || structure.isFetching,
+    process: rereadAll,
+  });
+  const refreshAll = () => void specs.reprocess();
 
   /** About to open the Runner: its listing starts now. Only when there is
    * none yet: a listing already there, or one that failed (a repo command

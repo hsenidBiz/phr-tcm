@@ -7,6 +7,7 @@ use crate::pw_repo::process::{self, Launch, RunEvent};
 use crate::pw_repo::runner::{self, BrowserMode, PwReport, RunAction, RunPreview, RunStart, TestTree};
 use crate::pw_export::export::{self, ExportResult};
 use crate::pw_repo::handoff;
+use crate::pw_repo::specs_status::{self, SpecsStatus};
 use crate::pw_repo::structure::{self, RepoStructure};
 use crate::pw_repo::sync::{self, SyncRow};
 use crate::pw_repo::users::{self, AccountChange, AccountRefs, ChangeOutcome, RepoAccount};
@@ -60,6 +61,17 @@ pub fn pw_repo_structure(clone: String) -> Result<RepoStructure, String> {
     let _t = crate::pw_repo::timed("pw_repo_structure");
     let clone = chosen(&clone)?;
     structure::structure_for(true, &clone.to_string_lossy(), structure::node_found())
+}
+
+/// How many spec files the clone holds and a fingerprint of them. A walk of
+/// file metadata only: it opens no file and starts no process, so the header
+/// can ask it every minute.
+#[tauri::command(async)]
+#[specta::specta]
+pub fn pw_repo_specs_status(clone: String) -> Result<SpecsStatus, String> {
+    let _t = crate::pw_repo::timed("pw_repo_specs_status");
+    let clone = chosen(&clone)?;
+    specs_status::read(&clone)
 }
 
 /// Makes the feature folder `path` (under `suites/`) in the clone, with

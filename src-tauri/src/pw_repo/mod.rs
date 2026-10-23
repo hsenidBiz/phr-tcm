@@ -11,6 +11,9 @@
 //! `runner` lists the tests, writes the run list, dry-counts and runs them
 //! the way the repo's `npm run qa` does.
 //!
+//! `specs_status` is the cheap look the header's pill takes every minute:
+//! how many spec files `suites/` holds and a fingerprint of them.
+//!
 //! `users` lists and changes the repo's test accounts through its `npm run
 //! users` CLI, and keeps every password out of the log and the output.
 //!
@@ -39,6 +42,7 @@ pub mod presence;
 pub mod process;
 pub mod rename_folder;
 pub mod runner;
+pub mod specs_status;
 pub mod structure;
 pub mod sync;
 pub mod users;

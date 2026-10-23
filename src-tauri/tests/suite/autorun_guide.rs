@@ -44,7 +44,7 @@ fn the_guide_names_every_action_the_executor_can_run() {
         Action::ExpectNoChange { selector: "s".into(), region: None, within_ms: None },
         Action::SignIn { account: "a".into() },
         Action::Upload { selector: "s".into(), file: "f.pdf".into() },
-        Action::ExpectResponse { method: None, url_contains: "/x".into(), status: 200, json: None, timeout_ms: None, stray: Default::default() },
+        Action::ExpectResponse { method: None, url_contains: "/x".into(), status: 200, json: None, timeout_ms: None, not_before_ms: None, started_within_ms: None, same_document: false, stray: Default::default() },
         Action::ApiRequest { path: "/api/x".into(), query: Default::default(), expect: Default::default(), stray: Default::default() },
         Action::WhenVisible { selector: "s".into(), within_ms: None, then: vec![Action::Click { selector: "s".into() }] },
         Action::RepeatWhileVisible { selector: v2_lib::browser::locator::Target::One(v2_lib::browser::locator::LocatorStep { css: Some(".delete".into()), ..Default::default() }), max: Some(3), except: vec![], then: vec![Action::Click { selector: "s".into() }] },
@@ -167,6 +167,37 @@ fn the_guide_teaches_the_api_checks_and_their_limits() {
         seen += 1;
     }
     assert!(seen >= 2, "the API section should show both kinds as examples");
+}
+
+/// A request's timing checks: what they time from, what they measure, how a
+/// value is held, where they go, and how a repair gives one up.
+#[test]
+fn the_guide_teaches_the_timing_checks() {
+    let g = autorun_guide();
+    let section = g.split_once("## Checking the API").unwrap().1;
+    let section = section.split("\n## ").next().unwrap();
+    for term in [
+        "not_before_ms",
+        "started_within_ms",
+        "same_document",
+        "never when it was answered",
+        "a near miss",
+        "needs a because",
+        "try_autorun_action",
+        "Export to Playwright",
+    ] {
+        assert!(section.contains(term), "the API section never says {term:?}");
+    }
+    // Each phrase sits on one line, so a re-wrap cannot split it.
+    for term in ["never when it was answered", "a near miss", "needs a because"] {
+        assert!(section.lines().any(|l| l.contains(term)), "{term:?} is split across lines");
+    }
+    assert!(g.contains("A timing it states"), "the guide never ties a stated timing to the check");
+    assert!(
+        g.contains("removes `not_before_ms`, `started_within_ms` or `same_document`"),
+        "the guide never says a repair names a dropped timing in gives_up"
+    );
+    assert!(!section.contains('\u{2014}') && !section.contains('\u{2013}'), "no em or en dashes in the timing text");
 }
 
 /// The assistant can read code, so the guide has to say what code is and

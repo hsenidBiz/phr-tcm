@@ -303,6 +303,11 @@ export function playwrightPatches(real: { getAppSettings: () => Promise<AppSetti
       return ok({ ...(await real.getAppSettings()), playwright_clone: demoClone });
     },
     pwRepoStructure: (_clone: string) => ok(STRUCTURE),
+    // The sample clone's specs, counted from the sample tree.
+    pwRepoSpecsStatus: (_clone: string) => {
+      const count = STRUCTURE.features.reduce((n, f) => n + f.spec_count, 0);
+      return ok({ count, fingerprint: STRUCTURE.features.map((f) => `${f.path.join("/")}:${f.spec_count}`).join("|") });
+    },
     // New folder: listed as an empty feature, as the real clone would list it.
     pwRepoCreateFolder: (_clone: string, path: string) => {
       const p = path.trim().replace(/[\s/]+$/, "");

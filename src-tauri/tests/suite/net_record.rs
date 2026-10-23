@@ -459,3 +459,25 @@ async fn the_browser_counts_what_it_cannot_see_as_a_write() {
     assert!(!Driver::net_wrote_since(&cdp, after), "only GETs since a fresh mark");
     assert_eq!(Driver::tabs_opened(&cdp), 1, "one tab, ever");
 }
+
+/// The browser's own start time of a request is kept from its first
+/// `requestWillBeSent`; a redirect never moves it.
+#[test]
+fn a_request_keeps_the_browsers_own_start_time() {
+    let mut rec = NetRecord::default();
+    rec.observe(&ev(
+        "Network.requestWillBeSent",
+        json!({ "requestId": "1", "type": "XHR", "wallTime": 1700000000.123,
+                "request": { "url": "https://hr.example/api/a", "method": "GET" } }),
+    ));
+    rec.observe(&ev(
+        "Network.requestWillBeSent",
+        json!({ "requestId": "1", "type": "XHR", "wallTime": 1700000005.0,
+                "request": { "url": "https://hr.example/api/b", "method": "GET" },
+                "redirectResponse": { "url": "https://hr.example/api/a", "status": 302 } }),
+    ));
+    rec.observe(&sent("2", "GET", "https://hr.example/api/c"));
+    let all = rec.since(0);
+    assert_eq!(all[0].started_ms, Some(1_700_000_000_123));
+    assert_eq!(all[1].started_ms, None);
+}

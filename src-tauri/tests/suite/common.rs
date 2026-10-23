@@ -163,6 +163,9 @@ pub struct ScriptedDriver {
     /// The addresses a `remember_url` noted, by name (`noted_addresses`):
     /// emptied with the case's tabs, as `Cdp` empties its own.
     pub noted: std::collections::BTreeMap<String, String>,
+    /// When (epoch ms) a command that delivers input was last made, as `Cdp` notes the moment the browser
+    /// answered it (`Driver::last_input_ms`).
+    pub last_input: Option<u64>,
 }
 
 /// A test's yes or no to a call, by method and parameters.
@@ -265,6 +268,7 @@ impl ScriptedDriver {
             capture_notes: vec![],
             capture: None,
             noted: std::collections::BTreeMap::new(),
+            last_input: None,
         }
     }
 
@@ -369,6 +373,9 @@ impl Driver for ScriptedDriver {
             }
         }
         self.calls.push((method.to_string(), params.clone()));
+        if v2_lib::browser::timing::delivers_input(method) {
+            self.last_input = Some(v2_lib::browser::timing::wall_ms());
+        }
         if self.block_after.as_ref().is_some_and(|(m, _)| m == method) {
             self.save_blocked = self.block_after.take().map(|(_, s)| s);
         }
@@ -530,6 +537,10 @@ impl Driver for ScriptedDriver {
 
     fn page_log(&self) -> Vec<String> {
         self.page_log.clone()
+    }
+
+    fn last_input_ms(&self) -> Option<u64> {
+        self.last_input
     }
 
     fn net_mark(&self) -> u64 {

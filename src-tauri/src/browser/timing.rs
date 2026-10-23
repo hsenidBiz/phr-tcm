@@ -51,6 +51,29 @@ impl Default for Timing {
     }
 }
 
+/// The wall clock now, in milliseconds since the Unix epoch (0 if the clock
+/// is set before it): the scale Chrome's `wallTime` is on, for timing a
+/// request against the input that caused it.
+pub fn wall_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
+/// Whether a DevTools command puts input into the page: a key, a pointer event, typed text or a drop. The
+/// commands that only switch drag interception on or off deliver nothing.
+pub fn delivers_input(method: &str) -> bool {
+    matches!(
+        method,
+        "Input.dispatchKeyEvent"
+            | "Input.dispatchMouseEvent"
+            | "Input.dispatchTouchEvent"
+            | "Input.dispatchDragEvent"
+            | "Input.insertText"
+    )
+}
+
 /// A screenshot is best effort evidence, not part of the action's own
 /// result - it must never hold the run up waiting for a browser that is
 /// already in trouble.

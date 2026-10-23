@@ -377,6 +377,8 @@ fn is_api_check(whole: &str) -> bool {
         || whole.starts_with(api::RESPONSE_TO)
         || whole.starts_with(api::BODY_GONE)
         || whole.starts_with(api::BODY_UNREADABLE)
+        || whole.starts_with(api::RELOADED)
+        || whole.starts_with(api::RELOAD_UNKNOWN)
     {
         return true;
     }
@@ -394,7 +396,9 @@ fn is_api_check(whole: &str) -> bool {
             || rest.ends_with(api::CANCELLED)
             || rest.contains(api::NET_FAILED)
             || rest.contains(api::ANSWERED)
-            || rest.contains(api::REDIRECTED))
+            || rest.contains(api::REDIRECTED)
+            || rest.contains(api::STARTED)
+            || rest.contains(api::NO_START))
 }
 
 /// What follows `item N of M ("label"): ` in an `expect_each` failure, found

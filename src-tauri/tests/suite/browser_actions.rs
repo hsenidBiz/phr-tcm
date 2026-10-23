@@ -639,7 +639,7 @@ fn only_checks_and_expectations_are_checks() {
         Action::ExpectNoChange { selector: "s".into(), region: None, within_ms: None },
         Action::SignIn { account: "a".into() },
         Action::Upload { selector: "s".into(), file: "f.pdf".into() },
-        Action::ExpectResponse { method: None, url_contains: "/x".into(), status: 200, json: None, timeout_ms: None, stray: Default::default() },
+        Action::ExpectResponse { method: None, url_contains: "/x".into(), status: 200, json: None, timeout_ms: None, not_before_ms: None, started_within_ms: None, same_document: false, stray: Default::default() },
         Action::ApiRequest { path: "/api/x".into(), query: Default::default(), expect: Default::default(), stray: Default::default() },
         // A guard is a tidy-up, never a check - even holding one.
         Action::WhenVisible { selector: "s".into(), within_ms: None, then: vec![Action::ExpectVisible { selector: "s".into(), timeout_ms: None }] },
@@ -722,6 +722,9 @@ fn expect_response_and_api_request_round_trip_with_their_defaults() {
             status: 200,
             json: None,
             timeout_ms: None,
+            not_before_ms: None,
+            started_within_ms: None,
+            same_document: false,
             stray: Default::default()
         }
     );
@@ -759,6 +762,68 @@ fn expect_response_and_api_request_round_trip_with_their_defaults() {
     let r: Action = serde_json::from_value(full.clone()).unwrap();
     assert_eq!(serde_json::to_value(&r).unwrap(), full);
     assert!(r.validate().is_ok());
+}
+
+#[test]
+fn expect_response_timings_round_trip_and_stay_out_when_unset() {
+    for full in [
+        json!({ "kind": "expect_response", "url_contains": "/api/cards", "status": 200, "timeout_ms": 2000, "not_before_ms": 600 }),
+        json!({
+            "kind": "expect_response", "url_contains": "/api/cards", "status": 200, "timeout_ms": 2000,
+            "not_before_ms": 600, "started_within_ms": 300, "same_document": true
+        }),
+    ] {
+        let a: Action = serde_json::from_value(full.clone()).unwrap();
+        assert_eq!(serde_json::to_value(&a).unwrap(), full);
+    }
+    let a: Action = serde_json::from_value(
+        json!({ "kind": "expect_response", "url_contains": "/Cycle/Save", "same_document": false }),
+    )
+    .unwrap();
+    let written = serde_json::to_value(&a).unwrap();
+    assert!(written.get("same_document").is_none(), "{written}");
+}
+
+#[test]
+fn expect_response_timings_are_validated() {
+    let err = |v: serde_json::Value| serde_json::from_value::<Action>(v).unwrap().validate().unwrap_err();
+    let with = |extra: serde_json::Value| {
+        let mut v = json!({ "kind": "expect_response", "url_contains": "/x" });
+        for (k, val) in extra.as_object().unwrap() {
+            v[k] = val.clone();
+        }
+        v
+    };
+    assert_eq!(err(with(json!({ "not_before_ms": 0 }))), "expect_response not_before_ms must be more than 0");
+    assert_eq!(err(with(json!({ "started_within_ms": 0 }))), "expect_response started_within_ms must be more than 0");
+    assert_eq!(
+        err(with(json!({ "not_before_ms": 300, "started_within_ms": 300 }))),
+        "expect_response not_before_ms must be less than started_within_ms"
+    );
+    assert_eq!(
+        err(with(json!({ "not_before_ms": 3000, "timeout_ms": 3000 }))),
+        "not_before_ms must be shorter than the time the check waits."
+    );
+    // With no timeout_ms the check waits the default 10 s: 12000 can never pass, 9000 can.
+    assert_eq!(
+        err(with(json!({ "not_before_ms": 12000 }))),
+        "not_before_ms must be shorter than the time the check waits."
+    );
+    assert_eq!(
+        err(with(json!({ "not_before_ms": 10000 }))),
+        "not_before_ms must be shorter than the time the check waits."
+    );
+    let ok: Action = serde_json::from_value(with(json!({ "not_before_ms": 9000 }))).unwrap();
+    assert!(ok.validate().is_ok());
+    let ok: Action = serde_json::from_value(with(
+        json!({ "not_before_ms": 600, "started_within_ms": 2000, "timeout_ms": 3000 }),
+    ))
+    .unwrap();
+    assert!(ok.validate().is_ok());
+    assert_eq!(
+        err(with(json!({ "bogus": 1 }))),
+        "expect_response has no \"bogus\" - it takes method, url_contains, status, json, timeout_ms, not_before_ms, started_within_ms and same_document"
+    );
 }
 
 #[test]

@@ -71,6 +71,7 @@ import { useOpenOnExportRequest } from "./lib/playwrightExport";
 import { useBackgroundRunHost } from "./hooks/useBackgroundRunHost";
 import { useAutoRunScriptsSync } from "./hooks/useAutoRunScriptsSync";
 import BridgeStatusBadge from "./components/BridgeStatusBadge";
+import SpecsStatusPill from "./components/SpecsStatusPill";
 import ContextBar from "./components/ContextBar";
 import Sidebar, { WORK_ITEMS, shortcutOrder, type Section, type WorkSection } from "./components/Sidebar";
 import { hydrateExtras } from "./lib/extras";
@@ -1405,6 +1406,7 @@ export default function App() {
                 <div className="mb-4 flex items-center gap-2">
                   <h1 className="text-lg font-semibold">{TITLES[section]}</h1>
                   {section === "ai" && <BridgeStatusBadge />}
+                  {section === "playwright" && <SpecsStatusPill />}
                   {TITLE_NOTES[section] && (
                     <span className="rounded-full bg-warning/15 px-2 py-0.5 text-[11px] font-medium text-warning">
                       <span className="label-trim">{TITLE_NOTES[section]}</span>

@@ -223,6 +223,7 @@ fn the_export_takes_requests_in_the_order_the_app_does() {
         kind: Some("XHR".into()),
         same_site: true,
         polling: false,
+        started_ms: None,
     };
     let took = |entries: &[NetEntry], taken: &[String]| match pick_in_order(entries, None, "api/list", taken) {
         Pick::Finished(e) | Pick::Failed(e) | Pick::PendingOnly(e) => e.id,
@@ -255,6 +256,267 @@ fn the_export_takes_requests_in_the_order_the_app_does() {
         // `debounced` has taken the one request there is at both checks above, so only the first is compared.
         let n = if *name == "debounced" { 1 } else { 2 };
         assert_eq!(export[..n], app_took[..n], "the export, {name}: {export:?}");
+    }
+}
+
+#[test]
+fn a_timed_response_marks_the_action_and_judges_its_start() {
+    let got = lf(&one_step(json!([
+        { "kind": "fill", "selector": "#q", "value": "abc" },
+        { "kind": "expect_response", "url_contains": "/api/cards", "status": 200, "not_before_ms": 600, "timeout_ms": 2000 }
+    ]))
+    .run()
+    .unwrap());
+    let lines: Vec<&str> = got.lines().map(str::trim).collect();
+    let at = |starts: &str| lines.iter().position(|l| l.starts_with(starts)).unwrap_or_else(|| panic!("no line {starts}\n{got}"));
+    let fill = at("await cur.locator('#q')");
+    let (began, acted) = (at("let began1 = 0;"), at("let acted1 = 0;"));
+    assert!(at("const taken1") < began && began < acted && acted < fill, "{got}");
+    // The action is bracketed by the two stamps, and the check judges the start before the status.
+    assert_eq!(lines[fill - 1], "began1 = Date.now();", "{got}");
+    assert_eq!(lines[fill + 1], "acted1 = Date.now();", "{got}");
+    assert!(lines[fill + 2].starts_with("const r1_0 = await nextResponse(sentFrom1, taken1, "), "{got}");
+    assert!(
+        lines[fill + 2].ends_with(", 2000, (r: Req) => { const t = r.timing().startTime; if (t > 0) { startedOk(t, began1, acted1, 600, undefined); } });"),
+        "{got}"
+    );
+    assert_eq!(lines[fill + 3], "startedOk(r1_0.request().timing().startTime, began1, acted1, 600, undefined);", "{got}");
+    assert_eq!(lines[fill + 4], "expect(r1_0.status()).toBe(200);", "{got}");
+    assert_eq!(got.matches("const startedOk = (").count(), 1, "{got}");
+    assert!(!got.contains("docOf"), "{got}");
+    // The helper sits right after the request log, before the first page load.
+    assert!(at("const nextResponse") < at("const startedOk = (") && at("const startedOk = (") < at("await page.goto('/');"), "{got}");
+
+    // A started_within_ms alone is passed on as it is written.
+    let within = lf(&one_step(json!([
+        { "kind": "click", "selector": "#go" },
+        { "kind": "expect_response", "url_contains": "/api/cards", "status": 200, "started_within_ms": 300 }
+    ]))
+    .run()
+    .unwrap());
+    assert!(within.contains("startedOk(r1_0.request().timing().startTime, began1, acted1, undefined, 300);"), "{within}");
+}
+
+#[test]
+fn same_document_compares_the_window_token() {
+    let got = lf(&one_step(json!([
+        { "kind": "click", "selector": "#refetch" },
+        { "kind": "expect_response", "url_contains": "/api/cards", "status": 200, "same_document": true }
+    ]))
+    .run()
+    .unwrap());
+    let lines: Vec<&str> = got.lines().map(str::trim).collect();
+    let at = |starts: &str| lines.iter().position(|l| l.starts_with(starts)).unwrap_or_else(|| panic!("no line {starts}\n{got}"));
+    let click = at("await cur.locator('#refetch')");
+    assert!(at("const doc1 = await docOf(cur);") < click, "{got}");
+    assert_eq!(lines[click + 2], "expect(r1_0.status()).toBe(200);", "{got}");
+    // A short settle first, as the app takes, so a reload begun when the response came has committed.
+    assert_eq!(lines[click + 3], "await cur.waitForTimeout(300);", "{got}");
+    assert_eq!(lines[click + 4], "expect(await docOf(cur), 'the page reloaded during the step').toBe(doc1);", "{got}");
+    assert_eq!(got.matches("const docOf = ").count(), 1, "{got}");
+    assert!(!got.contains("startedOk") && !got.contains("began1"), "{got}");
+}
+
+#[test]
+fn an_untimed_response_exports_as_before() {
+    let got = one_step(json!([
+        { "kind": "click", "selector": "#save" },
+        { "kind": "expect_response", "method": "post", "url_contains": "API/Save", "status": 201 }
+    ]))
+    .run()
+    .unwrap();
+    for gone in ["startedOk", "docOf", "began1", "acted1", "early"] {
+        assert!(!got.contains(gone), "{gone}\n{got}");
+    }
+    assert!(
+        got.contains("(r: Req) => r.url().toLowerCase().includes('api/save') && r.method() === 'POST', 10000);"),
+        "{got}"
+    );
+}
+
+/// `startedOk` and `docOf` as the spec carries them, run in node, judge as `judge_start` and `judge_document`
+/// do: row by row, the same pass or failure.
+#[test]
+fn the_timing_and_document_helpers_judge_as_the_app_does() {
+    use std::process::Command;
+    use v2_lib::autorun::api_checks::{judge_document, judge_start, ActedAt};
+    if Command::new("node").arg("--version").output().is_err() {
+        eprintln!("node is not installed: the generated helpers were not run");
+        return;
+    }
+    let got = lf(&one_step(json!([
+        { "kind": "fill", "selector": "#q", "value": "abc" },
+        { "kind": "expect_response", "url_contains": "/api/cards", "status": 200, "not_before_ms": 600, "same_document": true }
+    ]))
+    .run()
+    .unwrap());
+    let from = got.find("    const CLOCK_TOLERANCE_MS = ").expect("the tolerance");
+    let end = got.find("    const startedOk = ").expect("the timing helper");
+    let end = end + got[end..].find("\n    };\n").expect("its end") + "\n    };\n".len();
+    assert!(got.contains("const CLOCK_TOLERANCE_MS = 25;"), "{got}");
+    let doc_at = got.find("    const docOf = ").expect("the document helper");
+    let doc_end = doc_at + got[doc_at..].find('\n').unwrap() + 1;
+    let helpers = format!("{}{}", &got[from..end], &got[doc_at..doc_end]);
+
+    // (start, action began, action ended, not_before_ms, started_within_ms): the rows of `judge_start`'s own
+    // table, and the two that sit between the action's beginning and its last input.
+    type Row = (Option<u64>, u64, u64, Option<u32>, Option<u32>);
+    let rows: Vec<Row> = vec![
+        (Some(1800), 1000, 1000, Some(600), None),
+        (Some(1300), 1000, 1000, Some(600), None),
+        (Some(1600), 1000, 1000, Some(600), None),
+        (Some(1599), 1000, 1000, Some(600), None),
+        (Some(1300), 1000, 1000, None, Some(300)),
+        (Some(1301), 1000, 1000, None, Some(300)),
+        (Some(900), 1000, 1000, Some(600), None),
+        (Some(900), 1000, 1000, None, Some(300)),
+        (None, 1000, 1000, Some(600), None),
+        (None, 1000, 1000, None, Some(300)),
+        (Some(1700), 1000, 1000, Some(600), Some(1000)),
+        (Some(2100), 1000, 1000, Some(600), Some(1000)),
+        (Some(1020), 1000, 1050, None, Some(300)),
+        (Some(1020), 1000, 1050, Some(600), None),
+        (Some(1000), 1000, 1000, None, Some(0)),
+        // The 25 ms clock tolerance, at its edges: a start a tick before the action began is the action's own,
+        // and each bound is met with 25 ms to spare.
+        (Some(995), 1000, 1000, None, Some(300)),
+        (Some(995), 1000, 1000, Some(600), None),
+        (Some(975), 1000, 1000, None, Some(300)),
+        (Some(974), 1000, 1000, None, Some(300)),
+        (Some(1325), 1000, 1000, None, Some(300)),
+        (Some(1326), 1000, 1000, None, Some(300)),
+        (Some(1575), 1000, 1000, Some(600), None),
+        (Some(1574), 1000, 1000, Some(600), None),
+        // A navigate is done when it returned (the app: when the action finished), so a request the load made
+        // 1.2 s in, before that, is the action's own doing: 0 ms after it, in both.
+        (Some(2200), 1000, 2500, Some(500), None),
+        (Some(2200), 1000, 2500, None, Some(300)),
+        (Some(2700), 1000, 2500, Some(500), None),
+    ];
+    let js_rows: Vec<Value> = rows.iter().map(|(s, b, a, nb, sw)| json!([s.unwrap_or(0), b, a, nb, sw])).collect();
+    let script = format!(
+        "const page: any = {{}};\n{helpers}\n(async () => {{\n  const rows: any[] = {rows};\n  const timing: string[] = [];\n  for (const [s, b, a, nb, sw] of rows) {{\n    try {{ startedOk(s, b, a, nb ?? undefined, sw ?? undefined); timing.push('pass'); }} catch (e) {{ timing.push('error'); }}\n  }}\n  const fake: any = {{ evaluate: async (f: any) => f() }};\n  const g: any = globalThis;\n  g.window = {{}};\n  const first = await docOf(fake);\n  const refetch = (await docOf(fake)) === first ? 'the same' : 'differs';\n  g.window = {{}};\n  const reload = (await docOf(fake)) === first ? 'the same' : 'differs';\n  let none = 'pass';\n  try {{ startedOk(1800, 1000, 0, 600, undefined); }} catch (e) {{ none = 'error'; }}\n  console.log(JSON.stringify({{ timing, refetch, reload, none }}));\n}})();\n",
+        rows = serde_json::to_string(&js_rows).unwrap()
+    );
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("helpers.ts");
+    std::fs::write(&file, script).unwrap();
+    let out = Command::new("node").arg(&file).output().unwrap();
+    assert!(out.status.success(), "{}\n{}", String::from_utf8_lossy(&out.stderr), String::from_utf8_lossy(&out.stdout));
+    let said: Value = serde_json::from_str(String::from_utf8_lossy(&out.stdout).trim()).unwrap();
+
+    for (i, (start, began, at, nb, sw)) in rows.iter().enumerate() {
+        let acted = ActedAt { number: 1, kind: "fill".into(), began_ms: *began, at_ms: *at };
+        let app = judge_start(*start, &acted, *nb, *sw).is_ok();
+        let export = said["timing"][i].as_str().unwrap() == "pass";
+        assert_eq!(export, app, "row {i}: start {start:?} began {began} acted {at} nb {nb:?} sw {sw:?}");
+    }
+    assert_eq!(said["refetch"], "the same");
+    assert_eq!(said["reload"], "differs");
+    assert_eq!(said["refetch"] == "the same", judge_document(Some("L1"), Some("L1")).is_ok());
+    assert_eq!(said["reload"] == "the same", judge_document(Some("L1"), Some("L2")).is_ok());
+    // No action stamped before the check: nothing to time from, never a pass (the app: NOTHING_TO_TIME_FROM).
+    assert_eq!(said["none"], "error");
+}
+
+/// Where the export stamps the action before a timed check: `began` before the Playwright call, `acted` after it
+/// returned (the app: when the action's input was answered, or when a no-input action finished).
+#[test]
+fn the_export_stamps_the_action_around_its_playwright_call() {
+    let got = lf(&one_step(json!([
+        { "kind": "navigate", "url": "/hr/cards" },
+        { "kind": "expect_response", "url_contains": "/api/cards", "status": 200, "not_before_ms": 500 }
+    ]))
+    .run()
+    .unwrap());
+    let lines: Vec<&str> = got.lines().map(str::trim).collect();
+    let began = lines.iter().position(|l| *l == "began1 = Date.now();").expect("began is stamped");
+    let acted = lines.iter().position(|l| *l == "acted1 = Date.now();").expect("acted is stamped");
+    let goto = lines.iter().rposition(|l| l.starts_with("await cur.goto(")).expect("the navigation");
+    assert!(began < goto && goto < acted, "began, the navigation, then acted:\n{got}");
+}
+
+/// A timed check takes the request that started first and waits for it; an untimed one keeps taking the
+/// oldest that has finished (the app: `pick_timed` and `pick_in_order`).
+#[test]
+fn a_timed_check_in_the_export_takes_the_request_that_started_first() {
+    use std::process::Command;
+    if Command::new("node").arg("--version").output().is_err() {
+        eprintln!("node is not installed: the generated helpers were not run");
+        return;
+    }
+    let got = lf(&one_step(json!([
+        { "kind": "fill", "selector": "#q", "value": "abc" },
+        { "kind": "expect_response", "url_contains": "/api/cards", "status": 200, "started_within_ms": 300 }
+    ]))
+    .run()
+    .unwrap());
+    let from = got.find("    type Req = ").expect("the log");
+    let at = got.find("    const nextResponse = ").expect("the helper");
+    let end = at + got[at..].find("\n    };\n").expect("its end") + "\n    };\n".len();
+    let helper = &got[from..end];
+    assert!(helper.contains("const pool = early ? left.slice(0, 1) : left;"), "{helper}");
+    // A started first and is slow; B started later and finished first.
+    let script = format!(
+        "const handlers: Record<string, ((r: any) => void)[]> = {{}};\nconst context = {{ on: (ev: string, f: (r: any) => void) => {{ (handlers[ev] ||= []).push(f); }} }};\nconst page: any = {{ context: () => context, waitForTimeout: (ms: number) => new Promise(r => setTimeout(r, ms)) }};\nlet cur = page;\n{helper}\nconst made: Record<string, any> = {{}};\nconst req = (name: string) => made[name] ||= {{ name, method: () => 'GET', url: () => 'https://hr.example/hr/api/cards', redirectedFrom: () => null, frame: () => ({{ page: () => page }}), failure: () => ({{ errorText: '' }}), timing: () => ({{ startTime: 0 }}), response: async () => ({{ name }}) }};\nconst send = (n: string) => handlers.request.forEach(f => f(req(n)));\nconst finish = (n: string) => handlers.requestfinished.forEach(f => f(req(n)));\nconst results: Record<string, string> = {{}};\n(async () => {{\n  send('A'); send('B'); finish('B');\n  const untimed: any = await nextResponse(0, new Set<object>(), () => true, 300);\n  results.untimed = untimed.name;\n  const taken = new Set<object>();\n  setTimeout(() => finish('A'), 150);\n  const timed: any = await nextResponse(0, taken, () => true, 1000, () => {{}});\n  results.timed = timed.name;\n  console.log(JSON.stringify(results));\n}})();\n"
+    );
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("first.ts");
+    std::fs::write(&file, script).unwrap();
+    let out = Command::new("node").arg(&file).output().unwrap();
+    assert!(out.status.success(), "{}\n{}", String::from_utf8_lossy(&out.stderr), String::from_utf8_lossy(&out.stdout));
+    let said: Value = serde_json::from_str(String::from_utf8_lossy(&out.stdout).trim()).unwrap();
+    assert_eq!(said["untimed"], "B", "{said}");
+    assert_eq!(said["timed"], "A", "{said}");
+}
+
+/// A request still going when the check gives up is judged on its start first, as the app does
+/// (`expect_response` judges the start before "had not finished"): out of its window it fails on that, and
+/// inside it (or with no start time yet) it did not finish.
+#[test]
+fn a_request_still_going_is_judged_on_its_start_first_in_the_export_too() {
+    use std::process::Command;
+    if Command::new("node").arg("--version").output().is_err() {
+        eprintln!("node is not installed: the generated helpers were not run");
+        return;
+    }
+    let got = lf(&one_step(json!([
+        { "kind": "fill", "selector": "#q", "value": "abc" },
+        { "kind": "expect_response", "url_contains": "/api/cards", "status": 200, "started_within_ms": 300 }
+    ]))
+    .run()
+    .unwrap());
+    let from = got.find("    type Req = ").expect("the log");
+    let at = got.find("    const nextResponse = ").expect("the helper");
+    let end = at + got[at..].find("\n    };\n").expect("its end") + "\n    };\n".len();
+    let tolerance = got.find("    const CLOCK_TOLERANCE_MS = ").expect("the tolerance");
+    let timed = got.find("    const startedOk = ").expect("the timing helper");
+    let timed_end = timed + got[timed..].find("\n    };\n").expect("its end") + "\n    };\n".len();
+    let helper = format!("{}{}", &got[from..end], &got[tolerance..timed_end]);
+    // The callback the check hands the wait, as the spec writes it.
+    let lambda_at = got.find(", (r: Req) => { const t = r.timing().startTime;").expect("the early judge") + 2;
+    let lambda = &got[lambda_at..lambda_at + got[lambda_at..].find(");\n").unwrap()];
+
+    let scenarios = [("early", 900), ("late", 1500), ("inside", 1100), ("unknown", 0)];
+    let mut ran = String::new();
+    for (name, start) in scenarios {
+        ran.push_str(&format!(
+            "  {{ reset(); send('{name}', {start}); try {{ await nextResponse(0, new Set<object>(), () => true, 300, {lambda}); results['{name}'] = 'passed'; }} catch (e: any) {{ results['{name}'] = e.message; }} }}\n"
+        ));
+    }
+    let script = format!(
+        "const handlers: Record<string, ((r: any) => void)[]> = {{}};\nconst context = {{ on: (ev: string, f: (r: any) => void) => {{ (handlers[ev] ||= []).push(f); }} }};\nconst page: any = {{ context: () => context, waitForTimeout: (ms: number) => new Promise(r => setTimeout(r, ms)) }};\nlet cur = page;\nlet began1 = 1000, acted1 = 1000;\n{helper}\nconst reset = () => {{ sent.length = 0; }};\nconst send = (name: string, start: number) => handlers.request.forEach(f => f({{ name, method: () => 'GET', url: () => 'https://hr.example/hr/api/cards', redirectedFrom: () => null, frame: () => ({{ page: () => page }}), failure: () => null, timing: () => ({{ startTime: start }}), response: async () => ({{ name }}) }}));\nconst results: Record<string, string> = {{}};\n(async () => {{\n{ran}  console.log(JSON.stringify(results));\n}})();\n"
+    );
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("early.ts");
+    std::fs::write(&file, script).unwrap();
+    let out = Command::new("node").arg(&file).output().unwrap();
+    assert!(out.status.success(), "{}\n{}", String::from_utf8_lossy(&out.stderr), String::from_utf8_lossy(&out.stdout));
+    let said: Value = serde_json::from_str(String::from_utf8_lossy(&out.stdout).trim()).unwrap();
+    assert!(said["early"].as_str().unwrap().contains("100 ms before the action before it began"), "{said}");
+    assert!(said["late"].as_str().unwrap().contains("500 ms after the action before it, later than started_within_ms 300"), "{said}");
+    for name in ["inside", "unknown"] {
+        assert_eq!(said[name], "GET /hr/api/cards had not finished after 300 ms", "{name}: {said}");
     }
 }
 

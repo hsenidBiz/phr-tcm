@@ -105,6 +105,14 @@ describe("a sentence for every action kind", () => {
       "Check the POST request to /api/cycles answers 201 with the expected data",
     ],
     [
+      { kind: "expect_response", url_contains: "/api/cards", not_before_ms: 600, timeout_ms: 2000 },
+      "Check the request to /api/cards answers 200, starting at least 600 ms after the action before it",
+    ],
+    [
+      { kind: "expect_response", method: "get", url_contains: "/api/cards", started_within_ms: 300, same_document: true },
+      "Check the GET request to /api/cards answers 200, starting within 300 ms of the action before it, with no page reload",
+    ],
+    [
       { kind: "api_request", path: "/api/cycles/42", query: { handler: "Load", id: "7" }, expect: { status: 200 } },
       "Ask the site for /api/cycles/42?handler=Load and check it answers 200",
     ],

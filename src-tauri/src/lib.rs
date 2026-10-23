@@ -343,6 +343,7 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             pw_export::pw_export_save_map,
             pw_export::pw_export_write,
             pw_repo::pw_repo_structure,
+            pw_repo::pw_repo_specs_status,
             pw_repo::pw_repo_create_folder,
             pw_repo::pw_repo_rename_folder_check,
             pw_repo::pw_repo_rename_folder,

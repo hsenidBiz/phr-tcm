@@ -42,16 +42,35 @@
 <body>
 <main>
   <h1>Test Case Manager backlog</h1>
-  <p class="sub">Updated 23 October 2026, after 2.3.1-beta.1 (Settings card, Playwright folder menu, Pull Requests on a disabled repository). What is left is below.</p>
+  <p class="sub">Updated 23 October 2026, after 2.3.1-beta.2 (timing and no-reload checks on a request, the Playwright specs pill). What is left is below.</p>
 
   <h2>Agreed, not built yet</h2>
   <div class="item">
     <div class="head"><span class="title">Next builds</span><span class="status todo">Next</span></div>
     <ul>
-      <li>Backlog 36: timing and no-reload checks on a request (plan approved 23 October, 7 tasks; next).</li>
       <li>All projects as one (spec approved, 22 tasks, shipped as several betas).</li>
       <li>Several agents with their own browsers (spec approved; built last).</li>
       <li>From the Manage Cycle comparison, not in item 39 (yours to pick): expect_response cannot require a query parameter to be absent; absence checks have no run-time positive control; precondition records not tied to the case's names; components still wait for "Showing 1-1 of 1" rather than the search response; nothing flags nth where a label exists; script fixes for 141706, 142514, 141708, 141727.</li>
+    </ul>
+  </div>
+
+  <h2>Timing checks on a request, Playwright specs pill (2.3.1-beta.2, 23 October 2026)</h2>
+  <div class="item">
+    <div class="head"><span class="title">Hand checks owed</span><span class="status todo">Waiting on you</span></div>
+    <ul>
+      <li>141717 step 3 with expect_response not_before_ms 600 and timeout_ms 2000: passes on the real debounced search and reports the measured start; step 4 (Enter) with started_within_ms passes.</li>
+      <li>141721-141724 with same_document: true on the cards request: pass (the filter re-fetches), and the case text says the page does not reload.</li>
+      <li>The Playwright header shows green "N specs ready"; edit a spec in your clone and within a minute (or on returning to TCM) it shows "Updating specs" then green again.</li>
+    </ul>
+  </div>
+  <div class="item">
+    <div class="head"><span class="title">Not fully done</span><span class="status todo">Follow-ups</span></div>
+    <ul>
+      <li>The component-aware timing placement check runs only when the assistant saves a script, not on a script imported on the Auto Run screen.</li>
+      <li>In the Playwright export, a request that never answers reports "had not finished" rather than a start-time failure (Playwright gives no start time until a response).</li>
+      <li>A timed check whose first matching request starts out of window still waits its full timeout before failing.</li>
+      <li>The specs pill turns red if a spec listing fails because a run holds the Playwright slot; Refresh clears it.</li>
+      <li>How To Use does not yet mention the specs pill.</li>
     </ul>
   </div>
 

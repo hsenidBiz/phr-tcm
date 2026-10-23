@@ -8950,6 +8950,17 @@ async fn try_action<D: crate::browser::cdp::Driver>(
     noted: Option<&mut crate::autorun::runner::Noted>,
 ) -> Result<Tried, (u16, String)> {
     use crate::autorun::runner::{area_route, area_routes, named_areas, AreaRoute, InRun, NEEDS_SCRIPT_AREA};
+    // A check that times a request from the action before it, or compares the page with the one its step began
+    // on, has nothing to measure from when tried alone: it says so, and where to try it.
+    if crate::autorun::api_checks::needs_its_step(action) {
+        let outcome = crate::browser::actions::ActionOutcome::failed(format!(
+            "{}{}",
+            crate::browser::actions::CANNOT_RUN,
+            crate::autorun::api_checks::TRY_IN_ITS_STEP
+        ));
+        let answered = vec![(describe_action(action), outcome.clone())];
+        return Ok(Tried { outcome, dialog: None, steps: Vec::new(), answered });
+    }
     // A bare `return_to_area` goes to the case's own area - in a discovery
     // (case 0, which has no script), the discovery's own area; one that
     // names an area goes to that one.
@@ -11305,6 +11316,14 @@ async fn save_autorun_scripts(
         if !seen_scope.is_empty() {
             let (map, components, files) = seen_check_inputs(&root, ctx, uses_components, &saved_scripts)
                 .map_err(|e| SaveRefusal::Other(400, e))?;
+            // The placement of a timed or same_document check, again with each component expanded.
+            if uses_components {
+                for (case_id, only) in &seen_scope {
+                    let Some(script) = prepared.iter().find(|s| s.case_id == *case_id) else { continue };
+                    crate::autorun::store::check_expanded_response_timings(script, only.as_deref(), &components)
+                        .map_err(|e| SaveRefusal::Other(400, e))?;
+                }
+            }
             // Every script is checked, and every locator never seen in any
             // of them is named at once; a refusal of any other kind is
             // answered alone, as it always was.

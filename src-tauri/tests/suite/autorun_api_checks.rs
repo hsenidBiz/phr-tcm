@@ -9,16 +9,17 @@ use serde_json::{json, Value};
 use std::collections::BTreeMap;
 use v2_lib::api_templates::exec::encode_query;
 use v2_lib::autorun::api_checks::{
-    all_taken, api_request, expect_response, judge, pick, pick_in_order, which_request, Pick, StepRequests, GET_FN,
+    all_taken, api_request, expect_response, judge, judge_document, judge_start, pick, pick_in_order, which_request,
+    ActedAt, Pick, StepRequests, GET_FN, NOTHING_TO_TIME_FROM, NO_START, RELOADED, RELOAD_UNKNOWN, WHICH,
 };
 use v2_lib::autorun::patterns::{classify, ErrorClass};
 use v2_lib::autorun::recipe::SignInRecipe;
 use v2_lib::autorun::runner::run_step;
 use v2_lib::autorun::StepScript;
-use v2_lib::browser::actions::{Action, ActionOutcome, ApiExpect, BROWSER_SILENT};
+use v2_lib::browser::actions::{Action, ActionOutcome, ApiExpect, BROWSER_SILENT, CANNOT_RUN};
 use v2_lib::browser::cdp::{CdpError, Driver, Event};
 use v2_lib::browser::net_record::{NetEntry, NetState};
-use v2_lib::browser::timing::Timing;
+use v2_lib::browser::timing::{wall_ms, Timing};
 
 // ---------------------------------------------------------------- helpers
 
@@ -55,6 +56,7 @@ fn entry(seq: u64, method: &str, path_query: &str, status: Option<u16>, state: N
         kind: Some("XHR".to_string()),
         same_site: true,
         polling: false,
+        started_ms: None,
     }
 }
 
@@ -65,6 +67,9 @@ fn expect(method: Option<&str>, url_contains: &str, status: u16, json: Option<Va
         status,
         json,
         timeout_ms,
+        not_before_ms: None,
+        started_within_ms: None,
+        same_document: false,
         stray: Default::default(),
     }
 }
@@ -742,9 +747,13 @@ fn step(actions: Vec<Action>) -> StepScript {
 }
 
 async fn run(d: &mut ScriptedDriver, actions: Vec<Action>) -> Vec<ActionOutcome> {
+    run_with(d, actions, &quick()).await
+}
+
+async fn run_with(d: &mut ScriptedDriver, actions: Vec<Action>, timing: &Timing) -> Vec<ActionOutcome> {
     let dir = tempfile::tempdir().unwrap();
     let mut acc: Option<String> = None;
-    run_step(d, dir.path(), "Acme", "Web", &step(actions), &quick(), &mut acc).await.unwrap()
+    run_step(d, dir.path(), "Acme", "Web", &step(actions), timing, &mut acc).await.unwrap()
 }
 
 #[tokio::test]
@@ -1505,4 +1514,449 @@ async fn a_bare_jwt_or_bearer_token_is_redacted_wherever_it_sits() {
         none_of(&[out.detail.clone()], &[jwt, "eyJhbGci", "abc.DEF-123_xyz"]);
         assert!(out.detail.contains("[redacted]"), "{}", out.detail);
     }
+}
+
+// ------------------------------------------------- timing and same_document
+
+fn sent_at(id: &str, method: &str, url: &str, ms: u64) -> Event {
+    ev(
+        "Network.requestWillBeSent",
+        json!({ "requestId": id, "wallTime": ms as f64 / 1000.0, "request": { "url": url, "method": method } }),
+    )
+}
+
+/// The save check with its three new fields set.
+fn timed(nb: Option<u32>, sw: Option<u32>, same: bool) -> Action {
+    Action::ExpectResponse {
+        method: Some("POST".into()),
+        url_contains: "/PerformanceCycle/Save".into(),
+        status: 200,
+        json: None,
+        timeout_ms: Some(2000),
+        not_before_ms: nb,
+        started_within_ms: sw,
+        same_document: same,
+        stray: Default::default(),
+    }
+}
+
+fn acted(began_ms: u64, at_ms: u64) -> Option<ActedAt> {
+    Some(ActedAt { number: 1, kind: "fill".into(), began_ms, at_ms })
+}
+
+/// `check`, with the step's book set the way the runner would have set it.
+async fn check_in(d: &mut ScriptedDriver, a: &Action, acted_at: Option<ActedAt>, document: Option<&str>) -> ActionOutcome {
+    let mark = d.net_mark();
+    let mut book = StepRequests::new(mark, vec!["fill".into()]);
+    book.acted_at = acted_at;
+    book.document = document.map(str::to_string);
+    let out = expect_response(d, a, &mut book, &short()).await;
+    // A check refused before it waited never set a deadline.
+    assert!(d.deadlines.is_empty() || d.deadline_was_cleared(), "the wait loop must hand its deadline back: {:?}", d.deadlines);
+    out
+}
+
+/// The save, started at `ms`, answered 200.
+fn save_started_at(ms: u64) -> Vec<Event> {
+    vec![sent_at("7", "POST", SAVE, ms), answered("7", 200, "application/json"), finished("7")]
+}
+
+#[test]
+fn judge_start_measures_from_the_action_before_the_check() {
+    let at = |began: u64, at: u64| ActedAt { number: 1, kind: "fill".into(), began_ms: began, at_ms: at };
+    let base = at(1000, 1000);
+    let cases: Vec<(Option<u64>, ActedAt, Option<u32>, Option<u32>, Result<&str, &str>)> = vec![
+        (Some(1800), base.clone(), Some(600), None, Ok("started 800 ms after action 1 (fill)")),
+        (
+            Some(1300),
+            base.clone(),
+            Some(600),
+            None,
+            Err("started 300 ms after action 1 (fill), sooner than not_before_ms 600"),
+        ),
+        // The bound itself passes.
+        (Some(1600), base.clone(), Some(600), None, Ok("started 600 ms after action 1 (fill)")),
+        (Some(1300), base.clone(), None, Some(300), Ok("started 300 ms after action 1 (fill)")),
+        // The bounds are met with the 25 ms clock tolerance in the request's favour.
+        (Some(1325), base.clone(), None, Some(300), Ok("started 325 ms after action 1 (fill)")),
+        (
+            Some(1326),
+            base.clone(),
+            None,
+            Some(300),
+            Err("started 326 ms after action 1 (fill), later than started_within_ms 300"),
+        ),
+        (Some(1575), base.clone(), Some(600), None, Ok("started 575 ms after action 1 (fill)")),
+        (
+            Some(1574),
+            base.clone(),
+            Some(600),
+            None,
+            Err("started 574 ms after action 1 (fill), sooner than not_before_ms 600"),
+        ),
+        // A start a clock tick before the action began is the action's own: 0 ms after it.
+        (Some(995), base.clone(), None, Some(300), Ok("started 0 ms after action 1 (fill)")),
+        (
+            Some(995),
+            base.clone(),
+            Some(600),
+            None,
+            Err("started 0 ms after action 1 (fill), sooner than not_before_ms 600"),
+        ),
+        (Some(975), base.clone(), None, Some(300), Ok("started 0 ms after action 1 (fill)")),
+        (Some(974), base.clone(), None, Some(300), Err("started 26 ms before action 1 (fill) began")),
+        (Some(900), base.clone(), Some(600), None, Err("started 100 ms before action 1 (fill) began")),
+        (Some(900), base.clone(), None, Some(300), Err("started 100 ms before action 1 (fill) began")),
+        (None, base.clone(), Some(600), None, Err(NO_START)),
+        (Some(1700), base.clone(), Some(600), Some(1000), Ok("started 700 ms after action 1 (fill)")),
+        (
+            Some(2100),
+            base.clone(),
+            Some(600),
+            Some(1000),
+            Err("started 1100 ms after action 1 (fill), later than started_within_ms 1000"),
+        ),
+        // Between the action's beginning and its last input: 0 ms after it.
+        (Some(1020), at(1000, 1050), None, Some(300), Ok("started 0 ms after action 1 (fill)")),
+        (
+            Some(1020),
+            at(1000, 1050),
+            Some(600),
+            None,
+            Err("started 0 ms after action 1 (fill), sooner than not_before_ms 600"),
+        ),
+    ];
+    for (start, acted, nb, sw, want) in cases {
+        let got = judge_start(start, &acted, nb, sw);
+        assert_eq!(got, want.map(str::to_string).map_err(str::to_string), "start {start:?} nb {nb:?} sw {sw:?}");
+    }
+}
+
+#[tokio::test]
+async fn a_timed_check_that_started_too_soon_fails_naming_its_start() {
+    let mut d = browser(|| Ok(json!({})));
+    on_first_look(&mut d, save_started_at(1300));
+    let out = check_in(&mut d, &timed(Some(600), None, false), acted(1000, 1000), None).await;
+    assert!(!out.ok && !out.harness, "{out:?}");
+    assert!(
+        out.detail.starts_with(
+            "POST /hr/pmsv10/PerformanceCycle/Save started 300 ms after action 1 (fill), sooner than not_before_ms 600"
+        ),
+        "{}",
+        out.detail
+    );
+    assert!(out.detail.contains(WHICH), "{}", out.detail);
+    assert_eq!(classify(&out.detail, None), ErrorClass::Api);
+    for leak in ["hr.example", "handler"] {
+        assert!(!out.detail.contains(leak), "{leak}: {}", out.detail);
+    }
+}
+
+#[tokio::test]
+async fn a_timed_check_in_its_window_passes_and_says_when_it_started() {
+    let mut d = browser(|| Ok(json!({})));
+    on_first_look(&mut d, save_started_at(1800));
+    let out = check_in(&mut d, &timed(Some(600), None, false), acted(1000, 1000), None).await;
+    assert!(out.ok, "{out:?}");
+    assert!(
+        out.detail.contains("answered 200, started 800 ms after action 1 (fill): the step's matching request"),
+        "{}",
+        out.detail
+    );
+}
+
+#[tokio::test]
+async fn started_within_ms_reads_the_start_not_the_answer() {
+    let mut d = browser(|| Ok(json!({})));
+    // Sent at once; answered only on the check's second round.
+    on_first_look(&mut d, vec![sent_at("7", "POST", SAVE, 1100)]);
+    d.on_idle_events.extend([answered("7", 200, "application/json"), finished("7")]);
+    let out = check_in(&mut d, &timed(None, Some(300), false), acted(1000, 1000), None).await;
+    assert!(out.ok, "{out:?}");
+    assert!(out.detail.contains("started 100 ms after"), "{}", out.detail);
+}
+
+#[tokio::test]
+async fn a_request_started_while_the_action_sent_its_input_counts_as_0_ms() {
+    let mut d = browser(|| Ok(json!({})));
+    on_first_look(&mut d, save_started_at(1020));
+    let out = check_in(&mut d, &timed(None, Some(300), false), acted(1000, 1050), None).await;
+    assert!(out.ok, "{out:?}");
+    assert!(out.detail.contains("started 0 ms after action 1 (fill)"), "{}", out.detail);
+
+    let mut d = browser(|| Ok(json!({})));
+    on_first_look(&mut d, save_started_at(1020));
+    let out = check_in(&mut d, &timed(Some(600), None, false), acted(1000, 1050), None).await;
+    assert!(!out.ok, "{out:?}");
+    assert!(out.detail.contains("started 0 ms after action 1 (fill), sooner than not_before_ms 600"), "{}", out.detail);
+}
+
+#[tokio::test]
+async fn a_request_from_before_the_action_began_fails_both_timings() {
+    for check_value in [timed(Some(600), None, false), timed(None, Some(300), false)] {
+        let mut d = browser(|| Ok(json!({})));
+        on_first_look(&mut d, save_started_at(900));
+        let out = check_in(&mut d, &check_value, acted(1000, 1000), None).await;
+        assert!(!out.ok, "{out:?}");
+        assert!(out.detail.contains("started 100 ms before action 1 (fill) began"), "{}", out.detail);
+    }
+}
+
+/// A timed check with a short wait of its own.
+fn timed_for(nb: Option<u32>, sw: Option<u32>, wait_ms: u32) -> Action {
+    let mut a = timed(nb, sw, false);
+    if let Action::ExpectResponse { timeout_ms, .. } = &mut a {
+        *timeout_ms = Some(wait_ms);
+    }
+    a
+}
+
+#[tokio::test]
+async fn a_request_still_going_is_judged_on_its_start_before_it_is_said_not_to_have_finished() {
+    // Started 100 ms before the action began, and never answered: its start is the failure.
+    let mut d = browser(|| Ok(json!({})));
+    on_first_look(&mut d, vec![sent_at("7", "POST", SAVE, 900)]);
+    let out = check_in(&mut d, &timed_for(None, Some(300), 100), acted(1000, 1000), None).await;
+    assert!(!out.ok && !out.harness, "{out:?}");
+    assert!(out.detail.contains("started 100 ms before action 1 (fill) began"), "{}", out.detail);
+    assert!(!out.detail.contains("had not finished"), "{}", out.detail);
+
+    // Started too late for started_within_ms, and never answered.
+    let mut d = browser(|| Ok(json!({})));
+    on_first_look(&mut d, vec![sent_at("7", "POST", SAVE, 1500)]);
+    let out = check_in(&mut d, &timed_for(None, Some(300), 100), acted(1000, 1000), None).await;
+    assert!(!out.ok, "{out:?}");
+    assert!(out.detail.contains("started 500 ms after action 1 (fill), later than started_within_ms 300"), "{}", out.detail);
+
+    // Started inside its window and never answered: it did not finish, as before.
+    let mut d = browser(|| Ok(json!({})));
+    on_first_look(&mut d, vec![sent_at("7", "POST", SAVE, 1100)]);
+    let out = check_in(&mut d, &timed_for(None, Some(300), 100), acted(1000, 1000), None).await;
+    assert!(!out.ok, "{out:?}");
+    assert!(out.detail.contains("had not finished after 0.1 s"), "{}", out.detail);
+    assert!(!out.detail.contains("started_within_ms"), "{}", out.detail);
+
+    // No start time from the browser: nothing to judge, so just not finished.
+    let mut d = browser(|| Ok(json!({})));
+    on_first_look(&mut d, vec![sent("7", "POST", SAVE)]);
+    let out = check_in(&mut d, &timed_for(None, Some(300), 100), acted(1000, 1000), None).await;
+    assert!(out.detail.contains("had not finished after 0.1 s"), "{}", out.detail);
+}
+
+#[tokio::test]
+async fn a_timed_check_takes_the_request_that_started_first_and_waits_for_it() {
+    // A started at once and is slow; B started 800 ms later and finished first.
+    let events = |a_done: bool| {
+        let mut e = vec![sent_at("7", "POST", SAVE, 1100), sent_at("8", "POST", SAVE, 1900)];
+        e.extend([answered("8", 200, "application/json"), finished("8")]);
+        if a_done {
+            e.extend([answered("7", 200, "application/json"), finished("7")]);
+        }
+        e
+    };
+    // Still going when the wait ends: A is judged on its start, which is in the window, and had not finished.
+    let mut d = browser(|| Ok(json!({})));
+    on_first_look(&mut d, events(false));
+    let out = check_in(&mut d, &timed_for(None, Some(300), 100), acted(1000, 1000), None).await;
+    assert!(!out.ok, "{out:?}");
+    assert!(out.detail.contains("had not finished"), "B is not taken in A's place: {}", out.detail);
+    assert!(out.detail.contains("request 1 of 2"), "{}", out.detail);
+    assert!(!out.detail.contains("later than started_within_ms"), "{}", out.detail);
+
+    // Finishing on a later round: A passes, measured from its own start.
+    let mut d = browser(|| Ok(json!({})));
+    on_first_look(&mut d, events(false));
+    d.on_idle_events.extend([answered("7", 200, "application/json"), finished("7")]);
+    let out = check_in(&mut d, &timed(None, Some(300), false), acted(1000, 1000), None).await;
+    assert!(out.ok, "{out:?}");
+    assert!(out.detail.contains("started 100 ms after action 1 (fill)"), "{}", out.detail);
+    assert!(out.detail.contains("request 1 of 2"), "{}", out.detail);
+
+    // An untimed check keeps the oldest-finished rule: it takes B, as beta.26 did.
+    let mut d = browser(|| Ok(json!({})));
+    on_first_look(&mut d, events(false));
+    let out = check_in(&mut d, &timed(None, None, false), acted(1000, 1000), None).await;
+    assert!(out.ok, "{out:?}");
+    assert!(out.detail.contains("request 2 of 2"), "{}", out.detail);
+}
+
+#[tokio::test]
+async fn a_timed_check_with_no_action_before_it_cannot_run() {
+    let mut d = browser(|| Ok(json!({})));
+    on_first_look(&mut d, save_started_at(1800));
+    let out = check_in(&mut d, &timed(Some(600), None, false), None, None).await;
+    assert!(!out.ok && !out.harness, "{out:?}");
+    assert_eq!(out.detail, format!("{CANNOT_RUN}{NOTHING_TO_TIME_FROM}"));
+    assert!(d.calls_to("Runtime.evaluate").is_empty(), "no look was made: {:?}", d.calls);
+}
+
+#[tokio::test]
+async fn a_request_without_a_start_time_fails() {
+    let mut d = browser(|| Ok(json!({})));
+    on_first_look(&mut d, save_finished(200));
+    let out = check_in(&mut d, &timed(None, Some(300), false), acted(1000, 1000), None).await;
+    assert!(!out.ok, "{out:?}");
+    assert!(
+        out.detail.starts_with("POST /hr/pmsv10/PerformanceCycle/Save has no start time from the browser"),
+        "{}",
+        out.detail
+    );
+    assert_eq!(classify(&out.detail, None), ErrorClass::Api);
+}
+
+/// A browser whose top frame shows the document `loader`.
+fn showing(loader: &'static str) -> ScriptedDriver {
+    ScriptedDriver::new(move |method, _| match method {
+        "Page.getFrameTree" => Ok(json!({ "frameTree": { "frame": { "id": "F", "loaderId": loader } } })),
+        _ => Ok(json!({})),
+    })
+    .with_net_record()
+}
+
+#[tokio::test]
+async fn same_document_passes_a_refetch_and_fails_a_reload() {
+    let same = timed(None, None, true);
+
+    let mut d = showing("L1");
+    on_first_look(&mut d, save_finished(200));
+    let out = check_in(&mut d, &same, None, Some("L1")).await;
+    assert!(out.ok, "{out:?}");
+    assert!(out.detail.contains("answered 200, in the same document: the step's matching request"), "{}", out.detail);
+
+    let mut d = showing("L2");
+    on_first_look(&mut d, save_finished(200));
+    let out = check_in(&mut d, &same, None, Some("L1")).await;
+    assert!(!out.ok, "{out:?}");
+    assert!(out.detail.starts_with(RELOADED), "{}", out.detail);
+    assert!(out.detail.contains(WHICH), "{}", out.detail);
+
+    let mut d = showing("L1");
+    on_first_look(&mut d, save_finished(200));
+    let out = check_in(&mut d, &same, None, None).await;
+    assert!(!out.ok, "{out:?}");
+    assert!(out.detail.starts_with(RELOAD_UNKNOWN), "{}", out.detail);
+
+    // A browser that names no document, or fails to answer, is "cannot tell".
+    let mut d = browser(|| Ok(json!({})));
+    on_first_look(&mut d, save_finished(200));
+    let out = check_in(&mut d, &same, None, Some("L1")).await;
+    assert!(out.detail.starts_with(RELOAD_UNKNOWN), "{}", out.detail);
+
+    // Judged last: a wrong status is still the failure when the page also reloaded.
+    let mut d = showing("L2");
+    on_first_look(&mut d, save_finished(500));
+    let out = check_in(&mut d, &same, None, Some("L1")).await;
+    assert!(out.detail.contains("answered 500, expected 200"), "{}", out.detail);
+}
+
+#[test]
+fn judge_document_compares_the_two_loader_ids() {
+    assert_eq!(judge_document(Some("L1"), Some("L1")), Ok(()));
+    assert_eq!(judge_document(Some("L1"), Some("L2")), Err(RELOADED.to_string()));
+    assert_eq!(judge_document(None, Some("L1")), Err(RELOAD_UNKNOWN.to_string()));
+    assert_eq!(judge_document(Some("L1"), None), Err(RELOAD_UNKNOWN.to_string()));
+}
+
+#[test]
+fn an_action_done_is_noted_once_per_written_action() {
+    let mut book = StepRequests::new(0, vec!["fill".into(), "click".into()]);
+    // Before any action began there is still a first one to name.
+    book.note_action_done(100, 110);
+    assert_eq!(book.acted_at, Some(ActedAt { number: 1, kind: "fill".into(), began_ms: 100, at_ms: 110 }));
+    // A later inner action of the same written action (a component's last one) is the one that counts.
+    book.action_began(0);
+    book.note_action_done(120, 150);
+    assert_eq!(book.acted_at, Some(ActedAt { number: 1, kind: "fill".into(), began_ms: 120, at_ms: 150 }));
+    book.action_began(1);
+    book.note_action_done(200, 230);
+    assert_eq!(book.acted_at, Some(ActedAt { number: 2, kind: "click".into(), began_ms: 200, at_ms: 230 }));
+    let mut unnamed = StepRequests::new(0, Vec::new());
+    unnamed.action_began(0);
+    unnamed.note_action_done(1, 2);
+    assert_eq!(unnamed.acted_at.map(|a| a.kind), Some("action".to_string()));
+}
+
+/// A page whose click makes the save request, started `after_ms` after the test built it.
+fn clicking_saves(after_ms: u64) -> ScriptedDriver {
+    let mut d = FakePage::default().driver().with_net_record();
+    for e in [sent_at("9", "POST", SAVE, wall_ms() + after_ms), answered("9", 200, "application/json"), finished("9")] {
+        d.on_call_events.push(("Input.dispatchMouseEvent".into(), e));
+    }
+    d
+}
+
+#[tokio::test]
+async fn the_runner_times_from_the_action_before_the_check() {
+    let mut d = clicking_saves(150);
+    let out = run(&mut d, vec![click_option(), timed(None, Some(300), false)]).await;
+    assert!(out[1].ok, "{:?}", out[1]);
+    assert!(out[1].detail.contains(" ms after action 1 (click)"), "{}", out[1].detail);
+
+    let mut d = clicking_saves(150);
+    let out = run(&mut d, vec![click_option(), timed(Some(600), None, false)]).await;
+    assert!(!out[1].ok, "{:?}", out[1]);
+    assert!(out[1].detail.contains("sooner than not_before_ms 600"), "{}", out[1].detail);
+
+    // Nothing before it in its step: nothing to measure from.
+    let mut d = clicking_saves(150);
+    let out = run(&mut d, vec![timed(Some(600), None, false)]).await;
+    assert_eq!(out[0].detail, format!("{CANNOT_RUN}{NOTHING_TO_TIME_FROM}"));
+}
+
+#[tokio::test]
+async fn a_watched_runs_highlight_never_counts_toward_started_within_ms() {
+    // The run highlights the target for 400 ms before it clicks; the click makes the save request.
+    let mut d = clicking_saves(420);
+    let watched = Timing { highlight_ms: 400, ..quick() };
+    let out = run_with(&mut d, vec![click_option(), timed(None, Some(300), false)], &watched).await;
+    assert!(out[1].ok, "{:?}", out[1]);
+    assert!(out[1].detail.contains(" ms after action 1 (click)"), "{}", out[1].detail);
+}
+
+#[tokio::test]
+async fn an_action_that_sends_no_input_is_timed_from_when_it_finished_not_from_its_highlight() {
+    // A status filter that is a <select>: the run highlights it for 400 ms, then sets the value by script
+    // (no Input command), and the page's change handler makes the save request at once.
+    let fill: Action =
+        serde_json::from_value(json!({ "kind": "fill", "selector": { "css": "#status" }, "value": "Published" })).unwrap();
+    let page = FakePage { fill_kind: "select-ok", ..FakePage::default() };
+    let mut d = page.driver().with_net_record();
+    for e in [sent_at("9", "POST", SAVE, wall_ms() + 420), answered("9", 200, "application/json"), finished("9")] {
+        d.on_call_events.push(("Runtime.callFunctionOn".into(), e));
+    }
+    let watched = Timing { highlight_ms: 400, ..quick() };
+    let out = run_with(&mut d, vec![fill.clone(), timed(None, Some(300), false)], &watched).await;
+    assert!(out[0].ok, "{:?}", out[0]);
+    assert!(d.calls_to("Input.insertText").is_empty(), "no input was sent: {:?}", d.calls);
+    assert!(out[1].ok, "{:?}", out[1]);
+    assert!(out[1].detail.contains(" ms after action 1 (fill)"), "{}", out[1].detail);
+}
+
+/// A page showing the document `loader`, whose click makes the save request.
+fn clicking_saves_in(loader: &'static str) -> ScriptedDriver {
+    let page = FakePage::default();
+    let mut d = ScriptedDriver::new(move |method, params| match method {
+        "Page.getFrameTree" => Ok(json!({ "frameTree": { "frame": { "id": "F", "loaderId": loader } } })),
+        _ => page.answer(method, params),
+    })
+    .with_net_record();
+    for e in save_finished(200) {
+        d.on_call_events.push(("Input.dispatchMouseEvent".into(), e));
+    }
+    d
+}
+
+#[tokio::test]
+async fn the_runner_reads_the_document_when_a_check_asks() {
+    let mut d = clicking_saves_in("L1");
+    let out = run(&mut d, vec![click_option(), timed(None, None, true)]).await;
+    assert!(out[1].ok, "{:?}", out[1]);
+    assert!(out[1].detail.contains(", in the same document"), "{}", out[1].detail);
+    assert!(!d.calls_to("Page.getFrameTree").is_empty());
+
+    // A step with no such check never asks the browser for its document.
+    let mut d = clicking_saves_in("L1");
+    let out = run(&mut d, vec![click_option(), timed(None, None, false)]).await;
+    assert!(out[1].ok, "{:?}", out[1]);
+    assert!(d.calls_to("Page.getFrameTree").is_empty(), "{:?}", d.calls);
 }

@@ -24,7 +24,7 @@ use super::refusals::{self, app_refused_line, refused_with_ids, RefusedRequest};
 use crate::browser::cdp::{Driver, MAIN_TAB};
 use crate::browser::page;
 use crate::browser::page_messages::{new_messages, read_page_messages, PageMessage, MAX_MESSAGES};
-use crate::browser::timing::{Timing, SHOT_TIMEOUT_MS};
+use crate::browser::timing::{wall_ms, Timing, SHOT_TIMEOUT_MS};
 use crate::browser::downloads::{DownloadEntry, DownloadState};
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -1139,6 +1139,12 @@ async fn run_expanded<D: Driver>(
         let shown = written.map_or(step.actions.as_slice(), |(actions, _)| actions);
         api_checks::StepRequests::new(mark, shown.iter().map(super::patterns::action_kind).collect())
     });
+    // A check that asks `same_document` compares the top frame's document with the one it showed now.
+    if step.actions.iter().any(|a| matches!(a, Action::ExpectResponse { same_document: true, .. })) {
+        if let Some(book) = requests.as_mut() {
+            book.document = api_checks::main_document(d).await;
+        }
+    }
     let began = Instant::now();
     run.began = Some(began);
     run.tab = None;
@@ -1268,6 +1274,7 @@ async fn run_expanded<D: Driver>(
         };
         // The step's own `api_request` fetches: never the page's doing.
         let mut own: Vec<String> = Vec::new();
+        let began_ms = wall_ms();
         let mut outcome = match action {
             Action::SignIn { account: key } => match signin::prepare(root, organization, project, key) {
                 Err(why) => {
@@ -1390,6 +1397,18 @@ async fn run_expanded<D: Driver>(
                 outcome
             }
         };
+        // A timed `expect_response` later in the step measures from the action that sent the
+        // request: when it began, and when its act was done. An action that sent input is done when the
+        // browser answered the last of it; one that sent none (a script-set `fill`, a `navigate`, a guard
+        // that did not fire) is done when it finished. Neither moment includes a highlight or a wait for
+        // the element, which come before the act.
+        if api_checks::times_from(action) {
+            if let Some(book) = requests.as_mut() {
+                let finished_ms = wall_ms();
+                let at_ms = d.last_input_ms().filter(|t| *t >= began_ms).unwrap_or(finished_ms);
+                book.note_action_done(began_ms, at_ms);
+            }
+        }
         // A save the page tried while this action ran is the step's
         // failure, whatever the action itself made of the page - unless
         // nothing of this step has changed the page yet: then it is the

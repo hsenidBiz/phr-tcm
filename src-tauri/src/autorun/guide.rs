@@ -277,7 +277,7 @@ no script step for it, and do not renumber the steps that come after it.
 - `{ "kind": "check_url", "contains": "..." }` - is this in the address? Looked for again until it is, like every expect_ check (timeout_ms optional). With `"equals": "/hr/cycles/index"` in place of `contains`, the address is exactly that: a value starting with / is compared with the path, query and fragment, anything else with the whole address. With `"same_as": "before"`, the address is the one `remember_url` noted as before.
 - `{ "kind": "remember_url", "as": "before" }` - note the address the page is on now, under a name (1 to 30 letters, digits, - or _), for a later `check_url` with `same_as` in the same case. The save refuses a `same_as` with no earlier `remember_url`.
 - `{ "kind": "upload", "selector": ..., "file": "appraisal-form.pdf" }` - put a file into the page
-- `{ "kind": "expect_response", "method": "POST", "url_contains": "/PerformanceCycle/Save", "status": 200, "json": { "success": true } }` - a request the page made during this step finished with that status (and, with `json`, those fields); `method`, `status` (default 200), `json` and `timeout_ms` are optional
+- `{ "kind": "expect_response", "method": "POST", "url_contains": "/PerformanceCycle/Save", "status": 200, "json": { "success": true } }` - a request the page made during this step finished with that status (and, with `json`, those fields); `method`, `status` (default 200), `json`, `timeout_ms`, `not_before_ms`, `started_within_ms` and `same_document` are optional
 - `{ "kind": "api_request", "path": "/api/cycles/42", "query": { "include": "rules" }, "expect": { "status": 200, "json": { "name": "Q4 Cycle" } } }` - the page asks its own site a GET question and checks the answer; `path` is a path on the site, never an address, and `query`, `status` (default 200) and `json` are optional
 - `{ "kind": "when_visible", "selector": ..., "within_ms": 2000, "then": [ ... ] }` - if something that may or may not appear shows up, do the actions in `then`; otherwise carry on (see "Dismissing what may not show up")
 - `{ "kind": "repeat_while_visible", "selector": ..., "max": 20, "except": [ ... ], "then": [ ... ] }` - reset a list to a known state: while the selector shows a match whose row holds none of the `except` texts, run `then` on that row, at most `max` times (see "Resetting a list to a known state")
@@ -645,7 +645,52 @@ it (a click, usually) and then check it, in the same step:
   step took, passing over one the page cancelled when a later one matches,
   and its answer says which: `the step's matching request 2 of 3, sent
   after action 3 (press_key) began`. A request that never finishes within
-  the time fails, and the answer says it had not finished.
+  the time fails, and the answer says it had not finished. A timed check
+  (below) takes the request that started first instead, and waits for it
+  if it is still going.
+- When the case says when a request starts, time it from the action before
+  the check in its step (the last keystroke, the Enter, the click):
+  `not_before_ms` fails a request that started sooner than that ("about
+  800 ms after the last keystroke": `"not_before_ms": 600, "timeout_ms":
+  2000`), and `started_within_ms` fails one that started later ("at once":
+  `"started_within_ms": 300`). The start is the browser's own record of
+  when the request was sent, never when it was answered, so a slow server
+  does not fail it. The answer gives the measured start, `started 812 ms
+  after action 2 (fill)`, so a near miss shows before it turns flaky.
+- The time counts from when the action's input was delivered (the last
+  key or click), or for an action that sends none (a select or date
+  `fill`, `navigate`, `reload`) from when it finished. A highlight or a
+  wait for the element never counts. After a `use_component` it counts
+  from the component's last action.
+- The app's clock and the browser's can differ by a few milliseconds, so
+  the start is judged with 25 ms to spare: a request that started up to
+  25 ms before the action began counts as starting at it, and each bound
+  is met 25 ms early or late.
+- `not_before_ms` must be shorter than the time the check waits
+  (`timeout_ms`, or the default 10 seconds).
+- A timing is a check value. One the case states ("800 ms", "0.8 s",
+  "1,000 ms"; a range such as "600 to 900 ms" holds both ends) is held by
+  the case; a margin around it (600 for "about 800 ms") needs a because
+  naming the duration the case gives.
+- `"same_document": true` fails when the page loaded a new document during
+  the step (a full reload) instead of fetching again. It looks at the top
+  frame only, a moment (300 ms) after the response, so a reload the page
+  starts when the response comes is caught. The step's own words hold it
+  when they say the page does not reload ("does not refresh", "without a
+  full page reload"; a reload of something else, such as "no data
+  reload", does not); otherwise it needs a because.
+- These three go on an `expect_response` of the step itself (not inside
+  `when_visible`), after the action that sends the request (a
+  `when_visible` or `repeat_while_visible` between them is refused, and a
+  component counts as the actions it runs), in a step that goes to no
+  other page. A timed or `same_document` check cannot be tried on its own
+  with `try_autorun_action`: it needs the step's earlier action. Try it as
+  part of its step with replay_autorun_to_step.
+- Export to Playwright judges the three as the app does, with the same
+  25 ms to spare. Playwright knows a request's start time only once a
+  response arrives, so an unanswered request reports "had not finished" in
+  the export, where the app reports its start. The start is judged before
+  "had not finished", and no full reload by comparing the page's document.
 - A request the server redirected is judged on the redirect it answered:
   give that status (302, say) to check a form that saves and then moves
   on. Any other status fails, naming the path it was sent to.
@@ -1358,6 +1403,9 @@ Give it a `timeout_ms` of at least 1500.
 message, a state, a column, and an icon too. An icon has no accessible name, so reach it by css
 inside the element it belongs to: `[ { "role": "row", "name": "Group" }, { "css": "i.fa-sitemap" } ]`.
 Having no name is no reason to leave it out; when it truly cannot be reached, say so in your report.
+A timing it states ("about 800 ms after the last keystroke", "at once") is checked too, with
+`not_before_ms` or `started_within_ms` on the request's `expect_response`, and so is "the page
+does not reload", with `same_document`.
 
 **The place the case names.** When the case says where a thing is (in that row, in the dialog,
 under Target), chain the check inside that place:
@@ -2462,7 +2510,7 @@ says `"area": true`. This gate can refuse a save for any of these reasons:
 - the same steps, only reordered - `the steps are in a different order - a repair does not reorder a script`
 - a repair that leaves out or turns off `"no_save": true` - `this script is marked Must not save, and a repair cannot turn that off`
 
-A repair may change the steps it declares: the locator, the waiting, the navigation, or how a check is made. It keeps the script's number of checks (the save stores it) unless its edit names each check it gives up, with why, in `gives_up`: `"gives_up": [{ "step": 3, "kind": "expect_count", "why": "step 4 already counts the same rows" }]`. Give one up only when the case no longer asks for it or another check already proves the same, never because the app fails it: that is a divergence to report. The person sees every check given up on the case, and the save answer names each one (`case N: check given up: step S kind - why`): name them in your report. A repair never changes a check's value away from the case. "the repair lowers the script's checks from N to M" and "step N: the repair drops "4", which the case gives" are refused. A person removes or changes a check in the script editor. Every step it does not declare stays exactly as it was, it never changes the order the steps run in, and the save still checks every step against the case's expected results. A script may be repaired as often as it needs; a repaired script is checked again once a run passes or a replay runs the whole case.
+A repair may change the steps it declares: the locator, the waiting, the navigation, or how a check is made. It keeps the script's number of checks (the save stores it) unless its edit names each check it gives up, with why, in `gives_up`: `"gives_up": [{ "step": 3, "kind": "expect_count", "why": "step 4 already counts the same rows" }]`. Give one up only when the case no longer asks for it or another check already proves the same, never because the app fails it: that is a divergence to report. The person sees every check given up on the case, and the save answer names each one (`case N: check given up: step S kind - why`): name them in your report. A repair that removes `not_before_ms`, `started_within_ms` or `same_document` from an `expect_response` that stays gives that check up too: name the field as the `kind` in `gives_up` (`{ "step": 3, "kind": "not_before_ms", "why": "..." }`). A repair never changes a check's value away from the case. "the repair lowers the script's checks from N to M" and "step N: the repair drops "4", which the case gives" are refused. A person removes or changes a check in the script editor. Every step it does not declare stays exactly as it was, it never changes the order the steps run in, and the save still checks every step against the case's expected results. A script may be repaired as often as it needs; a repaired script is checked again once a run passes or a replay runs the whole case.
 
 A repair may not let the page decide whether a failure counts, either. A check never goes inside a
 guard. A new `when_visible` or `repeat_while_visible`, or a phrase added to `ignore_page_errors`, needs
