@@ -53,6 +53,13 @@
       <li>From the Manage Cycle comparison, not in item 39 (yours to pick): expect_response cannot require a query parameter to be absent; absence checks have no run-time positive control; precondition records not tied to the case's names; components still wait for "Showing 1-1 of 1" rather than the search response; nothing flags nth where a label exists; script fixes for 141706, 142514, 141708, 141727.</li>
     </ul>
   </div>
+  <div class="item">
+    <div class="head"><span class="title">Several assistants at once: a browser each</span><span class="status todo">Phase 1 shipped</span></div>
+    <p>Phase 1 (who is calling): the proxy names each caller, the log shows which assistant made each call, and one assistant's calls no longer wait for each other. Phases 2 to 5 (one slot table, the Assistants card, extra browsers, idle release) are still to build.</p>
+    <ul>
+      <li>Hand check owed: two Claude Code sessions calling Auto Run tools. Settings, Logs shows "AI tool ... (Assistant 1)" and "(Assistant 2)". In one session, a quick call answers while its replay is still waiting.</li>
+    </ul>
+  </div>
 
   <h2>Timing checks on a request, Playwright specs pill (2.3.1-beta.2, 23 October 2026)</h2>
   <div class="item">

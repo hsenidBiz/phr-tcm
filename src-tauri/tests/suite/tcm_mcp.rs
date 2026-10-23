@@ -3951,3 +3951,193 @@ fn initialize_keeps_the_client_name() {
     assert_eq!(v2_lib::mcp::client_name(), None);
     v2_lib::mcp::set_client_name("claude-code");
 }
+
+// ---- The proxy's loop: tool calls answered concurrently, one whole line per response ----
+
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
+use v2_lib::mcp::{serve_lines, SharedCall};
+use v2_lib::mcp_session::SessionBook;
+
+/// The longest any wait in these tests lasts: a failure is a failed assertion, never a hang.
+const SERVE_DEADLINE: Duration = Duration::from_secs(30);
+
+/// A writer that gives up the thread between bytes, so a response written without the output locked
+/// would be mixed with another's.
+struct YieldingWriter(Arc<Mutex<Vec<u8>>>);
+
+impl std::io::Write for YieldingWriter {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        for b in buf {
+            self.0.lock().unwrap().push(*b);
+            std::thread::yield_now();
+        }
+        Ok(buf.len())
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+fn all_modules_policy() -> String {
+    let names: Vec<&str> = Module::ALL.iter().map(|m| m.key()).collect();
+    serde_json::json!({ "disabled": [], "modules": names }).to_string()
+}
+
+fn tool_call_line(id: u64, tool: &str, arguments: serde_json::Value) -> String {
+    serde_json::json!({ "jsonrpc": "2.0", "id": id, "method": "tools/call", "params": { "name": tool, "arguments": arguments } }).to_string()
+}
+
+fn response_lines(bytes: &Arc<Mutex<Vec<u8>>>) -> Vec<String> {
+    let text = String::from_utf8(bytes.lock().unwrap().clone()).expect("utf-8 output");
+    text.lines().map(str::to_string).collect()
+}
+
+/// `serve_lines` over `lines` on a thread of its own; the output it writes, and the channel that says it returned.
+fn start_serving(lines: &[String], call: SharedCall) -> (Arc<Mutex<Vec<u8>>>, std::sync::mpsc::Receiver<()>) {
+    let bytes = Arc::new(Mutex::new(Vec::new()));
+    let output = Arc::new(Mutex::new(YieldingWriter(bytes.clone())));
+    let input = std::io::Cursor::new(lines.join("\n").into_bytes());
+    let (done_tx, done_rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        serve_lines(input, output, "1.0.0".to_string(), call, Arc::new(SessionBook::new()));
+        let _ = done_tx.send(());
+    });
+    (bytes, done_rx)
+}
+
+fn ids_of(lines: &[String]) -> Vec<u64> {
+    lines
+        .iter()
+        .map(|l| serde_json::from_str::<serde_json::Value>(l).unwrap_or_else(|e| panic!("not a whole JSON line ({e}): {l}"))["id"].as_u64().unwrap())
+        .collect()
+}
+
+#[test]
+fn a_slow_call_does_not_hold_up_a_quick_one() {
+    let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
+    let release_rx = Mutex::new(release_rx);
+    let call: SharedCall = Arc::new(move |_m: &str, path: &str, _b: &str| {
+        if path == "/tools" {
+            return Ok((200, all_modules_policy()));
+        }
+        if path == "/autorun-replay" {
+            // Held until the test lets go; gives up on its own so a broken test cannot hang the suite.
+            let _ = release_rx.lock().unwrap().recv_timeout(SERVE_DEADLINE);
+            return Ok((200, "{\"replayed\":true}".into()));
+        }
+        Ok((200, "{}".into()))
+    });
+    let lines = [
+        tool_call_line(1, "replay_autorun_to_step", serde_json::json!({ "case_id": 7, "step": 3 })),
+        tool_call_line(2, "get_autorun_page", serde_json::json!({})),
+    ];
+    let (bytes, done) = start_serving(&lines, call);
+    // The quick call answers while the replay is still waiting.
+    let started = Instant::now();
+    while response_lines(&bytes).is_empty() {
+        assert!(started.elapsed() < SERVE_DEADLINE, "the quick call never answered while the replay waited");
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert_eq!(ids_of(&response_lines(&bytes)), vec![2]);
+    assert!(done.try_recv().is_err(), "serve_lines returned before the replay answered");
+    release_tx.send(()).unwrap();
+    done.recv_timeout(SERVE_DEADLINE).expect("serve_lines returns once every call has answered");
+    assert_eq!(ids_of(&response_lines(&bytes)), vec![2, 1]);
+}
+
+#[test]
+fn responses_are_whole_lines() {
+    let call: SharedCall = Arc::new(|_m: &str, path: &str, _b: &str| {
+        if path == "/tools" {
+            return Ok((200, all_modules_policy()));
+        }
+        std::thread::sleep(Duration::from_millis(3));
+        Ok((200, "{\"a\":\"some text to make the line longer\"}".into()))
+    });
+    let lines: Vec<String> = (1..=20).map(|id| tool_call_line(id, "get_autorun_page", serde_json::json!({}))).collect();
+    let (bytes, done) = start_serving(&lines, call);
+    done.recv_timeout(SERVE_DEADLINE).expect("serve_lines returns");
+    let out = response_lines(&bytes);
+    assert_eq!(out.len(), 20);
+    let mut ids = ids_of(&out);
+    ids.sort_unstable();
+    assert_eq!(ids, (1..=20).collect::<Vec<u64>>());
+}
+
+#[test]
+fn initialize_and_list_are_answered_in_order() {
+    let call: SharedCall = Arc::new(|_m: &str, path: &str, _b: &str| {
+        if path == "/tools" {
+            return Ok((200, all_modules_policy()));
+        }
+        Ok((200, "{}".into()))
+    });
+    let lines = [
+        r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26"}}"#.to_string(),
+        r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#.to_string(),
+        r#"{"jsonrpc":"2.0","id":2,"method":"tools/list"}"#.to_string(),
+    ];
+    let (bytes, done) = start_serving(&lines, call);
+    done.recv_timeout(SERVE_DEADLINE).expect("serve_lines returns");
+    assert_eq!(ids_of(&response_lines(&bytes)), vec![1, 2]);
+}
+
+#[test]
+fn each_concurrent_call_names_its_own_agent() {
+    let seen: Arc<Mutex<Vec<(String, Option<String>)>>> = Arc::new(Mutex::new(Vec::new()));
+    let recorded = seen.clone();
+    let call: SharedCall = Arc::new(move |_m: &str, path: &str, _b: &str| {
+        if path == "/tools" {
+            return Ok((200, all_modules_policy()));
+        }
+        // Long enough for the other calls to be in the middle of theirs.
+        std::thread::sleep(Duration::from_millis(20));
+        recorded.lock().unwrap().push((path.to_string(), v2_lib::mcp::calling_agent()));
+        Ok((200, "{}".into()))
+    });
+    let lines: Vec<String> = (1..=8u64)
+        .map(|id| {
+            let mut arguments = serde_json::json!({ "limit": id });
+            match id % 3 {
+                0 => arguments["agent"] = serde_json::json!("alpha"),
+                1 => arguments["agent"] = serde_json::json!("beta"),
+                _ => {}
+            }
+            tool_call_line(id, "get_autorun_page", arguments)
+        })
+        .collect();
+    let (bytes, done) = start_serving(&lines, call);
+    done.recv_timeout(SERVE_DEADLINE).expect("serve_lines returns");
+    assert_eq!(response_lines(&bytes).len(), 8);
+    let seen = seen.lock().unwrap();
+    assert_eq!(seen.len(), 8);
+    for id in 1..=8u64 {
+        let want = match id % 3 {
+            0 => Some("alpha".to_string()),
+            1 => Some("beta".to_string()),
+            _ => None,
+        };
+        let (_, got) = seen.iter().find(|(p, _)| p.contains(&format!("limit={id}"))).unwrap_or_else(|| panic!("no request for call {id}"));
+        assert_eq!(got, &want, "call {id}");
+    }
+    // The loop's own thread was never given a name.
+    assert_eq!(v2_lib::mcp::calling_agent(), None);
+}
+
+#[test]
+fn a_call_that_panics_is_answered_as_an_internal_error() {
+    let call: SharedCall = Arc::new(|_m: &str, path: &str, _b: &str| {
+        if path == "/tools" {
+            return Ok((200, all_modules_policy()));
+        }
+        panic!("a bridge call that goes wrong");
+    });
+    let lines = [tool_call_line(5, "get_autorun_page", serde_json::json!({}))];
+    let (bytes, done) = start_serving(&lines, call);
+    done.recv_timeout(SERVE_DEADLINE).expect("serve_lines returns");
+    let out = response_lines(&bytes);
+    assert_eq!(ids_of(&out), vec![5]);
+    let v: serde_json::Value = serde_json::from_str(&out[0]).unwrap();
+    assert_eq!(v["error"]["code"], -32603, "{v}");
+}

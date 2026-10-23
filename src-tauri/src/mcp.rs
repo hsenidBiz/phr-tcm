@@ -216,6 +216,48 @@ pub fn handle_message(msg: &str, version: &str, call: BridgeCall) -> Option<Stri
 /// `handle_message` with the session the proxy keeps: a role's rules ride ahead of the first answer of the
 /// tool that starts the role, a pointer line ahead of later ones.
 pub fn handle_message_in(msg: &str, version: &str, call: BridgeCall, session: &mut crate::mcp_session::Session) -> Option<String> {
+    answer_with(msg, version, call, session)
+}
+
+/// `handle_message_in`, with the session ops going to `book` under the call's agent name; a role's text is
+/// fetched (`role_text_via`) after `note_kind` returns, outside the book's lock.
+pub fn handle_message_shared(msg: &str, version: &str, call: BridgeCall, book: &crate::mcp_session::SessionBook) -> Option<String> {
+    answer_with(msg, version, call, &mut { book })
+}
+
+/// What the answering body asks of whatever keeps the role notes: one `Session` (the agent name ignored)
+/// or a `SessionBook` (one session per agent name).
+trait RoleNotes {
+    fn reset_all(&mut self);
+    fn mark_read(&mut self, agent: Option<&str>, role: crate::autorun::roles::Role);
+    fn note_kind(&mut self, agent: Option<&str>, tool: &str, args: &serde_json::Value) -> Option<crate::mcp_session::Note>;
+}
+
+impl RoleNotes for crate::mcp_session::Session {
+    fn reset_all(&mut self) {
+        self.reset();
+    }
+    fn mark_read(&mut self, _agent: Option<&str>, role: crate::autorun::roles::Role) {
+        crate::mcp_session::Session::mark_read(self, role);
+    }
+    fn note_kind(&mut self, _agent: Option<&str>, tool: &str, args: &serde_json::Value) -> Option<crate::mcp_session::Note> {
+        crate::mcp_session::Session::note_kind(self, tool, args)
+    }
+}
+
+impl RoleNotes for &crate::mcp_session::SessionBook {
+    fn reset_all(&mut self) {
+        crate::mcp_session::SessionBook::reset_all(self);
+    }
+    fn mark_read(&mut self, agent: Option<&str>, role: crate::autorun::roles::Role) {
+        crate::mcp_session::SessionBook::mark_read(self, agent, role);
+    }
+    fn note_kind(&mut self, agent: Option<&str>, tool: &str, args: &serde_json::Value) -> Option<crate::mcp_session::Note> {
+        crate::mcp_session::SessionBook::note_kind(self, agent, tool, args)
+    }
+}
+
+fn answer_with<N: RoleNotes>(msg: &str, version: &str, call: BridgeCall, session: &mut N) -> Option<String> {
     let Ok(v) = serde_json::from_str::<serde_json::Value>(msg) else {
         return Some(rpc_error(serde_json::Value::Null, -32700, "Parse error"));
     };
@@ -230,7 +272,7 @@ pub fn handle_message_in(msg: &str, version: &str, call: BridgeCall, session: &m
 
     let result = match method {
         "initialize" => {
-            session.reset();
+            session.reset_all();
             // The client names itself here; the name rides on every later
             // bridge request. Left as it was when this initialize names none.
             if let Some(client) = v["params"]["clientInfo"]["name"].as_str() {
@@ -266,15 +308,21 @@ pub fn handle_message_in(msg: &str, version: &str, call: BridgeCall, session: &m
             let args = coerce_args(name, &bare);
             // Held through the role text below too, which is fetched for the
             // same subagent.
-            let _holding = CallingAgent::set(agent);
+            let _holding = CallingAgent::set(agent.clone());
+            let agent = agent.as_deref();
             let (mut result, reached) = tools_call_outcome(params, call);
             if reached && result["isError"] != serde_json::Value::Bool(true) && name == "get_guide" {
                 if let Some(role) = args["role"].as_str().and_then(crate::autorun::roles::Role::from_key) {
-                    session.mark_read(role);
+                    session.mark_read(agent, role);
                 }
             }
             if reached {
-                if let Some(note) = session.note_for(name, &args, &|r| role_text_via(r, call)) {
+                // The note's kind is decided under the book's lock; its text is fetched after it is released.
+                let note = session.note_kind(agent, name, &args).map(|kind| match kind {
+                    crate::mcp_session::Note::Rules(role) => role_text_via(role, call),
+                    crate::mcp_session::Note::Pointer(role) => crate::autorun::roles::pointer(role),
+                });
+                if let Some(note) = note {
                     if let Some(items) = result["content"].as_array_mut() {
                         items.insert(0, serde_json::json!({ "type": "text", "text": note }));
                     }
@@ -2732,23 +2780,129 @@ pub fn run_stdio_proxy() {
         eprintln!("{warning}");
     }
     let stdin = std::io::stdin();
-    let mut stdout = std::io::stdout();
-    let mut session = crate::mcp_session::Session::new();
-    for line in stdin.lock().lines() {
+    serve_lines(
+        stdin.lock(),
+        std::sync::Arc::new(std::sync::Mutex::new(std::io::stdout())),
+        version,
+        std::sync::Arc::new(bridge_call),
+        std::sync::Arc::new(crate::mcp_session::SessionBook::new()),
+    );
+    // The client closed the pipe and every call has answered: this session is over.
+    send_bye();
+}
+
+/// A bridge call that several tool-call threads can share.
+pub type SharedCall = std::sync::Arc<dyn Fn(&str, &str, &str) -> Result<(u16, String), String> + Send + Sync>;
+
+/// How many tool calls are being answered, so the end of the input can wait for them.
+#[derive(Default)]
+struct InFlight {
+    count: std::sync::Mutex<usize>,
+    idle: std::sync::Condvar,
+}
+
+/// One tool call in flight: counted from `enter` until it is dropped, answered or not.
+struct InFlightCall(std::sync::Arc<InFlight>);
+
+impl InFlight {
+    fn enter(this: &std::sync::Arc<InFlight>) -> InFlightCall {
+        *this.count.lock().unwrap_or_else(|e| e.into_inner()) += 1;
+        InFlightCall(this.clone())
+    }
+
+    fn wait_idle(&self) {
+        let mut count = self.count.lock().unwrap_or_else(|e| e.into_inner());
+        while *count > 0 {
+            count = self.idle.wait(count).unwrap_or_else(|e| e.into_inner());
+        }
+    }
+}
+
+impl Drop for InFlightCall {
+    fn drop(&mut self) {
+        *self.0.count.lock().unwrap_or_else(|e| e.into_inner()) -= 1;
+        self.0.idle.notify_all();
+    }
+}
+
+/// One response, as one whole line: written and flushed with `output` locked, so two threads' answers never mix.
+fn write_response_line<W: Write>(output: &std::sync::Mutex<W>, resp: &str) {
+    let mut out = output.lock().unwrap_or_else(|e| e.into_inner());
+    let _ = writeln!(out, "{resp}");
+    let _ = out.flush();
+}
+
+/// Answers one `tools/call` line and writes the response. A panic in the call is answered as an internal
+/// error with the call's own id, so the client is never left waiting on it.
+fn answer_call_line<W: Write>(
+    line: &str,
+    id: Option<serde_json::Value>,
+    version: &str,
+    call: &SharedCall,
+    book: &crate::mcp_session::SessionBook,
+    output: &std::sync::Mutex<W>,
+) {
+    let answered = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| handle_message_shared(line, version, &**call, book)));
+    let resp = match answered {
+        Ok(resp) => resp,
+        Err(_) => id.map(|id| rpc_error(id, -32603, "Internal error")),
+    };
+    if let Some(resp) = resp {
+        write_response_line(output, &resp);
+    }
+}
+
+/// The proxy's loop over its input. Every `tools/call` line runs on its own thread, with blocking sends (the
+/// calling agent is thread-local, so a call must never move between threads); every other line is answered
+/// inline, in order. Each response is one line, written whole with `output` locked. Returns at the end of
+/// the input once every call has answered.
+pub fn serve_lines<R: BufRead, W: Write + Send + 'static>(
+    input: R,
+    output: std::sync::Arc<std::sync::Mutex<W>>,
+    version: String,
+    call: SharedCall,
+    book: std::sync::Arc<crate::mcp_session::SessionBook>,
+) {
+    let version = std::sync::Arc::new(version);
+    let in_flight = std::sync::Arc::new(InFlight::default());
+    for line in input.lines() {
         let Ok(line) = line else { break };
         if line.trim().is_empty() {
             continue;
         }
-        let now_ms = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_millis() as u64)
-            .unwrap_or(0);
-        session.tick(now_ms);
-        if let Some(resp) = handle_message_in(&line, &version, &bridge_call, &mut session) {
-            let _ = writeln!(stdout, "{resp}");
-            let _ = stdout.flush();
+        let parsed = serde_json::from_str::<serde_json::Value>(&line).ok();
+        // The session that hears of this line is the agent's it names; a refused `agent` ticks none.
+        let ticked = match &parsed {
+            Some(v) => take_agent_arg(&v["params"]["arguments"]).ok().map(|(_, agent)| agent),
+            None => Some(None),
+        };
+        if let Some(agent) = ticked {
+            let now_ms = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_millis() as u64)
+                .unwrap_or(0);
+            book.tick(agent.as_deref(), now_ms);
+        }
+        let is_call = parsed.as_ref().is_some_and(|v| v["method"].as_str() == Some("tools/call"));
+        if !is_call {
+            if let Some(resp) = handle_message_shared(&line, &version, &*call, &book) {
+                write_response_line(&output, &resp);
+            }
+            continue;
+        }
+        let id = parsed.as_ref().and_then(|v| v.get("id").cloned());
+        let job = {
+            let (line, id, version, call, book, output) = (line.clone(), id.clone(), version.clone(), call.clone(), book.clone(), output.clone());
+            let counted = InFlight::enter(&in_flight);
+            move || {
+                let _counted = counted;
+                answer_call_line(&line, id, &version, &call, &book, &output);
+            }
+        };
+        // A thread that cannot be made drops the job (and its count); the call is then answered here.
+        if std::thread::Builder::new().name("tcm-mcp-call".into()).spawn(job).is_err() {
+            answer_call_line(&line, id, &version, &call, &book, &output);
         }
     }
-    // The client closed the pipe: this session is over.
-    send_bye();
+    in_flight.wait_idle();
 }
