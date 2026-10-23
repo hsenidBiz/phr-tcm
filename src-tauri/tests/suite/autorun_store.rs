@@ -1721,10 +1721,18 @@ fn a_cleanup_unchecked_is_one_sentence() {
 fn order_saves_from_many_threads_lose_none() {
     let dir = TempDir::new();
     let root = dir.path().to_path_buf();
+    // The threads start together, and each saves several ids, so their
+    // read-merge-write steps overlap if nothing orders them.
+    let start = std::sync::Arc::new(std::sync::Barrier::new(8));
     let threads: Vec<_> = (0..8)
         .map(|i| {
-            let root = root.clone();
-            std::thread::spawn(move || v2_lib::autorun::store::save_order_merged(&root, 4242, &[i]).unwrap())
+            let (root, start) = (root.clone(), std::sync::Arc::clone(&start));
+            std::thread::spawn(move || {
+                start.wait();
+                for n in 0..5 {
+                    v2_lib::autorun::store::save_order_merged(&root, 4242, &[i * 5 + n]).unwrap();
+                }
+            })
         })
         .collect();
     for t in threads {
@@ -1732,5 +1740,41 @@ fn order_saves_from_many_threads_lose_none() {
     }
     let mut held = load_order(&root, 4242).expect("an order was saved");
     held.sort();
-    assert_eq!(held, (0..8).collect::<Vec<i32>>());
+    assert_eq!(held, (0..40).collect::<Vec<i32>>());
+}
+
+/// A clear that comes while an append holds the order lock waits for it and
+/// then removes the order: it is not lost, and the append's write is not
+/// put back over it.
+#[test]
+fn a_clear_while_an_order_is_being_saved_is_not_lost() {
+    let dir = TempDir::new();
+    let root = dir.path().to_path_buf();
+    save_order(&root, 7, &[1, 2]).unwrap();
+    let (held_tx, held_rx) = std::sync::mpsc::channel::<()>();
+    let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
+    let (saver_root, clearer_root) = (root.clone(), root.clone());
+    // An append: reads the order, then holds the lock until told.
+    let saver = std::thread::spawn(move || {
+        v2_lib::autorun::store::with_order_locked(|| {
+            let mut ids = load_order(&saver_root, 7).unwrap();
+            ids.push(3);
+            held_tx.send(()).unwrap();
+            release_rx.recv().unwrap();
+            save_order(&saver_root, 7, &ids).unwrap();
+        });
+    });
+    held_rx.recv().unwrap();
+    let cleared = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let flag = std::sync::Arc::clone(&cleared);
+    let clearer = std::thread::spawn(move || {
+        clear_order(&clearer_root, 7).unwrap();
+        flag.store(true, std::sync::atomic::Ordering::SeqCst);
+    });
+    std::thread::sleep(std::time::Duration::from_millis(300));
+    assert!(!cleared.load(std::sync::atomic::Ordering::SeqCst), "the clear ran while the order lock was held");
+    release_tx.send(()).unwrap();
+    saver.join().unwrap();
+    clearer.join().unwrap();
+    assert!(load_order(&root, 7).is_none(), "the clear came after the append and removed the order");
 }

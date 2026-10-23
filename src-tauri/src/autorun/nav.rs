@@ -492,7 +492,8 @@ pub fn nav_lock() -> std::sync::MutexGuard<'static, ()> {
 /// in the same hold of `nav_lock` as the write. `New` is refused
 /// (`area_taken_meanwhile`) when an area of that name exists now; `Was(e)`
 /// is refused (`area_changed`) unless an area of that name exists with e's
-/// clicks, where they arrive and module; `Any` is `put_path`.
+/// clicks, where they arrive, module, who made it and when it was recorded
+/// (so a re-record with the same clicks is caught too); `Any` is `put_path`.
 pub fn put_path_if(
     root: &Path,
     org: &str,
@@ -511,7 +512,9 @@ pub fn put_path_if(
         (AreaExpect::Was(was), Some(now))
             if now.clicks != was.clicks
                 || now.arrived != was.arrived
-                || module_key(&now.module) != module_key(&was.module) =>
+                || module_key(&now.module) != module_key(&was.module)
+                || now.made_by != was.made_by
+                || now.recorded != was.recorded =>
         {
             return Err(area_changed(&path.area));
         }

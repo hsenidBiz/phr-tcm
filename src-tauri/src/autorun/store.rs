@@ -1605,12 +1605,14 @@ pub fn with_order_locked<R>(f: impl FnOnce() -> R) -> R {
 /// again. Only that one file goes; a PBI with no order is left as it is.
 pub fn clear_order(root: &Path, pbi_id: i32) -> Result<(), String> {
     let path = order_path(root, pbi_id);
-    match std::fs::remove_file(&path) {
+    // Under the order lock, so a clear cannot land between an append's read
+    // and its write and then be written back over.
+    with_order_locked(|| match std::fs::remove_file(&path) {
         Ok(()) => Ok(()),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
         Err(e) => {
             crate::applog::warn(format!("auto-run: the order for PBI {pbi_id} could not be removed from {}: {e}", path.display()));
             Err(ORDER_NOT_CLEARED.to_string())
         }
-    }
+    })
 }

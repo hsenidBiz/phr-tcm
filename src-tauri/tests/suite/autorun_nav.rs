@@ -5,9 +5,10 @@ use crate::common;
 
 use serde_json::json;
 use v2_lib::autorun::nav::{
-    area_changed, area_taken_meanwhile, put_path_if, AreaExpect, check_areas, check_no_addresses, find_area, find_path, go_home, go_to_module, guide_section, is_setup_problem, load_nav,
-    module_key, nav_path, no_address, no_default_area, no_path, path_of, put_path, remove_path, route_for, same_page, save_nav,
-    set_direct_urls, view, AssistantRepair, MadeBy, ModulePath, NavFile, PathFailure, Route, TripFrom, Where, NO_ACCOUNT, NO_MODULE,
+    area_changed, area_taken_meanwhile, check_areas, check_no_addresses, find_area, find_path, go_home, go_to_module,
+    guide_section, is_setup_problem, load_nav, module_key, nav_path, no_address, no_default_area, no_path, path_of, put_path,
+    put_path_if, remove_path, route_for, same_page, save_nav, set_direct_urls, view, AreaExpect, AssistantRepair, MadeBy, ModulePath,
+    NavFile, PathFailure, Route, TripFrom, Where, NO_ACCOUNT, NO_MODULE,
 };
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -223,10 +224,18 @@ fn put_path_if_writes_when_nothing_changed() {
 fn area_writes_from_many_threads_lose_none() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path().to_path_buf();
+    // The threads start together, and each saves several areas, so their
+    // load-change-save steps overlap if nothing orders them.
+    let start = Arc::new(std::sync::Barrier::new(8));
     let threads: Vec<_> = (0..8)
         .map(|i| {
-            let root = root.clone();
-            std::thread::spawn(move || put_path(&root, "Acme", "Web", area_clicking(&format!("Area {i}"), "x")).unwrap())
+            let (root, start) = (root.clone(), Arc::clone(&start));
+            std::thread::spawn(move || {
+                start.wait();
+                for n in 0..5 {
+                    put_path(&root, "Acme", "Web", area_clicking(&format!("Area {i}-{n}"), "x")).unwrap();
+                }
+            })
         })
         .collect();
     for t in threads {
@@ -235,7 +244,36 @@ fn area_writes_from_many_threads_lose_none() {
     let nav = load_nav(&root, "Acme", "Web").unwrap();
     let mut names: Vec<String> = nav.modules.iter().map(|m| m.name().to_string()).collect();
     names.sort();
-    assert_eq!(names, (0..8).map(|i| format!("Area {i}")).collect::<Vec<_>>());
+    let mut expected: Vec<String> = (0..8).flat_map(|i| (0..5).map(move |n| format!("Area {i}-{n}"))).collect();
+    expected.sort();
+    assert_eq!(names, expected);
+}
+
+#[test]
+fn put_path_if_refuses_an_area_re_recorded_with_the_same_clicks() {
+    let dir = tempfile::tempdir().unwrap();
+    // An assistant's mapping run saved the area; this save read it so.
+    let mut mapped = area_clicking("A", "x");
+    mapped.made_by = MadeBy::Mapping;
+    put_path(dir.path(), "Acme", "Web", mapped).unwrap();
+    let e = load_nav(dir.path(), "Acme", "Web").unwrap().modules[0].clone();
+    // The person recorded it again with the very same clicks.
+    let mut again = area_clicking("A", "x");
+    again.made_by = MadeBy::Person;
+    again.recorded = "2026-10-23T09:00:00Z".to_string();
+    put_path(dir.path(), "Acme", "Web", again.clone()).unwrap();
+    let err = put_path_if(dir.path(), "Acme", "Web", area_clicking("A", "z"), AreaExpect::Was(&e)).unwrap_err();
+    assert_eq!(err, area_changed("A"));
+    assert_eq!(load_nav(dir.path(), "Acme", "Web").unwrap().modules, vec![again], "the person's recording stands");
+    // Only the time differs: caught as well.
+    let e = load_nav(dir.path(), "Acme", "Web").unwrap().modules[0].clone();
+    let mut later = area_clicking("A", "x");
+    later.recorded = "2026-10-23T09:05:00Z".to_string();
+    put_path(dir.path(), "Acme", "Web", later).unwrap();
+    assert_eq!(
+        put_path_if(dir.path(), "Acme", "Web", area_clicking("A", "z"), AreaExpect::Was(&e)).unwrap_err(),
+        area_changed("A")
+    );
 }
 
 #[test]
