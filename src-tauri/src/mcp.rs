@@ -30,7 +30,9 @@ pub const TOOL_HEADER: &str = "x-tcm-tool";
 /// The headers a proxy names its caller in on every bridge request: an id it
 /// made at start, its process id, its client's name, and the calling
 /// subagent's `agent` name. The bridge turns them into a `Caller`
-/// (`autorun::agents`). None of them is ever logged or shown.
+/// (`autorun::agents`). The id and the pid are never logged or shown; only
+/// the label made from them is. The cleaned client name may be shown later
+/// (on the assistants card).
 pub const AGENT_HEADER: &str = "x-tcm-agent";
 pub const AGENT_PID_HEADER: &str = "x-tcm-agent-pid";
 pub const AGENT_CLIENT_HEADER: &str = "x-tcm-agent-client";

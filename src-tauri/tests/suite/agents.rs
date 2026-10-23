@@ -40,6 +40,19 @@ fn process_running_knows_this_process_and_an_ended_one() {
     assert!(!process_running(pid));
 }
 
+/// The line the sweeper logs for an ended session names the label and
+/// nothing that identifies the process or the proxy.
+#[test]
+fn the_session_ended_line_holds_the_label_and_neither_id_nor_pid() {
+    let _g = serial::agents();
+    agents::clear();
+    let label = call(ID_A, None, 1_000);
+    let line = agents::ended_line(&label);
+    assert_eq!(line, "Auto Run: Assistant 1's session ended");
+    assert!(!line.contains(ID_A) && !line.contains("4242"), "{line}");
+    agents::clear();
+}
+
 fn key(id: &str, name: Option<&str>) -> AgentKey {
     AgentKey { id: id.to_string(), name: name.map(str::to_string) }
 }

@@ -146,11 +146,10 @@ fn free_number(entries: &[Entry], except: Option<usize>) -> u32 {
     n
 }
 
-/// The clock the registry is told, in milliseconds since the Unix epoch.
-pub fn now_ms() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX))
+/// The log line for an agent whose process has ended: its label only, never
+/// its id or pid.
+pub fn ended_line(label: &str) -> String {
+    format!("Auto Run: {label}'s session ended")
 }
 
 /// Record a call. The default caller is never kept (None). An agent's entry

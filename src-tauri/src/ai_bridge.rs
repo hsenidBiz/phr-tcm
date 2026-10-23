@@ -401,7 +401,7 @@ pub async fn route_as(
         // nothing more.
         ("POST", "/agent-bye") => {
             if let crate::autorun::agents::Caller::Agent(key) = caller {
-                crate::autorun::agents::note_bye(&key.id, crate::autorun::agents::now_ms());
+                crate::autorun::agents::note_bye(&key.id, crate::autorun::sessions::now_ms());
             }
             (200, "{}".to_string())
         }
@@ -13979,7 +13979,7 @@ pub async fn start_listener(
                     // Who is calling is known only after the token check: a
                     // request without the token registers nobody.
                     let caller = agent.caller();
-                    let label = crate::autorun::agents::note_call(&caller, &agent, crate::autorun::agents::now_ms());
+                    let label = crate::autorun::agents::note_call(&caller, &agent, crate::autorun::sessions::now_ms());
                     let (status, payload) =
                         route_as(&caller, &ctx, client.as_ref(), &method, &target, &body, &state.version).await;
                     if let Some(line) = tool_call_line_for(tool.as_deref(), label.as_deref(), &target, status, &payload) {
@@ -14085,8 +14085,9 @@ pub fn parse_http(raw: &[u8]) -> Parsed {
             agent.id = Some(v.to_string());
         }
         if k.eq_ignore_ascii_case(crate::mcp::AGENT_PID_HEADER) {
-            // Not a number: left out, the request is still served.
-            agent.pid = v.parse().ok();
+            // Not a number, or 0 (no process has it): left out, the request
+            // is still served.
+            agent.pid = v.parse().ok().filter(|p| *p != 0);
         }
         if k.eq_ignore_ascii_case(crate::mcp::AGENT_CLIENT_HEADER) {
             agent.client = Some(v.to_string());

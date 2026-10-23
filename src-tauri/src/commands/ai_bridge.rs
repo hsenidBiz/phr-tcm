@@ -125,7 +125,7 @@ pub fn spawn_agent_sweeper() {
                 tokio::time::sleep(crate::autorun::agents::SWEEP_EVERY).await;
                 let swept = tauri::async_runtime::spawn_blocking(|| {
                     crate::autorun::agents::sweep(
-                        crate::autorun::agents::now_ms(),
+                        crate::autorun::sessions::now_ms(),
                         &crate::browser::tree::process_running,
                     )
                 })
@@ -133,7 +133,7 @@ pub fn spawn_agent_sweeper() {
                 let Ok(swept) = swept else { continue };
                 for key in &swept.newly_gone {
                     if let Some(info) = crate::autorun::agents::info(key) {
-                        crate::applog::info(format!("Auto Run: {}'s session ended", info.label));
+                        crate::applog::info(crate::autorun::agents::ended_line(&info.label));
                     }
                 }
             }

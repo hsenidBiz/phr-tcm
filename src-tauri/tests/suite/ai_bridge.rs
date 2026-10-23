@@ -2947,6 +2947,17 @@ fn a_bad_pid_header_is_ignored_not_refused() {
     }
 }
 
+/// Pid 0 is not a process: it is no pid.
+#[test]
+fn a_pid_header_of_zero_is_no_pid() {
+    use v2_lib::ai_bridge::{parse_http, Parsed};
+    let raw = format!("GET /ping HTTP/1.1\r\nx-bridge-token: t\r\nx-tcm-agent: {AGENT_ID}\r\nx-tcm-agent-pid: 0\r\n\r\n");
+    match parse_http(raw.as_bytes()) {
+        Parsed::Complete { agent, .. } => assert_eq!(agent.pid, None),
+        _ => panic!("a zero pid refused the request"),
+    }
+}
+
 #[test]
 fn tool_call_line_names_the_label() {
     use v2_lib::ai_bridge::{tool_call_line, tool_call_line_for};
