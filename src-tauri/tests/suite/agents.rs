@@ -155,6 +155,63 @@ fn sweep_marks_dead_pids_gone_then_past_grace_once_then_forgets() {
 }
 
 #[test]
+fn an_entry_past_grace_and_forget_age_is_reported_before_it_is_forgotten() {
+    let _g = serial::agents();
+    agents::clear();
+    call(ID_A, None, 1);
+    let k = key(ID_A, None);
+    agents::note_bye(ID_A, 1_000);
+    // One long gap: past both ages in the first sweep that looks.
+    let s = agents::sweep(1_000 + FORGET_AFTER_MS + 5, &|_| true);
+    assert_eq!(s.past_grace, vec![k.clone()]);
+    assert!(s.forgotten.is_empty());
+    assert_eq!(agents::info(&k).map(|i| i.label), Some("Assistant 1".to_string()));
+    // The next sweep forgets it.
+    let s = agents::sweep(1_000 + FORGET_AFTER_MS + 6, &|_| true);
+    assert!(s.past_grace.is_empty());
+    assert_eq!(s.forgotten, vec![k.clone()]);
+    assert_eq!(agents::info(&k), None);
+}
+
+#[test]
+fn a_call_without_pid_or_client_keeps_the_stored_ones() {
+    let _g = serial::agents();
+    agents::clear();
+    call(ID_A, None, 1);
+    let bare = AgentHeaders { id: Some(ID_A.to_string()), ..AgentHeaders::default() };
+    agents::note_call(&bare.caller(), &bare, 2);
+    let i = agents::info(&key(ID_A, None)).unwrap();
+    assert_eq!(i.pid, Some(4242));
+    assert_eq!(i.client.as_deref(), Some("claude-code"));
+    assert_eq!(i.last_ms, 2);
+    // An unreadable client does not wipe it either.
+    let odd = AgentHeaders { client: Some("é/".to_string()), ..bare };
+    agents::note_call(&odd.caller(), &odd, 3);
+    assert_eq!(agents::info(&key(ID_A, None)).unwrap().client.as_deref(), Some("claude-code"));
+}
+
+#[test]
+fn sweep_does_not_call_alive_with_the_registry_locked() {
+    let _g = serial::agents();
+    agents::clear();
+    call(ID_A, None, 1);
+    let k = key(ID_A, None);
+    let seen = std::cell::Cell::new(false);
+    // `alive` reads and writes the registry: it would deadlock if the sweep
+    // held the lock around it.
+    let s = agents::sweep(100, &|_| {
+        seen.set(agents::info(&key(ID_A, None)).is_some());
+        let h = headers(ID_B, None);
+        agents::note_call(&h.caller(), &h, 50);
+        false
+    });
+    assert!(seen.get());
+    assert_eq!(s.newly_gone, vec![k.clone()]);
+    assert!(agents::is_live(&key(ID_B, None)));
+    assert!(!agents::is_live(&k));
+}
+
+#[test]
 fn an_entry_without_a_pid_is_never_swept_gone() {
     let _g = serial::agents();
     agents::clear();

@@ -247,34 +247,49 @@ pub struct Sweep {
 
 /// Entries with a pid that `alive` says has ended become gone (`newly_gone`).
 /// Gone entries reach `past_grace` once, `GONE_GRACE_MS` after they went.
-/// Entries gone `FORGET_AFTER_MS` are removed (`forgotten`); one that was
-/// never reported past its grace is reported in the same sweep.
+/// Entries gone `FORGET_AFTER_MS` are removed (`forgotten`), but only in a
+/// sweep after the one that reported them in `past_grace`, so the label can
+/// still be read with `info` while the agent's resources are released.
+///
+/// `alive` may be slow and is never called with the registry locked.
 pub fn sweep(now_ms: u64, alive: &dyn Fn(u32) -> bool) -> Sweep {
+    // Ask about the processes first, without the lock.
+    let to_check: Vec<(AgentKey, u32)> = registry()
+        .iter()
+        .filter(|e| e.info.gone_since_ms.is_none())
+        .filter_map(|e| e.info.pid.map(|p| (e.info.key.clone(), p)))
+        .collect();
+    let dead: Vec<(AgentKey, u32)> = to_check.into_iter().filter(|(_, pid)| !alive(*pid)).collect();
+
     let mut out = Sweep::default();
     let mut entries = registry();
-    for e in entries.iter_mut() {
-        if e.info.gone_since_ms.is_none() {
-            if let Some(pid) = e.info.pid {
-                if !alive(pid) {
-                    e.info.gone_since_ms = Some(now_ms);
-                    e.grace_reported = false;
-                    out.newly_gone.push(e.info.key.clone());
-                }
-            }
-        } else if let Some(since) = e.info.gone_since_ms {
-            if !e.grace_reported && now_ms.saturating_sub(since) >= GONE_GRACE_MS {
-                e.grace_reported = true;
-                out.past_grace.push(e.info.key.clone());
+    for (key, pid) in dead {
+        // Skip an entry that changed meanwhile: made gone already, or taken
+        // over by a proxy with another pid.
+        if let Some(e) = entries.iter_mut().find(|e| e.info.key == key) {
+            if e.info.gone_since_ms.is_none() && e.info.pid == Some(pid) {
+                e.info.gone_since_ms = Some(now_ms);
+                e.grace_reported = false;
+                out.newly_gone.push(key);
             }
         }
     }
-    entries.retain(|e| match e.info.gone_since_ms {
-        Some(since) if now_ms.saturating_sub(since) >= FORGET_AFTER_MS => {
-            out.forgotten.push(e.info.key.clone());
-            false
+    let mut forget: Vec<AgentKey> = Vec::new();
+    for e in entries.iter_mut() {
+        let Some(since) = e.info.gone_since_ms else { continue };
+        let age = now_ms.saturating_sub(since);
+        if e.grace_reported {
+            // Reported by an earlier sweep.
+            if age >= FORGET_AFTER_MS {
+                forget.push(e.info.key.clone());
+            }
+        } else if age >= GONE_GRACE_MS {
+            e.grace_reported = true;
+            out.past_grace.push(e.info.key.clone());
         }
-        _ => true,
-    });
+    }
+    entries.retain(|e| !forget.contains(&e.info.key));
+    out.forgotten = forget;
     out
 }
 
