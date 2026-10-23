@@ -48,7 +48,7 @@ fn the_session_ended_line_holds_the_label_and_neither_id_nor_pid() {
     agents::clear();
     let label = call(ID_A, None, 1_000);
     let line = agents::ended_line(&label);
-    assert_eq!(line, "Auto Run: Assistant 1's session ended");
+    assert_eq!(line, "AI bridge: Assistant 1's session ended");
     assert!(!line.contains(ID_A) && !line.contains("4242"), "{line}");
     agents::clear();
 }

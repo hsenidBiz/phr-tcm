@@ -149,7 +149,7 @@ fn free_number(entries: &[Entry], except: Option<usize>) -> u32 {
 /// The log line for an agent whose process has ended: its label only, never
 /// its id or pid.
 pub fn ended_line(label: &str) -> String {
-    format!("Auto Run: {label}'s session ended")
+    format!("AI bridge: {label}'s session ended")
 }
 
 /// Record a call. The default caller is never kept (None). An agent's entry
