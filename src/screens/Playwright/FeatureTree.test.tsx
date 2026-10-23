@@ -6,7 +6,10 @@ import { clearMocks, mockIPC } from "@tauri-apps/api/mocks";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
 import type { RenameCheck, RepoStructure } from "../../bindings";
+import { toast } from "../../lib/toast";
 import FeatureTree from "./FeatureTree";
+
+vi.mock("../../lib/toast", () => ({ toast: { warning: vi.fn(), error: vi.fn(), success: vi.fn(), info: vi.fn() } }));
 
 afterEach(() => {
   clearMocks();
@@ -28,7 +31,8 @@ type Call = { cmd: string; args: Record<string, unknown> };
 /** Mounts the tree over a mocked IPC that answers the three folder commands. */
 function mount(
   opts: {
-    check?: (from: string, to: string) => RenameCheck | string;
+    check?: (from: string, to: string) => RenameCheck | string | Promise<RenameCheck>;
+    warning?: string;
     rename?: (confirmed: boolean) => string | null;
     create?: () => string | null;
     clone?: string;
@@ -52,7 +56,7 @@ function mount(
       const { from, to } = args as { from: string; to: string };
       const bad = opts.rename?.((args as { confirmed: boolean }).confirmed);
       if (bad) throw bad;
-      return { from, to, placements_updated: 0 };
+      return { from, to, placements_updated: 0, warning: opts.warning ?? null };
     }
     return null;
   });
@@ -66,7 +70,7 @@ const menu = () => screen.getByRole("menu");
 const ipc = (calls: Call[], cmd: string) => calls.filter((c) => c.cmd === cmd).map((c) => c.args);
 
 /** Right-click the row, pick an item of the menu. */
-function pick(path: string, item: "New folder" | "Rename") {
+function pick(path: string, item: "New feature folder" | "Rename") {
   fireEvent.contextMenu(row(path), { clientX: 40, clientY: 60 });
   fireEvent.click(within(menu()).getByRole("menuitem", { name: item }));
 }
@@ -77,13 +81,17 @@ test("right-clicking a folder opens a menu of New folder and Rename for it", () 
   fireEvent.contextMenu(row("sl/admin"), { clientX: 40, clientY: 60 });
   const m = menu();
   expect(m).toHaveAccessibleName("Actions for sl/admin");
-  expect(within(m).getAllByRole("menuitem").map((i) => i.textContent)).toEqual(["New folder", "Rename"]);
+  expect(within(m).getAllByRole("menuitem").map((i) => i.textContent)).toEqual(["New feature folder", "Rename"]);
+  expect(within(m).getByRole("menuitem", { name: "New feature folder" })).toHaveAttribute(
+    "title",
+    "Makes a feature folder, with specs and test-cases folders inside it.",
+  );
   // The first item has the focus, and the arrow keys walk the list.
-  expect(within(m).getByRole("menuitem", { name: "New folder" })).toHaveFocus();
-  fireEvent.keyDown(within(m).getByRole("menuitem", { name: "New folder" }), { key: "ArrowDown" });
+  expect(within(m).getByRole("menuitem", { name: "New feature folder" })).toHaveFocus();
+  fireEvent.keyDown(within(m).getByRole("menuitem", { name: "New feature folder" }), { key: "ArrowDown" });
   expect(within(m).getByRole("menuitem", { name: "Rename" })).toHaveFocus();
   fireEvent.keyDown(within(m).getByRole("menuitem", { name: "Rename" }), { key: "ArrowDown" });
-  expect(within(m).getByRole("menuitem", { name: "New folder" })).toHaveFocus();
+  expect(within(m).getByRole("menuitem", { name: "New feature folder" })).toHaveFocus();
 });
 
 test("Shift+F10 and the context-menu key open it from the focused row", () => {
@@ -129,7 +137,7 @@ test("without a clone the rows have no menu", () => {
 
 test("New folder puts a focused name box under the row and creates it on Enter", async () => {
   const { calls, onChanged } = mount();
-  pick("sl/admin", "New folder");
+  pick("sl/admin", "New feature folder");
   const box = screen.getByRole("textbox", { name: "New folder name under sl/admin" });
   expect(box).toHaveFocus();
   // It sits among the folder's own children, under the row.
@@ -143,7 +151,7 @@ test("New folder puts a focused name box under the row and creates it on Enter",
 
 test("New folder shows a refusal under the box and keeps it for another try", async () => {
   const { onChanged } = mount({ create: () => "\"sl/admin/performance\" is already a feature folder." });
-  pick("sl/admin", "New folder");
+  pick("sl/admin", "New feature folder");
   const box = screen.getByRole("textbox", { name: "New folder name under sl/admin" });
   fireEvent.change(box, { target: { value: "performance" } });
   fireEvent.keyDown(box, { key: "Enter" });
@@ -154,11 +162,11 @@ test("New folder shows a refusal under the box and keeps it for another try", as
 
 test("New folder is cancelled by Escape, and by leaving the box empty", () => {
   const { calls } = mount();
-  pick("sl", "New folder");
+  pick("sl", "New feature folder");
   fireEvent.keyDown(screen.getByRole("textbox"), { key: "Escape" });
   expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
 
-  pick("sl", "New folder");
+  pick("sl", "New feature folder");
   fireEvent.blur(screen.getByRole("textbox"));
   expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
   expect(ipc(calls, "pw_repo_create_folder")).toEqual([]);
@@ -168,7 +176,7 @@ test("New folder opens a folded row to show the box", () => {
   mount();
   fireEvent.click(screen.getByRole("button", { name: "sl/admin" }));
   expect(screen.queryByText("performance")).not.toBeInTheDocument();
-  pick("sl/admin", "New folder");
+  pick("sl/admin", "New feature folder");
   expect(screen.getByText("performance")).toBeInTheDocument();
   expect(screen.getByRole("textbox", { name: "New folder name under sl/admin" })).toBeInTheDocument();
 });
@@ -296,4 +304,108 @@ test("a fold follows the folder it belongs to when it is renamed", async () => {
   // The caller reads the clone again and passes the new paths; here the
   // folded set is carried, so the old open/shut state is not left on "sl/admin".
   expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
+});
+
+test("a name with a slash is refused in the box and nothing is asked", () => {
+  const { calls } = mount();
+  pick("sl/admin/performance", "Rename");
+  const box = screen.getByRole("textbox", { name: "New name for sl/admin/performance" });
+  for (const bad of ["foo/bar", String.raw`foo\bar`]) {
+    fireEvent.change(box, { target: { value: bad } });
+    fireEvent.keyDown(box, { key: "Enter" });
+    expect(screen.getByText("A name, not a path.")).toBeInTheDocument();
+  }
+  expect(calls.filter((c) => c.cmd.startsWith("pw_repo_rename"))).toEqual([]);
+  expect(box).toBeInTheDocument();
+});
+
+test("while a check runs the box is disabled and Enter does nothing more", async () => {
+  let release: (c: RenameCheck) => void = () => {};
+  const held = new Promise<RenameCheck>((r) => {
+    release = r;
+  });
+  const { calls, onChanged } = mount({ check: () => held });
+  pick("sl/admin/performance", "Rename");
+  const box = screen.getByRole("textbox", { name: "New name for sl/admin/performance" });
+  fireEvent.change(box, { target: { value: "perf" } });
+  fireEvent.keyDown(box, { key: "Enter" });
+  await waitFor(() => expect(box).toBeDisabled());
+  fireEvent.keyDown(box, { key: "Enter" });
+  fireEvent.keyDown(box, { key: "Escape" });
+  expect(ipc(calls, "pw_repo_rename_folder_check")).toHaveLength(1);
+  expect(box).toBeInTheDocument();
+  release({ from: "sl/admin/performance", to: "sl/admin/perf", breaks: [], tcm_updates: [] });
+  await waitFor(() => expect(onChanged).toHaveBeenCalledTimes(1));
+  expect(ipc(calls, "pw_repo_rename_folder")).toHaveLength(1);
+});
+
+test("the buttons of the breakage dialog are disabled while the rename runs", async () => {
+  let release: () => void = () => {};
+  const held = new Promise<void>((r) => {
+    release = r;
+  });
+  const calls: Call[] = [];
+  mockIPC((cmd, args) => {
+    calls.push({ cmd, args: args as Record<string, unknown> });
+    if (cmd === "pw_repo_rename_folder_check") return BREAKING;
+    if (cmd === "pw_repo_rename_folder") {
+      return held.then(() => ({ from: BREAKING.from, to: BREAKING.to, placements_updated: 0, warning: null }));
+    }
+    return null;
+  });
+  render(<FeatureTree features={FEATURES} clone="C:/repo" onChanged={vi.fn()} />);
+  pick("sl/admin/performance", "Rename");
+  const box = screen.getByRole("textbox", { name: "New name for sl/admin/performance" });
+  fireEvent.change(box, { target: { value: "perf" } });
+  fireEvent.keyDown(box, { key: "Enter" });
+  const dialog = await screen.findByRole("dialog");
+  fireEvent.click(within(dialog).getByRole("button", { name: "Rename anyway" }));
+  await waitFor(() => expect(within(dialog).getByRole("button", { name: "Rename anyway" })).toBeDisabled());
+  expect(within(dialog).getByRole("button", { name: "Cancel" })).toBeDisabled();
+  release();
+  await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+});
+
+test("a rename that moved the folder but not all of the settings closes the box, refreshes and says so", async () => {
+  const warning = "The folder was renamed, but TCM could not update its export settings in a.pwexport.json; fix them by hand.";
+  const { calls, onChanged } = mount({ check: () => BREAKING, warning });
+  pick("sl/admin/performance", "Rename");
+  const box = screen.getByRole("textbox", { name: "New name for sl/admin/performance" });
+  fireEvent.change(box, { target: { value: "perf" } });
+  fireEvent.keyDown(box, { key: "Enter" });
+  const dialog = await screen.findByRole("dialog");
+  fireEvent.click(within(dialog).getByRole("button", { name: "Rename anyway" }));
+  await waitFor(() => expect(onChanged).toHaveBeenCalledTimes(1));
+  expect(toast.warning).toHaveBeenCalledWith(warning, expect.anything());
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
+  expect(ipc(calls, "pw_repo_rename_folder")).toHaveLength(1);
+});
+
+test("Escape in the box puts the focus back on the folder's row", () => {
+  mount();
+  pick("sl/admin", "Rename");
+  fireEvent.keyDown(screen.getByRole("textbox"), { key: "Escape" });
+  expect(row("sl/admin")).toHaveFocus();
+  pick("sl", "New feature folder");
+  fireEvent.keyDown(screen.getByRole("textbox"), { key: "Escape" });
+  expect(row("sl")).toHaveFocus();
+});
+
+test("after a rename the focus goes to the row under its new path once the tree has it", async () => {
+  const onChanged = vi.fn();
+  mockIPC((cmd, args) => {
+    const { from, to } = args as { from: string; to: string };
+    if (cmd === "pw_repo_rename_folder_check") return { from, to, breaks: [], tcm_updates: [] };
+    if (cmd === "pw_repo_rename_folder") return { from, to, placements_updated: 0, warning: null };
+    return null;
+  });
+  const { rerender } = render(<FeatureTree features={FEATURES} clone="C:/repo" onChanged={onChanged} />);
+  pick("sl/admin/performance", "Rename");
+  const box = screen.getByRole("textbox", { name: "New name for sl/admin/performance" });
+  fireEvent.change(box, { target: { value: "perf" } });
+  fireEvent.keyDown(box, { key: "Enter" });
+  await waitFor(() => expect(onChanged).toHaveBeenCalled());
+  rerender(<FeatureTree features={[feature("sl/admin/perf"), feature("sl/self/leave")]} clone="C:/repo" onChanged={onChanged} />);
+  await waitFor(() => expect(row("sl/admin/perf")).toHaveFocus());
 });

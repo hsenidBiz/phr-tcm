@@ -28,6 +28,7 @@ import {
 } from "../../lib/actionIcons";
 import { cn } from "../../lib/cn";
 import { unwrapStr } from "../../lib/ipc";
+import { toast } from "../../lib/toast";
 import RenameFolderDialog from "./RenameFolderDialog";
 import { NESTED } from "./RunnerTree";
 
@@ -102,6 +103,7 @@ function NameBox({
   label,
   initial,
   hold,
+  busy,
   onSubmit,
   onCancel,
 }: {
@@ -109,8 +111,11 @@ function NameBox({
   initial: string;
   /** A dialog over it has the focus: leaving the box is not a cancel. */
   hold: boolean;
+  /** A check or rename is running: the box waits, and Enter does nothing. */
+  busy: boolean;
   onSubmit: (name: string) => void;
-  onCancel: () => void;
+  /** `viaKey`: Escape (the focus goes back to the row) rather than a blur. */
+  onCancel: (viaKey: boolean) => void;
 }) {
   const [value, setValue] = useState(initial);
   const field = useRef<HTMLInputElement>(null);
@@ -118,12 +123,17 @@ function NameBox({
     field.current?.focus();
     field.current?.select();
   }, []);
+  // A box that waited takes the focus back, to be edited again after a refusal.
+  useEffect(() => {
+    if (!busy) field.current?.focus();
+  }, [busy]);
   return (
     <Input
       ref={field}
       aria-label={label}
       className="h-6 min-w-0 flex-1 px-1.5 py-0 text-sm"
       value={value}
+      disabled={busy}
       spellCheck={false}
       onChange={(e) => setValue(e.target.value)}
       // The field keeps its own copy and paste menu.
@@ -132,15 +142,15 @@ function NameBox({
         e.stopPropagation();
         if (e.key === "Enter") {
           e.preventDefault();
-          onSubmit(value.trim());
+          if (!busy) onSubmit(value.trim());
         } else if (e.key === "Escape") {
           e.preventDefault();
-          onCancel();
+          if (!busy) onCancel(true);
         }
       }}
       onBlur={() => {
         const v = value.trim();
-        if (!hold && (v === "" || v === initial)) onCancel();
+        if (!hold && !busy && (v === "" || v === initial)) onCancel(false);
       }}
     />
   );
@@ -166,6 +176,27 @@ export default function FeatureTree({
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const editable = clone !== "";
+  const tree = useRef<HTMLDivElement>(null);
+  /** The row to give the focus to once it is on screen (a rename's new id
+   * only appears when the caller has read the clone again). */
+  const pendingFocus = useRef<string | null>(null);
+  const focusRow = (id: string) => {
+    pendingFocus.current = id;
+    setTimeout(() => {
+      if (pendingFocus.current === id) pendingFocus.current = null;
+    }, 3000);
+  };
+  useEffect(() => {
+    const id = pendingFocus.current;
+    if (id === null) return;
+    const el = [...(tree.current?.querySelectorAll<HTMLElement>("[data-folder]") ?? [])].find(
+      (e) => e.dataset.folder === id,
+    );
+    if (el) {
+      pendingFocus.current = null;
+      el.focus();
+    }
+  });
 
   const toggle = (id: string) =>
     setFolded((f) => {
@@ -189,11 +220,13 @@ export default function FeatureTree({
   };
 
   const create = async (parent: string, name: string) => {
+    if (busy) return;
     if (!name) return stopEditing();
     setBusy(true);
     setError("");
     try {
       await unwrapStr(commands.pwRepoCreateFolder(clone, joinPath(parent, name)));
+      focusRow(joinPath(parent, name));
       stopEditing();
       onChanged?.();
     } catch (e) {
@@ -205,10 +238,15 @@ export default function FeatureTree({
 
   /** Renames for real. The folds follow the folder to its new path. */
   const rename = async (check: RenameCheck, confirmed: boolean) => {
+    if (busy && confirmed) return;
     setBusy(true);
     setError("");
     try {
-      await unwrapStr(commands.pwRepoRenameFolder(clone, check.from, check.to, confirmed));
+      const done = await unwrapStr(commands.pwRepoRenameFolder(clone, check.from, check.to, confirmed));
+      // The folder moved, but some of the app's own settings could not follow:
+      // the sentence says which, and outlives the box and the dialog.
+      if (done.warning) toast.warning(done.warning, { duration: 10_000 });
+      focusRow(check.to);
       setFolded((f) => {
         const next = new Set<string>();
         for (const id of f) {
@@ -229,7 +267,12 @@ export default function FeatureTree({
   /** Enter in the rename box: ask what it would break, and go ahead at once
    * when it breaks nothing. */
   const askRename = async (from: string, name: string, current: string) => {
+    if (busy) return;
     if (!name || name === current) return stopEditing();
+    if (/[\\/]/.test(name)) {
+      setError("A name, not a path.");
+      return;
+    }
     setBusy(true);
     setError("");
     try {
@@ -260,10 +303,16 @@ export default function FeatureTree({
     const isRenaming = renaming === n.id && menuRow;
     const isCreating = creating === n.id && menuRow;
     const openMenu = (x: number, y: number, row: HTMLElement) => setMenu({ id: n.id, x, y, row });
+    /** Escape in a name box: back to the row it came from. */
+    const cancelBox = (viaKey: boolean) => {
+      if (viaKey) focusRow(n.id);
+      stopEditing();
+    };
     const menuProps = menuRow
       ? {
           role: "group",
           tabIndex: 0,
+          "data-folder": n.id,
           "aria-label": `Folder ${n.id}`,
           "aria-keyshortcuts": "Shift+F10",
           onContextMenu: (e: MouseEvent<HTMLDivElement>) => {
@@ -306,9 +355,10 @@ export default function FeatureTree({
             <NameBox
               label={`New name for ${n.id}`}
               initial={n.name}
-              hold={confirm !== null || busy}
+              hold={confirm !== null}
+              busy={busy}
               onSubmit={(name) => void askRename(n.id, name, n.name)}
-              onCancel={stopEditing}
+              onCancel={cancelBox}
             />
           ) : (
             <span
@@ -338,9 +388,10 @@ export default function FeatureTree({
                   <NameBox
                     label={`New folder name under ${n.id}`}
                     initial=""
-                    hold={busy}
+                    hold={false}
+                    busy={busy}
                     onSubmit={(name) => void create(n.id, name)}
-                    onCancel={stopEditing}
+                    onCancel={cancelBox}
                   />
                 </div>
                 {error && <p className="ml-7 text-xs text-danger">{error}</p>}
@@ -353,7 +404,7 @@ export default function FeatureTree({
   };
 
   return (
-    <div className="overflow-hidden rounded-lg border border-border bg-surface">
+    <div ref={tree} className="overflow-hidden rounded-lg border border-border bg-surface">
       <div aria-hidden className="flex items-center gap-1.5 border-b border-border bg-surface-2 px-3 py-2 text-xs font-medium text-muted">
         <span className="min-w-0 flex-1">Folder</span>
         <span className="w-14 shrink-0 text-right">Specs</span>
@@ -371,7 +422,8 @@ export default function FeatureTree({
           onClose={() => setMenu(null)}
           actions={[
             {
-              label: "New folder",
+              label: "New feature folder",
+              title: "Makes a feature folder, with specs and test-cases folders inside it.",
               icon: <IconAdd aria-hidden />,
               onSelect: () => {
                 setRenaming(null);
@@ -399,6 +451,7 @@ export default function FeatureTree({
           error={error}
           onConfirm={() => void rename(confirm, true)}
           onCancel={() => {
+            if (busy) return;
             setConfirm(null);
             setError("");
           }}

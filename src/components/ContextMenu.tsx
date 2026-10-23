@@ -5,6 +5,8 @@ import { cn } from "../lib/cn";
 export type ContextAction = {
   label: string;
   icon?: ReactNode;
+  /** A tooltip saying more than the label does. */
+  title?: string;
   onSelect: () => void;
 };
 
@@ -117,6 +119,7 @@ export default function ContextMenu({
           key={a.label}
           type="button"
           role="menuitem"
+          title={a.title}
           className={cn(
             "flex w-full items-center gap-2 whitespace-nowrap rounded px-3 py-1.5 text-left text-xs font-medium text-text transition-colors focus-visible:outline-none [&_svg]:size-3.5 [&_svg]:shrink-0",
             "hover:bg-accent-soft hover:text-accent focus-visible:bg-accent-soft focus-visible:text-accent",
