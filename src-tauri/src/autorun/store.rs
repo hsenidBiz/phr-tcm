@@ -216,6 +216,15 @@ pub fn check_scripts(scripts: &[CaseScript]) -> Result<(), String> {
                         sc.case_id, step.step_number, i + 1
                     ));
                 }
+                // A guard's own validation refuses any check inside it; the sharper sentence for a timing
+                // key comes first.
+                if matches!(
+                    action,
+                    crate::browser::actions::Action::WhenVisible { .. }
+                        | crate::browser::actions::Action::RepeatWhileVisible { .. }
+                ) {
+                    check_response_timings(sc.case_id, step, i, action)?;
+                }
                 if let Err(why) = action.validate() {
                     return Err(format!(
                         "case {} step {} action {}: {why}",
@@ -224,6 +233,7 @@ pub fn check_scripts(scripts: &[CaseScript]) -> Result<(), String> {
                         i + 1
                     ));
                 }
+                check_response_timings(sc.case_id, step, i, action)?;
                 match action {
                     crate::browser::actions::Action::RememberUrl { name } => {
                         noted.insert(name.as_str());
@@ -242,6 +252,64 @@ pub fn check_scripts(scripts: &[CaseScript]) -> Result<(), String> {
                 }
             }
         }
+    }
+    Ok(())
+}
+
+/// Whether an `expect_response` carries any of the three timing keys.
+fn has_timing_key(a: &crate::browser::actions::Action) -> bool {
+    use crate::browser::actions::Action;
+    matches!(a, Action::ExpectResponse { not_before_ms, started_within_ms, same_document, .. }
+        if not_before_ms.is_some() || started_within_ms.is_some() || *same_document)
+}
+
+/// Where `not_before_ms`, `started_within_ms` and `same_document` may go: on an `expect_response` of the
+/// step itself (a guard may never run), a timing after an action that sends the request, and
+/// `same_document` in a step that loads no new page before the check.
+fn check_response_timings(case_id: i32, step: &StepScript, i: usize, action: &crate::browser::actions::Action) -> Result<(), String> {
+    use crate::browser::actions::Action;
+    let n = step.step_number;
+    let at = i + 1;
+    let (guard, then) = match action {
+        Action::WhenVisible { then, .. } => ("when_visible", then),
+        Action::RepeatWhileVisible { then, .. } => ("repeat_while_visible", then),
+        Action::ExpectResponse { not_before_ms, started_within_ms, same_document, .. } => {
+            if (not_before_ms.is_some() || started_within_ms.is_some())
+                && !step.actions[..i].iter().any(crate::autorun::api_checks::times_from)
+            {
+                return Err(format!(
+                    "case {case_id} step {n} action {at}: not_before_ms and started_within_ms time the request from the action before it in its step - put the action that sends it (a fill, a click, a press_key) before this expect_response in the same step"
+                ));
+            }
+            if *same_document {
+                let loads = step.actions[..i].iter().enumerate().find(|(_, a)| {
+                    matches!(
+                        a,
+                        Action::Navigate { .. }
+                            | Action::Reload
+                            | Action::SignIn { .. }
+                            | Action::ReturnToArea { .. }
+                            | Action::OpenTab { .. }
+                            | Action::SwitchTab { .. }
+                            | Action::CloseTab { .. }
+                    )
+                });
+                if let Some((j, other)) = loads {
+                    return Err(format!(
+                        "case {case_id} step {n} action {at}: same_document checks the step loads no new page, and action {} of this step ({}) does",
+                        j + 1,
+                        crate::autorun::patterns::action_kind(other)
+                    ));
+                }
+            }
+            return Ok(());
+        }
+        _ => return Ok(()),
+    };
+    if then.iter().any(has_timing_key) {
+        return Err(format!(
+            "case {case_id} step {n} action {at}: not_before_ms, started_within_ms and same_document go on an expect_response of the step itself, not inside {guard}"
+        ));
     }
     Ok(())
 }

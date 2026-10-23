@@ -44,7 +44,7 @@ fn the_guide_names_every_action_the_executor_can_run() {
         Action::ExpectNoChange { selector: "s".into(), region: None, within_ms: None },
         Action::SignIn { account: "a".into() },
         Action::Upload { selector: "s".into(), file: "f.pdf".into() },
-        Action::ExpectResponse { method: None, url_contains: "/x".into(), status: 200, json: None, timeout_ms: None, stray: Default::default() },
+        Action::ExpectResponse { method: None, url_contains: "/x".into(), status: 200, json: None, timeout_ms: None, not_before_ms: None, started_within_ms: None, same_document: false, stray: Default::default() },
         Action::ApiRequest { path: "/api/x".into(), query: Default::default(), expect: Default::default(), stray: Default::default() },
         Action::WhenVisible { selector: "s".into(), within_ms: None, then: vec![Action::Click { selector: "s".into() }] },
         Action::RepeatWhileVisible { selector: v2_lib::browser::locator::Target::One(v2_lib::browser::locator::LocatorStep { css: Some(".delete".into()), ..Default::default() }), max: Some(3), except: vec![], then: vec![Action::Click { selector: "s".into() }] },

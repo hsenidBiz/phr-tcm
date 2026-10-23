@@ -1452,6 +1452,61 @@ fn a_same_as_needs_an_earlier_remember_url() {
     }
 }
 
+/// A one-case, one-step script with these actions.
+fn timing_script(actions: serde_json::Value) -> CaseScript {
+    serde_json::from_value(serde_json::json!({ "case_id": 7, "title": "t",
+        "steps": [{ "step_number": 1, "actions": actions }] })).unwrap()
+}
+
+#[test]
+fn a_timed_check_needs_an_action_before_it() {
+    let fill = serde_json::json!({ "kind": "fill", "selector": "#a", "value": "x" });
+    let press = serde_json::json!({ "kind": "press_key", "key": "Enter" });
+    let visible = serde_json::json!({ "kind": "expect_visible", "selector": "#a" });
+    let nb = serde_json::json!({ "kind": "expect_response", "url_contains": "/api/x", "not_before_ms": 600 });
+    let sw = serde_json::json!({ "kind": "expect_response", "url_contains": "/api/x", "started_within_ms": 300 });
+    let refused = "case 7 step 1 action {i}: not_before_ms and started_within_ms time the request from the action before it in its step - put the action that sends it (a fill, a click, a press_key) before this expect_response in the same step";
+
+    let err = v2_lib::autorun::store::check_scripts(&[timing_script(serde_json::json!([nb.clone()]))]).unwrap_err();
+    assert_eq!(err, refused.replace("{i}", "1"));
+    // A check is not an action to time from.
+    let err = v2_lib::autorun::store::check_scripts(&[timing_script(serde_json::json!([visible, nb.clone()]))]).unwrap_err();
+    assert_eq!(err, refused.replace("{i}", "2"));
+    assert_eq!(v2_lib::autorun::store::check_scripts(&[timing_script(serde_json::json!([fill, nb]))]), Ok(()));
+    assert_eq!(v2_lib::autorun::store::check_scripts(&[timing_script(serde_json::json!([press, sw]))]), Ok(()));
+}
+
+#[test]
+fn same_document_refuses_a_step_that_loads_a_page() {
+    let same = serde_json::json!({ "kind": "expect_response", "url_contains": "/api/x", "same_document": true });
+    let click = serde_json::json!({ "kind": "click", "selector": "#a" });
+    let reload = serde_json::json!({ "kind": "reload" });
+    let err = v2_lib::autorun::store::check_scripts(&[timing_script(serde_json::json!([reload, click.clone(), same.clone()]))])
+        .unwrap_err();
+    assert_eq!(
+        err,
+        "case 7 step 1 action 3: same_document checks the step loads no new page, and action 1 of this step (reload) does"
+    );
+    assert_eq!(v2_lib::autorun::store::check_scripts(&[timing_script(serde_json::json!([click, same]))]), Ok(()));
+}
+
+#[test]
+fn a_timed_check_inside_a_guard_is_refused() {
+    let timed = serde_json::json!({ "kind": "expect_response", "url_contains": "/api/x", "started_within_ms": 300 });
+    let click = serde_json::json!({ "kind": "click", "selector": "#a" });
+    for (kind, extra) in [("when_visible", serde_json::json!({})), ("repeat_while_visible", serde_json::json!({ "max": 3 }))] {
+        let mut guard = serde_json::json!({ "kind": kind, "selector": { "css": "#b" }, "then": [timed.clone()] });
+        for (k, v) in extra.as_object().unwrap() {
+            guard[k] = v.clone();
+        }
+        let err = v2_lib::autorun::store::check_scripts(&[timing_script(serde_json::json!([click.clone(), guard]))]).unwrap_err();
+        assert_eq!(
+            err,
+            format!("case 7 step 1 action 2: not_before_ms, started_within_ms and same_document go on an expect_response of the step itself, not inside {kind}")
+        );
+    }
+}
+
 /// A one-step script whose step carries `unchecked` and these actions.
 fn unchecked_script(actions: serde_json::Value, unchecked: serde_json::Value) -> CaseScript {
     serde_json::from_value(serde_json::json!({ "case_id": 7, "title": "t",

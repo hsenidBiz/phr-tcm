@@ -66,6 +66,9 @@ fn expect(method: Option<&str>, url_contains: &str, status: u16, json: Option<Va
         status,
         json,
         timeout_ms,
+        not_before_ms: None,
+        started_within_ms: None,
+        same_document: false,
         stray: Default::default(),
     }
 }

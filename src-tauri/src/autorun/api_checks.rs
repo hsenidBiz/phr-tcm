@@ -624,6 +624,12 @@ async fn look<D: Driver>(d: &mut D) -> Result<Value, CdpError> {
     d.call("Runtime.evaluate", json!({ "expression": "1", "returnByValue": true })).await
 }
 
+/// Whether an earlier action of a step is one a timed `expect_response` can be timed from: it may change
+/// the page, and it is not an `api_request` (that sends its own request and no input).
+pub fn times_from(a: &Action) -> bool {
+    crate::autorun::runner::changes_the_page(a) && !matches!(a, Action::ApiRequest { .. })
+}
+
 /// Carry out an `expect_response`, looking only at requests that started in the step (`step.mark` onwards).
 /// It takes the step's oldest matching request no earlier check took, records it in `step.taken`, and ends
 /// its pass or failure sentence with which request that was and after which action it was sent.

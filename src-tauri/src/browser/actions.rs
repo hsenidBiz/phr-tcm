@@ -205,6 +205,16 @@ pub enum Action {
         json: Option<Value>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         timeout_ms: Option<u32>,
+        /// The request must have started at least this many ms after the action before this check in its
+        /// step finished sending its input.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        not_before_ms: Option<u32>,
+        /// The request must have started within this many ms of that same moment.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        started_within_ms: Option<u32>,
+        /// The step must load no new document: the page's top frame is the one it was at the step's start.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        same_document: bool,
         /// Any other key the script carried - see `Stray`.
         #[serde(flatten)]
         #[specta(skip)]
@@ -1052,7 +1062,7 @@ fn refuse_stray(kind: &str, stray: &Stray) -> Result<(), String> {
         ("api_request", _) => format!("api_request has no \"{shown}\" - it takes path, query and expect"),
         (_, "expect") => "expect_response takes status and json directly, not under \"expect\"".to_string(),
         _ => format!(
-            "expect_response has no \"{shown}\" - it takes method, url_contains, status, json and timeout_ms"
+            "expect_response has no \"{shown}\" - it takes method, url_contains, status, json, timeout_ms, not_before_ms, started_within_ms and same_document"
         ),
     })
 }
@@ -1480,7 +1490,7 @@ impl Action {
                 Err(format!("upload: {}", crate::test_files::bad_name(file)))
             }
             Action::Upload { selector, .. } => selector.validate(),
-            Action::ExpectResponse { method, url_contains, status, stray, .. } => {
+            Action::ExpectResponse { method, url_contains, status, timeout_ms, not_before_ms, started_within_ms, stray, .. } => {
                 refuse_stray("expect_response", stray)?;
                 if url_contains.trim().is_empty() {
                     return Err("expect_response needs url_contains".to_string());
@@ -1494,7 +1504,27 @@ impl Action {
                         return Err(format!("expect_response method \"{m}\" is not an HTTP method"));
                     }
                 }
-                check_status(*status)
+                check_status(*status)?;
+                if *not_before_ms == Some(0) {
+                    return Err("expect_response not_before_ms must be more than 0".to_string());
+                }
+                if *started_within_ms == Some(0) {
+                    return Err("expect_response started_within_ms must be more than 0".to_string());
+                }
+                if let (Some(nb), Some(sw)) = (not_before_ms, started_within_ms) {
+                    if nb >= sw {
+                        return Err("expect_response not_before_ms must be less than started_within_ms".to_string());
+                    }
+                }
+                if let (Some(nb), Some(t)) = (not_before_ms, timeout_ms) {
+                    if nb >= t {
+                        return Err(
+                            "expect_response not_before_ms must be less than timeout_ms: the check waits timeout_ms for the request"
+                                .to_string(),
+                        );
+                    }
+                }
+                Ok(())
             }
             Action::ApiRequest { path, expect, stray, .. } => {
                 refuse_stray("api_request", stray)?;
