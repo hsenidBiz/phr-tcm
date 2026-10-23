@@ -359,6 +359,21 @@ pub async fn route(
     body: &str,
     version: &str,
 ) -> (u16, String) {
+    route_as(&crate::autorun::agents::Caller::Default, ctx, client, method, target, body, version).await
+}
+
+/// `route` for one caller: what the listener calls, with the caller read from
+/// the request's `x-tcm-agent*` headers. `route` is this for the default
+/// caller (an older proxy, a test, the person).
+pub async fn route_as(
+    caller: &crate::autorun::agents::Caller,
+    ctx: &BridgeContext,
+    client: Option<&crate::ado::AdoClient>,
+    method: &str,
+    target: &str,
+    body: &str,
+    version: &str,
+) -> (u16, String) {
     let path = target.split_once('?').map(|(p, _)| p).unwrap_or(target);
     // Every route that belongs to a module is answered only while that
     // module is on, and the check runs ONCE here, by path, before the
@@ -380,6 +395,16 @@ pub async fn route(
             })
             .to_string(),
         ),
+        // A proxy saying goodbye as it exits. It belongs to no module, so
+        // the guard above lets it through even with Auto Run off. Only an
+        // agent's goodbye ends anything; the default caller is answered and
+        // nothing more.
+        ("POST", "/agent-bye") => {
+            if let crate::autorun::agents::Caller::Agent(key) = caller {
+                crate::autorun::agents::note_bye(&key.id, crate::autorun::agents::now_ms());
+            }
+            (200, "{}".to_string())
+        }
         ("POST", "/optimize") => optimize_json(body, target, ctx),
         ("POST", "/transform") => transform_json(body, ctx),
         ("POST", "/validate") => (200, validate_json(body, target, ctx, client).await),
@@ -13919,8 +13944,8 @@ pub async fn start_listener(
                     if n == 0 { return; }
                     used += n;
                     match parse_http(&buf[..used]) {
-                        Parsed::Complete { method, target, token, body, proxy_version, tool } => {
-                            break (method, target, token, body, proxy_version, tool)
+                        Parsed::Complete { method, target, token, body, proxy_version, tool, agent } => {
+                            break (method, target, token, body, proxy_version, tool, agent)
                         }
                         // Answer rather than close in silence: the proxy on
                         // the other end is waiting on a response, and "the
@@ -13941,7 +13966,7 @@ pub async fn start_listener(
                         return;
                     }
                 };
-                let (method, target, tok, body, proxy_version, tool) = parsed;
+                let (method, target, tok, body, proxy_version, tool, agent) = parsed;
                 let (status, payload) = if tok.as_deref() != Some(state.token.as_str()) {
                     (401, String::new())
                 } else {
@@ -13951,9 +13976,13 @@ pub async fn start_listener(
                         Some(f) => f().await,
                         None => None,
                     };
+                    // Who is calling is known only after the token check: a
+                    // request without the token registers nobody.
+                    let caller = agent.caller();
+                    let label = crate::autorun::agents::note_call(&caller, &agent, crate::autorun::agents::now_ms());
                     let (status, payload) =
-                        route(&ctx, client.as_ref(), &method, &target, &body, &state.version).await;
-                    if let Some(line) = tool_call_line(tool.as_deref(), &target, status, &payload) {
+                        route_as(&caller, &ctx, client.as_ref(), &method, &target, &body, &state.version).await;
+                    if let Some(line) = tool_call_line_for(tool.as_deref(), label.as_deref(), &target, status, &payload) {
                         crate::applog::debug(line);
                     }
                     (status, payload)
@@ -14000,6 +14029,10 @@ pub enum Parsed {
         /// The `x-tcm-tool` header: the MCP tool this request was made for
         /// (`mcp::TOOL_HEADER`). None outside a tool call.
         tool: Option<String>,
+        /// The `x-tcm-agent*` headers (`mcp::AGENT_HEADER` and its three
+        /// companions), each None when absent or unreadable. A bad value is
+        /// ignored, never a reason to refuse the request.
+        agent: crate::autorun::agents::AgentHeaders,
     },
     Incomplete,
     Malformed,
@@ -14031,6 +14064,7 @@ pub fn parse_http(raw: &[u8]) -> Parsed {
     let mut token = None;
     let mut proxy_version = None;
     let mut tool = None;
+    let mut agent = crate::autorun::agents::AgentHeaders::default();
     let mut content_len = 0usize;
     for line in lines {
         // A header we cannot read is not a reason to reject the request -
@@ -14046,6 +14080,19 @@ pub fn parse_http(raw: &[u8]) -> Parsed {
         }
         if k.eq_ignore_ascii_case(crate::mcp::TOOL_HEADER) {
             tool = Some(v.to_string());
+        }
+        if k.eq_ignore_ascii_case(crate::mcp::AGENT_HEADER) {
+            agent.id = Some(v.to_string());
+        }
+        if k.eq_ignore_ascii_case(crate::mcp::AGENT_PID_HEADER) {
+            // Not a number: left out, the request is still served.
+            agent.pid = v.parse().ok();
+        }
+        if k.eq_ignore_ascii_case(crate::mcp::AGENT_CLIENT_HEADER) {
+            agent.client = Some(v.to_string());
+        }
+        if k.eq_ignore_ascii_case(crate::mcp::AGENT_NAME_HEADER) {
+            agent.name = Some(v.to_string());
         }
         if k.eq_ignore_ascii_case("content-length") {
             match v.parse() {
@@ -14065,6 +14112,7 @@ pub fn parse_http(raw: &[u8]) -> Parsed {
         body: String::from_utf8_lossy(&raw[body_start..end]).to_string(),
         proxy_version,
         tool,
+        agent,
     }
 }
 
@@ -14085,6 +14133,19 @@ pub fn parse_http(raw: &[u8]) -> Parsed {
 /// `get_guide` part sent with another topic, a quirk or cookie shape), a
 /// `get_guide` topic the proxy refuses, and a call to a retired tool name.
 pub fn tool_call_line(tool: Option<&str>, target: &str, status: u16, payload: &str) -> Option<String> {
+    tool_call_line_for(tool, None, target, status, payload)
+}
+
+/// `tool_call_line` for a caller with a label: "AI tool {tool} ({label}):
+/// {outcome}". With no label it is exactly `tool_call_line`'s line. The label
+/// is the registry's ("Assistant 2"), never an id or a pid.
+pub fn tool_call_line_for(
+    tool: Option<&str>,
+    label: Option<&str>,
+    target: &str,
+    status: u16,
+    payload: &str,
+) -> Option<String> {
     static NAMES: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
     let tool = tool?;
     if !NAMES.get_or_init(crate::mcp::all_tool_names).iter().any(|t| t == tool) {
@@ -14102,7 +14163,10 @@ pub fn tool_call_line(tool: Option<&str>, target: &str, status: u16, payload: &s
     } else {
         format!("tool error, HTTP {status}")
     };
-    Some(format!("AI tool {tool}: {outcome}"))
+    Some(match label {
+        Some(label) => format!("AI tool {tool} ({label}): {outcome}"),
+        None => format!("AI tool {tool}: {outcome}"),
+    })
 }
 
 /// Logs - once per proxy version, not once per call - an MCP proxy that is

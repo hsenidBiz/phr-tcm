@@ -26,6 +26,20 @@ fn call(id: &str, name: Option<&str>, now: u64) -> String {
     agents::note_call(&h.caller(), &h, now).expect("an agent is registered")
 }
 
+/// The check the sweep is given: this process runs, one that was waited for
+/// does not, and pid 0 is never a process.
+#[cfg(windows)]
+#[test]
+fn process_running_knows_this_process_and_an_ended_one() {
+    use v2_lib::browser::tree::process_running;
+    assert!(process_running(std::process::id()));
+    assert!(!process_running(0));
+    let mut child = std::process::Command::new("cmd").args(["/c", "exit", "0"]).spawn().unwrap();
+    let pid = child.id();
+    child.wait().unwrap();
+    assert!(!process_running(pid));
+}
+
 fn key(id: &str, name: Option<&str>) -> AgentKey {
     AgentKey { id: id.to_string(), name: name.map(str::to_string) }
 }

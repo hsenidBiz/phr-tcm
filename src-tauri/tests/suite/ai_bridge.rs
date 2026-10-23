@@ -2898,6 +2898,164 @@ fn parse_http_reads_the_proxys_version() {
     }
 }
 
+const AGENT_ID: &str = "0123456789abcdef0123456789abcdef";
+
+/// The proxy names its caller on every request: an id, its pid, its client
+/// and (for a subagent) its name - read, not judged, here.
+#[test]
+fn parse_http_reads_the_agent_headers() {
+    use v2_lib::ai_bridge::{parse_http, Parsed};
+    use v2_lib::autorun::agents::AgentHeaders;
+    let raw = format!(
+        "GET /ping HTTP/1.1\r\nx-bridge-token: t\r\nX-TCM-Agent: {AGENT_ID}\r\nx-tcm-agent-pid: 4242\r\n\
+         x-tcm-agent-client: claude-code\r\nX-Tcm-Agent-Name: writer-1\r\n\r\n"
+    );
+    match parse_http(raw.as_bytes()) {
+        Parsed::Complete { agent, .. } => assert_eq!(
+            agent,
+            AgentHeaders {
+                id: Some(AGENT_ID.to_string()),
+                pid: Some(4242),
+                client: Some("claude-code".to_string()),
+                name: Some("writer-1".to_string()),
+            }
+        ),
+        _ => panic!("expected a complete request"),
+    }
+}
+
+#[test]
+fn parse_http_without_agent_headers_gives_none() {
+    use v2_lib::ai_bridge::{parse_http, Parsed};
+    match parse_http(b"GET /ping HTTP/1.1\r\nx-bridge-token: t\r\n\r\n") {
+        Parsed::Complete { agent, .. } => assert_eq!(agent, v2_lib::autorun::agents::AgentHeaders::default()),
+        _ => panic!("expected a complete request"),
+    }
+}
+
+/// A pid that is not a number costs the agent its pid, never the request.
+#[test]
+fn a_bad_pid_header_is_ignored_not_refused() {
+    use v2_lib::ai_bridge::{parse_http, Parsed};
+    let raw = format!("GET /ping HTTP/1.1\r\nx-bridge-token: t\r\nx-tcm-agent: {AGENT_ID}\r\nx-tcm-agent-pid: abc\r\n\r\n");
+    match parse_http(raw.as_bytes()) {
+        Parsed::Complete { agent, .. } => {
+            assert_eq!(agent.pid, None);
+            assert_eq!(agent.id.as_deref(), Some(AGENT_ID));
+        }
+        _ => panic!("a bad pid refused the request"),
+    }
+}
+
+#[test]
+fn tool_call_line_names_the_label() {
+    use v2_lib::ai_bridge::{tool_call_line, tool_call_line_for};
+    assert_eq!(
+        tool_call_line_for(Some("try_autorun_action"), Some("Assistant 2"), "/autorun-try", 200, "").as_deref(),
+        Some("AI tool try_autorun_action (Assistant 2): ok")
+    );
+    assert_eq!(
+        tool_call_line_for(Some("try_autorun_action"), Some("Assistant 2"), "/autorun-try", 503, "").as_deref(),
+        Some("AI tool try_autorun_action (Assistant 2): tool error, HTTP 503")
+    );
+    // No label: exactly the line there has always been.
+    assert_eq!(
+        tool_call_line_for(Some("try_autorun_action"), None, "/autorun-try", 200, ""),
+        tool_call_line(Some("try_autorun_action"), "/autorun-try", 200, "")
+    );
+    assert_eq!(tool_call_line_for(None, Some("Assistant 1"), "/validate", 200, ""), None);
+}
+
+#[tokio::test]
+async fn route_as_the_default_caller_answers_as_route() {
+    use v2_lib::autorun::agents::Caller;
+    let a = route(&ctx(), None, "GET", "/ping", "", "1.10.3").await;
+    let b = v2_lib::ai_bridge::route_as(&Caller::Default, &ctx(), None, "GET", "/ping", "", "1.10.3").await;
+    assert_eq!(a, b);
+    assert_eq!(a.0, 200);
+}
+
+/// A request that carries the token and the agent headers registers its
+/// caller; one without the token registers nobody.
+#[tokio::test]
+async fn the_listener_registers_the_caller() {
+    let _agents = crate::serial::agents();
+    v2_lib::autorun::agents::clear();
+    let shared = v2_lib::ai_bridge::BridgeState::new(ctx(), "0.0.0-test".into());
+    let (port, token) = v2_lib::ai_bridge::start_listener(Arc::clone(&shared), None, None).await.unwrap();
+    async fn send(port: u16, req: String) -> String {
+        let mut s = tokio::net::TcpStream::connect(("127.0.0.1", port)).await.unwrap();
+        s.write_all(req.as_bytes()).await.unwrap();
+        let mut buf = Vec::new();
+        s.read_to_end(&mut buf).await.unwrap();
+        String::from_utf8_lossy(&buf).to_string()
+    }
+    let headers = format!(
+        "x-tcm-agent: {AGENT_ID}\r\nx-tcm-agent-pid: 4242\r\nx-tcm-agent-client: claude-code\r\nx-tcm-agent-name: writer-1\r\n"
+    );
+    // Wrong token: refused, and nobody is registered.
+    let resp = send(
+        port,
+        format!("GET /ping HTTP/1.1\r\nHost: x\r\nx-bridge-token: wrong\r\n{headers}Connection: close\r\n\r\n"),
+    )
+    .await;
+    assert!(resp.starts_with("HTTP/1.1 401"), "got: {resp}");
+    assert!(v2_lib::autorun::agents::live().is_empty());
+
+    let resp = send(
+        port,
+        format!("GET /ping HTTP/1.1\r\nHost: x\r\nx-bridge-token: {token}\r\n{headers}Connection: close\r\n\r\n"),
+    )
+    .await;
+    assert!(resp.starts_with("HTTP/1.1 200"), "got: {resp}");
+    let live = v2_lib::autorun::agents::live();
+    assert_eq!(live.len(), 1, "{live:?}");
+    assert_eq!(live[0].label, "Assistant 1");
+    assert_eq!(live[0].client.as_deref(), Some("claude-code"));
+    assert_eq!(live[0].pid, Some(4242));
+
+    // A request with no agent headers is the default caller: not registered.
+    let resp = send(
+        port,
+        format!("GET /ping HTTP/1.1\r\nHost: x\r\nx-bridge-token: {token}\r\nConnection: close\r\n\r\n"),
+    )
+    .await;
+    assert!(resp.starts_with("HTTP/1.1 200"), "got: {resp}");
+    assert_eq!(v2_lib::autorun::agents::live().len(), 1);
+    v2_lib::autorun::agents::clear();
+}
+
+/// A proxy's goodbye is answered whatever modules are on, ends only an
+/// agent's entries, and is harmless from the default caller.
+#[tokio::test]
+async fn agent_bye_marks_the_agent_gone_even_with_auto_run_off() {
+    use v2_lib::autorun::agents::{self, AgentHeaders, Caller};
+    let _agents = crate::serial::agents();
+    agents::clear();
+    // Auto Run (and every other module) off: the guard has nothing to say.
+    let none: std::collections::BTreeSet<v2_lib::modules::Module> = Default::default();
+    assert_eq!(v2_lib::ai_bridge::module_guard("/agent-bye", "", &none), None);
+
+    let h = AgentHeaders { id: Some(AGENT_ID.to_string()), pid: Some(4242), client: None, name: None };
+    let caller = h.caller();
+    agents::note_call(&caller, &h, 1_000);
+    let Caller::Agent(k) = caller.clone() else { panic!("a valid id is an agent") };
+    assert!(agents::is_live(&k));
+
+    let (status, body) = v2_lib::ai_bridge::route_as(&caller, &ctx(), None, "POST", "/agent-bye", "", "1.10.3").await;
+    assert_eq!((status, body.as_str()), (200, "{}"));
+    assert!(!agents::is_live(&k));
+
+    // The default caller is answered and ends nothing.
+    agents::note_call(&caller, &h, 2_000);
+    assert!(agents::is_live(&k));
+    let (status, body) =
+        v2_lib::ai_bridge::route_as(&Caller::Default, &ctx(), None, "POST", "/agent-bye", "", "1.10.3").await;
+    assert_eq!((status, body.as_str()), (200, "{}"));
+    assert!(agents::is_live(&k));
+    agents::clear();
+}
+
 /// Every MCP tool call writes ONE app-log line: the tool's name and how the
 /// call ended (ok, refused, or the HTTP status of a tool error) - and
 /// nothing of its arguments, its answer, an id or a path. Driven end to end:

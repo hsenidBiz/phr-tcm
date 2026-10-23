@@ -27,6 +27,9 @@ pub const FORGET_AFTER_MS: u64 = 10 * 60 * 1000;
 /// released (`Sweep::past_grace`).
 pub const GONE_GRACE_MS: u64 = 60 * 1000;
 
+/// How often the app asks whether each agent's process still runs.
+pub const SWEEP_EVERY: std::time::Duration = std::time::Duration::from_secs(30);
+
 /// The longest name or client text kept.
 const MAX_TEXT: usize = 32;
 
@@ -141,6 +144,13 @@ fn free_number(entries: &[Entry], except: Option<usize>) -> u32 {
         n += 1;
     }
     n
+}
+
+/// The clock the registry is told, in milliseconds since the Unix epoch.
+pub fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX))
 }
 
 /// Record a call. The default caller is never kept (None). An agent's entry

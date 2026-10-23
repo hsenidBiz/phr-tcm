@@ -1710,7 +1710,7 @@ fn no_bridge_route_or_mcp_tool_writes_the_test_made_record() {
     let bridge = read("src/ai_bridge.rs");
     let mcp = read("src/mcp.rs");
 
-    let route_body = &bridge[bridge.find("pub async fn route(").unwrap()..];
+    let route_body = &bridge[bridge.find("pub async fn route_as(").unwrap()..];
     let route_body = &route_body[..route_body.find("\n}\n").unwrap()];
     let routes: Vec<&str> = route_body
         .split("(\"")

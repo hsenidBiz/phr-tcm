@@ -27,6 +27,15 @@ pub const PROXY_VERSION_HEADER: &str = "x-tcm-proxy-version";
 /// logged). Only the name: never an argument.
 pub const TOOL_HEADER: &str = "x-tcm-tool";
 
+/// The headers a proxy names its caller in on every bridge request: an id it
+/// made at start, its process id, its client's name, and the calling
+/// subagent's `agent` name. The bridge turns them into a `Caller`
+/// (`autorun::agents`). None of them is ever logged or shown.
+pub const AGENT_HEADER: &str = "x-tcm-agent";
+pub const AGENT_PID_HEADER: &str = "x-tcm-agent-pid";
+pub const AGENT_CLIENT_HEADER: &str = "x-tcm-agent-client";
+pub const AGENT_NAME_HEADER: &str = "x-tcm-agent-name";
+
 thread_local! {
     /// The tool `tools_call` is answering on this thread, for `TOOL_HEADER`.
     static CALLING: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
