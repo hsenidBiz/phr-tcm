@@ -13898,6 +13898,25 @@ pub fn handshake_path() -> std::path::PathBuf {
     std::env::temp_dir().join("tcm-v2-mcp-bridge.json")
 }
 
+/// After an answer sent before the request was all read (a body over the cap): half-closes the socket so the
+/// caller sees the answer end, then reads and discards what is still coming, at most 1 MiB and 2 s. Closing
+/// with unread bytes makes Windows reset the connection, and the caller then reads the reset, not the answer.
+async fn drain_unread_request(sock: &mut tokio::net::TcpStream) {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let _ = sock.shutdown().await;
+    let drain = async {
+        let mut sink = [0u8; 8192];
+        let mut drained = 0usize;
+        while drained < 1024 * 1024 {
+            match sock.read(&mut sink).await {
+                Ok(0) | Err(_) => break,
+                Ok(n) => drained += n,
+            }
+        }
+    };
+    let _ = tokio::time::timeout(std::time::Duration::from_secs(2), drain).await;
+}
+
 /// Bind 127.0.0.1:0, optionally write the handshake file, serve forever on
 /// the tokio runtime. Returns (port, token). Requests: tiny HTTP/1.1, one
 /// request per connection, 64 KiB body cap (and 1 KiB more for the headers). `handshake` is Some in the real
@@ -13977,6 +13996,7 @@ pub async fn start_listener(
                         let _ = sock
                             .write_all(b"HTTP/1.1 413 Payload Too Large\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
                             .await;
+                        drain_unread_request(&mut sock).await;
                         return;
                     }
                 };
