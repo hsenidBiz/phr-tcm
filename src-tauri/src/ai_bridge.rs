@@ -7368,7 +7368,7 @@ async fn save_discovered_area<B: DiscoveryBrowser>(
             let mut updated = old.clone();
             updated.preferences = path.preferences.clone();
             updated.mode = path.mode.clone();
-            if let Err(why) = nav::put_path(root, organization, project, updated) {
+            if let Err(why) = nav::put_path_if(root, organization, project, updated, nav::AreaExpect::Was(old)) {
                 return (409, why);
             }
             stand_in_saved_area(d, p.discovery, p.signed_in.as_deref(), root, organization, project, kept.clone()).await;
@@ -7403,7 +7403,12 @@ async fn save_discovered_area<B: DiscoveryBrowser>(
             note.at.clone(),
             Some((path.preferences.clone(), path.mode.clone())),
         ),
-        _ => nav::put_path(root, organization, project, path),
+        // The area as it was read before the trips decides the write: an
+        // area saved or changed since is not written over.
+        _ => match existing.as_ref() {
+            Some(old) => nav::put_path_if(root, organization, project, path, nav::AreaExpect::Was(old)),
+            None => nav::put_path_if(root, organization, project, path, nav::AreaExpect::New),
+        },
     };
     if let Err(why) = written {
         return (409, why);
@@ -9855,17 +9860,24 @@ async fn autorun_order(ctx: &BridgeContext, client: Option<&crate::ado::AdoClien
     if !not_on_pbi.is_empty() {
         return (400, not_on_pbi.join("; "));
     }
-    // Appending keeps the saved order's other cases after the given ones.
-    let kept: Vec<i32> = match (append, crate::autorun::store::load_order(&root, o.pbi_id)) {
-        (true, Some(existing)) => {
-            crate::autorun::store::append_order(&existing, &o.case_ids).into_iter().filter(|id| !o.case_ids.contains(id)).collect()
-        }
-        _ => Vec::new(),
+    // The Azure DevOps read is done: only the file's read and write hold the
+    // order lock (never across an await), so another call's append cannot
+    // be read past and then overwritten here.
+    let (kept, saved): (Vec<i32>, Vec<i32>) = match crate::autorun::store::with_order_locked(|| {
+        // Appending keeps the saved order's other cases after the given ones.
+        let kept: Vec<i32> = match (append, crate::autorun::store::load_order(&root, o.pbi_id)) {
+            (true, Some(existing)) => crate::autorun::store::append_order(&existing, &o.case_ids)
+                .into_iter()
+                .filter(|id| !o.case_ids.contains(id))
+                .collect(),
+            _ => Vec::new(),
+        };
+        let saved: Vec<i32> = o.case_ids.iter().chain(&kept).copied().collect();
+        crate::autorun::store::save_order(&root, o.pbi_id, &saved).map(|()| (kept, saved))
+    }) {
+        Ok(both) => both,
+        Err(e) => return (500, format!("could not save the order: {e}")),
     };
-    let saved: Vec<i32> = o.case_ids.iter().chain(&kept).copied().collect();
-    if let Err(e) = crate::autorun::store::save_order(&root, o.pbi_id, &saved) {
-        return (500, format!("could not save the order: {e}"));
-    }
     let how = if append { "appended" } else { "replaced" };
     crate::applog::info(format!("AI set Auto Run's order for PBI {} ({how}): {} case(s)", o.pbi_id, saved.len()));
     let ids = |list: &[i32]| list.iter().map(|id| id.to_string()).collect::<Vec<_>>().join(", ");

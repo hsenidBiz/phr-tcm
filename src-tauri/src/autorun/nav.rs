@@ -450,12 +450,75 @@ pub fn keep_recorded_values(root: &Path, org: &str, project: &str, path: &mut Mo
 /// and module, in any case (Re-record). A new area whose name is taken by
 /// one under ANOTHER module is refused: names are unique per project. An
 /// area with no name is named after its module. Both are stored trimmed.
-pub fn put_path(root: &Path, org: &str, project: &str, mut path: ModulePath) -> Result<NavFile, String> {
+pub fn put_path(root: &Path, org: &str, project: &str, path: ModulePath) -> Result<NavFile, String> {
+    put_path_if(root, org, project, path, AreaExpect::Any)
+}
+
+/// What a save expects the areas file to hold under the area's name when it
+/// is written (`put_path_if`).
+#[derive(Debug, Clone, Copy)]
+pub enum AreaExpect<'a> {
+    /// No area of that name: a save that began with none.
+    New,
+    /// The area as the save read it before its browser trips.
+    Was(&'a ModulePath),
+    /// Whatever is there: add the area or replace the one of that name.
+    Any,
+}
+
+/// Said when an area changed (its clicks, where they arrive, or its module)
+/// between a save reading it and writing it.
+pub fn area_changed(name: &str) -> String {
+    format!("area {name} changed while it was being saved - nothing was saved; look at it again")
+}
+
+/// Said when a save that began with no area of its name finds one at the
+/// write.
+pub fn area_taken_meanwhile(name: &str) -> String {
+    format!("area {name} was saved by another call while this one was being saved - nothing was saved; look at it again")
+}
+
+/// Held around every load-change-save of the areas file, by the public
+/// writers only (never by `load_nav` or `save_nav`, never taken again while
+/// held, never across an await): two assistants saving areas at once would
+/// each read the same file, and the later write would drop the earlier
+/// area. It is coordination, not a cache.
+pub fn nav_lock() -> std::sync::MutexGuard<'static, ()> {
+    static L: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    L.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// `put_path`, but only if the file still holds what `expect` says, checked
+/// in the same hold of `nav_lock` as the write. `New` is refused
+/// (`area_taken_meanwhile`) when an area of that name exists now; `Was(e)`
+/// is refused (`area_changed`) unless an area of that name exists with e's
+/// clicks, where they arrive and module; `Any` is `put_path`.
+pub fn put_path_if(
+    root: &Path,
+    org: &str,
+    project: &str,
+    mut path: ModulePath,
+    expect: AreaExpect<'_>,
+) -> Result<NavFile, String> {
     path.module = path.module.trim().to_string();
     path.area = path.name().to_string();
+    let _one_writer = nav_lock();
     let mut nav = load_nav(root, org, project)?;
-    check_area_free(&nav, &path.area, &path.module)?;
     let key = module_key(&path.area);
+    let now = nav.modules.iter().find(|m| module_key(m.name()) == key);
+    match (expect, now) {
+        (AreaExpect::New, Some(_)) => return Err(area_taken_meanwhile(&path.area)),
+        (AreaExpect::Was(was), Some(now))
+            if now.clicks != was.clicks
+                || now.arrived != was.arrived
+                || module_key(&now.module) != module_key(&was.module) =>
+        {
+            return Err(area_changed(&path.area));
+        }
+        (AreaExpect::Was(_), None) => return Err(area_changed(&path.area)),
+        _ => {}
+    }
+    check_area_free(&nav, &path.area, &path.module)?;
     match nav.modules.iter_mut().find(|m| module_key(m.name()) == key) {
         Some(slot) => *slot = path,
         None => nav.modules.push(path),
@@ -467,6 +530,7 @@ pub fn put_path(root: &Path, org: &str, project: &str, mut path: ModulePath) -> 
 /// Remove the area of this name, ignoring case. The module's other areas
 /// stay.
 pub fn remove_path(root: &Path, org: &str, project: &str, area: &str) -> Result<NavFile, String> {
+    let _one_writer = nav_lock();
     let mut nav = load_nav(root, org, project)?;
     let key = module_key(area);
     nav.modules.retain(|m| module_key(m.name()) != key);
@@ -479,6 +543,7 @@ pub fn remove_path(root: &Path, org: &str, project: &str, area: &str) -> Result<
 /// list leaves the words already saved exactly as they were.
 pub fn set_save_words(root: &Path, org: &str, project: &str, words: &[String]) -> Result<NavFile, String> {
     let words = crate::browser::save_guard::check_words(words)?;
+    let _one_writer = nav_lock();
     let mut nav = load_nav(root, org, project)?;
     nav.save_words = words;
     save_nav(root, org, project, &nav)?;
@@ -487,6 +552,7 @@ pub fn set_save_words(root: &Path, org: &str, project: &str, words: &[String]) -
 
 /// Replace the project's protected baseline, tidied (`tidy_protected`).
 pub fn set_protected(root: &Path, org: &str, project: &str, records: &[ProtectedRecord]) -> Result<NavFile, String> {
+    let _one_writer = nav_lock();
     let mut nav = load_nav(root, org, project)?;
     nav.protected = tidy_protected(records);
     save_nav(root, org, project, &nav)?;
@@ -494,6 +560,7 @@ pub fn set_protected(root: &Path, org: &str, project: &str, records: &[Protected
 }
 
 pub fn set_direct_urls(root: &Path, org: &str, project: &str, allowed: bool) -> Result<NavFile, String> {
+    let _one_writer = nav_lock();
     let mut nav = load_nav(root, org, project)?;
     nav.direct_urls = allowed;
     save_nav(root, org, project, &nav)?;

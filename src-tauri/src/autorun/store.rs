@@ -1528,10 +1528,21 @@ pub fn append_order(existing: &[i32], given: &[i32]) -> Vec<i32> {
 /// (`merge_order`) so the rest of it is kept. With no saved order, it is
 /// saved as given.
 pub fn save_order_merged(root: &Path, pbi_id: i32, case_ids: &[i32]) -> Result<(), String> {
-    match load_order(root, pbi_id) {
+    with_order_locked(|| match load_order(root, pbi_id) {
         Some(existing) => save_order(root, pbi_id, &merge_order(&existing, case_ids)),
         None => save_order(root, pbi_id, case_ids),
-    }
+    })
+}
+
+/// Every read-change-write of an order file holds this: two assistants (or
+/// an assistant and the person) saving the order of one PBI at once would
+/// each read the same order, and the later save would drop the earlier
+/// one's cases. It is coordination, not a cache, and is never held across an
+/// await. Not reentrant: `f` must not call `save_order_merged`.
+pub fn with_order_locked<R>(f: impl FnOnce() -> R) -> R {
+    static L: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let _one_at_a_time = L.lock().unwrap_or_else(|e| e.into_inner());
+    f()
 }
 
 /// Remove Auto Run's own order for a PBI, so the suggested order is used

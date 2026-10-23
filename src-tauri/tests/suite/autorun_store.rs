@@ -1629,3 +1629,21 @@ fn a_cleanup_unchecked_is_one_sentence() {
     sc.steps[1].unchecked = Some("removes the record".into());
     v2_lib::autorun::store::check_scripts(&[sc]).unwrap();
 }
+
+#[test]
+fn order_saves_from_many_threads_lose_none() {
+    let dir = TempDir::new();
+    let root = dir.path().to_path_buf();
+    let threads: Vec<_> = (0..8)
+        .map(|i| {
+            let root = root.clone();
+            std::thread::spawn(move || v2_lib::autorun::store::save_order_merged(&root, 4242, &[i]).unwrap())
+        })
+        .collect();
+    for t in threads {
+        t.join().unwrap();
+    }
+    let mut held = load_order(&root, 4242).expect("an order was saved");
+    held.sort();
+    assert_eq!(held, (0..8).collect::<Vec<i32>>());
+}
