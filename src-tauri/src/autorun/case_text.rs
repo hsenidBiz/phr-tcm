@@ -111,13 +111,21 @@ impl CaseText {
     }
 }
 
-/// Every duration the text states: a number (digits, with an optional `.` or `,` and more digits),
-/// optional spaces, then a unit word. `ms`, `msec`, `msecs`, `millisecond` and `milliseconds` are ms;
-/// `s`, `sec`, `secs`, `second` and `seconds` are x 1000. Each is rounded to whole ms, so "800 ms",
-/// "800ms" and "0.8 s" all give 800. A number that sits against a letter ("q4 ms") is not one.
+/// Every duration the text states: a number (digits, with thousands separators ("1,000") and an optional `.`
+/// or `,` and more digits), optional spaces, then a unit word. `ms`, `msec`, `msecs`, `millisecond` and
+/// `milliseconds` are ms; `s`, `sec`, `secs`, `second` and `seconds` are x 1000. Each is rounded to whole ms,
+/// so "800 ms", "800ms" and "0.8 s" all give 800, and "1,000 ms" gives 1000. A range ("600 to 900 ms",
+/// "600-900 ms") states both ends, in the unit its last number carries. A number that sits against a letter
+/// ("q4 ms") is not one.
 pub fn stated_durations(folded: &str) -> BTreeSet<u64> {
     let chars: Vec<char> = folded.chars().collect();
     let mut out = BTreeSet::new();
+    let mut put = |n: f64, per_unit: f64| {
+        let ms = (n * per_unit).round();
+        if ms.is_finite() && (0.0..9.0e15).contains(&ms) {
+            out.insert(ms as u64);
+        }
+    };
     let mut i = 0;
     while i < chars.len() {
         if !chars[i].is_ascii_digit() {
@@ -125,42 +133,90 @@ pub fn stated_durations(folded: &str) -> BTreeSet<u64> {
             continue;
         }
         let start = i;
-        while i < chars.len() && chars[i].is_ascii_digit() {
+        let Some((first, end)) = read_number(&chars, i) else {
             i += 1;
-        }
-        if i + 1 < chars.len() && matches!(chars[i], '.' | ',') && chars[i + 1].is_ascii_digit() {
-            i += 1;
-            while i < chars.len() && chars[i].is_ascii_digit() {
-                i += 1;
-            }
-        }
-        let end = i;
+            continue;
+        };
+        i = end;
         if start > 0 && chars[start - 1].is_alphabetic() {
             continue;
         }
-        let mut j = end;
-        while j < chars.len() && chars[j] == ' ' {
-            j += 1;
+        if let Some((per_unit, _)) = read_unit(&chars, end) {
+            put(first, per_unit);
+            continue;
         }
-        let unit_start = j;
-        while j < chars.len() && chars[j].is_alphabetic() {
-            j += 1;
-        }
-        let unit: String = chars[unit_start..j].iter().collect();
-        let per_unit = match unit.as_str() {
-            "ms" | "msec" | "msecs" | "millisecond" | "milliseconds" => 1.0,
-            "s" | "sec" | "secs" | "second" | "seconds" => 1000.0,
-            _ => continue,
-        };
-        let number: String = chars[start..end].iter().map(|c| if *c == ',' { '.' } else { *c }).collect();
-        if let Ok(n) = number.parse::<f64>() {
-            let ms = (n * per_unit).round();
-            if ms.is_finite() && (0.0..9.0e15).contains(&ms) {
-                out.insert(ms as u64);
-            }
+        // A range: "600 to 900 ms", "600-900 ms". Both ends carry the unit the last one has.
+        let Some(second_at) = range_connector(&chars, end) else { continue };
+        let Some((second, second_end)) = read_number(&chars, second_at) else { continue };
+        if let Some((per_unit, _)) = read_unit(&chars, second_end) {
+            put(first, per_unit);
+            put(second, per_unit);
+            i = second_end;
         }
     }
     out
+}
+
+/// A number starting at `at`: digits, thousands separators (a `,` and exactly three digits), and a decimal part
+/// (a `.` or `,` and more digits). Its value and where it ends.
+fn read_number(chars: &[char], at: usize) -> Option<(f64, usize)> {
+    let digits = |from: usize| chars.get(from..).map_or(0, |rest| rest.iter().take_while(|c| c.is_ascii_digit()).count());
+    let mut i = at + digits(at);
+    if i == at {
+        return None;
+    }
+    let mut text: String = chars[at..i].iter().collect();
+    // "1,000": a comma and exactly three digits is a thousands separator.
+    while i < chars.len() && chars[i] == ',' && digits(i + 1) == 3 {
+        text.extend(&chars[i + 1..i + 4]);
+        i += 4;
+    }
+    if i + 1 < chars.len() && matches!(chars[i], '.' | ',') && chars[i + 1].is_ascii_digit() {
+        let frac = digits(i + 1);
+        text.push('.');
+        text.extend(&chars[i + 1..i + 1 + frac]);
+        i += 1 + frac;
+    }
+    text.parse::<f64>().ok().map(|n| (n, i))
+}
+
+/// The unit word at `at` (after optional spaces): how many ms one of it is, and where it ends.
+fn read_unit(chars: &[char], at: usize) -> Option<(f64, usize)> {
+    let mut j = at;
+    while j < chars.len() && chars[j] == ' ' {
+        j += 1;
+    }
+    let unit_start = j;
+    while j < chars.len() && chars[j].is_alphabetic() {
+        j += 1;
+    }
+    let unit: String = chars[unit_start..j].iter().collect();
+    let per_unit = match unit.as_str() {
+        "ms" | "msec" | "msecs" | "millisecond" | "milliseconds" => 1.0,
+        "s" | "sec" | "secs" | "second" | "seconds" => 1000.0,
+        _ => return None,
+    };
+    Some((per_unit, j))
+}
+
+/// Where the second number of a range starts, when a range's connector ("to" or a dash, with optional
+/// spaces) follows `at`.
+fn range_connector(chars: &[char], at: usize) -> Option<usize> {
+    let mut j = at;
+    while j < chars.len() && chars[j] == ' ' {
+        j += 1;
+    }
+    if chars.get(j..j + 2).is_some_and(|w| w == ['t', 'o']) {
+        j += 2;
+    } else if chars.get(j).is_some_and(|c| matches!(c, '-' | '\u{2013}' | '\u{2014}')) {
+        j += 1;
+    } else {
+        return None;
+    }
+    while j < chars.len() && chars[j] == ' ' {
+        j += 1;
+    }
+    chars.get(j).is_some_and(|c| c.is_ascii_digit()).then_some(j)
 }
 
 /// Every maximal ASCII digit run whose neighbours are not alphabetic ("level

@@ -680,22 +680,69 @@ fn held_with(v: &CheckValue, case: &CaseText, numbers: &BTreeSet<u32>) -> bool {
     }
 }
 
-/// Words that negate a reload when one sits within 3 words before it.
+/// Words that negate a reload when one sits within 4 words before it (only modifiers between).
 const NO_RELOAD_NEGATORS: &[&str] = &["not", "no", "without", "never", "doesnt", "dont", "isnt", "wont", "cannot"];
 
-/// Whether the step's own words say the page does not reload: a word starting with "reload" with a
-/// negator (`NO_RELOAD_NEGATORS`) within 3 words before it ("does not reload", "without reloading", "no
-/// full reload"), or "stays on the page" ("stay", "stays", "remain" and "remains" with "on" and then
-/// "page" within 3 words).
+/// Words that may sit between a negator and the reload it negates ("no full page reload", "without a
+/// full page reload", "does not even reload"). Any other word there is the reload's own object or kind
+/// ("no data reload"), which is not the page's.
+const NO_RELOAD_MODIFIERS: &[&str] =
+    &["a", "an", "the", "any", "full", "fully", "whole", "entire", "complete", "completely", "hard", "browser", "page", "even", "ever", "actually", "really", "itself", "automatically"];
+
+/// Words after a reload that begin something other than its object ("does not reload when saving").
+const NO_RELOAD_ADVERBIALS: &[&str] = &[
+    "when", "whenever", "after", "while", "on", "upon", "during", "because", "as", "if", "and", "or", "but", "then",
+    "since", "between", "before", "for", "in", "at", "by", "with", "again", "once", "until", "from", "unless", "so",
+    "though", "even", "to", "of", "happens", "occurs", "happen", "occur", "takes", "is", "are",
+];
+
+/// Whether the step's own words say the PAGE does not reload: in one clause, a word starting with "reload" or
+/// "refresh" with a negator (`NO_RELOAD_NEGATORS`) up to 4 words before it and only modifiers between ("does
+/// not reload", "without a full page reload", "no full reload", "without refreshing"), when it is the page's:
+/// the word "page" sits between the negator and it ("no page reload"), or what it is followed by is not
+/// another object (not "reload the grid", and not "no data reload"); or "stays on the page" ("stay",
+/// "stays", "remain" and "remains" with "on" and then "page" within 3 words).
 fn step_says_no_reload(step_text: &str) -> bool {
-    let words = words_of(step_text);
+    step_text
+        .split(|c: char| matches!(c, '.' | ',' | ';' | ':' | '!' | '?' | '(' | ')' | '\n'))
+        .any(|clause| clause_says_no_reload(&words_of(clause)))
+}
+
+fn clause_says_no_reload(words: &[String]) -> bool {
     words.iter().enumerate().any(|(i, w)| {
-        let reload = w.starts_with("reload") && (1..=3).any(|d| i >= d && NO_RELOAD_NEGATORS.contains(&words[i - d].as_str()));
+        let verb = w.starts_with("reload") || w.starts_with("refresh");
+        let negated = verb && {
+            // Walk back over modifiers to a negator, at most 4 words.
+            let mut page_before = false;
+            let mut found = None;
+            for d in 1..=4 {
+                let Some(prev) = i.checked_sub(d).map(|j| words[j].as_str()) else { break };
+                if NO_RELOAD_NEGATORS.contains(&prev) {
+                    found = Some(page_before);
+                    break;
+                }
+                if !NO_RELOAD_MODIFIERS.contains(&prev) {
+                    break;
+                }
+                page_before |= prev == "page";
+            }
+            found.is_some_and(|page_before| page_before || no_other_object(&words[i + 1..]))
+        };
         let stays = matches!(w.as_str(), "stay" | "stays" | "remain" | "remains")
             && words.get(i + 1).is_some_and(|n| n == "on")
             && (2..=4).any(|d| words.get(i + d).is_some_and(|n| n == "page"));
-        reload || stays
+        negated || stays
     })
+}
+
+/// Whether what follows a reload leaves it the page's: nothing, something that is not an object, or an
+/// object that is the page ("the page", "the whole page").
+fn no_other_object(after: &[String]) -> bool {
+    match after.first() {
+        None => true,
+        Some(w) if NO_RELOAD_ADVERBIALS.contains(&w.as_str()) => true,
+        Some(_) => after.iter().take(3).any(|w| w == "page"),
+    }
 }
 
 /// What a step's own words must say to hold a state the case lacks: the words, so the writer can see why.
@@ -1005,40 +1052,106 @@ fn is_timing_field(kind: &str) -> bool {
 
 /// The timing fields each `expect_response` of a step sets (nested ones included), one entry per field.
 fn timing_fields_of_step(step: &StepScript) -> Vec<&'static str> {
+    responses_of_step(step).into_iter().flat_map(|r| r.fields).collect()
+}
+
+/// An `expect_response` of a step: the path pattern and method that identify it, and the timing fields it sets.
+struct Response {
+    key: (String, String),
+    fields: Vec<&'static str>,
+}
+
+/// What identifies an `expect_response` across a repair: its path pattern (no query) and its method, folded.
+fn response_key(url_contains: &str, method: Option<&str>) -> (String, String) {
+    let path = crate::autorun::report::without_query(url_contains.trim()).to_lowercase();
+    (path, method.map(|m| m.trim().to_lowercase()).unwrap_or_default())
+}
+
+fn responses_of_step(step: &StepScript) -> Vec<Response> {
     let mut out = Vec::new();
     walk(&step.actions, &mut |a| {
-        if let Action::ExpectResponse { not_before_ms, started_within_ms, same_document, .. } = a {
+        if let Action::ExpectResponse { url_contains, method, not_before_ms, started_within_ms, same_document, .. } = a {
+            let mut fields = Vec::new();
             if not_before_ms.is_some() {
-                out.push(TIMING_FIELDS[0]);
+                fields.push(TIMING_FIELDS[0]);
             }
             if started_within_ms.is_some() {
-                out.push(TIMING_FIELDS[1]);
+                fields.push(TIMING_FIELDS[1]);
             }
             if *same_document {
-                out.push(TIMING_FIELDS[2]);
+                fields.push(TIMING_FIELDS[2]);
             }
+            out.push(Response { key: response_key(url_contains, method.as_deref()), fields });
         }
     });
     out
 }
 
-/// The timing fields step `n` loses: the old step's minus the new step's, each new one cancelling one
-/// old one of its name. A step that loses a whole `expect_response` is not asked about its timings: the
-/// check given up carries them.
-fn removed_timings(old: &CaseScript, new: &CaseScript, n: i32) -> Vec<&'static str> {
-    let Some(o) = old_step(old, n) else { return Vec::new() };
-    let new_step = new.steps.iter().find(|s| s.step_number == n);
-    let responses = |s: &StepScript| check_kinds_of_step(s).iter().filter(|k| *k == "expect_response").count();
-    if new_step.map_or(0, responses) < responses(o) {
-        return Vec::new();
-    }
-    let mut removed = timing_fields_of_step(o);
-    for f in new_step.map(timing_fields_of_step).unwrap_or_default() {
-        if let Some(i) = removed.iter().position(|r| *r == f) {
-            removed.remove(i);
+/// What a repair did to the `expect_response`s of step `n`: the timing fields each SURVIVING check lost
+/// (`lost`), and the keys of the old checks that did not survive (`dropped`). An old check survives as the
+/// new one with its path pattern and method; a check left over with no such partner is paired with a new one
+/// left over, in order (a pattern or method that was changed), and the old ones still unpaired were dropped.
+struct ResponseChanges {
+    lost: Vec<&'static str>,
+    dropped: Vec<(String, String)>,
+}
+
+fn response_changes(old: &CaseScript, new: &CaseScript, n: i32) -> ResponseChanges {
+    let mut out = ResponseChanges { lost: Vec::new(), dropped: Vec::new() };
+    let Some(o) = old_step(old, n) else { return out };
+    let mut fresh: Vec<Option<Response>> = new
+        .steps
+        .iter()
+        .find(|s| s.step_number == n)
+        .map(responses_of_step)
+        .unwrap_or_default()
+        .into_iter()
+        .map(Some)
+        .collect();
+    let mut unpaired: Vec<Response> = Vec::new();
+    for r in responses_of_step(o) {
+        match fresh.iter().position(|f| f.as_ref().is_some_and(|f| f.key == r.key)) {
+            Some(i) => {
+                let partner = fresh[i].take().expect("a partner was found");
+                out.lost.extend(fields_lost(&r.fields, &partner.fields));
+            }
+            None => unpaired.push(r),
         }
     }
-    removed
+    let mut left_over = fresh.into_iter().flatten();
+    for r in unpaired {
+        match left_over.next() {
+            Some(partner) => out.lost.extend(fields_lost(&r.fields, &partner.fields)),
+            None => out.dropped.push(r.key),
+        }
+    }
+    out
+}
+
+/// The fields of `old` that `new` does not have, each new one cancelling one old one of its name.
+fn fields_lost(old: &[&'static str], new: &[&'static str]) -> Vec<&'static str> {
+    let mut left = old.to_vec();
+    for f in new {
+        if let Some(i) = left.iter().position(|r| r == f) {
+            left.remove(i);
+        }
+    }
+    left
+}
+
+/// The timing fields step `n` loses from the `expect_response`s that stay: each is compared with its old
+/// self, whatever else the step lost. A check that is dropped carries its own timings away, and is given
+/// up by name as a whole.
+fn removed_timings(old: &CaseScript, new: &CaseScript, n: i32) -> Vec<&'static str> {
+    response_changes(old, new, n).lost
+}
+
+/// Whether the old `expect_response` `action` (the check as JSON) did not survive the repair of step `n`.
+fn check_was_dropped(old: &CaseScript, new: &CaseScript, n: i32, action: Option<&serde_json::Value>) -> bool {
+    let Some(j) = action else { return false };
+    let url = j.get("url_contains").and_then(|u| u.as_str()).unwrap_or("");
+    let method = j.get("method").and_then(|m| m.as_str());
+    response_changes(old, new, n).dropped.contains(&response_key(url, method))
 }
 
 /// The kinds of the checks step `n` loses: the old step's kinds minus the
@@ -1236,18 +1349,30 @@ pub fn check_repair_values(
             if kept {
                 continue;
             }
-            let held_by = serde_json::from_str::<serde_json::Value>(&v.action_json)
-                .ok()
+            let action = serde_json::from_str::<serde_json::Value>(&v.action_json).ok();
+            let held_by = action
+                .as_ref()
                 .and_then(|j| j.get("kind").and_then(|k| k.as_str().map(str::to_string)))
                 .unwrap_or_default();
             if valid.iter().any(|g| {
                 g.step == n
                     && match v.kind {
-                        // The timing or no-reload check is given up by its own name, or with the whole check.
+                        // A timing or the no-reload check is given up by its own field's name, or with the
+                        // whole check when that check was dropped; a check that stays and loses the field
+                        // is given up by the field's name alone.
                         ValueKind::Timing => {
-                            gives_up_kind(g) == held_by || matches!(gives_up_kind(g).as_str(), "not_before_ms" | "started_within_ms")
+                            let field = gives_up_kind(g);
+                            let mine = action.as_ref().is_some_and(|j| {
+                                ["not_before_ms", "started_within_ms"].iter().any(|f| {
+                                    field == *f && j.get(*f).is_some_and(|x| x.to_string() == v.value)
+                                })
+                            });
+                            mine || (field == held_by && check_was_dropped(old, new, n, action.as_ref()))
                         }
-                        ValueKind::NoReload => gives_up_kind(g) == held_by || gives_up_kind(g) == "same_document",
+                        ValueKind::NoReload => {
+                            gives_up_kind(g) == "same_document"
+                                || (gives_up_kind(g) == held_by && check_was_dropped(old, new, n, action.as_ref()))
+                        }
                         _ => gives_up_kind(g) == held_by,
                     }
             }) {

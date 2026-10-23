@@ -2023,6 +2023,19 @@ fn durations_the_case_states_are_read_as_whole_ms() {
     assert_eq!(stated_durations("level 4 of 12 sessions, q4 ms, 5 sessions"), set(&[]));
     let text = text_of(&search_case_saying("Wait 1.5 seconds", "The debounce is 800ms"));
     assert_eq!(text.stated_durations(), set(&[800, 1500]));
+    // A thousands separator is not a decimal point.
+    assert_eq!(stated_durations("after 1,000 ms"), set(&[1000]));
+    assert_eq!(stated_durations("after 12,500 milliseconds or 1,000 s"), set(&[12_500, 1_000_000]));
+    assert_eq!(stated_durations("3,5 secs and 2,25 s"), set(&[3500, 2250]));
+    // A range holds both ends, in the unit its last number carries.
+    assert_eq!(stated_durations("within 600 to 900 ms"), set(&[600, 900]));
+    assert_eq!(stated_durations("within 600-900 ms"), set(&[600, 900]));
+    assert_eq!(stated_durations("within 600 - 900 ms"), set(&[600, 900]));
+    assert_eq!(stated_durations("within 0.5\u{2013}1.5 s"), set(&[500, 1500]));
+    assert_eq!(stated_durations("between 1,000 to 2,000 ms"), set(&[1000, 2000]));
+    // A range with no unit, or of something else, is not a duration.
+    assert_eq!(stated_durations("10 to 12 sessions"), set(&[]));
+    assert_eq!(stated_durations("levels 1-4"), set(&[]));
 }
 
 #[test]
@@ -2090,14 +2103,31 @@ fn the_words_that_say_the_page_does_not_reload() {
         "It never reloads",
         "The user stays on the page",
         "The user remains on the same page",
+        "The list updates without a full page reload",
+        "The grid refreshes with no full reload",
+        "The page does not refresh",
+        "The list updates without refreshing",
+        "The list updates with no page reload",
+        "The page does not reload when the filter changes",
     ] {
         assert!(held(yes), "{yes}");
     }
     for no in ["The page reloads", "The list refreshes", "Reload the page", "The user is on the page"] {
         assert!(!held(no), "{no}");
     }
-    // The negation must sit within 3 words before the reload.
+    // A reload of something that is not the page does not hold it: "page", or no object at all.
+    for no in [
+        "The list updates with no data reload",
+        "The page does not reload the grid",
+        "If there is no data reload the page",
+        "The list updates without refreshing the totals",
+        "The list updates with no grid refresh",
+    ] {
+        assert!(!held(no), "{no}");
+    }
+    // The negation must sit within 4 words before the reload, and a clause ends it.
     assert!(!held("There is no sign that anything at all happens before the page reloads"));
+    assert!(!held("There is no error. The page reloads"));
 }
 
 #[test]
@@ -2206,6 +2236,84 @@ fn giving_up_a_whole_timed_check_needs_only_the_check() {
     ]));
     let r = search_repair(&old, &gone, &[give(3, "expect_response", "step 6 checks the same request")]);
     assert!(r.is_empty(), "{r:?}");
+}
+
+/// The search script with a second `expect_response` in step 3 (on `/api/count`), the first with `first`.
+fn search_script_with_count(first: Value, with_count: bool) -> CaseScript {
+    let mut search = json!({ "kind": "expect_response", "url_contains": "/api/search" });
+    for (k, v) in first.as_object().unwrap() {
+        search[k] = v.clone();
+    }
+    let mut actions = vec![json!({ "kind": "fill", "selector": "#q", "value": "Ann" }), search];
+    if with_count {
+        actions.push(json!({ "kind": "expect_response", "url_contains": "/api/count" }));
+    }
+    script(json!([
+        { "step_number": 1, "actions": [{ "kind": "navigate", "url": "https://app.example/" }] },
+        { "step_number": 2, "actions": [{ "kind": "click", "selector": "#search" }] },
+        { "step_number": 3, "actions": actions },
+    ]))
+}
+
+#[test]
+fn a_timing_taken_off_a_surviving_check_is_named_even_when_another_check_was_dropped() {
+    // Old step 3: the search check is timed, and a count check follows. The repair drops the count check
+    // (named) and, in the same edit, takes the timing off the search check.
+    let old = search_script_with_count(json!({ "not_before_ms": 800 }), true);
+    let new = search_script_with_count(json!({}), false);
+    let dropped = [give(3, "expect_response", "step 6 checks the count")];
+    let r = search_repair(&old, &new, &dropped);
+    assert!(
+        r.iter().any(|l| l.starts_with("step 3: the repair removes not_before_ms from an expect_response and gives_up does not name it")),
+        "{r:?}"
+    );
+    // The check given up does not excuse the 800 the case states: it belongs to the check that stayed.
+    assert!(r.iter().any(|l| l.contains("the repair drops \"800\"")), "{r:?}");
+    // Naming the timing as well passes.
+    let both = [give(3, "expect_response", "step 6 checks the count"), give(3, "not_before_ms", "step 5 times it")];
+    let r = search_repair(&old, &new, &both);
+    assert!(r.is_empty(), "{r:?}");
+    // The dropped check's own timing goes with it: the whole check is the one entry.
+    let old = search_script_with_count(json!({}), true);
+    let mut timed_count = old.clone();
+    if let Some(step) = timed_count.steps.iter_mut().find(|s| s.step_number == 3) {
+        step.actions.push(serde_json::from_value(json!({ "kind": "expect_response", "url_contains": "/api/other", "not_before_ms": 800 })).unwrap());
+    }
+    let r = search_repair(&timed_count, &old, &dropped);
+    assert!(r.is_empty(), "{r:?}");
+}
+
+#[test]
+fn a_timing_is_matched_to_its_check_by_path_and_method_not_by_name_alone() {
+    // Two timed checks of one name: the repair keeps one timing and drops the other. Each survivor is
+    // compared with its own old self.
+    let old = script(json!([
+        { "step_number": 1, "actions": [{ "kind": "navigate", "url": "https://app.example/" }] },
+        { "step_number": 2, "actions": [{ "kind": "click", "selector": "#search" }] },
+        {
+            "step_number": 3,
+            "actions": [
+                { "kind": "fill", "selector": "#q", "value": "Ann" },
+                { "kind": "expect_response", "url_contains": "/api/search", "not_before_ms": 800 },
+                { "kind": "expect_response", "url_contains": "/api/count", "not_before_ms": 800 },
+            ],
+        },
+    ]));
+    let new = script(json!([
+        { "step_number": 1, "actions": [{ "kind": "navigate", "url": "https://app.example/" }] },
+        { "step_number": 2, "actions": [{ "kind": "click", "selector": "#search" }] },
+        {
+            "step_number": 3,
+            "actions": [
+                { "kind": "fill", "selector": "#q", "value": "Ann" },
+                { "kind": "expect_response", "url_contains": "/api/search" },
+                { "kind": "expect_response", "url_contains": "/api/count", "not_before_ms": 800 },
+            ],
+        },
+    ]));
+    let r = search_repair(&old, &new, &[]);
+    assert!(r.iter().any(|l| l.contains("removes not_before_ms from an expect_response")), "{r:?}");
+    assert!(search_repair(&old, &old, &[]).is_empty());
 }
 
 #[test]
