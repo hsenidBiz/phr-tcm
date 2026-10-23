@@ -10964,8 +10964,12 @@ async fn save_autorun_scripts(
     client: Option<&crate::ado::AdoClient>,
     body: &str,
 ) -> (u16, String) {
+    // Parsing reads the saved script of a repair (to merge its patch onto
+    // it); that read, not the later one at Gate 1, is the version the
+    // bundle is built from, so it is the one the write checks against.
+    let reads = crate::autorun::store::ScriptReads::new();
     let load = |id: i32| match autorun_root() {
-        Ok(root) => crate::autorun::store::load_script(&root, id),
+        Ok(root) => reads.load(&root, id),
         Err((_, why)) => Err(why),
     };
     let SaveRequest { scripts, edits, dry_run } = match parse_save_request(body, &load) {
@@ -11059,16 +11063,17 @@ async fn save_autorun_scripts(
     } else {
         Vec::new()
     };
-    // When each case's script was saved as the gates below read it (`None`:
-    // there was none). The write re-checks these under the scripts lock, so
-    // a save that overlaps this one cannot be overwritten unseen.
+    // The version of each case's script this bundle was built from (`None`:
+    // there was none): the first read of it, else the one below. The write
+    // re-checks these under the scripts lock, so a save that overlaps this
+    // one cannot be overwritten unseen.
     let mut read: Vec<(i32, Option<String>)> = Vec::with_capacity(scripts.len());
     for sent in &scripts {
         let existing = match crate::autorun::store::load_script(&root, sent.case_id) {
             Ok(v) => v,
             Err(e) => return (500, e),
         };
-        read.push((sent.case_id, existing.as_ref().and_then(|s| s.saved_at.clone())));
+        read.push((sent.case_id, reads.first_version(sent.case_id, existing.as_ref())));
         let declared = edits.iter().find(|e| e.case_id == sent.case_id);
         // An unchanged re-send never lowers the floor it was stored with.
         let mut stored_floor: u32 = 0;
@@ -11451,6 +11456,9 @@ async fn save_autorun_scripts(
             Err(crate::autorun::store::SaveScriptsError::Invalid(e)) => Err(SaveRefusal::Other(400, e)),
             Err(changed @ crate::autorun::store::SaveScriptsError::Changed { .. }) => {
                 Err(SaveRefusal::Other(409, changed.to_string()))
+            }
+            Err(unread @ crate::autorun::store::SaveScriptsError::Unreadable { .. }) => {
+                Err(SaveRefusal::Other(500, unread.to_string()))
             }
             Err(crate::autorun::store::SaveScriptsError::Io(e)) => {
                 Err(SaveRefusal::Other(500, format!("could not save the bundle: {e}")))
