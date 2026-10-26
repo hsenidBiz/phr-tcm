@@ -575,9 +575,15 @@ export default function App() {
       return;
     }
     if (allProjects) {
-      // Together, the run's PBI carries its own project and the home project
-      // is never touched.
-      if (org !== r.org) setOrgRaw(r.org);
+      // Together, the run's PBI carries its own project, so a run of this
+      // organization leaves the home project alone. A run of another
+      // organization brings that run's project home: the one held now is a
+      // project of the organization being left.
+      if (org !== r.org) {
+        setOrgRaw(r.org);
+        setHomeProjectRaw(r.project);
+        setCaseSelection(null);
+      }
       if (pbi?.id !== r.pbi.id) {
         if (effectiveProject(true, r.pbi, homeProject) !== project) setCaseSelection(null);
         setPbiRaw(r.pbi);
@@ -990,9 +996,13 @@ export default function App() {
     if (!allProjects || homeProject || names.length < 2) return;
     if (askedAutorunHome.current === org) return;
     askedAutorunHome.current = org;
+    const askedOrg = org;
     commands
       .projectsWithAutorunFiles(org, names)
       .then((r) => {
+        // The answer belongs to the organization it was asked about: one
+        // that lands after the person moved on is dropped.
+        if (ctx.current.org !== askedOrg) return;
         // An answer that is not exactly one project (or none at all, as
         // from a stand-in) decides nothing. A home chosen meanwhile wins.
         if (r?.status === "ok" && Array.isArray(r.data) && r.data.length === 1) {

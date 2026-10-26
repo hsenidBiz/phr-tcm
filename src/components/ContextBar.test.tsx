@@ -127,7 +127,7 @@ test("the PBI search fills the free width and the right-hand group never shrinks
       />
     </QueryClientProvider>,
   );
-  const box =screen.getByLabelText("Find PBI");
+  const box = screen.getByLabelText("Find PBI");
   const wrapper = box.closest("[data-tour='pbi']") as HTMLElement;
   // min-w-56 (224px), not wider: at a 1280px window the two pickers, this box
   // and the right-hand group must all fit on one line.

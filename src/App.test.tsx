@@ -887,6 +887,128 @@ test("the switch is refused while the tour runs", async () => {
   expect(allProjectsSnapshot()).toBe(true);
   expect(localStorage.getItem("tcm-v2-all-projects")).toBeNull();
   expect(screen.queryByRole("combobox", { name: "Project" })).not.toBeInTheDocument();
+
+  // Ending the tour puts everything back: the home project is still the one
+  // that was saved, and so is the PBI.
+  fireEvent.click(screen.getByText("Skip tour"));
+  await waitFor(() => expect(screen.queryByRole("dialog", { name: "Interface tour" })).not.toBeInTheDocument());
+  expect(await screen.findByText("Pay run")).toBeInTheDocument();
+  await act(async () => {
+    await new Promise((r) => setTimeout(r, 30));
+  });
+  expect(storedPrefs().project).toBe("Web");
+  expect(storedPrefs().pbi?.id).toBe(7);
+  expect(allProjectsSnapshot()).toBe(true);
+});
+
+/// Search Suites hands a set of work item ids to Update Test Cases. The ids
+/// belong to one project, so a PBI of another project (which moves the
+/// effective project) drops them, exactly as a project change does; a PBI of
+/// the same project leaves them alone.
+async function handSuiteCasesToEdit(search: unknown[]) {
+  savedPrefs({ section: "suites" });
+  localStorage.setItem("tcm-v2-tour-done", "yes");
+  signedInMocks((cmd) => {
+    if (cmd === "list_projects")
+      return [
+        { id: "p1", name: "Web" },
+        { id: "p2", name: "Payroll" },
+      ];
+    if (cmd === "list_plans_with_suites")
+      return [
+        {
+          plan: { id: 9, name: "Auth - Test Plan", area_path: "Proj\\Auth", root_suite_id: 90 },
+          suites: [{ id: 95, name: "Regression", suite_type: "staticTestSuite", requirement_id: null, parent_id: null }],
+        },
+      ];
+    if (cmd === "list_test_points")
+      return [
+        {
+          point_id: 7,
+          test_case_id: 201,
+          test_case_name: "Valid login",
+          config_name: "W10",
+          tester: "",
+          last_outcome: "",
+          last_run_id: null,
+          last_result_id: null,
+        },
+      ];
+    if (cmd === "search_pbis_all") return search;
+  });
+  renderApp();
+  await screen.findByText("a@b.com");
+  await screen.findByText("Regression");
+  fireEvent.click(screen.getAllByText("Edit cases")[0]);
+  expect(await screen.findByText(/Showing cases handed over from Search Suites/)).toBeInTheDocument();
+}
+
+test("a PBI of another project drops the cases handed over from Search Suites", async () => {
+  await handSuiteCasesToEdit([PAYROLL_PBI]);
+  await pickPbiFromBar("pay", /Pay run/);
+  await waitFor(() =>
+    expect(screen.queryByText(/Showing cases handed over from Search Suites/)).not.toBeInTheDocument(),
+  );
+});
+
+test("a PBI of the same project keeps the cases handed over from Search Suites", async () => {
+  await handSuiteCasesToEdit([{ ...PAYROLL_PBI, project: "Web" }]);
+  // The effective project is the home project (Web) before and after.
+  await pickPbiFromBar("pay", /Pay run/);
+  await screen.findByText("Pay run");
+  await act(async () => {
+    await new Promise((r) => setTimeout(r, 30));
+  });
+  expect(screen.getByText(/Showing cases handed over from Search Suites/)).toBeInTheDocument();
+});
+
+// The probe for Auto Run files is a local check that can answer after the
+// person has moved to another organization: its answer belongs to the old one.
+test("a late Auto Run files answer for an old organization is ignored", async () => {
+  savedPrefs({ project: "" });
+  localStorage.setItem("tcm-v2-tour-done", "yes");
+  let answerFirst: (v: string[]) => void = () => {};
+  let probes = 0;
+  // Two organizations (signedInMocks answers with one), so the picker shows.
+  mockIPC((cmd) => {
+    if (cmd === "modules_get") return EVERY_MODULE;
+    if (cmd === "resume_session") return { signed_in: true, account: "a@b.com" };
+    if (cmd === "check_update") return null;
+    if (cmd === "list_test_case_fields") return [];
+    if (cmd === "plugin:event|listen") return 1;
+    if (cmd === "list_orgs")
+      return [
+        { name: "acme", url: "" },
+        { name: "other", url: "" },
+      ];
+    if (cmd === "list_projects")
+      return [
+        { id: "p1", name: "Web" },
+        { id: "p2", name: "HRM" },
+      ];
+    if (cmd === "projects_with_autorun_files") {
+      probes += 1;
+      if (probes === 1) return new Promise<string[]>((res) => (answerFirst = res));
+      return [];
+    }
+  });
+  renderApp();
+  await screen.findByText("a@b.com");
+  await vi.waitFor(() => expect(probes).toBe(1));
+
+  // Move to the other organization while the first probe is still out.
+  const orgBox = await screen.findByRole("combobox", { name: "Organization" });
+  fireEvent.click(orgBox);
+  fireEvent.click(await screen.findByRole("option", { name: "other" }));
+  await vi.waitFor(() => expect(storedPrefs().org).toBe("other"));
+  await vi.waitFor(() => expect(probes).toBe(2));
+
+  await act(async () => {
+    answerFirst(["HRM"]);
+    await new Promise((r) => setTimeout(r, 30));
+  });
+  expect(storedPrefs().org).toBe("other");
+  expect(storedPrefs().project).toBe("");
 });
 
 test("the bridge is pushed the home project and the switch", async () => {
