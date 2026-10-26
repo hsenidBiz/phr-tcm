@@ -1415,6 +1415,26 @@ test("the full Setup rows keep their status dot and spoken status", async () => 
   expect(site).toHaveTextContent("Site address, ready");
 });
 
+test("the Setup card is held to the window in the two-column layout so its toggle stays reachable", async () => {
+  mockReady((cmd) => (cmd === "auto_run_list_accounts" ? [] : undefined));
+  renderAutoRun(null);
+  const toggle = await within(setupPanel()).findByRole("button", { name: "Hide setup details" });
+  const card = setupPanel();
+  // At most the visible area, only beside the list: stacked it has no limit.
+  expect(card.className).toContain("@min-[69rem]:max-h-[var(--follow-room,calc(100vh_-_6rem))]");
+  expect(card.className).not.toMatch(/(^|\s)max-h-/);
+  expect(card).toHaveClass("flex", "flex-col");
+  // The header row (title, Needs attention, the toggle) wraps and never shrinks away.
+  const header = toggle.parentElement!;
+  expect(header).toHaveClass("flex-wrap", "shrink-0");
+  expect(header).toContainElement(screen.getByRole("heading", { name: "Setup" }));
+  // The body is what scrolls, and the toggle is not inside it.
+  const body = document.getElementById(toggle.getAttribute("aria-controls")!)!;
+  expect(body).toHaveClass("overflow-auto", "min-h-0");
+  expect(body).not.toContainElement(toggle);
+  expect(card).toContainElement(body);
+});
+
 test("a summary line with something missing says so in words", async () => {
   mockReady((cmd) => (cmd === "auto_run_list_accounts" ? [] : undefined));
   renderAutoRun(null);

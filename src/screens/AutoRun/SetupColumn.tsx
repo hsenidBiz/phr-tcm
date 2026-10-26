@@ -2,7 +2,9 @@
 // two-column layout) the column runs the list's whole height and the panel
 // follows the scroll down it, a little behind (followScroll). Above the
 // list, the column is only as tall as the panel, so it stays put. Under
-// prefers-reduced-motion the panel is simply sticky: no animation.
+// prefers-reduced-motion the panel is simply sticky: no animation. Either
+// way the panel is told the room the page has (--follow-room), and its card
+// is held to it, so the card's header row and toggle are never scrolled out.
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { prefersReducedMotion, useFollowScroll } from "./followScroll";

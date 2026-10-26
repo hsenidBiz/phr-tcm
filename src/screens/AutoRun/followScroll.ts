@@ -4,6 +4,10 @@
 // not above its top, so never over the header), and under
 // prefers-reduced-motion it does not animate at all: it simply stays in
 // place with position: sticky.
+//
+// The panel's card is held to the room the scrolling area has (followRoom,
+// handed to the card as the --follow-room custom property), so it is never
+// taller than the area and its top, with the toggle, is always in view.
 
 import { useEffect, useRef, type RefObject } from "react";
 
@@ -30,13 +34,23 @@ export type FollowGeometry = {
   viewBottom: number;
 };
 
+/** The most height, in px, a panel may take and still rest `FOLLOW_GAP`
+ * below the top of the scrolling area with the same gap at its bottom. */
+export function followRoom(g: Pick<FollowGeometry, "viewTop" | "viewBottom">): number {
+  return Math.max(0, g.viewBottom - g.viewTop - 2 * FOLLOW_GAP);
+}
+
+/** The custom property the panel's card reads its largest height from. */
+export const FOLLOW_ROOM_VAR = "--follow-room";
+
 /** How far down its column the panel should sit, in px. The panel rests
- * `FOLLOW_GAP` below the top of the scrolling area; one taller than that
- * area keeps its bottom in view instead, so every row can still be read.
- * Always clamped to the column: from 0 (its own place, never above it) to
+ * `FOLLOW_GAP` below the top of the scrolling area. The card is held to
+ * `followRoom`, so it is never taller than that; one that somehow is (before
+ * its limit is applied) keeps its bottom in view instead, so every row can
+ * still be read. Always clamped to the column: from 0 (its own place, never above it) to
  * the column's height less the panel's. */
 export function followOffset(g: FollowGeometry): number {
-  const room = g.viewBottom - g.viewTop - 2 * FOLLOW_GAP;
+  const room = followRoom(g);
   const wanted =
     g.panelHeight <= room
       ? g.viewTop + FOLLOW_GAP - g.columnTop
@@ -73,8 +87,10 @@ function scrollParent(el: HTMLElement): HTMLElement | null {
 }
 
 /** Moves `panel` down `column` as the page scrolls, eased (`stepToward`),
- * by a transform. Does nothing when `reduced`: the caller makes the panel
- * sticky instead. */
+ * by a transform. Does nothing to its place when `reduced`: the caller makes
+ * the panel sticky instead. Either way it tells the panel how much room the
+ * scrolling area has (`--follow-room`), kept current as the window or the
+ * area changes size. */
 export function useFollowScroll(
   column: RefObject<HTMLElement | null>,
   panel: RefObject<HTMLElement | null>,
@@ -85,16 +101,28 @@ export function useFollowScroll(
     const col = column.current;
     const box = panel.current;
     if (!col || !box) return;
+    const scroller = scrollParent(col);
+    const area = () => (scroller ? scroller.getBoundingClientRect() : { top: 0, bottom: window.innerHeight });
+    const tellRoom = () => {
+      const a = area();
+      box.style.setProperty(FOLLOW_ROOM_VAR, `${followRoom({ viewTop: a.top, viewBottom: a.bottom })}px`);
+    };
+    tellRoom();
     if (reduced) {
       at.current = 0;
       box.style.transform = "";
-      return;
+      window.addEventListener("resize", tellRoom);
+      const areaSize = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(tellRoom);
+      if (scroller) areaSize?.observe(scroller);
+      return () => {
+        window.removeEventListener("resize", tellRoom);
+        areaSize?.disconnect();
+      };
     }
-    const scroller = scrollParent(col);
     let frame = 0;
     const geometry = (): FollowGeometry => {
       const c = col.getBoundingClientRect();
-      const view = scroller ? scroller.getBoundingClientRect() : { top: 0, bottom: window.innerHeight };
+      const view = area();
       return {
         // The column's own top, with the panel's current offset left out.
         columnTop: c.top,
@@ -106,6 +134,7 @@ export function useFollowScroll(
     };
     const tick = () => {
       frame = 0;
+      tellRoom();
       const target = followOffset(geometry());
       const next = stepToward(at.current, target);
       at.current = next;
@@ -122,6 +151,7 @@ export function useFollowScroll(
     const sizes = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(wake);
     sizes?.observe(col);
     sizes?.observe(box);
+    if (scroller) sizes?.observe(scroller);
     wake();
     return () => {
       target.removeEventListener("scroll", wake);

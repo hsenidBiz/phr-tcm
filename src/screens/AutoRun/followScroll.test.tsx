@@ -4,7 +4,7 @@
 
 import { render, screen } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
-import { clampOffset, FOLLOW_EASE, FOLLOW_GAP, followOffset, stepToward } from "./followScroll";
+import { clampOffset, FOLLOW_EASE, FOLLOW_GAP, followOffset, followRoom, stepToward } from "./followScroll";
 import SetupColumn from "./SetupColumn";
 
 afterEach(() => {
@@ -44,6 +44,19 @@ test("a panel taller than the scrolling area keeps its bottom in view", () => {
   const offset = followOffset(g);
   // The panel's bottom sits a gap above the area's bottom.
   expect(g.columnTop + offset + g.panelHeight).toBe(view.viewBottom - FOLLOW_GAP);
+});
+
+test("the room a panel may take is the scrolling area less the gap above and below", () => {
+  expect(followRoom(view)).toBe(800 - 2 * FOLLOW_GAP);
+  // A window shorter than the two gaps leaves no room, never a negative one.
+  expect(followRoom({ viewTop: 0, viewBottom: FOLLOW_GAP })).toBe(0);
+});
+
+test("a panel held to the room is never the too-tall case: its top stays in view", () => {
+  const g = { ...view, columnTop: -1000, columnHeight: 4000, panelHeight: followRoom(view) };
+  const offset = followOffset(g);
+  // It rests a gap below the area's top, so its header row is in view.
+  expect(g.columnTop + offset).toBe(view.viewTop + FOLLOW_GAP);
 });
 
 test("each frame covers a share of the distance, then settles exactly", () => {
@@ -106,4 +119,20 @@ test("with motion the panel follows by a transform, never sticky", () => {
   expect(column.dataset.follow).toBe("eased");
   const box = screen.getByText("Setup").parentElement as HTMLElement;
   expect(box.className).not.toContain("sticky");
+});
+
+test("the panel is told how much room it has, so its card can be held to it", () => {
+  for (const reduce of [false, true]) {
+    motion(reduce);
+    window.innerHeight = 700;
+    const { unmount } = render(
+      <SetupColumn>
+        <p>Setup</p>
+      </SetupColumn>,
+    );
+    const box = screen.getByText("Setup").parentElement as HTMLElement;
+    // No scrolling ancestor in jsdom: the window is the area.
+    expect(box.style.getPropertyValue("--follow-room")).toBe(`${700 - 2 * FOLLOW_GAP}px`);
+    unmount();
+  }
 });

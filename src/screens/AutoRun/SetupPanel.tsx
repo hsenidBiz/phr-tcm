@@ -503,9 +503,12 @@ export default function SetupPanel({
   return (
     <section
       aria-labelledby={headingId}
-      className="space-y-3 rounded-md border border-border bg-surface p-4"
+      // Beside the list the card is never taller than the room the page has
+      // (the --follow-room the follow-scroll measures), so its header row,
+      // with the toggle, is always in view and only the body scrolls.
+      className="flex flex-col gap-3 rounded-md border border-border bg-surface p-4 @min-[69rem]:max-h-[var(--follow-room,calc(100vh_-_6rem))]"
     >
-      <div className="flex items-center gap-2">
+      <div className="flex shrink-0 flex-wrap items-center gap-2">
         <h2 id={headingId} className="text-sm font-semibold text-text">
           Setup
         </h2>
@@ -533,9 +536,13 @@ export default function SetupPanel({
       </div>
 
       {/* Finding a case: open or shut, on either tab. */}
-      <CaseSearch value={search} onChange={onSearch} wide />
+      <div className="shrink-0">
+        <CaseSearch value={search} onChange={onSearch} wide />
+      </div>
 
-      <div id={bodyId}>
+      {/* The one part that scrolls. The side padding and matching negative
+          margin leave room for a button's focus ring at the edge. */}
+      <div id={bodyId} className="-mx-1 min-h-0 overflow-auto px-1">
         {!open ? (
           <ul aria-label="Setup summary" className="space-y-1.5">
             {lines.map(({ label, status, value, missing }) => (
