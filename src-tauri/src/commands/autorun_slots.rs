@@ -156,10 +156,18 @@ pub fn clear() {
 }
 
 /// An agent that has gone past its grace (`agents::Sweep::past_grace`) holds
-/// no browser. Called by the sweeper after every sweep.
+/// no browser. A quiet one (`agents::Sweep::quiet`: no call for an hour, no
+/// session seen to end) no longer holds the main browser; an extra browser it
+/// holds is left to the idle release. Called by the sweeper after every sweep.
 pub fn on_sweep(s: &agents::Sweep) {
     for key in &s.past_grace {
         unbind_agent(key);
+    }
+    let mut held = bindings();
+    for key in &s.quiet {
+        if held[SlotNo::MAIN.index()].as_ref() == Some(key) {
+            held[SlotNo::MAIN.index()] = None;
+        }
     }
 }
 
@@ -258,16 +266,21 @@ fn slot_facts(n: SlotNo) -> Option<SlotFacts> {
 }
 
 /// What the replay going in slot `n` is, when it is an assistant's: the
-/// person's replay is never shown as an assistant's. `step` is the step it
-/// is on, or the step it was asked to reach before its first step begins.
+/// person's replay is never shown as an assistant's.
 fn replaying(n: SlotNo) -> Option<AgentActivity> {
     let replay = crate::autorun::replay_to::state(n);
     if !replay.assistants_replay_running() {
         return None;
     }
-    let (case_id, target) = crate::ai_bridge::assistant_replay_of(n)?;
-    let (step, of) = replay.progress();
-    Some(AgentActivity::Replaying { case_id, step: if of > 0 { step } else { target }, of })
+    let (case_id, _target) = crate::ai_bridge::assistant_replay_of(n)?;
+    Some(replaying_activity(case_id, replay.progress()))
+}
+
+/// An assistant's replay of `case_id` that is on step `progress.0` of
+/// `progress.1`. Before its first step begins that is honestly `0 of 0`:
+/// the step it was asked to reach is where it stops, not a step it is on.
+pub fn replaying_activity(case_id: i32, progress: (i32, i32)) -> AgentActivity {
+    AgentActivity::Replaying { case_id, step: progress.0, of: progress.1 }
 }
 
 /// The agents `agents::live()` lists, by number, each with what its slot's
@@ -411,7 +424,8 @@ pub enum ReleaseWhy {
     Person,
 }
 
-/// Stops slot `n`'s replay and batch, waits for its lock (`RELEASE_WAIT`),
+/// Stops slot `n`'s assistant's replay (never the person's) and batch, waits
+/// for its lock (`RELEASE_WAIT`),
 /// then lets the browser go as the assistant's own release does
 /// (`release_in_for_assistant`): a discovery is ended, its map kept, and its
 /// browser closed; a browser an assistant opened is closed; one the person
@@ -421,7 +435,12 @@ pub enum ReleaseWhy {
 pub async fn release_slot(n: SlotNo, why: ReleaseWhy) -> Result<String, String> {
     // Read first: the label is kept in the registry until its next sweep.
     let who = whose(n);
-    crate::autorun::replay_to::state(n).stop();
+    // Only an assistant's replay is stopped; the person's goes on, and the
+    // release then waits for its lock and says the browser is busy.
+    let replay = crate::autorun::replay_to::state(n);
+    if replay.assistants_replay_running() {
+        replay.stop();
+    }
     crate::ai_bridge::stop_batch_in(n);
     let Ok(mut slot) = tokio::time::timeout(crate::commands::autorun::RELEASE_WAIT, session_slot(n).lock()).await
     else {

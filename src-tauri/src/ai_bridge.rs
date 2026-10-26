@@ -5712,31 +5712,33 @@ pub fn batch_stop(n: SlotNo) -> &'static std::sync::atomic::AtomicBool {
     &BATCH_STOPS[n.index()]
 }
 
-/// Whether a batch of discovery actions is going in each slot (waiting for
-/// the browser or driving it). Kept so the Assistants card can offer to stop
-/// it without taking the browser's lock. Coordination only.
-static BATCHES_GOING: [std::sync::atomic::AtomicBool; SLOT_COUNT] =
-    [const { std::sync::atomic::AtomicBool::new(false) }; SLOT_COUNT];
+/// How many batches of discovery actions are going in each slot (waiting for
+/// the browser or driving it). Batches in one slot can overlap (two callers
+/// sharing it, or parallel calls of one proxy), so this counts. Kept so the
+/// Assistants card can offer to stop them without taking the browser's lock.
+/// Coordination only.
+static BATCHES_GOING: [std::sync::atomic::AtomicUsize; SLOT_COUNT] =
+    [const { std::sync::atomic::AtomicUsize::new(0) }; SLOT_COUNT];
 
 /// Whether a batch of discovery actions is going in slot `n` (`BATCHES_GOING`).
 pub fn batch_going(n: SlotNo) -> bool {
-    BATCHES_GOING[n.index()].load(std::sync::atomic::Ordering::SeqCst)
+    BATCHES_GOING[n.index()].load(std::sync::atomic::Ordering::SeqCst) > 0
 }
 
-/// Marks slot `n`'s batch as going for as long as it lives; dropped at the
+/// Counts slot `n`'s batch as going for as long as it lives; dropped at the
 /// batch's end, however it ends.
-struct BatchGoing(SlotNo);
+pub struct BatchGoing(SlotNo);
 
 impl BatchGoing {
-    fn begin(n: SlotNo) -> BatchGoing {
-        BATCHES_GOING[n.index()].store(true, std::sync::atomic::Ordering::SeqCst);
+    pub fn begin(n: SlotNo) -> BatchGoing {
+        BATCHES_GOING[n.index()].fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         BatchGoing(n)
     }
 }
 
 impl Drop for BatchGoing {
     fn drop(&mut self) {
-        BATCHES_GOING[self.0.index()].store(false, std::sync::atomic::Ordering::SeqCst);
+        BATCHES_GOING[self.0.index()].fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
     }
 }
 

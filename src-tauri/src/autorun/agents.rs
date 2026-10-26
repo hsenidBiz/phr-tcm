@@ -26,6 +26,11 @@ pub const FORGET_AFTER_MS: u64 = 10 * 60 * 1000;
 /// How long a gone agent is given to come back before its resources are
 /// released (`Sweep::past_grace`).
 pub const GONE_GRACE_MS: u64 = 60 * 1000;
+/// An entry nothing can ask about (no pid, or a named subagent) is quiet
+/// once it has made no call for this long (`Sweep::quiet`). Longer than the
+/// extra browsers' idle release (30 minutes), so that release always comes
+/// first and says why.
+pub const QUIET_AFTER_MS: u64 = 3_600_000;
 
 /// How often the app asks whether each agent's process still runs.
 pub const SWEEP_EVERY: std::time::Duration = std::time::Duration::from_secs(30);
@@ -252,11 +257,16 @@ pub struct Sweep {
     pub past_grace: Vec<AgentKey>,
     /// Removed from the registry in this sweep.
     pub forgotten: Vec<AgentKey>,
+    /// Made no call for `QUIET_AFTER_MS` and nothing can say whether they
+    /// still run (no pid, or a named subagent): no longer listed. Their
+    /// session was not seen to end, so these are never in `past_grace`.
+    pub quiet: Vec<AgentKey>,
 }
 
 /// Entries with a pid that `alive` says has ended become gone (`newly_gone`).
-/// Entries without a pid, and named subagents, become gone (not reported in
-/// `newly_gone`) once they have made no call for `FORGET_AFTER_MS`.
+/// Entries without a pid, and named subagents, become gone (reported in
+/// `quiet`, not in `newly_gone` or `past_grace`) once they have made no call
+/// for `QUIET_AFTER_MS`.
 /// Gone entries reach `past_grace` once, `GONE_GRACE_MS` after they went.
 /// Entries gone `FORGET_AFTER_MS` are removed (`forgotten`), but only in a
 /// sweep after the one that reported them in `past_grace`, so the label can
@@ -287,14 +297,17 @@ pub fn sweep(now_ms: u64, alive: &dyn Fn(u32) -> bool) -> Sweep {
     }
     // An entry nothing can ask about: no pid, or a named subagent (it shares
     // its proxy's pid for as long as the proxy lives). Quiet for
-    // `FORGET_AFTER_MS` since its last call, it is treated as gone, so it is
-    // not listed for ever and its resources are released after the grace. A
-    // call brings it back. Not `newly_gone`: no session was seen to end.
+    // `QUIET_AFTER_MS` since its last call, it is no longer listed and is
+    // forgotten later like any gone entry. No session was seen to end, so it
+    // is reported in `quiet` and never in `newly_gone` or `past_grace`
+    // (`grace_reported` is set at once): nothing is released for it. A call
+    // brings it back.
     for e in entries.iter_mut() {
         let unaskable = e.info.pid.is_none() || e.info.key.name.is_some();
-        if e.info.gone_since_ms.is_none() && unaskable && now_ms.saturating_sub(e.info.last_ms) >= FORGET_AFTER_MS {
+        if e.info.gone_since_ms.is_none() && unaskable && now_ms.saturating_sub(e.info.last_ms) >= QUIET_AFTER_MS {
             e.info.gone_since_ms = Some(now_ms);
-            e.grace_reported = false;
+            e.grace_reported = true;
+            out.quiet.push(e.info.key.clone());
         }
     }
     let mut forget: Vec<AgentKey> = Vec::new();

@@ -7,6 +7,17 @@
 //! piece of shared state lives here and every module that touches it takes
 //! the same one. Tests that only ever touch their own temp dirs, mock
 //! servers and values need none of this.
+//!
+//! LOCK ORDER. A test that takes two or more of these takes them in this
+//! order, always, whatever else it holds:
+//!
+//!     agents()  ->  log_tail()  ->  autorun()
+//!
+//! The locks are plain blocking mutexes in one binary whose tests run on
+//! parallel threads, so two tests that take the same pair in opposite orders
+//! can each hold one and wait for the other, and the whole suite hangs with
+//! no failure message. A new lock goes into this order, here, before a test
+//! takes it beside another.
 
 use std::sync::{Mutex, MutexGuard};
 

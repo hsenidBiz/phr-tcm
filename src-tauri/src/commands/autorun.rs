@@ -536,9 +536,39 @@ pub async fn supervised_session_is_open() -> bool {
 }
 
 /// `supervised_session_is_open` without waiting: a session lock that is
-/// taken counts as open (something is using the browser).
+/// taken counts as open (something is using the browser). A lock held for a
+/// moment (the Assistants card reading the slot) is waited out first
+/// (`try_lock_briefly`), so it is never mistaken for a browser in use.
 pub fn supervised_session_is_open_now() -> bool {
-    SESSION.try_lock().map_or(true, |slot| slot.is_some())
+    try_lock_briefly(&SESSION).map_or(true, |slot| slot.is_some())
+}
+
+/// How many times `try_lock_briefly` tries.
+const BRIEF_TRIES: usize = 5;
+
+/// `Mutex::try_lock` that waits out a hold of a moment: up to
+/// `BRIEF_TRIES` tries with a millisecond between, then `None` - a replay,
+/// a step or a call holding the lock still reads as busy. For the readers
+/// that answer the person from a lock they must not wait on.
+pub fn try_lock_briefly<T>(m: &tokio::sync::Mutex<T>) -> Option<tokio::sync::MutexGuard<'_, T>> {
+    try_lock_with_retries(m, BRIEF_TRIES, &|| std::thread::sleep(std::time::Duration::from_millis(1)))
+}
+
+/// `try_lock_briefly` with its tries and its pause given.
+pub fn try_lock_with_retries<'a, T>(
+    m: &'a tokio::sync::Mutex<T>,
+    tries: usize,
+    pause: &dyn Fn(),
+) -> Option<tokio::sync::MutexGuard<'a, T>> {
+    for attempt in 0..tries {
+        if let Ok(guard) = m.try_lock() {
+            return Some(guard);
+        }
+        if attempt + 1 < tries {
+            pause();
+        }
+    }
+    None
 }
 
 #[tauri::command]
@@ -1101,6 +1131,11 @@ async fn open_into(
     // then waits on this lock to look for a session, so the two can never
     // both miss each other.
     crate::commands::autorun_record::refuse_while_recording()?;
+    // A browser the person opens is theirs: no assistant holds it, even one
+    // that was bound to this slot while it had no browser.
+    if by == OpenedBy::Person {
+        crate::commands::autorun_slots::unbind(n);
+    }
     if let Some(old) = slot.take() {
         close_session(old);
     }
@@ -3244,7 +3279,7 @@ pub fn auto_run_save_run(app: tauri::AppHandle, run: LocalRun) -> Result<(), Str
 /// browser busy with something else right now keeps its note until it
 /// closes.
 pub fn release_stepped_run(case_ids: &[i32]) {
-    if let Ok(mut slot) = SESSION.try_lock() {
+    if let Some(mut slot) = try_lock_briefly(&SESSION) {
         if let Some(s) = slot.as_mut() {
             release_saved(&mut s.stepping, case_ids);
         }

@@ -565,6 +565,160 @@ mod card {
         fresh();
     }
 
+    /// A quiet assistant (no call for an hour, no session seen to end) loses
+    /// its binding of the main browser only: an extra browser it holds is
+    /// the idle release's to deal with, not this sweep's.
+    #[test]
+    fn on_sweep_unbinds_a_quiet_assistant_from_main_only() {
+        let _g = crate::serial::agents();
+        let _a = crate::serial::autorun();
+        fresh();
+        let (a, b) = (key(ID_A), key(ID_B));
+        bind(SlotNo::MAIN, &a);
+        bind(SlotNo(1), &b);
+        on_sweep(&Sweep { quiet: vec![a.clone(), b.clone()], ..Sweep::default() });
+        assert_eq!(bound(SlotNo::MAIN), None, "a quiet assistant does not hold main");
+        assert_eq!(bound(SlotNo(1)), Some(b), "an extra browser's binding is left to the idle release");
+        // Another assistant's quiet leaves main's holder alone.
+        bind(SlotNo::MAIN, &a);
+        on_sweep(&Sweep { quiet: vec![key(ID_B)], ..Sweep::default() });
+        assert_eq!(bound(SlotNo::MAIN), Some(a));
+        fresh();
+    }
+
+    /// The sweeper logs a session ending only for `newly_gone`, never for a
+    /// quiet assistant.
+    #[test]
+    fn a_quiet_assistant_is_not_logged_as_an_ended_session() {
+        let sweeper = include_str!("../../src/commands/ai_bridge.rs");
+        let head = sweeper.find("pub fn spawn_agent_sweeper()").expect("sweeper");
+        let body = &sweeper[head..head + 1800];
+        assert!(body.contains("swept.newly_gone"), "{body}");
+        assert!(!body.contains("swept.quiet"), "{body}");
+    }
+
+    /// Before a replay's first step begins it is `step 0 of 0`, not the step
+    /// it was asked to reach.
+    #[test]
+    fn a_replay_before_its_first_step_reports_zero_of_zero() {
+        use v2_lib::commands::autorun_slots::replaying_activity;
+        assert_eq!(replaying_activity(4521, (0, 0)), AgentActivity::Replaying { case_id: 4521, step: 0, of: 0 });
+        assert_eq!(replaying_activity(4521, (3, 8)), AgentActivity::Replaying { case_id: 4521, step: 3, of: 8 });
+    }
+
+    /// Batches in one slot can overlap: it is going until the last one ends.
+    #[test]
+    fn overlapping_batches_keep_the_slot_going_until_the_last_ends() {
+        use v2_lib::ai_bridge::{batch_going, BatchGoing};
+        let _g = crate::serial::agents();
+        let _a = crate::serial::autorun();
+        let one = SlotNo(1);
+        assert!(!batch_going(one));
+        let first = BatchGoing::begin(one);
+        let second = BatchGoing::begin(one);
+        assert!(batch_going(one));
+        assert!(!batch_going(SlotNo::MAIN), "another slot's batch is another count");
+        drop(first);
+        assert!(batch_going(one), "the second batch is still going");
+        drop(second);
+        assert!(!batch_going(one));
+    }
+
+    /// The person's replay is never stopped by a Release from the card: only
+    /// an assistant's is.
+    #[tokio::test]
+    async fn release_stops_an_assistants_replay_but_never_the_persons() {
+        use v2_lib::commands::autorun_slots::{release_slot, ReleaseWhy};
+        let _g = crate::serial::agents();
+        let _l = crate::serial::log_tail();
+        let _a = crate::serial::autorun();
+        fresh();
+        let cancelled = || state(SlotNo::MAIN).cancel.load(std::sync::atomic::Ordering::SeqCst);
+        let a = register(ID_A, "claude-code", T0);
+        bind(SlotNo::MAIN, &a);
+
+        let persons = OneReplay::claim().expect("main is free");
+        release_slot(SlotNo::MAIN, ReleaseWhy::Person).await.unwrap();
+        assert!(!cancelled(), "the person's replay was asked to stop");
+        drop(persons);
+
+        bind(SlotNo::MAIN, &a);
+        let assistants = OneReplay::claim_for_assistant().expect("main is free");
+        release_slot(SlotNo::MAIN, ReleaseWhy::Person).await.unwrap();
+        assert!(cancelled(), "an assistant's replay is stopped by the release");
+        drop(assistants);
+        fresh();
+    }
+
+    /// A lock the card's watcher holds for a moment is waited out; one a
+    /// replay or a step holds is still reported busy.
+    #[test]
+    fn a_brief_hold_is_waited_out_and_a_real_one_is_not() {
+        use v2_lib::commands::autorun::try_lock_with_retries;
+        let m = tokio::sync::Mutex::new(1u8);
+        let pauses = std::cell::Cell::new(0);
+
+        // Held until the first pause: the second try gets it.
+        let held = std::cell::RefCell::new(Some(m.try_lock().unwrap()));
+        let got = try_lock_with_retries(&m, 5, &|| {
+            pauses.set(pauses.get() + 1);
+            held.borrow_mut().take();
+        });
+        assert!(got.is_some());
+        assert_eq!(pauses.get(), 1);
+        drop(got);
+
+        // Held throughout: five tries, four pauses, then busy.
+        pauses.set(0);
+        let _held = m.try_lock().unwrap();
+        let got = try_lock_with_retries(&m, 5, &|| pauses.set(pauses.get() + 1));
+        assert!(got.is_none());
+        assert_eq!(pauses.get(), 4);
+    }
+
+    /// The same, from another thread that holds the lock a moment.
+    #[test]
+    fn a_lock_another_thread_holds_briefly_is_waited_out() {
+        use v2_lib::commands::autorun::try_lock_briefly;
+        use std::sync::{mpsc, Arc};
+        let m = Arc::new(tokio::sync::Mutex::new(1u8));
+        let (held_tx, held_rx) = mpsc::channel::<()>();
+        let holder = {
+            let m = Arc::clone(&m);
+            std::thread::spawn(move || {
+                let guard = m.try_lock().unwrap();
+                held_tx.send(()).unwrap();
+                // Spun, not slept: a sleep can last a whole timer tick.
+                let until = std::time::Instant::now() + std::time::Duration::from_millis(1);
+                while std::time::Instant::now() < until {
+                    std::hint::spin_loop();
+                }
+                drop(guard);
+            })
+        };
+        held_rx.recv().unwrap();
+        assert!(try_lock_briefly(&m).is_some(), "a hold of a millisecond is waited out");
+        holder.join().unwrap();
+        // One held far longer reads as busy.
+        let _long = m.try_lock().unwrap();
+        assert!(try_lock_briefly(&m).is_none());
+    }
+
+    /// The two readers that answer the person from a try_lock wait out the
+    /// watcher's brief hold, and the person's Open browser clears a binding.
+    #[test]
+    fn the_persons_readers_retry_and_open_clears_the_binding() {
+        let src = include_str!("../../src/commands/autorun.rs");
+        let open = src.find("pub fn supervised_session_is_open_now()").expect("reader");
+        assert!(src[open..open + 400].contains("try_lock_briefly("), "{}", &src[open..open + 400]);
+        let release = src.find("pub fn release_stepped_run(").expect("release_stepped_run");
+        assert!(src[release..release + 400].contains("try_lock_briefly("), "{}", &src[release..release + 400]);
+        let into = src.find("async fn open_into(").expect("open_into");
+        let body = &src[into..into + 1200];
+        let person = body.find("OpenedBy::Person").expect("open_into tells a person's open apart");
+        assert!(body[person..].contains("unbind("), "{body}");
+    }
+
     #[test]
     fn views_list_live_agents_and_their_browser() {
         let _g = crate::serial::agents();

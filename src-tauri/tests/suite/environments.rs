@@ -1019,8 +1019,8 @@ mod accounts_for_the_assistant {
 
     #[tokio::test]
     async fn a_test_environment_keeps_each_proposed_password() {
-        let _root = crate::serial::autorun();
         let _log = crate::serial::log_tail();
+        let _root = crate::serial::autorun();
         let dir = bridge_root();
         let root = dir.path();
         mark_test_environment(root);
@@ -1391,8 +1391,8 @@ mod accounts_for_the_assistant {
 
     #[tokio::test]
     async fn get_accounts_is_not_logged() {
-        let _root = crate::serial::autorun();
         let _log = crate::serial::log_tail();
+        let _root = crate::serial::autorun();
         let dir = bridge_root();
         save_accounts(dir.path(), &[acct("hr.sup", "sup1")]).unwrap();
         mark_test_environment(dir.path());
