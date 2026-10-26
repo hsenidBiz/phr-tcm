@@ -57,6 +57,10 @@ pub struct BridgeContext {
     /// refuse (`NETWORK_TOOLS_OFF`). Each environment keeps its own; off by
     /// default.
     pub network_tools: bool,
+    /// The webview's "Treat all projects as one" switch. Read only by the
+    /// Azure DevOps routes (from Phase 6); `project` stays the home project
+    /// either way.
+    pub all_projects: bool,
     /// The active environment's "Run database changes without asking".
     /// Never the webview's to say: Rust sets it from the environment, on a
     /// push and on a switch (`commands::ai_bridge::push_context_with`,
@@ -158,6 +162,7 @@ impl std::fmt::Debug for BridgeContext {
             .field("db_writes", &self.db_writes)
             .field("api_writes", &self.api_writes)
             .field("network_tools", &self.network_tools)
+            .field("all_projects", &self.all_projects)
             .field("db_no_ask", &self.db_no_ask)
             .field("gate", &self.gate)
             .finish()
@@ -13802,6 +13807,23 @@ pub fn parse_outcomes(raw: Option<&str>) -> Result<Vec<&'static str>, String> {
     Ok(keys)
 }
 
+/// The project a PBI is in, from the session cache or one organization-level
+/// work item read. A work item never changes project, so the answer is kept
+/// for `WORK_ITEM_PROJECT_TTL`.
+async fn pbi_project(
+    ctx: &BridgeContext,
+    client: &crate::ado::AdoClient,
+    pbi: i32,
+) -> Result<String, crate::ado::AdoError> {
+    let key = crate::cache::keys::work_item_project(&client.base_url, &ctx.org, pbi);
+    if let Some(p) = crate::cache::session_fresh::<String>(&key, crate::cache::keys::WORK_ITEM_PROJECT_TTL) {
+        return Ok(p);
+    }
+    let project = client.work_item_project(&ctx.org, pbi).await?;
+    crate::cache::session_put(&key, project.clone());
+    Ok(project)
+}
+
 /// The cases from a PBI's latest runs with the outcomes asked for (Failed
 /// unless told otherwise), each with its comment and linked bugs, plus a
 /// count of every outcome in the suite - what an assistant needs to draft
@@ -13827,9 +13849,27 @@ async fn run_results(
         Ok(w) => w,
         Err(why) => return (400, why),
     };
+    // Combined, the PBI's own project holds its suite and results; the home
+    // project is only where this app keeps its files. Switched off, the
+    // project the bridge was given, with no lookup.
+    let project = if ctx.all_projects {
+        match pbi_project(ctx, client, pbi).await {
+            Ok(p) => p,
+            Err(crate::ado::AdoError::NotFound) => {
+                return (
+                    404,
+                    format!("Work item {pbi} was not found in this organization (find one with search_pbis)."),
+                )
+            }
+            Err(e) => return (502, format!("Azure DevOps error: {e:?}")),
+        }
+    } else {
+        ctx.project.clone()
+    };
+    let project = project.as_str();
     let mut retried = false;
     let (suite, points) = loop {
-        let cached = crate::ado_testplan::cached_suite(&client.base_url, &ctx.org, &ctx.project, pbi);
+        let cached = crate::ado_testplan::cached_suite(&client.base_url, &ctx.org, project, pbi);
         let (suite, from_cache) = match cached {
             Some(s) => (s, true),
             None => {
@@ -13837,11 +13877,11 @@ async fn run_results(
                 // and it checks every plan regardless, so "" costs at most
                 // a slower hit.
                 match client
-                    .find_pbi_requirement_suite(&ctx.org, &ctx.project, pbi, "")
+                    .find_pbi_requirement_suite(&ctx.org, project, pbi, "")
                     .await
                 {
                     Ok(Some(s)) => {
-                        crate::ado_testplan::remember_suite(&client.base_url, &ctx.org, &ctx.project, pbi, &s);
+                        crate::ado_testplan::remember_suite(&client.base_url, &ctx.org, project, pbi, &s);
                         (s, false)
                     }
                     Ok(None) => {
@@ -13861,14 +13901,14 @@ async fn run_results(
             }
         };
         match client
-            .get_test_points(&ctx.org, &ctx.project, suite.plan_id, suite.suite_id, &[])
+            .get_test_points(&ctx.org, project, suite.plan_id, suite.suite_id, &[])
             .await
         {
             Ok(p) => break (suite, p),
             // A cached suite that 404s was deleted in Azure DevOps since
             // it was resolved: forget it and scan once from scratch.
             Err(crate::ado::AdoError::NotFound) if from_cache && !retried => {
-                crate::ado_testplan::forget_suite(&client.base_url, &ctx.org, &ctx.project, pbi);
+                crate::ado_testplan::forget_suite(&client.base_url, &ctx.org, project, pbi);
                 retried = true;
             }
             Err(e) => return (502, format!("Azure DevOps error: {e:?}")),
@@ -13908,7 +13948,7 @@ async fn run_results(
         let detail = match (p.last_run_id, p.last_result_id) {
             (Some(run), Some(res)) if i < RUN_FAILURE_DETAIL_CAP => Some(
                 client
-                    .get_result_report_info(&ctx.org, &ctx.project, run, res)
+                    .get_result_report_info(&ctx.org, project, run, res)
                     .await
                     .unwrap_or_default(),
             ),

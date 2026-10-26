@@ -36,6 +36,7 @@ export const TOUR_PBI: PbiHit = {
   id: 4821,
   title: "Guest checkout",
   work_item_type: "Product Backlog Item",
+  project: TOUR_PROJECT,
 };
 
 const steps = (...pairs: [string, string][]): Step[] =>

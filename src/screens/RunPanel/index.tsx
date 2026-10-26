@@ -305,7 +305,7 @@ export default function RunPanel({
       planId: suite.data!.plan_id,
       planName: suite.data!.plan_name,
       suiteId: suite.data!.suite_id,
-      pbi: { id: pbiId, title: pbiTitle, work_item_type: "" },
+      pbi: { id: pbiId, title: pbiTitle, work_item_type: "", project },
       caseIds,
     }).catch((e) => toast.error(`Could not open runner: ${e.message ?? e}`));
 

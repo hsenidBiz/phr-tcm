@@ -24,6 +24,8 @@ export default function ContextBar({
   setOrg,
   project,
   setProject,
+  allProjects,
+  homeProject,
   pbi,
   setPbi,
   account,
@@ -38,8 +40,14 @@ export default function ContextBar({
 }: {
   org: string;
   setOrg: (v: string) => void;
+  /** The effective project: the PBI's own while the projects show
+   * together, otherwise the picked one. */
   project: string;
   setProject: (v: string) => void;
+  /** The projects show together: no Project picker, and what is not about
+   * one PBI is checked in the home project. */
+  allProjects: boolean;
+  homeProject: string;
   pbi: PbiHit | null;
   setPbi: (p: PbiHit | null) => void;
   account: string | null;
@@ -117,18 +125,26 @@ export default function ContextBar({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [singleOrg, org, locked]);
 
+  // The Project picker is for one-project-at-a-time work only, and a single
+  // project is chosen for you by App (the same rule as the organization).
+  const showProjectPicker = !allProjects && (projects.data?.length ?? 0) !== 1;
+
   // PRs with conflicts or comments still to resolve - the number on the
   // Work Manager pill. Shares the PR panel's cache keys.
-  const prAttention = usePrAttention(org, project);
+  // Both stay on one project (the home project while the projects show
+  // together, so they do not jump with every PBI picked).
+  const watchedProject = allProjects ? homeProject : project;
+  const prAttention = usePrAttention(org, watchedProject);
   // Work-item @mentions of you, into the bell beside it.
-  useMentions(org, project);
+  useMentions(org, watchedProject);
 
   return (
     // flex-wrap: in a narrow window the right-side group drops to a second
     // row instead of overlapping the PBI picker.
     <div className="flex flex-wrap items-center gap-x-2 gap-y-2 border-b border-border bg-surface px-4 py-2.5">
       {/* The scope group: Organization (not drawn when there is exactly one),
-          Project and the PBI search. Always drawn, because the tour anchors
+          Project (not drawn while the projects show together, or when there
+          is exactly one) and the PBI search. Always drawn, because the tour anchors
           its "where you work" stop here. It takes all the free width (flex-1)
           and never less than 224px (min-w-56), so the right-hand group keeps
           the first row. With several organizations on a narrow header the
@@ -159,23 +175,25 @@ export default function ContextBar({
             ))}
           </Select>
         )}
-        <Select
-          aria-label="Project"
-          className="w-44" triggerClassName="h-10 py-0"
-          value={project}
-          disabled={!org || locked}
-          onChange={(e) => {
-            setProject(e.target.value);
-            setPbi(null);
-          }}
-        >
-          <option value="">Project</option>
-          {(projects.data ?? []).map((p) => (
-            <option key={p.id} value={p.name}>
-              {p.name}
-            </option>
-          ))}
-        </Select>
+        {showProjectPicker && (
+          <Select
+            aria-label="Project"
+            className="w-44" triggerClassName="h-10 py-0"
+            value={project}
+            disabled={!org || locked}
+            onChange={(e) => {
+              setProject(e.target.value);
+              setPbi(null);
+            }}
+          >
+            <option value="">Project</option>
+            {(projects.data ?? []).map((p) => (
+              <option key={p.id} value={p.name}>
+                {p.name}
+              </option>
+            ))}
+          </Select>
+        )}
         {/* The PBI search takes ALL the width between the Project picker and
             the right-hand group, with no maximum: the group never shrinks, so
             this is what gives way. min-w forces a wrap instead of a squeeze. */}
@@ -193,10 +211,10 @@ export default function ContextBar({
               // so the glow traces the control instead of a rounder box.
               borderRadius={cssLengthPx("--radius-md", 6)}
             >
-              <PbiPicker org={org} project={project} pbi={pbi} onChange={setPbi} />
+              <PbiPicker org={org} project={project} pbi={pbi} onChange={setPbi} perProject={!allProjects} />
             </ElectricBorder>
           ) : (
-            <PbiPicker org={org} project={project} pbi={pbi} onChange={setPbi} />
+            <PbiPicker org={org} project={project} pbi={pbi} onChange={setPbi} perProject={!allProjects} />
           )}
         </div>
       </div>

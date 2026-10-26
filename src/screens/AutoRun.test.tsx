@@ -14,7 +14,7 @@ afterEach(() => {
   localStorage.clear();
 });
 
-const PBI = { id: 42, title: "Login flow", work_item_type: "Product Backlog Item" };
+const PBI = { id: 42, title: "Login flow", work_item_type: "Product Backlog Item", project: "Web" };
 
 type TabName = "Test cases" | "Past runs";
 

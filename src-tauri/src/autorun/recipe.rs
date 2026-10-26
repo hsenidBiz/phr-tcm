@@ -662,6 +662,30 @@ pub fn project_slug(org: &str, project: &str) -> String {
     format!("{}__{}-{hash:08x}", slug_part(org), slug_part(project))
 }
 
+/// The projects (in the order given) that have any Auto Run file under
+/// `<root>/projects/`. Every per-project file is named `{slug}.json`,
+/// `{slug}.nav.json`, `{slug}.pwexport.json` or `{slug}-<kind>.json`, so a
+/// project has files when some entry starts with `{slug}.` or `{slug}-`.
+/// The slug ends in a hash of the whole name, so one project's prefix is
+/// never another's. Read-only: a missing folder answers `[]` and nothing is
+/// ever created.
+pub fn projects_with_files(root: &Path, org: &str, projects: &[String]) -> Vec<String> {
+    let Ok(entries) = std::fs::read_dir(root.join("projects")) else {
+        return Vec::new();
+    };
+    let names: Vec<String> = entries.flatten().map(|e| e.file_name().to_string_lossy().into_owned()).collect();
+    projects
+        .iter()
+        .filter(|p| {
+            let slug = project_slug(org, p);
+            let dotted = format!("{slug}.");
+            let dashed = format!("{slug}-");
+            names.iter().any(|n| n.starts_with(&dotted) || n.starts_with(&dashed))
+        })
+        .cloned()
+        .collect()
+}
+
 pub(crate) fn recipe_path(root: &Path, org: &str, project: &str) -> PathBuf {
     root.join("projects").join(format!("{}.json", project_slug(org, project)))
 }

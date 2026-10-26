@@ -45,6 +45,7 @@ import ComponentsDialog, { componentsSummary, useComponents } from "./Components
 import DiscoveryDialog, { discoverySummary, useDiscoveryMap } from "./DiscoveryDialog";
 import ProtectedRecordsDialog from "./ProtectedRecordsDialog";
 import RecipeEditor from "./RecipeEditor";
+import { noProjectHint, useAllProjects } from "../../lib/projectScope";
 import RecordSignInDialog from "./RecordSignInDialog";
 import SaveWordsDialog, { BUILT_IN_SAVE_WORDS } from "./SaveWordsDialog";
 import SiteAddressDialog from "./SiteAddressDialog";
@@ -303,8 +304,9 @@ function MissingFiles({ names, full = false }: { names: string[]; full?: boolean
  * script uploads a file the folder lacks: the line then names them. */
 function summaryLines(
   s: AutoRunSetup,
+  allProjects: boolean,
 ): { label: string; status: Status; value: string; missing?: string[] }[] {
-  const pickProject = "Pick a project first";
+  const pickProject = noProjectHint(allProjects, "Pick a project first");
   // No environment is an answer, not a gap: runs then go to the saved
   // recipe's address, which the Site address line says.
   const env: [Status, string] = s.envs.isPending
@@ -430,6 +432,7 @@ export default function SetupPanel({
   search: string;
   onSearch: (text: string) => void;
 }) {
+  const allProjects = useAllProjects();
   const headingId = useId();
   const bodyId = useId();
   const [accountsOpen, setAccountsOpen] = useState(false);
@@ -481,7 +484,9 @@ export default function SetupPanel({
   };
 
   const { setupReady, recipe, envs, accounts, nav, testFiles, site, activeEnv } = s;
-  const needsProject = setupReady ? undefined : "Pick an organization and project first";
+  const needsProject = setupReady
+    ? undefined
+    : noProjectHint(allProjects, "Pick an organization and project first");
   const extraSites = site.allowed_origins.length;
   const dbLine = s.databases.isPending
     ? "loading…"
@@ -496,7 +501,7 @@ export default function SetupPanel({
   // The full rows carry the same status as the summary lines. Save words
   // and Protected records have no summary line: quiet, so every row's label
   // starts at the same place.
-  const lines = summaryLines(s);
+  const lines = summaryLines(s, allProjects);
   const statusOf = (label: string): Status => lines.find((l) => l.label === label)?.status ?? "quiet";
   const dbStatus = statusOf("Database");
 

@@ -73,6 +73,8 @@ import { useAutoRunScriptsSync } from "./hooks/useAutoRunScriptsSync";
 import BridgeStatusBadge from "./components/BridgeStatusBadge";
 import SpecsStatusPill from "./components/SpecsStatusPill";
 import ContextBar from "./components/ContextBar";
+import { seedCombinedRecents } from "./components/PbiPicker";
+import { effectiveProject, saveAllProjects, takeAllProjectsNotice, useAllProjects } from "./lib/projectScope";
 import Sidebar, { WORK_ITEMS, shortcutOrder, type Section, type WorkSection } from "./components/Sidebar";
 import { hydrateExtras } from "./lib/extras";
 import {
@@ -240,8 +242,16 @@ export default function App() {
   // The tour skips the stop for a card whose module is off.
   const tourSteps = useMemo(() => tourStepsFor(modules), [modules]);
   const [org, setOrgRaw] = useState(initial.org);
-  const [project, setProjectRaw] = useState(initial.project);
+  // The home project: where Auto Run, API templates and Playwright keep their
+  // files, and what a screen with no PBI falls back to. It is the project the
+  // person picked (switched off) or the one the first PBI / the only project /
+  // the Auto Run files chose (projects shown together).
+  const [homeProject, setHomeProjectRaw] = useState(initial.project);
   const [pbi, setPbiRaw] = useState<PbiHit | null>(initial.pbi);
+  const allProjects = useAllProjects();
+  // The project every PBI-scoped screen and write uses: the PBI's own while
+  // the projects show together, otherwise the home project.
+  const project = effectiveProject(allProjects, pbi, homeProject);
   const [workMode, setWorkMode] = useState(initial.workMode);
   // Work Manager's own rail section; the board stays the landing view.
   const [workSection, setWorkSection] = useState<WorkSection>("board");
@@ -257,6 +267,13 @@ export default function App() {
   // item or a pull request, and the Work Manager screen that can show it
   // clears this the moment it has.
   const [workFocus, setWorkFocus] = useState<NotificationTarget | null>(null);
+  // The project a notification came from, handed to the Work Manager screens
+  // while the projects show together (there is no project selector to switch,
+  // and the home project is not theirs to overwrite). Null means the screens
+  // use their ordinary project. Interim until the Work Manager screens read
+  // every project (Phase 4); anything that changes what the screens stand
+  // for clears it.
+  const [workProject, setWorkProject] = useState<string | null>(null);
 
   // First-run walkthrough: opens once after the first sign-in, and again
   // whenever Settings asks for it. While it is up the app runs on sample
@@ -285,7 +302,7 @@ export default function App() {
   const before = useRef<{
     section: Section;
     org: string;
-    project: string;
+    homeProject: string;
     pbi: PbiHit | null;
     workMode: boolean;
     workSection: WorkSection;
@@ -293,12 +310,37 @@ export default function App() {
   } | null>(null);
   // Read inside stable callbacks, so starting the tour does not depend on
   // a fresh closure over seven pieces of state.
-  const ctx = useRef({ section, org, project, pbi, workMode, workSection, caseSelection });
-  ctx.current = { section, org, project, pbi, workMode, workSection, caseSelection };
+  const ctx = useRef({ section, org, homeProject, pbi, workMode, workSection, caseSelection });
+  ctx.current = { section, org, homeProject, pbi, workMode, workSection, caseSelection };
+
+  // Turning the switch OFF while a PBI of another project is open: the
+  // Project selector comes back pre-filled with that PBI's project, so the
+  // PBI is kept and every screen stays where it was. Done while rendering,
+  // not in an effect, so no screen is ever drawn for the old home project in
+  // between. The tour refuses the switch (saveAllProjects), so this never
+  // runs over the walkthrough's sample scope - and is skipped there anyway.
+  // Turning it ON changes nothing else, except that a project a notification
+  // handed to the Work Manager screens goes with either flip, and that the
+  // case selection (work item ids of the old project) goes when the PBI's
+  // project is not the home project, the same rule a PBI pick follows.
+  const [seenAllProjects, setSeenAllProjects] = useState(allProjects);
+  if (seenAllProjects !== allProjects) {
+    setSeenAllProjects(allProjects);
+    setWorkProject(null);
+    // (Turning it off sets the home project to the PBI's just below, so the
+    // effective project does not move then.)
+    if (allProjects && effectiveProject(true, pbi, homeProject) !== homeProject) setCaseSelection(null);
+    if (!allProjects && !tourOpen && pbi?.project && pbi.project !== homeProject) {
+      setHomeProjectRaw(pbi.project);
+    }
+  }
 
   const startTour = useCallback(() => {
     if (before.current) return; // already running
     before.current = { ...ctx.current };
+    // The walkthrough runs on sample data; a project handed over by a
+    // notification is not part of its scope.
+    setWorkProject(null);
     suspendCache(true);
     setTourExpanded(true);
     installTourBackend();
@@ -317,7 +359,7 @@ export default function App() {
     // outlive it.
     qc.removeQueries({ queryKey: ["orgs"] });
     setOrgRaw(TOUR_ORG);
-    setProjectRaw(TOUR_PROJECT);
+    setHomeProjectRaw(TOUR_PROJECT);
     setPbiRaw(TOUR_PBI);
     setTourRunning(true);
     setTourOpen(true);
@@ -348,7 +390,7 @@ export default function App() {
     qc.removeQueries({ queryKey: ["orgs"] });
     if (!back) return;
     setOrgRaw(back.org);
-    setProjectRaw(back.project);
+    setHomeProjectRaw(back.homeProject);
     setPbiRaw(back.pbi);
     setSection(back.section);
     setWorkMode(back.workMode);
@@ -412,6 +454,8 @@ export default function App() {
       if (e.shiftKey && e.key.toLowerCase() === "m") {
         e.preventDefault();
         setWorkMode((w) => !w);
+        // A project a notification handed over is good for that visit only.
+        setWorkProject(null);
         return;
       }
       // Read at the moment of the press: the rows close up around a
@@ -472,8 +516,10 @@ export default function App() {
   // the tour: the sample scope is not the user's, and must not outlive it.
   useEffect(() => {
     if (tourOpen) return;
-    savePrefs({ org, project, section, pbi, workMode });
-  }, [org, project, section, pbi, workMode, tourOpen]);
+    // The home project, not the effective one: a PBI picked from another
+    // project must not move where the person's own files live.
+    savePrefs({ org, project: homeProject, section, pbi, workMode });
+  }, [org, homeProject, section, pbi, workMode, tourOpen]);
 
   // A sidebar row marked "new" (lib/newNav) is done with once its screen
   // is open, however it was reached: a click, Ctrl+number, the palette, a
@@ -498,17 +544,46 @@ export default function App() {
   // goToSection, so it survived the one change that invalidates it.
   const setOrg = (o: string) => {
     setOrgRaw(o);
-    setProjectRaw("");
+    setHomeProjectRaw("");
     setPbiRaw(null);
     setCaseSelection(null);
     // A pending notification handoff belongs to the organisation it was
     // raised in; carrying it across would open someone else's item id.
     setWorkFocus(null);
+    setWorkProject(null);
   };
   const setProject = (p: string) => {
-    setProjectRaw(p);
+    setHomeProjectRaw(p);
     setPbiRaw(null);
     setCaseSelection(null);
+  };
+  // Every PBI pick (the context bar, the screens' own pickers, Search
+  // Suites' hand-over) comes through here. A PBI of another project moves the
+  // effective project exactly as a project change does, so the case
+  // selection (work item ids of the old project) goes with it. On a fresh
+  // install the first PBI's project becomes the home project. The tour and
+  // the unattended-run host keep the raw setter.
+  const setPbi = (p: PbiHit | null) => {
+    if (effectiveProject(allProjects, p, homeProject) !== project) setCaseSelection(null);
+    if (allProjects && !homeProject && p?.project) {
+      setHomeProjectRaw(p.project);
+      // Auto Run, API Templates and Playwright keep their files there, so
+      // say so rather than let it happen unseen. An organization with one
+      // project had it chosen already: nothing to announce.
+      if (projects.data?.length !== 1) {
+        toast.info(`Home project set to ${p.project}. Change it in Settings.`);
+      }
+    }
+    setWorkProject(null);
+    setPbiRaw(p);
+  };
+  // Settings' Home project picker. Moving the home project moves the
+  // effective project only when no PBI pins it, and then the case selection
+  // (work item ids of the old project) goes, the same rule setPbi follows.
+  const changeHomeProject = (p: string) => {
+    if (effectiveProject(allProjects, pbi, p) !== project) setCaseSelection(null);
+    setWorkProject(null);
+    setHomeProjectRaw(p);
   };
   // Settings opens on Modules when the "Playwright is needed" dialog sent
   // the person there; any other navigation clears it.
@@ -519,6 +594,9 @@ export default function App() {
     setStartOnModules(false);
     setWorkMode(false); // any tab click exits Work Manager mode
     setCaseSelection(null); // direct navigation returns Edit to PBI mode
+    // A project a notification handed to the Work Manager is good for that
+    // visit; leaving by any tab (or the Settings gear) ends it.
+    setWorkProject(null);
   };
   // Auto Run's Export to Playwright is a shortcut to the Playwright tab,
   // which holds the Export dialog (lib/playwrightExport).
@@ -536,12 +614,29 @@ export default function App() {
       clearReviewRequest();
       return;
     }
-    if (org !== r.org || project !== r.project) {
-      setOrgRaw(r.org);
-      setProjectRaw(r.project);
-      setCaseSelection(null);
+    if (allProjects) {
+      // Together, the run's PBI carries its own project, so a run of this
+      // organization leaves the home project alone. A run of another
+      // organization brings that run's project home: the one held now is a
+      // project of the organization being left.
+      if (org !== r.org) {
+        setOrgRaw(r.org);
+        setHomeProjectRaw(r.project);
+        setCaseSelection(null);
+        setWorkProject(null);
+      }
+      if (pbi?.id !== r.pbi.id) {
+        if (effectiveProject(true, r.pbi, homeProject) !== project) setCaseSelection(null);
+        setPbiRaw(r.pbi);
+      }
+    } else {
+      if (org !== r.org || homeProject !== r.project) {
+        setOrgRaw(r.org);
+        setHomeProjectRaw(r.project);
+        setCaseSelection(null);
+      }
+      if (pbi?.id !== r.pbi.id) setPbiRaw(r.pbi);
     }
-    if (pbi?.id !== r.pbi.id) setPbiRaw(r.pbi);
     if (section !== "autorun" || workMode) goToSection("autorun");
   });
 
@@ -773,7 +868,12 @@ export default function App() {
   // tour is running - see `lib/fieldPrefs.ts`. That covers every caller,
   // this one included, so passing it the sample org/project during a tour
   // is safe.
-  const { prefs: bridgePrefs } = useFieldRefs(org, project);
+  //
+  // The project the bridge learns is the home project while the projects
+  // show together: it stays put as PBIs of other projects are picked (the
+  // assistant names a project when it means another one).
+  const bridgeProject = allProjects ? homeProject : project;
+  const { prefs: bridgePrefs } = useFieldRefs(org, bridgeProject);
   // Re-pushed when the AI Bridge tab toggles a tool, so the change reaches
   // an assistant on its next tools/list rather than after a restart.
   const disabledTools = useSyncExternalStore(subscribeDisabledTools, disabledToolsSnapshot);
@@ -848,20 +948,20 @@ export default function App() {
   const bridgeContextTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
     if (tourOpen || !dbMigrated) return;
-    if (!signedIn || !org || !project) return;
+    if (!signedIn || !org || !bridgeProject) return;
     const push = () => {
       commands
         .bridgeStatus()
         .then(() =>
           commands.setBridgeContext(
             org,
-            project,
+            bridgeProject,
             bridgePrefs.moduleRef,
             bridgePrefs.preconditionsRef,
             disabledTools,
             workingDir || null,
             dbId || null,
-            { dbWrites: dbWrites && devLogin, apiWrites, networkTools, envId },
+            { dbWrites: dbWrites && devLogin, apiWrites, networkTools, envId, allProjects },
           ),
         )
         .catch(() => {});
@@ -879,7 +979,8 @@ export default function App() {
   }, [
     signedIn,
     org,
-    project,
+    bridgeProject,
+    allProjects,
     bridgePrefs.moduleRef,
     bridgePrefs.preconditionsRef,
     disabledTools,
@@ -904,6 +1005,86 @@ export default function App() {
     };
   }, []);
 
+  // The organization's projects: the same key and options as the context
+  // bar's and the palette's, so it is one request. Not over the walkthrough,
+  // whose sample scope has its own list.
+  const projects = useQuery({
+    queryKey: ["projects", org],
+    ...persistentQuery({
+      key: cacheKeys.projects(org),
+      fetcher: () => unwrap(commands.listProjects(org)),
+      ...CACHE.reference,
+    }),
+    enabled: signedIn && Boolean(org) && !tourOpen,
+  });
+
+  // A home project nobody has to pick. An organization with exactly one
+  // project: that project, in both modes (the selector hides). Projects shown
+  // together with several and no home yet: the one project that already has
+  // Auto Run files (asked once per organization, and only when exactly one
+  // does); otherwise the first PBI picked decides (setPbi).
+  const askedAutorunHome = useRef<string | null>(null);
+  useEffect(() => {
+    if (tourOpen || !signedIn || !org || !projects.data) return;
+    const names = projects.data.map((p) => p.name);
+    if (names.length === 1) {
+      if (homeProject !== names[0]) {
+        if (allProjects) setHomeProjectRaw(names[0]);
+        else setProject(names[0]);
+      }
+      return;
+    }
+    if (!allProjects || homeProject || names.length < 2) return;
+    if (askedAutorunHome.current === org) return;
+    askedAutorunHome.current = org;
+    const askedOrg = org;
+    commands
+      .projectsWithAutorunFiles(org, names)
+      .then((r) => {
+        // The answer belongs to the organization it was asked about: one
+        // that lands after the person moved on is dropped.
+        if (ctx.current.org !== askedOrg) return;
+        // An answer that is not exactly one project (or none at all, as
+        // from a stand-in) decides nothing. A home chosen meanwhile wins.
+        if (r?.status === "ok" && Array.isArray(r.data) && r.data.length === 1) {
+          const only = r.data[0];
+          setHomeProjectRaw((h) => h || only);
+        }
+      })
+      .catch(() => {});
+    // setProject is this component's own and changes identity every render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tourOpen, signedIn, org, projects.data, homeProject, allProjects]);
+
+  // What a person saved as the home project's recent PBIs is copied to the
+  // organization-wide list the first time the projects show together (the
+  // per-project list is left exactly as it was).
+  useEffect(() => {
+    if (tourOpen || !signedIn || !allProjects || !org || !homeProject) return;
+    seedCombinedRecents(org, homeProject);
+  }, [tourOpen, signedIn, allProjects, org, homeProject]);
+
+  // An existing install is told once that its projects now show together.
+  // A fresh install (nothing chosen yet) never is, and neither is one whose
+  // organization has a single project: there is nothing to show together, so
+  // the notice would only puzzle (its key is still spent). It waits for the
+  // project list to know which. Not over a documentation capture, which must
+  // never carry a toast.
+  //
+  // The wording says only what holds from here on: later releases widen what
+  // shows together, and this notice is never shown again to correct it.
+  const hadProject = useRef(Boolean(initial.project));
+  useEffect(() => {
+    if (tourOpen || !signedIn || isCaptureMode() || !projects.data) return;
+    if (takeAllProjectsNotice(hadProject.current) && projects.data.length > 1) {
+      toast.info("Projects now show together", {
+        description:
+          "PBIs from every project now show in one search, and each PBI brings its own project, so the Project picker is gone. Auto Run, API Templates and Playwright stay on your home project, which you can change in Settings. To work in one project at a time, turn off Treat all projects as one in Settings, under General.",
+        duration: 12_000,
+      });
+    }
+  }, [tourOpen, signedIn, projects.data]);
+
   // Delete permission, asked ONCE at sign-in per org/project rather than
   // when the Update Test Cases screen opens. The screen reads this same
   // cache key, so by the time anyone can look for a Delete button the
@@ -924,9 +1105,11 @@ export default function App() {
   // because "can the user see the app" is a frontend question.
   useEffect(() => {
     if (tourOpen) return;
-    if (!signedIn || !org || !project) return;
-    commands.watchAssignedWork(org, project).catch(() => {});
-  }, [signedIn, org, project, tourOpen]);
+    if (!signedIn || !org || !bridgeProject) return;
+    // The home project while the projects show together, so the watch does
+    // not restart with every PBI picked (a later phase widens it).
+    commands.watchAssignedWork(org, bridgeProject).catch(() => {});
+  }, [signedIn, org, bridgeProject, tourOpen]);
 
   useEffect(() => {
     const un = events.workAssigned.listen((e) => {
@@ -936,14 +1119,14 @@ export default function App() {
       // until the user actually looks at the board.
       addWorkAlerts(items.length);
       // And into the bell, where it stays until dismissed.
-      noteAssigned(org, project, items);
+      noteAssigned(org, bridgeProject, items);
       const { title, body } = summarize(items);
       announce(title, body);
     });
     return () => {
       un.then((f) => f()).catch(() => {});
     };
-  }, [org, project]);
+  }, [org, bridgeProject]);
 
   // The title bar names the active environment once there are two or more.
   const environmentName = useActiveEnvironmentName();
@@ -1132,8 +1315,12 @@ export default function App() {
         <CommandPalette
           onNavigate={goToSection}
           org={org}
+          allProjects={allProjects}
           onSwitchProject={setProject}
-          onToggleWork={() => setWorkMode((w) => !w)}
+          onToggleWork={() => {
+            setWorkMode((w) => !w);
+            setWorkProject(null);
+          }}
         />
       </Suspense>
 
@@ -1183,6 +1370,7 @@ export default function App() {
                 // drawer later, on a screen the user navigated to on
                 // their own and was not expecting it to react to.
                 setWorkFocus(null);
+                setWorkProject(null);
               }}
               items={WORK_ITEMS}
               badges={{ board: workAlerts }}
@@ -1203,8 +1391,10 @@ export default function App() {
               setOrg={setOrg}
               project={project}
               setProject={setProject}
+              allProjects={allProjects}
+              homeProject={homeProject}
               pbi={pbi}
-              setPbi={setPbiRaw}
+              setPbi={setPbi}
               account={status.data?.account ?? null}
               workMode={workMode}
               onToggleWork={() => {
@@ -1213,6 +1403,7 @@ export default function App() {
                 // Manager (or entering it by hand) drops a stale focus
                 // rather than letting it surface on whatever is next.
                 setWorkFocus(null);
+                setWorkProject(null);
               }}
               onOpenSettings={toggleSettings}
               settingsOpen={section === "settings" && !workMode}
@@ -1225,10 +1416,14 @@ export default function App() {
                 logUi(`nav: notification/${target.kind}`);
                 // The target's own project, not necessarily the one on
                 // screen: a notification can arrive for a project you have
-                // since navigated away from. setProject only clears the
-                // PBI and case selection, not workFocus, so setting the
-                // focus after it survives.
-                if (target.project !== project) setProject(target.project);
+                // since navigated away from. Picked one at a time, that means
+                // switching there (setProject only clears the PBI and case
+                // selection, not workFocus, so setting the focus after it
+                // survives). Shown together there is nothing to switch and
+                // the home project is not the notification's to overwrite:
+                // the Work Manager screens are handed the project instead.
+                if (allProjects) setWorkProject(target.project !== project ? target.project : null);
+                else if (target.project !== project) setProject(target.project);
                 setWorkFocus(target);
                 setWorkSection(target.kind === "pr" ? "prs" : "board");
                 setWorkMode(true);
@@ -1367,7 +1562,7 @@ export default function App() {
                     <div className="min-h-0 flex-1">
                       <WorkBoard
                         org={org}
-                        project={project}
+                        project={workProject ?? project}
                         focusItem={workFocus?.kind === "work-item" ? workFocus.id : null}
                         onFocusHandled={() => setWorkFocus(null)}
                       />
@@ -1377,7 +1572,14 @@ export default function App() {
                   <>
                     <h1 className="mb-4 text-lg font-semibold">New Work Item</h1>
                     <div className="min-h-0 flex-1 overflow-y-auto">
-                      <CreateWorkItem org={org} project={project} />
+                      {/* An item with no parent belongs to the home project; a
+                          parent from another project moves it there (the
+                          screen decides). */}
+                      <CreateWorkItem
+                        org={org}
+                        project={workProject ?? (allProjects ? homeProject : project)}
+                        allProjects={allProjects}
+                      />
                     </div>
                   </>
                 ) : (
@@ -1386,7 +1588,7 @@ export default function App() {
                     <div className="min-h-0 flex-1 overflow-y-auto">
                       <PrPanel
                         org={org}
-                        project={project}
+                        project={workProject ?? project}
                         focus={workFocus?.kind === "pr" ? workFocus : null}
                         onFocusHandled={() => setWorkFocus(null)}
                       />
@@ -1414,10 +1616,10 @@ export default function App() {
                   )}
                 </div>
                 {section === "manual" && (
-                  <ManualEntry org={org} project={project} pbi={pbi} onPickPbi={setPbiRaw} />
+                  <ManualEntry org={org} project={project} pbi={pbi} onPickPbi={setPbi} />
                 )}
                 {section === "import" && (
-                  <ImportFile org={org} project={project} pbi={pbi} onPickPbi={setPbiRaw} />
+                  <ImportFile org={org} project={project} pbi={pbi} onPickPbi={setPbi} />
                 )}
                 {section === "edit" && (
                   <EditCases
@@ -1426,21 +1628,21 @@ export default function App() {
                     pbi={pbi}
                     caseSelection={caseSelection}
                     onClearSelection={() => setCaseSelection(null)}
-                    onPickPbi={setPbiRaw}
+                    onPickPbi={setPbi}
                   />
                 )}
                 {section === "view" && (
-                  <ViewCases org={org} project={project} pbi={pbi} onPickPbi={setPbiRaw} />
+                  <ViewCases org={org} project={project} pbi={pbi} onPickPbi={setPbi} />
                 )}
                 {section === "run" && (
-                  <RunTests org={org} project={project} pbi={pbi} onPickPbi={setPbiRaw} />
+                  <RunTests org={org} project={project} pbi={pbi} onPickPbi={setPbi} />
                 )}
                 {section === "suites" && (
                   <Suites
                     org={org}
                     project={project}
                     onOpenPbi={(p, target) => {
-                      setPbiRaw({ id: p.id, title: p.title, work_item_type: "Product Backlog Item" });
+                      setPbi({ id: p.id, title: p.title, work_item_type: "Product Backlog Item", project: project });
                       goToSection(target === "edit" ? "edit" : "run");
                     }}
                     onEditCases={(label, caseIds) => {
@@ -1453,14 +1655,18 @@ export default function App() {
                       goToSection("manage");
                     }}
                     onSetCurrentPbi={(p) =>
-                      setPbiRaw({ id: p.id, title: p.title, work_item_type: "Product Backlog Item" })
+                      setPbi({ id: p.id, title: p.title, work_item_type: "Product Backlog Item", project: project })
                     }
                   />
                 )}
                 {modules.has("auto_run") && section === "autorun" && (
                   <AutoRun
                     org={org}
-                    project={project}
+                    // Auto Run's files belong to the application under test
+                    // (the home project); only the results sent to Azure
+                    // DevOps follow the PBI.
+                    project={allProjects ? homeProject : project}
+                    adoProject={project}
                     pbi={pbi}
                     onOpenPlaywright={() => goToSection("playwright")}
                     onOpenModules={() => {
@@ -1480,14 +1686,23 @@ export default function App() {
                 )}
                 {section === "ai" && <AiBridge />}
                 {modules.has("api_templates") && section === "apitemplates" && (
-                  <ApiTemplates org={org} project={project} onOpenAiBridge={() => goToSection("ai")} />
+                  <ApiTemplates
+                    org={org}
+                    project={allProjects ? homeProject : project}
+                    onOpenAiBridge={() => goToSection("ai")}
+                  />
                 )}
-                {modules.has("playwright") && section === "playwright" && <Playwright org={org} project={project} />}
+                {modules.has("playwright") && section === "playwright" && (
+                  <Playwright org={org} project={allProjects ? homeProject : project} />
+                )}
                 {modules.has("crystal_reports") && section === "crystal-reports" && <CrystalReports />}
                 {section === "settings" && (
                   <Settings
                     org={org}
                     project={project}
+                    homeProject={homeProject}
+                    onHomeProjectChange={changeHomeProject}
+                    onAllProjectsChange={saveAllProjects}
                     onFillChange={setSettingsFill}
                     startOnModules={startOnModules}
                   />

@@ -62,7 +62,7 @@ test("in capture mode, every boot resets the PBI, the mode and the queue", async
     org: "Contoso",
     project: "Customer Portal",
     section: "manual",
-    pbi: { id: 1001, title: "Login and session flow", work_item_type: "Product Backlog Item" },
+    pbi: { id: 1001, title: "Login and session flow", work_item_type: "Product Backlog Item", project: "Customer Portal" },
     workMode: false,
   });
   expect(JSON.parse(localStorage.getItem("tcm-v2-recent-pbis:Contoso/Customer Portal")!)).toHaveLength(2);

@@ -6,6 +6,7 @@ import { Button } from "../../components/ui/button";
 import { IconClear } from "../../lib/actionIcons";
 import { CACHE, cacheKeys, persistentQuery } from "../../lib/cache";
 import { unwrap } from "../../lib/ipc";
+import { noProjectSentence, useAllProjects } from "../../lib/projectScope";
 import type { SuiteCase } from "../../lib/suiteOrder";
 import PlanTable from "./PlanTable";
 import { toggleSelection, type Selection } from "./selection";
@@ -38,6 +39,7 @@ export default function ManageCases({
   focus?: { planId: number; suiteId: number } | null;
   onFocusHandled?: () => void;
 }) {
+  const allProjects = useAllProjects();
   const plans = useQuery({
     queryKey: plansSuitesKey(org, project),
     ...persistentQuery({
@@ -110,9 +112,7 @@ export default function ManageCases({
 
   if (!org || !project) {
     return (
-      <p className="text-sm text-muted">
-        Pick an organization and project in the bar above to manage test cases.
-      </p>
+      <p className="text-sm text-muted">{noProjectSentence(allProjects, "to manage test cases")}</p>
     );
   }
 

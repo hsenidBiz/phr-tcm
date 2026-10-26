@@ -51,7 +51,13 @@ function renderSettings(extra?: ReactNode) {
   return render(
     <QueryClientProvider client={qc}>
       {extra}
-      <Settings org="acme" project="Web" />
+      <Settings
+        org="acme"
+        project="Web"
+        homeProject="Web"
+        onHomeProjectChange={() => {}}
+        onAllProjectsChange={() => {}}
+      />
     </QueryClientProvider>,
   );
 }

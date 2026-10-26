@@ -35,6 +35,35 @@ pub async fn search_pbis(
         .await
 }
 
+/// PBI search across every project of the organization (the "treat all
+/// projects as one" path). Each hit names its own project.
+#[tauri::command]
+#[specta::specta]
+pub async fn search_pbis_all(
+    app: tauri::AppHandle,
+    organization: String,
+    query: String,
+) -> Result<Vec<ado::PbiHit>, ado::AdoError> {
+    let token = get_fresh_token(&app).await?;
+    ado::AdoClient::new(token)
+        .search_pbis_all(&organization, &query, 20)
+        .await
+}
+
+/// Which of `projects` already have Auto Run files: how the app picks a
+/// home project for someone whose files predate the "all projects" switch.
+/// A read-only listing of the Auto Run folder; nothing is created or moved.
+#[tauri::command]
+#[specta::specta]
+pub async fn projects_with_autorun_files(
+    app: tauri::AppHandle,
+    organization: String,
+    projects: Vec<String>,
+) -> Result<Vec<String>, String> {
+    let root = super::autorun::root(&app)?;
+    Ok(crate::autorun::recipe::projects_with_files(&root, &organization, &projects))
+}
+
 /// The project's Area or Iteration paths for the create pickers.
 #[tauri::command]
 #[specta::specta]

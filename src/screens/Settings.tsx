@@ -23,6 +23,10 @@ import { useTileLayout } from "../components/settings/useTileLayout";
 import ChangelogVersionTitle from "../components/ChangelogVersionTitle";
 import { Button } from "../components/ui/button";
 import { Switch } from "../components/ui/switch";
+import { Select } from "../components/ui/select";
+import { unwrap } from "../lib/ipc";
+import { CACHE, cacheKeys, persistentQuery } from "../lib/cache";
+import { useAllProjects } from "../lib/projectScope";
 import { Collapse } from "../components/ui/collapse";
 import { Modal } from "../components/ui/modal";
 import { Input, Textarea } from "../components/ui/input";
@@ -125,17 +129,37 @@ function guideProgressPercent(p: { received: number; total: number } | null): nu
 export default function Settings({
   org,
   project,
+  homeProject,
+  onHomeProjectChange,
+  onAllProjectsChange,
   onFillChange,
   startOnModules = false,
 }: {
   org: string;
   project: string;
+  /** Where Auto Run, API templates, Playwright and new work items without
+   * a PBI keep their files while the projects show together. */
+  homeProject: string;
+  onHomeProjectChange: (p: string) => void;
+  onAllProjectsChange: (on: boolean) => void;
   /** Told whether a page that needs the whole height (Modules) is open. */
   onFillChange?: (fill: boolean) => void;
   /** Open on the Modules page rather than the settings cards. */
   startOnModules?: boolean;
 }) {
   const qc = useQueryClient();
+  const allProjects = useAllProjects();
+  // The same list, key and options as the context bar's, so they share one
+  // entry; the home project is a choice only when there is more than one.
+  const projects = useQuery({
+    queryKey: ["projects", org],
+    ...persistentQuery({
+      key: cacheKeys.projects(org),
+      fetcher: () => unwrap(commands.listProjects(org)),
+      ...CACHE.reference,
+    }),
+    enabled: Boolean(org) && allProjects,
+  });
   // The optional extras (settingsExtras.ts): the listener lives only
   // while this screen is mounted, and shakes this panel.
   const panelRef = useRef<HTMLDivElement>(null);
@@ -755,6 +779,45 @@ export default function Settings({
       </SettingsCard>
 
       <SettingsCard title="General" data-settings-card="general">
+        <SettingRow
+          asLabel
+          name="Treat all projects as one"
+          description="PBIs from every project show in one search, and new test cases go to the PBI's own project. Off, you pick a project in the bar."
+          control={
+            <Switch
+              checked={allProjects}
+              onCheckedChange={onAllProjectsChange}
+              ariaLabel="Treat all projects as one"
+            />
+          }
+        />
+        {allProjects && (projects.data?.length ?? 0) > 1 && (
+          <SettingRow
+            name="Home project"
+            description="Auto Run, API templates, Playwright and new work items without a PBI use this project."
+            control={
+              <Select
+                aria-label="Home project"
+                className="w-44"
+                triggerClassName="py-1.5"
+                value={homeProject}
+                onChange={(e) => onHomeProjectChange(e.target.value)}
+              >
+                {/* The way to a home project is to pick one; once there is one,
+                    going back to none would leave screens with nowhere to
+                    point. */}
+                <option value="" disabled={Boolean(homeProject)}>
+                  Pick a project
+                </option>
+                {(projects.data ?? []).map((p) => (
+                  <option key={p.name} value={p.name}>
+                    {p.name}
+                  </option>
+                ))}
+              </Select>
+            }
+          />
+        )}
         <AccountSettings />
         <BackgroundSettings />
         {/* Three levels, one pressed. Only the chosen level's explanation

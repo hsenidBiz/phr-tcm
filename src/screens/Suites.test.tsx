@@ -366,7 +366,7 @@ test("a static suite's Run chip opens a suite-scoped runner session", async () =
     expect(raw).toBeTruthy();
   });
   const session = JSON.parse(localStorage.getItem("tcm-v2-runner-session") as string);
-  expect(session.pbi).toEqual({ id: 0, title: "Sprint stories", work_item_type: "" });
+  expect(session.pbi).toEqual({ id: 0, title: "Sprint stories", work_item_type: "", project: "Web" });
   expect(session.caseIds).toEqual([301, 302]);
   expect(session.planId).toBe(9);
   expect(session.suiteId).toBe(93);

@@ -35,6 +35,17 @@ export const commands = {
 	listProjects: (organization: string) => typedError<Project[], AdoError>(__TAURI_INVOKE("list_projects", { organization })),
 	listOrgs: () => typedError<Org[], AdoError>(__TAURI_INVOKE("list_orgs")),
 	searchPbis: (organization: string, project: string, query: string) => typedError<PbiHit[], AdoError>(__TAURI_INVOKE("search_pbis", { organization, project, query })),
+	/**
+	 *  PBI search across every project of the organization (the "treat all
+	 *  projects as one" path). Each hit names its own project.
+	 */
+	searchPbisAll: (organization: string, query: string) => typedError<PbiHit[], AdoError>(__TAURI_INVOKE("search_pbis_all", { organization, query })),
+	/**
+	 *  Which of `projects` already have Auto Run files: how the app picks a
+	 *  home project for someone whose files predate the "all projects" switch.
+	 *  A read-only listing of the Auto Run folder; nothing is created or moved.
+	 */
+	projectsWithAutorunFiles: (organization: string, projects: string[]) => typedError<string[], string>(__TAURI_INVOKE("projects_with_autorun_files", { organization, projects })),
 	pbiTestCases: (organization: string, pbiId: number) => typedError<TestCaseSummary[], AdoError>(__TAURI_INVOKE("pbi_test_cases", { organization, pbiId })),
 	parseImportFile: (path: string) => typedError<ImportResult_Serialize, string>(__TAURI_INVOKE("parse_import_file", { path })),
 	/**
@@ -2819,6 +2830,11 @@ export type BridgeSwitches = {
 	 *  (`push_context_with`).
 	 */
 	envId?: string,
+	/**
+	 *  The webview's "Treat all projects as one" switch (see
+	 *  `BridgeContext::all_projects`). Not a write switch.
+	 */
+	allProjects?: boolean,
 };
 
 /**  How the browser runs. */
@@ -4904,6 +4920,7 @@ export type PbiHit = {
 	id: number,
 	title: string,
 	work_item_type: string,
+	project: string,
 };
 
 /**  Phrases one page holds. `page` counts from 1, and `-1` is the last. */

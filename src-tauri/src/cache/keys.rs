@@ -39,6 +39,16 @@ pub fn suite_tree(base_url: &str, org: &str, project: &str) -> String {
     format!("suite-tree:{base_url}|{org}|{project}")
 }
 
+/// A work item never changes project, so the project a work item was found
+/// in is good for the whole session.
+pub const WORK_ITEM_PROJECT_TTL: Duration = Duration::from_secs(6 * 60 * 60);
+
+/// The project a work item belongs to (session tier only). The base_url is
+/// in the key for the same reason as `suite`'s.
+pub fn work_item_project(base_url: &str, org: &str, id: i32) -> String {
+    format!("wi-project:{base_url}|{org}|{id}")
+}
+
 /// How long the Boards fallback reuses the ids its URL needs. A project's
 /// GUID never changes and a team's area scope changes when somebody
 /// reorganises the project, not during an upload - and the fallback only

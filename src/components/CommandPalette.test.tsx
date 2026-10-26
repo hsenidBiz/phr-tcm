@@ -12,13 +12,19 @@ afterEach(() => {
   resetModulesStore();
 });
 
-function renderPalette(onNavigate = vi.fn(), onSwitchProject = vi.fn(), onToggleWork = vi.fn()) {
+function renderPalette(
+  onNavigate = vi.fn(),
+  onSwitchProject = vi.fn(),
+  onToggleWork = vi.fn(),
+  allProjects = false,
+) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(
     <QueryClientProvider client={qc}>
       <CommandPalette
         onNavigate={onNavigate}
         org="acme"
+        allProjects={allProjects}
         onSwitchProject={onSwitchProject}
         onToggleWork={onToggleWork}
       />
@@ -52,6 +58,25 @@ test("switch-project entries come from the current org", async () => {
   fireEvent.keyDown(window, { key: "k", ctrlKey: true });
   fireEvent.click(await screen.findByText("Web"));
   expect(onSwitchProject).toHaveBeenCalledWith("Web");
+});
+
+// While the projects show together there is no project to switch to: each
+// PBI carries its own.
+test("combined mode offers no Switch project", async () => {
+  const asked: string[] = [];
+  mockIPC((cmd) => {
+    asked.push(cmd);
+    if (cmd === "list_projects") return [{ id: "p1", name: "Web" }];
+  });
+  renderPalette(vi.fn(), vi.fn(), vi.fn(), true);
+  fireEvent.keyDown(window, { key: "k", ctrlKey: true });
+  await screen.findByPlaceholderText(/Type a command/);
+  await waitFor(() => expect(asked).toContain("list_projects"));
+  await act(async () => {
+    await new Promise((r) => setTimeout(r, 20));
+  });
+  expect(screen.queryByText("Switch project")).not.toBeInTheDocument();
+  expect(screen.queryByText("Web")).not.toBeInTheDocument();
 });
 
 // The hints were once literals and drifted the moment a tab was added:

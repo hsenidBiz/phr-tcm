@@ -157,3 +157,41 @@ test("choosing a hit and pressing change returns to the search", async () => {
   expect(screen.getByLabelText("Search for the destination PBI")).toBeInTheDocument();
   expect(screen.getByRole("button", { name: /Pick a PBI first/ })).toBeDisabled();
 });
+
+/// Test cases belong to their project, so moving them is a move within it:
+/// the destination is searched in the cases' own project and the move is
+/// made there, whether or not the projects show together.
+test("a relink target is searched in the cases' own project while combined", async () => {
+  localStorage.setItem("tcm-v2-all-projects", "1");
+  const asked: { cmd: string; args: Record<string, unknown> }[] = [];
+  mockIPC((cmd, args) => {
+    asked.push({ cmd, args: args as Record<string, unknown> });
+    if (cmd === "search_pbis")
+      return [{ id: 200, title: "The right PBI", work_item_type: "Product Backlog Item", project: "Web" }];
+    if (cmd === "relink_test_cases") return [{ id: 1, moved: true, error: null }];
+  });
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  render(
+    <QueryClientProvider client={qc}>
+      <RelinkDialog
+        org="acme"
+        project="Web"
+        fromPbi={100}
+        cases={[tc(1, "Valid login")]}
+        onClose={() => {}}
+        onMoved={() => {}}
+      />
+    </QueryClientProvider>,
+  );
+  fireEvent.change(screen.getByLabelText("Search for the destination PBI"), {
+    target: { value: "right" },
+  });
+  fireEvent.click(await screen.findByText("The right PBI", {}, { timeout: 3000 }));
+  fireEvent.click(screen.getByRole("button", { name: /Move 1 to #200/ }));
+
+  await waitFor(() => expect(asked.some((c) => c.cmd === "relink_test_cases")).toBe(true));
+  expect(asked.filter((c) => c.cmd === "search_pbis").every((c) => c.args.project === "Web")).toBe(true);
+  expect(asked.some((c) => c.cmd === "search_pbis")).toBe(true);
+  expect(asked.some((c) => c.cmd === "search_pbis_all")).toBe(false);
+  expect(asked.find((c) => c.cmd === "relink_test_cases")?.args.project).toBe("Web");
+});

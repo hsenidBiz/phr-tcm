@@ -35,7 +35,7 @@ function mountPane(cases: PaneCase[], plan: never | null = null) {
     openRunSetup({
       org: "acme",
       project: "Web",
-      pbi: { id: 42, title: "Login work", work_item_type: "Product Backlog Item" },
+      pbi: { id: 42, title: "Login work", work_item_type: "Product Backlog Item", project: "Web" },
       cases,
       plan,
     });

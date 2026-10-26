@@ -37,7 +37,7 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
-const pbi = { id: 42, title: "Login work", work_item_type: "Product Backlog Item" };
+const pbi = { id: 42, title: "Login work", work_item_type: "Product Backlog Item", project: "proj" };
 
 function caseRow(id: number, title: string) {
   return {

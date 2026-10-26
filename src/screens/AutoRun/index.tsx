@@ -101,12 +101,18 @@ const EMPTY: Divergence[] = [];
 export default function AutoRun({
   org,
   project,
+  adoProject = project,
   pbi,
   onOpenPlaywright,
   onOpenModules,
 }: {
   org: string;
+  /** The project Auto Run's files belong to (the application under test):
+   * the home project while the projects show together. */
   project: string;
+  /** The project the PBI belongs to: where results are sent in Azure
+   * DevOps. The same as `project` unless the projects show together. */
+  adoProject?: string;
   pbi: PbiHit | null;
   /** The Playwright tab, for the "Playwright is needed" dialog. */
   onOpenPlaywright?: () => void;
@@ -1229,7 +1235,7 @@ export default function AutoRun({
           // new run yet.
           key={reviewing}
           org={org}
-          project={project}
+          project={adoProject}
           pbiTitle={pbi.title}
           pbiId={pbi.id}
           runId={reviewing}

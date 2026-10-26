@@ -1,7 +1,7 @@
 import { mockIPC, clearMocks } from "@tauri-apps/api/mocks";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, configure, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { afterEach, expect, test, vi } from "vitest";
+import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import App from "./App";
 import { TOUR_STEPS } from "./tour/tourScript";
 import { START_TOUR_EVENT } from "./tour/tourState";
@@ -19,6 +19,8 @@ import { ALL_MODULES, modulesSnapshot, resetModulesStore } from "./lib/modules";
 import { resetSplashForTests } from "./lib/splash";
 import { CHANGELOG } from "./lib/changelog";
 import { flagSessionExpired } from "./lib/sessionExpired";
+import { allProjectsSnapshot, saveAllProjects } from "./lib/projectScope";
+import { toast } from "./lib/toast";
 
 // Every test here mounts the WHOLE app - sidebar, context bar, screens,
 // queries - and several walk the tour across most of its stops. Idle, they
@@ -43,6 +45,12 @@ vi.setConfig({ testTimeout: 15_000 });
 // diagnosis: the failure moved between tests run to run and vanished when
 // the file ran alone.
 configure({ asyncUtilTimeout: 5_000 });
+
+// The one-time "projects now show together" notice is told to an existing
+// install on its first launch; every test but its own starts after it.
+beforeEach(() => {
+  localStorage.setItem("tcm-v2-all-projects-notice", "1");
+});
 
 afterEach(() => {
   clearMocks();
@@ -330,6 +338,8 @@ test("a pull request notification opens the Pull Requests panel in the app", asy
 /// Opening it has to take the context bar there too, not just the drawer,
 /// or the screen underneath the notification would still read the old one.
 test("a notification for another project switches the project before opening", async () => {
+  // Switching the project is the one-project-at-a-time behaviour.
+  localStorage.setItem("tcm-v2-all-projects", "0");
   localStorage.setItem(
     "tcm-v2-prefs",
     JSON.stringify({ org: "acme", project: "Web", section: "manual", pbi: null, workMode: false }),
@@ -529,18 +539,18 @@ test("signing in starts the AI bridge and pushes org/project context", async () 
   );
   // No environment known in this test: the push says so, and Rust then
   // keeps every write off whatever the switches say.
-  expect(pushes[pushes.length - 1].switches).toEqual({ dbWrites: false, apiWrites: true, networkTools: false, envId: "" });
+  expect(pushes[pushes.length - 1].switches).toEqual({ dbWrites: false, apiWrites: true, networkTools: false, envId: "", allProjects: true });
 
   // The Network tools switch reaches the push as true too: dropping it from
   // the effect or the switches object would leave every assertion above
   // green and the tools off for good.
   act(() => saveNetworkTools(true));
   await vi.waitFor(() =>
-    expect(pushes[pushes.length - 1].switches).toEqual({ dbWrites: false, apiWrites: true, networkTools: true, envId: "" }),
+    expect(pushes[pushes.length - 1].switches).toEqual({ dbWrites: false, apiWrites: true, networkTools: true, envId: "", allProjects: true }),
   );
   act(() => saveNetworkTools(false));
   await vi.waitFor(() =>
-    expect(pushes[pushes.length - 1].switches).toEqual({ dbWrites: false, apiWrites: true, networkTools: false, envId: "" }),
+    expect(pushes[pushes.length - 1].switches).toEqual({ dbWrites: false, apiWrites: true, networkTools: false, envId: "", allProjects: true }),
   );
 });
 
@@ -576,16 +586,777 @@ test("the bridge context carries the active environment's switches and names it"
   renderApp();
   await screen.findByText("a@b.com");
   await vi.waitFor(() =>
-    expect(pushes[pushes.length - 1]?.switches).toEqual({ dbWrites: false, apiWrites: true, networkTools: false, envId: A.id }),
+    expect(pushes[pushes.length - 1]?.switches).toEqual({ dbWrites: false, apiWrites: true, networkTools: false, envId: A.id, allProjects: true }),
   );
 
   // At once, not after the pause a burst of edits waits for (400ms): Rust
   // holds every write off from the switch until this push arrives.
   act(() => setActiveEnvId(B.id));
   await vi.waitFor(
-    () => expect(pushes[pushes.length - 1].switches).toEqual({ dbWrites: false, apiWrites: false, networkTools: false, envId: B.id }),
+    () => expect(pushes[pushes.length - 1].switches).toEqual({ dbWrites: false, apiWrites: false, networkTools: false, envId: B.id, allProjects: true }),
     { timeout: 300 },
   );
+});
+
+// ---- Treat all projects as one: the home project and the effective project ----
+
+const PAYROLL_PBI = { id: 7, title: "Pay run", work_item_type: "Product Backlog Item", project: "Payroll" };
+
+function savedPrefs(over: Record<string, unknown> = {}) {
+  localStorage.setItem(
+    "tcm-v2-prefs",
+    JSON.stringify({ org: "acme", project: "Web", section: "manual", pbi: null, workMode: false, ...over }),
+  );
+}
+const storedPrefs = () => JSON.parse(localStorage.getItem("tcm-v2-prefs") ?? "{}");
+
+/** Type into the context bar's PBI search and pick the hit titled `title`. */
+async function pickPbiFromBar(query: string, title: RegExp) {
+  const input = await screen.findByLabelText("Find PBI");
+  fireEvent.change(input, { target: { value: query } });
+  fireEvent.keyDown(input, { key: "Enter" });
+  fireEvent.click(await screen.findByText(title));
+}
+
+test("combined mode shows no project selector", async () => {
+  savedPrefs();
+  localStorage.setItem("tcm-v2-tour-done", "yes");
+  const asked: string[] = [];
+  signedInMocks((cmd) => {
+    asked.push(cmd);
+    if (cmd === "list_projects")
+      return [
+        { id: "p1", name: "Web" },
+        { id: "p2", name: "Payroll" },
+      ];
+  });
+  renderApp();
+  await screen.findByText("a@b.com");
+  await vi.waitFor(() => expect(asked).toContain("list_projects"));
+  await act(async () => {
+    await new Promise((r) => setTimeout(r, 20));
+  });
+  expect(screen.queryByRole("combobox", { name: "Project" })).not.toBeInTheDocument();
+  expect(screen.getByLabelText("Find PBI")).toBeInTheDocument();
+});
+
+test("a PBI picked from another project becomes the effective project", async () => {
+  savedPrefs();
+  localStorage.setItem("tcm-v2-tour-done", "yes");
+  const deleteAsks: Array<Record<string, unknown>> = [];
+  signedInMocks((cmd, args) => {
+    if (cmd === "list_projects")
+      return [
+        { id: "p1", name: "Web" },
+        { id: "p2", name: "Payroll" },
+      ];
+    if (cmd === "search_pbis_all") return [PAYROLL_PBI];
+    if (cmd === "can_delete_test_cases") {
+      deleteAsks.push(args as Record<string, unknown>);
+      return true;
+    }
+  });
+  renderApp();
+  await screen.findByText("a@b.com");
+  await vi.waitFor(() => expect(deleteAsks.map((a) => a.project)).toContain("Web"));
+
+  await pickPbiFromBar("pay", /Pay run/);
+  // Every PBI-scoped call is aimed at the PBI's own project...
+  await vi.waitFor(() => expect(deleteAsks.map((a) => a.project)).toContain("Payroll"));
+  // ...while the home project is what was saved, untouched.
+  await vi.waitFor(() => expect(storedPrefs().pbi?.project).toBe("Payroll"));
+  expect(storedPrefs().project).toBe("Web");
+});
+
+test("a fresh install takes its home project from the first PBI", async () => {
+  localStorage.setItem("tcm-v2-tour-done", "yes");
+  signedInMocks((cmd) => {
+    if (cmd === "list_projects")
+      return [
+        { id: "p1", name: "Web" },
+        { id: "p2", name: "HRM" },
+      ];
+    if (cmd === "search_pbis_all")
+      return [{ id: 9, title: "Login flow", work_item_type: "Product Backlog Item", project: "HRM" }];
+  });
+  renderApp();
+  await screen.findByText("a@b.com");
+
+  await pickPbiFromBar("login", /Login flow/);
+  await vi.waitFor(() => expect(storedPrefs().project).toBe("HRM"));
+  expect(storedPrefs().pbi?.id).toBe(9);
+});
+
+// The home project decides where Auto Run, API Templates and Playwright keep
+// their files, so the pick that silently sets it says so.
+test("the first PBI that becomes the home project says so", async () => {
+  localStorage.setItem("tcm-v2-tour-done", "yes");
+  const info = vi.spyOn(toast, "info");
+  try {
+    signedInMocks((cmd) => {
+      if (cmd === "list_projects")
+        return [
+          { id: "p1", name: "Web" },
+          { id: "p2", name: "HRM" },
+        ];
+      if (cmd === "search_pbis_all")
+        return [{ id: 9, title: "Login flow", work_item_type: "Product Backlog Item", project: "HRM" }];
+    });
+    renderApp();
+    await screen.findByText("a@b.com");
+    await pickPbiFromBar("login", /Login flow/);
+    await vi.waitFor(() => expect(storedPrefs().project).toBe("HRM"));
+    const told = info.mock.calls.filter((c) => String(c[0]).startsWith("Home project set to"));
+    expect(told).toHaveLength(1);
+    expect(told[0][0]).toBe("Home project set to HRM. Change it in Settings.");
+  } finally {
+    info.mockRestore();
+  }
+});
+
+test("a home project that was already set is not announced when a PBI is picked", async () => {
+  savedPrefs();
+  localStorage.setItem("tcm-v2-tour-done", "yes");
+  const info = vi.spyOn(toast, "info");
+  try {
+    signedInMocks((cmd) => {
+      if (cmd === "list_projects")
+        return [
+          { id: "p1", name: "Web" },
+          { id: "p2", name: "Payroll" },
+        ];
+      if (cmd === "search_pbis_all") return [PAYROLL_PBI];
+    });
+    renderApp();
+    await screen.findByText("a@b.com");
+    await pickPbiFromBar("pay", /Pay run/);
+    await vi.waitFor(() => expect(storedPrefs().pbi?.project).toBe("Payroll"));
+    expect(info.mock.calls.filter((c) => String(c[0]).startsWith("Home project set to"))).toHaveLength(0);
+  } finally {
+    info.mockRestore();
+  }
+});
+
+test("a fresh install with Auto Run files in one project takes that project as home", async () => {
+  localStorage.setItem("tcm-v2-tour-done", "yes");
+  const probes: Array<Record<string, unknown>> = [];
+  signedInMocks((cmd, args) => {
+    if (cmd === "list_projects")
+      return [
+        { id: "p1", name: "Web" },
+        { id: "p2", name: "HRM" },
+      ];
+    if (cmd === "projects_with_autorun_files") {
+      probes.push(args as Record<string, unknown>);
+      return ["HRM"];
+    }
+  });
+  renderApp();
+  await screen.findByText("a@b.com");
+  await vi.waitFor(() => expect(storedPrefs().project).toBe("HRM"));
+  expect(probes).toHaveLength(1);
+  expect(probes[0]).toEqual({ organization: "acme", projects: ["Web", "HRM"] });
+});
+
+test("an install that already has a home project is not asked about Auto Run files", async () => {
+  savedPrefs();
+  localStorage.setItem("tcm-v2-tour-done", "yes");
+  const asked: string[] = [];
+  signedInMocks((cmd) => {
+    asked.push(cmd);
+    if (cmd === "list_projects")
+      return [
+        { id: "p1", name: "Web" },
+        { id: "p2", name: "HRM" },
+      ];
+  });
+  renderApp();
+  await screen.findByText("a@b.com");
+  await vi.waitFor(() => expect(asked).toContain("list_projects"));
+  await act(async () => {
+    await new Promise((r) => setTimeout(r, 50));
+  });
+  expect(asked).not.toContain("projects_with_autorun_files");
+  expect(storedPrefs().project).toBe("Web");
+});
+
+test("exactly one project is chosen for you", async () => {
+  localStorage.setItem("tcm-v2-tour-done", "yes");
+  signedInMocks((cmd) => {
+    if (cmd === "list_projects") return [{ id: "p1", name: "Only" }];
+  });
+  renderApp();
+  await screen.findByText("a@b.com");
+  await vi.waitFor(() => expect(storedPrefs().project).toBe("Only"));
+});
+
+test("switched off, exactly one project is chosen for you and its selector is hidden", async () => {
+  localStorage.setItem("tcm-v2-tour-done", "yes");
+  localStorage.setItem("tcm-v2-all-projects", "0");
+  savedPrefs({ project: "Old" });
+  signedInMocks((cmd) => {
+    if (cmd === "list_projects") return [{ id: "p1", name: "Only" }];
+  });
+  renderApp();
+  await screen.findByText("a@b.com");
+  await vi.waitFor(() => expect(storedPrefs().project).toBe("Only"));
+  expect(screen.queryByRole("combobox", { name: "Project" })).not.toBeInTheDocument();
+});
+
+test("an existing install is told once that projects show together", async () => {
+  savedPrefs();
+  localStorage.setItem("tcm-v2-tour-done", "yes");
+  localStorage.removeItem("tcm-v2-all-projects-notice");
+  const info = vi.spyOn(toast, "info");
+  const told = () => info.mock.calls.filter((c) => c[0] === "Projects now show together");
+  try {
+    signedInMocks((cmd) => {
+      if (cmd === "list_projects")
+        return [
+          { id: "p1", name: "Web" },
+          { id: "p2", name: "Payroll" },
+        ];
+    });
+    const first = renderApp();
+    await screen.findByText("a@b.com");
+    expect(await screen.findByText("Projects now show together")).toBeInTheDocument();
+    expect(told()).toHaveLength(1);
+    expect(String(told()[0][1]?.description)).toContain("Treat all projects as one");
+    first.unmount();
+
+    renderApp();
+    await screen.findByText("a@b.com");
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 50));
+    });
+    expect(told()).toHaveLength(1);
+  } finally {
+    info.mockRestore();
+  }
+});
+
+// With one project there is nothing to show together, so the notice would only
+// puzzle. The key is still written, so a project added later is not announced.
+test("an existing install with one project is not told, and the notice is spent", async () => {
+  savedPrefs();
+  localStorage.setItem("tcm-v2-tour-done", "yes");
+  localStorage.removeItem("tcm-v2-all-projects-notice");
+  const info = vi.spyOn(toast, "info");
+  try {
+    signedInMocks((cmd) => {
+      if (cmd === "list_projects") return [{ id: "p1", name: "Web" }];
+    });
+    renderApp();
+    await screen.findByText("a@b.com");
+    await vi.waitFor(() => expect(localStorage.getItem("tcm-v2-all-projects-notice")).toBe("1"));
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 50));
+    });
+    expect(info.mock.calls.filter((c) => c[0] === "Projects now show together")).toHaveLength(0);
+  } finally {
+    info.mockRestore();
+  }
+});
+
+test("the notice says only what the projects do together now", async () => {
+  savedPrefs();
+  localStorage.setItem("tcm-v2-tour-done", "yes");
+  localStorage.removeItem("tcm-v2-all-projects-notice");
+  const info = vi.spyOn(toast, "info");
+  try {
+    signedInMocks((cmd) => {
+      if (cmd === "list_projects")
+        return [
+          { id: "p1", name: "Web" },
+          { id: "p2", name: "Payroll" },
+        ];
+    });
+    renderApp();
+    await screen.findByText("a@b.com");
+    expect(await screen.findByText("Projects now show together")).toBeInTheDocument();
+    const text = String(info.mock.calls.find((c) => c[0] === "Projects now show together")?.[1]?.description);
+    expect(text).toContain("PBIs from every project");
+    expect(text).toContain("home project");
+    expect(text).toContain("turn off Treat all projects as one in Settings, under General");
+    // The boards, suites and pull requests are still one project at a time.
+    expect(text).not.toMatch(/boards|suites|pull requests|test cases/i);
+  } finally {
+    info.mockRestore();
+  }
+});
+
+test("a fresh install is not told that projects show together", async () => {
+  localStorage.setItem("tcm-v2-tour-done", "yes");
+  localStorage.removeItem("tcm-v2-all-projects-notice");
+  const info = vi.spyOn(toast, "info");
+  try {
+    signedInMocks((cmd) => {
+      if (cmd === "list_projects") return [{ id: "p1", name: "Web" }];
+    });
+    renderApp();
+    await screen.findByText("a@b.com");
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 50));
+    });
+    expect(info.mock.calls.filter((c) => c[0] === "Projects now show together")).toHaveLength(0);
+  } finally {
+    info.mockRestore();
+  }
+});
+
+test("turning the switch off keeps the PBI and selects its project", async () => {
+  savedPrefs({ pbi: PAYROLL_PBI });
+  localStorage.setItem("tcm-v2-tour-done", "yes");
+  signedInMocks((cmd) => {
+    if (cmd === "list_projects")
+      return [
+        { id: "p1", name: "Web" },
+        { id: "p2", name: "Payroll" },
+      ];
+  });
+  renderApp();
+  await screen.findByText("a@b.com");
+  expect(await screen.findByText("Pay run")).toBeInTheDocument();
+
+  act(() => saveAllProjects(false));
+
+  // The selector comes back pre-filled with the PBI's project, and the PBI stays.
+  await waitFor(() =>
+    expect(screen.getByRole("combobox", { name: "Project" })).toHaveTextContent("Payroll"),
+  );
+  expect(screen.getByText("Pay run")).toBeInTheDocument();
+  await vi.waitFor(() => expect(storedPrefs().project).toBe("Payroll"));
+  expect(storedPrefs().pbi?.id).toBe(7);
+});
+
+test("turning the switch off with the PBI in the home project changes nothing", async () => {
+  savedPrefs({ pbi: { ...PAYROLL_PBI, project: "Web" } });
+  localStorage.setItem("tcm-v2-tour-done", "yes");
+  signedInMocks((cmd) => {
+    if (cmd === "list_projects")
+      return [
+        { id: "p1", name: "Web" },
+        { id: "p2", name: "Payroll" },
+      ];
+  });
+  renderApp();
+  await screen.findByText("a@b.com");
+  expect(await screen.findByText("Pay run")).toBeInTheDocument();
+
+  act(() => saveAllProjects(false));
+  await waitFor(() =>
+    expect(screen.getByRole("combobox", { name: "Project" })).toHaveTextContent("Web"),
+  );
+  expect(screen.getByText("Pay run")).toBeInTheDocument();
+  expect(storedPrefs().project).toBe("Web");
+});
+
+test("turning the switch on again changes nothing else", async () => {
+  localStorage.setItem("tcm-v2-all-projects", "0");
+  savedPrefs({ pbi: { ...PAYROLL_PBI, project: "Web" } });
+  localStorage.setItem("tcm-v2-tour-done", "yes");
+  signedInMocks((cmd) => {
+    if (cmd === "list_projects")
+      return [
+        { id: "p1", name: "Web" },
+        { id: "p2", name: "Payroll" },
+      ];
+  });
+  renderApp();
+  await screen.findByText("a@b.com");
+  expect(await screen.findByText("Pay run")).toBeInTheDocument();
+
+  act(() => saveAllProjects(true));
+  await waitFor(() => expect(screen.queryByRole("combobox", { name: "Project" })).not.toBeInTheDocument());
+  expect(screen.getByText("Pay run")).toBeInTheDocument();
+  expect(storedPrefs().project).toBe("Web");
+});
+
+// The walkthrough runs on sample data and must not change a real choice: the
+// switch is refused while it is up, so the home project cannot follow it.
+test("the switch is refused while the tour runs", async () => {
+  savedPrefs({ pbi: PAYROLL_PBI });
+  signedInMocks((cmd) => {
+    if (cmd === "list_projects")
+      return [
+        { id: "p1", name: "Web" },
+        { id: "p2", name: "Payroll" },
+      ];
+  });
+  renderApp();
+  await screen.findByText("a@b.com");
+  await startTour();
+
+  act(() => saveAllProjects(false));
+  expect(allProjectsSnapshot()).toBe(true);
+  expect(localStorage.getItem("tcm-v2-all-projects")).toBeNull();
+  expect(screen.queryByRole("combobox", { name: "Project" })).not.toBeInTheDocument();
+
+  // Ending the tour puts everything back: the home project is still the one
+  // that was saved, and so is the PBI.
+  fireEvent.click(screen.getByText("Skip tour"));
+  await waitFor(() => expect(screen.queryByRole("dialog", { name: "Interface tour" })).not.toBeInTheDocument());
+  expect(await screen.findByText("Pay run")).toBeInTheDocument();
+  await act(async () => {
+    await new Promise((r) => setTimeout(r, 30));
+  });
+  expect(storedPrefs().project).toBe("Web");
+  expect(storedPrefs().pbi?.id).toBe(7);
+  expect(allProjectsSnapshot()).toBe(true);
+});
+
+// Settings' General card holds the switch and the Home project picker. The
+// switch is the store's own setter (so the tour refuses it); the picker moves
+// the home project that Auto Run and the other per-project files use.
+test("the Settings switch turns the projects off and the bar gets its Project selector", async () => {
+  localStorage.setItem("tcm-v2-tour-done", "yes");
+  savedPrefs();
+  signedInMocks((cmd) => {
+    if (cmd === "list_projects")
+      return [
+        { id: "p1", name: "Web" },
+        { id: "p2", name: "Payroll" },
+      ];
+  });
+  renderApp();
+  await screen.findByText("a@b.com");
+  expect(screen.queryByRole("combobox", { name: "Project" })).not.toBeInTheDocument();
+
+  fireEvent.click(screen.getByLabelText("Settings"));
+  const toggle = await screen.findByRole("switch", { name: "Treat all projects as one" });
+  expect(toggle).toBeChecked();
+  fireEvent.click(toggle);
+
+  expect(localStorage.getItem("tcm-v2-all-projects")).toBe("0");
+  await waitFor(() => expect(screen.getByRole("switch", { name: "Treat all projects as one" })).not.toBeChecked());
+  expect(screen.queryByRole("combobox", { name: "Home project" })).not.toBeInTheDocument();
+  expect(await screen.findByRole("combobox", { name: "Project" })).toHaveTextContent("Web");
+});
+
+test("the Settings Home project picker changes the home project", async () => {
+  localStorage.setItem("tcm-v2-tour-done", "yes");
+  savedPrefs();
+  signedInMocks((cmd) => {
+    if (cmd === "list_projects")
+      return [
+        { id: "p1", name: "Web" },
+        { id: "p2", name: "Payroll" },
+      ];
+  });
+  renderApp();
+  await screen.findByText("a@b.com");
+
+  fireEvent.click(screen.getByLabelText("Settings"));
+  const picker = await screen.findByRole("combobox", { name: "Home project" });
+  expect(picker).toHaveTextContent("Web");
+  fireEvent.click(picker);
+  fireEvent.click(screen.getByRole("option", { name: "Payroll" }));
+
+  await waitFor(() => expect(storedPrefs().project).toBe("Payroll"));
+  expect(screen.getByRole("combobox", { name: "Home project" })).toHaveTextContent("Payroll");
+});
+
+/// A notification for a Payroll work item, opened while the projects show
+/// together: the Work Manager is handed Payroll while the home project stays
+/// Web. Resolves with every board the app asked for.
+async function openPayrollNotification() {
+  savedPrefs();
+  localStorage.setItem("tcm-v2-tour-done", "yes");
+  claimCacheFor("a@b.com");
+  localStorage.setItem(
+    "tcm-v2-notifications:acme",
+    JSON.stringify([
+      {
+        id: "assigned:Payroll:55",
+        kind: "assigned",
+        title: "Item 55 was assigned to you",
+        body: "Fix the payslip",
+        at: new Date().toISOString(),
+        read: false,
+        href: "https://x/55",
+        target: { kind: "work-item", id: 55, project: "Payroll" },
+      },
+    ]),
+  );
+  resetNotifications();
+  const boards: Array<{ organization: string; project: string }> = [];
+  signedInMocks((cmd, args) => {
+    if (cmd === "list_projects")
+      return [
+        { id: "p1", name: "Web" },
+        { id: "p2", name: "Payroll" },
+      ];
+    if (cmd === "fetch_board") {
+      boards.push(args as { organization: string; project: string });
+      return { items: [], states_by_type: {} };
+    }
+    if (cmd === "pr_overview") return { awaiting: [], mine: [] };
+    if (cmd === "list_repos") return [];
+  });
+  renderApp();
+  await screen.findByText("a@b.com");
+  fireEvent.click(await screen.findByRole("button", { name: /Notifications/ }));
+  fireEvent.click(screen.getByRole("button", { name: "Item 55 was assigned to you" }));
+  expect(await screen.findByRole("heading", { name: "Board" })).toBeInTheDocument();
+  await waitFor(() => expect(boards[boards.length - 1]?.project).toBe("Payroll"));
+  return boards;
+}
+
+// The project a notification handed to the Work Manager is good for that visit
+// only. Coming back to the board any other way shows the person's own project,
+// so a work item made there is not quietly made in the notification's.
+test("Ctrl+Shift+M back into the Work Manager drops a notification's project", async () => {
+  const boards = await openPayrollNotification();
+  fireEvent.keyDown(window, { key: "1", ctrlKey: true });
+  await waitFor(() => expect(screen.queryByRole("heading", { name: "Board" })).not.toBeInTheDocument());
+
+  fireEvent.keyDown(window, { key: "m", ctrlKey: true, shiftKey: true });
+  expect(await screen.findByRole("heading", { name: "Board" })).toBeInTheDocument();
+  await waitFor(() => expect(boards[boards.length - 1]?.project).toBe("Web"));
+});
+
+test("the palette's Work Manager toggle drops a notification's project", async () => {
+  const boards = await openPayrollNotification();
+  fireEvent.keyDown(window, { key: "1", ctrlKey: true });
+  await waitFor(() => expect(screen.queryByRole("heading", { name: "Board" })).not.toBeInTheDocument());
+
+  fireEvent.keyDown(window, { key: "k", ctrlKey: true });
+  fireEvent.click(await screen.findByText("Toggle Work Manager"));
+  expect(await screen.findByRole("heading", { name: "Board" })).toBeInTheDocument();
+  await waitFor(() => expect(boards[boards.length - 1]?.project).toBe("Web"));
+});
+
+test("a visit to Settings drops a notification's project", async () => {
+  const boards = await openPayrollNotification();
+  fireEvent.click(screen.getByLabelText("Settings"));
+  await waitFor(() => expect(screen.queryByRole("heading", { name: "Board" })).not.toBeInTheDocument());
+
+  // The gear again goes back to the Work Manager it came from.
+  fireEvent.click(screen.getByLabelText("Close settings"));
+  expect(await screen.findByRole("heading", { name: "Board" })).toBeInTheDocument();
+  await waitFor(() => expect(boards[boards.length - 1]?.project).toBe("Web"));
+});
+
+/// Search Suites hands a set of work item ids to Update Test Cases. The ids
+/// belong to one project, so a PBI of another project (which moves the
+/// effective project) drops them, exactly as a project change does; a PBI of
+/// the same project leaves them alone.
+async function handSuiteCasesToEdit(search: unknown[], prefs: Record<string, unknown> = {}) {
+  savedPrefs({ section: "suites", ...prefs });
+  localStorage.setItem("tcm-v2-tour-done", "yes");
+  signedInMocks((cmd) => {
+    if (cmd === "list_projects")
+      return [
+        { id: "p1", name: "Web" },
+        { id: "p2", name: "Payroll" },
+      ];
+    if (cmd === "list_plans_with_suites")
+      return [
+        {
+          plan: { id: 9, name: "Auth - Test Plan", area_path: "Proj\\Auth", root_suite_id: 90 },
+          suites: [{ id: 95, name: "Regression", suite_type: "staticTestSuite", requirement_id: null, parent_id: null }],
+        },
+      ];
+    if (cmd === "list_test_points")
+      return [
+        {
+          point_id: 7,
+          test_case_id: 201,
+          test_case_name: "Valid login",
+          config_name: "W10",
+          tester: "",
+          last_outcome: "",
+          last_run_id: null,
+          last_result_id: null,
+        },
+      ];
+    if (cmd === "search_pbis_all") return search;
+  });
+  renderApp();
+  await screen.findByText("a@b.com");
+  await screen.findByText("Regression");
+  fireEvent.click(screen.getAllByText("Edit cases")[0]);
+  expect(await screen.findByText(/Showing cases handed over from Search Suites/)).toBeInTheDocument();
+}
+
+test("a PBI of another project drops the cases handed over from Search Suites", async () => {
+  await handSuiteCasesToEdit([PAYROLL_PBI]);
+  await pickPbiFromBar("pay", /Pay run/);
+  await waitFor(() =>
+    expect(screen.queryByText(/Showing cases handed over from Search Suites/)).not.toBeInTheDocument(),
+  );
+});
+
+// Switched off, a PBI of another project can be held with the home project
+// unchanged (Import File's shared-draft switch does it). Turning the switch on
+// then moves the effective project to the PBI's, so the work item ids of the
+// home project go, the same rule a PBI pick follows.
+test("turning the switch on drops the cases handed over when the project moves", async () => {
+  localStorage.setItem("tcm-v2-all-projects", "0");
+  await handSuiteCasesToEdit([], { pbi: PAYROLL_PBI });
+  act(() => saveAllProjects(true));
+  await waitFor(() =>
+    expect(screen.queryByText(/Showing cases handed over from Search Suites/)).not.toBeInTheDocument(),
+  );
+});
+
+test("turning the switch on keeps the cases handed over when the project stays", async () => {
+  localStorage.setItem("tcm-v2-all-projects", "0");
+  await handSuiteCasesToEdit([], { pbi: { ...PAYROLL_PBI, project: "Web" } });
+  act(() => saveAllProjects(true));
+  await act(async () => {
+    await new Promise((r) => setTimeout(r, 30));
+  });
+  expect(screen.getByText(/Showing cases handed over from Search Suites/)).toBeInTheDocument();
+});
+
+test("a PBI of the same project keeps the cases handed over from Search Suites", async () => {
+  await handSuiteCasesToEdit([{ ...PAYROLL_PBI, project: "Web" }]);
+  // The effective project is the home project (Web) before and after.
+  await pickPbiFromBar("pay", /Pay run/);
+  await screen.findByText("Pay run");
+  await act(async () => {
+    await new Promise((r) => setTimeout(r, 30));
+  });
+  expect(screen.getByText(/Showing cases handed over from Search Suites/)).toBeInTheDocument();
+});
+
+// The probe for Auto Run files is a local check that can answer after the
+// person has moved to another organization: its answer belongs to the old one.
+test("a late Auto Run files answer for an old organization is ignored", async () => {
+  savedPrefs({ project: "" });
+  localStorage.setItem("tcm-v2-tour-done", "yes");
+  let answerFirst: (v: string[]) => void = () => {};
+  let probes = 0;
+  // Two organizations (signedInMocks answers with one), so the picker shows.
+  mockIPC((cmd) => {
+    if (cmd === "modules_get") return EVERY_MODULE;
+    if (cmd === "resume_session") return { signed_in: true, account: "a@b.com" };
+    if (cmd === "check_update") return null;
+    if (cmd === "list_test_case_fields") return [];
+    if (cmd === "plugin:event|listen") return 1;
+    if (cmd === "list_orgs")
+      return [
+        { name: "acme", url: "" },
+        { name: "other", url: "" },
+      ];
+    if (cmd === "list_projects")
+      return [
+        { id: "p1", name: "Web" },
+        { id: "p2", name: "HRM" },
+      ];
+    if (cmd === "projects_with_autorun_files") {
+      probes += 1;
+      if (probes === 1) return new Promise<string[]>((res) => (answerFirst = res));
+      return [];
+    }
+  });
+  renderApp();
+  await screen.findByText("a@b.com");
+  await vi.waitFor(() => expect(probes).toBe(1));
+
+  // Move to the other organization while the first probe is still out.
+  const orgBox = await screen.findByRole("combobox", { name: "Organization" });
+  fireEvent.click(orgBox);
+  fireEvent.click(await screen.findByRole("option", { name: "other" }));
+  await vi.waitFor(() => expect(storedPrefs().org).toBe("other"));
+  await vi.waitFor(() => expect(probes).toBe(2));
+
+  await act(async () => {
+    answerFirst(["HRM"]);
+    await new Promise((r) => setTimeout(r, 30));
+  });
+  expect(storedPrefs().org).toBe("other");
+  expect(storedPrefs().project).toBe("");
+});
+
+test("the bridge is pushed the home project and the switch", async () => {
+  const pushes: Array<Record<string, unknown>> = [];
+  savedPrefs({ pbi: PAYROLL_PBI });
+  localStorage.setItem("tcm-v2-tour-done", "yes");
+  signedInMocks((cmd, args) => {
+    if (cmd === "list_projects")
+      return [
+        { id: "p1", name: "Web" },
+        { id: "p2", name: "Payroll" },
+      ];
+    if (cmd === "set_bridge_context") {
+      pushes.push(args as Record<string, unknown>);
+      return null;
+    }
+    if (cmd === "bridge_status") return { port: 1, mcp_exe: "x" };
+  });
+  renderApp();
+  await screen.findByText("a@b.com");
+  await vi.waitFor(() => expect(pushes.length).toBeGreaterThan(0));
+  const last = pushes[pushes.length - 1];
+  // The PBI is in Payroll; the assistant's default stays the home project.
+  expect(last.project).toBe("Web");
+  expect(last.switches).toMatchObject({ allProjects: true });
+});
+
+test("a PBI from another project is not pushed to the bridge as the project", async () => {
+  const pushes: Array<Record<string, unknown>> = [];
+  savedPrefs();
+  localStorage.setItem("tcm-v2-tour-done", "yes");
+  signedInMocks((cmd, args) => {
+    if (cmd === "list_projects")
+      return [
+        { id: "p1", name: "Web" },
+        { id: "p2", name: "Payroll" },
+      ];
+    if (cmd === "search_pbis_all") return [PAYROLL_PBI];
+    if (cmd === "set_bridge_context") {
+      pushes.push(args as Record<string, unknown>);
+      return null;
+    }
+    if (cmd === "bridge_status") return { port: 1, mcp_exe: "x" };
+  });
+  renderApp();
+  await screen.findByText("a@b.com");
+  await vi.waitFor(() => expect(pushes.length).toBeGreaterThan(0));
+
+  await pickPbiFromBar("pay", /Pay run/);
+  await act(async () => {
+    await new Promise((r) => setTimeout(r, 600));
+  });
+  expect(pushes.every((p) => p.project === "Web")).toBe(true);
+});
+
+test("combined mode copies the home project's recent PBIs to the organization-wide list", async () => {
+  const old = JSON.stringify([{ id: 5, title: "Older", work_item_type: "Product Backlog Item" }]);
+  localStorage.setItem("tcm-v2-recent-pbis:acme/Web", old);
+  savedPrefs();
+  localStorage.setItem("tcm-v2-tour-done", "yes");
+  signedInMocks((cmd) => {
+    if (cmd === "list_projects") return [{ id: "p1", name: "Web" }];
+  });
+  renderApp();
+  await screen.findByText("a@b.com");
+  await vi.waitFor(() => expect(localStorage.getItem("tcm-v2-recent-pbis:acme/*")).not.toBeNull());
+  const seeded = JSON.parse(localStorage.getItem("tcm-v2-recent-pbis:acme/*")!);
+  expect(seeded).toEqual([{ id: 5, title: "Older", work_item_type: "Product Backlog Item", project: "Web" }]);
+  // The per-project list is exactly as it was.
+  expect(localStorage.getItem("tcm-v2-recent-pbis:acme/Web")).toBe(old);
+});
+
+test("switched off, nothing is copied to the organization-wide recents", async () => {
+  localStorage.setItem("tcm-v2-all-projects", "0");
+  localStorage.setItem(
+    "tcm-v2-recent-pbis:acme/Web",
+    JSON.stringify([{ id: 5, title: "Older", work_item_type: "Product Backlog Item" }]),
+  );
+  savedPrefs();
+  localStorage.setItem("tcm-v2-tour-done", "yes");
+  signedInMocks((cmd) => {
+    if (cmd === "list_projects") return [{ id: "p1", name: "Web" }];
+  });
+  renderApp();
+  await screen.findByText("a@b.com");
+  await act(async () => {
+    await new Promise((r) => setTimeout(r, 50));
+  });
+  expect(localStorage.getItem("tcm-v2-recent-pbis:acme/*")).toBeNull();
 });
 
 /// The old trial switch on the AI Bridge tab is gone: when an older version
@@ -1839,4 +2610,227 @@ test("the Modules page gets the full height with no shell scrollbar, and Back gi
   await screen.findByText("Appearance");
   expect(main).toHaveClass("overflow-y-auto");
   expect(main).not.toHaveClass("overflow-hidden");
+});
+
+// ---- Opening a notification from another project, projects together ----
+//
+// The bell names the project of what it opens. While the projects show
+// together there is no project to switch, so the Work Manager screen is
+// handed that project directly and the home project (where Auto Run keeps its
+// files) is left alone. Anything that changes what the screens stand for
+// drops the handed-over project.
+
+const PROJECTS = [
+  { id: "p1", name: "Web" },
+  { id: "p2", name: "Payroll" },
+  { id: "p3", name: "Mobile" },
+];
+
+function seedItemNotification(project = "Payroll") {
+  claimCacheFor("a@b.com");
+  localStorage.setItem(
+    "tcm-v2-notifications:acme",
+    JSON.stringify([
+      {
+        id: `assigned:${project}:55`,
+        kind: "assigned",
+        title: "Item 55 was assigned to you",
+        body: "Fix the payslip",
+        at: new Date().toISOString(),
+        read: false,
+        href: "https://x/55",
+        target: { kind: "work-item", id: 55, project },
+      },
+    ]),
+  );
+  resetNotifications(); // the store caches per org in memory
+}
+
+/** One board asked for. */
+type BoardAsk = { organization: string; project: string };
+
+function boardMocks(boards: BoardAsk[], extra: (cmd: string, args: unknown) => unknown = () => undefined) {
+  signedInMocks((cmd, args) => {
+    if (cmd === "list_projects") return PROJECTS;
+    if (cmd === "fetch_board") {
+      boards.push(args as BoardAsk);
+      return { items: [], states_by_type: {} };
+    }
+    if (cmd === "pr_overview") return { awaiting: [], mine: [] };
+    if (cmd === "list_repos") return [];
+    return extra(cmd, args);
+  });
+}
+
+async function openItemNotification() {
+  fireEvent.click(await screen.findByRole("button", { name: /Notifications/ }));
+  fireEvent.click(screen.getByRole("button", { name: "Item 55 was assigned to you" }));
+  expect(await screen.findByRole("heading", { name: "Board" })).toBeInTheDocument();
+}
+
+const lastBoard = (boards: BoardAsk[]) => boards[boards.length - 1];
+
+/** Mounts with the home project Web, a bell item for `project`, and opens it. */
+async function mountAndOpenItemFrom(project: string, extra?: (cmd: string, args: unknown) => unknown) {
+  savedPrefs();
+  localStorage.setItem("tcm-v2-tour-done", "yes");
+  seedItemNotification(project);
+  const boards: BoardAsk[] = [];
+  boardMocks(boards, extra);
+  renderApp();
+  await screen.findByText("a@b.com");
+  await openItemNotification();
+  await waitFor(() => expect(lastBoard(boards)?.project).toBe(project));
+  return boards;
+}
+
+test("in combined mode a notification from another project opens without switching project", async () => {
+  const boards = await mountAndOpenItemFrom("Payroll");
+
+  // No Project selector appears, and the board is the target's project's.
+  expect(screen.queryByRole("combobox", { name: "Project" })).not.toBeInTheDocument();
+  expect(lastBoard(boards)).toEqual(expect.objectContaining({ organization: "acme", project: "Payroll" }));
+  // The home project is untouched.
+  await act(async () => {
+    await new Promise((r) => setTimeout(r, 30));
+  });
+  expect(storedPrefs().project).toBe("Web");
+});
+
+test("a notification from the project on screen opens that project's board", async () => {
+  const boards = await mountAndOpenItemFrom("Web");
+  expect(lastBoard(boards)?.project).toBe("Web");
+  expect(storedPrefs().project).toBe("Web");
+});
+
+test("the handed-over project goes when the Work Manager is left and entered by hand", async () => {
+  const boards = await mountAndOpenItemFrom("Payroll");
+
+  fireEvent.click(screen.getByRole("button", { name: /Test Case Manager/ }));
+  fireEvent.click(screen.getByRole("button", { name: /Work Manager/ }));
+  expect(await screen.findByRole("heading", { name: "Board" })).toBeInTheDocument();
+  await waitFor(() => expect(lastBoard(boards)?.project).toBe("Web"));
+});
+
+test("turning the switch off drops the project a notification handed over", async () => {
+  const boards = await mountAndOpenItemFrom("Payroll");
+
+  // Settings and back is the way into the board that keeps what it had.
+  fireEvent.click(screen.getByLabelText("Settings"));
+  fireEvent.click(await screen.findByRole("switch", { name: "Treat all projects as one" }));
+  await waitFor(() => expect(localStorage.getItem("tcm-v2-all-projects")).toBe("0"));
+  fireEvent.click(screen.getByLabelText("Close settings"));
+
+  expect(await screen.findByRole("heading", { name: "Board" })).toBeInTheDocument();
+  await waitFor(() => expect(lastBoard(boards)?.project).toBe("Web"));
+  expect(screen.getByRole("combobox", { name: "Project" })).toHaveTextContent("Web");
+});
+
+test("turning the switch on drops the project a notification handed over", async () => {
+  const boards = await mountAndOpenItemFrom("Payroll");
+
+  // Off and back on without leaving Settings: each flip clears it.
+  fireEvent.click(screen.getByLabelText("Settings"));
+  fireEvent.click(await screen.findByRole("switch", { name: "Treat all projects as one" }));
+  await waitFor(() => expect(localStorage.getItem("tcm-v2-all-projects")).toBe("0"));
+  fireEvent.click(screen.getByRole("switch", { name: "Treat all projects as one" }));
+  await waitFor(() => expect(localStorage.getItem("tcm-v2-all-projects")).toBe("1"));
+  fireEvent.click(screen.getByLabelText("Close settings"));
+
+  expect(await screen.findByRole("heading", { name: "Board" })).toBeInTheDocument();
+  await waitFor(() => expect(lastBoard(boards)?.project).toBe("Web"));
+  expect(screen.queryByRole("combobox", { name: "Project" })).not.toBeInTheDocument();
+});
+
+test("changing the home project drops the project a notification handed over", async () => {
+  const boards = await mountAndOpenItemFrom("Payroll");
+
+  fireEvent.click(screen.getByLabelText("Settings"));
+  fireEvent.click(await screen.findByRole("combobox", { name: "Home project" }));
+  fireEvent.click(screen.getByRole("option", { name: "Mobile" }));
+  await vi.waitFor(() => expect(storedPrefs().project).toBe("Mobile"));
+  fireEvent.click(screen.getByLabelText("Close settings"));
+
+  expect(await screen.findByRole("heading", { name: "Board" })).toBeInTheDocument();
+  await waitFor(() => expect(lastBoard(boards)?.project).toBe("Mobile"));
+});
+
+test("picking a PBI drops the project a notification handed over", async () => {
+  const boards = await mountAndOpenItemFrom("Payroll", (cmd) => {
+    if (cmd === "search_pbis_all")
+      return [{ id: 9, title: "Login flow", work_item_type: "Product Backlog Item", project: "Mobile" }];
+  });
+
+  await pickPbiFromBar("login", /Login flow/);
+
+  // The PBI's project is the effective one from here on.
+  await waitFor(() => expect(lastBoard(boards)?.project).toBe("Mobile"));
+});
+
+test("changing the organization drops the project a notification handed over", async () => {
+  savedPrefs();
+  localStorage.setItem("tcm-v2-tour-done", "yes");
+  seedItemNotification("Payroll");
+  const boards: BoardAsk[] = [];
+  // Two organizations (signedInMocks answers with one), so the picker shows;
+  // the second has a single project, which is chosen for you.
+  mockIPC((cmd, args) => {
+    if (cmd === "modules_get") return EVERY_MODULE;
+    if (cmd === "resume_session") return { signed_in: true, account: "a@b.com" };
+    if (cmd === "check_update") return null;
+    if (cmd === "list_test_case_fields") return [];
+    if (cmd === "plugin:event|listen") return 1;
+    if (cmd === "list_orgs")
+      return [
+        { name: "acme", url: "" },
+        { name: "other", url: "" },
+      ];
+    if (cmd === "list_projects")
+      return (args as { organization: string }).organization === "other" ? [{ id: "s1", name: "Solo" }] : PROJECTS;
+    if (cmd === "fetch_board") {
+      boards.push(args as BoardAsk);
+      return { items: [], states_by_type: {} };
+    }
+    if (cmd === "pr_overview") return { awaiting: [], mine: [] };
+    if (cmd === "list_repos") return [];
+  });
+  renderApp();
+  await screen.findByText("a@b.com");
+  await openItemNotification();
+  await waitFor(() => expect(lastBoard(boards)?.project).toBe("Payroll"));
+
+  fireEvent.click(await screen.findByRole("combobox", { name: "Organization" }));
+  fireEvent.click(await screen.findByRole("option", { name: "other" }));
+
+  await waitFor(() =>
+    expect(lastBoard(boards)).toEqual(expect.objectContaining({ organization: "other", project: "Solo" })),
+  );
+});
+
+// Auto Run and API Templates keep their files per project, belonging to the
+// application under test rather than to a PBI: together they stay with the
+// home project even when the PBI is in another one.
+test("Auto Run and API Templates use the home project while the PBI is in another", async () => {
+  savedPrefs({ section: "autorun", pbi: PAYROLL_PBI });
+  localStorage.setItem("tcm-v2-tour-done", "yes");
+  const asked: Array<{ cmd: string; project: unknown }> = [];
+  signedInMocks((cmd, args) => {
+    const project = (args as { project?: unknown } | undefined)?.project;
+    if (cmd === "auto_run_load_recipe" || cmd === "api_templates_overview") asked.push({ cmd, project });
+    if (cmd === "list_projects")
+      return [
+        { id: "p1", name: "Web" },
+        { id: "p2", name: "Payroll" },
+      ];
+    if (cmd === "api_templates_overview") return { origin: null, templates: [] };
+    if (cmd === "auto_run_list_runs" || cmd === "auto_run_list_accounts") return [];
+  });
+  renderApp();
+  await screen.findByText("a@b.com");
+  await waitFor(() => expect(asked.some((a) => a.cmd === "auto_run_load_recipe")).toBe(true));
+  expect(asked.filter((a) => a.cmd === "auto_run_load_recipe").every((a) => a.project === "Web")).toBe(true);
+
+  fireEvent.click(screen.getByRole("button", { name: "API Templates" }));
+  await waitFor(() => expect(asked.some((a) => a.cmd === "api_templates_overview")).toBe(true));
+  expect(asked.filter((a) => a.cmd === "api_templates_overview").every((a) => a.project === "Web")).toBe(true);
 });

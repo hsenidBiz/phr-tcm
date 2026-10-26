@@ -203,6 +203,10 @@ pub struct BridgeSwitches {
     /// (`push_context_with`).
     #[serde(default)]
     pub env_id: String,
+    /// The webview's "Treat all projects as one" switch (see
+    /// `BridgeContext::all_projects`). Not a write switch.
+    #[serde(default)]
+    pub all_projects: bool,
 }
 
 /// The running bridge, if it has started.
@@ -387,6 +391,7 @@ fn push_context(
             db_writes: switches.db_writes,
             api_writes: switches.api_writes,
             network_tools: switches.network_tools,
+            all_projects: switches.all_projects,
             // Set from the active environment, never from the webview.
             db_no_ask: false,
             gate: Default::default(),
