@@ -27,6 +27,13 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.3.1-beta.8",
+    date: "2026-10-27",
+    items: [
+      "Treat all projects as one: find and pick a PBI from any project in one search, and new test cases go to that PBI's own project. It is on by default; turn it off in Settings, under General, to pick a project again. A Home project setting chooses where Auto Run, API templates and Playwright keep their files.",
+    ],
+  },
+  {
     version: "2.3.1-beta.7",
     date: "2026-10-27",
     items: [
