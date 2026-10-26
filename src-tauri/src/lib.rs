@@ -82,7 +82,7 @@ pub use state::SubmitCancel;
 pub fn specta_builder() -> Builder<tauri::Wry> {
     use commands::{
         ai_bridge, ai_tools, api_templates, app_settings, auth, autorun, autorun_publish, autorun_record,
-        autorun_divergence, autorun_record_signin, autorun_replay, autorun_setup, board, bugs, cases, crystal, discovery, environments, guide, misc, modules, prs, pw_export, pw_repo, pw_rules, queue, run_order, runs,
+        autorun_divergence, autorun_record_signin, autorun_replay, autorun_setup, autorun_slots, board, bugs, cases, crystal, discovery, environments, guide, misc, modules, prs, pw_export, pw_repo, pw_rules, queue, run_order, runs,
         test_files, testplan, workspace, writing_style,
     };
     Builder::<tauri::Wry>::new()
@@ -105,6 +105,7 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             events::AutorunReplayProgress,
             events::AutorunSessionChanged,
             events::AutorunDiscoveryChanged,
+            events::AutorunAgentsChanged,
             events::AutorunResetNeeded,
             events::AutorunNetworkWait,
             events::RecordingEvent,
@@ -216,6 +217,10 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             autorun::auto_run_reset_components,
             autorun::auto_run_end_discovery,
             autorun::auto_run_release_browser,
+            autorun_slots::auto_run_agents,
+            autorun_slots::auto_run_stop_agent,
+            autorun_slots::auto_run_end_agent_discovery,
+            autorun_slots::auto_run_release_agent,
             autorun::auto_run_replay_to_step,
             autorun::auto_run_stop_replay,
             autorun::auto_run_step,
@@ -530,6 +535,9 @@ pub fn run() {
             // A discovery starts and ends in the AI bridge, which has no
             // AppHandle either: Auto Run hears it through this one.
             commands::autorun::set_discovery_events(app.handle().clone());
+            // The Assistants card hears who is connected and what each is
+            // doing, once a second at most, when it changed.
+            commands::autorun_slots::spawn_agents_watch(app.handle().clone());
             // Every script written or removed, whoever did it, is said to
             // the window: the Auto Run screen reads those scripts again.
             {

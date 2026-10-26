@@ -255,6 +255,8 @@ pub struct Sweep {
 }
 
 /// Entries with a pid that `alive` says has ended become gone (`newly_gone`).
+/// Entries without a pid, and named subagents, become gone (not reported in
+/// `newly_gone`) once they have made no call for `FORGET_AFTER_MS`.
 /// Gone entries reach `past_grace` once, `GONE_GRACE_MS` after they went.
 /// Entries gone `FORGET_AFTER_MS` are removed (`forgotten`), but only in a
 /// sweep after the one that reported them in `past_grace`, so the label can
@@ -281,6 +283,18 @@ pub fn sweep(now_ms: u64, alive: &dyn Fn(u32) -> bool) -> Sweep {
                 e.grace_reported = false;
                 out.newly_gone.push(key);
             }
+        }
+    }
+    // An entry nothing can ask about: no pid, or a named subagent (it shares
+    // its proxy's pid for as long as the proxy lives). Quiet for
+    // `FORGET_AFTER_MS` since its last call, it is treated as gone, so it is
+    // not listed for ever and its resources are released after the grace. A
+    // call brings it back. Not `newly_gone`: no session was seen to end.
+    for e in entries.iter_mut() {
+        let unaskable = e.info.pid.is_none() || e.info.key.name.is_some();
+        if e.info.gone_since_ms.is_none() && unaskable && now_ms.saturating_sub(e.info.last_ms) >= FORGET_AFTER_MS {
+            e.info.gone_since_ms = Some(now_ms);
+            e.grace_reported = false;
         }
     }
     let mut forget: Vec<AgentKey> = Vec::new();

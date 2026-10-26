@@ -300,12 +300,15 @@ mod routing {
     /// In this phase every caller, whatever it needs, gets the main browser.
     #[test]
     fn slot_for_is_main_for_now() {
+        let _g = crate::serial::agents();
+        let _a = crate::serial::autorun();
         let agent = Caller::Agent(AgentKey { id: "a".repeat(32), name: Some("writer".to_string()) });
         for caller in [Caller::Default, agent] {
             for need in [Need::Open, Need::Act, Need::Read] {
                 assert_eq!(slot_for(&caller, need), Ok(SlotNo::MAIN), "{caller:?} {need:?}");
             }
         }
+        v2_lib::commands::autorun_slots::clear();
     }
 
     #[test]
@@ -463,5 +466,339 @@ mod routing {
 
         show_overrides(&Overrides::new());
         show_overrides_in(one, &Overrides::new());
+    }
+}
+
+// ---------------------------------------------------------------------------
+// The Assistants card: bindings, views and commands (Task 10)
+// ---------------------------------------------------------------------------
+
+mod card {
+    use super::*;
+    use v2_lib::autorun::agents::{self, AgentHeaders, AgentKey, Caller, Sweep};
+    use v2_lib::autorun::replay_to::{state, OneReplay};
+    use v2_lib::commands::autorun_slots::{
+        agent_views, auto_run_agents, auto_run_end_agent_discovery, auto_run_release_agent, auto_run_stop_agent,
+        bind, bound, clear, next_views_to_send, on_sweep, slot_for, slot_of, unbind, unbind_agent, AgentActivity, Need,
+        NO_SUCH_BROWSER,
+    };
+
+    const ID_A: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    const ID_B: &str = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+    const T0: u64 = 10_000_000;
+
+    fn key(id: &str) -> AgentKey {
+        AgentKey { id: id.to_string(), name: None }
+    }
+
+    fn register(id: &str, client: &str, now: u64) -> AgentKey {
+        let h = AgentHeaders {
+            id: Some(id.to_string()),
+            pid: Some(4242),
+            client: Some(client.to_string()),
+            name: None,
+        };
+        agents::note_call(&h.caller(), &h, now);
+        key(id)
+    }
+
+    fn fresh() {
+        agents::clear();
+        clear();
+        for n in SlotNo::all() {
+            state(n).cancel.store(false, std::sync::atomic::Ordering::SeqCst);
+            v2_lib::ai_bridge::batch_stop(n).store(false, std::sync::atomic::Ordering::SeqCst);
+        }
+        show_overrides(&Overrides::new());
+    }
+
+    #[test]
+    fn an_agent_that_opens_or_acts_binds_main_and_a_read_does_not() {
+        let _g = crate::serial::agents();
+        let _a = crate::serial::autorun();
+        fresh();
+        let (a, b) = (key(ID_A), key(ID_B));
+        assert_eq!(slot_for(&Caller::Agent(a.clone()), Need::Read), Ok(SlotNo::MAIN));
+        assert_eq!(bound(SlotNo::MAIN), None, "a read binds nothing");
+        assert_eq!(slot_for(&Caller::Agent(a.clone()), Need::Act), Ok(SlotNo::MAIN));
+        assert_eq!(bound(SlotNo::MAIN), Some(a.clone()));
+        assert_eq!(slot_of(&a), Some(SlotNo::MAIN));
+        assert_eq!(slot_for(&Caller::Agent(b.clone()), Need::Open), Ok(SlotNo::MAIN));
+        assert_eq!(bound(SlotNo::MAIN), Some(b.clone()), "the latest to open or act holds main");
+        assert_eq!(slot_of(&a), None, "an agent is bound to one slot at most");
+        assert_eq!(slot_for(&Caller::Default, Need::Act), Ok(SlotNo::MAIN));
+        assert_eq!(bound(SlotNo::MAIN), Some(b), "the default caller changes no binding");
+        assert_eq!(slot_for(&Caller::Agent(a.clone()), Need::Read), Ok(SlotNo::MAIN));
+        assert_ne!(bound(SlotNo::MAIN), Some(a), "a read does not take main over");
+        fresh();
+    }
+
+    #[test]
+    fn bind_moves_an_agent_and_unbind_clears_a_slot() {
+        let _g = crate::serial::agents();
+        let _a = crate::serial::autorun();
+        fresh();
+        let (a, b) = (key(ID_A), key(ID_B));
+        bind(SlotNo(1), &a);
+        bind(SlotNo::MAIN, &a);
+        assert_eq!((bound(SlotNo::MAIN), bound(SlotNo(1))), (Some(a.clone()), None), "bind unbinds it elsewhere");
+        bind(SlotNo(1), &b);
+        unbind(SlotNo(1));
+        assert_eq!(bound(SlotNo(1)), None);
+        unbind_agent(&a);
+        assert_eq!(bound(SlotNo::MAIN), None);
+        assert_eq!(slot_of(&a), None);
+        fresh();
+    }
+
+    #[test]
+    fn on_sweep_unbinds_an_agent_past_grace() {
+        let _g = crate::serial::agents();
+        let _a = crate::serial::autorun();
+        fresh();
+        let a = key(ID_A);
+        bind(SlotNo::MAIN, &a);
+        on_sweep(&Sweep { newly_gone: vec![a.clone()], ..Sweep::default() });
+        assert_eq!(bound(SlotNo::MAIN), Some(a.clone()), "gone is not yet past its grace");
+        on_sweep(&Sweep { past_grace: vec![a.clone()], ..Sweep::default() });
+        assert_eq!(bound(SlotNo::MAIN), None);
+        fresh();
+    }
+
+    #[test]
+    fn views_list_live_agents_and_their_browser() {
+        let _g = crate::serial::agents();
+        let _a = crate::serial::autorun();
+        fresh();
+        let a = register(ID_A, "claude-code", T0);
+        register(ID_B, "claude-desktop", T0);
+        bind(SlotNo::MAIN, &a);
+        let views = agent_views(T0);
+        assert_eq!(views.len(), 2, "{views:?}");
+        let (va, vb) = (&views[0], &views[1]);
+        assert_eq!((va.label.as_str(), vb.label.as_str()), ("Assistant 1", "Assistant 2"));
+        assert_eq!(va.client.as_deref(), Some("claude-code"));
+        assert_eq!(vb.client.as_deref(), Some("claude-desktop"));
+        assert_eq!(va.slot, Some(0));
+        assert!(!va.own_browser);
+        assert_eq!(va.browser, None, "no session is open");
+        assert_eq!(va.account, None);
+        assert_eq!(va.activity, AgentActivity::Idle);
+        assert_eq!(va.idle_minutes, 0);
+        assert!(!va.changed_for_testing && !va.saves_blocked && !va.can_stop);
+        assert_eq!(vb.slot, None);
+        assert_eq!(vb.activity, AgentActivity::Idle);
+        // Idle minutes count from the last call; the command answers the same list.
+        assert_eq!(agent_views(T0 + 3 * 60_000 + 5)[0].idle_minutes, 3);
+        assert_eq!(auto_run_agents().len(), 2);
+        // A gone agent is not listed.
+        agents::note_bye(ID_B, T0 + 1);
+        let views = agent_views(T0 + 2);
+        assert_eq!(views.iter().map(|v| v.label.as_str()).collect::<Vec<_>>(), ["Assistant 1"]);
+        fresh();
+    }
+
+    /// What the main browser's changes are is published, so the view needs no lock for it.
+    #[test]
+    fn a_view_reports_the_changes_published_for_its_slot() {
+        let _g = crate::serial::agents();
+        let _a = crate::serial::autorun();
+        fresh();
+        let a = register(ID_A, "claude-code", T0);
+        bind(SlotNo::MAIN, &a);
+        show_overrides(&changed());
+        assert!(agent_views(T0)[0].changed_for_testing);
+        show_overrides(&Overrides::new());
+        assert!(!agent_views(T0)[0].changed_for_testing);
+        fresh();
+    }
+
+    /// The person's replay is not the assistant's: the card never shows it
+    /// as the assistant's case, and offers no stop for it.
+    #[test]
+    fn a_persons_replay_is_not_shown_as_an_assistants() {
+        let _g = crate::serial::agents();
+        let _a = crate::serial::autorun();
+        fresh();
+        let a = register(ID_A, "claude-code", T0);
+        bind(SlotNo::MAIN, &a);
+        let replay = OneReplay::claim().expect("main is free");
+        assert!(state(SlotNo::MAIN).is_running());
+        let v = &agent_views(T0)[0];
+        assert_eq!(v.activity, AgentActivity::Idle, "{v:?}");
+        assert!(!v.can_stop, "the card does not offer to stop the person's replay");
+        drop(replay);
+        fresh();
+    }
+
+    /// An assistant's replay going in the slot is stoppable from the card.
+    #[test]
+    fn an_assistants_replay_can_be_stopped_from_the_card() {
+        let _g = crate::serial::agents();
+        let _a = crate::serial::autorun();
+        fresh();
+        let a = register(ID_A, "claude-code", T0);
+        bind(SlotNo::MAIN, &a);
+        let replay = OneReplay::claim_for_assistant().expect("main is free");
+        let v = &agent_views(T0)[0];
+        assert!(v.can_stop, "{v:?}");
+        drop(replay);
+        assert!(!agent_views(T0)[0].can_stop);
+        fresh();
+    }
+
+    /// Neither the agent's id nor its pid is in what the webview is sent.
+    #[test]
+    fn a_view_carries_neither_id_nor_pid() {
+        let _g = crate::serial::agents();
+        let _a = crate::serial::autorun();
+        fresh();
+        let a = register(ID_A, "claude-code", T0);
+        bind(SlotNo::MAIN, &a);
+        let json = serde_json::to_value(&agent_views(T0)[0]).unwrap();
+        let mut keys: Vec<&str> = json.as_object().unwrap().keys().map(String::as_str).collect();
+        keys.sort_unstable();
+        assert_eq!(
+            keys,
+            [
+                "account",
+                "activity",
+                "browser",
+                "can_stop",
+                "changed_for_testing",
+                "client",
+                "idle_minutes",
+                "label",
+                "own_browser",
+                "saves_blocked",
+                "slot"
+            ]
+        );
+        let text = json.to_string();
+        assert!(!text.contains(ID_A) && !text.contains("4242"), "{text}");
+        assert_eq!(json["activity"], serde_json::json!({ "kind": "idle" }));
+        fresh();
+    }
+
+    /// The watcher sends only when the views differ from the last ones sent.
+    #[test]
+    fn views_are_sent_only_when_they_change() {
+        let _g = crate::serial::agents();
+        let _a = crate::serial::autorun();
+        fresh();
+        let mut last = Vec::new();
+        assert_eq!(next_views_to_send(&mut last, T0), None, "nobody connected, nothing sent");
+        let a = register(ID_A, "claude-code", T0);
+        let sent = next_views_to_send(&mut last, T0).expect("a new assistant is news");
+        assert_eq!(sent.len(), 1);
+        assert_eq!(next_views_to_send(&mut last, T0 + 500), None, "the same views are not sent again");
+        bind(SlotNo::MAIN, &a);
+        assert_eq!(next_views_to_send(&mut last, T0 + 1_000).map(|v| v[0].slot), Some(Some(0)));
+        agents::note_bye(ID_A, T0 + 2_000);
+        assert_eq!(next_views_to_send(&mut last, T0 + 2_000), Some(Vec::new()), "the last assistant going is news");
+        assert_eq!(next_views_to_send(&mut last, T0 + 3_000), None);
+        fresh();
+    }
+
+    #[tokio::test]
+    async fn stop_agent_stops_that_slot_only() {
+        let _g = crate::serial::agents();
+        let _a = crate::serial::autorun();
+        fresh();
+        let cancelled = |n: u8| state(SlotNo(n)).cancel.load(std::sync::atomic::Ordering::SeqCst);
+        assert_eq!(auto_run_stop_agent(1).await, Ok(()));
+        assert!(cancelled(1));
+        assert!(!cancelled(0), "main's replay was not asked to stop");
+        assert!(!cancelled(2));
+        fresh();
+    }
+
+    #[tokio::test]
+    async fn a_stop_also_asks_that_slots_batch_to_give_way() {
+        let _g = crate::serial::agents();
+        let _a = crate::serial::autorun();
+        fresh();
+        let flag = |n: u8| v2_lib::ai_bridge::batch_stop(SlotNo(n)).load(std::sync::atomic::Ordering::SeqCst);
+        auto_run_stop_agent(0).await.unwrap();
+        assert!(flag(0) && !flag(1));
+        fresh();
+    }
+
+    #[tokio::test]
+    async fn an_unknown_slot_is_refused() {
+        let _g = crate::serial::agents();
+        let _a = crate::serial::autorun();
+        fresh();
+        let no = NO_SUCH_BROWSER.to_string();
+        assert_eq!(auto_run_stop_agent(7).await, Err(no.clone()));
+        assert_eq!(auto_run_end_agent_discovery(3).await, Err(no.clone()));
+        assert_eq!(auto_run_release_agent(255).await, Err(no));
+        assert!(NO_SUCH_BROWSER.contains("not open any more"));
+        fresh();
+    }
+
+    #[tokio::test]
+    async fn releasing_an_empty_slot_unbinds_it() {
+        let _g = crate::serial::agents();
+        let _a = crate::serial::autorun();
+        fresh();
+        let a = register(ID_A, "claude-code", T0);
+        bind(SlotNo::MAIN, &a);
+        assert!(auto_run_release_agent(0).await.is_ok());
+        assert_eq!(bound(SlotNo::MAIN), None);
+        assert_eq!(slot_of(&a), None);
+        fresh();
+    }
+
+    /// Ending a discovery from the card with none going is not an error.
+    #[tokio::test]
+    async fn ending_a_discovery_with_none_going_is_fine() {
+        let _g = crate::serial::agents();
+        let _a = crate::serial::autorun();
+        fresh();
+        assert_eq!(auto_run_end_agent_discovery(0).await, Ok(()));
+        fresh();
+    }
+
+    /// The release logs the assistant by label, never by id or pid.
+    #[tokio::test]
+    async fn the_release_is_logged_by_label_only() {
+        use v2_lib::commands::autorun_slots::{release_slot, ReleaseWhy};
+        let logged = || {
+            v2_lib::applog::recent(500).into_iter().map(|l| l.message).collect::<Vec<_>>().join("\n")
+        };
+        let _l = crate::serial::log_tail();
+        let _g = crate::serial::agents();
+        let _a = crate::serial::autorun();
+        fresh();
+        let a = register(ID_A, "claude-code", T0);
+        bind(SlotNo::MAIN, &a);
+        release_slot(SlotNo::MAIN, ReleaseWhy::Person).await.unwrap();
+        let lines = logged();
+        assert!(lines.contains("Auto Run: released Assistant 1's browser (the person released it)"), "{lines}");
+        assert!(!lines.contains(ID_A) && !lines.contains("4242"));
+        release_slot(SlotNo::MAIN, ReleaseWhy::Person).await.unwrap();
+        let lines = logged();
+        assert!(lines.contains("Auto Run: released the main Auto Run browser (the person released it)"), "{lines}");
+        fresh();
+    }
+
+    /// The paths that end a main browser's use also end its binding.
+    #[test]
+    fn closing_and_taking_the_main_browser_unbind_it() {
+        let src = include_str!("../../src/commands/autorun.rs");
+        let close = src.find("fn close_session(s: Session)").expect("close_session");
+        let close_body = &src[close..close + 700];
+        assert!(close_body.contains("unbind("), "{close_body}");
+        let persons = src.find("pub(crate) async fn make_persons").expect("make_persons");
+        let persons_body = &src[persons..persons + 700];
+        assert!(persons_body.contains("unbind("), "{persons_body}");
+        let release = src.find("pub async fn release_for_assistant").expect("release_for_assistant");
+        let release_body = &src[release..release + 1500];
+        assert!(release_body.contains("unbind("), "{release_body}");
+        let sweeper = include_str!("../../src/commands/ai_bridge.rs");
+        assert!(sweeper.contains("autorun_slots::on_sweep(&swept)"), "the sweeper hands its sweep to the bindings");
+        let lib = include_str!("../../src/lib.rs");
+        assert!(lib.contains("spawn_agents_watch("), "the watcher is started where the discovery events are set");
     }
 }

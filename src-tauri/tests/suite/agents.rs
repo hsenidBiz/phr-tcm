@@ -239,13 +239,56 @@ fn sweep_does_not_call_alive_with_the_registry_locked() {
 }
 
 #[test]
-fn an_entry_without_a_pid_is_never_swept_gone() {
+fn an_entry_without_a_pid_is_never_swept_gone_while_it_calls() {
     let _g = serial::agents();
     agents::clear();
     let h = AgentHeaders { id: Some(ID_A.to_string()), ..AgentHeaders::default() };
     assert!(agents::note_call(&h.caller(), &h, 1).is_some());
-    assert_eq!(agents::sweep(5_000_000, &|_| false), agents::Sweep::default());
+    // No pid to ask about: quiet for less than the forget age changes nothing.
+    assert_eq!(agents::sweep(FORGET_AFTER_MS, &|_| false), agents::Sweep::default());
     assert!(agents::is_live(&key(ID_A, None)));
+}
+
+/// Nothing asks whether an entry without a pid is still there, and a named
+/// subagent shares its proxy's pid for as long as the proxy lives, so the
+/// card would list both for ever. Quiet for `FORGET_AFTER_MS` from the last
+/// call, they go like any gone agent (grace, release, forgotten); a call
+/// brings them back.
+#[test]
+fn an_entry_without_a_pid_or_a_named_subagent_goes_after_a_long_quiet() {
+    let _g = serial::agents();
+    agents::clear();
+    let bare = AgentHeaders { id: Some(ID_A.to_string()), ..AgentHeaders::default() };
+    agents::note_call(&bare.caller(), &bare, 1_000);
+    call(ID_B, Some("writer"), 1_000);
+    call(ID_B, None, 1_000);
+    let (a, sub, proxy) = (key(ID_A, None), key(ID_B, Some("writer")), key(ID_B, None));
+
+    // Just short of the age: still live.
+    let s = agents::sweep(1_000 + FORGET_AFTER_MS - 1, &|_| true);
+    assert_eq!(s, agents::Sweep::default());
+    // At the age: the bare entry and the subagent are gone, the proxy's own
+    // session entry (it has a pid that answers) is not.
+    let t = 1_000 + FORGET_AFTER_MS;
+    let s = agents::sweep(t, &|_| true);
+    assert!(s.newly_gone.is_empty(), "not reported as an ended session: {s:?}");
+    assert!(!agents::is_live(&a) && !agents::is_live(&sub));
+    assert!(agents::is_live(&proxy));
+    assert_eq!(agents::info(&a).unwrap().gone_since_ms, Some(t));
+    // Then the usual grace and forgetting.
+    assert_eq!(agents::sweep(t + GONE_GRACE_MS, &|_| true).past_grace.len(), 2);
+    let s = agents::sweep(t + FORGET_AFTER_MS, &|_| true);
+    assert_eq!(s.forgotten.len(), 2);
+    assert_eq!(agents::info(&a), None);
+
+    // A call after it was marked gone brings an entry back.
+    let again = AgentHeaders { id: Some(ID_C.to_string()), ..AgentHeaders::default() };
+    agents::note_call(&again.caller(), &again, t);
+    agents::sweep(t + FORGET_AFTER_MS - 1, &|_| true);
+    agents::sweep(t + FORGET_AFTER_MS, &|_| true);
+    assert!(!agents::is_live(&key(ID_C, None)));
+    agents::note_call(&again.caller(), &again, t + FORGET_AFTER_MS + 5);
+    assert!(agents::is_live(&key(ID_C, None)));
 }
 
 #[test]

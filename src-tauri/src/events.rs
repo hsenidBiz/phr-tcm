@@ -192,6 +192,16 @@ pub struct AutorunDiscoveryChanged {
     pub active: bool,
 }
 
+/// Emitted when the assistants the Assistants card lists, or what any of
+/// them is doing, changed: the whole list, by number, sent at most once a
+/// second (`commands::autorun_slots::spawn_agents_watch`). It carries labels
+/// and account keys only, never an agent's id or pid, a login, a host or an
+/// address.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, specta::Type, tauri_specta::Event)]
+pub struct AutorunAgentsChanged {
+    pub agents: Vec<crate::commands::autorun_slots::AgentView>,
+}
+
 /// Emitted when an unattended run pauses before a batch: before case
 /// `before_case_id` runs, which opens batch `batch`, a person sets each
 /// setting in `set` to its value and reverts `names` (`changed_by` gives,

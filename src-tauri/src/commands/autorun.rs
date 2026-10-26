@@ -160,6 +160,8 @@ impl Session {
         show_overrides_in(self.slot, &self.overrides);
         taken?;
         self.opened_by = OpenedBy::Person;
+        // No assistant has this browser any more.
+        crate::commands::autorun_slots::unbind(self.slot);
         Ok(())
     }
 }
@@ -584,6 +586,9 @@ const UNATTENDED_GOING: &str = "an unattended run is going - wait for it, or sto
 /// (`store::last_browser`) when none is open - the same opening as Open
 /// browser, marked as opened `by`. Called with the session lock held.
 async fn open_if_none(app: &tauri::AppHandle, slot: &mut Option<Session>, n: SlotNo, by: OpenedBy) -> Result<(), String> {
+    // The assistant this call is for: a browser that has gone is let go
+    // first, which unbinds the slot, and the browser opened is still its own.
+    let caller = crate::commands::autorun_slots::bound(n);
     // A held browser that has gone is let go, and a new one opened.
     let_go_if_gone_in(n, slot).await;
     if slot.is_some() {
@@ -593,7 +598,22 @@ async fn open_if_none(app: &tauri::AppHandle, slot: &mut Option<Session>, n: Slo
         return Err(UNATTENDED_GOING.to_string());
     }
     let which = Browser::from_name(&store::last_browser(&root(app)?));
-    open_into(root(app), slot, n, which, by).await
+    let opened = open_into(root(app), slot, n, which, by).await;
+    if opened.is_ok() && by == OpenedBy::Assistant {
+        rebind_if_free(n, caller);
+    }
+    opened
+}
+
+/// After the browser an assistant's call opened closed an old one in slot
+/// `n` (which unbinds the slot), the assistant whose call it is holds the
+/// new one, unless another took the slot meanwhile.
+fn rebind_if_free(n: SlotNo, caller: Option<crate::autorun::agents::AgentKey>) {
+    if let Some(key) = caller {
+        if crate::commands::autorun_slots::bound(n).is_none() {
+            crate::commands::autorun_slots::bind(n, &key);
+        }
+    }
 }
 
 /// Said by `open_for_discovery` when the app set up no data directory.
@@ -642,6 +662,9 @@ pub(crate) async fn open_for_discovery(
     let wanted = browser_name.map(Browser::from_name);
     let guarded = (mapping.is_some() || no_save.no_save).then_some(from);
     let mut slot = session_slot(n).lock().await;
+    // The assistant this discovery is for: closing a browser that has gone,
+    // or the other kind, unbinds the slot, and the one opened is still its own.
+    let caller = crate::commands::autorun_slots::bound(n);
     // Refused only for a browser that is really there: one that has gone
     // is let go, and the discovery opens.
     let made_way = crate::ai_bridge::make_way_for_discovery(&mut slot, wanted, guarded).await;
@@ -654,6 +677,7 @@ pub(crate) async fn open_for_discovery(
         let root = store::configured_root().ok_or_else(|| NO_DATA_DIRECTORY.to_string())?;
         let which = wanted.unwrap_or_else(|| Browser::from_name(&store::last_browser(&root)));
         open_into(Ok(root), &mut slot, n, which, OpenedBy::Assistant).await?;
+        rebind_if_free(n, caller);
     }
     if let Some(session) = slot.as_mut() {
         session.discovery = Some(DiscoveryState {
@@ -1222,6 +1246,9 @@ async fn keep_supervised_downloads(root: Result<PathBuf, String>, n: SlotNo, cdp
 /// The browser goes first: one still running holds the files it saved.
 fn close_session(s: Session) {
     note_session_use_in(s.slot);
+    // No assistant has a browser that is gone. A call that closes this
+    // browser to open another for the same assistant binds it again.
+    crate::commands::autorun_slots::unbind(s.slot);
     // What the assistant changed for testing went with the browser.
     show_overrides_in(s.slot, &crate::autorun::overrides::Overrides::new());
     close_browser(s.browser);
@@ -1298,7 +1325,7 @@ pub async fn release_autorun_browsers() -> Result<String, String> {
 
 /// How long Release waits for the browser's lock: a replay to stop, or a
 /// supervised step or an assistant's call to finish.
-const RELEASE_WAIT: std::time::Duration = std::time::Duration::from_secs(30);
+pub(crate) const RELEASE_WAIT: std::time::Duration = std::time::Duration::from_secs(30);
 
 /// Said when Release is pressed while the template runner's one slot is
 /// held: by an API template run, a fixture run (Run or Rebuild, the
@@ -1424,6 +1451,9 @@ pub async fn release_for_assistant(n: SlotNo) -> (u16, String) {
     if slot.is_none() {
         tell_panes_closed_in(n);
     }
+    // Released: the assistant no longer has this browser, a person's left
+    // open included.
+    crate::commands::autorun_slots::unbind(n);
     crate::applog::info(format!("Auto Run: the assistant's release: {}", answer.1));
     answer
 }
@@ -2124,6 +2154,10 @@ pub(crate) async fn replay_supervised(
     let (case_id, step, db_read_access) = (req.case_id, req.step, req.db_read_access);
     let secrets = std::sync::Arc::clone(&app.state::<crate::db::DbSecrets>().0);
     let mut slot = session_slot(n).lock().await;
+    // The assistant this replay is for: ending its discovery, or letting a
+    // gone browser go, unbinds the slot, and the browser the replay then
+    // uses is still its own.
+    let caller = crate::commands::autorun_slots::bound(n);
     // A Close that took the lock first is respected: no browser is opened
     // again for a replay the person has already stopped.
     if let Some(stopped) = replay_to::stopped_before_opening(&replay_to::state(n).cancel) {
@@ -2149,6 +2183,9 @@ pub(crate) async fn replay_supervised(
     let had_browser = slot.is_some();
     if let Err(why) = open_if_none(app, &mut slot, n, by.opens_as()).await {
         return Err(crate::ai_bridge::after_ended_discovery(discovery.ended, &why));
+    }
+    if by == ReplayBy::Assistant {
+        rebind_if_free(n, caller);
     }
     // The panes hear of a browser this replay opened, and of the account
     // it leaves the browser signed in as, before the lock lets them in.
