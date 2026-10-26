@@ -1,7 +1,7 @@
 import { mockIPC, clearMocks } from "@tauri-apps/api/mocks";
 import { emit } from "@tauri-apps/api/event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { useState } from "react";
 import { afterEach, expect, test } from "vitest";
 import ImportFile, { specEntryFor } from "./ImportFile";
@@ -1118,7 +1118,7 @@ test("a watched file lists its specs and Attach spec writes the list back", asyn
   await waitFor(() => expect(saved).not.toBeNull());
   expect(saved!.path).toBe("C:/w/cases.json");
   expect(saved!.specs).toEqual(["Step13.md", "specs/Rules.md"]);
-  expect(await screen.findByText("specs/Rules.md")).toBeInTheDocument();
+  expect(await screen.findByText("Rules.md")).toBeInTheDocument();
 });
 
 test("a wiki link is added by pasting it, and an entry can be removed", async () => {
@@ -1151,7 +1151,7 @@ test("a wiki link is added by pasting it, and an entry can be removed", async ()
   fireEvent.keyDown(box, { key: "Enter" });
   await waitFor(() => expect(saved).toHaveLength(1));
   expect(saved[0]).toEqual(["Step13.md", "https://dev.azure.com/o/p/_wiki/wikis/p.wiki/12/Engine"]);
-  fireEvent.click(screen.getByRole("button", { name: "Remove spec Step13.md" }));
+  fireEvent.click(screen.getByRole("button", { name: "Remove Step13.md" }));
   await waitFor(() => expect(saved).toHaveLength(2));
   expect(saved[1]).toEqual(["https://dev.azure.com/o/p/_wiki/wikis/p.wiki/12/Engine"]);
 });
@@ -1374,4 +1374,95 @@ test("the share link box uses the normal input font and size", () => {
   expect(input.className).not.toMatch(/id-mono/);
   expect(input.className).not.toMatch(/\btext-xs\b/);
   expect(input.className).toMatch(/py-1\.5/);
+});
+
+// ---------------------------------------------------------------------
+// The watch panel's spec list, compact: specs grouped by folder as chips,
+// a remove button inside each, the attach actions on the file's own line.
+
+function mountWithSpecs(specs: string[], saved: string[][] = []) {
+  mockIPC((cmd, args) => {
+    if (cmd === "plugin:event|listen") return 1;
+    if (cmd === "plugin:event|unlisten") return null;
+    if (cmd === "plugin:dialog|open") return "C:/w/cases.json";
+    if (cmd === "parse_import_file") return { cases: [jsonCase("A")], warnings: [], specs };
+    if (cmd === "read_general_comment") return "";
+    if (cmd === "save_specs") {
+      saved.push((args as { specs: string[] }).specs);
+      return "stamp-" + saved.length;
+    }
+    if (cmd === "file_stamp") return "stamp-1";
+    if (cmd === "watch_file") return null;
+    if (cmd === "list_test_case_fields") return [];
+    if (cmd === "pbi_test_cases") return [];
+    if (cmd === "test_case_field_values") return [];
+  });
+  renderScreen();
+  fireEvent.click(screen.getByRole("button", { name: "Import JSON" }));
+}
+
+test("specs from one folder show the folder once, and each file as a chip with its path on hover", async () => {
+  const folder = "../doc/Solution Design";
+  mountWithSpecs([`${folder}/1.Overview.md`, `${folder}/2.Rules.md`, "notes/3.Extra.md"]);
+  const chip = await screen.findByText("1.Overview.md");
+  expect(chip.closest("[title]")).toHaveAttribute("title", `${folder}/1.Overview.md`);
+  expect(screen.getByText("2.Rules.md")).toBeInTheDocument();
+  // The shared folder is one muted line, not repeated on every spec.
+  expect(screen.getAllByText(folder)).toHaveLength(1);
+  expect(screen.queryByText(`${folder}/1.Overview.md`)).not.toBeInTheDocument();
+  // Another folder gets its own line.
+  expect(screen.getByText("notes")).toBeInTheDocument();
+  expect(screen.getByText("3.Extra.md")).toBeInTheDocument();
+  // The far-right bin on every row is gone.
+  expect(screen.queryByRole("button", { name: /^Remove spec/ })).not.toBeInTheDocument();
+});
+
+test("a chip's own x removes that spec and writes the rest back", async () => {
+  const saved: string[][] = [];
+  mountWithSpecs(["../doc/A/1.One.md", "../doc/A/2.Two.md"], saved);
+  await screen.findByText("1.One.md");
+  fireEvent.click(screen.getByRole("button", { name: "Remove 1.One.md" }));
+  await waitFor(() => expect(saved).toHaveLength(1));
+  expect(saved[0]).toEqual(["../doc/A/2.Two.md"]);
+});
+
+test("Attach spec and Add wiki link sit on the watched file's own line, beside Stop", async () => {
+  mountWithSpecs(["../doc/A/1.One.md"]);
+  const stop = await screen.findByRole("button", { name: "Stop watching cases.json" });
+  const line = stop.parentElement!;
+  expect(within(line).getByText("1 case")).toBeInTheDocument();
+  expect(within(line).getByRole("button", { name: /Attach spec/ })).toBeInTheDocument();
+  expect(within(line).getByRole("button", { name: /Add wiki link/ })).toBeInTheDocument();
+});
+
+test("past twelve specs the rest fold behind a +N more chip, and Show fewer folds them again", async () => {
+  const specs = Array.from({ length: 15 }, (_, i) => `../doc/S/${String(i + 1).padStart(2, "0")}.Spec.md`);
+  mountWithSpecs(specs);
+  await screen.findByText("01.Spec.md");
+  expect(screen.getByText("12.Spec.md")).toBeInTheDocument();
+  expect(screen.queryByText("13.Spec.md")).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "+3 more" }));
+  expect(screen.getByText("15.Spec.md")).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Show fewer" }));
+  expect(screen.queryByText("13.Spec.md")).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "+3 more" })).toBeInTheDocument();
+});
+
+test("twelve specs or fewer have no +N more chip", async () => {
+  mountWithSpecs(Array.from({ length: 12 }, (_, i) => `d/${i}.md`));
+  await screen.findByText("0.md");
+  expect(screen.getByText("11.md")).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /more$/ })).not.toBeInTheDocument();
+});
+
+test("a wiki link is a chip with the page's title, and the link is only its tooltip", async () => {
+  const url = "https://dev.azure.com/o/p/_wiki/wikis/p.wiki/12/Engine-Rules";
+  const saved: string[][] = [];
+  mountWithSpecs(["Step13.md", url], saved);
+  const chip = await screen.findByText("Engine Rules");
+  expect(chip.closest("[title]")).toHaveAttribute("title", url);
+  expect(screen.queryByText(url)).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Remove Engine Rules" }));
+  await waitFor(() => expect(saved).toHaveLength(1));
+  expect(saved[0]).toEqual(["Step13.md"]);
 });
