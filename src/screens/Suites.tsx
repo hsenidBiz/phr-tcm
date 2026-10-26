@@ -16,6 +16,7 @@ import { pagePalette } from "../lib/reportTheme";
 import { CACHE, cacheKeys, persistentQuery } from "../lib/cache";
 import { cn } from "../lib/cn";
 import { unwrap, unwrapStr } from "../lib/ipc";
+import { noProjectSentence, useAllProjects } from "../lib/projectScope";
 import { buildTree, type SuiteNode } from "../lib/suiteTree";
 import { outcomeLabel } from "./RunPanel";
 
@@ -153,6 +154,7 @@ export default function Suites({
   onSetCurrentPbi?: (pbi: { id: number; title: string }) => void;
 }) {
   const qc = useQueryClient();
+  const allProjects = useAllProjects();
   const [openSuite, setOpenSuite] = useState<number | null>(null);
   // Folders start collapsed; clicking a folder row toggles it open.
   const [expanded, setExpanded] = useState<Set<number>>(new Set());
@@ -319,9 +321,7 @@ export default function Suites({
 
   if (!org || !project) {
     return (
-      <p className="text-sm text-muted">
-        Pick an organization and project in the bar above to browse test suites.
-      </p>
+      <p className="text-sm text-muted">{noProjectSentence(allProjects, "to browse test suites")}</p>
     );
   }
 

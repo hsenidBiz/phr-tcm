@@ -77,6 +77,23 @@ export function effectiveProject(
   return allProjects ? pbi?.project || homeProject : homeProject;
 }
 
+/** What a screen says when there is no project to work in, ending in `tail`
+ * ("first", "to browse test suites"). Shown together there is no Project
+ * picker to point at: the ways out are a PBI in the bar or a Home project in
+ * Settings. Switched off it is the picker's sentence. */
+export function noProjectSentence(allProjects: boolean, tail: string): string {
+  return allProjects
+    ? `Pick a PBI in the bar above, or a Home project in Settings, ${tail}.`
+    : `Pick an organization and project in the bar above ${tail}.`;
+}
+
+/** The same, short enough for a button's reason or a Setup row (no full stop,
+ * as those never have one). `off` is the switched-off wording that spot has
+ * always used. */
+export function noProjectHint(allProjects: boolean, off: string): string {
+  return allProjects ? "Pick a PBI, or a Home project in Settings, first" : off;
+}
+
 /** True exactly once per profile, for an existing install: the notice key
  * is absent, the switch was never set, and a project was already chosen.
  * The notice key is written the first time this is asked, so a fresh

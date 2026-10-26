@@ -782,7 +782,7 @@ export default function Settings({
         <SettingRow
           asLabel
           name="Treat all projects as one"
-          description="Work items, test cases, suites, boards and pull requests from every project show together. Off, you pick a project in the bar."
+          description="PBIs from every project show in one search, and new test cases go to the PBI's own project. Off, you pick a project in the bar."
           control={
             <Switch
               checked={allProjects}
@@ -803,7 +803,12 @@ export default function Settings({
                 value={homeProject}
                 onChange={(e) => onHomeProjectChange(e.target.value)}
               >
-                <option value="">Pick a project</option>
+                {/* The way to a home project is to pick one; once there is one,
+                    going back to none would leave screens with nowhere to
+                    point. */}
+                <option value="" disabled={Boolean(homeProject)}>
+                  Pick a project
+                </option>
                 {(projects.data ?? []).map((p) => (
                   <option key={p.name} value={p.name}>
                     {p.name}

@@ -1622,7 +1622,7 @@ test("Clear results lives in the Past runs section, and Clear scripts and Import
   expect(within(pastRuns).getByText(/nothing goes to azure devops unless you press send/i)).toBeInTheDocument();
 });
 
-test("with no project picked, the project-bound Setup buttons are disabled and say why", async () => {
+async function noProjectSetup() {
   mockList([caseRow(1, "Alpha check")], [1]);
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(
@@ -1632,8 +1632,9 @@ test("with no project picked, the project-bound Setup buttons are disabled and s
   );
   openSetup();
   await screen.findByRole("button", { name: "Edit site address" });
+}
 
-  const why = "Pick an organization and project first";
+function expectSetupGatedBy(why: string) {
   for (const name of ["Edit site address", "Record sign-in", "Edit sign-in recipe", "Edit areas"]) {
     const b = screen.getByRole("button", { name });
     expect(b).toBeDisabled();
@@ -1642,6 +1643,19 @@ test("with no project picked, the project-bound Setup buttons are disabled and s
   // Accounts belong to this machine, not a project - never gated on one.
   expect(screen.getByRole("button", { name: "Edit accounts" })).toBeEnabled();
   expect(within(row("Site address")).getByText(why)).toBeInTheDocument();
+}
+
+// Together there is no Project picker: the ways to a project are a PBI in the
+// bar or a Home project in Settings.
+test("with no project picked, the project-bound Setup buttons are disabled and say why", async () => {
+  await noProjectSetup();
+  expectSetupGatedBy("Pick a PBI, or a Home project in Settings, first");
+});
+
+test("switched off with no project picked, the Setup buttons name the Project picker", async () => {
+  localStorage.setItem("tcm-v2-all-projects", "0");
+  await noProjectSetup();
+  expectSetupGatedBy("Pick an organization and project first");
 });
 
 // The screen used to be two columns from xl (setup and cases left, Past

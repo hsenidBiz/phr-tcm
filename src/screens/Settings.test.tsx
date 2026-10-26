@@ -1763,6 +1763,27 @@ describe("the all-projects switch and the home project", () => {
     expect(onHomeProjectChange).toHaveBeenCalledWith("Payroll");
   });
 
+  test("the switch says only what the projects do together now", async () => {
+    mockProjects(["Web", "Payroll"]);
+    renderSettings(newClient(), { org: "ap-words" });
+    await screen.findByRole("heading", { name: "General" });
+    const row = within(general()).getByRole("switch", { name: "Treat all projects as one" }).closest("label")!;
+    expect(row).toHaveTextContent("PBIs from every project show in one search");
+    expect(row).toHaveTextContent("new test cases go to the PBI's own project");
+    expect(row).toHaveTextContent("Off, you pick a project in the bar.");
+    // Boards, suites and pull requests still follow one project.
+    expect(row.textContent).not.toMatch(/boards|suites|pull requests/i);
+  });
+
+  test("a home project, once set, cannot be unset", async () => {
+    mockProjects(["Web", "Payroll"]);
+    renderSettings(newClient(), { org: "ap-set", homeProject: "Web" });
+    await screen.findByRole("heading", { name: "General" });
+    fireEvent.click(await within(general()).findByRole("combobox", { name: "Home project" }));
+    expect(screen.getByRole("option", { name: "Pick a project" })).toBeDisabled();
+    expect(screen.getByRole("option", { name: "Payroll" })).toBeEnabled();
+  });
+
   test("a home project not chosen yet reads Pick a project", async () => {
     mockProjects(["Web", "Payroll"]);
     renderSettings(newClient(), { org: "ap-unset", homeProject: "" });

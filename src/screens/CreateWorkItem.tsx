@@ -20,6 +20,7 @@ import { CACHE, cacheKeys, persistentQuery } from "../lib/cache";
 import { iterationDetails } from "../lib/iterations";
 import { IconAdd, IconCopy, IconOpenInBrowser } from "../lib/actionIcons";
 import { copyText } from "../lib/clipboard";
+import { noProjectSentence } from "../lib/projectScope";
 
 const TYPES = ["Task", "Bug", "Product Backlog Item"];
 
@@ -178,7 +179,7 @@ export default function CreateWorkItem({
 
   if (!org || !createProject) {
     return (
-      <p className="text-sm text-muted">Pick an organization and project in the bar above first.</p>
+      <p className="text-sm text-muted">{noProjectSentence(allProjects, "first")}</p>
     );
   }
 

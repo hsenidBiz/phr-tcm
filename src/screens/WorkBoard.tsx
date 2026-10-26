@@ -37,6 +37,7 @@ import {
   saveSwimlanes,
 } from "../lib/boardLanes";
 import { loadPinnedAreas, savePinnedAreas, togglePin } from "../lib/boardPins";
+import { noProjectSentence, useAllProjects } from "../lib/projectScope";
 import { sidebarCollapsedSnapshot, stickyLeftPx, subscribeSidebar } from "../lib/sidebarState";
 
 const COLUMNS = ["To Do", "In Progress", "Done"] as const;
@@ -161,6 +162,7 @@ export default function WorkBoard({
   onFocusHandled?: () => void;
 }) {
   const qc = useQueryClient();
+  const allProjects = useAllProjects();
   const [dragging, setDragging] = useState<BoardItem | null>(null);
   const [scope, setScope] = useState(""); // "" = my work, else an area path
   // Third scope mode: everything parented under one PBI (plus the PBI
@@ -672,9 +674,7 @@ export default function WorkBoard({
 
   if (!org || !project) {
     return (
-      <p className="text-sm text-muted">
-        Pick an organization and project in the bar above first.
-      </p>
+      <p className="text-sm text-muted">{noProjectSentence(allProjects, "first")}</p>
     );
   }
 

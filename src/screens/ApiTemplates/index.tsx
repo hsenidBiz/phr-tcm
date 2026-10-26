@@ -13,6 +13,7 @@ import { cn } from "../../lib/cn";
 import { usePersistedStringSet } from "../../lib/collapsedGroups";
 import { unwrapStr } from "../../lib/ipc";
 import { plural } from "../../lib/plural";
+import { noProjectSentence, useAllProjects } from "../../lib/projectScope";
 import { pagePalette } from "../../lib/reportTheme";
 import { sidebarCollapsedSnapshot, stickyLeftPx, subscribeSidebar } from "../../lib/sidebarState";
 import { toast } from "../../lib/toast";
@@ -106,6 +107,7 @@ export default function ApiTemplates({
   onOpenAiBridge: () => void;
 }) {
   const qc = useQueryClient();
+  const allProjects = useAllProjects();
   const writesOn = useSyncExternalStore(subscribeApiWrites, apiWritesSnapshot);
   const sidebarCollapsed = useSyncExternalStore(subscribeSidebar, sidebarCollapsedSnapshot);
   // Folded module groups, remembered across sessions like the test case
@@ -273,7 +275,7 @@ export default function ApiTemplates({
     view === "flows" ? moduleFlows.length : list.length;
 
   if (!org || !project) {
-    return <p className="text-sm text-muted">Pick an organization and project in the bar above first.</p>;
+    return <p className="text-sm text-muted">{noProjectSentence(allProjects, "first")}</p>;
   }
 
   const origin = overview.data?.origin ?? null;
