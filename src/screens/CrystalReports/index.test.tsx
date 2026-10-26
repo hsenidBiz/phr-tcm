@@ -324,6 +324,8 @@ test("only_pages_near_the_view_are_drawn_and_a_page_that_leaves_is_let_go", asyn
   await waitFor(() => expect(pages()).toHaveLength(3));
   for (const i of [0, 1, 2]) expect(sheet(i).style.height).toBe(`${Math.round(800 * (96 / 72))}px`);
   // The watcher looks about one screen beyond the view, inside the page area.
+  // It is made in an effect after the sheets, so under load it can lag them.
+  await waitFor(() => expect(nearby.observers.length).toBeGreaterThan(0));
   const io = nearby.observers[nearby.observers.length - 1];
   expect(io.options?.rootMargin).toBe("100% 0px");
   expect(io.options?.root).toBe(sheet(0).closest("[data-page-area]"));

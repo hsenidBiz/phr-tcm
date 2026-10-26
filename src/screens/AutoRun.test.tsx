@@ -673,6 +673,7 @@ test("no path through this screen - load, selection, a supervised run or an unat
     "auto_run_load_components", // read-only, local: the Setup card's Components line
     "auto_run_discovery_active", // read-only, local: whether discovery holds the Auto Run browser
     "auto_run_end_discovery", // local: ends the assistant's discovery and closes its browser (End discovery); never ADO
+    "auto_run_agents", // read-only, local: the Assistants card's list of connected assistants
     "test_files_list", // read-only, local: the Setup card's Test files count
     "env_list", // read-only, local: the header's environment name and its address
     "db_databases", // read-only, local: the environments list checks its databases against these
