@@ -901,6 +901,57 @@ test("the switch is refused while the tour runs", async () => {
   expect(allProjectsSnapshot()).toBe(true);
 });
 
+// Settings' General card holds the switch and the Home project picker. The
+// switch is the store's own setter (so the tour refuses it); the picker moves
+// the home project that Auto Run and the other per-project files use.
+test("the Settings switch turns the projects off and the bar gets its Project selector", async () => {
+  localStorage.setItem("tcm-v2-tour-done", "yes");
+  savedPrefs();
+  signedInMocks((cmd) => {
+    if (cmd === "list_projects")
+      return [
+        { id: "p1", name: "Web" },
+        { id: "p2", name: "Payroll" },
+      ];
+  });
+  renderApp();
+  await screen.findByText("a@b.com");
+  expect(screen.queryByRole("combobox", { name: "Project" })).not.toBeInTheDocument();
+
+  fireEvent.click(screen.getByLabelText("Settings"));
+  const toggle = await screen.findByRole("switch", { name: "Treat all projects as one" });
+  expect(toggle).toBeChecked();
+  fireEvent.click(toggle);
+
+  expect(localStorage.getItem("tcm-v2-all-projects")).toBe("0");
+  await waitFor(() => expect(screen.getByRole("switch", { name: "Treat all projects as one" })).not.toBeChecked());
+  expect(screen.queryByRole("combobox", { name: "Home project" })).not.toBeInTheDocument();
+  expect(await screen.findByRole("combobox", { name: "Project" })).toHaveTextContent("Web");
+});
+
+test("the Settings Home project picker changes the home project", async () => {
+  localStorage.setItem("tcm-v2-tour-done", "yes");
+  savedPrefs();
+  signedInMocks((cmd) => {
+    if (cmd === "list_projects")
+      return [
+        { id: "p1", name: "Web" },
+        { id: "p2", name: "Payroll" },
+      ];
+  });
+  renderApp();
+  await screen.findByText("a@b.com");
+
+  fireEvent.click(screen.getByLabelText("Settings"));
+  const picker = await screen.findByRole("combobox", { name: "Home project" });
+  expect(picker).toHaveTextContent("Web");
+  fireEvent.click(picker);
+  fireEvent.click(screen.getByRole("option", { name: "Payroll" }));
+
+  await waitFor(() => expect(storedPrefs().project).toBe("Payroll"));
+  expect(screen.getByRole("combobox", { name: "Home project" })).toHaveTextContent("Payroll");
+});
+
 /// Search Suites hands a set of work item ids to Update Test Cases. The ids
 /// belong to one project, so a PBI of another project (which moves the
 /// effective project) drops them, exactly as a project change does; a PBI of

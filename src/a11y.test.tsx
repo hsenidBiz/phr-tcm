@@ -70,7 +70,15 @@ test("Settings is accessible", async () => {
     if (cmd === "app_log_dir") return "C:\\logs";
     return undefined;
   });
-  await expectAccessible(<Settings org="acme" project="Web" />);
+  await expectAccessible(
+    <Settings
+      org="acme"
+      project="Web"
+      homeProject="Web"
+      onHomeProjectChange={() => {}}
+      onAllProjectsChange={() => {}}
+    />,
+  );
 });
 
 test("AI Bridge is accessible", async () => {

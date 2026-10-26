@@ -74,7 +74,7 @@ import BridgeStatusBadge from "./components/BridgeStatusBadge";
 import SpecsStatusPill from "./components/SpecsStatusPill";
 import ContextBar from "./components/ContextBar";
 import { seedCombinedRecents } from "./components/PbiPicker";
-import { effectiveProject, takeAllProjectsNotice, useAllProjects } from "./lib/projectScope";
+import { effectiveProject, saveAllProjects, takeAllProjectsNotice, useAllProjects } from "./lib/projectScope";
 import Sidebar, { WORK_ITEMS, shortcutOrder, type Section, type WorkSection } from "./components/Sidebar";
 import { hydrateExtras } from "./lib/extras";
 import {
@@ -547,6 +547,13 @@ export default function App() {
     if (effectiveProject(allProjects, p, homeProject) !== project) setCaseSelection(null);
     if (allProjects && !homeProject && p?.project) setHomeProjectRaw(p.project);
     setPbiRaw(p);
+  };
+  // Settings' Home project picker. Moving the home project moves the
+  // effective project only when no PBI pins it, and then the case selection
+  // (work item ids of the old project) goes, the same rule setPbi follows.
+  const changeHomeProject = (p: string) => {
+    if (effectiveProject(allProjects, pbi, p) !== project) setCaseSelection(null);
+    setHomeProjectRaw(p);
   };
   // Settings opens on Modules when the "Playwright is needed" dialog sent
   // the person there; any other navigation clears it.
@@ -1627,6 +1634,9 @@ export default function App() {
                   <Settings
                     org={org}
                     project={project}
+                    homeProject={homeProject}
+                    onHomeProjectChange={changeHomeProject}
+                    onAllProjectsChange={saveAllProjects}
                     onFillChange={setSettingsFill}
                     startOnModules={startOnModules}
                   />

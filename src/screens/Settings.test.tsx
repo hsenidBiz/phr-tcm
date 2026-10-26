@@ -2,7 +2,7 @@ import { mockIPC, clearMocks } from "@tauri-apps/api/mocks";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { StrictMode } from "react";
-import { afterEach, expect, test, vi } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import Settings from "./Settings";
 import { CHANGELOG, isBetaVersion } from "../lib/changelog";
 import { RATE_LEVELS } from "../lib/adoRate";
@@ -27,12 +27,32 @@ afterEach(() => {
   resetExtrasStore();
   resetModulesStore();
   localStorage.removeItem("tcm-v2-dev-capture");
+  // The General card reads the project list through the shared cache, which
+  // leaves its entries behind; the export test counts what storage holds.
+  for (const k of Object.keys(localStorage)) if (k.startsWith("tcm-v2-cache")) localStorage.removeItem(k);
 });
 
-function renderSettings(qc: QueryClient) {
+const noop = () => {};
+
+function renderSettings(
+  qc: QueryClient,
+  props: Partial<{
+    org: string;
+    homeProject: string;
+    onHomeProjectChange: (p: string) => void;
+    onAllProjectsChange: (on: boolean) => void;
+  }> = {},
+) {
   return render(
     <QueryClientProvider client={qc}>
-      <Settings org="acme" project="Web" />
+      <Settings
+        org="acme"
+        project="Web"
+        homeProject="Web"
+        onHomeProjectChange={noop}
+        onAllProjectsChange={noop}
+        {...props}
+      />
     </QueryClientProvider>,
   );
 }
@@ -454,7 +474,13 @@ test("under StrictMode Show more still holds the grow for Updates", async () => 
     render(
       <StrictMode>
         <QueryClientProvider client={qc}>
-          <Settings org="acme" project="Web" />
+          <Settings
+            org="acme"
+            project="Web"
+            homeProject="Web"
+            onHomeProjectChange={noop}
+            onAllProjectsChange={noop}
+          />
         </QueryClientProvider>
       </StrictMode>,
     );
@@ -1118,7 +1144,9 @@ test("export sends only the app's own localStorage keys to the backend", async (
     }
     return undefined;
   });
-  renderSettings(qc);
+  // No organization: the Home project list is not fetched, so it does not
+  // write its own cache key into the storage this test counts.
+  renderSettings(qc, { org: "" });
 
   fireEvent.click(screen.getByRole("button", { name: "Export to file" }));
   await waitFor(() => expect(sent).not.toBeNull());
@@ -1596,7 +1624,14 @@ test("Settings tells its host while the Modules page is open, so the host can gi
   const seen: boolean[] = [];
   const { unmount } = render(
     <QueryClientProvider client={qc}>
-      <Settings org="acme" project="Web" onFillChange={(fill) => seen.push(fill)} />
+      <Settings
+        org="acme"
+        project="Web"
+        homeProject="Web"
+        onHomeProjectChange={noop}
+        onAllProjectsChange={noop}
+        onFillChange={(fill) => seen.push(fill)}
+      />
     </QueryClientProvider>,
   );
   expect(seen[seen.length - 1]).toBe(false);
@@ -1619,7 +1654,14 @@ test("startOnModules opens on Modules", async () => {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(
     <QueryClientProvider client={qc}>
-      <Settings org="acme" project="Web" startOnModules />
+      <Settings
+        org="acme"
+        project="Web"
+        homeProject="Web"
+        onHomeProjectChange={noop}
+        onAllProjectsChange={noop}
+        startOnModules
+      />
     </QueryClientProvider>,
   );
   expect(await screen.findAllByRole("switch")).toHaveLength(5);
@@ -1640,4 +1682,93 @@ test("the Auto Run card with the browser page size shows only while Auto Run is 
   expect(within(card).getByRole("spinbutton", { name: "Width" })).toBeInTheDocument();
   act(() => setModulesForTest([]));
   await waitFor(() => expect(screen.queryByRole("heading", { name: "Auto Run" })).not.toBeInTheDocument());
+});
+
+/// "Treat all projects as one": the switch is the first row of the General
+/// card, and the Home project picker shows only while it is on and the
+/// organization lists more than one project. Each test names its own
+/// organization so the project list one test caches never answers another.
+describe("the all-projects switch and the home project", () => {
+  afterEach(() => localStorage.removeItem("tcm-v2-all-projects"));
+
+  function general() {
+    return screen.getByRole("heading", { name: "General" }).closest("section")!;
+  }
+  function mockProjects(names: string[]) {
+    mockIPC((cmd) => {
+      if (cmd === "list_projects") return names.map((name, i) => ({ id: `p${i}`, name }));
+      return undefined;
+    });
+  }
+  const newClient = () => new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const settle = () =>
+    act(async () => {
+      await new Promise((r) => setTimeout(r, 20));
+    });
+
+  test("the all-projects switch is on by default", async () => {
+    mockProjects(["Web"]);
+    renderSettings(newClient(), { org: "ap-default" });
+    await screen.findByRole("heading", { name: "General" });
+    expect(within(general()).getByRole("switch", { name: "Treat all projects as one" })).toBeChecked();
+  });
+
+  test("turning the switch off reports it", async () => {
+    mockProjects(["Web"]);
+    const onAllProjectsChange = vi.fn();
+    renderSettings(newClient(), { org: "ap-off", onAllProjectsChange });
+    await screen.findByRole("heading", { name: "General" });
+    fireEvent.click(within(general()).getByRole("switch", { name: "Treat all projects as one" }));
+    expect(onAllProjectsChange).toHaveBeenCalledWith(false);
+  });
+
+  test("the home project picker shows while on with several projects", async () => {
+    mockProjects(["Web", "Payroll"]);
+    renderSettings(newClient(), { org: "ap-several" });
+    await screen.findByRole("heading", { name: "General" });
+    const picker = await within(general()).findByRole("combobox", { name: "Home project" });
+    expect(picker).toHaveTextContent("Web");
+    expect(
+      within(general()).getByText(
+        "Auto Run, API templates, Playwright and new work items without a PBI use this project.",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  test("the home project picker hides with one project", async () => {
+    mockProjects(["Web"]);
+    renderSettings(newClient(), { org: "ap-one" });
+    await screen.findByRole("heading", { name: "General" });
+    await settle();
+    expect(screen.queryByRole("combobox", { name: "Home project" })).not.toBeInTheDocument();
+  });
+
+  test("the home project picker hides while switched off", async () => {
+    localStorage.setItem("tcm-v2-all-projects", "0");
+    mockProjects(["Web", "Payroll"]);
+    renderSettings(newClient(), { org: "ap-hidden" });
+    await screen.findByRole("heading", { name: "General" });
+    await settle();
+    expect(screen.queryByRole("combobox", { name: "Home project" })).not.toBeInTheDocument();
+    expect(within(general()).getByRole("switch", { name: "Treat all projects as one" })).not.toBeChecked();
+  });
+
+  test("picking a home project reports it", async () => {
+    mockProjects(["Web", "Payroll"]);
+    const onHomeProjectChange = vi.fn();
+    renderSettings(newClient(), { org: "ap-pick", onHomeProjectChange });
+    await screen.findByRole("heading", { name: "General" });
+    fireEvent.click(await within(general()).findByRole("combobox", { name: "Home project" }));
+    fireEvent.click(screen.getByRole("option", { name: "Payroll" }));
+    expect(onHomeProjectChange).toHaveBeenCalledWith("Payroll");
+  });
+
+  test("a home project not chosen yet reads Pick a project", async () => {
+    mockProjects(["Web", "Payroll"]);
+    renderSettings(newClient(), { org: "ap-unset", homeProject: "" });
+    await screen.findByRole("heading", { name: "General" });
+    expect(await within(general()).findByRole("combobox", { name: "Home project" })).toHaveTextContent(
+      "Pick a project",
+    );
+  });
 });
