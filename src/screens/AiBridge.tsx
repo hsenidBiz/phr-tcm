@@ -1116,7 +1116,7 @@ export default function AiBridge() {
           )}
           {toolShown("list_api_templates") && (
             <li>
-              <span className="font-medium text-text">API templates</span> — build, test and run templates that create test data through the application itself. It can also map a module&apos;s steps as a flow of stages and check which stages are done before each run, so templates go in the order the application allows. Those checks read the company database, so they need Database Read Access switched on. Testing and running also need the API templates switch above, which is off by default. Off: you do template work by hand.
+              <span className="font-medium text-text">API templates</span> — build, test and run templates that create test data through the application itself. It can also map a module&apos;s steps as a flow of stages and check which stages are done before each run, so templates go in the order the application allows. Those checks read the company database, so they need the Database Access module on. Testing and running also need the API templates switch above, which is off by default. Off: you do template work by hand.
             </li>
           )}
           {toolShown("open_report") && (

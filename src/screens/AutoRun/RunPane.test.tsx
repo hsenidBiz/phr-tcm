@@ -596,7 +596,7 @@ test("a case with no preconditions is never checked", async () => {
   expect(seen).not.toContain("auto_run_check_preconditions");
 });
 
-const NOT_CHECKED = "preconditions were not checked: Database Read Access is off on the AI Bridge tab";
+const NOT_CHECKED = "preconditions were not checked: the Database Access module is off in Settings";
 
 test("with Database Read Access off the case says its preconditions were not checked and carries on", async () => {
   // Database Read Access is the Database Access module being on.
@@ -863,11 +863,11 @@ test("a replay that is ready with a notice shows the notice", async () => {
   await r.finish({
     end: {
       kind: "ready",
-      detail: { case_id: 1, step: 3, notice: "preconditions not checked: Database Read Access is off" },
+      detail: { case_id: 1, step: 3, notice: "preconditions not checked: the Database Access module is off" },
     },
     sentence: READY.sentence,
   });
-  expect(await screen.findByText("preconditions not checked: Database Read Access is off")).toBeInTheDocument();
+  expect(await screen.findByText("preconditions not checked: the Database Access module is off")).toBeInTheDocument();
 });
 
 test("a replay stopped at step 2 marks step 1, shows step 2's outcomes as failed, and leaves step 2 to run", async () => {
