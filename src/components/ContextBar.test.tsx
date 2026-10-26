@@ -267,9 +267,9 @@ describe("the Project selector follows the all-projects switch", () => {
   });
 
   test("switched off with one project the selector hides", async () => {
-    const { listLoaded } = renderBar({ allProjects: false, projects: ["Web"] });
-    await listLoaded();
-    expect(projectBox()).toBeNull();
+    renderBar({ allProjects: false, projects: ["Web"] });
+    // The selector shows until the list arrives and says there is one project.
+    await waitFor(() => expect(projectBox()).toBeNull());
   });
 
   test("switched off with two projects the selector shows", async () => {
