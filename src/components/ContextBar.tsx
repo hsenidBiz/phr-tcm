@@ -129,9 +129,12 @@ export default function ContextBar({
     <div className="flex flex-wrap items-center gap-x-2 gap-y-2 border-b border-border bg-surface px-4 py-2.5">
       {/* The scope group: Organization (not drawn when there is exactly one),
           Project and the PBI search. Always drawn, because the tour anchors
-          its "where you work" stop here. min-w-56 (not min-w-0): the outer
-          row must wrap the right-hand group to a second row rather than
-          squeeze the search. */}
+          its "where you work" stop here. It takes all the free width (flex-1)
+          and never less than 224px (min-w-56), so the right-hand group keeps
+          the first row. With several organizations on a narrow header the
+          three controls do not fit side by side: the PBI search wraps under
+          the pickers inside this group while the right-hand group stays on
+          the first row. */}
       <div
         data-tour="org"
         className="flex min-w-56 flex-1 flex-wrap items-center gap-x-2 gap-y-2"

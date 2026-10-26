@@ -3,7 +3,7 @@
 
 import { mockIPC, clearMocks } from "@tauri-apps/api/mocks";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -210,7 +210,9 @@ describe("a single organization is chosen for you", () => {
     org: string;
     locked?: boolean;
   }) {
+    const calls: string[] = [];
     mockIPC((cmd) => {
+      calls.push(cmd);
       if (cmd === "list_orgs") return opts.orgs;
       if (cmd === "list_projects") return [];
       if (cmd === "pr_overview") return { mine: [], awaiting: [] };
@@ -237,7 +239,16 @@ describe("a single organization is chosen for you", () => {
         />
       </QueryClientProvider>,
     );
-    return { setOrg, setProject, setPbi };
+    // Resolves once list_orgs has been asked and answered and the render
+    // that follows has flushed, so a "nothing happened" assertion made
+    // after it is made against the loaded list, not the empty first render.
+    const listLoaded = async () => {
+      await waitFor(() => expect(calls).toContain("list_orgs"));
+      await act(async () => {
+        await new Promise((r) => setTimeout(r, 20));
+      });
+    };
+    return { setOrg, setProject, setPbi, listLoaded };
   }
   const orgBox = () => screen.queryByRole("combobox", { name: "Organization" });
 
@@ -274,10 +285,18 @@ describe("a single organization is chosen for you", () => {
   });
 
   test("no organization keeps the selector", async () => {
-    const { setOrg } = renderBar({ orgs: [], org: "" });
-    await waitFor(() => expect(screen.getByRole("button", { name: "Settings" })).toBeInTheDocument());
+    const { setOrg, listLoaded } = renderBar({ orgs: [], org: "" });
+    await listLoaded();
     expect(orgBox()).not.toBeNull();
     expect(setOrg).not.toHaveBeenCalled();
+  });
+
+  test("a saved organization that is not the only one is replaced by it", async () => {
+    const { setOrg, setProject, setPbi } = renderBar({ orgs: [{ name: "acme", url: "" }], org: "Northwind" });
+    await waitFor(() => expect(setOrg).toHaveBeenCalledWith("acme"));
+    expect(setProject).toHaveBeenCalledWith("");
+    expect(setPbi).toHaveBeenCalledWith(null);
+    expect(orgBox()).toBeNull();
   });
 
   test("a locked bar never auto-selects", async () => {
