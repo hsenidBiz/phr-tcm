@@ -27,6 +27,13 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.3.1-beta.5",
+    date: "2026-10-26",
+    items: [
+      "Auto Run: an Assistants card shows each assistant connected to the app, which browser it uses and what it is doing, with Stop, End discovery and Release.",
+    ],
+  },
+  {
     version: "2.3.1-beta.4",
     date: "2026-10-24",
     items: [
