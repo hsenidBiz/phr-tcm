@@ -1462,6 +1462,26 @@ impl AdoClient {
         ))
     }
 
+    /// The project a work item is in (`System.TeamProject`), read at the
+    /// organization level so the caller needs no project to ask. Read only.
+    pub async fn work_item_project(
+        &self,
+        organization: &str,
+        wi_id: i32,
+    ) -> Result<String, AdoError> {
+        let url = format!(
+            "{}/{}/_apis/wit/workitems/{}?fields=System.TeamProject&api-version=7.1",
+            self.base_url,
+            percent_encode_segment(organization),
+            wi_id
+        );
+        let data = self.get_json(url).await?;
+        match data["fields"]["System.TeamProject"].as_str() {
+            Some(p) if !p.is_empty() => Ok(p.to_string()),
+            _ => Err(AdoError::NotFound),
+        }
+    }
+
     pub async fn get_projects(&self, organization: &str) -> Result<Vec<Project>, AdoError> {
         let url = format!(
             "{}/{}/_apis/projects?api-version=7.1&$top=500",

@@ -32,6 +32,7 @@ mod ado_testplan;
 mod agents;
 mod ai_bridge;
 mod ai_tools;
+mod all_projects_bridge;
 mod all_projects_pbis;
 mod allow_rules;
 mod api_fixtures;
