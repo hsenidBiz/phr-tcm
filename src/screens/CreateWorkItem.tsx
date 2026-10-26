@@ -39,6 +39,9 @@ type Draft = {
   tags: string;
   description: string;
   parent: PbiHit | null;
+  /** The project the area and iteration were chosen in; their paths belong
+   * to that project's tree. Empty before anything was chosen. */
+  project: string;
 };
 const BLANK: Draft = {
   wiType: "Task",
@@ -50,6 +53,7 @@ const BLANK: Draft = {
   tags: "",
   description: "",
   parent: null,
+  project: "",
 };
 let draft: Draft = { ...BLANK };
 
@@ -72,11 +76,16 @@ export default function CreateWorkItem({
   allProjects: boolean;
 }) {
   const qc = useQueryClient();
+  // An area or iteration kept in the draft is good only under the project it
+  // was chosen in: coming back under another (the home project changed, or a
+  // notification handed one over) starts those two empty.
+  const draftProject = allProjects ? draft.parent?.project || project : project;
+  const treeKept = !draft.project || draft.project === draftProject;
   const [wiType, setWiType] = useState(draft.wiType);
   const [title, setTitle] = useState(draft.title);
   const [assignee, setAssignee] = useState(draft.assignee);
-  const [area, setArea] = useState(draft.area);
-  const [iteration, setIteration] = useState(draft.iteration);
+  const [area, setArea] = useState(treeKept ? draft.area : "");
+  const [iteration, setIteration] = useState(treeKept ? draft.iteration : "");
   const [priority, setPriority] = useState(draft.priority);
   const [tags, setTags] = useState(draft.tags);
   const [description, setDescription] = useState(draft.description);
@@ -85,15 +94,18 @@ export default function CreateWorkItem({
 
   // Mirror every keystroke into the module draft, so whatever is on
   // screen when the user wanders off is exactly what greets them back.
-  useEffect(() => {
-    draft = { wiType, title, assignee, area, iteration, priority, tags, description, parent };
-  }, [wiType, title, assignee, area, iteration, priority, tags, description, parent]);
-
   // Where the item is created. Switched off it is the picked project. Together,
   // a parent PBI decides (it carries its own project) and without one the
   // item goes to the home project. Members, areas, iterations and tags are
   // that project's, and so is the create.
   const createProject = allProjects ? parent?.project || project : project;
+  useEffect(() => {
+    draft = {
+      wiType, title, assignee, area, iteration, priority, tags, description, parent,
+      project: createProject,
+    };
+  }, [wiType, title, assignee, area, iteration, priority, tags, description, parent, createProject]);
+
   // The area and iteration chosen belong to the tree of the project they
   // were read from; another project's tree has no such path. Done while
   // rendering so no query or create ever pairs the old path with the new

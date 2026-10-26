@@ -10,11 +10,11 @@ afterEach(() => {
   clearWorkItemDraft();
 });
 
-function renderScreen(allProjects = false) {
+function renderScreen(allProjects = false, project = "Web") {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={qc}>
-      <CreateWorkItem org="acme" project="Web" allProjects={allProjects} />
+      <CreateWorkItem org="acme" project={project} allProjects={allProjects} />
     </QueryClientProvider>,
   );
 }
@@ -252,4 +252,35 @@ test("an organization with one project does not say where the item goes", async 
   await waitFor(() => expect(projectsAsked).toBe(true));
   await new Promise((r) => setTimeout(r, 50));
   expect(screen.queryByText(/It will be created in/)).not.toBeInTheDocument();
+});
+
+/// The draft outlives the screen, and the area chosen belongs to the tree of
+/// the project it was read from. Coming back under another project (the home
+/// project changed, or a notification handed one over) must not offer a path
+/// from the old tree.
+test("a draft's area from another project's tree is dropped when the screen comes back", async () => {
+  const calls: Call[] = [];
+  combinedMocks(calls);
+  const first = renderScreen(false, "Web");
+  fireEvent.click(await screen.findByLabelText("Area"));
+  fireEvent.click(await screen.findByRole("option", { name: "Web\Gamma Guardians" }));
+  fireEvent.change(screen.getByLabelText("Title"), { target: { value: "Half-written task" } });
+  expect(screen.getByLabelText("Area")).toHaveTextContent("Web\Gamma Guardians");
+  first.unmount();
+
+  renderScreen(false, "Payroll");
+  expect(await screen.findByLabelText("Title")).toHaveValue("Half-written task");
+  expect(screen.getByLabelText("Area")).not.toHaveTextContent("Gamma Guardians");
+});
+
+test("a draft's area is kept when the screen comes back under the same project", async () => {
+  const calls: Call[] = [];
+  combinedMocks(calls);
+  const first = renderScreen(false, "Web");
+  fireEvent.click(await screen.findByLabelText("Area"));
+  fireEvent.click(await screen.findByRole("option", { name: "Web\Gamma Guardians" }));
+  first.unmount();
+
+  renderScreen(false, "Web");
+  expect(await screen.findByLabelText("Area")).toHaveTextContent("Web\Gamma Guardians");
 });
