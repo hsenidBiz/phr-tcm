@@ -50,6 +50,20 @@ pub async fn search_pbis_all(
         .await
 }
 
+/// Which of `projects` already have Auto Run files: how the app picks a
+/// home project for someone whose files predate the "all projects" switch.
+/// A read-only listing of the Auto Run folder; nothing is created or moved.
+#[tauri::command]
+#[specta::specta]
+pub async fn projects_with_autorun_files(
+    app: tauri::AppHandle,
+    organization: String,
+    projects: Vec<String>,
+) -> Result<Vec<String>, String> {
+    let root = super::autorun::root(&app)?;
+    Ok(crate::autorun::recipe::projects_with_files(&root, &organization, &projects))
+}
+
 /// The project's Area or Iteration paths for the create pickers.
 #[tauri::command]
 #[specta::specta]

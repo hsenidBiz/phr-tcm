@@ -128,6 +128,7 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             discovery::list_orgs,
             discovery::search_pbis,
             discovery::search_pbis_all,
+            discovery::projects_with_autorun_files,
             cases::pbi_test_cases,
             queue::parse_import_file,
             queue::file_stamp,

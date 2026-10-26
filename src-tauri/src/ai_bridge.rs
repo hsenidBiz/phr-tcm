@@ -57,6 +57,10 @@ pub struct BridgeContext {
     /// refuse (`NETWORK_TOOLS_OFF`). Each environment keeps its own; off by
     /// default.
     pub network_tools: bool,
+    /// The webview's "Treat all projects as one" switch. Read only by the
+    /// Azure DevOps routes (from Phase 6); `project` stays the home project
+    /// either way.
+    pub all_projects: bool,
     /// The active environment's "Run database changes without asking".
     /// Never the webview's to say: Rust sets it from the environment, on a
     /// push and on a switch (`commands::ai_bridge::push_context_with`,
@@ -158,6 +162,7 @@ impl std::fmt::Debug for BridgeContext {
             .field("db_writes", &self.db_writes)
             .field("api_writes", &self.api_writes)
             .field("network_tools", &self.network_tools)
+            .field("all_projects", &self.all_projects)
             .field("db_no_ask", &self.db_no_ask)
             .field("gate", &self.gate)
             .finish()

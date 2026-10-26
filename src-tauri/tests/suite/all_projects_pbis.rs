@@ -1,4 +1,8 @@
+use std::sync::Mutex;
 use v2_lib::ado::AdoClient;
+use v2_lib::ai_bridge::BridgeContext;
+use v2_lib::autorun::recipe::{project_slug, projects_with_files};
+use v2_lib::commands::ai_bridge::push_context_with;
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -113,4 +117,56 @@ async fn per_project_pbi_hits_carry_the_argument_project() {
     let hits = client.search_pbis("o", "p", "x", 20).await.unwrap();
     assert_eq!(hits.len(), 1);
     assert_eq!(hits[0].project, "p");
+}
+
+// ------------------------------------------------ home project from Auto Run files
+
+fn touch(root: &std::path::Path, name: &str) {
+    let dir = root.join("projects");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join(name), "{}").unwrap();
+}
+
+#[test]
+fn autorun_files_name_the_projects_that_have_them() {
+    let dir = tempfile::tempdir().unwrap();
+    let slug = project_slug("acme", "HRM");
+    touch(dir.path(), &format!("{slug}.nav.json"));
+    touch(dir.path(), &format!("{slug}-map.json"));
+    let found = projects_with_files(dir.path(), "acme", &["HRM".to_string(), "Payroll".to_string()]);
+    assert_eq!(found, vec!["HRM".to_string()]);
+}
+
+#[test]
+fn autorun_files_match_the_whole_slug_not_a_prefix_of_another() {
+    let dir = tempfile::tempdir().unwrap();
+    let slug = project_slug("acme", "HRM");
+    for name in [".json", ".nav.json", "-map.json", "-components.json", "-quirks.json", "-mapping.json", "-divergences.json", ".pwexport.json"] {
+        touch(dir.path(), &format!("{slug}{name}"));
+    }
+    assert!(projects_with_files(dir.path(), "acme", &["HR".to_string()]).is_empty());
+    // Another organization's project of the same name is not this one.
+    assert!(projects_with_files(dir.path(), "other", &["HRM".to_string()]).is_empty());
+}
+
+#[test]
+fn no_projects_folder_means_no_projects() {
+    let dir = tempfile::tempdir().unwrap();
+    let found = projects_with_files(dir.path(), "acme", &["HRM".to_string()]);
+    assert!(found.is_empty());
+    assert!(!dir.path().join("projects").exists(), "listing creates nothing");
+}
+
+#[test]
+fn bridge_context_takes_the_all_projects_switch() {
+    let dir = tempfile::tempdir().unwrap();
+    for env_id in ["some-env", ""] {
+        let ctx = Mutex::new(BridgeContext::default());
+        let next = BridgeContext { org: "acme".into(), all_projects: true, ..BridgeContext::default() };
+        push_context_with(&ctx, Some(dir.path()), next, env_id);
+        assert!(ctx.lock().unwrap().all_projects, "env {env_id:?}");
+    }
+    let ctx = Mutex::new(BridgeContext { all_projects: true, ..BridgeContext::default() });
+    push_context_with(&ctx, None, BridgeContext::default(), "");
+    assert!(!ctx.lock().unwrap().all_projects, "a push with the switch off turns it off");
 }
