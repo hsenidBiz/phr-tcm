@@ -63,7 +63,7 @@ const existing: TestCaseFull = {
 
 test("Manual Entry: a new case defaults to priority 2 and the chosen value is saved", async () => {
   mocks();
-  wrap(<ManualEntry org="acme" project="Web" pbi={{ id: 42, title: "PBI", work_item_type: "Product Backlog Item" }} />);
+  wrap(<ManualEntry org="acme" project="Web" pbi={{ id: 42, title: "PBI", work_item_type: "Product Backlog Item", project: "Web" }} />);
   expect(priority()).toHaveTextContent("Priority 2");
 
   const add = (title: string) => {

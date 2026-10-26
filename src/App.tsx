@@ -1440,7 +1440,7 @@ export default function App() {
                     org={org}
                     project={project}
                     onOpenPbi={(p, target) => {
-                      setPbiRaw({ id: p.id, title: p.title, work_item_type: "Product Backlog Item" });
+                      setPbiRaw({ id: p.id, title: p.title, work_item_type: "Product Backlog Item", project: project });
                       goToSection(target === "edit" ? "edit" : "run");
                     }}
                     onEditCases={(label, caseIds) => {
@@ -1453,7 +1453,7 @@ export default function App() {
                       goToSection("manage");
                     }}
                     onSetCurrentPbi={(p) =>
-                      setPbiRaw({ id: p.id, title: p.title, work_item_type: "Product Backlog Item" })
+                      setPbiRaw({ id: p.id, title: p.title, work_item_type: "Product Backlog Item", project: project })
                     }
                   />
                 )}

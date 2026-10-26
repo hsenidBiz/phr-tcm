@@ -31,7 +31,7 @@ function renderView() {
       <ViewCases
         org="acme"
         project="Web"
-        pbi={{ id: 42, title: "Login flow", work_item_type: "Product Backlog Item" }}
+        pbi={{ id: 42, title: "Login flow", work_item_type: "Product Backlog Item", project: "Web" }}
       />
     </QueryClientProvider>,
   );
@@ -89,7 +89,7 @@ test("a remount within staleTime reuses the cached case list", async () => {
         <ViewCases
           org="acme"
           project="Web"
-          pbi={{ id: 42, title: "Login flow", work_item_type: "Product Backlog Item" }}
+          pbi={{ id: 42, title: "Login flow", work_item_type: "Product Backlog Item", project: "Web" }}
         />
       </QueryClientProvider>,
     );

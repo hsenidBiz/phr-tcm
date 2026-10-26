@@ -28,7 +28,7 @@ test("opening a run's window loads and shows it, and nothing shows before", asyn
     openRunSetup({
       org: "acme",
       project: "Web",
-      pbi: { id: 42, title: "Login work", work_item_type: "Product Backlog Item" },
+      pbi: { id: 42, title: "Login work", work_item_type: "Product Backlog Item", project: "Web" },
       cases: [{ id: 1, title: "Alpha check" }],
       plan: null,
     });

@@ -109,8 +109,8 @@ const nowMinus = (seconds: number) => new Date(Date.now() - seconds * 1000).toIS
 // ---------------------------------------------------------------- dataset
 
 const PBIS: PbiHit[] = [
-  { id: 1001, title: "Demo - Login & session flow", work_item_type: "Product Backlog Item" },
-  { id: 1002, title: "Demo - Checkout redesign", work_item_type: "Product Backlog Item" },
+  { id: 1001, title: "Demo - Login & session flow", work_item_type: "Product Backlog Item", project: "Demo Project" },
+  { id: 1002, title: "Demo - Checkout redesign", work_item_type: "Product Backlog Item", project: "Demo Project" },
 ];
 
 const full = (
@@ -1016,6 +1016,8 @@ function applyPatches() {
     searchPbis: (_o: string, _p: string, query: string) =>
       // Matched on the name shown, so a capture-mode search finds what the
       // picker lists.
+      ok(PBIS.filter((b) => shown(`${b.id} ${b.title}`).toLowerCase().includes(query.toLowerCase()))),
+    searchPbisAll: (_o: string, query: string) =>
       ok(PBIS.filter((b) => shown(`${b.id} ${b.title}`).toLowerCase().includes(query.toLowerCase()))),
 
     listTestCaseFields: () => ok([]),

@@ -274,7 +274,7 @@ export default function Suites({
         planId,
         planName: trees.find((t) => t.plan.id === planId)?.plan.name ?? "",
         suiteId,
-        pbi: { id: 0, title: label, work_item_type: "" },
+        pbi: { id: 0, title: label, work_item_type: "", project },
         caseIds: ids,
       });
     },
@@ -303,6 +303,7 @@ export default function Suites({
           id: s.requirement_id!,
           title: s.name,
           work_item_type: "Product Backlog Item",
+          project,
         }
       );
     },

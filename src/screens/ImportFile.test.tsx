@@ -18,7 +18,7 @@ afterEach(() => {
   resetFileWriteQueueForTests();
 });
 
-const pbi = { id: 42, title: "Login flow", work_item_type: "Product Backlog Item" };
+const pbi = { id: 42, title: "Login flow", work_item_type: "Product Backlog Item", project: "Web" };
 
 function renderScreen() {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });

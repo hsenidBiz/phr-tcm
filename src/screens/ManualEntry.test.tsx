@@ -9,7 +9,7 @@ afterEach(() => {
   localStorage.clear();
 });
 
-const pbi = { id: 42, title: "Login flow", work_item_type: "Product Backlog Item" };
+const pbi = { id: 42, title: "Login flow", work_item_type: "Product Backlog Item", project: "Web" };
 
 function renderScreen(pbiArg: typeof pbi | null = pbi) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });

@@ -52,7 +52,12 @@ export function loadPrefs(): Prefs {
         section: SECTIONS.includes(p.section) ? p.section : "manual",
         pbi:
           p.pbi && typeof p.pbi.id === "number" && typeof p.pbi.title === "string"
-            ? { id: p.pbi.id, title: p.pbi.title, work_item_type: p.pbi.work_item_type ?? "" }
+            ? {
+                id: p.pbi.id,
+                title: p.pbi.title,
+                work_item_type: p.pbi.work_item_type ?? "",
+                project: p.pbi.project ?? p.project ?? "",
+              }
             : null,
         workMode: Boolean(p.workMode),
       };

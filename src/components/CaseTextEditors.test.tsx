@@ -118,7 +118,7 @@ test("Update Test Cases editor: Markdown typed is sent exactly", async () => {
 
 test("Manual Entry: Markdown typed reaches the queue exactly", async () => {
   mocks();
-  wrap(<ManualEntry org="acme" project="Web" pbi={{ id: 42, title: "PBI", work_item_type: "Product Backlog Item" }} />);
+  wrap(<ManualEntry org="acme" project="Web" pbi={{ id: 42, title: "PBI", work_item_type: "Product Backlog Item", project: "Web" }} />);
   fireEvent.change(screen.getByPlaceholderText("Test case title"), { target: { value: "Leave count" } });
   typeAndPreview();
   fireEvent.click(screen.getByRole("button", { name: "Add to queue" }));

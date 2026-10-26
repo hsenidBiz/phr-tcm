@@ -1041,6 +1041,7 @@ export default function ImportFile({
                   id: choice.pbi_id,
                   title: choice.pbi_title,
                   work_item_type: choice.pbi_work_item_type,
+                  project: choice.project,
                 });
                 setChoice(null);
               }}

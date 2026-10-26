@@ -29,7 +29,7 @@ function runIn(over: Partial<BackgroundRun>): BackgroundRun {
   return {
     org: "acme",
     project: "Web",
-    pbi: { id: 42, title: "Login work", work_item_type: "Product Backlog Item" },
+    pbi: { id: 42, title: "Login work", work_item_type: "Product Backlog Item", project: "Web" },
     cases: CASES,
     plan: null,
     phase: "running",

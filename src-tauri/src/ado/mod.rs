@@ -39,6 +39,7 @@ pub struct PbiHit {
     pub id: i32,
     pub title: String,
     pub work_item_type: String,
+    pub project: String,
 }
 
 #[derive(Debug, Clone, Serialize, specta::Type)]

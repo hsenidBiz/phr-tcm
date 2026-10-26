@@ -23,3 +23,11 @@ test("an unrecognised section in storage falls back to Manual Entry", () => {
   localStorage.setItem(PREFS_KEY, JSON.stringify({ ...base, section: "nonsense" }));
   expect(loadPrefs().section).toBe("manual");
 });
+
+test("a saved PBI without a project takes the saved project, one with its own keeps it", () => {
+  const stored = { id: 7, title: "Seven", work_item_type: "Product Backlog Item" };
+  localStorage.setItem(PREFS_KEY, JSON.stringify({ ...base, project: "HRM", pbi: stored }));
+  expect(loadPrefs().pbi?.project).toBe("HRM");
+  localStorage.setItem(PREFS_KEY, JSON.stringify({ ...base, project: "HRM", pbi: { ...stored, project: "Payroll" } }));
+  expect(loadPrefs().pbi?.project).toBe("Payroll");
+});

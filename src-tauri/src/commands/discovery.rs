@@ -35,6 +35,21 @@ pub async fn search_pbis(
         .await
 }
 
+/// PBI search across every project of the organization (the "treat all
+/// projects as one" path). Each hit names its own project.
+#[tauri::command]
+#[specta::specta]
+pub async fn search_pbis_all(
+    app: tauri::AppHandle,
+    organization: String,
+    query: String,
+) -> Result<Vec<ado::PbiHit>, ado::AdoError> {
+    let token = get_fresh_token(&app).await?;
+    ado::AdoClient::new(token)
+        .search_pbis_all(&organization, &query, 20)
+        .await
+}
+
 /// The project's Area or Iteration paths for the create pickers.
 #[tauri::command]
 #[specta::specta]

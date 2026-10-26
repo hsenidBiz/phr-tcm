@@ -44,7 +44,9 @@ impl AdoClient {
 
     /// PBI search ported from v1 search_work_items(): title CONTAINS (quotes
     /// escaped), OR exact id when numeric, PBIs only, most recently changed
-    /// first. WIQL order is preserved in the result.
+    /// first. WIQL order is preserved in the result. Every hit carries the
+    /// `project` argument (filled here, not asked of Azure DevOps, so the
+    /// request is exactly the per-project one).
     pub async fn search_pbis(
         &self,
         organization: &str,
@@ -52,11 +54,7 @@ impl AdoClient {
         text: &str,
         top: u32,
     ) -> Result<Vec<PbiHit>, AdoError> {
-        let safe = text.trim().replace('\'', "''");
-        let mut clause = format!("[System.Title] CONTAINS '{safe}'");
-        if let Ok(id) = text.trim().parse::<i64>() {
-            clause = format!("([System.Id] = {id} OR {clause})");
-        }
+        let clause = pbi_search_clause(text);
         let wiql = format!(
             "SELECT [System.Id] FROM workitems \
              WHERE [System.TeamProject] = @project AND {clause} \
@@ -70,8 +68,61 @@ impl AdoClient {
             percent_encode_segment(project),
             top
         );
+        self.pbi_hits_for_wiql(
+            organization,
+            url,
+            &wiql,
+            "System.Title,System.WorkItemType",
+            Some(project),
+        )
+        .await
+    }
+
+    /// The same PBI search across every project of the organization: no
+    /// `[System.TeamProject]` clause and an organization-scoped WIQL URL.
+    /// Each hit's `project` is the work item's own `System.TeamProject`.
+    pub async fn search_pbis_all(
+        &self,
+        organization: &str,
+        text: &str,
+        top: u32,
+    ) -> Result<Vec<PbiHit>, AdoError> {
+        let clause = pbi_search_clause(text);
+        let wiql = format!(
+            "SELECT [System.Id] FROM workitems \
+             WHERE {clause} \
+             AND [System.WorkItemType] = 'Product Backlog Item' \
+             ORDER BY [System.ChangedDate] DESC"
+        );
+        let url = format!(
+            "{}/{}/_apis/wit/wiql?$top={}&api-version=7.1",
+            self.base_url,
+            percent_encode_segment(organization),
+            top
+        );
+        self.pbi_hits_for_wiql(
+            organization,
+            url,
+            &wiql,
+            "System.Title,System.WorkItemType,System.TeamProject",
+            None,
+        )
+        .await
+    }
+
+    /// Runs a PBI WIQL query and fetches the titles of its hits in one batch.
+    /// `fixed_project` is the project every hit belongs to when the query was
+    /// scoped to one; `None` reads each hit's `System.TeamProject`.
+    async fn pbi_hits_for_wiql(
+        &self,
+        organization: &str,
+        wiql_url: String,
+        wiql: &str,
+        fields: &str,
+        fixed_project: Option<&str>,
+    ) -> Result<Vec<PbiHit>, AdoError> {
         let body = self
-            .post_json_query(url, &serde_json::json!({ "query": wiql }))
+            .post_json_query(wiql_url, &serde_json::json!({ "query": wiql }))
             .await?;
         let ids: Vec<i64> = body["workItems"]
             .as_array()
@@ -90,8 +141,11 @@ impl AdoClient {
             .collect::<Vec<_>>()
             .join(",");
         let url = format!(
-            "{}/{}/_apis/wit/workitems?ids={}&fields=System.Title,System.WorkItemType&api-version=7.1",
-            self.base_url, percent_encode_segment(organization), ids_csv
+            "{}/{}/_apis/wit/workitems?ids={}&fields={}&api-version=7.1",
+            self.base_url,
+            percent_encode_segment(organization),
+            ids_csv,
+            fields
         );
         let fetched = self.get_json(url).await?;
         let by_id: std::collections::HashMap<i64, &serde_json::Value> = fetched["value"]
@@ -113,6 +167,13 @@ impl AdoClient {
                         .as_str()
                         .unwrap_or_default()
                         .to_string(),
+                    project: match fixed_project {
+                        Some(p) => p.to_string(),
+                        None => fields["System.TeamProject"]
+                            .as_str()
+                            .unwrap_or_default()
+                            .to_string(),
+                    },
                 })
             })
             .collect())
@@ -788,6 +849,17 @@ pub fn parse_priority(v: &serde_json::Value) -> Option<i32> {
     };
     let n = i32::try_from(n).ok()?;
     crate::model::VALID_PRIORITIES.contains(&n).then_some(n)
+}
+
+/// The text clause shared by the per-project and organization-wide PBI
+/// searches: title CONTAINS (quotes escaped), OR exact id when numeric.
+fn pbi_search_clause(text: &str) -> String {
+    let safe = text.trim().replace('\'', "''");
+    let clause = format!("[System.Title] CONTAINS '{safe}'");
+    match text.trim().parse::<i64>() {
+        Ok(id) => format!("([System.Id] = {id} OR {clause})"),
+        Err(_) => clause,
+    }
 }
 
 /// Is this relation "the test cases that test THIS work item"?
