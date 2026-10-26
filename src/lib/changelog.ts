@@ -27,6 +27,21 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.3.1-beta.6",
+    date: "2026-10-27",
+    items: [
+      "Manual Entry starts with three steps, and a step with nothing in it is left out.",
+      "Import Test Cases: the screen title shows once, the share link box uses the normal font, and attached specs show as compact chips grouped by folder.",
+      "Search boxes are bigger, with a clear button, and Find PBI fills the free width of the top bar.",
+      "Bulk edit shows every field at once with no checkboxes, says what will change, and can clear the module on every selected case. Move to PBI is bigger, with a full-width search and two-line titles.",
+      "Run Tests shows the plan without the suite number.",
+      "Auto Run: scripts are written by an assistant, and a case's script opens with View script. The Setup card keeps its status dots when expanded, and its Hide button stays within reach on a short window.",
+      "Playwright: make a feature folder from the folder tree's right-click menu; right-click the empty area below the folders for a top-level one.",
+      "AI Bridge: tools that belong to a module are on whenever the module is on, with no second switch. Flow and precondition checks that read the database need the Database Access module on.",
+      "The Settings gear stays centred in its button.",
+    ],
+  },
+  {
     version: "2.3.1-beta.5",
     date: "2026-10-26",
     items: [
