@@ -56,7 +56,9 @@ export function loadPrefs(): Prefs {
                 id: p.pbi.id,
                 title: p.pbi.title,
                 work_item_type: p.pbi.work_item_type ?? "",
-                project: p.pbi.project ?? p.project ?? "",
+                // A PBI saved before PBIs carried a project belongs to the
+                // project that was picked then.
+                project: typeof p.pbi.project === "string" && p.pbi.project ? p.pbi.project : (p.project ?? ""),
               }
             : null,
         workMode: Boolean(p.workMode),

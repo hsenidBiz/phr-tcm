@@ -24,10 +24,38 @@ test("an unrecognised section in storage falls back to Manual Entry", () => {
   expect(loadPrefs().section).toBe("manual");
 });
 
-test("a saved PBI without a project takes the saved project, one with its own keeps it", () => {
-  const stored = { id: 7, title: "Seven", work_item_type: "Product Backlog Item" };
-  localStorage.setItem(PREFS_KEY, JSON.stringify({ ...base, project: "HRM", pbi: stored }));
+const storedPbi = { id: 7, title: "Seven", work_item_type: "Product Backlog Item" };
+
+test("a saved PBI without a project takes the saved project", () => {
+  // What a person saved before PBIs carried a project.
+  localStorage.setItem(PREFS_KEY, JSON.stringify({ ...base, org: "acme", project: "HRM", pbi: storedPbi }));
+  const loaded = loadPrefs();
+  expect(loaded.pbi).toEqual({ ...storedPbi, project: "HRM" });
+  // The saved project stays the home project, untouched.
+  expect(loaded.org).toBe("acme");
+  expect(loaded.project).toBe("HRM");
+});
+
+test("a saved PBI keeps its own project", () => {
+  localStorage.setItem(
+    PREFS_KEY,
+    JSON.stringify({ ...base, project: "HRM", pbi: { ...storedPbi, project: "Payroll" } }),
+  );
+  const loaded = loadPrefs();
+  expect(loaded.pbi?.project).toBe("Payroll");
+  expect(loaded.project).toBe("HRM");
+});
+
+test("a saved PBI with an empty or odd project takes the saved project, and none at all gives empty", () => {
+  localStorage.setItem(PREFS_KEY, JSON.stringify({ ...base, project: "HRM", pbi: { ...storedPbi, project: "" } }));
   expect(loadPrefs().pbi?.project).toBe("HRM");
-  localStorage.setItem(PREFS_KEY, JSON.stringify({ ...base, project: "HRM", pbi: { ...stored, project: "Payroll" } }));
-  expect(loadPrefs().pbi?.project).toBe("Payroll");
+  localStorage.setItem(PREFS_KEY, JSON.stringify({ ...base, project: "HRM", pbi: { ...storedPbi, project: 5 } }));
+  expect(loadPrefs().pbi?.project).toBe("HRM");
+  localStorage.setItem(PREFS_KEY, JSON.stringify({ section: "manual", pbi: storedPbi }));
+  expect(loadPrefs().pbi?.project).toBe("");
+});
+
+test("corrupt saved prefs load as defaults", () => {
+  localStorage.setItem(PREFS_KEY, "{not json");
+  expect(loadPrefs()).toEqual(base);
 });
