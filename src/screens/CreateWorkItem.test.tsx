@@ -47,6 +47,8 @@ test("Create stays disabled until a title is entered", async () => {
 });
 
 test("the full form reaches create_work_item, including the parent PBI", async () => {
+  // The per-project parent search; the combined one is covered by the picker's own tests.
+  localStorage.setItem("tcm-v2-all-projects", "0");
   let payload: Record<string, unknown> | null = null;
   baseMocks((args) => {
     payload = args;

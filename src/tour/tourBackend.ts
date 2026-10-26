@@ -45,6 +45,7 @@ function standIns(): Partial<Commands> {
     listOrgs: () => ok(TOUR_ORGS),
     listProjects: () => ok(TOUR_PROJECTS),
     searchPbis: () => ok([TOUR_PBI]),
+    searchPbisAll: () => ok([TOUR_PBI]),
 
     // Manual Entry's field pickers.
     listTestCaseFields: () => ok([]),

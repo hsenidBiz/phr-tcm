@@ -3,27 +3,37 @@ import { History, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { commands, type PbiHit } from "../bindings";
 import { unwrap } from "../lib/ipc";
+import {
+  COMBINED,
+  scopeSegment,
+  seedCombinedKey,
+  spansProjects,
+  useAllProjects,
+} from "../lib/projectScope";
+import ProjectChip from "./ProjectChip";
 import { SearchInput } from "./ui/search-input";
 
 const RECENTS_MAX = 8;
-const recentsKey = (org: string, project: string) => `tcm-v2-recent-pbis:${org}/${project}`;
+// The second part of the key is the project while the projects are picked
+// one at a time, and `*` (COMBINED) while they show together.
+const recentsKey = (org: string, segment: string) => `tcm-v2-recent-pbis:${org}/${segment}`;
 
-export function loadRecents(org: string, project: string): PbiHit[] {
+export function loadRecents(org: string, segment: string): PbiHit[] {
   try {
-    const raw = localStorage.getItem(recentsKey(org, project));
+    const raw = localStorage.getItem(recentsKey(org, segment));
     return raw ? (JSON.parse(raw) as PbiHit[]) : [];
   } catch {
     return [];
   }
 }
 
-function pushRecent(org: string, project: string, pbi: PbiHit) {
+function pushRecent(org: string, segment: string, pbi: PbiHit) {
   try {
-    const next = [pbi, ...loadRecents(org, project).filter((p) => p.id !== pbi.id)].slice(
+    const next = [pbi, ...loadRecents(org, segment).filter((p) => p.id !== pbi.id)].slice(
       0,
       RECENTS_MAX,
     );
-    localStorage.setItem(recentsKey(org, project), JSON.stringify(next));
+    localStorage.setItem(recentsKey(org, segment), JSON.stringify(next));
   } catch {
     // storage unavailable -> no recents
   }
@@ -31,15 +41,25 @@ function pushRecent(org: string, project: string, pbi: PbiHit) {
 
 /** Drop one PBI from the recents list - a mis-clicked or long-finished PBI
  * otherwise squats in the list until seven newer ones push it out. */
-export function removeRecent(org: string, project: string, id: number) {
+export function removeRecent(org: string, segment: string, id: number) {
   try {
     localStorage.setItem(
-      recentsKey(org, project),
-      JSON.stringify(loadRecents(org, project).filter((p) => p.id !== id)),
+      recentsKey(org, segment),
+      JSON.stringify(loadRecents(org, segment).filter((p) => p.id !== id)),
     );
   } catch {
     // storage unavailable -> nothing to remove
   }
+}
+
+/** Copies the home project's recents to the org-wide list the first time
+ * the projects show together, naming the project on each (older entries
+ * were saved without one). The per-project list stays as it was, so
+ * switching off finds it unchanged; an org-wide list is never overwritten. */
+export function seedCombinedRecents(org: string, homeProject: string): void {
+  seedCombinedKey(recentsKey(org, COMBINED), recentsKey(org, homeProject), (list) =>
+    (list as PbiHit[]).map((p) => ({ ...p, project: p.project || homeProject })),
+  );
 }
 
 /** Global PBI scope in the context bar - v1's Config-screen PBI search.
@@ -50,12 +70,18 @@ export default function PbiPicker({
   project,
   pbi,
   onChange,
+  perProject = false,
 }: {
   org: string;
   project: string;
   pbi: PbiHit | null;
   onChange: (pbi: PbiHit | null) => void;
+  /** Search the one project even while the projects show together (a screen
+   * that works inside a single project, such as the board's PBI filter). */
+  perProject?: boolean;
 }) {
+  const combined = useAllProjects() && !perProject;
+  const segment = scopeSegment(project, combined);
   const [text, setText] = useState("");
   const [query, setQuery] = useState("");
   const [open, setOpen] = useState(false);
@@ -93,19 +119,31 @@ export default function PbiPicker({
   // Re-read on every render; the bump only forces a render after a remove
   // (nothing else about the component changes when a recent is dropped).
   const [, bumpRecents] = useState(0);
-  const recents = loadRecents(org, project);
+  const recents = loadRecents(org, segment);
   const pick = (hit: PbiHit) => {
-    pushRecent(org, project, hit);
+    pushRecent(org, segment, hit);
     onChange(hit);
     setOpen(false);
   };
 
-  const hits = useQuery({
-    queryKey: ["pbis", org, project, query],
-    queryFn: () => unwrap(commands.searchPbis(org, project, query)),
-    enabled: Boolean(org && project && query),
-    retry: false,
-  });
+  const hits = useQuery(
+    combined
+      ? {
+          queryKey: ["pbis-all", org, query],
+          queryFn: () => unwrap(commands.searchPbisAll(org, query)),
+          enabled: Boolean(org && query),
+          retry: false,
+        }
+      : {
+          queryKey: ["pbis", org, project, query],
+          queryFn: () => unwrap(commands.searchPbis(org, project, query)),
+          enabled: Boolean(org && project && query),
+          retry: false,
+        },
+  );
+  const shownHits = query ? hits.data ?? [] : [];
+  const hitsSpan = spansProjects(shownHits);
+  const recentsSpan = spansProjects(recents);
 
   if (pbi) {
     return (
@@ -132,8 +170,8 @@ export default function PbiPicker({
       <SearchInput
         aria-label="Find PBI"
         className="w-full"
-        placeholder={project ? "Find PBI" : "Pick a project first"}
-        disabled={!project}
+        placeholder={combined || project ? "Find PBI" : "Pick a project first"}
+        disabled={combined ? !org : !project}
         value={text}
         onChange={setText}
         // The clear button focuses the box in the same handler, when `text`
@@ -164,13 +202,27 @@ export default function PbiPicker({
             <p className="px-3 py-2 text-sm text-muted">No PBIs match "{query}".</p>
           )}
           <ul className="max-h-72 overflow-y-auto p-1">
-            {(query ? hits.data ?? [] : []).map((hit) => (
+            {shownHits.map((hit) => (
               <li key={hit.id}>
                 <button
-                  className="w-full rounded px-2 py-1.5 text-left text-sm text-text hover:bg-accent-soft"
+                  className={
+                    hitsSpan
+                      ? "flex w-full items-baseline gap-1.5 rounded px-2 py-1.5 text-left text-sm text-text hover:bg-accent-soft"
+                      : "w-full rounded px-2 py-1.5 text-left text-sm text-text hover:bg-accent-soft"
+                  }
                   onClick={() => pick(hit)}
                 >
-                  <span className="id-mono text-faint">#{hit.id}</span> {hit.title}
+                  {hitsSpan ? (
+                    <>
+                      <span className="id-mono shrink-0 text-faint">#{hit.id}</span>
+                      <span className="min-w-0 flex-1 break-words">{hit.title}</span>
+                      <ProjectChip project={hit.project} />
+                    </>
+                  ) : (
+                    <>
+                      <span className="id-mono text-faint">#{hit.id}</span> {hit.title}
+                    </>
+                  )}
                 </button>
               </li>
             ))}
@@ -191,13 +243,14 @@ export default function PbiPicker({
                       <History size={12} className="mt-1 shrink-0 text-faint" />
                       <span className="id-mono shrink-0 text-faint">#{hit.id}</span>
                       <span className="min-w-0 break-words">{hit.title}</span>
+                      {recentsSpan && <ProjectChip project={hit.project} />}
                     </button>
                     <button
                       aria-label={`Remove #${hit.id} from recent PBIs`}
                       title="Remove from recent PBIs"
                       className="mt-1 shrink-0 rounded p-1 text-muted transition-colors hover:text-danger"
                       onClick={() => {
-                        removeRecent(org, project, hit.id);
+                        removeRecent(org, segment, hit.id);
                         bumpRecents((v) => v + 1);
                       }}
                     >

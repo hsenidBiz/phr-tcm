@@ -1,7 +1,9 @@
 import { History, X } from "lucide-react";
 import { useState } from "react";
 import type { PbiHit } from "../bindings";
+import { scopeSegment, spansProjects, useAllProjects } from "../lib/projectScope";
 import { loadRecents, removeRecent } from "./PbiPicker";
+import ProjectChip from "./ProjectChip";
 
 /** Recently-used PBIs for the pick-a-PBI empty states: a proper card grid
  * (the empty screens have the space), full titles, one click to scope -
@@ -19,9 +21,12 @@ export default function RecentPbis({
   // Re-read per render; the bump only forces a render after a remove.
   // (Declared before the early returns - hooks cannot follow them.)
   const [, bump] = useState(0);
-  if (!org || !project || !onPick) return null;
-  const recents = loadRecents(org, project);
+  const combined = useAllProjects();
+  if (!org || (!combined && !project) || !onPick) return null;
+  const segment = scopeSegment(project, combined);
+  const recents = loadRecents(org, segment);
   if (recents.length === 0) return null;
+  const span = spansProjects(recents);
   return (
     <div className="mt-6">
       <p className="mb-2 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-faint">
@@ -40,13 +45,14 @@ export default function RecentPbis({
               <span className="id-mono shrink-0 text-xs text-faint">#{p.id}</span>
               {/* Full title, wrapped - the empty state has the vertical room. */}
               <span className="min-w-0 break-words text-sm text-text">{p.title}</span>
+              {span && <ProjectChip project={p.project} />}
             </button>
             <button
               aria-label={`Remove #${p.id} from recent PBIs`}
               title="Remove from recent PBIs"
               className="mr-2 shrink-0 rounded p-1 text-muted transition-colors hover:text-danger"
               onClick={() => {
-                removeRecent(org, project, p.id);
+                removeRecent(org, segment, p.id);
                 bump((v) => v + 1);
               }}
             >

@@ -726,7 +726,7 @@ export default function WorkBoard({
           )}
           {pbiMode && (
             <div className="w-72">
-              <PbiPicker org={org} project={project} pbi={pbiScope} onChange={setPbiScope} />
+              <PbiPicker perProject org={org} project={project} pbi={pbiScope} onChange={setPbiScope} />
             </div>
           )}
           <SearchInput
