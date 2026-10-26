@@ -56,7 +56,7 @@ export const gettingStarted: Screen = {
   ],
   groups: [
     { id: "move-around", title: "Move between screens", summary: "The sidebar lists every screen; the command palette reaches them from the keyboard." },
-    { id: "where-you-work", title: "Pick the organisation, project and Product Backlog Item", summary: "The context bar across the top says which Product Backlog Item every screen works on." },
+    { id: "where-you-work", title: "Pick the organisation, project and Product Backlog Item", summary: "The context bar across the top says which Product Backlog Item every screen works on. When your account has only one organisation it is chosen for you; with several, an Organization picker shows first, and choosing another organisation clears the project and Product Backlog Item." },
     { id: "top-right", title: "Notifications, Work Manager and your account", summary: "The corner of the context bar: what changed, the switch to Work Manager, and who you are signed in as." },
     { id: "commands", title: "Run a command", summary: "The command palette finds any screen or action by name." },
   ],
@@ -75,20 +75,12 @@ export const gettingStarted: Screen = {
       tips: ["[[Ctrl+1]] to [[Ctrl+8]] open the screens in the order they are listed, or [[Ctrl+1]] to [[Ctrl+9]] with Auto Run switched on. Playwright and API Templates have no shortcut and are skipped in that count."],
     },
     {
-      id: "organization",
-      shot: SHELL,
-      group: "where-you-work",
-      locate: { role: "combobox", name: "Organization" },
-      name: "Organization",
-      does: "The Azure DevOps organisation you work in, from every organisation your account can open. Choosing another one clears the project and Product Backlog Item.",
-    },
-    {
       id: "project",
       shot: SHELL,
       group: "where-you-work",
       locate: { role: "combobox", name: "Project" },
       name: "Project",
-      does: "The project inside that organisation. Choosing another one clears the Product Backlog Item.",
+      does: "The project inside your organisation. Choosing another one clears the Product Backlog Item.",
     },
     {
       id: "pbi",

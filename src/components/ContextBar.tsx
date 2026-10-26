@@ -100,6 +100,23 @@ export default function ContextBar({
     enabled: Boolean(org),
   });
 
+  // An account with exactly one organization has nothing to pick: that
+  // organization is chosen for you and the picker is not drawn. Zero or
+  // several keep the picker. The tour (`locked`) swaps the list for its
+  // sample one and must not be pulled back to the real organization.
+  const singleOrg = orgs.data?.length === 1 ? orgs.data[0].name : null;
+  useEffect(() => {
+    if (locked || !singleOrg) return;
+    if (org !== singleOrg) {
+      // The same three calls the picker's onChange makes.
+      setOrg(singleOrg);
+      setProject("");
+      setPbi(null);
+    }
+    // The setters are the parent's and change identity every render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [singleOrg, org, locked]);
+
   // PRs with conflicts or comments still to resolve - the number on the
   // Work Manager pill. Shares the PR panel's cache keys.
   const prAttention = usePrAttention(org, project);
@@ -110,64 +127,78 @@ export default function ContextBar({
     // flex-wrap: in a narrow window the right-side group drops to a second
     // row instead of overlapping the PBI picker.
     <div className="flex flex-wrap items-center gap-x-2 gap-y-2 border-b border-border bg-surface px-4 py-2.5">
-      <Select
+      {/* The scope group: Organization (not drawn when there is exactly one),
+          Project and the PBI search. Always drawn, because the tour anchors
+          its "where you work" stop here. It takes all the free width (flex-1)
+          and never less than 224px (min-w-56), so the right-hand group keeps
+          the first row. With several organizations on a narrow header the
+          three controls do not fit side by side: the PBI search wraps under
+          the pickers inside this group while the right-hand group stays on
+          the first row. */}
+      <div
         data-tour="org"
-        aria-label="Organization"
-        className="w-44" triggerClassName="h-10 py-0"
-        disabled={locked}
-        value={org}
-        onChange={(e) => {
-          setOrg(e.target.value);
-          setProject("");
-          setPbi(null);
-        }}
+        className="flex min-w-56 flex-1 flex-wrap items-center gap-x-2 gap-y-2"
       >
-        <option value="">Organization</option>
-        {(orgs.data ?? []).map((o) => (
-          <option key={o.name} value={o.name}>
-            {o.name}
-          </option>
-        ))}
-      </Select>
-      <Select
-        aria-label="Project"
-        className="w-44" triggerClassName="h-10 py-0"
-        value={project}
-        disabled={!org || locked}
-        onChange={(e) => {
-          setProject(e.target.value);
-          setPbi(null);
-        }}
-      >
-        <option value="">Project</option>
-        {(projects.data ?? []).map((p) => (
-          <option key={p.id} value={p.name}>
-            {p.name}
-          </option>
-        ))}
-      </Select>
-      {/* The PBI search takes ALL the width between the Project picker and
-          the right-hand group, with no maximum: the group never shrinks, so
-          this is what gives way. min-w forces a wrap instead of a squeeze. */}
-      <div className="min-w-56 flex-1" data-tour="pbi" inert={locked}>
-        {/* React Bits ElectricBorder wraps the chip while confirmation is
-            armed, in the theme accent so it follows light/dark and presets. */}
-        {pbiGlow ? (
-          <ElectricBorder
-            color={getComputedStyle(document.documentElement)
-              .getPropertyValue("--color-accent")
-              .trim()}
-            speed={1}
-            chaos={0.01}
-            // The chip's own corners (rounded-md), read from the same token,
-            // so the glow traces the control instead of a rounder box.
-            borderRadius={cssLengthPx("--radius-md", 6)}
+        {singleOrg === null && (
+          <Select
+            aria-label="Organization"
+            className="w-44" triggerClassName="h-10 py-0"
+            disabled={locked}
+            value={org}
+            onChange={(e) => {
+              setOrg(e.target.value);
+              setProject("");
+              setPbi(null);
+            }}
           >
-            <PbiPicker org={org} project={project} pbi={pbi} onChange={setPbi} />
-          </ElectricBorder>
-        ) : (
-          <PbiPicker org={org} project={project} pbi={pbi} onChange={setPbi} />
+            <option value="">Organization</option>
+            {(orgs.data ?? []).map((o) => (
+              <option key={o.name} value={o.name}>
+                {o.name}
+              </option>
+            ))}
+          </Select>
         )}
+        <Select
+          aria-label="Project"
+          className="w-44" triggerClassName="h-10 py-0"
+          value={project}
+          disabled={!org || locked}
+          onChange={(e) => {
+            setProject(e.target.value);
+            setPbi(null);
+          }}
+        >
+          <option value="">Project</option>
+          {(projects.data ?? []).map((p) => (
+            <option key={p.id} value={p.name}>
+              {p.name}
+            </option>
+          ))}
+        </Select>
+        {/* The PBI search takes ALL the width between the Project picker and
+            the right-hand group, with no maximum: the group never shrinks, so
+            this is what gives way. min-w forces a wrap instead of a squeeze. */}
+        <div className="min-w-56 flex-1" data-tour="pbi" inert={locked}>
+          {/* React Bits ElectricBorder wraps the chip while confirmation is
+              armed, in the theme accent so it follows light/dark and presets. */}
+          {pbiGlow ? (
+            <ElectricBorder
+              color={getComputedStyle(document.documentElement)
+                .getPropertyValue("--color-accent")
+                .trim()}
+              speed={1}
+              chaos={0.01}
+              // The chip's own corners (rounded-md), read from the same token,
+              // so the glow traces the control instead of a rounder box.
+              borderRadius={cssLengthPx("--radius-md", 6)}
+            >
+              <PbiPicker org={org} project={project} pbi={pbi} onChange={setPbi} />
+            </ElectricBorder>
+          ) : (
+            <PbiPicker org={org} project={project} pbi={pbi} onChange={setPbi} />
+          )}
+        </div>
       </div>
       {orgs.isError && <span className="text-xs text-danger">{orgs.error.message}</span>}
 
