@@ -1123,3 +1123,13 @@ test("a Paused case and a Not Applicable case are not the same colour", async ()
   expect(cell("Not Applicable")).toHaveClass("text-text");
   expect(cell("Not Applicable")).not.toHaveClass("text-muted");
 });
+
+test("the plan line names the plan and no suite number", async () => {
+  mockAll();
+  renderPanel();
+  const line = (await screen.findByText(/Auth - Test Plan/)).closest("p");
+  expect(line).not.toBeNull();
+  expect(line!.textContent).toContain('Plan "Auth - Test Plan"');
+  expect(line!.textContent).not.toMatch(/suite\s*91/);
+  expect(line!.textContent).not.toContain("/ suite");
+});

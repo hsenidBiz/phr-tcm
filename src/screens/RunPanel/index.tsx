@@ -431,7 +431,7 @@ export default function RunPanel({
       {suite.isError && <p className="text-sm text-danger">{suite.error.message}</p>}
       {suite.data && (
         <p className="flex items-center gap-1.5 text-xs text-faint">
-          Plan "{suite.data.plan_name}" / suite {suite.data.suite_id}
+          Plan "{suite.data.plan_name}"
           <button
             aria-label="Refresh outcomes"
             title="Refresh outcomes (Shift-click: re-detect the test suite)"
