@@ -10,6 +10,7 @@ import { commands, events, type AgentActivity, type AgentView } from "../../bind
 import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
 import { IconRelease, IconStop } from "../../lib/actionIcons";
+import { logUi } from "../../lib/uiLog";
 
 /** What a row says its assistant is doing. */
 function activityText(a: AgentActivity, idleMinutes: number): string {
@@ -62,18 +63,39 @@ export default function AssistantsCard() {
   const heard = useRef(false);
   const headingId = useId();
 
+  /** Takes a new list, and forgets the answers and waits of any assistant
+   * not in it: Rust hands out the smallest free number, so a new session can
+   * be "Assistant 1" again and must not inherit the last one's answer. */
+  function take(list: AgentView[]) {
+    const here = new Set(list.map((a) => a.label));
+    setAgents(list);
+    setNotes((n) => {
+      const kept = Object.entries(n).filter(([l]) => here.has(l));
+      return kept.length === Object.keys(n).length ? n : Object.fromEntries(kept);
+    });
+    setBusy((b) => {
+      const kept = [...b].filter((l) => here.has(l));
+      return kept.length === b.size ? b : new Set(kept);
+    });
+  }
+  const takeRef = useRef(take);
+  takeRef.current = take;
+
   useEffect(() => {
     let live = true;
-    commands
-      .autoRunAgents()
-      .then((list) => {
-        if (live && !heard.current && Array.isArray(list)) setAgents(list);
-      })
-      .catch(() => {});
+    // Listen first and load after, so a change between the two is not
+    // missed; an event that lands during the load beats it.
     const un = events.autorunAgentsChanged.listen((e) => {
       heard.current = true;
-      if (live) setAgents(e.payload.agents);
+      if (live) takeRef.current(e.payload.agents);
     });
+    void un
+      .catch(() => {})
+      .then(() => (live ? commands.autoRunAgents() : null))
+      .then((list) => {
+        if (live && !heard.current && Array.isArray(list)) takeRef.current(list);
+      })
+      .catch(() => {});
     return () => {
       live = false;
       un.then((f) => f()).catch(() => {});
@@ -81,7 +103,7 @@ export default function AssistantsCard() {
   }, []);
 
   /** Runs one button's command and shows what came of it under the row. */
-  async function press(label: string, call: () => Promise<Answer>) {
+  async function press(label: string, call: () => Promise<Answer>, action: string, failed: string) {
     setBusy((b) => new Set(b).add(label));
     setNotes((n) => {
       const rest = { ...n };
@@ -93,8 +115,11 @@ export default function AssistantsCard() {
       const note: Note | null =
         r.status === "error" ? { text: r.error, error: true } : r.data ? { text: r.data, error: false } : null;
       if (note) setNotes((n) => ({ ...n, [label]: note }));
-    } catch {
-      setNotes((n) => ({ ...n, [label]: { text: "That did not go through. Try again.", error: true } }));
+    } catch (e) {
+      // The raw error can carry an address: it goes to the app log, and the
+      // person gets a sentence.
+      logUi(`auto-run: assistants card: ${action} for ${label} failed: ${e instanceof Error ? e.message : String(e)}`);
+      setNotes((n) => ({ ...n, [label]: { text: `${failed} Try again, or see Settings → Logs.`, error: true } }));
     } finally {
       setBusy((b) => {
         const next = new Set(b);
@@ -117,7 +142,7 @@ export default function AssistantsCard() {
           const note = notes[a.label];
           const working = busy.has(a.label);
           return (
-            <li key={a.label} className="space-y-1 py-2 first:pt-0 last:pb-0">
+            <li key={a.label} className="py-2 first:pt-0 last:pb-0">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div className="min-w-0 space-y-0.5 text-xs">
                   <p className="font-medium text-text">{a.client ? `${a.label} - ${a.client}` : a.label}</p>
@@ -135,7 +160,9 @@ export default function AssistantsCard() {
                       variant="outline"
                       aria-label={`Stop ${a.label}`}
                       disabled={working}
-                      onClick={() => void press(a.label, () => commands.autoRunStopAgent(slot))}
+                      onClick={() =>
+                        void press(a.label, () => commands.autoRunStopAgent(slot), "stop", `Could not stop ${a.label}.`)
+                      }
                     >
                       <IconStop aria-hidden />
                       Stop
@@ -145,9 +172,16 @@ export default function AssistantsCard() {
                     <Button
                       size="sm"
                       variant="outline"
-                      aria-label={`End ${a.label}'s discovery`}
+                      aria-label={`End discovery for ${a.label}`}
                       disabled={working}
-                      onClick={() => void press(a.label, () => commands.autoRunEndAgentDiscovery(slot))}
+                      onClick={() =>
+                        void press(
+                          a.label,
+                          () => commands.autoRunEndAgentDiscovery(slot),
+                          "end discovery",
+                          `Could not end ${a.label}'s discovery.`,
+                        )
+                      }
                     >
                       <IconStop aria-hidden />
                       End discovery
@@ -159,7 +193,14 @@ export default function AssistantsCard() {
                       variant="outline"
                       aria-label={`Release ${a.label}'s browser`}
                       disabled={working}
-                      onClick={() => void press(a.label, () => commands.autoRunReleaseAgent(slot))}
+                      onClick={() =>
+                        void press(
+                          a.label,
+                          () => commands.autoRunReleaseAgent(slot),
+                          "release",
+                          `Could not release ${a.label}'s browser.`,
+                        )
+                      }
                     >
                       <IconRelease aria-hidden />
                       Release
@@ -167,11 +208,14 @@ export default function AssistantsCard() {
                   )}
                 </div>
               </div>
-              {note && (
-                <p
-                  role={note.error ? "alert" : "status"}
-                  className={note.error ? "text-xs text-danger" : "text-xs text-muted"}
-                >
+              {/* Always present, so a screen reader that watches it hears the
+                  answer arrive; only its text changes. A failure is its own
+                  alert. */}
+              <p role="status" aria-live="polite" className="text-xs text-muted [&:not(:empty)]:mt-1">
+                {note && !note.error ? note.text : ""}
+              </p>
+              {note?.error && (
+                <p role="alert" className="mt-1 text-xs text-danger">
                   {note.text}
                 </p>
               )}

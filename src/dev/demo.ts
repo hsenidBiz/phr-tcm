@@ -1941,10 +1941,13 @@ function applyPatches() {
  * in a capture-mode shot. The pacer's "slow down" toast likewise only ever
  * comes from real traffic.
  *
+ * The Assistants card likewise: a really connected assistant's labels,
+ * browser names and account keys must not replace the sample rows.
+ *
  * Left alone on purpose: file-watch, draft-comment, report-note and intake
  * events. They come from files and pages the person opened on this
  * machine, not from Azure DevOps, and muting them would drop their edits. */
-export const MUTED_EVENTS = ["workAssigned", "slowdownRequested"] as const;
+export const MUTED_EVENTS = ["workAssigned", "slowdownRequested", "autorunAgentsChanged"] as const;
 
 function muteRealSessionEvents() {
   const none = () => Promise.resolve(() => {});

@@ -13,6 +13,9 @@ const h = vi.hoisted(() => ({
   release: vi.fn(),
   emit: null as null | ((e: { payload: unknown }) => void),
   unlisten: vi.fn(),
+  log: vi.fn(),
+  /** When set, registering the listener takes until this settles. */
+  slowListen: null as null | Promise<void>,
 }));
 
 vi.mock("../../bindings", () => ({
@@ -21,12 +24,13 @@ vi.mock("../../bindings", () => ({
     autoRunStopAgent: (...a: unknown[]) => h.stop(...a),
     autoRunEndAgentDiscovery: (...a: unknown[]) => h.end(...a),
     autoRunReleaseAgent: (...a: unknown[]) => h.release(...a),
+    logUi: (...a: unknown[]) => h.log(...a),
   },
   events: {
     autorunAgentsChanged: {
       listen: (cb: (e: { payload: unknown }) => void) => {
         h.emit = cb;
-        return Promise.resolve(h.unlisten);
+        return h.slowListen ? h.slowListen.then(() => h.unlisten) : Promise.resolve(h.unlisten);
       },
     },
   },
@@ -40,7 +44,9 @@ beforeEach(() => {
   h.end.mockReset().mockResolvedValue({ status: "ok", data: null });
   h.release.mockReset().mockResolvedValue({ status: "ok", data: "Released." });
   h.unlisten.mockReset();
+  h.log.mockReset().mockResolvedValue(undefined);
   h.emit = null;
+  h.slowListen = null;
 });
 
 function agent(over: Partial<AgentView> = {}): AgentView {
@@ -140,8 +146,8 @@ test("Stop shows only when the assistant can be stopped, End discovery only whil
   ]);
   expect(screen.getByRole("button", { name: "Stop Assistant 1" })).toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Stop Assistant 2" })).toBeNull();
-  expect(screen.queryByRole("button", { name: "End Assistant 1's discovery" })).toBeNull();
-  expect(screen.getByRole("button", { name: "End Assistant 2's discovery" })).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "End discovery for Assistant 1" })).toBeNull();
+  expect(screen.getByRole("button", { name: "End discovery for Assistant 2" })).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Release Assistant 1's browser" })).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Release Assistant 2's browser" })).toBeInTheDocument();
   // No slot, so nothing to release.
@@ -154,7 +160,7 @@ test.each([
   [{ kind: "exploring" }],
 ] as const)("End discovery is offered while %j", async (activity) => {
   await mount([agent({ activity: activity as AgentView["activity"] })]);
-  expect(screen.getByRole("button", { name: "End Assistant 1's discovery" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "End discovery for Assistant 1" })).toBeInTheDocument();
 });
 
 test("Stop, End discovery and Release send the row's slot", async () => {
@@ -164,7 +170,7 @@ test("Stop, End discovery and Release send the row's slot", async () => {
   ]);
   fireEvent.click(screen.getByRole("button", { name: "Stop Assistant 1" }));
   await waitFor(() => expect(h.stop).toHaveBeenCalledWith(0));
-  fireEvent.click(screen.getByRole("button", { name: "End Assistant 2's discovery" }));
+  fireEvent.click(screen.getByRole("button", { name: "End discovery for Assistant 2" }));
   await waitFor(() => expect(h.end).toHaveBeenCalledWith(3));
   fireEvent.click(screen.getByRole("button", { name: "Release Assistant 2's browser" }));
   await waitFor(() => expect(h.release).toHaveBeenCalledWith(3));
@@ -187,12 +193,98 @@ test("an error shows in the danger colour under the row", async () => {
   expect(msg.className).toContain("text-danger");
 });
 
-test("a command that fails outright shows an error too", async () => {
-  h.release.mockRejectedValue(new Error("boom"));
-  await mount([agent()]);
-  fireEvent.click(screen.getByRole("button", { name: "Release Assistant 1's browser" }));
+test.each([
+  ["stop", "Stop Assistant 1", "Could not stop Assistant 1. Try again, or see Settings → Logs."],
+  ["end", "End discovery for Assistant 1", "Could not end Assistant 1's discovery. Try again, or see Settings → Logs."],
+  ["release", "Release Assistant 1's browser", "Could not release Assistant 1's browser. Try again, or see Settings → Logs."],
+] as const)("when %s throws, the row says which action failed and the cause is logged", async (which, button, sentence) => {
+  h[which].mockRejectedValue(new Error("error sending request for url (https://example.test/x)"));
+  await mount([agent({ can_stop: true, activity: { kind: "exploring" } })]);
+  fireEvent.click(screen.getByRole("button", { name: button }));
   const msg = await screen.findByRole("alert");
+  expect(msg).toHaveTextContent(sentence);
+  expect(msg.textContent).toBe(sentence);
   expect(msg.className).toContain("text-danger");
+  // The cause goes to the app log, never to the person.
+  expect(h.log).toHaveBeenCalledTimes(1);
+  expect(String(h.log.mock.calls[0][0])).toContain("example.test");
+});
+
+test("a row's buttons wait while its own command is on its way", async () => {
+  let done!: (r: unknown) => void;
+  h.release.mockReturnValue(new Promise((r) => (done = r)));
+  await mount([
+    agent({ label: "Assistant 1", slot: 0, can_stop: true, activity: { kind: "exploring" } }),
+    agent({ label: "Assistant 2", slot: 1, can_stop: true }),
+  ]);
+  fireEvent.click(screen.getByRole("button", { name: "Release Assistant 1's browser" }));
+  const one = ["Stop Assistant 1", "End discovery for Assistant 1", "Release Assistant 1's browser"];
+  const two = ["Stop Assistant 2", "Release Assistant 2's browser"];
+  await waitFor(() => expect(screen.getByRole("button", { name: one[0] })).toBeDisabled());
+  for (const n of one) expect(screen.getByRole("button", { name: n })).toBeDisabled();
+  for (const n of two) expect(screen.getByRole("button", { name: n })).toBeEnabled();
+  await act(async () => done({ status: "ok", data: "Released." }));
+  for (const n of one) expect(screen.getByRole("button", { name: n })).toBeEnabled();
+});
+
+test("each row keeps one status element, and only its text changes", async () => {
+  await mount([agent({ label: "Assistant 1", slot: 0 }), agent({ label: "Assistant 2", slot: 1 })]);
+  const rows = screen.getAllByRole("listitem");
+  const before = within(rows[0]).getByRole("status");
+  expect(before).toHaveAttribute("aria-live", "polite");
+  expect(before).toBeEmptyDOMElement();
+  fireEvent.click(screen.getByRole("button", { name: "Release Assistant 1's browser" }));
+  await waitFor(() => expect(before).toHaveTextContent("Released."));
+  expect(within(screen.getAllByRole("listitem")[0]).getByRole("status")).toBe(before);
+  expect(within(rows[1]).getByRole("status")).toBeEmptyDOMElement();
+});
+
+test("a new Assistant 1 does not inherit the old one's answer or error", async () => {
+  h.release.mockResolvedValue({ status: "error", error: "The browser is busy." });
+  await mount([agent({ label: "Assistant 1" })]);
+  fireEvent.click(screen.getByRole("button", { name: "Release Assistant 1's browser" }));
+  await screen.findByText("The browser is busy.");
+  await push([]);
+  await push([agent({ label: "Assistant 1" })]);
+  expect(screen.queryByText("The browser is busy.")).toBeNull();
+});
+
+test("an assistant that is still there keeps its answer when the list refreshes", async () => {
+  await mount([agent({ label: "Assistant 1" })]);
+  fireEvent.click(screen.getByRole("button", { name: "Release Assistant 1's browser" }));
+  await screen.findByText("Released.");
+  await push([agent({ label: "Assistant 1", idle_minutes: 1 })]);
+  expect(screen.getByText("Released.")).toBeInTheDocument();
+});
+
+test("an event fired while the first load is still going is not lost", async () => {
+  let release!: (v: AgentView[]) => void;
+  h.agents.mockReturnValue(new Promise<AgentView[]>((r) => (release = r)));
+  render(<AssistantsCard />);
+  // The listener is already registered before the load has answered.
+  await waitFor(() => expect(h.emit).not.toBeNull());
+  expect(h.agents).toHaveBeenCalled();
+  await push([agent({ label: "Assistant 7" })]);
+  await act(async () => release([agent({ label: "Assistant 1" })]));
+  expect(screen.getByText("Assistant 7 - claude-code")).toBeInTheDocument();
+});
+
+test("the load waits for the listener to be registered", async () => {
+  let registered!: () => void;
+  const order: string[] = [];
+  h.agents.mockImplementation(() => {
+    order.push("load");
+    return Promise.resolve([]);
+  });
+  // A listener whose registration is slow.
+  h.slowListen = new Promise<void>((r) => (registered = r)).then(() => {
+    order.push("listening");
+  });
+  render(<AssistantsCard />);
+  await act(async () => {});
+  expect(order).toEqual([]);
+  await act(async () => registered());
+  expect(order).toEqual(["listening", "load"]);
 });
 
 test("an event replaces the rows", async () => {
