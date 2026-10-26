@@ -136,6 +136,12 @@ export default function PbiPicker({
         disabled={!project}
         value={text}
         onChange={setText}
+        // The clear button focuses the box in the same handler, when `text`
+        // is still the old one, so onFocus would not open the recents.
+        onClear={() => {
+          setText("");
+          if (recents.length > 0) setOpen(true);
+        }}
         onFocus={() => {
           if (!text && recents.length > 0) setOpen(true);
         }}

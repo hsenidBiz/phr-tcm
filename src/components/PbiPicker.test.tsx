@@ -151,3 +151,23 @@ test("the results list is at least as wide as the box, and the picked chip is as
   fireEvent.click(hit);
   expect(screen.getByLabelText("Clear PBI").parentElement).toHaveClass("h-10");
 });
+
+test("clearing the search with its x reopens the recents list", () => {
+  localStorage.setItem(
+    "tcm-v2-recent-pbis:acme/Web",
+    JSON.stringify([{ id: 42, title: "Login flow", work_item_type: "Product Backlog Item" }]),
+  );
+  mockIPC(() => []);
+  renderPicker();
+
+  // Typed text, with nothing open (the box was never focused).
+  const input = screen.getByLabelText("Find PBI");
+  fireEvent.change(input, { target: { value: "abc" } });
+  expect(screen.queryByText("Recently used")).not.toBeInTheDocument();
+
+  // The clear button empties the box and focuses it: the recents open, as
+  // they do on a plain focus of an empty box.
+  fireEvent.click(screen.getByRole("button", { name: "Clear search" }));
+  expect(input).toHaveValue("");
+  expect(screen.getByText("Recently used")).toBeInTheDocument();
+});
