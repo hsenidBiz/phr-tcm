@@ -11,6 +11,7 @@ import type { NotificationTarget } from "../lib/notifications";
 import { unwrap } from "../lib/ipc";
 import { cssLengthPx } from "../lib/cssLength";
 import { CACHE, cacheKeys, persistentQuery } from "../lib/cache";
+import { cn } from "../lib/cn";
 import { PBI_GLOW_EVENT } from "../lib/pbiGlow";
 import PbiPicker from "./PbiPicker";
 import { Button } from "./ui/button";
@@ -209,11 +210,14 @@ export default function ContextBar({
           aria-label={settingsOpen ? "Close settings" : "Settings"}
           title={settingsOpen ? "Close settings" : "Settings"}
           aria-pressed={settingsOpen}
-          className={
+          // A fixed square that centres its icon, so the gear never rides a
+          // text baseline; the ring is the one the app's Buttons draw.
+          className={cn(
+            "inline-flex size-8 items-center justify-center rounded-md transition-colors focus-visible:outline-2 focus-visible:outline-accent disabled:pointer-events-none",
             settingsOpen
-              ? "rounded-md bg-accent-soft p-2 text-accent transition-colors disabled:pointer-events-none"
-              : "rounded-md p-2 text-muted transition-colors hover:bg-surface-2 hover:text-text disabled:pointer-events-none"
-          }
+              ? "bg-accent-soft text-accent"
+              : "text-muted hover:bg-surface-2 hover:text-text",
+          )}
           // The tour spotlights the gear and, on its Settings stops, asks
           // the user to click it - it never opens Settings for them.
           disabled={locked && !settingsLive}
@@ -225,7 +229,10 @@ export default function ContextBar({
           <SettingsIcon
             key={turn?.n ?? 0}
             size={16}
-            className={turn ? (turn.opening ? "ico-cog-turn" : "ico-cog-turn-back") : undefined}
+            className={cn(
+              "block",
+              turn && (turn.opening ? "ico-cog-turn" : "ico-cog-turn-back"),
+            )}
           />
         </button>
       </div>
