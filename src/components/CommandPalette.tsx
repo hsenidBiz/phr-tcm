@@ -60,11 +60,14 @@ function paletteFilter(item: unknown, query: string): boolean {
 export default function CommandPalette({
   onNavigate,
   org,
+  allProjects,
   onSwitchProject,
   onToggleWork,
 }: {
   onNavigate: (s: Section) => void;
   org: string;
+  /** The projects show together: there is no project to switch to. */
+  allProjects: boolean;
   onSwitchProject: (p: string) => void;
   onToggleWork: () => void;
 }) {
@@ -138,7 +141,7 @@ export default function CommandPalette({
       ],
     },
   ];
-  if (org && (projects.data?.length ?? 0) > 0) {
+  if (!allProjects && org && (projects.data?.length ?? 0) > 0) {
     groups.push({
       value: "Switch project",
       items: projects.data!.map((p) => ({ value: `project:${p.id}`, label: p.name, run: () => onSwitchProject(p.name) })),

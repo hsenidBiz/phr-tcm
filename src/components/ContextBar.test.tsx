@@ -32,6 +32,8 @@ test("the context bar checks for mentions in the picked project", async () => {
         setOrg={() => {}}
         project="Web"
         setProject={() => {}}
+        allProjects={false}
+        homeProject="Web"
         pbi={null}
         setPbi={() => {}}
         account={null}
@@ -65,6 +67,8 @@ test("the Settings gear turns forward as Settings opens and back as it closes", 
         setOrg={() => {}}
         project="Web"
         setProject={() => {}}
+        allProjects={false}
+        homeProject="Web"
         pbi={null}
         setPbi={() => {}}
         account={null}
@@ -112,6 +116,8 @@ test("the PBI search fills the free width and the right-hand group never shrinks
         setOrg={() => {}}
         project="Web"
         setProject={() => {}}
+        allProjects={false}
+        homeProject="Web"
         pbi={null}
         setPbi={() => {}}
         account={null}
@@ -121,7 +127,7 @@ test("the PBI search fills the free width and the right-hand group never shrinks
       />
     </QueryClientProvider>,
   );
-  const box = screen.getByLabelText("Find PBI");
+  const box =screen.getByLabelText("Find PBI");
   const wrapper = box.closest("[data-tour='pbi']") as HTMLElement;
   // min-w-56 (224px), not wider: at a 1280px window the two pickers, this box
   // and the right-hand group must all fit on one line.
@@ -161,6 +167,8 @@ describe("the Settings gear stays centred", () => {
           setOrg={() => {}}
           project="Web"
           setProject={() => {}}
+          allProjects={false}
+          homeProject="Web"
           pbi={null}
           setPbi={() => {}}
           account={null}
@@ -201,6 +209,76 @@ describe("the Settings gear stays centred", () => {
   });
 });
 
+/// While the projects show together there is no Project picker: a PBI
+/// carries its own project. Switched off, the picker is today's, except that
+/// a single project is chosen for you and the picker is not drawn (the same
+/// rule as the organization).
+describe("the Project selector follows the all-projects switch", () => {
+  function renderBar(opts: { allProjects: boolean; projects: string[] }) {
+    const calls: Array<{ cmd: string; args: unknown }> = [];
+    mockIPC((cmd, args) => {
+      calls.push({ cmd, args });
+      if (cmd === "list_orgs") return [{ name: "acme", url: "" }];
+      if (cmd === "list_projects") return opts.projects.map((name, i) => ({ id: `p${i}`, name }));
+      if (cmd === "pr_overview") return { mine: [], awaiting: [] };
+      if (cmd === "recent_mentions") return [];
+    });
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={qc}>
+        <ContextBar
+          org="acme"
+          setOrg={() => {}}
+          project="Payroll"
+          setProject={() => {}}
+          allProjects={opts.allProjects}
+          homeProject="Web"
+          pbi={null}
+          setPbi={() => {}}
+          account={null}
+          workMode={false}
+          onToggleWork={() => {}}
+          onOpenSettings={() => {}}
+        />
+      </QueryClientProvider>,
+    );
+    const listLoaded = async () => {
+      await waitFor(() => expect(calls.map((c) => c.cmd)).toContain("list_projects"));
+      await act(async () => {
+        await new Promise((r) => setTimeout(r, 20));
+      });
+    };
+    return { calls, listLoaded };
+  }
+  const projectBox = () => screen.queryByRole("combobox", { name: "Project" });
+
+  test("combined mode hides the project selector", async () => {
+    const { listLoaded } = renderBar({ allProjects: true, projects: ["Web", "Payroll"] });
+    await listLoaded();
+    expect(projectBox()).toBeNull();
+    // The PBI search is still there, and still the scope group's own child.
+    expect(screen.getByLabelText("Find PBI")).toBeInTheDocument();
+  });
+
+  test("combined mode checks pull requests and mentions in the home project", async () => {
+    const { calls, listLoaded } = renderBar({ allProjects: true, projects: ["Web", "Payroll"] });
+    await listLoaded();
+    expect(calls.find((c) => c.cmd === "recent_mentions")?.args).toEqual({ organization: "acme", project: "Web" });
+  });
+
+  test("switched off with one project the selector hides", async () => {
+    const { listLoaded } = renderBar({ allProjects: false, projects: ["Web"] });
+    await listLoaded();
+    expect(projectBox()).toBeNull();
+  });
+
+  test("switched off with two projects the selector shows", async () => {
+    const { listLoaded } = renderBar({ allProjects: false, projects: ["Web", "Payroll"] });
+    await listLoaded();
+    expect(projectBox()).not.toBeNull();
+  });
+});
+
 /// With exactly one organization the bar hides the Organization picker and
 /// selects that organization itself (the same three calls the picker's
 /// onChange makes). Zero or several keep the picker.
@@ -229,6 +307,8 @@ describe("a single organization is chosen for you", () => {
           setOrg={setOrg}
           project=""
           setProject={setProject}
+          allProjects={false}
+          homeProject=""
           pbi={null}
           setPbi={setPbi}
           account={null}

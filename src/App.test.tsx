@@ -1,7 +1,7 @@
 import { mockIPC, clearMocks } from "@tauri-apps/api/mocks";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, configure, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { afterEach, expect, test, vi } from "vitest";
+import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import App from "./App";
 import { TOUR_STEPS } from "./tour/tourScript";
 import { START_TOUR_EVENT } from "./tour/tourState";
@@ -19,6 +19,8 @@ import { ALL_MODULES, modulesSnapshot, resetModulesStore } from "./lib/modules";
 import { resetSplashForTests } from "./lib/splash";
 import { CHANGELOG } from "./lib/changelog";
 import { flagSessionExpired } from "./lib/sessionExpired";
+import { allProjectsSnapshot, saveAllProjects } from "./lib/projectScope";
+import { toast } from "./lib/toast";
 
 // Every test here mounts the WHOLE app - sidebar, context bar, screens,
 // queries - and several walk the tour across most of its stops. Idle, they
@@ -43,6 +45,12 @@ vi.setConfig({ testTimeout: 15_000 });
 // diagnosis: the failure moved between tests run to run and vanished when
 // the file ran alone.
 configure({ asyncUtilTimeout: 5_000 });
+
+// The one-time "projects now show together" notice is told to an existing
+// install on its first launch; every test but its own starts after it.
+beforeEach(() => {
+  localStorage.setItem("tcm-v2-all-projects-notice", "1");
+});
 
 afterEach(() => {
   clearMocks();
@@ -330,6 +338,8 @@ test("a pull request notification opens the Pull Requests panel in the app", asy
 /// Opening it has to take the context bar there too, not just the drawer,
 /// or the screen underneath the notification would still read the old one.
 test("a notification for another project switches the project before opening", async () => {
+  // Switching the project is the one-project-at-a-time behaviour.
+  localStorage.setItem("tcm-v2-all-projects", "0");
   localStorage.setItem(
     "tcm-v2-prefs",
     JSON.stringify({ org: "acme", project: "Web", section: "manual", pbi: null, workMode: false }),
@@ -529,18 +539,18 @@ test("signing in starts the AI bridge and pushes org/project context", async () 
   );
   // No environment known in this test: the push says so, and Rust then
   // keeps every write off whatever the switches say.
-  expect(pushes[pushes.length - 1].switches).toEqual({ dbWrites: false, apiWrites: true, networkTools: false, envId: "" });
+  expect(pushes[pushes.length - 1].switches).toEqual({ dbWrites: false, apiWrites: true, networkTools: false, envId: "", allProjects: true });
 
   // The Network tools switch reaches the push as true too: dropping it from
   // the effect or the switches object would leave every assertion above
   // green and the tools off for good.
   act(() => saveNetworkTools(true));
   await vi.waitFor(() =>
-    expect(pushes[pushes.length - 1].switches).toEqual({ dbWrites: false, apiWrites: true, networkTools: true, envId: "" }),
+    expect(pushes[pushes.length - 1].switches).toEqual({ dbWrites: false, apiWrites: true, networkTools: true, envId: "", allProjects: true }),
   );
   act(() => saveNetworkTools(false));
   await vi.waitFor(() =>
-    expect(pushes[pushes.length - 1].switches).toEqual({ dbWrites: false, apiWrites: true, networkTools: false, envId: "" }),
+    expect(pushes[pushes.length - 1].switches).toEqual({ dbWrites: false, apiWrites: true, networkTools: false, envId: "", allProjects: true }),
   );
 });
 
@@ -576,16 +586,396 @@ test("the bridge context carries the active environment's switches and names it"
   renderApp();
   await screen.findByText("a@b.com");
   await vi.waitFor(() =>
-    expect(pushes[pushes.length - 1]?.switches).toEqual({ dbWrites: false, apiWrites: true, networkTools: false, envId: A.id }),
+    expect(pushes[pushes.length - 1]?.switches).toEqual({ dbWrites: false, apiWrites: true, networkTools: false, envId: A.id, allProjects: true }),
   );
 
   // At once, not after the pause a burst of edits waits for (400ms): Rust
   // holds every write off from the switch until this push arrives.
   act(() => setActiveEnvId(B.id));
   await vi.waitFor(
-    () => expect(pushes[pushes.length - 1].switches).toEqual({ dbWrites: false, apiWrites: false, networkTools: false, envId: B.id }),
+    () => expect(pushes[pushes.length - 1].switches).toEqual({ dbWrites: false, apiWrites: false, networkTools: false, envId: B.id, allProjects: true }),
     { timeout: 300 },
   );
+});
+
+// ---- Treat all projects as one: the home project and the effective project ----
+
+const PAYROLL_PBI = { id: 7, title: "Pay run", work_item_type: "Product Backlog Item", project: "Payroll" };
+
+function savedPrefs(over: Record<string, unknown> = {}) {
+  localStorage.setItem(
+    "tcm-v2-prefs",
+    JSON.stringify({ org: "acme", project: "Web", section: "manual", pbi: null, workMode: false, ...over }),
+  );
+}
+const storedPrefs = () => JSON.parse(localStorage.getItem("tcm-v2-prefs") ?? "{}");
+
+/** Type into the context bar's PBI search and pick the hit titled `title`. */
+async function pickPbiFromBar(query: string, title: RegExp) {
+  const input = await screen.findByLabelText("Find PBI");
+  fireEvent.change(input, { target: { value: query } });
+  fireEvent.keyDown(input, { key: "Enter" });
+  fireEvent.click(await screen.findByText(title));
+}
+
+test("combined mode shows no project selector", async () => {
+  savedPrefs();
+  localStorage.setItem("tcm-v2-tour-done", "yes");
+  const asked: string[] = [];
+  signedInMocks((cmd) => {
+    asked.push(cmd);
+    if (cmd === "list_projects")
+      return [
+        { id: "p1", name: "Web" },
+        { id: "p2", name: "Payroll" },
+      ];
+  });
+  renderApp();
+  await screen.findByText("a@b.com");
+  await vi.waitFor(() => expect(asked).toContain("list_projects"));
+  await act(async () => {
+    await new Promise((r) => setTimeout(r, 20));
+  });
+  expect(screen.queryByRole("combobox", { name: "Project" })).not.toBeInTheDocument();
+  expect(screen.getByLabelText("Find PBI")).toBeInTheDocument();
+});
+
+test("a PBI picked from another project becomes the effective project", async () => {
+  savedPrefs();
+  localStorage.setItem("tcm-v2-tour-done", "yes");
+  const deleteAsks: Array<Record<string, unknown>> = [];
+  signedInMocks((cmd, args) => {
+    if (cmd === "list_projects")
+      return [
+        { id: "p1", name: "Web" },
+        { id: "p2", name: "Payroll" },
+      ];
+    if (cmd === "search_pbis_all") return [PAYROLL_PBI];
+    if (cmd === "can_delete_test_cases") {
+      deleteAsks.push(args as Record<string, unknown>);
+      return true;
+    }
+  });
+  renderApp();
+  await screen.findByText("a@b.com");
+  await vi.waitFor(() => expect(deleteAsks.map((a) => a.project)).toContain("Web"));
+
+  await pickPbiFromBar("pay", /Pay run/);
+  // Every PBI-scoped call is aimed at the PBI's own project...
+  await vi.waitFor(() => expect(deleteAsks.map((a) => a.project)).toContain("Payroll"));
+  // ...while the home project is what was saved, untouched.
+  await vi.waitFor(() => expect(storedPrefs().pbi?.project).toBe("Payroll"));
+  expect(storedPrefs().project).toBe("Web");
+});
+
+test("a fresh install takes its home project from the first PBI", async () => {
+  localStorage.setItem("tcm-v2-tour-done", "yes");
+  signedInMocks((cmd) => {
+    if (cmd === "list_projects")
+      return [
+        { id: "p1", name: "Web" },
+        { id: "p2", name: "HRM" },
+      ];
+    if (cmd === "search_pbis_all")
+      return [{ id: 9, title: "Login flow", work_item_type: "Product Backlog Item", project: "HRM" }];
+  });
+  renderApp();
+  await screen.findByText("a@b.com");
+
+  await pickPbiFromBar("login", /Login flow/);
+  await vi.waitFor(() => expect(storedPrefs().project).toBe("HRM"));
+  expect(storedPrefs().pbi?.id).toBe(9);
+});
+
+test("a fresh install with Auto Run files in one project takes that project as home", async () => {
+  localStorage.setItem("tcm-v2-tour-done", "yes");
+  const probes: Array<Record<string, unknown>> = [];
+  signedInMocks((cmd, args) => {
+    if (cmd === "list_projects")
+      return [
+        { id: "p1", name: "Web" },
+        { id: "p2", name: "HRM" },
+      ];
+    if (cmd === "projects_with_autorun_files") {
+      probes.push(args as Record<string, unknown>);
+      return ["HRM"];
+    }
+  });
+  renderApp();
+  await screen.findByText("a@b.com");
+  await vi.waitFor(() => expect(storedPrefs().project).toBe("HRM"));
+  expect(probes).toHaveLength(1);
+  expect(probes[0]).toEqual({ organization: "acme", projects: ["Web", "HRM"] });
+});
+
+test("an install that already has a home project is not asked about Auto Run files", async () => {
+  savedPrefs();
+  localStorage.setItem("tcm-v2-tour-done", "yes");
+  const asked: string[] = [];
+  signedInMocks((cmd) => {
+    asked.push(cmd);
+    if (cmd === "list_projects")
+      return [
+        { id: "p1", name: "Web" },
+        { id: "p2", name: "HRM" },
+      ];
+  });
+  renderApp();
+  await screen.findByText("a@b.com");
+  await vi.waitFor(() => expect(asked).toContain("list_projects"));
+  await act(async () => {
+    await new Promise((r) => setTimeout(r, 50));
+  });
+  expect(asked).not.toContain("projects_with_autorun_files");
+  expect(storedPrefs().project).toBe("Web");
+});
+
+test("exactly one project is chosen for you", async () => {
+  localStorage.setItem("tcm-v2-tour-done", "yes");
+  signedInMocks((cmd) => {
+    if (cmd === "list_projects") return [{ id: "p1", name: "Only" }];
+  });
+  renderApp();
+  await screen.findByText("a@b.com");
+  await vi.waitFor(() => expect(storedPrefs().project).toBe("Only"));
+});
+
+test("switched off, exactly one project is chosen for you and its selector is hidden", async () => {
+  localStorage.setItem("tcm-v2-tour-done", "yes");
+  localStorage.setItem("tcm-v2-all-projects", "0");
+  savedPrefs({ project: "Old" });
+  signedInMocks((cmd) => {
+    if (cmd === "list_projects") return [{ id: "p1", name: "Only" }];
+  });
+  renderApp();
+  await screen.findByText("a@b.com");
+  await vi.waitFor(() => expect(storedPrefs().project).toBe("Only"));
+  expect(screen.queryByRole("combobox", { name: "Project" })).not.toBeInTheDocument();
+});
+
+test("an existing install is told once that projects show together", async () => {
+  savedPrefs();
+  localStorage.setItem("tcm-v2-tour-done", "yes");
+  localStorage.removeItem("tcm-v2-all-projects-notice");
+  const info = vi.spyOn(toast, "info");
+  const told = () => info.mock.calls.filter((c) => c[0] === "Projects now show together");
+  try {
+    signedInMocks((cmd) => {
+      if (cmd === "list_projects") return [{ id: "p1", name: "Web" }];
+    });
+    const first = renderApp();
+    await screen.findByText("a@b.com");
+    expect(await screen.findByText("Projects now show together")).toBeInTheDocument();
+    expect(told()).toHaveLength(1);
+    expect(String(told()[0][1]?.description)).toContain("Treat all projects as one");
+    first.unmount();
+
+    renderApp();
+    await screen.findByText("a@b.com");
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 50));
+    });
+    expect(told()).toHaveLength(1);
+  } finally {
+    info.mockRestore();
+  }
+});
+
+test("a fresh install is not told that projects show together", async () => {
+  localStorage.setItem("tcm-v2-tour-done", "yes");
+  localStorage.removeItem("tcm-v2-all-projects-notice");
+  const info = vi.spyOn(toast, "info");
+  try {
+    signedInMocks((cmd) => {
+      if (cmd === "list_projects") return [{ id: "p1", name: "Web" }];
+    });
+    renderApp();
+    await screen.findByText("a@b.com");
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 50));
+    });
+    expect(info.mock.calls.filter((c) => c[0] === "Projects now show together")).toHaveLength(0);
+  } finally {
+    info.mockRestore();
+  }
+});
+
+test("turning the switch off keeps the PBI and selects its project", async () => {
+  savedPrefs({ pbi: PAYROLL_PBI });
+  localStorage.setItem("tcm-v2-tour-done", "yes");
+  signedInMocks((cmd) => {
+    if (cmd === "list_projects")
+      return [
+        { id: "p1", name: "Web" },
+        { id: "p2", name: "Payroll" },
+      ];
+  });
+  renderApp();
+  await screen.findByText("a@b.com");
+  expect(await screen.findByText("Pay run")).toBeInTheDocument();
+
+  act(() => saveAllProjects(false));
+
+  // The selector comes back pre-filled with the PBI's project, and the PBI stays.
+  await waitFor(() =>
+    expect(screen.getByRole("combobox", { name: "Project" })).toHaveTextContent("Payroll"),
+  );
+  expect(screen.getByText("Pay run")).toBeInTheDocument();
+  await vi.waitFor(() => expect(storedPrefs().project).toBe("Payroll"));
+  expect(storedPrefs().pbi?.id).toBe(7);
+});
+
+test("turning the switch off with the PBI in the home project changes nothing", async () => {
+  savedPrefs({ pbi: { ...PAYROLL_PBI, project: "Web" } });
+  localStorage.setItem("tcm-v2-tour-done", "yes");
+  signedInMocks((cmd) => {
+    if (cmd === "list_projects")
+      return [
+        { id: "p1", name: "Web" },
+        { id: "p2", name: "Payroll" },
+      ];
+  });
+  renderApp();
+  await screen.findByText("a@b.com");
+  expect(await screen.findByText("Pay run")).toBeInTheDocument();
+
+  act(() => saveAllProjects(false));
+  await waitFor(() =>
+    expect(screen.getByRole("combobox", { name: "Project" })).toHaveTextContent("Web"),
+  );
+  expect(screen.getByText("Pay run")).toBeInTheDocument();
+  expect(storedPrefs().project).toBe("Web");
+});
+
+test("turning the switch on again changes nothing else", async () => {
+  localStorage.setItem("tcm-v2-all-projects", "0");
+  savedPrefs({ pbi: { ...PAYROLL_PBI, project: "Web" } });
+  localStorage.setItem("tcm-v2-tour-done", "yes");
+  signedInMocks((cmd) => {
+    if (cmd === "list_projects")
+      return [
+        { id: "p1", name: "Web" },
+        { id: "p2", name: "Payroll" },
+      ];
+  });
+  renderApp();
+  await screen.findByText("a@b.com");
+  expect(await screen.findByText("Pay run")).toBeInTheDocument();
+
+  act(() => saveAllProjects(true));
+  await waitFor(() => expect(screen.queryByRole("combobox", { name: "Project" })).not.toBeInTheDocument());
+  expect(screen.getByText("Pay run")).toBeInTheDocument();
+  expect(storedPrefs().project).toBe("Web");
+});
+
+// The walkthrough runs on sample data and must not change a real choice: the
+// switch is refused while it is up, so the home project cannot follow it.
+test("the switch is refused while the tour runs", async () => {
+  savedPrefs({ pbi: PAYROLL_PBI });
+  signedInMocks((cmd) => {
+    if (cmd === "list_projects")
+      return [
+        { id: "p1", name: "Web" },
+        { id: "p2", name: "Payroll" },
+      ];
+  });
+  renderApp();
+  await screen.findByText("a@b.com");
+  await startTour();
+
+  act(() => saveAllProjects(false));
+  expect(allProjectsSnapshot()).toBe(true);
+  expect(localStorage.getItem("tcm-v2-all-projects")).toBeNull();
+  expect(screen.queryByRole("combobox", { name: "Project" })).not.toBeInTheDocument();
+});
+
+test("the bridge is pushed the home project and the switch", async () => {
+  const pushes: Array<Record<string, unknown>> = [];
+  savedPrefs({ pbi: PAYROLL_PBI });
+  localStorage.setItem("tcm-v2-tour-done", "yes");
+  signedInMocks((cmd, args) => {
+    if (cmd === "list_projects")
+      return [
+        { id: "p1", name: "Web" },
+        { id: "p2", name: "Payroll" },
+      ];
+    if (cmd === "set_bridge_context") {
+      pushes.push(args as Record<string, unknown>);
+      return null;
+    }
+    if (cmd === "bridge_status") return { port: 1, mcp_exe: "x" };
+  });
+  renderApp();
+  await screen.findByText("a@b.com");
+  await vi.waitFor(() => expect(pushes.length).toBeGreaterThan(0));
+  const last = pushes[pushes.length - 1];
+  // The PBI is in Payroll; the assistant's default stays the home project.
+  expect(last.project).toBe("Web");
+  expect(last.switches).toMatchObject({ allProjects: true });
+});
+
+test("a PBI from another project is not pushed to the bridge as the project", async () => {
+  const pushes: Array<Record<string, unknown>> = [];
+  savedPrefs();
+  localStorage.setItem("tcm-v2-tour-done", "yes");
+  signedInMocks((cmd, args) => {
+    if (cmd === "list_projects")
+      return [
+        { id: "p1", name: "Web" },
+        { id: "p2", name: "Payroll" },
+      ];
+    if (cmd === "search_pbis_all") return [PAYROLL_PBI];
+    if (cmd === "set_bridge_context") {
+      pushes.push(args as Record<string, unknown>);
+      return null;
+    }
+    if (cmd === "bridge_status") return { port: 1, mcp_exe: "x" };
+  });
+  renderApp();
+  await screen.findByText("a@b.com");
+  await vi.waitFor(() => expect(pushes.length).toBeGreaterThan(0));
+
+  await pickPbiFromBar("pay", /Pay run/);
+  await act(async () => {
+    await new Promise((r) => setTimeout(r, 600));
+  });
+  expect(pushes.every((p) => p.project === "Web")).toBe(true);
+});
+
+test("combined mode copies the home project's recent PBIs to the organization-wide list", async () => {
+  const old = JSON.stringify([{ id: 5, title: "Older", work_item_type: "Product Backlog Item" }]);
+  localStorage.setItem("tcm-v2-recent-pbis:acme/Web", old);
+  savedPrefs();
+  localStorage.setItem("tcm-v2-tour-done", "yes");
+  signedInMocks((cmd) => {
+    if (cmd === "list_projects") return [{ id: "p1", name: "Web" }];
+  });
+  renderApp();
+  await screen.findByText("a@b.com");
+  await vi.waitFor(() => expect(localStorage.getItem("tcm-v2-recent-pbis:acme/*")).not.toBeNull());
+  const seeded = JSON.parse(localStorage.getItem("tcm-v2-recent-pbis:acme/*")!);
+  expect(seeded).toEqual([{ id: 5, title: "Older", work_item_type: "Product Backlog Item", project: "Web" }]);
+  // The per-project list is exactly as it was.
+  expect(localStorage.getItem("tcm-v2-recent-pbis:acme/Web")).toBe(old);
+});
+
+test("switched off, nothing is copied to the organization-wide recents", async () => {
+  localStorage.setItem("tcm-v2-all-projects", "0");
+  localStorage.setItem(
+    "tcm-v2-recent-pbis:acme/Web",
+    JSON.stringify([{ id: 5, title: "Older", work_item_type: "Product Backlog Item" }]),
+  );
+  savedPrefs();
+  localStorage.setItem("tcm-v2-tour-done", "yes");
+  signedInMocks((cmd) => {
+    if (cmd === "list_projects") return [{ id: "p1", name: "Web" }];
+  });
+  renderApp();
+  await screen.findByText("a@b.com");
+  await act(async () => {
+    await new Promise((r) => setTimeout(r, 50));
+  });
+  expect(localStorage.getItem("tcm-v2-recent-pbis:acme/*")).toBeNull();
 });
 
 /// The old trial switch on the AI Bridge tab is gone: when an older version
