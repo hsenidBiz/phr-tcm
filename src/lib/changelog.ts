@@ -27,6 +27,13 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.3.1-beta.7",
+    date: "2026-10-27",
+    items: [
+      "With only one organization, the organization picker no longer shows: it is chosen for you.",
+    ],
+  },
+  {
     version: "2.3.1-beta.6",
     date: "2026-10-27",
     items: [
