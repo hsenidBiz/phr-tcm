@@ -2,9 +2,8 @@
 // and RUN a template, which writes test data through the application's
 // own endpoints.
 //
-// A separate decision from whether the four API template tools are
-// reachable at all (the "API templates" row in mcpTools.ts's TOOL_PAIRS) -
-// the same shape as the Database Read Access card's create/update/delete
+// A separate decision from whether the API template tools are reachable at
+// all (they are, while the API Templates module is on) - the same shape as the Database Read Access card's create/update/delete
 // switch (dbServer.ts), which this file mirrors.
 
 import { BRIDGE_SWITCH_KEYS, envScopedKey, subscribeActiveEnv } from "./activeEnv";

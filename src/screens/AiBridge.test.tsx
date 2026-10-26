@@ -177,17 +177,16 @@ test("the AI Tools Breakdown states the recommended way to write test cases once
   expect(text.match(/Azure DevOps/g)).toHaveLength(1);
 });
 
-// The AI Tools tab's own display gate, toolShown() (toolOffered() &&
-// !capture for the Auto Run and API template tools), hides every render
-// site - the switch row, the breakdown-card entry and the numbered-list
-// bullet - in capture mode. toolOffered() itself stays capture-blind, since
-// it also decides what gets saved and registered (see mcpTools.test.ts).
-// This is a documented, captured screen; off, the tests above and below pin
-// that this build's ordinary behaviour is unchanged.
+// The AI Tools tab's own display gate, toolShown() (the module is on and not
+// capture mode, for the Auto Run and API template tools), hides every render
+// site - the breakdown-card entry and the numbered-list bullet - in capture
+// mode. It stays out of what gets saved and registered (see
+// mcpTools.test.ts). This is a documented, captured screen; off, the tests
+// above and below pin that this build's ordinary behaviour is unchanged.
 //
 // The API templates card names no tool, and the help site documents it, so
 // capture mode shows it - with the Environment card - as every module on
-// does. Only the tool rows and the breakdown entries stay hidden.
+// does. Only the breakdown entries stay hidden.
 test("capture mode hides every mention of the Auto Run tools on the AI Tools tab, but shows the Environment and API templates cards", async () => {
   localStorage.setItem("tcm-v2-dev-capture", "on");
   mockIPC((cmd) => {
@@ -245,7 +244,10 @@ test("with every module off, only the always-there cards and tools remain", asyn
   expect(screen.getByLabelText("Project wiki")).toBeInTheDocument();
 });
 
-test("each card and tool row appears with its own module and no other", async () => {
+// A module's own card appears with the module. Its tools get no row in the
+// "Tools an assistant may use" list at any point: the module being on is
+// their switch.
+test("each card appears with its own module and no other, and no module adds a tool row", async () => {
   mockIPC((cmd) => {
     if (cmd === "bridge_status") return { port: 51234, mcp_exe: "C:\apps\tcm\v2.exe" };
     if (cmd === "detect_ai_tools") return [];
@@ -256,7 +258,7 @@ test("each card and tool row appears with its own module and no other", async ()
 
   act(() => setModulesForTest(["db_access"]));
   expect(screen.getByRole("heading", { name: "Database Read Access" })).toBeInTheDocument();
-  expect(screen.getByLabelText("Database Read Access")).toBeInTheDocument();
+  expect(screen.queryByRole("switch", { name: "Database Read Access" })).not.toBeInTheDocument();
   expect(screen.queryByRole("heading", { name: "Writing style" })).not.toBeInTheDocument();
   expect(screen.queryByRole("heading", { name: "Environment" })).not.toBeInTheDocument();
 
@@ -266,13 +268,14 @@ test("each card and tool row appears with its own module and no other", async ()
 
   act(() => setModulesForTest(["db_access", "writing_style", "auto_run"]));
   expect(screen.getByRole("heading", { name: "Environment" })).toBeInTheDocument();
-  expect(screen.getByLabelText("Auto Run scripts")).toBeInTheDocument();
+  expect(screen.queryByRole("switch", { name: "Auto Run scripts" })).not.toBeInTheDocument();
   expect(screen.queryByRole("heading", { name: "API templates" })).not.toBeInTheDocument();
-  expect(screen.queryByLabelText("API templates")).not.toBeInTheDocument();
+  expect(screen.queryByRole("switch", { name: "API templates" })).not.toBeInTheDocument();
 
   act(() => setModulesForTest(["db_access", "writing_style", "auto_run", "api_templates"]));
   expect(screen.getByRole("heading", { name: "API templates" })).toBeInTheDocument();
-  expect(screen.getByLabelText("API templates")).toBeInTheDocument();
+  expect(screen.queryByRole("switch", { name: "API templates" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("switch", { name: "Auto Run scripts" })).not.toBeInTheDocument();
 });
 
 test("the copy button writes the registration command to the clipboard", async () => {
@@ -482,6 +485,17 @@ function dbMocks(extra: (cmd: string, args: unknown) => unknown = () => undefine
 function dbCard(): HTMLElement {
   return screen.getByRole("heading", { name: "Database Read Access" }).closest("section")!;
 }
+
+/// The database tools have no row in the tool list, so the card must not send
+/// a person looking for one.
+test("the database card says its tools are on with the module, not with a row in the tool list", async () => {
+  dbMocks();
+  renderBridge(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+  await screen.findByRole("combobox", { name: "Database" });
+  const text = dbCard().textContent ?? "";
+  expect(text).toMatch(/on while the Database Access module is on/);
+  expect(text).not.toMatch(/tool list/);
+});
 
 /// The card is which database, its login, and whether it may write. The
 /// login itself lives in Rust: nothing on the card can show or take one.
@@ -983,17 +997,21 @@ test("the tool list offers only the switchable tools, by their human names", asy
   expect(within(toolSection).queryByText("Check a draft")).not.toBeInTheDocument();
   expect(within(toolSection).queryByText("Merge slice files")).not.toBeInTheDocument();
   expect(screen.queryByText("always on")).not.toBeInTheDocument();
-  // Nine rows in this development build: the wiki search and its page
-  // reader share one switch, so do the suite search and its case reader,
-  // the two database tools, the Auto Run tools, the API template tools and
-  // the Crystal Reports tools.
+  // Five rows, with every module on: the wiki search and its page reader
+  // share one switch, so do the suite search and its case reader. The tools
+  // of a module (Auto Run, API templates, Database Read Access and the
+  // rest) have no row: the module being on is their switch.
   expect(screen.getByLabelText("Project tags")).toBeInTheDocument();
   expect(screen.getByLabelText("Project wiki")).toBeInTheDocument();
   expect(screen.getByLabelText("Test Suites")).toBeInTheDocument();
-  expect(screen.getByLabelText("Auto Run scripts")).toBeInTheDocument();
-  expect(screen.getByLabelText("API templates")).toBeInTheDocument();
-  expect(screen.getByLabelText("Crystal Reports")).toBeInTheDocument();
-  expect(within(toolSection).getByText("9 of 9 on")).toBeInTheDocument();
+  expect(screen.getByLabelText("Run results")).toBeInTheDocument();
+  expect(screen.getByLabelText("Find a PBI")).toBeInTheDocument();
+  for (const label of ["Auto Run scripts", "API templates", "Database Read Access", "Crystal Reports"]) {
+    expect(within(toolSection).queryByText(label), label).not.toBeInTheDocument();
+    expect(screen.queryByRole("switch", { name: label }), label).not.toBeInTheDocument();
+  }
+  expect(within(toolSection).getAllByRole("switch")).toHaveLength(5);
+  expect(within(toolSection).getByText("5 of 5 on")).toBeInTheDocument();
 });
 
 test("the breakdown names the Crystal Reports tools only while that module is on", async () => {
@@ -1028,9 +1046,8 @@ test("the API templates breakdown says the assistant maps a module's stages and 
   expect(entry.textContent).not.toMatch(/[a-z]+_[a-z]/);
 });
 
-/// Every tool name but the quirk tool: it rides in the API templates row
-/// too, which is still on, so it stays offered.
-test("switching the Auto Run scripts row off sends every tool name in the disabled list", async () => {
+/// Switching a row off sends every tool name the row carries, and only those.
+test("switching the Project wiki row off sends both of its tool names in the disabled list", async () => {
   let seen: unknown;
   mockIPC((cmd, args) => {
     if (cmd === "bridge_status") return { port: 51234, mcp_exe: "C:\\apps\\tcm\\v2.exe" };
@@ -1045,7 +1062,7 @@ test("switching the Auto Run scripts row off sends every tool name in the disabl
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   renderBridge(qc);
 
-  fireEvent.click(await screen.findByLabelText("Auto Run scripts"));
+  fireEvent.click(await screen.findByLabelText("Project wiki"));
 
   fireEvent.click(await screen.findByRole("button", { name: "Register" }));
   await waitFor(() =>
@@ -1055,40 +1072,34 @@ test("switching the Auto Run scripts row off sends every tool name in the disabl
     }),
   );
   const disabledTools = (seen as { disabledTools: string[] }).disabledTools;
-  expect([...disabledTools].sort()).toEqual([
-    "autorun_capture",
-    "autorun_cookies",
-    "autorun_har",
-    "clear_autorun_suspected_defect",
-    "delete_autorun_script",
-    "discover_autorun_actions",
-    "end_autorun_discovery",
-    "get_accounts",
-    "get_autorun_failures",
-    "get_autorun_network_wait",
-    "get_autorun_page",
-    "get_autorun_request",
-    "get_autorun_script",
-    "get_explore_changes",
-    "mark_autorun_suspected_defect",
-    "probe_autorun_locator",
-    "propose_accounts",
-    "record_explore_change",
-    "record_validation_rule",
-    "replay_autorun_to_step",
-    "report_case_divergence",
-    "reset_autorun_browser",
-    "rule_case_divergence",
-    "save_autorun_area",
-    "save_autorun_component",
-    "save_autorun_script",
-    "save_test_file",
-    "search_autorun_requests",
-    "set_autorun_headers",
-    "set_autorun_order",
-    "start_autorun_discovery",
-    "try_autorun_action",
-  ]);
+  expect([...disabledTools].sort()).toEqual(["get_wiki_page", "search_wiki"]);
+});
+
+/// A list saved before a module's tools lost their switches can still name
+/// them. Registering must not send them: a module that is on offers all its
+/// tools, and there is no switch left to turn one back on.
+test("a saved list naming a module's tools registers without them", async () => {
+  localStorage.setItem(
+    "tcm-v2-mcp-disabled",
+    JSON.stringify(["db_query", "db_lookup", "save_autorun_script", "list_api_templates", "record_quirk", "get_tags"]),
+  );
+  let seen: unknown;
+  mockIPC((cmd, args) => {
+    if (cmd === "bridge_status") return { port: 51234, mcp_exe: "C:\\apps\\tcm\\v2.exe" };
+    if (cmd === "detect_ai_tools")
+      return [{ id: "cursor", name: "Cursor", installed: true, registered_servers: [], scope: "project" }];
+    if (cmd === "register_ai_tool") {
+      seen = args;
+      return null;
+    }
+    return [];
+  });
+  renderBridge(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+
+  expect(await screen.findByLabelText("Project tags")).not.toBeChecked();
+  fireEvent.click(await screen.findByRole("button", { name: "Register" }));
+  await waitFor(() => expect(seen).toMatchObject({ id: "cursor" }));
+  expect((seen as { disabledTools: string[] }).disabledTools).toEqual(["get_tags"]);
 });
 
 // --------------------------------------------- the database tools' switches
@@ -1983,9 +1994,11 @@ test("the Environment card shows only the site name of the full address", async 
   expect(await within(envCard()).findByText("hrmmainslqaautom.phrsandbox.dev")).toBeInTheDocument();
 });
 
-// Off hides, never deletes: a tool choice made for a module survives the
-// module being off while other switches are used.
-test("tool choices of a switched-off module survive other toggles and Turn all on", async () => {
+// "N of M on" and "Turn all on" cover only the rows that have a switch. A
+// saved list that names nothing but a module's tools (an old one) is empty
+// as far as this card is concerned: no row is off, so no Turn all on.
+test("the count and Turn all on cover only the rows with a switch", async () => {
+  localStorage.setItem("tcm-v2-mcp-disabled", JSON.stringify(["db_query", "save_autorun_script", "list_api_templates"]));
   mockIPC((cmd) => {
     if (cmd === "bridge_status") return { port: 51234, mcp_exe: "C:\apps\tcm\v2.exe" };
     if (cmd === "detect_ai_tools") return [];
@@ -1993,18 +2006,23 @@ test("tool choices of a switched-off module survive other toggles and Turn all o
   });
   renderBridge(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
   await screen.findByText("Tools an assistant may use");
+  const toolSection = screen.getByText("Tools an assistant may use").closest("section")!;
 
-  fireEvent.click(screen.getByLabelText("Auto Run scripts"));
-  expect(screen.getByLabelText("Auto Run scripts")).not.toBeChecked();
-
-  act(() => setModulesForTest(["db_access", "writing_style"]));
-  // Only hidden names are disabled: no Turn all on to offer.
+  expect(within(toolSection).getByText("5 of 5 on")).toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Turn all on" })).not.toBeInTheDocument();
+
   fireEvent.click(screen.getByLabelText("Project wiki"));
-  expect(screen.getByRole("button", { name: "Turn all on" })).toBeInTheDocument();
+  expect(within(toolSection).getByText("4 of 5 on")).toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "Turn all on" }));
   expect(screen.getByLabelText("Project wiki")).toBeChecked();
+  expect(within(toolSection).getByText("5 of 5 on")).toBeInTheDocument();
 
+  // Turn all on left nothing of a module's tools behind in storage either.
+  expect(localStorage.getItem("tcm-v2-mcp-disabled")).toBeNull();
+
+  // A module coming and going adds and removes no row.
+  act(() => setModulesForTest(["db_access", "writing_style"]));
+  expect(within(toolSection).getByText("5 of 5 on")).toBeInTheDocument();
   act(() => setModulesForTest(ALL_MODULES));
-  expect(screen.getByLabelText("Auto Run scripts")).not.toBeChecked();
+  expect(within(toolSection).getByText("5 of 5 on")).toBeInTheDocument();
 });

@@ -150,9 +150,11 @@ the board's test count.
   so the app looks for it on PATH, in the ODBC 17/18 client tools
   folders, and in `C:\Program Files\sqlcmd`, and says so plainly when
   none of those has it.
-- Reading and writing are two separate switches on the AI Bridge tab.
-  "Database Read Access" turns the two tools on at all - SELECT only.
-  The create/update/delete switch is off by default, greyed out unless
+- Reading and writing are two separate decisions. The Database Access
+  module being on turns the two tools on at all - SELECT only - with no
+  switch of their own on the AI Bridge tab (the same holds for every
+  module's tools). The create/update/delete switch there is off by
+  default, greyed out unless
   the chosen connection is a dev login one (a user ending in
   `_devlogin`), and a write still needs both: that switch on AND that
   connection, or it is refused.

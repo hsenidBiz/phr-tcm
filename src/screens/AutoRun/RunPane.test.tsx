@@ -599,7 +599,8 @@ test("a case with no preconditions is never checked", async () => {
 const NOT_CHECKED = "preconditions were not checked: Database Read Access is off on the AI Bridge tab";
 
 test("with Database Read Access off the case says its preconditions were not checked and carries on", async () => {
-  localStorage.setItem("tcm-v2-mcp-disabled", JSON.stringify(["db_lookup", "db_query"]));
+  // Database Read Access is the Database Access module being on.
+  setModulesForTest(["auto_run"]);
   const s = mockPreconditions({ blocked: null, notice: NOT_CHECKED });
   renderPane([{ id: 1, title: "Open a published cycle" }]);
   fireEvent.click(await screen.findByRole("button", { name: "Open browser" }));
@@ -722,7 +723,8 @@ test("a pane opened for a replay starts it at once, for that case and step, with
 });
 
 test("the replay is told Database Read Access is off", async () => {
-  localStorage.setItem("tcm-v2-mcp-disabled", JSON.stringify(["db_lookup", "db_query"]));
+  // Database Read Access is the Database Access module being on.
+  setModulesForTest(["auto_run"]);
   const r = mockReplay();
   renderReplay(2);
 
