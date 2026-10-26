@@ -1359,3 +1359,19 @@ test("a shared import that finishes after a PBI switch records its watch under i
   const stored = JSON.parse(localStorage.getItem("tcm-v2-watch:acme/42") as string) as { path: string }[];
   expect(stored.map((w) => w.path)).toEqual([CASE_PATH, "C:/drafts/shared-pbi-42.json"]);
 });
+
+test("the Import card repeats no heading of its own, but keeps its accessible name", () => {
+  mockIPC(() => undefined);
+  renderScreen();
+  expect(screen.queryByRole("heading", { name: "Import test cases" })).not.toBeInTheDocument();
+  expect(screen.getByRole("region", { name: "Import test cases" })).toBeInTheDocument();
+});
+
+test("the share link box uses the normal input font and size", () => {
+  mockIPC(() => undefined);
+  renderScreen();
+  const input = screen.getByLabelText("Share link");
+  expect(input.className).not.toMatch(/id-mono/);
+  expect(input.className).not.toMatch(/\btext-xs\b/);
+  expect(input.className).toMatch(/py-1\.5/);
+});

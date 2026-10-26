@@ -673,8 +673,11 @@ export default function ImportFile({
 
   return (
     <div className="space-y-4">
-      <section data-tour="import-drop" className="space-y-3 rounded-md border border-border bg-surface p-4">
-        <h2 className="text-sm font-semibold text-text">Import test cases</h2>
+      <section
+        data-tour="import-drop"
+        aria-label="Import test cases"
+        className="space-y-3 rounded-md border border-border bg-surface p-4"
+      >
         <p className="text-sm text-muted">
           Import your test cases from a JSON file. Imported files are watched -
           edit the file and the changes flow into the queue automatically.
@@ -777,7 +780,7 @@ export default function ImportFile({
               aria-label="Share link"
               placeholder="Paste a share link from a colleague"
               title="Links are one-time use - once imported, the link expires."
-              className="id-mono flex-1 py-1.5 text-xs"
+              className="flex-1 py-1.5"
               value={shareLink}
               onChange={(e) => setShareLink(e.target.value)}
             />
