@@ -679,27 +679,38 @@ mod card {
     /// The same, from another thread that holds the lock a moment.
     #[test]
     fn a_lock_another_thread_holds_briefly_is_waited_out() {
-        use v2_lib::commands::autorun::try_lock_briefly;
+        use v2_lib::commands::autorun::{try_lock_briefly, try_lock_with_retries};
         use std::sync::{mpsc, Arc};
         let m = Arc::new(tokio::sync::Mutex::new(1u8));
         let (held_tx, held_rx) = mpsc::channel::<()>();
+        let (release_tx, release_rx) = mpsc::channel::<()>();
+        let (released_tx, released_rx) = mpsc::channel::<()>();
         let holder = {
             let m = Arc::clone(&m);
             std::thread::spawn(move || {
                 let guard = m.try_lock().unwrap();
                 held_tx.send(()).unwrap();
-                // Spun, not slept: a sleep can last a whole timer tick.
-                let until = std::time::Instant::now() + std::time::Duration::from_millis(1);
-                while std::time::Instant::now() < until {
-                    std::hint::spin_loop();
-                }
+                // Held until the reader's first pause asks for it back; no
+                // clock decides when that is.
+                release_rx.recv().unwrap();
                 drop(guard);
+                released_tx.send(()).unwrap();
             })
         };
         held_rx.recv().unwrap();
-        assert!(try_lock_briefly(&m).is_some(), "a hold of a millisecond is waited out");
+        let pauses = std::cell::Cell::new(0);
+        let got = try_lock_with_retries(&m, 5, &|| {
+            pauses.set(pauses.get() + 1);
+            // The first pause: the other thread lets go, and the next try
+            // finds the lock free.
+            let _ = release_tx.send(());
+            let _ = released_rx.recv();
+        });
+        assert!(got.is_some(), "a lock the other thread let go of during the wait was not taken");
+        assert_eq!(pauses.get(), 1, "the lock was held until the first pause only");
+        drop(got);
         holder.join().unwrap();
-        // One held far longer reads as busy.
+        // One held throughout reads as busy.
         let _long = m.try_lock().unwrap();
         assert!(try_lock_briefly(&m).is_none());
     }
@@ -860,10 +871,31 @@ mod card {
         let _a = crate::serial::autorun();
         fresh();
         let cancelled = |n: u8| state(SlotNo(n)).cancel.load(std::sync::atomic::Ordering::SeqCst);
+        let assistants = OneReplay::claim_for_assistant_in(SlotNo(1)).expect("slot 1 is free");
         assert_eq!(auto_run_stop_agent(1).await, Ok(()));
         assert!(cancelled(1));
         assert!(!cancelled(0), "main's replay was not asked to stop");
         assert!(!cancelled(2));
+        drop(assistants);
+        fresh();
+    }
+
+    /// Stop never ends the person's own replay: a card showing Stop for a
+    /// queued batch, or one a second behind, is not the person's replay's.
+    /// The slot's batch is still asked to give way.
+    #[tokio::test]
+    async fn stop_never_stops_the_persons_replay() {
+        use v2_lib::ai_bridge::{batch_stop, BatchGoing};
+        let _g = crate::serial::agents();
+        let _a = crate::serial::autorun();
+        fresh();
+        let persons = OneReplay::claim().expect("main is free");
+        let batch = BatchGoing::begin(SlotNo::MAIN);
+        assert_eq!(auto_run_stop_agent(0).await, Ok(()));
+        assert!(!state(SlotNo::MAIN).cancel.load(std::sync::atomic::Ordering::SeqCst), "the person's replay was stopped");
+        assert!(batch_stop(SlotNo::MAIN).load(std::sync::atomic::Ordering::SeqCst), "the batch was not asked to stop");
+        drop(batch);
+        drop(persons);
         fresh();
     }
 
@@ -921,8 +953,8 @@ mod card {
         let logged = || {
             v2_lib::applog::recent(500).into_iter().map(|l| l.message).collect::<Vec<_>>().join("\n")
         };
-        let _l = crate::serial::log_tail();
         let _g = crate::serial::agents();
+        let _l = crate::serial::log_tail();
         let _a = crate::serial::autorun();
         fresh();
         let a = register(ID_A, "claude-code", T0);

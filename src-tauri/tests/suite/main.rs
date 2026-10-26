@@ -19,6 +19,7 @@
 
 mod common;
 mod serial;
+mod serial_order;
 
 mod activity_log;
 mod ado;

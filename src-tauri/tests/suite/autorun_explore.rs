@@ -1336,3 +1336,25 @@ async fn an_undo_that_ends_your_session_carries_the_saves_not_on_its_list() {
     assert_eq!(v["explore"]["saves_not_on_the_change_list"], json!(["POST /hr/other"]), "{v}");
     assert_eq!(v["note"], json!(UNRECORDED_SAVES), "{v}");
 }
+
+/// Release on the card does not hand the person an explore session's end,
+/// which is JSON naming the application's requests: it says a sentence of
+/// its own and the assistant's text goes to the log.
+#[tokio::test]
+async fn the_cards_release_of_an_explore_session_answers_in_a_sentence() {
+    use v2_lib::commands::autorun_slots::release_answer_in;
+    let dir = root_with_recipe_and_account();
+    let _g = crate::serial::autorun();
+    set_root(dir.path().to_path_buf());
+    let save = Action::Click { selector: "#save".into() };
+    let id = begin(dir.path(), ORG, PROJECT, "admin", 1_760_000_000_000).unwrap();
+    let mut browser = browser_that_saves(&id);
+    let (status, body) = discover_action_in(&mut browser, dir.path(), ORG, PROJECT, &save, None, None).await;
+    assert_eq!(status, 200, "{body}");
+
+    let said = release_answer_in(&mut browser, "Assistant 1's browser").await;
+    crate::autorun_held_browser::assert_a_persons_sentence(&said, "Assistant 1's browser");
+    assert!(said.starts_with("Ended the discovery"), "{said}");
+    assert!(browser.is_none(), "the explore session's browser was kept");
+    assert!(load(dir.path(), &id).unwrap().ended_at.is_some(), "the session was not ended");
+}

@@ -1982,7 +1982,12 @@ test("the Assistants card shows before a PBI is picked, and not at all with no a
     can_stop: false,
   };
   let agents: unknown[] = [agent];
-  mockIPC((cmd) => (cmd === "auto_run_agents" ? agents : null));
+  let asked = 0;
+  mockIPC((cmd) => {
+    if (cmd !== "auto_run_agents") return null;
+    asked += 1;
+    return agents;
+  });
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const first = render(
     <QueryClientProvider client={qc}>
@@ -1995,11 +2000,16 @@ test("the Assistants card shows before a PBI is picked, and not at all with no a
   first.unmount();
 
   agents = [];
+  asked = 0;
   render(
     <QueryClientProvider client={qc}>
       <AutoRun org="acme" project="proj" pbi={null} />
     </QueryClientProvider>,
   );
-  await act(async () => {});
+  // Absence only means something once the card has asked and been answered.
+  await waitFor(() => expect(asked).toBeGreaterThan(0));
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
   expect(screen.queryByRole("heading", { name: "Assistants" })).toBeNull();
 });

@@ -378,14 +378,19 @@ pub fn auto_run_agents() -> Vec<AgentView> {
     agent_views(crate::autorun::sessions::now_ms())
 }
 
-/// Stop what slot `slot`'s assistant is doing: its replay, and a batch of
-/// discovery actions, at their next look. The assistant's browser stays as
-/// it is.
+/// Stop what slot `slot`'s assistant is doing: its replay (never the
+/// person's), and a batch of discovery actions, at their next look. The
+/// assistant's browser stays as it is.
 #[tauri::command]
 #[specta::specta]
 pub async fn auto_run_stop_agent(slot: u8) -> Result<(), String> {
     let n = slot_numbered(slot)?;
-    crate::autorun::replay_to::state(n).stop();
+    // Only an assistant's replay: the person's own, which a card showing Stop
+    // may be a second behind, is never stopped from here.
+    let replay = crate::autorun::replay_to::state(n);
+    if replay.assistants_replay_running() {
+        replay.stop();
+    }
     crate::ai_bridge::stop_batch_in(n);
     crate::applog::info(format!("Auto Run: stopped {} (the person stopped it)", whose(n)));
     Ok(())
@@ -430,7 +435,8 @@ pub enum ReleaseWhy {
 /// (`release_in_for_assistant`): a discovery is ended, its map kept, and its
 /// browser closed; a browser an assistant opened is closed; one the person
 /// opened is left open (`PERSONS_BROWSER_KEPT`). The slot is unbound either
-/// way. A browser that stays busy past the wait is refused
+/// way. The answer is the card's own sentence for what happened
+/// (`release_answer_in`), not the assistant's text. A browser that stays busy past the wait is refused
 /// (`BROWSER_BUSY`) and the binding kept.
 pub async fn release_slot(n: SlotNo, why: ReleaseWhy) -> Result<String, String> {
     // Read first: the label is kept in the registry until its next sweep.
@@ -446,7 +452,7 @@ pub async fn release_slot(n: SlotNo, why: ReleaseWhy) -> Result<String, String> 
     else {
         return Err(crate::commands::autorun::BROWSER_BUSY.to_string());
     };
-    let answer = crate::commands::autorun::release_in_for_assistant(&mut slot).await;
+    let answer = release_answer_in(&mut slot, &who).await;
     crate::commands::autorun::publish_discovery_in(n, &slot);
     crate::commands::autorun::publish_overrides_in(n, &slot);
     if slot.is_none() {
@@ -456,9 +462,29 @@ pub async fn release_slot(n: SlotNo, why: ReleaseWhy) -> Result<String, String> 
     unbind(n);
     let ReleaseWhy::Person = why;
     crate::applog::info(format!("Auto Run: released {who} (the person released it)"));
-    match answer {
-        (409, said) if said == crate::commands::autorun::PERSONS_BROWSER_OPEN => Ok(PERSONS_BROWSER_KEPT.to_string()),
-        (200, said) => Ok(said),
-        (_, said) => Err(said),
+    Ok(answer)
+}
+
+/// Lets go of the browser in `slot` as the assistant's own release does
+/// (`release_outcome_in`) and answers the person in sentences of the card's
+/// own, by what happened: never the assistant's text, which is JSON for a
+/// mapping or explore discovery and names the application's requests. That
+/// text goes to the log. `who` is `whose` of the slot.
+pub async fn release_answer_in<B: crate::ai_bridge::DiscoveryBrowser>(slot: &mut Option<B>, who: &str) -> String {
+    use crate::commands::autorun::ReleaseOutcome;
+    match crate::commands::autorun::release_outcome_in(slot).await {
+        ReleaseOutcome::AlreadyGone => {
+            let mut sentence = format!("{who} had already closed, so there was nothing to close.");
+            sentence[..1].make_ascii_uppercase();
+            sentence
+        }
+        ReleaseOutcome::NothingHeld => "No Auto Run browser was held, so there was nothing to release.".to_string(),
+        ReleaseOutcome::EndedDiscovery(_, said) => {
+            let kept: String = said.chars().take(400).collect();
+            crate::applog::info(format!("Auto Run: the discovery ended by the release said: {kept}"));
+            format!("Ended the discovery in {who}, kept what it found, and closed the browser.")
+        }
+        ReleaseOutcome::ClosedAssistants => format!("Released {who} and closed it."),
+        ReleaseOutcome::PersonsKept => PERSONS_BROWSER_KEPT.to_string(),
     }
 }

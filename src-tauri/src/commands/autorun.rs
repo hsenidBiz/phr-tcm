@@ -1496,21 +1496,51 @@ pub async fn release_for_assistant(n: SlotNo) -> (u16, String) {
 /// The assistant's release over `slot` (`release_for_assistant`), for any
 /// held browser, a test's fake included.
 pub async fn release_in_for_assistant<B: crate::ai_bridge::DiscoveryBrowser>(slot: &mut Option<B>) -> (u16, String) {
+    match release_outcome_in(slot).await {
+        ReleaseOutcome::AlreadyGone => (200, "the Auto Run browser had already closed; the app let it go, and none is held now".to_string()),
+        ReleaseOutcome::NothingHeld => (200, "no Auto Run browser was held - nothing to release".to_string()),
+        ReleaseOutcome::EndedDiscovery(status, said) => (status, said),
+        ReleaseOutcome::ClosedAssistants => (200, RELEASED_YOURS.to_string()),
+        ReleaseOutcome::PersonsKept => (409, PERSONS_BROWSER_OPEN.to_string()),
+    }
+}
+
+/// What a release did to the browser in a slot. The assistant's release
+/// says it in words written for the assistant (`release_in_for_assistant`);
+/// the card's Release says it in its own (`release_slot`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ReleaseOutcome {
+    /// The browser had gone; the app let it go.
+    AlreadyGone,
+    /// None was held.
+    NothingHeld,
+    /// A discovery was ended, its map kept, and its browser closed: the
+    /// answer `end_discovery_closing` gave, for the assistant.
+    EndedDiscovery(u16, String),
+    /// A browser the assistant opened was closed.
+    ClosedAssistants,
+    /// The browser is the person's: it stays open.
+    PersonsKept,
+}
+
+/// Lets go of the browser in `slot` as a release does, and says what it did.
+pub async fn release_outcome_in<B: crate::ai_bridge::DiscoveryBrowser>(slot: &mut Option<B>) -> ReleaseOutcome {
     if crate::ai_bridge::forget_gone_browser(slot).await {
-        return (200, "the Auto Run browser had already closed; the app let it go, and none is held now".to_string());
+        return ReleaseOutcome::AlreadyGone;
     }
     let discovering = match slot.as_mut() {
-        None => return (200, "no Auto Run browser was held - nothing to release".to_string()),
+        None => return ReleaseOutcome::NothingHeld,
         Some(b) => b.parts().discovery.is_some(),
     };
     if discovering {
-        return crate::ai_bridge::end_discovery_closing(slot);
+        let (status, said) = crate::ai_bridge::end_discovery_closing(slot);
+        return ReleaseOutcome::EndedDiscovery(status, said);
     }
     if slot.as_mut().is_some_and(|b| b.opened_by_assistant()) {
         crate::ai_bridge::close_browser_in(slot);
-        return (200, RELEASED_YOURS.to_string());
+        return ReleaseOutcome::ClosedAssistants;
     }
-    (409, PERSONS_BROWSER_OPEN.to_string())
+    ReleaseOutcome::PersonsKept
 }
 
 /// Said by the assistant's release once it closed the browser its own
