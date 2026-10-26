@@ -15,6 +15,7 @@ import { joinTags, splitTags } from "../components/ui/tagfield";
 import { useQueue } from "../hooks/useQueue";
 import { IconAdd, IconSetDefault } from "../lib/actionIcons";
 import { loadDefaultTags } from "../lib/defaultTags";
+import { keptSteps } from "../lib/keptSteps";
 
 /** A fresh case opens with this many blank steps, so the usual case needs no
  * "Add Step" clicks. */
@@ -68,10 +69,8 @@ export default function ManualEntry({
     );
   }
 
-  // A step is skipped only when BOTH halves are empty. One with just an
-  // Expected Result stays so the review gate flags the missing action
-  // instead of silently losing what was typed.
-  const cleanSteps = steps.filter((s) => s.action.trim() || s.expected.trim());
+  // A step is skipped only when BOTH halves are empty (`keptSteps`).
+  const cleanSteps = keptSteps(steps);
 
   const lockedTags = splitTags(defaults);
   const tags = joinTags([...lockedTags, ...splitTags(extras)]);
