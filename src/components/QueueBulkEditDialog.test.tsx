@@ -133,3 +133,31 @@ test("Priority sets every draft's priority", () => {
   pickOption("Priority", "Priority 1");
   expect(appliedEdit(onApply, draft()).priority).toBe(1);
 });
+
+test("Clear module empties the module on every draft, and picking a module un-presses it", async () => {
+  const onApply = mount();
+  const clear = screen.getByRole("button", { name: "Clear module" });
+  expect(clear).toHaveAttribute("aria-pressed", "false");
+
+  fireEvent.click(clear);
+  expect(clear).toHaveAttribute("aria-pressed", "true");
+  expect(screen.getByText("Will change: Module (clear)")).toBeInTheDocument();
+
+  await pickModule("Billing");
+  expect(clear).toHaveAttribute("aria-pressed", "false");
+  expect(screen.getByText("Will change: Module")).toBeInTheDocument();
+
+  fireEvent.click(clear);
+  expect(appliedEdit(onApply, draft()).module_value).toBe("");
+});
+
+test("Tags: Add with nothing typed is no change, and Replace with nothing reads as a clear", () => {
+  const onApply = mount();
+  pickOption("Tags", "Add tags");
+  expect(screen.getByText("Nothing to change yet")).toBeInTheDocument();
+  expect(apply()).toBeDisabled();
+
+  pickOption("Tags", "Replace tags");
+  expect(screen.getByText("Will change: Tags (clear)")).toBeInTheDocument();
+  expect(appliedEdit(onApply, draft()).tags).toBe("");
+});

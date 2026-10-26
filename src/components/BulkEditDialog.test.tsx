@@ -165,3 +165,44 @@ test("Priority and Automation status still apply from their selects", async () =
     expect(tc).toMatchObject({ priority: 1, automation_status: "Not Automated", module_value: "Payroll" });
   }
 });
+
+test("Clear module clears the module on every case, and picking a module un-presses it", async () => {
+  const { sent, onDone } = mount();
+  const clear = screen.getByRole("button", { name: "Clear module" });
+  expect(clear).toHaveAttribute("aria-pressed", "false");
+
+  fireEvent.click(clear);
+  expect(clear).toHaveAttribute("aria-pressed", "true");
+  expect(screen.getByText("Will change: Module (clear)")).toBeInTheDocument();
+  expect(apply()).toBeEnabled();
+
+  // Picking a module lets go of Clear: the pick is what is sent.
+  await pickModule("Billing");
+  expect(clear).toHaveAttribute("aria-pressed", "false");
+  expect(screen.getByText("Will change: Module")).toBeInTheDocument();
+
+  // Pressed again, then pressed off, it is back to unchanged.
+  fireEvent.click(clear);
+  fireEvent.click(clear);
+  expect(screen.getByText("Nothing to change yet")).toBeInTheDocument();
+  expect(apply()).toBeDisabled();
+
+  fireEvent.click(clear);
+  fireEvent.click(apply());
+  await waitFor(() => expect(onDone).toHaveBeenCalled());
+  expect(sent.map((t) => t.module_value)).toEqual(["", ""]);
+});
+
+test("Tags: Add with nothing typed is no change, and Replace with nothing reads as a clear", async () => {
+  const { sent, onDone } = mount();
+  pickOption("Tags", "Add tags");
+  expect(screen.getByText("Nothing to change yet")).toBeInTheDocument();
+  expect(apply()).toBeDisabled();
+
+  pickOption("Tags", "Replace tags");
+  expect(screen.getByText("Will change: Tags (clear)")).toBeInTheDocument();
+  expect(apply()).toBeEnabled();
+  fireEvent.click(apply());
+  await waitFor(() => expect(onDone).toHaveBeenCalled());
+  expect(sent.map((t) => t.tags)).toEqual(["", ""]);
+});

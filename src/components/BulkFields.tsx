@@ -1,6 +1,8 @@
+import { IconClear } from "../lib/actionIcons";
 import ModuleField from "./ModuleField";
 import PrioritySelect from "./PrioritySelect";
 import TagsField from "./TagsField";
+import { Button } from "./ui/button";
 import { Textarea } from "./ui/input";
 import { Select } from "./ui/select";
 
@@ -11,7 +13,8 @@ import { Select } from "./ui/select";
 export type BulkValues = {
   status: string; // "" = unchanged
   priority: number | null; // null = unchanged
-  moduleValue: string; // "" = unchanged
+  moduleValue: string; // "" (or only spaces) = unchanged
+  moduleClear: boolean; // true = empty the module on every case
   tagsMode: "unchanged" | "add" | "replace";
   tags: string;
   preconditionsMode: "unchanged" | "replace" | "clear";
@@ -22,6 +25,7 @@ export const NO_BULK_CHANGE: BulkValues = {
   status: "",
   priority: null,
   moduleValue: "",
+  moduleClear: false,
   tagsMode: "unchanged",
   tags: "",
   preconditionsMode: "unchanged",
@@ -37,21 +41,37 @@ function preconditionsSet(v: BulkValues): boolean {
   );
 }
 
+/** A tag is typed: Add with nothing in the box would only re-format each
+ * case's tags, so it is not a change. */
+function tagsTyped(v: BulkValues): boolean {
+  return v.tags.split(";").some((t) => t.trim() !== "");
+}
+
 /** The set fields' names, in the order the form shows them. */
 export function bulkChangedFields(v: BulkValues): string[] {
   const out: string[] = [];
   if (v.status) out.push("Automation status");
   if (v.priority != null) out.push("Priority");
-  if (v.moduleValue) out.push("Module");
-  if (v.tagsMode !== "unchanged") out.push("Tags");
+  if (v.moduleClear) out.push("Module (clear)");
+  else if (v.moduleValue.trim() !== "") out.push("Module");
+  if (v.tagsMode === "add" && tagsTyped(v)) out.push("Tags");
+  // Replace with nothing typed is how tags are cleared, so it counts.
+  if (v.tagsMode === "replace") out.push(v.tags.trim() === "" ? "Tags (clear)" : "Tags");
   if (preconditionsSet(v)) out.push("Preconditions");
   return out;
+}
+
+/** A case's module after the chosen change: empty when cleared, the
+ * trimmed pick when one is set, the case's own otherwise. */
+export function bulkModule(v: BulkValues, current: string): string {
+  if (v.moduleClear) return "";
+  return v.moduleValue.trim() || current;
 }
 
 /** A case's tags after the chosen tag change. */
 export function bulkTags(v: BulkValues, current: string): string {
   if (v.tagsMode === "replace") return v.tags.trim();
-  if (v.tagsMode === "add") {
+  if (v.tagsMode === "add" && tagsTyped(v)) {
     const split = (s: string) => s.split(";").map((t) => t.trim()).filter(Boolean);
     return [...split(current), ...split(v.tags)]
       .filter((t, idx, arr) => arr.indexOf(t) === idx)
@@ -106,14 +126,30 @@ export function BulkFields({
 
       <div className="space-y-1">
         <span className="block text-xs text-muted">Module</span>
-        <ModuleField
-          org={org}
-          project={project}
-          value={value.moduleValue}
-          onChange={(moduleValue) => set({ moduleValue })}
-          placeholder="Leave unchanged"
-          className="w-full"
-        />
+        <div className="flex items-center gap-2">
+          <ModuleField
+            org={org}
+            project={project}
+            value={value.moduleValue}
+            // Picking a module lets go of Clear; emptying the picker does not.
+            onChange={(moduleValue) =>
+              set({ moduleValue, moduleClear: moduleValue.trim() !== "" ? false : value.moduleClear })
+            }
+            placeholder={value.moduleClear ? "No module (clears it)" : "Leave unchanged"}
+            className="min-w-0 flex-1"
+          />
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            aria-pressed={value.moduleClear}
+            className={value.moduleClear ? "border-accent bg-accent-soft text-accent" : undefined}
+            onClick={() => set({ moduleClear: !value.moduleClear, moduleValue: "" })}
+          >
+            <IconClear aria-hidden />
+            Clear module
+          </Button>
+        </div>
       </div>
 
       <div className="space-y-1">

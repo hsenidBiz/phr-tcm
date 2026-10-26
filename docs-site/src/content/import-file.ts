@@ -484,7 +484,7 @@ export const importFile: Screen = {
       group: "many-at-once",
       locate: { role: "combobox", name: "Module" },
       name: "Module",
-      does: "Pick one module to give all of them. It reads **Leave unchanged** until you do; the x beside a chosen module puts it back.",
+      does: "Pick one module to give all of them. It reads **Leave unchanged** until you do; the x beside a chosen module puts it back. **Clear module** beside it empties the module on every selected case instead; picking a module lets go of it.",
     },
     {
       id: "bulk-tags",
@@ -492,7 +492,7 @@ export const importFile: Screen = {
       group: "many-at-once",
       locate: { role: "combobox", name: "Tags" },
       name: "Tags",
-      does: "Leave tags unchanged, add tags to the ones each case already has, or replace them.",
+      does: "Leave tags unchanged, add tags to the ones each case already has (type at least one), or replace them. Replace with nothing typed clears them.",
     },
     {
       id: "bulk-preconditions",

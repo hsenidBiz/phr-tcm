@@ -8,6 +8,7 @@ import {
   BulkSummary,
   NO_BULK_CHANGE,
   bulkChangedFields,
+  bulkModule,
   bulkPreconditions,
   bulkTags,
 } from "./BulkFields";
@@ -51,7 +52,7 @@ export default function BulkEditDialog({
           steps: c.steps,
           tags: bulkTags(values, c.tags),
           automation_status: values.status || c.automation_status,
-          module_value: values.moduleValue || c.module_value,
+          module_value: bulkModule(values, c.module_value),
           preconditions: bulkPreconditions(values, c.preconditions),
           update_id: c.id,
           // Null leaves each work item's own priority alone.

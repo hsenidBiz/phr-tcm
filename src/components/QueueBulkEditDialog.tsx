@@ -5,6 +5,7 @@ import {
   BulkSummary,
   NO_BULK_CHANGE,
   bulkChangedFields,
+  bulkModule,
   bulkPreconditions,
   bulkTags,
 } from "./BulkFields";
@@ -44,7 +45,7 @@ export default function QueueBulkEditDialog({
       tags: bulkTags(chosen, tc.tags),
       automation_status: chosen.status || tc.automation_status,
       priority: chosen.priority ?? tc.priority ?? null,
-      module_value: chosen.moduleValue || tc.module_value,
+      module_value: bulkModule(chosen, tc.module_value),
       preconditions: bulkPreconditions(chosen, tc.preconditions),
     });
   };

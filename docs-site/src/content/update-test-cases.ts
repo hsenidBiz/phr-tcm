@@ -330,7 +330,7 @@ export const updateTestCases: Screen = {
       group: "selection",
       locate: { role: "combobox", name: "Module" },
       name: "Module",
-      does: "The module to give every selected case. It reads **Leave unchanged** until you pick one; the x beside a chosen module puts it back.",
+      does: "The module to give every selected case. It reads **Leave unchanged** until you pick one; the x beside a chosen module puts it back. **Clear module** beside it empties the module on every selected case instead; picking a module lets go of it.",
     },
     {
       id: "bulk-tags",
@@ -338,7 +338,7 @@ export const updateTestCases: Screen = {
       group: "selection",
       locate: { role: "combobox", name: "Tags" },
       name: "Tags",
-      does: "**Add tags** adds the tags you type to each case's own. **Replace tags** swaps each case's tags for them. **Leave unchanged** keeps them.",
+      does: "**Add tags** adds the tags you type to each case's own (type at least one). **Replace tags** swaps each case's tags for them, and with nothing typed clears them. **Leave unchanged** keeps them.",
     },
     {
       id: "bulk-preconditions",

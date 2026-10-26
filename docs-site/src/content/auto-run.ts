@@ -461,7 +461,7 @@ export const autoRun: Screen = {
       name: "Preconditions",
       does:
         "Records the case relies on, each one a stage of a flow on the API Templates tab that must be done for a value. The run checks them before it signs in, and a case whose precondition is not met is **Blocked** and runs no step. " +
-        "Preconditions are checked in the company database, so they are skipped, and the case says **Not checked**, while Database Read Access is off.",
+        "Preconditions are checked in the company database, so they are skipped, and the case says **Not checked**, while the Database Access module is off.",
     },
     {
       id: "remove-precondition",
