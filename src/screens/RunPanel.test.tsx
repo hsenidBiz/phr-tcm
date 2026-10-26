@@ -274,7 +274,7 @@ test("the Run in runner button sits in the filter row above the list", async () 
   await screen.findByText("Valid login");
   fireEvent.click(screen.getByText("Valid login"));
   const run = screen.getByRole("button", { name: /Run 1 in runner/ });
-  expect(screen.getByLabelText("Filter points").parentElement).toContainElement(run);
+  expect(screen.getByLabelText("Filter points").parentElement!.parentElement).toContainElement(run);
   expect(
     screen.getByRole("button", { name: /Set execution order/ }).parentElement,
   ).not.toContainElement(run);
@@ -363,7 +363,7 @@ test("the selection's actions sit in the toolbar and float once it scrolls away"
     fireEvent.click(screen.getByText("Valid login"));
     // In place: in the filter row, directly above the list.
     const run = screen.getByRole("button", { name: /Run 1 in runner/ });
-    expect(screen.getByLabelText("Filter points").parentElement).toContainElement(run);
+    expect(screen.getByLabelText("Filter points").parentElement!.parentElement).toContainElement(run);
 
     // Assumed on screen until told otherwise, so the floating copy starts hidden.
     const dock = document.querySelector("[data-sticky-action]") as HTMLElement;

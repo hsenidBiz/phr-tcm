@@ -9,7 +9,7 @@ import PickPbiEmpty from "../../components/PickPbiEmpty";
 import { Button } from "../../components/ui/button";
 import { Checkbox } from "../../components/ui/checkbox";
 import { Collapse, useRegroupMotion, useSettled } from "../../components/ui/collapse";
-import { Input } from "../../components/ui/input";
+import { SearchInput } from "../../components/ui/search-input";
 import { Skeleton } from "../../components/ui/skeleton";
 import { useFieldRefs } from "../../hooks/useFieldRefs";
 import { loadNotes, saveNote } from "../../lib/caseNotes";
@@ -416,12 +416,12 @@ export default function ViewCases({
 
       {list.length > 0 && (
         <div className="flex gap-2">
-          <Input
+          <SearchInput
             aria-label="Search test cases"
-            className="w-56 px-2 py-1.5"
+            className="w-56"
             placeholder="Filter by name or id"
             value={search}
-            onChange={(e) => setSearch(e.target.value)}
+            onChange={setSearch}
           />
           <label className="flex items-center gap-1.5 text-xs text-muted">
             <Checkbox

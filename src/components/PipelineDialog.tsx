@@ -15,7 +15,6 @@ import {
   ExternalLink,
   Rocket,
   ScrollText,
-  Search,
   X,
 } from "lucide-react";
 import { Collapse, useSettled } from "./ui/collapse";
@@ -26,7 +25,7 @@ import { commands, type BuildStage, type PrBuild } from "../bindings";
 import { cn } from "../lib/cn";
 import { copyText } from "../lib/clipboard";
 import { unwrap } from "../lib/ipc";
-import { Input } from "./ui/input";
+import { SearchInput } from "./ui/search-input";
 import { Modal } from "./ui/modal";
 
 /** Tone for a pipeline/environment outcome. Anything still moving reads as
@@ -591,19 +590,13 @@ export default function PipelineDialog({
 
       {builds.length > 0 && (
         <div className="flex items-center gap-2 border-b border-border px-4 py-2">
-          <div className="relative min-w-0 flex-1">
-            <Search
-              size={13}
-              className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-faint"
-            />
-            <Input
-              aria-label="Search stages and steps"
-              placeholder="Search stages, jobs and steps…"
-              className="w-full py-1 pl-7 text-xs"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-            />
-          </div>
+          <SearchInput
+            aria-label="Search stages and steps"
+            placeholder="Search stages, jobs and steps…"
+            className="min-w-0 flex-1"
+            value={query}
+            onChange={setQuery}
+          />
           <button
             aria-pressed={failuresOnly}
             disabled={!anyFailures}

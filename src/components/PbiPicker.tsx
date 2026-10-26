@@ -3,7 +3,7 @@ import { History, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { commands, type PbiHit } from "../bindings";
 import { unwrap } from "../lib/ipc";
-import { Input } from "./ui/input";
+import { SearchInput } from "./ui/search-input";
 
 const RECENTS_MAX = 8;
 const recentsKey = (org: string, project: string) => `tcm-v2-recent-pbis:${org}/${project}`;
@@ -109,7 +109,7 @@ export default function PbiPicker({
 
   if (pbi) {
     return (
-      <span className="flex min-w-0 max-w-full items-center gap-1.5 rounded-md border border-accent/50 bg-accent-soft px-2.5 py-1.5 text-sm">
+      <span className="flex h-10 min-w-0 max-w-full items-center gap-1.5 rounded-md border border-accent/50 bg-accent-soft px-2.5 text-sm">
         <span className="id-mono text-faint">#{pbi.id}</span>
         <span className="min-w-0 truncate text-text">{pbi.title}</span>
         <button
@@ -128,14 +128,14 @@ export default function PbiPicker({
   }
 
   return (
-    <div className="relative" ref={boxRef}>
-      <Input
+    <div className="relative w-full" ref={boxRef}>
+      <SearchInput
         aria-label="Find PBI"
-        className="w-72 py-1.5"
+        className="w-full"
         placeholder={project ? "Find PBI" : "Pick a project first"}
         disabled={!project}
         value={text}
-        onChange={(e) => setText(e.target.value)}
+        onChange={setText}
         onFocus={() => {
           if (!text && recents.length > 0) setOpen(true);
         }}
@@ -149,7 +149,7 @@ export default function PbiPicker({
         }}
       />
       {open && (query || recents.length > 0) && (
-        <div className="absolute left-0 top-full z-30 mt-1 w-[28rem] max-w-[calc(100vw-2rem)] rounded-md border border-border bg-surface shadow-xl">
+        <div className="absolute left-0 top-full z-30 mt-1 w-full min-w-[28rem] max-w-[calc(100vw-2rem)] rounded-md border border-border bg-surface shadow-xl">
           {query && hits.isLoading && <p className="px-3 py-2 text-sm text-muted">Searching</p>}
           {query && hits.isError && (
             <p className="px-3 py-2 text-sm text-danger">{hits.error.message}</p>

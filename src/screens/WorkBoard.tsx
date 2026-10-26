@@ -11,7 +11,7 @@ import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
 import { Checkbox } from "../components/ui/checkbox";
 import Combobox from "../components/ui/combobox";
-import { Input } from "../components/ui/input";
+import { SearchInput } from "../components/ui/search-input";
 import MultiSelect from "../components/ui/multiselect";
 import { Skeleton } from "../components/ui/skeleton";
 import { Switch } from "../components/ui/switch";
@@ -729,12 +729,12 @@ export default function WorkBoard({
               <PbiPicker org={org} project={project} pbi={pbiScope} onChange={setPbiScope} />
             </div>
           )}
-          <Input
+          <SearchInput
             aria-label="Filter items"
-            className="w-56 py-1.5"
+            className="w-56"
             placeholder="Filter by title, id, tag"
             value={filterText}
-            onChange={(e) => setFilterText(e.target.value)}
+            onChange={setFilterText}
           />
           <MultiSelect
             ariaLabel="Filter type"

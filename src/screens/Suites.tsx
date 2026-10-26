@@ -9,7 +9,7 @@ import MoreActionsMenu, { type MoreAction } from "../components/MoreActionsMenu"
 import ScanProgress from "../components/ScanProgress";
 import { Collapse, useSettled } from "../components/ui/collapse";
 import { Badge } from "../components/ui/badge";
-import { Input } from "../components/ui/input";
+import { SearchInput } from "../components/ui/search-input";
 import { loadNotes } from "../lib/caseNotes";
 import { openRunnerWindow } from "../lib/openRunner";
 import { pagePalette } from "../lib/reportTheme";
@@ -506,12 +506,12 @@ export default function Suites({
             className={plans.isFetching || pointsFetching > 0 ? "animate-spin" : undefined}
           />
         </button>
-        <Input
+        <SearchInput
           aria-label="Search suites"
-          className="w-64 px-2 py-1.5"
+          className="w-64"
           placeholder="Search plans and suites"
           value={search}
-          onChange={(e) => setSearch(e.target.value)}
+          onChange={setSearch}
         />
         {busy && <span className="text-xs text-muted">Collecting test cases</span>}
       </div>

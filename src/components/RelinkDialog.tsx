@@ -10,7 +10,7 @@ import { toast } from "../lib/toast";
 import { commands, type PbiHit, type RelinkOutcome } from "../bindings";
 import { describeAdoError, unwrap } from "../lib/ipc";
 import { Button } from "./ui/button";
-import { Input } from "./ui/input";
+import { SearchInput } from "./ui/search-input";
 import { Modal } from "./ui/modal";
 import { IconCancel, IconConfirm } from "../lib/actionIcons";
 
@@ -131,12 +131,12 @@ export default function RelinkDialog({
 
       {!target ? (
         <div className="min-h-0 flex-1 space-y-2 overflow-auto">
-          <Input
+          <SearchInput
             aria-label="Search for the destination PBI"
             autoFocus
             placeholder="Search PBIs by title or id"
             value={text}
-            onChange={(e) => setText(e.target.value)}
+            onChange={setText}
           />
           {hits.isLoading && query && <p className="text-xs text-faint">Searching…</p>}
           {(hits.data ?? [])

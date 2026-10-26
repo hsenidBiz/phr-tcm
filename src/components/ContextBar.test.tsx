@@ -90,3 +90,46 @@ test("the Settings gear turns forward as Settings opens and back as it closes", 
   rerender(bar(false));
   expect(icon()).toBe(closed);
 });
+
+/// The PBI search takes ALL the free width between the Project picker and
+/// the right-hand group: no max width, and the group never shrinks - the
+/// search gives way first. jsdom does no layout, so this is the class contract.
+test("the PBI search fills the free width and the right-hand group never shrinks", () => {
+  mockIPC((cmd) => {
+    if (cmd === "list_orgs") return [];
+    if (cmd === "list_projects") return [];
+    if (cmd === "pr_overview") return { mine: [], awaiting: [] };
+    if (cmd === "recent_mentions") return [];
+  });
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  render(
+    <QueryClientProvider client={qc}>
+      <ContextBar
+        org="acme"
+        setOrg={() => {}}
+        project="Web"
+        setProject={() => {}}
+        pbi={null}
+        setPbi={() => {}}
+        account={null}
+        workMode={false}
+        onToggleWork={() => {}}
+        onOpenSettings={() => {}}
+      />
+    </QueryClientProvider>,
+  );
+  const box = screen.getByLabelText("Find PBI");
+  const wrapper = box.closest("[data-tour='pbi']") as HTMLElement;
+  expect(wrapper).toHaveClass("flex-1", "min-w-80");
+  expect(wrapper.className).not.toMatch(/(^|\s)max-w-/);
+  expect(box).toHaveClass("h-10", "w-full");
+
+  const right = screen.getByRole("button", { name: "Settings" }).parentElement!;
+  expect(right).toHaveClass("shrink-0");
+  expect(right).toContainElement(screen.getByRole("button", { name: /work manager/i }));
+
+  // The two pickers keep their width but match the search's 40px height.
+  for (const name of ["Organization", "Project"]) {
+    expect(screen.getByRole("combobox", { name })).toHaveClass("h-10");
+  }
+});

@@ -114,3 +114,40 @@ test("a recent can be removed from the dropdown without picking it", async () =>
   expect(screen.queryByLabelText("Clear PBI")).not.toBeInTheDocument();
   expect(JSON.parse(localStorage.getItem("tcm-v2-recent-pbis:acme/Web")!)).toHaveLength(1);
 });
+
+/// The header search is the shared SearchInput: a 40px box with a magnifier
+/// and a clear button, and it fills the room it is given.
+test("Find PBI is a full-width, 40px search box with a clear button", async () => {
+  mockIPC(() => undefined);
+  renderPicker();
+
+  const input = screen.getByLabelText("Find PBI");
+  expect(input).toHaveClass("h-10", "text-sm", "w-full");
+  expect(input.parentElement!.querySelector("svg")).toBeInTheDocument();
+  // The picker itself takes the whole width its parent gives it.
+  expect(input.closest("div")).toHaveClass("w-full");
+
+  expect(screen.queryByRole("button", { name: "Clear search" })).not.toBeInTheDocument();
+  fireEvent.change(input, { target: { value: "login" } });
+  fireEvent.click(screen.getByRole("button", { name: "Clear search" }));
+  expect((input as HTMLInputElement).value).toBe("");
+  expect(input).toHaveFocus();
+});
+
+test("the results list is at least as wide as the box, and the picked chip is as tall", async () => {
+  mockIPC((cmd) => {
+    if (cmd === "search_pbis")
+      return [{ id: 42, title: "Login flow", work_item_type: "Product Backlog Item" }];
+  });
+  renderPicker();
+
+  const input = screen.getByLabelText("Find PBI");
+  fireEvent.change(input, { target: { value: "login" } });
+  fireEvent.keyDown(input, { key: "Enter" });
+  const hit = await screen.findByText(/Login flow/);
+  const list = hit.closest("ul")!.parentElement!;
+  expect(list).toHaveClass("w-full", "min-w-[28rem]");
+
+  fireEvent.click(hit);
+  expect(screen.getByLabelText("Clear PBI").parentElement).toHaveClass("h-10");
+});

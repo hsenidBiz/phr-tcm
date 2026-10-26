@@ -112,7 +112,7 @@ export default function ContextBar({
       <Select
         data-tour="org"
         aria-label="Organization"
-        className="w-44" triggerClassName="py-1.5"
+        className="w-44" triggerClassName="h-10 py-0"
         disabled={locked}
         value={org}
         onChange={(e) => {
@@ -130,7 +130,7 @@ export default function ContextBar({
       </Select>
       <Select
         aria-label="Project"
-        className="w-44" triggerClassName="py-1.5"
+        className="w-44" triggerClassName="h-10 py-0"
         value={project}
         disabled={!org || locked}
         onChange={(e) => {
@@ -145,9 +145,10 @@ export default function ContextBar({
           </option>
         ))}
       </Select>
-      {/* The PBI chip gets all remaining width so long titles stay readable;
-          min-w keeps it usable and forces a wrap instead of a squeeze. */}
-      <div className="min-w-56 flex-1" data-tour="pbi" inert={locked}>
+      {/* The PBI search takes ALL the width between the Project picker and
+          the right-hand group, with no maximum: the group never shrinks, so
+          this is what gives way. min-w forces a wrap instead of a squeeze. */}
+      <div className="min-w-80 flex-1" data-tour="pbi" inert={locked}>
         {/* React Bits ElectricBorder wraps the chip while confirmation is
             armed, in the theme accent so it follows light/dark and presets. */}
         {pbiGlow ? (
