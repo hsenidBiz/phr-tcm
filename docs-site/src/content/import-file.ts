@@ -482,9 +482,9 @@ export const importFile: Screen = {
       id: "bulk-module",
       shot: BULK,
       group: "many-at-once",
-      locate: { role: "checkbox", name: "Set module" },
-      name: "Set module",
-      does: "Tick it to choose one module for all of them.",
+      locate: { role: "combobox", name: "Module" },
+      name: "Module",
+      does: "Pick one module to give all of them. It reads **Leave unchanged** until you do; the x beside a chosen module puts it back.",
     },
     {
       id: "bulk-tags",
@@ -498,9 +498,9 @@ export const importFile: Screen = {
       id: "bulk-preconditions",
       shot: BULK,
       group: "many-at-once",
-      locate: { role: "checkbox", name: "Set preconditions" },
-      name: "Set preconditions",
-      does: "Tick it to give them all the same preconditions.",
+      locate: { role: "combobox", name: "Preconditions" },
+      name: "Preconditions",
+      does: "**Leave unchanged** keeps each case's own. **Replace with** shows a box whose text goes on all of them. **Clear** empties them.",
     },
     {
       id: "bulk-cancel",
@@ -516,7 +516,7 @@ export const importFile: Screen = {
       group: "many-at-once",
       locate: { role: "button", nameRe: "^Apply to \\d+$" },
       name: "Apply",
-      does: "Makes the changes. Titles and steps are never touched, and the file each case came from is updated to match.",
+      does: "Makes the changes. The line above it names what will change, and it is greyed out while that line reads **Nothing to change yet**. Titles and steps are never touched, and the file each case came from is updated to match.",
     },
 
     // --- Rename -----------------------------------------------------------------

@@ -328,9 +328,9 @@ export const updateTestCases: Screen = {
       id: "bulk-module",
       shot: BULK,
       group: "selection",
-      locate: { role: "checkbox", name: "Set module" },
-      name: "Set module",
-      does: "Tick it to show a Module field; the value you pick goes on every selected case.",
+      locate: { role: "combobox", name: "Module" },
+      name: "Module",
+      does: "The module to give every selected case. It reads **Leave unchanged** until you pick one; the x beside a chosen module puts it back.",
     },
     {
       id: "bulk-tags",
@@ -344,9 +344,9 @@ export const updateTestCases: Screen = {
       id: "bulk-preconditions",
       shot: BULK,
       group: "selection",
-      locate: { role: "checkbox", name: "Set preconditions" },
-      name: "Set preconditions",
-      does: "Tick it to show a Preconditions box; its text replaces the preconditions of every selected case.",
+      locate: { role: "combobox", name: "Preconditions" },
+      name: "Preconditions",
+      does: "**Leave unchanged** keeps each case's own. **Replace with** shows a box whose text replaces the preconditions of every selected case. **Clear** empties them.",
     },
     {
       id: "bulk-cancel",
@@ -364,7 +364,7 @@ export const updateTestCases: Screen = {
       name: "Apply to N",
       does:
         "Saves the chosen fields to each selected case in Azure DevOps, one after another. Titles and steps are never touched. " +
-        "It is greyed out until you choose at least one change. Any case that fails is named with the reason.",
+        "The line above it names what will change, and it is greyed out while that line reads **Nothing to change yet**. Any case that fails is named with the reason.",
     },
 
     // --- Move to PBI --------------------------------------------------------
