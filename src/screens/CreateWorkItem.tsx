@@ -58,7 +58,18 @@ export function clearWorkItemDraft() {
   draft = { ...BLANK };
 }
 
-export default function CreateWorkItem({ org, project }: { org: string; project: string }) {
+export default function CreateWorkItem({
+  org,
+  project,
+  allProjects,
+}: {
+  org: string;
+  /** The home project while the projects show together, the picked project
+   * otherwise: where an item with no parent is created. */
+  project: string;
+  /** The projects show together: the parent PBI may belong to another project. */
+  allProjects: boolean;
+}) {
   const qc = useQueryClient();
   const [wiType, setWiType] = useState(draft.wiType);
   const [title, setTitle] = useState(draft.title);
@@ -77,34 +88,62 @@ export default function CreateWorkItem({ org, project }: { org: string; project:
     draft = { wiType, title, assignee, area, iteration, priority, tags, description, parent };
   }, [wiType, title, assignee, area, iteration, priority, tags, description, parent]);
 
-  const members = useQuery({
-    // Same key + cache as the drawer: one members fetch serves both.
-    queryKey: ["members", org, project],
+  // Where the item is created. Switched off it is the picked project. Together,
+  // a parent PBI decides (it carries its own project) and without one the
+  // item goes to the home project. Members, areas, iterations and tags are
+  // that project's, and so is the create.
+  const createProject = allProjects ? parent?.project || project : project;
+  // The area and iteration chosen belong to the tree of the project they
+  // were read from; another project's tree has no such path. Done while
+  // rendering so no query or create ever pairs the old path with the new
+  // project.
+  const [seenCreateProject, setSeenCreateProject] = useState(createProject);
+  if (seenCreateProject !== createProject) {
+    setSeenCreateProject(createProject);
+    setArea("");
+    setIteration("");
+  }
+
+  // The same list and options as the context bar's, so they share one entry.
+  const projects = useQuery({
+    queryKey: ["projects", org],
     ...persistentQuery({
-      key: cacheKeys.members(org, project),
-      fetcher: () => unwrap(commands.listTeamMembers(org, project)),
+      key: cacheKeys.projects(org),
+      fetcher: () => unwrap(commands.listProjects(org)),
       ...CACHE.reference,
     }),
-    enabled: Boolean(org && project),
+    enabled: Boolean(org) && allProjects,
+  });
+  const severalProjects = (projects.data?.length ?? 0) > 1;
+
+  const members = useQuery({
+    // Same key + cache as the drawer: one members fetch serves both.
+    queryKey: ["members", org, createProject],
+    ...persistentQuery({
+      key: cacheKeys.members(org, createProject),
+      fetcher: () => unwrap(commands.listTeamMembers(org, createProject)),
+      ...CACHE.reference,
+    }),
+    enabled: Boolean(org && createProject),
     retry: false,
   });
   const areas = useQuery({
-    queryKey: ["classification", org, project, "areas"],
-    queryFn: () => unwrap(commands.classificationPaths(org, project, "areas")),
-    enabled: Boolean(org && project),
+    queryKey: ["classification", org, createProject, "areas"],
+    queryFn: () => unwrap(commands.classificationPaths(org, createProject, "areas")),
+    enabled: Boolean(org && createProject),
     staleTime: 60 * 60_000,
   });
   const iterations = useQuery({
-    queryKey: ["iterations-dated", org, project],
-    queryFn: () => unwrap(commands.listIterations(org, project)),
-    enabled: Boolean(org && project),
+    queryKey: ["iterations-dated", org, createProject],
+    queryFn: () => unwrap(commands.listIterations(org, createProject)),
+    enabled: Boolean(org && createProject),
     staleTime: 60 * 60_000,
   });
 
   const create = useMutation({
     mutationFn: () =>
       unwrap(
-        commands.createWorkItem(org, project, {
+        commands.createWorkItem(org, createProject, {
           wi_type: wiType,
           title: title.trim(),
           assigned_to: assignee || null,
@@ -137,7 +176,7 @@ export default function CreateWorkItem({ org, project }: { org: string; project:
   // confirmation back for the form, contextual choices intact.
   const resetForKeep = () => setCreated(null);
 
-  if (!org || !project) {
+  if (!org || !createProject) {
     return (
       <p className="text-sm text-muted">Pick an organization and project in the bar above first.</p>
     );
@@ -281,7 +320,7 @@ export default function CreateWorkItem({ org, project }: { org: string; project:
 
       <label className="block text-xs text-muted">
         <span className="mb-1 block">Tags</span>
-        <TagsField org={org} project={project} className="w-full" value={tags} onChange={setTags} />
+        <TagsField org={org} project={createProject} className="w-full" value={tags} onChange={setTags} />
       </label>
 
       <div className="text-xs text-muted">
@@ -289,6 +328,9 @@ export default function CreateWorkItem({ org, project }: { org: string; project:
         <div className="mt-1 max-w-md">
           <PbiPicker org={org} project={project} pbi={parent} onChange={setParent} />
         </div>
+        {allProjects && severalProjects && (
+          <p className="mt-1">It will be created in {createProject}.</p>
+        )}
       </div>
       </div>
 

@@ -2014,3 +2014,52 @@ test("the Assistants card shows before a PBI is picked, and not at all with no a
   });
   expect(screen.queryByRole("heading", { name: "Assistants" })).toBeNull();
 });
+
+/// Auto Run's files belong to the application under test, so they stay with
+/// the home project; the results go to Azure DevOps, so they follow the PBI.
+test("Auto Run sends results to the PBI's project while its files stay home", async () => {
+  const confirmedRun = {
+    ...FAILED_RUN,
+    cases: [{ ...FAILED_RUN.cases[0], verdict: "Failed" }],
+  };
+  const asked: { cmd: string; args: Record<string, unknown> }[] = [];
+  mockIPC((cmd, args) => {
+    asked.push({ cmd, args: args as Record<string, unknown> });
+    if (cmd === "list_test_case_fields") return [];
+    if (cmd === "pbi_test_cases_full") return [caseRow(1, "Alpha check")];
+    if (cmd === "auto_run_list_runs") return [confirmedRun];
+    if (cmd === "auto_run_load_run") return confirmedRun;
+    if (cmd === "auto_run_list_accounts") return [];
+    if (cmd === "auto_run_publish")
+      return { status: "sent", run_id: 9, web_url: "https://example.invalid/run/9", sent: [1], skipped: [], problems: [] };
+    return null;
+  });
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  render(
+    <QueryClientProvider client={qc}>
+      <AutoRun
+        org="acme"
+        project="Web"
+        adoProject="Payroll"
+        pbi={{ ...pbi, project: "Payroll" } as never}
+      />
+    </QueryClientProvider>,
+  );
+  await screen.findByText("Alpha check");
+  openTab("Past runs");
+  fireEvent.click(await screen.findByRole("button", { name: "Open review" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Send to Azure DevOps" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Confirm" }));
+
+  await waitFor(() => expect(asked.some((c) => c.cmd === "auto_run_publish")).toBe(true));
+  expect(asked.find((c) => c.cmd === "auto_run_publish")?.args.project).toBe("Payroll");
+  // Everything that reads or writes Auto Run's own files uses the home project.
+  const filesAsked = asked.filter((c) => c.cmd === "auto_run_load_recipe");
+  expect(filesAsked.length).toBeGreaterThan(0);
+  expect(filesAsked.every((c) => c.args.project === "Web")).toBe(true);
+  expect(
+    asked.filter((c) => c.cmd === "auto_run_load_script" || c.cmd === "auto_run_list_runs").every(
+      (c) => c.args.project === undefined || c.args.project === "Web",
+    ),
+  ).toBe(true);
+});

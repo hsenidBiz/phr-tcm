@@ -267,6 +267,13 @@ export default function App() {
   // item or a pull request, and the Work Manager screen that can show it
   // clears this the moment it has.
   const [workFocus, setWorkFocus] = useState<NotificationTarget | null>(null);
+  // The project a notification came from, handed to the Work Manager screens
+  // while the projects show together (there is no project selector to switch,
+  // and the home project is not theirs to overwrite). Null means the screens
+  // use their ordinary project. Interim until the Work Manager screens read
+  // every project (Phase 4); anything that changes what the screens stand
+  // for clears it.
+  const [workProject, setWorkProject] = useState<string | null>(null);
 
   // First-run walkthrough: opens once after the first sign-in, and again
   // whenever Settings asks for it. While it is up the app runs on sample
@@ -312,10 +319,12 @@ export default function App() {
   // not in an effect, so no screen is ever drawn for the old home project in
   // between. The tour refuses the switch (saveAllProjects), so this never
   // runs over the walkthrough's sample scope - and is skipped there anyway.
-  // Turning it ON changes nothing else.
+  // Turning it ON changes nothing else, except that a project a notification
+  // handed to the Work Manager screens goes with either flip.
   const [seenAllProjects, setSeenAllProjects] = useState(allProjects);
   if (seenAllProjects !== allProjects) {
     setSeenAllProjects(allProjects);
+    setWorkProject(null);
     if (!allProjects && !tourOpen && pbi?.project && pbi.project !== homeProject) {
       setHomeProjectRaw(pbi.project);
     }
@@ -324,6 +333,9 @@ export default function App() {
   const startTour = useCallback(() => {
     if (before.current) return; // already running
     before.current = { ...ctx.current };
+    // The walkthrough runs on sample data; a project handed over by a
+    // notification is not part of its scope.
+    setWorkProject(null);
     suspendCache(true);
     setTourExpanded(true);
     installTourBackend();
@@ -531,6 +543,7 @@ export default function App() {
     // A pending notification handoff belongs to the organisation it was
     // raised in; carrying it across would open someone else's item id.
     setWorkFocus(null);
+    setWorkProject(null);
   };
   const setProject = (p: string) => {
     setHomeProjectRaw(p);
@@ -546,6 +559,7 @@ export default function App() {
   const setPbi = (p: PbiHit | null) => {
     if (effectiveProject(allProjects, p, homeProject) !== project) setCaseSelection(null);
     if (allProjects && !homeProject && p?.project) setHomeProjectRaw(p.project);
+    setWorkProject(null);
     setPbiRaw(p);
   };
   // Settings' Home project picker. Moving the home project moves the
@@ -553,6 +567,7 @@ export default function App() {
   // (work item ids of the old project) goes, the same rule setPbi follows.
   const changeHomeProject = (p: string) => {
     if (effectiveProject(allProjects, pbi, p) !== project) setCaseSelection(null);
+    setWorkProject(null);
     setHomeProjectRaw(p);
   };
   // Settings opens on Modules when the "Playwright is needed" dialog sent
@@ -590,6 +605,7 @@ export default function App() {
         setOrgRaw(r.org);
         setHomeProjectRaw(r.project);
         setCaseSelection(null);
+        setWorkProject(null);
       }
       if (pbi?.id !== r.pbi.id) {
         if (effectiveProject(true, r.pbi, homeProject) !== project) setCaseSelection(null);
@@ -1327,6 +1343,7 @@ export default function App() {
                 // drawer later, on a screen the user navigated to on
                 // their own and was not expecting it to react to.
                 setWorkFocus(null);
+                setWorkProject(null);
               }}
               items={WORK_ITEMS}
               badges={{ board: workAlerts }}
@@ -1359,6 +1376,7 @@ export default function App() {
                 // Manager (or entering it by hand) drops a stale focus
                 // rather than letting it surface on whatever is next.
                 setWorkFocus(null);
+                setWorkProject(null);
               }}
               onOpenSettings={toggleSettings}
               settingsOpen={section === "settings" && !workMode}
@@ -1371,10 +1389,14 @@ export default function App() {
                 logUi(`nav: notification/${target.kind}`);
                 // The target's own project, not necessarily the one on
                 // screen: a notification can arrive for a project you have
-                // since navigated away from. setProject only clears the
-                // PBI and case selection, not workFocus, so setting the
-                // focus after it survives.
-                if (target.project !== project) setProject(target.project);
+                // since navigated away from. Picked one at a time, that means
+                // switching there (setProject only clears the PBI and case
+                // selection, not workFocus, so setting the focus after it
+                // survives). Shown together there is nothing to switch and
+                // the home project is not the notification's to overwrite:
+                // the Work Manager screens are handed the project instead.
+                if (allProjects) setWorkProject(target.project !== project ? target.project : null);
+                else if (target.project !== project) setProject(target.project);
                 setWorkFocus(target);
                 setWorkSection(target.kind === "pr" ? "prs" : "board");
                 setWorkMode(true);
@@ -1513,7 +1535,7 @@ export default function App() {
                     <div className="min-h-0 flex-1">
                       <WorkBoard
                         org={org}
-                        project={project}
+                        project={workProject ?? project}
                         focusItem={workFocus?.kind === "work-item" ? workFocus.id : null}
                         onFocusHandled={() => setWorkFocus(null)}
                       />
@@ -1523,7 +1545,14 @@ export default function App() {
                   <>
                     <h1 className="mb-4 text-lg font-semibold">New Work Item</h1>
                     <div className="min-h-0 flex-1 overflow-y-auto">
-                      <CreateWorkItem org={org} project={project} />
+                      {/* An item with no parent belongs to the home project; a
+                          parent from another project moves it there (the
+                          screen decides). */}
+                      <CreateWorkItem
+                        org={org}
+                        project={workProject ?? (allProjects ? homeProject : project)}
+                        allProjects={allProjects}
+                      />
                     </div>
                   </>
                 ) : (
@@ -1532,7 +1561,7 @@ export default function App() {
                     <div className="min-h-0 flex-1 overflow-y-auto">
                       <PrPanel
                         org={org}
-                        project={project}
+                        project={workProject ?? project}
                         focus={workFocus?.kind === "pr" ? workFocus : null}
                         onFocusHandled={() => setWorkFocus(null)}
                       />
@@ -1606,7 +1635,11 @@ export default function App() {
                 {modules.has("auto_run") && section === "autorun" && (
                   <AutoRun
                     org={org}
-                    project={project}
+                    // Auto Run's files belong to the application under test
+                    // (the home project); only the results sent to Azure
+                    // DevOps follow the PBI.
+                    project={allProjects ? homeProject : project}
+                    adoProject={project}
                     pbi={pbi}
                     onOpenPlaywright={() => goToSection("playwright")}
                     onOpenModules={() => {
@@ -1626,9 +1659,15 @@ export default function App() {
                 )}
                 {section === "ai" && <AiBridge />}
                 {modules.has("api_templates") && section === "apitemplates" && (
-                  <ApiTemplates org={org} project={project} onOpenAiBridge={() => goToSection("ai")} />
+                  <ApiTemplates
+                    org={org}
+                    project={allProjects ? homeProject : project}
+                    onOpenAiBridge={() => goToSection("ai")}
+                  />
                 )}
-                {modules.has("playwright") && section === "playwright" && <Playwright org={org} project={project} />}
+                {modules.has("playwright") && section === "playwright" && (
+                  <Playwright org={org} project={allProjects ? homeProject : project} />
+                )}
                 {modules.has("crystal_reports") && section === "crystal-reports" && <CrystalReports />}
                 {section === "settings" && (
                   <Settings
