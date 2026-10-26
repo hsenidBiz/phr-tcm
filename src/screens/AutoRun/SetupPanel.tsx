@@ -203,7 +203,18 @@ export type AutoRunSetup = ReturnType<typeof useAutoRunSetup>;
  * address or a list of words gets the whole width to wrap in. A labelled
  * group, so a screen reader hears the row's name with its state and its
  * buttons. */
-function SetupRow({ label, state, children }: { label: string; state: ReactNode; children?: ReactNode }) {
+function SetupRow({
+  label,
+  status,
+  state,
+  children,
+}: {
+  label: string;
+  /** The row's status, as the collapsed summary shows it. */
+  status: Status;
+  state: ReactNode;
+  children?: ReactNode;
+}) {
   return (
     <div
       role="group"
@@ -213,7 +224,11 @@ function SetupRow({ label, state, children }: { label: string; state: ReactNode;
       {/* The label never gives up its width to the buttons: when they do not fit beside it, they
           wrap onto the next line instead of covering it. */}
       <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-        <span className="mr-auto shrink-0 text-xs font-medium text-muted">{label}</span>
+        <span className="mr-auto flex shrink-0 items-center gap-1.5 text-xs font-medium text-muted">
+          <StatusDot status={status} />
+          {label}
+          {SPOKEN[status] && <span className="sr-only">{SPOKEN[status]}</span>}
+        </span>
         <span className="flex max-w-full flex-wrap justify-end gap-2">{children}</span>
       </div>
       <div className="break-words text-sm text-text">{state}</div>
@@ -239,6 +254,19 @@ const SPOKEN: Record<Status, string> = {
   warning: ", needs a look",
   quiet: "",
 };
+
+/** The status dot, the same look in the summary and the full rows. A look
+ * only: the status is spoken in words beside it. In the summary it sits in
+ * a line-tall box of its own (`boxed`) so it stays beside a label's first
+ * line when the value wraps. */
+function StatusDot({ status, boxed = false }: { status: Status; boxed?: boolean }) {
+  const dot = <span data-status-dot={status} className={cn("size-2 shrink-0 rounded-full", DOT[status])} />;
+  return (
+    <span aria-hidden className={boxed ? "flex h-5 shrink-0 items-center" : "inline-flex items-center"}>
+      {dot}
+    </span>
+  );
+}
 
 /** A web address as text with a break opportunity after each `/`, `.`, `?`,
  * `&` and `=`, so a long one wraps at its own punctuation instead of in the
@@ -465,6 +493,13 @@ export default function SetupPanel({
           ? `${s.activeDb.label}: ${s.activeDb.database} on ${s.activeDb.server}`
           : `${s.activeDb.label}: not set up yet`;
 
+  // The full rows carry the same status as the summary lines. Save words
+  // and Protected records have no summary line: quiet, so every row's label
+  // starts at the same place.
+  const lines = summaryLines(s);
+  const statusOf = (label: string): Status => lines.find((l) => l.label === label)?.status ?? "quiet";
+  const dbStatus = statusOf("Database");
+
   return (
     <section
       aria-labelledby={headingId}
@@ -503,13 +538,11 @@ export default function SetupPanel({
       <div id={bodyId}>
         {!open ? (
           <ul aria-label="Setup summary" className="space-y-1.5">
-            {summaryLines(s).map(({ label, status, value, missing }) => (
+            {lines.map(({ label, status, value, missing }) => (
               <li key={label} className="flex items-start gap-2 text-sm">
                 {/* One line tall and centred in it, so the dot sits beside
                     the label's first line even when the value wraps. */}
-                <span aria-hidden className="flex h-5 shrink-0 items-center">
-                  <span className={cn("size-2 rounded-full", DOT[status])} />
-                </span>
+                <StatusDot status={status} boxed />
                 <span className="w-24 shrink-0 text-muted">{label}</span>
                 {/* Never cut short: the site address in particular is only
                     useful whole. It breaks inside the URL; the rest wrap at
@@ -536,6 +569,7 @@ export default function SetupPanel({
                   chosen on AI Bridge, which owns them - so no button. */}
               <SetupRow
                 label="Environment"
+                status={statusOf("Environment")}
                 state={
                   envs.isError ? (
                     <span className="text-danger">The environments could not be read</span>
@@ -545,7 +579,9 @@ export default function SetupPanel({
                     <>
                       <span className="font-medium">{activeEnv.name}</span>
                       <span className="block text-xs text-muted">
-                        Database <span className="text-text">{dbLine}</span>. Both change on the AI Bridge tab.
+                        <StatusDot status={dbStatus} /> Database <span className="text-text">{dbLine}</span>
+                        {SPOKEN[dbStatus] && <span className="sr-only">{SPOKEN[dbStatus]}</span>}. Both change on the AI Bridge
+                        tab.
                       </span>
                     </>
                   ) : (
@@ -556,6 +592,7 @@ export default function SetupPanel({
 
               <SetupRow
                 label="Site address"
+                status={statusOf("Site address")}
                 state={
                   !setupReady ? (
                     <span className="text-muted">{needsProject}</span>
@@ -595,6 +632,7 @@ export default function SetupPanel({
 
               <SetupRow
                 label="Sign-in"
+                status={statusOf("Sign-in")}
                 state={
                   !setupReady ? (
                     <span className="text-muted">{needsProject}</span>
@@ -639,6 +677,7 @@ export default function SetupPanel({
 
               <SetupRow
                 label="Accounts"
+                status={statusOf("Accounts")}
                 state={
                   accounts.isError ? (
                     <span className="text-danger">The accounts could not be read</span>
@@ -659,6 +698,7 @@ export default function SetupPanel({
 
               <SetupRow
                 label="Areas"
+                status={statusOf("Areas")}
                 state={
                   !setupReady ? (
                     <span className="text-muted">{needsProject}</span>
@@ -690,6 +730,7 @@ export default function SetupPanel({
                   area by area. */}
               <SetupRow
                 label="Discovery"
+                status={statusOf("Discovery")}
                 state={
                   !setupReady ? (
                     <span className="text-muted">{needsProject}</span>
@@ -752,6 +793,7 @@ export default function SetupPanel({
               {/* Steps saved once that scripts use by name. */}
               <SetupRow
                 label="Components"
+                status={statusOf("Components")}
                 state={
                   !setupReady ? (
                     <span className="text-muted">{needsProject}</span>
@@ -781,6 +823,7 @@ export default function SetupPanel({
 
               <SetupRow
                 label="Test files"
+                status={statusOf("Test files")}
                 state={
                   !setupReady ? (
                     <span className="text-muted">{needsProject}</span>
@@ -821,6 +864,7 @@ export default function SetupPanel({
                   built-in words, fixed, then the project's own. */}
               <SetupRow
                 label="Save words"
+                status={statusOf("Save words")}
                 state={
                   !setupReady ? (
                     <span className="text-muted">{needsProject}</span>
@@ -860,6 +904,7 @@ export default function SetupPanel({
                   the Playwright repo on export. */}
               <SetupRow
                 label="Protected records"
+                status={statusOf("Protected records")}
                 state={
                   !setupReady ? (
                     <span className="text-muted">{needsProject}</span>

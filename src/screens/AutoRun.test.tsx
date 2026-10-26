@@ -1379,6 +1379,42 @@ test("with a site address, a sign-in and an account the Setup panel starts as a 
   expect(within(setupPanel()).getByRole("list", { name: "Setup summary" })).toBeInTheDocument();
 });
 
+test("the full Setup rows keep their status dot and spoken status", async () => {
+  mockReady((cmd) => (cmd === "auto_run_list_accounts" ? [] : undefined));
+  renderAutoRun(null);
+  // No account: the panel opens by itself, so these are the full rows.
+  await waitFor(() =>
+    expect(within(setupPanel()).getByRole("button", { name: "Hide setup details" })).toBeInTheDocument(),
+  );
+  const rows = [
+    "Environment",
+    "Site address",
+    "Sign-in",
+    "Accounts",
+    "Areas",
+    "Discovery",
+    "Components",
+    "Test files",
+    "Save words",
+    "Protected records",
+  ];
+  for (const name of rows) {
+    const row = within(setupPanel()).getByRole("group", { name });
+    const dot = row.querySelector("[data-status-dot]");
+    expect(dot, `${name} has a status dot`).not.toBeNull();
+    // The dot is a look only: hidden from a screen reader.
+    expect(dot!.closest("[aria-hidden]")).not.toBeNull();
+  }
+  // The same dot and words as the summary line: no account is missing.
+  const accounts = within(setupPanel()).getByRole("group", { name: "Accounts" });
+  expect(accounts.querySelector("[data-status-dot]")).toHaveClass("bg-danger");
+  expect(accounts).toHaveTextContent("Accounts, missing");
+  // A site address that is set is ready.
+  const site = within(setupPanel()).getByRole("group", { name: "Site address" });
+  expect(site.querySelector("[data-status-dot]")).toHaveClass("bg-success");
+  expect(site).toHaveTextContent("Site address, ready");
+});
+
 test("a summary line with something missing says so in words", async () => {
   mockReady((cmd) => (cmd === "auto_run_list_accounts" ? [] : undefined));
   renderAutoRun(null);
