@@ -137,8 +137,7 @@ test("a run from this organization never moves the home project", async () => {
 
 // A project a notification handed to the Work Manager belongs to the
 // organization it was raised in; a run that takes the person to another
-// organization leaves it behind. Getting back to the board by the keyboard
-// is the way in that clears nothing by itself.
+// organization leaves it behind. The way back in is the Work Manager button.
 test("a run from another organization drops the project a notification handed over", async () => {
   claimCacheFor("a@b.com");
   localStorage.setItem(
@@ -184,8 +183,8 @@ test("a run from another organization drops the project a notification handed ov
   await waitFor(() => expect(storedPrefs().org).toBe("other"));
   await waitFor(() => expect(screen.queryByRole("heading", { name: "Board" })).not.toBeInTheDocument());
 
-  // Back to the Work Manager from the keyboard.
-  fireEvent.keyDown(window, { key: "M", ctrlKey: true, shiftKey: true });
+  // Back to the Work Manager from its button.
+  fireEvent.click(screen.getByRole("button", { name: /Work Manager/ }));
   expect(await screen.findByRole("heading", { name: "Board" })).toBeInTheDocument();
   await waitFor(() =>
     expect(boards[boards.length - 1]).toEqual(expect.objectContaining({ organization: "other", project: "Mobile" })),

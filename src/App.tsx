@@ -449,6 +449,8 @@ export default function App() {
       if (e.shiftKey && e.key.toLowerCase() === "m") {
         e.preventDefault();
         setWorkMode((w) => !w);
+        // A project a notification handed over is good for that visit only.
+        setWorkProject(null);
         return;
       }
       // Read at the moment of the press: the rows close up around a
@@ -579,6 +581,9 @@ export default function App() {
     setStartOnModules(false);
     setWorkMode(false); // any tab click exits Work Manager mode
     setCaseSelection(null); // direct navigation returns Edit to PBI mode
+    // A project a notification handed to the Work Manager is good for that
+    // visit; leaving by any tab (or the Settings gear) ends it.
+    setWorkProject(null);
   };
   // Auto Run's Export to Playwright is a shortcut to the Playwright tab,
   // which holds the Export dialog (lib/playwrightExport).
@@ -1293,7 +1298,10 @@ export default function App() {
           org={org}
           allProjects={allProjects}
           onSwitchProject={setProject}
-          onToggleWork={() => setWorkMode((w) => !w)}
+          onToggleWork={() => {
+            setWorkMode((w) => !w);
+            setWorkProject(null);
+          }}
         />
       </Suspense>
 

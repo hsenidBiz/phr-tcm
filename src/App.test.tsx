@@ -952,6 +952,87 @@ test("the Settings Home project picker changes the home project", async () => {
   expect(screen.getByRole("combobox", { name: "Home project" })).toHaveTextContent("Payroll");
 });
 
+/// A notification for a Payroll work item, opened while the projects show
+/// together: the Work Manager is handed Payroll while the home project stays
+/// Web. Resolves with every board the app asked for.
+async function openPayrollNotification() {
+  savedPrefs();
+  localStorage.setItem("tcm-v2-tour-done", "yes");
+  claimCacheFor("a@b.com");
+  localStorage.setItem(
+    "tcm-v2-notifications:acme",
+    JSON.stringify([
+      {
+        id: "assigned:Payroll:55",
+        kind: "assigned",
+        title: "Item 55 was assigned to you",
+        body: "Fix the payslip",
+        at: new Date().toISOString(),
+        read: false,
+        href: "https://x/55",
+        target: { kind: "work-item", id: 55, project: "Payroll" },
+      },
+    ]),
+  );
+  resetNotifications();
+  const boards: Array<{ organization: string; project: string }> = [];
+  signedInMocks((cmd, args) => {
+    if (cmd === "list_projects")
+      return [
+        { id: "p1", name: "Web" },
+        { id: "p2", name: "Payroll" },
+      ];
+    if (cmd === "fetch_board") {
+      boards.push(args as { organization: string; project: string });
+      return { items: [], states_by_type: {} };
+    }
+    if (cmd === "pr_overview") return { awaiting: [], mine: [] };
+    if (cmd === "list_repos") return [];
+  });
+  renderApp();
+  await screen.findByText("a@b.com");
+  fireEvent.click(await screen.findByRole("button", { name: /Notifications/ }));
+  fireEvent.click(screen.getByRole("button", { name: "Item 55 was assigned to you" }));
+  expect(await screen.findByRole("heading", { name: "Board" })).toBeInTheDocument();
+  await waitFor(() => expect(boards[boards.length - 1]?.project).toBe("Payroll"));
+  return boards;
+}
+
+// The project a notification handed to the Work Manager is good for that visit
+// only. Coming back to the board any other way shows the person's own project,
+// so a work item made there is not quietly made in the notification's.
+test("Ctrl+Shift+M back into the Work Manager drops a notification's project", async () => {
+  const boards = await openPayrollNotification();
+  fireEvent.keyDown(window, { key: "1", ctrlKey: true });
+  await waitFor(() => expect(screen.queryByRole("heading", { name: "Board" })).not.toBeInTheDocument());
+
+  fireEvent.keyDown(window, { key: "m", ctrlKey: true, shiftKey: true });
+  expect(await screen.findByRole("heading", { name: "Board" })).toBeInTheDocument();
+  await waitFor(() => expect(boards[boards.length - 1]?.project).toBe("Web"));
+});
+
+test("the palette's Work Manager toggle drops a notification's project", async () => {
+  const boards = await openPayrollNotification();
+  fireEvent.keyDown(window, { key: "1", ctrlKey: true });
+  await waitFor(() => expect(screen.queryByRole("heading", { name: "Board" })).not.toBeInTheDocument());
+
+  fireEvent.keyDown(window, { key: "k", ctrlKey: true });
+  fireEvent.click(await screen.findByText("Toggle Work Manager"));
+  expect(await screen.findByRole("heading", { name: "Board" })).toBeInTheDocument();
+  await waitFor(() => expect(boards[boards.length - 1]?.project).toBe("Web"));
+});
+
+test("a visit to Settings drops a notification's project", async () => {
+  const boards = await openPayrollNotification();
+  fireEvent.click(screen.getByLabelText("Settings"));
+  await waitFor(() => expect(screen.queryByRole("heading", { name: "Board" })).not.toBeInTheDocument());
+
+  // The gear again goes back to the Work Manager it came from.
+  fireEvent.click(screen.getByLabelText("Close settings"));
+  expect(await screen.findByRole("heading", { name: "Board" })).toBeInTheDocument();
+  await waitFor(() => expect(boards[boards.length - 1]?.project).toBe("Web"));
+});
+
 /// Search Suites hands a set of work item ids to Update Test Cases. The ids
 /// belong to one project, so a PBI of another project (which moves the
 /// effective project) drops them, exactly as a project change does; a PBI of
