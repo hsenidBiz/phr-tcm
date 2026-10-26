@@ -95,8 +95,9 @@ export default function AiBridge() {
   // Each card follows its module (lib/modules). Environments exist for Auto
   // Run - its site, accounts and sign-ins - so that card needs Auto Run; the
   // API templates switch needs API Templates. Subscribing here also makes
-  // the tool rows and the breakdown below follow a module switched while
-  // this screen is open.
+  // the cards and the breakdown below follow a module switched while this
+  // screen is open. A module's tools have no row or switch of their own in
+  // the tool list: the module being on offers them.
   const dbOn = useModule("db_access");
   const writingOn = useModule("writing_style");
   const autoRunOn = useModule("auto_run");
@@ -828,10 +829,8 @@ export default function AiBridge() {
         </div>
         <p className="text-xs text-muted">
           The database you choose here is the one this app&apos;s own database tools
-          use. Switch them on with{" "}
-          <span className="font-medium text-text">Database Read Access</span> in the
-          tool list, and an assistant can find the table behind a screen and read it
-          while it writes cases.
+          use. They are on while the Database Access module is on, and an assistant
+          can then find the table behind a screen and read it while it writes cases.
         </p>
 
         <div className="space-y-2">
@@ -938,8 +937,8 @@ export default function AiBridge() {
             />
           )}
 
-          {/* The second switch. Reading is the "Database Read Access"
-              row in the tool list; writing is its own decision and lives
+          {/* The only switch. Reading is the Database Access module being
+              on; writing is its own decision and lives
               here, beside the database it applies to, because that is
               what decides whether it may be made at all.
 
@@ -1048,9 +1047,8 @@ export default function AiBridge() {
       )}
 
       {/* Whether an assistant gets the network tools at all: until this is
-          on, Rust neither lists them nor answers their routes. They also
-          ride in the Auto Run scripts row, so that row off takes them too.
-          Shown while Auto Run is on, but not in capture mode, which hides
+          on, Rust neither lists them nor answers their routes. They are
+          Auto Run's tools, so Auto Run off takes them too. Shown while Auto Run is on, but not in capture mode, which hides
           the Auto Run tools from the help site's shots (toolShown). */}
       {autoRunOn && !isCaptureMode() && (
         <section className="space-y-3 rounded-md border border-border bg-surface p-4">
@@ -1118,7 +1116,7 @@ export default function AiBridge() {
           )}
           {toolShown("list_api_templates") && (
             <li>
-              <span className="font-medium text-text">API templates</span> — build, test and run templates that create test data through the application itself. It can also map a module&apos;s steps as a flow of stages and check which stages are done before each run, so templates go in the order the application allows. Those checks read the company database, so they need Database Read Access switched on. Testing and running also need the API templates switch above, which is off by default. Off: you do template work by hand.
+              <span className="font-medium text-text">API templates</span> — build, test and run templates that create test data through the application itself. It can also map a module&apos;s steps as a flow of stages and check which stages are done before each run, so templates go in the order the application allows. Those checks read the company database, so they need the Database Access module on. Testing and running also need the API templates switch above, which is off by default. Off: you do template work by hand.
             </li>
           )}
           {toolShown("open_report") && (

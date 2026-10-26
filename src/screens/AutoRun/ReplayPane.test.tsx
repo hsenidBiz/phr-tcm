@@ -121,7 +121,8 @@ test("start sends the selection, the browser and the watch choice", async () => 
 });
 
 test("the run is told Database Read Access is off, so it checks no precondition", async () => {
-  localStorage.setItem("tcm-v2-mcp-disabled", JSON.stringify(["db_lookup", "db_query"]));
+  // Database Read Access is the Database Access module being on.
+  setModulesForTest(["auto_run"]);
   const calls: { dbReadAccess: boolean }[] = [];
   mockIPC(
     (cmd, args) => {

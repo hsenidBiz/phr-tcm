@@ -1,7 +1,8 @@
 // New folder: makes a feature folder in the clone, with test-cases/ and
 // specs/ each holding a .gitkeep so git keeps it (Rust's pw_repo::new_folder).
-// On the Overview and in Export to Playwright; the caller reads the clone's
-// folders again once one is made, so it is listed and offered at once.
+// In Export to Playwright, under Areas (the Overview makes folders from the
+// tree's right-click menu instead); the caller reads the clone's folders
+// again once one is made, so it is listed and offered at once.
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { commands } from "../../bindings";

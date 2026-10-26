@@ -15,6 +15,13 @@ import { joinTags, splitTags } from "../components/ui/tagfield";
 import { useQueue } from "../hooks/useQueue";
 import { IconAdd, IconSetDefault } from "../lib/actionIcons";
 import { loadDefaultTags } from "../lib/defaultTags";
+import { keptSteps } from "../lib/keptSteps";
+
+/** A fresh case opens with this many blank steps, so the usual case needs no
+ * "Add Step" clicks. */
+const STARTING_STEPS = 3;
+const blankSteps = (): Step[] =>
+  Array.from({ length: STARTING_STEPS }, () => ({ action: "", expected: "" }));
 
 export default function ManualEntry({
   org,
@@ -29,7 +36,7 @@ export default function ManualEntry({
 }) {
   const { queue, setQueue } = useQueue(org, pbi?.id ?? null);
   const [title, setTitle] = useState("");
-  const [steps, setSteps] = useState<Step[]>([{ action: "", expected: "" }]);
+  const [steps, setSteps] = useState<Step[]>(blankSteps);
   // Tags come in two halves. The project's defaults are FIXED: they ride
   // on every case and the field refuses to remove them, so the only way to
   // change them is the dialog that owns them. `extras` is what this one
@@ -62,7 +69,8 @@ export default function ManualEntry({
     );
   }
 
-  const cleanSteps = steps.filter((s) => s.action.trim());
+  // A step is skipped only when BOTH halves are empty (`keptSteps`).
+  const cleanSteps = keptSteps(steps);
 
   const lockedTags = splitTags(defaults);
   const tags = joinTags([...lockedTags, ...splitTags(extras)]);
@@ -88,7 +96,7 @@ export default function ManualEntry({
     };
     setQueue((q) => [...q, tc]);
     setTitle("");
-    setSteps([{ action: "", expected: "" }]);
+    setSteps(blankSteps());
     // Only the extras go. The defaults stay because the next case wants
     // them too - and because clearing them here would quietly undo a
     // project setting from a form that is not allowed to change it.

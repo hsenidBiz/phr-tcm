@@ -903,8 +903,18 @@ table {
 /* The parts swing past the 24x24 box, which an <svg> clips by default; the
    old one-piece bell turned the whole element and was never clipped. */
 .nav-glyph.ng-bell { overflow: visible; }
-.ico-cog-turn { animation: ico-cog-turn 0.6s cubic-bezier(0.22, 1, 0.36, 1); }
-.ico-cog-turn-back { animation: ico-cog-turn-back 0.6s cubic-bezier(0.22, 1, 0.36, 1); }
+/* The turn pivots on the gear's own centre, not on whatever origin the
+   element would otherwise inherit, so it cannot drift off-centre. */
+.ico-cog-turn {
+  transform-origin: center;
+  transform-box: fill-box;
+  animation: ico-cog-turn 0.6s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.ico-cog-turn-back {
+  transform-origin: center;
+  transform-box: fill-box;
+  animation: ico-cog-turn-back 0.6s cubic-bezier(0.22, 1, 0.36, 1);
+}
 @media (prefers-reduced-motion: reduce) {
   .ico-cog-turn,
   .ico-cog-turn-back { animation: none; }

@@ -5,6 +5,7 @@
 
 import { useState } from "react";
 import type { TestCase } from "../bindings";
+import { keptSteps } from "../lib/keptSteps";
 import { validateCase } from "../lib/validate";
 import { CaseTextField, PreviewToggle } from "./CaseText";
 import ModuleField from "./ModuleField";
@@ -31,9 +32,13 @@ export default function QueueCaseEditor({
 }) {
   const [tc, setTc] = useState<TestCase>(original);
   const [previewPre, setPreviewPre] = useState(false);
-  const problem = validateCase(tc);
+  // A step left completely blank is not part of the case: it is dropped on
+  // save (as in Manual Entry), so it neither blocks the save nor counts as
+  // a change.
+  const cleaned: TestCase = { ...tc, steps: keptSteps(tc.steps) };
+  const problem = validateCase(cleaned);
   // Same-shape objects edited only by spreads: string compare works.
-  const dirty = JSON.stringify(tc) !== JSON.stringify(original);
+  const dirty = JSON.stringify(cleaned) !== JSON.stringify(original);
 
   return (
     <div className="space-y-2 border-t border-border p-3">
@@ -45,7 +50,7 @@ export default function QueueCaseEditor({
           onChange={(e) => setTc((t) => ({ ...t, title: e.target.value }))}
           onKeyDown={(e) => {
             // Enter here = the Save button, under the same conditions.
-            if (e.key === "Enter" && dirty && !problem) onSave(tc);
+            if (e.key === "Enter" && dirty && !problem) onSave(cleaned);
           }}
         />
         <Select
@@ -109,7 +114,7 @@ export default function QueueCaseEditor({
           size="sm"
           disabled={Boolean(problem) || !dirty}
           title={dirty ? undefined : "Nothing changed yet"}
-          onClick={() => onSave(tc)}
+          onClick={() => onSave(cleaned)}
         >
           <IconConfirm aria-hidden />
           Save to queue

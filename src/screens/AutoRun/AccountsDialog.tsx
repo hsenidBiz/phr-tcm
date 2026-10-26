@@ -22,6 +22,7 @@ import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
 import { Checkbox } from "../../components/ui/checkbox";
 import { Input } from "../../components/ui/input";
+import { SearchInput } from "../../components/ui/search-input";
 import { Modal } from "../../components/ui/modal";
 import { MODAL_LARGE } from "./modalWidths";
 import { IconAdd, IconCancel, IconClear, IconConfirm, IconRemove } from "../../lib/actionIcons";
@@ -326,12 +327,12 @@ export default function AccountsDialog({ onClose }: { onClose: () => void }) {
           <section className="space-y-2 border-t border-border pt-3">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <h3 className="text-xs font-semibold text-text">Proposed by the assistant ({proposals.length})</h3>
-              <Input
+              <SearchInput
                 aria-label="Search proposed logins"
                 placeholder="Search logins"
                 value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                className="h-8 w-48 py-1 text-xs"
+                onChange={setQuery}
+                className="w-48"
               />
             </div>
             <p className="text-xs text-muted">Each login uses its password from the database unless you set one.</p>

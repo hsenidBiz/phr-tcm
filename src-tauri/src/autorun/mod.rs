@@ -585,7 +585,7 @@ pub struct CaseRecord {
     pub retried: Option<String>,
     /// Something the run did not do for this case and the case went on
     /// without, said so a person reviewing it knows: today only that its
-    /// preconditions were not checked while Database Read Access was off
+    /// preconditions were not checked while the Database Access module was off
     /// (`preconditions::NOT_CHECKED`). Never a reason to block.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub notice: Option<String>,

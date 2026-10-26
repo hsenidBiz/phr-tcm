@@ -482,9 +482,9 @@ export const importFile: Screen = {
       id: "bulk-module",
       shot: BULK,
       group: "many-at-once",
-      locate: { role: "checkbox", name: "Set module" },
-      name: "Set module",
-      does: "Tick it to choose one module for all of them.",
+      locate: { role: "combobox", name: "Module" },
+      name: "Module",
+      does: "Pick one module to give all of them. It reads **Leave unchanged** until you do; the x beside a chosen module puts it back. **Clear module** beside it empties the module on every selected case instead; picking a module lets go of it.",
     },
     {
       id: "bulk-tags",
@@ -492,15 +492,15 @@ export const importFile: Screen = {
       group: "many-at-once",
       locate: { role: "combobox", name: "Tags" },
       name: "Tags",
-      does: "Leave tags unchanged, add tags to the ones each case already has, or replace them.",
+      does: "Leave tags unchanged, add tags to the ones each case already has (type at least one), or replace them. Replace with nothing typed clears them.",
     },
     {
       id: "bulk-preconditions",
       shot: BULK,
       group: "many-at-once",
-      locate: { role: "checkbox", name: "Set preconditions" },
-      name: "Set preconditions",
-      does: "Tick it to give them all the same preconditions.",
+      locate: { role: "combobox", name: "Preconditions" },
+      name: "Preconditions",
+      does: "**Leave unchanged** keeps each case's own. **Replace with** shows a box whose text goes on all of them. **Clear** empties them.",
     },
     {
       id: "bulk-cancel",
@@ -516,7 +516,7 @@ export const importFile: Screen = {
       group: "many-at-once",
       locate: { role: "button", nameRe: "^Apply to \\d+$" },
       name: "Apply",
-      does: "Makes the changes. Titles and steps are never touched, and the file each case came from is updated to match.",
+      does: "Makes the changes. The line above it names what will change, and it is greyed out while that line reads **Nothing to change yet**. Titles and steps are never touched, and the file each case came from is updated to match.",
     },
 
     // --- Rename -----------------------------------------------------------------
@@ -721,7 +721,7 @@ export const importFile: Screen = {
   tips: [
     "Only a case id updates a work item. A title that matches an existing case is a warning, never an update.",
     "While a file is watched, a line under **Import JSON** names it and how many cases it added. **Stop** stops following that file (**Stop all** there stops every one) and asks whether to keep the cases it added or remove them too. Cases you typed by hand are never removed.",
-    "Under each watched file, **Attach spec…** adds specification documents (Markdown files) and **Add wiki link** adds an Azure DevOps wiki page. Both open beside the cases on the review page. Nothing else can be a spec: any other file or link is refused with the reason.",
+    "On each watched file's line, **Attach spec…** adds specification documents (Markdown files) and **Add wiki link** adds an Azure DevOps wiki page. Both open beside the cases on the review page. Nothing else can be a spec: any other file or link is refused with the reason. The specs are listed under the file as small chips grouped by folder, with the folder shown once above them; point at a chip to see its full path or link, and press the x in it to remove that spec. Past twelve specs, the rest fold behind a **+N more** chip, and **Show fewer** folds them again.",
     "**General comments**, under the watched files, holds notes about the whole set, such as a question you asked a developer. They are saved into the file.",
     "When a watched file changes, a panel says what was added, changed or removed, and the rows it touched are outlined in the queue. **Show details** lists each change; the x closes the panel. A new case the file changed also gets a link on its own row, such as \"Title, 2 steps changed\", that opens the old and new wording right there; closing the panel removes the link.",
     "With the queue empty, **Recent JSON Imports** lists files you imported before. **Open** imports one again as it is now; the x takes it off the list.",

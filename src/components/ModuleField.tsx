@@ -13,12 +13,15 @@ export default function ModuleField({
   value,
   onChange,
   className,
+  placeholder = "Module",
 }: {
   org: string;
   project: string;
   value: string;
   onChange: (v: string) => void;
   className?: string;
+  /** What the empty picker says (a bulk edit says "Leave unchanged"). */
+  placeholder?: string;
 }) {
   const { prefs } = useFieldRefs(org, project);
 
@@ -33,7 +36,7 @@ export default function ModuleField({
     <Combobox
       ariaLabel="Module"
       className={className}
-      placeholder="Module"
+      placeholder={placeholder}
       value={value}
       onChange={onChange}
       options={values.data ?? []}

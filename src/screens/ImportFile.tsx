@@ -40,6 +40,7 @@ import {
   IconStopWatching,
   IconWikiLink,
 } from "../lib/actionIcons";
+import { cn } from "../lib/cn";
 import { unwrapStr } from "../lib/ipc";
 
 /** Two spellings of the same file. Windows paths compare case-insensitively
@@ -58,19 +59,91 @@ export function specEntryFor(jsonPath: string, picked: string): string {
   return p.toLowerCase().startsWith(dir.toLowerCase()) ? p.slice(dir.length) : picked;
 }
 
-/** One watched file's `specs` list: spec documents and wiki links shown
- * beside its cases in the browser review page. Attach spec picks one or
- * more files off disk; Add wiki link pastes a URL; either writes the list
- * straight back to the file's own `specs` field. */
-function FileSpecs({
+/** How many spec chips a watched file shows before the rest fold behind
+ * "+N more". */
+const SPEC_CHIPS_SHOWN = 12;
+
+const isWikiLink = (spec: string) => /^https?:\/\//i.test(spec);
+
+/** A spec path split at its last separator: the folder it sits in (as
+ * written, so a relative `../doc/Solution Design` stays that) and the file. */
+function splitSpec(spec: string): { dir: string; name: string } {
+  const at = Math.max(spec.lastIndexOf("/"), spec.lastIndexOf("\\"));
+  return at < 0 ? { dir: "", name: spec } : { dir: spec.slice(0, at), name: spec.slice(at + 1) };
+}
+
+/** A wiki page's name from its link: the last part of the address, read as
+ * words. The link itself stays the chip's tooltip, never its text. */
+function wikiTitle(url: string): string {
+  try {
+    const u = new URL(url);
+    const last = u.pathname.split("/").filter(Boolean).pop() ?? "";
+    const words = decodeURIComponent(last).replace(/[-_]+/g, " ").trim();
+    return words && !/^\d+$/.test(words) ? words : "Wiki page";
+  } catch {
+    return "Wiki page";
+  }
+}
+
+const chipLabel = (spec: string) => (isWikiLink(spec) ? wikiTitle(spec) : splitSpec(spec).name);
+
+/** Each spec's remove button name. A label that is alone is "Remove <label>";
+ * two chips that share one (the same file name in two folders, two wiki links
+ * that both fall back to "Wiki page") add where they differ, so a screen
+ * reader never hears two identical buttons. */
+function removeNames(specs: string[]): Map<string, string> {
+  const byLabel = new Map<string, string[]>();
+  for (const s of specs) byLabel.set(chipLabel(s), [...(byLabel.get(chipLabel(s)) ?? []), s]);
+  const names = new Map<string, string>();
+  for (const [label, same] of byLabel) {
+    same.forEach((s, i) => {
+      if (same.length === 1) names.set(s, `Remove ${label}`);
+      else if (isWikiLink(s)) names.set(s, `Remove ${label} (link ${i + 1})`);
+      else names.set(s, `Remove ${label} from ${splitSpec(s).dir || "this folder"}`);
+    });
+  }
+  // A last guard: names that are still the same get a number.
+  const seen = new Map<string, number>();
+  for (const [s, name] of names) {
+    const n = (seen.get(name) ?? 0) + 1;
+    seen.set(name, n);
+    if (n > 1) names.set(s, `${name} (${n})`);
+  }
+  return names;
+}
+
+/** The specs, grouped by the folder they sit in (wiki links together), in
+ * the order each group first appears. */
+function groupSpecs(specs: string[]): { key: string; dir: string; items: string[] }[] {
+  const groups: { key: string; dir: string; items: string[] }[] = [];
+  for (const spec of specs) {
+    const wiki = isWikiLink(spec);
+    const dir = wiki ? "" : splitSpec(spec).dir;
+    const key = wiki ? "\u0000wiki" : `dir:${dir}`;
+    const found = groups.find((g) => g.key === key);
+    if (found) found.items.push(spec);
+    else groups.push({ key, dir, items: [spec] });
+  }
+  return groups;
+}
+
+/** One watched file's line, and its `specs` list under it: spec documents
+ * and wiki links shown beside its cases in the browser review page. Attach
+ * spec picks one or more files off disk; Add wiki link pastes a URL; either
+ * writes the list straight back to the file's own `specs` field. The specs
+ * are chips under their folder, each with its own remove button. */
+function WatchedFileRow({
   watch,
+  onStop,
   onSaved,
 }: {
   watch: WatchedFile;
+  onStop: () => void;
   onSaved: (specs: string[], stamp: string) => void;
 }) {
   const [linkOpen, setLinkOpen] = useState(false);
   const [link, setLink] = useState("");
+  const [expanded, setExpanded] = useState(false);
   const specs = watch.specs ?? [];
   const save = useMutation({
     mutationFn: (next: string[]) => unwrapStr(commands.saveSpecs(watch.path, next)),
@@ -96,24 +169,19 @@ function FileSpecs({
     setLinkOpen(false);
     if (!specs.some((s) => s.toLowerCase() === url.toLowerCase())) save.mutate([...specs, url]);
   };
+  const hidden = expanded ? 0 : Math.max(0, specs.length - SPEC_CHIPS_SHOWN);
+  const groups = groupSpecs(hidden > 0 ? specs.slice(0, SPEC_CHIPS_SHOWN) : specs);
+  const name = fileName(watch.path);
+  const removeName = removeNames(specs);
   return (
-    <div className="ml-4 space-y-1 text-xs">
-      {specs.map((s) => (
-        <div key={s} className="flex items-center gap-2">
-          <span className="id-mono min-w-0 flex-1 truncate text-muted" title={s}>
-            {s}
-          </span>
-          <Button
-            variant="ghost"
-            size="sm"
-            aria-label={`Remove spec ${s}`}
-            onClick={() => save.mutate(specs.filter((x) => x !== s))}
-          >
-            <IconRemove aria-hidden />
-          </Button>
-        </div>
-      ))}
-      <div className="flex items-center gap-2">
+    <>
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+        <span className="id-mono min-w-0 flex-1 basis-40 truncate text-text" title={watch.path}>
+          {name}
+        </span>
+        <span className="shrink-0 text-faint">
+          {watch.snapshot.length} case{watch.snapshot.length === 1 ? "" : "s"}
+        </span>
         <Button variant="ghost" size="sm" disabled={save.isPending} onClick={() => void attach()}>
           <IconAttach aria-hidden />
           Attach spec…
@@ -122,6 +190,7 @@ function FileSpecs({
           <Input
             aria-label="Wiki page link"
             placeholder="Paste an Azure DevOps wiki page link"
+            className="w-72 max-w-full py-1.5"
             value={link}
             onChange={(e) => setLink(e.target.value)}
             onKeyDown={(e) => {
@@ -139,8 +208,60 @@ function FileSpecs({
             Add wiki link
           </Button>
         )}
+        <Button variant="ghost" size="sm" aria-label={`Stop watching ${name}`} onClick={onStop}>
+          <IconStopWatching aria-hidden />
+          Stop
+        </Button>
       </div>
-    </div>
+      {specs.length > 0 && (
+        <div className="ml-4 space-y-1.5">
+          {groups.map((g) => (
+            <div key={g.key} className="space-y-0.5">
+              {g.dir && (
+                <div className="id-mono truncate text-muted" title={g.dir}>
+                  {g.dir}
+                </div>
+              )}
+              <ul className="flex flex-wrap gap-1">
+                {g.items.map((s) => {
+                  const label = chipLabel(s);
+                  return (
+                    <li
+                      key={s}
+                      title={s}
+                      className="inline-flex max-w-full items-center gap-1 rounded border border-border/60 bg-surface py-0.5 pl-1.5 pr-0.5"
+                    >
+                      {isWikiLink(s) && <IconWikiLink aria-hidden className="size-3 shrink-0 text-muted" />}
+                      <span className={cn("min-w-0 truncate text-text", !isWikiLink(s) && "id-mono")}>{label}</span>
+                      <button
+                        type="button"
+                        aria-label={removeName.get(s) ?? `Remove ${label}`}
+                        disabled={save.isPending}
+                        className="flex size-4 shrink-0 items-center justify-center rounded text-faint hover:text-danger focus-visible:outline-2 focus-visible:outline-accent disabled:pointer-events-none disabled:opacity-50"
+                        onClick={() => save.mutate(specs.filter((x) => x !== s))}
+                      >
+                        <IconCancel aria-hidden className="size-3" />
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
+          ))}
+          {specs.length > SPEC_CHIPS_SHOWN && (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-auto px-1.5 py-0.5"
+              aria-expanded={expanded}
+              onClick={() => setExpanded((e) => !e)}
+            >
+              {expanded ? "Show fewer" : `+${hidden} more`}
+            </Button>
+          )}
+        </div>
+      )}
+    </>
   );
 }
 
@@ -673,8 +794,11 @@ export default function ImportFile({
 
   return (
     <div className="space-y-4">
-      <section data-tour="import-drop" className="space-y-3 rounded-md border border-border bg-surface p-4">
-        <h2 className="text-sm font-semibold text-text">Import test cases</h2>
+      <section
+        data-tour="import-drop"
+        aria-label="Import test cases"
+        className="space-y-3 rounded-md border border-border bg-surface p-4"
+      >
         <p className="text-sm text-muted">
           Import your test cases from a JSON file. Imported files are watched -
           edit the file and the changes flow into the queue automatically.
@@ -717,28 +841,9 @@ export default function ImportFile({
             <ul className="space-y-0.5">
               {watches.map((w) => (
                 <li key={w.path} className="space-y-1">
-                  <div className="flex items-center gap-2">
-                    <span
-                      className="id-mono min-w-0 flex-1 truncate text-text"
-                      title={w.path}
-                    >
-                      {fileName(w.path)}
-                    </span>
-                    <span className="shrink-0 text-faint">
-                      {w.snapshot.length} case{w.snapshot.length === 1 ? "" : "s"}
-                    </span>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      aria-label={`Stop watching ${fileName(w.path)}`}
-                      onClick={() => setDropping([w])}
-                    >
-                      <IconStopWatching aria-hidden />
-                      Stop
-                    </Button>
-                  </div>
-                  <FileSpecs
+                  <WatchedFileRow
                     watch={w}
+                    onStop={() => setDropping([w])}
                     onSaved={(specs, stamp) => {
                       setWatches((prev) => patchWatch(prev, w.path, { specs, stamp }));
                       // Same reasoning as onWatchPatched below: this write's
@@ -777,7 +882,7 @@ export default function ImportFile({
               aria-label="Share link"
               placeholder="Paste a share link from a colleague"
               title="Links are one-time use - once imported, the link expires."
-              className="id-mono flex-1 py-1.5 text-xs"
+              className="flex-1 py-1.5"
               value={shareLink}
               onChange={(e) => setShareLink(e.target.value)}
             />

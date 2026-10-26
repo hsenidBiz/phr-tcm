@@ -5,9 +5,7 @@
 // them. Escape empties it while it has focus; so does the clear button
 // beside it.
 
-import { Input } from "../../components/ui/input";
-import { IconClear } from "../../lib/actionIcons";
-import { cn } from "../../lib/cn";
+import { SearchInput } from "../../components/ui/search-input";
 
 type Searchable = { id: number; title: string };
 
@@ -54,33 +52,20 @@ export default function CaseSearch({
   wide?: boolean;
 }) {
   return (
-    <span className={cn("relative items-center", wide ? "flex w-full" : "inline-flex")}>
-      <Input
-        aria-label="Search test cases"
-        className={cn("py-1.5 pl-2 pr-8", wide ? "w-full" : "w-56")}
-        placeholder="Search test cases by id or title"
-        title="Search the Test cases list by case id or title. Separate several with commas, for example 135592, 135601"
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        onKeyDown={(e) => {
-          if (e.key === "Escape" && value !== "") {
-            // Only this box's own text: a dialog behind it is not closed.
-            e.stopPropagation();
-            onChange("");
-          }
-        }}
-      />
-      {value !== "" && (
-        <button
-          type="button"
-          aria-label="Clear search"
-          title="Clear search"
-          className="absolute right-1.5 rounded p-1 text-muted transition-colors hover:text-accent [&_svg]:size-3.5"
-          onClick={() => onChange("")}
-        >
-          <IconClear aria-hidden />
-        </button>
-      )}
-    </span>
+    <SearchInput
+      aria-label="Search test cases"
+      className={wide ? "w-full" : "w-56"}
+      placeholder="Search test cases by id or title"
+      title="Search the Test cases list by case id or title. Separate several with commas, for example 135592, 135601"
+      value={value}
+      onChange={onChange}
+      onKeyDown={(e) => {
+        if (e.key === "Escape" && value !== "") {
+          // Only this box's own text: a dialog behind it is not closed.
+          e.stopPropagation();
+          onChange("");
+        }
+      }}
+    />
   );
 }

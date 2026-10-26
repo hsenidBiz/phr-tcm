@@ -2,7 +2,7 @@
 // a script, with a person watching (one case or a selection) or unattended,
 // and keeps the results on this computer until they are reviewed and sent.
 // Two tabs, Test cases and Past runs, with the Setup panel beside the
-// cases. A case's Script and Run buttons are on its card once it is open.
+// cases. A case's View script and Run buttons are on its card once it is open.
 //
 // Locates come from screens/AutoRun/index.tsx, ScriptEditor.tsx,
 // RunPane.tsx, ReplayPane.tsx, PastRuns.tsx, RunReview.tsx,
@@ -42,10 +42,10 @@ const TO_SCRIPT: Step[] = [
   READY,
   { click: { role: "button", name: "Show details for #5003" } },
   { waitFor: { role: "button", name: "Hide details for #5003" } },
-  { click: { role: "button", name: "Edit script for #5003" } },
+  { click: { role: "button", name: "View script for #5003" } },
   { waitFor: { role: "region", name: "Step 1" } },
 ];
-/** Opens a case's card, where its Script and Run buttons are. */
+/** Opens a case's card, where its View script and Run buttons are. */
 const OPEN_CARD = (id: number): Step[] => [
   { click: { role: "button", name: `Show details for #${id}` } },
   { waitFor: { role: "button", name: `Hide details for #${id}` } },
@@ -97,7 +97,7 @@ export const autoRun: Screen = {
         NAV,
         READY,
         ...OPEN_CARD(5001),
-        { click: { role: "button", name: "Edit script for #5001" } },
+        { click: { role: "button", name: "View script for #5001" } },
         { waitFor: { role: "list", name: "Setup steps" } },
         { scrollTo: { role: "list", name: "Setup steps" } },
       ],
@@ -313,17 +313,9 @@ export const autoRun: Screen = {
       id: "edit-script",
       shot: CASES,
       group: "scripts",
-      locate: { role: "button", name: "Edit script for #5002" },
-      name: "Script",
-      does: "Opens the case's script, in plain sentences. On a case without one, the button reads **Add script**.",
-    },
-    {
-      id: "add-script",
-      shot: CASES,
-      group: "scripts",
-      locate: { role: "button", name: "Add script for #5005" },
-      name: "Add script",
-      does: "Writes a script for a case that has none yet. Until it has one, the case cannot be run or selected.",
+      locate: { role: "button", name: "View script for #5002" },
+      name: "View script",
+      does: "Opens the case's script, in plain sentences. A case without a script has no button: only an assistant writes one, and until it has one the case cannot be run or selected.",
     },
     {
       id: "run-one",
@@ -469,7 +461,7 @@ export const autoRun: Screen = {
       name: "Preconditions",
       does:
         "Records the case relies on, each one a stage of a flow on the API Templates tab that must be done for a value. The run checks them before it signs in, and a case whose precondition is not met is **Blocked** and runs no step. " +
-        "Preconditions are checked in the company database, so they are skipped, and the case says **Not checked**, while Database Read Access is off.",
+        "Preconditions are checked in the company database, so they are skipped, and the case says **Not checked**, while the Database Access module is off.",
     },
     {
       id: "remove-precondition",
@@ -935,8 +927,7 @@ export const autoRun: Screen = {
     {
       title: "Write or import scripts",
       steps: [
-        "On **Test cases**, open a case and press **Add script**, write its actions, check that **Checks** covers every step, and press **Save script**.",
-        "Or let an assistant write the scripts for the whole Product Backlog Item. It explores the site with discovery and saves each script itself.",
+        "Ask an assistant to write the scripts for the whole Product Backlog Item. It explores the site with discovery and saves each script itself.",
         "To bring in a file of scripts, press **More**, **Import scripts** and pick it. The scripts are checked against the live app and their test cases the same way, so sign in first.",
         "A script whose case needs a draft of its own has a setup, which runs every time the case runs. Open the script to read its **Setup**.",
       ],

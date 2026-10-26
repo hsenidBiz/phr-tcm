@@ -124,3 +124,36 @@ test("Move is dead until a destination is picked", () => {
   mount({});
   expect(screen.getByRole("button", { name: /Pick a PBI first/ })).toBeDisabled();
 });
+
+// "Too thin": the picker is a wide, tall window with a full-width search, and
+// a long PBI title wraps over two lines instead of being cut off.
+test("the dialog is wide and tall, the search fills its width, and titles wrap to two lines", async () => {
+  mount({});
+  const panel = screen.getByRole("dialog");
+  expect(panel.className).toContain("max-w-3xl");
+  expect(panel.className).toContain("h-[80vh]");
+
+  const box = screen.getByLabelText("Search for the destination PBI");
+  expect(box).toHaveFocus();
+  // The field fills the search wrapper, which fills the dialog's width.
+  expect(box.className).toContain("w-full");
+  expect(box.parentElement!.className).toContain("w-full");
+
+  fireEvent.change(box, { target: { value: "PBI" } });
+  const title = await screen.findByText("The right PBI", {}, { timeout: 3000 });
+  expect(title.className).toContain("line-clamp-2");
+  expect(title.className).not.toContain("truncate");
+  expect(title.closest("button")!.textContent).toContain("#200");
+});
+
+test("choosing a hit and pressing change returns to the search", async () => {
+  mount({});
+  fireEvent.change(screen.getByLabelText("Search for the destination PBI"), {
+    target: { value: "right" },
+  });
+  fireEvent.click(await screen.findByText("The right PBI", {}, { timeout: 3000 }));
+  expect(screen.queryByLabelText("Search for the destination PBI")).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "change" }));
+  expect(screen.getByLabelText("Search for the destination PBI")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: /Pick a PBI first/ })).toBeDisabled();
+});

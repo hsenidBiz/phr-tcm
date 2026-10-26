@@ -11,6 +11,7 @@ import type { NotificationTarget } from "../lib/notifications";
 import { unwrap } from "../lib/ipc";
 import { cssLengthPx } from "../lib/cssLength";
 import { CACHE, cacheKeys, persistentQuery } from "../lib/cache";
+import { cn } from "../lib/cn";
 import { PBI_GLOW_EVENT } from "../lib/pbiGlow";
 import PbiPicker from "./PbiPicker";
 import { Button } from "./ui/button";
@@ -112,7 +113,7 @@ export default function ContextBar({
       <Select
         data-tour="org"
         aria-label="Organization"
-        className="w-44" triggerClassName="py-1.5"
+        className="w-44" triggerClassName="h-10 py-0"
         disabled={locked}
         value={org}
         onChange={(e) => {
@@ -130,7 +131,7 @@ export default function ContextBar({
       </Select>
       <Select
         aria-label="Project"
-        className="w-44" triggerClassName="py-1.5"
+        className="w-44" triggerClassName="h-10 py-0"
         value={project}
         disabled={!org || locked}
         onChange={(e) => {
@@ -145,8 +146,9 @@ export default function ContextBar({
           </option>
         ))}
       </Select>
-      {/* The PBI chip gets all remaining width so long titles stay readable;
-          min-w keeps it usable and forces a wrap instead of a squeeze. */}
+      {/* The PBI search takes ALL the width between the Project picker and
+          the right-hand group, with no maximum: the group never shrinks, so
+          this is what gives way. min-w forces a wrap instead of a squeeze. */}
       <div className="min-w-56 flex-1" data-tour="pbi" inert={locked}>
         {/* React Bits ElectricBorder wraps the chip while confirmation is
             armed, in the theme accent so it follows light/dark and presets. */}
@@ -208,11 +210,14 @@ export default function ContextBar({
           aria-label={settingsOpen ? "Close settings" : "Settings"}
           title={settingsOpen ? "Close settings" : "Settings"}
           aria-pressed={settingsOpen}
-          className={
+          // A fixed square that centres its icon, so the gear never rides a
+          // text baseline; the ring is the one the app's Buttons draw.
+          className={cn(
+            "inline-flex size-8 items-center justify-center rounded-md transition-colors focus-visible:outline-2 focus-visible:outline-accent disabled:pointer-events-none",
             settingsOpen
-              ? "rounded-md bg-accent-soft p-2 text-accent transition-colors disabled:pointer-events-none"
-              : "rounded-md p-2 text-muted transition-colors hover:bg-surface-2 hover:text-text disabled:pointer-events-none"
-          }
+              ? "bg-accent-soft text-accent"
+              : "text-muted hover:bg-surface-2 hover:text-text",
+          )}
           // The tour spotlights the gear and, on its Settings stops, asks
           // the user to click it - it never opens Settings for them.
           disabled={locked && !settingsLive}
@@ -224,7 +229,10 @@ export default function ContextBar({
           <SettingsIcon
             key={turn?.n ?? 0}
             size={16}
-            className={turn ? (turn.opening ? "ico-cog-turn" : "ico-cog-turn-back") : undefined}
+            className={cn(
+              "block",
+              turn && (turn.opening ? "ico-cog-turn" : "ico-cog-turn-back"),
+            )}
           />
         </button>
       </div>

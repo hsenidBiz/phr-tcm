@@ -201,3 +201,55 @@ test("cancelling the dialog changes nothing", async () => {
 
   expect(localStorage.getItem("tcm-v2-default-tags:acme/Web")).toBe("smoke");
 });
+
+function queued(): Array<{ title: string; steps: Array<{ action: string; expected: string }> }> {
+  return JSON.parse(localStorage.getItem("tcm-v2-draft:acme/42") ?? "[]");
+}
+
+test("a new case starts with three blank steps", () => {
+  baseMocks();
+  renderScreen();
+  for (const n of [1, 2, 3]) {
+    expect(screen.getByLabelText(`Step ${n} action`)).toHaveValue("");
+    expect(screen.getByLabelText(`Step ${n} expected`)).toHaveValue("");
+  }
+  expect(screen.queryByLabelText("Step 4 action")).not.toBeInTheDocument();
+});
+
+test("steps with both Action and Expected Result empty are skipped; a half-filled step is kept", async () => {
+  baseMocks();
+  renderScreen();
+  fireEvent.change(screen.getByPlaceholderText("Test case title"), { target: { value: "Skips blanks" } });
+  fireEvent.change(screen.getByLabelText("Step 1 action"), { target: { value: "Open page" } });
+  // Step 2 is left completely blank; step 3 has an Expected Result only.
+  fireEvent.change(screen.getByLabelText("Step 3 expected"), { target: { value: "Page shown" } });
+  fireEvent.click(screen.getByRole("button", { name: "Add to queue" }));
+  await screen.findByText("Skips blanks");
+  expect(queued()[0].steps).toEqual([
+    { action: "Open page", expected: "" },
+    { action: "", expected: "Page shown" },
+  ]);
+});
+
+test("Add to queue needs a title and at least one step with text, and Expected Result alone counts", () => {
+  baseMocks();
+  renderScreen();
+  const add = screen.getByRole("button", { name: "Add to queue" });
+  fireEvent.change(screen.getByPlaceholderText("Test case title"), { target: { value: "T" } });
+  expect(add).toBeDisabled();
+  fireEvent.change(screen.getByLabelText("Step 2 expected"), { target: { value: "Something" } });
+  expect(add).toBeEnabled();
+});
+
+test("after Add to queue the form is back to three blank steps", async () => {
+  baseMocks();
+  renderScreen();
+  fireEvent.change(screen.getByPlaceholderText("Test case title"), { target: { value: "Reset me" } });
+  fireEvent.change(screen.getByLabelText("Step 1 action"), { target: { value: "A" } });
+  fireEvent.click(screen.getByRole("button", { name: "Add Step" }));
+  expect(screen.getByLabelText("Step 4 action")).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Add to queue" }));
+  await screen.findByText("Reset me");
+  expect(screen.getByLabelText("Step 3 action")).toHaveValue("");
+  expect(screen.queryByLabelText("Step 4 action")).not.toBeInTheDocument();
+});

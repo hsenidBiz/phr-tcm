@@ -105,9 +105,9 @@ export const runTests: Screen = {
       id: "suite",
       shot: LIST,
       group: "choose",
-      locate: { text: 'Plan "Release 2.4" / suite 91' },
-      name: "Plan and suite",
-      does: "The test plan and the Product Backlog Item's test suite the results are recorded in. The first time you open a Product Backlog Item here, the app finds its suite, or creates one when it has none.",
+      locate: { text: 'Plan "Release 2.4"' },
+      name: "Plan",
+      does: "The test plan the results are recorded in, which holds the Product Backlog Item's test suite. The first time you open a Product Backlog Item here, the app finds its suite, or creates one when it has none.",
     },
     {
       id: "refresh-outcomes",

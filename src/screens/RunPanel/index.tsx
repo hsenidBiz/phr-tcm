@@ -8,7 +8,7 @@ import { onPointRecorded, patchPointRows } from "../../lib/runnerBus";
 import { Button } from "../../components/ui/button";
 import { Checkbox } from "../../components/ui/checkbox";
 import { Collapse, useSettled } from "../../components/ui/collapse";
-import { Input } from "../../components/ui/input";
+import { SearchInput } from "../../components/ui/search-input";
 import { Select } from "../../components/ui/select";
 import HistoryDots from "../../components/HistoryDots";
 import ScanProgress from "../../components/ScanProgress";
@@ -431,7 +431,7 @@ export default function RunPanel({
       {suite.isError && <p className="text-sm text-danger">{suite.error.message}</p>}
       {suite.data && (
         <p className="flex items-center gap-1.5 text-xs text-faint">
-          Plan "{suite.data.plan_name}" / suite {suite.data.suite_id}
+          Plan "{suite.data.plan_name}"
           <button
             aria-label="Refresh outcomes"
             title="Refresh outcomes (Shift-click: re-detect the test suite)"
@@ -503,12 +503,12 @@ export default function RunPanel({
 
       {points.data && points.data.length > 0 && (
         <div className="flex items-center gap-2">
-          <Input
+          <SearchInput
             aria-label="Filter points"
-            className="w-56 px-2 py-1.5"
+            className="w-56"
             placeholder="Filter by name or id"
             value={filterText}
-            onChange={(e) => setFilterText(e.target.value)}
+            onChange={setFilterText}
           />
           <Select
             aria-label="Filter by last outcome"

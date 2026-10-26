@@ -446,9 +446,9 @@ export const commands = {
 	/**  The assistants connected now, and what each is doing. */
 	autoRunAgents: () => __TAURI_INVOKE<AgentView[]>("auto_run_agents"),
 	/**
-	 *  Stop what slot `slot`'s assistant is doing: its replay, and a batch of
-	 *  discovery actions, at their next look. The assistant's browser stays as
-	 *  it is.
+	 *  Stop what slot `slot`'s assistant is doing: its replay (never the
+	 *  person's), and a batch of discovery actions, at their next look. The
+	 *  assistant's browser stays as it is.
 	 */
 	autoRunStopAgent: (slot: number) => typedError<null, string>(__TAURI_INVOKE("auto_run_stop_agent", { slot })),
 	/**
@@ -487,8 +487,7 @@ export const commands = {
 	 *  before its sign-in. `blocked`: the case is Blocked, with the sentence
 	 *  as its reason, and the pane never signs it in. `notice`: said before
 	 *  step 1, and the case goes on (the checks were skipped while
-	 *  `db_read_access`, the AI Bridge tab's Database Read Access switch, is
-	 *  off). Neither: the case goes on. The active environment's database is
+	 *  `db_read_access`, the Database Access module being on, is off). Neither: the case goes on. The active environment's database is
 	 *  looked up only when the case's script has preconditions. Once they are
 	 *  met, the case's fixtures are prepared as an unattended case's are
 	 *  (`autorun::setup::check_supervised`): a setup fixture that is not
@@ -946,7 +945,7 @@ export const commands = {
 	 *  does not start. `retry_transient` runs a case whose failure looked
 	 *  transient once more, in a fresh browser context (`autorun::transient`).
 	 *  The run keeps one browser, with a context per case (`one_browser`).
-	 *  `db_read_access` is the AI Bridge tab's Database Read Access switch:
+	 *  `db_read_access` is the Database Access module being on:
 	 *  while it is off no precondition is checked (`autorun::preconditions`).
 	 */
 	autoRunReplay: (organization: string, project: string, pbiId: number, cases: ReplayCase[], account: string | null, browserName: string, watch: boolean, retryTransient: boolean, dbReadAccess: boolean) => typedError<LocalRun_Serialize, string>(__TAURI_INVOKE("auto_run_replay", { organization, project, pbiId, cases, account, browserName, watch, retryTransient, dbReadAccess })),
@@ -2972,7 +2971,7 @@ export type CaseRecord_Deserialize = {
 	/**
 	 *  Something the run did not do for this case and the case went on
 	 *  without, said so a person reviewing it knows: today only that its
-	 *  preconditions were not checked while Database Read Access was off
+	 *  preconditions were not checked while the Database Access module was off
 	 *  (`preconditions::NOT_CHECKED`). Never a reason to block.
 	 */
 	notice?: string | null,
@@ -3032,7 +3031,7 @@ export type CaseRecord_Serialize = {
 	/**
 	 *  Something the run did not do for this case and the case went on
 	 *  without, said so a person reviewing it knows: today only that its
-	 *  preconditions were not checked while Database Read Access was off
+	 *  preconditions were not checked while the Database Access module was off
 	 *  (`preconditions::NOT_CHECKED`). Never a reason to block.
 	 */
 	notice?: string | null,

@@ -6,9 +6,14 @@
 //
 // Each environment keeps its own set (activeEnv.ts); everything here reads
 // and writes the ACTIVE environment's.
+//
+// The set never names a module's tool. A tool that belongs to a module is
+// offered exactly while the module is on in Settings: the module is its
+// switch, and a second one here would only be a way to lose a tool with the
+// module on and nothing left to turn it back on.
 
 import { BRIDGE_SWITCH_KEYS, envScopedKey, subscribeActiveEnv } from "./activeEnv";
-import { modulesSnapshot, realModulesSnapshot, subscribeModules, type Module } from "./modules";
+import { modulesSnapshot, type Module } from "./modules";
 import { isCaptureMode } from "../dev/capture";
 
 /** The active environment's stored set. */
@@ -399,21 +404,13 @@ export function moduleOfTool(name: string): Module | null {
   return null;
 }
 
-/** Whether a tool is offered right now: Core, or its module is really on.
- * Read live from the REAL set, not capture mode's all-on view: it decides
- * what `loadDisabledTools()` keeps and what `snapshotKeyFor()` keys on,
- * which feed `register`'s `commands.registerAiTool(...)` - real files Rust
- * writes to disk. Capture mode must affect display only; see `toolShown`. */
-export function toolOffered(name: string): boolean {
-  const m = moduleOfTool(name);
-  return m === null || realModulesSnapshot().has(m);
-}
-
-/** Whether the AI Tools screen should show a tool right now: its module is
- * on (capture mode's view: every module), hidden again in capture mode for the Auto Run and API template tools - the
- * screen is documented and captured, so a shot must never name them.
- * DISPLAY ONLY: never wire this into `loadDisabledTools`, `snapshotKeyFor`,
- * or anything that feeds `register`/`setBridgeContext`. */
+/** Whether the AI Tools screen should show a module's tool (in its breakdown
+ * and cards) right now: its module is on (capture mode's view: every
+ * module), hidden again in capture mode for the Auto Run and API template
+ * tools - the screen is documented and captured, so a shot must never name
+ * them. Whether a tool is OFFERED is Rust's call, from the real modules.
+ * DISPLAY ONLY: never wire this into `loadDisabledTools` or anything that
+ * feeds `register`/`setBridgeContext`. */
 export function toolShown(name: string): boolean {
   const m = moduleOfTool(name);
   if (m !== null && !modulesSnapshot().has(m)) return false;
@@ -438,100 +435,8 @@ export const TOOL_PAIRS: readonly (readonly string[])[] = [
   // The same shape: the reader takes the plan id and suite id the search
   // returns, and has no other way to name a suite.
   ["search_test_suites", "get_suite_test_cases"],
-  // Not the same shape as the two above - each of these can be called on
-  // its own - but authoring an Auto Run script is ONE job, and these are
-  // its steps: read the format, look at the page, try a locator or an
-  // action, read what a run did, save the result and record what you
-  // learned. Half of them switched on is half a job, so they move
-  // together. Offered only while the Auto Run module is on; see toolOffered.
-  // The accounts a script runs as belong to the same job: proposing
-  // logins for the environment, and reading the keys a script names. The
-  // network tools ride here too, and besides need the Network tools switch
-  // (networkTools.ts), which Rust enforces.
-  // (The guide is Core's `get_guide`, refused by topic while the module is
-  // off.)
-  [
-    "save_autorun_script",
-    "get_autorun_script",
-    "delete_autorun_script",
-    "get_autorun_page",
-    "probe_autorun_locator",
-    "try_autorun_action",
-    "replay_autorun_to_step",
-    "start_autorun_discovery",
-    "discover_autorun_actions",
-    "save_autorun_area",
-    "end_autorun_discovery",
-    "reset_autorun_browser",
-    "save_autorun_component",
-    "get_autorun_failures",
-    "record_quirk",
-    "record_validation_rule",
-    "mark_autorun_suspected_defect",
-    "report_case_divergence",
-    "rule_case_divergence",
-    "clear_autorun_suspected_defect",
-    "set_autorun_order",
-    "propose_accounts",
-    "get_accounts",
-    "save_test_file",
-    "get_autorun_network_wait",
-    "search_autorun_requests",
-    "get_autorun_request",
-    "autorun_capture",
-    "autorun_har",
-    "set_autorun_headers",
-    "autorun_cookies",
-    "record_explore_change",
-    "get_explore_changes",
-  ],
-  // Building an API template is one job too: read the format, see what
-  // is saved, prove a draft, run it. A list with no way to run what it
-  // lists, or a prove with no guide to the format, is half a job. Offered
-  // only while the API Templates module is on. Proving and running also need the separate
-  // API templates switch - a different decision, like database writes.
-  // The stages a module's wizard is mapped into belong to that job: a
-  // template that writes to a stage is only as good as the order the
-  // application allows, and that order is what the flow tools hold.
-  [
-    "list_api_templates",
-    "prove_api_template",
-    "run_api_template",
-    "save_api_flow",
-    "get_api_flow_progress",
-    // A fixture is built from the proven templates, and run like one.
-    "save_api_fixture",
-    "run_api_fixture",
-    // One-off calls from an explore session, and the undo of what it
-    // created, belong to the same job: the calls that worked become
-    // templates here.
-    "send_api_request",
-    "undo_explore_creates",
-    // What a template's author learns about the application goes on the
-    // project's one quirks list, through the Auto Run row's own tool: it
-    // rides in both rows (SHARED_TOOLS), so switching Auto Run off does not
-    // take it away.
-    "record_quirk",
-  ],
-  // Reading the company database is one choice: finding the table and
-  // reading it are two halves of the same question, and a lookup whose
-  // answer nothing can query is a map with no road. Creating, updating
-  // and deleting is a SEPARATE switch, on the Database Read Access card - it
-  // is a different decision, and it is off until someone makes it.
-  ["db_lookup", "db_query"],
-  // Working on a report is one job: open it, read it, change it, check it,
-  // see it. A preview with nothing to open is half a job. Offered only while
-  // the Crystal Reports module is on; its guide is Core's `get_guide`,
-  // refused by topic while the module is off.
-  [
-    "open_report",
-    "read_report",
-    "edit_report",
-    "compare_reports",
-    "check_report",
-    "preview_report",
-    "preview_report_live",
-  ],
+  // A module's tools are not here: they have no switch. The module being on
+  // in Settings is what offers them, as a group, and Rust enforces it.
 ];
 
 /** The one human name and summary a pair shows, keyed by its first member. */
@@ -540,25 +445,6 @@ const PAIR_ROWS: Record<string, { label: string; summary: string }> = {
   search_test_suites: {
     label: "Test Suites",
     summary: "Find a test suite by plan, name or PBI, and read the cases in it.",
-  },
-  save_autorun_script: {
-    label: "Auto Run scripts",
-    summary:
-      "Read the script guide, see the page in the open browser, try a locator or an action, replay a case to its failing step, read a run's failures, save, read, repair and delete scripts, set Auto Run's order for a PBI, and propose and read the environment's test logins.",
-  },
-  list_api_templates: {
-    label: "API templates",
-    summary:
-      "Map a module's stages, then build, prove and run templates that write test data through the application's own endpoints, in the order the application allows.",
-  },
-  db_lookup: {
-    label: "Database Read Access",
-    summary: "Look up tables and run SELECT on the connection chosen below.",
-  },
-  open_report: {
-    label: "Crystal Reports",
-    summary:
-      "Open, read, edit, compare, check and preview Crystal Reports .rpt files, and create blank ones. An accepted edit is saved over the file at once.",
   },
 };
 
@@ -609,18 +495,13 @@ export function toggleRow(disabled: string[], names: string[]): string[] {
  *
  * The always-on tools never appear - a row carrying no switch was a
  * control that did nothing, and they are enforced in `ai_tools.rs`
- * whatever this list shows. Nor do the Auto Run tools, unless they are
- * offered - a switch for a tool that is not offered would toggle
- * nothing. What is left is exactly the set of choices this screen can
- * honour, right now.
+ * whatever this list shows. Nor does a module's tool: the module being on
+ * in Settings is its switch, so a second one here is only a way to lose a
+ * tool with its module on. What is left is exactly the set of choices this
+ * screen can honour.
  */
 export function visibleTools(): McpToolInfo[] {
-  return MCP_TOOLS.filter(
-    (t) =>
-      !isCoreTool(t.name) &&
-      // Display gate only - see toolShown's own doc comment.
-      toolShown(t.name),
-  );
+  return MCP_TOOLS.filter((t) => !isCoreTool(t.name) && moduleOfTool(t.name) === null);
 }
 
 /** Tools that were renamed, old name -> new. A saved list naming the old
@@ -660,40 +541,20 @@ export const RENAMED_TOOLS: Readonly<Record<string, string>> = {
   clear_autorun_cookies: "autorun_cookies",
 };
 
-/** Tools that ride in more than one row. Such a tool is off only while
- * every row carrying it is off - a row whose module is off counts as off -
- * so switching one row off never takes it from the job another row is on
- * for. `loadDisabledTools` settles it; the screen and Rust read that. */
-export const SHARED_TOOLS: readonly string[] = [
-  ...new Set(TOOL_PAIRS.flat().filter((n, i, all) => all.indexOf(n) !== i)),
-];
-
-function isShared(name: string): boolean {
-  return SHARED_TOOLS.includes(name);
-}
-
-/** A row is on while any of its own (not shared) tools is offered and not
- * in `disabled`. */
-function rowOn(pair: readonly string[], disabled: readonly string[]): boolean {
-  return pair.some((n) => !isShared(n) && toolOffered(n) && !disabled.includes(n));
-}
-
-/** `disabled` with each shared tool off exactly when no row carrying it is
- * on. */
-function settleShared(disabled: string[]): string[] {
-  const out = disabled.filter((n) => !isShared(n));
-  for (const name of SHARED_TOOLS) {
-    const on = TOOL_PAIRS.filter((p) => p.includes(name)).some((p) => rowOn(p, out));
-    if (!on && toolOffered(name)) out.push(name);
-  }
-  return out;
-}
-
-/** Whether Database Read Access is switched on: the Database Access module
- * is on and the reading pair's `db_query` is not among the disabled tools.
+/** Whether Database Read Access is on: the Database Access module is on.
  * Auto Run's precondition checks follow it - while it is off, none is run. */
 export function dbReadAccessOn(): boolean {
-  return modulesSnapshot().has("db_access") && !disabledToolsSnapshot().includes("db_query");
+  return modulesSnapshot().has("db_access");
+}
+
+/** A stored list as names this screen can honour: old names carried to the
+ * new ones, no repeats, nothing but strings, and neither a core tool (always
+ * on) nor a module's tool (on with its module, with no switch of its own). */
+function switchableNames(parsed: unknown[]): string[] {
+  const renamed = parsed.map((t) => (typeof t === "string" ? RENAMED_TOOLS[t] ?? t : t));
+  return [...new Set(renamed)].filter(
+    (t): t is string => typeof t === "string" && !isCoreTool(t) && moduleOfTool(t) === null,
+  );
 }
 
 export function loadDisabledTools(): string[] {
@@ -702,53 +563,63 @@ export function loadDisabledTools(): string[] {
     if (!raw) return [];
     const parsed = JSON.parse(raw);
     if (!Array.isArray(parsed)) return [];
-    const renamed = parsed.map((t) => (typeof t === "string" ? RENAMED_TOOLS[t] ?? t : t));
-    const kept: string[] = [...new Set(renamed)].filter(
-      (t) =>
-        typeof t === "string" &&
-        !isCoreTool(t) &&
-        // A list saved while a module was on can name one of its tools.
-        // Dropped while that module is off, where it would be meaningless -
-        // there is no request it could ever be attached to. The database
-        // pair is the exception: switching Database Access off and on
-        // again must not quietly re-enable reading the person had refused.
-        (toolOffered(t) || moduleOfTool(t) === "db_access"),
-    );
+    const kept = switchableNames(parsed);
     // A list saved before the pairing can name one half of a pair. Complete
     // it toward OFF: the pair is one switch now, and the alternative would
-    // silently hand an assistant a tool this list says is off. A shared
-    // tool says nothing about any one row: it is settled after.
+    // silently hand an assistant a tool this list says is off.
     for (const pair of TOOL_PAIRS) {
-      if (pair.some((n) => !isShared(n) && kept.includes(n))) {
-        for (const n of pair) if (!isShared(n) && !kept.includes(n)) kept.push(n);
+      if (pair.some((n) => kept.includes(n))) {
+        for (const n of pair) if (!kept.includes(n)) kept.push(n);
       }
     }
-    return settleShared(kept);
+    return kept;
   } catch {
     return [];
+  }
+}
+
+/** Take a module's tools out of every saved list: each environment's, and the
+ * single one older versions kept before there were environments.
+ *
+ * A module's tools used to have a switch of their own on the AI Bridge tab,
+ * and a person may have switched some off. That switch is gone - the module
+ * being on is what offers them - so a name left in a saved list would keep a
+ * tool from an assistant with nothing on screen to turn it back on. A list
+ * left empty is removed; one with nothing to take out is not touched; one
+ * that cannot be read is left as it is. Runs once at start-up, and does
+ * nothing when run again. */
+export function clearModuleToolSwitches(): void {
+  const base = BRIDGE_SWITCH_KEYS.tools;
+  try {
+    const keys: string[] = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (key !== null && (key === base || key.startsWith(`${base}:`))) keys.push(key);
+    }
+    for (const key of keys) {
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(localStorage.getItem(key) ?? "");
+      } catch {
+        continue;
+      }
+      if (!Array.isArray(parsed)) continue;
+      const kept = switchableNames(parsed);
+      if (kept.length === parsed.length && kept.every((t, i) => t === parsed[i])) continue;
+      if (kept.length === 0) localStorage.removeItem(key);
+      else localStorage.setItem(key, JSON.stringify(kept));
+    }
+  } catch {
+    // storage unavailable -> nothing saved to clean
   }
 }
 
 const listeners = new Set<() => void>();
 
-/** Every name in storage, unfiltered. */
-function storedNames(): string[] {
-  try {
-    const parsed = JSON.parse(localStorage.getItem(storageKey()) ?? "[]");
-    return Array.isArray(parsed) ? parsed.filter((t): t is string => typeof t === "string") : [];
-  } catch {
-    return [];
-  }
-}
-
-/** Save the list the screen shows. Off hides, never deletes: the names of a
- * module that is off are not on the screen's list (the read side hides
- * them), so they are carried over from storage - otherwise any toggle made
- * while a module is off would erase them, and they would come back enabled
- * with the module. */
+/** Save the list the screen shows. A module's tool is never written: it has
+ * no switch to take it off again. */
 export function saveDisabledTools(names: string[]): void {
-  const hidden = storedNames().filter((n) => !isCoreTool(n) && moduleOfTool(n) !== null && !toolOffered(n));
-  const all = [...new Set([...names, ...hidden])];
+  const all = [...new Set(names)].filter((n) => !isCoreTool(n) && moduleOfTool(n) === null);
   try {
     if (all.length === 0) localStorage.removeItem(storageKey());
     else localStorage.setItem(storageKey(), JSON.stringify(all));
@@ -760,27 +631,23 @@ export function saveDisabledTools(names: string[]): void {
 
 /** Subscription so App can re-push the bridge context the moment a tool is
  * toggled, instead of the change waiting for the next org/project change.
- * Also fires when a module is switched on or off: that changes which saved
- * names count - and when the active environment changes, which changes
- * whose set it is. */
+ * Also fires when the active environment changes, which changes whose set
+ * it is. */
 export function subscribeDisabledTools(cb: () => void): () => void {
   listeners.add(cb);
-  const offModules = subscribeModules(cb);
   const offEnv = subscribeActiveEnv(cb);
   return () => {
     listeners.delete(cb);
-    offModules();
     offEnv();
   };
 }
 
-/** Keyed on whose set it is, the stored list AND which modules are on: the
- * same stored list loads differently either side of a module being
- * switched. */
+/** Keyed on whose set it is and the stored list. */
 function snapshotKeyFor(raw: string): string {
-  return `${storageKey()}|${[...realModulesSnapshot()].sort().join("+")}:${raw}`;
+  return `${storageKey()}:${raw}`;
 }
 
+clearModuleToolSwitches();
 let snapshot: string[] = loadDisabledTools();
 let snapshotKey = snapshotKeyFor(JSON.stringify(snapshot));
 

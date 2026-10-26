@@ -887,3 +887,62 @@ test("a clean-up step is shown as the Clean-up, not as a step of the case", asyn
   expect(tidy).toHaveTextContent("Not checked: removes the record step 1 made");
   expect(within(view).queryByRole("region", { name: "Step 2" })).not.toBeInTheDocument();
 });
+
+/// While the existing script hasn't resolved yet, an empty textarea is
+/// indistinguishable from "this case has no script" - saving in that window
+/// would silently overwrite whatever script was already there.
+test("refuses to save while the existing script is still loading", async () => {
+  let saved = 0;
+  let resolveLoad: (value: unknown) => void = () => {};
+  const pending = new Promise((resolve) => {
+    resolveLoad = resolve;
+  });
+  mockIPC((cmd) => {
+    if (cmd === "auto_run_load_script") return pending;
+    if (cmd === "auto_run_save_script") {
+      saved++;
+      return null;
+    }
+    return null;
+  });
+  render(
+    <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+      <ScriptEditor caseId={7} title="t" steps={[]} org="acme" project="Web" onClose={vi.fn()} />
+    </QueryClientProvider>,
+  );
+
+  const saveButton = await screen.findByRole("button", { name: "Save script" });
+  expect(saveButton).toBeDisabled();
+
+  fireEvent.click(saveButton);
+  expect(saved).toBe(0);
+
+  resolveLoad(null);
+  await waitFor(() => expect(saveButton).not.toBeDisabled());
+});
+
+/// A load failure must be distinct from "no script yet" - it must not
+/// silently default to an empty, savable editor either.
+test("refuses to save when the existing script fails to load", async () => {
+  let saved = 0;
+  mockIPC((cmd) => {
+    if (cmd === "auto_run_load_script") throw "boom";
+    if (cmd === "auto_run_save_script") {
+      saved++;
+      return null;
+    }
+    return null;
+  });
+  render(
+    <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+      <ScriptEditor caseId={7} title="t" steps={[]} org="acme" project="Web" onClose={vi.fn()} />
+    </QueryClientProvider>,
+  );
+
+  const saveButton = await screen.findByRole("button", { name: "Save script" });
+  await waitFor(() => expect(saveButton).toBeDisabled());
+
+  fireEvent.click(saveButton);
+  expect(saved).toBe(0);
+  expect(await screen.findByText(/could not load the existing script/i)).toBeInTheDocument();
+});

@@ -3484,11 +3484,49 @@ mod api_template_routes {
     }
 
     /// Flow checks are assistant-written reads of the company database, so
-    /// with Database Read Access switched off none of them runs: saving a
-    /// flow, asking its progress and a flow template's run are all refused
-    /// with the switch named, before any database or browser.
+    /// with the Database Access module off none of them runs, whatever the
+    /// disabled list says: saving a flow, asking its progress and the
+    /// database a prove or run gates on are all refused with the module
+    /// named, before any database or browser. The module set is passed in,
+    /// as `live_preview_gate` takes it, so no process-wide state moves.
     #[tokio::test]
-    async fn flow_checks_are_refused_while_database_reading_is_off() {
+    async fn flow_checks_are_refused_while_the_database_access_module_is_off() {
+        use v2_lib::ai_bridge::{api_template_flow_progress, api_template_flow_save, real_stage_db_for, stage_db_for};
+        use v2_lib::modules::Module;
+        let _root = crate::serial::autorun();
+        let _slot = crate::serial::api_template_run();
+        let dir = root_with_recipe_and_account();
+        // Nothing in the disabled list: the module alone is the switch.
+        let c = on();
+        assert!(c.disabled_tools.is_empty());
+        v2_lib::api_templates::flow_store::save(dir.path(), &c.org, &c.project, &cycle_flow()).unwrap();
+        let t = crate::common::saved_on_stage("pms-add-participants", "Add the participants", "participants");
+        v2_lib::api_templates::store::save(dir.path(), &c.org, &c.project, &t).unwrap();
+        let sentence = "flow checks read the company database: turn the Database Access module on in Settings";
+        let off: std::collections::BTreeSet<Module> = Module::ALL.into_iter().filter(|m| *m != Module::DbAccess).collect();
+
+        assert_eq!(stage_db_for(&c, &off).err(), Some((409, sentence.to_string())));
+        assert_eq!(real_stage_db_for(&c, &off).err(), Some((409, sentence.to_string())));
+
+        let progress = json!({ "flow": FLOW, "subject": 274 }).to_string();
+        let (status, out) = api_template_flow_progress(&c, &progress, |c| stage_db_for(c, &off)).await;
+        assert_eq!((status, out.as_str()), (409, sentence));
+
+        let save =
+            json!({ "flow": crate::common::cycle_flow_json(), "sample": 274, "replace": true, "why": "again" }).to_string();
+        let (status, out) = api_template_flow_save(&c, &save, |c| stage_db_for(c, &off)).await;
+        assert_eq!((status, out.as_str()), (409, sentence));
+
+        // With the module on the module is not what refuses: the answer is
+        // the database's own (none chosen here).
+        let all: std::collections::BTreeSet<Module> = Module::ALL.into_iter().collect();
+        assert_ne!(stage_db_for(&c, &all).err(), Some((409, sentence.to_string())));
+    }
+
+    /// A `db_query` entry among the disabled tools still refuses flow checks
+    /// as a second door, with the same sentence.
+    #[tokio::test]
+    async fn flow_checks_are_also_refused_while_db_query_is_disabled() {
         let _root = crate::serial::autorun();
         let _slot = crate::serial::api_template_run();
         let dir = root_with_recipe_and_account();
@@ -3496,7 +3534,7 @@ mod api_template_routes {
         v2_lib::api_templates::flow_store::save(dir.path(), &c.org, &c.project, &cycle_flow()).unwrap();
         let t = crate::common::saved_on_stage("pms-add-participants", "Add the participants", "participants");
         v2_lib::api_templates::store::save(dir.path(), &c.org, &c.project, &t).unwrap();
-        let sentence = "flow checks read the company database: switch on Database Read Access on the AI Bridge tab";
+        let sentence = "flow checks read the company database: turn the Database Access module on in Settings";
 
         assert_eq!(v2_lib::ai_bridge::real_stage_db(&c).err(), Some((409, sentence.to_string())));
 

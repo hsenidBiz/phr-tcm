@@ -77,6 +77,8 @@ export {
   MoveHorizontal as IconFitWidth,
   ArrowRightLeft as IconMoveToPbi,
   Eraser as IconClear,
+  // The magnifier at the start of every search box (components/ui/search-input).
+  Search as IconSearch,
   Trash2 as IconRemove,
   // Taking a note out of use while keeping it to bring back (Auto Run's
   // Known quirks) - an archive box, since nothing is deleted.
@@ -213,4 +215,7 @@ export {
   // case editors' Preview toggle) - an eye, since it only shows what was
   // typed and changes none of it.
   Eye as IconPreview,
+  // Auto Run's case card: look at a saved script, never change it from the
+  // card. An eye, since the button only shows it.
+  Eye as IconViewScript,
 } from "lucide-react";

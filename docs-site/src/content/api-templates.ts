@@ -454,7 +454,7 @@ export const apiTemplates: Screen = {
       steps: [
         "Switch on **API Templates** in Settings, under General, on the **Modules** page. It needs Auto Run, which needs Database Access.",
         "Set up the site address and your accounts in the Setup panel on the Auto Run tab.",
-        "On the AI Bridge tab, connect your assistant and switch **API templates** on.",
+        "On the AI Bridge tab, connect your assistant, then switch **API templates (create, edit and delete)** on so it may prove and run templates. Its other template tools need no switch: they are on while the module is.",
         "Ask the assistant to build a template for the data you need. It proves the template on your site, and it appears here once it worked.",
       ],
     },

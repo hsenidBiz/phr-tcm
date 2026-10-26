@@ -865,7 +865,7 @@ test("a case whose script flagged page errors carries the count", async () => {
 });
 
 test("a case whose preconditions were not checked is labelled Not checked, with the sentence", async () => {
-  const notice = "preconditions were not checked: Database Read Access is off on the AI Bridge tab";
+  const notice = "preconditions were not checked: the Database Access module is off in Settings";
   renderReview({ ...RUN, cases: RUN.cases.map((c) => (c.case_id === 202 ? { ...c, notice } : c)) });
 
   const label = (await waitFor(() => within(caseCard(202)).getByText("Not checked"))).parentElement!;

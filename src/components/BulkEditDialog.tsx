@@ -3,20 +3,23 @@ import { useState } from "react";
 import { toast } from "../lib/toast";
 import { commands, type TestCase, type TestCaseFull } from "../bindings";
 import { useFieldRefs } from "../hooks/useFieldRefs";
-import ModuleField from "./ModuleField";
-import PrioritySelect from "./PrioritySelect";
-import TagsField from "./TagsField";
+import {
+  BulkFields,
+  BulkSummary,
+  NO_BULK_CHANGE,
+  bulkChangedFields,
+  bulkModule,
+  bulkPreconditions,
+  bulkTags,
+} from "./BulkFields";
 import { Button } from "./ui/button";
-import { Checkbox } from "./ui/checkbox";
-import { Textarea } from "./ui/input";
 import { Modal } from "./ui/modal";
-import { Select } from "./ui/select";
 import { IconCancel, IconConfirm } from "../lib/actionIcons";
 
-/** Bulk edit for the selected cases: every field defaults to "leave
- * unchanged"; chosen fields are applied to each case IN ADDITION to its
- * existing content (steps are always preserved - each update sends the
- * case's own steps back). Applied serially with progress. */
+/** Bulk edit for the selected cases: every field shows at once and defaults
+ * to "leave unchanged"; chosen fields are applied to each case IN ADDITION
+ * to its existing content (steps are always preserved - each update sends
+ * the case's own steps back). Applied serially with progress. */
 export default function BulkEditDialog({
   org,
   project,
@@ -31,18 +34,10 @@ export default function BulkEditDialog({
   onDone: () => void;
 }) {
   const { prefs } = useFieldRefs(org, project);
-  const [status, setStatus] = useState(""); // "" = unchanged
-  const [priority, setPriority] = useState<number | null>(null); // null = unchanged
-  const [moduleValue, setModuleValue] = useState("");
-  const [applyModule, setApplyModule] = useState(false);
-  const [tagsMode, setTagsMode] = useState<"unchanged" | "add" | "replace">("unchanged");
-  const [tags, setTags] = useState("");
-  const [preconditions, setPreconditions] = useState("");
-  const [applyPreconditions, setApplyPreconditions] = useState(false);
+  const [values, setValues] = useState(NO_BULK_CHANGE);
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
 
-  const nothingChosen =
-    !status && priority == null && !applyModule && tagsMode === "unchanged" && !applyPreconditions;
+  const nothingChosen = bulkChangedFields(values).length === 0;
 
   const apply = useMutation({
     mutationFn: async () => {
@@ -50,29 +45,18 @@ export default function BulkEditDialog({
       for (let i = 0; i < cases.length; i++) {
         setProgress({ done: i + 1, total: cases.length });
         const c = cases[i];
-        const mergedTags =
-          tagsMode === "replace"
-            ? tags.trim()
-            : tagsMode === "add"
-              ? [
-                  ...c.tags.split(";").map((t) => t.trim()).filter(Boolean),
-                  ...tags.split(";").map((t) => t.trim()).filter(Boolean),
-                ]
-                  .filter((t, idx, arr) => arr.indexOf(t) === idx)
-                  .join("; ")
-              : c.tags;
         const tc: TestCase = {
           title: c.title,
           // Handed straight back unchanged, so the save compares them equal
           // to the original and omits Steps from the patch altogether.
           steps: c.steps,
-          tags: mergedTags,
-          automation_status: status || c.automation_status,
-          module_value: applyModule ? moduleValue : c.module_value,
-          preconditions: applyPreconditions ? preconditions : c.preconditions,
+          tags: bulkTags(values, c.tags),
+          automation_status: values.status || c.automation_status,
+          module_value: bulkModule(values, c.module_value),
+          preconditions: bulkPreconditions(values, c.preconditions),
           update_id: c.id,
           // Null leaves each work item's own priority alone.
-          priority,
+          priority: values.priority,
         };
         const r = await commands.updateTestCase(
           org,
@@ -134,80 +118,7 @@ export default function BulkEditDialog({
       </div>
 
       <div className="min-h-0 flex-1 space-y-4 overflow-y-auto pr-1">
-        <label className="block text-xs text-muted">
-          Automation status
-          <Select className="mt-1 w-full" value={status} onChange={(e) => setStatus(e.target.value)}>
-            <option value="">Leave unchanged</option>
-            <option>Not Automated</option>
-            <option>Planned</option>
-          </Select>
-        </label>
-
-        <label className="block text-xs text-muted">
-          Priority
-          <PrioritySelect
-            className="mt-1 w-full"
-            value={priority}
-            onChange={setPriority}
-            keepLabel="Leave unchanged"
-          />
-        </label>
-
-        <div className="space-y-1">
-          <label className="flex items-center gap-2 text-xs text-muted">
-            <Checkbox checked={applyModule} onCheckedChange={setApplyModule} />
-            Set module
-          </label>
-          {applyModule && (
-            <ModuleField
-              org={org}
-              project={project}
-              value={moduleValue}
-              onChange={setModuleValue}
-              className="w-full"
-            />
-          )}
-        </div>
-
-        <div className="space-y-1">
-          <label className="block text-xs text-muted">
-            Tags
-            <Select
-              className="mt-1 w-full"
-              value={tagsMode}
-              onChange={(e) => setTagsMode(e.target.value as typeof tagsMode)}
-            >
-              <option value="unchanged">Leave unchanged</option>
-              <option value="add">Add tags</option>
-              <option value="replace">Replace tags</option>
-            </Select>
-          </label>
-          {tagsMode !== "unchanged" && (
-            <TagsField
-              org={org}
-              project={project}
-              className="w-full"
-              value={tags}
-              onChange={setTags}
-              placeholder={tagsMode === "add" ? "Tags to add…" : "Replacement tags…"}
-            />
-          )}
-        </div>
-
-        <div className="space-y-1">
-          <label className="flex items-center gap-2 text-xs text-muted">
-            <Checkbox checked={applyPreconditions} onCheckedChange={setApplyPreconditions} />
-            Set preconditions
-          </label>
-          {applyPreconditions && (
-            <Textarea
-              className="h-16 w-full"
-              placeholder="Preconditions"
-              value={preconditions}
-              onChange={(e) => setPreconditions(e.target.value)}
-            />
-          )}
-        </div>
+        <BulkFields org={org} project={project} value={values} onChange={setValues} />
 
         {progress && (
           <p className="text-xs text-muted">
@@ -215,6 +126,8 @@ export default function BulkEditDialog({
           </p>
         )}
       </div>
+
+      <BulkSummary value={values} />
 
       <div className="flex shrink-0 justify-end gap-2">
         <Button variant="ghost" size="sm" onClick={onClose}>

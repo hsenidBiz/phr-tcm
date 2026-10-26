@@ -189,7 +189,7 @@ export const aiBridge: Screen = {
       locate: { css: '[data-tour="ai-toolset"] > div > span.text-faint' },
       name: "Tools an assistant may use",
       does:
-        "How many of the tools below are switched on. The tools every writing job needs (the writing guide, reading cases, checking a draft and similar) are always on and not listed. " +
+        "How many of the tools below are switched on. The tools every writing job needs (the writing guide, reading cases, checking a draft and similar) are always on and not listed. The tools that belong to a module are not listed either: they are on while the module is. " +
         "The list belongs to the active environment, whose name shows beside the heading: each environment keeps its own.",
     },
     {
@@ -199,7 +199,8 @@ export const aiBridge: Screen = {
       locate: { role: "switch", name: "Test Suites" },
       name: "Tool switch",
       does:
-        "Switch a tool off to keep it out of an assistant's reach: Test Suites, Run results, Project tags, Find a Product Backlog Item and Project wiki, and Database Read Access while the Database Access module is on. A connected assistant sees the change without being restarted. " +
+        "Switch a tool off to keep it out of an assistant's reach: Test Suites, Run results, Project tags, Find a Product Backlog Item and Project wiki. A connected assistant sees the change without being restarted. " +
+        "The tools of a module you switched on in Settings (Auto Run, API Templates and Database Access) have no switch here: the module being on is what gives an assistant those tools, and switching the module off takes them away. " +
         "The switch is for the active environment only, and so is **Turn all on** under the list. A new environment starts with every tool on.",
     },
     {
@@ -243,7 +244,7 @@ export const aiBridge: Screen = {
       locate: { role: "combobox", name: "Database" },
       name: "Database",
       does:
-        "The company database this app's own database tools read, when **Database Read Access** is switched on. The x clears the choice.",
+        "The company database this app's own database tools read, while the Database Access module is on. The x clears the choice.",
     },
     {
       id: "signs-in-as",
@@ -433,7 +434,7 @@ export const aiBridge: Screen = {
       title: "Let an assistant read the company database",
       steps: [
         "Pick the database in **Database**. If it has no login yet, press **Edit** beside it in the list, fill it in, **Test connection**, then **Save**.",
-        "Make sure **Database Read Access** is switched on in the tool list.",
+        "Make sure **Database Access** is switched on in Settings, under General, on the **Modules** page. There is no separate switch for its tools.",
       ],
     },
     {

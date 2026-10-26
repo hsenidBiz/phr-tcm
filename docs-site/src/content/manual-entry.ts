@@ -96,7 +96,7 @@ export const manualEntry: Screen = {
       group: "write-steps",
       locate: { role: "textbox", name: "Step 1 action" },
       name: "Action",
-      does: "What the tester does in this step. A step needs an action; empty ones are left out.",
+      does: "What the tester does in this step. A new case starts with three steps. A step with nothing in either box is left out, and one with only an expected result is kept so the review can flag the missing action.",
     },
     {
       id: "step-expected",
@@ -120,7 +120,7 @@ export const manualEntry: Screen = {
       group: "write-steps",
       locate: { role: "button", name: "Add Step" },
       name: "Add Step",
-      does: "Adds an empty step at the end.",
+      does: "Adds an empty step at the end, for a case that needs more than the three it starts with.",
     },
     {
       id: "add-to-queue",
@@ -129,7 +129,7 @@ export const manualEntry: Screen = {
       locate: { role: "button", name: "Add to queue" },
       name: "Add to queue",
       does:
-        "Adds the case to the queue below and clears the form for the next one. It is greyed out until the case has a title and at least one step with an action.",
+        "Adds the case to the queue below and clears the form for the next one. It is greyed out until the case has a title and at least one step with something written in it. The form goes back to three empty steps.",
       tips: ["Your default tags and the automation status stay filled in for the next case."],
     },
     {
@@ -175,8 +175,8 @@ export const manualEntry: Screen = {
       title: "Write a case and upload it",
       steps: [
         "Choose the Product Backlog Item in the bar at the top.",
-        "Type the title, then the first step's action and expected result.",
-        "Press **Add Step** for each further step, and fill in the tags, module and preconditions if you need them.",
+        "Type the title, then the action and expected result of each step. The form starts with three steps and skips any you leave empty.",
+        "Press **Add Step** if the case needs more than three steps, and fill in the tags, module and preconditions if you need them.",
         "Press **Add to queue**. Repeat for the next case.",
         "Press **Review** under the queue, check the cases, then confirm the upload.",
       ],

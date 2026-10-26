@@ -4,7 +4,7 @@
 //
 // Rust lists them only on this switch's yes and refuses their routes
 // without it (`ai_tools::NETWORK_TOOLS`, `ai_bridge::network_guard`); they
-// also ride in the Auto Run scripts row (mcpTools.ts's TOOL_PAIRS). The
+// are also Auto Run's tools, offered only while that module is on. The
 // store mirrors apiTemplates.ts's write switch.
 
 import { BRIDGE_SWITCH_KEYS, envScopedKey, subscribeActiveEnv } from "./activeEnv";

@@ -5,7 +5,7 @@
 //! the active environment's database whether each stage is done, through
 //! the flow machinery (`api_templates::gate::stage_state`), and a case
 //! whose record is not there is Blocked before anything happens in the
-//! browser. They follow the Database Read Access switch: while it is off
+//! browser. They follow the Database Access module: while it is off
 //! no check runs and a case with preconditions goes on carrying
 //! `NOT_CHECKED`; while it is on they need a database.
 //!
@@ -311,7 +311,7 @@ pub enum PreconditionDb<D> {
     /// No database to ask: the Blocked sentence that says why
     /// (`environment_db`).
     Missing(String),
-    /// Database Read Access is switched off: no check runs, and a case with
+    /// The Database Access module is off: no check runs, and a case with
     /// preconditions goes on carrying `NOT_CHECKED`.
     ReadingOff,
 }
@@ -327,9 +327,9 @@ impl<D> PreconditionDb<D> {
 }
 
 /// The note a case with preconditions carries when they were not checked
-/// because Database Read Access is switched off. Not a block: the case
+/// because the Database Access module is off. Not a block: the case
 /// goes on.
-pub const NOT_CHECKED: &str = "preconditions were not checked: Database Read Access is off on the AI Bridge tab";
+pub const NOT_CHECKED: &str = "preconditions were not checked: the Database Access module is off in Settings";
 
 /// What the check before a case's sign-in decided.
 #[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, specta::Type)]
@@ -437,9 +437,9 @@ pub fn read_access(switch: bool) -> bool {
 }
 
 /// Where a run started from the app asks its preconditions: nowhere while
-/// Database Read Access is off (`db_read_access` is the AI Bridge tab's
-/// switch, as the webview holds it: `db_query` not among the disabled
-/// tools), otherwise the active environment's database.
+/// the Database Access module is off (`db_read_access` is that module being
+/// on, as the webview holds it), otherwise the active environment's
+/// database.
 pub fn for_run(
     root: &Path,
     store: Option<&dyn crate::db::SecretStore>,

@@ -270,7 +270,8 @@ test("an unscripted case cannot be ticked, so a bulk run never queues one", asyn
   // Case 2 has no script: its checkbox is present for row alignment but
   // inert, and Run is not offered at all, not even on its open card.
   openCard(2);
-  expect(await screen.findByRole("button", { name: "Add script for #2" })).toBeInTheDocument();
+  expect(await screen.findByText("No script yet. An assistant writes it.")).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /script for #2/ })).not.toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Run #2" })).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole("checkbox", { name: "Select #2" }));
   expect(screen.queryByText(/selected/)).not.toBeInTheDocument();
@@ -1226,7 +1227,7 @@ test("Select all shown covers only the cases the search leaves, and a search tha
 
 // ---- Case cards ----
 
-test("a collapsed card has no Script, Run or Add script button; opening it shows them", async () => {
+test("a collapsed card has no View script or Run button; opening it shows them, and a case with no script shows neither", async () => {
   mockList([caseRow(1, "Alpha check"), caseRow(2, "Beta check")], [1]);
   renderScreen();
   await screen.findByText("Alpha check");
@@ -1237,11 +1238,11 @@ test("a collapsed card has no Script, Run or Add script button; opening it shows
   fireEvent.click(screen.getByRole("button", { name: "Alpha check" }));
   expect(await screen.findByRole("button", { name: "Run #1" })).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Hide details for #1" })).toHaveAttribute("aria-expanded", "true");
-  expect(screen.queryByRole("button", { name: "Add script for #2" })).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "View script for #1" })).toBeInTheDocument();
 
   openCard(2);
-  expect(screen.getByText("No script yet")).toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "Add script for #2" })).toBeInTheDocument();
+  expect(screen.getByText("No script yet. An assistant writes it.")).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /script for #2/ })).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "Hide details for #1" }));
   expect(screen.queryByRole("button", { name: "Run #1" })).not.toBeInTheDocument();
 });
