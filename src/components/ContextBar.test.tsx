@@ -3,11 +3,11 @@
 
 import { mockIPC, clearMocks } from "@tauri-apps/api/mocks";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { afterEach, describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import ContextBar from "./ContextBar";
 
 afterEach(() => {
@@ -198,5 +198,102 @@ describe("the Settings gear stays centred", () => {
       expect(rule, cls).toMatch(/transform-origin:\s*center/);
       expect(rule, cls).toMatch(/transform-box:\s*fill-box/);
     }
+  });
+});
+
+/// With exactly one organization the bar hides the Organization picker and
+/// selects that organization itself (the same three calls the picker's
+/// onChange makes). Zero or several keep the picker.
+describe("a single organization is chosen for you", () => {
+  function renderBar(opts: {
+    orgs: Array<{ name: string; url: string }>;
+    org: string;
+    locked?: boolean;
+  }) {
+    mockIPC((cmd) => {
+      if (cmd === "list_orgs") return opts.orgs;
+      if (cmd === "list_projects") return [];
+      if (cmd === "pr_overview") return { mine: [], awaiting: [] };
+      if (cmd === "recent_mentions") return [];
+    });
+    const setOrg = vi.fn();
+    const setProject = vi.fn();
+    const setPbi = vi.fn();
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={qc}>
+        <ContextBar
+          org={opts.org}
+          setOrg={setOrg}
+          project=""
+          setProject={setProject}
+          pbi={null}
+          setPbi={setPbi}
+          account={null}
+          workMode={false}
+          onToggleWork={() => {}}
+          onOpenSettings={() => {}}
+          locked={opts.locked}
+        />
+      </QueryClientProvider>,
+    );
+    return { setOrg, setProject, setPbi };
+  }
+  const orgBox = () => screen.queryByRole("combobox", { name: "Organization" });
+
+  test("one organization hides the organization selector and selects it", async () => {
+    const { setOrg, setProject, setPbi } = renderBar({ orgs: [{ name: "acme", url: "" }], org: "" });
+    await waitFor(() => expect(setOrg).toHaveBeenCalledWith("acme"));
+    expect(setProject).toHaveBeenCalledWith("");
+    expect(setPbi).toHaveBeenCalledWith(null);
+    expect(orgBox()).toBeNull();
+  });
+
+  test("one organization already selected is not selected again", async () => {
+    const { setOrg } = renderBar({ orgs: [{ name: "acme", url: "" }], org: "acme" });
+    await waitFor(() => expect(orgBox()).toBeNull());
+    expect(setOrg).not.toHaveBeenCalled();
+  });
+
+  test("two organizations show the selector", async () => {
+    const { setOrg } = renderBar({
+      orgs: [
+        { name: "acme", url: "" },
+        { name: "Northwind", url: "" },
+      ],
+      org: "",
+    });
+    // Open the picker once; its options fill in when the list arrives.
+    await waitFor(() => {
+      const box = orgBox()!;
+      if (box.getAttribute("aria-expanded") !== "true") fireEvent.click(box);
+      expect(screen.getByRole("option", { name: "Northwind" })).toBeInTheDocument();
+    });
+    expect(screen.getByRole("option", { name: "acme" })).toBeInTheDocument();
+    expect(setOrg).not.toHaveBeenCalled();
+  });
+
+  test("no organization keeps the selector", async () => {
+    const { setOrg } = renderBar({ orgs: [], org: "" });
+    await waitFor(() => expect(screen.getByRole("button", { name: "Settings" })).toBeInTheDocument());
+    expect(orgBox()).not.toBeNull();
+    expect(setOrg).not.toHaveBeenCalled();
+  });
+
+  test("a locked bar never auto-selects", async () => {
+    const { setOrg } = renderBar({ orgs: [{ name: "acme", url: "" }], org: "Northwind", locked: true });
+    await waitFor(() => expect(orgBox()).toBeNull());
+    expect(setOrg).not.toHaveBeenCalled();
+  });
+
+  test("the scope group always renders and never squeezes the search", async () => {
+    renderBar({ orgs: [{ name: "acme", url: "" }], org: "acme" });
+    await waitFor(() => expect(orgBox()).toBeNull());
+    const group = document.querySelector("[data-tour='org']") as HTMLElement;
+    expect(group).not.toBeNull();
+    // min-w-56 (not min-w-0): the outer row must wrap the right-hand group
+    // to a second row rather than squeeze the search.
+    expect(group).toHaveClass("flex-1", "min-w-56");
+    expect(group).toContainElement(document.querySelector("[data-tour='pbi']") as HTMLElement);
   });
 });

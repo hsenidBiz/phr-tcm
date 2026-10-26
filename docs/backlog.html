@@ -48,7 +48,7 @@
   <div class="item">
     <div class="head"><span class="title">Next builds</span><span class="status todo">Next</span></div>
     <ul>
-      <li>All projects as one (spec approved, 22 tasks, shipped as several betas): next, after its plan is refreshed against today's code. With it, one organization is selected for you and its picker hidden, and the project picker goes while the switch is on.</li>
+      <li>All projects as one (spec approved, 22 tasks, shipped as several betas): phase 1 is built (below); phases 2 to 7 are next. They add the Settings switch (on by default), the PBI search across every project, and the combined board, pull requests, suites and assistant tools; while the switch is on the project picker goes.</li>
       <li>Saved setups: an assistant saves the browser steps that built a precondition under a name, with a database check (and a browser check) for a suitable test-prefixed record; asked for again later, it uses that record or builds a new one. For assistants only. Design written (docs/superpowers/specs/2026-10-23-saved-setups-design.md), waiting for the owner's review; built after phase 2 of several assistants.</li>
       <li>From the Manage Cycle comparison, not in item 39 (yours to pick): expect_response cannot require a query parameter to be absent; absence checks have no run-time positive control; precondition records not tied to the case's names; components still wait for "Showing 1-1 of 1" rather than the search response; nothing flags nth where a label exists; script fixes for 141706, 142514, 141708, 141727.</li>
     </ul>
@@ -62,6 +62,18 @@
       <li>Hand check owed: two sessions connected, the card lists both.</li>
       <li>Hand check owed: Stop, End discovery and Release on the main browser's row.</li>
       <li>Owed: the How To Use shot of the Assistants card (needs the installed app closed).</li>
+    </ul>
+  </div>
+
+  <h2>All projects as one, phase 1: one organization is chosen for you (27 October 2026)</h2>
+  <div class="item">
+    <div class="head"><span class="title">Hand checks owed</span><span class="status todo">Waiting on you</span></div>
+    <p>When the signed-in account has exactly one organization, the bar selects it automatically and the Organization picker is not drawn. Zero or several organizations keep the picker. The guided tour never auto-selects, and its "Choose where you work" stop now rings the whole scope group (Organization, Project and PBI search) with a body that fits one or several organizations.</p>
+    <ul>
+      <li>Hand check owed: sign in with a one-organization account. There is no Organization picker, the organization is selected on its own, the Project picker lists its projects, and the header stays on one line in a 1280px window.</li>
+      <li>Hand check owed: sign in with a two-organization account. The Organization picker shows and nothing is chosen for you.</li>
+      <li>Hand check owed: run the guided tour on a one-organization account. The "Choose where you work" stop rings the Project and PBI search, and your real organization is still selected when the tour ends.</li>
+      <li>Owed: the How To Use shot of the header (it still shows the Organization picker; re-taken in phase 7, needs the installed app closed).</li>
     </ul>
   </div>
 

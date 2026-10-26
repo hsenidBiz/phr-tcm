@@ -89,7 +89,7 @@ export const TOUR_STEPS: TourStep[] = [
     where: cases("manual"),
     anchor: "org",
     title: "Choose where you work",
-    body: "Pick your organisation and project up here. Everything you do stays inside that choice.",
+    body: "Everything you do happens inside the scope chosen up here: the PBI, and your organisation or project when there is more than one to pick from.",
   },
   {
     anchor: "pbi",
