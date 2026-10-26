@@ -97,7 +97,7 @@ test("a collapsed card shows the checkbox, the id, the title and the result, and
   expect(within(card).getByRole("checkbox", { name: "Select #7" })).toBeInTheDocument();
   expect(within(card).getByText("#7")).toBeInTheDocument();
   expect(within(card).getByText("Failed")).toHaveTextContent("Last result: Failed");
-  for (const name of ["Edit script for #7", "Add script for #7", "Run #7"]) {
+  for (const name of ["View script for #7", "Add script for #7", "Run #7"]) {
     expect(within(card).queryByRole("button", { name })).not.toBeInTheDocument();
   }
   // The only buttons are the two ways to open it.
@@ -118,7 +118,7 @@ test("the chevron and the title both open the card, and the chevron names its ca
   expect(onToggleOpen).toHaveBeenCalledWith(7);
 });
 
-test("an open card shows the Script, Steps and Files sections, then Script and Run", () => {
+test("an open card shows the Script, Steps and Files sections, then View script and Run", () => {
   mockIPC(() => null);
   const { onEdit, onRun } = renderCard({ open: true });
   expect(screen.getByRole("button", { name: "Hide details for #7" })).toHaveAttribute("aria-expanded", "true");
@@ -144,7 +144,10 @@ test("an open card shows the Script, Steps and Files sections, then Script and R
   expect(screen.getByText("note.pdf")).toBeInTheDocument();
   expect(screen.getByText("leave-*.xlsx")).toBeInTheDocument();
 
-  fireEvent.click(screen.getByRole("button", { name: "Edit script for #7" }));
+  const view = screen.getByRole("button", { name: "View script for #7" });
+  expect(view).toHaveTextContent("View script");
+  expect(screen.queryByRole("button", { name: "Edit script for #7" })).not.toBeInTheDocument();
+  fireEvent.click(view);
   fireEvent.click(screen.getByRole("button", { name: "Run #7" }));
   expect(onEdit).toHaveBeenCalledTimes(1);
   expect(onRun).toHaveBeenCalledTimes(1);
@@ -182,14 +185,19 @@ test("an open card leaves out every fact with no value, and Files when there is 
   expect(screen.getByText("Steps")).toBeInTheDocument();
 });
 
-test("an open card with no script says so and offers Add script, with no Script or Steps sections", () => {
-  const { onEdit } = renderCard({ open: true, script: null });
-  expect(screen.getByText("No script yet")).toBeInTheDocument();
+test("an open card with no script says an assistant writes it and offers no button, with no Script or Steps sections", () => {
+  renderCard({ open: true, script: null });
+  expect(screen.getByText("No script yet. An assistant writes it.")).toBeInTheDocument();
   expect(screen.queryByText("Steps")).not.toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Run #7" })).not.toBeInTheDocument();
   expect(screen.getByRole("checkbox", { name: "Select #7" })).toHaveClass("invisible");
-  fireEvent.click(screen.getByRole("button", { name: "Add script for #7" }));
-  expect(onEdit).toHaveBeenCalledTimes(1);
+  expect(screen.queryByRole("button", { name: /script for #7/ })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /Add script/ })).not.toBeInTheDocument();
+  // The only buttons left are the two ways to close the card.
+  expect(within(screen.getByRole("listitem")).getAllByRole("button").map((b) => b.getAttribute("aria-expanded"))).toEqual([
+    "true",
+    "true",
+  ]);
 });
 
 test("an open card lists the last run's downloads, each with Open", async () => {
@@ -389,7 +397,7 @@ test("a collapsed card whose case waits for a repair does not say it needs a rul
 
 test("a case with no script still shows its divergence", () => {
   renderCard({ open: true, script: null, divergences: [DIV] });
-  expect(screen.getByText("No script yet")).toBeInTheDocument();
+  expect(screen.getByText("No script yet. An assistant writes it.")).toBeInTheDocument();
   expect(screen.getByText("Needs a ruling")).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Rule the case is right for #7 step 2" })).toBeInTheDocument();
 });

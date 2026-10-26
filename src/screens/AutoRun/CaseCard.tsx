@@ -4,8 +4,8 @@
 // case's last result. Nothing on it is a button but the chevron and the
 // title, which both open it. Open, it shows what the saved script does (its
 // summary, its steps, the files it uploads and checks), the last run's
-// downloads, and then the Script and Run buttons, or Add script for a case
-// that has none.
+// downloads, and then the View script and Run buttons. A case with no script
+// has neither: only an assistant writes one, so the card just says so.
 
 import { useQuery } from "@tanstack/react-query";
 import { memo, useId, type CSSProperties } from "react";
@@ -13,7 +13,7 @@ import type { Action, CaseScript, Divergence } from "../../bindings";
 import { Button } from "../../components/ui/button";
 import { Checkbox } from "../../components/ui/checkbox";
 import SharedStepLabel from "../../components/SharedStepLabel";
-import { IconAdd, IconBug, IconEdit, IconHideDetails, IconRun, IconShowDetails, IconWarning } from "../../lib/actionIcons";
+import { IconBug, IconHideDetails, IconRun, IconShowDetails, IconViewScript, IconWarning } from "../../lib/actionIcons";
 import { cn } from "../../lib/cn";
 import { caseTextLine } from "../../lib/markdown";
 import { plural } from "../../lib/plural";
@@ -252,7 +252,7 @@ function CaseCard({
             </div>
           )}
           {!script ? (
-            <p className="text-xs text-muted">No script yet</p>
+            <p className="text-xs text-muted">No script yet. An assistant writes it.</p>
           ) : (
             <>
               <div className="space-y-1">
@@ -343,22 +343,22 @@ function CaseCard({
           )}
 
           {/* No "Script ready" badge: the card says it with its buttons. A
-              scripted case has a Run button, outlined in the success
-              colour; a case with no script has no Run button, and its
-              script button says Add. Both stay outline buttons: the one
-              primary action on the screen is running the selection, in the
-              dock. */}
-          <div className="flex flex-wrap items-center gap-2">
-            <Button
-              size="sm"
-              variant="outline"
-              aria-label={`${ready ? "Edit" : "Add"} script for #${c.id}`}
-              onClick={() => onEdit(c.id)}
-            >
-              {ready ? <IconEdit aria-hidden /> : <IconAdd aria-hidden />}
-              {ready ? "Script" : "Add script"}
-            </Button>
-            {ready && (
+              scripted case has View script and a Run button, outlined in the
+              success colour; a case with no script has neither, because a
+              person never writes one by hand. Both stay outline buttons: the
+              one primary action on the screen is running the selection, in
+              the dock. */}
+          {ready && (
+            <div className="flex flex-wrap items-center gap-2">
+              <Button
+                size="sm"
+                variant="outline"
+                aria-label={`View script for #${c.id}`}
+                onClick={() => onEdit(c.id)}
+              >
+                <IconViewScript aria-hidden />
+                View script
+              </Button>
               <Button
                 size="sm"
                 variant="outline"
@@ -373,8 +373,8 @@ function CaseCard({
                 <IconRun aria-hidden />
                 Run
               </Button>
-            )}
-          </div>
+            </div>
+          )}
         </div>
       )}
     </li>

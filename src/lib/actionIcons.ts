@@ -213,4 +213,7 @@ export {
   // case editors' Preview toggle) - an eye, since it only shows what was
   // typed and changes none of it.
   Eye as IconPreview,
+  // Auto Run's case card: look at a saved script, never change it from the
+  // card. An eye, since the button only shows it.
+  Eye as IconViewScript,
 } from "lucide-react";

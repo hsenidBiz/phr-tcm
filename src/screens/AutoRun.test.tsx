@@ -55,6 +55,14 @@ function chooseFromMore(name: string) {
   fireEvent.click(screen.getByRole("menuitem", { name }));
 }
 
+/** A saved one-step script for case 201, for the tests that open the
+ * script window: it is only reachable from a case that already has one. */
+const EXISTING_201 = {
+  case_id: 201,
+  title: "Valid login",
+  steps: [{ step_number: 1, actions: [{ kind: "check_text", value: "Dashboard" }] }],
+};
+
 const cases = [
   {
     id: 201,
@@ -82,9 +90,9 @@ const cases = [
 
 /// Most cases have no script, and that is the normal state - the screen
 /// has to say which are drivable rather than looking broken. It says it with
-/// the row's buttons, not a badge: a scripted case has a Run button outlined
-/// in the success colour; an unscripted one has none, and its script button
-/// says Add.
+/// the row's buttons, not a badge: a scripted case has View script and a Run
+/// button outlined in the success colour; an unscripted one has neither and
+/// says an assistant writes its script.
 test("lists the PBI's cases and marks which ones have a script", async () => {
   mockIPC((cmd, args) => {
     if (cmd === "list_test_case_fields") return [];
@@ -103,8 +111,9 @@ test("lists the PBI's cases and marks which ones have a script", async () => {
   expect(screen.getByText("Locked account")).toBeInTheDocument();
   const run = await screen.findByRole("button", { name: "Run #201" });
   expect(run).toHaveClass("border-success");
-  expect(screen.getByRole("button", { name: "Edit script for #201" })).toHaveTextContent("Script");
-  expect(screen.getByRole("button", { name: "Add script for #202" })).toHaveTextContent("Add script");
+  expect(screen.getByRole("button", { name: "View script for #201" })).toHaveTextContent("View script");
+  expect(screen.getByText("No script yet. An assistant writes it.")).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /script for #202/ })).not.toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Run #202" })).not.toBeInTheDocument();
   // The badges are gone.
   expect(screen.queryByText("Script ready")).not.toBeInTheDocument();
@@ -161,7 +170,8 @@ test("importing scripts sends the picked file's path, and the badge updates", as
 
   const row = (await screen.findByText("Valid login")).closest("li");
   if (!row) throw new Error("row for case #201 not found");
-  expect(within(row).getByRole("button", { name: "Add script for #201" })).toBeInTheDocument();
+  expect(within(row).getByText("No script yet. An assistant writes it.")).toBeInTheDocument();
+  expect(within(row).queryByRole("button", { name: /script for #201/ })).not.toBeInTheDocument();
 
   chooseFromMore("Import scripts");
 
@@ -255,7 +265,7 @@ test("the script editor refuses invalid JSON instead of saving it", async () => 
   mockIPC((cmd) => {
     if (cmd === "list_test_case_fields") return [];
     if (cmd === "pbi_test_cases_full") return cases;
-    if (cmd === "auto_run_load_script") return null;
+    if (cmd === "auto_run_load_script") return EXISTING_201;
     if (cmd === "auto_run_save_script") {
       saved++;
       return null;
@@ -264,7 +274,7 @@ test("the script editor refuses invalid JSON instead of saving it", async () => 
   renderAutoRun();
   await expandCards();
 
-  fireEvent.click(await screen.findByRole("button", { name: "Add script for #201" }));
+  fireEvent.click(await screen.findByRole("button", { name: "View script for #201" }));
   // The window opens on the readable script; the JSON is behind Edit script.
   fireEvent.click(await screen.findByRole("button", { name: "Edit script" }));
   const box = await screen.findByLabelText("Action script JSON");
@@ -280,7 +290,7 @@ test("a valid script is saved for that case id", async () => {
   mockIPC((cmd, args) => {
     if (cmd === "list_test_case_fields") return [];
     if (cmd === "pbi_test_cases_full") return cases;
-    if (cmd === "auto_run_load_script") return null;
+    if (cmd === "auto_run_load_script") return EXISTING_201;
     if (cmd === "auto_run_save_script") {
       payload = args as Record<string, unknown>;
       return null;
@@ -289,7 +299,7 @@ test("a valid script is saved for that case id", async () => {
   renderAutoRun();
   await expandCards();
 
-  fireEvent.click(await screen.findByRole("button", { name: "Add script for #201" }));
+  fireEvent.click(await screen.findByRole("button", { name: "View script for #201" }));
   // The window opens on the readable script; the JSON is behind Edit script.
   fireEvent.click(await screen.findByRole("button", { name: "Edit script" }));
   const box = await screen.findByLabelText("Action script JSON");
@@ -308,16 +318,15 @@ test("a valid script is saved for that case id", async () => {
   expect(script.steps).toHaveLength(1);
 });
 
-/// The row's script button and Run button are driven by the SAME
+/// The card's script summary and its buttons are driven by the SAME
 /// `["autorun-script", caseId]` query the editor reads. A save that never
-/// invalidates that key leaves both stuck on "Add script" and no Run until
-/// the person leaves the section and
-/// comes back - the case they just scripted can't be run. `scriptFor201`
-/// starts null and only becomes non-null once the save handler below fires,
-/// so this fails without the invalidation (the query would keep serving its
-/// cached `null` forever, `refetchOnWindowFocus` being off).
-test("saving a script invalidates its query so the script and Run buttons update in place", async () => {
-  let scriptFor201: unknown = null;
+/// invalidates that key leaves the card showing the old script until the
+/// person leaves the section and comes back. `scriptFor201` only changes
+/// once the save handler below fires, so this fails without the
+/// invalidation (the query would keep serving its cached script forever,
+/// `refetchOnWindowFocus` being off).
+test("saving a script invalidates its query so the card updates in place", async () => {
+  let scriptFor201: unknown = EXISTING_201;
   mockIPC((cmd, args) => {
     if (cmd === "list_test_case_fields") return [];
     if (cmd === "pbi_test_cases_full") return cases;
@@ -329,7 +338,10 @@ test("saving a script invalidates its query so the script and Run buttons update
       scriptFor201 = {
         case_id: 201,
         title: "Valid login",
-        steps: [{ step_number: 1, actions: [{ kind: "check_text", value: "Dashboard" }] }],
+        steps: [
+          { step_number: 1, actions: [{ kind: "check_text", value: "Dashboard" }] },
+          { step_number: 2, actions: [{ kind: "check_text", value: "Welcome" }] },
+        ],
       };
       return null;
     }
@@ -337,12 +349,13 @@ test("saving a script invalidates its query so the script and Run buttons update
   renderAutoRun();
   await expandCards();
 
-  const editButton = await screen.findByRole("button", { name: "Add script for #201" });
-  const row = editButton.closest("li");
+  const viewButton = await screen.findByRole("button", { name: "View script for #201" });
+  const row = viewButton.closest("li");
   if (!row) throw new Error("row for case #201 not found");
-  expect(within(row).queryByRole("button", { name: "Run #201" })).not.toBeInTheDocument();
+  expect(within(row).getByRole("button", { name: "Run #201" })).toBeInTheDocument();
+  expect(within(row).getByRole("list", { name: "Script steps of #201" }).children).toHaveLength(1);
 
-  fireEvent.click(editButton);
+  fireEvent.click(viewButton);
   // The window opens on the readable script; the JSON is behind Edit script.
   fireEvent.click(await screen.findByRole("button", { name: "Edit script" }));
   const box = await screen.findByLabelText("Action script JSON");
@@ -350,19 +363,20 @@ test("saving a script invalidates its query so the script and Run buttons update
     target: {
       value: JSON.stringify([
         { step_number: 1, actions: [{ kind: "check_text", value: "Dashboard" }] },
+        { step_number: 2, actions: [{ kind: "check_text", value: "Welcome" }] },
       ]),
     },
   });
   fireEvent.click(screen.getByRole("button", { name: "Save script" }));
 
   await waitFor(() =>
-    expect(within(row).getByRole("button", { name: "Edit script for #201" })).toBeInTheDocument(),
+    expect(within(row).getByRole("list", { name: "Script steps of #201" }).children).toHaveLength(2),
   );
   expect(within(row).getByRole("button", { name: "Run #201" })).toHaveClass("border-success");
 });
 
-/// A case that already has a saved script has never had its load-and-prefill
-/// path exercised - both prior tests mock the load as returning null.
+/// The window opens from View script on a case that already has a script,
+/// and the editor reads that script back into its box.
 test("prefills the editor with a case's existing script", async () => {
   mockIPC((cmd) => {
     if (cmd === "list_test_case_fields") return [];
@@ -378,68 +392,11 @@ test("prefills the editor with a case's existing script", async () => {
   renderAutoRun();
   await expandCards();
 
-  fireEvent.click(await screen.findByRole("button", { name: "Edit script for #201" }));
+  fireEvent.click(await screen.findByRole("button", { name: "View script for #201" }));
   // The window opens on the readable script; the JSON is behind Edit script.
   fireEvent.click(await screen.findByRole("button", { name: "Edit script" }));
   const box = (await screen.findByLabelText("Action script JSON")) as HTMLTextAreaElement;
   await waitFor(() => expect(box.value).toContain("check_text"));
-});
-
-/// While the existing script hasn't resolved yet, an empty textarea is
-/// indistinguishable from "this case has no script" - saving in that window
-/// would silently overwrite whatever script was already there.
-test("refuses to save while the existing script is still loading", async () => {
-  let saved = 0;
-  let resolveLoad: (value: unknown) => void = () => {};
-  const pending = new Promise((resolve) => {
-    resolveLoad = resolve;
-  });
-  mockIPC((cmd) => {
-    if (cmd === "list_test_case_fields") return [];
-    if (cmd === "pbi_test_cases_full") return cases;
-    if (cmd === "auto_run_load_script") return pending;
-    if (cmd === "auto_run_save_script") {
-      saved++;
-      return null;
-    }
-  });
-  renderAutoRun();
-  await expandCards();
-
-  fireEvent.click(await screen.findByRole("button", { name: "Add script for #201" }));
-  const saveButton = await screen.findByRole("button", { name: "Save script" });
-  expect(saveButton).toBeDisabled();
-
-  fireEvent.click(saveButton);
-  expect(saved).toBe(0);
-
-  resolveLoad(null);
-  await waitFor(() => expect(saveButton).not.toBeDisabled());
-});
-
-/// A load failure must be distinct from "no script yet" - it must not
-/// silently default to an empty, savable editor either.
-test("refuses to save when the existing script fails to load", async () => {
-  let saved = 0;
-  mockIPC((cmd) => {
-    if (cmd === "list_test_case_fields") return [];
-    if (cmd === "pbi_test_cases_full") return cases;
-    if (cmd === "auto_run_load_script") throw "boom";
-    if (cmd === "auto_run_save_script") {
-      saved++;
-      return null;
-    }
-  });
-  renderAutoRun();
-  await expandCards();
-
-  fireEvent.click(await screen.findByRole("button", { name: "Add script for #201" }));
-  const saveButton = await screen.findByRole("button", { name: "Save script" });
-  await waitFor(() => expect(saveButton).toBeDisabled());
-
-  fireEvent.click(saveButton);
-  expect(saved).toBe(0);
-  expect(await screen.findByText(/could not load the existing script/i)).toBeInTheDocument();
 });
 
 const scriptFor201 = {
@@ -1094,7 +1051,7 @@ test("a case without a mark shows no badge and no Clear button", async () => {
   renderAutoRun();
   await expandCards();
 
-  await screen.findByRole("button", { name: "Edit script for #201" });
+  await screen.findByRole("button", { name: "View script for #201" });
   expect(screen.queryByText("Suspected defect")).not.toBeInTheDocument();
   expect(screen.queryByRole("button", { name: /clear suspected defect/i })).not.toBeInTheDocument();
 });
@@ -1385,7 +1342,7 @@ test("with a site address, a sign-in and an account the Setup panel starts as a 
   await expandCards();
 
   expect(tab("Test cases")).toHaveAttribute("aria-selected", "true");
-  expect(await screen.findByRole("button", { name: "Add script for #201" })).toBeInTheDocument();
+  expect((await screen.findAllByText("No script yet. An assistant writes it.")).length).toBeGreaterThan(0);
   const summary = within(setupPanel()).getByRole("list", { name: "Setup summary" });
   expect(await within(summary).findByText("https://qa.example.com/")).toBeInTheDocument();
   // The address is shown whole - never cut short with an ellipsis, and not
@@ -1804,10 +1761,9 @@ test("Clear scripts in More is disabled when no case has a script", async () => 
   mockReady();
   renderAutoRun("Test cases");
   await expandCards();
-  // Wait for the script lookups to answer (no script: an Add button), or
-  // the item would be disabled merely because they are still pending.
-  await screen.findByRole("button", { name: "Add script for #201" });
-  await screen.findByRole("button", { name: "Add script for #202" });
+  // Wait for the cards to show (no script: the line saying so), or the
+  // item would be disabled merely because they are still pending.
+  expect(await screen.findAllByText("No script yet. An assistant writes it.")).toHaveLength(2);
   fireEvent.click(screen.getByRole("button", { name: "More" }));
   expect(screen.getByRole("menuitem", { name: "Clear scripts" })).toBeDisabled();
 });
@@ -1958,7 +1914,5 @@ test("opening the screen reads all its cases' scripts in one call", async () => 
   });
   renderAutoRun("Test cases");
   await expandCards();
-  await screen.findByRole("button", { name: "Add script for #201" });
-  await screen.findByRole("button", { name: "Add script for #202" });
-  expect(batches).toEqual([[201, 202]]);
+  await waitFor(() => expect(batches).toEqual([[201, 202]]));
 });
