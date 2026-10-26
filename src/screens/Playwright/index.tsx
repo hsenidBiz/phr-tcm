@@ -22,7 +22,6 @@ import {
 import Accounts, { ACCOUNTS_KEY } from "./Accounts";
 import FeatureTree from "./FeatureTree";
 import HealthLine, { HEALTH_TEXT, WARNING_ONLY } from "./HealthLine";
-import NewFolder from "./NewFolder";
 import { Hint, STRUCTURE_KEY, Stat, SubTabs, type TabSpec } from "./parts";
 import PlaywrightExportDialog from "./PlaywrightExportDialog";
 import Runner, { REPORTS_KEY, TESTS_KEY } from "./Runner";
@@ -43,7 +42,8 @@ let lastTab: Tab = "overview";
 const READS_SPECS: ReadonlySet<string> = new Set([STRUCTURE_KEY, TESTS_KEY, SYNC_KEY]);
 
 /** What the clone holds: the counts (counting up each time the tab is
- * `shown`), New folder, and the folder tree under suites. */
+ * `shown`), and the folder tree under suites. New folders are made from the
+ * tree's own right-click menu. */
 function Overview({ s, clone, shown, onCreated }: { s: RepoStructure; clone: string; shown: boolean; onCreated: () => void }) {
   const specs = s.features.reduce((n, f) => n + f.spec_count, 0);
   const cases = s.features.reduce((n, f) => n + f.case_count, 0);
@@ -61,8 +61,7 @@ function Overview({ s, clone, shown, onCreated }: { s: RepoStructure; clone: str
           label={s.navigation_keys.length === 1 ? "navigation entry" : "navigation entries"}
         />
       </div>
-      <NewFolder clone={clone} paths={s.features.map((f) => f.path.join("/"))} disabled={s.health.includes("NotTheRepo")} onCreated={onCreated} />
-      {s.features.length === 0 ? <Hint>No features under suites yet.</Hint> : <FeatureTree features={s.features} clone={s.health.includes("NotTheRepo") ? "" : clone} onChanged={onCreated} />}
+      <FeatureTree features={s.features} clone={s.health.includes("NotTheRepo") ? "" : clone} onChanged={onCreated} />
     </section>
   );
 }

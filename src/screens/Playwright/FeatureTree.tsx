@@ -13,6 +13,11 @@
 // New folder puts a name box under the row, Rename turns the row's name into
 // one. Rename asks Rust what it would break first (pw_repo_rename_folder_check)
 // and lists that for confirming; the app never rewrites the repo's files.
+//
+// The empty area under the rows (or the hint, when the clone has no features
+// yet) has the same menu with just New feature folder, which makes a folder
+// at the top, directly under suites. That is the only way to a first folder
+// or a top-level one, since the tree has no toolbar button for it.
 
 import { useEffect, useRef, useState, type KeyboardEvent, type MouseEvent } from "react";
 import { commands, type RenameCheck, type RepoStructure } from "../../bindings";
@@ -30,6 +35,7 @@ import { cn } from "../../lib/cn";
 import { unwrapStr } from "../../lib/ipc";
 import { toast } from "../../lib/toast";
 import RenameFolderDialog from "./RenameFolderDialog";
+import { Hint } from "./parts";
 import { NESTED } from "./RunnerTree";
 
 type Feature = RepoStructure["features"][number];
@@ -168,8 +174,10 @@ export default function FeatureTree({
   onChanged?: () => void;
 }) {
   const [folded, setFolded] = useState<Set<string>>(() => new Set());
+  /** `id` "" is the top, under suites. */
   const [menu, setMenu] = useState<{ id: string; x: number; y: number; row: HTMLElement | null } | null>(null);
-  /** The folder a new one is being named under, and the one being renamed. */
+  /** The folder a new one is being named under ("" is the top, under
+   * suites), and the one being renamed. */
   const [creating, setCreating] = useState<string | null>(null);
   const [renaming, setRenaming] = useState<string | null>(null);
   const [confirm, setConfirm] = useState<RenameCheck | null>(null);
@@ -403,21 +411,80 @@ export default function FeatureTree({
     );
   };
 
+  /** The empty area under the rows: the menu for the top, by right-click or
+   * the keyboard. Without a clone it is just the space. */
+  const topProps = editable
+    ? {
+        role: "group",
+        tabIndex: 0,
+        "data-folder-top": "",
+        "aria-label": "Top of suites",
+        "aria-keyshortcuts": "Shift+F10",
+        onContextMenu: (e: MouseEvent<HTMLDivElement>) => {
+          e.preventDefault();
+          setMenu({ id: "", x: e.clientX, y: e.clientY, row: e.currentTarget });
+        },
+        onKeyDown: (e: KeyboardEvent<HTMLDivElement>) => {
+          if (e.target !== e.currentTarget) return;
+          if (e.key !== "ContextMenu" && !(e.shiftKey && e.key === "F10")) return;
+          e.preventDefault();
+          const r = e.currentTarget.getBoundingClientRect();
+          setMenu({ id: "", x: r.left + 28, y: r.top + 24, row: e.currentTarget });
+        },
+      }
+    : {};
+  const isCreatingTop = creating === "" && editable;
+  /** Escape in the top-level name box: back to the empty area. */
+  const cancelTopBox = (viaKey: boolean) => {
+    if (viaKey) tree.current?.querySelector<HTMLElement>("[data-folder-top]")?.focus();
+    stopEditing();
+  };
+
   return (
     <div ref={tree} className="overflow-hidden rounded-lg border border-border bg-surface">
-      <div aria-hidden className="flex items-center gap-1.5 border-b border-border bg-surface-2 px-3 py-2 text-xs font-medium text-muted">
-        <span className="min-w-0 flex-1">Folder</span>
-        <span className="w-14 shrink-0 text-right">Specs</span>
-        <span className="w-14 shrink-0 text-right">Cases</span>
+      {features.length > 0 && (
+        <>
+          <div aria-hidden className="flex items-center gap-1.5 border-b border-border bg-surface-2 px-3 py-2 text-xs font-medium text-muted">
+            <span className="min-w-0 flex-1">Folder</span>
+            <span className="w-14 shrink-0 text-right">Specs</span>
+            <span className="w-14 shrink-0 text-right">Cases</span>
+          </div>
+          <ul aria-label="Features" className="p-2">
+            {buildFolders(features).map(row)}
+          </ul>
+        </>
+      )}
+      <div
+        {...topProps}
+        className={cn(
+          "min-h-10 px-3 py-2",
+          editable && "focus-visible:bg-surface-2 focus-visible:outline focus-visible:outline-1 focus-visible:outline-accent",
+        )}
+      >
+        {features.length === 0 && <Hint>No features under suites yet.</Hint>}
+        {isCreatingTop && (
+          <div className="mt-1">
+            <div className="flex items-center gap-1.5 rounded px-1 py-0.5">
+              <span className="w-5 shrink-0" aria-hidden />
+              <IconRepoFolder aria-hidden className="size-4 shrink-0 text-muted" />
+              <NameBox
+                label="New folder name under suites"
+                initial=""
+                hold={false}
+                busy={busy}
+                onSubmit={(name) => void create("", name)}
+                onCancel={cancelTopBox}
+              />
+            </div>
+            {error && <p className="ml-7 text-xs text-danger">{error}</p>}
+          </div>
+        )}
       </div>
-      <ul aria-label="Features" className="p-2">
-        {buildFolders(features).map(row)}
-      </ul>
       {menu && (
         <ContextMenu
           x={menu.x}
           y={menu.y}
-          label={`Actions for ${menu.id}`}
+          label={`Actions for ${menu.id || SUITES}`}
           returnTo={menu.row}
           onClose={() => setMenu(null)}
           actions={[
@@ -432,15 +499,20 @@ export default function FeatureTree({
                 setCreating(menu.id);
               },
             },
-            {
-              label: "Rename",
-              icon: <IconRename aria-hidden />,
-              onSelect: () => {
-                setCreating(null);
-                setError("");
-                setRenaming(menu.id);
-              },
-            },
+            // The top is not a folder: nothing there to rename.
+            ...(menu.id === ""
+              ? []
+              : [
+                  {
+                    label: "Rename",
+                    icon: <IconRename aria-hidden />,
+                    onSelect: () => {
+                      setCreating(null);
+                      setError("");
+                      setRenaming(menu.id);
+                    },
+                  },
+                ]),
           ]}
         />
       )}

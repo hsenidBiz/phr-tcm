@@ -468,3 +468,24 @@ test("Refresh waits while an account change or a Runner command is going", async
   await waitFor(() => expect(refresh()).toBeEnabled());
   fireEvent.click(screen.getByRole("tab", { name: "Overview" }));
 });
+
+test("the Overview has no New folder button; folders are made from the tree's right-click menu", async () => {
+  reduceMotion();
+  mount("C:/repo");
+  await screen.findByRole("list", { name: "Features" });
+  expect(screen.queryByRole("button", { name: "New folder" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("group", { name: "New folder" })).not.toBeInTheDocument();
+});
+
+test("a clone with no features lists the hint and a right-click on it makes the first folder", async () => {
+  reduceMotion();
+  const calls = mount("C:/repo", { ...HEALTHY, features: [] });
+  const hint = await screen.findByText("No features under suites yet.");
+  fireEvent.contextMenu(hint);
+  fireEvent.click(await screen.findByRole("menuitem", { name: "New feature folder" }));
+  const box = screen.getByRole("textbox", { name: "New folder name under suites" });
+  fireEvent.change(box, { target: { value: "sl" } });
+  fireEvent.keyDown(box, { key: "Enter" });
+  await waitFor(() => expect(calls.some((c) => c.cmd === "pw_repo_create_folder")).toBe(true));
+  expect(calls.find((c) => c.cmd === "pw_repo_create_folder")!.args).toEqual({ clone: "C:/repo", path: "sl" });
+});

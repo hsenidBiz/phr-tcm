@@ -409,3 +409,61 @@ test("after a rename the focus goes to the row under its new path once the tree 
   rerender(<FeatureTree features={[feature("sl/admin/perf"), feature("sl/self/leave")]} clone="C:/repo" onChanged={onChanged} />);
   await waitFor(() => expect(row("sl/admin/perf")).toHaveFocus());
 });
+
+const strip = () => screen.getByRole("group", { name: "Top of suites" });
+
+test("right-clicking the empty area below the rows offers New feature folder at the top level", async () => {
+  const { calls, onChanged } = mount();
+  fireEvent.contextMenu(strip(), { clientX: 40, clientY: 400 });
+  // Only the action that makes sense for the top: there is no folder to rename.
+  expect(within(menu()).getAllByRole("menuitem").map((m) => m.textContent)).toEqual(["New feature folder"]);
+  fireEvent.click(within(menu()).getByRole("menuitem", { name: "New feature folder" }));
+  const box = screen.getByRole("textbox", { name: "New folder name under suites" });
+  expect(box).toHaveFocus();
+  fireEvent.change(box, { target: { value: "reports" } });
+  fireEvent.keyDown(box, { key: "Enter" });
+  await waitFor(() => expect(onChanged).toHaveBeenCalledTimes(1));
+  expect(ipc(calls, "pw_repo_create_folder")).toEqual([{ clone: "C:/repo", path: "reports" }]);
+  expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
+});
+
+test("the empty area opens the same menu from the keyboard", () => {
+  mount();
+  fireEvent.keyDown(strip(), { key: "F10", shiftKey: true });
+  expect(within(menu()).getByRole("menuitem", { name: "New feature folder" })).toBeInTheDocument();
+});
+
+test("a top-level folder that is refused shows why and keeps the box", async () => {
+  const { onChanged } = mount({ create: () => "\"reports\" is already a feature folder." });
+  fireEvent.contextMenu(strip());
+  fireEvent.click(within(menu()).getByRole("menuitem", { name: "New feature folder" }));
+  const box = screen.getByRole("textbox", { name: "New folder name under suites" });
+  fireEvent.change(box, { target: { value: "reports" } });
+  fireEvent.keyDown(box, { key: "Enter" });
+  expect(await screen.findByText("\"reports\" is already a feature folder.")).toBeInTheDocument();
+  expect(onChanged).not.toHaveBeenCalled();
+  expect(box).toBeInTheDocument();
+});
+
+test("a clone with no features shows the hint, and right-clicking it makes the first folder", async () => {
+  const calls: Call[] = [];
+  mockIPC((cmd, args) => {
+    calls.push({ cmd, args: args as Record<string, unknown> });
+    return cmd === "pw_repo_create_folder" ? { path: (args as { path: string }).path, files: [] } : null;
+  });
+  const onChanged = vi.fn();
+  render(<FeatureTree features={[]} clone="C:/repo" onChanged={onChanged} />);
+  expect(screen.getByText("No features under suites yet.")).toBeInTheDocument();
+  fireEvent.contextMenu(screen.getByText("No features under suites yet."));
+  fireEvent.click(within(menu()).getByRole("menuitem", { name: "New feature folder" }));
+  const box = screen.getByRole("textbox", { name: "New folder name under suites" });
+  fireEvent.change(box, { target: { value: "sl" } });
+  fireEvent.keyDown(box, { key: "Enter" });
+  await waitFor(() => expect(onChanged).toHaveBeenCalledTimes(1));
+  expect(ipc(calls, "pw_repo_create_folder")).toEqual([{ clone: "C:/repo", path: "sl" }]);
+});
+
+test("without a clone the empty area has no menu", () => {
+  mount({ clone: "" });
+  expect(screen.queryByRole("group", { name: "Top of suites" })).not.toBeInTheDocument();
+});
