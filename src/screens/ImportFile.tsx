@@ -87,6 +87,31 @@ function wikiTitle(url: string): string {
 
 const chipLabel = (spec: string) => (isWikiLink(spec) ? wikiTitle(spec) : splitSpec(spec).name);
 
+/** Each spec's remove button name. A label that is alone is "Remove <label>";
+ * two chips that share one (the same file name in two folders, two wiki links
+ * that both fall back to "Wiki page") add where they differ, so a screen
+ * reader never hears two identical buttons. */
+function removeNames(specs: string[]): Map<string, string> {
+  const byLabel = new Map<string, string[]>();
+  for (const s of specs) byLabel.set(chipLabel(s), [...(byLabel.get(chipLabel(s)) ?? []), s]);
+  const names = new Map<string, string>();
+  for (const [label, same] of byLabel) {
+    same.forEach((s, i) => {
+      if (same.length === 1) names.set(s, `Remove ${label}`);
+      else if (isWikiLink(s)) names.set(s, `Remove ${label} (link ${i + 1})`);
+      else names.set(s, `Remove ${label} from ${splitSpec(s).dir || "this folder"}`);
+    });
+  }
+  // A last guard: names that are still the same get a number.
+  const seen = new Map<string, number>();
+  for (const [s, name] of names) {
+    const n = (seen.get(name) ?? 0) + 1;
+    seen.set(name, n);
+    if (n > 1) names.set(s, `${name} (${n})`);
+  }
+  return names;
+}
+
 /** The specs, grouped by the folder they sit in (wiki links together), in
  * the order each group first appears. */
 function groupSpecs(specs: string[]): { key: string; dir: string; items: string[] }[] {
@@ -147,6 +172,7 @@ function WatchedFileRow({
   const hidden = expanded ? 0 : Math.max(0, specs.length - SPEC_CHIPS_SHOWN);
   const groups = groupSpecs(hidden > 0 ? specs.slice(0, SPEC_CHIPS_SHOWN) : specs);
   const name = fileName(watch.path);
+  const removeName = removeNames(specs);
   return (
     <>
       <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
@@ -209,8 +235,9 @@ function WatchedFileRow({
                       <span className={cn("min-w-0 truncate text-text", !isWikiLink(s) && "id-mono")}>{label}</span>
                       <button
                         type="button"
-                        aria-label={`Remove ${label}`}
-                        className="flex size-4 shrink-0 items-center justify-center rounded text-faint hover:text-danger"
+                        aria-label={removeName.get(s) ?? `Remove ${label}`}
+                        disabled={save.isPending}
+                        className="flex size-4 shrink-0 items-center justify-center rounded text-faint hover:text-danger focus-visible:outline-2 focus-visible:outline-accent disabled:pointer-events-none disabled:opacity-50"
                         onClick={() => save.mutate(specs.filter((x) => x !== s))}
                       >
                         <IconCancel aria-hidden className="size-3" />
@@ -226,6 +253,7 @@ function WatchedFileRow({
               variant="ghost"
               size="sm"
               className="h-auto px-1.5 py-0.5"
+              aria-expanded={expanded}
               onClick={() => setExpanded((e) => !e)}
             >
               {expanded ? "Show fewer" : `+${hidden} more`}

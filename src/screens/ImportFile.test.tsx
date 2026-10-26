@@ -1466,3 +1466,63 @@ test("a wiki link is a chip with the page's title, and the link is only its tool
   await waitFor(() => expect(saved).toHaveLength(1));
   expect(saved[0]).toEqual(["Step13.md"]);
 });
+
+test("a chip's remove button has the app's focus ring", async () => {
+  mountWithSpecs(["../doc/A/1.One.md"]);
+  const remove = await screen.findByRole("button", { name: "Remove 1.One.md" });
+  expect(remove).toHaveClass("focus-visible:outline-2", "focus-visible:outline-accent");
+});
+
+test("two chips with the same label get remove buttons with different names", async () => {
+  const url = (n: number) => `https://dev.azure.com/o/p/_wiki/wikis/p.wiki/${n}`;
+  mountWithSpecs(["../doc/A/1.Name.md", "../doc/B/1.Name.md", "Other.md", url(5), url(6)]);
+  await screen.findAllByText("1.Name.md");
+  // The same file name in two folders is told apart by its folder.
+  expect(screen.getByRole("button", { name: "Remove 1.Name.md from ../doc/A" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Remove 1.Name.md from ../doc/B" })).toBeInTheDocument();
+  // A label that is alone keeps its short name.
+  expect(screen.getByRole("button", { name: "Remove Other.md" })).toBeInTheDocument();
+  // Two wiki links that both fall back to "Wiki page" are numbered.
+  expect(screen.getByRole("button", { name: "Remove Wiki page (link 1)" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Remove Wiki page (link 2)" })).toBeInTheDocument();
+  const names = screen.getAllByRole("button", { name: /^Remove / }).map((b) => b.getAttribute("aria-label"));
+  expect(new Set(names).size).toBe(names.length);
+});
+
+test("the +N more chip says whether the rest is shown", async () => {
+  mountWithSpecs(Array.from({ length: 15 }, (_, i) => `../doc/S/${String(i + 1).padStart(2, "0")}.Spec.md`));
+  await screen.findByText("01.Spec.md");
+  const more = screen.getByRole("button", { name: "+3 more" });
+  expect(more).toHaveAttribute("aria-expanded", "false");
+  fireEvent.click(more);
+  expect(screen.getByRole("button", { name: "Show fewer" })).toHaveAttribute("aria-expanded", "true");
+});
+
+test("while a spec removal is being saved the other remove buttons are disabled", async () => {
+  let finish: (stamp: string) => void = () => {};
+  mockIPC((cmd) => {
+    if (cmd === "plugin:event|listen") return 1;
+    if (cmd === "plugin:event|unlisten") return null;
+    if (cmd === "plugin:dialog|open") return "C:/w/cases.json";
+    if (cmd === "parse_import_file")
+      return { cases: [jsonCase("A")], warnings: [], specs: ["../doc/A/1.One.md", "../doc/A/2.Two.md"] };
+    if (cmd === "read_general_comment") return "";
+    if (cmd === "save_specs") return new Promise<string>((resolve) => (finish = resolve));
+    if (cmd === "file_stamp") return "stamp-1";
+    if (cmd === "watch_file") return null;
+    if (cmd === "list_test_case_fields") return [];
+    if (cmd === "pbi_test_cases") return [];
+    if (cmd === "test_case_field_values") return [];
+  });
+  renderScreen();
+  fireEvent.click(screen.getByRole("button", { name: "Import JSON" }));
+  await screen.findByText("1.One.md");
+  const first = screen.getByRole("button", { name: "Remove 1.One.md" });
+  const second = screen.getByRole("button", { name: "Remove 2.Two.md" });
+  expect(second).toBeEnabled();
+  fireEvent.click(first);
+  await waitFor(() => expect(second).toBeDisabled());
+  expect(first).toBeDisabled();
+  finish("stamp-2");
+  await waitFor(() => expect(second).toBeEnabled());
+});
