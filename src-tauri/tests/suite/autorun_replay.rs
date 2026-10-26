@@ -1769,7 +1769,7 @@ async fn with_reading_off_a_case_runs_unchecked_and_its_record_says_so() {
     assert_ne!(run.cases[0].proposed, "Blocked", "{:?}", run.cases[0]);
     assert_eq!(
         run.cases[0].notice.as_deref(),
-        Some("preconditions were not checked: Database Read Access is off on the AI Bridge tab")
+        Some("preconditions were not checked: the Database Access module is off in Settings")
     );
     assert_eq!(run.cases[0].notice.as_deref(), Some(NOT_CHECKED));
     assert_eq!(run.cases[1].notice, None, "a script without preconditions is untouched");

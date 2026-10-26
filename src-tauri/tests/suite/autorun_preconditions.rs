@@ -293,7 +293,7 @@ fn no_database_blocks_a_case_with_preconditions_and_never_one_without() {
 #[test]
 fn with_reading_off_nothing_is_asked_and_the_case_goes_on_saying_so() {
     let _g = crate::serial::activity_log();
-    assert_eq!(NOT_CHECKED, "preconditions were not checked: Database Read Access is off on the AI Bridge tab");
+    assert_eq!(NOT_CHECKED, "preconditions were not checked: the Database Access module is off in Settings");
     let dir = tempfile::tempdir().unwrap();
     // The switch off: no database is resolved at all.
     let off = for_run(dir.path(), None, false);
@@ -508,7 +508,7 @@ fn the_guide_teaches_preconditions() {
         "is tried once more after 3 seconds",
         NEED_DB,
         NOT_CHECKED,
-        "follow the Database Read Access switch",
+        "follow the Database Access module (Settings, Modules)",
         "precondition 1: no flow",
         "has no stage",
         "give the value the flow's checks take",

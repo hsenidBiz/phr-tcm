@@ -1277,8 +1277,7 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool, unlocked: bool) -> serde_j
 
 /// The call-time refusal text for a switched-off tool. A tool whose module
 /// is off has no switch on the AI Bridge tab to turn back on - it names
-/// the module instead; every other switched-off tool (including a module's
-/// tool whose module IS on and that the person switched off) gets the
+/// the module instead; every other switched-off tool gets the
 /// ordinary AI Bridge sentence - a network tool's names the switch it also
 /// needs. `on` is explicit so every branch is testable.
 pub fn refusal_text(name: &str, on: &BTreeSet<Module>) -> String {
@@ -1295,7 +1294,7 @@ pub fn refusal_text_for(name: &str, on: &BTreeSet<Module>, unlocked: bool) -> St
         format!(
             "The `{name}` tool is switched off in Test Case Manager. It needs the Network tools switch \
              on the app's AI Bridge tab (each environment keeps its own, off until the person turns it on), \
-             and the Auto Run scripts tools switched on."
+             and the Auto Run module on in Settings."
         )
     } else {
         format!(

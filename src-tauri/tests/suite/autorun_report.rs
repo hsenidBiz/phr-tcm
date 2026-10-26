@@ -512,7 +512,7 @@ fn a_case_with_a_notice_shows_it_in_its_section() {
     let section = section_of(&html, 204);
     assert!(
         section.contains(
-            "<p><strong>Notice:</strong> preconditions were not checked: Database Read Access is off on the AI Bridge tab</p>"
+            "<p><strong>Notice:</strong> preconditions were not checked: the Database Access module is off in Settings</p>"
         ),
         "{section}"
     );

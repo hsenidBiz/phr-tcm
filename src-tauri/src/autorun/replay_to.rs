@@ -29,8 +29,8 @@ use super::slots::{SlotNo, SLOT_COUNT};
 pub const ALREADY_RUNNING: &str = "a replay is already running - wait for it to finish";
 
 /// What a replay is asked to do: carry case `case_id` to the page before
-/// `step` runs. `db_read_access` is the AI Bridge tab's Database Read Access
-/// switch, as for a supervised case's preconditions.
+/// `step` runs. `db_read_access` is the Database Access module being on, as
+/// for a supervised case's preconditions.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReplayRequest {
     pub case_id: i32,
@@ -556,8 +556,8 @@ fn closed(o: &ActionOutcome) -> bool {
 /// `replay_to_checked` as the person's own replay (it may lift an earlier
 /// case's guard), with the default timing, no earlier guard to carry, no
 /// database to ask and no browser for a setup: a case with preconditions
-/// is refused with `preconditions::NEED_DB` while Database Read Access is
-/// on, and carries the notice while it is off; a setup fails to open its
+/// is refused with `preconditions::NEED_DB` while the Database Access module
+/// is on, and carries the notice while it is off; a setup fails to open its
 /// browser (`setup::NoBrowsers`).
 #[allow(clippy::too_many_arguments)]
 pub async fn replay_to<D: Driver>(

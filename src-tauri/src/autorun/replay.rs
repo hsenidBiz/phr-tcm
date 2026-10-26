@@ -1068,7 +1068,7 @@ pub async fn run_cases<B: Browsers>(
 /// A case with preconditions has them checked against `precondition_db`
 /// before its browser opens; one not met Blocks the case with its sentence
 /// (`preconditions::check_case`), it never signs in, and the run goes on.
-/// While Database Read Access is off (`PreconditionDb::ReadingOff`) none
+/// While the Database Access module is off (`PreconditionDb::ReadingOff`) none
 /// is checked, and such a case runs carrying the `notice` that says so.
 /// After the preconditions and before its browser opens, a case that uses
 /// fixtures is prepared (`setup::prepare_case`): a setup fixture that is

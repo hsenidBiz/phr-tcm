@@ -292,8 +292,8 @@ The order of work - flows first, templates second:
 Bridge tab; neither needs the API templates switch. Proving or running a
 template on a flow needs a database chosen on the AI Bridge tab too - only a
 run of the creating stage's template checks nothing. Every flow check reads
-the company database, so while the person has switched off Database Read Access,
-each call that would run one is refused until it is switched on.
+the company database, so while the Database Access module is off in Settings,
+each call that would run one is refused until it is on.
 
 ## What you learn about the application
 

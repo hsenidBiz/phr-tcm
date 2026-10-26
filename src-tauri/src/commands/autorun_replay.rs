@@ -283,7 +283,7 @@ impl Drop for RealBrowsers {
 /// does not start. `retry_transient` runs a case whose failure looked
 /// transient once more, in a fresh browser context (`autorun::transient`).
 /// The run keeps one browser, with a context per case (`one_browser`).
-/// `db_read_access` is the AI Bridge tab's Database Read Access switch:
+/// `db_read_access` is the Database Access module being on:
 /// while it is off no precondition is checked (`autorun::preconditions`).
 #[tauri::command]
 #[specta::specta]

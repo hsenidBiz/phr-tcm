@@ -1166,10 +1166,10 @@ wrong:
   (the cycle's name).
 - `why` is optional: one sentence on what the case needs the record for.
 
-Preconditions follow the Database Read Access switch on the AI Bridge
-tab: while it is off, no check runs, and the case goes on saying:
+Preconditions follow the Database Access module (Settings, Modules): while
+it is off, no check runs, and the case goes on saying:
 
-    preconditions were not checked: Database Read Access is off on the AI Bridge tab
+    preconditions were not checked: the Database Access module is off in Settings
 
 While it is on, before the case signs in, the app runs each
 precondition's stage check on the active environment's database, so it

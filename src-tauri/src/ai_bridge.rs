@@ -8609,8 +8609,7 @@ async fn wait_for_replay(
 /// another case or step still running (`replay_running_elsewhere`). Nothing
 /// asks the person first: a script marked must not save replays at once,
 /// its saves stopped throughout by its no-save guard (`guard_for_case`).
-/// Database Read Access is the `db_query` switch, as for the person's own
-/// replay.
+/// Database Access is the module, as for the person's own replay.
 ///
 /// The replay runs apart from the call (`AssistantRun`). One that has not
 /// reached its stop point within `wait` answers 202 with where it is
@@ -10209,8 +10208,7 @@ fn accounts_propose(body: &str) -> (u16, String) {
 
 /// Said when `GET /accounts` arrives while the person has switched the
 /// `get_accounts` tool off.
-pub const GET_ACCOUNTS_OFF: &str =
-    "reading the accounts is switched off - turn on get_accounts on the AI Bridge tab";
+pub const GET_ACCOUNTS_OFF: &str = "reading the accounts is switched off in Test Case Manager";
 
 /// `GET /accounts`: the active environment's accounts - key, label and
 /// username, and the password ONLY when the environment is marked as a
@@ -10307,21 +10305,31 @@ fn db_ready(
 pub const FLOW_NEEDS_DB: &str =
     "this template belongs to a flow, and flow checks need a database: choose one on the AI Bridge tab";
 
-/// Said when a flow check would run while the person has switched off
-/// Database Read Access: every check is an assistant-written read of
-/// that database, so none runs until reading is switched on again.
+/// Said when a flow check would run while the Database Access module is
+/// off: every check is an assistant-written read of that database, so none
+/// runs until the module is on again.
 pub const FLOW_NEEDS_READING: &str =
-    "flow checks read the company database: switch on Database Read Access on the AI Bridge tab";
+    "flow checks read the company database: turn the Database Access module on in Settings";
 
 /// The chosen database as the place flow checks are asked, with
 /// `db_ready`'s refusals as they are - what saving a flow and a flow's
-/// progress answer with. Refused first while database reading is switched
-/// off (`db_query` among the disabled tools), before any connection is
-/// looked at.
+/// progress answer with. Refused first while the Database Access module is
+/// off, whatever the disabled list says, before any connection is looked
+/// at.
 fn stage_db(
     ctx: &BridgeContext,
 ) -> Result<crate::api_templates::gate::SqlcmdStageDb<crate::db::RealRunner>, (u16, String)> {
-    if ctx.disabled_tools.iter().any(|t| t == "db_query") {
+    stage_db_for(ctx, &crate::modules::current())
+}
+
+/// `stage_db` with the modules that are on passed in, so both answers are
+/// testable. The module is the switch for reading the database; a
+/// `db_query` entry among the disabled tools refuses too, as a second door.
+pub fn stage_db_for(
+    ctx: &BridgeContext,
+    on: &std::collections::BTreeSet<crate::modules::Module>,
+) -> Result<crate::api_templates::gate::SqlcmdStageDb<crate::db::RealRunner>, (u16, String)> {
+    if !on.contains(&crate::modules::Module::DbAccess) || ctx.disabled_tools.iter().any(|t| t == "db_query") {
         return Err((409, FLOW_NEEDS_READING.to_string()));
     }
     let (conn, exe) = db_ready(ctx)?;
@@ -10330,13 +10338,22 @@ fn stage_db(
 
 /// The database a prove or a run of a template on a flow gates on. With
 /// nothing chosen the answer says why a template needs one at all
-/// (`FLOW_NEEDS_DB`), with `db_ready`'s own status; reading switched off is
-/// `stage_db`'s `FLOW_NEEDS_READING`; every other refusal - no login saved,
-/// a store that cannot be read, no sqlcmd - is `db_ready`'s, unchanged.
+/// (`FLOW_NEEDS_DB`), with `db_ready`'s own status; the Database Access
+/// module being off is `stage_db`'s `FLOW_NEEDS_READING`; every other
+/// refusal - no login saved, a store that cannot be read, no sqlcmd - is
+/// `db_ready`'s, unchanged.
 pub fn real_stage_db(
     ctx: &BridgeContext,
 ) -> Result<crate::api_templates::gate::SqlcmdStageDb<crate::db::RealRunner>, (u16, String)> {
-    stage_db(ctx).map_err(|(status, why)| {
+    real_stage_db_for(ctx, &crate::modules::current())
+}
+
+/// `real_stage_db` with the modules that are on passed in.
+pub fn real_stage_db_for(
+    ctx: &BridgeContext,
+    on: &std::collections::BTreeSet<crate::modules::Module>,
+) -> Result<crate::api_templates::gate::SqlcmdStageDb<crate::db::RealRunner>, (u16, String)> {
+    stage_db_for(ctx, on).map_err(|(status, why)| {
         if why == crate::db::query::NO_CONNECTION {
             (status, FLOW_NEEDS_DB.to_string())
         } else {

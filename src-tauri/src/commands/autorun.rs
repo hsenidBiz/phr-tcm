@@ -2506,8 +2506,7 @@ pub fn auto_run_stop_replay() {
 /// before its sign-in. `blocked`: the case is Blocked, with the sentence
 /// as its reason, and the pane never signs it in. `notice`: said before
 /// step 1, and the case goes on (the checks were skipped while
-/// `db_read_access`, the AI Bridge tab's Database Read Access switch, is
-/// off). Neither: the case goes on. The active environment's database is
+/// `db_read_access`, the Database Access module being on, is off). Neither: the case goes on. The active environment's database is
 /// looked up only when the case's script has preconditions. Once they are
 /// met, the case's fixtures are prepared as an unattended case's are
 /// (`autorun::setup::check_supervised`): a setup fixture that is not
