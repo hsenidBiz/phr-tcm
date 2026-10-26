@@ -149,7 +149,7 @@ export default function ContextBar({
       {/* The PBI search takes ALL the width between the Project picker and
           the right-hand group, with no maximum: the group never shrinks, so
           this is what gives way. min-w forces a wrap instead of a squeeze. */}
-      <div className="min-w-80 flex-1" data-tour="pbi" inert={locked}>
+      <div className="min-w-56 flex-1" data-tour="pbi" inert={locked}>
         {/* React Bits ElectricBorder wraps the chip while confirmation is
             armed, in the theme accent so it follows light/dark and presets. */}
         {pbiGlow ? (

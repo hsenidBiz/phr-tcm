@@ -123,7 +123,10 @@ test("the PBI search fills the free width and the right-hand group never shrinks
   );
   const box = screen.getByLabelText("Find PBI");
   const wrapper = box.closest("[data-tour='pbi']") as HTMLElement;
-  expect(wrapper).toHaveClass("flex-1", "min-w-80");
+  // min-w-56 (224px), not wider: at a 1280px window the two pickers, this box
+  // and the right-hand group must all fit on one line.
+  expect(wrapper).toHaveClass("flex-1", "min-w-56");
+  expect(wrapper).not.toHaveClass("min-w-80");
   expect(wrapper.className).not.toMatch(/(^|\s)max-w-/);
   expect(box).toHaveClass("h-10", "w-full");
 
