@@ -687,6 +687,56 @@ test("a fresh install takes its home project from the first PBI", async () => {
   expect(storedPrefs().pbi?.id).toBe(9);
 });
 
+// The home project decides where Auto Run, API Templates and Playwright keep
+// their files, so the pick that silently sets it says so.
+test("the first PBI that becomes the home project says so", async () => {
+  localStorage.setItem("tcm-v2-tour-done", "yes");
+  const info = vi.spyOn(toast, "info");
+  try {
+    signedInMocks((cmd) => {
+      if (cmd === "list_projects")
+        return [
+          { id: "p1", name: "Web" },
+          { id: "p2", name: "HRM" },
+        ];
+      if (cmd === "search_pbis_all")
+        return [{ id: 9, title: "Login flow", work_item_type: "Product Backlog Item", project: "HRM" }];
+    });
+    renderApp();
+    await screen.findByText("a@b.com");
+    await pickPbiFromBar("login", /Login flow/);
+    await vi.waitFor(() => expect(storedPrefs().project).toBe("HRM"));
+    const told = info.mock.calls.filter((c) => String(c[0]).startsWith("Home project set to"));
+    expect(told).toHaveLength(1);
+    expect(told[0][0]).toBe("Home project set to HRM. Change it in Settings.");
+  } finally {
+    info.mockRestore();
+  }
+});
+
+test("a home project that was already set is not announced when a PBI is picked", async () => {
+  savedPrefs();
+  localStorage.setItem("tcm-v2-tour-done", "yes");
+  const info = vi.spyOn(toast, "info");
+  try {
+    signedInMocks((cmd) => {
+      if (cmd === "list_projects")
+        return [
+          { id: "p1", name: "Web" },
+          { id: "p2", name: "Payroll" },
+        ];
+      if (cmd === "search_pbis_all") return [PAYROLL_PBI];
+    });
+    renderApp();
+    await screen.findByText("a@b.com");
+    await pickPbiFromBar("pay", /Pay run/);
+    await vi.waitFor(() => expect(storedPrefs().pbi?.project).toBe("Payroll"));
+    expect(info.mock.calls.filter((c) => String(c[0]).startsWith("Home project set to"))).toHaveLength(0);
+  } finally {
+    info.mockRestore();
+  }
+});
+
 test("a fresh install with Auto Run files in one project takes that project as home", async () => {
   localStorage.setItem("tcm-v2-tour-done", "yes");
   const probes: Array<Record<string, unknown>> = [];
@@ -761,7 +811,11 @@ test("an existing install is told once that projects show together", async () =>
   const told = () => info.mock.calls.filter((c) => c[0] === "Projects now show together");
   try {
     signedInMocks((cmd) => {
-      if (cmd === "list_projects") return [{ id: "p1", name: "Web" }];
+      if (cmd === "list_projects")
+        return [
+          { id: "p1", name: "Web" },
+          { id: "p2", name: "Payroll" },
+        ];
     });
     const first = renderApp();
     await screen.findByText("a@b.com");
@@ -776,6 +830,56 @@ test("an existing install is told once that projects show together", async () =>
       await new Promise((r) => setTimeout(r, 50));
     });
     expect(told()).toHaveLength(1);
+  } finally {
+    info.mockRestore();
+  }
+});
+
+// With one project there is nothing to show together, so the notice would only
+// puzzle. The key is still written, so a project added later is not announced.
+test("an existing install with one project is not told, and the notice is spent", async () => {
+  savedPrefs();
+  localStorage.setItem("tcm-v2-tour-done", "yes");
+  localStorage.removeItem("tcm-v2-all-projects-notice");
+  const info = vi.spyOn(toast, "info");
+  try {
+    signedInMocks((cmd) => {
+      if (cmd === "list_projects") return [{ id: "p1", name: "Web" }];
+    });
+    renderApp();
+    await screen.findByText("a@b.com");
+    await vi.waitFor(() => expect(localStorage.getItem("tcm-v2-all-projects-notice")).toBe("1"));
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 50));
+    });
+    expect(info.mock.calls.filter((c) => c[0] === "Projects now show together")).toHaveLength(0);
+  } finally {
+    info.mockRestore();
+  }
+});
+
+test("the notice says only what the projects do together now", async () => {
+  savedPrefs();
+  localStorage.setItem("tcm-v2-tour-done", "yes");
+  localStorage.removeItem("tcm-v2-all-projects-notice");
+  const info = vi.spyOn(toast, "info");
+  try {
+    signedInMocks((cmd) => {
+      if (cmd === "list_projects")
+        return [
+          { id: "p1", name: "Web" },
+          { id: "p2", name: "Payroll" },
+        ];
+    });
+    renderApp();
+    await screen.findByText("a@b.com");
+    expect(await screen.findByText("Projects now show together")).toBeInTheDocument();
+    const text = String(info.mock.calls.find((c) => c[0] === "Projects now show together")?.[1]?.description);
+    expect(text).toContain("PBIs from every project");
+    expect(text).toContain("home project");
+    expect(text).toContain("turn off Treat all projects as one in Settings, under General");
+    // The boards, suites and pull requests are still one project at a time.
+    expect(text).not.toMatch(/boards|suites|pull requests|test cases/i);
   } finally {
     info.mockRestore();
   }
@@ -1037,8 +1141,8 @@ test("a visit to Settings drops a notification's project", async () => {
 /// belong to one project, so a PBI of another project (which moves the
 /// effective project) drops them, exactly as a project change does; a PBI of
 /// the same project leaves them alone.
-async function handSuiteCasesToEdit(search: unknown[]) {
-  savedPrefs({ section: "suites" });
+async function handSuiteCasesToEdit(search: unknown[], prefs: Record<string, unknown> = {}) {
+  savedPrefs({ section: "suites", ...prefs });
   localStorage.setItem("tcm-v2-tour-done", "yes");
   signedInMocks((cmd) => {
     if (cmd === "list_projects")
@@ -1081,6 +1185,29 @@ test("a PBI of another project drops the cases handed over from Search Suites", 
   await waitFor(() =>
     expect(screen.queryByText(/Showing cases handed over from Search Suites/)).not.toBeInTheDocument(),
   );
+});
+
+// Switched off, a PBI of another project can be held with the home project
+// unchanged (Import File's shared-draft switch does it). Turning the switch on
+// then moves the effective project to the PBI's, so the work item ids of the
+// home project go, the same rule a PBI pick follows.
+test("turning the switch on drops the cases handed over when the project moves", async () => {
+  localStorage.setItem("tcm-v2-all-projects", "0");
+  await handSuiteCasesToEdit([], { pbi: PAYROLL_PBI });
+  act(() => saveAllProjects(true));
+  await waitFor(() =>
+    expect(screen.queryByText(/Showing cases handed over from Search Suites/)).not.toBeInTheDocument(),
+  );
+});
+
+test("turning the switch on keeps the cases handed over when the project stays", async () => {
+  localStorage.setItem("tcm-v2-all-projects", "0");
+  await handSuiteCasesToEdit([], { pbi: { ...PAYROLL_PBI, project: "Web" } });
+  act(() => saveAllProjects(true));
+  await act(async () => {
+    await new Promise((r) => setTimeout(r, 30));
+  });
+  expect(screen.getByText(/Showing cases handed over from Search Suites/)).toBeInTheDocument();
 });
 
 test("a PBI of the same project keeps the cases handed over from Search Suites", async () => {

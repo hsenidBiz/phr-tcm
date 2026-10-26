@@ -320,11 +320,16 @@ export default function App() {
   // between. The tour refuses the switch (saveAllProjects), so this never
   // runs over the walkthrough's sample scope - and is skipped there anyway.
   // Turning it ON changes nothing else, except that a project a notification
-  // handed to the Work Manager screens goes with either flip.
+  // handed to the Work Manager screens goes with either flip, and that the
+  // case selection (work item ids of the old project) goes when the PBI's
+  // project is not the home project, the same rule a PBI pick follows.
   const [seenAllProjects, setSeenAllProjects] = useState(allProjects);
   if (seenAllProjects !== allProjects) {
     setSeenAllProjects(allProjects);
     setWorkProject(null);
+    // (Turning it off sets the home project to the PBI's just below, so the
+    // effective project does not move then.)
+    if (allProjects && effectiveProject(true, pbi, homeProject) !== homeProject) setCaseSelection(null);
     if (!allProjects && !tourOpen && pbi?.project && pbi.project !== homeProject) {
       setHomeProjectRaw(pbi.project);
     }
@@ -560,7 +565,15 @@ export default function App() {
   // the unattended-run host keep the raw setter.
   const setPbi = (p: PbiHit | null) => {
     if (effectiveProject(allProjects, p, homeProject) !== project) setCaseSelection(null);
-    if (allProjects && !homeProject && p?.project) setHomeProjectRaw(p.project);
+    if (allProjects && !homeProject && p?.project) {
+      setHomeProjectRaw(p.project);
+      // Auto Run, API Templates and Playwright keep their files there, so
+      // say so rather than let it happen unseen. An organization with one
+      // project had it chosen already: nothing to announce.
+      if (projects.data?.length !== 1) {
+        toast.info(`Home project set to ${p.project}. Change it in Settings.`);
+      }
+    }
     setWorkProject(null);
     setPbiRaw(p);
   };
@@ -1052,19 +1065,25 @@ export default function App() {
   }, [tourOpen, signedIn, allProjects, org, homeProject]);
 
   // An existing install is told once that its projects now show together.
-  // A fresh install (nothing chosen yet) never is. Not over a documentation
-  // capture, which must never carry a toast.
+  // A fresh install (nothing chosen yet) never is, and neither is one whose
+  // organization has a single project: there is nothing to show together, so
+  // the notice would only puzzle (its key is still spent). It waits for the
+  // project list to know which. Not over a documentation capture, which must
+  // never carry a toast.
+  //
+  // The wording says only what holds from here on: later releases widen what
+  // shows together, and this notice is never shown again to correct it.
   const hadProject = useRef(Boolean(initial.project));
   useEffect(() => {
-    if (tourOpen || !signedIn || isCaptureMode()) return;
-    if (takeAllProjectsNotice(hadProject.current)) {
+    if (tourOpen || !signedIn || isCaptureMode() || !projects.data) return;
+    if (takeAllProjectsNotice(hadProject.current) && projects.data.length > 1) {
       toast.info("Projects now show together", {
         description:
-          "Work items, test cases, suites, boards and pull requests from every project show in one place. To work in one project at a time, turn off Treat all projects as one in Settings, under General.",
+          "PBIs from every project now show in one search, and each PBI brings its own project, so the Project picker is gone. Auto Run, API Templates and Playwright stay on your home project, which you can change in Settings. To work in one project at a time, turn off Treat all projects as one in Settings, under General.",
         duration: 12_000,
       });
     }
-  }, [tourOpen, signedIn]);
+  }, [tourOpen, signedIn, projects.data]);
 
   // Delete permission, asked ONCE at sign-in per org/project rather than
   // when the Update Test Cases screen opens. The screen reads this same
