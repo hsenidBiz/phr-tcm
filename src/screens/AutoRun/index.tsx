@@ -53,6 +53,7 @@ import { requestPlaywrightExport } from "../../lib/playwrightExport";
 import { useModule } from "../../lib/modules";
 import ResetNeededPanel from "./ResetNeededPanel";
 import NetworkWaitPanel from "./NetworkWaitPanel";
+import AssistantsCard from "./AssistantsCard";
 import { fetchPlan, pauseHeading } from "./plan";
 import PastRuns from "./PastRuns";
 import RunPane from "./RunPane";
@@ -748,6 +749,9 @@ export default function AutoRun({
           clear of the last card. Test cases may grow wider, for the Setup
           panel's column, when its own width has room for one. */}
       <div className="space-y-4">
+        {/* Who is connected and what each assistant is doing; nothing at all
+            while no assistant is. */}
+        <AssistantsCard />
         {/* The Templates/Flows tab pattern from API Templates, with the
             keyboard a tab list owes: only the chosen tab is in the Tab
             order, and the arrow keys move along. */}
