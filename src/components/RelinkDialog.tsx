@@ -8,6 +8,7 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { toast } from "../lib/toast";
 import { commands, type PbiHit, type RelinkOutcome } from "../bindings";
+import { cn } from "../lib/cn";
 import { describeAdoError, unwrap } from "../lib/ipc";
 import { Button } from "./ui/button";
 import { SearchInput } from "./ui/search-input";
@@ -117,7 +118,15 @@ export default function RelinkDialog({
   }
 
   return (
-    <Modal onClose={onClose} className="flex max-h-[85vh] w-full max-w-lg flex-col gap-3 p-5">
+    // Picking is roomy and a steady height (the hits come and go inside it);
+    // the confirmation after it is only as tall as its case list needs.
+    <Modal
+      onClose={onClose}
+      className={cn(
+        "flex w-full max-w-3xl flex-col gap-3 p-5",
+        target ? "max-h-[80vh]" : "h-[80vh]",
+      )}
+    >
       <div className="shrink-0">
         <h2 className="text-sm font-semibold text-text">
           Move {cases.length} test case{cases.length === 1 ? "" : "s"} to another PBI
@@ -130,31 +139,34 @@ export default function RelinkDialog({
       </div>
 
       {!target ? (
-        <div className="min-h-0 flex-1 space-y-2 overflow-auto">
+        <>
           <SearchInput
+            className="w-full shrink-0"
             aria-label="Search for the destination PBI"
             autoFocus
             placeholder="Search PBIs by title or id"
             value={text}
             onChange={setText}
           />
-          {hits.isLoading && query && <p className="text-xs text-faint">Searching…</p>}
-          {(hits.data ?? [])
-            .filter((h) => h.id !== fromPbi)
-            .map((h) => (
-              <button
-                key={h.id}
-                className="flex w-full items-center gap-2 rounded-md border border-border bg-surface px-3 py-1.5 text-left text-sm transition-colors hover:border-accent"
-                onClick={() => setTarget(h)}
-              >
-                <span className="id-mono shrink-0 text-faint">#{h.id}</span>
-                <span className="truncate text-text">{h.title}</span>
-              </button>
-            ))}
-          {hits.data && hits.data.filter((h) => h.id !== fromPbi).length === 0 && query && (
-            <p className="text-xs text-faint">No other PBI matches "{query}".</p>
-          )}
-        </div>
+          <div className="min-h-0 flex-1 space-y-2 overflow-auto">
+            {hits.isLoading && query && <p className="text-xs text-faint">Searching…</p>}
+            {(hits.data ?? [])
+              .filter((h) => h.id !== fromPbi)
+              .map((h) => (
+                <button
+                  key={h.id}
+                  className="flex w-full items-start gap-2 rounded-md border border-border bg-surface px-3 py-1.5 text-left text-sm transition-colors hover:border-accent"
+                  onClick={() => setTarget(h)}
+                >
+                  <span className="id-mono shrink-0 text-faint">#{h.id}</span>
+                  <span className="line-clamp-2 min-w-0 flex-1 text-text">{h.title}</span>
+                </button>
+              ))}
+            {hits.data && hits.data.filter((h) => h.id !== fromPbi).length === 0 && query && (
+              <p className="text-xs text-faint">No other PBI matches "{query}".</p>
+            )}
+          </div>
+        </>
       ) : (
         <>
           <div className="shrink-0 rounded-md border border-accent/40 bg-accent-soft px-3 py-2 text-sm">
