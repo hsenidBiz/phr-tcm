@@ -935,3 +935,74 @@ async fn the_assistant_resets_through_its_route() {
     let no_root = &no_root[..no_root.find("NO_DATA_DIRECTORY").unwrap()];
     assert!(no_root.contains("if slot.is_none() {") && no_root.contains("(404, NO_BROWSER_OPEN.to_string())"), "{no_root}");
 }
+
+/// What the card's Release may say to the person for the slot of
+/// `Assistant 1`: one of its own sentences, never the assistant's text - no
+/// JSON, no request line, no path.
+pub(crate) fn assert_a_persons_sentence(said: &str, who: &str) {
+    let mut gone = format!("{who} had already closed, so there was nothing to close.");
+    gone[..1].make_ascii_uppercase();
+    let allowed = [
+        format!("Ended the discovery in {who}, kept what it found, and closed the browser."),
+        format!("Released {who} and closed it."),
+        gone,
+        "No Auto Run browser was held, so there was nothing to release.".to_string(),
+        v2_lib::commands::autorun_slots::PERSONS_BROWSER_KEPT.to_string(),
+    ];
+    assert!(allowed.iter().any(|a| a == said), "not one of the card's sentences: {said}");
+    assert!(!said.starts_with('{') && !said.contains("POST ") && !said.contains('/'), "{said}");
+    assert!(!said.contains('\u{2014}') && !said.contains('\u{2013}'), "{said}");
+}
+
+/// Release on the card answers the person in the card's own sentences, for
+/// a mapping run, a plain discovery, a browser the assistant opened, one
+/// that had gone, none held, and the person's own. The assistant's text for
+/// a mapping run is JSON.
+#[tokio::test]
+async fn the_cards_release_answers_in_its_own_sentences() {
+    use v2_lib::commands::autorun::MappingRun;
+    use v2_lib::commands::autorun_slots::release_answer_in;
+    let _a = crate::serial::autorun();
+    let who = "Assistant 1's browser";
+
+    let mapping = discovering().map(|s| DiscoveryState { mapping: Some(MappingRun::new(&["Leave".to_string()])), ..s });
+    let (mut slot, closed) = left_open_by_assistant(true, mapping);
+    let said = release_answer_in(&mut slot, who).await;
+    assert_a_persons_sentence(&said, who);
+    assert!(said.starts_with("Ended the discovery"), "{said}");
+    assert!(slot.is_none() && closed.load(Ordering::SeqCst), "the mapping run's browser was kept");
+
+    let (mut slot, closed) = left_open_by_assistant(true, discovering());
+    let said = release_answer_in(&mut slot, who).await;
+    assert_a_persons_sentence(&said, who);
+    assert!(slot.is_none() && closed.load(Ordering::SeqCst));
+
+    let (mut slot, closed) = left_open_by_assistant(true, None);
+    let said = release_answer_in(&mut slot, who).await;
+    assert_a_persons_sentence(&said, who);
+    assert_eq!(said, "Released Assistant 1's browser and closed it.");
+    assert!(slot.is_none() && closed.load(Ordering::SeqCst));
+
+    let (mut slot, closed) = left_open_by_assistant(false, None);
+    let said = release_answer_in(&mut slot, who).await;
+    assert_a_persons_sentence(&said, who);
+    assert!(said.starts_with("Assistant 1's browser had already closed"), "{said}");
+    assert!(slot.is_none() && closed.load(Ordering::SeqCst));
+
+    let (mut slot, closed) = held(true, None);
+    let said = release_answer_in(&mut slot, "the main Auto Run browser").await;
+    assert_a_persons_sentence(&said, "the main Auto Run browser");
+    assert_eq!(said, v2_lib::commands::autorun_slots::PERSONS_BROWSER_KEPT);
+    assert!(slot.is_some() && !closed.load(Ordering::SeqCst), "the person's browser was closed");
+
+    let mut none: Option<HeldOne> = None;
+    let said = release_answer_in(&mut none, who).await;
+    assert_a_persons_sentence(&said, who);
+    assert!(said.starts_with("No Auto Run browser was held"), "{said}");
+
+    // The main browser, bound to no assistant, is named as itself.
+    let (mut slot, _) = left_open_by_assistant(false, None);
+    let said = release_answer_in(&mut slot, "the main Auto Run browser").await;
+    assert_a_persons_sentence(&said, "the main Auto Run browser");
+    assert!(said.starts_with("The main Auto Run browser had already closed"), "{said}");
+}

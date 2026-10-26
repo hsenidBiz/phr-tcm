@@ -3,7 +3,7 @@
 use crate::serial;
 use v2_lib::autorun::agents::{
     self, clean_client, clean_name, valid_id, AgentHeaders, AgentKey, Caller, FORGET_AFTER_MS,
-    GONE_GRACE_MS,
+    GONE_GRACE_MS, QUIET_AFTER_MS,
 };
 
 const ID_A: &str = "0123456789abcdef0123456789abcdef";
@@ -239,13 +239,69 @@ fn sweep_does_not_call_alive_with_the_registry_locked() {
 }
 
 #[test]
-fn an_entry_without_a_pid_is_never_swept_gone() {
+fn an_entry_without_a_pid_is_never_swept_gone_while_it_calls() {
     let _g = serial::agents();
     agents::clear();
     let h = AgentHeaders { id: Some(ID_A.to_string()), ..AgentHeaders::default() };
     assert!(agents::note_call(&h.caller(), &h, 1).is_some());
-    assert_eq!(agents::sweep(5_000_000, &|_| false), agents::Sweep::default());
+    // No pid to ask about: quiet for less than the quiet age changes nothing.
+    assert_eq!(agents::sweep(QUIET_AFTER_MS, &|_| false), agents::Sweep::default());
     assert!(agents::is_live(&key(ID_A, None)));
+}
+
+/// The quiet age is longer than the extra browsers' idle release (30
+/// minutes), so that release always comes first and says why.
+#[test]
+fn the_quiet_age_is_an_hour() {
+    assert_eq!(QUIET_AFTER_MS, 3_600_000);
+    assert!(QUIET_AFTER_MS > 1_800_000);
+}
+
+/// Nothing asks whether an entry without a pid is still there, and a named
+/// subagent shares its proxy's pid for as long as the proxy lives, so the
+/// card would list both for ever. Quiet for `QUIET_AFTER_MS` from the last
+/// call, they are reported in `Sweep::quiet` (never in `past_grace`: no
+/// session ended, so nothing is released for them), not listed any more and
+/// forgotten after `FORGET_AFTER_MS`; a call brings them back.
+#[test]
+fn an_entry_without_a_pid_or_a_named_subagent_goes_quiet_after_an_hour() {
+    let _g = serial::agents();
+    agents::clear();
+    let bare = AgentHeaders { id: Some(ID_A.to_string()), ..AgentHeaders::default() };
+    agents::note_call(&bare.caller(), &bare, 1_000);
+    call(ID_B, Some("writer"), 1_000);
+    call(ID_B, None, 1_000);
+    let (a, sub, proxy) = (key(ID_A, None), key(ID_B, Some("writer")), key(ID_B, None));
+
+    // Just short of the age (and well past the forget age): still live.
+    let s = agents::sweep(1_000 + QUIET_AFTER_MS - 1, &|_| true);
+    assert_eq!(s, agents::Sweep::default());
+    // At the age: the bare entry and the subagent are quiet, the proxy's own
+    // session entry (it has a pid that answers) is not.
+    let t = 1_000 + QUIET_AFTER_MS;
+    let s = agents::sweep(t, &|_| true);
+    assert_eq!(s.quiet.len(), 2, "{s:?}");
+    assert!(s.quiet.contains(&a) && s.quiet.contains(&sub));
+    assert!(s.newly_gone.is_empty() && s.past_grace.is_empty(), "no session ended: {s:?}");
+    assert!(!agents::is_live(&a) && !agents::is_live(&sub));
+    assert!(agents::is_live(&proxy));
+    // They are never past their grace, however long it has been.
+    let s = agents::sweep(t + GONE_GRACE_MS + 5, &|_| true);
+    assert!(s.past_grace.is_empty() && s.quiet.is_empty(), "{s:?}");
+    // Reported once; forgotten later like any gone entry.
+    assert!(agents::info(&a).is_some());
+    let s = agents::sweep(t + FORGET_AFTER_MS, &|_| true);
+    assert_eq!(s.forgotten.len(), 2);
+    assert_eq!(agents::info(&a), None);
+
+    // A call after it went quiet brings an entry back.
+    let again = AgentHeaders { id: Some(ID_C.to_string()), ..AgentHeaders::default() };
+    agents::note_call(&again.caller(), &again, t);
+    assert_eq!(agents::sweep(t + QUIET_AFTER_MS, &|_| true).quiet, vec![key(ID_C, None)]);
+    assert!(!agents::is_live(&key(ID_C, None)));
+    agents::note_call(&again.caller(), &again, t + QUIET_AFTER_MS + 5);
+    assert!(agents::is_live(&key(ID_C, None)));
+    assert_eq!(agents::sweep(t + QUIET_AFTER_MS + 6, &|_| true), agents::Sweep::default());
 }
 
 #[test]

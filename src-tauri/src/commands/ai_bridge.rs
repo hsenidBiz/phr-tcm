@@ -115,7 +115,8 @@ pub async fn bridge_status(app: tauri::AppHandle) -> Result<BridgeStatus, String
 
 /// Every `agents::SWEEP_EVERY`, ask whether each assistant's process still
 /// runs (`agents::sweep`), on a blocking thread because the check is a system
-/// call per agent. Each agent found gone is logged by label only. Started
+/// call per agent. Each agent found gone is logged by label only, and one
+/// past its grace gives up the browser it was bound to. Started
 /// once, where the bridge starts; a second call does nothing.
 pub fn spawn_agent_sweeper() {
     static STARTED: std::sync::Once = std::sync::Once::new();
@@ -136,6 +137,8 @@ pub fn spawn_agent_sweeper() {
                         crate::applog::info(crate::autorun::agents::ended_line(&info.label));
                     }
                 }
+                // An agent past its grace holds no browser any more.
+                crate::commands::autorun_slots::on_sweep(&swept);
             }
         });
     });

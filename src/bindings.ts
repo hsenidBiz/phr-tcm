@@ -443,6 +443,21 @@ export const commands = {
 	 *  keeps what a discovery saw.
 	 */
 	autoRunReleaseBrowser: () => typedError<string, string>(__TAURI_INVOKE("auto_run_release_browser")),
+	/**  The assistants connected now, and what each is doing. */
+	autoRunAgents: () => __TAURI_INVOKE<AgentView[]>("auto_run_agents"),
+	/**
+	 *  Stop what slot `slot`'s assistant is doing: its replay, and a batch of
+	 *  discovery actions, at their next look. The assistant's browser stays as
+	 *  it is.
+	 */
+	autoRunStopAgent: (slot: number) => typedError<null, string>(__TAURI_INVOKE("auto_run_stop_agent", { slot })),
+	/**
+	 *  End the discovery going in slot `slot`'s browser, as the person's End
+	 *  discovery does (`EndedBy::Person`); with none going this does nothing.
+	 */
+	autoRunEndAgentDiscovery: (slot: number) => typedError<null, string>(__TAURI_INVOKE("auto_run_end_agent_discovery", { slot })),
+	/**  Release slot `slot`'s browser from its assistant (`release_slot`). */
+	autoRunReleaseAgent: (slot: number) => typedError<string, string>(__TAURI_INVOKE("auto_run_release_agent", { slot })),
 	/**
 	 *  Replay case `case_id`'s saved steps 1 to `step` - 1 in the supervised
 	 *  browser and stop before `step` (`autorun::replay_to`), for the person's
@@ -1627,6 +1642,7 @@ export const commands = {
 export const events = {
 	apiTemplatesChanged: makeEvent<ApiTemplatesChanged>("api-templates-changed"),
 	audioSpectrum: makeEvent<AudioSpectrum>("audio-spectrum"),
+	autorunAgentsChanged: makeEvent<AutorunAgentsChanged>("autorun-agents-changed"),
 	autorunCleanupProgress: makeEvent<AutorunCleanupProgress>("autorun-cleanup-progress"),
 	autorunDiscoveryChanged: makeEvent<AutorunDiscoveryChanged>("autorun-discovery-changed"),
 	autorunNetworkWait: makeEvent<AutorunNetworkWait>("autorun-network-wait"),
@@ -2334,6 +2350,38 @@ export type AdoError = { kind: "Unauthorized" } | { kind: "RateLimited"; detail:
 	body: string,
 } } | { kind: "Network"; detail: string };
 
+/**  What an assistant is doing in its browser. */
+export type AgentActivity = { kind: "idle" } | { kind: "discovering"; area: string | null } | { kind: "mapping"; modules: string[] } | { kind: "exploring" } | { kind: "replaying"; case_id: number; step: number; of: number } | 
+/**  Its browser is busy with something not known (a call going). */
+{ kind: "working" };
+
+/**
+ *  One connected assistant, as the card shows it. Carries neither the
+ *  agent's id nor its pid, and no login, host or address: the account is
+ *  the key the browser's lease holds.
+ */
+export type AgentView = {
+	label: string,
+	client: string | null,
+	/**  The browser slot it is bound to. */
+	slot: number | null,
+	/**  Its slot is an extra one, not the main browser. */
+	own_browser: boolean,
+	/**  Which browser it is (`Browser::label`), when its slot has a session. */
+	browser: string | null,
+	/**  The account key its slot's lease holds, never a login. */
+	account: string | null,
+	activity: AgentActivity,
+	/**  Whole minutes since its last call. */
+	idle_minutes: number,
+	/**  Its slot's browser has changes set for testing. */
+	changed_for_testing: boolean,
+	/**  Its slot's browser stops the page's saves. */
+	saves_blocked: boolean,
+	/**  Its slot runs an assistant's replay or a batch, which Stop ends. */
+	can_stop: boolean,
+};
+
 export type Antiforgery = {
 	page: string,
 };
@@ -2575,6 +2623,17 @@ export type AutoApproveOutcome = {
 	 *  tool's own it also depends on. Empty when there is nothing to do.
 	 */
 	note: string,
+};
+
+/**
+ *  Emitted when the assistants the Assistants card lists, or what any of
+ *  them is doing, changed: the whole list, by number, sent at most once a
+ *  second (`commands::autorun_slots::spawn_agents_watch`). It carries labels
+ *  and account keys only, never an agent's id or pid, a login, a host or an
+ *  address.
+ */
+export type AutorunAgentsChanged = {
+	agents: AgentView[],
 };
 
 /**

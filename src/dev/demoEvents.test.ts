@@ -26,9 +26,9 @@ async function boot(demo: boolean) {
   return { events, MUTED_EVENTS };
 }
 
-test("in demo mode, assigned work and slow-down events never reach a listener", async () => {
+test("in demo mode, assigned work, slow-down and assistant-list events never reach a listener", async () => {
   const { events, MUTED_EVENTS } = await boot(true);
-  expect([...MUTED_EVENTS]).toEqual(["workAssigned", "slowdownRequested"]);
+  expect([...MUTED_EVENTS]).toEqual(["workAssigned", "slowdownRequested", "autorunAgentsChanged"]);
   const cb = vi.fn();
   for (const name of MUTED_EVENTS) {
     const un = await events[name].listen(cb);

@@ -1966,3 +1966,50 @@ test("opening Auto Run with no Playwright repo set says so, with or without a PB
   expect(onOpenPlaywright).toHaveBeenCalledTimes(1);
   expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
 });
+
+test("the Assistants card shows before a PBI is picked, and not at all with no assistants", async () => {
+  const agent = {
+    label: "Assistant 1",
+    client: "claude-code",
+    slot: 0,
+    own_browser: false,
+    browser: "Edge",
+    account: null,
+    activity: { kind: "idle" },
+    idle_minutes: 0,
+    changed_for_testing: false,
+    saves_blocked: false,
+    can_stop: false,
+  };
+  let agents: unknown[] = [agent];
+  let asked = 0;
+  mockIPC((cmd) => {
+    if (cmd !== "auto_run_agents") return null;
+    asked += 1;
+    return agents;
+  });
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const first = render(
+    <QueryClientProvider client={qc}>
+      <AutoRun org="acme" project="proj" pbi={null} />
+    </QueryClientProvider>,
+  );
+  expect(screen.getByText("Pick a PBI in the bar above to auto-run its cases.")).toBeInTheDocument();
+  expect(await screen.findByRole("heading", { name: "Assistants" })).toBeInTheDocument();
+  expect(screen.getByText("Assistant 1 - claude-code")).toBeInTheDocument();
+  first.unmount();
+
+  agents = [];
+  asked = 0;
+  render(
+    <QueryClientProvider client={qc}>
+      <AutoRun org="acme" project="proj" pbi={null} />
+    </QueryClientProvider>,
+  );
+  // Absence only means something once the card has asked and been answered.
+  await waitFor(() => expect(asked).toBeGreaterThan(0));
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
+  expect(screen.queryByRole("heading", { name: "Assistants" })).toBeNull();
+});

@@ -5712,6 +5712,36 @@ pub fn batch_stop(n: SlotNo) -> &'static std::sync::atomic::AtomicBool {
     &BATCH_STOPS[n.index()]
 }
 
+/// How many batches of discovery actions are going in each slot (waiting for
+/// the browser or driving it). Batches in one slot can overlap (two callers
+/// sharing it, or parallel calls of one proxy), so this counts. Kept so the
+/// Assistants card can offer to stop them without taking the browser's lock.
+/// Coordination only.
+static BATCHES_GOING: [std::sync::atomic::AtomicUsize; SLOT_COUNT] =
+    [const { std::sync::atomic::AtomicUsize::new(0) }; SLOT_COUNT];
+
+/// Whether a batch of discovery actions is going in slot `n` (`BATCHES_GOING`).
+pub fn batch_going(n: SlotNo) -> bool {
+    BATCHES_GOING[n.index()].load(std::sync::atomic::Ordering::SeqCst) > 0
+}
+
+/// Counts slot `n`'s batch as going for as long as it lives; dropped at the
+/// batch's end, however it ends.
+pub struct BatchGoing(SlotNo);
+
+impl BatchGoing {
+    pub fn begin(n: SlotNo) -> BatchGoing {
+        BATCHES_GOING[n.index()].fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        BatchGoing(n)
+    }
+}
+
+impl Drop for BatchGoing {
+    fn drop(&mut self) {
+        BATCHES_GOING[self.0.index()].fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
 /// Ask the batch going in slot `n`, if any, to stop before its next action.
 pub fn stop_batch_in(n: SlotNo) {
     batch_stop(n).store(true, std::sync::atomic::Ordering::SeqCst);
@@ -7902,6 +7932,7 @@ async fn autorun_discover_actions(
     };
     // A stop asked for before this batch is not this batch's.
     batch_stop(n).store(false, std::sync::atomic::Ordering::SeqCst);
+    let _going = BatchGoing::begin(n);
     // Held for the whole batch: nothing else drives the browser between
     // its actions. End discovery, Close browser or a release asks it to
     // give way (`BATCH_STOPS`). A gone browser is let go inside, keeping

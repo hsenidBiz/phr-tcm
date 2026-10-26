@@ -11,6 +11,7 @@ import {
   commands,
   events,
   type Account,
+  type AgentView,
   type AccountInput,
   type AuthStatus,
   type CleanupLine_Serialize,
@@ -506,6 +507,37 @@ let environments: EnvListView = {
     },
   ],
 };
+
+/** Two sample assistants for the Assistants card: one replaying a case in
+ * the main Auto Run browser, one connected with no browser yet. */
+const demoAgents: AgentView[] = [
+  {
+    label: "Assistant 1",
+    client: "claude-code",
+    slot: 0,
+    own_browser: false,
+    browser: "Edge",
+    account: "hr_admin",
+    activity: { kind: "replaying", case_id: 4521, step: 3, of: 7 },
+    idle_minutes: 0,
+    changed_for_testing: false,
+    saves_blocked: false,
+    can_stop: true,
+  },
+  {
+    label: "Assistant 2",
+    client: "claude-code",
+    slot: null,
+    own_browser: false,
+    browser: null,
+    account: null,
+    activity: { kind: "idle" },
+    idle_minutes: 4,
+    changed_for_testing: false,
+    saves_blocked: false,
+    can_stop: false,
+  },
+];
 
 let autoRunNav: NavView = {
   direct_urls: false,
@@ -1696,6 +1728,10 @@ function applyPatches() {
       if (script) scripts.set(caseId, { ...script, suspected_defect: null });
       return ok(null);
     },
+    autoRunAgents: () => Promise.resolve(demoAgents.map((a) => ({ ...a, activity: { ...a.activity } }))),
+    autoRunStopAgent: () => ok(null),
+    autoRunEndAgentDiscovery: () => ok(null),
+    autoRunReleaseAgent: () => ok("Demo mode: the sample assistant keeps its browser"),
     autoRunListRuns: () => Promise.resolve(autoRuns.map((r) => ({ ...r }))),
     autoRunLoadRun: (runId: string) => ok(autoRuns.find((r) => r.id === runId) ?? null),
     autoRunSaveRun: (run: LocalRun_Serialize) => {
@@ -1905,10 +1941,13 @@ function applyPatches() {
  * in a capture-mode shot. The pacer's "slow down" toast likewise only ever
  * comes from real traffic.
  *
+ * The Assistants card likewise: a really connected assistant's labels,
+ * browser names and account keys must not replace the sample rows.
+ *
  * Left alone on purpose: file-watch, draft-comment, report-note and intake
  * events. They come from files and pages the person opened on this
  * machine, not from Azure DevOps, and muting them would drop their edits. */
-export const MUTED_EVENTS = ["workAssigned", "slowdownRequested"] as const;
+export const MUTED_EVENTS = ["workAssigned", "slowdownRequested", "autorunAgentsChanged"] as const;
 
 function muteRealSessionEvents() {
   const none = () => Promise.resolve(() => {});
