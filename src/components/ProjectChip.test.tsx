@@ -9,3 +9,9 @@ test("the chip shows the project name inside a trimmed label with a title", () =
   expect(name).toHaveClass("label-trim");
   expect(name.parentElement).toHaveAttribute("title", "Project: Payroll");
 });
+
+test("a screen reader hears what the chip is", () => {
+  const { container } = render(<ProjectChip project="Payroll" />);
+  expect(container.textContent).toBe("Project: Payroll");
+  expect(screen.getByText("Project:")).toHaveClass("sr-only");
+});

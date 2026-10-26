@@ -179,3 +179,9 @@ test("seeding is refused during the tour", () => {
   seedCombinedKey("to", "from");
   expect(localStorage.getItem("to")).toBeNull();
 });
+
+test("seeding a reshaper that returns nothing writes nothing", () => {
+  localStorage.setItem("from", "[1]");
+  seedCombinedKey("to", "from", () => undefined);
+  expect(localStorage.getItem("to")).toBeNull();
+});

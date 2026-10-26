@@ -51,7 +51,8 @@ export function saveAllProjects(on: boolean): void {
   try {
     localStorage.setItem(ALL_PROJECTS_KEY, on ? "1" : "0");
   } catch {
-    // storage unavailable -> the choice lasts for this session only
+    // A failed write leaves storage as it was, and the snapshot re-reads
+    // storage, so the switch shows its stored value again.
   }
   notify();
 }
@@ -124,7 +125,10 @@ export function seedCombinedKey(
     if (localStorage.getItem(combinedKey) !== null) return;
     const raw = localStorage.getItem(fromKey);
     if (raw === null) return;
-    localStorage.setItem(combinedKey, fill ? JSON.stringify(fill(JSON.parse(raw))) : raw);
+    const value = fill ? JSON.stringify(fill(JSON.parse(raw))) : raw;
+    // A reshaper that returns undefined has nothing to store.
+    if (value === undefined) return;
+    localStorage.setItem(combinedKey, value);
   } catch {
     // unreadable storage or bad saved data -> nothing is copied
   }

@@ -7,6 +7,7 @@ export default function ProjectChip({ project }: { project: string }) {
       className="shrink-0 rounded-full bg-surface-2 px-1.5 py-0.5 text-[10px] text-muted"
       title={`Project: ${project}`}
     >
+      <span className="sr-only">Project: </span>
       <span className="label-trim">{project}</span>
     </span>
   );
