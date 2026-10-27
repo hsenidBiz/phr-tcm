@@ -55,6 +55,16 @@ pub fn agents() -> MutexGuard<'static, ()> {
     hold(&L)
 }
 
+/// The bridge's record of which PBI each assistant's writing job named
+/// (`ai_bridge::forget_writing_jobs` empties all of it). Taken by the tests
+/// that begin a job and read it back through `get_tags`, so the one that
+/// forgets every job does not land between another's begin and read. Held on
+/// its own, never beside another lock.
+pub fn writing_jobs() -> MutexGuard<'static, ()> {
+    static L: Mutex<()> = Mutex::new(());
+    hold(&L)
+}
+
 /// The `SQLCMD_OVERRIDE` environment variable, which decides where (or
 /// whether) sqlcmd is found for everything in the process.
 pub fn sqlcmd_env() -> MutexGuard<'static, ()> {

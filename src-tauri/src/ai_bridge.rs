@@ -419,6 +419,7 @@ pub async fn route_as(
         ("POST", "/agent-bye") => {
             if let crate::autorun::agents::Caller::Agent(key) = caller {
                 crate::autorun::agents::note_bye(&key.id, crate::autorun::sessions::now_ms());
+                forget_writing_jobs_of(&key.id);
             }
             (200, "{}".to_string())
         }
@@ -427,7 +428,7 @@ pub async fn route_as(
         ("POST", "/validate") => (200, validate_json(body, target, ctx, client).await),
         ("POST", "/check-coverage") => check_coverage_route(body).await,
         ("POST", "/merge-cases") => merge_cases_route(body, ctx),
-        ("POST", "/begin") => begin_writing(body, target, ctx, client).await,
+        ("POST", "/begin") => begin_writing(caller, body, target, ctx, client).await,
         ("GET", "/guide") => match client {
             Some(c) => (200, guide(ctx, c).await),
             None => (503, "sign in to Test Case Manager first".into()),
@@ -444,7 +445,7 @@ pub async fn route_as(
             Some(c) => suite_cases(ctx, c, target).await,
             None => (503, "sign in to Test Case Manager first".into()),
         },
-        ("GET", "/tags") => tags(ctx, client, target).await,
+        ("GET", "/tags") => tags(caller, ctx, client, target).await,
         // The Auto Run routes. Only ONE of them reaches Azure DevOps, and
         // only to read: the save route looks the test cases up so the
         // floor has something to check the script against. The rest
@@ -12204,6 +12205,7 @@ fn draft_text_for(old: Option<&str>, cases: &[crate::model::TestCase]) -> Result
 /// invents a plausible path is caught by name here, which is most of
 /// what a file picker would have bought.
 async fn begin_writing(
+    caller: &crate::autorun::agents::Caller,
     body: &str,
     target: &str,
     ctx: &BridgeContext,
@@ -12316,9 +12318,9 @@ async fn begin_writing(
     // its folder exists - so this is a real place a file is about to
     // appear. Watching starts now, before the assistant has written a line.
     announce_intake_path(answers.output_path.trim());
-    note_writing_job_pbi(&ctx.org, answers.examples_pbi);
+    note_writing_job_pbi(caller, &ctx.org, answers.examples_pbi);
 
-    let plan =crate::intake::plan_markdown(&answers, &feature);
+    let plan = crate::intake::plan_markdown(&answers, &feature);
     let plan_path = crate::intake::plan_path(&answers.output_path);
     // Advice, not a gate: `None` (never an error) when no spec file could
     // be read at all, which must not block an otherwise-ready intake.
@@ -12943,11 +12945,12 @@ fn parse_cases_with_warnings(
 /// asked before the developer opened a tag field) fetches, and it stores
 /// the result so the app doesn't pay for it either.
 async fn tags(
+    caller: &crate::autorun::agents::Caller,
     ctx: &BridgeContext,
     client: Option<&crate::ado::AdoClient>,
     target: &str,
 ) -> (u16, String) {
-    let project = tags_project(ctx, client).await;
+    let project = tags_project(caller, ctx, client).await;
     let key = crate::cache::keys::tags(&ctx.org, &project);
     let (values, source) = match crate::cache::get::<Vec<String>>(&key) {
         Some(v) => (v, "cache"),
@@ -13008,30 +13011,73 @@ async fn tags(
     (200, out.to_string())
 }
 
-/// The organization and PBI the latest writing job named as its reference
-/// (the intake's `examples_pbi`), kept so `get_tags` can read the tags of
-/// the project the job's cases belong to. One slot, in memory only: the
-/// next job replaces it (a job naming no PBI empties it), a job in another
-/// organization is not read for this one, and it is gone when the app closes.
-static WRITING_JOB_PBI: StdMutex<Option<(String, i32)>> = StdMutex::new(None);
+/// Who a writing job belongs to: one assistant (its proxy id and, for a named
+/// subagent, its name), or `None` for the default caller (an older proxy, a
+/// test, the person).
+type JobOwner = Option<crate::autorun::agents::AgentKey>;
 
-fn note_writing_job_pbi(org: &str, pbi: Option<i32>) {
-    *WRITING_JOB_PBI.lock().unwrap_or_else(|e| e.into_inner()) = pbi.map(|p| (org.to_string(), p));
+fn job_owner(caller: &crate::autorun::agents::Caller) -> JobOwner {
+    match caller {
+        crate::autorun::agents::Caller::Default => None,
+        crate::autorun::agents::Caller::Agent(key) => Some(key.clone()),
+    }
+}
+
+/// The PBI each assistant's latest writing job named as its reference (the
+/// intake's `examples_pbi`), per organization, kept so `get_tags` can read
+/// the tags of the project that job's cases belong to. Process coordination,
+/// not cached data: it holds only what the intake named, nothing fetched.
+/// In memory only. A later job by the same assistant in the same organization
+/// replaces its entry (a job naming no PBI removes it), an assistant's
+/// goodbye drops its entries, a different account signing in drops all of
+/// them, and it is gone when the app closes.
+static WRITING_JOB_PBIS: StdMutex<std::collections::BTreeMap<(JobOwner, String), i32>> =
+    StdMutex::new(std::collections::BTreeMap::new());
+
+fn note_writing_job_pbi(caller: &crate::autorun::agents::Caller, org: &str, pbi: Option<i32>) {
+    let mut jobs = WRITING_JOB_PBIS.lock().unwrap_or_else(|e| e.into_inner());
+    let key = (job_owner(caller), org.to_string());
+    match pbi {
+        Some(p) => {
+            jobs.insert(key, p);
+        }
+        None => {
+            jobs.remove(&key);
+        }
+    }
+}
+
+/// An assistant said goodbye: its jobs (and its named subagents') are over.
+fn forget_writing_jobs_of(agent_id: &str) {
+    WRITING_JOB_PBIS
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .retain(|(owner, _), _| owner.as_ref().is_none_or(|k| k.id != agent_id));
+}
+
+/// Every job's PBI is forgotten: called when a different account signs in,
+/// as the caches are, so one person's job is never read as the next one's.
+pub fn forget_writing_jobs() {
+    WRITING_JOB_PBIS.lock().unwrap_or_else(|e| e.into_inner()).clear();
 }
 
 /// Whose tags `get_tags` reads: the home project (where cases are written),
-/// except that while combined a writing job naming a PBI points at that
-/// PBI's project. A PBI whose project cannot be read leaves it at home.
-async fn tags_project(ctx: &BridgeContext, client: Option<&crate::ado::AdoClient>) -> String {
+/// except that while combined the caller's own writing job naming a PBI
+/// points at that PBI's project. A PBI whose project cannot be read leaves
+/// it at home.
+async fn tags_project(
+    caller: &crate::autorun::agents::Caller,
+    ctx: &BridgeContext,
+    client: Option<&crate::ado::AdoClient>,
+) -> String {
     if !ctx.all_projects {
         return ctx.project.clone();
     }
-    let pbi = WRITING_JOB_PBI
+    let pbi = WRITING_JOB_PBIS
         .lock()
         .unwrap_or_else(|e| e.into_inner())
-        .as_ref()
-        .filter(|(org, _)| *org == ctx.org)
-        .map(|(_, pbi)| *pbi);
+        .get(&(job_owner(caller), ctx.org.clone()))
+        .copied();
     match (pbi, client) {
         (Some(pbi), Some(c)) => {
             work_item_project_cached(ctx, c, pbi).await.unwrap_or_else(|_| ctx.project.clone())

@@ -2,7 +2,8 @@
 //! the PBI's own project rather than the home project.
 
 use v2_lib::ado::AdoClient;
-use v2_lib::ai_bridge::{route, BridgeContext};
+use v2_lib::ai_bridge::{route, route_as, BridgeContext};
+use v2_lib::autorun::agents::{AgentKey, Caller};
 use v2_lib::cache::{self, keys};
 use wiremock::matchers::{method as wm_method, path as wm_path, path_regex};
 use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -30,12 +31,12 @@ fn ctx(all_projects: bool) -> BridgeContext {
 /// the session entries this file writes are keyed by that address, so every
 /// one of them is emptied before a test starts.
 fn forget_memos(uri: &str) {
-    for org in ["acme", "tagsorg-p6"] {
+    for org in ["acme", "tagsorg-p6", "tagsorg-p6-callers", "tagsorg-p6-bye", "tagsorg-p6-account"] {
         cache::forget(&keys::org_projects(uri, org));
         for p in ["Web", "Payroll", "Locked"] {
             cache::forget(&keys::suite_tree(uri, org, p));
         }
-        for id in [9, 42, 77, 4201, 4202, 4203, 4204] {
+        for id in [9, 42, 43, 77, 4201, 4202, 4203, 4204] {
             cache::forget(&keys::work_item_project(uri, org, id));
         }
         for (p, pbi) in [("Payroll", 4201), ("Payroll", 4202), ("Web", 4203), ("Web", 4204)] {
@@ -708,6 +709,7 @@ fn tags_ctx(all_projects: bool, dir: &std::path::Path) -> BridgeContext {
 
 #[tokio::test]
 async fn combined_tags_follow_the_writing_jobs_pbi_project() {
+    let _jobs = crate::serial::writing_jobs();
     for p in ["Web", "Payroll"] {
         v2_lib::cache::forget(&v2_lib::cache::keys::tags("tagsorg-p6", p));
     }
@@ -753,4 +755,144 @@ async fn combined_tags_follow_the_writing_jobs_pbi_project() {
     let (_, body) = route(&on, Some(&client), "GET", "/tags", "", "2.3.1").await;
     let v: serde_json::Value = serde_json::from_str(&body).unwrap();
     assert_eq!(v["project"], "Web", "{body}");
+}
+
+fn assistant(id: &str) -> Caller {
+    Caller::Agent(AgentKey { id: id.into(), name: None })
+}
+
+/// The project `who`'s `get_tags` answered for.
+async fn tags_project_for(who: &Caller, c: &BridgeContext, client: &AdoClient) -> String {
+    let (status, body) = route_as(who, c, Some(client), "GET", "/tags", "", "2.3.1").await;
+    assert_eq!(status, 200, "{body}");
+    let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+    v["project"].as_str().unwrap().to_string()
+}
+
+async fn begin_job_as(who: &Caller, c: &BridgeContext, dir: &std::path::Path, pbi: Option<i32>) {
+    let spec = dir.join("spec.md");
+    std::fs::write(&spec, "# spec").unwrap();
+    let mut answers = serde_json::json!({
+        "output_path": "pay.json",
+        "spec_paths": [spec.to_string_lossy()],
+        "authority": "spec",
+        "ordering": "tester",
+        "reference_cases": "none",
+    });
+    if let Some(p) = pbi {
+        answers["examples_pbi"] = serde_json::json!(p);
+    }
+    let (status, body) =
+        route_as(who, c, None, "POST", "/begin?feature=Pay%20run", &answers.to_string(), "2.3.1").await;
+    assert_eq!(status, 200, "{body}");
+    assert!(body.contains("\"ready\""), "{body}");
+}
+
+/// Organization `org`: PBI 42 is in Payroll and PBI 43 in Billing; Web is
+/// the home project. Each project has its own tags.
+async fn mount_three_projects(server: &MockServer, org: &str) {
+    for (id, project) in [(42, "Payroll"), (43, "Billing")] {
+        Mock::given(wm_method("GET"))
+            .and(wm_path(format!("/{org}/_apis/wit/workitems/{id}")))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "id": id, "fields": { "System.TeamProject": project }
+            })))
+            .mount(server)
+            .await;
+    }
+    mount_tags(server, org, "Web", &["web-only"]).await;
+    mount_tags(server, org, "Payroll", &["payroll-only"]).await;
+    mount_tags(server, org, "Billing", &["billing-only"]).await;
+}
+
+fn forget_tags(org: &str) {
+    for p in ["Web", "Payroll", "Billing"] {
+        cache::forget(&keys::tags(org, p));
+    }
+}
+
+#[tokio::test]
+async fn each_assistants_writing_job_keeps_its_own_pbi_for_tags() {
+    let _jobs = crate::serial::writing_jobs();
+    let org = "tagsorg-p6-callers";
+    forget_tags(org);
+    let (server, client) = ado_stub().await;
+    mount_three_projects(&server, org).await;
+    let dir = tempfile::tempdir().unwrap();
+    let mut on = tags_ctx(true, dir.path());
+    on.org = org.into();
+    let (a, b) = (assistant("agent-a"), assistant("agent-b"));
+
+    begin_job_as(&a, &on, dir.path(), Some(42)).await;
+    // Another assistant begins a job that names no PBI: it must not move A's.
+    begin_job_as(&b, &on, dir.path(), None).await;
+    assert_eq!(tags_project_for(&a, &on, &client).await, "Payroll");
+    assert_eq!(tags_project_for(&b, &on, &client).await, "Web");
+
+    // B's next job names a Billing PBI: A still reads Payroll.
+    begin_job_as(&b, &on, dir.path(), Some(43)).await;
+    assert_eq!(tags_project_for(&a, &on, &client).await, "Payroll");
+    assert_eq!(tags_project_for(&b, &on, &client).await, "Billing");
+
+    // The default caller (the person, an older proxy) has no job of its own.
+    assert_eq!(tags_project_for(&Caller::Default, &on, &client).await, "Web");
+}
+
+#[tokio::test]
+async fn an_assistants_goodbye_drops_only_its_own_writing_job() {
+    let _jobs = crate::serial::writing_jobs();
+    let org = "tagsorg-p6-bye";
+    forget_tags(org);
+    let (server, client) = ado_stub().await;
+    mount_three_projects(&server, org).await;
+    let dir = tempfile::tempdir().unwrap();
+    let mut on = tags_ctx(true, dir.path());
+    on.org = org.into();
+    let (a, b) = (assistant("agent-bye-a"), assistant("agent-bye-b"));
+
+    begin_job_as(&a, &on, dir.path(), Some(42)).await;
+    begin_job_as(&b, &on, dir.path(), Some(43)).await;
+    let (status, body) = route_as(&a, &on, None, "POST", "/agent-bye", "", "2.3.1").await;
+    assert_eq!(status, 200, "{body}");
+
+    // A's job is gone, so its id reads the home project; B's is untouched.
+    assert_eq!(tags_project_for(&a, &on, &client).await, "Web");
+    assert_eq!(tags_project_for(&b, &on, &client).await, "Billing");
+}
+
+#[tokio::test]
+async fn a_different_account_signing_in_drops_every_writing_job() {
+    let _jobs = crate::serial::writing_jobs();
+    let org = "tagsorg-p6-account";
+    forget_tags(org);
+    let (server, client) = ado_stub().await;
+    mount_three_projects(&server, org).await;
+    let dir = tempfile::tempdir().unwrap();
+    let mut on = tags_ctx(true, dir.path());
+    on.org = org.into();
+    let a = assistant("agent-account-a");
+
+    begin_job_as(&a, &on, dir.path(), Some(42)).await;
+    begin_job_as(&Caller::Default, &on, dir.path(), Some(43)).await;
+    assert_eq!(tags_project_for(&a, &on, &client).await, "Payroll");
+    assert_eq!(tags_project_for(&Caller::Default, &on, &client).await, "Billing");
+
+    v2_lib::ai_bridge::forget_writing_jobs();
+    assert_eq!(tags_project_for(&a, &on, &client).await, "Web");
+    assert_eq!(tags_project_for(&Caller::Default, &on, &client).await, "Web");
+}
+
+/// Both places an account signs in drop the writing jobs when the cache is
+/// taken by a different account. (The global cache itself is not claimed in
+/// a test: it is shared by every other one.)
+#[test]
+fn both_sign_in_paths_forget_the_writing_jobs_with_the_cache() {
+    let text = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/commands/auth.rs"),
+    )
+    .unwrap();
+    let claims = text.matches("if crate::cache::claim_for(").count();
+    assert_eq!(claims, 2, "the sign-in and the kept sign-in each claim the cache");
+    assert_eq!(text.matches("crate::ai_bridge::forget_writing_jobs();").count(), claims);
+    assert_eq!(text.matches("crate::cache::claim_for(").count(), claims, "no claim without it");
 }
