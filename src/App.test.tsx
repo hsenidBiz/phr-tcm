@@ -2958,21 +2958,23 @@ test("the toast and the Board badge show only the assignments the bell had not a
     renderApp();
     await screen.findByText("a@b.com");
     const { emit } = await import("@tauri-apps/api/event");
-    const first = { id: 601, title: "Fix the payslip", work_item_type: "Bug", state: "New", project: "Payroll" };
-    const second = { id: 602, title: "Tidy the docs", work_item_type: "Task", state: "New", project: "Web" };
-    const toasts = () => info.mock.calls.map((c) => String(c[0]));
+    const first = { id: 801, title: "Check the leave balance", work_item_type: "Bug", state: "New", project: "Payroll" };
+    const second = { id: 802, title: "Update the rota", work_item_type: "Task", state: "New", project: "Web" };
+    // Another test's announcement can still land late (an OS notification that
+    // was refused falls back to a toast), so only this test's items are read.
+    const toasts = () => info.mock.calls.map((c) => String(c[0])).filter((t) => /#80\d|^2 work items/.test(t));
 
     await act(async () => {
       await emit("work-assigned", { items: [first] });
     });
-    await vi.waitFor(() => expect(toasts()).toEqual(["Bug #601 assigned to you"]));
+    await vi.waitFor(() => expect(toasts()).toEqual(["Bug #801 assigned to you"]));
     expect(workAlertsSnapshot()).toBe(1);
 
     // One known item and one new one: only the new one is announced.
     await act(async () => {
       await emit("work-assigned", { items: [first, second] });
     });
-    await vi.waitFor(() => expect(toasts()).toEqual(["Bug #601 assigned to you", "Task #602 assigned to you"]));
+    await vi.waitFor(() => expect(toasts()).toEqual(["Bug #801 assigned to you", "Task #802 assigned to you"]));
     expect(workAlertsSnapshot()).toBe(2);
 
     // Nothing but known items: no toast, no badge.
@@ -2984,7 +2986,7 @@ test("the toast and the Board badge show only the assignments the bell had not a
     });
     expect(toasts()).toHaveLength(2);
     expect(workAlertsSnapshot()).toBe(2);
-    expect(bellItems().map((n) => n.id).sort()).toEqual(["assigned:601", "assigned:602"]);
+    expect(bellItems().map((n) => n.id).sort()).toEqual(["assigned:801", "assigned:802"]);
   } finally {
     info.mockRestore();
     clearWorkAlerts();
