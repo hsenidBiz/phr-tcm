@@ -174,6 +174,7 @@ test("each case in a selection gets a fresh browser, so none inherits the last o
 
 test("a failed write keeps the pane open instead of closing over lost verdicts", async () => {
   const s = mockSession({ saveFails: true });
+  const failed = vi.spyOn(toast, "error").mockImplementation(() => "");
   const onClose = renderPane([
     { id: 1, title: "Valid login" },
     { id: 2, title: "Locked account" },
@@ -183,12 +184,19 @@ test("a failed write keeps the pane open instead of closing over lost verdicts",
   fireEvent.click(screen.getByRole("button", { name: "Passed" }));
   fireEvent.click(screen.getByRole("button", { name: /Save and next case/ }));
   await screen.findByText("case 2 of 2");
+  // Case 2 gets a fresh browser, and Close is unavailable while that is
+  // being opened: wait for it, or the click below does nothing at all and
+  // the assertions after it pass without the write ever being tried.
+  await waitFor(() => expect(s.launched).toEqual(["edge", "edge"]));
+  await waitFor(() => expect(screen.getByRole("button", { name: /Close/ })).toBeEnabled());
 
   fireEvent.click(screen.getByRole("button", { name: /Close/ }));
 
-  // The write failed, so the pane stays put with the verdict still in
-  // hand - closing here would destroy it with no way back.
-  await waitFor(() => expect(screen.getByText("case 2 of 2")).toBeInTheDocument());
+  // The write was tried and failed ...
+  await waitFor(() => expect(failed).toHaveBeenCalledWith(expect.stringContaining("Could not save the result")));
+  // ... so the pane stays put with the verdict still in hand - closing
+  // here would destroy it with no way back.
+  expect(screen.getByText("case 2 of 2")).toBeInTheDocument();
   expect(onClose).not.toHaveBeenCalled();
   expect(s.saved).toHaveLength(0);
   expect(s.counted, "nothing on disk, nothing counted").toEqual([]);
