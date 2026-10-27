@@ -4487,7 +4487,7 @@ pub fn describe_action(action: &crate::browser::actions::Action) -> String {
 
 /// What no action an assistant runs may be: one read from its body by
 /// `/autorun-try` or `/autorun-discover-action`.
-fn refuse_as_a_tried_action(action: &crate::browser::actions::Action) -> Result<(), (u16, String)> {
+pub(crate) fn refuse_as_a_tried_action(action: &crate::browser::actions::Action) -> Result<(), (u16, String)> {
     // Signing in needs the tester's own accounts and the project's
     // recipe. It is theirs to drive, and a script never carries a login.
     if matches!(action, crate::browser::actions::Action::SignIn { .. }) {
@@ -6648,8 +6648,13 @@ pub async fn setup_save_for<S: crate::autorun::setup_find::RowSource>(
         seen_check::check_component_seen(&map, area, actions)
     };
     let area_known = |area: &str| nav::load_nav(root, org, project).is_ok_and(|n| nav::find_area(&n, area).is_some());
+    let accounts = match crate::autorun::accounts::load_accounts(root) {
+        Ok(a) => a,
+        Err(_) => return (409, "The saved accounts could not be read, so nothing was saved.".to_string()),
+    };
     let built = {
         let from = setups::SaveFrom {
+            accounts: &accounts,
             kept: &list,
             session: &session,
             prefix: &prefix,
@@ -6712,11 +6717,22 @@ async fn kept_started(slot: SlotNo, caller: &crate::autorun::agents::Caller) {
         return;
     };
     let mut held = crate::commands::autorun::session_slot(slot).lock().await;
+    kept_started_in(&root, &mut held, caller);
+}
+
+/// `kept_started` over the browser in `held`: the discovery it holds decides
+/// whether `caller` gets a kept list (an explore session with a change list)
+/// or none.
+pub fn kept_started_in<B: DiscoveryBrowser>(
+    root: &std::path::Path,
+    held: &mut Option<B>,
+    caller: &crate::autorun::agents::Caller,
+) {
     let (session, area) = held
         .as_mut()
         .and_then(|b| b.parts().discovery.as_ref().map(|s| (s.explore_session().map(str::to_string), s.area.clone())))
         .unwrap_or((None, None));
-    crate::autorun::kept::started(&root, &crate::autorun::kept::owner_of(caller), session.as_deref(), area.as_deref());
+    crate::autorun::kept::started(root, &crate::autorun::kept::owner_of(caller), session.as_deref(), area.as_deref());
 }
 
 /// `/autorun-explore-changes`: `{}` lists this project's explore sessions,
@@ -8592,7 +8608,7 @@ fn autorun_component_retire(ctx: &BridgeContext, body: &str) -> (u16, String) {
 /// A discovery's `navigate` or `open_tab` to a site outside `policy`'s,
 /// refused. A relative address names no site: the runner makes it absolute
 /// on the page and holds it to the same list.
-fn refuse_outside_the_recipe(
+pub(crate) fn refuse_outside_the_recipe(
     policy: &crate::browser::actions::Policy,
     action: &crate::browser::actions::Action,
 ) -> Result<(), (u16, String)> {

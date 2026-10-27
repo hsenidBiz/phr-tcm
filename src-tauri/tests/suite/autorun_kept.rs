@@ -223,6 +223,64 @@ fn the_owner_is_the_agent_or_nothing() {
     assert_eq!(owner_of(&Caller::Agent(key)), format!("{}:", "a".repeat(32)));
 }
 
+/// A discovery start, with explore, gives the calling assistant a kept list the
+/// route then answers for it, and no one else; a plain start takes it away.
+/// (The real start opens a real browser, so this runs the step the route takes
+/// after a start that answered 200, `kept_started_in`, over the fake browser,
+/// and reads the list back through the route itself.)
+#[tokio::test]
+async fn a_discovery_start_binds_the_kept_list_to_the_assistant_that_started_it() {
+    use v2_lib::ai_bridge::{kept_started_in, route_as};
+    use v2_lib::autorun::agents::AgentHeaders;
+    use v2_lib::autorun::store::set_root;
+    let _g = crate::serial::autorun();
+    let dir = root_with_recipe_and_account();
+    set_root(dir.path().to_path_buf());
+    let id = begin(dir.path(), ORG, PROJECT, "admin", 1_760_000_000_000).unwrap();
+    let who = |id: &str| {
+        AgentHeaders { id: Some(id.to_string()), pid: Some(4242), client: Some("claude-code".into()), name: None }.caller()
+    };
+    let (a, b) = (who(&"a".repeat(32)), who(&"b".repeat(32)));
+    let ask = |caller: &v2_lib::autorun::agents::Caller| {
+        let caller = caller.clone();
+        async move {
+            route_as(&caller, &crate::autorun_discovery::ctx(), None, "POST", "/autorun-kept-actions", "", "1.0.0").await
+        }
+    };
+
+    // Before any start, nothing is kept for anyone.
+    assert_eq!(ask(&a).await, (409, NOT_AN_EXPLORE.to_string()));
+
+    // An explore start: the caller has a list, answered by the route; the other assistant has none.
+    let mut explore = browser(&id, false);
+    kept_started_in(dir.path(), &mut explore, &a);
+    let (status, body) = ask(&a).await;
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(parsed(&body)["session"], id.as_str(), "{body}");
+    assert_eq!(ask(&b).await, (409, NOT_AN_EXPLORE.to_string()));
+
+    // An action it ran is on its list.
+    run(&mut explore, dir.path(), &click("#save")).await;
+    let (status, body) = ask(&a).await;
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(parsed(&body)["actions"].as_array().map(Vec::len), Some(1), "{body}");
+
+    // A plain start (no explore session) takes it away.
+    let mut plain = slot(
+        leave_page("Input.dispatchMouseEvent", "https://hr.example.internal/hr/leave/list?page=2"),
+        exploring("Leave"),
+    )
+    .0;
+    kept_started_in(dir.path(), &mut plain, &a);
+    assert_eq!(ask(&a).await, (409, NOT_AN_EXPLORE.to_string()));
+
+    // The route calls it after every start that answered 200.
+    let bridge = include_str!("../../src/ai_bridge.rs").replace("\r\n", "\n");
+    let arm = bridge.find("(\"POST\", \"/autorun-discover-start\") => {").expect("the start arm");
+    let at = arm + bridge[arm..].find("kept_started(slot, caller).await;").expect("the start no longer binds a kept list");
+    assert!(bridge[at.saturating_sub(60)..at].contains("if answer.0 == 200 {"), "it is not guarded by a 200");
+}
+
 #[test]
 fn kept_actions_answer_shows_typed_values_and_no_login() {
     let dir = root_with_recipe_and_account();

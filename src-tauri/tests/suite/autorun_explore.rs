@@ -1382,6 +1382,26 @@ fn the_shortest_place_of_the_id_is_kept() {
     assert_eq!(id_pointer(&body, "274"), Some("/Id".to_string()));
 }
 
+/// I4: a place is a guess when the value sits in several and no id-named key holds it.
+#[test]
+fn an_id_found_in_several_places_is_only_kept_where_an_id_key_holds_it() {
+    // `ok: 1` is shorter, but the key named like an id holds the id.
+    assert_eq!(id_pointer(&json!({"ok": 1, "data": {"id": 1}}), "1"), Some("/data/id".to_string()));
+    assert_eq!(id_pointer(&json!({"count": 1, "data": {"leaveTypeId": 1}}), "1"), Some("/data/leaveTypeId".to_string()));
+    assert_eq!(id_pointer(&json!({"count": 1, "row": {"leave_id": "1"}}), "1"), Some("/row/leave_id".to_string()));
+    // No id-named key, the value in two places: no pointer, rather than a guess.
+    assert_eq!(id_pointer(&json!({"ok": 1, "data": {"n": 1}}), "1"), None);
+    // One place only keeps it, whatever the key.
+    assert_eq!(id_pointer(&json!({"data": {"n": 7}}), "7"), Some("/data/n".to_string()));
+
+    // Through a verified create: the place is left out, so a setup is not built from it.
+    let (dir, session) = started();
+    let post = save("POST", "/hr/c", 2000, text(r#"{"ok":1,"data":{"n":1}}"#));
+    let rec = record_change(dir.path(), &session, created("leave type", "1", "AUTOTEST a"), None, &[&post], 1000).unwrap();
+    assert_eq!(rec.verified, Some(true));
+    assert_eq!(load(dir.path(), &session).unwrap().changes[0].proof, Some(SaveProof { saved_ms: 2000, id_at: None }));
+}
+
 #[test]
 fn a_text_answer_verifies_but_keeps_no_place() {
     let (dir, session) = started();

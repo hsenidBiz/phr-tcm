@@ -347,37 +347,57 @@ pub fn same_save(a: &str, b: &str) -> bool {
     compared(a) == compared(b)
 }
 
-/// The shortest RFC 6901 pointer to a value in `body` equal to `id` (a string
-/// compared trimmed, or a number as written). Ties go to document order.
+/// Whether an object key is named like an id: `id`, `...Id` or `..._id`, case
+/// ignored for the first and last.
+fn id_named(key: &str) -> bool {
+    let lower = key.to_ascii_lowercase();
+    lower == "id" || lower.ends_with("_id") || (key.len() > 2 && key.ends_with("Id"))
+}
+
+/// The RFC 6901 pointer to the value in `body` equal to `id` (a string
+/// compared trimmed, or a number as written). A key named like an id that
+/// holds it wins (the shortest such pointer, ties to document order). With
+/// no such key, a value found in one place only has that place; found in
+/// more than one, the place is a guess and there is no pointer.
 pub fn id_pointer(body: &Value, id: &str) -> Option<String> {
-    // Depth first in document order; only a strictly shorter pointer
-    // replaces the best so far, so a tie keeps the earlier one.
-    fn walk(v: &Value, at: &str, id: &str, best: &mut Option<String>) {
+    // Every place the value sits, in document order, with whether the key
+    // that holds it is named like an id.
+    fn walk(v: &Value, at: &str, key: Option<&str>, id: &str, hits: &mut Vec<(String, bool)>) {
         let hit = match v {
             Value::String(s) => s.trim() == id,
             Value::Number(n) => n.to_string() == id,
             _ => false,
         };
-        if hit && !at.is_empty() && best.as_ref().map_or(true, |b| at.len() < b.len()) {
-            *best = Some(at.to_string());
+        if hit && !at.is_empty() {
+            hits.push((at.to_string(), key.is_some_and(id_named)));
         }
         match v {
             Value::Object(m) => {
                 for (k, child) in m {
-                    walk(child, &format!("{at}/{}", k.replace('~', "~0").replace('/', "~1")), id, best);
+                    walk(child, &format!("{at}/{}", k.replace('~', "~0").replace('/', "~1")), Some(k), id, hits);
                 }
             }
             Value::Array(a) => {
                 for (i, child) in a.iter().enumerate() {
-                    walk(child, &format!("{at}/{i}"), id, best);
+                    walk(child, &format!("{at}/{i}"), None, id, hits);
                 }
             }
             _ => {}
         }
     }
-    let mut best = None;
-    walk(body, "", id.trim(), &mut best);
-    best
+    let mut hits = Vec::new();
+    walk(body, "", None, id.trim(), &mut hits);
+    let mut best: Option<&String> = None;
+    for (at, _) in hits.iter().filter(|(_, named)| *named) {
+        if best.map_or(true, |b| at.len() < b.len()) {
+            best = Some(at);
+        }
+    }
+    match (best, hits.as_slice()) {
+        (Some(at), _) => Some(at.clone()),
+        (None, [(only, _)]) => Some(only.clone()),
+        _ => None,
+    }
 }
 
 /// The string (trimmed) or number at `pointer` in `body`, as text; anything

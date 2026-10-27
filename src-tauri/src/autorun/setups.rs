@@ -8,10 +8,11 @@
 //! line (`METHOD /path`) and where the id sat in the answer. It never holds a
 //! password, a login, a host, an address with a query string or a cookie: a
 //! kept action that typed a login is never kept, a `sign_in` is refused, and
-//! an address outside the sign-in recipe's sites is refused at save.
+//! an address outside the sign-in recipe's sites, or one that carries a query
+//! string, is refused at save (and an `api_request` with a query too).
 
 use super::explore::{Change, ExploreSession};
-use super::kept::KeptList;
+use super::kept::{types_a_credential, KeptList};
 use super::nav;
 use super::recipe::project_slug;
 use super::setup_find::{browser_with_prefix, check_find, starts_with_prefix, FindRule};
@@ -23,6 +24,9 @@ use std::sync::Mutex;
 
 /// Said when a range made no create the app verified.
 pub const NO_CREATE_IN_RANGE: &str = "These actions made no create the app verified: record what these actions create first, with record_explore_change.";
+
+/// Said when a record a setup would build is not named with the test prefix.
+pub const ONLY_TEST_BUILDS: &str = "A setup must build only records named with the test prefix.";
 
 /// How far past the last action a save may have started and still belong to
 /// it: the page's save follows the click that sent it.
@@ -229,6 +233,8 @@ pub struct SaveFrom<'a> {
     /// Whether the map has seen these actions' locators in this area.
     pub seen: &'a dyn Fn(Option<&str>, &[Action]) -> Result<(), String>,
     pub area_known: &'a dyn Fn(&str) -> bool,
+    /// The saved accounts: no action a setup keeps types one's login.
+    pub accounts: &'a [crate::autorun::accounts::Account],
     pub now: u64,
 }
 
@@ -341,6 +347,55 @@ fn replace_in_value(
     }
 }
 
+/// Whether a create's name template comes out named with the test prefix: it
+/// starts with the prefix itself, or with the value of an input that is
+/// `unique` or names the record (those values are prefix-checked at save and
+/// at run).
+fn named_with_prefix(template: &str, inputs: &[SetupInput], prefix: &str) -> bool {
+    if starts_with_prefix(template, prefix) {
+        return true;
+    }
+    let t = template.trim_start();
+    inputs.iter().any(|i| (i.unique || i.names_the_record) && t.starts_with(&format!("{{{{{}}}}}", i.name)))
+}
+
+/// Every problem with one action a setup would keep, in a build or a find
+/// rule. `what` names it ("Action 3"). The same checks both ways: no sign-in,
+/// no component, only the recipe's sites and never a local file or an address
+/// with a query string, no `api_request` query, a valid action, no login.
+fn action_problems(what: &str, a: &Action, from: &SaveFrom) -> Vec<String> {
+    let mut bad = Vec::new();
+    for inner in a.each() {
+        match inner {
+            Action::SignIn { .. } => bad.push(format!("{what} signs in: a setup never signs in.")),
+            Action::UseComponent { .. } => bad.push(format!("{what} runs a component whose steps were not kept.")),
+            Action::Navigate { url } | Action::OpenTab { url, .. } => {
+                if url.trim().to_ascii_lowercase().starts_with("file:") {
+                    bad.push(format!("{what} goes to a local file: a setup goes to http or https only."));
+                } else if !(from.allowed)(url) {
+                    bad.push(format!("{what} goes to an address outside the sign-in recipe's sites."));
+                }
+                if url.contains('?') {
+                    bad.push(format!(
+                        "{what} goes to an address with a query string: a setup never keeps one, so reach that page by clicking instead."
+                    ));
+                }
+            }
+            Action::ApiRequest { query, .. } if !query.is_empty() => bad.push(format!(
+                "{what} sends a request with a query: a setup never keeps one, so reach that page by clicking instead."
+            )),
+            _ => {}
+        }
+    }
+    if let Err(why) = a.validate() {
+        bad.push(format!("{what}: {why}"));
+    }
+    if types_a_credential(a, None, from.accounts) {
+        bad.push(format!("{what} types a login: a setup never types one."));
+    }
+    bad
+}
+
 /// Each target an action carries, as JSON.
 fn targets_of(a: &Action) -> Vec<Value> {
     a.each()
@@ -413,21 +468,7 @@ pub fn build_setup(asked: &SaveAsked, from: &SaveFrom) -> Result<Built, Vec<Stri
         }
     }
     for (n, a) in &flat {
-        for inner in a.each() {
-            match inner {
-                Action::SignIn { .. } => bad.push(format!("Action {n} signs in: a setup never signs in.")),
-                Action::UseComponent { .. } => {
-                    bad.push(format!("Action {n} runs a component whose steps were not kept."))
-                }
-                Action::Navigate { url } | Action::OpenTab { url, .. } if !(from.allowed)(url) => {
-                    bad.push(format!("Action {n} goes to an address outside the sign-in recipe's sites."))
-                }
-                _ => {}
-            }
-        }
-        if let Err(why) = a.validate() {
-            bad.push(format!("Action {n}: {why}"));
-        }
+        bad.extend(action_problems(&format!("Action {n}"), a, from));
     }
 
     // 4. The area.
@@ -544,6 +585,12 @@ pub fn build_setup(asked: &SaveAsked, from: &SaveFrom) -> Result<Built, Vec<Stri
                 continue;
             };
             let (template, _) = replace_values(name, &values);
+            if !name.trim().is_empty() && !named_with_prefix(&template, &inputs, prefix) {
+                bad.push(format!(
+                    "{ONLY_TEST_BUILDS} The {kind} that entry {} recorded is not: name it from a unique input that starts with {prefix}, or start its name with {prefix}.",
+                    e.n
+                ));
+            }
             creates.push((
                 e.n,
                 SetupCreate { kind: kind.clone(), name: template, request: e.request.clone().unwrap_or_default(), id_at },
@@ -567,6 +614,9 @@ pub fn build_setup(asked: &SaveAsked, from: &SaveFrom) -> Result<Built, Vec<Stri
     if let Some(rule) = &asked.find.browser {
         match browser_with_prefix(rule, prefix) {
             Ok(filled) => {
+                for (i, a) in filled.iter().enumerate() {
+                    bad.extend(action_problems(&format!("The browser find rule's action {}", i + 1), a, from));
+                }
                 let used: Vec<Value> = kept
                     .actions
                     .iter()

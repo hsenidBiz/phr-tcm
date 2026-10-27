@@ -17,7 +17,7 @@ use v2_lib::autorun::setup_find::{
 };
 use v2_lib::autorun::setups::{
     build_setup, find_setup, fresh_value, list_answer, load_setups, no_such_setup, save, setups_path, InputAsked,
-    ReturnsAsked, SaveAsked, SaveFrom, SetupCreate, NO_CREATE_IN_RANGE,
+    ReturnsAsked, SaveAsked, SaveFrom, SetupCreate, NO_CREATE_IN_RANGE, ONLY_TEST_BUILDS,
 };
 use v2_lib::browser::actions::Action;
 use v2_lib::browser::net_capture::{Body, Captured};
@@ -134,6 +134,16 @@ fn build(
     session: &ExploreSession,
     seen: &Seen,
 ) -> Result<v2_lib::autorun::setups::Built, Vec<String>> {
+    build_with(asked, kept, session, seen, &[])
+}
+
+fn build_with(
+    asked: &SaveAsked,
+    kept: &KeptList,
+    session: &ExploreSession,
+    seen: &Seen,
+    accounts: &[v2_lib::autorun::accounts::Account],
+) -> Result<v2_lib::autorun::setups::Built, Vec<String>> {
     let allowed = |u: &str| u.starts_with("https://hr.example.internal/");
     let area_known = |a: &str| a == "Leave";
     build_setup(
@@ -145,6 +155,7 @@ fn build(
             allowed: &allowed,
             seen,
             area_known: &area_known,
+            accounts,
             now: 1_760_000_000_000,
         },
     )
@@ -409,6 +420,128 @@ fn returns_names_a_create_and_defaults_to_the_first() {
 fn fresh_value_is_prefix_name_and_stamp() {
     assert_eq!(fresh_value("AUTOTEST", "Leave type", 1_760_000_000_000), "AUTOTESTLeave-type-gj6k3cw");
     assert_eq!(fresh_value("AUTOTEST", "Leave type", 1_760_000_000_001), "AUTOTESTLeave-type-gj6k3cx");
+}
+
+/// C1: a setup builds only records named with the test prefix.
+#[test]
+fn a_setup_must_build_only_records_named_with_the_prefix() {
+    // Recorded without the prefix, no input: refused.
+    let off = session_with(vec![entry(1, "leave type", "274", "Annual Leave Test", 1350, Some("/data/Id"), true)]);
+    let said = problems(build(&asked(4, vec![], db_rule()), &leave_list(), &off, &never_seen));
+    assert_eq!(said.len(), 1, "{said:?}");
+    assert!(said[0].starts_with(ONLY_TEST_BUILDS), "{said:?}");
+
+    // A unique input that is not what named the record does not help.
+    let said = problems(build(&asked(4, vec![name_input()], db_rule()), &leave_list(), &off, &never_seen));
+    assert!(said.iter().any(|s| s.starts_with(ONLY_TEST_BUILDS)), "{said:?}");
+
+    // An input that is neither unique nor names the record cannot vouch for a name.
+    let loose = InputAsked { unique: false, names_the_record: false, ..name_input() };
+    let by_input = session_with(vec![entry(1, "leave type", "274", "AUTOTEST leave A", 1350, Some("/data/Id"), true)]);
+    let said = problems(build(&asked(4, vec![loose], db_rule()), &leave_list(), &by_input, &never_seen));
+    assert!(said.iter().any(|s| s.starts_with(ONLY_TEST_BUILDS)), "{said:?}");
+
+    // Every create in the range, not only the one returned.
+    let two = session_with(vec![
+        entry(1, "leave type", "274", "AUTOTEST leave A", 1350, Some("/data/Id"), true),
+        entry(2, "policy", "9", "Plain policy", 1360, Some("/Id"), true),
+    ]);
+    let mut a = asked(4, vec![], db_rule());
+    a.returns = Some(ReturnsAsked { entry: 1 });
+    let said = problems(build(&a, &leave_list(), &two, &never_seen));
+    assert!(said.iter().any(|s| s.starts_with(ONLY_TEST_BUILDS)), "{said:?}");
+
+    // A literal prefixed name, or a unique input that names it, passes.
+    build(&asked(4, vec![], db_rule()), &leave_list(), &leave_session(), &never_seen).expect("a prefixed name");
+    build(&asked(4, vec![name_input()], db_rule()), &leave_list(), &leave_session(), &never_seen)
+        .expect("a unique input names it");
+}
+
+/// I2: a browser find rule's actions meet the checks the build's actions do.
+#[test]
+fn a_browser_find_rules_actions_get_the_build_checks() {
+    let seen_ok = |_: Option<&str>, _: &[Action]| Ok(());
+    let accounts = vec![v2_lib::autorun::accounts::Account {
+        key: "admin".into(),
+        label: "Admin".into(),
+        username: "hr.admin".into(),
+        password: "Sup3rSecret".into(),
+    }];
+    let input = InputAsked { names_the_record: false, ..name_input() };
+    let rule = |actions: Vec<Value>| FindRule { database: None, browser: Some(actions.into_iter().map(act).collect()) };
+    let check = json!({"kind":"expect_visible","selector":{"role":"row","name":"{prefix}"}});
+    let said_for = |actions: Vec<Value>| {
+        problems(build_with(
+            &asked(4, vec![input.clone()], rule(actions)),
+            &leave_list(),
+            &leave_session(),
+            &seen_ok,
+            &accounts,
+        ))
+        .join(" | ")
+    };
+
+    let all = said_for(vec![json!({"kind":"navigate","url":"https://elsewhere.example/x"}), check.clone()]);
+    assert!(all.contains("The browser find rule's action 1 goes to an address outside the sign-in recipe's sites"), "{all}");
+    assert!(!all.contains("elsewhere.example"), "a host in the refusal: {all}");
+
+    let all = said_for(vec![json!({"kind":"navigate","url":"file:///C:/x.html"}), check.clone()]);
+    assert!(all.contains("action 1 goes to a local file"), "{all}");
+
+    let all = said_for(vec![json!({"kind":"fill","selector":"#name","value":"Sup3rSecret"}), check.clone()]);
+    assert!(all.contains("action 1 types a login"), "{all}");
+
+    let all = said_for(vec![
+        json!({"kind":"when_visible","selector":"#x","then":[{"kind":"sign_in","account":"admin"}]}),
+        check.clone(),
+    ]);
+    assert!(all.contains("action 1 signs in"), "{all}");
+
+    let all = said_for(vec![json!({"kind":"navigate","url":"https://hr.example.internal/leave?x=1"}), check.clone()]);
+    assert!(all.contains("action 1 goes to an address with a query string"), "{all}");
+
+    // And a build action that types a login.
+    let mut list = leave_list();
+    list.actions[1] = kept_at(2, json!({"kind":"fill","selector":"#name","value":"Sup3rSecret"}), 1150, 1250);
+    let said = problems(build_with(&asked(4, vec![], db_rule()), &list, &leave_session(), &never_seen, &accounts));
+    assert!(said.join(" ").contains("Action 2 types a login"), "{said:?}");
+}
+
+/// I3: nothing with a query string is ever kept.
+#[test]
+fn an_address_or_request_with_a_query_is_refused_at_save() {
+    let mut list = leave_list();
+    list.actions[0] = kept_at(
+        1,
+        json!({"kind":"navigate","url":"https://hr.example.internal/leave/edit?id=12&returnUrl=%2Fx&token=abc"}),
+        1000,
+        1100,
+    );
+    let said = problems(build(&asked(4, vec![name_input()], db_rule()), &list, &leave_session(), &never_seen));
+    assert_eq!(said.len(), 1, "{said:?}");
+    assert!(said[0].starts_with("Action 1 goes to an address with a query string"), "{said:?}");
+    assert!(said[0].contains("clicking instead"), "{said:?}");
+    assert!(!said[0].contains("token") && !said[0].contains("hr.example.internal"), "{said:?}");
+
+    let mut list = leave_list();
+    list.actions[0] = kept_at(1, json!({"kind":"open_tab","name":"t","url":"https://hr.example.internal/r?id=1"}), 1000, 1100);
+    let said = problems(build(&asked(4, vec![name_input()], db_rule()), &list, &leave_session(), &never_seen));
+    assert!(said.join(" ").contains("query string"), "{said:?}");
+
+    let mut list = leave_list();
+    list.actions[0] = kept_at(
+        1,
+        json!({"kind":"api_request","path":"/hr/leave/types","query":{"page":"2"},"expect":{"status":200}}),
+        1000,
+        1100,
+    );
+    let said = problems(build(&asked(4, vec![name_input()], db_rule()), &list, &leave_session(), &never_seen));
+    assert!(said.join(" ").contains("Action 1 sends a request with a query"), "{said:?}");
+
+    // The same address without a query is kept.
+    let mut list = leave_list();
+    list.actions[0] = kept_at(1, json!({"kind":"navigate","url":"https://hr.example.internal/leave/new"}), 1000, 1100);
+    build(&asked(4, vec![name_input()], db_rule()), &list, &leave_session(), &never_seen).expect("no query");
 }
 
 // ---- The route: setup_save_for ----

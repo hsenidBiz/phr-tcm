@@ -244,8 +244,10 @@ pub fn first_test_record(
         {
             continue;
         }
-        if trimmed.is_empty() || trimmed.starts_with('(') {
-            break;
+        // A blank line and the `(N rows affected)` footer are not rows; a
+        // row that merely starts with "(" is one.
+        if trimmed.is_empty() || query::rows_affected(trimmed).is_some() {
+            continue;
         }
         let cells: Vec<&str> = line.split('\t').collect();
         let name = cells.get(name_at).map(|c| c.trim()).unwrap_or("");

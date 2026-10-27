@@ -84,6 +84,23 @@ fn a_row_named_outside_the_prefix_is_skipped() {
     );
 }
 
+/// M3: every row sqlcmd returned is read; a row starting with "(" or a blank
+/// line in the middle does not end the scan, only the footer is skipped.
+#[test]
+fn a_row_starting_with_a_bracket_or_a_blank_line_does_not_end_the_scan() {
+    let find = |text: &str| first_test_record(text, &db(GOOD_SQL, "Id", "Name"), "AUTOTEST");
+    let want = Ok(Some(FoundRecord { id: Some("9".to_string()), name: "AUTOTEST leave".to_string() }));
+
+    let bracket = "Id\tName\n--\t----\n7\t(Old) Annual\n(8)\tx\n9\tAUTOTEST leave\n\n(3 rows affected)\n";
+    assert_eq!(find(bracket), want);
+    let first_cell = "Id\tName\n--\t----\n(7)\t(Old) Annual\n9\tAUTOTEST leave\n\n(2 rows affected)\n";
+    assert_eq!(find(first_cell), want);
+    let blank = "Id\tName\n--\t----\n7\tReal Person\n\n9\tAUTOTEST leave\n\n(2 rows affected)\n";
+    assert_eq!(find(blank), want);
+    // Still nothing when no row is a test record.
+    assert_eq!(find("Id\tName\n--\t----\n(7)\t(Old)\n\n(1 rows affected)\n"), Ok(None));
+}
+
 #[test]
 fn no_prefixed_row_is_not_found() {
     let text = "Id\tName\n--\t----\n7\tReal Person\n8\tNULL\n\n(2 rows affected)\n";

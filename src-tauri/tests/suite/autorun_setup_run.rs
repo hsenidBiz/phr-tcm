@@ -17,8 +17,8 @@ use v2_lib::autorun::kept;
 use v2_lib::autorun::nav::unrecorded_area;
 use v2_lib::autorun::setup_find::{DbFind, FindRule, RowSource, DATABASE_OFF};
 use v2_lib::autorun::setup_run::{
-    action_failed, find_could_not_run, ids_of_built, not_confirmed, record_built, run_setup_in, values_for,
-    BuiltCreate, BUILD_NOT_SAVED, BUILT, FOUND,
+    action_failed, find_could_not_run, ids_of_built, not_confirmed, not_prefixed, record_built, run_setup_in,
+    values_for, BuiltCreate, BUILD_NOT_SAVED, BUILT, FOUND,
 };
 use v2_lib::autorun::setups::{
     fresh_value, load_setups, save, Built, SavedSetup, SetupCreate, SetupInput,
@@ -28,11 +28,14 @@ use v2_lib::browser::actions::{Action, CHECK_TEXT_JS, HIGHLIGHT_JS};
 use v2_lib::browser::cdp::Event;
 use v2_lib::browser::input::{FOCUS_JS, HAS_FOCUS_JS, PROBE_JS};
 use v2_lib::browser::locator::VISIBLE_JS;
-use v2_lib::browser::net_capture::{Body, Captured};
+use v2_lib::browser::net_capture::{Body, Captured, NetCapture};
+use v2_lib::browser::net_record::NetRecord;
 use v2_lib::commands::autorun::DiscoveryState;
 
 const NOW: u64 = 1_760_000_000_000;
 const NAME: &str = "Leave type";
+/// Passed as an app's `row_text`: reading the matched element's text fails.
+const UNREADABLE: &str = "<unreadable>";
 
 fn act(v: Value) -> Action {
     serde_json::from_value(v).unwrap()
@@ -160,6 +163,9 @@ fn app(missing: &'static [&'static str], row_text: &'static str) -> ScriptedDriv
             "Runtime.callFunctionOn" if f == FOCUS_JS => json!({ "result": { "value": "text" } }),
             "Runtime.callFunctionOn" if f == CHECK_TEXT_JS => json!({ "result": { "value": true } }),
             "Runtime.callFunctionOn" if f == v2_lib::autorun::setup_run::MATCHED_TEXT_JS => {
+                if row_text == UNREADABLE {
+                    return Err(v2_lib::browser::cdp::CdpError::Closed);
+                }
                 json!({ "result": { "value": row_text } })
             }
             "Runtime.callFunctionOn" => {
@@ -607,4 +613,196 @@ fn the_sentences_say_what_to_do() {
     );
     assert_eq!(find_could_not_run("x"), "The find rule could not run, so nothing was built: x");
     assert!(!BUILD_NOT_SAVED.contains('\u{2014}') && !BUILD_NOT_SAVED.contains('\u{2013}'));
+    assert!(!not_prefixed().contains('\u{2014}') && !not_prefixed().contains('\u{2013}'));
+}
+
+// ---- The fix round ----
+
+fn feed(rec: &mut NetRecord, cap: &mut NetCapture, page: &str, method: &str, params: Value) {
+    let e = Event { method: method.to_string(), params };
+    rec.observe(&e);
+    cap.observe("S-main", "main", page, &e, rec);
+}
+
+/// A capture holding one save the page sent and the JSON it answered with,
+/// fed as the real browser feeds it. The save started an hour from now, so it
+/// is after the start of any run in this test.
+fn capture_with_save(path: &str, answer: &str) -> NetCapture {
+    const SITE: &str = "https://hr.example.internal";
+    let page = format!("{SITE}/hr/leave");
+    let mut cap = NetCapture::default();
+    cap.set_app_site(Some(&format!("{SITE}/Account/Login")));
+    cap.confirm_app_site(&format!("{SITE}/hr/home"));
+    let mut rec = NetRecord::default();
+    let wall = (v2_lib::autorun::sessions::now_ms() / 1000 + 3600) as f64;
+    feed(
+        &mut rec,
+        &mut cap,
+        &page,
+        "Network.requestWillBeSent",
+        json!({ "requestId": "r1", "type": "XHR", "documentURL": page, "timestamp": 100.0, "wallTime": wall,
+                "request": { "url": format!("{SITE}{path}"), "method": "POST", "headers": {},
+                             "postData": "LeaveName=x", "hasPostData": true } }),
+    );
+    feed(
+        &mut rec,
+        &mut cap,
+        &page,
+        "Network.responseReceived",
+        json!({ "requestId": "r1", "type": "XHR",
+                "response": { "status": 200, "mimeType": "application/json", "headers": {} } }),
+    );
+    feed(&mut rec, &mut cap, &page, "Network.loadingFinished", json!({ "requestId": "r1", "timestamp": 100.25, "encodedDataLength": 40 }));
+    while let Some(read) = cap.next_read() {
+        cap.answered(&read, Some(&json!({ "body": answer, "base64Encoded": false })));
+    }
+    cap
+}
+
+/// I5: a whole build whose save the browser captured.
+#[tokio::test]
+async fn a_build_whose_save_the_browser_captured_is_confirmed_and_on_the_change_list() {
+    let _g = crate::serial::autorun();
+    let dir = root_with_recipe_and_account();
+    let id = begin(dir.path(), ORG, PROJECT, "admin", NOW).unwrap();
+    saved(dir.path(), leave_setup(database_rule()));
+    let cap = capture_with_save("/hr/leave/save?x=1", r#"{"data":{"Id":301}}"#);
+    let mut b = browser(app(&[], "").with_capture(cap), going(&id, false));
+    let rows = Rows::none();
+
+    let (status, body) = run(&mut b, dir.path(), Some(&rows), json!({ "name": NAME })).await;
+    assert_eq!(status, 200, "{body}");
+    let v = parsed(&body);
+    assert_eq!(v["said"], BUILT, "{body}");
+    assert_eq!(v["built"], true, "{body}");
+    assert_eq!(v["confirmed"], true, "{body}");
+    assert_eq!(v["record"]["id"], "301", "{body}");
+    assert_eq!(v["recorded"][0]["verified"], true, "{body}");
+
+    let s = load(dir.path(), &id).unwrap();
+    assert_eq!(s.changes.len(), 1, "{:?}", s.changes);
+    let Change::Created { id: made, verified, .. } = &s.changes[0].change else { panic!("not a create") };
+    assert_eq!((made.as_str(), *verified), ("301", true));
+    assert_eq!(s.changes[0].proof.as_ref().unwrap().id_at.as_deref(), Some("/data/Id"));
+    // What an undo would delete, and the session's own test-made list.
+    let undoable = v2_lib::autorun::explore::verified_creates(&s);
+    assert_eq!(undoable.len(), 1, "{undoable:?}");
+    assert!(undoable[0].to_string().contains("301"), "{undoable:?}");
+    let made = test_made::list(dir.path());
+    assert_eq!(made.len(), 1, "{made:?}");
+    assert_eq!(made[0].run_id, id);
+}
+
+/// C1: a record outside the prefix is never a clean build, even from a file
+/// that says it will make one.
+#[tokio::test]
+async fn a_built_record_outside_the_prefix_is_reported_not_clean() {
+    let _g = crate::serial::autorun();
+    let dir = root_with_recipe_and_account();
+    let id = begin(dir.path(), ORG, PROJECT, "admin", NOW).unwrap();
+    let mut setup = leave_setup(database_rule());
+    setup.inputs = vec![];
+    setup.creates[0].name = "Annual Leave".into();
+    saved(dir.path(), setup);
+    let cap = capture_with_save("/hr/leave/save", r#"{"data":{"Id":301}}"#);
+    let mut b = browser(app(&[], "").with_capture(cap), going(&id, false));
+    let rows = Rows::none();
+
+    let (status, body) = run(&mut b, dir.path(), Some(&rows), json!({ "name": NAME })).await;
+    assert_eq!(status, 200, "{body}");
+    let v = parsed(&body);
+    assert_eq!(v["built"], true, "{body}");
+    assert_eq!(v["confirmed"], false, "{body}");
+    assert_eq!(v["said"], not_prefixed().as_str(), "{body}");
+    assert!(!v["said"].as_str().unwrap().contains(BUILT), "{body}");
+}
+
+/// I1: only a check that ran and reported a failure means "not found".
+#[tokio::test]
+async fn a_browser_check_that_did_not_run_or_read_builds_nothing() {
+    let _g = crate::serial::autorun();
+    // The last action is refused (a component that is not saved): not a failed check.
+    let dir = root_with_recipe_and_account();
+    let id = begin(dir.path(), ORG, PROJECT, "admin", NOW).unwrap();
+    let rule = browser_rule(vec![json!({ "kind": "use_component", "component": "No such component", "inputs": {} })]);
+    saved(dir.path(), leave_setup(rule));
+    let mut b = browser(app(&[], ""), going(&id, false));
+    let (status, body) = run(&mut b, dir.path(), None, json!({ "name": NAME })).await;
+    assert_eq!(status, 409, "{body}");
+    assert!(body.starts_with("The find rule could not run, so nothing was built"), "{body}");
+    assert_eq!(mouse_releases(&mut b), 0, "a build action ran");
+    assert!(load(dir.path(), &id).unwrap().changes.is_empty());
+
+    // The check passes but the matched text cannot be read.
+    let dir = root_with_recipe_and_account();
+    let id = begin(dir.path(), ORG, PROJECT, "admin", NOW).unwrap();
+    let rule = browser_rule(vec![json!({ "kind": "expect_visible", "selector": { "css": "#row" } })]);
+    saved(dir.path(), leave_setup(rule));
+    let mut b = browser(app(&[], UNREADABLE), going(&id, false));
+    let (status, body) = run(&mut b, dir.path(), None, json!({ "name": NAME })).await;
+    assert_eq!(status, 409, "{body}");
+    assert!(body.starts_with("The find rule could not run, so nothing was built"), "{body}");
+    assert_eq!(mouse_releases(&mut b), 0, "a build action ran");
+}
+
+/// I2: what the setups file holds goes back through the refusals a tried
+/// action meets, so a hand-edited file cannot sign in or go anywhere.
+#[tokio::test]
+async fn a_hand_edited_setup_that_signs_in_or_goes_elsewhere_is_refused() {
+    let _g = crate::serial::autorun();
+    let sign_in = json!({ "kind": "sign_in", "account": "admin" });
+    let elsewhere = json!({ "kind": "navigate", "url": "https://elsewhere.example/x" });
+    let local = json!({ "kind": "navigate", "url": "file:///C:/secret.html" });
+    let check = json!({ "kind": "expect_visible", "selector": { "css": "#row" } });
+    let build = |action: &Value| {
+        let setup = setup_with(database_rule(), None, vec![action.clone(), click("#save")]);
+        SavedSetup { inputs: vec![], ..setup }
+    };
+    let find = |action: &Value| leave_setup(browser_rule(vec![action.clone(), check.clone()]));
+    for (what, setup) in [
+        ("a build sign_in", build(&sign_in)),
+        ("a build navigate elsewhere", build(&elsewhere)),
+        ("a build local file", build(&local)),
+        ("a find sign_in", find(&sign_in)),
+        ("a find navigate elsewhere", find(&elsewhere)),
+        ("a find local file", find(&local)),
+    ] {
+        let dir = root_with_recipe_and_account();
+        let id = begin(dir.path(), ORG, PROJECT, "admin", NOW).unwrap();
+        saved(dir.path(), setup);
+        let mut b = browser(app(&[], ""), going(&id, false));
+        let rows = Rows::none();
+        let (status, said) = run(&mut b, dir.path(), Some(&rows), json!({ "name": NAME })).await;
+        assert_eq!(status, 409, "{what}: {said}");
+        assert!(said.starts_with("The setup needs saving again"), "{what}: {said}");
+        assert!(!said.contains("elsewhere.example"), "{what}: a host in the answer: {said}");
+        assert!(b.as_mut().unwrap().d.calls.is_empty(), "{what}: the browser was driven");
+        assert_eq!(rows.asked.load(Ordering::SeqCst), 0, "{what}: the database was asked");
+    }
+}
+
+struct Panics;
+
+impl RowSource for Panics {
+    async fn select(&self, _sql: &str) -> Result<String, String> {
+        panic!("the database fake panicked on purpose")
+    }
+}
+
+/// M1: a panic in a run does not leave the session unable to keep actions.
+#[test]
+fn a_panic_in_a_run_clears_the_setup_running_mark() {
+    let _g = crate::serial::autorun();
+    let dir = root_with_recipe_and_account();
+    let id = begin(dir.path(), ORG, PROJECT, "admin", NOW).unwrap();
+    saved(dir.path(), leave_setup(database_rule()));
+    let mut b = browser(app(&[], ""), going(&id, false));
+    let body = json!({ "name": NAME }).to_string();
+    let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+    let panicked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        rt.block_on(run_setup_in(&mut b, dir.path(), ORG, PROJECT, &body, Some(&Panics), &quick(), NOW))
+    }))
+    .is_err();
+    assert!(panicked, "the run did not reach the database");
+    assert!(!b.as_mut().unwrap().parts().discovery.as_ref().unwrap().explore.as_ref().unwrap().setup_running);
 }

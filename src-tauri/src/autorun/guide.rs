@@ -2029,7 +2029,9 @@ builds, the range (`from` and `to`), the typed values that become inputs (mark a
 named with the test name prefix: a `database` SELECT that uses `{prefix}` outside quotes and names
 its id and name columns, a `browser` list of actions that ends in a check using `{prefix}`, or
 both. The database rule is used while Database Read Access is on; otherwise the browser rule is
-used, and with neither the run is refused. Read the places the save answer says each input
+used, and with neither the run is refused. Aim a browser rule's last check at the record's own
+name (its name cell or title), not at a whole row or table: the run reads the first line of what
+the check matches as the record's name. Read the places the save answer says each input
 replaced, and save again if one is a match by chance.
 
 Two assistants running the same setup at once may both find nothing and both build: split the

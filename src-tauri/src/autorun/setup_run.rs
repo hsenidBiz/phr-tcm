@@ -19,7 +19,10 @@ use super::setup_find::{
     DATABASE_OFF, NEEDS_A_FIND_RULE,
 };
 use super::setups::{fresh_value, find_setup, load_setups, no_such_setup, stamp_used, SavedSetup, SetupCreate};
-use crate::ai_bridge::{discover_action_in, discovery_must_not_save, went_home, DiscoveryBrowser};
+use crate::ai_bridge::{
+    discover_action_in, discovery_must_not_save, refuse_as_a_tried_action, refuse_outside_the_recipe, went_home,
+    DiscoveryBrowser,
+};
 use crate::browser::actions::Action;
 use crate::browser::cdp::Driver;
 use crate::browser::locator::{self, Target};
@@ -56,6 +59,13 @@ pub fn action_failed(n: usize, what: &str, detail: &str) -> String {
 pub fn not_confirmed(request: &str) -> String {
     format!(
         "The record was built, but it could not be confirmed: the save {request} did not answer with an id where it did when the setup was saved. Record it with record_explore_change."
+    )
+}
+
+pub fn not_prefixed() -> String {
+    format!(
+        "The record was built, but it is not named with the test prefix. {} The setup needs saving again; check the change list.",
+        super::setups::ONLY_TEST_BUILDS
     )
 }
 
@@ -313,17 +323,73 @@ async fn find_in_browser<B: DiscoveryBrowser>(
     trip(slot, root, org, project, setup, timing).await?;
     for (i, action) in actions.iter().enumerate() {
         let answer = discover_action_in(slot, root, org, project, action, None, None).await;
-        if let Some(why) = failure_of(&answer) {
-            return if i == last { Ok(None) } else { Err(why) };
+        let Some(why) = failure_of(&answer) else { continue };
+        if i < last {
+            return Err(why);
         }
+        // Only a check that ran and reported a failure means "not found". Any
+        // other answer (an error, a refusal, one that cannot be read) means
+        // the check did not run, and nothing is built on that.
+        let plain = answer.0 == 200
+            && serde_json::from_str::<Value>(&answer.1).is_ok_and(|v| v["ok"].as_bool() == Some(false));
+        return if plain { Ok(None) } else { Err(why) };
     }
     let target = actions.get(last).and_then(check_target).ok_or("the browser find rule does not end in a check")?;
     let Some(browser) = slot.as_mut() else {
         return Err("no Auto Run browser is open".to_string());
     };
     let parts = browser.parts();
-    let text = matched_text(&mut *parts.driver, target).await;
-    Ok(text.filter(|t| starts_with_prefix(t, prefix)).map(|name| FoundRecord { id: None, name }))
+    let Some(text) = matched_text(&mut *parts.driver, target).await else {
+        return Err("the check passed, but the record's name could not be read from the page".to_string());
+    };
+    Ok(starts_with_prefix(&text, prefix).then_some(FoundRecord { id: None, name: text }))
+}
+
+/// Every action loaded from the setups file goes back through the refusals an
+/// action an assistant tries meets (no sign-in, a valid action, http or https
+/// only, only the sign-in recipe's sites, none of the fixes that are never
+/// made), so a file edited by hand cannot make a run sign in or go anywhere.
+fn recheck_actions(root: &Path, org: &str, project: &str, setup: &SavedSetup, prefix: &str) -> Result<(), String> {
+    let recipe = crate::autorun::recipe::load_effective_recipe(root, org, project)?;
+    let policy = crate::autorun::runner::policy_for(Some(&recipe));
+    let mut all: Vec<&Action> = setup.actions.iter().collect();
+    let find = match setup.find.browser.as_deref() {
+        Some(rule) => browser_with_prefix(rule, prefix)?,
+        None => Vec::new(),
+    };
+    all.extend(find.iter());
+    for action in all {
+        if action.each().iter().any(|a| matches!(a, Action::SignIn { .. })) {
+            return Err("an action signs in".to_string());
+        }
+        refuse_as_a_tried_action(action).map_err(|(_, why)| why)?;
+        // Its own refusal names the site; this one never does.
+        refuse_outside_the_recipe(&policy, action)
+            .map_err(|_| "an action goes to an address outside the sign-in recipe's sites".to_string())?;
+        if let Some(why) = crate::autorun::forbidden_fixes::forbidden_in(&serde_json::to_value(action).unwrap_or(Value::Null)) {
+            return Err(why);
+        }
+    }
+    Ok(())
+}
+
+/// Clears the setup-running mark when the run ends, however it ends: a panic
+/// in the run must not leave the session unable to keep actions.
+struct Running<'a, B: DiscoveryBrowser> {
+    slot: &'a mut Option<B>,
+}
+
+impl<'a, B: DiscoveryBrowser> Running<'a, B> {
+    fn on(slot: &'a mut Option<B>) -> Self {
+        set_running(slot, true);
+        Running { slot }
+    }
+}
+
+impl<B: DiscoveryBrowser> Drop for Running<'_, B> {
+    fn drop(&mut self) {
+        set_running(self.slot, false);
+    }
 }
 
 fn stamp(root: &Path, org: &str, project: &str, setup: &SavedSetup, now: u64) {
@@ -375,10 +441,11 @@ pub async fn run_setup_in<B: DiscoveryBrowser, S: RowSource>(
         Ok(v) => v,
         Err(problems) => return (400, problems.join(" ")),
     };
-    set_running(slot, true);
-    let answer = run_found_or_built(slot, root, org, project, &setup, &session, &values, &prefix, rows, timing, now).await;
-    set_running(slot, false);
-    answer
+    if let Err(why) = recheck_actions(root, org, project, &setup, &prefix) {
+        return (409, format!("The setup needs saving again: {}.", why.trim().trim_end_matches('.')));
+    }
+    let running = Running::on(slot);
+    run_found_or_built(&mut *running.slot, root, org, project, &setup, &session, &values, &prefix, rows, timing, now).await
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -471,7 +538,14 @@ async fn run_found_or_built<B: DiscoveryBrowser, S: RowSource>(
         "id": ids.get(setup.returns).cloned().flatten(),
         "name": named.or_else(|| returned.map(|c| filled(&c.name, values))),
     });
+    // A record outside the test prefix is never a clean build, whatever the
+    // setups file said it would make.
+    let off_prefix = setup.creates.iter().any(|c| {
+        let name = filled(&c.name, values);
+        !name.trim().is_empty() && !starts_with_prefix(&name, prefix)
+    });
     let said = match unconfirmed.first() {
+        _ if off_prefix => not_prefixed(),
         None => BUILT.to_string(),
         Some(request) => not_confirmed(request),
     };
@@ -480,7 +554,7 @@ async fn run_found_or_built<B: DiscoveryBrowser, S: RowSource>(
         json!({
             "said": said,
             "built": true,
-            "confirmed": unconfirmed.is_empty(),
+            "confirmed": unconfirmed.is_empty() && !off_prefix,
             "record": record,
             "values": values,
             "recorded": recorded,

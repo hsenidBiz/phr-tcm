@@ -2471,6 +2471,7 @@ fn the_guide_explains_saved_setups() {
         "`save_setup`",
         "{prefix}",
         "always a find rule",
+        "Aim a browser rule's last check at the record's own name",
         "both find nothing and both build",
     ] {
         assert!(flat.contains(needle), "{needle} not in: {flat}");
