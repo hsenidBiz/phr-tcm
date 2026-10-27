@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { Check, ChevronDown, ChevronRight, GitPullRequest, RefreshCw } from "lucide-react";
-import { memo, useEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties } from "react";
 import { createPortal } from "react-dom";
 import { toast } from "../lib/toast";
 import { commands, type BoardData, type BoardItem, type PbiHit, type PrLink } from "../bindings";
@@ -84,7 +84,7 @@ const Card = memo(function Card({
   /** Name the card's project: only where the board spans more than one. */
   showProject?: boolean;
   onDragStart: (item: BoardItem) => void;
-  onOpen: (id: number) => void;
+  onOpen: (item: BoardItem) => void;
 }) {
   const stale = staleDays(item.changed_date);
   const isStale = stale >= STALE_DAYS && item.column !== "Done";
@@ -92,7 +92,7 @@ const Card = memo(function Card({
     <div
       draggable
       onDragStart={() => onDragStart(item)}
-      onClick={() => onOpen(item.id)}
+      onClick={() => onOpen(item)}
       title={isStale ? `No changes in ${stale} days` : undefined}
       className={cn(
         "cv-row cursor-pointer space-y-1 rounded-md border border-border bg-surface p-2 text-sm hover:border-accent",
@@ -297,7 +297,22 @@ export default function WorkBoard({
   // ignores the persisted preference until an area is picked again.
   const sprintApplies = Boolean(scope) && !pbiMode;
   const sprintFilter = sprintApplies && thisSprint;
-  const [openItem, setOpenItem] = useState<number | null>(null);
+  // The work item whose drawer is open, and the project it lives in. The
+  // project is fixed once, when the drawer opens, and kept until it closes:
+  // the board can stop holding the item while its drawer is still up (it was
+  // reassigned and saved, a teammate changed it), and everything the drawer
+  // reads, saves or comments must keep going to the item's own project.
+  const [open, setOpen] = useState<{ id: number; project: string } | null>(null);
+  /** The project a card's item lives in: its own where the projects show
+   * together, else the picked one. */
+  const cardProject = useCallback(
+    (item: BoardItem) => (allProjects ? item.project || homeProject : project),
+    [allProjects, homeProject, project],
+  );
+  const openCardItem = useCallback(
+    (item: BoardItem) => setOpen({ id: item.id, project: cardProject(item) }),
+    [cardProject],
+  );
   // Fields ADO said were blocking a move - the drawer rings them.
   const [highlightFields, setHighlightFields] = useState<string[]>([]);
   // Per-area, session-only (an assignee list rarely transfers between areas).
@@ -372,11 +387,19 @@ export default function WorkBoard({
   });
   // Together: every project's areas (each path starts with its project's
   // name, which is the grouping), and how many projects they cover.
+  // Up to a hundred projects are read to make it, so it is kept on disk and
+  // an hour fresh: a later visit, or the next launch, reads none of them
+  // again. A failure is reported once (no retries - each retry is the whole
+  // fan-out again) and the screen says so.
   const areasAll = useQuery({
     queryKey: ["areas-all", org],
-    queryFn: () => unwrap(commands.classificationPathsAll(org)),
+    ...persistentQuery({
+      key: cacheKeys.areasAll(org),
+      fetcher: () => unwrap(commands.classificationPathsAll(org)),
+      ...CACHE.areas,
+    }),
     enabled: Boolean(org) && allProjects,
-    staleTime: 60 * 60_000,
+    retry: false,
   });
   const areaPaths = allProjects ? (areasAll.data?.paths ?? []) : (areas.data ?? []);
   const areaCoverage = allProjects ? areasAll.data?.coverage : undefined;
@@ -416,15 +439,22 @@ export default function WorkBoard({
   // board's own load because the drawer takes a card's states from it; an
   // item outside the loaded board still opens, and the drawer reads its
   // type's states itself. Handled once: the handoff is cleared by the caller.
-  // Its project is kept here, because the caller clears the handoff the
-  // moment it is handled and the drawer must stay where it opened.
-  const [focusedProject, setFocusedProject] = useState<string | null>(null);
+  // Its project is fixed here, as for any drawer, because the caller clears
+  // the handoff the moment it is handled: the board's card for it, else its
+  // lane's, else the one the notification came from, else home.
   useEffect(() => {
     if (focusItem == null || !board.data) return;
-    setOpenItem(focusItem);
-    setFocusedProject(focusProject);
+    const card = board.data.items.find((i) => i.id === focusItem);
+    setOpen({
+      id: focusItem,
+      project: !allProjects
+        ? project
+        : card
+          ? cardProject(card)
+          : (board.data.parent_projects?.[focusItem] ?? focusProject ?? homeProject),
+    });
     onFocusHandled?.();
-  }, [focusItem, focusProject, board.data, onFocusHandled]);
+  }, [focusItem, focusProject, board.data, onFocusHandled, allProjects, project, homeProject, cardProject]);
 
   // Work-item -> PR chips, resolved PR-side (one list + one small call per
   // PR). Best-effort decoration: failures just mean no chips.
@@ -496,7 +526,7 @@ export default function WorkBoard({
           `#${item.id} can't move to ${column}: fill ${fields.join(", ")} first - opening the item.`,
         );
         setHighlightFields(fields);
-        setOpenItem(item.id);
+        setOpen({ id: item.id, project: cardProject(item) });
       } else {
         toast.error(`Could not move #${item.id}: ${e.message}`);
       }
@@ -736,7 +766,7 @@ export default function WorkBoard({
                 prLinks={prByItem.get(item.id)}
                 showProject={showProject}
                 onDragStart={setDragging}
-                onOpen={setOpenItem}
+                onOpen={openCardItem}
               />
             ))}
             </div>
@@ -748,14 +778,7 @@ export default function WorkBoard({
 
   // The open item's card, when the board holds it (a lane parent, or an item
   // a notification named, may not be on it).
-  const openCard = board.data?.items.find((i) => i.id === openItem);
-  // Everything the drawer reads or writes goes to the project the item lives
-  // in: its card's, else its lane's (a parent can sit in another project),
-  // else the one a notification came from, else home.
-  const drawerProject = (data: BoardData, id: number) =>
-    allProjects
-      ? (openCard?.project ?? data.parent_projects?.[id] ?? focusedProject ?? homeProject)
-      : project;
+  const openCard = board.data?.items.find((i) => i.id === open?.id);
 
   // Together there is no project to be missing: the board reads them all.
   if (!org || (!allProjects && !project)) {
@@ -903,6 +926,12 @@ export default function WorkBoard({
           </p>
         )}
 
+        {allProjects && areasAll.isError && (
+          <p className="text-xs text-danger">
+            Could not list the areas of every project: {areasAll.error.message}
+          </p>
+        )}
+
         {board.isError && <p className="text-sm text-danger">{board.error.message}</p>}
 
         {board.isLoading && (
@@ -1001,7 +1030,14 @@ export default function WorkBoard({
                       <button
                         className="min-w-0 truncate text-left text-sm font-semibold text-text hover:text-accent hover:underline"
                         title={`Open #${lane.id}`}
-                        onClick={() => setOpenItem(lane.id)}
+                        onClick={() =>
+                          setOpen({
+                            id: lane.id,
+                            project: allProjects
+                              ? (board.data?.parent_projects?.[lane.id] ?? homeProject)
+                              : project,
+                          })
+                        }
                       >
                         <span className="id-mono text-xs text-faint">#{lane.id}</span>
                         {lane.parent?.title ? ` ${lane.parent.title}` : ""}
@@ -1051,17 +1087,16 @@ export default function WorkBoard({
           document.body,
         )}
 
-      {openItem != null && board.data && (
+      {open != null && board.data && (
         <WorkItemDrawer
           org={org}
-          project={drawerProject(board.data, openItem)}
-          itemId={openItem}
+          project={allProjects ? open.project : project}
+          itemId={open.id}
           states={openCard ? statesFor(board.data, openCard).map((s) => s.name) : []}
           highlightFields={highlightFields}
           onClose={() => {
-            setOpenItem(null);
+            setOpen(null);
             setHighlightFields([]);
-            setFocusedProject(null);
           }}
           onSaved={() => qc.invalidateQueries({ queryKey: boardKey })}
         />

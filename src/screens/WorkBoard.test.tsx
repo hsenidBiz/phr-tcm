@@ -1132,6 +1132,9 @@ test("areas left out over the cap are reported", async () => {
   const capped = renderBoard(combined);
   expect(await screen.findByText("Showing areas from 98 of 100 projects.")).toBeInTheDocument();
   capped.unmount();
+  // The areas are kept on disk now: the second board starts from nothing, as
+  // if the first one's answer had expired.
+  localStorage.clear();
 
   mockCombined(combinedData, { paths: ["HRM\\Alpha"], coverage: { shown: 100, total: 100 } });
   renderBoard(combined);
@@ -1233,4 +1236,96 @@ test("the combined board keeps the pins and collapsed lanes of the home project,
   expect(localStorage.getItem("tcm-v2-board-pinned-areas:acme/*")).toBe("[]");
   expect(localStorage.getItem("tcm-v2-board-pinned-areas:acme/HRM")).toBe('["HRM\\\\Gamma"]');
   expect(localStorage.getItem("tcm-v2-board-lanes-collapsed:acme/HRM")).toBe("[500]");
+});
+
+test("the open drawer keeps its item's project when a refetch drops the item from the board", async () => {
+  // Reassigned and saved on My work: the next board no longer holds the card,
+  // yet the drawer is still open on it, and what it reads, saves and comments
+  // must still go to the item's own project, never the home project.
+  let dropped = false;
+  const asked: Array<{ cmd: string; args: Record<string, unknown> }> = [];
+  const opened: Array<Record<string, unknown>> = [];
+  const reads = drawerReads(opened);
+  mockIPC((cmd, args) => {
+    asked.push({ cmd, args: (args ?? {}) as Record<string, unknown> });
+    if (cmd === "fetch_board_all") return dropped ? { ...combinedData, items: [hrmCard] } : combinedData;
+    if (cmd === "classification_paths_all") return noAreas;
+    if (cmd === "board_pr_links") return [];
+    if (cmd === "update_work_item") {
+      dropped = true;
+      return null;
+    }
+    if (cmd === "add_comment") return null;
+    return reads(cmd, args);
+  });
+  renderBoard(combined);
+  fireEvent.click(await screen.findByText("Run payroll"));
+
+  fireEvent.change(await screen.findByLabelText(/Title/), { target: { value: "Run payroll twice" } });
+  fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+  await vi.waitFor(() => expect(asked.some((c) => c.cmd === "update_work_item")).toBe(true));
+  // The refetch has come back without the card; the drawer is still there.
+  await vi.waitFor(() => expect(screen.queryByText("Run payroll")).not.toBeInTheDocument());
+  expect(screen.getByRole("dialog", { name: "Work item 32" })).toBeInTheDocument();
+
+  fireEvent.change(screen.getByLabelText("New comment (markdown)"), { target: { value: "Reassigned" } });
+  fireEvent.click(screen.getByRole("button", { name: /Post/ }));
+  await vi.waitFor(() => expect(asked.some((c) => c.cmd === "add_comment")).toBe(true));
+
+  const drawerCommands = [
+    "work_item_detail",
+    "update_work_item",
+    "add_comment",
+    "work_item_comments",
+    "list_team_members",
+    "activity_values",
+  ];
+  const named = asked.filter((c) => drawerCommands.includes(c.cmd));
+  expect(named.some((c) => c.cmd === "add_comment")).toBe(true);
+  expect(named.map((c) => [c.cmd, c.args.project])).toEqual(named.map((c) => [c.cmd, "Payroll"]));
+});
+
+test("when the areas of every project cannot be listed, the board says so, and asks only once", async () => {
+  const asked: string[] = [];
+  mockIPC((cmd) => {
+    asked.push(cmd);
+    if (cmd === "fetch_board_all") return combinedData;
+    if (cmd === "board_pr_links") return [];
+    if (cmd === "classification_paths_all")
+      throw { kind: "Network", detail: "Azure DevOps could not be reached. Try again in a moment." };
+  });
+  // The app's own client, which retries a failed query three times.
+  const qc = new QueryClient();
+  render(
+    <QueryClientProvider client={qc}>
+      <WorkBoard org="acme" project="HRM" allProjects homeProject="HRM" />
+    </QueryClientProvider>,
+  );
+  // Retries would hold the answer back for seconds: a line inside the
+  // default wait means the query did not retry.
+  const line = await screen.findByText(
+    "Could not list the areas of every project: Azure DevOps could not be reached. Try again in a moment.",
+  );
+  expect(line).toHaveClass("text-danger");
+  expect(asked.filter((c) => c === "classification_paths_all")).toHaveLength(1);
+  // The board itself is unharmed.
+  expect(await screen.findByText("Leave form")).toBeInTheDocument();
+});
+
+test("a later visit to the board does not list the areas of every project again", async () => {
+  const calls = mockCombined(combinedData, { paths: ["HRM\\Alpha"], coverage: { shown: 2, total: 2 } });
+  const first = renderBoard(combined);
+  await screen.findByText("Leave form");
+  fireEvent.click(screen.getByLabelText("Board scope"));
+  await screen.findByText("Area: HRM\\Alpha");
+  // Written under the cache's own key, scoped to the organization.
+  expect(localStorage.getItem("tcm-v2-cache:areas-all:acme")).not.toBeNull();
+  first.unmount();
+
+  // A new visit with nothing in memory, as after the screen was left for a while.
+  renderBoard(combined);
+  await screen.findByText("Leave form");
+  fireEvent.click(screen.getByLabelText("Board scope"));
+  await screen.findByText("Area: HRM\\Alpha");
+  expect(calls.filter((c) => c.cmd === "classification_paths_all")).toHaveLength(1);
 });
