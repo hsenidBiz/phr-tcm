@@ -21,9 +21,11 @@ export function ListToolbar({ search, children }: { search: ReactNode; children?
 }
 
 /**
- * An on/off filter for a toolbar: the app's switch inside a bordered 40px
- * chip with its label. The label wraps the switch, so clicking either
- * toggles it; the switch is named by `label`.
+ * An on/off filter for a toolbar: the app's switch and its label, 40px tall
+ * so it sits level with the search. No border (owner, 2026-10-27): only the
+ * search and real buttons are boxed, so a setting does not read as a button
+ * and sits like the plain checkboxes beside it. The label wraps the switch,
+ * so clicking either toggles it; the switch is named by `label`.
  */
 export function ToolbarSwitch({
   checked,
@@ -39,7 +41,7 @@ export function ToolbarSwitch({
   return (
     <label
       title={title}
-      className="flex h-10 shrink-0 items-center gap-2 rounded-md border border-border px-3 text-sm text-muted"
+      className="flex h-10 shrink-0 items-center gap-2 px-1 text-sm text-muted"
     >
       <Switch checked={checked} onCheckedChange={onCheckedChange} ariaLabel={label} />
       {label}

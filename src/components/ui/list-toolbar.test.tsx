@@ -21,12 +21,14 @@ test("the toolbar renders with only a search", () => {
   expect(screen.getByLabelText("Find")).toBeInTheDocument();
 });
 
-test("the switch chip is a 40px bordered chip holding a switch named by its label", () => {
+test("the toolbar switch is 40px tall, unboxed, and named by its label", () => {
   render(<ToolbarSwitch checked={false} onCheckedChange={() => {}} label="Group by title" />);
   const sw = screen.getByRole("switch", { name: "Group by title" });
   expect(sw).toHaveAttribute("aria-checked", "false");
   const chip = sw.parentElement!;
-  expect(chip).toHaveClass("h-10", "rounded-md", "border", "border-border", "px-3", "text-sm");
+  expect(chip).toHaveClass("h-10", "text-sm");
+  expect(chip).not.toHaveClass("border");
+  expect(chip).not.toHaveClass("rounded-md");
   expect(chip).toHaveTextContent("Group by title");
 });
 
