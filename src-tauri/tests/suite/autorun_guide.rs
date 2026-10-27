@@ -2583,8 +2583,8 @@ fn the_guide_says_each_assistant_has_its_own_browser() {
         "is refused at once: that is not an error to retry in a loop - take other work, or report it.",
         "One mapping run at a time, whoever runs it.",
         "The map, the areas, the components and the quirks are shared: read an area again just before you repair it.",
-        "An unattended run waits until every assistant's browser is released.",
-        "Your browser is released when your session ends.",
+        "An unattended run cannot start while any assistant's browser is open.",
+        "When your session ends, a browser of your own is released; the main one is left open for the person.",
         "give each subagent you start a name of its own (for example writer-1, writer-2) and tell it to pass it as `agent` on every Auto Run and API template call; each name gets its own browser.",
         "A subagent without a name shares your browser.",
         "A client that serves several chats through one connection (Claude desktop) is one assistant to the app: give each chat its own `agent` name too.",
@@ -2592,6 +2592,9 @@ fn the_guide_says_each_assistant_has_its_own_browser() {
         assert!(section.contains(said), "the section never says {said:?}: {section}");
     }
     assert!(!section.contains('\u{2013}') && !section.contains('\u{2014}'), "no dash in text an assistant reads");
+    for old in ["waits until every assistant's browser is released", "Your browser is released when your session ends."] {
+        assert!(!section.contains(old), "the section still says what the code does not do: {old}");
+    }
     // The section sits right after the one about discovering the app, which holds the replay sentence.
     let titles = section_titles(&g);
     let at = |t: &str| titles.iter().position(|x| *x == t).unwrap();

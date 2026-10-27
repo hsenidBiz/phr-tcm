@@ -3824,6 +3824,7 @@ fn every_auto_run_and_template_tool_takes_an_agent() {
     let said = v2_lib::mcp::AGENT_PROPERTY_DESCRIPTION;
     assert!(said.contains("1 to 32 letters, digits, spaces, dots, underscores or hyphens"), "{said}");
     assert!(said.contains("Each name gets an Auto Run browser of its own; leave it out when you work alone."), "{said}");
+    assert!(said.contains("one of several subagents of one session, or one of several chats served by one connection"), "{said}");
     assert!(!said.contains('\u{2014}') && !said.contains('\u{2013}'), "{said}");
 }
 

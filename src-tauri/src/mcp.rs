@@ -129,7 +129,7 @@ pub const AGENT_SHAPE: &str =
     "agent must be 1 to 32 letters, digits, spaces, dots, underscores or hyphens - the name your caller gave you";
 
 /// What the `agent` property of an Auto Run or API template tool says.
-pub const AGENT_PROPERTY_DESCRIPTION: &str = "Optional: the name your caller gave you when you are one of several subagents of one session (1 to 32 letters, digits, spaces, dots, underscores or hyphens). Each name gets an Auto Run browser of its own; leave it out when you work alone.";
+pub const AGENT_PROPERTY_DESCRIPTION: &str = "Optional: the name your caller gave you when you are one of several subagents of one session, or one of several chats served by one connection (1 to 32 letters, digits, spaces, dots, underscores or hyphens). Each name gets an Auto Run browser of its own; leave it out when you work alone.";
 
 /// `args` without `agent`, and the name it held. Absent, null or blank gives
 /// no name; present but not a string, or a name `agents::clean_name` refuses,
