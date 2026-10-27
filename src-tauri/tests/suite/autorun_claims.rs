@@ -7,6 +7,7 @@ use v2_lib::ai_bridge::{claim_for, mapping_going, mapping_refusal, route_as, Bri
 use v2_lib::autorun::agents::{self, AgentHeaders, AgentKey, Caller, Sweep};
 use v2_lib::autorun::claims::{self, case_claimed, CLAIM_TIMEOUT_MS};
 use v2_lib::autorun::slots::{SlotNo, SLOT_COUNT};
+use v2_lib::commands::autorun::claim_mapping_start;
 use v2_lib::commands::autorun_slots::{self as slots, release_slot, ReleaseWhy};
 
 const ID_A: &str = "0123456789abcdef0123456789abcdef";
@@ -191,6 +192,30 @@ fn a_mapping_run_in_a_browser_nobody_holds_names_the_browser_without_a_label() {
     fresh();
 }
 
+/// Two mapping starts at the same moment in different slots cannot both
+/// pass: the claim is looked at and taken in one step, before a browser
+/// opens, and given back when the start returns.
+#[test]
+fn two_mapping_starts_at_once_cannot_both_pass() {
+    let _g = serial::agents();
+    let _a = serial::autorun();
+    fresh();
+    register(ID_A);
+    slots::bind(SlotNo(1), &key(ID_A));
+    let first = claim_mapping_start(SlotNo(1)).expect("the first start is claimed");
+    let Err(going) = claim_mapping_start(SlotNo::MAIN) else { panic!("a second start passed while the first was starting") };
+    assert!(going[1] && !going[0] && !going[2], "{going:?}");
+    assert_eq!(mapping_refusal(SlotNo::MAIN, going), Some(mapping_going("Assistant 1's browser")));
+    assert!(claim_mapping_start(SlotNo(2)).is_err());
+    // The start returns: the claim goes back and the next start passes.
+    drop(first);
+    let again = claim_mapping_start(SlotNo::MAIN).expect("claimed once the first start returned");
+    assert!(claim_mapping_start(SlotNo(1)).is_err());
+    drop(again);
+    assert!(claim_mapping_start(SlotNo(2)).is_ok());
+    fresh();
+}
+
 /// A mapping run held in a slot is a flag per slot, published with the
 /// discovery, and the start reads it before it opens anything.
 #[test]
@@ -203,9 +228,11 @@ fn the_mapping_flag_is_published_with_the_discovery_and_read_by_the_start() {
     let bridge = include_str!("../../src/ai_bridge.rs").replace("\r\n", "\n");
     let start = &bridge[bridge.find("async fn autorun_discover_start(").unwrap()..];
     let start = &start[..start.find("\n}\n").unwrap()];
-    let refuse = start.find("mapping_refusal(n, ").expect("a second mapping run is refused");
+    let refuse = start.find("claim_mapping_start(n)").expect("a second mapping run is refused by the start claim");
     let busy = start.find("refuse_discovery_while_busy(n)").unwrap();
-    assert!(refuse < busy, "the mapping refusal comes before the browser is touched");
+    assert!(refuse < busy, "the mapping start is claimed before the browser is touched");
+    assert!(start.contains("mapping_refusal(n, going)"), "{start}");
+    assert!(start.contains("let _mapping_start"), "the claim is held to the end of the start: {start}");
     assert!(start.contains("(409,"), "{start}");
     for slot in SlotNo::all() {
         assert!(!v2_lib::commands::autorun::mapping_in(slot), "{slot:?}");

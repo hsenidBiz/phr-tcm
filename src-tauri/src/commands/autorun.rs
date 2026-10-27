@@ -818,6 +818,41 @@ pub fn mapping_in(n: SlotNo) -> bool {
     MAPPING_ACTIVE[n.index()].load(std::sync::atomic::Ordering::SeqCst)
 }
 
+/// The slot whose mapping run is starting right now: taken by a mapping
+/// start before anything opens (`claim_mapping_start`) and given back when
+/// the start returns, by which time `MAPPING_ACTIVE` says whether the run is
+/// going. Coordination state, not a cache: memory only. One std mutex, never
+/// held across an await.
+static MAPPING_STARTING: std::sync::Mutex<Option<SlotNo>> = std::sync::Mutex::new(None);
+
+/// A mapping start under way in a slot; dropping it gives the start back.
+pub struct MappingStart(SlotNo);
+
+impl Drop for MappingStart {
+    fn drop(&mut self) {
+        let mut s = MAPPING_STARTING.lock().unwrap_or_else(|e| e.into_inner());
+        if *s == Some(self.0) {
+            *s = None;
+        }
+    }
+}
+
+/// Slot `n` starts a mapping run, or `Err(going)`: per slot, whether a
+/// mapping run is going or starting there. Looked at and taken in one step,
+/// so two starts at the same moment cannot both pass.
+pub fn claim_mapping_start(n: SlotNo) -> Result<MappingStart, [bool; SLOT_COUNT]> {
+    let mut s = MAPPING_STARTING.lock().unwrap_or_else(|e| e.into_inner());
+    let mut going = SlotNo::all().map(mapping_in);
+    if let Some(m) = *s {
+        going[m.index()] = true;
+    }
+    if SlotNo::all().into_iter().any(|m| m != n && going[m.index()]) {
+        return Err(going);
+    }
+    *s = Some(n);
+    Ok(MappingStart(n))
+}
+
 /// Whether a discovery holds any slot's browser.
 pub fn any_discovery_active() -> bool {
     SlotNo::all().into_iter().any(discovery_active_in)

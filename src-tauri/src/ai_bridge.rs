@@ -7734,12 +7734,13 @@ async fn autorun_discover_start(
         None
     };
     // One mapping run at a time, whoever runs it and in whichever browser:
-    // refused at once, naming whose browser it is going in.
-    if mapping.is_some() {
-        if let Some(why) = mapping_refusal(n, SlotNo::all().map(crate::commands::autorun::mapping_in)) {
-            return (409, why);
-        }
-    }
+    // claimed before anything opens, refused at once naming whose browser it
+    // is going in, and given back when this start returns (failed or not).
+    let _mapping_start = match mapping.is_some().then(|| crate::commands::autorun::claim_mapping_start(n)) {
+        Some(Err(going)) => return (409, mapping_refusal(n, going).unwrap_or_else(|| mapping_going("an Auto Run browser"))),
+        Some(Ok(start)) => Some(start),
+        None => None,
+    };
     if let Err(why) = crate::commands::autorun::refuse_discovery_while_busy(n) {
         return (409, why);
     }
