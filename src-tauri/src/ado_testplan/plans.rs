@@ -9,6 +9,10 @@ use super::{
 };
 use crate::ado::{AdoClient, AdoError};
 
+/// How many of a PBI's test cases `suite_from_cases` asks about before it
+/// gives up and lets the plans be walked.
+const SUITE_FROM_CASES_ASKED: usize = 3;
+
 impl AdoClient {
     /// All test plans in the project (paginated). Read only.
     pub async fn get_test_plans(&self, org: &str, project: &str) -> Result<Vec<TestPlan>, AdoError> {
@@ -352,9 +356,80 @@ impl AdoClient {
         Ok(None)
     }
 
+    /// The PBI's requirement suite, asked of the PBI's own test cases: Azure
+    /// DevOps answers "which suites hold test case N" in one request
+    /// (`GET {org}/_apis/testplan/suites?testCaseId=N`, each suite with its
+    /// plan, project, `suiteType` and `requirementId`), where walking plans
+    /// reads every plan's suite list. Asks up to the first three Tested By
+    /// cases, one after another, and stops at the first hit. None means "not
+    /// found this way" - no cases, or none in this PBI's requirement suite -
+    /// and the caller falls back to the plan walk. Read only.
+    pub async fn suite_from_cases(
+        &self,
+        org: &str,
+        project: &str,
+        pbi_id: i32,
+    ) -> Result<Option<EnsuredSuite>, AdoError> {
+        // A PBI that cannot be read or has no links is not an error here:
+        // the walk that follows reports whatever is really wrong.
+        let case_ids = match self.get_pbi_tested_by_ids(org, pbi_id).await {
+            Ok(ids) => ids,
+            Err(AdoError::Forbidden) | Err(AdoError::NotFound) => return Ok(None),
+            Err(e) => return Err(e),
+        };
+        for case_id in case_ids.into_iter().take(SUITE_FROM_CASES_ASKED) {
+            let url = format!(
+                "{}/{}/_apis/testplan/suites?testCaseId={}&api-version=7.1",
+                self.base_url,
+                crate::ado::endpoints::percent_encode_segment(org),
+                case_id
+            );
+            let data = match self.get_json(url).await {
+                Ok(d) => d,
+                Err(AdoError::Forbidden) | Err(AdoError::NotFound) => continue,
+                Err(e) => return Err(e),
+            };
+            let suites = data["value"].as_array().or_else(|| data.as_array()).cloned().unwrap_or_default();
+            for s in suites {
+                if s["suiteType"].as_str() != Some("requirementTestSuite")
+                    || s["requirementId"].as_i64() != Some(pbi_id as i64)
+                {
+                    continue;
+                }
+                let (Some(suite_id), Some(plan_id)) = (s["id"].as_i64(), s["plan"]["id"].as_i64()) else {
+                    continue;
+                };
+                // The call is org wide, so the suite may be another
+                // project's. The suite names its project when it can;
+                // when it does not, the plan read in `project` decides.
+                let named = s["project"]["name"].as_str().filter(|n| !n.is_empty());
+                let plan_name = match named {
+                    Some(n) if n.eq_ignore_ascii_case(project) => {
+                        s["plan"]["name"].as_str().unwrap_or_default().to_string()
+                    }
+                    Some(_) => continue,
+                    None => match self.get_test_plan(org, project, plan_id as i32).await {
+                        Ok(p) => p.name,
+                        Err(AdoError::Forbidden) | Err(AdoError::NotFound) => continue,
+                        Err(e) => return Err(e),
+                    },
+                };
+                return Ok(Some(EnsuredSuite {
+                    plan_id: plan_id as i32,
+                    plan_name,
+                    suite_id: suite_id as i32,
+                    created_plan: false,
+                }));
+            }
+        }
+        Ok(None)
+    }
+
     /// Read-only lookup of the PBI's requirement suite across every plan -
     /// the background-prefetch variant of ensure: it NEVER creates a plan
     /// or suite, so it is safe to run without the user asking to run tests.
+    /// The PBI's own test cases are asked first (`suite_from_cases`); the
+    /// plans are walked only when that finds nothing.
     pub async fn find_pbi_requirement_suite(
         &self,
         org: &str,
@@ -362,6 +437,9 @@ impl AdoClient {
         pbi_id: i32,
         area_path: &str,
     ) -> Result<Option<EnsuredSuite>, AdoError> {
+        if let Some(found) = self.suite_from_cases(org, project, pbi_id).await? {
+            return Ok(Some(found));
+        }
         let plans = self.get_test_plans(org, project).await?;
         self.scan_plans_for_suite(org, project, pbi_id, area_path, &plans, true, &mut |_, _| {})
             .await
@@ -425,6 +503,11 @@ impl AdoClient {
         skip_remembered: bool,
         mut progress: impl FnMut(u32, u32),
     ) -> Result<EnsuredSuite, AdoError> {
+        // The PBI's own test cases know their suite: ask them before reading
+        // any plan.
+        if let Some(found) = self.suite_from_cases(org, project, pbi_id).await? {
+            return Ok(found);
+        }
         let plans = self.get_test_plans(org, project).await?;
         // Not exhaustive: a suite found under a plan for another area is
         // not one this would create under, so the area-matched plans are
