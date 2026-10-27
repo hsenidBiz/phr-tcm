@@ -28,6 +28,7 @@ pub mod floor;
 pub mod forbidden_fixes;
 pub mod guide;
 pub mod har;
+pub mod kept;
 pub mod lease;
 pub mod mapping_summary;
 pub mod marks;

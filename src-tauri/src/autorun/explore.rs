@@ -39,6 +39,9 @@ pub struct ExploreRun {
     /// or after this, so the sign-in's own answer never counts. 0 until the
     /// change list is made.
     pub began_ms: u64,
+    /// A saved setup is running in this session: the actions it drives are
+    /// not kept (`autorun::kept`), as they are already a setup's.
+    pub setup_running: bool,
 }
 
 /// One explore session's change list, as its file holds it.

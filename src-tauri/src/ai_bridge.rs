@@ -568,6 +568,11 @@ pub async fn route_as(
             // keep the extra browser it reserved.
             crate::commands::autorun_slots::free_extra_if_unused(slot, holder, answer.0);
             let answer = with_overrides_seen(with_no_save_note(answer, discovery_no_save(slot)), seen, slot);
+            // A discovery that started drops this assistant's previous kept
+            // actions; an explore session begins its own list.
+            if answer.0 == 200 {
+                kept_started(slot, caller).await;
+            }
             // A mapping run records areas and writes no check: no rules.
             let mapping = serde_json::from_str::<serde_json::Value>(body)
                 .map(|v| v["mapping"].as_bool() == Some(true) || v["mapping"].as_str().map(|s| s.trim().eq_ignore_ascii_case("true")) == Some(true))
@@ -611,6 +616,11 @@ pub async fn route_as(
                 (None, Err(refused)) => refused,
             }
         }
+        // The actions this assistant's explore session kept, in memory only.
+        ("POST", "/autorun-kept-actions") => match autorun_root() {
+            Ok(root) => kept_actions_for(&root, &crate::autorun::kept::owner_of(caller)),
+            Err(refused) => refused,
+        },
         ("POST", "/autorun-explore-changes") => match autorun_root() {
             Ok(root) => explore_changes(&root, &ctx.org, &ctx.project, body),
             Err(refused) => refused,
@@ -5462,7 +5472,9 @@ async fn discover_action_heard<B: DiscoveryBrowser>(
     let exploring = state.explore.is_some();
     heard.explore = exploring;
     let explore_session = state.explore_session().map(str::to_string);
+    let setup_running = state.explore.as_ref().is_some_and(|e| e.setup_running);
     let mapping = state.mapping.is_some();
+    let began_ms = crate::autorun::sessions::now_ms();
     // Once a discovery must not save, it stays so (`DiscoveryState::no_save`).
     // A call that said `no_save` itself is guarded too, for that call only
     // (`end_call_guard` lifts it): it never makes the discovery one.
@@ -5584,6 +5596,27 @@ async fn discover_action_heard<B: DiscoveryBrowser>(
     }
     if let Some(shot) = &outcome.screenshot {
         answer["picture"] = serde_json::json!(crate::autorun::store::shot_path(root, shot).display().to_string());
+    }
+    // An explore session keeps an action that worked for the assistant that
+    // ran it (`autorun::kept`), unless a setup is driving it, a save it sent
+    // was stopped, or it typed a login. A keep never fails the action.
+    if let (Some(session), true) = (explore_session.as_deref(), outcome.ok && !setup_running && !mapping && blocked.unwrap_or(0) == 0) {
+        let steps: Option<Vec<crate::browser::actions::Action>> = component.as_ref().map(|(_, actions)| actions.clone());
+        let credential = match crate::autorun::accounts::load_accounts(root) {
+            Ok(accounts) => crate::autorun::kept::types_a_credential(action, steps.as_deref(), &accounts),
+            Err(_) => true,
+        };
+        if !credential {
+            crate::autorun::kept::keep(
+                root,
+                session,
+                action,
+                steps,
+                area_name.as_deref(),
+                began_ms,
+                crate::autorun::sessions::now_ms(),
+            );
+        }
     }
     // An explore session keeps the saves the call reported, by method and
     // path, so its end can name the ones no change names. A change list
@@ -6481,6 +6514,29 @@ pub fn record_change_in<B: DiscoveryBrowser>(
         Ok(recorded) => (200, serde_json::to_string(&recorded).unwrap_or_default()),
         Err(why) => explore_refusal(why),
     }
+}
+
+/// `get_kept_actions`: the actions the owner's explore session kept, or why
+/// there are none.
+pub fn kept_actions_for(root: &std::path::Path, owner: &str) -> (u16, String) {
+    match crate::autorun::kept::last_of(root, owner) {
+        Ok(list) => (200, crate::autorun::kept::kept_answer(&list).to_string()),
+        Err(why) => (409, why),
+    }
+}
+
+/// A discovery started in `slot` for `caller`: its previous kept actions are
+/// dropped, and an explore session with a change list gets a list of its own.
+async fn kept_started(slot: SlotNo, caller: &crate::autorun::agents::Caller) {
+    let Ok(root) = autorun_root() else {
+        return;
+    };
+    let mut held = crate::commands::autorun::session_slot(slot).lock().await;
+    let (session, area) = held
+        .as_mut()
+        .and_then(|b| b.parts().discovery.as_ref().map(|s| (s.explore_session().map(str::to_string), s.area.clone())))
+        .unwrap_or((None, None));
+    crate::autorun::kept::started(&root, &crate::autorun::kept::owner_of(caller), session.as_deref(), area.as_deref());
 }
 
 /// `/autorun-explore-changes`: `{}` lists this project's explore sessions,

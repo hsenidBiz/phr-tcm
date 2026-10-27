@@ -80,6 +80,7 @@ mod autorun_forbidden_fixes;
 mod autorun_guide;
 mod autorun_held_browser;
 mod autorun_inspect;
+mod autorun_kept;
 mod autorun_lease;
 mod autorun_marks;
 mod autorun_menu_setup;
