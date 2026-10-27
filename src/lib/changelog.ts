@@ -27,6 +27,13 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.3.1-beta.16",
+    date: "2026-10-27",
+    items: [
+      "Auto Run: each assistant on the Assistants card has a small figure that walks while it explores, types while it replays a case and dozes when it is idle, and a replay shows how far it has got. The card now shows only while an assistant is working.",
+    ],
+  },
+  {
     version: "2.3.1-beta.15",
     date: "2026-10-27",
     items: [
