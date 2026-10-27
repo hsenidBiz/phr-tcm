@@ -657,6 +657,9 @@ async fn test_cases_return_real_cases_in_import_shape() {
 #[tokio::test]
 async fn suites_list_the_plan_tree_and_filter_by_name_or_pbi() {
     let (server, client) = ado_stub().await;
+    // A pooled mock server's address comes round again, and the plan tree is
+    // remembered for the session under it: start from none.
+    v2_lib::cache::forget(&v2_lib::cache::keys::suite_tree(&server.uri(), "acme", "Web"));
     Mock::given(wm_method("GET"))
         .and(wm_path("/acme/Web/_apis/testplan/plans"))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({

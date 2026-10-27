@@ -3,6 +3,7 @@
 
 use v2_lib::ado::AdoClient;
 use v2_lib::ai_bridge::{route, BridgeContext};
+use v2_lib::cache::{self, keys};
 use wiremock::matchers::{method as wm_method, path as wm_path, path_regex};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -25,8 +26,27 @@ fn ctx(all_projects: bool) -> BridgeContext {
     }
 }
 
+/// Pooled mock servers hand a finished test's address to the next test, and
+/// the session entries this file writes are keyed by that address, so every
+/// one of them is emptied before a test starts.
+fn forget_memos(uri: &str) {
+    for org in ["acme", "tagsorg-p6"] {
+        cache::forget(&keys::org_projects(uri, org));
+        for p in ["Web", "Payroll", "Locked"] {
+            cache::forget(&keys::suite_tree(uri, org, p));
+        }
+        for id in [9, 42, 77, 4201, 4202, 4203, 4204] {
+            cache::forget(&keys::work_item_project(uri, org, id));
+        }
+        for (p, pbi) in [("Payroll", 4201), ("Payroll", 4202), ("Web", 4203), ("Web", 4204)] {
+            cache::forget(&keys::suite(uri, org, p, pbi));
+        }
+    }
+}
+
 async fn ado_stub() -> (MockServer, AdoClient) {
     let server = MockServer::start().await;
+    forget_memos(&server.uri());
     let client = AdoClient::with_base_urls("tok".into(), server.uri(), server.uri());
     (server, client)
 }
