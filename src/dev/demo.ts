@@ -995,6 +995,55 @@ function applyPatches() {
   // sample clone stands in for the Playwright folder only.
   const realGetAppSettings = commands.getAppSettings;
 
+  // Repositories and pull requests: the per-project and the combined
+  // commands answer the same sample, every row naming its project.
+  const demoRepos = [
+    { id: "demo-repo-1", name: "demo-web", project: "Demo Project" },
+    { id: "demo-repo-2", name: "demo-api", project: "Demo Project" },
+  ];
+  const demoPrOverview = {
+    awaiting: [
+      {
+        id: 501, title: "Add PBI scope to the board", repo: "demo-web", repo_id: "demo-repo-1",
+        project: "Demo Project",
+        author: "Sam Rivera", source_branch: "feature/pbi-scope", target_branch: "main",
+        created: "2026-07-17T09:00:00Z",
+        description: "Demo description: what changed and why.", is_draft: false, has_conflicts: false,
+        my_vote: 0,
+        reviewers: [
+          { display_name: "Demo User", vote: 0 },
+          { display_name: "Alex Kim", vote: 10 },
+        ],
+        web_url: "https://example.invalid/demo-pr/501",
+      },
+    ],
+    mine: [
+      {
+        id: 502, title: "Electric border for the PBI chip", repo: "demo-web", repo_id: "demo-repo-1",
+        project: "Demo Project",
+        author: "Demo User", source_branch: "feature/electric-border", target_branch: "main",
+        created: "2026-07-16T14:00:00Z",
+        description: "Demo description: what changed and why.", is_draft: true, has_conflicts: true,
+        my_vote: 0,
+        reviewers: [{ display_name: "Sam Rivera", vote: -5 }],
+        web_url: "https://example.invalid/demo-pr/502",
+      },
+    ],
+  };
+  const demoPrLinks = [
+    {
+      work_item_id: 2001, pr_id: 501, status: "active",
+      title: "Add PBI scope to the board", repo: "demo-web", repo_id: "demo-repo-1",
+      project: "Demo Project",
+      web_url: "https://example.invalid/demo-pr/501",
+    },
+    {
+      work_item_id: 2001, pr_id: 499, status: "completed",
+      title: "Earlier slice", repo: "demo-db", project: "Demo Project",
+      web_url: "https://example.invalid/demo-pr/499",
+    },
+  ];
+
   const patches = {
     // The Playwright tab: a made-up clone of the team's repo (dev/demoPlaywright).
     ...playwrightPatches({ getAppSettings: realGetAppSettings }),
@@ -1174,51 +1223,13 @@ function applyPatches() {
     },
     viewExecutionReport: () => err("Demo mode: execution reports are disabled"),
 
-    listRepos: () =>
-      ok([
-        { id: "demo-repo-1", name: "demo-web" },
-        { id: "demo-repo-2", name: "demo-api" },
-      ]),
-    prOverview: () =>
-      ok({
-        awaiting: [
-          {
-            id: 501, title: "Add PBI scope to the board", repo: "demo-web", repo_id: "demo-repo-1",
-            author: "Sam Rivera", source_branch: "feature/pbi-scope", target_branch: "main",
-            created: "2026-07-17T09:00:00Z",
-            description: "Demo description: what changed and why.", is_draft: false, has_conflicts: false,
-            my_vote: 0,
-            reviewers: [
-              { display_name: "Demo User", vote: 0 },
-              { display_name: "Alex Kim", vote: 10 },
-            ],
-            web_url: "https://example.invalid/demo-pr/501",
-          },
-        ],
-        mine: [
-          {
-            id: 502, title: "Electric border for the PBI chip", repo: "demo-web", repo_id: "demo-repo-1",
-            author: "Demo User", source_branch: "feature/electric-border", target_branch: "main",
-            created: "2026-07-16T14:00:00Z",
-            description: "Demo description: what changed and why.", is_draft: true, has_conflicts: true,
-            my_vote: 0,
-            reviewers: [{ display_name: "Sam Rivera", vote: -5 }],
-            web_url: "https://example.invalid/demo-pr/502",
-          },
-        ],
-      }),
-    boardPrLinks: () =>
-      ok([
-        {
-          work_item_id: 2001, pr_id: 501, status: "active",
-          title: "Add PBI scope to the board", repo: "demo-web", repo_id: "demo-repo-1",
-          web_url: "https://example.invalid/demo-pr/501",
-        },
-        {
-          work_item_id: 2001, pr_id: 499, status: "completed",
-          title: "Earlier slice", repo: "demo-db", web_url: "https://example.invalid/demo-pr/499",
-        },
-      ]),
+    listRepos: () => ok(demoRepos),
+    listReposAll: () => ok(demoRepos),
+    prOverview: () => ok(demoPrOverview),
+    // Nothing is left out of the sample organization.
+    prOverviewAll: () => ok({ ...demoPrOverview, coverage: { shown: 0, total: 0 } }),
+    boardPrLinks: () => ok(demoPrLinks),
+    boardPrLinksAll: () => ok(demoPrLinks),
     prWorkItems: () =>
       ok([
         {

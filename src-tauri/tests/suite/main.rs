@@ -35,6 +35,7 @@ mod ai_tools;
 mod all_projects_board;
 mod all_projects_bridge;
 mod all_projects_pbis;
+mod all_projects_prs;
 mod allow_rules;
 mod api_fixtures;
 mod api_template_flows;

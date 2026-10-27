@@ -1246,6 +1246,15 @@ export const commands = {
 	openSnip: () => typedError<null, string>(__TAURI_INVOKE("open_snip")),
 	listRepos: (organization: string, project: string) => typedError<RepoRef[], AdoError>(__TAURI_INVOKE("list_repos", { organization, project })),
 	prOverview: (organization: string, project: string) => typedError<PrOverview, AdoError>(__TAURI_INVOKE("pr_overview", { organization, project })),
+	/**
+	 *  Every enabled repository of the organization, in one call, each naming
+	 *  its project.
+	 */
+	listReposAll: (organization: string) => typedError<RepoRef[], AdoError>(__TAURI_INVOKE("list_repos_all", { organization })),
+	/**  `pr_overview` across every project of the organization. */
+	prOverviewAll: (organization: string) => typedError<PrOverviewAll, AdoError>(__TAURI_INVOKE("pr_overview_all", { organization })),
+	/**  `board_pr_links` across every project of the organization. */
+	boardPrLinksAll: (organization: string) => typedError<PrLink[], AdoError>(__TAURI_INVOKE("board_pr_links_all", { organization })),
 	repoPullRequests: (organization: string, project: string, repoId: string, status: string, skip: number) => typedError<PullRequest[], AdoError>(__TAURI_INVOKE("repo_pull_requests", { organization, project, repoId, status, skip })),
 	boardPrLinks: (organization: string, project: string) => typedError<PrLink[], AdoError>(__TAURI_INVOKE("board_pr_links", { organization, project })),
 	prWorkItems: (organization: string, project: string, repo: string, prId: number) => typedError<PrWorkItem[], AdoError>(__TAURI_INVOKE("pr_work_items", { organization, project, repo, prId })),
@@ -5148,6 +5157,8 @@ export type PrLink = {
 	 *  apart when one item carries PRs in several repos.
 	 */
 	repo: string,
+	/**  The project the pull request's repository belongs to. */
+	project: string,
 	web_url: string,
 };
 
@@ -5157,6 +5168,17 @@ export type PrOverview = {
 	awaiting: PullRequest[],
 	/**  Active PRs the user created. */
 	mine: PullRequest[],
+};
+
+/**  The same two groups across every project of the organization. */
+export type PrOverviewAll = {
+	awaiting: PullRequest[],
+	mine: PullRequest[],
+	/**
+	 *  How many projects were read, when they were read one by one. An
+	 *  organization-wide listing reports `0 of 0` (nothing was left out).
+	 */
+	coverage: ProjectCoverage,
 };
 
 export type PrReviewer = {
@@ -5522,6 +5544,13 @@ export type PullRequest = {
 	id: number,
 	title: string,
 	repo: string,
+	/**
+	 *  The project that owns the repository: what Azure DevOps names under
+	 *  `repository.project`, or the project asked when the answer names
+	 *  none. The detail reads and the thread write of a combined list go
+	 *  through it.
+	 */
+	project: string,
 	/**
 	 *  Repository GUID. The git APIs accept the name in their URL path, but
 	 *  the Build API's `repositoryId=` query param demands the id - passing
@@ -6110,6 +6139,11 @@ export type RepoFeature = {
 export type RepoRef = {
 	id: string,
 	name: string,
+	/**
+	 *  The project that owns the repository: what Azure DevOps names, or the
+	 *  project asked when a per-project answer names none.
+	 */
+	project: string,
 };
 
 /**  The clone as the Playwright tab shows it. */
