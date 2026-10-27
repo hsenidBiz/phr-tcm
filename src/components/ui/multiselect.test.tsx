@@ -129,3 +129,8 @@ test("without checkedFirst an options change while open shows in the same commit
   expect(seen.length).toBeGreaterThan(0);
   for (const labels of seen) expect(labels).toEqual(["A", "B", "C"]);
 });
+
+test("triggerClassName lands on the trigger button, so a toolbar can make it 40px", () => {
+  render(<MultiSelect ariaLabel="Letters" options={OPTIONS} selected={[]} onChange={() => {}} triggerClassName="h-10" />);
+  expect(screen.getByRole("button", { name: "Letters" })).toHaveClass("h-10");
+});

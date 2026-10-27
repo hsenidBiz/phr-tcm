@@ -8,12 +8,26 @@ test("the toolbar wraps, the search slot grows and shrinks first, filters never 
       <select aria-label="Outcome" />
     </ListToolbar>,
   );
-  expect(container.firstElementChild).toHaveClass("flex", "flex-wrap", "items-center", "gap-2");
+  const row = container.firstElementChild!;
+  expect(row).toHaveClass("flex", "flex-wrap", "items-center", "gap-2", "*:shrink-0");
   const searchSlot = screen.getByLabelText("Find").parentElement!;
   expect(searchSlot).toHaveClass("flex-1", "min-w-64");
-  const filter = screen.getByLabelText("Outcome");
-  expect(filter.parentElement).toHaveClass("shrink-0");
-  expect(filter.parentElement).not.toBe(searchSlot);
+  // A filter sits straight in the row (the row's *:shrink-0 holds it).
+  expect(screen.getByLabelText("Outcome").parentElement).toBe(row);
+});
+
+test("a filter that renders nothing leaves no empty box, so the gaps stay even", () => {
+  const Nothing = () => null;
+  const scope = "";
+  const { container } = render(
+    <ListToolbar search={<input aria-label="Find" />}>
+      <Nothing />
+      {scope && <span>never</span>}
+      <select aria-label="Outcome" />
+    </ListToolbar>,
+  );
+  // The search slot and the one real filter: nothing in between.
+  expect(container.firstElementChild!.children).toHaveLength(2);
 });
 
 test("the toolbar renders with only a search", () => {

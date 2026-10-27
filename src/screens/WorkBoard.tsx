@@ -843,6 +843,7 @@ export default function WorkBoard({
           <Combobox
             ariaLabel="Board scope"
             className="w-56"
+            triggerClassName="h-10"
             placeholder="My work"
             value={pbiMode ? "By PBI…" : scope ? `Area: ${scope}` : "My work"}
             options={[
@@ -875,6 +876,7 @@ export default function WorkBoard({
             <MultiSelect
               ariaLabel="Filter assignee"
               className="w-48"
+              triggerClassName="h-10"
               allLabel="All assignees"
               options={assignees}
               selected={assigneeFilter}
@@ -889,6 +891,7 @@ export default function WorkBoard({
           <MultiSelect
             ariaLabel="Filter type"
             className="w-44"
+            triggerClassName="h-10"
             allLabel="All types"
             options={types}
             selected={typeFilter}
