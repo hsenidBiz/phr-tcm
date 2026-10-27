@@ -27,6 +27,12 @@ pub fn assigned_seen(org: &str, project: &str) -> String {
     format!("assigned-seen:{org}/{project}")
 }
 
+/// The same for the combined, all-projects watch: one baseline for the
+/// whole organization, beside (never replacing) the per-project ones.
+pub fn assigned_seen_all(org: &str) -> String {
+    format!("assigned-seen-all:{org}")
+}
+
 /// A PBI's resolved requirement suite, shared by the upload, Run Tests and
 /// the AI bridge. The client's base_url is in the key so parallel tests on
 /// different mock servers cannot poison each other.

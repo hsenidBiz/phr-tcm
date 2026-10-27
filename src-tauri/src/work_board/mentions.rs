@@ -17,6 +17,10 @@ use crate::cache::{self, keys};
 /// in the project the notification names.
 pub const RECENT_MENTIONS_WIQL: &str = "SELECT [System.Id] FROM WorkItems WHERE [System.TeamProject] = @project AND [System.Id] IN (@RecentMentions) ORDER BY [System.ChangedDate] DESC";
 
+/// The same, asked of the whole organization: no project clause, so an item
+/// of any project can come back. Each result's project is read afterwards.
+pub const RECENT_MENTIONS_ALL_WIQL: &str = "SELECT [System.Id] FROM WorkItems WHERE [System.Id] IN (@RecentMentions) ORDER BY [System.ChangedDate] DESC";
+
 /// How many mentioned items one check reads comments for.
 pub const MENTION_ITEMS: u32 = 20;
 /// How many of each item's newest comments are scanned.
@@ -40,6 +44,9 @@ pub struct Mention {
     pub excerpt: String,
     /// ISO 8601, as Azure DevOps returns it.
     pub created_date: String,
+    /// The project the item lives in, so a notification opens it there.
+    /// `mentions_in` leaves it empty; the readers fill it.
+    pub project: String,
 }
 
 /// Whether a comment's HTML mentions `me`. Azure DevOps writes a mention as
@@ -97,6 +104,7 @@ pub fn mentions_in(
             author: c["createdBy"]["displayName"].as_str().unwrap_or_default().to_string(),
             excerpt: excerpt(c["text"].as_str().unwrap_or_default()),
             created_date: c["createdDate"].as_str().unwrap_or_default().to_string(),
+            project: String::new(),
         })
         .collect()
 }
@@ -151,7 +159,55 @@ impl AdoClient {
             };
             let (title, wtype) = titles.get(&id).cloned().unwrap_or_default();
             let wtype = if wtype.is_empty() { "Work item".to_string() } else { wtype };
-            out.extend(mentions_in(id, &wtype, &title, &answer, me));
+            out.extend(mentions_in(id, &wtype, &title, &answer, me).into_iter().map(|m| Mention {
+                project: project.to_string(),
+                ..m
+            }));
+        }
+        Ok(out)
+    }
+
+    /// `recent_mentions` across every project: the items Azure DevOps lists
+    /// as mentioning `me` are asked of the organization, each item's project
+    /// is read with its title, and its comments are read in that project (the
+    /// comments API is project-scoped). An item whose project could not be
+    /// read is skipped and logged, like an item whose comments fail. The
+    /// query failing fails the check. Read only.
+    pub async fn recent_mentions_all(&self, org: &str, me: &str) -> Result<Vec<Mention>, AdoError> {
+        if me.trim().is_empty() {
+            crate::applog::warn("mentions: the signed-in identity has no id, so no mention can be matched");
+            return Ok(vec![]);
+        }
+        let ids = self
+            .query_work_items_org(org, RECENT_MENTIONS_ALL_WIQL, MENTION_ITEMS)
+            .await?;
+        if ids.is_empty() {
+            return Ok(vec![]);
+        }
+        let titles = self.read_titles_org(org, &ids).await;
+        let mut out = vec![];
+        for id in ids {
+            let (title, wtype, project) = titles.get(&id).cloned().unwrap_or_default();
+            if project.trim().is_empty() {
+                crate::applog::warn(format!("mentions: skipped #{id}, the project it lives in could not be read"));
+                continue;
+            }
+            let url = format!(
+                "{}/{}/{}/_apis/wit/workItems/{}/comments?order=desc&$top={}&api-version=7.1-preview.4",
+                self.base_url, org, project, id, MENTION_COMMENTS
+            );
+            let answer = match self.get_json(url).await {
+                Ok(a) => a,
+                Err(e) => {
+                    crate::applog::warn(format!("mentions: skipped #{id}, its comments could not be read: {e}"));
+                    continue;
+                }
+            };
+            let wtype = if wtype.is_empty() { "Work item".to_string() } else { wtype };
+            out.extend(mentions_in(id, &wtype, &title, &answer, me).into_iter().map(|m| Mention {
+                project: project.clone(),
+                ..m
+            }));
         }
         Ok(out)
     }

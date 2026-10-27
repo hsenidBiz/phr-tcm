@@ -301,6 +301,20 @@ pub async fn recent_mentions(
     client.recent_mentions(&organization, &project, &me.id).await
 }
 
+/// `recent_mentions` across every project of the organization; each
+/// mention names the project its item lives in. Read only.
+#[tauri::command]
+#[specta::specta]
+pub async fn recent_mentions_all(
+    app: tauri::AppHandle,
+    organization: String,
+) -> Result<Vec<work_board::mentions::Mention>, ado::AdoError> {
+    let token = get_fresh_token(&app).await?;
+    let client = ado::AdoClient::new(token);
+    let me = client.connected_user_cached(&organization).await?;
+    client.recent_mentions_all(&organization, &me.id).await
+}
+
 /// Best-effort avatar fetch (None -> initials disc in the UI).
 #[tauri::command]
 #[specta::specta]

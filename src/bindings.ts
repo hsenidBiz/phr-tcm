@@ -202,6 +202,13 @@ export const commands = {
 	 */
 	watchAssignedWork: (organization: string, project: string) => typedError<null, string>(__TAURI_INVOKE("watch_assigned_work", { organization, project })),
 	/**
+	 *  The same watch across every project: one baseline for the organization,
+	 *  seeded from the home project's (see `assigned_watch::check_once_all`).
+	 *  Shares the one loop with `watch_assigned_work`, so whichever was called
+	 *  last decides what the next round checks.
+	 */
+	watchAssignedWorkAll: (organization: string, homeProject: string) => typedError<null, string>(__TAURI_INVOKE("watch_assigned_work_all", { organization, homeProject })),
+	/**
 	 *  Export everything the app remembers on this machine - the webview's
 	 *  `tcm-v2-*` localStorage (handed in by the frontend, which is the only
 	 *  side that can read it) plus the disk stores under `app_data_dir` - into
@@ -291,6 +298,11 @@ export const commands = {
 	 *  Read only.
 	 */
 	recentMentions: (organization: string, project: string) => typedError<Mention[], AdoError>(__TAURI_INVOKE("recent_mentions", { organization, project })),
+	/**
+	 *  `recent_mentions` across every project of the organization; each
+	 *  mention names the project its item lives in. Read only.
+	 */
+	recentMentionsAll: (organization: string) => typedError<Mention[], AdoError>(__TAURI_INVOKE("recent_mentions_all", { organization })),
 	/**  Best-effort avatar fetch (None -> initials disc in the UI). */
 	avatarB64: (url: string) => __TAURI_INVOKE<string | null>("avatar_b64", { url }),
 	/**
@@ -2632,6 +2644,8 @@ export type AssignedItem = {
 	title: string,
 	work_item_type: string,
 	state: string,
+	/**  The project the item lives in (per-project reads: the argument). */
+	project: string,
 };
 
 export type AudioSpectrum = {
@@ -4677,6 +4691,11 @@ export type Mention = {
 	excerpt: string,
 	/**  ISO 8601, as Azure DevOps returns it. */
 	created_date: string,
+	/**
+	 *  The project the item lives in, so a notification opens it there.
+	 *  `mentions_in` leaves it empty; the readers fill it.
+	 */
+	project: string,
 };
 
 /**

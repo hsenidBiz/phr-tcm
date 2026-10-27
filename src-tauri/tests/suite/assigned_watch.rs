@@ -9,6 +9,7 @@ fn item(id: i32, title: &str) -> AssignedItem {
         title: title.into(),
         work_item_type: "Task".into(),
         state: "Active".into(),
+        project: String::new(),
     }
 }
 

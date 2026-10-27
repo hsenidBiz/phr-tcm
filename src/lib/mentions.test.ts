@@ -51,6 +51,7 @@ const wiMention: Mention = {
   author: "Sam",
   excerpt: "@Avin can you check this?",
   created_date: "2026-09-25T08:00:00Z",
+  project: "Web",
 };
 
 function thread(id: number, comments: Array<{ id: number; author: string; author_id: string; content: string }>): PrThread {

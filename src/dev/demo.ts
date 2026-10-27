@@ -106,6 +106,16 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
  * genuinely live (elapsed times grow) instead of frozen in the past. */
 const nowMinus = (seconds: number) => new Date(Date.now() - seconds * 1000).toISOString();
 
+/** One mention on the demo bug, two hours old, so the bell has one to show. */
+const demoMentions = () => [
+  {
+    source: "work-item", item_id: 2003, item_type: "Bug",
+    item_title: "Demo Bug - session timeout not enforced", comment_id: 2,
+    author: "Sam Doyle", excerpt: "@Demo User can you confirm the timeout on the demo build?",
+    created_date: nowMinus(2 * 3600), project: "Demo Project",
+  },
+];
+
 // ---------------------------------------------------------------- dataset
 
 const PBIS: PbiHit[] = [
@@ -1566,15 +1576,8 @@ function applyPatches() {
     // The demo user owns every demo comment, so Edit shows on all of them.
     connectedUser: () => ok({ id: "demo", display_name: "Demo User" }),
     // One mention on the demo bug, two hours old, so the bell has one to show.
-    recentMentions: () =>
-      ok([
-        {
-          source: "work-item", item_id: 2003, item_type: "Bug",
-          item_title: "Demo Bug - session timeout not enforced", comment_id: 2,
-          author: "Sam Doyle", excerpt: "@Demo User can you confirm the timeout on the demo build?",
-          created_date: nowMinus(2 * 3600),
-        },
-      ]),
+    recentMentions: () => ok(demoMentions()),
+    recentMentionsAll: () => ok(demoMentions()),
     listTeamMembers: () => ok([{ display_name: "Demo User", unique_name: "demo@local" }]),
     listTeams: () => ok(["Demo Team"]),
     createWorkItem: (_o: string, _p: string, item: NewWorkItem) => {
@@ -1585,6 +1588,7 @@ function applyPatches() {
     bridgeStatus: () => ok({ port: 51999, mcp_exe: "C:\\demo\\v2.exe" }),
     setBridgeContext: () => ok(null),
     watchAssignedWork: () => ok(null),
+    watchAssignedWorkAll: () => ok(null),
     detectAiTools: () =>
       Promise.resolve([
         { id: "claude-code", name: "Claude Code", installed: true, registered: true },

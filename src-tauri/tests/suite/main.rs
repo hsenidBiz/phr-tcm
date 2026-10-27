@@ -34,6 +34,7 @@ mod ai_bridge;
 mod ai_tools;
 mod all_projects_board;
 mod all_projects_bridge;
+mod all_projects_notify;
 mod all_projects_pbis;
 mod all_projects_prs;
 mod allow_rules;

@@ -141,7 +141,7 @@ test("notePrComments raises once per PR-and-count, and again when the count grow
 });
 
 test("noteAssigned raises one item per work item, linked to it", () => {
-  noteAssigned(ORG, "Web", [{ id: 501, title: "Wire the login flow", work_item_type: "Task", state: "New" }]);
+  noteAssigned(ORG, "Web", [{ id: 501, title: "Wire the login flow", work_item_type: "Task", state: "New", project: "Web" }]);
   const full = JSON.parse(localStorage.getItem(`tcm-v2-notifications:${ORG}`) ?? "[]") as Array<{
     id: string;
     title: string;
@@ -160,7 +160,7 @@ test("noteAssigned raises one item per work item, linked to it", () => {
 /// click away.
 test("sources carry a structured target beside the browser href", () => {
   noteAssigned(ORG, "Web", [
-    { id: 501, title: "Wire login", work_item_type: "Task", state: "New" },
+    { id: 501, title: "Wire login", work_item_type: "Task", state: "New", project: "Web" },
   ]);
   notePrOverview(ORG, "Web", {
     mine: [pr({ id: 12, repo: "web", has_conflicts: true })],
