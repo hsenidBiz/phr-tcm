@@ -713,3 +713,86 @@ async fn a_card_with_no_project_named_reads_no_states_and_keeps_the_heuristic_co
     // The WIQL post and the item read; no states request for a blank project.
     assert_eq!(server.received_requests().await.unwrap().len(), 2);
 }
+
+#[tokio::test]
+async fn a_project_named_with_a_percent_sign_gets_its_states_read_through_an_encoded_url() {
+    let server = MockServer::start().await;
+    mount_org_wiql(&server, &[5]).await;
+    mount_org_items(
+        &server,
+        "5",
+        vec![board_item(5, "half done", "Task", "Active", "50% Done")],
+    )
+    .await;
+    Mock::given(method("GET"))
+        .and(path_regex(r"/states$"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(states_body(&[(
+            "Active",
+            "InProgress",
+        )])))
+        .mount(&server)
+        .await;
+
+    let client = AdoClient::with_base_url("t".into(), server.uri());
+    let board = client.fetch_board_all("org", None, None, false).await.unwrap();
+    let asked = server.received_requests().await.unwrap();
+    let states = asked
+        .iter()
+        .find(|r| r.url.path().ends_with("/states"))
+        .expect("the project's states were asked");
+    let raw = states.url.as_str();
+    assert!(raw.contains("/org/50%25%20Done/"), "percent AND space must be encoded: {raw}");
+    assert!(!raw.contains("50% Done"), "the raw name must not reach the wire: {raw}");
+    // And the answer reached the card: its state read worked.
+    assert_eq!(board.states_by_project["50% Done"]["Task"].len(), 1);
+    assert_eq!(board.items[0].column.as_deref(), Some("In Progress"));
+}
+
+#[tokio::test]
+async fn a_second_board_load_reads_no_states_again() {
+    let server = MockServer::start().await;
+    mount_org_wiql(&server, &[1, 2]).await;
+    mount_org_items(
+        &server,
+        "1,2",
+        vec![
+            board_item(1, "a", "Task", "Active", "A"),
+            board_item(2, "b", "Bug", "Active", "B"),
+        ],
+    )
+    .await;
+    // One read per (project, type) for the whole session, not per load.
+    mount_states(&server, "A", "Task", &[("Active", "InProgress")], 1).await;
+    mount_states(&server, "B", "Bug", &[("Active", "Completed")], 1).await;
+
+    let client = AdoClient::with_base_url("t".into(), server.uri());
+    let first = client.fetch_board_all("org", None, None, false).await.unwrap();
+    let second = client.fetch_board_all("org", None, None, false).await.unwrap();
+    // The remembered answer paints the same cards the first load did.
+    assert_eq!(first.items[0].column, second.items[0].column);
+    assert_eq!(second.items[1].column.as_deref(), Some("Done"));
+    assert_eq!(second.states_by_project["A"]["Task"].len(), 1);
+    server.verify().await;
+}
+
+#[tokio::test]
+async fn a_failed_state_read_is_not_remembered() {
+    let server = MockServer::start().await;
+    mount_org_wiql(&server, &[1]).await;
+    mount_org_items(&server, "1", vec![board_item(1, "a", "Task", "Active", "A")]).await;
+    // Refused once, then answered: the empty answer must not stick.
+    Mock::given(method("GET"))
+        .and(path("/org/A/_apis/wit/workitemtypes/Task/states"))
+        .respond_with(ResponseTemplate::new(403))
+        .up_to_n_times(1)
+        .with_priority(1)
+        .mount(&server)
+        .await;
+    mount_states(&server, "A", "Task", &[("Active", "InProgress")], 1).await;
+
+    let client = AdoClient::with_base_url("t".into(), server.uri());
+    let first = client.fetch_board_all("org", None, None, false).await.unwrap();
+    assert!(first.states_by_project["A"]["Task"].is_empty());
+    let second = client.fetch_board_all("org", None, None, false).await.unwrap();
+    assert_eq!(second.states_by_project["A"]["Task"].len(), 1);
+}

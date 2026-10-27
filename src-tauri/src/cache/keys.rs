@@ -61,6 +61,19 @@ pub fn org_projects(base_url: &str, org: &str) -> String {
     format!("org-projects:{base_url}|{org}")
 }
 
+/// How long the board across projects reuses a work-item type's states. A
+/// type's states change when an administrator edits the process, which is
+/// rare, and the board would otherwise read them again for every project
+/// and type on every load.
+pub const WORK_ITEM_STATES_TTL: Duration = Duration::from_secs(30 * 60);
+
+/// One project's states for one work-item type (session tier only; only the
+/// board across projects uses it). The base_url is in the key for the same
+/// reason as `suite`'s.
+pub fn work_item_states(base_url: &str, org: &str, project: &str, wi_type: &str) -> String {
+    format!("wi-states:{base_url}|{org}|{project}|{wi_type}")
+}
+
 /// How long the Boards fallback reuses the ids its URL needs. A project's
 /// GUID never changes and a team's area scope changes when somebody
 /// reorganises the project, not during an upload - and the fallback only

@@ -7,7 +7,9 @@ use super::{
     wiql_str, BoardData, BoardItem, BoardParent, Member, StateInfo, TeamRef, BOARD_FIELDS,
     BOARD_FIELDS_ALL, EXCLUDED_TYPES, MAX_ITEMS, TITLE_FIELDS,
 };
+use crate::ado::endpoints::percent_encode_segment;
 use crate::ado::{AdoClient, AdoError};
+use crate::cache::{self, keys};
 use super::column_for_state;
 
 impl AdoClient {
@@ -143,7 +145,7 @@ impl AdoClient {
             "{}/{}/{}/_apis/wit/workitemtypes/{}/states?api-version=7.1",
             self.base_url,
             org,
-            project,
+            percent_encode_segment(project),
             urlencoding::encode(wi_type)
         );
         let data = self.get_json(url).await?;
@@ -158,6 +160,30 @@ impl AdoClient {
                 category: s["category"].as_str().unwrap_or_default().to_string(),
             })
             .collect())
+    }
+
+    /// `get_work_item_states` for the board across projects, remembered for
+    /// `WORK_ITEM_STATES_TTL` (session tier only): that board reads one type
+    /// per project present on every load, and a type's states almost never
+    /// change. A failed read is not remembered - the card falls back to the
+    /// name heuristic this time and the read is tried again next load.
+    async fn work_item_states_remembered(
+        &self,
+        org: &str,
+        project: &str,
+        wi_type: &str,
+    ) -> Vec<StateInfo> {
+        let key = keys::work_item_states(&self.base_url, org, project, wi_type);
+        if let Some(hit) = cache::session_fresh::<Vec<StateInfo>>(&key, keys::WORK_ITEM_STATES_TTL) {
+            return hit;
+        }
+        match self.get_work_item_states(org, project, wi_type).await {
+            Ok(states) => {
+                cache::session_put(&key, states.clone());
+                states
+            }
+            Err(_) => Vec::new(),
+        }
     }
 
     /// Teams in the project (for the board's team-scope selector). Read only.
@@ -480,10 +506,7 @@ impl AdoClient {
             if states_by_project.get(project).is_some_and(|m| m.contains_key(wtype)) {
                 continue;
             }
-            let states = self
-                .get_work_item_states(org, project, wtype)
-                .await
-                .unwrap_or_default();
+            let states = self.work_item_states_remembered(org, project, wtype).await;
             states_by_project
                 .entry(project.to_string())
                 .or_default()
