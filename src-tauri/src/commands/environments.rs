@@ -188,9 +188,12 @@ pub async fn save_with(root: &Path, store: &dyn SecretStore, env: EnvInput) -> R
     // (`set_active_with`) - which also means no switch can make this the
     // active environment halfway through.
     let refused = |e: String| e.replacen(SWITCH_REFUSED, ADDRESS_CHANGE_REFUSED, 1);
-    let slot = crate::commands::autorun::supervised().lock().await;
+    // And across every Auto Run browser: no open begins (`opening()`), and
+    // each slot's session is locked in slot order.
+    let _opening = crate::commands::autorun_slots::opening().write().await;
+    let slots = crate::commands::autorun::lock_every_slot().await;
     let run_slot = if environments::active_id(root)? == env.id {
-        refuse_switch(slot.is_some()).map_err(refused)?;
+        refuse_switch(slots.iter().any(|s| s.is_some())).map_err(refused)?;
         Some(crate::api_templates::runner::claim().ok_or_else(|| refused(SWITCH_TEMPLATE_RUNNING.to_string()))?)
     } else {
         None
@@ -208,7 +211,7 @@ pub async fn save_with(root: &Path, store: &dyn SecretStore, env: EnvInput) -> R
         }
     }
     drop(run_slot);
-    drop(slot);
+    drop(slots);
     if unmarked {
         strip_proposed_passwords(root, &id);
     }
@@ -349,10 +352,13 @@ pub async fn switch_with<T: Send + 'static>(
     bridge: Option<&Mutex<BridgeContext>>,
     after: impl FnOnce() -> T + Send + 'static,
 ) -> Result<(EnvListView, Option<T>), String> {
-    // Held across the switch, so a supervised browser cannot open halfway
-    // through it - the same way Open browser holds it to look for a recording.
-    let slot = crate::commands::autorun::supervised().lock().await;
-    refuse_switch(slot.is_some())?;
+    // Held across the switch, so no supervised browser, the main one or an
+    // assistant's, can open halfway through it: the opening lock for writing
+    // first (an open in progress finishes, a new one is refused), then every
+    // slot's session in slot order.
+    let _opening = crate::commands::autorun_slots::opening().write().await;
+    let slots = crate::commands::autorun::lock_every_slot().await;
+    refuse_switch(slots.iter().any(|s| s.is_some()))?;
     // The template slot is TAKEN, not just looked at, for the write: a run
     // that started between the look in `refuse_switch` and the write would
     // otherwise sign in to one environment and finish in another.
@@ -368,7 +374,7 @@ pub async fn switch_with<T: Send + 'static>(
     let answered = tauri::async_runtime::spawn_blocking(after).await.ok();
     drop(release);
     drop(run_slot);
-    drop(slot);
+    drop(slots);
     if let Some(e) = file.environments.iter().find(|e| e.id == file.active) {
         crate::applog::info(format!("Environments: switched to {}", e.name));
     }

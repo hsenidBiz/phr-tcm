@@ -304,7 +304,7 @@ pub async fn auto_run_replay(
     let _claim = OneAtATime::claim().ok_or_else(|| {
         "an unattended run is already going - wait for it, or stop it first".to_string()
     })?;
-    if let Some(busy) = super::autorun::open_session_refusal().await {
+    if let Some(busy) = super::autorun::open_session_refusal_any().await {
         return Err(busy);
     }
     super::autorun_record::refuse_while_recording()?;

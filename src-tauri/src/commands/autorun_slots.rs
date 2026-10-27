@@ -157,6 +157,25 @@ pub fn slot_for(caller: &Caller, need: Need) -> Result<SlotNo, (u16, String)> {
     Err((409, ALL_BROWSERS_OPEN.to_string()))
 }
 
+/// The opening lock: coordination between a browser opening and the few
+/// things that must see every slot still. Not a cache. An open reads it for
+/// as long as it goes and never waits for it (`open_into` takes
+/// `opening().try_read()` while it holds its slot's lock, and is refused at
+/// once when a write has it). The environment save and switch and Release all
+/// write it, and then lock every slot's session in order 0, 1, 2. So a browser
+/// cannot start halfway through either, and the two never wait on each other
+/// (an open holding a slot's lock would otherwise wait for the write while the
+/// write waited for that slot).
+pub fn opening() -> &'static tokio::sync::RwLock<()> {
+    static OPENING: tokio::sync::RwLock<()> = tokio::sync::RwLock::const_new(());
+    &OPENING
+}
+
+/// Said to an open that meets the environment being switched or every Auto
+/// Run browser being released.
+pub const OPEN_WHILE_SWITCHING: &str =
+    "the Auto Run browsers are being released or the environment is being switched - try again in a moment";
+
 /// No browser is open in extra slot `n`, and nothing is working in it.
 fn slot_is_empty(n: SlotNo) -> bool {
     crate::commands::autorun::try_lock_briefly(session_slot(n)).is_some_and(|slot| slot.is_none())

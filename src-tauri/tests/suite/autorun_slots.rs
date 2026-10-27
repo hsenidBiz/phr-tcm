@@ -208,9 +208,14 @@ fn a_session_knows_its_slot() {
 #[test]
 fn release_all_and_exit_stop_every_slots_replay_and_batch() {
     let source = norm(include_str!("../../src/commands/autorun.rs"));
-    for start in ["pub async fn release_autorun_browsers()", "pub async fn close_autorun_browsers()"] {
+    // The first thing each one waits for: Release all's opening lock, the
+    // exit's first slot lock.
+    for (start, first_wait) in [
+        ("pub async fn release_autorun_browsers()", "opening().write()"),
+        ("pub async fn close_autorun_browsers()", "session_slot("),
+    ] {
         let from = &source[source.find(start).unwrap_or_else(|| panic!("{start} is gone"))..];
-        let before_lock = &from[..from.find("SESSION.lock()").unwrap()];
+        let before_lock = &from[..from.find(first_wait).unwrap_or_else(|| panic!("{start} no longer waits with {first_wait}"))];
         assert!(before_lock.contains("for n in SlotNo::all() {"), "{start} does not walk the slots: {before_lock}");
         assert!(before_lock.contains("crate::autorun::replay_to::state(n).stop();"), "{start}: {before_lock}");
         assert!(before_lock.contains("crate::ai_bridge::stop_all_batches();"), "{start}: {before_lock}");
@@ -1378,5 +1383,159 @@ mod card {
         assert!(sweeper.contains("autorun_slots::on_sweep(&swept)"), "the sweeper hands its sweep to the bindings");
         let lib = include_str!("../../src/lib.rs");
         assert!(lib.contains("spawn_agents_watch("), "the watcher is started where the discovery events are set");
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Everything global looks at every slot (Task 14)
+// ---------------------------------------------------------------------------
+
+mod global_checks {
+    use super::*;
+    use v2_lib::commands::autorun::{
+        any_session_open, any_session_open_now, first_open, open_session_refusal_any, try_hold_slot, EXTRA_BROWSER_OPEN,
+    };
+
+    /// Which slot an open browser is reported in: the lowest, so main's
+    /// sentence is the one said when main and an extra are both open.
+    #[test]
+    fn first_open_finds_the_lowest_open_slot() {
+        assert_eq!(first_open([false, true, true]), Some(SlotNo(1)));
+        assert_eq!(first_open([false, false, true]), Some(SlotNo(2)));
+        assert_eq!(first_open([true, false, true]), Some(SlotNo::MAIN));
+        assert_eq!(first_open([false, false, false]), None);
+    }
+
+    /// With nothing open, every global check says so; a lock that is taken
+    /// counts as a browser in use, in any slot.
+    #[tokio::test]
+    async fn with_no_browser_open_nothing_refuses_and_a_taken_slot_counts_as_open() {
+        let _g = serial::autorun();
+        assert!(!any_session_open().await);
+        assert!(open_session_refusal_any().await.is_none());
+        assert!(!any_session_open_now());
+        for n in SlotNo::extras() {
+            let taken = try_hold_slot(n).expect("the slot is free");
+            assert!(any_session_open_now(), "slot {} is in use and was not seen", n.0);
+            drop(taken);
+            assert!(!any_session_open_now());
+        }
+        assert!(EXTRA_BROWSER_OPEN.contains("assistant"), "{EXTRA_BROWSER_OPEN}");
+        assert!(!EXTRA_BROWSER_OPEN.contains('\u{2014}') && !EXTRA_BROWSER_OPEN.contains('\u{2013}'));
+    }
+
+    /// The unattended run, the recorder, the module switch and the
+    /// environment save and switch ask about every slot, not main alone.
+    #[test]
+    fn every_global_check_looks_at_every_slot() {
+        let replay = norm(include_str!("../../src/commands/autorun_replay.rs"));
+        let record = norm(include_str!("../../src/commands/autorun_record.rs"));
+        for (name, src) in [("autorun_replay.rs", &replay), ("autorun_record.rs", &record)] {
+            assert!(src.contains("open_session_refusal_any()"), "{name} does not ask every slot");
+            assert!(!src.contains("open_session_refusal()"), "{name} still asks main alone");
+        }
+        let modules = norm(include_str!("../../src/commands/modules.rs"));
+        let body_of = body(&modules, "pub fn auto_run_browser_open()");
+        assert!(body_of.contains("any_session_open_now()") && body_of.contains("any_discovery_active()"), "{body_of}");
+        assert!(
+            !body_of.contains("auto_run_discovery_active()") && !body_of.contains("supervised_session_is_open_now()"),
+            "{body_of}"
+        );
+
+        let envs = norm(include_str!("../../src/commands/environments.rs"));
+        for f in ["pub async fn save_with(", "pub async fn switch_with<"] {
+            let b = body(&envs, f);
+            assert!(b.contains("opening().write()"), "{f}: {b}");
+            assert!(b.contains("lock_every_slot()"), "{f}: {b}");
+            assert!(b.contains("refuse_switch(slots.iter().any(|s| s.is_some()))"), "{f}: {b}");
+            assert!(!b.contains("supervised().lock()"), "{f}: {b}");
+        }
+
+        // The one place the slots are locked together, in slot order.
+        let autorun = norm(include_str!("../../src/commands/autorun.rs"));
+        let every = body(&autorun, "pub(crate) async fn lock_every_slot(");
+        assert!(every.contains("for n in SlotNo::all() {") && every.contains("session_slot(n).lock().await"), "{every}");
+
+        // The clear buttons look at every slot too.
+        let clear = body(&autorun, "pub async fn refuse_while_a_run_is_going(");
+        assert!(clear.contains("open_session_refusal_any()"), "{clear}");
+        // Making way for a setup looks at each slot in turn, and no longer
+        // locks `SESSION` alone.
+        let way = body(&autorun, "pub async fn make_way_for_setup(");
+        assert!(way.contains("for n in SlotNo::all() {") && way.contains("session_slot(n).lock().await"), "{way}");
+        assert!(!way.contains("SESSION.lock()"), "{way}");
+        // Every slot is asked after letting a gone browser go, one lock at a time.
+        let any = body(&autorun, "async fn slots_open(");
+        assert!(any.contains("let_go_if_gone_in(n, &mut slot)") && any.contains("for n in SlotNo::all() {"), "{any}");
+    }
+
+    /// Release all locks the opening lock for writing and then every slot in
+    /// order; the app's exit closes every slot in order. Neither locks
+    /// `SESSION` any more.
+    #[test]
+    fn release_all_takes_every_slot_in_order() {
+        let source = norm(include_str!("../../src/commands/autorun.rs"));
+        let release = body(&source, "pub async fn release_autorun_browsers()");
+        let batches = release.find("stop_all_batches()").expect("batches are stopped");
+        let write = release.find("opening().write()").expect("Release all takes the opening lock for writing");
+        assert!(batches < write, "the batches are stopped before the opening lock is waited for");
+        let after_write = &release[write..];
+        let walk = after_write.find("for n in SlotNo::all() {").expect("a loop over the slots after the write");
+        let in_loop = &after_write[walk..];
+        assert!(in_loop.contains("session_slot(n).lock()"), "each slot's lock is taken in the loop: {in_loop}");
+        assert!(in_loop.contains("RELEASE_WAIT"), "each slot's wait is bounded: {in_loop}");
+        assert!(!release.contains("SESSION.lock()"), "{release}");
+        // Each slot's browser is closed, its discovery published and its
+        // binding cleared.
+        assert!(release.contains("close_browser_in("), "{release}");
+        assert!(release.contains("publish_discovery_in("), "{release}");
+        assert!(release.contains("unbind("), "{release}");
+        assert!(release.contains("tell_panes_closed()"), "{release}");
+        // The slot locks go only after `end_all` has returned.
+        let ended = release.find("tree::end_all").expect("end_all");
+        let dropped = release.rfind("drop(").expect("the locks are dropped");
+        assert!(ended < dropped, "{release}");
+
+        let exit = body(&source, "pub async fn close_autorun_browsers()");
+        assert!(!exit.contains("SESSION.lock()") && !exit.contains("opening().write()"), "{exit}");
+        let batches = exit.find("stop_all_batches()").expect("batches are stopped");
+        let walk = exit[batches..].find("for n in SlotNo::all() {").expect("exit walks the slots after stopping");
+        let rest = &exit[batches + walk..];
+        assert!(rest.contains("session_slot(n).lock().await"), "{rest}");
+        assert!(rest.contains("finish_mapping(") && rest.contains("finish_explore(") && rest.contains("close_session("), "{rest}");
+    }
+
+    /// An open runs with its slot's lock held, so it must never wait for the
+    /// opening lock: a switch holding that for writing waits for the same
+    /// slot's lock. It tries, and is refused at once when a write has it.
+    #[test]
+    fn an_open_never_waits_for_the_opening_lock_under_a_slot_lock() {
+        let source = norm(include_str!("../../src/commands/autorun.rs"));
+        let open = body(&source, "async fn open_into(");
+        assert!(open.contains("opening().try_read()"), "{open}");
+        for (name, src) in [("autorun.rs", &source), ("ai_bridge.rs", &norm(include_str!("../../src/ai_bridge.rs")))] {
+            assert!(!src.contains("opening().read()"), "{name} waits for the opening lock");
+        }
+        // The refusal is a sentence for the person, no dash.
+        let sentence = v2_lib::commands::autorun_slots::OPEN_WHILE_SWITCHING;
+        assert!(sentence.contains("try again") && !sentence.contains('\u{2014}') && !sentence.contains('\u{2013}'), "{sentence}");
+    }
+
+    /// The opening lock is a read-write lock: opens read, and a write held or
+    /// waited for refuses every new read.
+    #[tokio::test]
+    async fn a_write_waiting_for_the_opening_lock_refuses_new_opens() {
+        use v2_lib::commands::autorun_slots::opening;
+        let _g = serial::autorun();
+        let read = opening().try_read().expect("free");
+        let write = opening().write();
+        tokio::pin!(write);
+        assert!(tokio::time::timeout(std::time::Duration::from_millis(100), &mut write).await.is_err());
+        assert!(opening().try_read().is_err(), "a new open got past a switch that is waiting");
+        drop(read);
+        let guard = tokio::time::timeout(std::time::Duration::from_secs(5), write).await.expect("the write was never given");
+        assert!(opening().try_read().is_err(), "an open got past a switch");
+        drop(guard);
+        assert!(opening().try_read().is_ok());
     }
 }

@@ -1561,7 +1561,11 @@ fn every_other_use_of_the_browser_clears_the_stand() {
     for f in ["pub async fn auto_run_step", "pub async fn auto_run_check_preconditions", "pub async fn make_way_for_setup", "pub async fn auto_run_sign_in"] {
         let b = body(&source, f);
         assert!(b.contains("replay_stand = None;") || b.contains("used_otherwise();"), "{f} does not clear the stand");
-        assert!(b.contains("note_session_use();"), "{f} is not counted as a use");
+        // Making way for a setup looks at every slot and counts the use in
+        // the slot it made way in (`note_session_use_in(n)`); the others are
+        // the person's, main's.
+        let counted = if f.ends_with("make_way_for_setup") { "note_session_use_in(n);" } else { "note_session_use();" };
+        assert!(b.contains(counted), "{f} is not counted as a use");
     }
     for f in ["pub async fn auto_run_step", "pub async fn auto_run_check_preconditions", "pub async fn auto_run_sign_in"] {
         // `make_persons` marks it, and takes away the assistant's test changes.

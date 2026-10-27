@@ -463,6 +463,80 @@ fn switching_is_refused_while_the_supervised_browser_is_open() {
     assert_eq!(refuse_switch(false), Ok(()));
 }
 
+/// An open runs under its slot's lock and holds the opening lock for reading
+/// while it goes; a switch takes the opening lock for writing and then every
+/// slot's. Whichever comes first, neither waits on the other for ever: a
+/// switch waits out an open that is under way (bounded here), and an open that
+/// meets a switch waiting for its slot is refused at once, drops the slot and
+/// lets the switch through.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_switch_while_an_extra_browser_is_opening_does_not_hang() {
+    use std::time::Duration;
+    use v2_lib::autorun::slots::SlotNo;
+    use v2_lib::commands::autorun::hold_slot;
+    use v2_lib::commands::autorun_slots::opening;
+    let _claims = crate::serial::autorun();
+    let _slot = crate::serial::api_template_run();
+    let _held = crate::serial::held_browsers();
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let store = MemoryStore::default();
+    let (first, qa) = two_envs(root);
+
+    // The open is under way: slot 1's lock held, the opening lock read.
+    let in_slot = hold_slot(SlotNo(1)).await;
+    let reading = opening().try_read().expect("no switch is going");
+    let switching = set_active_with(root, &store, &qa);
+    tokio::pin!(switching);
+    assert!(
+        tokio::time::timeout(Duration::from_millis(300), &mut switching).await.is_err(),
+        "the switch went through an open that was under way"
+    );
+    assert_eq!(active_id(root).unwrap(), first, "the switch changed things beside an open");
+    drop(reading);
+    drop(in_slot);
+    let switched = tokio::time::timeout(Duration::from_secs(10), switching).await.expect("the switch hung after the open ended");
+    assert_eq!(switched.unwrap().active, qa);
+
+    // The switch is first: it holds the opening lock and waits for slot 1,
+    // which an open already holds. That open asks for the opening lock, is
+    // refused at once and lets the slot go.
+    let in_slot = hold_slot(SlotNo(1)).await;
+    let switching = set_active_with(root, &store, &first);
+    tokio::pin!(switching);
+    assert!(tokio::time::timeout(Duration::from_millis(300), &mut switching).await.is_err(), "the switch did not wait for the slot");
+    assert!(opening().try_read().is_err(), "an open under a slot lock was let past a switch");
+    drop(in_slot);
+    let switched = tokio::time::timeout(Duration::from_secs(10), switching).await.expect("the switch hung beside an open");
+    assert_eq!(switched.unwrap().active, first);
+    assert!(opening().try_read().is_ok(), "a finished switch still holds the opening lock");
+}
+
+/// The same for a save that moves the active address.
+#[tokio::test(flavor = "multi_thread")]
+async fn an_address_change_beside_an_extra_browser_opening_does_not_hang() {
+    use std::time::Duration;
+    use v2_lib::autorun::slots::SlotNo;
+    use v2_lib::commands::autorun::hold_slot;
+    use v2_lib::commands::autorun_slots::opening;
+    let _claims = crate::serial::autorun();
+    let _slot = crate::serial::api_template_run();
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let store = MemoryStore::default();
+    let (first, _qa) = two_envs(root);
+
+    let in_slot = hold_slot(SlotNo(2)).await;
+    let saving = save_with(root, &store, edit(root, &first, "https://moved.example/", &[]));
+    tokio::pin!(saving);
+    assert!(tokio::time::timeout(Duration::from_millis(300), &mut saving).await.is_err(), "the save did not wait for the slot");
+    assert!(opening().try_read().is_err(), "an open was let past a save that moves the address");
+    drop(in_slot);
+    tokio::time::timeout(Duration::from_secs(10), saving).await.expect("the save hung beside an open").unwrap();
+    assert_eq!(list(root).iter().find(|e| e.id == first).unwrap().start_url, "https://moved.example/");
+    assert!(opening().try_read().is_ok());
+}
+
 fn edit(root: &Path, id: &str, start_url: &str, allowed: &[&str]) -> EnvInput {
     let e = list(root).into_iter().find(|e| e.id == id).unwrap();
     EnvInput {

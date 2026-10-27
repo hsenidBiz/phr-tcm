@@ -12,12 +12,13 @@ pub const AUTO_RUN_BROWSER_OPEN: &str = "Auto Run can't be switched off while it
 /// What a failed save of `modules.json` says; the raw reason goes to the log.
 pub const SAVE_FAILED: &str = "Could not save this setting. The app log in Settings has the details.";
 
-/// Whether any Auto Run browser is open: an assistant discovery, the
-/// supervised browser, an Auto Run setup browser, or a held API template
-/// browser. Switching Auto Run off would strand it.
+/// Whether any Auto Run browser is open: an assistant discovery, a
+/// supervised browser (any of the assistants' too), an Auto Run setup
+/// browser, or a held API template browser. Switching Auto Run off would
+/// strand it.
 pub fn auto_run_browser_open() -> bool {
-    crate::commands::autorun::auto_run_discovery_active()
-        || crate::commands::autorun::supervised_session_is_open_now()
+    crate::commands::autorun::any_discovery_active()
+        || crate::commands::autorun::any_session_open_now()
         || crate::autorun::lease::a_browser_is_held()
         || crate::api_templates::held::any()
 }
