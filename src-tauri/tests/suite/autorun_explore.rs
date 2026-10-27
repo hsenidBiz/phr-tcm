@@ -24,7 +24,7 @@ use v2_lib::autorun::cleanup::{not_this_sessions, ran_in_project};
 use v2_lib::autorun::discovery_map::map_path;
 use v2_lib::autorun::cleanup::EXPLORE_MADE;
 use v2_lib::autorun::explore::{
-    begin, change_from_args, load, mark_create_undone, mark_undone, no_such_entry, note_writes, record_change,
+    begin, change_from_args, create_proof, id_at, id_pointer, load, same_save, SaveProof, mark_create_undone, mark_undone, no_such_entry, note_writes, record_change,
     safe_session_id, session_id, session_path, unaccounted, undone_by_the_tool, unknown_session, verify_create,
     Change, ChangeEntry, ExploreRun, ExploreSession, SeenWrite, BEFORE_NOT_KNOWN, CHANGES_UNREADABLE, DELETED_STAYS,
     NOT_VERIFIED, NO_EXPLORE_SESSION, SECRET_NOT_KEPT, UNRECORDED_SAVES,
@@ -260,6 +260,7 @@ fn entry(n: u32, request: Option<&str>) -> ChangeEntry {
         change: Change::Created { kind: "leave".into(), id: "7".into(), name: "x".into(), verified: true },
         request: request.map(str::to_string),
         undone: false,
+        proof: None,
     }
 }
 
@@ -309,6 +310,7 @@ fn a_change_list_round_trips_through_its_file() {
         },
         request: Some("POST /a".into()),
         undone: false,
+        proof: None,
     };
     let deleted = ChangeEntry {
         n: 3,
@@ -316,6 +318,7 @@ fn a_change_list_round_trips_through_its_file() {
         change: Change::Deleted { kind: "leave".into(), id: "7".into(), name: "x".into(), held: Some(json!({"a": 1})) },
         request: None,
         undone: true,
+        proof: None,
     };
     let s = session_with(&[("POST", "/a")], vec![entry(1, Some("POST /a")), changed, deleted]);
     let text = serde_json::to_string_pretty(&s).unwrap();
@@ -911,7 +914,7 @@ use v2_lib::autorun::explore::{
 use v2_lib::browser::net_capture::MAX_CAPTURED;
 
 fn change_entry(n: u32, change: Change, request: Option<&str>) -> ChangeEntry {
-    ChangeEntry { n, at: "2026-10-22T00:00:00.000Z".into(), change, request: request.map(str::to_string), undone: false }
+    ChangeEntry { n, at: "2026-10-22T00:00:00.000Z".into(), change, request: request.map(str::to_string), undone: false, proof: None }
 }
 
 /// C1: an edit's save answers with the id of the record it edited; it made
@@ -1357,4 +1360,77 @@ async fn the_cards_release_of_an_explore_session_answers_in_a_sentence() {
     assert!(said.starts_with("Ended the discovery"), "{said}");
     assert!(browser.is_none(), "the explore session's browser was kept");
     assert!(load(dir.path(), &id).unwrap().ended_at.is_some(), "the session was not ended");
+}
+
+// ---- The save proof: when a verified create was saved and where its id sat ----
+
+#[test]
+fn a_verified_create_keeps_when_and_where_its_id_was_saved() {
+    let (dir, session) = started();
+    let post = save("POST", "/hr/c?x=1", 2000, text(r#"{"data":{"Id":274,"Name":"AUTOTEST a"}}"#));
+    record_change(dir.path(), &session, created("leave type", "274", "AUTOTEST a"), None, &[&post], 1000).unwrap();
+    let s = load(dir.path(), &session).unwrap();
+    assert_eq!(s.changes[0].proof, Some(SaveProof { saved_ms: 2000, id_at: Some("/data/Id".into()) }));
+    let proof = create_proof(&[&post], 1000, "274", &[]).unwrap();
+    assert_eq!(proof.request, "POST /hr/c");
+    assert_eq!((proof.saved_ms, proof.id_at.as_deref()), (2000, Some("/data/Id")));
+}
+
+#[test]
+fn the_shortest_place_of_the_id_is_kept() {
+    let body = json!({"items": [{"Id": 274}], "Id": 274});
+    assert_eq!(id_pointer(&body, "274"), Some("/Id".to_string()));
+}
+
+/// I4: a place is a guess when the value sits in several and no id-named key holds it.
+#[test]
+fn an_id_found_in_several_places_is_only_kept_where_an_id_key_holds_it() {
+    // `ok: 1` is shorter, but the key named like an id holds the id.
+    assert_eq!(id_pointer(&json!({"ok": 1, "data": {"id": 1}}), "1"), Some("/data/id".to_string()));
+    assert_eq!(id_pointer(&json!({"count": 1, "data": {"leaveTypeId": 1}}), "1"), Some("/data/leaveTypeId".to_string()));
+    assert_eq!(id_pointer(&json!({"count": 1, "row": {"leave_id": "1"}}), "1"), Some("/row/leave_id".to_string()));
+    // No id-named key, the value in two places: no pointer, rather than a guess.
+    assert_eq!(id_pointer(&json!({"ok": 1, "data": {"n": 1}}), "1"), None);
+    // One place only keeps it, whatever the key.
+    assert_eq!(id_pointer(&json!({"data": {"n": 7}}), "7"), Some("/data/n".to_string()));
+
+    // Through a verified create: the place is left out, so a setup is not built from it.
+    let (dir, session) = started();
+    let post = save("POST", "/hr/c", 2000, text(r#"{"ok":1,"data":{"n":1}}"#));
+    let rec = record_change(dir.path(), &session, created("leave type", "1", "AUTOTEST a"), None, &[&post], 1000).unwrap();
+    assert_eq!(rec.verified, Some(true));
+    assert_eq!(load(dir.path(), &session).unwrap().changes[0].proof, Some(SaveProof { saved_ms: 2000, id_at: None }));
+}
+
+#[test]
+fn a_text_answer_verifies_but_keeps_no_place() {
+    let (dir, session) = started();
+    let post = save("POST", "/hr/c", 2000, text("created 274"));
+    let rec = record_change(dir.path(), &session, created("leave type", "274", "AUTOTEST a"), None, &[&post], 1000).unwrap();
+    assert_eq!(rec.verified, Some(true));
+    let s = load(dir.path(), &session).unwrap();
+    assert_eq!(s.changes[0].proof, Some(SaveProof { saved_ms: 2000, id_at: None }));
+}
+
+#[test]
+fn an_unverified_create_keeps_no_proof() {
+    let (dir, session) = started();
+    let get = save("GET", "/hr/c", 2000, text(r#"{"Id":274}"#));
+    record_change(dir.path(), &session, created("leave type", "274", "AUTOTEST a"), None, &[&get], 1000).unwrap();
+    let s = load(dir.path(), &session).unwrap();
+    assert_eq!(s.changes[0].proof, None);
+}
+
+#[test]
+fn id_at_reads_a_string_or_a_number() {
+    assert_eq!(id_at(&json!({"a": {"b": " x7 "}}), "/a/b"), Some("x7".to_string()));
+    assert_eq!(id_at(&json!({"n": 12}), "/n"), Some("12".to_string()));
+    assert_eq!(id_at(&json!({"n": 12}), "/missing"), None);
+    assert_eq!(id_at(&json!({"o": {"k": 1}}), "/o"), None);
+}
+
+#[test]
+fn same_save_compares_as_the_change_list_does() {
+    assert!(same_save("POST /hr/c?x=1", "post /HR/c/"));
+    assert!(!same_save("POST /p?handler=Save", "POST /p?handler=Delete"));
 }

@@ -42,14 +42,14 @@
 <body>
 <main>
   <h1>Test Case Manager backlog</h1>
-  <p class="sub">Updated 27 October 2026, after 2.3.1-beta.18. All projects as one and several assistants are complete (through 2.3.1-beta.15); the faster suite lookup shipped in 2.3.1-beta.18. Next: saved setups (2.3.1-beta.19), then the final screenshot run, released as 2.4.0 (owner, 27 October 2026). What is left is below.</p>
+  <p class="sub">Updated 27 October 2026, after 2.3.1-beta.19. All projects as one and several assistants are complete (through 2.3.1-beta.15); the faster suite lookup shipped in 2.3.1-beta.18 and saved setups in 2.3.1-beta.19. Next: the final screenshot run, released as 2.4.0 (owner, 27 October 2026). What is left is below.</p>
 
   <h2>Agreed, not built yet</h2>
   <div class="item">
     <div class="head"><span class="title">Next builds</span><span class="status todo">Next</span></div>
     <ul>
       <li>Faster suite lookup: shipped in 2.3.1-beta.18. Hand checks owed on a live org before 2.4.0: Run Tests finds a real PBI's suite quickly (the suites-by-test-case answer has requirement suites and names their project), a PBI with requirement suites in two plans picks your area's plan, and "Reading a large plan (page N)" shows on plan 55291 when the full walk runs.</li>
-      <li>Saved setups: an assistant saves the browser steps that built a precondition under a name, with a database check (and a browser check) for a suitable test-prefixed record; asked for again later, it uses that record or builds a new one. For assistants only. Design approved by the owner on 27 October 2026 (docs/superpowers/specs/2026-10-23-saved-setups-design.md); the plan is being written (docs/superpowers/plans/2026-10-27-saved-setups.md).</li>
+      <li>Saved setups: shipped in 2.3.1-beta.19 (assistant tools get_kept_actions, save_setup, list_setups, run_setup; no UI). Hand checks owed on a live org before 2.4.0: save a setup that creates a leave type with a database find rule, run it twice (built, then found); run it with Database Read Access off and a browser find rule; undo a record a setup built with undo_explore_creates.</li>
       <li>The final screenshot run, after both. Owed shots: the Assistants card (new shot id), the header shots, every list screen's new toolbar, the Auto Run case list (its search moved out of Setup; drop "with the search at its top" from the alt text after the recapture), the end of the Setup panel (Save words and Protected records are gone), the Fixtures row in Setup, the Settings "Treat all projects as one" switch as a located control, and the UI round's shots. Two prepared patches are in .superpowers/sdd/ (final-shots-*.patch). The owner allows closing the installed app for it.</li>
       <li>From the Manage Cycle comparison, not in item 39 (yours to pick): expect_response cannot require a query parameter to be absent; absence checks have no run-time positive control; precondition records not tied to the case's names; components still wait for "Showing 1-1 of 1" rather than the search response; nothing flags nth where a label exists; script fixes for 141706, 142514, 141708, 141727.</li>
     </ul>

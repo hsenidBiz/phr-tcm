@@ -1015,6 +1015,78 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool, unlocked: bool, all_projec
             }), &[]),
         },
         {
+            "name": "get_kept_actions",
+            "description": "The actions of your explore session that worked, in order and numbered from 1, with the area the session started in and the values you typed (never a login or password), so you can save some of them as a setup with save_setup. Kept in memory for your latest explore session until you start another discovery, so it still answers after end_autorun_discovery. `cut` true means the oldest went past 200: their numbers are not reused.",
+            "inputSchema": schema(serde_json::json!({}), &[]),
+        },
+        {
+            "name": "save_setup",
+            "description": "Save kept actions from your explore session as a named setup that builds a precondition, so a later session can ask for it with run_setup. Give the range (`from`, `to` from get_kept_actions), which typed values become inputs, and a find rule that only looks for records named with the test name prefix. Record what the actions create with record_explore_change first: the setup learns each create's save from the change list. Every problem is named at once. A taken name is a change and needs `why`. With `remove` true and `name`, removes that setup.",
+            "inputSchema": schema(serde_json::json!({
+                "name": { "type": "string", "description": "The setup's name." },
+                "description": { "type": "string", "description": "What the setup builds." },
+                "from": { "type": "number", "description": "The first kept action of the range, from get_kept_actions." },
+                "to": { "type": "number", "description": "The last kept action of the range, from get_kept_actions." },
+                "area": { "type": "string", "description": "Optional: the area a run starts from. The session's own by default." },
+                "inputs": {
+                    "type": "array",
+                    "description": "The typed values that become inputs.",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "action": { "type": "number", "description": "The kept action that typed the value." },
+                            "name": { "type": "string", "description": "The input's name." },
+                            "description": { "type": "string", "description": "What the input is." },
+                            "unique": { "type": "boolean", "description": "True when each run needs a fresh value." },
+                            "names_the_record": { "type": "boolean", "description": "True when the value is the record's name." },
+                        },
+                        "required": ["action", "name", "description", "unique", "names_the_record"],
+                    },
+                },
+                "find": {
+                    "type": "object",
+                    "description": "The find rule: one or both of `database` and `browser`. It only looks for records named with the test name prefix.",
+                    "properties": {
+                        "database": {
+                            "type": "object",
+                            "description": "A SELECT that uses {prefix} outside quotes.",
+                            "properties": {
+                                "sql": { "type": "string", "description": "The SELECT statement." },
+                                "id_column": { "type": "string", "description": "The column holding the record's id." },
+                                "name_column": { "type": "string", "description": "The column holding the record's name." },
+                            },
+                            "required": ["sql", "id_column", "name_column"],
+                        },
+                        "browser": {
+                            "type": "array",
+                            "description": "Actions that end in a check using {prefix}.",
+                            "items": { "type": "object" },
+                        },
+                    },
+                },
+                "returns": {
+                    "type": "object",
+                    "description": "Optional: which create of the change list the setup hands back.",
+                    "properties": { "entry": { "type": "number", "description": "The number of the change list entry." } },
+                },
+                "why": { "type": "string", "description": "Why a taken name is changed." },
+                "remove": { "type": "boolean", "description": "True, with `name`, removes that setup." },
+            }), &["name"]),
+        },
+        {
+            "name": "list_setups",
+            "description": "This project's saved setups: each name, what it builds, its inputs, which find rules it has (database, browser) and when it last found or built a record. Look here before you build a precondition by hand.",
+            "inputSchema": schema(serde_json::json!({}), &[]),
+        },
+        {
+            "name": "run_setup",
+            "description": "Ask for a saved setup by name in your explore session. Its find rule runs first: when a test record that fits exists, it is handed back and nothing is built. Otherwise the setup's actions run in your browser with `values` (a unique input left out gets a fresh name with the test prefix), and the new record is handed back; every record it builds is on the change list, to be undone like any other. Needs an explore session started with start_autorun_discovery and explore true.",
+            "inputSchema": schema(serde_json::json!({
+                "name": { "type": "string", "description": "The setup's name." },
+                "values": { "type": "object", "description": "Optional: a value for each input, by the input's name." },
+            }), &["name"]),
+        },
+        {
             "name": "list_api_templates",
             "description": "The API templates saved for the current project, filtered and paged. Check here before building a template - the one you need may already exist; it is also the reference for real endpoints, paths and response fields when a script checks the API (never run from a script). When at most `limit` match and the answer stays under 40,000 characters, each comes in full (params, outputs, flow stage, whether it is proven on this site - prove an imported one before relying on it - and its newest run) with the project's flows and Test files; when more match, a compact index: narrow it with `module`, `search` or `flow`, or pass `id` for one template in full. With `id`, the other filters and the paging are ignored. While `paging.next_offset` is there, call again with `offset` set to it. With `kind: \"fixtures\"` it lists the saved fixtures instead: `id` for one in full, `full: true` for all. What each field means: get_guide (topic api_templates). Read-only; answers with the API templates switch off.",
             "inputSchema": schema(serde_json::json!({
@@ -2565,6 +2637,10 @@ fn tools_call_outcome(params: &serde_json::Value, call: BridgeCall) -> (serde_js
         "undo_explore_creates" => call("POST", "/api-template-explore-undo", &args.to_string()),
         "record_explore_change" => call("POST", "/autorun-explore-change", &args.to_string()),
         "get_explore_changes" => call("POST", "/autorun-explore-changes", &args.to_string()),
+        "get_kept_actions" => call("POST", "/autorun-kept-actions", &args.to_string()),
+        "save_setup" => call("POST", "/autorun-setup-save", &args.to_string()),
+        "list_setups" => call("POST", "/autorun-setups", &args.to_string()),
+        "run_setup" => call("POST", "/autorun-setup-run", &args.to_string()),
         // Both bridge routes read their fields out of the body, so
         // forwarding the raw arguments object is structurally unable to
         // drop one - the same pattern as `check_spec_coverage`.

@@ -152,6 +152,26 @@ export const MCP_TOOLS: McpToolInfo[] = [
     summary: "The assistant's explore sessions, newest first, or one session's change list and the saves it did not record.",
   },
   {
+    name: "get_kept_actions",
+    label: "Kept actions",
+    summary: "The actions of the assistant's explore session that worked, numbered, to save as a setup.",
+  },
+  {
+    name: "save_setup",
+    label: "Save a setup",
+    summary: "Save kept actions as a named setup that builds a test record, with a rule to find one that exists.",
+  },
+  {
+    name: "list_setups",
+    label: "Saved setups",
+    summary: "The project's saved setups: what each builds, its inputs and when it was last used.",
+  },
+  {
+    name: "run_setup",
+    label: "Run a setup",
+    summary: "Find a test record that fits, or build one in the explore session, on its change list.",
+  },
+  {
     name: "get_autorun_failures",
     label: "Auto Run failures",
     summary: "What failed in a run on this machine, and when the script must be left alone.",
@@ -356,6 +376,10 @@ export const AUTORUN_TOOLS = [
   "autorun_cookies",
   "record_explore_change",
   "get_explore_changes",
+  "get_kept_actions",
+  "save_setup",
+  "list_setups",
+  "run_setup",
 ] as const;
 
 /** The network tools: Auto Run's (in AUTORUN_TOOLS and its row), and

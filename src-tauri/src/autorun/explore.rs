@@ -39,6 +39,9 @@ pub struct ExploreRun {
     /// or after this, so the sign-in's own answer never counts. 0 until the
     /// change list is made.
     pub began_ms: u64,
+    /// A saved setup is running in this session: the actions it drives are
+    /// not kept (`autorun::kept`), as they are already a setup's.
+    pub setup_running: bool,
 }
 
 /// One explore session's change list, as its file holds it.
@@ -83,6 +86,29 @@ pub struct ChangeEntry {
     pub request: Option<String>,
     #[serde(default)]
     pub undone: bool,
+    /// For a verified create: when its save started and where its id sat in
+    /// the answer. Files written before this was kept read as `None`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub proof: Option<SaveProof>,
+}
+
+/// When a verified create's save started (the page's clock, milliseconds) and
+/// the JSON pointer to its id in the answer. Key names and indexes only; no
+/// value is kept here. `id_at` is `None` for an answer that is not JSON.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SaveProof {
+    pub saved_ms: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id_at: Option<String>,
+}
+
+/// What `create_proof` found: the save's request line, when it started and
+/// where its id sat.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CreateProof {
+    pub request: String,
+    pub saved_ms: u64,
+    pub id_at: Option<String>,
 }
 
 /// What a change was.
@@ -313,6 +339,75 @@ fn compared(line: &str) -> String {
     let path = if path.len() > 1 { path.trim_end_matches('/') } else { path.as_str() };
     let handler = handler_of(rest).map(|h| format!("?handler={h}")).unwrap_or_default();
     format!("{} {}{}", method.trim().to_ascii_lowercase(), path.to_ascii_lowercase(), handler.to_ascii_lowercase())
+}
+
+/// Whether two request lines are the same save, as the change list compares
+/// them: ignoring case, the query (but not its `handler`) and a trailing `/`.
+pub fn same_save(a: &str, b: &str) -> bool {
+    compared(a) == compared(b)
+}
+
+/// Whether an object key is named like an id: `id`, `...Id` or `..._id`, case
+/// ignored for the first and last.
+fn id_named(key: &str) -> bool {
+    let lower = key.to_ascii_lowercase();
+    lower == "id" || lower.ends_with("_id") || (key.len() > 2 && key.ends_with("Id"))
+}
+
+/// The RFC 6901 pointer to the value in `body` equal to `id` (a string
+/// compared trimmed, or a number as written). A key named like an id that
+/// holds it wins (the shortest such pointer, ties to document order). With
+/// no such key, a value found in one place only has that place; found in
+/// more than one, the place is a guess and there is no pointer.
+pub fn id_pointer(body: &Value, id: &str) -> Option<String> {
+    // Every place the value sits, in document order, with whether the key
+    // that holds it is named like an id.
+    fn walk(v: &Value, at: &str, key: Option<&str>, id: &str, hits: &mut Vec<(String, bool)>) {
+        let hit = match v {
+            Value::String(s) => s.trim() == id,
+            Value::Number(n) => n.to_string() == id,
+            _ => false,
+        };
+        if hit && !at.is_empty() {
+            hits.push((at.to_string(), key.is_some_and(id_named)));
+        }
+        match v {
+            Value::Object(m) => {
+                for (k, child) in m {
+                    walk(child, &format!("{at}/{}", k.replace('~', "~0").replace('/', "~1")), Some(k), id, hits);
+                }
+            }
+            Value::Array(a) => {
+                for (i, child) in a.iter().enumerate() {
+                    walk(child, &format!("{at}/{i}"), None, id, hits);
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut hits = Vec::new();
+    walk(body, "", None, id.trim(), &mut hits);
+    let mut best: Option<&String> = None;
+    for (at, _) in hits.iter().filter(|(_, named)| *named) {
+        if best.map_or(true, |b| at.len() < b.len()) {
+            best = Some(at);
+        }
+    }
+    match (best, hits.as_slice()) {
+        (Some(at), _) => Some(at.clone()),
+        (None, [(only, _)]) => Some(only.clone()),
+        _ => None,
+    }
+}
+
+/// The string (trimmed) or number at `pointer` in `body`, as text; anything
+/// else, or nothing there, is `None`.
+pub fn id_at(body: &Value, pointer: &str) -> Option<String> {
+    match body.pointer(pointer)? {
+        Value::String(s) => Some(s.trim().to_string()),
+        Value::Number(n) => Some(n.to_string()),
+        _ => None,
+    }
 }
 
 /// The saves the session's browser sent that no change's `request` accounts
@@ -561,6 +656,12 @@ fn changes_name(earlier: &[ChangeEntry], id: &str) -> bool {
 /// The sign-in is before `floor_ms`, so its answer never counts. Hands back
 /// the save's `request_line`.
 pub fn verify_create(captured: &[&Captured], floor_ms: u64, id: &str, earlier: &[ChangeEntry]) -> Option<String> {
+    create_proof(captured, floor_ms, id, earlier).map(|p| p.request)
+}
+
+/// `verify_create`'s rule, handing back more: the save's request line, when it
+/// started and where its id sat in an answer that is JSON (`id_pointer`).
+pub fn create_proof(captured: &[&Captured], floor_ms: u64, id: &str, earlier: &[ChangeEntry]) -> Option<CreateProof> {
     let id = id.trim();
     if id.is_empty() || changes_name(earlier, id) || cut_short(captured, floor_ms) {
         return None;
@@ -573,7 +674,14 @@ pub fn verify_create(captured: &[&Captured], floor_ms: u64, id: &str, earlier: &
             (Seen::No, Seen::Yes) => {
                 let made = ["POST", "PUT"].iter().any(|m| c.method.eq_ignore_ascii_case(m))
                     && c.status.is_some_and(|s| (200..300).contains(&s));
-                return made.then(|| request_line(&c.method, &c.url_path_query));
+                return made.then(|| CreateProof {
+                    request: request_line(&c.method, &c.url_path_query),
+                    saved_ms: c.started_ms,
+                    id_at: match &c.resp_body {
+                        Some(Body::Text(t)) => serde_json::from_str::<Value>(t).ok().and_then(|v| id_pointer(&v, id)),
+                        _ => None,
+                    },
+                });
             }
             // The id was already in what the request sent, or something
             // before the answer cannot be read: not proven new.
@@ -706,12 +814,18 @@ fn keep_made(root: &Path, s: &ExploreSession, kind: &str, id: &str, name: &str) 
 /// Adds `change` to the end of `s` and writes the file. A verified create
 /// goes on the test-made list first, so the list never says "verified" for
 /// something an undo cannot find.
-fn keep(root: &Path, s: &mut ExploreSession, change: Change, request: Option<String>) -> Result<u32, String> {
+fn keep(
+    root: &Path,
+    s: &mut ExploreSession,
+    change: Change,
+    request: Option<String>,
+    proof: Option<SaveProof>,
+) -> Result<u32, String> {
     if let Change::Created { kind, id, name, verified: true } = &change {
         keep_made(root, s, kind, id, name)?;
     }
     let n = u32::try_from(s.changes.len()).unwrap_or(u32::MAX).saturating_add(1);
-    s.changes.push(ChangeEntry { n, at: now(), change, request, undone: false });
+    s.changes.push(ChangeEntry { n, at: now(), change, request, undone: false, proof });
     write_for_change(root, s)?;
     Ok(n)
 }
@@ -737,11 +851,13 @@ pub fn record_change(
     let mut request = request_of(request.as_deref());
     let mut change = change;
     let (mut verified, mut note) = (None, None);
+    let mut proof = None;
     match &mut change {
-        Change::Created { id, verified: ok, .. } => match verify_create(captured, since_ms, id, &s.changes) {
-            Some(line) => {
+        Change::Created { id, verified: ok, .. } => match create_proof(captured, since_ms, id, &s.changes) {
+            Some(found) => {
                 *ok = true;
-                request = Some(line);
+                request = Some(found.request);
+                proof = Some(SaveProof { saved_ms: found.saved_ms, id_at: found.id_at });
                 verified = Some(true);
             }
             None => {
@@ -765,7 +881,7 @@ pub fn record_change(
             note = Some(DELETED_STAYS);
         }
     }
-    let n = keep(root, &mut s, change, request)?;
+    let n = keep(root, &mut s, change, request, proof)?;
     Ok(Recorded { n, verified, note: note.map(str::to_string) })
 }
 
@@ -792,7 +908,7 @@ pub(crate) fn record_send_create(
     let _held = lock();
     let mut s = read_for_change(root, session)?;
     let verified = is_new(&id, &s.changes);
-    let n = keep(root, &mut s, Change::Created { kind, id, name, verified }, request_of(Some(request)))?;
+    let n = keep(root, &mut s, Change::Created { kind, id, name, verified }, request_of(Some(request)), None)?;
     Ok((n, verified))
 }
 

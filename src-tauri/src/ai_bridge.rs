@@ -568,6 +568,11 @@ pub async fn route_as(
             // keep the extra browser it reserved.
             crate::commands::autorun_slots::free_extra_if_unused(slot, holder, answer.0);
             let answer = with_overrides_seen(with_no_save_note(answer, discovery_no_save(slot)), seen, slot);
+            // A discovery that started drops this assistant's previous kept
+            // actions; an explore session begins its own list.
+            if answer.0 == 200 {
+                kept_started(slot, caller).await;
+            }
             // A mapping run records areas and writes no check: no rules.
             let mapping = serde_json::from_str::<serde_json::Value>(body)
                 .map(|v| v["mapping"].as_bool() == Some(true) || v["mapping"].as_str().map(|s| s.trim().eq_ignore_ascii_case("true")) == Some(true))
@@ -610,6 +615,69 @@ pub async fn route_as(
                 }
                 (None, Err(refused)) => refused,
             }
+        }
+        // The actions this assistant's explore session kept, in memory only.
+        ("POST", "/autorun-kept-actions") => match autorun_root() {
+            Ok(root) => kept_actions_for(&root, &crate::autorun::kept::owner_of(caller)),
+            Err(refused) => refused,
+        },
+        // The project's saved setups, read from the setups file.
+        ("POST", "/autorun-setups") => match autorun_root() {
+            Ok(root) => setups_list_for(&root, &ctx.org, &ctx.project),
+            Err(refused) => refused,
+        },
+        // Save a range of the kept actions as a named setup. Files and
+        // memory on this machine; the database rule is one SELECT.
+        ("POST", "/autorun-setup-save") => match autorun_root() {
+            Ok(root) => {
+                let owner = crate::autorun::kept::owner_of(caller);
+                let now = crate::autorun::sessions::now_ms();
+                let reading = crate::modules::current().contains(&crate::modules::Module::DbAccess);
+                match reading.then(|| db_ready(ctx)).and_then(Result::ok) {
+                    Some((conn, exe)) => {
+                        let rows = crate::autorun::setup_find::SqlcmdRows { runner: crate::db::RealRunner, exe, conn };
+                        setup_save_for(&root, &ctx.org, &ctx.project, &owner, body, Some(&rows), now).await
+                    }
+                    None => {
+                        setup_save_for::<crate::autorun::setup_find::SqlcmdRows<crate::db::RealRunner>>(
+                            &root, &ctx.org, &ctx.project, &owner, body, None, now,
+                        )
+                        .await
+                    }
+                }
+            }
+            Err(refused) => refused,
+        },
+        // Run a saved setup in the going explore session: it finds a test
+        // record or builds one in the caller's own browser, and the build
+        // goes on the change list. The database rule is one SELECT.
+        ("POST", "/autorun-setup-run") => {
+            let answer = match (unattended_run_is_using_the_browser(), autorun_root()) {
+                (Some(busy), _) => busy,
+                (None, Err(refused)) => refused,
+                (None, Ok(root)) => {
+                    let now = crate::autorun::sessions::now_ms();
+                    let timing = crate::browser::timing::Timing::supervised();
+                    let reading = crate::modules::current().contains(&crate::modules::Module::DbAccess);
+                    let mut held = crate::commands::autorun::session_slot(slot).lock().await;
+                    match reading.then(|| db_ready(ctx)).and_then(Result::ok) {
+                        Some((conn, exe)) => {
+                            let rows = crate::autorun::setup_find::SqlcmdRows { runner: crate::db::RealRunner, exe, conn };
+                            crate::autorun::setup_run::run_setup_in(
+                                &mut held, &root, &ctx.org, &ctx.project, body, Some(&rows), &timing, now,
+                            )
+                            .await
+                        }
+                        None => {
+                            crate::autorun::setup_run::run_setup_in::<_, crate::autorun::setup_find::SqlcmdRows<crate::db::RealRunner>>(
+                                &mut held, &root, &ctx.org, &ctx.project, body, None, &timing, now,
+                            )
+                            .await
+                        }
+                    }
+                }
+            };
+            crate::autorun::roles::with_rules(answer, crate::autorun::roles::RULES_EXPLORE)
         }
         ("POST", "/autorun-explore-changes") => match autorun_root() {
             Ok(root) => explore_changes(&root, &ctx.org, &ctx.project, body),
@@ -4419,7 +4487,7 @@ pub fn describe_action(action: &crate::browser::actions::Action) -> String {
 
 /// What no action an assistant runs may be: one read from its body by
 /// `/autorun-try` or `/autorun-discover-action`.
-fn refuse_as_a_tried_action(action: &crate::browser::actions::Action) -> Result<(), (u16, String)> {
+pub(crate) fn refuse_as_a_tried_action(action: &crate::browser::actions::Action) -> Result<(), (u16, String)> {
     // Signing in needs the tester's own accounts and the project's
     // recipe. It is theirs to drive, and a script never carries a login.
     if matches!(action, crate::browser::actions::Action::SignIn { .. }) {
@@ -4822,7 +4890,7 @@ async fn lift_a_calls_guard<D: crate::browser::cdp::Driver>(
 /// (`nav::load_home`, which keeps the cookies and waits for the signed-in
 /// marker), so the replay's page is never filed under the discovery's area.
 /// False when it did not arrive: the discovery then signs in.
-async fn went_home<D: crate::browser::cdp::Driver>(
+pub(crate) async fn went_home<D: crate::browser::cdp::Driver>(
     d: &mut D,
     root: &std::path::Path,
     organization: &str,
@@ -5462,7 +5530,9 @@ async fn discover_action_heard<B: DiscoveryBrowser>(
     let exploring = state.explore.is_some();
     heard.explore = exploring;
     let explore_session = state.explore_session().map(str::to_string);
+    let setup_running = state.explore.as_ref().is_some_and(|e| e.setup_running);
     let mapping = state.mapping.is_some();
+    let began_ms = crate::autorun::sessions::now_ms();
     // Once a discovery must not save, it stays so (`DiscoveryState::no_save`).
     // A call that said `no_save` itself is guarded too, for that call only
     // (`end_call_guard` lifts it): it never makes the discovery one.
@@ -5584,6 +5654,27 @@ async fn discover_action_heard<B: DiscoveryBrowser>(
     }
     if let Some(shot) = &outcome.screenshot {
         answer["picture"] = serde_json::json!(crate::autorun::store::shot_path(root, shot).display().to_string());
+    }
+    // An explore session keeps an action that worked for the assistant that
+    // ran it (`autorun::kept`), unless a setup is driving it, a save it sent
+    // was stopped, or it typed a login. A keep never fails the action.
+    if let (Some(session), true) = (explore_session.as_deref(), outcome.ok && !setup_running && !mapping && blocked.unwrap_or(0) == 0) {
+        let steps: Option<Vec<crate::browser::actions::Action>> = component.as_ref().map(|(_, actions)| actions.clone());
+        let credential = match crate::autorun::accounts::load_accounts(root) {
+            Ok(accounts) => crate::autorun::kept::types_a_credential(action, steps.as_deref(), &accounts),
+            Err(_) => true,
+        };
+        if !credential {
+            crate::autorun::kept::keep(
+                root,
+                session,
+                action,
+                steps,
+                area_name.as_deref(),
+                began_ms,
+                crate::autorun::sessions::now_ms(),
+            );
+        }
     }
     // An explore session keeps the saves the call reported, by method and
     // path, so its end can name the ones no change names. A change list
@@ -6481,6 +6572,167 @@ pub fn record_change_in<B: DiscoveryBrowser>(
         Ok(recorded) => (200, serde_json::to_string(&recorded).unwrap_or_default()),
         Err(why) => explore_refusal(why),
     }
+}
+
+/// `get_kept_actions`: the actions the owner's explore session kept, or why
+/// there are none.
+pub fn kept_actions_for(root: &std::path::Path, owner: &str) -> (u16, String) {
+    match crate::autorun::kept::last_of(root, owner) {
+        Ok(list) => (200, crate::autorun::kept::kept_answer(&list).to_string()),
+        Err(why) => (409, why),
+    }
+}
+
+/// `list_setups`: this project's saved setups, without actions, SQL or values.
+pub fn setups_list_for(root: &std::path::Path, org: &str, project: &str) -> (u16, String) {
+    match crate::autorun::setups::load_setups(root, org, project) {
+        Ok(f) => (200, crate::autorun::setups::list_answer(&f).to_string()),
+        Err(why) => (409, why),
+    }
+}
+
+/// `save_setup`: a range of the owner's kept actions saved as a named setup
+/// with a find rule. Everything is checked against files and memory on this
+/// machine; the one thing that runs is the database find rule, once, as a
+/// SELECT, when `rows` is given (Database Read Access is on). A body that is
+/// not a save ask is 400 in serde's words.
+pub async fn setup_save_for<S: crate::autorun::setup_find::RowSource>(
+    root: &std::path::Path,
+    org: &str,
+    project: &str,
+    owner: &str,
+    body: &str,
+    rows: Option<&S>,
+    now: u64,
+) -> (u16, String) {
+    use crate::autorun::{explore as ex, kept, nav, seen_check, setup_find, setups};
+    let asked: setups::SaveAsked = match serde_json::from_str(body) {
+        Ok(a) => a,
+        Err(e) => return (400, e.to_string()),
+    };
+    // A removal needs no explore session and no reason.
+    if asked.remove {
+        return match setups::remove(root, org, project, &asked.name) {
+            Ok(name) => {
+                crate::applog::info(format!("Auto Run setup {name}: removed"));
+                (200, serde_json::json!({ "removed": name }).to_string())
+            }
+            Err(why) if why == setups::no_such_setup(&asked.name) => (404, why),
+            Err(why) => (409, why),
+        };
+    }
+    let list = match kept::last_of(root, owner) {
+        Ok(l) => l,
+        Err(why) => return (409, why),
+    };
+    let session = match ex::load(root, &list.session) {
+        Ok(s) => s,
+        Err(why) if ex::is_unknown_session(&why) => return (404, why),
+        Err(why) => {
+            crate::applog::warn(format!("Auto Run explore session: {why}"));
+            return (409, ex::CHANGES_UNREADABLE.to_string());
+        }
+    };
+    let prefix = crate::environments::active(root)
+        .map(|e| e.test_prefix)
+        .unwrap_or_else(|_| crate::environments::default_test_prefix());
+    let recipe = match crate::autorun::recipe::load_effective_recipe(root, org, project) {
+        Ok(r) => r,
+        Err(why) => return (409, why),
+    };
+    let policy = crate::autorun::runner::policy_for(Some(&recipe));
+    let allowed = |url: &str| policy.allows(url);
+    // The map and the areas are read only when the ask needs them.
+    let seen = |area: Option<&str>, actions: &[crate::browser::actions::Action]| {
+        let map = seen_check::load_checked_map(root, org, project)?;
+        seen_check::check_component_seen(&map, area, actions)
+    };
+    let area_known = |area: &str| nav::load_nav(root, org, project).is_ok_and(|n| nav::find_area(&n, area).is_some());
+    let accounts = match crate::autorun::accounts::load_accounts(root) {
+        Ok(a) => a,
+        Err(_) => return (409, "The saved accounts could not be read, so nothing was saved.".to_string()),
+    };
+    let built = {
+        let from = setups::SaveFrom {
+            accounts: &accounts,
+            kept: &list,
+            session: &session,
+            prefix: &prefix,
+            allowed: &allowed,
+            seen: &seen,
+            area_known: &area_known,
+            now,
+        };
+        match setups::build_setup(&asked, &from) {
+            Ok(b) => b,
+            Err(problems) => return (400, problems.join(" ")),
+        }
+    };
+    let database_checked = match &built.setup.find.database {
+        None => None,
+        Some(db) => Some(match rows {
+            None => "not run: Database Read Access is off",
+            Some(rows) => match setup_find::find_in_database(rows, db, &prefix).await {
+                setup_find::DbOutcome::Found(_) => "found",
+                setup_find::DbOutcome::NotFound => "not found",
+                setup_find::DbOutcome::CouldNotRun(why) => {
+                    return (400, format!("The database find rule did not run: {why}"))
+                }
+            },
+        }),
+    };
+    let setup = built.setup.clone();
+    let (replaced, cut) = (built.replaced.clone(), built.cut);
+    let saved = match setups::save(root, org, project, built, asked.why.as_deref()) {
+        Ok(s) => s,
+        Err(why) => return (409, why),
+    };
+    crate::applog::info(format!("Auto Run setup {}: saved, version {}", saved.saved, saved.version));
+    let mut answer = serde_json::json!({
+        "saved": saved.saved,
+        "version": saved.version,
+        "changes": saved.changes,
+        "actions": setup.actions.len(),
+        "area": setup.area,
+        "inputs": setup.inputs.iter().map(|i| i.name.clone()).collect::<Vec<_>>(),
+        "replaced": replaced,
+        "creates": setup
+            .creates
+            .iter()
+            .map(|c| serde_json::json!({ "kind": c.kind, "request": c.request }))
+            .collect::<Vec<_>>(),
+        "returns": setup.creates.get(setup.returns).map(|c| c.kind.clone()),
+        "cut": cut,
+    });
+    if let (Some(checked), Some(map)) = (database_checked, answer.as_object_mut()) {
+        map.insert("database_checked".to_string(), serde_json::Value::String(checked.to_string()));
+    }
+    (200, answer.to_string())
+}
+
+/// A discovery started in `slot` for `caller`: its previous kept actions are
+/// dropped, and an explore session with a change list gets a list of its own.
+async fn kept_started(slot: SlotNo, caller: &crate::autorun::agents::Caller) {
+    let Ok(root) = autorun_root() else {
+        return;
+    };
+    let mut held = crate::commands::autorun::session_slot(slot).lock().await;
+    kept_started_in(&root, &mut held, caller);
+}
+
+/// `kept_started` over the browser in `held`: the discovery it holds decides
+/// whether `caller` gets a kept list (an explore session with a change list)
+/// or none.
+pub fn kept_started_in<B: DiscoveryBrowser>(
+    root: &std::path::Path,
+    held: &mut Option<B>,
+    caller: &crate::autorun::agents::Caller,
+) {
+    let (session, area) = held
+        .as_mut()
+        .and_then(|b| b.parts().discovery.as_ref().map(|s| (s.explore_session().map(str::to_string), s.area.clone())))
+        .unwrap_or((None, None));
+    crate::autorun::kept::started(root, &crate::autorun::kept::owner_of(caller), session.as_deref(), area.as_deref());
 }
 
 /// `/autorun-explore-changes`: `{}` lists this project's explore sessions,
@@ -8356,7 +8608,7 @@ fn autorun_component_retire(ctx: &BridgeContext, body: &str) -> (u16, String) {
 /// A discovery's `navigate` or `open_tab` to a site outside `policy`'s,
 /// refused. A relative address names no site: the runner makes it absolute
 /// on the page and holds it to the same list.
-fn refuse_outside_the_recipe(
+pub(crate) fn refuse_outside_the_recipe(
     policy: &crate::browser::actions::Policy,
     action: &crate::browser::actions::Action,
 ) -> Result<(), (u16, String)> {
