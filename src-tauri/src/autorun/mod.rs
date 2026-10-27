@@ -63,6 +63,7 @@ pub mod seen_match;
 pub mod sessions;
 pub mod setup;
 pub mod setup_find;
+pub mod setups;
 pub mod signin;
 pub mod signin_recorder;
 pub mod slots;

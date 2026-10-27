@@ -621,6 +621,28 @@ pub async fn route_as(
             Ok(root) => kept_actions_for(&root, &crate::autorun::kept::owner_of(caller)),
             Err(refused) => refused,
         },
+        // Save a range of the kept actions as a named setup. Files and
+        // memory on this machine; the database rule is one SELECT.
+        ("POST", "/autorun-setup-save") => match autorun_root() {
+            Ok(root) => {
+                let owner = crate::autorun::kept::owner_of(caller);
+                let now = crate::autorun::sessions::now_ms();
+                let reading = crate::modules::current().contains(&crate::modules::Module::DbAccess);
+                match reading.then(|| db_ready(ctx)).and_then(Result::ok) {
+                    Some((conn, exe)) => {
+                        let rows = crate::autorun::setup_find::SqlcmdRows { runner: crate::db::RealRunner, exe, conn };
+                        setup_save_for(&root, &ctx.org, &ctx.project, &owner, body, Some(&rows), now).await
+                    }
+                    None => {
+                        setup_save_for::<crate::autorun::setup_find::SqlcmdRows<crate::db::RealRunner>>(
+                            &root, &ctx.org, &ctx.project, &owner, body, None, now,
+                        )
+                        .await
+                    }
+                }
+            }
+            Err(refused) => refused,
+        },
         ("POST", "/autorun-explore-changes") => match autorun_root() {
             Ok(root) => explore_changes(&root, &ctx.org, &ctx.project, body),
             Err(refused) => refused,
@@ -6523,6 +6545,109 @@ pub fn kept_actions_for(root: &std::path::Path, owner: &str) -> (u16, String) {
         Ok(list) => (200, crate::autorun::kept::kept_answer(&list).to_string()),
         Err(why) => (409, why),
     }
+}
+
+/// `save_setup`: a range of the owner's kept actions saved as a named setup
+/// with a find rule. Everything is checked against files and memory on this
+/// machine; the one thing that runs is the database find rule, once, as a
+/// SELECT, when `rows` is given (Database Read Access is on). A body that is
+/// not a save ask is 400 in serde's words.
+pub async fn setup_save_for<S: crate::autorun::setup_find::RowSource>(
+    root: &std::path::Path,
+    org: &str,
+    project: &str,
+    owner: &str,
+    body: &str,
+    rows: Option<&S>,
+    now: u64,
+) -> (u16, String) {
+    use crate::autorun::{explore as ex, kept, nav, seen_check, setup_find, setups};
+    let asked: setups::SaveAsked = match serde_json::from_str(body) {
+        Ok(a) => a,
+        Err(e) => return (400, e.to_string()),
+    };
+    let list = match kept::last_of(root, owner) {
+        Ok(l) => l,
+        Err(why) => return (409, why),
+    };
+    let session = match ex::load(root, &list.session) {
+        Ok(s) => s,
+        Err(why) if ex::is_unknown_session(&why) => return (404, why),
+        Err(why) => {
+            crate::applog::warn(format!("Auto Run explore session: {why}"));
+            return (409, ex::CHANGES_UNREADABLE.to_string());
+        }
+    };
+    let prefix = crate::environments::active(root)
+        .map(|e| e.test_prefix)
+        .unwrap_or_else(|_| crate::environments::default_test_prefix());
+    let recipe = match crate::autorun::recipe::load_effective_recipe(root, org, project) {
+        Ok(r) => r,
+        Err(why) => return (409, why),
+    };
+    let policy = crate::autorun::runner::policy_for(Some(&recipe));
+    let allowed = |url: &str| policy.allows(url);
+    // The map and the areas are read only when the ask needs them.
+    let seen = |area: Option<&str>, actions: &[crate::browser::actions::Action]| {
+        let map = seen_check::load_checked_map(root, org, project)?;
+        seen_check::check_component_seen(&map, area, actions)
+    };
+    let area_known = |area: &str| nav::load_nav(root, org, project).is_ok_and(|n| nav::find_area(&n, area).is_some());
+    let built = {
+        let from = setups::SaveFrom {
+            kept: &list,
+            session: &session,
+            prefix: &prefix,
+            allowed: &allowed,
+            seen: &seen,
+            area_known: &area_known,
+            now,
+        };
+        match setups::build_setup(&asked, &from) {
+            Ok(b) => b,
+            Err(problems) => return (400, problems.join(" ")),
+        }
+    };
+    let database_checked = match &built.setup.find.database {
+        None => None,
+        Some(db) => Some(match rows {
+            None => "not run: Database Read Access is off",
+            Some(rows) => match setup_find::find_in_database(rows, db, &prefix).await {
+                setup_find::DbOutcome::Found(_) => "found",
+                setup_find::DbOutcome::NotFound => "not found",
+                setup_find::DbOutcome::CouldNotRun(why) => {
+                    return (400, format!("The database find rule did not run: {why}"))
+                }
+            },
+        }),
+    };
+    let setup = built.setup.clone();
+    let (replaced, cut) = (built.replaced.clone(), built.cut);
+    let saved = match setups::save(root, org, project, built, asked.why.as_deref()) {
+        Ok(s) => s,
+        Err(why) => return (409, why),
+    };
+    crate::applog::info(format!("Auto Run setup {}: saved, version {}", saved.saved, saved.version));
+    let mut answer = serde_json::json!({
+        "saved": saved.saved,
+        "version": saved.version,
+        "changes": saved.changes,
+        "actions": setup.actions.len(),
+        "area": setup.area,
+        "inputs": setup.inputs.iter().map(|i| i.name.clone()).collect::<Vec<_>>(),
+        "replaced": replaced,
+        "creates": setup
+            .creates
+            .iter()
+            .map(|c| serde_json::json!({ "kind": c.kind, "request": c.request }))
+            .collect::<Vec<_>>(),
+        "returns": setup.creates.get(setup.returns).map(|c| c.kind.clone()),
+        "cut": cut,
+    });
+    if let (Some(checked), Some(map)) = (database_checked, answer.as_object_mut()) {
+        map.insert("database_checked".to_string(), serde_json::Value::String(checked.to_string()));
+    }
+    (200, answer.to_string())
 }
 
 /// A discovery started in `slot` for `caller`: its previous kept actions are
