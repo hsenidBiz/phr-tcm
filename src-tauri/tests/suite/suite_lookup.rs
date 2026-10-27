@@ -336,8 +336,8 @@ async fn run_tests_joins_the_background_finder_already_walking() {
     let heard = std::sync::Mutex::new(vec![]);
     let (finder, ensured) = tokio::join!(
         client.find_pbi_requirement_suite("org", "proj", 42, "Proj\\Auth"),
-        client.ensure_requirement_suite_cb("org", "proj", 42, "Proj\\Auth", "", |d, t| {
-            heard.lock().unwrap().push((d, t));
+        client.ensure_requirement_suite_cb("org", "proj", 42, "Proj\\Auth", "", |p| {
+            heard.lock().unwrap().push((p.done, p.total));
         }),
     );
     assert_eq!(finder.unwrap().unwrap().suite_id, 91);
@@ -403,12 +403,143 @@ async fn the_plans_tree_is_read_once_for_screens_asking_together() {
 
     let (first, second) = (std::sync::Mutex::new(vec![]), std::sync::Mutex::new(vec![]));
     let (a, b) = tokio::join!(
-        client.list_plans_with_suites_cb("org", "proj", |d, t| first.lock().unwrap().push((d, t))),
-        client.list_plans_with_suites_cb("org", "proj", |d, t| second.lock().unwrap().push((d, t))),
+        client.list_plans_with_suites_cb("org", "proj", |p| first.lock().unwrap().push((p.done, p.total))),
+        client.list_plans_with_suites_cb("org", "proj", |p| second.lock().unwrap().push((p.done, p.total))),
     );
     assert_eq!(a.unwrap().len(), 1);
     assert_eq!(b.unwrap().len(), 1);
     assert_eq!(plan_list_calls(&server).await, 1);
     assert_eq!(first.lock().unwrap().last(), Some(&(1, 1)));
     assert_eq!(second.lock().unwrap().last(), Some(&(1, 1)), "both saw the one walk's progress");
+}
+
+// ---- each screen hears its own walk, and a long plan says so ----
+
+#[test]
+fn a_scan_event_says_which_walk_it_belongs_to() {
+    use v2_lib::ado::single_flight::ScanProgress;
+    use v2_lib::events::{ScanKind, SuiteScanProgress};
+
+    let p = ScanProgress { done: 3, total: 9, pages: Some(4) };
+    assert_eq!(
+        serde_json::to_value(SuiteScanProgress::of(ScanKind::Plans, p)).unwrap(),
+        serde_json::json!({"done": 3, "total": 9, "pages": 4, "kind": "plans"}),
+    );
+    assert_eq!(
+        serde_json::to_value(SuiteScanProgress::of(ScanKind::Suite, ScanProgress::plans(1, 2))).unwrap(),
+        serde_json::json!({"done": 1, "total": 2, "pages": null, "kind": "suite"}),
+    );
+}
+
+const PAGE_DELAY: std::time::Duration = std::time::Duration::from_millis(150);
+
+/// Plans 7 and 8. Plan `paged` answers its suite list in `pages` pages
+/// (each after `PAGE_DELAY`); the other answers one page after
+/// `other_delay`.
+async fn two_plans_one_paged(server: &MockServer, paged: i32, pages: usize, other_delay: std::time::Duration) {
+    Mock::given(method("GET"))
+        .and(path("/org/proj/_apis/testplan/plans"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "value": [
+                {"id": 7, "name": "Plan 7", "areaPath": "Proj\\Auth", "rootSuite": {"id": 1}},
+                {"id": 8, "name": "Plan 8", "areaPath": "Proj\\Auth", "rootSuite": {"id": 1}},
+            ]
+        })))
+        .mount(server)
+        .await;
+    let other = if paged == 7 { 8 } else { 7 };
+    Mock::given(method("GET"))
+        .and(path(format!("/org/proj/_apis/testplan/Plans/{other}/suites")))
+        .respond_with(
+            ResponseTemplate::new(200).set_delay(other_delay).set_body_json(serde_json::json!({
+                "value": [{"id": other * 10, "name": "Folder", "suiteType": "staticTestSuite", "parentSuite": {"id": 1}}]
+            })),
+        )
+        .mount(server)
+        .await;
+    let page_path = format!("/org/proj/_apis/testplan/Plans/{paged}/suites");
+    // Later pages first: the first mock that matches answers.
+    for n in (2..=pages).rev() {
+        let mut r = ResponseTemplate::new(200).set_delay(PAGE_DELAY).set_body_json(serde_json::json!({
+            "value": [{"id": paged * 10 + n as i32, "name": "Folder", "suiteType": "staticTestSuite", "parentSuite": {"id": 1}}]
+        }));
+        if n < pages {
+            r = r.insert_header("x-ms-continuationtoken", format!("t{}", n + 1).as_str());
+        }
+        Mock::given(method("GET"))
+            .and(path(page_path.clone()))
+            .and(query_param("continuationToken", format!("t{n}")))
+            .respond_with(r)
+            .mount(server)
+            .await;
+    }
+    Mock::given(method("GET"))
+        .and(path(page_path))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_delay(PAGE_DELAY)
+                .insert_header("x-ms-continuationtoken", "t2")
+                .set_body_json(serde_json::json!({
+                    "value": [{"id": paged * 10 + 1, "name": "Folder", "suiteType": "staticTestSuite", "parentSuite": {"id": 1}}]
+                })),
+        )
+        .mount(server)
+        .await;
+}
+
+#[tokio::test]
+async fn the_plans_walk_reports_the_pages_of_the_one_plan_it_waits_on() {
+    let server = MockServer::start().await;
+    two_plans_one_paged(&server, 8, 3, std::time::Duration::ZERO).await;
+    let client = AdoClient::with_base_urls("tok".into(), server.uri(), server.uri());
+
+    let heard = std::sync::Mutex::new(vec![]);
+    let tree = client
+        .list_plans_with_suites_cb("org", "proj", |p| heard.lock().unwrap().push(p))
+        .await
+        .unwrap();
+    assert_eq!(tree.len(), 2);
+    let heard = heard.lock().unwrap();
+    let pages: Vec<u32> = heard.iter().filter_map(|p| p.pages).collect();
+    assert_eq!(pages, vec![1, 2], "page 1 and 2 had a next page; the last page ends the plan");
+    assert!(
+        heard.iter().filter(|p| p.pages.is_some()).all(|p| (p.done, p.total) == (1, 2)),
+        "reported only once every other plan had finished: {heard:?}"
+    );
+}
+
+#[tokio::test]
+async fn pages_are_not_reported_while_other_plans_are_still_being_read() {
+    let server = MockServer::start().await;
+    // Plan 7 pages three times, but plan 8 is slower still: the walk is
+    // waiting on plan 8, which has no pages to report.
+    two_plans_one_paged(&server, 7, 3, std::time::Duration::from_millis(900)).await;
+    let client = AdoClient::with_base_urls("tok".into(), server.uri(), server.uri());
+
+    let heard = std::sync::Mutex::new(vec![]);
+    client
+        .list_plans_with_suites_cb("org", "proj", |p| heard.lock().unwrap().push(p))
+        .await
+        .unwrap();
+    let heard = heard.lock().unwrap();
+    assert!(heard.iter().all(|p| p.pages.is_none()), "{heard:?}");
+    assert_eq!(heard.last().map(|p| (p.done, p.total)), Some((2, 2)));
+}
+
+#[tokio::test]
+async fn the_suite_search_reports_the_pages_of_a_large_plan_too() {
+    let server = MockServer::start().await;
+    mount_pbi_without_cases(&server, 42).await;
+    two_plans_one_paged(&server, 8, 3, std::time::Duration::ZERO).await;
+    let client = AdoClient::with_base_urls("tok".into(), server.uri(), server.uri());
+
+    let heard = std::sync::Mutex::new(vec![]);
+    let found = client
+        .find_pbi_requirement_suite_cb("org", "proj", 42, "Proj\\Auth", |p| heard.lock().unwrap().push(p))
+        .await
+        .unwrap();
+    assert!(found.is_none());
+    let pages: Vec<u32> = heard.lock().unwrap().iter().filter_map(|p| p.pages).collect();
+    assert_eq!(pages, vec![1, 2]);
+    assert_eq!(heard.lock().unwrap().last().map(|p| (p.done, p.total)), Some((2, 2)));
 }

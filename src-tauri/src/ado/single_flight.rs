@@ -18,13 +18,26 @@ use std::sync::Mutex;
 use futures::future::{BoxFuture, FutureExt, Shared};
 use tokio::sync::watch;
 
-/// (done, total) of the walk, as its progress callback reports it.
-pub type Progress = (u32, u32);
+/// Where a walk is, as its progress callback reports it: plans read of
+/// plans to read, and, when the walk is waiting on one large plan alone,
+/// how many pages of that plan's suite list it has read so far.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ScanProgress {
+    pub done: u32,
+    pub total: u32,
+    pub pages: Option<u32>,
+}
+
+impl ScanProgress {
+    pub fn plans(done: u32, total: u32) -> Self {
+        Self { done, total, pages: None }
+    }
+}
 
 struct Flight<T: Clone> {
     key: String,
     result: Shared<BoxFuture<'static, T>>,
-    progress: watch::Receiver<Progress>,
+    progress: watch::Receiver<ScanProgress>,
 }
 
 /// The running work of one kind, keyed by what it is for. Held in a
@@ -43,13 +56,13 @@ impl<T: Clone + Send + Sync + 'static> Flights<T> {
     /// for `key` is running, otherwise the running work's. `also_join`
     /// names a second key whose running work answers this ask too (checked
     /// first); it never starts work under that key. `make` gets the sender
-    /// the work reports (done, total) on; every asker's `progress` hears it.
+    /// the work reports its progress on; every asker's `progress` hears it.
     pub async fn run<Fut>(
         &'static self,
         key: &str,
         also_join: Option<&str>,
-        make: impl FnOnce(watch::Sender<Progress>) -> Fut,
-        mut progress: impl FnMut(u32, u32),
+        make: impl FnOnce(watch::Sender<ScanProgress>) -> Fut,
+        mut progress: impl FnMut(ScanProgress),
     ) -> T
     where
         Fut: Future<Output = T> + Send + 'static,
@@ -63,7 +76,7 @@ impl<T: Clone + Send + Sync + 'static> Flights<T> {
             match running {
                 Some(f) => (f.result.clone(), f.progress.clone()),
                 None => {
-                    let (tx, rx) = watch::channel((0, 0));
+                    let (tx, rx) = watch::channel(ScanProgress::default());
                     let work = make(tx);
                     let owned = key.to_string();
                     let result = async move {
@@ -81,22 +94,22 @@ impl<T: Clone + Send + Sync + 'static> Flights<T> {
 
         // An asker that joins late still hears where the walk is.
         let mut told = *heard.borrow_and_update();
-        if told.1 > 0 {
-            progress(told.0, told.1);
+        if told.total > 0 {
+            progress(told);
         }
         loop {
             tokio::select! {
                 out = &mut result => {
                     // The last report can land with the result itself.
                     let last = *heard.borrow();
-                    if last != told && last.1 > 0 {
-                        progress(last.0, last.1);
+                    if last != told && last.total > 0 {
+                        progress(last);
                     }
                     return out;
                 }
                 Ok(()) = heard.changed() => {
                     told = *heard.borrow_and_update();
-                    progress(told.0, told.1);
+                    progress(told);
                 }
             }
         }

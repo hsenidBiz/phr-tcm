@@ -1,6 +1,6 @@
 import { mockIPC, clearMocks } from "@tauri-apps/api/mocks";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import type { ComponentProps } from "react";
 import { afterEach, expect, test, vi } from "vitest";
 import Suites, { pointsIndent } from "./Suites";
@@ -960,4 +960,38 @@ test("switched off Manage names the picked project", async () => {
   fireEvent.click(screen.getByRole("button", { name: "More actions for Login checks" }));
   fireEvent.click(screen.getByRole("menuitem", { name: "Manage" }));
   expect(managed).toEqual([[9, 91, "Web"]]);
+});
+
+/// Two screens hear one scan event; each shows only its own walk. This
+/// screen's wait is the read of every plan ("plans"), never Run Tests'
+/// search for one PBI's suite ("suite").
+test("the scan bar follows the plans walk only, and says so when one large plan is being paged", async () => {
+  mockIPC(
+    (cmd) => {
+      if (cmd === "list_plans_with_suites") return new Promise(() => {});
+      if (cmd === "list_test_points") return [];
+    },
+    { shouldMockEvents: true },
+  );
+  renderSuites();
+  expect(await screen.findByText("Loading test plans")).toBeInTheDocument();
+  const { emit } = await import("@tauri-apps/api/event");
+
+  await act(async () => {
+    await emit("suite-scan-progress", { done: 3, total: 12, pages: null, kind: "suite" });
+  });
+  expect(screen.getByText("Loading test plans")).toBeInTheDocument();
+  expect(screen.queryByText("Scanning test plans")).not.toBeInTheDocument();
+
+  await act(async () => {
+    await emit("suite-scan-progress", { done: 5, total: 9, pages: null, kind: "plans" });
+  });
+  expect(screen.getByText("Scanning test plans")).toBeInTheDocument();
+  expect(screen.getByText("5 / 9")).toBeInTheDocument();
+
+  await act(async () => {
+    await emit("suite-scan-progress", { done: 8, total: 9, pages: 4, kind: "plans" });
+  });
+  expect(screen.getByText("Reading a large plan (page 4)")).toBeInTheDocument();
+  expect(screen.queryByText("8 / 9")).not.toBeInTheDocument();
 });

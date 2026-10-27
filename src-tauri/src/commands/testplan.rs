@@ -2,7 +2,7 @@
 
 use tauri_specta::Event;
 
-use crate::events::SuiteScanProgress;
+use crate::events::{ScanKind, SuiteScanProgress};
 use crate::state::get_fresh_token;
 use crate::{ado, ado_testplan};
 
@@ -16,8 +16,8 @@ pub async fn list_plans_with_suites(
     let token = get_fresh_token(&app).await?;
     let emitter = app.clone();
     ado::AdoClient::new(token)
-        .list_plans_with_suites_cb(&organization, &project, move |done, total| {
-            let _ = SuiteScanProgress { done, total }.emit(&emitter);
+        .list_plans_with_suites_cb(&organization, &project, move |p| {
+            let _ = SuiteScanProgress::of(ScanKind::Plans, p).emit(&emitter);
         })
         .await
 }
@@ -44,8 +44,8 @@ pub async fn ensure_pbi_suite(
         .await?;
     let emitter = app.clone();
     let ensured = client
-        .ensure_requirement_suite_cb(&organization, &project, pbi_id, &area, &iteration, move |done, total| {
-            let _ = SuiteScanProgress { done, total }.emit(&emitter);
+        .ensure_requirement_suite_cb(&organization, &project, pbi_id, &area, &iteration, move |p| {
+            let _ = SuiteScanProgress::of(ScanKind::Suite, p).emit(&emitter);
         })
         .await?;
     // Shared with the upload and the AI bridge, so a PBI Run Tests has
@@ -77,8 +77,11 @@ pub async fn find_pbi_suite(
     let (area, _iteration) = client
         .get_work_item_paths(&organization, &project, pbi_id)
         .await?;
+    let emitter = app.clone();
     let found = client
-        .find_pbi_requirement_suite(&organization, &project, pbi_id, &area)
+        .find_pbi_requirement_suite_cb(&organization, &project, pbi_id, &area, move |p| {
+            let _ = SuiteScanProgress::of(ScanKind::Suite, p).emit(&emitter);
+        })
         .await?;
     if let Some(s) = &found {
         ado_testplan::remember_suite(&client.base_url, &organization, &project, pbi_id, s);

@@ -955,7 +955,7 @@ async fn run_tests_ensure_asks_again_even_when_the_area_is_remembered_as_refused
 
     // The call Run Tests makes (`ensure_pbi_suite`).
     let ensured = client
-        .ensure_requirement_suite_cb("org", "proj", 42, "Proj\\Auth", "", |_, _| {})
+        .ensure_requirement_suite_cb("org", "proj", 42, "Proj\\Auth", "", |_| {})
         .await
         .unwrap();
     assert_eq!(ensured.suite_id, 1001);

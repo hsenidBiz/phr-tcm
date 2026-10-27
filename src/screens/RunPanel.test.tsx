@@ -1186,3 +1186,37 @@ test("the plan line names the plan and no suite number", async () => {
   expect(line!.textContent).not.toMatch(/suite\s*91/);
   expect(line!.textContent).not.toContain("/ suite");
 });
+
+/// Two screens hear one scan event; each shows only its own walk. This
+/// screen's wait is the search for the PBI's suite ("suite"), never the
+/// plans tree another screen is reading ("plans").
+test("the scan bar follows the suite search only, and says so when one large plan is being paged", async () => {
+  mockIPC(
+    (cmd) => {
+      if (cmd === "ensure_pbi_suite") return new Promise(() => {});
+      if (cmd === "run_history") return [];
+    },
+    { shouldMockEvents: true },
+  );
+  renderPanel();
+  expect(await screen.findByText("Resolving test suite")).toBeInTheDocument();
+  const { emit } = await import("@tauri-apps/api/event");
+
+  await act(async () => {
+    await emit("suite-scan-progress", { done: 5, total: 9, pages: null, kind: "plans" });
+  });
+  expect(screen.getByText("Resolving test suite")).toBeInTheDocument();
+  expect(screen.queryByText("Scanning test plans")).not.toBeInTheDocument();
+
+  await act(async () => {
+    await emit("suite-scan-progress", { done: 3, total: 12, pages: null, kind: "suite" });
+  });
+  expect(screen.getByText("Scanning test plans")).toBeInTheDocument();
+  expect(screen.getByText("3 / 12")).toBeInTheDocument();
+
+  await act(async () => {
+    await emit("suite-scan-progress", { done: 11, total: 12, pages: 7, kind: "suite" });
+  });
+  expect(screen.getByText("Reading a large plan (page 7)")).toBeInTheDocument();
+  expect(screen.queryByText("11 / 12")).not.toBeInTheDocument();
+});

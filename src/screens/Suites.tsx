@@ -4,7 +4,7 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import { copyText } from "../lib/clipboard";
 import { useEffect, useMemo, useState, type CSSProperties, type ReactNode } from "react";
 import { toast } from "../lib/toast";
-import { commands, events, type SuiteRef, type TestCase } from "../bindings";
+import { commands, events, type SuiteRef, type SuiteScanProgress, type TestCase } from "../bindings";
 import MoreActionsMenu, { type MoreAction } from "../components/MoreActionsMenu";
 import ScanProgress from "../components/ScanProgress";
 import { Collapse, useSettled } from "../components/ui/collapse";
@@ -182,7 +182,7 @@ export default function Suites({
   // tracks what the user opens inside a search (reset when it changes),
   // without disturbing the normal-mode expansion state.
   const [searchExpanded, setSearchExpanded] = useState<Set<number>>(new Set());
-  const [scan, setScan] = useState<{ done: number; total: number } | null>(null);
+  const [scan, setScan] = useState<SuiteScanProgress | null>(null);
 
   // Scanning every plan is the expensive part - cache the result for the
   // session and re-scan only on explicit Refresh.
@@ -212,7 +212,11 @@ export default function Suites({
   const { projectList, projectNames, plansAll, scanNote, noProjects } = usePlansAll(org, allProjects);
 
   useEffect(() => {
-    const un = events.suiteScanProgress.listen((e) => setScan(e.payload));
+    // Only the read of every plan's suites: the search for one PBI's suite
+    // (Run Tests, the background finder) is not this screen's wait.
+    const un = events.suiteScanProgress.listen((e) => {
+      if (e.payload.kind === "plans") setScan(e.payload);
+    });
     return () => {
       un.then((f) => f()).catch(() => {});
     };
@@ -612,9 +616,15 @@ export default function Suites({
           the toolbar Refresh icon above, not this bar over the tree. */}
       {(allProjects ? !loaded && !listError && (fetching || projectNames.length > 0) : fetching && !loaded) && (
         <ScanProgress
-          label={scan ? "Scanning test plans" : "Loading test plans"}
-          done={scan?.done}
-          total={scan?.total}
+          label={
+            scan?.pages
+              ? `Reading a large plan (page ${scan.pages})`
+              : scan
+                ? "Scanning test plans"
+                : "Loading test plans"
+          }
+          done={scan?.pages ? undefined : scan?.done}
+          total={scan?.pages ? undefined : scan?.total}
         />
       )}
       {allProjects && scanNote && <p className="text-xs text-muted">{scanNote}</p>}

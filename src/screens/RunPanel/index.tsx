@@ -3,7 +3,7 @@ import { ChevronDown, ChevronRight, RefreshCw, X } from "lucide-react";
 import { Fragment, useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
 import { toast } from "../../lib/toast";
-import { commands, events, type TestPoint } from "../../bindings";
+import { commands, events, type SuiteScanProgress, type TestPoint } from "../../bindings";
 import { onPointRecorded, patchPointRows } from "../../lib/runnerBus";
 import { Button } from "../../components/ui/button";
 import { Checkbox } from "../../components/ui/checkbox";
@@ -103,7 +103,7 @@ export default function RunPanel({
   const [filterText, setFilterText] = useState("");
   const [filterOutcome, setFilterOutcome] = useState("");
   const [selected, setSelected] = useState<Set<number>>(new Set()); // test case ids
-  const [scan, setScan] = useState<{ done: number; total: number } | null>(null);
+  const [scan, setScan] = useState<SuiteScanProgress | null>(null);
   const [groupMode, setGroupModeState] = useState<GroupMode>(() => loadGroupMode());
   const setGroupMode = (mode: GroupMode) => {
     setGroupModeState(mode);
@@ -145,7 +145,11 @@ export default function RunPanel({
   });
 
   useEffect(() => {
-    const un = events.suiteScanProgress.listen((e) => setScan(e.payload));
+    // Only the search for a PBI's suite: the plans tree reading every
+    // plan (Search Suites, the background prefetch) is not this screen's wait.
+    const un = events.suiteScanProgress.listen((e) => {
+      if (e.payload.kind === "suite") setScan(e.payload);
+    });
     return () => {
       un.then((f) => f()).catch(() => {});
     };
@@ -462,9 +466,15 @@ export default function RunPanel({
 
       {suite.isFetching && !suite.data && (
         <ScanProgress
-          label={scan ? "Scanning test plans" : "Resolving test suite"}
-          done={scan?.done}
-          total={scan?.total}
+          label={
+            scan?.pages
+              ? `Reading a large plan (page ${scan.pages})`
+              : scan
+                ? "Scanning test plans"
+                : "Resolving test suite"
+          }
+          done={scan?.pages ? undefined : scan?.done}
+          total={scan?.pages ? undefined : scan?.total}
         />
       )}
       {suite.isError && <p className="text-sm text-danger">{suite.error.message}</p>}

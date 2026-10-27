@@ -38,13 +38,35 @@ pub struct RunOrderNotSaved {
     pub reason: String,
 }
 
+/// Which walk a `SuiteScanProgress` belongs to. Two screens listen to the
+/// one event, and each wants only its own walk: Run Tests the search for a
+/// PBI's suite, Search Suites the read of every plan's suites.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub enum ScanKind {
+    /// Looking for one PBI's requirement suite.
+    Suite,
+    /// Reading every plan with its suites.
+    Plans,
+}
+
 /// Emitted while test plans are being scanned for suites, so Run Tests and
 /// the Suites browser can show "Scanning plans X of Y" instead of a bare
-/// skeleton.
+/// skeleton. `kind` says which walk this is. `pages` is set only while the
+/// walk is waiting on one large plan alone: how many pages of that plan's
+/// suite list have been read so far.
 #[derive(Clone, serde::Serialize, specta::Type, tauri_specta::Event)]
 pub struct SuiteScanProgress {
     pub done: u32,
     pub total: u32,
+    pub pages: Option<u32>,
+    pub kind: ScanKind,
+}
+
+impl SuiteScanProgress {
+    pub fn of(kind: ScanKind, p: crate::ado::single_flight::ScanProgress) -> Self {
+        Self { done: p.done, total: p.total, pages: p.pages, kind }
+    }
 }
 
 /// Emitted when work items have been newly assigned to the signed-in
