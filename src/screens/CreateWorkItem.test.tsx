@@ -10,8 +10,11 @@ afterEach(() => {
   clearWorkItemDraft();
 });
 
-function renderScreen(allProjects = false, project = "Web") {
-  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+function renderScreen(
+  allProjects = false,
+  project = "Web",
+  qc = new QueryClient({ defaultOptions: { queries: { retry: false } } }),
+) {
   return render(
     <QueryClientProvider client={qc}>
       <CreateWorkItem org="acme" project={project} allProjects={allProjects} />
@@ -117,6 +120,21 @@ test("a created item's content does not linger in the draft", async () => {
 
   renderScreen();
   expect(await screen.findByLabelText("Title")).toHaveValue("");
+});
+
+/// A board that is open somewhere should show the new item on its next visit,
+/// whichever board it is: one project's, or every project's.
+test("a created item marks both the per-project and the all-projects board stale", async () => {
+  baseMocks();
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  qc.setQueryData(["board", "acme", "Web", "", "", false], { items: [] });
+  qc.setQueryData(["board-all", "acme", "", "", false], { items: [] });
+  renderScreen(false, "Web", qc);
+  fireEvent.change(await screen.findByLabelText("Title"), { target: { value: "Ship it" } });
+  fireEvent.click(screen.getByRole("button", { name: "Create Task" }));
+  await screen.findByText("#9001");
+  expect(qc.getQueryState(["board", "acme", "Web", "", "", false])?.isInvalidated).toBe(true);
+  expect(qc.getQueryState(["board-all", "acme", "", "", false])?.isInvalidated).toBe(true);
 });
 
 /// Where a new item lands. While the projects show together the screen's own

@@ -1,11 +1,12 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { Check, ChevronDown, ChevronRight, GitPullRequest, RefreshCw } from "lucide-react";
-import { memo, useEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties } from "react";
 import { createPortal } from "react-dom";
 import { toast } from "../lib/toast";
 import { commands, type BoardData, type BoardItem, type PbiHit, type PrLink } from "../bindings";
 import PbiPicker from "../components/PbiPicker";
+import ProjectChip from "../components/ProjectChip";
 import WorkItemDrawer from "../components/WorkItemDrawer";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
@@ -35,12 +36,20 @@ import {
   saveCollapsedLanes,
   saveOpenLanesOnly,
   saveSwimlanes,
+  seedCombinedLanes,
 } from "../lib/boardLanes";
-import { loadPinnedAreas, savePinnedAreas, togglePin } from "../lib/boardPins";
-import { noProjectSentence, useAllProjects } from "../lib/projectScope";
+import { loadPinnedAreas, savePinnedAreas, seedCombinedPins, togglePin } from "../lib/boardPins";
+import { noProjectSentence, scopeSegment, spansProjects } from "../lib/projectScope";
 import { sidebarCollapsedSnapshot, stickyLeftPx, subscribeSidebar } from "../lib/sidebarState";
 
 const COLUMNS = ["To Do", "In Progress", "Done"] as const;
+
+/** The states of a card's type. The organization-wide board files them by
+ * project, because two projects can run different processes; the
+ * per-project board has the one list by type. The new maps are read with
+ * `?.` because the mocks of older tests omit them. */
+const statesFor = (d: BoardData, i: Pick<BoardItem, "project" | "work_item_type">) =>
+  d.states_by_project?.[i.project]?.[i.work_item_type] ?? d.states_by_type?.[i.work_item_type] ?? [];
 
 const typeColor: Record<string, string> = {
   Bug: "#e15b64",
@@ -66,13 +75,16 @@ function staleDays(changed: string): number {
 const Card = memo(function Card({
   item,
   prLinks = [],
+  showProject = false,
   onDragStart,
   onOpen,
 }: {
   item: BoardItem;
   prLinks?: PrLink[];
+  /** Name the card's project: only where the board spans more than one. */
+  showProject?: boolean;
   onDragStart: (item: BoardItem) => void;
-  onOpen: (id: number) => void;
+  onOpen: (item: BoardItem) => void;
 }) {
   const stale = staleDays(item.changed_date);
   const isStale = stale >= STALE_DAYS && item.column !== "Done";
@@ -80,7 +92,7 @@ const Card = memo(function Card({
     <div
       draggable
       onDragStart={() => onDragStart(item)}
-      onClick={() => onOpen(item.id)}
+      onClick={() => onOpen(item)}
       title={isStale ? `No changes in ${stale} days` : undefined}
       className={cn(
         "cv-row cursor-pointer space-y-1 rounded-md border border-border bg-surface p-2 text-sm hover:border-accent",
@@ -92,6 +104,7 @@ const Card = memo(function Card({
         <Badge color={typeColor[item.work_item_type] ?? "#9ca3af"}>
           {item.work_item_type}
         </Badge>
+        {showProject && <ProjectChip project={item.project} />}
         <span className="id-mono text-xs text-faint">#{item.id}</span>
         {item.assigned_to && (
           <span className="ml-auto truncate text-[10px] text-faint">{item.assigned_to}</span>
@@ -151,18 +164,31 @@ const Card = memo(function Card({
 export default function WorkBoard({
   org,
   project,
+  allProjects,
+  homeProject,
   focusItem = null,
+  focusProject = null,
   onFocusHandled,
 }: {
   org: string;
+  /** The picked project. Used while the projects show apart; the board
+   * across projects reads every one and ignores it (but for PR chips, until
+   * they follow). */
   project: string;
+  /** The projects show together: one board for the whole organization. */
+  allProjects: boolean;
+  /** Where a lane parent or a handed-over item with no project of its own
+   * opens, and whose pins and collapsed lanes the combined board starts from. */
+  homeProject: string;
   /** One work item to open as soon as the board is up - a notification's
    * handoff. Reported back through onFocusHandled so it fires once. */
   focusItem?: number | null;
+  /** The project that handoff came from: where the item opens when the
+   * board does not hold it. */
+  focusProject?: string | null;
   onFocusHandled?: () => void;
 }) {
   const qc = useQueryClient();
-  const allProjects = useAllProjects();
   const [dragging, setDragging] = useState<BoardItem | null>(null);
   const [scope, setScope] = useState(""); // "" = my work, else an area path
   // Third scope mode: everything parented under one PBI (plus the PBI
@@ -271,7 +297,22 @@ export default function WorkBoard({
   // ignores the persisted preference until an area is picked again.
   const sprintApplies = Boolean(scope) && !pbiMode;
   const sprintFilter = sprintApplies && thisSprint;
-  const [openItem, setOpenItem] = useState<number | null>(null);
+  // The work item whose drawer is open, and the project it lives in. The
+  // project is fixed once, when the drawer opens, and kept until it closes:
+  // the board can stop holding the item while its drawer is still up (it was
+  // reassigned and saved, a teammate changed it), and everything the drawer
+  // reads, saves or comments must keep going to the item's own project.
+  const [open, setOpen] = useState<{ id: number; project: string } | null>(null);
+  /** The project a card's item lives in: its own where the projects show
+   * together, else the picked one. */
+  const cardProject = useCallback(
+    (item: BoardItem) => (allProjects ? item.project || homeProject : project),
+    [allProjects, homeProject, project],
+  );
+  const openCardItem = useCallback(
+    (item: BoardItem) => setOpen({ id: item.id, project: cardProject(item) }),
+    [cardProject],
+  );
   // Fields ADO said were blocking a move - the drawer rings them.
   const [highlightFields, setHighlightFields] = useState<string[]>([]);
   // Per-area, session-only (an assignee list rarely transfers between areas).
@@ -283,15 +324,25 @@ export default function WorkBoard({
     setSwimlanes(on);
     saveSwimlanes(on);
   };
-  const [collapsedLanes, setCollapsedLanes] = useState<Set<number>>(() =>
-    loadCollapsedLanes(org, project),
-  );
+  // Together, lanes and pins live under the organization's `*` key, started
+  // from the home project's the first time (copied, never moved).
+  const segment = scopeSegment(project, allProjects);
+  const seedCombined = () => {
+    if (!allProjects) return;
+    seedCombinedLanes(org, homeProject);
+    seedCombinedPins(org, homeProject);
+  };
+  const [collapsedLanes, setCollapsedLanes] = useState<Set<number>>(() => {
+    seedCombined();
+    return loadCollapsedLanes(org, segment);
+  });
   useEffect(() => {
-    setCollapsedLanes(loadCollapsedLanes(org, project));
-  }, [org, project]);
+    seedCombined();
+    setCollapsedLanes(loadCollapsedLanes(org, segment));
+  }, [org, segment, allProjects, homeProject]);
   const updateCollapsed = (next: Set<number>) => {
     setCollapsedLanes(next);
-    saveCollapsedLanes(org, project, next);
+    saveCollapsedLanes(org, segment, next);
   };
   // Open lanes only: a lane whose every card is Done is hidden, for
   // whoever reads the board for what is still moving. Remembered here.
@@ -301,14 +352,15 @@ export default function WorkBoard({
     saveOpenLanesOnly(on);
   };
   // Areas pinned to the top of the scope list, per org/project.
-  const [pinnedAreas, setPinnedAreas] = useState<string[]>(() => loadPinnedAreas(org, project));
+  const [pinnedAreas, setPinnedAreas] = useState<string[]>(() => loadPinnedAreas(org, segment));
   useEffect(() => {
-    setPinnedAreas(loadPinnedAreas(org, project));
-  }, [org, project]);
+    // The lanes effect above has seeded the combined key by now.
+    setPinnedAreas(loadPinnedAreas(org, segment));
+  }, [org, segment, allProjects, homeProject]);
   const togglePinnedArea = (area: string) => {
     const next = togglePin(pinnedAreas, area);
     setPinnedAreas(next);
-    savePinnedAreas(org, project, next);
+    savePinnedAreas(org, segment, next);
   };
   const toggleLane = (id: number) => {
     const next = new Set(collapsedLanes);
@@ -317,14 +369,12 @@ export default function WorkBoard({
     updateCollapsed(next);
   };
 
-  const boardKey = [
-    "board",
-    org,
-    project,
-    scope,
-    pbiMode ? (pbiScope?.id ?? "none") : "",
-    sprintFilter,
-  ];
+  const pbiPart = pbiMode ? (pbiScope?.id ?? "none") : "";
+  // The board across projects is the organization's one board, so its key
+  // names no project; the per-project key is as it always was.
+  const boardKey = allProjects
+    ? ["board-all", org, scope, pbiPart, sprintFilter]
+    : ["board", org, project, scope, pbiPart, sprintFilter];
 
   // Areas (the classification tree) instead of the project's team list:
   // teams accumulate forever in ADO project settings, while areas are what
@@ -332,23 +382,51 @@ export default function WorkBoard({
   const areas = useQuery({
     queryKey: ["areas", org, project],
     queryFn: () => unwrap(commands.classificationPaths(org, project, "areas")),
-    enabled: Boolean(org && project),
+    enabled: Boolean(org && project) && !allProjects,
     staleTime: 60 * 60_000,
   });
+  // Together: every project's areas (each path starts with its project's
+  // name, which is the grouping), and how many projects they cover.
+  // Up to a hundred projects are read to make it, so it is kept on disk and
+  // an hour fresh: a later visit, or the next launch, reads none of them
+  // again. A failure is reported once (no retries - each retry is the whole
+  // fan-out again) and the screen says so.
+  const areasAll = useQuery({
+    queryKey: ["areas-all", org],
+    ...persistentQuery({
+      key: cacheKeys.areasAll(org),
+      fetcher: () => unwrap(commands.classificationPathsAll(org)),
+      ...CACHE.areas,
+    }),
+    enabled: Boolean(org) && allProjects,
+    retry: false,
+  });
+  const areaPaths = allProjects ? (areasAll.data?.paths ?? []) : (areas.data ?? []);
+  const areaCoverage = allProjects ? areasAll.data?.coverage : undefined;
 
   const board = useQuery({
     queryKey: boardKey,
     queryFn: () =>
-      unwrap(
-        commands.fetchBoard(
-          org,
-          project,
-          pbiMode ? null : scope || null,
-          pbiMode && pbiScope ? pbiScope.id : null,
-          sprintFilter,
-        ),
-      ),
-    enabled: Boolean(org && project) && (!pbiMode || pbiScope !== null),
+      allProjects
+        ? unwrap(
+            commands.fetchBoardAll(
+              org,
+              pbiMode ? null : scope || null,
+              pbiMode && pbiScope ? pbiScope.id : null,
+              sprintFilter,
+            ),
+          )
+        : unwrap(
+            commands.fetchBoard(
+              org,
+              project,
+              pbiMode ? null : scope || null,
+              pbiMode && pbiScope ? pbiScope.id : null,
+              sprintFilter,
+            ),
+          ),
+    enabled:
+      (allProjects ? Boolean(org) : Boolean(org && project)) && (!pbiMode || pbiScope !== null),
     retry: false,
     // Cached-first: a tab flip inside a minute renders instantly from
     // cache; after that the cached list still paints while a background
@@ -361,11 +439,22 @@ export default function WorkBoard({
   // board's own load because the drawer takes a card's states from it; an
   // item outside the loaded board still opens, and the drawer reads its
   // type's states itself. Handled once: the handoff is cleared by the caller.
+  // Its project is fixed here, as for any drawer, because the caller clears
+  // the handoff the moment it is handled: the board's card for it, else its
+  // lane's, else the one the notification came from, else home.
   useEffect(() => {
     if (focusItem == null || !board.data) return;
-    setOpenItem(focusItem);
+    const card = board.data.items.find((i) => i.id === focusItem);
+    setOpen({
+      id: focusItem,
+      project: !allProjects
+        ? project
+        : card
+          ? cardProject(card)
+          : (board.data.parent_projects?.[focusItem] ?? focusProject ?? homeProject),
+    });
     onFocusHandled?.();
-  }, [focusItem, board.data, onFocusHandled]);
+  }, [focusItem, focusProject, board.data, onFocusHandled, allProjects, project, homeProject, cardProject]);
 
   // Work-item -> PR chips, resolved PR-side (one list + one small call per
   // PR). Best-effort decoration: failures just mean no chips.
@@ -401,8 +490,16 @@ export default function WorkBoard({
 
   const move = useMutation({
     mutationFn: async ({ item, column }: { item: BoardItem; column: string }) => {
+      // A card moves in the project it lives in, never the one the screen
+      // happens to stand for.
       const state = await unwrap(
-        commands.moveBoardItem(org, project, item.id, item.work_item_type, column),
+        commands.moveBoardItem(
+          org,
+          allProjects ? item.project : project,
+          item.id,
+          item.work_item_type,
+          column,
+        ),
       );
       return { item, column, state };
     },
@@ -429,7 +526,7 @@ export default function WorkBoard({
           `#${item.id} can't move to ${column}: fill ${fields.join(", ")} first - opening the item.`,
         );
         setHighlightFields(fields);
-        setOpenItem(item.id);
+        setOpen({ id: item.id, project: cardProject(item) });
       } else {
         toast.error(`Could not move #${item.id}: ${e.message}`);
       }
@@ -437,8 +534,7 @@ export default function WorkBoard({
     onSuccess: ({ item, state }) => {
       const data = qc.getQueryData<BoardData>(boardKey);
       if (data) {
-        const color =
-          data.states_by_type[item.work_item_type]?.find((s) => s.name === state)?.color ?? "";
+        const color = statesFor(data, item).find((s) => s.name === state)?.color ?? "";
         qc.setQueryData<BoardData>(boardKey, {
           ...data,
           items: data.items.map((i) =>
@@ -454,6 +550,13 @@ export default function WorkBoard({
   const types = useMemo(
     () => [...new Set((board.data?.items ?? []).map((i) => i.work_item_type))].sort(),
     [board.data],
+  );
+
+  // Cards and lanes name their project only where the board spans two or
+  // more; one project's board stays as quiet as it was.
+  const showProject = useMemo(
+    () => allProjects && spansProjects(board.data?.items ?? []),
+    [allProjects, board.data],
   );
 
   // Assignee filter, offered on area boards only (My work is already one
@@ -661,8 +764,9 @@ export default function WorkBoard({
                 key={item.id}
                 item={item}
                 prLinks={prByItem.get(item.id)}
+                showProject={showProject}
                 onDragStart={setDragging}
-                onOpen={setOpenItem}
+                onOpen={openCardItem}
               />
             ))}
             </div>
@@ -672,9 +776,16 @@ export default function WorkBoard({
     </div>
   );
 
-  if (!org || !project) {
+  // The open item's card, when the board holds it (a lane parent, or an item
+  // a notification named, may not be on it).
+  const openCard = board.data?.items.find((i) => i.id === open?.id);
+
+  // Together there is no project to be missing: the board reads them all.
+  if (!org || (!allProjects && !project)) {
     return (
-      <p className="text-sm text-muted">{noProjectSentence(allProjects, "first")}</p>
+      <p className="text-sm text-muted">
+        {allProjects ? "Pick an organization in the bar above first." : noProjectSentence(false, "first")}
+      </p>
     );
   }
 
@@ -693,7 +804,7 @@ export default function WorkBoard({
               "By PBI…",
               // Retired teams get parked under a "Scrum Archive" area node in
               // this org - hide that whole subtree from the picker.
-              ...(areas.data ?? [])
+              ...areaPaths
                 .filter((a) => !a.split("\\").some((seg) => seg.trim().toLowerCase() === "scrum archive"))
                 .map((a) => `Area: ${a}`),
             ]}
@@ -726,7 +837,7 @@ export default function WorkBoard({
           )}
           {pbiMode && (
             <div className="w-72">
-              <PbiPicker perProject org={org} project={project} pbi={pbiScope} onChange={setPbiScope} />
+              <PbiPicker perProject={!allProjects} org={org} project={project} pbi={pbiScope} onChange={setPbiScope} />
             </div>
           )}
           <SearchInput
@@ -807,6 +918,20 @@ export default function WorkBoard({
               board stays a read-and-move surface. */}
         </div>
 
+        {/* The area list is capped at a number of projects: say so when it
+            left some out, rather than look complete. */}
+        {areaCoverage && areaCoverage.shown < areaCoverage.total && (
+          <p className="text-xs text-muted">
+            Showing areas from {areaCoverage.shown} of {areaCoverage.total} projects.
+          </p>
+        )}
+
+        {allProjects && areasAll.isError && (
+          <p className="text-xs text-danger">
+            Could not list the areas of every project: {areasAll.error.message}
+          </p>
+        )}
+
         {board.isError && <p className="text-sm text-danger">{board.error.message}</p>}
 
         {board.isLoading && (
@@ -841,7 +966,7 @@ export default function WorkBoard({
           <p className="rounded-md border border-border p-6 text-center text-sm text-muted">
             {scope
               ? `Nothing under the ${scope} area yet.`
-              : "Nothing assigned to you in this project - quick create one above, or switch to an area board."}
+              : `Nothing assigned to you in ${allProjects ? "any project" : "this project"} - quick create one above, or switch to an area board.`}
           </p>
         )}
 
@@ -891,13 +1016,28 @@ export default function WorkBoard({
                         {lane.parent.work_item_type}
                       </Badge>
                     )}
+                    {/* The lane is its parent's: the project the parent lives in
+                        (the one its title opens in), else its first card's.
+                        No parent is cards of every project - nothing to name. */}
+                    {showProject && lane.id !== NO_PARENT && (
+                      <ProjectChip
+                        project={board.data?.parent_projects?.[lane.id] || lane.items[0]?.project || ""}
+                      />
+                    )}
                     {lane.id === NO_PARENT ? (
                       <span className="text-sm font-semibold text-muted">{laneLabel(lane)}</span>
                     ) : (
                       <button
                         className="min-w-0 truncate text-left text-sm font-semibold text-text hover:text-accent hover:underline"
                         title={`Open #${lane.id}`}
-                        onClick={() => setOpenItem(lane.id)}
+                        onClick={() =>
+                          setOpen({
+                            id: lane.id,
+                            project: allProjects
+                              ? (board.data?.parent_projects?.[lane.id] ?? homeProject)
+                              : project,
+                          })
+                        }
                       >
                         <span className="id-mono text-xs text-faint">#{lane.id}</span>
                         {lane.parent?.title ? ` ${lane.parent.title}` : ""}
@@ -947,19 +1087,15 @@ export default function WorkBoard({
           document.body,
         )}
 
-      {openItem != null && board.data && (
+      {open != null && board.data && (
         <WorkItemDrawer
           org={org}
-          project={project}
-          itemId={openItem}
-          states={(
-            board.data.states_by_type[
-              board.data.items.find((i) => i.id === openItem)?.work_item_type ?? ""
-            ] ?? []
-          ).map((s) => s.name)}
+          project={allProjects ? open.project : project}
+          itemId={open.id}
+          states={openCard ? statesFor(board.data, openCard).map((s) => s.name) : []}
           highlightFields={highlightFields}
           onClose={() => {
-            setOpenItem(null);
+            setOpen(null);
             setHighlightFields([]);
           }}
           onSaved={() => qc.invalidateQueries({ queryKey: boardKey })}

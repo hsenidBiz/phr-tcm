@@ -49,6 +49,9 @@ export const CACHE = {
   /** Org/project lists, team members: a day from disk with no request, so
    * most app starts cost nothing here. */
   reference: { ttlMs: DAY, staleMs: DAY },
+  /** The area paths of every project (one request per project): an hour
+   * with no request, then shown from disk while it is read again. */
+  areas: { ttlMs: DAY, staleMs: HOUR },
   /** Pipelines of a finished PR: they never change again. */
   finished: { ttlMs: 30 * DAY, staleMs: Infinity },
   /** Choices a person made and expects back (the Playwright tab's ticks):
@@ -73,6 +76,7 @@ export const cacheKeys = {
   points: (org: string, project: string, planId: number | undefined, suiteId: number | undefined) =>
     `points:${org}/${project}/${planId}/${suiteId}`,
   boardPrs: (org: string, project: string) => `board-prs:${org}/${project}`,
+  areasAll: (org: string) => `areas-all:${org}`,
   prPipeline: (org: string, project: string, prId: number, mergeCommit: string) =>
     `pipe:${org}/${project}:${prId}:${mergeCommit}`,
   suiteSeed: (org: string, pbiId: number) => `suite-seed:${org}/${pbiId}`,

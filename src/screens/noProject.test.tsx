@@ -36,7 +36,6 @@ const COMBINED = "Pick a PBI in the bar above, or a Home project in Settings, ";
 const OFF = "Pick an organization and project in the bar above ";
 
 const SCREENS: Array<{ name: string; ui: (allProjects: boolean) => ReactElement; tail: string }> = [
-  { name: "Work Manager", ui: () => <WorkBoard org="acme" project="" />, tail: "first." },
   {
     name: "New Work Item",
     ui: (allProjects) => <CreateWorkItem org="acme" project="" allProjects={allProjects} />,
@@ -54,6 +53,20 @@ const SCREENS: Array<{ name: string; ui: (allProjects: boolean) => ReactElement;
     tail: "first.",
   },
 ];
+
+// The board is the exception while the projects show together: it reads every
+// project, so only an organization is missing. (The combined board itself is
+// covered in WorkBoard.test.tsx.)
+test("Work Manager with no organization asks for one while the projects show together", () => {
+  mount(<WorkBoard org="" project="" allProjects homeProject="" />);
+  expect(screen.getByText("Pick an organization in the bar above first.")).toBeInTheDocument();
+});
+
+test("Work Manager with no project points at the Project picker once switched off", () => {
+  saveAllProjects(false);
+  mount(<WorkBoard org="acme" project="" allProjects={false} homeProject="" />);
+  expect(screen.getByText(`${OFF}first.`)).toBeInTheDocument();
+});
 
 for (const s of SCREENS) {
   test(`${s.name} with no project points at a PBI or the Home project while the projects show together`, () => {

@@ -69,6 +69,23 @@ test("every stand-in command is answered locally", async () => {
   await expect(
     commands.fetchBoard(TOUR_ORG, TOUR_PROJECT, null, null, false),
   ).resolves.toMatchObject({ status: "ok" });
+  // The board across projects: the same board, every card naming the sample
+  // project and the states filed under it, so the tour reads the same
+  // whichever way the board is asked.
+  const all = await commands.fetchBoardAll(TOUR_ORG, null, null, false);
+  expect(all.status).toBe("ok");
+  if (all.status === "ok") {
+    expect(all.data.items.length).toBeGreaterThan(2);
+    expect(all.data.items.every((i) => i.project === TOUR_PROJECT)).toBe(true);
+    expect(all.data.states_by_type).toEqual({});
+    expect(Object.keys(all.data.states_by_project)).toEqual([TOUR_PROJECT]);
+    expect(all.data.states_by_project[TOUR_PROJECT]["Task"]?.length).toBeGreaterThan(0);
+    expect(all.data.parent_projects).toEqual({});
+  }
+  await expect(commands.classificationPathsAll(TOUR_ORG)).resolves.toEqual({
+    status: "ok",
+    data: { paths: ["Website", "Website\\Checkout"], coverage: { shown: 1, total: 1 } },
+  });
   await expect(commands.prOverview(TOUR_ORG, TOUR_PROJECT)).resolves.toMatchObject({
     status: "ok",
   });

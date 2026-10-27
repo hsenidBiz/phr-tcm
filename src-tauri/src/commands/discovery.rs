@@ -79,6 +79,20 @@ pub async fn classification_paths(
         .await
 }
 
+/// The Area paths of every project of the organization, for the board's
+/// area filter while projects show together. Read only.
+#[tauri::command]
+#[specta::specta]
+pub async fn classification_paths_all(
+    app: tauri::AppHandle,
+    organization: String,
+) -> Result<work_board::AreasAll, ado::AdoError> {
+    let token = get_fresh_token(&app).await?;
+    ado::AdoClient::new(token)
+        .classification_paths_all(&organization)
+        .await
+}
+
 /// The project's tag names, served from the shared reference cache.
 ///
 /// Serve-then-revalidate: a cached list comes back immediately - instantly

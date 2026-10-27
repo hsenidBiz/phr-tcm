@@ -36,6 +36,12 @@ const MAX_ITEMS: u32 = 500;
 /// the plain id of the card's direct parent, for the swimlanes.
 const BOARD_FIELDS: &str = "System.Id,System.Title,System.WorkItemType,System.State,System.AssignedTo,System.ChangedDate,System.Tags,Microsoft.VSTS.Common.Priority,System.Parent";
 
+/// The same fields plus the project each card lives in - what the
+/// organization-wide board asks for, since a query without a project clause
+/// does not say which project an item belongs to. The per-project fetch
+/// keeps asking for `BOARD_FIELDS` alone.
+pub const BOARD_FIELDS_ALL: &str = "System.Id,System.Title,System.WorkItemType,System.State,System.AssignedTo,System.ChangedDate,System.Tags,Microsoft.VSTS.Common.Priority,System.Parent,System.TeamProject";
+
 /// What a lane header needs of a work item, and nothing more.
 pub(crate) const TITLE_FIELDS: &str = "System.Title,System.WorkItemType";
 
@@ -73,12 +79,26 @@ pub struct BoardItem {
     /// The direct parent (tasks and bugs under their PBI, PBIs under their
     /// Feature); None when the item has none.
     pub parent: Option<BoardParent>,
+    /// The project the item lives in: the argument project on the
+    /// per-project board, the name Azure DevOps gives it on the
+    /// organization-wide one. Every write on a card uses this, never the
+    /// project the screen happens to be showing.
+    pub project: String,
 }
 
 #[derive(Debug, Clone, Serialize, specta::Type)]
 pub struct BoardData {
     pub items: Vec<BoardItem>,
+    /// Per-project board only: a type's states by type name. Empty on the
+    /// organization-wide board, where two projects can run different
+    /// processes (see `states_by_project`).
     pub states_by_type: HashMap<String, Vec<StateInfo>>,
+    /// Organization-wide board only: project -> type -> states.
+    pub states_by_project: HashMap<String, HashMap<String, Vec<StateInfo>>>,
+    /// Organization-wide board only: the project of each card's parent, so
+    /// a lane whose parent lives in another project still opens in the
+    /// right one.
+    pub parent_projects: HashMap<i32, String>,
 }
 
 #[derive(Debug, Clone, Serialize, specta::Type)]
@@ -147,6 +167,15 @@ pub struct ExtraField {
     pub allowed: Vec<String>,
     /// Current raw value (HTML for html fields).
     pub value: String,
+}
+
+/// The Area paths of every project of the organization, with how many of
+/// its projects they cover. Every path starts with its project's name, which
+/// is the grouping; projects with nothing under their root are left out.
+#[derive(Debug, Clone, Serialize, specta::Type)]
+pub struct AreasAll {
+    pub paths: Vec<String>,
+    pub coverage: crate::ado::fanout::ProjectCoverage,
 }
 
 /// An iteration path plus its sprint window, for DevOps-style pickers.

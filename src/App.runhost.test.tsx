@@ -135,8 +135,8 @@ test("a run from this organization never moves the home project", async () => {
   expect(storedPrefs().project).toBe("Web");
 });
 
-// A project a notification handed to the Work Manager belongs to the
-// organization it was raised in; a run that takes the person to another
+// A project a notification handed to the Work Manager's pull requests belongs
+// to the organization it was raised in; a run that takes the person to another
 // organization leaves it behind. The way back in is the Work Manager button.
 test("a run from another organization drops the project a notification handed over", async () => {
   claimCacheFor("a@b.com");
@@ -144,32 +144,31 @@ test("a run from another organization drops the project a notification handed ov
     "tcm-v2-notifications:acme",
     JSON.stringify([
       {
-        id: "assigned:Payroll:55",
-        kind: "assigned",
-        title: "Item 55 was assigned to you",
+        id: "pr-review:Payroll:api:7",
+        kind: "pr-review",
+        title: "Pull request 7 needs your review",
         body: "Fix the payslip",
         at: new Date().toISOString(),
         read: false,
-        href: "https://x/55",
-        target: { kind: "work-item", id: 55, project: "Payroll" },
+        href: "https://x/pr/7",
+        target: { kind: "pr", repo: "api", id: 7, project: "Payroll" },
       },
     ]),
   );
   resetNotifications();
-  const boards: Array<{ organization: string; project: string }> = [];
+  const asked: Array<{ organization: string; project: string }> = [];
   mount(null, (cmd, args) => {
-    if (cmd === "fetch_board") {
-      boards.push(args as { organization: string; project: string });
-      return { items: [], states_by_type: {} };
+    if (cmd === "pr_overview") {
+      asked.push(args as { organization: string; project: string });
+      return { awaiting: [], mine: [] };
     }
-    if (cmd === "pr_overview") return { awaiting: [], mine: [] };
     if (cmd === "list_repos") return [];
   });
   await screen.findByText("a@b.com");
   fireEvent.click(await screen.findByRole("button", { name: /Notifications/ }));
-  fireEvent.click(screen.getByRole("button", { name: "Item 55 was assigned to you" }));
-  expect(await screen.findByRole("heading", { name: "Board" })).toBeInTheDocument();
-  await waitFor(() => expect(boards[boards.length - 1]?.project).toBe("Payroll"));
+  fireEvent.click(screen.getByRole("button", { name: "Pull request 7 needs your review" }));
+  expect(await screen.findByRole("heading", { name: "Pull Requests" })).toBeInTheDocument();
+  await waitFor(() => expect(asked[asked.length - 1]?.project).toBe("Payroll"));
 
   act(() =>
     store.set({
@@ -181,12 +180,12 @@ test("a run from another organization drops the project a notification handed ov
     }),
   );
   await waitFor(() => expect(storedPrefs().org).toBe("other"));
-  await waitFor(() => expect(screen.queryByRole("heading", { name: "Board" })).not.toBeInTheDocument());
+  await waitFor(() => expect(screen.queryByRole("heading", { name: "Pull Requests" })).not.toBeInTheDocument());
 
   // Back to the Work Manager from its button.
   fireEvent.click(screen.getByRole("button", { name: /Work Manager/ }));
-  expect(await screen.findByRole("heading", { name: "Board" })).toBeInTheDocument();
+  expect(await screen.findByRole("heading", { name: "Pull Requests" })).toBeInTheDocument();
   await waitFor(() =>
-    expect(boards[boards.length - 1]).toEqual(expect.objectContaining({ organization: "other", project: "Mobile" })),
+    expect(asked[asked.length - 1]).toEqual(expect.objectContaining({ organization: "other", project: "Mobile" })),
   );
 });

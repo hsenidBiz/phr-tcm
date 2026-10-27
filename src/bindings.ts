@@ -115,6 +115,11 @@ export const commands = {
 	finishTestRun: (organization: string, project: string, runId: number) => typedError<null, AdoError>(__TAURI_INVOKE("finish_test_run", { organization, project, runId })),
 	fetchBoard: (organization: string, project: string, area: string | null, pbiId: number | null, currentSprint: boolean) => typedError<BoardData, AdoError>(__TAURI_INVOKE("fetch_board", { organization, project, area, pbiId, currentSprint })),
 	/**
+	 *  The board of every project of the organization at once ("treat all
+	 *  projects as one"). Each card names its own project.
+	 */
+	fetchBoardAll: (organization: string, area: string | null, pbiId: number | null, currentSprint: boolean) => typedError<BoardData, AdoError>(__TAURI_INVOKE("fetch_board_all", { organization, area, pbiId, currentSprint })),
+	/**
 	 *  Move a board item into a column: resolves the target state exactly like
 	 *  v1 (_state_for_column) and PATCHes System.State. Returns the state set.
 	 */
@@ -303,6 +308,11 @@ export const commands = {
 	createWorkItem: (organization: string, project: string, item: NewWorkItem) => typedError<CreatedItem, AdoError>(__TAURI_INVOKE("create_work_item", { organization, project, item })),
 	/**  The project's Area or Iteration paths for the create pickers. */
 	classificationPaths: (organization: string, project: string, structure: string) => typedError<string[], AdoError>(__TAURI_INVOKE("classification_paths", { organization, project, structure })),
+	/**
+	 *  The Area paths of every project of the organization, for the board's
+	 *  area filter while projects show together. Read only.
+	 */
+	classificationPathsAll: (organization: string) => typedError<AreasAll, AdoError>(__TAURI_INVOKE("classification_paths_all", { organization })),
 	/**
 	 *  Uploads the draft queue as an ADO attachment on the PBI and returns a
 	 *  pasteable share link. Review-before-upload sharing: the cases do NOT
@@ -2598,6 +2608,16 @@ export type AreaView = {
 	writes: WriteEntry[],
 };
 
+/**
+ *  The Area paths of every project of the organization, with how many of
+ *  its projects they cover. Every path starts with its project's name, which
+ *  is the grouping; projects with nothing under their root are left out.
+ */
+export type AreasAll = {
+	paths: string[],
+	coverage: ProjectCoverage,
+};
+
 export type AssignedItem = {
 	id: number,
 	title: string,
@@ -2768,7 +2788,20 @@ export type Because_Serialize = {
 
 export type BoardData = {
 	items: BoardItem[],
+	/**
+	 *  Per-project board only: a type's states by type name. Empty on the
+	 *  organization-wide board, where two projects can run different
+	 *  processes (see `states_by_project`).
+	 */
 	states_by_type: { [key in string]: StateInfo[] },
+	/**  Organization-wide board only: project -> type -> states. */
+	states_by_project: { [key in string]: { [key in string]: StateInfo[] } },
+	/**
+	 *  Organization-wide board only: the project of each card's parent, so
+	 *  a lane whose parent lives in another project still opens in the
+	 *  right one.
+	 */
+	parent_projects: { [key in number]: string },
 };
 
 export type BoardItem = {
@@ -2788,6 +2821,13 @@ export type BoardItem = {
 	 *  Feature); None when the item has none.
 	 */
 	parent: BoardParent | null,
+	/**
+	 *  The project the item lives in: the argument project on the
+	 *  per-project board, the name Azure DevOps gives it on the
+	 *  organization-wide one. Every write on a card uses this, never the
+	 *  project the screen happens to be showing.
+	 */
+	project: string,
 };
 
 /**  A card's direct parent, as its swimlane shows it. */
@@ -5343,6 +5383,17 @@ export type PreviewInfo = {
 export type Project = {
 	id: string,
 	name: string,
+};
+
+/**
+ *  How many projects a fan-out showed, out of how many the organization has.
+ *  `shown < total` means the screen must say so.
+ * 
+ *  Named for projects so it never reads as the spec-coverage feature.
+ */
+export type ProjectCoverage = {
+	shown: number,
+	total: number,
 };
 
 /**

@@ -181,6 +181,7 @@ export default function CreateWorkItem({
       setDescription("");
       // Any open board should show the new item on next visit.
       qc.invalidateQueries({ queryKey: ["board"] });
+      qc.invalidateQueries({ queryKey: ["board-all"] });
     },
     onError: (e) => toast.error(`Create failed: ${e.message}`),
   });

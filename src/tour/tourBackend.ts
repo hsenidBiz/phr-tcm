@@ -11,6 +11,7 @@
 import { commands } from "../bindings";
 import {
   TOUR_BOARD,
+  TOUR_BOARD_ALL,
   TOUR_BRIDGE,
   TOUR_CASES,
   TOUR_CASE_SUMMARIES,
@@ -52,6 +53,8 @@ function standIns(): Partial<Commands> {
     testCaseFieldValues: () => ok(["Checkout", "Basket", "Sign in"]),
     listProjectTags: () => ok(["Checkout", "Regression", "Payments"]),
     classificationPaths: () => ok(["Website", "Website\\Checkout"]),
+    classificationPathsAll: () =>
+      ok({ paths: ["Website", "Website\\Checkout"], coverage: { shown: 1, total: 1 } }),
     listIterations: () => ok([{ path: "Website", start_date: null, finish_date: null }]),
     activityValues: () => ok(["Testing"]),
 
@@ -82,6 +85,7 @@ function standIns(): Partial<Commands> {
 
     // Work Manager.
     fetchBoard: () => ok(TOUR_BOARD),
+    fetchBoardAll: () => ok(TOUR_BOARD_ALL),
     boardPrLinks: () => ok([]),
     prOverview: () => ok(TOUR_PR_OVERVIEW),
     // The mention scan runs from the context bar the moment an org and

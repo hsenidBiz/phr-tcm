@@ -5,9 +5,11 @@ use std::collections::HashMap;
 
 use super::{
     wiql_str, BoardData, BoardItem, BoardParent, Member, StateInfo, TeamRef, BOARD_FIELDS,
-    EXCLUDED_TYPES, MAX_ITEMS, TITLE_FIELDS,
+    BOARD_FIELDS_ALL, EXCLUDED_TYPES, MAX_ITEMS, TITLE_FIELDS,
 };
+use crate::ado::endpoints::percent_encode_segment;
 use crate::ado::{AdoClient, AdoError};
+use crate::cache::{self, keys};
 use super::column_for_state;
 
 impl AdoClient {
@@ -39,6 +41,31 @@ impl AdoClient {
         let url = format!(
             "{}/{}/{}{}/_apis/wit/wiql?$top={}&api-version=7.1",
             self.base_url, org, project, team_seg, top
+        );
+        let body = self
+            .post_json_query(url, &serde_json::json!({ "query": wiql }))
+            .await?;
+        Ok(body["workItems"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default()
+            .iter()
+            .filter_map(|w| w["id"].as_i64().map(|i| i as i32))
+            .collect())
+    }
+
+    /// Run a WIQL query against the whole organization and return matching
+    /// ids. With no project in the route the query may match items of any
+    /// project, so its WHERE clause must not name one. Query only.
+    pub async fn query_work_items_org(
+        &self,
+        org: &str,
+        wiql: &str,
+        top: u32,
+    ) -> Result<Vec<i32>, AdoError> {
+        let url = format!(
+            "{}/{}/_apis/wit/wiql?$top={}&api-version=7.1",
+            self.base_url, org, top
         );
         let body = self
             .post_json_query(url, &serde_json::json!({ "query": wiql }))
@@ -118,7 +145,7 @@ impl AdoClient {
             "{}/{}/{}/_apis/wit/workitemtypes/{}/states?api-version=7.1",
             self.base_url,
             org,
-            project,
+            percent_encode_segment(project),
             urlencoding::encode(wi_type)
         );
         let data = self.get_json(url).await?;
@@ -133,6 +160,30 @@ impl AdoClient {
                 category: s["category"].as_str().unwrap_or_default().to_string(),
             })
             .collect())
+    }
+
+    /// `get_work_item_states` for the board across projects, remembered for
+    /// `WORK_ITEM_STATES_TTL` (session tier only): that board reads one type
+    /// per project present on every load, and a type's states almost never
+    /// change. A failed read is not remembered - the card falls back to the
+    /// name heuristic this time and the read is tried again next load.
+    async fn work_item_states_remembered(
+        &self,
+        org: &str,
+        project: &str,
+        wi_type: &str,
+    ) -> Vec<StateInfo> {
+        let key = keys::work_item_states(&self.base_url, org, project, wi_type);
+        if let Some(hit) = cache::session_fresh::<Vec<StateInfo>>(&key, keys::WORK_ITEM_STATES_TTL) {
+            return hit;
+        }
+        match self.get_work_item_states(org, project, wi_type).await {
+            Ok(states) => {
+                cache::session_put(&key, states.clone());
+                states
+            }
+            Err(_) => Vec::new(),
+        }
     }
 
     /// Teams in the project (for the board's team-scope selector). Read only.
@@ -315,6 +366,239 @@ impl AdoClient {
         out
     }
 
+    /// `read_titles` at organization scope: title, type and project of each
+    /// readable id, wherever it lives. Same batching and `errorPolicy=omit`;
+    /// never fails (a batch that errors is logged and its ids are absent).
+    /// Read only.
+    pub(crate) async fn read_titles_org(
+        &self,
+        org: &str,
+        ids: &[i32],
+    ) -> HashMap<i32, (String, String, String)> {
+        let mut out = HashMap::new();
+        for chunk in ids.chunks(Self::WORKITEM_BATCH_SIZE) {
+            let ids_csv = chunk
+                .iter()
+                .map(|i| i.to_string())
+                .collect::<Vec<_>>()
+                .join(",");
+            let url = format!(
+                "{}/{}/_apis/wit/workitems?ids={}&fields={},System.TeamProject&errorPolicy=omit&api-version=7.1",
+                self.base_url, org, ids_csv, TITLE_FIELDS
+            );
+            match self.get_json(url).await {
+                Ok(data) => {
+                    for w in data["value"].as_array().cloned().unwrap_or_default() {
+                        let Some(id) = w["id"].as_i64() else { continue };
+                        let f = &w["fields"];
+                        out.insert(
+                            id as i32,
+                            (
+                                f["System.Title"].as_str().unwrap_or_default().to_string(),
+                                f["System.WorkItemType"].as_str().unwrap_or_default().to_string(),
+                                f["System.TeamProject"].as_str().unwrap_or_default().to_string(),
+                            ),
+                        );
+                    }
+                }
+                Err(e) => crate::applog::warn(format!(
+                    "could not read the titles of {} work item(s); they show as ids only: {e}",
+                    chunk.len()
+                )),
+            }
+        }
+        out
+    }
+
+    /// The board of every project at once: the same scopes as `fetch_board`
+    /// ("me", an area, a PBI) asked of the organization, so the WHERE clause
+    /// never names a project. Each card carries the project Azure DevOps says
+    /// it lives in, states are read once per (project, type) because two
+    /// projects can run different processes, and a parent in another project
+    /// is read with its project. A sprint filter applies to an area board
+    /// only, resolved from the area's own project and team. Read only.
+    pub async fn fetch_board_all(
+        &self,
+        org: &str,
+        area: Option<&str>,
+        pbi_id: Option<i32>,
+        current_sprint: bool,
+    ) -> Result<BoardData, AdoError> {
+        let excluded = EXCLUDED_TYPES
+            .iter()
+            .map(|t| format!("'{t}'"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let mut where_clauses = vec![format!("[System.WorkItemType] NOT IN ({excluded})")];
+        match (pbi_id, area) {
+            (Some(id), _) => {
+                where_clauses.push(format!("([System.Parent] = {id} OR [System.Id] = {id})"));
+            }
+            (None, Some(area)) => {
+                where_clauses.push(format!("[System.AreaPath] UNDER {}", wiql_str(area)));
+            }
+            (None, None) => where_clauses.push("[System.AssignedTo] = @Me".to_string()),
+        }
+        // (project, team) the @CurrentIteration macro must run in; None when
+        // the sprint clause is an explicit path (or there is no sprint).
+        let mut macro_ctx: Option<(String, String)> = None;
+        if let (true, None, Some(area)) = (current_sprint, pbi_id, area) {
+            // The area is "<project>\...\<team>": the first segment is the
+            // project it lives in, the last one the team (this org's
+            // convention). Anything that cannot resolve falls back to the
+            // project's default-team @CurrentIteration clause.
+            let root = area.split('\\').next().unwrap_or_default();
+            let team = area.rsplit('\\').next().unwrap_or_default();
+            if !root.is_empty() && !team.is_empty() {
+                match self.team_sprint_path(org, root, team).await? {
+                    Some(path) => where_clauses
+                        .push(format!("[System.IterationPath] UNDER {}", wiql_str(&path))),
+                    None => {
+                        where_clauses
+                            .push("[System.IterationPath] = @CurrentIteration".to_string());
+                        macro_ctx = Some((
+                            root.to_string(),
+                            self.default_team(org, root).await?,
+                        ));
+                    }
+                }
+            }
+        }
+        let wiql = format!(
+            "SELECT [System.Id] FROM workitems WHERE {} ORDER BY [System.ChangedDate] DESC",
+            where_clauses.join(" AND ")
+        );
+        let ids = match &macro_ctx {
+            Some((project, team)) => {
+                self.query_work_items_ctx(org, project, Some(team), &wiql, MAX_ITEMS)
+                    .await?
+            }
+            None => self.query_work_items_org(org, &wiql, MAX_ITEMS).await?,
+        };
+
+        let mut raw_items: Vec<serde_json::Value> = vec![];
+        for chunk in ids.chunks(200) {
+            let ids_csv = chunk
+                .iter()
+                .map(|i| i.to_string())
+                .collect::<Vec<_>>()
+                .join(",");
+            let url = format!(
+                "{}/{}/_apis/wit/workitems?ids={}&fields={}&api-version=7.1",
+                self.base_url, org, ids_csv, BOARD_FIELDS_ALL
+            );
+            let data = self.get_json(url).await?;
+            raw_items.extend(data["value"].as_array().cloned().unwrap_or_default());
+        }
+
+        // One state read per (project, type) present. A card whose project
+        // came back blank has no process to ask, so it keeps the name
+        // heuristic.
+        let mut states_by_project: HashMap<String, HashMap<String, Vec<StateInfo>>> =
+            HashMap::new();
+        for w in &raw_items {
+            let f = &w["fields"];
+            let project = f["System.TeamProject"].as_str().unwrap_or_default();
+            let wtype = f["System.WorkItemType"].as_str().unwrap_or_default();
+            if project.is_empty() || wtype.is_empty() {
+                continue;
+            }
+            if states_by_project.get(project).is_some_and(|m| m.contains_key(wtype)) {
+                continue;
+            }
+            let states = self.work_item_states_remembered(org, project, wtype).await;
+            states_by_project
+                .entry(project.to_string())
+                .or_default()
+                .insert(wtype.to_string(), states);
+        }
+
+        // Each card's direct parent, as in `fetch_board`, but a parent may
+        // live in another project, so its project is kept too.
+        let mut known: HashMap<i32, (String, String, String)> = raw_items
+            .iter()
+            .filter_map(|w| {
+                let f = &w["fields"];
+                Some((
+                    w["id"].as_i64()? as i32,
+                    (
+                        f["System.Title"].as_str().unwrap_or_default().to_string(),
+                        f["System.WorkItemType"].as_str().unwrap_or_default().to_string(),
+                        f["System.TeamProject"].as_str().unwrap_or_default().to_string(),
+                    ),
+                ))
+            })
+            .collect();
+        let mut to_read: Vec<i32> = vec![];
+        let mut queued = std::collections::HashSet::new();
+        for w in &raw_items {
+            if let Some(p) = w["fields"]["System.Parent"].as_i64().map(|p| p as i32) {
+                if !known.contains_key(&p) && queued.insert(p) {
+                    to_read.push(p);
+                }
+            }
+        }
+        known.extend(self.read_titles_org(org, &to_read).await);
+        let mut parent_projects: HashMap<i32, String> = HashMap::new();
+        let mut parent_of = |f: &serde_json::Value| {
+            f["System.Parent"].as_i64().map(|p| {
+                let id = p as i32;
+                let (title, work_item_type, project) = known.get(&id).cloned().unwrap_or_default();
+                if !project.is_empty() {
+                    parent_projects.insert(id, project);
+                }
+                BoardParent { id, title, work_item_type }
+            })
+        };
+
+        // Preserve WIQL order (ChangedDate DESC), not batch-GET order.
+        let by_id: HashMap<i64, &serde_json::Value> = raw_items
+            .iter()
+            .filter_map(|w| Some((w["id"].as_i64()?, w)))
+            .collect();
+        let no_states = HashMap::new();
+        let items = ids
+            .iter()
+            .filter_map(|id| {
+                let w = by_id.get(&(*id as i64))?;
+                let f = &w["fields"];
+                let project = f["System.TeamProject"].as_str().unwrap_or_default().to_string();
+                let wtype = f["System.WorkItemType"].as_str().unwrap_or_default().to_string();
+                let state = f["System.State"].as_str().unwrap_or_default().to_string();
+                let own_states = states_by_project.get(&project).unwrap_or(&no_states);
+                let state_color = own_states
+                    .get(&wtype)
+                    .and_then(|ss| ss.iter().find(|s| s.name == state))
+                    .map(|s| s.color.clone())
+                    .unwrap_or_default();
+                Some(BoardItem {
+                    id: *id,
+                    title: f["System.Title"].as_str().unwrap_or_default().to_string(),
+                    column: column_for_state(&wtype, &state, own_states),
+                    work_item_type: wtype,
+                    state,
+                    state_color,
+                    assigned_to: f["System.AssignedTo"]["displayName"]
+                        .as_str()
+                        .unwrap_or_default()
+                        .to_string(),
+                    tags: f["System.Tags"].as_str().unwrap_or_default().to_string(),
+                    priority: f["Microsoft.VSTS.Common.Priority"].as_i64().map(|i| i as i32),
+                    changed_date: f["System.ChangedDate"].as_str().unwrap_or_default().to_string(),
+                    parent: parent_of(f),
+                    project,
+                })
+            })
+            .collect();
+
+        Ok(BoardData {
+            items,
+            states_by_type: HashMap::new(),
+            states_by_project,
+            parent_projects,
+        })
+    }
+
     /// The board in one call, ported from v1 _fetch_work: scope is "me"
     /// (AssignedTo = @Me), an area (everything UNDER that area path,
     /// whoever it's assigned to - areas are the classification tree the
@@ -489,10 +773,16 @@ impl AdoClient {
                     priority: f["Microsoft.VSTS.Common.Priority"].as_i64().map(|i| i as i32),
                     changed_date: f["System.ChangedDate"].as_str().unwrap_or_default().to_string(),
                     parent: parent_of(f),
+                    project: project.to_string(),
                 })
             })
             .collect();
 
-        Ok(BoardData { items, states_by_type })
+        Ok(BoardData {
+            items,
+            states_by_type,
+            states_by_project: HashMap::new(),
+            parent_projects: HashMap::new(),
+        })
     }
 }
