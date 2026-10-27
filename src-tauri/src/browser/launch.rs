@@ -340,7 +340,26 @@ pub fn launch_in(which: Browser) -> Result<LaunchedBrowser, String> {
     launch_with(which, &[])
 }
 
-/// The same, with extra switches. A supervised run never passes any: the
+/// `--window-position=x,y` for a window that opens there, none when it asks
+/// for no position (the main browser, and every launch before there were
+/// extra ones).
+pub fn window_position_switch(position: Option<(i32, i32)>) -> Option<String> {
+    position.map(|(x, y)| format!("--window-position={x},{y}"))
+}
+
+/// `launch_in`, with the window opened at `position` (screen pixels from the
+/// top left) when one is given: an extra assistant's browser is offset from
+/// the main one so the windows are not stacked exactly. `None` is `launch_in`.
+pub fn launch_in_at(which: Browser, position: Option<(i32, i32)>) -> Result<LaunchedBrowser, String> {
+    let switch = window_position_switch(position);
+    match switch.as_deref() {
+        Some(switch) => launch_with(which, &[switch]),
+        None => launch_with(which, &[]),
+    }
+}
+
+/// The same, with extra switches. A supervised run passes none but a
+/// window position (`launch_in_at`): the
 /// window is always visible. An unattended run passes `background_args`
 /// unless the person asked to watch, so it can run headless; the live
 /// tests pass `--headless=new` for the same reason.

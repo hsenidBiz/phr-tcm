@@ -9,9 +9,10 @@ use std::path::Path;
 use std::sync::Mutex;
 use std::time::Duration;
 use v2_lib::ai_bridge::{
-    after_ended_discovery, module_guard_for, autorun_replay_with, route, AssistantReplay, BridgeContext,
-    DiscoveryEnded, HostFuture, ReplayHost, ENDED_DISCOVERY_FIRST,
+    after_ended_discovery, module_guard_for, autorun_replay_as, autorun_replay_with, route, AssistantReplay,
+    BridgeContext, DiscoveryEnded, HostFuture, ReplayHost, ENDED_DISCOVERY_FIRST,
 };
+use v2_lib::autorun::agents::AgentKey;
 use v2_lib::autorun::mapping_summary::MappingSummary;
 use v2_lib::autorun::accounts::save_accounts;
 use v2_lib::autorun::nav::{save_nav, ModulePath, NavFile};
@@ -72,6 +73,8 @@ struct FakeHost {
     replays: Mutex<Vec<(String, String, ReplayRequest)>>,
     /// The slot each replay was asked for, and each page read.
     slots: Mutex<Vec<SlotNo>>,
+    /// The assistant each replay was asked for (`None`: the default caller).
+    holders: Mutex<Vec<Option<AgentKey>>>,
     page_slots: Mutex<Vec<SlotNo>>,
     end: ReplayEnd,
     /// A discovery holds the browser: the replay ends it first.
@@ -110,6 +113,7 @@ impl FakeHost {
         FakeHost {
             replays: Mutex::new(vec![]),
             slots: Mutex::new(vec![]),
+            holders: Mutex::new(vec![]),
             page_slots: Mutex::new(vec![]),
             end,
             discovering: false,
@@ -140,6 +144,7 @@ impl ReplayHost for FakeHost {
     fn replay(
         &self,
         slot: SlotNo,
+        holder: Option<AgentKey>,
         organization: String,
         project: String,
         req: ReplayRequest,
@@ -147,6 +152,7 @@ impl ReplayHost for FakeHost {
         Box::pin(async move {
             self.replays.lock().unwrap().push((organization, project, req));
             self.slots.lock().unwrap().push(slot);
+            self.holders.lock().unwrap().push(holder);
             if self.until_stopped {
                 use std::sync::atomic::Ordering;
                 use v2_lib::autorun::replay_to::{state, OneReplay};
@@ -213,6 +219,25 @@ fn body(step: i32) -> String {
 }
 
 // ---- the route ----------------------------------------------------------------
+
+/// The assistant whose call it is travels to the host with its replay, so
+/// the browser the replay opens is bound to it and nobody else; the default
+/// caller (an older proxy, a test) passes none.
+#[tokio::test]
+async fn the_callers_key_reaches_the_host() {
+    let _a = crate::serial::autorun();
+    let dir = tempfile::tempdir().unwrap();
+    store::set_root(dir.path().to_path_buf());
+    project(dir.path(), &script(false));
+    let key = AgentKey { id: "e".repeat(32), name: Some("writer".to_string()) };
+    let host = leak(FakeHost::ready());
+    let (status, text) = autorun_replay_as(Some(&key), &ctx(), SlotNo(1), &body(3), host, WAIT).await;
+    assert_eq!(status, 200, "{text}");
+    let (status, text) = autorun_replay_with(&ctx(), SlotNo::MAIN, &body(2), host, WAIT).await;
+    assert_eq!(status, 200, "{text}");
+    assert_eq!(*host.holders.lock().unwrap(), vec![Some(key), None]);
+    assert_eq!(host.slots(), vec![SlotNo(1), SlotNo::MAIN]);
+}
 
 /// A script marked must not save replays at once: nobody is asked, and its
 /// no-save guard is what stops its saves (`guard_for_case`).

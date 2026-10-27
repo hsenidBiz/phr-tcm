@@ -4030,14 +4030,14 @@ async fn the_person_open_browser_is_still_refused_while_discovering() {
     assert!(ReplayBy::Assistant.may_lift(Some(&call)) && ReplayBy::Assistant.may_lift(None));
     let person = &source[source.find("pub async fn auto_run_replay_to_step").unwrap()..];
     let person = &person[..person.find("pub(crate) async fn replay_supervised").unwrap()];
-    assert!(person.contains("replay_supervised(&app, SlotNo::MAIN, &organization, &project, req, ReplayBy::Person)"), "{person}");
+    assert!(person.contains("replay_supervised(&app, SlotNo::MAIN, &organization, &project, req, ReplayBy::Person, None)"), "{person}");
     let replay = &source[source.find("pub(crate) async fn replay_supervised").unwrap()..];
     let replay = &replay[..replay.find("open_if_none(").unwrap()];
     assert!(replay.contains("if by.ends_discovery() {"), "{replay}");
     assert!(replay.contains("} else if let Err(why) = crate::ai_bridge::refuse_while_discovering(&mut slot) {"));
     // And the assistant's host is the only caller that ends a discovery.
     let host = include_str!("../../src/commands/ai_bridge.rs");
-    assert!(host.contains("replay_supervised(&self.0, slot, &organization, &project, req, ReplayBy::Assistant)"));
+    assert!(host.contains("replay_supervised(&self.0, slot, &organization, &project, req, ReplayBy::Assistant, holder.as_ref())"));
     assert_eq!(source.matches("ReplayBy::Assistant)").count(), 0, "a person's path replays as the assistant");
     assert_eq!(source.matches("refuse_while_discovering(&mut slot)").count(), 3, "a refusal went missing");
 }

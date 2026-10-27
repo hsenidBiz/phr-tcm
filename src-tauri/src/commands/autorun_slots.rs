@@ -2,9 +2,11 @@
 //!
 //! `slot_for` is asked once, at the top of the bridge's router
 //! (`ai_bridge::route_as`), and the slot it answers is the one every handler
-//! of that call locks and publishes to. Today every caller gets the main
-//! browser; the rules that give an assistant a browser of its own come with
-//! the extra browsers.
+//! of that call locks and publishes to. The default caller (an older proxy, a
+//! test, the person) always gets the main browser. One assistant alone does
+//! too, exactly as before there were extra browsers; a second assistant that
+//! opens one while a live assistant holds main gets a browser of its own, up
+//! to three in all (`slot_for` has the rules).
 //!
 //! Beside that sit the bindings (which assistant a slot's browser is in use
 //! by), the views the Assistants card shows and the card's commands.
@@ -71,28 +73,118 @@ pub fn need_of(method: &str, path: &str) -> Option<Need> {
     }
 }
 
-/// The browser `caller` uses for a route that `need`s one. For now every
-/// caller, a default one or an agent, gets the main browser, so nothing
-/// changes for anyone; the refusals (no browser to spare, the account is
-/// held) come with the rules that give an assistant a browser of its own.
-///
-/// An agent that opens or acts on the main browser is bound to it
-/// (`bind`), so the Assistants card can say whose it is; one that only
-/// reads it binds nothing, and the default caller never binds.
-pub fn slot_for(caller: &Caller, need: Need) -> Result<SlotNo, (u16, String)> {
-    if let Caller::Agent(key) = caller {
-        if matches!(need, Need::Open | Need::Act) {
-            bind(SlotNo::MAIN, key);
-        }
+/// Said to an assistant that opens a browser when every browser there can be
+/// is open already.
+pub const ALL_BROWSERS_OPEN: &str = "3 Auto Run browsers are open already, the most at once - wait for another assistant to finish, or ask the person to release one on the Auto Run screen";
+
+/// Said to an assistant that acts on or reads a browser when it has none and
+/// main is another assistant's.
+pub const NO_BROWSER_OF_YOURS: &str = "you have no Auto Run browser - start_autorun_discovery or replay_autorun_to_step opens one (another assistant is using the main one)";
+
+/// Does this call read a capture set that was imported (`from` names one)?
+/// Such a read answers from the imported sets and uses no browser, so it needs
+/// no slot: an assistant with no browser of its own is not refused it. A body
+/// that cannot be read is answered 400 before any browser is used too. The
+/// same read of the live capture (no `from`, or `from: live`) is as `need_of`
+/// says.
+pub fn reads_an_imported_set(method: &str, path: &str, body: &str) -> bool {
+    use crate::autorun::capture_tools as ct;
+    if method != "POST"
+        || !matches!(
+            path,
+            "/autorun-requests" | "/autorun-requests-search" | "/autorun-request" | "/autorun-response" | "/autorun-response-body"
+        )
+    {
+        return false;
     }
-    Ok(SlotNo::MAIN)
+    match ct::args_of(body) {
+        Err(_) => true,
+        Ok(args) => ct::from_of(&args).map_or(true, |from| from.is_some()),
+    }
 }
 
-/// The caller's slot when it has one, else `None`, and never a refusal: for
-/// the routes that use a browser only when the caller has one
-/// (`/api-template-run`). For now every caller has the main browser.
-pub fn slot_if_any(_caller: &Caller) -> Option<SlotNo> {
-    Some(SlotNo::MAIN)
+/// Where slot `n`'s window opens: the main browser's is wherever the browser
+/// puts it, and each extra one is offset from the one before so the windows
+/// are never exactly stacked.
+pub fn window_position(n: SlotNo) -> Option<(i32, i32)> {
+    (!n.is_main()).then(|| {
+        let step = 60 * i32::from(n.0);
+        (step, step)
+    })
+}
+
+/// The browser `caller` uses for a route that `need`s one.
+///
+/// 1. The default caller gets main, and no binding changes.
+/// 2. An assistant bound to a slot gets that slot.
+/// 3. An unbound assistant gets main when nobody holds it, when this
+///    assistant does, or when the assistant that does has gone (is not live):
+///    an Open or an Act binds it.
+/// 4. Main is another live assistant's. An Open takes the lowest extra
+///    browser with no binding and no session (one being worked in is not
+///    free), binding it to this assistant in the same step; with none left
+///    it is refused (`ALL_BROWSERS_OPEN`). An Act or a Read is refused
+///    (`NO_BROWSER_OF_YOURS`): it has no browser to act on.
+///
+/// So one assistant alone, an older proxy and the person see no change.
+pub fn slot_for(caller: &Caller, need: Need) -> Result<SlotNo, (u16, String)> {
+    let Caller::Agent(key) = caller else {
+        return Ok(SlotNo::MAIN);
+    };
+    // Looked at before the bindings are locked (a briefly busy lock is waited
+    // out): a slot nobody is bound to has a session only if one was left.
+    let empty = (need == Need::Open).then(|| SlotNo::extras().map(slot_is_empty));
+    let mut t = bindings();
+    if let Some(i) = t.bound.iter().position(|b| b.as_ref() == Some(key)) {
+        return Ok(SlotNo(i as u8));
+    }
+    if main_is_free_for(&t, key) {
+        if need != Need::Read {
+            t.bound[SlotNo::MAIN.index()] = Some(key.clone());
+        }
+        return Ok(SlotNo::MAIN);
+    }
+    if need != Need::Open {
+        return Err((409, NO_BROWSER_OF_YOURS.to_string()));
+    }
+    let empty = empty.unwrap_or_default();
+    for (n, empty) in SlotNo::extras().into_iter().zip(empty) {
+        if empty && t.bound[n.index()].is_none() {
+            t.bound[n.index()] = Some(key.clone());
+            return Ok(n);
+        }
+    }
+    Err((409, ALL_BROWSERS_OPEN.to_string()))
+}
+
+/// No browser is open in extra slot `n`, and nothing is working in it.
+fn slot_is_empty(n: SlotNo) -> bool {
+    crate::commands::autorun::try_lock_briefly(session_slot(n)).is_some_and(|slot| slot.is_none())
+}
+
+/// May `key` use main (rule 3 of `slot_for`): nobody holds it, `key` does, or
+/// the assistant that does has gone.
+fn main_is_free_for(t: &Table, key: &AgentKey) -> bool {
+    match &t.bound[SlotNo::MAIN.index()] {
+        None => true,
+        Some(holder) => holder == key || !agents::is_live(holder),
+    }
+}
+
+/// The caller's slot when it has one, else `None`, and never a refusal or a
+/// binding: for the routes that use a browser only when the caller has one
+/// (`/api-template-run`, `/autorun-script`, the guide). The default caller
+/// has main; an assistant has its own slot, or main when `slot_for` would
+/// give it that.
+pub fn slot_if_any(caller: &Caller) -> Option<SlotNo> {
+    let Caller::Agent(key) = caller else {
+        return Some(SlotNo::MAIN);
+    };
+    let t = bindings();
+    if let Some(i) = t.bound.iter().position(|b| b.as_ref() == Some(key)) {
+        return Some(SlotNo(i as u8));
+    }
+    main_is_free_for(&t, key).then_some(SlotNo::MAIN)
 }
 
 // ---------------------------------------------------------------------------
@@ -105,42 +197,85 @@ pub fn slot_if_any(_caller: &Caller) -> Option<SlotNo> {
 /// the app may keep a second copy of it (the same rule as `IMPORTING` in
 /// `commands/autorun.rs`). One `static` mutex, never held across an await.
 /// An agent is bound to at most one slot.
-static BINDINGS: Mutex<[Option<AgentKey>; SLOT_COUNT]> = Mutex::new([const { None }; SLOT_COUNT]);
+static BINDINGS: Mutex<Table> = Mutex::new(Table { bound: [const { None }; SLOT_COUNT], held: [const { None }; SLOT_COUNT] });
 
-fn bindings() -> std::sync::MutexGuard<'static, [Option<AgentKey>; SLOT_COUNT]> {
+struct Table {
+    /// Who each slot's browser is in use by.
+    bound: [Option<AgentKey>; SLOT_COUNT],
+    /// The assistant whose open is replacing the browser in a slot right now
+    /// (`hold_binding`): that slot's unbind leaves its binding alone.
+    held: [Option<AgentKey>; SLOT_COUNT],
+}
+
+fn bindings() -> std::sync::MutexGuard<'static, Table> {
     BINDINGS.lock().unwrap_or_else(|e| e.into_inner())
 }
 
 /// The assistant slot `n`'s browser is in use by.
 pub fn bound(n: SlotNo) -> Option<AgentKey> {
-    bindings()[n.index()].clone()
+    bindings().bound[n.index()].clone()
 }
 
 /// The slot `key` is bound to.
 pub fn slot_of(key: &AgentKey) -> Option<SlotNo> {
-    bindings().iter().position(|b| b.as_ref() == Some(key)).map(|i| SlotNo(i as u8))
+    bindings().bound.iter().position(|b| b.as_ref() == Some(key)).map(|i| SlotNo(i as u8))
 }
 
 /// Slot `n`'s browser is in use by `key` from now on, and `key` is bound
 /// to no other slot. Whoever held `n` before no longer does.
 pub fn bind(n: SlotNo, key: &AgentKey) {
-    let mut b = bindings();
-    for held in b.iter_mut() {
+    let mut t = bindings();
+    for held in t.bound.iter_mut() {
         if held.as_ref() == Some(key) {
             *held = None;
         }
     }
-    b[n.index()] = Some(key.clone());
+    t.bound[n.index()] = Some(key.clone());
 }
 
-/// Slot `n`'s browser is in use by nobody.
+/// Slot `n`'s browser is bound to `key` if nobody holds it and `key` holds no
+/// other: after an open, in case the slot was let go on the way.
+pub fn bind_if_free(n: SlotNo, key: &AgentKey) {
+    let mut t = bindings();
+    if t.bound[n.index()].is_none() && !t.bound.iter().any(|b| b.as_ref() == Some(key)) {
+        t.bound[n.index()] = Some(key.clone());
+    }
+}
+
+/// Slot `n`'s browser is in use by nobody - unless an assistant's open is
+/// replacing it right now (`hold_binding`), whose binding stays.
 pub fn unbind(n: SlotNo) {
-    bindings()[n.index()] = None;
+    let mut t = bindings();
+    let kept = t.held[n.index()].is_some() && t.held[n.index()] == t.bound[n.index()];
+    if !kept {
+        t.bound[n.index()] = None;
+    }
+}
+
+/// The assistant `key` is opening a browser in slot `n`, closing the one
+/// there first: while the returned hold lives, closing that browser leaves
+/// the slot bound to `key` (an unbind of the slot does nothing), so there is
+/// no moment in which another assistant's call finds the slot free and takes
+/// it. Taken under the slot's session lock, by the paths that open a browser
+/// for an assistant, and let go (dropped) when the open is over.
+pub fn hold_binding(n: SlotNo, key: &AgentKey) -> BindingHold {
+    bindings().held[n.index()] = Some(key.clone());
+    BindingHold(n)
+}
+
+/// An assistant's open is replacing the browser in a slot (`hold_binding`).
+#[must_use = "the binding is held only while this lives"]
+pub struct BindingHold(SlotNo);
+
+impl Drop for BindingHold {
+    fn drop(&mut self) {
+        bindings().held[self.0.index()] = None;
+    }
 }
 
 /// `key` holds no browser.
 pub fn unbind_agent(key: &AgentKey) {
-    for held in bindings().iter_mut() {
+    for held in bindings().bound.iter_mut() {
         if held.as_ref() == Some(key) {
             *held = None;
         }
@@ -149,7 +284,10 @@ pub fn unbind_agent(key: &AgentKey) {
 
 /// Every binding and every remembered reading of a slot (tests).
 pub fn clear() {
-    *bindings() = [const { None }; SLOT_COUNT];
+    let mut t = bindings();
+    t.bound = [const { None }; SLOT_COUNT];
+    t.held = [const { None }; SLOT_COUNT];
+    drop(t);
     for f in FACTS.iter() {
         *f.lock().unwrap_or_else(|e| e.into_inner()) = None;
     }
@@ -163,10 +301,10 @@ pub fn on_sweep(s: &agents::Sweep) {
     for key in &s.past_grace {
         unbind_agent(key);
     }
-    let mut held = bindings();
+    let mut t = bindings();
     for key in &s.quiet {
-        if held[SlotNo::MAIN.index()].as_ref() == Some(key) {
-            held[SlotNo::MAIN.index()] = None;
+        if t.bound[SlotNo::MAIN.index()].as_ref() == Some(key) {
+            t.bound[SlotNo::MAIN.index()] = None;
         }
     }
 }

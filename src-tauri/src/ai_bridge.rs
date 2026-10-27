@@ -5,6 +5,7 @@
 //! the bearer token never leaves the app. Modeled on note_server.rs; the
 //! TCP loop is thin, all logic lives in `route` so tests need no sockets.
 
+use crate::autorun::agents::AgentKey;
 use crate::autorun::slots::{SlotNo, SLOT_COUNT};
 use rand::RngExt;
 use serde::Serialize;
@@ -393,14 +394,22 @@ pub async fn route_as(
     // The browser this call uses, found ONCE: every handler below locks,
     // publishes to and answers for that slot. A route that uses no
     // supervised browser (or one the caller must not be refused for) is
-    // main's, as everything was before there were slots.
-    let slot = match crate::commands::autorun_slots::need_of(method, path) {
+    // main's, as everything was before there were slots. A capture read that
+    // names an imported set needs none either, so an assistant with no
+    // browser of its own can still read it.
+    let need = crate::commands::autorun_slots::need_of(method, path)
+        .filter(|_| !crate::commands::autorun_slots::reads_an_imported_set(method, path, body));
+    let slot = match need {
         Some(need) => match crate::commands::autorun_slots::slot_for(caller, need) {
             Ok(slot) => slot,
             Err(refused) => return refused,
         },
         None => SlotNo::MAIN,
     };
+    // Who opens a browser in `slot` if this call does: the real assistant,
+    // never whoever the bindings name at that moment. The default caller
+    // holds none.
+    let holder = caller.key();
     match (method, path) {
         ("GET", "/ping") => (
             200,
@@ -537,7 +546,7 @@ pub async fn route_as(
         // the live application, one action at a time.
         ("POST", "/autorun-discover-start") => {
             let mut seen = None;
-            let answer = without_page(autorun_discover_start(ctx, body, &mut seen, slot).await, body);
+            let answer = without_page(autorun_discover_start(ctx, body, &mut seen, slot, holder).await, body);
             let answer = with_overrides_seen(with_no_save_note(answer, discovery_no_save(slot)), seen, slot);
             // A mapping run records areas and writes no check: no rules.
             let mapping = serde_json::from_str::<serde_json::Value>(body)
@@ -598,7 +607,7 @@ pub async fn route_as(
         ("POST", "/autorun-replay") => {
             release_rewritten_cases(ctx, client).await;
             crate::autorun::roles::with_rules(
-                without_page(autorun_replay(ctx, body, slot).await, body),
+                without_page(autorun_replay(ctx, body, slot, holder).await, body),
                 crate::autorun::roles::RULES_REPLAY,
             )
         }
@@ -645,7 +654,11 @@ pub async fn route_as(
         ("GET", "/api-template-guide") => (200, api_template_guide(ctx)),
         ("GET", "/api-templates") => api_template_list(ctx, target),
         ("POST", "/api-template-prove") => {
-            api_template_prove(
+            // A proof refused its account because the Auto Run browser holds
+            // it asks the caller's own browser, as a run does; a caller with
+            // no browser has none to ask.
+            api_template_prove_for(
+                crate::commands::autorun_slots::slot_if_any(caller),
                 ctx,
                 body,
                 real_template_browsers,
@@ -662,7 +675,8 @@ pub async fn route_as(
             if let Some(answer) = run_saved_in_session(ctx, slot, body).await {
                 return answer;
             }
-            let answer = api_template_run(
+            let answer = api_template_run_for(
+                slot,
                 ctx,
                 body,
                 real_template_browsers,
@@ -1493,7 +1507,23 @@ const RUN_SHAPE: &str = "{ \"id\": \"<template id>\", \"account\": \"<account ke
 /// afterwards. The route arm with the browser factory (`open`) and the
 /// flow database (`open_db`, asked for only by a template on a flow)
 /// handed in, so a test reaches all of it but a real browser and server.
+/// The default caller's: a refusal for an account the Auto Run browser holds
+/// asks main's browser (`api_template_prove_for`).
 pub async fn api_template_prove<B: crate::api_templates::held::Keeps, D: crate::api_templates::gate::StageDb>(
+    ctx: &BridgeContext,
+    body: &str,
+    open: impl FnOnce(crate::browser::launch::Browser) -> B,
+    open_db: impl FnOnce(&BridgeContext) -> Result<D, (u16, String)>,
+    timing: &crate::browser::timing::Timing,
+) -> (u16, String) {
+    api_template_prove_for(Some(SlotNo::MAIN), ctx, body, open, open_db, timing).await
+}
+
+/// `api_template_prove` for a caller whose own Auto Run browser is slot
+/// `asker` (none: it has no browser). A proof refused its account because the
+/// Auto Run browser holds it says so only when THAT browser holds it.
+pub async fn api_template_prove_for<B: crate::api_templates::held::Keeps, D: crate::api_templates::gate::StageDb>(
+    asker: Option<SlotNo>,
     ctx: &BridgeContext,
     body: &str,
     open: impl FnOnce(crate::browser::launch::Browser) -> B,
@@ -1545,14 +1575,28 @@ pub async fn api_template_prove<B: crate::api_templates::held::Keeps, D: crate::
         mode: Mode::Prove { replace, why },
         template,
     };
-    run_api_template_request(ctx, &root, req, existing.as_ref(), call.browser, open, open_db, timing).await
+    run_api_template_request(ctx, &root, req, existing.as_ref(), call.browser, asker, open, open_db, timing).await
 }
 
 /// `POST /api-template-run`: run a saved template and return its outputs,
 /// or the failing step and what had been created. As
 /// `api_template_prove`, with the browser factory and the flow database
-/// handed in.
+/// handed in. The default caller's: a refusal for an account the Auto Run
+/// browser holds asks main's browser (`api_template_run_for`).
 pub async fn api_template_run<B: crate::api_templates::held::Keeps, D: crate::api_templates::gate::StageDb>(
+    ctx: &BridgeContext,
+    body: &str,
+    open: impl FnOnce(crate::browser::launch::Browser) -> B,
+    open_db: impl FnOnce(&BridgeContext) -> Result<D, (u16, String)>,
+    timing: &crate::browser::timing::Timing,
+) -> (u16, String) {
+    api_template_run_for(Some(SlotNo::MAIN), ctx, body, open, open_db, timing).await
+}
+
+/// `api_template_run` for a caller whose own Auto Run browser is slot
+/// `asker` (none: it has no browser), as `api_template_prove_for`.
+pub async fn api_template_run_for<B: crate::api_templates::held::Keeps, D: crate::api_templates::gate::StageDb>(
+    asker: Option<SlotNo>,
     ctx: &BridgeContext,
     body: &str,
     open: impl FnOnce(crate::browser::launch::Browser) -> B,
@@ -1570,7 +1614,7 @@ pub async fn api_template_run<B: crate::api_templates::held::Keeps, D: crate::ap
         Ok(read) => read,
         Err(refused) => return refused,
     };
-    run_api_template_request(ctx, &root, req, None, which, open, open_db, timing).await
+    run_api_template_request(ctx, &root, req, None, which, asker, open, open_db, timing).await
 }
 
 /// What `api_template_run` reads of its call: the saved template, the
@@ -1777,6 +1821,7 @@ async fn run_api_template_request<B: crate::api_templates::held::Keeps, D: crate
     req: crate::api_templates::runner::RunRequest,
     existing: Option<&crate::api_templates::ApiTemplate>,
     which: crate::browser::launch::Browser,
+    asker: Option<SlotNo>,
     open: impl FnOnce(crate::browser::launch::Browser) -> B,
     open_db: impl FnOnce(&BridgeContext) -> Result<D, (u16, String)>,
     timing: &crate::browser::timing::Timing,
@@ -1995,10 +2040,12 @@ async fn run_api_template_request<B: crate::api_templates::held::Keeps, D: crate
     }
     let mut text = serde_json::to_string(&report).unwrap_or_default();
     if !report.ok && held_by_the_auto_run_browser(&text, &req.account) {
-        // A template run is not the caller's own browser's: it asks main's,
-        // the only one an assistant can hold today.
-        let holds = crate::commands::autorun::assistant_browser_holds(SlotNo::MAIN, &req.account).await;
-        text = template_report_hint(text, &req.account, holds);
+        // A template run is not the caller's own browser's, so the hint asks
+        // the caller's: a caller with no browser has none to free.
+        if let Some(n) = asker {
+            let holds = crate::commands::autorun::assistant_browser_holds(n, &req.account).await;
+            text = template_report_hint(text, &req.account, holds);
+        }
     }
     (if report.ok { 200 } else { 502 }, text)
 }
@@ -7590,12 +7637,15 @@ async fn save_discovered_area<B: DiscoveryBrowser>(
 /// `/autorun-discover-start`: open the Auto Run browser for the assistant
 /// and sign in as `account` (`discover_start_in`). Refused, before
 /// anything opens, while anything else holds the browser, and for an
-/// account or recipe that is not there.
+/// account or recipe that is not there. `holder` is the assistant whose call
+/// it is: the browser opened in slot `n` stays its own through any browser it
+/// replaces.
 async fn autorun_discover_start(
     ctx: &BridgeContext,
     body: &str,
     seen: &mut Option<crate::autorun::overrides::Overrides>,
     n: SlotNo,
+    holder: Option<&AgentKey>,
 ) -> (u16, String) {
     const SHAPE: &str = "{ \"account\": <an account key>, \"area\": <an area name, optional>, \"browser\": \"edge\" | \"chrome\", optional, \"mapping\": true | false, optional, \"modules\": [<a module name>], for a mapping run, \"case_id\": <the case explored for, optional>, \"no_save\": true | false, optional, \"explore\": true | false, optional }";
     let v: serde_json::Value = match serde_json::from_str(body) {
@@ -7672,7 +7722,7 @@ async fn autorun_discover_start(
     // new one is the one last chosen (`open_for_discovery`). A guarded
     // discovery's guard is on in a browser it took over before the lock goes.
     let from = GuardFrom { root: &root, organization: &ctx.org, project: &ctx.project };
-    let made_way = match crate::commands::autorun::open_for_discovery(browser.as_deref(), mapping, asked, from, n).await {
+    let made_way = match crate::commands::autorun::open_for_discovery(browser.as_deref(), mapping, asked, from, n, holder).await {
         Ok(made_way) => made_way,
         Err(why) => return (409, why),
     };
@@ -8377,9 +8427,14 @@ pub trait ReplayHost: Send + Sync {
     /// guard held for another case, and a discovery holding the browser is
     /// ended first rather than refusing (`end_discovery_for_replay`). `Err`
     /// is a browser that would not open.
+    ///
+    /// `holder` is the assistant whose call it is, if it is one: the browser
+    /// the replay uses stays bound to it through a browser it replaces. The
+    /// default caller passes none and is never bound.
     fn replay(
         &self,
         slot: SlotNo,
+        holder: Option<AgentKey>,
         organization: String,
         project: String,
         req: crate::autorun::replay_to::ReplayRequest,
@@ -8421,11 +8476,11 @@ pub fn set_replay_host(host: Box<dyn ReplayHost>) {
 const NO_REPLAY_HOST: &str = "the app could not start replays this session - restart the app";
 
 /// Replay a case to a step in the supervised browser, for the assistant.
-async fn autorun_replay(ctx: &BridgeContext, body: &str, n: SlotNo) -> (u16, String) {
+async fn autorun_replay(ctx: &BridgeContext, body: &str, n: SlotNo, holder: Option<&AgentKey>) -> (u16, String) {
     let Some(host) = REPLAY_HOST.get() else {
         return (503, NO_REPLAY_HOST.to_string());
     };
-    autorun_replay_with(ctx, n, body, host.as_ref(), REPLAY_ANSWER_WAIT).await
+    autorun_replay_as(holder, ctx, n, body, host.as_ref(), REPLAY_ANSWER_WAIT).await
 }
 
 /// How long `replay_autorun_to_step` waits for its replay to reach its stop
@@ -8645,7 +8700,21 @@ pub async fn autorun_replay_with(
     host: &'static dyn ReplayHost,
     wait: std::time::Duration,
 ) -> (u16, String) {
-    let answer = replay_answer_with(ctx, slot, body, host, wait).await;
+    autorun_replay_as(None, ctx, slot, body, host, wait).await
+}
+
+/// `autorun_replay_with` for the assistant `holder`, whose browser the
+/// replay uses or opens in slot `slot`; none for the default caller, which
+/// holds no browser and is never bound to one by its replay.
+pub async fn autorun_replay_as(
+    holder: Option<&AgentKey>,
+    ctx: &BridgeContext,
+    slot: SlotNo,
+    body: &str,
+    host: &'static dyn ReplayHost,
+    wait: std::time::Duration,
+) -> (u16, String) {
+    let answer = replay_answer_with(holder, ctx, slot, body, host, wait).await;
     with_changes_on_a_refusal(answer, slot)
 }
 
@@ -8664,6 +8733,7 @@ pub fn with_changes_on_a_refusal(answer: (u16, String), slot: SlotNo) -> (u16, S
 
 /// `autorun_replay_with`, before a refusal names the test changes.
 async fn replay_answer_with(
+    holder: Option<&AgentKey>,
     ctx: &BridgeContext,
     n: SlotNo,
     body: &str,
@@ -8735,8 +8805,9 @@ async fn replay_answer_with(
         return wait_for_replay(n, theirs, other, case_id, step, wait).await;
     }
     let (org, project) = (ctx.org.clone(), ctx.project.clone());
+    let holder = holder.cloned();
     tokio::spawn(async move {
-        let answer = run_assistant_replay(host, n, org, project, req).await;
+        let answer = run_assistant_replay(host, n, holder, org, project, req).await;
         // Kept in the slot for the next call when none is waiting, while
         // it stays fresh (`still_fresh`).
         let done = ReplayDone {
@@ -8849,6 +8920,7 @@ fn capitalised(s: &str) -> String {
 async fn run_assistant_replay(
     host: &'static dyn ReplayHost,
     n: SlotNo,
+    holder: Option<AgentKey>,
     org: String,
     project: String,
     req: crate::autorun::replay_to::ReplayRequest,
@@ -8856,7 +8928,7 @@ async fn run_assistant_replay(
     use crate::autorun::replay_to::{ReplayEnd, ReplayFrom};
     let (case_id, step) = (req.case_id, req.step);
     let replay = crate::autorun::replay_to::state(n);
-    let (end, discovery, left_open, from, reuse, overrides) = match host.replay(n, org.clone(), project.clone(), req).await {
+    let (end, discovery, left_open, from, reuse, overrides) = match host.replay(n, holder, org.clone(), project.clone(), req).await {
         Ok(AssistantReplay { end, discovery, left_open, from, reuse, overrides }) => {
             (end, discovery, left_open, from, reuse, overrides)
         }

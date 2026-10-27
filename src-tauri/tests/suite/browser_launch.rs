@@ -3,7 +3,9 @@
 //! - are unit tested here; actually starting a browser is an ignored
 //! test, like the updater's live download check.
 
-use v2_lib::browser::launch::{args_with, background_args, edge_candidates, free_port, launch_args};
+use v2_lib::browser::launch::{
+    args_with, background_args, edge_candidates, free_port, launch_args, window_position_switch,
+};
 use v2_lib::browser::viewport::{device_metrics_params, DEVICE_SCALE, PAGE_HEIGHT, PAGE_WIDTH};
 use std::path::{Path, PathBuf};
 
@@ -74,6 +76,24 @@ fn extra_switches_go_before_the_start_page() {
     assert_eq!(args.last().map(String::as_str), Some("about:blank"));
     assert!(args.contains(&"--headless=new".to_string()));
     assert_eq!(args_with(9222, &dir, &[]), launch_args(9222, &dir));
+}
+
+/// An extra assistant's browser opens offset from the main window, so two
+/// windows are never exactly on top of each other: the position goes through
+/// the extra switches (the path `launch_in_at` takes), before the start page.
+/// Main asks for none, so its launch is exactly what it was.
+#[test]
+fn a_positioned_launch_names_its_window_position() {
+    let dir = PathBuf::from("C:/tmp/p");
+    assert_eq!(window_position_switch(None), None);
+    assert_eq!(window_position_switch(Some((60, 60))).as_deref(), Some("--window-position=60,60"));
+    assert_eq!(window_position_switch(Some((120, 120))).as_deref(), Some("--window-position=120,120"));
+    let args = args_with(9222, &dir, &["--window-position=60,60"]);
+    assert!(args.contains(&"--window-position=60,60".to_string()), "{args:?}");
+    assert_eq!(args.last().map(String::as_str), Some("about:blank"));
+    // The switch is added to the app's own arguments, none removed.
+    assert_eq!(args.len(), launch_args(9222, &dir).len() + 1);
+    assert!(!args.contains(&"--headless=new".to_string()), "a positioned window is a visible one");
 }
 
 /// A port nobody else holds, so two runs (or a stale browser) cannot

@@ -1,7 +1,7 @@
 //! The Auto Run browser's numbered slots: main is the one the person and
-//! every existing path use; two more sit beside it. In this phase only main
-//! is ever opened, so these pin the table itself, the state each slot keeps
-//! apart, and that main's old names still mean main.
+//! every existing path use; two more sit beside it for assistants beyond the
+//! first. These pin the table itself, the state each slot keeps apart, that
+//! main's old names still mean main, and the rules that pick a slot.
 
 use crate::serial;
 use v2_lib::autorun::overrides::Overrides;
@@ -234,7 +234,7 @@ fn release_all_and_exit_stop_every_slots_replay_and_batch() {
 mod routing {
     use super::*;
     use v2_lib::autorun::agents::{AgentKey, Caller};
-    use v2_lib::commands::autorun_slots::{need_of, slot_for, slot_if_any, Need};
+    use v2_lib::commands::autorun_slots::{need_of, slot_for, Need};
 
     /// Every route that uses a supervised browser names what it does with
     /// it; every other route names nothing.
@@ -289,6 +289,17 @@ mod routing {
             ("GET", "/autorun-guide"),
             ("POST", "/autorun-order"),
             ("POST", "/agent-bye"),
+            // What All projects as one added: Azure DevOps reads and the
+            // per-caller writing job, none of which uses a browser.
+            ("GET", "/search-pbis"),
+            ("GET", "/suites"),
+            ("GET", "/suite-cases"),
+            ("GET", "/run-results"),
+            ("GET", "/search-wiki"),
+            ("GET", "/wiki-page"),
+            ("GET", "/tags"),
+            ("POST", "/begin"),
+            ("GET", "/accounts"),
         ] {
             assert_eq!(need_of(method, path), None, "{method} {path}");
         }
@@ -297,25 +308,112 @@ mod routing {
         assert_eq!(need_of("GET", "/autorun-try"), None);
     }
 
-    /// In this phase every caller, whatever it needs, gets the main browser.
+    /// A template run (and a proof) that was refused its account because the
+    /// Auto Run browser holds it asks whether the CALLER's own browser does,
+    /// not main's: prove and run share the check, and both are given their
+    /// caller's slot (none when it has no browser, which then gets no hint).
     #[test]
-    fn slot_for_is_main_for_now() {
-        let _g = crate::serial::agents();
-        let _a = crate::serial::autorun();
-        let agent = Caller::Agent(AgentKey { id: "a".repeat(32), name: Some("writer".to_string()) });
-        for caller in [Caller::Default, agent] {
-            for need in [Need::Open, Need::Act, Need::Read] {
-                assert_eq!(slot_for(&caller, need), Ok(SlotNo::MAIN), "{caller:?} {need:?}");
-            }
+    fn a_template_run_asks_its_callers_own_browser() {
+        fn body<'a>(source: &'a str, head: &str) -> &'a str {
+            let from = &source[source.find(head).unwrap_or_else(|| panic!("{head} is gone"))..];
+            &from[..from.find("\n}\n").unwrap_or(from.len())]
         }
-        v2_lib::commands::autorun_slots::clear();
+        let bridge = include_str!("../../src/ai_bridge.rs").replace("\r\n", "\n");
+        let request = body(&bridge, "async fn run_api_template_request<");
+        assert!(request.contains("asker: Option<SlotNo>"), "{request}");
+        assert!(request.contains("assistant_browser_holds(n, &req.account)"), "{request}");
+        assert!(!request.contains("SlotNo::MAIN"), "a template run still asks main's browser: {request}");
+        for head in ["pub async fn api_template_prove_for<", "pub async fn api_template_run_for<"] {
+            assert!(body(&bridge, head).contains("run_api_template_request(ctx, &root, req,"), "{head}");
+            assert!(body(&bridge, head).contains("asker"), "{head}");
+        }
+        // The default caller's entry points are the old names, asking main.
+        assert!(body(&bridge, "pub async fn api_template_prove<").contains("api_template_prove_for(Some(SlotNo::MAIN),"));
+        assert!(body(&bridge, "pub async fn api_template_run<").contains("api_template_run_for(Some(SlotNo::MAIN),"));
+        let route_as = body(&bridge, "pub async fn route_as(");
+        let prove = &route_as[route_as.find("(\"POST\", \"/api-template-prove\")").unwrap()..];
+        let prove = &prove[..prove.find("(\"POST\", \"/api-template-run\")").unwrap()];
+        assert!(prove.contains("slot_if_any(caller)") && prove.contains("api_template_prove_for("), "{prove}");
+        let run = &route_as[route_as.find("(\"POST\", \"/api-template-run\")").unwrap()..];
+        let run = &run[..run.find("(\"POST\", \"/api-template-send\")").unwrap()];
+        let run = run.split_whitespace().collect::<Vec<_>>().join(" ");
+        assert!(run.contains("api_template_run_for( slot, ctx,"), "{run}");
     }
 
+    /// A capture read that names an imported set (`from`) uses no browser, so
+    /// it is never refused for lack of one; the same read of the live
+    /// capture, a filter and an import are as `need_of` says.
     #[test]
-    fn slot_if_any_is_main_for_now() {
-        let agent = Caller::Agent(AgentKey { id: "b".repeat(32), name: None });
-        assert_eq!(slot_if_any(&Caller::Default), Some(SlotNo::MAIN));
-        assert_eq!(slot_if_any(&agent), Some(SlotNo::MAIN));
+    fn a_capture_read_of_an_imported_set_needs_no_browser() {
+        use v2_lib::commands::autorun_slots::reads_an_imported_set;
+        let from = r#"{"from":"saved-run"}"#;
+        for path in ["/autorun-requests", "/autorun-requests-search", "/autorun-request", "/autorun-response", "/autorun-response-body"] {
+            assert!(reads_an_imported_set("POST", path, from), "{path}");
+            assert!(reads_an_imported_set("POST", path, r#"{"from":" saved-run "}"#), "{path} with spaces");
+            assert!(!reads_an_imported_set("POST", path, ""), "{path} without a body");
+            assert!(!reads_an_imported_set("POST", path, "{}"), "{path} without from");
+            assert!(!reads_an_imported_set("POST", path, r#"{"from":"live"}"#), "{path} from live");
+            assert!(!reads_an_imported_set("POST", path, r#"{"from":"LIVE"}"#), "{path} from LIVE");
+            assert!(!reads_an_imported_set("POST", path, r#"{"from":""}"#), "{path} from blank");
+            assert!(!reads_an_imported_set("GET", path, from), "{path} by GET");
+        }
+        // The capture routes that read no set, and every other route, keep
+        // their browser.
+        for path in ["/autorun-capture", "/autorun-requests-export", "/autorun-probe", "/autorun-try"] {
+            assert!(!reads_an_imported_set("POST", path, from), "{path}");
+        }
+        // A body that cannot be read is answered 400 before any browser is
+        // used, so it needs none either.
+        assert!(reads_an_imported_set("POST", "/autorun-requests", "not json"));
+    }
+
+    /// `route_as` looks for it before `slot_for`, and still calls `slot_for`
+    /// once.
+    #[test]
+    fn route_as_does_not_pick_a_slot_for_a_read_of_an_imported_set() {
+        let bridge = include_str!("../../src/ai_bridge.rs").replace("\r\n", "\n");
+        let head = bridge.find("pub async fn route_as(").expect("route_as");
+        let after = &bridge[head..];
+        let route_as = &after[..after.find("\n}").expect("end of route_as")];
+        let reads = route_as.find("reads_an_imported_set(method, path, body)").expect("route_as does not ask");
+        assert!(reads < route_as.find("slot_for(caller,").unwrap(), "asked after slot_for");
+        assert_eq!(route_as.matches("slot_for(caller,").count(), 1);
+    }
+
+    /// A caller with no browser is answered by a bridge route that reads an
+    /// imported set, whoever holds main.
+    #[tokio::test]
+    async fn an_assistant_with_no_browser_reads_an_imported_set() {
+        use v2_lib::ai_bridge::route_as;
+        use v2_lib::autorun::agents::{self, AgentHeaders};
+        let _g = crate::serial::agents();
+        let _a = crate::serial::autorun();
+        agents::clear();
+        v2_lib::commands::autorun_slots::clear();
+        let register = |id: &str| {
+            let h = AgentHeaders { id: Some(id.to_string()), pid: Some(4242), client: Some("claude-code".into()), name: None };
+            agents::note_call(&h.caller(), &h, 10_000_000);
+            h.caller()
+        };
+        let (holder, other) = (register(&"1".repeat(32)), register(&"2".repeat(32)));
+        assert_eq!(slot_for(&holder, Need::Act), Ok(SlotNo::MAIN));
+        let live = serde_json::json!({ "limit": 1 }).to_string();
+        let from = serde_json::json!({ "from": "no-such-set" }).to_string();
+        let ctx = v2_lib::ai_bridge::BridgeContext {
+            org: "acme".into(),
+            project: "Web".into(),
+            network_tools: true,
+            ..Default::default()
+        };
+        // A read of the live capture needs the caller's own browser.
+        let (status, said) = route_as(&other, &ctx, None, "POST", "/autorun-requests", &live, "1.0.0").await;
+        assert_eq!((status, said.as_str()), (409, v2_lib::commands::autorun_slots::NO_BROWSER_OF_YOURS));
+        // A read of an imported set is answered (here: no such set), not refused.
+        let (status, said) = route_as(&other, &ctx, None, "POST", "/autorun-requests", &from, "1.0.0").await;
+        assert_eq!(status, 400, "{said}");
+        assert!(said.contains("No imported set named"), "{said}");
+        agents::clear();
+        v2_lib::commands::autorun_slots::clear();
     }
 
     /// `route_as` picks the slot once, after the guards, and no browser route
@@ -479,7 +577,8 @@ mod card {
     use v2_lib::autorun::replay_to::{state, OneReplay};
     use v2_lib::commands::autorun_slots::{
         agent_views, auto_run_agents, auto_run_end_agent_discovery, auto_run_release_agent, auto_run_stop_agent,
-        bind, bound, clear, next_views_to_send, on_sweep, slot_for, slot_of, unbind, unbind_agent, AgentActivity, Need,
+        bind, bind_if_free, bound, clear, hold_binding, next_views_to_send, on_sweep, slot_for, slot_if_any, slot_of,
+        unbind, unbind_agent, window_position, AgentActivity, Need, ALL_BROWSERS_OPEN, NO_BROWSER_OF_YOURS,
         NO_SUCH_BROWSER,
     };
 
@@ -512,8 +611,298 @@ mod card {
         show_overrides(&Overrides::new());
     }
 
+    const ID_C: &str = "cccccccccccccccccccccccccccccccc";
+    const ID_D: &str = "dddddddddddddddddddddddddddddddd";
+
+    fn caller(id: &str) -> Caller {
+        Caller::Agent(key(id))
+    }
+
+    /// One assistant alone works exactly as it did before there were extra
+    /// browsers: every call lands in main, and an Open or an Act binds it.
+    #[test]
+    fn one_agent_alone_always_lands_in_main_and_binds_it() {
+        let _g = crate::serial::agents();
+        let _a = crate::serial::autorun();
+        fresh();
+        register(ID_A, "claude-code", T0);
+        assert_eq!(slot_for(&caller(ID_A), Need::Read), Ok(SlotNo::MAIN));
+        assert_eq!(bound(SlotNo::MAIN), None, "a read binds nothing");
+        assert_eq!(slot_for(&caller(ID_A), Need::Act), Ok(SlotNo::MAIN));
+        assert_eq!(bound(SlotNo::MAIN), Some(key(ID_A)));
+        for need in [Need::Open, Need::Act, Need::Read] {
+            assert_eq!(slot_for(&caller(ID_A), need), Ok(SlotNo::MAIN), "{need:?}");
+        }
+        assert_eq!(bound(SlotNo::MAIN), Some(key(ID_A)));
+        assert_eq!(slot_if_any(&caller(ID_A)), Some(SlotNo::MAIN));
+        fresh();
+    }
+
+    /// An older proxy, a test and the person are never refused and never
+    /// moved by another assistant's claim.
+    #[test]
+    fn the_default_caller_always_gets_main_even_when_main_is_bound() {
+        let _g = crate::serial::agents();
+        let _a = crate::serial::autorun();
+        fresh();
+        register(ID_A, "claude-code", T0);
+        register(ID_B, "claude-code", T0);
+        bind(SlotNo::MAIN, &key(ID_A));
+        bind(SlotNo(1), &key(ID_B));
+        for need in [Need::Open, Need::Act, Need::Read] {
+            assert_eq!(slot_for(&Caller::Default, need), Ok(SlotNo::MAIN), "{need:?}");
+        }
+        assert_eq!(slot_if_any(&Caller::Default), Some(SlotNo::MAIN));
+        assert_eq!(bound(SlotNo::MAIN), Some(key(ID_A)), "the default caller changed main's binding");
+        assert_eq!(bound(SlotNo(1)), Some(key(ID_B)));
+        fresh();
+    }
+
+    /// Main is held by a live assistant: the next to open gets the lowest
+    /// extra browser with nobody in it, and the fourth is told there are no
+    /// more.
+    #[test]
+    fn a_second_agent_opening_gets_slot_1_then_slot_2_then_the_cap() {
+        let _g = crate::serial::agents();
+        let _a = crate::serial::autorun();
+        fresh();
+        for id in [ID_A, ID_B, ID_C, ID_D] {
+            register(id, "claude-code", T0);
+        }
+        assert_eq!(slot_for(&caller(ID_A), Need::Act), Ok(SlotNo::MAIN));
+        assert_eq!(slot_for(&caller(ID_B), Need::Open), Ok(SlotNo(1)));
+        assert_eq!(bound(SlotNo(1)), Some(key(ID_B)), "the slot is bound in the same step");
+        assert_eq!(slot_for(&caller(ID_C), Need::Open), Ok(SlotNo(2)));
+        assert_eq!(slot_for(&caller(ID_D), Need::Open), Err((409, ALL_BROWSERS_OPEN.to_string())));
+        assert_eq!(slot_of(&key(ID_D)), None, "a refused open binds nothing");
+        // Each keeps its own browser on every later call.
+        assert_eq!(slot_for(&caller(ID_B), Need::Read), Ok(SlotNo(1)));
+        assert_eq!(slot_for(&caller(ID_B), Need::Act), Ok(SlotNo(1)));
+        assert_eq!(slot_for(&caller(ID_B), Need::Open), Ok(SlotNo(1)));
+        assert_eq!(slot_for(&caller(ID_C), Need::Act), Ok(SlotNo(2)));
+        assert_eq!(slot_for(&caller(ID_A), Need::Read), Ok(SlotNo::MAIN));
+        // A freed extra browser is the next to open's.
+        unbind(SlotNo(1));
+        assert_eq!(slot_for(&caller(ID_D), Need::Open), Ok(SlotNo(1)));
+        assert_eq!(slot_if_any(&caller(ID_D)), Some(SlotNo(1)));
+        fresh();
+    }
+
+    /// An assistant that only acts or reads, with main held by another and
+    /// no browser of its own, is told how to get one.
+    #[test]
+    fn a_second_agent_without_a_browser_is_told_how_to_get_one() {
+        let _g = crate::serial::agents();
+        let _a = crate::serial::autorun();
+        fresh();
+        register(ID_A, "claude-code", T0);
+        register(ID_B, "claude-code", T0);
+        bind(SlotNo::MAIN, &key(ID_A));
+        for need in [Need::Read, Need::Act] {
+            assert_eq!(slot_for(&caller(ID_B), need), Err((409, NO_BROWSER_OF_YOURS.to_string())), "{need:?}");
+        }
+        assert_eq!(slot_of(&key(ID_B)), None, "a refusal binds nothing");
+        assert_eq!(bound(SlotNo::MAIN), Some(key(ID_A)), "main's holder was moved");
+        // The routes that use a browser only when the caller has one are
+        // refused nothing: they just find none.
+        assert_eq!(slot_if_any(&caller(ID_B)), None);
+        assert!(!NO_BROWSER_OF_YOURS.contains(['\u{2013}', '\u{2014}']));
+        assert!(!ALL_BROWSERS_OPEN.contains(['\u{2013}', '\u{2014}']));
+        assert!(ALL_BROWSERS_OPEN.starts_with("3 Auto Run browsers are open already"));
+        fresh();
+    }
+
+    /// A subagent that leaves out its `agent` name is the session it was
+    /// started by: the same id and no name is one agent, one browser. A
+    /// named subagent is another agent.
+    #[test]
+    fn two_calls_with_the_same_id_and_name_share_one_slot() {
+        let _g = crate::serial::agents();
+        let _a = crate::serial::autorun();
+        fresh();
+        register(ID_A, "claude-code", T0);
+        register(ID_B, "claude-code", T0);
+        bind(SlotNo::MAIN, &key(ID_A));
+        let first = Caller::Agent(AgentKey { id: ID_B.to_string(), name: None });
+        let second = Caller::Agent(AgentKey { id: ID_B.to_string(), name: None });
+        assert_eq!(slot_for(&first, Need::Open), Ok(SlotNo(1)));
+        assert_eq!(slot_for(&second, Need::Open), Ok(SlotNo(1)), "the same agent was given another browser");
+        assert_eq!(slot_for(&second, Need::Act), Ok(SlotNo(1)));
+        assert_eq!(slot_for(&second, Need::Read), Ok(SlotNo(1)));
+        // The same id with a name is a subagent of its own.
+        let named = AgentKey { id: ID_B.to_string(), name: Some("writer".to_string()) };
+        agents::note_call(
+            &Caller::Agent(named.clone()),
+            &AgentHeaders { id: Some(ID_B.to_string()), pid: None, client: None, name: Some("writer".to_string()) },
+            T0,
+        );
+        assert_eq!(slot_for(&Caller::Agent(named), Need::Open), Ok(SlotNo(2)));
+        fresh();
+    }
+
+    /// An assistant that has gone does not keep main from the next.
+    #[test]
+    fn a_gone_main_binding_does_not_block_another_agent() {
+        let _g = crate::serial::agents();
+        let _a = crate::serial::autorun();
+        fresh();
+        register(ID_A, "claude-code", T0);
+        register(ID_B, "claude-code", T0);
+        bind(SlotNo::MAIN, &key(ID_A));
+        agents::note_bye(ID_A, T0 + 1);
+        assert_eq!(slot_if_any(&caller(ID_B)), Some(SlotNo::MAIN));
+        assert_eq!(bound(SlotNo::MAIN), Some(key(ID_A)), "a look binds nothing");
+        assert_eq!(slot_for(&caller(ID_B), Need::Act), Ok(SlotNo::MAIN));
+        assert_eq!(bound(SlotNo::MAIN), Some(key(ID_B)));
+        assert_eq!(slot_of(&key(ID_A)), None);
+        fresh();
+    }
+
+    /// Main is held by an assistant the app cannot see (never registered, or
+    /// forgotten): the next takes it, as before there were extra browsers.
+    #[test]
+    fn main_held_by_an_unlisted_agent_is_taken_by_the_next() {
+        let _g = crate::serial::agents();
+        let _a = crate::serial::autorun();
+        fresh();
+        register(ID_B, "claude-code", T0);
+        bind(SlotNo::MAIN, &key(ID_A));
+        assert_eq!(slot_for(&caller(ID_B), Need::Open), Ok(SlotNo::MAIN));
+        assert_eq!(bound(SlotNo::MAIN), Some(key(ID_B)));
+        fresh();
+    }
+
+    #[test]
+    fn extra_windows_open_offset() {
+        assert_eq!(window_position(SlotNo::MAIN), None);
+        assert_eq!(window_position(SlotNo(1)), Some((60, 60)));
+        assert_eq!(window_position(SlotNo(2)), Some((120, 120)));
+    }
+
+    /// An open that replaces the browser an assistant holds keeps its
+    /// binding the whole time: another assistant's call cannot take main in
+    /// the gap, and the slot is the holder's again when the open ends.
+    #[test]
+    fn a_replacing_open_keeps_the_holders_binding() {
+        let _g = crate::serial::agents();
+        let _a = crate::serial::autorun();
+        fresh();
+        register(ID_A, "claude-code", T0);
+        register(ID_B, "claude-code", T0);
+        bind(SlotNo::MAIN, &key(ID_A));
+        {
+            let _hold = hold_binding(SlotNo::MAIN, &key(ID_A));
+            // The browser being replaced is closed: its close unbinds the slot.
+            unbind(SlotNo::MAIN);
+            assert_eq!(bound(SlotNo::MAIN), Some(key(ID_A)), "the close unbound the holder");
+            assert_eq!(
+                slot_for(&caller(ID_B), Need::Act),
+                Err((409, NO_BROWSER_OF_YOURS.to_string())),
+                "another assistant took main in the gap"
+            );
+            // Another slot's binding is not held.
+            bind(SlotNo(1), &key(ID_B));
+            unbind(SlotNo(1));
+            assert_eq!(bound(SlotNo(1)), None);
+        }
+        // Once the open is over an unbind is an unbind again.
+        unbind(SlotNo::MAIN);
+        assert_eq!(bound(SlotNo::MAIN), None);
+        assert_eq!(slot_for(&caller(ID_B), Need::Act), Ok(SlotNo::MAIN));
+        // A hold ends however its holder returns.
+        bind(SlotNo::MAIN, &key(ID_A));
+        let hold = hold_binding(SlotNo::MAIN, &key(ID_A));
+        drop(hold);
+        unbind(SlotNo::MAIN);
+        assert_eq!(bound(SlotNo::MAIN), None);
+        fresh();
+    }
+
+    /// Binding a slot to its holder after an open does nothing when another
+    /// assistant has it by then.
+    #[test]
+    fn bind_if_free_binds_only_an_unbound_slot() {
+        let _g = crate::serial::agents();
+        let _a = crate::serial::autorun();
+        fresh();
+        bind_if_free(SlotNo(1), &key(ID_A));
+        assert_eq!(bound(SlotNo(1)), Some(key(ID_A)));
+        bind_if_free(SlotNo(1), &key(ID_B));
+        assert_eq!(bound(SlotNo(1)), Some(key(ID_A)), "an assistant's slot was taken");
+        fresh();
+    }
+
+    /// The paths that open a browser for an assistant take the assistant's
+    /// real key from `route_as`, hold its binding through the replace, and
+    /// never read the holder back from the bindings.
+    #[test]
+    fn the_open_paths_are_given_the_real_caller() {
+        fn body<'a>(source: &'a str, head: &str) -> &'a str {
+            let from = &source[source.find(head).unwrap_or_else(|| panic!("{head} is gone"))..];
+            &from[..from.find("\n}\n").unwrap_or(from.len())]
+        }
+        let bridge = include_str!("../../src/ai_bridge.rs").replace("\r\n", "\n");
+        let commands = include_str!("../../src/commands/autorun.rs").replace("\r\n", "\n");
+        let route_as = body(&bridge, "pub async fn route_as(");
+        assert!(route_as.contains("let holder = caller.key();"), "{route_as}");
+        assert!(route_as.contains("autorun_discover_start(ctx, body, &mut seen, slot, holder)"), "{route_as}");
+        assert!(route_as.contains("autorun_replay(ctx, body, slot, holder)"), "{route_as}");
+        assert!(body(&bridge, "async fn autorun_discover_start(").contains("holder: Option<&AgentKey>"));
+        assert!(body(&bridge, "async fn autorun_discover_start(").contains(", n, holder)"));
+        assert!(body(&bridge, "pub trait ReplayHost").contains("holder: Option<AgentKey>"));
+        let host = include_str!("../../src/commands/ai_bridge.rs").replace("\r\n", "\n");
+        assert!(host.contains("ReplayBy::Assistant, holder.as_ref())"), "the host does not pass the holder on");
+        for head in ["pub(crate) async fn open_for_discovery(", "pub(crate) async fn replay_supervised("] {
+            let b = body(&commands, head);
+            assert!(b.contains("holder: Option<&crate::autorun::agents::AgentKey>"), "{head} takes no holder");
+            assert!(b.contains("hold_binding(n, key)"), "{head} does not hold the binding");
+            assert!(b.contains("bind_if_free(n, key)"), "{head} does not bind the holder after the open");
+            assert!(!b.contains("= crate::commands::autorun_slots::bound(n)"), "{head} reads the holder from the bindings");
+        }
+        let into = body(&commands, "async fn open_if_none(");
+        assert!(!into.contains("bound(n)") && !into.contains("rebind"), "open_if_none guesses the holder: {into}");
+        assert!(!commands.contains("fn rebind_if_free("), "the old rebind is back");
+    }
+
+    /// An assistant's extra browser opens offset from the main window.
+    #[test]
+    fn an_opened_browser_takes_its_slots_window_position() {
+        let commands = include_str!("../../src/commands/autorun.rs").replace("\r\n", "\n");
+        let from = &commands[commands.find("async fn open_into(").unwrap()..];
+        let open = &from[..from.find("\n}\n").unwrap()];
+        assert!(
+            open.contains("launch_in_at(which, crate::commands::autorun_slots::window_position(n))"),
+            "{open}"
+        );
+        assert!(!open.contains("launch_in(which)"), "{open}");
+    }
+
+    /// The pane events of a replay are the main browser's: an extra browser
+    /// opening, signing in, closing or stepping never tells the person's
+    /// panes anything.
+    #[test]
+    fn a_replay_in_an_extra_slot_tells_the_panes_nothing() {
+        fn body<'a>(source: &'a str, head: &str) -> &'a str {
+            let from = &source[source.find(head).unwrap_or_else(|| panic!("{head} is gone"))..];
+            &from[..from.find("\n}\n").unwrap_or(from.len())]
+        }
+        let commands = include_str!("../../src/commands/autorun.rs").replace("\r\n", "\n");
+        for head in ["pub(crate) async fn replay_supervised(", "async fn open_into(", "async fn open_if_none("] {
+            let b = body(&commands, head);
+            // Every event is sent through `emit_if_main`; none is emitted bare.
+            assert!(!b.contains(".emit(app)"), "{head} emits a pane event for any slot:\n{b}");
+        }
+        let replay = body(&commands, "pub(crate) async fn replay_supervised(");
+        assert_eq!(replay.matches("emit_if_main(n, app, ").count(), 6, "the six pane events of a replay: {replay}");
+        let helper = body(&commands, "fn emit_if_main<");
+        assert!(helper.contains("if n.is_main()"), "{helper}");
+    }
+
     #[test]
     fn an_agent_that_opens_or_acts_binds_main_and_a_read_does_not() {
+        // These agents are never registered, so none of them is live and the
+        // latest to open or act takes main (rule 3). Registered agents are
+        // held apart (the rules tests above).
         let _g = crate::serial::agents();
         let _a = crate::serial::autorun();
         fresh();
@@ -976,6 +1365,9 @@ mod card {
         let close = src.find("fn close_session(s: Session)").expect("close_session");
         let close_body = &src[close..close + 700];
         assert!(close_body.contains("unbind("), "{close_body}");
+        // Every slot's browser, an extra one included, unbinds its own slot
+        // when it closes, so an extra slot whose browser closes is empty again.
+        assert!(close_body.contains("unbind(s.slot)"), "{close_body}");
         let persons = src.find("pub(crate) async fn make_persons").expect("make_persons");
         let persons_body = &src[persons..persons + 700];
         assert!(persons_body.contains("unbind("), "{persons_body}");
