@@ -11,12 +11,19 @@
 //! is running and is removed the moment it finishes, whether it succeeded
 //! or failed, so nothing is remembered and an error is never served to a
 //! later asker. (Remembering an answer is `crate::cache`'s job.)
+//!
+//! The work runs on a task of its own, not inside whoever asked first: an
+//! asker that goes away (a timeout, a closed connection) does not stall the
+//! others, and work that panics comes back to every waiter as an error and
+//! leaves nothing behind, so the next ask starts fresh.
 
 use std::future::Future;
 use std::sync::Mutex;
 
 use futures::future::{BoxFuture, FutureExt, Shared};
 use tokio::sync::watch;
+
+use super::AdoError;
 
 /// Where a walk is, as its progress callback reports it: plans read of
 /// plans to read, and, when the walk is waiting on one large plan alone,
@@ -34,20 +41,35 @@ impl ScanProgress {
     }
 }
 
-struct Flight<T: Clone> {
+type Outcome<V> = Result<V, AdoError>;
+
+struct Flight<V: Clone> {
     key: String,
-    result: Shared<BoxFuture<'static, T>>,
+    result: Shared<BoxFuture<'static, Outcome<V>>>,
     progress: watch::Receiver<ScanProgress>,
 }
 
 /// The running work of one kind, keyed by what it is for. Held in a
 /// `static` by each kind of work (a `Vec` rather than a map: a handful of
 /// entries at most, and none outlive their work).
-pub struct Flights<T: Clone> {
-    open: Mutex<Vec<Flight<T>>>,
+pub struct Flights<V: Clone> {
+    open: Mutex<Vec<Flight<V>>>,
 }
 
-impl<T: Clone + Send + Sync + 'static> Flights<T> {
+/// Takes the work's entry out when the work's task ends, however it ends:
+/// returning, or unwinding from a panic.
+struct Finish<V: Clone + Send + Sync + 'static> {
+    flights: &'static Flights<V>,
+    key: String,
+}
+
+impl<V: Clone + Send + Sync + 'static> Drop for Finish<V> {
+    fn drop(&mut self) {
+        self.flights.finish(&self.key);
+    }
+}
+
+impl<V: Clone + Send + Sync + 'static> Flights<V> {
     pub const fn new() -> Self {
         Self { open: Mutex::new(Vec::new()) }
     }
@@ -63,9 +85,9 @@ impl<T: Clone + Send + Sync + 'static> Flights<T> {
         also_join: Option<&str>,
         make: impl FnOnce(watch::Sender<ScanProgress>) -> Fut,
         mut progress: impl FnMut(ScanProgress),
-    ) -> T
+    ) -> Outcome<V>
     where
-        Fut: Future<Output = T> + Send + 'static,
+        Fut: Future<Output = Outcome<V>> + Send + 'static,
     {
         let (mut result, mut heard) = {
             let mut open = self.lock();
@@ -78,11 +100,19 @@ impl<T: Clone + Send + Sync + 'static> Flights<T> {
                 None => {
                     let (tx, rx) = watch::channel(ScanProgress::default());
                     let work = make(tx);
-                    let owned = key.to_string();
+                    let guard = Finish { flights: self, key: key.to_string() };
+                    let task = tokio::spawn(async move {
+                        let _guard = guard;
+                        work.await
+                    });
                     let result = async move {
-                        let out = work.await;
-                        self.finish(&owned);
-                        out
+                        match task.await {
+                            Ok(out) => out,
+                            // The work panicked (or was cancelled): every
+                            // waiter hears it as a failed read, and the
+                            // guard has already cleared the entry.
+                            Err(_) => Err(AdoError::Network("the lookup stopped unexpectedly".to_string())),
+                        }
                     }
                     .boxed()
                     .shared();
@@ -115,7 +145,7 @@ impl<T: Clone + Send + Sync + 'static> Flights<T> {
         }
     }
 
-    fn lock(&self) -> std::sync::MutexGuard<'_, Vec<Flight<T>>> {
+    fn lock(&self) -> std::sync::MutexGuard<'_, Vec<Flight<V>>> {
         self.open.lock().unwrap_or_else(|e| e.into_inner())
     }
 

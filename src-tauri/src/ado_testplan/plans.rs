@@ -57,6 +57,17 @@ impl Stragglers {
 /// gives up and lets the plans be walked.
 const SUITE_FROM_CASES_ASKED: usize = 3;
 
+/// One of a PBI's requirement suites, as a test case's answer lists it.
+/// `plan` is filled when the plan was read (to confirm it, or to rank it);
+/// `in_project` is whether the suite itself named this project.
+struct SuiteCandidate {
+    plan_id: i32,
+    suite_id: i32,
+    plan_name: String,
+    in_project: bool,
+    plan: Option<TestPlan>,
+}
+
 /// What looking for a PBI's suite came to: the suite if there is one, and
 /// the project's plans when they had to be read (so a caller about to
 /// create a suite does not read them again). `plans` is empty when the
@@ -67,12 +78,13 @@ struct SuiteWalk {
     plans: std::sync::Arc<Vec<TestPlan>>,
 }
 
-/// The suite lookups running now, one per (server, org, project, PBI, how
-/// far it looks). See `ado::single_flight`.
-static SUITE_WALKS: Flights<Result<SuiteWalk, AdoError>> = Flights::new();
+/// The suite lookups running now, one per (server, signed-in account, org,
+/// project, PBI, area, how far it looks). See `ado::single_flight`.
+static SUITE_WALKS: Flights<SuiteWalk> = Flights::new();
 
-/// The plans-and-suites walks running now, one per (server, org, project).
-static PLAN_TREES: Flights<Result<Vec<PlanWithSuites>, AdoError>> = Flights::new();
+/// The plans-and-suites walks running now, one per (server, signed-in
+/// account, org, project).
+static PLAN_TREES: Flights<Vec<PlanWithSuites>> = Flights::new();
 
 impl AdoClient {
     /// All test plans in the project (paginated). Read only.
@@ -254,8 +266,8 @@ impl AdoClient {
     ) -> Result<Vec<PlanWithSuites>, AdoError> {
         // Every screen that wants the tree shares one walk; a failed walk
         // is shared too, and never kept.
-        let key = format!("{}|{org}|{project}", self.base_url);
-        let (me, org, project) = (self.clone(), org.to_string(), project.to_string());
+        let key = format!("{}|{}|{org}|{project}", self.base_url, self.account);
+        let (me, org, project)= (self.clone(), org.to_string(), project.to_string());
         PLAN_TREES
             .run(
                 &key,
@@ -510,20 +522,36 @@ impl AdoClient {
     /// (`GET {org}/_apis/testplan/suites?testCaseId=N`, each suite with its
     /// plan, project, `suiteType` and `requirementId`), where walking plans
     /// reads every plan's suite list. Asks up to the first three Tested By
-    /// cases, one after another, and stops at the first hit. None means "not
-    /// found this way" - no cases, or none in this PBI's requirement suite -
-    /// and the caller falls back to the plan walk. Read only.
+    /// cases, one after another, and stops at the first that names one of
+    /// this PBI's requirement suites. A PBI can have one in several plans
+    /// (one per release, an old plan copied from, another team's), all
+    /// listed by that one answer; they are ranked as the plan walk ranks
+    /// plans - the plan for the PBI's area first, then an active plan, then
+    /// the newest - so the lookup and the walk agree. None means "not found
+    /// this way" - no cases, none in this PBI's requirement suite, or the
+    /// service would not say - and the caller falls back to the plan walk.
+    /// Read only.
     pub async fn suite_from_cases(
         &self,
         org: &str,
         project: &str,
         pbi_id: i32,
+        area_path: &str,
     ) -> Result<Option<EnsuredSuite>, AdoError> {
         // A PBI that cannot be read or has no links is not an error here:
-        // the walk that follows reports whatever is really wrong.
+        // the walk that follows reports whatever is really wrong. The same
+        // goes for an answer this shortcut cannot use (a 400, a 5xx): it is
+        // logged and the walk decides. A bad sign-in or a throttle is not
+        // let past, since the walk would only meet it too.
         let case_ids = match self.get_pbi_tested_by_ids(org, pbi_id).await {
             Ok(ids) => ids,
             Err(AdoError::Forbidden) | Err(AdoError::NotFound) => return Ok(None),
+            Err(AdoError::Http { status, .. }) => {
+                crate::applog::warn(format!(
+                    "reading PBI {pbi_id} for its test cases answered http {status}; walking the plans instead"
+                ));
+                return Ok(None);
+            }
             Err(e) => return Err(e),
         };
         for case_id in case_ids.into_iter().take(SUITE_FROM_CASES_ASKED) {
@@ -536,9 +564,22 @@ impl AdoClient {
             let data = match self.get_json(url).await {
                 Ok(d) => d,
                 Err(AdoError::Forbidden) | Err(AdoError::NotFound) => continue,
+                Err(AdoError::Http { status, .. }) => {
+                    // The shortcut is not served here (or hiccuped): the
+                    // other cases would get the same answer.
+                    crate::applog::warn(format!(
+                        "asking which suites hold test case {case_id} answered http {status}; walking the plans instead"
+                    ));
+                    return Ok(None);
+                }
                 Err(e) => return Err(e),
             };
             let suites = data["value"].as_array().or_else(|| data.as_array()).cloned().unwrap_or_default();
+            // Every suite of this PBI that this answer lists. The call is
+            // org wide, so one may be another project's: the suite names
+            // its project when it can; when it does not, the plan read in
+            // `project` decides.
+            let mut candidates: Vec<SuiteCandidate> = vec![];
             for s in suites {
                 if s["suiteType"].as_str() != Some("requirementTestSuite")
                     || s["requirementId"].as_i64() != Some(pbi_id as i64)
@@ -548,25 +589,64 @@ impl AdoClient {
                 let (Some(suite_id), Some(plan_id)) = (s["id"].as_i64(), s["plan"]["id"].as_i64()) else {
                     continue;
                 };
-                // The call is org wide, so the suite may be another
-                // project's. The suite names its project when it can;
-                // when it does not, the plan read in `project` decides.
                 let named = s["project"]["name"].as_str().filter(|n| !n.is_empty());
-                let plan_name = match named {
-                    Some(n) if n.eq_ignore_ascii_case(project) => {
-                        s["plan"]["name"].as_str().unwrap_or_default().to_string()
-                    }
+                match named {
+                    Some(n) if n.eq_ignore_ascii_case(project) => {}
                     Some(_) => continue,
-                    None => match self.get_test_plan(org, project, plan_id as i32).await {
-                        Ok(p) => p.name,
+                    None => {}
+                }
+                candidates.push(SuiteCandidate {
+                    plan_id: plan_id as i32,
+                    suite_id: suite_id as i32,
+                    plan_name: s["plan"]["name"].as_str().unwrap_or_default().to_string(),
+                    in_project: named.is_some(),
+                    plan: None,
+                });
+            }
+            if candidates.is_empty() {
+                continue;
+            }
+            // One candidate that names this project needs nothing more.
+            // Otherwise each plan is read once: it confirms a suite that
+            // named no project, and its area, state and id rank the rest.
+            if !(candidates.len() == 1 && candidates[0].in_project) {
+                let mut kept = Vec::with_capacity(candidates.len());
+                for mut c in candidates {
+                    match self.get_test_plan(org, project, c.plan_id).await {
+                        Ok(p) => c.plan = Some(p),
+                        Err(AdoError::Forbidden) | Err(AdoError::NotFound) if c.in_project => {}
                         Err(AdoError::Forbidden) | Err(AdoError::NotFound) => continue,
+                        Err(AdoError::Http { status, .. }) => {
+                            crate::applog::warn(format!(
+                                "reading test plan {} answered http {status}; leaving its suite out of the shortcut",
+                                c.plan_id
+                            ));
+                            if !c.in_project {
+                                continue;
+                            }
+                        }
                         Err(e) => return Err(e),
-                    },
+                    }
+                    kept.push(c);
+                }
+                candidates = kept;
+            }
+            candidates.sort_by_key(|c| {
+                let (matched, active) = match &c.plan {
+                    Some(p) => (area_matches(&p.area_path, area_path), is_active(&p.state)),
+                    None => (false, false),
+                };
+                std::cmp::Reverse((matched, active, c.plan_id))
+            });
+            if let Some(best) = candidates.into_iter().next() {
+                let plan_name = match &best.plan {
+                    Some(p) if !p.name.is_empty() => p.name.clone(),
+                    _ => best.plan_name,
                 };
                 return Ok(Some(EnsuredSuite {
-                    plan_id: plan_id as i32,
+                    plan_id: best.plan_id,
                     plan_name,
-                    suite_id: suite_id as i32,
+                    suite_id: best.suite_id,
                     created_plan: false,
                 }));
             }
@@ -619,7 +699,11 @@ impl AdoClient {
         exhaustive: bool,
         progress: impl FnMut(ScanProgress),
     ) -> Result<SuiteWalk, AdoError> {
-        let key = |all: bool| format!("{}|{org}|{project}|{pbi_id}|{all}", self.base_url);
+        // The area is part of the key: it decides which suite wins when a
+        // PBI has several, so a walk for another area is not this one's.
+        let key = |all: bool| {
+            format!("{}|{}|{org}|{project}|{pbi_id}|{}|{all}", self.base_url, self.account, area_path.trim())
+        };
         let own = key(exhaustive);
         let wider = key(true);
         let also = if exhaustive { None } else { Some(wider.as_str()) };
@@ -630,7 +714,7 @@ impl AdoClient {
                 &own,
                 also,
                 move |tx| async move {
-                    if let Some(found) = me.suite_from_cases(&org, &project, pbi_id).await? {
+                    if let Some(found) = me.suite_from_cases(&org, &project, pbi_id, &area).await? {
                         return Ok(SuiteWalk { found: Some(found), plans: Default::default() });
                     }
                     let plans = me.get_test_plans(&org, &project).await?;

@@ -493,6 +493,14 @@ impl Store {
         dropped
     }
 
+    /// Who the cache belongs to, as the short tag it records (never the
+    /// address, never a token); empty while it belongs to no one. Work that
+    /// is shared between askers is keyed by it, so an ask made under one
+    /// account never joins work started under another.
+    pub fn owner(&self) -> String {
+        self.lock().disk.owner.clone().unwrap_or_default()
+    }
+
     /// Drop every entry in both tiers (the owner is kept).
     pub fn clear(&self) {
         {
@@ -619,6 +627,11 @@ pub fn session_put<T: Send + 'static>(key: &str, value: T) {
 /// than the owner signed in and everything was dropped.
 pub fn claim_for(account: Option<&str>) -> bool {
     global().claim_for(account)
+}
+
+/// `Store::owner` for the global cache.
+pub fn owner() -> String {
+    global().owner()
 }
 
 pub fn clear() {

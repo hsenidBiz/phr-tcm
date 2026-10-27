@@ -15,9 +15,10 @@ pub async fn list_plans_with_suites(
 ) -> Result<Vec<ado_testplan::PlanWithSuites>, ado::AdoError> {
     let token = get_fresh_token(&app).await?;
     let emitter = app.clone();
+    let named = project.clone();
     ado::AdoClient::new(token)
         .list_plans_with_suites_cb(&organization, &project, move |p| {
-            let _ = SuiteScanProgress::of(ScanKind::Plans, p).emit(&emitter);
+            let _ = SuiteScanProgress::of(ScanKind::Plans, &named, None, p).emit(&emitter);
         })
         .await
 }
@@ -43,9 +44,10 @@ pub async fn ensure_pbi_suite(
         .get_work_item_paths(&organization, &project, pbi_id)
         .await?;
     let emitter = app.clone();
+    let named = project.clone();
     let ensured = client
         .ensure_requirement_suite_cb(&organization, &project, pbi_id, &area, &iteration, move |p| {
-            let _ = SuiteScanProgress::of(ScanKind::Suite, p).emit(&emitter);
+            let _ = SuiteScanProgress::of(ScanKind::Suite, &named, Some(pbi_id), p).emit(&emitter);
         })
         .await?;
     // Shared with the upload and the AI bridge, so a PBI Run Tests has
@@ -78,9 +80,10 @@ pub async fn find_pbi_suite(
         .get_work_item_paths(&organization, &project, pbi_id)
         .await?;
     let emitter = app.clone();
+    let named = project.clone();
     let found = client
         .find_pbi_requirement_suite_cb(&organization, &project, pbi_id, &area, move |p| {
-            let _ = SuiteScanProgress::of(ScanKind::Suite, p).emit(&emitter);
+            let _ = SuiteScanProgress::of(ScanKind::Suite, &named, Some(pbi_id), p).emit(&emitter);
         })
         .await?;
     if let Some(s) = &found {

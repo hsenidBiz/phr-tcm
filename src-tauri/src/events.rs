@@ -54,18 +54,36 @@ pub enum ScanKind {
 /// the Suites browser can show "Scanning plans X of Y" instead of a bare
 /// skeleton. `kind` says which walk this is. `pages` is set only while the
 /// walk is waiting on one large plan alone: how many pages of that plan's
-/// suite list have been read so far.
+/// suite list have been read so far. `project` is the project the walk is
+/// in, and `pbi_id` the PBI a `suite` walk is looking for (none for
+/// `plans`): a screen listens only to the walk it is waiting on, since
+/// the person can move to another PBI or project while an earlier walk is
+/// still running.
 #[derive(Clone, serde::Serialize, specta::Type, tauri_specta::Event)]
 pub struct SuiteScanProgress {
     pub done: u32,
     pub total: u32,
     pub pages: Option<u32>,
     pub kind: ScanKind,
+    pub pbi_id: Option<i32>,
+    pub project: Option<String>,
 }
 
 impl SuiteScanProgress {
-    pub fn of(kind: ScanKind, p: crate::ado::single_flight::ScanProgress) -> Self {
-        Self { done: p.done, total: p.total, pages: p.pages, kind }
+    pub fn of(
+        kind: ScanKind,
+        project: &str,
+        pbi_id: Option<i32>,
+        p: crate::ado::single_flight::ScanProgress,
+    ) -> Self {
+        Self {
+            done: p.done,
+            total: p.total,
+            pages: p.pages,
+            kind,
+            pbi_id,
+            project: Some(project.to_string()),
+        }
     }
 }
 

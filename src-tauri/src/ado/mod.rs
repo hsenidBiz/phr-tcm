@@ -331,6 +331,10 @@ pub struct AdoClient {
     pub(crate) token: String,
     pub(crate) base_url: String, // "https://dev.azure.com" in prod, mock server in tests
     pub(crate) vssps_base_url: String, // "https://app.vssps.visualstudio.com" in prod
+    /// The cache's tag for the account signed in when this client was made
+    /// (see `cache::owner`; never a token). Work shared between askers is
+    /// keyed by it so one account never joins another's.
+    pub(crate) account: String,
 }
 
 impl AdoClient {
@@ -372,6 +376,15 @@ impl AdoClient {
             token: access_token,
             base_url,
             vssps_base_url,
+            account: crate::cache::owner(),
         }
+    }
+
+    /// The same client acting for the account the cache tags `tag`. Tests
+    /// use it to stand in for a second sign-in without touching the
+    /// process-wide cache.
+    pub fn for_account(mut self, tag: &str) -> Self {
+        self.account = tag.to_string();
+        self
     }
 }
