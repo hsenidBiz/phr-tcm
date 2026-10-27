@@ -128,12 +128,19 @@ pub fn window_position(n: SlotNo) -> Option<(i32, i32)> {
 ///
 /// So one assistant alone, an older proxy and the person see no change.
 pub fn slot_for(caller: &Caller, need: Need) -> Result<SlotNo, (u16, String)> {
+    slot_for_with(caller, need, &slot_is_empty)
+}
+
+/// `slot_for`, with what each extra browser holds given: `is_empty(n)` says
+/// slot `n` has no session and nothing working in it. Rule 4 gives out only a
+/// slot that is empty and unbound, so a test can say a slot is not.
+pub fn slot_for_with(caller: &Caller, need: Need, is_empty: &dyn Fn(SlotNo) -> bool) -> Result<SlotNo, (u16, String)> {
     let Caller::Agent(key) = caller else {
         return Ok(SlotNo::MAIN);
     };
     // Looked at before the bindings are locked (a briefly busy lock is waited
     // out): a slot nobody is bound to has a session only if one was left.
-    let empty = (need == Need::Open).then(|| SlotNo::extras().map(slot_is_empty));
+    let empty = (need == Need::Open).then(|| SlotNo::extras().map(is_empty));
     let mut t = bindings();
     if let Some(i) = t.bound.iter().position(|b| b.as_ref() == Some(key)) {
         return Ok(SlotNo(i as u8));
@@ -155,6 +162,24 @@ pub fn slot_for(caller: &Caller, need: Need) -> Result<SlotNo, (u16, String)> {
         }
     }
     Err((409, ALL_BROWSERS_OPEN.to_string()))
+}
+
+/// After an Open (a discovery's start, a replay) answered `status` in slot
+/// `n` for the assistant `holder`: an answer of 400 or more that left an extra
+/// browser with nothing open in it gives it back, so a refused or failed Open
+/// (bad request, unknown account, a browser that would not start) never
+/// leaves it reserved with no browser. Main is never freed this way, a slot
+/// with a browser in it, or being worked in, is left alone, and so is one
+/// another assistant has by now.
+pub fn free_extra_if_unused(n: SlotNo, holder: Option<&AgentKey>, status: u16) {
+    let Some(key) = holder else { return };
+    if status < 400 || n.is_main() || !slot_is_empty(n) {
+        return;
+    }
+    let mut t = bindings();
+    if t.bound[n.index()].as_ref() == Some(key) && t.held[n.index()].is_none() {
+        t.bound[n.index()] = None;
+    }
 }
 
 /// The opening lock: coordination between a browser opening and the few
@@ -252,11 +277,13 @@ pub fn bind(n: SlotNo, key: &AgentKey) {
     t.bound[n.index()] = Some(key.clone());
 }
 
-/// Slot `n`'s browser is bound to `key` if nobody holds it and `key` holds no
-/// other: after an open, in case the slot was let go on the way.
+/// Slot `n`'s browser is bound to `key` if nobody holds it, `key` holds no
+/// other and `key` is still live: after an open, in case the slot was let go
+/// on the way. An assistant the sweeper unbound while its open ran is not
+/// bound again, for nothing would free the slot after that.
 pub fn bind_if_free(n: SlotNo, key: &AgentKey) {
     let mut t = bindings();
-    if t.bound[n.index()].is_none() && !t.bound.iter().any(|b| b.as_ref() == Some(key)) {
+    if agents::is_live(key) && t.bound[n.index()].is_none() && !t.bound.iter().any(|b| b.as_ref() == Some(key)) {
         t.bound[n.index()] = Some(key.clone());
     }
 }

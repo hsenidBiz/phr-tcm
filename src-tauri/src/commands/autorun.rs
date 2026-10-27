@@ -2329,7 +2329,7 @@ pub(crate) async fn replay_supervised(
     let (case_id, step, db_read_access) = (req.case_id, req.step, req.db_read_access);
     let secrets = std::sync::Arc::clone(&app.state::<crate::db::DbSecrets>().0);
     let mut slot = session_slot(n).lock().await;
-    let _hold = holder.map(|key| crate::commands::autorun_slots::hold_binding(n, key));
+    let hold = holder.map(|key| crate::commands::autorun_slots::hold_binding(n, key));
     // A Close that took the lock first is respected: no browser is opened
     // again for a replay the person has already stopped.
     if let Some(stopped) = replay_to::stopped_before_opening(&replay_to::state(n).cancel) {
@@ -2359,6 +2359,10 @@ pub(crate) async fn replay_supervised(
     if let Some(key) = holder {
         crate::commands::autorun_slots::bind_if_free(n, key);
     }
+    // The hold covered the open only: a browser that closes during the
+    // replay, or at its end, leaves the slot empty and unbound
+    // (`close_session`), as it does for anyone else.
+    drop(hold);
     // The panes hear of a browser this replay opened, and of the account
     // it leaves the browser signed in as, before the lock lets them in. Only
     // the person's browser is theirs to hear of (`emit_if_main`).

@@ -4039,6 +4039,21 @@ async fn the_person_open_browser_is_still_refused_while_discovering() {
     let host = include_str!("../../src/commands/ai_bridge.rs");
     assert!(host.contains("replay_supervised(&self.0, slot, &organization, &project, req, ReplayBy::Assistant, holder.as_ref())"));
     assert_eq!(source.matches("ReplayBy::Assistant)").count(), 0, "a person's path replays as the assistant");
+    // Every call of `replay_supervised` in this file (not its head) is a
+    // person's path, and none names the assistant between its name and its
+    // `.await`: the assistant's only caller is the host above. The argument
+    // list ends in the holder now, so the old needle alone could not fail.
+    let mut calls = 0;
+    for (at, _) in source.match_indices("replay_supervised(") {
+        if source[..at].ends_with("async fn ") {
+            continue;
+        }
+        let call = &source[at..];
+        let call = &call[..call.find(".await").expect("a call of replay_supervised is awaited")];
+        assert!(!call.contains("ReplayBy::Assistant"), "a person's path replays as the assistant: {call}");
+        calls += 1;
+    }
+    assert!(calls >= 1, "no call of replay_supervised was found to check");
     assert_eq!(source.matches("refuse_while_discovering(&mut slot)").count(), 3, "a refusal went missing");
 }
 

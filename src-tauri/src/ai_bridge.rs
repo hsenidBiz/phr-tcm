@@ -547,6 +547,9 @@ pub async fn route_as(
         ("POST", "/autorun-discover-start") => {
             let mut seen = None;
             let answer = without_page(autorun_discover_start(ctx, body, &mut seen, slot, holder).await, body);
+            // A start refused or failed before it opened a browser does not
+            // keep the extra browser it reserved.
+            crate::commands::autorun_slots::free_extra_if_unused(slot, holder, answer.0);
             let answer = with_overrides_seen(with_no_save_note(answer, discovery_no_save(slot)), seen, slot);
             // A mapping run records areas and writes no check: no rules.
             let mapping = serde_json::from_str::<serde_json::Value>(body)
@@ -606,10 +609,11 @@ pub async fn route_as(
         ("POST", "/autorun-discover-area") => autorun_discover_area(ctx, body, slot).await,
         ("POST", "/autorun-replay") => {
             release_rewritten_cases(ctx, client).await;
-            crate::autorun::roles::with_rules(
-                without_page(autorun_replay(ctx, body, slot, holder).await, body),
-                crate::autorun::roles::RULES_REPLAY,
-            )
+            let answer = without_page(autorun_replay(ctx, body, slot, holder).await, body);
+            // A replay refused or failed before it opened a browser does not
+            // keep the extra browser it reserved.
+            crate::commands::autorun_slots::free_extra_if_unused(slot, holder, answer.0);
+            crate::autorun::roles::with_rules(answer, crate::autorun::roles::RULES_REPLAY)
         }
         // The assistant's replay going, stopped through the same stop the
         // person's Stop sets, and its answer once it has ended.

@@ -582,15 +582,14 @@ mod card {
     use v2_lib::autorun::replay_to::{state, OneReplay};
     use v2_lib::commands::autorun_slots::{
         agent_views, auto_run_agents, auto_run_end_agent_discovery, auto_run_release_agent, auto_run_stop_agent,
-        bind, bind_if_free, bound, clear, hold_binding, next_views_to_send, on_sweep, slot_for, slot_if_any, slot_of,
-        unbind, unbind_agent, window_position, AgentActivity, Need, ALL_BROWSERS_OPEN, NO_BROWSER_OF_YOURS,
-        NO_SUCH_BROWSER,
+        bind, bind_if_free, bound, clear, hold_binding, next_views_to_send, on_sweep, slot_for, slot_for_with,
+        slot_if_any, slot_of, unbind, unbind_agent, window_position, AgentActivity, Need, ALL_BROWSERS_OPEN,
+        NO_BROWSER_OF_YOURS, NO_SUCH_BROWSER,
     };
 
     const ID_A: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
     const ID_B: &str = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
     const T0: u64 = 10_000_000;
-
     fn key(id: &str) -> AgentKey {
         AgentKey { id: id.to_string(), name: None }
     }
@@ -830,10 +829,152 @@ mod card {
         let _g = crate::serial::agents();
         let _a = crate::serial::autorun();
         fresh();
+        register(ID_A, "claude-code", T0);
+        register(ID_B, "claude-code", T0);
         bind_if_free(SlotNo(1), &key(ID_A));
         assert_eq!(bound(SlotNo(1)), Some(key(ID_A)));
         bind_if_free(SlotNo(1), &key(ID_B));
         assert_eq!(bound(SlotNo(1)), Some(key(ID_A)), "an assistant's slot was taken");
+        fresh();
+    }
+
+    /// An assistant the sweeper unbound while its open ran (or that said
+    /// goodbye) is not bound again by the open's end: nothing would free
+    /// that slot afterwards.
+    #[test]
+    fn bind_if_free_never_binds_a_gone_assistant() {
+        let _g = crate::serial::agents();
+        let _a = crate::serial::autorun();
+        fresh();
+        // Never listed: not live.
+        bind_if_free(SlotNo(1), &key(ID_A));
+        assert_eq!(bound(SlotNo(1)), None, "an unlisted assistant was bound");
+        // Listed, then gone.
+        register(ID_B, "claude-code", T0);
+        agents::note_bye(ID_B, T0 + 1);
+        bind_if_free(SlotNo(2), &key(ID_B));
+        assert_eq!(bound(SlotNo(2)), None, "a gone assistant was bound");
+        // Live: bound.
+        register(ID_C, "claude-code", T0);
+        bind_if_free(SlotNo(2), &key(ID_C));
+        assert_eq!(bound(SlotNo(2)), Some(key(ID_C)));
+        fresh();
+    }
+
+    /// Rule 4 gives out an extra browser only when it has no session: one
+    /// whose assistant was unbound while its browser stayed open is not free.
+    /// The emptiness is the pick's input, so this fails if it is ignored.
+    #[test]
+    fn rule_4_skips_an_extra_browser_that_is_not_empty() {
+        let _g = crate::serial::agents();
+        let _a = crate::serial::autorun();
+        fresh();
+        for id in [ID_A, ID_B, ID_C, ID_D] {
+            register(id, "claude-code", T0);
+        }
+        bind(SlotNo::MAIN, &key(ID_A));
+        let slot_1_has_a_browser = |n: SlotNo| n != SlotNo(1);
+        assert_eq!(slot_for_with(&caller(ID_B), Need::Open, &slot_1_has_a_browser), Ok(SlotNo(2)));
+        assert_eq!(bound(SlotNo(1)), None, "a slot with a browser in it was bound");
+        assert_eq!(
+            slot_for_with(&caller(ID_C), Need::Open, &slot_1_has_a_browser),
+            Err((409, ALL_BROWSERS_OPEN.to_string())),
+            "the only empty slot was taken already"
+        );
+        // Neither slot empty: nothing to give.
+        unbind(SlotNo(2));
+        assert_eq!(slot_for_with(&caller(ID_D), Need::Open, &|_| false), Err((409, ALL_BROWSERS_OPEN.to_string())));
+        // A read asks nothing of the slots' emptiness.
+        assert_eq!(slot_for_with(&caller(ID_D), Need::Read, &|_| true), Err((409, NO_BROWSER_OF_YOURS.to_string())));
+        // Both empty: the lowest.
+        assert_eq!(slot_for_with(&caller(ID_D), Need::Open, &|_| true), Ok(SlotNo(1)));
+        // `slot_for` asks the slots themselves.
+        let src = include_str!("../../src/commands/autorun_slots.rs").replace("\r\n", "\n");
+        let head = &src[src.find("pub fn slot_for(").unwrap()..];
+        assert!(head[..head.find("\n}\n").unwrap()].contains("slot_for_with(caller, need, &slot_is_empty)"));
+        fresh();
+    }
+
+    /// An Open that is refused or fails after it bound an extra browser to
+    /// its assistant gives the browser back while it is still empty, so it is
+    /// never left reserved and a fourth assistant is not told all three are
+    /// open.
+    #[tokio::test]
+    async fn a_refused_open_frees_the_extra_browser_it_reserved() {
+        use v2_lib::ai_bridge::{route_as, BridgeContext};
+        let _g = crate::serial::agents();
+        let _a = crate::serial::autorun();
+        fresh();
+        for id in [ID_A, ID_B, ID_C] {
+            register(id, "claude-code", T0);
+        }
+        assert_eq!(slot_for(&caller(ID_A), Need::Act), Ok(SlotNo::MAIN));
+        let ctx = BridgeContext { org: "acme".into(), project: "Web".into(), ..Default::default() };
+        let account = serde_json::json!({ "account": "no-such-account" }).to_string();
+        let case = serde_json::json!({ "case_id": 1 }).to_string();
+        for (path, body) in [
+            ("/autorun-discover-start", "not json"),
+            ("/autorun-discover-start", account.as_str()),
+            ("/autorun-replay", "not json"),
+            ("/autorun-replay", case.as_str()),
+        ] {
+            let (status, said) = route_as(&caller(ID_B), &ctx, None, "POST", path, body, "1.0.0").await;
+            assert!(status >= 400, "{path} {body}: {status} {said}");
+            assert_eq!(bound(SlotNo(1)), None, "{path} {body}: the refused Open left slot 1 reserved");
+            assert_eq!(slot_of(&key(ID_B)), None);
+            // And it is free for the next to open.
+            assert_eq!(slot_for(&caller(ID_C), Need::Open), Ok(SlotNo(1)), "{path} {body}");
+            unbind(SlotNo(1));
+        }
+        // Main is A's, never freed this way.
+        assert_eq!(bound(SlotNo::MAIN), Some(key(ID_A)));
+        fresh();
+    }
+
+    /// The Open arms hand the answer to `free_extra_if_unused`, which looks
+    /// at an answer of 400 or more only and frees only an extra slot with
+    /// nothing open in it.
+    #[test]
+    fn the_open_arms_free_an_unused_extra_browser_on_a_failure() {
+        let bridge = include_str!("../../src/ai_bridge.rs").replace("\r\n", "\n");
+        for arm in ["(\"POST\", \"/autorun-discover-start\")", "(\"POST\", \"/autorun-replay\")"] {
+            let from = &bridge[bridge.find(arm).unwrap()..];
+            let arm_text = &from[..from.find("\n        }\n").unwrap()];
+            assert!(arm_text.contains("free_extra_if_unused(slot, holder"), "{arm}: {arm_text}");
+        }
+        let src = include_str!("../../src/commands/autorun_slots.rs").replace("\r\n", "\n");
+        let f = &src[src.find("pub fn free_extra_if_unused(").unwrap()..];
+        let f = &f[..f.find("\n}\n").unwrap()];
+        assert!(f.contains("status < 400") && f.contains("is_main()") && f.contains("slot_is_empty(n)"), "{f}");
+    }
+
+    /// The hold ends as soon as the open is over: a browser that closes
+    /// during the replay, or at its end, leaves the slot unbound.
+    #[test]
+    fn the_replays_binding_hold_ends_with_its_open() {
+        let src = include_str!("../../src/commands/autorun.rs").replace("\r\n", "\n");
+        let head = &src[src.find("pub(crate) async fn replay_supervised(").unwrap()..];
+        let replay = &head[..head.find("\n}\n").unwrap()];
+        let bound_at = replay.find("bind_if_free(n, key);").expect("the holder is bound after the open");
+        let drop_at = replay.find("drop(hold);").expect("the hold is never dropped early");
+        assert!(drop_at > bound_at, "the hold ends before the holder is bound");
+        let between = &replay[bound_at..drop_at];
+        assert!(!between.contains("let_go_if_gone_in") && !between.contains("close_browser_in"), "{between}");
+        // The panes are told, the replay runs and the browser is let go after it.
+        assert!(drop_at < replay.find("emit_if_main(n, app, changed)").unwrap());
+        assert!(drop_at < replay.find("replay_to::replay_to_traced(").unwrap());
+        assert!(drop_at < replay.find("_ => let_go_if_gone_in(n, &mut slot).await,").unwrap());
+        // A hold dropped is an unbind that works again.
+        let _g = crate::serial::agents();
+        let _a = crate::serial::autorun();
+        fresh();
+        bind(SlotNo(1), &key(ID_A));
+        let hold = hold_binding(SlotNo(1), &key(ID_A));
+        unbind(SlotNo(1));
+        assert_eq!(bound(SlotNo(1)), Some(key(ID_A)));
+        drop(hold);
+        unbind(SlotNo(1));
+        assert_eq!(bound(SlotNo(1)), None);
         fresh();
     }
 
