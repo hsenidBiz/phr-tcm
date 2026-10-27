@@ -27,6 +27,14 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.3.1-beta.14",
+    date: "2026-10-27",
+    items: [
+      "Several assistants can now write scripts at the same time, each in its own browser.",
+      "Auto Run: each assistant signs in as an account of its own; get_accounts says which accounts are in use and by whom.",
+    ],
+  },
+  {
     version: "2.3.1-beta.13",
     date: "2026-10-27",
     items: [
