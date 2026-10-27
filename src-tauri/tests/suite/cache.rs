@@ -360,7 +360,8 @@ const NOT_CACHES: &[(&str, &str, &str)] = &[
     ("autorun/lease.rs", "TABLE", "process coordination: who holds each account's sign-in right now"),
     ("autorun/lease.rs", "GENERATIONS", "process coordination: how many times each account was taken"),
     ("api_templates/held.rs", "STORE", "live browser processes kept signed in, closed on drain"),
-    ("mcp.rs", "TOOL_PROPS", "this build's own tool schema, derived once from code: nothing fetched, so nothing to go stale"),
+    ("ai_bridge.rs", "WRITING_JOB_PBIS", "process coordination: the PBI each assistant's current writing job named, kept only until its goodbye or another account's sign-in; nothing fetched, so nothing to go stale"),
+    ("mcp.rs", "TOOL_PROPS","this build's own tool schema, derived once from code: nothing fetched, so nothing to go stale"),
 ];
 
 /// Every static in `text` whose type holds a `HashMap` or `BTreeMap`,
@@ -553,6 +554,18 @@ fn an_unnamed_account_does_not_inherit_the_cache() {
     store.put("k", &1u8);
     store.claim_for(Some("first@example.com"));
     assert!(store.get::<u8>("k").is_none(), "an unnamed account's cache must not be inherited by a named one");
+}
+
+/// `claim_for` says whether it dropped the cache for another account, which
+/// is what the sign-in uses to forget the assistants' writing jobs too.
+#[test]
+fn claiming_the_cache_says_whether_another_account_took_it() {
+    let store = Store::open(None);
+    assert!(!store.claim_for(Some("first@example.com")), "an unowned cache is adopted, not dropped");
+    assert!(!store.claim_for(Some("first@example.com")), "the same account again drops nothing");
+    assert!(store.claim_for(Some("second@example.com")), "another account drops everything");
+    assert!(store.claim_for(None), "an account that cannot be named drops everything");
+    assert!(!store.claim_for(None), "an unnamed cache with nothing in it has nothing to drop");
 }
 
 /// A late background refresh used to `put` a list that lacked the tags an

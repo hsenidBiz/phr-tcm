@@ -75,6 +75,9 @@ pub struct WikiHit {
     pub path: String,
     pub wiki_name: String,
     pub wiki_id: String,
+    /// The project the page's wiki belongs to: the argument for a search of
+    /// one project, the result's own project for an organization-wide one.
+    pub project: String,
     /// Joined highlight fragments from all matched fields (may be empty).
     pub highlights: String,
 }

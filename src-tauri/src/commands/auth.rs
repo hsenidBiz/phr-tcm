@@ -62,7 +62,9 @@ pub async fn resume_session(app: tauri::AppHandle) -> AuthStatus {
         if state.lock().unwrap().tokens.is_none() {
             // As in `sign_in`: before the tokens are visible to anything
             // that reads the cache.
-            crate::cache::claim_for(tokens.account.as_deref());
+            if crate::cache::claim_for(tokens.account.as_deref()) {
+                crate::ai_bridge::forget_writing_jobs();
+            }
             // Capture sets imported for the assistant belong to whoever was
             // signed in: never read by the next account.
             crate::commands::autorun::forget_imported_captures();
@@ -96,7 +98,10 @@ pub async fn sign_in(app: tauri::AppHandle) -> Result<AuthStatus, String> {
     // Before the tokens are visible to anything that reads the cache: a
     // different account than last time must not be served the previous
     // one's tags or suite ids (the webview's cache does the same).
-    crate::cache::claim_for(tokens.account.as_deref());
+    if crate::cache::claim_for(tokens.account.as_deref()) {
+        // The assistants' writing jobs belong to the previous person too.
+        crate::ai_bridge::forget_writing_jobs();
+    }
     // Capture sets imported for the assistant belong to whoever was
     // signed in: never read by the next account.
     crate::commands::autorun::forget_imported_captures();

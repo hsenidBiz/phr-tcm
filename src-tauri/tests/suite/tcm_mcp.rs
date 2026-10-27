@@ -4162,3 +4162,132 @@ fn no_more_than_the_cap_of_calls_run_at_once() {
     assert!(most <= v2_lib::mcp::MAX_CALLS_IN_FLIGHT, "{most} calls ran at once");
     assert!(most > 1, "the calls still overlap: {most}");
 }
+
+/// `tools/list` against an app whose `/tools` answer is `tools_body`: the
+/// tools by name.
+fn tools_by_name(tools_body: &str) -> std::collections::HashMap<String, serde_json::Value> {
+    let resp = handle_message(
+        r#"{"jsonrpc":"2.0","id":2,"method":"tools/list"}"#,
+        "1.10.3",
+        &stub(200, tools_body),
+    )
+    .unwrap();
+    let v: serde_json::Value = serde_json::from_str(&resp).unwrap();
+    v["result"]["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|t| (t["name"].as_str().unwrap().to_string(), t.clone()))
+        .collect()
+}
+
+fn description_of(tools: &std::collections::HashMap<String, serde_json::Value>, name: &str) -> String {
+    tools[name]["description"].as_str().unwrap().to_string()
+}
+
+#[test]
+fn the_tool_list_says_every_project_only_while_combined() {
+    let on = tools_by_name(r#"{"all_projects":true}"#);
+    let off = tools_by_name(r#"{"all_projects":false}"#);
+    // An app that does not say (older, or closed) reads per project.
+    let silent = tools_by_name("{}");
+
+    assert!(
+        description_of(&on, "search_test_suites")
+            .starts_with("The test plans and suites in every project of the organization, one row per suite with its project, plan id, suite id,"),
+        "{}",
+        description_of(&on, "search_test_suites")
+    );
+    assert_eq!(
+        description_of(&on, "search_pbis"),
+        "Search every project's PBIs by title text to find the right work item id; each hit names its project."
+    );
+    assert_eq!(
+        description_of(&on, "search_wiki"),
+        "Search the organization's Azure DevOps wikis for documentation; returns page paths, snippet highlights and each page's project."
+    );
+    for name in ["get_suite_test_cases", "get_wiki_page"] {
+        assert_eq!(on[name]["inputSchema"]["properties"]["project"]["type"], "string", "{name}");
+        let required: Vec<&str> =
+            on[name]["inputSchema"]["required"].as_array().unwrap().iter().map(|r| r.as_str().unwrap()).collect();
+        assert!(!required.contains(&"project"), "{name} takes project as an option");
+    }
+
+    for other in [&off, &silent] {
+        assert!(description_of(other, "search_test_suites").starts_with("The test plans and suites in the current project, one row per suite with its plan id,"));
+        assert_eq!(description_of(other, "search_pbis"), "Search the current project's PBIs by title text to find the right work item id.");
+        assert_eq!(
+            description_of(other, "search_wiki"),
+            "Search the project's Azure DevOps wiki for documentation; returns page paths and snippet highlights."
+        );
+        for name in ["get_suite_test_cases", "get_wiki_page"] {
+            assert!(other[name]["inputSchema"]["properties"].get("project").is_none(), "{name}");
+        }
+    }
+
+    // The home-project tools read the same in both modes.
+    for name in ["run_api_template", "list_api_templates", "send_api_request"] {
+        assert_eq!(description_of(&on, name), description_of(&off, name), "{name}");
+    }
+    assert!(!description_of(&on, "get_tags").contains("every project"));
+
+    // Tags follow the writing job's PBI only while combined, and the
+    // description says so, including the one work item read it may cost and
+    // the `project` the answer names. Off or silent, it keeps its words.
+    let tags_on = description_of(&on, "get_tags");
+    assert!(tags_on.contains("project of the PBI the job named"), "{tags_on}");
+    assert!(tags_on.contains("`project`"), "{tags_on}");
+    assert!(tags_on.contains("one work item read"), "{tags_on}");
+    for other in [&off, &silent] {
+        assert_eq!(
+            description_of(other, "get_tags"),
+            "The tag names this project already uses. Prefer an existing tag over inventing a near-duplicate. Served from the app's cache - calling this costs no Azure DevOps request."
+        );
+    }
+
+    // The words the assistant reads never use a term it is not given.
+    for tools in [&on, &off, &silent] {
+        let text = serde_json::to_string(&tools["get_wiki_page"]).unwrap();
+        assert!(!text.contains("home project"), "{text}");
+    }
+    assert_eq!(
+        on["get_wiki_page"]["inputSchema"]["properties"]["project"]["description"],
+        "The project a search_wiki hit names. Optional: the project the app is set to is read when it is left out (a page URL names its own)."
+    );
+}
+
+#[test]
+fn suite_cases_and_wiki_pages_forward_an_explicit_project() {
+    let (_, _, made) = call_with_arguments(
+        "get_suite_test_cases",
+        serde_json::json!({ "plan_id": 9, "suite_id": 901, "project": "Pay roll" }),
+        (200, "{}"),
+    );
+    assert_eq!(
+        paths_of(&made),
+        vec!["/suite-cases?plan=9&suite=901&limit=5&offset=0&project=Pay%20roll"]
+    );
+
+    let (_, _, made) = call_with_arguments(
+        "get_wiki_page",
+        serde_json::json!({ "wiki_id": "w1", "path": "/Docs/Pay-Run", "project": "Payroll" }),
+        (200, "{}"),
+    );
+    assert_eq!(paths_of(&made), vec!["/wiki-page?wiki=w1&path=%2FDocs%2FPay-Run&project=Payroll"]);
+
+    // Left out or blank: the request is the one it always was.
+    for project in [serde_json::json!(null), serde_json::json!("  ")] {
+        let (_, _, made) = call_with_arguments(
+            "get_suite_test_cases",
+            serde_json::json!({ "plan_id": 9, "suite_id": 901, "project": project }),
+            (200, "{}"),
+        );
+        assert_eq!(paths_of(&made), vec!["/suite-cases?plan=9&suite=901&limit=5&offset=0"]);
+    }
+    let (_, _, made) = call_with_arguments(
+        "get_wiki_page",
+        serde_json::json!({ "wiki_id": "w1", "path": "/Docs/Pay-Run" }),
+        (200, "{}"),
+    );
+    assert_eq!(paths_of(&made), vec!["/wiki-page?wiki=w1&path=%2FDocs%2FPay-Run"]);
+}

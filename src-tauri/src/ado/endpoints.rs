@@ -197,6 +197,36 @@ impl AdoClient {
         let url = format!(
             "{search_base}/{organization}/{project}/_apis/search/wikisearchresults?api-version=7.1"
         );
+        self.wiki_hits_for(url, query, top, Some(project)).await
+    }
+
+    /// The same wiki search across every project of the organization: the
+    /// organization-level search route, no project in the path. Each hit's
+    /// `project` is the one the search result names (`project.name`).
+    pub async fn search_wiki_all(
+        &self,
+        organization: &str,
+        query: &str,
+        top: u32,
+    ) -> Result<Vec<WikiHit>, AdoError> {
+        let search_base = self.base_url.replacen("dev.azure.com", "almsearch.dev.azure.com", 1);
+        let url = format!(
+            "{search_base}/{}/_apis/search/wikisearchresults?api-version=7.1",
+            percent_encode_segment(organization)
+        );
+        self.wiki_hits_for(url, query, top, None).await
+    }
+
+    /// Runs a wiki search and maps its hits. `fixed_project` is the project
+    /// every hit belongs to when the search was scoped to one; `None` reads
+    /// each hit's own `project.name`.
+    async fn wiki_hits_for(
+        &self,
+        url: String,
+        query: &str,
+        top: u32,
+        fixed_project: Option<&str>,
+    ) -> Result<Vec<WikiHit>, AdoError> {
         let body = self
             .post_json_query(url, &serde_json::json!({ "searchText": query, "$top": top }))
             .await?;
@@ -220,6 +250,10 @@ impl AdoClient {
                     path: hit["path"].as_str().unwrap_or_default().to_string(),
                     wiki_name: hit["wiki"]["name"].as_str().unwrap_or_default().to_string(),
                     wiki_id: hit["wiki"]["id"].as_str().unwrap_or_default().to_string(),
+                    project: match fixed_project {
+                        Some(p) => p.to_string(),
+                        None => hit["project"]["name"].as_str().unwrap_or_default().to_string(),
+                    },
                     highlights,
                 }
             })

@@ -296,7 +296,8 @@ fn answer_with<N: RoleNotes>(msg: &str, version: &str, call: BridgeCall, session
             let reply = call("GET", "/tools", "");
             let no_ask = db_no_ask_from(&reply);
             let unlocked = unlocked_from(&reply);
-            tools_list(tool_policy_from(reply).0, no_ask, unlocked)
+            let all_projects = all_projects_from(&reply);
+            tools_list(tool_policy_from(reply).0, no_ask, unlocked, all_projects)
         }
         "tools/call" => {
             let params = &v["params"];
@@ -446,6 +447,20 @@ pub fn unlocked_from(reply: &Result<(u16, String), String>) -> bool {
     }
 }
 
+/// Whether the app has "Treat all projects as one" on, as the `/tools` answer
+/// says. Anything short of an explicit `true` - no app, an older app, the
+/// saved answer a closed app leaves - is no, so a description only ever
+/// loses the words "every project", never gains them by accident.
+pub fn all_projects_from(reply: &Result<(u16, String), String>) -> bool {
+    match reply {
+        Ok((200, body)) => serde_json::from_str::<serde_json::Value>(body)
+            .ok()
+            .and_then(|v| v["all_projects"].as_bool())
+            .unwrap_or(false),
+        _ => false,
+    }
+}
+
 /// Said to the assistant, at the end of `db_query`'s description, while the
 /// person has switched on running database changes without being asked.
 pub const DB_NO_ASK: &str = " The person has allowed database changes without confirmation: do not stop to ask before running INSERT, UPDATE, DELETE or a procedure through this tool - run the batch with dry_run first, read the row counts, then run it for real, and tell them what changed afterwards.";
@@ -466,7 +481,7 @@ fn tool_policy(call: BridgeCall) -> (Vec<String>, BTreeSet<Module>, bool) {
 
 /// Every tool this server offers, by name.
 pub fn all_tool_names() -> Vec<String> {
-    tools_list(vec![], false, true)["tools"]
+    tools_list(vec![], false, true, true)["tools"]
         .as_array()
         .map(|tools| tools.iter().filter_map(|t| t["name"].as_str().map(str::to_string)).collect())
         .unwrap_or_default()
@@ -478,7 +493,7 @@ pub fn all_tool_names() -> Vec<String> {
 const DB_QUERY_CREATE_UNLOCKED: &str = " CREATE, ALTER and CREATE OR ALTER are refused too, except on the Dev - dev login with Crystal Reports and Database Access on and writes switched on: there it may create or alter one procedure, view or function per call (still never DROP).";
 const DB_QUERY_CREATE_LOCKED: &str = " CREATE, ALTER and CREATE OR ALTER are refused too.";
 
-fn tools_list(disabled: Vec<String>, db_no_ask: bool, unlocked: bool) -> serde_json::Value {
+fn tools_list(disabled: Vec<String>, db_no_ask: bool, unlocked: bool, all_projects: bool) -> serde_json::Value {
     let ops = crate::transform::SUPPORTED_OPS.join(", ");
     let transform_ops_desc = format!(
         "Ops applied in order, each with an optional `where` (title_contains, has_tag, module_is, area_is, at_index). \
@@ -1269,10 +1284,52 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool, unlocked: bool) -> serde_j
                 let said = format!("{}{tail}", t["description"].as_str().unwrap_or_default());
                 t["description"] = serde_json::Value::String(said);
             }
+            if all_projects {
+                across_projects(&mut t);
+            }
             t
         })
         .collect();
     serde_json::json!({ "tools": tools })
+}
+
+/// Rewords the Azure DevOps tools that read across projects for an app that
+/// has "Treat all projects as one" on, and gives the two that take a project
+/// the optional `project` they forward. `get_tags` says it follows the writing
+/// job's PBI. Every other tool (the API templates ...) works in the home
+/// project and keeps its words.
+fn across_projects(t: &mut serde_json::Value) {
+    let name = t["name"].as_str().unwrap_or_default().to_string();
+    let reworded = match name.as_str() {
+        "search_test_suites" => Some(
+            t["description"].as_str().unwrap_or_default().replacen(
+                "The test plans and suites in the current project, one row per suite with its plan id,",
+                "The test plans and suites in every project of the organization, one row per suite with its project, plan id,",
+                1,
+            ),
+        ),
+        "get_tags" => Some(
+            "The tag names the project of the current writing job already uses: the project of the PBI the job named, else the app's project; the answer's `project` says which. Prefer an existing tag over inventing a near-duplicate. Served from the app's cache - calling this costs no Azure DevOps request, except one work item read the first time a job's PBI is looked up.".to_string(),
+        ),
+        "search_pbis" => Some(
+            "Search every project's PBIs by title text to find the right work item id; each hit names its project.".to_string(),
+        ),
+        "search_wiki" => Some(
+            "Search the organization's Azure DevOps wikis for documentation; returns page paths, snippet highlights and each page's project.".to_string(),
+        ),
+        _ => None,
+    };
+    if let Some(said) = reworded {
+        t["description"] = serde_json::Value::String(said);
+    }
+    let project = match name.as_str() {
+        "get_suite_test_cases" => Some("The project the plan is in, as search_test_suites names it. Optional: it is found from the plan id when left out."),
+        "get_wiki_page" => Some("The project a search_wiki hit names. Optional: the project the app is set to is read when it is left out (a page URL names its own)."),
+        _ => None,
+    };
+    if let (Some(said), Some(props)) = (project, t["inputSchema"]["properties"].as_object_mut()) {
+        props.insert("project".into(), serde_json::json!({ "type": "string", "description": said }));
+    }
 }
 
 /// The call-time refusal text for a switched-off tool. A tool whose module
@@ -1989,7 +2046,8 @@ fn tool_properties(name: &str) -> Option<&'static serde_json::Map<String, serde_
         std::sync::OnceLock::new();
     TOOL_PROPS
         .get_or_init(|| {
-            tools_list(vec![], false, true)["tools"]
+            // Combined, so `project` is a known property of the two tools that take it.
+            tools_list(vec![], false, true, true)["tools"]
                 .as_array()
                 .map(|tools| {
                     tools
@@ -2226,6 +2284,9 @@ fn tools_call_outcome(params: &serde_json::Value, call: BridgeCall) -> (serde_js
             }
             if args["include_children"].as_bool().unwrap_or(false) {
                 target.push_str("&children=true");
+            }
+            if let Some(p) = args["project"].as_str().filter(|p| !p.trim().is_empty()) {
+                target.push_str(&format!("&project={}", urlencoding::encode(p)));
             }
             call("GET", &target, "")
         }
@@ -2589,15 +2650,15 @@ fn tools_call_outcome(params: &serde_json::Value, call: BridgeCall) -> (serde_js
         "get_wiki_page" => {
             let wiki_id = args["wiki_id"].as_str().unwrap_or("");
             let path = args["path"].as_str().unwrap_or("");
-            call(
-                "GET",
-                &format!(
-                    "/wiki-page?wiki={}&path={}",
-                    urlencoding::encode(wiki_id),
-                    urlencoding::encode(path)
-                ),
-                "",
-            )
+            let mut target = format!(
+                "/wiki-page?wiki={}&path={}",
+                urlencoding::encode(wiki_id),
+                urlencoding::encode(path)
+            );
+            if let Some(p) = args["project"].as_str().filter(|p| !p.trim().is_empty()) {
+                target.push_str(&format!("&project={}", urlencoding::encode(p)));
+            }
+            call("GET", &target, "")
         }
         // An unknown tool whose NAME says the assistant wanted to mutate
         // Azure DevOps gets the refusal sentence, not a bare "unknown" -

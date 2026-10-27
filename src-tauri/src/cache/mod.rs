@@ -455,36 +455,42 @@ impl Store {
     /// the cache is marked `UNNAMED_OWNER`, never left plain unowned - an
     /// unowned cache is adopted as is by the next named sign-in, and an
     /// unnamed one must not be mistaken for that.
-    pub fn claim_for(&self, account: Option<&str>) {
+    ///
+    /// Answers whether the cache was dropped for a different (or unnamed)
+    /// account, so the caller can forget what it keeps outside the cache.
+    pub fn claim_for(&self, account: Option<&str>) -> bool {
         let mut inner = self.lock();
         let Some(account) = account else {
             if inner.disk.owner.as_deref() == Some(UNNAMED_OWNER)
                 && inner.disk.entries.is_empty()
                 && inner.session.is_empty()
             {
-                return;
+                return false;
             }
             inner.disk.entries.clear();
             inner.session.clear();
             inner.disk.owner = Some(UNNAMED_OWNER.to_string());
             drop(inner);
             self.write_through();
-            return;
+            return true;
         };
         let tag = owner_tag(account);
+        let mut dropped = false;
         // Compare first, into a plain bool, so no borrow of the owner is
         // alive while the entries are cleared.
         match inner.disk.owner.as_deref().map(|owner| owner == tag) {
-            Some(true) => return,
+            Some(true) => return false,
             Some(false) => {
                 inner.disk.entries.clear();
                 inner.session.clear();
+                dropped = true;
             }
             None => {}
         }
         inner.disk.owner = Some(tag);
         drop(inner);
         self.write_through();
+        dropped
     }
 
     /// Drop every entry in both tiers (the owner is kept).
@@ -609,7 +615,9 @@ pub fn session_put<T: Send + 'static>(key: &str, value: T) {
     global().session_put(key, value)
 }
 
-pub fn claim_for(account: Option<&str>) {
+/// `Store::claim_for` for the global cache: true when a different account
+/// than the owner signed in and everything was dropped.
+pub fn claim_for(account: Option<&str>) -> bool {
     global().claim_for(account)
 }
 
