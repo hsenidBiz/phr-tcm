@@ -30,6 +30,7 @@ export default function PlanTable({
   selection,
   onToggle,
   onClearSelection,
+  onSuiteCreated,
 }: {
   org: string;
   project: string;
@@ -42,6 +43,11 @@ export default function PlanTable({
   selection: Selection | null;
   onToggle: (planId: number, cases: SuiteCase[], on: boolean) => void;
   onClearSelection: () => void;
+  /** Told when a suite was created in this plan, before its project's plan
+   * list is read again. The screen that lists several projects at once keeps
+   * a combined list of its own, and has to forget what it held for this
+   * project. */
+  onSuiteCreated?: () => void;
 }) {
   const qc = useQueryClient();
   const [expanded, setExpanded] = useState<Set<number>>(() => new Set(initiallyExpanded));
@@ -219,6 +225,7 @@ export default function PlanTable({
           sourceLabel="their suites"
           onClose={() => setNewOpen(false)}
           onCreated={() => {
+            onSuiteCreated?.();
             qc.invalidateQueries({ queryKey: plansSuitesKey(org, project) });
             onClearSelection();
           }}

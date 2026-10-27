@@ -35,17 +35,30 @@ function mount(ui: ReactElement) {
 const COMBINED = "Pick a PBI in the bar above, or a Home project in Settings, ";
 const OFF = "Pick an organization and project in the bar above ";
 
-const SCREENS: Array<{ name: string; ui: (allProjects: boolean) => ReactElement; tail: string }> = [
+const SCREENS: Array<{
+  name: string;
+  ui: (allProjects: boolean) => ReactElement;
+  tail: string;
+  /** False for a screen that reads every project while they show together,
+   * so a missing home project is not a missing project. */
+  needsProjectTogether?: boolean;
+}> = [
   {
     name: "New Work Item",
     ui: (allProjects) => <CreateWorkItem org="acme" project="" allProjects={allProjects} />,
     tail: "first.",
   },
-  { name: "Search Suites", ui: () => <Suites org="acme" project="" />, tail: "to browse test suites." },
+  {
+    name: "Search Suites",
+    ui: (allProjects) => <Suites org="acme" project="" allProjects={allProjects} />,
+    tail: "to browse test suites.",
+    needsProjectTogether: false,
+  },
   {
     name: "Suite Management",
-    ui: () => <ManageCases org="acme" project="" pbi={null} />,
+    ui: (allProjects) => <ManageCases org="acme" project="" allProjects={allProjects} pbi={null} />,
     tail: "to manage test cases.",
+    needsProjectTogether: false,
   },
   {
     name: "API Templates",
@@ -68,11 +81,28 @@ test("Work Manager with no project points at the Project picker once switched of
   expect(screen.getByText(`${OFF}first.`)).toBeInTheDocument();
 });
 
+// Search Suites is the same: it lists the plans of every project, so only an
+// organization is missing. (The combined list is covered in Suites.test.tsx.)
+test("Search Suites with no organization asks for one while the projects show together", () => {
+  mount(<Suites org="" project="" allProjects />);
+  expect(screen.getByText("Pick an organization in the bar above to browse test suites.")).toBeInTheDocument();
+});
+
+// Suite Management is the same without a PBI: it lists the plans of every
+// project, so only an organization is missing. (The combined list is covered in
+// ManageCases/index.test.tsx.)
+test("Suite Management with no organization asks for one while the projects show together", () => {
+  mount(<ManageCases org="" project="" allProjects pbi={null} />);
+  expect(screen.getByText("Pick an organization in the bar above to manage test cases.")).toBeInTheDocument();
+});
+
 for (const s of SCREENS) {
-  test(`${s.name} with no project points at a PBI or the Home project while the projects show together`, () => {
-    mount(s.ui(true));
-    expect(screen.getByText(`${COMBINED}${s.tail}`)).toBeInTheDocument();
-  });
+  if (s.needsProjectTogether !== false) {
+    test(`${s.name} with no project points at a PBI or the Home project while the projects show together`, () => {
+      mount(s.ui(true));
+      expect(screen.getByText(`${COMBINED}${s.tail}`)).toBeInTheDocument();
+    });
+  }
 
   test(`${s.name} with no project points at the Project picker once switched off`, () => {
     saveAllProjects(false);

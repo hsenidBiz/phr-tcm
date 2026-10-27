@@ -212,3 +212,110 @@ test("a suite's header count is its own, not the whole plan's selection", async 
   expect(screen.getByText("2 test cases")).toBeInTheDocument();
   expect(screen.getByText("2 of 3 selected")).toBeInTheDocument();
 });
+
+// ---- Projects together: every write lands in the plan's own project -----
+//
+// The home project is Web. The Payslip plan lives in Payroll, so anything
+// written to it that carries "Web" would be a write in the wrong project.
+
+const TOGETHER = { allProjects: true };
+
+/** The project each call of one command named, in order. */
+const projectsOf = (calls: Array<{ cmd: string; args: unknown }>, cmd: string) =>
+  calls.filter((c) => c.cmd === cmd).map((c) => (c.args as { project: string }).project);
+
+test("reordering a suite writes to its plan's project", async () => {
+  const { calls } = mountScreen(
+    (cmd) => (cmd === "reorder_suite_cases" ? [203, 201, 202] : undefined),
+    null,
+    null,
+    undefined,
+    TOGETHER,
+  );
+  const l = await expandSuite("Slips");
+  // The cases of the suite were read in Payroll as well.
+  expect(projectsOf(calls, "list_suite_entries")).toEqual(["Payroll"]);
+  expect(projectsOf(calls, "list_test_points")).toEqual(["Payroll"]);
+
+  const rows = within(l).getAllByRole("listitem");
+  fireEvent.dragStart(rows[2]);
+  fireEvent.dragOver(rows[0]);
+  fireEvent.drop(rows[0]);
+  fireEvent.click(screen.getByRole("button", { name: "Apply order" }));
+  await waitFor(() => {
+    const call = calls.find((c) => c.cmd === "reorder_suite_cases");
+    expect(call?.args).toEqual({ organization: "acme", project: "Payroll", suiteId: 121, caseIds: [203, 201, 202] });
+  });
+  expect(calls.filter((c) => c.cmd === "reorder_suite_cases")).toHaveLength(1);
+});
+
+test("a new static suite is created in its plan's project", async () => {
+  const { calls } = mountScreen(
+    (cmd, args) => {
+      if (cmd === "create_static_suite")
+        return { id: 123, name: (args as { name: string }).name, suite_type: "staticTestSuite", requirement_id: null, parent_id: 120 };
+      if (cmd === "add_cases_to_suite") return [202];
+      return undefined;
+    },
+    null,
+    null,
+    undefined,
+    TOGETHER,
+  );
+  const l = await expandSuite("Slips");
+  fireEvent.click(caseRow(l, 202), { ctrlKey: true });
+  const payslip = screen.getByRole("region", { name: "Payslip - Test Plan" });
+  fireEvent.click(within(payslip).getByRole("button", { name: "New test suite" }));
+  const dialog = await screen.findByRole("dialog");
+  fireEvent.change(within(dialog).getByLabelText("Suite name"), { target: { value: "Nightly" } });
+  fireEvent.click(within(dialog).getByRole("button", { name: "Create suite and add 1 test case" }));
+
+  await waitFor(() => {
+    const create = calls.find((c) => c.cmd === "create_static_suite");
+    expect(create?.args).toEqual({ organization: "acme", project: "Payroll", planId: 12, parentSuiteId: 120, name: "Nightly" });
+  });
+  await waitFor(() => {
+    const add = calls.find((c) => c.cmd === "add_cases_to_suite");
+    expect(add?.args).toEqual({ organization: "acme", project: "Payroll", planId: 12, suiteId: 123, caseIds: [202] });
+  });
+  // The permission to create was asked in the plan's own project, too.
+  expect(projectsOf(calls, "can_create_test_suites").filter((p) => p === "Payroll")).toHaveLength(1);
+  // Only the project that changed is read again, and the new suite shows.
+  await waitFor(() => expect(projectsOf(calls, "list_plans_with_suites").filter((p) => p === "Payroll")).toHaveLength(2));
+  expect(projectsOf(calls, "list_plans_with_suites").filter((p) => p === "Web")).toHaveLength(1);
+  await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+});
+
+test("copying cases writes to the plan's project", async () => {
+  const { calls } = mountScreen((cmd) => (cmd === "add_cases_to_suite" ? [201] : undefined), null, null, undefined, TOGETHER);
+  const l = await expandSuite("Slips");
+  fireEvent.click(caseRow(l, 201), { ctrlKey: true });
+  const payslip = screen.getByRole("region", { name: "Payslip - Test Plan" });
+  await openSelect(payslip, "Copy to");
+  fireEvent.click(screen.getByRole("option", { name: "Plan root" }));
+  fireEvent.click(within(payslip).getByRole("button", { name: "Copy to suite" }));
+  await waitFor(() => {
+    const add = calls.find((c) => c.cmd === "add_cases_to_suite");
+    expect(add?.args).toEqual({ organization: "acme", project: "Payroll", planId: 12, suiteId: 120, caseIds: [201] });
+  });
+});
+
+test("copy targets never include another plan's suites", async () => {
+  // Every plan of every project is on screen at once. A selection belongs to
+  // one plan, and its copy targets are that plan's suites alone: a copy could
+  // otherwise cross projects.
+  mountScreen(undefined, null, null, undefined, TOGETHER);
+  const l = await expandSuite("Slips");
+  fireEvent.click(caseRow(l, 201), { ctrlKey: true });
+  const payslip = screen.getByRole("region", { name: "Payslip - Test Plan" });
+  await openSelect(payslip, "Copy to");
+  expect(screen.getAllByRole("option").map((o) => o.textContent?.trim())).toEqual(["Plan root", "Slips"]);
+  fireEvent.keyDown(document.activeElement ?? document.body, { key: "Escape" });
+
+  // The selection is Payroll's: the other projects' plans cannot take it.
+  for (const name of ["Auth - Test Plan", "Billing - Test Plan"]) {
+    const plan = screen.getByRole("region", { name });
+    expect(within(plan).getByRole("button", { name: "Copy to suite" })).toBeDisabled();
+    expect(within(plan).queryByText(/selected/)).not.toBeInTheDocument();
+  }
+});

@@ -1108,19 +1108,22 @@ function togetherPrAnswers(
 async function handSuiteCasesToEdit(search: unknown[], prefs: Record<string, unknown> = {}) {
   savedPrefs({ section: "suites", ...prefs });
   localStorage.setItem("tcm-v2-tour-done", "yes");
-  signedInMocks((cmd) => {
+  signedInMocks((cmd, args) => {
     if (cmd === "list_projects")
       return [
         { id: "p1", name: "Web" },
         { id: "p2", name: "Payroll" },
       ];
+    // Only Web has a plan: Search Suites lists every project together.
     if (cmd === "list_plans_with_suites")
-      return [
-        {
-          plan: { id: 9, name: "Auth - Test Plan", area_path: "Proj\\Auth", root_suite_id: 90 },
-          suites: [{ id: 95, name: "Regression", suite_type: "staticTestSuite", requirement_id: null, parent_id: null }],
-        },
-      ];
+      return (args as { project: string }).project !== "Web"
+        ? []
+        : [
+            {
+              plan: { id: 9, name: "Auth - Test Plan", area_path: "Proj\\Auth", root_suite_id: 90 },
+              suites: [{ id: 95, name: "Regression", suite_type: "staticTestSuite", requirement_id: null, parent_id: null }],
+            },
+          ];
     if (cmd === "list_test_points")
       return [
         {
@@ -1183,6 +1186,125 @@ test("a PBI of the same project keeps the cases handed over from Search Suites",
     await new Promise((r) => setTimeout(r, 30));
   });
   expect(screen.getByText(/Showing cases handed over from Search Suites/)).toBeInTheDocument();
+});
+
+// The cases belong to the project of the plan they were listed from. With no
+// PBI the effective project is the home project (Web), so Update Test Cases
+// has to aim its own calls at Payroll - the permission to delete, and with it
+// every delete, edit and tag.
+test("handed-over cases from another project are edited in their own project", async () => {
+  savedPrefs({ section: "suites" });
+  localStorage.setItem("tcm-v2-tour-done", "yes");
+  const deleteAsks: Array<Record<string, unknown>> = [];
+  const pointReads: Array<Record<string, unknown>> = [];
+  signedInMocks((cmd, args) => {
+    if (cmd === "list_projects")
+      return [
+        { id: "p1", name: "Web" },
+        { id: "p2", name: "Payroll" },
+      ];
+    if (cmd === "list_plans_with_suites")
+      return (args as { project: string }).project === "Payroll"
+        ? [
+            {
+              plan: { id: 12, name: "Payslip - Test Plan", area_path: "Payroll\\Slips", root_suite_id: 120 },
+              suites: [
+                { id: 121, name: "Slip regression", suite_type: "staticTestSuite", requirement_id: null, parent_id: null },
+              ],
+            },
+          ]
+        : [];
+    if (cmd === "list_test_points") {
+      pointReads.push(args as Record<string, unknown>);
+      return [
+        {
+          point_id: 7,
+          test_case_id: 301,
+          test_case_name: "Pay a slip",
+          config_name: "W10",
+          tester: "",
+          last_outcome: "",
+          last_run_id: null,
+          last_result_id: null,
+        },
+      ];
+    }
+    if (cmd === "can_delete_test_cases") {
+      deleteAsks.push(args as Record<string, unknown>);
+      return true;
+    }
+    if (cmd === "test_cases_by_ids") return [];
+  });
+  renderApp();
+  await screen.findByText("a@b.com");
+  await screen.findByText("Slip regression");
+  fireEvent.click(screen.getAllByText("Edit cases")[0]);
+  expect(await screen.findByText(/Showing cases handed over from Search Suites/)).toBeInTheDocument();
+
+  // The ids were read in Payroll, and the screen asks about deleting there.
+  expect(pointReads.map((a) => a.project)).toEqual(["Payroll"]);
+  await vi.waitFor(() => expect(deleteAsks.map((a) => a.project)).toContain("Payroll"));
+  // The home project is untouched by the hand-over.
+  expect(storedPrefs().project).toBe("Web");
+});
+
+// Manage hands over the suite and its plan's project: Suite Management opens
+// the plan in Payroll and reads and writes the suite there, though the home
+// project (and so the effective project, with no PBI) is Web.
+test("a suite managed from another project's plan is opened in its own project", async () => {
+  savedPrefs({ section: "suites" });
+  localStorage.setItem("tcm-v2-tour-done", "yes");
+  const entryReads: Array<Record<string, unknown>> = [];
+  const planReads: string[] = [];
+  signedInMocks((cmd, args) => {
+    if (cmd === "list_projects")
+      return [
+        { id: "p1", name: "Web" },
+        { id: "p2", name: "Payroll" },
+      ];
+    if (cmd === "list_plans_with_suites") {
+      planReads.push((args as { project: string }).project);
+      return (args as { project: string }).project === "Payroll"
+        ? [
+            {
+              plan: { id: 12, name: "Payslip - Test Plan", area_path: "Payroll\\Slips", root_suite_id: 120 },
+              suites: [
+                { id: 121, name: "Slip regression", suite_type: "staticTestSuite", requirement_id: null, parent_id: null },
+              ],
+            },
+          ]
+        : [];
+    }
+    if (cmd === "list_suite_entries") {
+      entryReads.push(args as Record<string, unknown>);
+      return [{ id: 301, sequence_number: 1, entry_type: "testCase" }];
+    }
+    if (cmd === "list_test_points")
+      return [
+        {
+          point_id: 7,
+          test_case_id: 301,
+          test_case_name: "Pay a slip",
+          config_name: "W10",
+          tester: "",
+          last_outcome: "",
+          last_run_id: null,
+          last_result_id: null,
+        },
+      ];
+  });
+  renderApp();
+  await screen.findByText("a@b.com");
+  await screen.findByText("Slip regression");
+  fireEvent.click(screen.getByRole("button", { name: "More actions for Slip regression" }));
+  fireEvent.click(screen.getByRole("menuitem", { name: "Manage" }));
+
+  expect(await screen.findByText("Showing the suite you picked in Search Suites.")).toBeInTheDocument();
+  expect(await screen.findByRole("list", { name: "Test cases in Slip regression" })).toBeInTheDocument();
+  expect(entryReads.map((a) => a.project)).toEqual(["Payroll"]);
+  // Nothing was read for the home project's plans beyond the one combined walk.
+  expect(planReads.filter((p) => p === "Payroll")).toHaveLength(1);
+  expect(storedPrefs().project).toBe("Web");
 });
 
 // The probe for Auto Run files is a local check that can answer after the

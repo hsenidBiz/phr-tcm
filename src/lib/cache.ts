@@ -33,6 +33,10 @@ const OWNER_KEY = "tcm-v2-cache-owner";
 /** Each entry's storage key to its `at`, so pruning never parses entries. */
 const INDEX_KEY = "tcm-v2-cache-index";
 const MAX_ENTRIES = 150;
+/** The `plans-suites:` entries (see cacheKeys.plansSuites) have a cap of
+ * their own: one per project the combined walk may read (100), plus headroom. */
+const PLAN_TREES = PREFIX + "plans-suites:";
+const MAX_PLAN_TREES = 120;
 
 const HOUR = 60 * 60_000;
 const DAY = 24 * HOUR;
@@ -275,12 +279,28 @@ function prune(key: string, at: number): void {
   }
   kept[PREFIX + key] = at;
   const keys = Object.keys(kept);
-  if (keys.length > MAX_ENTRIES) {
-    keys.sort((a, b) => kept[a] - kept[b]);
-    for (const k of keys.slice(0, keys.length - MAX_ENTRIES)) {
-      localStorage.removeItem(k);
-      delete kept[k];
-    }
-  }
+  // Plan trees (one per project the combined walk reads) are counted and
+  // evicted among themselves, so a walk over many projects never pushes
+  // out other screens' entries, nor they the trees.
+  trimOldest(
+    keys.filter((k) => !k.startsWith(PLAN_TREES)),
+    kept,
+    MAX_ENTRIES,
+  );
+  trimOldest(
+    keys.filter((k) => k.startsWith(PLAN_TREES)),
+    kept,
+    MAX_PLAN_TREES,
+  );
   localStorage.setItem(INDEX_KEY, JSON.stringify(kept));
+}
+
+/** Drops the oldest of `keys` (and from `kept`) until at most `max` remain. */
+function trimOldest(keys: string[], kept: Record<string, number>, max: number): void {
+  if (keys.length <= max) return;
+  keys.sort((a, b) => kept[a] - kept[b]);
+  for (const k of keys.slice(0, keys.length - max)) {
+    localStorage.removeItem(k);
+    delete kept[k];
+  }
 }

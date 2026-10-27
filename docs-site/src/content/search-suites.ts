@@ -1,4 +1,4 @@
-// Search Suites: every test plan of the project as a tree of its suites,
+// Search Suites: every test plan of every project as a tree of its suites,
 // with each suite's test points and what can be done with it.
 //
 // Locates come from screens/Suites.tsx and components/MoreActionsMenu.tsx.
@@ -27,7 +27,7 @@ export const searchSuites: Screen = {
   title: "Search Suites",
   group: "Running tests",
   summary:
-    "Browse every test plan in the project and the suites inside it. Find a suite by name, see its test cases and their last outcomes, " +
+    "Browse every test plan in the organization and the suites inside it. Find a suite by name, see its test cases and their last outcomes, " +
     "and open it where you need it: in the browser, in Update Test Cases, in Run Tests or in Suite Management.",
   shots: [
     { id: TREE, route: OPEN_SUITE, alt: "A test plan's folder opened, with one suite showing its test points" },
@@ -168,6 +168,7 @@ export const searchSuites: Screen = {
     },
   ],
   tips: [
+    "The page covers every project of the organization together, unless Treat all projects as one is switched off in Settings. When plans come from more than one project, each project's plans sit under its name, and every button on a suite works in that suite's own project. A project you cannot read is left out, and a note says how many projects are shown.",
     "Plans with no suites are not listed.",
     "While the app collects the cases for **View**, **Edit cases** or a run, the buttons are greyed out and a note says so.",
   ],

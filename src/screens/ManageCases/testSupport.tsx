@@ -22,6 +22,22 @@ const PLANS = [
   },
 ];
 
+/** A second project, for the projects-together tests. */
+export const PAYROLL_PLANS = [
+  {
+    plan: { id: 12, name: "Payslip - Test Plan", area_path: "Payroll\\Slips", root_suite_id: 120 },
+    suites: [
+      { id: 121, name: "Slips", suite_type: "staticTestSuite", requirement_id: null, parent_id: null },
+      { id: 122, name: "PBI 77 suite", suite_type: "requirementTestSuite", requirement_id: 77, parent_id: null },
+    ],
+  },
+];
+
+export const PROJECT_LIST = [
+  { id: "p1", name: "Web" },
+  { id: "p2", name: "Payroll" },
+];
+
 const ENTRIES = [
   { id: 95, sequence_number: 0, entry_type: "suite" },
   { id: 201, sequence_number: 1, entry_type: "testCase" },
@@ -46,15 +62,25 @@ const point = (id: number, name: string, config = "Windows 10") => ({
   last_result_id: null,
 });
 
+/** How the screen is mounted. `allProjects` is the "Treat all projects as
+ * one" switch; `project` is what App passes as the effective project (the
+ * home project, or the picked PBI's own). */
+export type MountOptions = { allProjects?: boolean; project?: string; org?: string };
+
 /** Mount the screen over two plans. Every suite answers with cases 201,
  * 202, 203 (the fixture does not vary per suite). `extra` answers any
- * other command. Returns every IPC call for assertions. */
+ * other command. Returns every IPC call for assertions.
+ *
+ * Plans are per project: Web holds `PLANS`, Payroll holds `PAYROLL_PLANS`
+ * (read only when the projects show together). */
 export function mountScreen(
   extra: (cmd: string, args: unknown) => unknown = () => undefined,
   pbi: PbiHit | null = null,
-  focus: { planId: number; suiteId: number } | null = null,
+  focus: { planId: number; suiteId: number; project?: string } | null = null,
   onFocusHandled: () => void = () => {},
+  options: MountOptions = {},
 ) {
+  const { allProjects = false, project = "Web", org = "acme" } = options;
   const calls: Array<{ cmd: string; args: unknown }> = [];
   mockIPC((cmd, args) => {
     calls.push({ cmd, args });
@@ -62,7 +88,9 @@ export function mountScreen(
     if (answered !== undefined) return answered;
     if (cmd === "plugin:event|listen") return 1;
     if (cmd === "plugin:event|unlisten") return null;
-    if (cmd === "list_plans_with_suites") return PLANS;
+    if (cmd === "list_projects") return PROJECT_LIST;
+    if (cmd === "list_plans_with_suites")
+      return (args as { project: string }).project === "Payroll" ? PAYROLL_PLANS : PLANS;
     if (cmd === "list_suite_entries") {
       const suiteId = (args as { suiteId: number }).suiteId;
       return suiteId === 92 ? SMOKE_ENTRIES : ENTRIES;
@@ -78,14 +106,28 @@ export function mountScreen(
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const { rerender: rtlRerender, container } = render(
     <QueryClientProvider client={qc}>
-      <ManageCases org="acme" project="Web" pbi={pbi} focus={focus} onFocusHandled={onFocusHandled} />
+      <ManageCases
+        org={org}
+        project={project}
+        allProjects={allProjects}
+        pbi={pbi}
+        focus={focus}
+        onFocusHandled={onFocusHandled}
+      />
     </QueryClientProvider>,
   );
   /** Re-render the same tree with a newly picked PBI (or none). */
   const rerender = (nextPbi: PbiHit | null) =>
     rtlRerender(
       <QueryClientProvider client={qc}>
-        <ManageCases org="acme" project="Web" pbi={nextPbi} focus={focus} onFocusHandled={onFocusHandled} />
+        <ManageCases
+          org={org}
+          project={project}
+          allProjects={allProjects}
+          pbi={nextPbi}
+          focus={focus}
+          onFocusHandled={onFocusHandled}
+        />
       </QueryClientProvider>,
     );
   return { calls, rerender, container };
