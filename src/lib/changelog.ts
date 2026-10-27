@@ -27,6 +27,13 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.3.1-beta.11",
+    date: "2026-10-27",
+    items: [
+      "Search Suites and Suite Management list the test plans of every project, grouped by project.",
+    ],
+  },
+  {
     version: "2.3.1-beta.10",
     date: "2026-10-27",
     items: [
