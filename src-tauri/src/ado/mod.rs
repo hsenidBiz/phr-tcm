@@ -16,6 +16,7 @@ pub use endpoints::{tags_write_ops, RelinkOutcome};
 /// The single, audited exception to the no-DELETE rule. See its header.
 pub mod deletion;
 pub mod permissions;
+pub mod single_flight;
 pub mod throttle;
 mod transport;
 pub use transport::{network_error, said, NET_GENERIC, NET_TIMEOUT, NET_UNREACHABLE, REPO_UNAVAILABLE};
@@ -324,11 +325,16 @@ fn client_for(base_url: &str) -> reqwest::Client {
     }
 }
 
+#[derive(Clone)]
 pub struct AdoClient {
     pub(crate) http: reqwest::Client,
     pub(crate) token: String,
     pub(crate) base_url: String, // "https://dev.azure.com" in prod, mock server in tests
     pub(crate) vssps_base_url: String, // "https://app.vssps.visualstudio.com" in prod
+    /// The cache's tag for the account signed in when this client was made
+    /// (see `cache::owner`; never a token). Work shared between askers is
+    /// keyed by it so one account never joins another's.
+    pub(crate) account: String,
 }
 
 impl AdoClient {
@@ -370,6 +376,15 @@ impl AdoClient {
             token: access_token,
             base_url,
             vssps_base_url,
+            account: crate::cache::owner(),
         }
+    }
+
+    /// The same client acting for the account the cache tags `tag`. Tests
+    /// use it to stand in for a second sign-in without touching the
+    /// process-wide cache.
+    pub fn for_account(mut self, tag: &str) -> Self {
+        self.account = tag.to_string();
+        self
     }
 }

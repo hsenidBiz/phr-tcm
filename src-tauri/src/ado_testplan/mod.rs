@@ -261,9 +261,13 @@ pub fn area_matches(plan_area: &str, pbi_area: &str) -> bool {
 /// is kept in the app's cache (cache/mod.rs), on disk, and the first
 /// upload after a restart is as quick as the tenth. A suite deleted in
 /// Azure DevOps since is caught by the 404 on its points; the caller
-/// forgets it and scans once.
+/// forgets it and scans once. An entry older than `keys::SUITE_TTL_MS`
+/// (30 days) counts as not remembered.
 pub fn cached_suite(base_url: &str, org: &str, project: &str, pbi_id: i32) -> Option<EnsuredSuite> {
-    crate::cache::get(&crate::cache::keys::suite(base_url, org, project, pbi_id))
+    crate::cache::fresh(
+        &crate::cache::keys::suite(base_url, org, project, pbi_id),
+        crate::cache::keys::SUITE_TTL_MS,
+    )
 }
 
 pub fn remember_suite(base_url: &str, org: &str, project: &str, pbi_id: i32, suite: &EnsuredSuite) {

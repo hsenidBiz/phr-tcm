@@ -220,6 +220,7 @@ mod specs_field;
 mod startup_window;
 mod steps_xml;
 mod submit_mapping;
+mod suite_lookup;
 mod suite_manage;
 mod tcm_mcp;
 mod template_held;

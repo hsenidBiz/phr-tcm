@@ -7,7 +7,84 @@ use super::{
     area_matches, default_plan_name, EnsuredSuite, PlanWithSuites, SuiteRef, TestPlan,
     SUITE_SCAN_CONCURRENCY,
 };
+use crate::ado::single_flight::{Flights, ScanProgress};
 use crate::ado::{AdoClient, AdoError};
+
+/// Tells when a walk is waiting on one plan alone. Each plan of a walk
+/// (or of one batch of it) reports the pages of its suite list it has read
+/// and, when it ends, that it has; once every plan but one has ended, that
+/// one's page count is what the walk can honestly say it is doing. A plan
+/// read in a single page never reports pages, so a small project's walk
+/// never shows any.
+struct Stragglers {
+    pages: Vec<u32>,
+    ended: Vec<bool>,
+}
+
+impl Stragglers {
+    fn new(plans: usize) -> Self {
+        Self { pages: vec![0; plans], ended: vec![false; plans] }
+    }
+
+    /// The one plan not yet ended, when it is the only one.
+    fn alone(&self) -> Option<usize> {
+        let mut open = (0..self.ended.len()).filter(|&i| !self.ended[i]);
+        match (open.next(), open.next()) {
+            (Some(i), None) => Some(i),
+            _ => None,
+        }
+    }
+
+    /// Plan `i` has read `pages` pages. The count to report, if it is the
+    /// plan the walk is waiting on alone.
+    fn page(&mut self, i: usize, pages: u32) -> Option<u32> {
+        if self.ended[i] {
+            return None;
+        }
+        self.pages[i] = pages;
+        (self.alone() == Some(i)).then_some(pages)
+    }
+
+    /// Plan `i` has ended. The count to report, if that leaves one plan
+    /// that is already paging.
+    fn end(&mut self, i: usize) -> Option<u32> {
+        self.ended[i] = true;
+        self.alone().map(|j| self.pages[j]).filter(|&p| p > 0)
+    }
+}
+
+/// How many of a PBI's test cases `suite_from_cases` asks about before it
+/// gives up and lets the plans be walked.
+const SUITE_FROM_CASES_ASKED: usize = 3;
+
+/// One of a PBI's requirement suites, as a test case's answer lists it.
+/// `plan` is filled when the plan was read (to confirm it, or to rank it);
+/// `in_project` is whether the suite itself named this project.
+struct SuiteCandidate {
+    plan_id: i32,
+    suite_id: i32,
+    plan_name: String,
+    in_project: bool,
+    plan: Option<TestPlan>,
+}
+
+/// What looking for a PBI's suite came to: the suite if there is one, and
+/// the project's plans when they had to be read (so a caller about to
+/// create a suite does not read them again). `plans` is empty when the
+/// PBI's own test cases answered.
+#[derive(Clone)]
+struct SuiteWalk {
+    found: Option<EnsuredSuite>,
+    plans: std::sync::Arc<Vec<TestPlan>>,
+}
+
+/// The suite lookups running now, one per (server, signed-in account, org,
+/// project, PBI, area, how far it looks). See `ado::single_flight`.
+static SUITE_WALKS: Flights<SuiteWalk> = Flights::new();
+
+/// The plans-and-suites walks running now, one per (server, signed-in
+/// account, org, project).
+static PLAN_TREES: Flights<Vec<PlanWithSuites>> = Flights::new();
 
 impl AdoClient {
     /// All test plans in the project (paginated). Read only.
@@ -69,6 +146,19 @@ impl AdoClient {
         plan_id: i32,
         pbi_id: i32,
     ) -> Result<Option<SuiteRef>, AdoError> {
+        self.find_requirement_suite_cb(org, project, plan_id, pbi_id, |_| {}).await
+    }
+
+    /// Same, calling `on_page` with the number of pages read so far each
+    /// time the plan's suite list turns out to have another page.
+    pub async fn find_requirement_suite_cb(
+        &self,
+        org: &str,
+        project: &str,
+        plan_id: i32,
+        pbi_id: i32,
+        mut on_page: impl FnMut(u32),
+    ) -> Result<Option<SuiteRef>, AdoError> {
         let mut continuation: Option<String> = None;
         let mut pages = 0usize;
         loop {
@@ -99,6 +189,7 @@ impl AdoClient {
                 Some(next)
                     if super::may_continue(pages, continuation.as_ref(), &next, "plan suites") =>
                 {
+                    on_page(pages as u32);
                     Some(next)
                 }
                 _ => return Ok(None),
@@ -107,12 +198,14 @@ impl AdoClient {
     }
 
     /// Every suite in a plan, flat (parent links let callers rebuild the
-    /// tree). Read only.
+    /// tree). `on_page` hears the number of pages read so far each time
+    /// the list turns out to have another page. Read only.
     pub async fn get_all_suites(
         &self,
         org: &str,
         project: &str,
         plan_id: i32,
+        mut on_page: impl FnMut(u32),
     ) -> Result<Vec<SuiteRef>, AdoError> {
         let mut suites = vec![];
         let mut continuation: Option<String> = None;
@@ -141,6 +234,7 @@ impl AdoClient {
                 Some(next)
                     if super::may_continue(pages, continuation.as_ref(), &next, "plan suites") =>
                 {
+                    on_page(pages as u32);
                     Some(next)
                 }
                 _ => break,
@@ -158,16 +252,42 @@ impl AdoClient {
         org: &str,
         project: &str,
     ) -> Result<Vec<PlanWithSuites>, AdoError> {
-        self.list_plans_with_suites_cb(org, project, |_, _| {}).await
+        self.list_plans_with_suites_cb(org, project, |_| {}).await
     }
 
     /// Same, reporting (done, total) after each plan scanned so the UI can
-    /// show "Scanning plans X of Y".
+    /// show "Scanning plans X of Y", and, once only one large plan is left,
+    /// how many pages of its suite list have been read.
     pub async fn list_plans_with_suites_cb(
         &self,
         org: &str,
         project: &str,
-        mut progress: impl FnMut(u32, u32),
+        progress: impl FnMut(ScanProgress),
+    ) -> Result<Vec<PlanWithSuites>, AdoError> {
+        // Every screen that wants the tree shares one walk; a failed walk
+        // is shared too, and never kept.
+        let key = format!("{}|{}|{org}|{project}", self.base_url, self.account);
+        let (me, org, project)= (self.clone(), org.to_string(), project.to_string());
+        PLAN_TREES
+            .run(
+                &key,
+                None,
+                move |tx| async move {
+                    me.walk_plans_with_suites(&org, &project, |p| {
+                        let _ = tx.send(p);
+                    })
+                    .await
+                },
+                progress,
+            )
+            .await
+    }
+
+    async fn walk_plans_with_suites(
+        &self,
+        org: &str,
+        project: &str,
+        mut progress: impl FnMut(ScanProgress),
     ) -> Result<Vec<PlanWithSuites>, AdoError> {
         let plans = self.get_test_plans(org, project).await?;
         let total = plans.len() as u32;
@@ -181,19 +301,38 @@ impl AdoClient {
         {
             // Futures are created eagerly (concrete lifetimes keep the tauri
             // command macro happy); the async block only owns (index, future).
+            let (page_tx, mut page_rx) = tokio::sync::mpsc::unbounded_channel::<(usize, u32)>();
             let futs: Vec<_> = plans
                 .iter()
                 .enumerate()
                 .map(|(i, plan)| {
-                    let fut = self.get_all_suites(org, project, plan.id);
+                    let tx = page_tx.clone();
+                    let fut = self.get_all_suites(org, project, plan.id, move |n| {
+                        let _ = tx.send((i, n));
+                    });
                     async move { (i, fut.await) }
                 })
                 .collect();
+            drop(page_tx);
             let mut in_flight = stream::iter(futs).buffer_unordered(SUITE_SCAN_CONCURRENCY);
-            while let Some((i, res)) = in_flight.next().await {
-                done += 1;
-                progress(done, total);
-                fetched[i] = Some(res);
+            let mut watch = Stragglers::new(plans.len());
+            loop {
+                tokio::select! {
+                    next = in_flight.next() => {
+                        let Some((i, res)) = next else { break };
+                        done += 1;
+                        progress(ScanProgress::plans(done, total));
+                        if let Some(pages) = watch.end(i) {
+                            progress(ScanProgress { done, total, pages: Some(pages) });
+                        }
+                        fetched[i] = Some(res);
+                    }
+                    Some((i, n)) = page_rx.recv() => {
+                        if let Some(pages) = watch.page(i, n) {
+                            progress(ScanProgress { done, total, pages: Some(pages) });
+                        }
+                    }
+                }
             }
         }
 
@@ -303,7 +442,7 @@ impl AdoClient {
         area_path: &str,
         plans: &[TestPlan],
         exhaustive: bool,
-        progress: &mut impl FnMut(u32, u32),
+        progress: &mut impl FnMut(ScanProgress),
     ) -> Result<Option<EnsuredSuite>, AdoError> {
         let mut ordered: Vec<&TestPlan> = plans.iter().collect();
         ordered.sort_by_key(|p| if area_matches(&p.area_path, area_path) { 0 } else { 1 });
@@ -322,14 +461,40 @@ impl AdoClient {
         let total = ordered.len() as u32;
         let mut done = 0u32;
         for batch in ordered.chunks(SUITE_SCAN_CONCURRENCY) {
-            let results = futures::future::join_all(
-                batch
-                    .iter()
-                    .map(|plan| self.find_requirement_suite(org, project, plan.id, pbi_id)),
-            )
-            .await;
+            // (plan in the batch, pages read so far) while it is paging;
+            // (plan, None) when it has ended.
+            let (tick_tx, mut ticks) = tokio::sync::mpsc::unbounded_channel::<(usize, Option<u32>)>();
+            let mut all = Box::pin(futures::future::join_all(batch.iter().enumerate().map(
+                |(i, plan)| {
+                    let (page_tx, end_tx) = (tick_tx.clone(), tick_tx.clone());
+                    let fut = self.find_requirement_suite_cb(org, project, plan.id, pbi_id, move |n| {
+                        let _ = page_tx.send((i, Some(n)));
+                    });
+                    async move {
+                        let res = fut.await;
+                        let _ = end_tx.send((i, None));
+                        res
+                    }
+                },
+            )));
+            drop(tick_tx);
+            let mut watch = Stragglers::new(batch.len());
+            let results = loop {
+                tokio::select! {
+                    results = &mut all => break results,
+                    Some((i, tick)) = ticks.recv() => {
+                        let pages = match tick {
+                            Some(n) => watch.page(i, n),
+                            None => watch.end(i),
+                        };
+                        if let Some(pages) = pages {
+                            progress(ScanProgress { done, total, pages: Some(pages) });
+                        }
+                    }
+                }
+            };
             done += batch.len() as u32;
-            progress(done, total);
+            progress(ScanProgress::plans(done, total));
             for (plan, res) in batch.iter().zip(results) {
                 // A plan whose suites can't be listed (permissions) is
                 // skipped rather than aborting the search; auth/rate-limit
@@ -352,9 +517,148 @@ impl AdoClient {
         Ok(None)
     }
 
+    /// The PBI's requirement suite, asked of the PBI's own test cases: Azure
+    /// DevOps answers "which suites hold test case N" in one request
+    /// (`GET {org}/_apis/testplan/suites?testCaseId=N`, each suite with its
+    /// plan, project, `suiteType` and `requirementId`), where walking plans
+    /// reads every plan's suite list. Asks up to the first three Tested By
+    /// cases, one after another, and stops at the first that names one of
+    /// this PBI's requirement suites. A PBI can have one in several plans
+    /// (one per release, an old plan copied from, another team's), all
+    /// listed by that one answer; they are ranked as the plan walk ranks
+    /// plans - the plan for the PBI's area first, then an active plan, then
+    /// the newest - so the lookup and the walk agree. None means "not found
+    /// this way" - no cases, none in this PBI's requirement suite, or the
+    /// service would not say - and the caller falls back to the plan walk.
+    /// Read only.
+    pub async fn suite_from_cases(
+        &self,
+        org: &str,
+        project: &str,
+        pbi_id: i32,
+        area_path: &str,
+    ) -> Result<Option<EnsuredSuite>, AdoError> {
+        // A PBI that cannot be read or has no links is not an error here:
+        // the walk that follows reports whatever is really wrong. The same
+        // goes for an answer this shortcut cannot use (a 400, a 5xx): it is
+        // logged and the walk decides. A bad sign-in or a throttle is not
+        // let past, since the walk would only meet it too.
+        let case_ids = match self.get_pbi_tested_by_ids(org, pbi_id).await {
+            Ok(ids) => ids,
+            Err(AdoError::Forbidden) | Err(AdoError::NotFound) => return Ok(None),
+            Err(AdoError::Http { status, .. }) => {
+                crate::applog::warn(format!(
+                    "reading PBI {pbi_id} for its test cases answered http {status}; walking the plans instead"
+                ));
+                return Ok(None);
+            }
+            Err(e) => return Err(e),
+        };
+        for case_id in case_ids.into_iter().take(SUITE_FROM_CASES_ASKED) {
+            let url = format!(
+                "{}/{}/_apis/testplan/suites?testCaseId={}&api-version=7.1",
+                self.base_url,
+                crate::ado::endpoints::percent_encode_segment(org),
+                case_id
+            );
+            let data = match self.get_json(url).await {
+                Ok(d) => d,
+                Err(AdoError::Forbidden) | Err(AdoError::NotFound) => continue,
+                Err(AdoError::Http { status, .. }) => {
+                    // The shortcut is not served here (or hiccuped): the
+                    // other cases would get the same answer.
+                    crate::applog::warn(format!(
+                        "asking which suites hold test case {case_id} answered http {status}; walking the plans instead"
+                    ));
+                    return Ok(None);
+                }
+                Err(e) => return Err(e),
+            };
+            let suites = data["value"].as_array().or_else(|| data.as_array()).cloned().unwrap_or_default();
+            // Every suite of this PBI that this answer lists. The call is
+            // org wide, so one may be another project's: the suite names
+            // its project when it can; when it does not, the plan read in
+            // `project` decides.
+            let mut candidates: Vec<SuiteCandidate> = vec![];
+            for s in suites {
+                if s["suiteType"].as_str() != Some("requirementTestSuite")
+                    || s["requirementId"].as_i64() != Some(pbi_id as i64)
+                {
+                    continue;
+                }
+                let (Some(suite_id), Some(plan_id)) = (s["id"].as_i64(), s["plan"]["id"].as_i64()) else {
+                    continue;
+                };
+                let named = s["project"]["name"].as_str().filter(|n| !n.is_empty());
+                match named {
+                    Some(n) if n.eq_ignore_ascii_case(project) => {}
+                    Some(_) => continue,
+                    None => {}
+                }
+                candidates.push(SuiteCandidate {
+                    plan_id: plan_id as i32,
+                    suite_id: suite_id as i32,
+                    plan_name: s["plan"]["name"].as_str().unwrap_or_default().to_string(),
+                    in_project: named.is_some(),
+                    plan: None,
+                });
+            }
+            if candidates.is_empty() {
+                continue;
+            }
+            // One candidate that names this project needs nothing more.
+            // Otherwise each plan is read once: it confirms a suite that
+            // named no project, and its area, state and id rank the rest.
+            if !(candidates.len() == 1 && candidates[0].in_project) {
+                let mut kept = Vec::with_capacity(candidates.len());
+                for mut c in candidates {
+                    match self.get_test_plan(org, project, c.plan_id).await {
+                        Ok(p) => c.plan = Some(p),
+                        Err(AdoError::Forbidden) | Err(AdoError::NotFound) if c.in_project => {}
+                        Err(AdoError::Forbidden) | Err(AdoError::NotFound) => continue,
+                        Err(AdoError::Http { status, .. }) => {
+                            crate::applog::warn(format!(
+                                "reading test plan {} answered http {status}; leaving its suite out of the shortcut",
+                                c.plan_id
+                            ));
+                            if !c.in_project {
+                                continue;
+                            }
+                        }
+                        Err(e) => return Err(e),
+                    }
+                    kept.push(c);
+                }
+                candidates = kept;
+            }
+            candidates.sort_by_key(|c| {
+                let (matched, active) = match &c.plan {
+                    Some(p) => (area_matches(&p.area_path, area_path), is_active(&p.state)),
+                    None => (false, false),
+                };
+                std::cmp::Reverse((matched, active, c.plan_id))
+            });
+            if let Some(best) = candidates.into_iter().next() {
+                let plan_name = match &best.plan {
+                    Some(p) if !p.name.is_empty() => p.name.clone(),
+                    _ => best.plan_name,
+                };
+                return Ok(Some(EnsuredSuite {
+                    plan_id: best.plan_id,
+                    plan_name,
+                    suite_id: best.suite_id,
+                    created_plan: false,
+                }));
+            }
+        }
+        Ok(None)
+    }
+
     /// Read-only lookup of the PBI's requirement suite across every plan -
     /// the background-prefetch variant of ensure: it NEVER creates a plan
     /// or suite, so it is safe to run without the user asking to run tests.
+    /// The PBI's own test cases are asked first (`suite_from_cases`); the
+    /// plans are walked only when that finds nothing.
     pub async fn find_pbi_requirement_suite(
         &self,
         org: &str,
@@ -362,8 +666,67 @@ impl AdoClient {
         pbi_id: i32,
         area_path: &str,
     ) -> Result<Option<EnsuredSuite>, AdoError> {
-        let plans = self.get_test_plans(org, project).await?;
-        self.scan_plans_for_suite(org, project, pbi_id, area_path, &plans, true, &mut |_, _| {})
+        self.find_pbi_requirement_suite_cb(org, project, pbi_id, area_path, |_| {}).await
+    }
+
+    /// Same, reporting the walk's progress (see `list_plans_with_suites_cb`).
+    pub async fn find_pbi_requirement_suite_cb(
+        &self,
+        org: &str,
+        project: &str,
+        pbi_id: i32,
+        area_path: &str,
+        progress: impl FnMut(ScanProgress),
+    ) -> Result<Option<EnsuredSuite>, AdoError> {
+        Ok(self
+            .suite_walk(org, project, pbi_id, area_path, true, progress)
+            .await?
+            .found)
+    }
+
+    /// Look for the PBI's suite: its own test cases first, then the plans
+    /// (`exhaustive`: every plan; otherwise the area-matched ones when
+    /// there are any). Lookups for the same PBI started together share one
+    /// walk, and a lookup that only needs the area-matched plans joins an
+    /// exhaustive walk already running, since it covers them too. A failed
+    /// walk is shared with whoever was waiting and is never kept.
+    async fn suite_walk(
+        &self,
+        org: &str,
+        project: &str,
+        pbi_id: i32,
+        area_path: &str,
+        exhaustive: bool,
+        progress: impl FnMut(ScanProgress),
+    ) -> Result<SuiteWalk, AdoError> {
+        // The area is part of the key: it decides which suite wins when a
+        // PBI has several, so a walk for another area is not this one's.
+        let key = |all: bool| {
+            format!("{}|{}|{org}|{project}|{pbi_id}|{}|{all}", self.base_url, self.account, area_path.trim())
+        };
+        let own = key(exhaustive);
+        let wider = key(true);
+        let also = if exhaustive { None } else { Some(wider.as_str()) };
+        let (me, org, project, area) =
+            (self.clone(), org.to_string(), project.to_string(), area_path.to_string());
+        SUITE_WALKS
+            .run(
+                &own,
+                also,
+                move |tx| async move {
+                    if let Some(found) = me.suite_from_cases(&org, &project, pbi_id, &area).await? {
+                        return Ok(SuiteWalk { found: Some(found), plans: Default::default() });
+                    }
+                    let plans = me.get_test_plans(&org, &project).await?;
+                    let found = me
+                        .scan_plans_for_suite(&org, &project, pbi_id, &area, &plans, exhaustive, &mut |p| {
+                            let _ = tx.send(p);
+                        })
+                        .await?;
+                    Ok(SuiteWalk { found, plans: std::sync::Arc::new(plans) })
+                },
+                progress,
+            )
             .await
     }
 
@@ -378,7 +741,7 @@ impl AdoClient {
         area_path: &str,
         iteration: &str,
     ) -> Result<EnsuredSuite, AdoError> {
-        self.ensure_requirement_suite_cb(org, project, pbi_id, area_path, iteration, |_, _| {})
+        self.ensure_requirement_suite_cb(org, project, pbi_id, area_path, iteration, |_| {})
             .await
     }
 
@@ -395,7 +758,7 @@ impl AdoClient {
         area_path: &str,
         iteration: &str,
     ) -> Result<EnsuredSuite, AdoError> {
-        self.ensure_inner(org, project, pbi_id, area_path, iteration, true, |_, _| {})
+        self.ensure_inner(org, project, pbi_id, area_path, iteration, true, |_| {})
             .await
     }
 
@@ -408,7 +771,7 @@ impl AdoClient {
         pbi_id: i32,
         area_path: &str,
         iteration: &str,
-        progress: impl FnMut(u32, u32),
+        progress: impl FnMut(ScanProgress),
     ) -> Result<EnsuredSuite, AdoError> {
         self.ensure_inner(org, project, pbi_id, area_path, iteration, false, progress)
             .await
@@ -423,18 +786,17 @@ impl AdoClient {
         area_path: &str,
         iteration: &str,
         skip_remembered: bool,
-        mut progress: impl FnMut(u32, u32),
+        progress: impl FnMut(ScanProgress),
     ) -> Result<EnsuredSuite, AdoError> {
-        let plans = self.get_test_plans(org, project).await?;
-        // Not exhaustive: a suite found under a plan for another area is
-        // not one this would create under, so the area-matched plans are
-        // the whole search when there are any.
-        if let Some(found) = self
-            .scan_plans_for_suite(org, project, pbi_id, area_path, &plans, false, &mut progress)
-            .await?
-        {
+        // The PBI's own test cases know their suite: they are asked before
+        // any plan is read. Not exhaustive: a suite found under a plan for
+        // another area is not one this would create under, so the
+        // area-matched plans are the whole search when there are any.
+        let walk = self.suite_walk(org, project, pbi_id, area_path, false, progress).await?;
+        if let Some(found) = walk.found {
             return Ok(found);
         }
+        let plans = walk.plans;
 
         // No suite anywhere. Every area-matched plan is a candidate, ranked
         // so the first is the one a person would pick: the most specific

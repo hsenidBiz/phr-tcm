@@ -33,6 +33,12 @@ pub fn assigned_seen_all(org: &str) -> String {
     format!("assigned-seen-all:{org}")
 }
 
+/// How long a remembered suite is trusted (on disk, across restarts). The
+/// ids are stable once found and a suite deleted since is caught by the 404
+/// on its points, so a month only bounds how long an entry nobody has
+/// touched can mislead.
+pub const SUITE_TTL_MS: u64 = 30 * 24 * 60 * 60 * 1000;
+
 /// A PBI's resolved requirement suite, shared by the upload, Run Tests and
 /// the AI bridge. The client's base_url is in the key so parallel tests on
 /// different mock servers cannot poison each other.

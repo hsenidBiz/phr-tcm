@@ -3,7 +3,7 @@ import { ChevronDown, ChevronRight, RefreshCw, X } from "lucide-react";
 import { Fragment, useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
 import { toast } from "../../lib/toast";
-import { commands, events, type TestPoint } from "../../bindings";
+import { commands, events, type SuiteScanProgress, type TestPoint } from "../../bindings";
 import { onPointRecorded, patchPointRows } from "../../lib/runnerBus";
 import { Button } from "../../components/ui/button";
 import { Checkbox } from "../../components/ui/checkbox";
@@ -103,7 +103,7 @@ export default function RunPanel({
   const [filterText, setFilterText] = useState("");
   const [filterOutcome, setFilterOutcome] = useState("");
   const [selected, setSelected] = useState<Set<number>>(new Set()); // test case ids
-  const [scan, setScan] = useState<{ done: number; total: number } | null>(null);
+  const [scan, setScan] = useState<SuiteScanProgress | null>(null);
   const [groupMode, setGroupModeState] = useState<GroupMode>(() => loadGroupMode());
   const setGroupMode = (mode: GroupMode) => {
     setGroupModeState(mode);
@@ -145,11 +145,20 @@ export default function RunPanel({
   });
 
   useEffect(() => {
-    const un = events.suiteScanProgress.listen((e) => setScan(e.payload));
+    // Only the search for THIS PBI's suite: the plans tree reading every
+    // plan (Search Suites, the background prefetch) is not this screen's
+    // wait, and neither is another PBI's search still running after the
+    // person moved on (the background finder cannot be stopped).
+    // Starting on another PBI also drops the last PBI's bar: a suite found
+    // from its test cases reports no progress, so nothing else would.
+    setScan(null);
+    const un = events.suiteScanProgress.listen((e) => {
+      if (e.payload.kind === "suite" && e.payload.pbi_id === pbiId) setScan(e.payload);
+    });
     return () => {
       un.then((f) => f()).catch(() => {});
     };
-  }, []);
+  }, [org, project, pbiId]);
 
   // Live repaint: the runner announces every recorded (or reset) point as
   // the tester clicks Next; patch the cached rows in place so the tint and
@@ -462,9 +471,15 @@ export default function RunPanel({
 
       {suite.isFetching && !suite.data && (
         <ScanProgress
-          label={scan ? "Scanning test plans" : "Resolving test suite"}
-          done={scan?.done}
-          total={scan?.total}
+          label={
+            scan?.pages
+              ? `Reading a large plan (page ${scan.pages})`
+              : scan
+                ? "Scanning test plans"
+                : "Resolving test suite"
+          }
+          done={scan?.pages ? undefined : scan?.done}
+          total={scan?.pages ? undefined : scan?.total}
         />
       )}
       {suite.isError && <p className="text-sm text-danger">{suite.error.message}</p>}

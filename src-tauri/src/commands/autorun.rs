@@ -2950,12 +2950,7 @@ static ANSWERING: [std::sync::atomic::AtomicBool; SLOT_COUNT] =
 /// client only reads the socket while something calls it. Between two
 /// commands - a person reading the page before pressing the next step -
 /// a task reads it (`keep_answering`), so the page is never held up
-/// waiting. Called with the session lock held.
-pub(crate) fn answer_between_commands() {
-    answer_between_commands_in(SlotNo::MAIN);
-}
-
-/// `answer_between_commands` for slot `n`'s browser. Called with that slot's
+/// waiting. This does it for slot `n`'s browser, called with that slot's
 /// session lock held.
 pub(crate) fn answer_between_commands_in(n: SlotNo) {
     if ANSWERING[n.index()].swap(true, std::sync::atomic::Ordering::SeqCst) {

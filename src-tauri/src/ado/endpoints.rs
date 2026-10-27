@@ -414,6 +414,28 @@ impl AdoClient {
         Ok(values)
     }
 
+    /// The ids of the Test Cases a PBI is Tested By, in link order: one
+    /// work item GET with its relations, no case fetched. Read only.
+    pub(crate) async fn get_pbi_tested_by_ids(
+        &self,
+        organization: &str,
+        pbi_id: i32,
+    ) -> Result<Vec<i32>, AdoError> {
+        let url = format!(
+            "{}/{}/_apis/wit/workitems/{}?$expand=relations&api-version=7.1",
+            self.base_url, percent_encode_segment(organization), pbi_id
+        );
+        let data = self.get_json(url).await?;
+        Ok(data["relations"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default()
+            .iter()
+            .filter(|r| r["rel"].as_str().map(is_tested_by_forward).unwrap_or(false))
+            .filter_map(|r| r["url"].as_str()?.rsplit('/').next()?.parse().ok())
+            .collect())
+    }
+
     /// All Test Cases linked to a PBI via TestedBy relations, ported from v1
     /// get_test_cases_for_pbi(). Fetches in batches so there is no overall cap.
     pub async fn get_pbi_test_cases(
