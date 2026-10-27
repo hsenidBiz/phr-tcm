@@ -27,6 +27,7 @@ import {
 } from "../../lib/sidebarState";
 import { describeAdoError, unwrap, unwrapStr } from "../../lib/ipc";
 import { outcomeLabel } from "../../lib/outcomes";
+import { matchesQuery, searchPlaceholder } from "../../lib/search";
 import { openRunnerWindow } from "../../lib/openRunner";
 import CasePreview from "./CasePreview";
 import { IconCollapseAll, IconReport, IconRun, IconSetOrder } from "../../lib/actionIcons";
@@ -76,10 +77,14 @@ const NO_POINTS: TestPoint[] = [];
 function pointMatches(p: TestPoint, filterOutcome: string, filterText: string): boolean {
   if (filterOutcome === "none" && p.last_outcome) return false;
   if (filterOutcome && filterOutcome !== "none" && p.last_outcome.toLowerCase() !== filterOutcome) return false;
-  if (filterText) {
-    const t = filterText.toLowerCase();
-    if (!p.test_case_name.toLowerCase().includes(t) && !String(p.test_case_id ?? "").includes(t)) return false;
-  }
+  if (
+    filterText &&
+    !matchesQuery(
+      [p.test_case_id, p.test_case_name, outcomeLabel(p.last_outcome) || "Never run", p.tester, p.config_name],
+      filterText,
+    )
+  )
+    return false;
   return true;
 }
 
@@ -505,7 +510,7 @@ export default function RunPanel({
             <SearchInput
               aria-label="Filter points"
               className="w-full"
-              placeholder="Filter by name or id"
+              placeholder={searchPlaceholder(["name", "id", "outcome", "tester", "configuration"])}
               value={filterText}
               onChange={setFilterText}
             />

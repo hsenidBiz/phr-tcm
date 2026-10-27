@@ -71,6 +71,30 @@ function mockAll() {
   });
 }
 
+test("the search finds a point by its outcome word and two words narrow", async () => {
+  mockAll();
+  renderPanel();
+  await screen.findByText("Valid login");
+  const box = screen.getByLabelText("Filter points");
+  expect(box).toHaveAttribute("placeholder", "Search by name, id, outcome, tester…");
+
+  fireEvent.change(box, { target: { value: "failed" } });
+  expect(screen.getByText("Valid login")).toBeInTheDocument();
+  expect(screen.queryByText("Invalid login")).not.toBeInTheDocument();
+
+  fireEvent.change(box, { target: { value: "never run" } });
+  expect(screen.getByText("Invalid login")).toBeInTheDocument();
+  expect(screen.queryByText("Valid login")).not.toBeInTheDocument();
+
+  // Both are on Windows 10; the second word narrows to one.
+  fireEvent.change(box, { target: { value: "windows" } });
+  expect(screen.getByText("Valid login")).toBeInTheDocument();
+  expect(screen.getByText("Invalid login")).toBeInTheDocument();
+  fireEvent.change(box, { target: { value: "windows failed" } });
+  expect(screen.getByText("Valid login")).toBeInTheDocument();
+  expect(screen.queryByText("Invalid login")).not.toBeInTheDocument();
+});
+
 test("loads suite + points as a read-only overview (outcomes live in the runner)", async () => {
   mockAll();
   renderPanel();
@@ -644,7 +668,7 @@ test("grouped mode hides the Select all button and Ctrl+A skips text fields", as
 
   expect(screen.queryByRole("button", { name: "Select all" })).not.toBeInTheDocument();
 
-  const filter = screen.getByPlaceholderText(/Filter/i);
+  const filter = screen.getByLabelText("Filter points");
   fireEvent.keyDown(filter, { key: "a", ctrlKey: true });
   expect(screen.queryByRole("button", { name: /Run \d+ in runner/ })).not.toBeInTheDocument();
 });

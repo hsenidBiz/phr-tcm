@@ -133,6 +133,40 @@ test("text filter narrows visible cards", async () => {
   expect(screen.getByText("Fix bug")).toBeInTheDocument();
 });
 
+test("the search finds a card by assignee, state or tag, and two words narrow", async () => {
+  mockIPC((cmd) => {
+    if (cmd === "fetch_board")
+      return {
+        ...boardData,
+        items: [
+          { ...boardData.items[0], assigned_to: "Kim Lee", tags: "docs; urgent" },
+          boardData.items[1],
+        ],
+      };
+    if (cmd === "classification_paths") return [];
+  });
+  renderBoard();
+  await screen.findByText("Write docs");
+  const box = screen.getByLabelText("Filter items");
+  expect(box).toHaveAttribute("placeholder", "Search by title, id, tag, state…");
+
+  fireEvent.change(box, { target: { value: "kim" } });
+  expect(screen.getByText("Write docs")).toBeInTheDocument();
+  expect(screen.queryByText("Fix bug")).not.toBeInTheDocument();
+
+  fireEvent.change(box, { target: { value: "urgent" } });
+  expect(screen.getByText("Write docs")).toBeInTheDocument();
+  expect(screen.queryByText("Fix bug")).not.toBeInTheDocument();
+
+  // "done" is Fix bug's state; "kim" is not its assignee, so two words rule it out.
+  fireEvent.change(box, { target: { value: "done" } });
+  expect(screen.getByText("Fix bug")).toBeInTheDocument();
+  expect(screen.queryByText("Write docs")).not.toBeInTheDocument();
+  fireEvent.change(box, { target: { value: "done kim" } });
+  expect(screen.queryByText("Fix bug")).not.toBeInTheDocument();
+  expect(screen.queryByText("Write docs")).not.toBeInTheDocument();
+});
+
 test("card click opens the drawer; save patches only dirty fields", async () => {
   let patched: { patches?: Array<{ reference_name: string; value: string }> } = {};
   mockIPC((cmd, args) => {

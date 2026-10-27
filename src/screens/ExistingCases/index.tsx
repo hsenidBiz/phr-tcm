@@ -24,6 +24,7 @@ import { cn } from "../../lib/cn";
 import { exportPathFor, rememberExportPath } from "../../lib/exportDir";
 import { usePersistedStringSet } from "../../lib/collapsedGroups";
 import { groupIndices } from "../../lib/grouping";
+import { CASE_SEARCH_PLACEHOLDER, caseSearchFields, matchesQuery } from "../../lib/search";
 import { unwrap } from "../../lib/ipc";
 import { sidebarCollapsedSnapshot, stickyLeftPx, subscribeSidebar } from "../../lib/sidebarState";
 import { toTestCase } from "../../lib/testCaseConvert";
@@ -177,20 +178,11 @@ export default function ExistingCases({
   // Switching Group by title is one motion, not a regroup then an unfold
   // per open group (components/ui/collapse.tsx).
   const regroup = useRegroupMotion(grouped);
-  const q = search.trim().toLowerCase();
-  // Search narrows the visible cards (title, #id or tag); grouping and the
-  // header count follow the filtered view.
+  const q = search.trim();
+  // Search narrows the visible cards (id, title, tags, module, automation
+  // status, priority); grouping and the header count follow the filtered view.
   const visible = useMemo(
-    () =>
-      q
-        ? list.filter(
-            (c) =>
-              c.title.toLowerCase().includes(q) ||
-              `#${c.id}`.includes(q) ||
-              String(c.id).includes(q) ||
-              c.tags.toLowerCase().includes(q),
-          )
-        : list,
+    () => (q ? list.filter((c) => matchesQuery(caseSearchFields(c), q)) : list),
     [list, q],
   );
   const ordered = useMemo(() => {
@@ -349,7 +341,7 @@ export default function ExistingCases({
             <SearchInput
               aria-label="Search test cases"
               className="w-full"
-              placeholder="Filter by name or id"
+              placeholder={CASE_SEARCH_PLACEHOLDER}
               value={search}
               onChange={setSearch}
             />

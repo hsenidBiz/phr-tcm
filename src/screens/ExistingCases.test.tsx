@@ -324,6 +324,41 @@ test("search narrows the list by title, id or tag", async () => {
   expect(screen.getByText("Checkout")).toBeInTheDocument();
 });
 
+test("search also finds a case by module, automation status or priority, and two words narrow", async () => {
+  mockIPC((cmd) => {
+    if (cmd === "list_test_case_fields") return [];
+    if (cmd === "pbi_test_cases_full")
+      return [
+        { ...fullCase, module_value: "Payroll", priority: 1 },
+        { ...secondCase, module_value: "Leave", automation_status: "Automated", priority: 3 },
+      ];
+  });
+  renderCases();
+  await screen.findByText("Valid login");
+  const box = screen.getByLabelText("Search test cases");
+  expect(box).toHaveAttribute("placeholder", "Search by name, id, tag, module…");
+
+  fireEvent.change(box, { target: { value: "payroll" } });
+  expect(screen.getByText("Valid login")).toBeInTheDocument();
+  expect(screen.queryByText("Invalid login")).not.toBeInTheDocument();
+
+  fireEvent.change(box, { target: { value: "automated" } });
+  expect(screen.getByText("Invalid login")).toBeInTheDocument();
+  expect(screen.queryByText("Valid login")).not.toBeInTheDocument();
+
+  fireEvent.change(box, { target: { value: "p3" } });
+  expect(screen.getByText("Invalid login")).toBeInTheDocument();
+  expect(screen.queryByText("Valid login")).not.toBeInTheDocument();
+
+  // Both cases have "login"; the second word narrows to one.
+  fireEvent.change(box, { target: { value: "login" } });
+  expect(screen.getByText("Valid login")).toBeInTheDocument();
+  expect(screen.getByText("Invalid login")).toBeInTheDocument();
+  fireEvent.change(box, { target: { value: "login leave" } });
+  expect(screen.getByText("Invalid login")).toBeInTheDocument();
+  expect(screen.queryByText("Valid login")).not.toBeInTheDocument();
+});
+
 /** Same merged sticky as View Test Cases / Run Tests, adjusted for this
  * screen's single-editor model: one press folds the open editor and every
  * unfolded group, then the button retires. */

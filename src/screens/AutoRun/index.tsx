@@ -519,7 +519,7 @@ export default function AutoRun({
     (activeFilter.size === 0 || activeFilter.has(lastOf(i))) &&
     (!defectsOnly || hasDefect(i)) &&
     (!scriptedOnly || hasScript(i)) &&
-    matchesSearch(c, search)
+    matchesSearch(c, search, [scripts[i]?.area])
       ? [i]
       : [],
   );

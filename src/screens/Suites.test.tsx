@@ -312,6 +312,38 @@ test("the header holds the title and refresh; the search sits alone in the wide 
   expect(search.parentElement!.parentElement).toHaveClass("flex-1", "min-w-64");
 });
 
+test("search finds a suite by its id or PBI id, and a plan word plus a suite word narrow together", async () => {
+  baseMock((cmd) => {
+    if (cmd === "list_plans_with_suites")
+      return [
+        {
+          plan: PLAN,
+          suites: [
+            { id: 96, name: "Alpha suite", suite_type: "requirementTestSuite", requirement_id: 50, parent_id: null },
+            { id: 97, name: "Beta suite", suite_type: "staticTestSuite", requirement_id: null, parent_id: null },
+          ],
+        },
+      ];
+  });
+  renderSuites();
+  await screen.findByText("Alpha suite");
+  const box = screen.getByLabelText("Search suites");
+  expect(box).toHaveAttribute("placeholder", "Search by plan, suite, suite id, PBI id");
+
+  fireEvent.change(box, { target: { value: "#97" } });
+  expect(screen.getByText("Beta suite")).toBeInTheDocument();
+  expect(screen.queryByText("Alpha suite")).not.toBeInTheDocument();
+
+  fireEvent.change(box, { target: { value: "#50" } });
+  expect(screen.getByText("Alpha suite")).toBeInTheDocument();
+  expect(screen.queryByText("Beta suite")).not.toBeInTheDocument();
+
+  // The plan's name is "Auth - Test Plan": its word and a suite word together.
+  fireEvent.change(box, { target: { value: "auth beta" } });
+  expect(screen.getByText("Beta suite")).toBeInTheDocument();
+  expect(screen.queryByText("Alpha suite")).not.toBeInTheDocument();
+});
+
 test("search filters the tree; results start collapsed and open on demand", async () => {
   baseMock((cmd) => {
     if (cmd === "list_plans_with_suites")

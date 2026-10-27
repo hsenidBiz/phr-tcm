@@ -19,6 +19,7 @@ import { PageHeader } from "../components/ui/page-header";
 import { cn } from "../lib/cn";
 import { requiredFieldsFromError } from "../lib/adoFieldErrors";
 import { unwrap } from "../lib/ipc";
+import { priorityText, matchesQuery, searchPlaceholder } from "../lib/search";
 import { CACHE, cacheKeys, persistentQuery } from "../lib/cache";
 import { IconCollapseAll, IconExpandAll } from "../lib/actionIcons";
 import { Collapse, useRegroupMotion, useSettled } from "../components/ui/collapse";
@@ -584,15 +585,25 @@ export default function WorkBoard({
       !assigneeFilter.includes(i.assigned_to || UNASSIGNED)
     )
       return false;
-    if (filterText) {
-      const t = filterText.toLowerCase();
-      if (
-        !i.title.toLowerCase().includes(t) &&
-        !String(i.id).includes(t) &&
-        !i.tags.toLowerCase().includes(t)
+    if (
+      filterText &&
+      !matchesQuery(
+        [
+          i.id,
+          i.title,
+          i.tags,
+          i.state,
+          i.assigned_to,
+          i.work_item_type,
+          priorityText(i.priority),
+          i.parent?.id,
+          i.parent?.title,
+          i.project,
+        ],
+        filterText,
       )
-        return false;
-    }
+    )
+      return false;
     return true;
   });
 
@@ -822,7 +833,7 @@ export default function WorkBoard({
             <SearchInput
               aria-label="Filter items"
               className="w-full"
-              placeholder="Filter by title, id, tag"
+              placeholder={searchPlaceholder(["title", "id", "tag", "state", "assignee", "type", "parent"])}
               value={filterText}
               onChange={setFilterText}
             />

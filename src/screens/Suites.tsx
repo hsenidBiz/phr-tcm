@@ -22,6 +22,7 @@ import { projectOfPlan, type ProjectPlans } from "../lib/plansAll";
 import { noProjectSentence } from "../lib/projectScope";
 import { NO_PROJECTS_SENTENCE, refreshPlansAll, usePlansAll } from "../lib/usePlansAll";
 import { buildTree, type SuiteNode } from "../lib/suiteTree";
+import { matchesQuery, searchPlaceholder } from "../lib/search";
 import { outcomeLabel } from "./RunPanel";
 
 // The same colours Run Tests and the runner give each outcome: Paused is
@@ -40,11 +41,13 @@ function descendantIds(n: SuiteNode): number[] {
 
 /** Keep nodes whose name matches `q` (with their whole subtree) or that
  * contain a matching descendant (pruned to the matching branches). */
-function pruneTree(nodes: SuiteNode[], q: string): SuiteNode[] {
+function pruneTree(nodes: SuiteNode[], q: string, planName: string): SuiteNode[] {
   return nodes
     .map((n) => {
-      if (n.suite.name.toLowerCase().includes(q)) return n;
-      const kids = pruneTree(n.children, q);
+      // The tree holds suites only: the cases inside one load when it opens.
+      // The plan's name counts too, so "plan suite" words can be mixed.
+      if (matchesQuery([planName, n.suite.name, n.suite.id, n.suite.requirement_id], q)) return n;
+      const kids = pruneTree(n.children, q, planName);
       return kids.length ? { suite: n.suite, children: kids } : null;
     })
     .filter((n): n is SuiteNode => n !== null);
@@ -249,7 +252,7 @@ export default function Suites({
     [groups],
   );
 
-  const q = search.trim().toLowerCase();
+  const q = search.trim();
   useEffect(() => setSearchExpanded(new Set()), [q]);
   const visibleTrees = useMemo(() => {
     if (!q) return trees;
@@ -257,8 +260,8 @@ export default function Suites({
       .map(({ project: owner, plan, roots }) => {
         // A matching plan name keeps the whole plan; otherwise prune to
         // the suites (or branches) that match.
-        if (plan.name.toLowerCase().includes(q)) return { project: owner, plan, roots };
-        const pruned = pruneTree(roots, q);
+        if (matchesQuery([plan.name], q)) return { project: owner, plan, roots };
+        const pruned = pruneTree(roots, q, plan.name);
         return pruned.length ? { project: owner, plan, roots: pruned } : null;
       })
       .filter((t): t is (typeof trees)[number] => t !== null);
@@ -597,7 +600,7 @@ export default function Suites({
           <SearchInput
             aria-label="Search suites"
             className="w-full"
-            placeholder="Search plans and suites"
+            placeholder={searchPlaceholder(["plan", "suite", "suite id", "PBI id"])}
             value={search}
             onChange={setSearch}
           />

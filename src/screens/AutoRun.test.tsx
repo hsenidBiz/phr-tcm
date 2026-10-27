@@ -1762,7 +1762,7 @@ test("the Setup panel, with the search box, is on both tabs; searching on Past r
   fireEvent.click(tab("Past runs"));
   expect(tab("Past runs")).toHaveAttribute("aria-selected", "true");
   expect(box).toHaveValue("");
-  expect(box).toHaveAttribute("placeholder", "Search test cases by id or title");
+  expect(box).toHaveAttribute("placeholder", "Search by id, title, tag, module…");
   // The same by the keyboard: back to Test cases, search, then the arrow.
   fireEvent.click(tab("Test cases"));
   fireEvent.change(box, { target: { value: "lock" } });

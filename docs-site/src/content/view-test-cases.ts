@@ -78,8 +78,8 @@ export const viewTestCases: Screen = {
       id: "search",
       shot: LIST,
       locate: { role: "textbox", name: "Search test cases" },
-      name: "Filter by name or id",
-      does: "Shows only the cases whose title, id or tags contain what you type.",
+      name: "Search the cases",
+      does: "Shows only the cases whose title, id, tags, module, automation status or priority (for example P2) contain what you type. Several words narrow it: every word must be found.",
     },
     {
       id: "group-by-title",

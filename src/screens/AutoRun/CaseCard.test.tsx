@@ -335,6 +335,26 @@ test("the search matches the id with or without #, and the title, ignoring case"
   expect(matchesSearch(c, "expired")).toBe(false);
 });
 
+test("the search also finds a case by tag, module, automation status or its script's area, and two words narrow", () => {
+  const c = {
+    id: 4321,
+    title: "Login - Locked Account",
+    tags: "smoke; regression",
+    module_value: "Payroll",
+    automation_status: "Planned",
+  };
+  expect(matchesSearch(c, "regression")).toBe(true);
+  expect(matchesSearch(c, "payroll")).toBe(true);
+  expect(matchesSearch(c, "planned")).toBe(true);
+  expect(matchesSearch(c, "leave requests", ["Leave requests"])).toBe(true);
+  expect(matchesSearch(c, "leave requests")).toBe(false);
+  expect(matchesSearch(c, "locked payroll")).toBe(true);
+  expect(matchesSearch(c, "locked leave")).toBe(false);
+  // A comma list still means those exact ids, and any search in it may match.
+  expect(matchesSearch(c, "99, regression")).toBe(true);
+  expect(matchesSearch(c, "99, 43")).toBe(false);
+});
+
 /** A setup view as the editor's command answers it. */
 const view = () => ({
   fixture_name: "Draft cycle",

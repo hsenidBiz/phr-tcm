@@ -130,8 +130,8 @@ export const runTests: Screen = {
       shot: LIST,
       group: "choose",
       locate: { role: "textbox", name: "Filter points" },
-      name: "Filter by name or id",
-      does: "Shows only the cases whose title or id contains what you type. Filtering hides rows; it never changes the order.",
+      name: "Search the cases",
+      does: "Shows only the cases whose title, id, last outcome, tester or configuration contains what you type. Several words narrow it: every word must be found. Filtering hides rows; it never changes the order.",
     },
     {
       id: "filter-outcome",

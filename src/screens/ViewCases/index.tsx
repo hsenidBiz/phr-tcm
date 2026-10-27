@@ -23,6 +23,7 @@ import {
   subscribeSidebar,
 } from "../../lib/sidebarState";
 import { groupIndices } from "../../lib/grouping";
+import { CASE_SEARCH_PLACEHOLDER, caseSearchFields, matchesQuery } from "../../lib/search";
 import { unwrap, unwrapStr } from "../../lib/ipc";
 import { exportPathFor, rememberExportPath } from "../../lib/exportDir";
 import { pagePalette } from "../../lib/reportTheme";
@@ -184,18 +185,9 @@ export default function ViewCases({
   // Switching Group by title is one motion, not a regroup then an unfold
   // per open group (components/ui/collapse.tsx).
   const regroup = useRegroupMotion(grouped);
-  const q = search.trim().toLowerCase();
+  const q = search.trim();
   const visible = useMemo(
-    () =>
-      q
-        ? list.filter(
-            (c) =>
-              c.title.toLowerCase().includes(q) ||
-              `#${c.id}`.includes(q) ||
-              String(c.id).includes(q) ||
-              c.tags.toLowerCase().includes(q),
-          )
-        : list,
+    () => (q ? list.filter((c) => matchesQuery(caseSearchFields(c), q)) : list),
     [list, q],
   );
 
@@ -414,7 +406,7 @@ export default function ViewCases({
             <SearchInput
               aria-label="Search test cases"
               className="w-full"
-              placeholder="Filter by name or id"
+              placeholder={CASE_SEARCH_PLACEHOLDER}
               value={search}
               onChange={setSearch}
             />

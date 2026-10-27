@@ -108,8 +108,8 @@ export const board: Screen = {
       shot: COLUMNS,
       group: "scope-filters",
       locate: { role: "textbox", name: "Filter items" },
-      name: "Filter by title, id, tag",
-      does: "Shows only the cards whose title, number or tags contain what you type.",
+      name: "Search the board",
+      does: "Shows only the cards whose title, number, tags, state, assignee, type, priority or parent contain what you type. Several words narrow it: every word must be found.",
     },
     {
       id: "filter-type",
@@ -486,7 +486,7 @@ export const board: Screen = {
     {
       title: "Move a work item on",
       steps: [
-        "Find its card; type part of its title in **Filter by title, id, tag** if the board is busy.",
+        "Find its card; type part of its title in **Search the board** if the board is busy.",
         "Drag the card into the next column. The new state is saved to Azure DevOps.",
         "If Azure DevOps asks for more fields first, the work item opens with them marked: fill them in, choose the new **State** and press **Save changes**.",
       ],

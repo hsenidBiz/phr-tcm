@@ -347,6 +347,43 @@ test("a click on one case draws only that row again", async () => {
   expect(screen.queryByText("1 selected")).not.toBeInTheDocument();
 });
 
+test("search finds a case by tag, module or priority, and two words narrow", async () => {
+  mockIPC((cmd) => {
+    if (cmd === "list_test_case_fields") return [];
+    if (cmd === "pbi_test_cases_full")
+      return [
+        { ...caseA, module_value: "Payroll", priority: 1 },
+        { ...caseB, tags: "regression; slow", module_value: "Leave", priority: 3 },
+        caseC,
+      ];
+  });
+  renderView();
+  await screen.findByText("Login - valid");
+  const box = screen.getByLabelText("Search test cases");
+  expect(box).toHaveAttribute("placeholder", "Search by name, id, tag, module…");
+
+  fireEvent.change(box, { target: { value: "slow" } });
+  expect(screen.getByText("Login - locked out")).toBeInTheDocument();
+  expect(screen.queryByText("Login - valid")).not.toBeInTheDocument();
+  expect(screen.queryByText("Checkout")).not.toBeInTheDocument();
+
+  fireEvent.change(box, { target: { value: "payroll" } });
+  expect(screen.getByText("Login - valid")).toBeInTheDocument();
+  expect(screen.queryByText("Login - locked out")).not.toBeInTheDocument();
+
+  fireEvent.change(box, { target: { value: "p3" } });
+  expect(screen.getByText("Login - locked out")).toBeInTheDocument();
+  expect(screen.queryByText("Login - valid")).not.toBeInTheDocument();
+
+  // Both login cases match "login"; the second word narrows to one.
+  fireEvent.change(box, { target: { value: "login" } });
+  expect(screen.getByText("Login - valid")).toBeInTheDocument();
+  expect(screen.getByText("Login - locked out")).toBeInTheDocument();
+  fireEvent.change(box, { target: { value: "login leave" } });
+  expect(screen.getByText("Login - locked out")).toBeInTheDocument();
+  expect(screen.queryByText("Login - valid")).not.toBeInTheDocument();
+});
+
 test("Export JSON and Open in browser sit on the header line; the search is the wide toolbar item", async () => {
   mockCases();
   renderView();
