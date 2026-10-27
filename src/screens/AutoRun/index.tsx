@@ -106,6 +106,7 @@ export default function AutoRun({
   pbi,
   onOpenPlaywright,
   onOpenModules,
+  onOpenFixtures,
 }: {
   org: string;
   /** The project Auto Run's files belong to (the application under test):
@@ -119,6 +120,9 @@ export default function AutoRun({
   onOpenPlaywright?: () => void;
   /** Modules in Settings, for the same dialog when the module is off. */
   onOpenModules?: () => void;
+  /** The API Templates screen on its Fixtures tab, for the Setup panel's
+   * Fixtures row. */
+  onOpenFixtures?: () => void;
 }) {
   const { prefs } = useFieldRefs(org, project);
 
@@ -548,6 +552,7 @@ export default function AutoRun({
       org={org}
       project={project}
       caseModules={caseModules}
+      onOpenFixtures={onOpenFixtures}
       open={panelOpen}
       onToggle={() => setPanelChoice(!panelOpen)}
     />

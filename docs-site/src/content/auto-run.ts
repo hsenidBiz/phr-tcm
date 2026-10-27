@@ -181,8 +181,9 @@ export const autoRun: Screen = {
       name: "Setup",
       does:
         "What a run needs before it can start, one line each: the environment runs go to, the site address, the sign-in, the accounts, the areas, what discovery has mapped, the test files and the database. " +
+        "With API templates switched on there is a **Fixtures** line too: how many fixtures you have and when one last ran. **Open** beside it takes you to the Fixtures tab of the API Templates screen. " +
         "A green dot means that part is ready, a red one that it is missing, and an amber one that it is worth a look. " +
-        "The panel opens by itself when something a run needs is missing, and says **Needs attention**. It says that too when a script uploads a file the Test files folder does not hold, and names the file.",
+        "The panel opens by itself when something a run needs is missing, and says **Needs attention**. It says that too when a script uploads a file the Test files folder does not hold, and names the file. It does so when a fixture failed on its last run, too.",
     },
     {
       id: "setup-details",

@@ -8,6 +8,20 @@
 
 import { BRIDGE_SWITCH_KEYS, envScopedKey, subscribeActiveEnv } from "./activeEnv";
 
+/** Where the API Templates screen remembers which of its tabs was last open. */
+export const API_TEMPLATES_VIEW_KEY = "tcm-v2-api-templates-view";
+
+/** Asks for the API Templates screen's Fixtures tab. The screen opens on the
+ * tab it remembers, so a caller about to take the person there remembers
+ * Fixtures first. */
+export function askForFixturesView(): void {
+  try {
+    localStorage.setItem(API_TEMPLATES_VIEW_KEY, "fixtures");
+  } catch {
+    // Without storage the screen opens on its usual tab.
+  }
+}
+
 /** The prove/run switch, the active environment's own (each environment
  * keeps its own - activeEnv.ts). "1" only when it is on, and absent
  * otherwise - so a fresh profile, a cleared one and a new environment all

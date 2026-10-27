@@ -46,7 +46,7 @@ import {
   selectedDbSnapshot,
   subscribeDbSettings,
 } from "./lib/dbServer";
-import { apiWritesSnapshot, subscribeApiWrites } from "./lib/apiTemplates";
+import { apiWritesSnapshot, askForFixturesView, subscribeApiWrites } from "./lib/apiTemplates";
 import { networkToolsSnapshot, subscribeNetworkTools } from "./lib/networkTools";
 import { migrateOldTrialSwitch, WRITING_STYLE_QUERY } from "./lib/writingStyle";
 import {
@@ -1671,6 +1671,10 @@ export default function App() {
                     adoProject={project}
                     pbi={pbi}
                     onOpenPlaywright={() => goToSection("playwright")}
+                    onOpenFixtures={() => {
+                      askForFixturesView();
+                      goToSection("apitemplates");
+                    }}
                     onOpenModules={() => {
                       goToSection("settings");
                       setStartOnModules(true);
