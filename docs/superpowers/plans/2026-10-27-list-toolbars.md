@@ -59,3 +59,25 @@
 - [ ] Auto Run case list: search wide + Group by title chip; page actions on the header line.
 - [ ] How To Use: Grep `docs-site/src/content` for locators naming the changed roles/names (Group by title checkbox, This sprint, View All Test Cases in Browser, the Run Tests sentence) and update them and their prose; `npm run docs:build`; `npx vitest run docs-site`. If a guard fails only because a box must be recaptured, stop and report it (do not fake boxes).
 - [ ] Run `npx vitest run src/screens/WorkBoard.test.tsx src/screens/AutoRun src/screens/AutoRun.test.tsx src/ui-consistency.test.ts`, `npx tsc --noEmit`. Commit `feat(v2): Work Manager and the Auto Run case list use the shared header and toolbar`.
+
+### Task 4: One shared search across every list screen (owner, 2026-10-27)
+
+Owner: "extend the search options so that I can search by tags, etc so things will be easier to find rather than just by name or ID. This is to be done across all pages with the search function." Field list proposed by the controller and accepted ("That list is fine, go ahead").
+
+**Files:** Create `src/lib/search.ts` (+ `search.test.ts`). Modify every screen search: `ExistingCases`, `ViewCases`, `RunPanel`, `Suites.tsx`, `ManageCases` (SuiteCases and its suite list), `WorkBoard.tsx`, `AutoRun/CaseSearch.tsx` (`matchesSearch` keeps its export name and callers), and their tests.
+
+**Produces:**
+- `matchesQuery(fields: ReadonlyArray<string | number | null | undefined>, query: string): boolean` - case-insensitive; the query is split on whitespace into words (a "quoted phrase" is one word); EVERY word must be a substring of at least one field; an id field also matches with a leading `#` (`#123`); an empty query matches everything.
+- `searchPlaceholder(names: string[]): string` - "Search by " + the first four names joined with ", " + ("…" when more), e.g. "Search by name, id, tag, state…".
+
+**Fields per screen (use what each row already has loaded; do NOT add requests):**
+- Update / View Test Cases: id, title, tags, state, priority, assigned to, area or module, automation status.
+- Run Tests: id, title, tags (when loaded), last outcome (its display word), tester, priority.
+- Auto Run case list: id, title, tags, module/area, automation or script status where the row has it.
+- Work Manager: id, title, tags, state, assigned to, area, work item type.
+- Search Suites and Suite Management: plan name, suite name, and the ids and titles of the cases inside a suite WHEN that data is already loaded for the tree; if it is not loaded, say so in the report rather than fetching it.
+- Each screen's placeholder comes from `searchPlaceholder` with its own field names; aria-labels stay unchanged.
+
+- [ ] `search.test.ts` first: every word must match (AND); a word can match any field; quoted phrase; `#id`; case-insensitive; null fields ignored; empty query; placeholder text with and without "…".
+- [ ] Each screen uses `matchesQuery` with its fields; a test per screen that a tag (or the screen's non-name field) finds a row and that two words narrow. Run `npx vitest run src/lib/search.test.ts` and each touched screen's tests, `src/ui-consistency.test.ts`, `npx tsc --noEmit`; How To Use: update any text that says "name or id" (Grep `docs-site/src/content`), `npm run docs:build`, `npx vitest run docs-site`.
+- [ ] Commit `feat(v2): every search box finds by tag, state, assignee and more, not just name or id`.
