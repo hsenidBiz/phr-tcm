@@ -42,7 +42,7 @@
 <body>
 <main>
   <h1>Test Case Manager backlog</h1>
-  <p class="sub">Updated 27 October 2026, after 2.3.1-beta.19. All projects as one and several assistants are complete (through 2.3.1-beta.15); the faster suite lookup shipped in 2.3.1-beta.18 and saved setups in 2.3.1-beta.19. Next: the final screenshot run, released as 2.4.0 (owner, 27 October 2026). What is left is below.</p>
+  <p class="sub">Updated 28 October 2026, after 2.4.0. All projects as one and several assistants are complete (through 2.3.1-beta.15); the faster suite lookup shipped in 2.3.1-beta.18 and saved setups in 2.3.1-beta.19, and the final screenshot run in 2.4.0, the stable release the owner asked for on 27 October 2026. What is left is the owner's hand checks and the Manage Cycle items, below. What is left is below.</p>
 
   <h2>Agreed, not built yet</h2>
   <div class="item">
@@ -50,7 +50,7 @@
     <ul>
       <li>Faster suite lookup: shipped in 2.3.1-beta.18. Hand checks owed on a live org before 2.4.0: Run Tests finds a real PBI's suite quickly (the suites-by-test-case answer has requirement suites and names their project), a PBI with requirement suites in two plans picks your area's plan, and "Reading a large plan (page N)" shows on plan 55291 when the full walk runs.</li>
       <li>Saved setups: shipped in 2.3.1-beta.19 (assistant tools get_kept_actions, save_setup, list_setups, run_setup; no UI). Hand checks owed on a live org before 2.4.0: save a setup that creates a leave type with a database find rule, run it twice (built, then found); run it with Database Read Access off and a browser find rule; undo a record a setup built with undo_explore_creates.</li>
-      <li>The final screenshot run, after both. Owed shots: the Assistants card (new shot id), the header shots, every list screen's new toolbar, the Auto Run case list (its search moved out of Setup; drop "with the search at its top" from the alt text after the recapture), the end of the Setup panel (Save words and Protected records are gone), the Fixtures row in Setup, the Settings "Treat all projects as one" switch as a located control, and the UI round's shots. Two prepared patches are in .superpowers/sdd/ (final-shots-*.patch). The owner allows closing the installed app for it.</li>
+      <li>The final screenshot run: shipped in 2.4.0. All 90 shots retaken in both themes, plus the new Assistants card shot; the Settings switch to treat all projects as one is a located control.</li>
       <li>From the Manage Cycle comparison, not in item 39 (yours to pick): expect_response cannot require a query parameter to be absent; absence checks have no run-time positive control; precondition records not tied to the case's names; components still wait for "Showing 1-1 of 1" rather than the search response; nothing flags nth where a label exists; script fixes for 141706, 142514, 141708, 141727.</li>
     </ul>
   </div>
@@ -70,7 +70,7 @@
       <li>Hand check owed: two subagents of one session given different agent names get two browsers.</li>
       <li>Hand check owed (phase 5): an assistant's own browser left 30 minutes without a call closes, its row on the card loses its browser, and that assistant's next call says why; the main browser stays open however long it is left, and a browser with a replay going is not closed.</li>
       <li>Hand check owed: Task Manager memory and CPU with three browsers on PeoplesHR, recorded here. The limit of three may be lowered on that measurement, never raised.</li>
-      <li>Owed, taken in the one capture run after phase 5 (not before): the How To Use shot of the Assistants card with the two sample assistants, one in the main browser and one in its own browser (both light and dark; a new shot id in the capture script and its positions file, then the Assistants tip points at it). The sample data already shows both: demo mode lists Assistant 1 replaying in the main browser and Assistant 2 discovering in its own. The capture needs the dev app (<code>npm run docs:dev</code>) with the installed app closed.</li>
+      <li>Owed, taken in the one capture run after phase 5 (not before): the How To Use shot of the Assistants card with the two sample assistants, one in the main browser and one in its own browser (both light and dark; the shot is <code>auto-run-assistants</code>, declared with its controls in <code>docs-site/src/content/auto-run.ts</code> in place of the two Assistants tips; the guard tests reject a shot with no captured image and positions, so it goes in together with the capture, not before). The sample data already shows both: demo mode lists Assistant 1 replaying in the main browser and Assistant 2 discovering in its own. The capture needs the dev app (<code>npm run docs:dev</code>) with the installed app closed.</li>
     </ul>
   </div>
 
@@ -188,7 +188,7 @@
     <p>The README and the guide text now describe working across every project: Treat all projects as one and the Home project picker (Settings, General), the hidden Organization and Project pickers, a PBI from any project, which screens use the home project, the project label on board and pull request items, plans grouped by project with "Showing plans from N of M projects.", and the assistants' cross-project search. The built guide is rebuilt from that text.</p>
     <ul>
       <li>Owed: re-take the How To Use shots (docs:dev, docs:shots) with the installed app closed. Stale in particular: the Getting started header shot and command palette shot (the palette no longer lists the projects while the switch is on; its route now scrolls to Check for updates), the Settings General card, and every screen's header.</li>
-      <li>Owed: once the shots are re-taken, the Settings Treat all projects as one row can become a located control with its own box; today it is described in the General group's text because a control cannot be added without a captured position.</li>
+      <li>Owed: once the shots are re-taken, the Settings Treat all projects as one row can become a located control with its own box (a <code>switch</code> named Treat all projects as one on <code>settings-main</code>); today it is described in the General group's text because the guard tests reject a control with no captured position, so it goes in together with the capture.</li>
     </ul>
   </div>
 
