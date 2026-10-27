@@ -289,6 +289,29 @@ test("folder Edit cases collects descendant case ids and hands off", async () =>
   await vi.waitFor(() => expect(onEdit).toHaveBeenCalledWith("Regression", [201], "Web"));
 });
 
+test("the header holds the title and refresh; the search sits alone in the wide toolbar below", async () => {
+  baseMock((cmd) => {
+    if (cmd === "list_plans_with_suites")
+      return [
+        {
+          plan: PLAN,
+          suites: [
+            { id: 91, name: "PBI 42 suite", suite_type: "requirementTestSuite", requirement_id: 42, parent_id: null },
+          ],
+        },
+      ];
+  });
+  renderSuites();
+  await screen.findByText("PBI 42 suite");
+  expect(screen.getByRole("heading", { name: "Test plans" })).toBeInTheDocument();
+  const refresh = screen.getByRole("button", { name: "Refresh test plans" });
+  const search = screen.getByLabelText("Search suites");
+  const toolbar = search.parentElement!.parentElement!.parentElement as HTMLElement;
+  expect(toolbar).toHaveClass("flex-wrap");
+  expect(toolbar).not.toContainElement(refresh);
+  expect(search.parentElement!.parentElement).toHaveClass("flex-1", "min-w-64");
+});
+
 test("search filters the tree; results start collapsed and open on demand", async () => {
   baseMock((cmd) => {
     if (cmd === "list_plans_with_suites")

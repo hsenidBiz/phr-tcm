@@ -9,6 +9,8 @@ import MoreActionsMenu, { type MoreAction } from "../components/MoreActionsMenu"
 import ScanProgress from "../components/ScanProgress";
 import { Collapse, useSettled } from "../components/ui/collapse";
 import { Badge } from "../components/ui/badge";
+import { ListToolbar } from "../components/ui/list-toolbar";
+import { PageHeader } from "../components/ui/page-header";
 import { SearchInput } from "../components/ui/search-input";
 import { loadNotes } from "../lib/caseNotes";
 import { openRunnerWindow } from "../lib/openRunner";
@@ -551,8 +553,10 @@ export default function Suites({
 
   return (
     <div data-tour="plans-tree" className="space-y-3">
-      <div className="flex items-center gap-2">
-        <h2 className="text-sm font-semibold text-muted">Test plans</h2>
+      <PageHeader
+        title="Test plans"
+        aside={
+          <>
         <button
           aria-label="Refresh test plans"
           title="Refresh test plans"
@@ -583,15 +587,22 @@ export default function Suites({
             className={fetching || pointsFetching > 0 ? "animate-spin" : undefined}
           />
         </button>
-        <SearchInput
-          aria-label="Search suites"
-          className="w-64"
-          placeholder="Search plans and suites"
-          value={search}
-          onChange={setSearch}
-        />
         {busy && <span className="text-xs text-muted">Collecting test cases</span>}
-      </div>
+          </>
+        }
+      />
+
+      <ListToolbar
+        search={
+          <SearchInput
+            aria-label="Search suites"
+            className="w-full"
+            placeholder="Search plans and suites"
+            value={search}
+            onChange={setSearch}
+          />
+        }
+      />
 
       {/* The bar is for the FIRST scan only - once a tree is already on
           screen, a background revalidation keeps it there and spins only
