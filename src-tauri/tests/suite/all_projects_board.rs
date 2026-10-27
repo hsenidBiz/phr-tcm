@@ -352,6 +352,19 @@ fn states_body(states: &[(&str, &str)]) -> serde_json::Value {
     serde_json::json!({ "value": value })
 }
 
+/// The board across projects remembers a type's states for the session,
+/// keyed by the server's address - and a finished test's port can come round
+/// again in this one process. A test that counts or needs its own states
+/// read starts with the key empty.
+fn forget_states(server: &MockServer, project: &str, wtype: &str) {
+    v2_lib::cache::forget(&v2_lib::cache::keys::work_item_states(
+        &server.uri(),
+        "org",
+        project,
+        wtype,
+    ));
+}
+
 async fn mount_states(
     server: &MockServer,
     project: &str,
@@ -359,6 +372,7 @@ async fn mount_states(
     states: &[(&str, &str)],
     expect: u64,
 ) {
+    forget_states(server, project, wtype);
     Mock::given(method("GET"))
         .and(path(format!("/org/{project}/_apis/wit/workitemtypes/{wtype}/states")))
         .respond_with(ResponseTemplate::new(200).set_body_json(states_body(states)))
@@ -717,6 +731,7 @@ async fn a_card_with_no_project_named_reads_no_states_and_keeps_the_heuristic_co
 #[tokio::test]
 async fn a_project_named_with_a_percent_sign_gets_its_states_read_through_an_encoded_url() {
     let server = MockServer::start().await;
+    forget_states(&server, "50% Done", "Task");
     mount_org_wiql(&server, &[5]).await;
     mount_org_items(
         &server,
