@@ -27,6 +27,14 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.3.1-beta.18",
+    date: "2026-10-27",
+    items: [
+      "Run Tests finds a PBI's test plan and suite much faster: it asks the PBI's own test cases where their suite is instead of reading every test plan, and remembers what it found for 30 days.",
+      "When the app does have to read every test plan, one read serves every screen that asks, each screen shows only its own progress, and a very large plan says which page it is on instead of looking stuck.",
+    ],
+  },
+  {
     version: "2.3.1-beta.17",
     date: "2026-10-27",
     items: [
