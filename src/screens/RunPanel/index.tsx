@@ -145,15 +145,20 @@ export default function RunPanel({
   });
 
   useEffect(() => {
-    // Only the search for a PBI's suite: the plans tree reading every
-    // plan (Search Suites, the background prefetch) is not this screen's wait.
+    // Only the search for THIS PBI's suite: the plans tree reading every
+    // plan (Search Suites, the background prefetch) is not this screen's
+    // wait, and neither is another PBI's search still running after the
+    // person moved on (the background finder cannot be stopped).
+    // Starting on another PBI also drops the last PBI's bar: a suite found
+    // from its test cases reports no progress, so nothing else would.
+    setScan(null);
     const un = events.suiteScanProgress.listen((e) => {
-      if (e.payload.kind === "suite") setScan(e.payload);
+      if (e.payload.kind === "suite" && e.payload.pbi_id === pbiId) setScan(e.payload);
     });
     return () => {
       un.then((f) => f()).catch(() => {});
     };
-  }, []);
+  }, [org, project, pbiId]);
 
   // Live repaint: the runner announces every recorded (or reset) point as
   // the tester clicks Next; patch the cached rows in place so the tint and

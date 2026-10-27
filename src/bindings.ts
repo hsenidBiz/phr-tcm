@@ -7100,13 +7100,19 @@ export type SuiteRef = {
  *  the Suites browser can show "Scanning plans X of Y" instead of a bare
  *  skeleton. `kind` says which walk this is. `pages` is set only while the
  *  walk is waiting on one large plan alone: how many pages of that plan's
- *  suite list have been read so far.
+ *  suite list have been read so far. `project` is the project the walk is
+ *  in, and `pbi_id` the PBI a `suite` walk is looking for (none for
+ *  `plans`): a screen listens only to the walk it is waiting on, since
+ *  the person can move to another PBI or project while an earlier walk is
+ *  still running.
  */
 export type SuiteScanProgress = {
 	done: number,
 	total: number,
 	pages: number | null,
 	kind: ScanKind,
+	pbi_id: number | null,
+	project: string | null,
 };
 
 /**

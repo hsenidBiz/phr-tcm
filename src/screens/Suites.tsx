@@ -213,14 +213,31 @@ export default function Suites({
 
   useEffect(() => {
     // Only the read of every plan's suites: the search for one PBI's suite
-    // (Run Tests, the background finder) is not this screen's wait.
+    // (Run Tests, the background finder) is not this screen's wait. And
+    // only the project this screen is reading: one project's walk can be
+    // running for another screen (the app's prefetch of its current
+    // project). Together, the projects are read one after another, so the
+    // bar follows the project whose walk reports first and lets go of it
+    // when that walk is done, which keeps two projects' counts from
+    // alternating on one bar.
+    setScan(null);
+    let followed: string | null = null;
     const un = events.suiteScanProgress.listen((e) => {
-      if (e.payload.kind === "plans") setScan(e.payload);
+      const p = e.payload;
+      if (p.kind !== "plans") return;
+      if (!allProjects) {
+        if (p.project === project) setScan(p);
+        return;
+      }
+      followed ??= p.project;
+      if (p.project !== followed) return;
+      setScan(p);
+      if (p.total > 0 && p.done >= p.total && !p.pages) followed = null;
     });
     return () => {
       un.then((f) => f()).catch(() => {});
     };
-  }, []);
+  }, [org, project, allProjects]);
 
   // One shape for both modes: the projects that have plans, each with its
   // plans. Switched off it is the picked project alone.

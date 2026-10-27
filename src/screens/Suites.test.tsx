@@ -978,20 +978,94 @@ test("the scan bar follows the plans walk only, and says so when one large plan 
   const { emit } = await import("@tauri-apps/api/event");
 
   await act(async () => {
-    await emit("suite-scan-progress", { done: 3, total: 12, pages: null, kind: "suite" });
+    await emit("suite-scan-progress", { done: 3, total: 12, pages: null, kind: "suite", pbi_id: 42, project: "Web" });
   });
   expect(screen.getByText("Loading test plans")).toBeInTheDocument();
   expect(screen.queryByText("Scanning test plans")).not.toBeInTheDocument();
 
   await act(async () => {
-    await emit("suite-scan-progress", { done: 5, total: 9, pages: null, kind: "plans" });
+    await emit("suite-scan-progress", { done: 5, total: 9, pages: null, kind: "plans", pbi_id: null, project: "Web" });
   });
   expect(screen.getByText("Scanning test plans")).toBeInTheDocument();
   expect(screen.getByText("5 / 9")).toBeInTheDocument();
 
   await act(async () => {
-    await emit("suite-scan-progress", { done: 8, total: 9, pages: 4, kind: "plans" });
+    await emit("suite-scan-progress", { done: 8, total: 9, pages: 4, kind: "plans", pbi_id: null, project: "Web" });
   });
   expect(screen.getByText("Reading a large plan (page 4)")).toBeInTheDocument();
   expect(screen.queryByText("8 / 9")).not.toBeInTheDocument();
+});
+
+const plansEvent = (project: string, done: number, total: number) => ({
+  done,
+  total,
+  pages: null,
+  kind: "plans",
+  pbi_id: null,
+  project,
+});
+
+/// The app also reads its current project's plans in the background, so a
+/// plans walk for another project can be running while this screen waits.
+test("the scan bar ignores another project's plans walk", async () => {
+  mockIPC(
+    (cmd) => {
+      if (cmd === "list_plans_with_suites") return new Promise(() => {});
+    },
+    { shouldMockEvents: true },
+  );
+  renderSuites();
+  expect(await screen.findByText("Loading test plans")).toBeInTheDocument();
+  const { emit } = await import("@tauri-apps/api/event");
+
+  await act(async () => {
+    await emit("suite-scan-progress", plansEvent("Payroll", 40, 90));
+  });
+  expect(screen.getByText("Loading test plans")).toBeInTheDocument();
+  expect(screen.queryByText("40 / 90")).not.toBeInTheDocument();
+
+  await act(async () => {
+    await emit("suite-scan-progress", plansEvent("Web", 2, 5));
+  });
+  expect(screen.getByText("2 / 5")).toBeInTheDocument();
+  await act(async () => {
+    await emit("suite-scan-progress", plansEvent("Payroll", 41, 90));
+  });
+  expect(screen.getByText("2 / 5")).toBeInTheDocument();
+});
+
+/// Projects together are read one after another: the bar follows the
+/// project whose walk reports first until that walk is done, so two
+/// projects' counts never alternate on it.
+test("projects together: the bar follows one project's walk at a time", async () => {
+  mockIPC(
+    (cmd) => {
+      if (cmd === "list_projects")
+        return [
+          { id: "p1", name: "Web" },
+          { id: "p2", name: "Payroll" },
+        ];
+      if (cmd === "list_plans_with_suites") return new Promise(() => {});
+    },
+    { shouldMockEvents: true },
+  );
+  renderCombined();
+  expect(await screen.findByText("Loading test plans")).toBeInTheDocument();
+  const { emit } = await import("@tauri-apps/api/event");
+  const send = (project: string, done: number, total: number) =>
+    act(async () => {
+      await emit("suite-scan-progress", plansEvent(project, done, total));
+    });
+
+  await send("Payroll", 1, 3);
+  expect(screen.getByText("1 / 3")).toBeInTheDocument();
+  await send("Web", 40, 90);
+  expect(screen.getByText("1 / 3")).toBeInTheDocument();
+  expect(screen.queryByText("40 / 90")).not.toBeInTheDocument();
+
+  // Payroll's walk is done; the next project's walk takes over the bar.
+  await send("Payroll", 3, 3);
+  expect(screen.getByText("3 / 3")).toBeInTheDocument();
+  await send("Web", 41, 90);
+  expect(screen.getByText("41 / 90")).toBeInTheDocument();
 });

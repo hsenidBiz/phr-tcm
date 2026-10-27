@@ -1203,20 +1203,64 @@ test("the scan bar follows the suite search only, and says so when one large pla
   const { emit } = await import("@tauri-apps/api/event");
 
   await act(async () => {
-    await emit("suite-scan-progress", { done: 5, total: 9, pages: null, kind: "plans" });
+    await emit("suite-scan-progress", { done: 5, total: 9, pages: null, kind: "plans", pbi_id: null, project: "Web" });
   });
   expect(screen.getByText("Resolving test suite")).toBeInTheDocument();
   expect(screen.queryByText("Scanning test plans")).not.toBeInTheDocument();
 
   await act(async () => {
-    await emit("suite-scan-progress", { done: 3, total: 12, pages: null, kind: "suite" });
+    await emit("suite-scan-progress", { done: 3, total: 12, pages: null, kind: "suite", pbi_id: 42, project: "Web" });
   });
   expect(screen.getByText("Scanning test plans")).toBeInTheDocument();
   expect(screen.getByText("3 / 12")).toBeInTheDocument();
 
   await act(async () => {
-    await emit("suite-scan-progress", { done: 11, total: 12, pages: 7, kind: "suite" });
+    await emit("suite-scan-progress", { done: 11, total: 12, pages: 7, kind: "suite", pbi_id: 42, project: "Web" });
   });
   expect(screen.getByText("Reading a large plan (page 7)")).toBeInTheDocument();
   expect(screen.queryByText("11 / 12")).not.toBeInTheDocument();
+});
+
+/// The person can move to another PBI while an earlier PBI's search is
+/// still walking (the background finder cannot be stopped): its progress
+/// is not this PBI's, and a PBI the walk never reports for must not keep
+/// the last PBI's bar.
+test("the scan bar shows only this PBI's search, and starts over when the PBI changes", async () => {
+  mockIPC(
+    (cmd) => {
+      if (cmd === "ensure_pbi_suite") return new Promise(() => {});
+      if (cmd === "run_history") return [];
+    },
+    { shouldMockEvents: true },
+  );
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const panel = (pbiId: number) => (
+    <QueryClientProvider client={qc}>
+      <RunPanel org="acme" project="Web" pbiId={pbiId} pbiTitle="Login flow" />
+    </QueryClientProvider>
+  );
+  const view = render(panel(42));
+  expect(await screen.findByText("Resolving test suite")).toBeInTheDocument();
+  const { emit } = await import("@tauri-apps/api/event");
+  const send = (pbi: number, done: number, total: number) =>
+    act(async () => {
+      await emit("suite-scan-progress", { done, total, pages: null, kind: "suite", pbi_id: pbi, project: "Web" });
+    });
+
+  // Another PBI's walk does not move this bar.
+  await send(43, 300, 482);
+  expect(screen.getByText("Resolving test suite")).toBeInTheDocument();
+  expect(screen.queryByText("300 / 482")).not.toBeInTheDocument();
+
+  await send(42, 2, 5);
+  expect(screen.getByText("2 / 5")).toBeInTheDocument();
+  await send(43, 301, 482);
+  expect(screen.getByText("2 / 5")).toBeInTheDocument();
+
+  // Moving to the other PBI drops the first one's bar, and shows its own.
+  view.rerender(panel(43));
+  expect(await screen.findByText("Resolving test suite")).toBeInTheDocument();
+  expect(screen.queryByText("2 / 5")).not.toBeInTheDocument();
+  await send(43, 302, 482);
+  expect(screen.getByText("302 / 482")).toBeInTheDocument();
 });
