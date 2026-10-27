@@ -657,7 +657,11 @@ export default function RunPanel({
                   p.test_case_id != null && selected.has(p.test_case_id)
                     ? "bg-accent-soft"
                     : (outcomeRowTint[p.last_outcome.toLowerCase()] ?? ""),
-                  "hover:bg-surface-2",
+                  // The Paused and Not Applicable tints are already close to
+                  // surface-2, so the hover tint alone barely showed on them
+                  // (owner, 2026-10-27). An accent bar at the row's start
+                  // marks the hovered row on every tint, selected included.
+                  "hover:bg-surface-2 hover:shadow-[inset_3px_0_0_var(--color-accent)]",
                 )}
                 onClick={(e) => handleRowClick(p, e)}
               >
