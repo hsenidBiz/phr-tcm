@@ -27,6 +27,13 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.3.1-beta.9",
+    date: "2026-10-27",
+    items: [
+      "Work Manager's board shows work items from every project; each card names its project when more than one project is on the board.",
+    ],
+  },
+  {
     version: "2.3.1-beta.8",
     date: "2026-10-27",
     items: [
