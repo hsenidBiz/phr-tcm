@@ -33,6 +33,7 @@ function card(id: number, parent: BoardParent | null): BoardItem {
     priority: null,
     changed_date: "",
     parent,
+    project: "Web",
   };
 }
 

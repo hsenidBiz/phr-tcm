@@ -19,6 +19,23 @@ pub async fn fetch_board(
         .await
 }
 
+/// The board of every project of the organization at once ("treat all
+/// projects as one"). Each card names its own project.
+#[tauri::command]
+#[specta::specta]
+pub async fn fetch_board_all(
+    app: tauri::AppHandle,
+    organization: String,
+    area: Option<String>,
+    pbi_id: Option<i32>,
+    current_sprint: bool,
+) -> Result<work_board::BoardData, ado::AdoError> {
+    let token = get_fresh_token(&app).await?;
+    ado::AdoClient::new(token)
+        .fetch_board_all(&organization, area.as_deref(), pbi_id, current_sprint)
+        .await
+}
+
 /// Move a board item into a column: resolves the target state exactly like
 /// v1 (_state_for_column) and PATCHes System.State. Returns the state set.
 #[tauri::command]

@@ -145,6 +145,7 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             runs::reset_test_points,
             runs::finish_test_run,
             board::fetch_board,
+            board::fetch_board_all,
             board::move_board_item,
             board::work_item_history,
             misc::audio_capture_start,

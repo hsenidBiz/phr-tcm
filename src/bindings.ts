@@ -115,6 +115,11 @@ export const commands = {
 	finishTestRun: (organization: string, project: string, runId: number) => typedError<null, AdoError>(__TAURI_INVOKE("finish_test_run", { organization, project, runId })),
 	fetchBoard: (organization: string, project: string, area: string | null, pbiId: number | null, currentSprint: boolean) => typedError<BoardData, AdoError>(__TAURI_INVOKE("fetch_board", { organization, project, area, pbiId, currentSprint })),
 	/**
+	 *  The board of every project of the organization at once ("treat all
+	 *  projects as one"). Each card names its own project.
+	 */
+	fetchBoardAll: (organization: string, area: string | null, pbiId: number | null, currentSprint: boolean) => typedError<BoardData, AdoError>(__TAURI_INVOKE("fetch_board_all", { organization, area, pbiId, currentSprint })),
+	/**
 	 *  Move a board item into a column: resolves the target state exactly like
 	 *  v1 (_state_for_column) and PATCHes System.State. Returns the state set.
 	 */
@@ -2783,7 +2788,20 @@ export type Because_Serialize = {
 
 export type BoardData = {
 	items: BoardItem[],
+	/**
+	 *  Per-project board only: a type's states by type name. Empty on the
+	 *  organization-wide board, where two projects can run different
+	 *  processes (see `states_by_project`).
+	 */
 	states_by_type: { [key in string]: StateInfo[] },
+	/**  Organization-wide board only: project -> type -> states. */
+	states_by_project: { [key in string]: { [key in string]: StateInfo[] } },
+	/**
+	 *  Organization-wide board only: the project of each card's parent, so
+	 *  a lane whose parent lives in another project still opens in the
+	 *  right one.
+	 */
+	parent_projects: { [key in number]: string },
 };
 
 export type BoardItem = {
@@ -2803,6 +2821,13 @@ export type BoardItem = {
 	 *  Feature); None when the item has none.
 	 */
 	parent: BoardParent | null,
+	/**
+	 *  The project the item lives in: the argument project on the
+	 *  per-project board, the name Azure DevOps gives it on the
+	 *  organization-wide one. Every write on a card uses this, never the
+	 *  project the screen happens to be showing.
+	 */
+	project: string,
 };
 
 /**  A card's direct parent, as its swimlane shows it. */

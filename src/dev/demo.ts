@@ -191,11 +191,24 @@ const SUITE_BY_PBI = new Map<number, EnsuredSuite>([
 const PBI_BY_SUITE = new Map([...SUITE_BY_PBI].map(([pbi, s]) => [s.suite_id, pbi]));
 
 const boardItems: BoardData["items"] = [
-  { id: 2001, title: "Demo Task - wire the login flow", work_item_type: "Task", state: "In Progress", state_color: "007acc", column: "In Progress", assigned_to: "Demo User", tags: "demo", priority: 2, changed_date: "2026-07-13T08:00:00Z", parent: { id: 1001, title: "Demo - Login & session flow", work_item_type: "Product Backlog Item" } },
-  { id: 2002, title: "Demo Task - write test cases", work_item_type: "Task", state: "To Do", state_color: "b2b2b2", column: "To Do", assigned_to: "Demo User", tags: "", priority: 2, changed_date: "2026-07-13T07:00:00Z", parent: { id: 1001, title: "Demo - Login & session flow", work_item_type: "Product Backlog Item" } },
-  { id: 2003, title: "Demo Bug - session timeout not enforced", work_item_type: "Bug", state: "To Do", state_color: "cc293d", column: "To Do", assigned_to: "Demo User", tags: "demo", priority: 1, changed_date: "2026-07-13T06:00:00Z", parent: null },
-  { id: 2004, title: "Demo Task - done example", work_item_type: "Task", state: "Done", state_color: "339933", column: "Done", assigned_to: "Demo User", tags: "", priority: 3, changed_date: "2026-07-12T06:00:00Z", parent: { id: 1002, title: "Demo - Checkout redesign", work_item_type: "Product Backlog Item" } },
+  { id: 2001, title: "Demo Task - wire the login flow", work_item_type: "Task", state: "In Progress", state_color: "007acc", column: "In Progress", assigned_to: "Demo User", tags: "demo", priority: 2, changed_date: "2026-07-13T08:00:00Z", parent: { id: 1001, title: "Demo - Login & session flow", work_item_type: "Product Backlog Item" }, project: "Demo Project" },
+  { id: 2002, title: "Demo Task - write test cases", work_item_type: "Task", state: "To Do", state_color: "b2b2b2", column: "To Do", assigned_to: "Demo User", tags: "", priority: 2, changed_date: "2026-07-13T07:00:00Z", parent: { id: 1001, title: "Demo - Login & session flow", work_item_type: "Product Backlog Item" }, project: "Demo Project" },
+  { id: 2003, title: "Demo Bug - session timeout not enforced", work_item_type: "Bug", state: "To Do", state_color: "cc293d", column: "To Do", assigned_to: "Demo User", tags: "demo", priority: 1, changed_date: "2026-07-13T06:00:00Z", parent: null, project: "Demo Project" },
+  { id: 2004, title: "Demo Task - done example", work_item_type: "Task", state: "Done", state_color: "339933", column: "Done", assigned_to: "Demo User", tags: "", priority: 3, changed_date: "2026-07-12T06:00:00Z", parent: { id: 1002, title: "Demo - Checkout redesign", work_item_type: "Product Backlog Item" }, project: "Demo Project" },
 ];
+
+const boardStates: BoardData["states_by_type"] = {
+  Task: [
+    { name: "To Do", color: "b2b2b2", category: "Proposed" },
+    { name: "In Progress", color: "007acc", category: "InProgress" },
+    { name: "Done", color: "339933", category: "Completed" },
+  ],
+  Bug: [
+    { name: "To Do", color: "cc293d", category: "Proposed" },
+    { name: "In Progress", color: "007acc", category: "InProgress" },
+    { name: "Done", color: "339933", category: "Completed" },
+  ],
+};
 
 const comments = new Map<number, WorkComment[]>([
   [2003, [{ id: 1, text: "Repro'd on the demo build.", text_html: "<div>Repro'd on the demo build.</div>", created_by: "Demo User", created_by_id: "demo", created_date: "2026-07-13T06:30:00Z", modified_date: "2026-07-13T06:30:00Z", avatar_url: "" }]],
@@ -1151,7 +1164,7 @@ function applyPatches() {
     resultScreenshots: () => ok([]),
     fileBug: (_o: string, _p: string, title: string) => {
       const id = nextId++;
-      boardItems.push({ id, title, work_item_type: "Bug", state: "To Do", state_color: "cc293d", column: "To Do", assigned_to: "Demo User", tags: "demo", priority: 2, changed_date: new Date().toISOString(), parent: null });
+      boardItems.push({ id, title, work_item_type: "Bug", state: "To Do", state_color: "cc293d", column: "To Do", assigned_to: "Demo User", tags: "demo", priority: 2, changed_date: new Date().toISOString(), parent: null, project: "Demo Project" });
       return ok({
         id,
         url: "https://example.invalid/demo-bug",
@@ -1416,20 +1429,13 @@ function applyPatches() {
       ]),
 
     fetchBoard: () =>
+      ok({ items: boardItems, states_by_type: boardStates, states_by_project: {}, parent_projects: {} }),
+    fetchBoardAll: () =>
       ok({
         items: boardItems,
-        states_by_type: {
-          Task: [
-            { name: "To Do", color: "b2b2b2", category: "Proposed" },
-            { name: "In Progress", color: "007acc", category: "InProgress" },
-            { name: "Done", color: "339933", category: "Completed" },
-          ],
-          Bug: [
-            { name: "To Do", color: "cc293d", category: "Proposed" },
-            { name: "In Progress", color: "007acc", category: "InProgress" },
-            { name: "Done", color: "339933", category: "Completed" },
-          ],
-        },
+        states_by_type: {},
+        states_by_project: { "Demo Project": boardStates },
+        parent_projects: { 1001: "Demo Project", 1002: "Demo Project" },
       }),
     moveBoardItem: (_o: string, _p: string, itemId: number, _t: string, column: string) => {
       const item = boardItems.find((b) => b.id === itemId);
@@ -1562,7 +1568,7 @@ function applyPatches() {
     listTeams: () => ok(["Demo Team"]),
     createWorkItem: (_o: string, _p: string, item: NewWorkItem) => {
       const id = nextId++;
-      boardItems.push({ id, title: item.title, work_item_type: item.wi_type, state: "To Do", state_color: "b2b2b2", column: "To Do", assigned_to: item.assigned_to ?? "", tags: item.tags ?? "", priority: item.priority ?? 2, changed_date: new Date().toISOString(), parent: null });
+      boardItems.push({ id, title: item.title, work_item_type: item.wi_type, state: "To Do", state_color: "b2b2b2", column: "To Do", assigned_to: item.assigned_to ?? "", tags: item.tags ?? "", priority: item.priority ?? 2, changed_date: new Date().toISOString(), parent: null, project: "Demo Project" });
       return ok({ id, url: "https://example.invalid/demo-wi" });
     },
     bridgeStatus: () => ok({ port: 51999, mcp_exe: "C:\\demo\\v2.exe" }),
