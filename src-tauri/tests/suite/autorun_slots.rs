@@ -1691,6 +1691,10 @@ mod global_checks {
             assert!(!any_session_open_now());
         }
         assert!(EXTRA_BROWSER_OPEN.contains("assistant"), "{EXTRA_BROWSER_OPEN}");
+        // The person reads this one, not an assistant: it tells them what to
+        // do, never to ask someone.
+        assert!(!EXTRA_BROWSER_OPEN.contains("ask the person"), "{EXTRA_BROWSER_OPEN}");
+        assert!(EXTRA_BROWSER_OPEN.contains("release it on the Assistants card at the top of the Auto Run screen"), "{EXTRA_BROWSER_OPEN}");
         assert!(!EXTRA_BROWSER_OPEN.contains('\u{2014}') && !EXTRA_BROWSER_OPEN.contains('\u{2013}'));
     }
 

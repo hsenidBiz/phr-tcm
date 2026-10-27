@@ -1056,8 +1056,9 @@ pub async fn open_session_refusal() -> Option<String> {
 
 /// Said when an assistant's own browser (a slot beside the main one) is open
 /// where a global check - an unattended run, a recording, the environment
-/// switch - looks. The person can release it on the Auto Run screen.
-pub const EXTRA_BROWSER_OPEN: &str = "an assistant's Auto Run browser is open - wait for it to finish, or ask the person to release it on the Auto Run screen";
+/// switch - looks. Every caller is the person's own command, so the sentence
+/// is for the person: it says what to do on the Auto Run screen.
+pub const EXTRA_BROWSER_OPEN: &str = "an assistant's Auto Run browser is open - wait for it to finish, or release it on the Assistants card at the top of the Auto Run screen";
 
 /// The lowest slot whose browser is open, if any: the one a global check
 /// names when it refuses.
