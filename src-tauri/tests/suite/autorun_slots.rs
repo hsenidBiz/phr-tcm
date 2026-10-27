@@ -1447,7 +1447,7 @@ mod card {
     /// once (side by side, never the person's main one) and leaves a recent one.
     #[tokio::test]
     async fn the_sweeps_idle_release_frees_only_the_idle_extra_slots() {
-        use v2_lib::commands::autorun_slots::{release_idle_within, take_idle_notice, IDLE_RELEASE_MS};
+        use v2_lib::commands::autorun_slots::{release_idle, take_idle_notice, IDLE_RELEASE_MS};
         let _g = crate::serial::agents();
         let _a = crate::serial::autorun();
         fresh();
@@ -1458,13 +1458,137 @@ mod card {
         bind(SlotNo(1), &b);
         bind(SlotNo(2), &c);
         let now = T0 + IDLE_RELEASE_MS;
-        release_idle_within(now, std::time::Duration::from_millis(50)).await;
+        release_idle(now).await;
         assert_eq!(bound(SlotNo(1)), None, "B was idle");
         assert_eq!(bound(SlotNo(2)), Some(c.clone()), "C called just now");
         assert_eq!(bound(SlotNo::MAIN), Some(a.clone()), "main is never idle-released");
         assert!(take_idle_notice(&b), "B is told once");
         assert!(!take_idle_notice(&b));
         assert!(!take_idle_notice(&c));
+        fresh();
+    }
+
+    /// A slot whose session lock is held (a call, an open, a replay step is
+    /// going in it) is not idle however long its assistant was quiet.
+    #[test]
+    fn a_slot_whose_session_lock_is_held_is_not_idle() {
+        use v2_lib::commands::autorun::try_hold_slot;
+        use v2_lib::commands::autorun_slots::{idle_extras, IDLE_RELEASE_MS};
+        let _g = crate::serial::agents();
+        let _a = crate::serial::autorun();
+        fresh();
+        let b = register(ID_B, "claude-code", T0);
+        bind(SlotNo(1), &b);
+        let held = try_hold_slot(SlotNo(1)).expect("slot 1 is free");
+        assert_eq!(idle_extras(T0 + IDLE_RELEASE_MS), vec![], "a call holds the browser");
+        drop(held);
+        assert_eq!(idle_extras(T0 + IDLE_RELEASE_MS), vec![SlotNo(1)]);
+        fresh();
+    }
+
+    /// An idle release that finds a replay or a batch going answers busy at
+    /// once, stops nothing, keeps the binding and leaves no notice.
+    #[tokio::test]
+    async fn an_idle_release_of_a_browser_with_a_replay_or_batch_going_stops_nothing() {
+        use v2_lib::ai_bridge::BatchGoing;
+        use v2_lib::commands::autorun::BROWSER_BUSY;
+        use v2_lib::commands::autorun_slots::{release_slot_within, take_idle_notice, ReleaseWhy};
+        let short = std::time::Duration::from_millis(40);
+        let _g = crate::serial::agents();
+        let _a = crate::serial::autorun();
+        fresh();
+        let b = register(ID_B, "claude-code", T0);
+        bind(SlotNo(1), &b);
+        {
+            let replay = OneReplay::claim_for_assistant_in(SlotNo(1)).expect("slot 1 is free");
+            let answer = release_slot_within(SlotNo(1), ReleaseWhy::Idle, short).await;
+            assert_eq!(answer, Err(BROWSER_BUSY.to_string()));
+            assert!(state(SlotNo(1)).is_running(), "the replay was left running");
+            assert!(!state(SlotNo(1)).cancel.load(std::sync::atomic::Ordering::SeqCst), "nothing was cancelled");
+            assert_eq!(bound(SlotNo(1)), Some(b.clone()));
+            assert!(!take_idle_notice(&b), "no notice for a release that did not happen");
+            drop(replay);
+        }
+        {
+            let batch = BatchGoing::begin(SlotNo(1));
+            let answer = release_slot_within(SlotNo(1), ReleaseWhy::Idle, short).await;
+            assert_eq!(answer, Err(BROWSER_BUSY.to_string()));
+            assert!(
+                !v2_lib::ai_bridge::batch_stop(SlotNo(1)).load(std::sync::atomic::Ordering::SeqCst),
+                "the batch was not told to stop"
+            );
+            assert_eq!(bound(SlotNo(1)), Some(b.clone()));
+            assert!(!take_idle_notice(&b));
+            drop(batch);
+        }
+        fresh();
+    }
+
+    /// The release acts on what idleness was judged on: a call made, a
+    /// rebind, or an unbind between the judgement and the release refuses it.
+    #[tokio::test]
+    async fn an_idle_release_refuses_when_the_slot_changed_since_it_was_judged() {
+        use v2_lib::commands::autorun::BROWSER_BUSY;
+        use v2_lib::commands::autorun_slots::{idle_slots, release_idle_slot, take_idle_notice, IDLE_RELEASE_MS};
+        let _g = crate::serial::agents();
+        let _a = crate::serial::autorun();
+        fresh();
+        let b = register(ID_B, "claude-code", T0);
+        let now = T0 + IDLE_RELEASE_MS;
+
+        // A call by B after the judgement.
+        bind(SlotNo(1), &b);
+        let judged = idle_slots(now).pop().expect("B's browser is idle");
+        assert_eq!((judged.slot, judged.key.clone()), (SlotNo(1), b.clone()));
+        register(ID_B, "claude-code", T0 + 1);
+        assert_eq!(release_idle_slot(&judged).await, Err(BROWSER_BUSY.to_string()));
+        assert_eq!(bound(SlotNo(1)), Some(b.clone()), "B called, so it keeps its browser");
+        assert!(!take_idle_notice(&b));
+
+        // The slot rebound to C after the judgement.
+        fresh();
+        let b = register(ID_B, "claude-code", T0);
+        let c = register(ID_C, "claude-code", T0);
+        bind(SlotNo(1), &b);
+        let judged = idle_slots(now).pop().expect("B's browser is idle");
+        bind(SlotNo(1), &c);
+        assert_eq!(release_idle_slot(&judged).await, Err(BROWSER_BUSY.to_string()));
+        assert_eq!(bound(SlotNo(1)), Some(c.clone()), "C keeps what it was given");
+        assert!(!take_idle_notice(&b) && !take_idle_notice(&c));
+
+        // Unbound after the judgement: nothing is released, nobody is told.
+        fresh();
+        let b = register(ID_B, "claude-code", T0);
+        bind(SlotNo(1), &b);
+        let judged = idle_slots(now).pop().expect("B's browser is idle");
+        unbind(SlotNo(1));
+        assert_eq!(release_idle_slot(&judged).await, Err(BROWSER_BUSY.to_string()));
+        assert!(!take_idle_notice(&b), "nothing was released, so nothing is said");
+        fresh();
+    }
+
+    /// An idle release never waits for a slot's lock: held, it answers busy at
+    /// once and the next sweep asks again.
+    #[tokio::test]
+    async fn an_idle_release_of_a_held_slot_returns_at_once() {
+        use v2_lib::commands::autorun::{try_hold_slot, BROWSER_BUSY};
+        use v2_lib::commands::autorun_slots::{idle_slots, release_idle_slot, release_slot, ReleaseWhy, IDLE_RELEASE_MS};
+        let _g = crate::serial::agents();
+        let _a = crate::serial::autorun();
+        fresh();
+        let b = register(ID_B, "claude-code", T0);
+        bind(SlotNo(1), &b);
+        let judged = idle_slots(T0 + IDLE_RELEASE_MS).pop().expect("B's browser is idle");
+        let held = try_hold_slot(SlotNo(1)).expect("slot 1 is free");
+        let began = std::time::Instant::now();
+        // release_slot waits 30 seconds for a lock; an idle release must not.
+        assert_eq!(release_idle_slot(&judged).await, Err(BROWSER_BUSY.to_string()));
+        assert_eq!(release_slot(SlotNo(1), ReleaseWhy::Idle).await, Err(BROWSER_BUSY.to_string()));
+        assert!(began.elapsed() < std::time::Duration::from_secs(2), "{:?}", began.elapsed());
+        assert_eq!(bound(SlotNo(1)), Some(b.clone()));
+        drop(held);
+        assert!(release_idle_slot(&judged).await.is_ok(), "free again, the next sweep releases it");
+        assert_eq!(bound(SlotNo(1)), None);
         fresh();
     }
 

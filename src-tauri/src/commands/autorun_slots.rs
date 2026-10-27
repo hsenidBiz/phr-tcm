@@ -307,10 +307,24 @@ pub fn bind_if_free(n: SlotNo, key: &AgentKey) {
 /// Slot `n`'s browser is in use by nobody - unless an assistant's open is
 /// replacing it right now (`hold_binding`), whose binding stays.
 pub fn unbind(n: SlotNo) {
+    unbind_noting(n, None);
+}
+
+/// `unbind`, and when `idle_of` names the assistant whose browser was let go
+/// for idleness, its notice (`take_idle_notice`) is left in the same step, so
+/// no call of its sees the browser gone without being told why. Bindings
+/// first, then the notices.
+fn unbind_noting(n: SlotNo, idle_of: Option<&AgentKey>) {
     let mut t = bindings();
     let kept = t.held[n.index()].is_some() && t.held[n.index()] == t.bound[n.index()];
     if !kept {
         t.bound[n.index()] = None;
+        if let Some(key) = idle_of {
+            let mut notices = idle_notices();
+            if !notices.contains(key) {
+                notices.push(key.clone());
+            }
+        }
     }
 }
 
@@ -375,8 +389,11 @@ pub const IDLE_RELEASE_MS: u64 = 30 * 60 * 1000;
 /// The assistants whose own browser was released for idleness and who have
 /// not yet been told (`slot_for`). Coordination state, not a cache: in
 /// memory only, gone when the app closes, never shown to anyone but the
-/// assistant it is about. Never held across an await, and only taken inside
-/// the bindings' lock, never the other way round.
+/// assistant it is about. Never held across an await. When this and the
+/// bindings are both held, the bindings are taken first. A notice is added
+/// only by a successful idle release and dropped by that assistant's next
+/// call, so the set holds at most one key for each assistant that held an
+/// extra browser and never called again.
 static IDLE_NOTICES: Mutex<Vec<AgentKey>> = Mutex::new(Vec::new());
 
 fn idle_notices() -> std::sync::MutexGuard<'static, Vec<AgentKey>> {
@@ -397,32 +414,82 @@ pub fn take_idle_notice(key: &AgentKey) -> bool {
 /// forgotten counts as idle. A slot with a replay or a batch going, or whose
 /// session lock is held (a call is going), is not idle.
 pub fn idle_extras(now_ms: u64) -> Vec<SlotNo> {
+    idle_slots(now_ms).into_iter().map(|j| j.slot).collect()
+}
+
+/// An extra slot judged idle, with what it was judged on: the assistant it
+/// was bound to and that assistant's last call (`None`: the registry had
+/// forgotten it). The release refuses unless both are still so once it holds
+/// the slot's lock.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IdleSlot {
+    pub slot: SlotNo,
+    pub key: AgentKey,
+    pub last_ms: Option<u64>,
+}
+
+/// `idle_extras`, with what each was judged on.
+pub fn idle_slots(now_ms: u64) -> Vec<IdleSlot> {
     SlotNo::extras()
         .into_iter()
-        .filter(|&n| {
-            let Some(key) = bound(n) else { return false };
-            let quiet_for = agents::info(&key).map_or(u64::MAX, |i| now_ms.saturating_sub(i.last_ms));
-            quiet_for >= IDLE_RELEASE_MS
+        .filter_map(|n| {
+            let key = bound(n)?;
+            let last_ms = agents::info(&key).map(|i| i.last_ms);
+            let quiet_for = last_ms.map_or(u64::MAX, |last| now_ms.saturating_sub(last));
+            (quiet_for >= IDLE_RELEASE_MS
                 && !crate::autorun::replay_to::state(n).is_running()
                 && !crate::ai_bridge::batch_going(n)
-                && session_slot(n).try_lock().is_ok()
+                && session_slot(n).try_lock().is_ok())
+            .then_some(IdleSlot { slot: n, key, last_ms })
         })
         .collect()
 }
 
-/// Releases every idle extra browser (`idle_extras`) as the person's release
-/// does, side by side so the sweep waits one `RELEASE_WAIT` at most, and
-/// leaves each assistant a notice of why (`release_slot_within` with
-/// `ReleaseWhy::Idle`). A browser that stays busy is asked again by the next
-/// sweep. Called by the sweeper after every sweep.
+/// Releases every idle extra browser (`idle_slots`) as the person's release
+/// does, and leaves each assistant a notice of why. The releases never wait
+/// for a slot's lock (`release_idle_slot`), so the sweep is not held; a
+/// browser still idle next time is asked again by the next sweep. Called by
+/// the sweeper after every sweep.
 pub async fn release_idle(now_ms: u64) {
-    release_idle_within(now_ms, crate::commands::autorun::RELEASE_WAIT).await;
+    let idle = idle_slots(now_ms);
+    let _ = futures::future::join_all(idle.iter().map(release_idle_slot)).await;
 }
 
-/// `release_idle`, each release waiting at most `wait` for its slot's lock.
-pub async fn release_idle_within(now_ms: u64, wait: std::time::Duration) {
-    let idle = idle_extras(now_ms);
-    let _ = futures::future::join_all(idle.into_iter().map(|n| release_slot_within(n, ReleaseWhy::Idle, wait))).await;
+/// Lets go of an extra browser judged idle (`idle_slots`), only if it is
+/// still the same assistant's, that assistant has made no call since, and no
+/// replay, batch or call is going in it: a browser in use is refused
+/// (`BROWSER_BUSY`) with nothing stopped, the binding kept and no notice
+/// left. It never waits for the slot's lock. The slot is unbound and the
+/// assistant's notice is left in one step, so its next call hears why before
+/// anything else (`slot_for`).
+pub async fn release_idle_slot(j: &IdleSlot) -> Result<String, String> {
+    let busy = || Err(crate::commands::autorun::BROWSER_BUSY.to_string());
+    let n = j.slot;
+    if n.is_main() {
+        return busy();
+    }
+    let unchanged = || bound(n).as_ref() == Some(&j.key) && agents::info(&j.key).map(|i| i.last_ms) == j.last_ms;
+    let working = || crate::autorun::replay_to::state(n).is_running() || crate::ai_bridge::batch_going(n);
+    // Read first: the label is kept in the registry until its next sweep.
+    let who = whose(n);
+    if working() || !unchanged() {
+        return busy();
+    }
+    let Ok(mut slot) = session_slot(n).try_lock() else { return busy() };
+    if working() || !unchanged() {
+        return busy();
+    }
+    let answer = release_answer_in(&mut slot, &who).await;
+    crate::commands::autorun::publish_discovery_in(n, &slot);
+    crate::commands::autorun::publish_overrides_in(n, &slot);
+    if slot.is_none() {
+        crate::commands::autorun::tell_panes_closed_in(n);
+    }
+    drop(slot);
+    unbind_noting(n, Some(&j.key));
+    crate::autorun::claims::end_for(&j.key);
+    crate::applog::info(format!("Auto Run: released {who} (30 minutes without a call)"));
+    Ok(answer)
 }
 
 /// An agent that has gone past its grace (`agents::Sweep::past_grace`) holds
@@ -756,39 +823,38 @@ pub enum ReleaseWhy {
 /// way. The answer is the card's own sentence for what happened
 /// (`release_answer_in`), not the assistant's text. A browser that stays busy past the wait is refused
 /// (`BROWSER_BUSY`) and the binding kept.
+///
+/// An idle release (`ReleaseWhy::Idle`) is the exception to the stopping and
+/// the waiting: it stops nothing and never waits (`release_idle_slot`),
+/// judging idleness on the slot's binding as it is now, and refuses
+/// (`BROWSER_BUSY`) a browser with a replay, a batch or a call going.
 pub async fn release_slot(n: SlotNo, why: ReleaseWhy) -> Result<String, String> {
     release_slot_within(n, why, crate::commands::autorun::RELEASE_WAIT).await
 }
 
-/// `release_slot`, waiting at most `wait` for the slot's lock.
+/// `release_slot`, waiting at most `wait` for the slot's lock (an idle
+/// release does not wait).
 pub async fn release_slot_within(n: SlotNo, why: ReleaseWhy, wait: std::time::Duration) -> Result<String, String> {
+    if why == ReleaseWhy::Idle {
+        // Judged on what the slot holds now; nothing bound is nothing to release.
+        let Some(key) = bound(n) else { return Err(crate::commands::autorun::BROWSER_BUSY.to_string()) };
+        let last_ms = agents::info(&key).map(|i| i.last_ms);
+        return release_idle_slot(&IdleSlot { slot: n, key, last_ms }).await;
+    }
     // Read first: the label is kept in the registry until its next sweep.
     let who = whose(n);
     // Read before the unbind below: whose claims end with the release.
     let held = bound(n);
-    // An idle release never takes a browser from a call: a replay or batch
-    // going, or a call made since the idleness was judged, is not idle.
-    let last_call = |key: &Option<AgentKey>| key.as_ref().and_then(agents::info).map(|i| i.last_ms);
-    let seen = last_call(&held);
+    // Only an assistant's replay is stopped; the person's goes on, and the
+    // release then waits for its lock and says the browser is busy.
     let replay = crate::autorun::replay_to::state(n);
-    if why == ReleaseWhy::Idle {
-        if replay.is_running() || crate::ai_bridge::batch_going(n) {
-            return Err(crate::commands::autorun::BROWSER_BUSY.to_string());
-        }
-    } else {
-        // Only an assistant's replay is stopped; the person's goes on, and the
-        // release then waits for its lock and says the browser is busy.
-        if replay.assistants_replay_running() {
-            replay.stop();
-        }
-        crate::ai_bridge::stop_batch_in(n);
+    if replay.assistants_replay_running() {
+        replay.stop();
     }
+    crate::ai_bridge::stop_batch_in(n);
     let Ok(mut slot) = tokio::time::timeout(wait, session_slot(n).lock()).await else {
         return Err(crate::commands::autorun::BROWSER_BUSY.to_string());
     };
-    if why == ReleaseWhy::Idle && (bound(n) != held || last_call(&held) != seen) {
-        return Err(crate::commands::autorun::BROWSER_BUSY.to_string());
-    }
     let answer = release_answer_in(&mut slot, &who).await;
     crate::commands::autorun::publish_discovery_in(n, &slot);
     crate::commands::autorun::publish_overrides_in(n, &slot);
@@ -802,13 +868,6 @@ pub async fn release_slot_within(n: SlotNo, why: ReleaseWhy, wait: std::time::Du
     // browser ends nothing: it may release between two cases of one job.)
     if let Some(key) = held {
         crate::autorun::claims::end_for(&key);
-        if why == ReleaseWhy::Idle {
-            // Its next call hears why (`slot_for`).
-            let mut notices = idle_notices();
-            if !notices.contains(&key) {
-                notices.push(key);
-            }
-        }
     }
     let by = match why {
         ReleaseWhy::Person => "the person released it",
