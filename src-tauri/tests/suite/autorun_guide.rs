@@ -2584,7 +2584,7 @@ fn the_guide_says_each_assistant_has_its_own_browser() {
         "One mapping run at a time, whoever runs it.",
         "The map, the areas, the components and the quirks are shared: read an area again just before you repair it.",
         "An unattended run cannot start while any assistant's browser is open.",
-        "When your session ends, a browser of your own is released; the main one is left open for the person.",
+        "When your session ends, or after 30 minutes without a call, a browser of your own is released; the main one is left open for the person.",
         "give each subagent you start a name of its own (for example writer-1, writer-2) and tell it to pass it as `agent` on every Auto Run and API template call; each name gets its own browser.",
         "A subagent without a name shares your browser.",
         "A client that serves several chats through one connection (Claude desktop) is one assistant to the app: give each chat its own `agent` name too.",
