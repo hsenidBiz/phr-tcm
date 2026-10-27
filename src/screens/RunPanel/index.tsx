@@ -506,6 +506,7 @@ export default function RunPanel({
 
       {points.data && points.data.length > 0 && (
         <ListToolbar
+          surface
           search={
             <SearchInput
               aria-label="Filter points"

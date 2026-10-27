@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import { expect, test, vi } from "vitest";
 import { ListToolbar, ToolbarSwitch } from "./list-toolbar";
 
@@ -28,6 +28,66 @@ test("a filter that renders nothing leaves no empty box, so the gaps stay even",
   );
   // The search slot and the one real filter: nothing in between.
   expect(container.firstElementChild!.children).toHaveLength(2);
+});
+
+test("the toolbar sticks to the top, borderless at rest, on the page's or the card's background", () => {
+  const { container, rerender } = render(<ListToolbar search={<input aria-label="Find" />} />);
+  const bar = container.firstElementChild!;
+  expect(bar).toHaveClass("sticky", "z-20", "border", "border-transparent", "rounded-md", "bg-bg");
+  // No scrolling box around it here: one pixel up, for the stuck check.
+  expect((bar as HTMLElement).style.top).toBe("-1px");
+  expect(bar).not.toHaveAttribute("data-stuck");
+  rerender(<ListToolbar surface search={<input aria-label="Find" />} />);
+  expect(container.firstElementChild).toHaveClass("bg-surface");
+  expect(container.firstElementChild).not.toHaveClass("bg-bg");
+});
+
+test("the border shows only while the toolbar is stuck, and goes again at the top", () => {
+  let fire: (top: number, ratio: number) => void = () => {};
+  const Real = globalThis.IntersectionObserver;
+  globalThis.IntersectionObserver = class {
+    constructor(cb: IntersectionObserverCallback) {
+      fire = (top, ratio) =>
+        cb(
+          [{ intersectionRatio: ratio, boundingClientRect: { top }, rootBounds: { top: 100 } } as unknown as IntersectionObserverEntry],
+          this as unknown as IntersectionObserver,
+        );
+    }
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+    takeRecords() {
+      return [];
+    }
+  } as unknown as typeof IntersectionObserver;
+  try {
+    const { container } = render(<ListToolbar search={<input aria-label="Find" />} />);
+    const bar = container.firstElementChild!;
+    // Stuck: one pixel above the scroller's top, so not wholly inside it.
+    act(() => fire(99, 0.98));
+    expect(bar).toHaveClass("border-b-border", "rounded-none");
+    expect(bar).toHaveAttribute("data-stuck");
+    // Scrolled back to the top: wholly in view again.
+    act(() => fire(124, 1));
+    expect(bar).toHaveClass("border-transparent", "rounded-md");
+    expect(bar).not.toHaveClass("border-b-border");
+    expect(bar).not.toHaveAttribute("data-stuck");
+    // Below the fold (partly hidden at the BOTTOM) is not stuck.
+    act(() => fire(700, 0.5));
+    expect(bar).not.toHaveAttribute("data-stuck");
+  } finally {
+    globalThis.IntersectionObserver = Real;
+  }
+});
+
+test("inside a padded scrolling box, the bar sticks at the box's edge, not under its padding", () => {
+  render(
+    <div style={{ overflowY: "auto", paddingTop: "24px" }}>
+      <ListToolbar search={<input aria-label="Find" />} />
+    </div>,
+  );
+  const bar = screen.getByLabelText("Find").closest("[data-list-toolbar]") as HTMLElement;
+  expect(bar.style.top).toBe("-25px");
 });
 
 test("the toolbar renders with only a search", () => {
