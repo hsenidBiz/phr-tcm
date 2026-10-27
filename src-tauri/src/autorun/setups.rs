@@ -214,6 +214,9 @@ pub struct SaveAsked {
     pub returns: Option<ReturnsAsked>,
     #[serde(default)]
     pub why: Option<String>,
+    /// Remove the setup called `name` instead of saving one.
+    #[serde(default)]
+    pub remove: bool,
 }
 
 /// What a save is checked against.
@@ -638,6 +641,59 @@ pub fn save(root: &Path, org: &str, project: &str, built: Built, why: Option<&st
             }
         }
     })
+}
+
+/// Takes the setup called `name` out of the file; the answer is the name it
+/// was saved under. A name the file does not hold is `no_such_setup`.
+pub fn remove(root: &Path, org: &str, project: &str, name: &str) -> Result<String, String> {
+    update_with(root, org, project, |file| {
+        let k = key(name);
+        match file.setups.iter().position(|s| key(&s.name) == k) {
+            Some(at) => Ok(file.setups.remove(at).name),
+            None => Err(no_such_setup(name)),
+        }
+    })
+}
+
+fn rfc3339(ms: u64) -> Option<String> {
+    chrono::DateTime::from_timestamp_millis(i64::try_from(ms).ok()?)
+        .map(|t| t.to_rfc3339_opts(chrono::SecondsFormat::Millis, true))
+}
+
+/// What `list_setups` answers: each setup's name, what it builds, its inputs,
+/// which find rules it has and when it was saved and last used. Never the
+/// actions, the SQL text or any value from an earlier run.
+pub fn list_answer(f: &SetupFile) -> Value {
+    let mut sorted: Vec<&SavedSetup> = f.setups.iter().collect();
+    sorted.sort_by_key(|s| key(&s.name));
+    let setups: Vec<Value> = sorted
+        .into_iter()
+        .map(|s| {
+            let mut find = Vec::new();
+            if s.find.database.is_some() {
+                find.push("database");
+            }
+            if s.find.browser.is_some() {
+                find.push("browser");
+            }
+            serde_json::json!({
+                "name": s.name,
+                "description": s.description,
+                "area": s.area,
+                "inputs": s.inputs.iter().map(|i| serde_json::json!({
+                    "name": i.name,
+                    "description": i.description,
+                    "unique": i.unique,
+                    "names_the_record": i.names_the_record,
+                })).collect::<Vec<_>>(),
+                "find": find,
+                "saved_at": rfc3339(s.saved_at),
+                "last_used": if s.last_used_at == 0 { None } else { rfc3339(s.last_used_at) },
+                "version": s.version,
+            })
+        })
+        .collect();
+    serde_json::json!({ "setups": setups })
 }
 
 /// A setup was used - a record found, or one built: its `last_used_at` is

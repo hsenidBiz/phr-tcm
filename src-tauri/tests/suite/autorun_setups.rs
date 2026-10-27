@@ -7,7 +7,7 @@
 
 use crate::autorun_discovery::{root_with_recipe_and_account, ORG, PROJECT};
 use serde_json::{json, Value};
-use v2_lib::ai_bridge::setup_save_for;
+use v2_lib::ai_bridge::{setup_save_for, setups_list_for};
 use v2_lib::autorun::explore::{
     begin, record_change, Change, ChangeEntry, ExploreSession, SaveProof,
 };
@@ -16,7 +16,7 @@ use v2_lib::autorun::setup_find::{
     DbFind, FindRule, RowSource, NEEDS_A_FIND_RULE,
 };
 use v2_lib::autorun::setups::{
-    build_setup, find_setup, fresh_value, load_setups, no_such_setup, save, setups_path, InputAsked,
+    build_setup, find_setup, fresh_value, list_answer, load_setups, no_such_setup, save, setups_path, InputAsked,
     ReturnsAsked, SaveAsked, SaveFrom, SetupCreate, NO_CREATE_IN_RANGE,
 };
 use v2_lib::browser::actions::Action;
@@ -122,6 +122,7 @@ fn asked(to: u32, inputs: Vec<InputAsked>, find: FindRule) -> SaveAsked {
         find,
         returns: None,
         why: None,
+        remove: false,
     }
 }
 
@@ -470,14 +471,74 @@ async fn saving_outside_an_explore_session_is_refused() {
     assert_eq!(status, 400, "{said}");
 }
 
+/// Two saved setups: "Leave type" (both find rules, never used) and
+/// "Policy" (browser rule only, used at 1_760_000_000_000).
+fn two_setups(dir: &std::path::Path) {
+    let browser_rule = vec![act(json!({"kind":"expect_visible","selector":{"role":"row","name":"{prefix}"}}))];
+    let mut built = build(&asked(4, vec![name_input()], db_rule()), &leave_list(), &leave_session(), &never_seen)
+        .unwrap();
+    built.setup.find.browser = Some(browser_rule.clone());
+    let mut policy = built.setup.clone();
+    save(dir, ORG, PROJECT, built, None).unwrap();
+    policy.name = "Policy".into();
+    policy.find = FindRule { database: None, browser: Some(browser_rule) };
+    policy.last_used_at = 1_760_000_000_000;
+    let mut file = load_setups(dir, ORG, PROJECT).unwrap();
+    file.setups.push(policy);
+    std::fs::write(setups_path(dir, ORG, PROJECT), serde_json::to_string_pretty(&file).unwrap()).unwrap();
+}
+
+#[test]
+fn list_setups_names_each_setup_without_values() {
+    let dir = root_with_recipe_and_account();
+    two_setups(dir.path());
+    let said = list_answer(&load_setups(dir.path(), ORG, PROJECT).unwrap());
+    let list = said["setups"].as_array().unwrap();
+    assert_eq!(list.len(), 2);
+    assert_eq!(list[0]["name"], "Leave type");
+    assert_eq!(list[0]["find"], json!(["database", "browser"]));
+    assert_eq!(list[0]["last_used"], Value::Null);
+    assert_eq!(list[0]["inputs"][0]["name"], "leave_name");
+    assert_eq!(list[0]["inputs"][0]["unique"], true);
+    assert_eq!(list[0]["inputs"][0]["names_the_record"], true);
+    assert_eq!(list[0]["version"], 1);
+    assert_eq!(list[1]["name"], "Policy");
+    assert_eq!(list[1]["find"], json!(["browser"]));
+    assert_eq!(list[1]["last_used"], "2025-10-09T08:53:20.000Z");
+    let text = said.to_string();
+    assert!(!text.contains("{{") && !text.contains("SELECT") && !text.contains("AUTOTEST leave A"), "{text}");
+}
+
 #[tokio::test]
-async fn a_remove_flag_is_refused_until_the_tool_exists() {
-    let (dir, _) = explored();
-    let mut v: Value = serde_json::from_str(&body()).unwrap();
-    v["remove"] = json!(true);
-    let (status, said) = setup_save_for(dir.path(), ORG, PROJECT, "a", &v.to_string(), None::<&Fake>, 5).await;
-    assert_eq!(status, 400, "{said}");
-    assert!(!setups_path(dir.path(), ORG, PROJECT).exists());
+async fn removing_a_setup_leaves_the_others() {
+    let dir = root_with_recipe_and_account();
+    two_setups(dir.path());
+    // An owner with no kept list: removing needs no explore session and no why.
+    let ask = json!({"name": "leave type", "remove": true}).to_string();
+    let (status, said) = setup_save_for(dir.path(), ORG, PROJECT, "nobody", &ask, None::<&Fake>, 5).await;
+    assert_eq!((status, said.as_str()), (200, r#"{"removed":"Leave type"}"#));
+    let names: Vec<String> =
+        load_setups(dir.path(), ORG, PROJECT).unwrap().setups.into_iter().map(|s| s.name).collect();
+    assert_eq!(names, vec!["Policy".to_string()]);
+
+    let (status, said) = setup_save_for(dir.path(), ORG, PROJECT, "nobody", &ask, None::<&Fake>, 6).await;
+    assert_eq!((status, said), (404, no_such_setup("leave type")));
+}
+
+#[tokio::test]
+async fn remove_and_list_refuse_a_damaged_file() {
+    let dir = root_with_recipe_and_account();
+    let path = setups_path(dir.path(), ORG, PROJECT);
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(&path, "{ x").unwrap();
+    let ask = json!({"name": "leave type", "remove": true}).to_string();
+    let (status, said) = setup_save_for(dir.path(), ORG, PROJECT, "nobody", &ask, None::<&Fake>, 5).await;
+    assert_eq!(status, 409, "{said}");
+    assert!(said.contains("-setups.json could not be read"), "{said}");
+    let (status, said) = setups_list_for(dir.path(), ORG, PROJECT);
+    assert_eq!(status, 409, "{said}");
+    assert!(said.contains("-setups.json could not be read"), "{said}");
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), "{ x");
 }
 
 #[tokio::test]

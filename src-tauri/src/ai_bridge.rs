@@ -621,6 +621,11 @@ pub async fn route_as(
             Ok(root) => kept_actions_for(&root, &crate::autorun::kept::owner_of(caller)),
             Err(refused) => refused,
         },
+        // The project's saved setups, read from the setups file.
+        ("POST", "/autorun-setups") => match autorun_root() {
+            Ok(root) => setups_list_for(&root, &ctx.org, &ctx.project),
+            Err(refused) => refused,
+        },
         // Save a range of the kept actions as a named setup. Files and
         // memory on this machine; the database rule is one SELECT.
         ("POST", "/autorun-setup-save") => match autorun_root() {
@@ -6578,6 +6583,14 @@ pub fn kept_actions_for(root: &std::path::Path, owner: &str) -> (u16, String) {
     }
 }
 
+/// `list_setups`: this project's saved setups, without actions, SQL or values.
+pub fn setups_list_for(root: &std::path::Path, org: &str, project: &str) -> (u16, String) {
+    match crate::autorun::setups::load_setups(root, org, project) {
+        Ok(f) => (200, crate::autorun::setups::list_answer(&f).to_string()),
+        Err(why) => (409, why),
+    }
+}
+
 /// `save_setup`: a range of the owner's kept actions saved as a named setup
 /// with a find rule. Everything is checked against files and memory on this
 /// machine; the one thing that runs is the database find rule, once, as a
@@ -6597,6 +6610,17 @@ pub async fn setup_save_for<S: crate::autorun::setup_find::RowSource>(
         Ok(a) => a,
         Err(e) => return (400, e.to_string()),
     };
+    // A removal needs no explore session and no reason.
+    if asked.remove {
+        return match setups::remove(root, org, project, &asked.name) {
+            Ok(name) => {
+                crate::applog::info(format!("Auto Run setup {name}: removed"));
+                (200, serde_json::json!({ "removed": name }).to_string())
+            }
+            Err(why) if why == setups::no_such_setup(&asked.name) => (404, why),
+            Err(why) => (409, why),
+        };
+    }
     let list = match kept::last_of(root, owner) {
         Ok(l) => l,
         Err(why) => return (409, why),
