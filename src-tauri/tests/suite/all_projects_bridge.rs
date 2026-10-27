@@ -3,7 +3,7 @@
 
 use v2_lib::ado::AdoClient;
 use v2_lib::ai_bridge::{route, BridgeContext};
-use wiremock::matchers::{method as wm_method, path as wm_path};
+use wiremock::matchers::{method as wm_method, path as wm_path, path_regex};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 fn ctx(all_projects: bool) -> BridgeContext {
@@ -167,4 +167,320 @@ async fn combined_run_results_name_a_pbi_that_is_not_in_the_organization() {
         route(&ctx(true), Some(&client), "GET", "/run-results?pbi=4204", "", "2.3.1").await;
     assert_eq!(status, 404, "{body}");
     assert!(body.contains("4204"), "{body}");
+}
+
+async fn mount_projects(server: &MockServer, names: &[&str]) {
+    let value: Vec<_> = names
+        .iter()
+        .enumerate()
+        .map(|(i, n)| serde_json::json!({ "id": format!("p{i}"), "name": n }))
+        .collect();
+    Mock::given(wm_method("GET"))
+        .and(wm_path("/acme/_apis/projects"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({ "value": value })))
+        .mount(server)
+        .await;
+}
+
+/// `project` holds plan `plan` with one requirement suite `suite` (for PBI
+/// `plan * 10`) whose single point is test case `case`.
+async fn mount_plan_in(server: &MockServer, project: &str, plan: i64, suite: i64, case: i64) {
+    Mock::given(wm_method("GET"))
+        .and(wm_path(format!("/acme/{project}/_apis/testplan/plans")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "value": [{ "id": plan, "name": format!("{project} Plan"), "areaPath": project, "rootSuite": { "id": plan * 100 } }]
+        })))
+        .mount(server)
+        .await;
+    Mock::given(wm_method("GET"))
+        .and(wm_path(format!("/acme/{project}/_apis/testplan/Plans/{plan}/suites")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "value": [
+                { "id": plan * 100, "name": format!("{project} Plan"), "suiteType": "staticTestSuite" },
+                { "id": suite, "name": format!("{} : Cases", plan * 10), "suiteType": "requirementTestSuite", "requirementId": plan * 10, "parentSuite": { "id": plan * 100 } }
+            ]
+        })))
+        .mount(server)
+        .await;
+    Mock::given(wm_method("GET"))
+        .and(wm_path(format!("/acme/{project}/_apis/testplan/Plans/{plan}/Suites/{suite}/TestPoint")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "value": [{
+                "id": 1,
+                "testCaseReference": { "id": case, "name": "A case" },
+                "configuration": { "name": "Windows 10" }
+            }]
+        })))
+        .mount(server)
+        .await;
+}
+
+async fn mount_case(server: &MockServer, case: i64) {
+    Mock::given(wm_method("GET"))
+        .and(wm_path("/acme/_apis/wit/workitems"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "value": [{ "id": case, "fields": { "System.Title": "A case" } }]
+        })))
+        .mount(server)
+        .await;
+}
+
+async fn mount_work_item_project(server: &MockServer, id: i64, project: &str) {
+    Mock::given(wm_method("GET"))
+        .and(wm_path(format!("/acme/_apis/wit/workitems/{id}")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "id": id,
+            "fields": { "System.TeamProject": project }
+        })))
+        .mount(server)
+        .await;
+}
+
+async fn mount_pbi_hits(server: &MockServer, wiql_path: &str) {
+    Mock::given(wm_method("POST"))
+        .and(wm_path(wiql_path))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "workItems": [{ "id": 42 }, { "id": 7 }]
+        })))
+        .mount(server)
+        .await;
+    Mock::given(wm_method("GET"))
+        .and(wm_path("/acme/_apis/wit/workitems"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "value": [
+                { "id": 42, "fields": { "System.Title": "Pay run", "System.WorkItemType": "Product Backlog Item", "System.TeamProject": "Payroll" } },
+                { "id": 7, "fields": { "System.Title": "Login", "System.WorkItemType": "Product Backlog Item", "System.TeamProject": "Web" } }
+            ]
+        })))
+        .mount(server)
+        .await;
+}
+
+#[tokio::test]
+async fn combined_pbi_search_names_each_hits_project() {
+    let (server, client) = ado_stub().await;
+    mount_pbi_hits(&server, "/acme/_apis/wit/wiql").await;
+
+    let (status, body) =
+        route(&ctx(true), Some(&client), "GET", "/search-pbis?q=pay", "", "2.3.1").await;
+    assert_eq!(status, 200, "{body}");
+    let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(v["pbis"][0]["id"], 42);
+    assert_eq!(v["pbis"][0]["project"], "Payroll");
+    assert_eq!(v["pbis"][1]["id"], 7);
+    assert_eq!(v["pbis"][1]["project"], "Web");
+}
+
+#[tokio::test]
+async fn switched_off_pbi_search_answers_exactly_as_before() {
+    let (server, client) = ado_stub().await;
+    // Off, the query is scoped to the home project and the answer has no
+    // `project` key at all.
+    mount_pbi_hits(&server, "/acme/Web/_apis/wit/wiql").await;
+
+    let (status, body) =
+        route(&ctx(false), Some(&client), "GET", "/search-pbis?q=pay", "", "2.3.1").await;
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(
+        body,
+        r#"{"pbis":[{"id":42,"title":"Pay run","work_item_type":"Product Backlog Item"},{"id":7,"title":"Login","work_item_type":"Product Backlog Item"}]}"#
+    );
+}
+
+#[tokio::test]
+async fn combined_suite_search_lists_every_projects_suites_with_their_project() {
+    let (server, client) = ado_stub().await;
+    mount_projects(&server, &["Web", "Payroll", "Locked"]).await;
+    mount_plan_in(&server, "Web", 8, 801, 301).await;
+    mount_plan_in(&server, "Payroll", 9, 901, 302).await;
+    // A project the person may not read is skipped, and the answer says so.
+    Mock::given(wm_method("GET"))
+        .and(wm_path("/acme/Locked/_apis/testplan/plans"))
+        .respond_with(ResponseTemplate::new(403))
+        .mount(&server)
+        .await;
+
+    let (status, body) = route(&ctx(true), Some(&client), "GET", "/suites", "", "2.3.1").await;
+    assert_eq!(status, 200, "{body}");
+    let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+    let rows = v["suites"].as_array().unwrap();
+    assert_eq!(rows.len(), 2, "{body}");
+    // Projects in name order: Payroll, then Web.
+    assert_eq!(rows[0]["project"], "Payroll");
+    assert_eq!(rows[0]["plan_id"], 9);
+    assert_eq!(rows[0]["suite_id"], 901);
+    assert_eq!(rows[1]["project"], "Web");
+    assert_eq!(rows[1]["plan_id"], 8);
+    assert_eq!(v["total"], 2);
+    assert_eq!(v["projects_shown"], 2, "{body}");
+    assert_eq!(v["projects_total"], 3, "{body}");
+    assert!(v["note"].as_str().unwrap().contains("2 of 3 projects"), "{body}");
+
+    // The filter still reaches a requirement suite's PBI.
+    let (_, body) = route(&ctx(true), Some(&client), "GET", "/suites?q=90", "", "2.3.1").await;
+    let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(v["suites"].as_array().unwrap().len(), 1, "{body}");
+    assert_eq!(v["suites"][0]["project"], "Payroll");
+}
+
+#[tokio::test]
+async fn combined_suite_search_reads_only_the_capped_projects() {
+    let (server, client) = ado_stub().await;
+    let many: Vec<String> = (0..102).map(|i| format!("P{i:03}")).collect();
+    let names: Vec<&str> = many.iter().map(String::as_str).collect();
+    mount_projects(&server, &names).await;
+    Mock::given(wm_method("GET"))
+        .and(path_regex(r"^/acme/[^/]+/_apis/testplan/plans$"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({ "value": [] })))
+        .mount(&server)
+        .await;
+
+    let (status, body) = route(&ctx(true), Some(&client), "GET", "/suites", "", "2.3.1").await;
+    assert_eq!(status, 200, "{body}");
+    let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(v["projects_shown"], 100, "{body}");
+    assert_eq!(v["projects_total"], 102, "{body}");
+    assert!(v["note"].as_str().unwrap().contains("100 of 102 projects"), "{body}");
+    let seen = paths(&server.received_requests().await.unwrap());
+    assert!(
+        !seen.iter().any(|p| p.starts_with("/acme/P101/") || p.starts_with("/acme/P100/")),
+        "{seen:?}"
+    );
+}
+
+#[tokio::test]
+async fn switched_off_suite_search_answers_exactly_as_before() {
+    let (server, client) = ado_stub().await;
+    mount_plan_in(&server, "Web", 8, 801, 301).await;
+
+    let (status, body) = route(&ctx(false), Some(&client), "GET", "/suites", "", "2.3.1").await;
+    assert_eq!(status, 200, "{body}");
+    let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert!(v["suites"][0].get("project").is_none(), "{body}");
+    assert!(v.get("projects_shown").is_none(), "{body}");
+    let seen = paths(&server.received_requests().await.unwrap());
+    assert!(!seen.iter().any(|p| p == "/acme/_apis/projects"), "no project list when off: {seen:?}");
+}
+
+#[tokio::test]
+async fn suite_cases_find_the_plans_project_from_the_cached_trees() {
+    let (server, client) = ado_stub().await;
+    mount_projects(&server, &["Web", "Payroll"]).await;
+    mount_plan_in(&server, "Web", 8, 801, 301).await;
+    mount_plan_in(&server, "Payroll", 9, 901, 302).await;
+    mount_case(&server, 302).await;
+    // The suite search reads every project's tree and keeps them.
+    let (status, body) = route(&ctx(true), Some(&client), "GET", "/suites", "", "2.3.1").await;
+    assert_eq!(status, 200, "{body}");
+
+    let (status, body) =
+        route(&ctx(true), Some(&client), "GET", "/suite-cases?plan=9&suite=901", "", "2.3.1").await;
+    assert_eq!(status, 200, "{body}");
+    let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(v["project"], "Payroll", "{body}");
+    assert_eq!(v["test_cases"][0]["id"], 302);
+
+    let seen = paths(&server.received_requests().await.unwrap());
+    assert!(
+        seen.iter().any(|p| p == "/acme/Payroll/_apis/testplan/Plans/9/Suites/901/TestPoint"),
+        "the points are read in the plan's project: {seen:?}"
+    );
+    assert!(
+        !seen.iter().any(|p| p == "/acme/_apis/wit/workitems/9"),
+        "the cached tree answers, so Azure DevOps is not asked: {seen:?}"
+    );
+    assert!(!seen.iter().any(|p| p.starts_with("/acme/Web/_apis/testplan/Plans/9/")), "{seen:?}");
+}
+
+#[tokio::test]
+async fn suite_cases_ask_azure_devops_for_a_plans_project_only_once() {
+    let (server, client) = ado_stub().await;
+    // No tree is cached and the project list is not there either, so the
+    // plan is a work item and its project comes from one read.
+    mount_plan_in(&server, "Payroll", 9, 901, 302).await;
+    mount_case(&server, 302).await;
+    mount_work_item_project(&server, 9, "Payroll").await;
+
+    for _ in 0..2 {
+        let (status, body) =
+            route(&ctx(true), Some(&client), "GET", "/suite-cases?plan=9&suite=901", "", "2.3.1").await;
+        assert_eq!(status, 200, "{body}");
+    }
+    let seen = paths(&server.received_requests().await.unwrap());
+    let reads = seen.iter().filter(|p| *p == "/acme/_apis/wit/workitems/9").count();
+    assert_eq!(reads, 1, "{seen:?}");
+    assert!(
+        seen.iter().any(|p| p == "/acme/Payroll/_apis/testplan/Plans/9/Suites/901/TestPoint"),
+        "{seen:?}"
+    );
+}
+
+#[tokio::test]
+async fn an_explicit_project_wins() {
+    let (server, client) = ado_stub().await;
+    mount_plan_in(&server, "Payroll", 9, 901, 302).await;
+    mount_case(&server, 302).await;
+
+    let (status, body) = route(
+        &ctx(true),
+        Some(&client),
+        "GET",
+        "/suite-cases?plan=9&suite=901&project=Payroll",
+        "",
+        "2.3.1",
+    )
+    .await;
+    assert_eq!(status, 200, "{body}");
+    let seen = paths(&server.received_requests().await.unwrap());
+    assert!(
+        !seen.iter().any(|p| p.starts_with("/acme/_apis/wit/workitems/") || p == "/acme/_apis/projects"),
+        "nothing is looked up when the caller names the project: {seen:?}"
+    );
+    assert!(
+        seen.iter().any(|p| p == "/acme/Payroll/_apis/testplan/Plans/9/Suites/901/TestPoint"),
+        "{seen:?}"
+    );
+}
+
+#[tokio::test]
+async fn switched_off_suite_cases_stay_in_the_chosen_project() {
+    let (server, client) = ado_stub().await;
+    mount_plan_in(&server, "Web", 8, 801, 301).await;
+    mount_case(&server, 301).await;
+
+    // Off, a `project` in the request is not a thing: the chosen project is
+    // read, with no lookup, exactly as before.
+    let (status, body) = route(
+        &ctx(false),
+        Some(&client),
+        "GET",
+        "/suite-cases?plan=8&suite=801&project=Payroll",
+        "",
+        "2.3.1",
+    )
+    .await;
+    assert_eq!(status, 200, "{body}");
+    let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert!(v.get("project").is_none(), "{body}");
+    let seen = paths(&server.received_requests().await.unwrap());
+    assert!(
+        seen.iter().any(|p| p == "/acme/Web/_apis/testplan/Plans/8/Suites/801/TestPoint"),
+        "{seen:?}"
+    );
+    assert!(!seen.iter().any(|p| p.starts_with("/acme/_apis/wit/workitems/")), "{seen:?}");
+}
+
+#[tokio::test]
+async fn combined_suite_cases_name_a_plan_that_is_not_in_the_organization() {
+    let (server, client) = ado_stub().await;
+    Mock::given(wm_method("GET"))
+        .and(wm_path("/acme/_apis/wit/workitems/77"))
+        .respond_with(ResponseTemplate::new(404))
+        .mount(&server)
+        .await;
+
+    let (status, body) =
+        route(&ctx(true), Some(&client), "GET", "/suite-cases?plan=77&suite=1", "", "2.3.1").await;
+    assert_eq!(status, 404, "{body}");
+    assert!(body.contains("77"), "{body}");
 }

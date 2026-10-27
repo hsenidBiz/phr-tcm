@@ -13601,29 +13601,56 @@ fn case_page(
 
 type SuiteTree = Vec<crate::ado_testplan::PlanWithSuites>;
 
-/// The plans and suites the Test Suites tab shows, cached in memory per org
-/// and project for `cache::keys::SUITE_TREE_TTL`; `refresh=true` reads them
-/// again. Session tier: the tree is large, and TestPlan's `#[serde(skip)]`
-/// fields would not survive a trip through the disk.
+/// The plans and suites the Test Suites tab shows for `project`, cached in
+/// memory per org and project for `cache::keys::SUITE_TREE_TTL`;
+/// `refresh=true` reads them again. Session tier: the tree is large, and
+/// TestPlan's `#[serde(skip)]` fields would not survive a trip through the
+/// disk.
 async fn suite_tree(
     ctx: &BridgeContext,
     client: &crate::ado::AdoClient,
+    project: &str,
     refresh: bool,
 ) -> Result<SuiteTree, crate::ado::AdoError> {
-    let key = crate::cache::keys::suite_tree(&client.base_url, &ctx.org, &ctx.project);
+    let key = crate::cache::keys::suite_tree(&client.base_url, &ctx.org, project);
     if !refresh {
         if let Some(tree) = crate::cache::session_fresh::<SuiteTree>(&key, crate::cache::keys::SUITE_TREE_TTL) {
             return Ok(tree);
         }
     }
-    let tree = client.list_plans_with_suites(&ctx.org, &ctx.project).await?;
+    let tree = client.list_plans_with_suites(&ctx.org, project).await?;
     crate::cache::session_put(&key, tree.clone());
     Ok(tree)
+}
+
+/// The project that holds test plan `plan`, for a combined `suite-cases`
+/// call that was not told: the project whose cached suite tree lists the
+/// plan (the suite search keeps them), else one organization-level work item
+/// read, because a test plan is a work item and a work item never changes
+/// project. A project list that cannot be read only costs the shortcut.
+async fn plan_project(
+    ctx: &BridgeContext,
+    client: &crate::ado::AdoClient,
+    plan: i32,
+) -> Result<String, crate::ado::AdoError> {
+    if let Ok(names) = client.org_project_names(&ctx.org).await {
+        for name in names {
+            let key = crate::cache::keys::suite_tree(&client.base_url, &ctx.org, &name);
+            if let Some(tree) = crate::cache::session_fresh::<SuiteTree>(&key, crate::cache::keys::SUITE_TREE_TTL) {
+                if tree.iter().any(|p| p.plan.id == plan) {
+                    return Ok(name);
+                }
+            }
+        }
+    }
+    work_item_project_cached(ctx, client, plan).await
 }
 
 /// Every suite in the project, one row each with its plan, filtered by
 /// `q` against the plan name, the suite name, or a requirement id. The
 /// plan id and suite id in a row are what `get_suite_test_cases` takes.
+/// Combined, the rows are every project's (capped, one project at a time),
+/// each naming its project, and the answer says how many projects it read.
 async fn suites(
     ctx: &BridgeContext,
     client: &crate::ado::AdoClient,
@@ -13632,38 +13659,91 @@ async fn suites(
     const CAP: usize = 200;
     let query = q(target, "q").map(|s| s.trim().to_lowercase()).unwrap_or_default();
     let refresh = matches!(q(target, "refresh").as_deref(), Some("true") | Some("1"));
-    let tree = match suite_tree(ctx, client, refresh).await {
-        Ok(t) => t,
-        Err(e) => return (502, format!("Azure DevOps error: {e:?}")),
-    };
-    let mut rows: Vec<serde_json::Value> = vec![];
-    for p in &tree {
-        let plan_hit = query.is_empty() || p.plan.name.to_lowercase().contains(&query);
-        for s in &p.suites {
-            let hit = plan_hit
-                || s.name.to_lowercase().contains(&query)
-                || s.requirement_id.map(|r| r.to_string() == query).unwrap_or(false);
-            if !hit {
-                continue;
+    // (the project a tree belongs to, named in a row only while combined; the tree)
+    let mut trees: Vec<(Option<String>, SuiteTree)> = vec![];
+    let mut coverage: Option<crate::ado::fanout::ProjectCoverage> = None;
+    if ctx.all_projects {
+        let names = match client.org_project_names(&ctx.org).await {
+            Ok(n) => n,
+            Err(e) => return (502, format!("Azure DevOps error: {e:?}")),
+        };
+        let (names, total_projects) = crate::ado::fanout::capped(names);
+        // One project at a time: each tree is itself a scan of its plans,
+        // several requests at once.
+        let mut results = Vec::with_capacity(names.len());
+        for name in &names {
+            let result = suite_tree(ctx, client, name, refresh).await;
+            let stop = matches!(&result, Err(e) if !matches!(e, crate::ado::AdoError::Forbidden | crate::ado::AdoError::NotFound));
+            results.push((name.clone(), result));
+            if stop {
+                break;
             }
-            rows.push(serde_json::json!({
-                "plan_id": p.plan.id,
-                "plan_name": p.plan.name,
-                "suite_id": s.id,
-                "suite_name": s.name,
-                "suite_type": s.suite_type,
-                "requirement_id": s.requirement_id,
-                "parent_suite_id": s.parent_id,
-            }));
+        }
+        match crate::ado::fanout::gather(results, total_projects) {
+            Ok((read, cov)) => {
+                trees.extend(read.into_iter().map(|(name, tree)| (Some(name), tree)));
+                coverage = Some(cov);
+            }
+            Err(e) => return (502, format!("Azure DevOps error: {e:?}")),
+        }
+    } else {
+        match suite_tree(ctx, client, &ctx.project, refresh).await {
+            Ok(t) => trees.push((None, t)),
+            Err(e) => return (502, format!("Azure DevOps error: {e:?}")),
+        }
+    }
+    let mut rows: Vec<serde_json::Value> = vec![];
+    for (project, tree) in &trees {
+        for p in tree {
+            let plan_hit = query.is_empty() || p.plan.name.to_lowercase().contains(&query);
+            for s in &p.suites {
+                let hit = plan_hit
+                    || s.name.to_lowercase().contains(&query)
+                    || s.requirement_id.map(|r| r.to_string() == query).unwrap_or(false);
+                if !hit {
+                    continue;
+                }
+                let mut row = serde_json::json!({
+                    "plan_id": p.plan.id,
+                    "plan_name": p.plan.name,
+                    "suite_id": s.id,
+                    "suite_name": s.name,
+                    "suite_type": s.suite_type,
+                    "requirement_id": s.requirement_id,
+                    "parent_suite_id": s.parent_id,
+                });
+                if let Some(project) = project {
+                    row["project"] = serde_json::json!(project);
+                }
+                rows.push(row);
+            }
         }
     }
     let total = rows.len();
     rows.truncate(CAP);
     let mut out = serde_json::json!({ "suites": rows, "total": total });
+    let mut notes: Vec<String> = vec![];
     if total > CAP {
-        out["note"] = serde_json::json!(format!(
+        notes.push(format!(
             "{CAP} of {total} suites returned - pass q=<plan or suite name> to narrow the list."
         ));
+    }
+    if let Some(cov) = coverage {
+        // Said whenever a project is missing, whether the cap cut it or the
+        // sign-in cannot read it: a short list must never look complete.
+        if cov.shown < cov.total {
+            out["projects_shown"] = serde_json::json!(cov.shown);
+            out["projects_total"] = serde_json::json!(cov.total);
+            notes.push(format!(
+                "Suites from {} of {} projects are listed; the rest are past the {} project limit or not readable with this sign-in.",
+                cov.shown,
+                cov.total,
+                crate::ado::fanout::MAX_FANOUT_PROJECTS
+            ));
+        }
+    }
+    if !notes.is_empty() {
+        out["note"] = serde_json::json!(notes.join(" "));
     }
     (200, out.to_string())
 }
@@ -13671,7 +13751,9 @@ async fn suites(
 /// The cases in one suite, in the import JSON record shape, by way of the
 /// suite's test points - the same read the Run Tests tab makes. With
 /// `children=true` the endpoint's own `isRecursive` flag brings in every
-/// child suite's cases, so a folder reads in one call.
+/// child suite's cases, so a folder reads in one call. Combined, the points
+/// are read in the plan's own project: the `project` the caller names, else
+/// the one found by `plan_project`.
 async fn suite_cases(
     ctx: &BridgeContext,
     client: &crate::ado::AdoClient,
@@ -13685,8 +13767,27 @@ async fn suite_cases(
     };
     let (limit, offset, titles_only) = paging(target);
     let children = matches!(q(target, "children").as_deref(), Some("true") | Some("1"));
+    // Switched off, the project the bridge was given, with no lookup (and a
+    // `project` in the request is ignored).
+    let project = if ctx.all_projects {
+        match q(target, "project").map(|p| p.trim().to_string()).filter(|p| !p.is_empty()) {
+            Some(p) => p,
+            None => match plan_project(ctx, client, plan).await {
+                Ok(p) => p,
+                Err(crate::ado::AdoError::NotFound) => {
+                    return (
+                        404,
+                        format!("Plan {plan} was not found in this organization (find one with search_test_suites)."),
+                    )
+                }
+                Err(e) => return (502, format!("Azure DevOps error: {e:?}")),
+            },
+        }
+    } else {
+        ctx.project.clone()
+    };
     let points = match client
-        .get_test_points_in(&ctx.org, &ctx.project, plan, suite, &[], children)
+        .get_test_points_in(&ctx.org, &project, plan, suite, &[], children)
         .await
     {
         Ok(p) => p,
@@ -13713,6 +13814,9 @@ async fn suite_cases(
             let mut out = case_page(&cases, limit, offset, titles_only);
             out["plan_id"] = serde_json::json!(plan);
             out["suite_id"] = serde_json::json!(suite);
+            if ctx.all_projects {
+                out["project"] = serde_json::json!(project);
+            }
             (200, out.to_string())
         }
         Err(e) => (502, format!("Azure DevOps error: {e:?}")),
@@ -13807,10 +13911,10 @@ pub fn parse_outcomes(raw: Option<&str>) -> Result<Vec<&'static str>, String> {
     Ok(keys)
 }
 
-/// The project a PBI is in, from the session cache or one organization-level
-/// work item read. A work item never changes project, so the answer is kept
-/// for `WORK_ITEM_PROJECT_TTL`.
-async fn pbi_project(
+/// The project a work item (a PBI, or a test plan) is in, from the session
+/// cache or one organization-level work item read. A work item never changes
+/// project, so the answer is kept for `WORK_ITEM_PROJECT_TTL`.
+async fn work_item_project_cached(
     ctx: &BridgeContext,
     client: &crate::ado::AdoClient,
     pbi: i32,
@@ -13853,7 +13957,7 @@ async fn run_results(
     // project is only where this app keeps its files. Switched off, the
     // project the bridge was given, with no lookup.
     let project = if ctx.all_projects {
-        match pbi_project(ctx, client, pbi).await {
+        match work_item_project_cached(ctx, client, pbi).await {
             Ok(p) => p,
             Err(crate::ado::AdoError::NotFound) => {
                 return (
@@ -14002,6 +14106,22 @@ async fn search_pbis(
     let Some(query) = q(target, "q").filter(|s| !s.trim().is_empty()) else {
         return (400, "pass ?q=<search text>".into());
     };
+    if ctx.all_projects {
+        // Every project's PBIs; each hit names its own project.
+        return match client.search_pbis_all(&ctx.org, &query, 20).await {
+            Ok(hits) => (
+                200,
+                serde_json::json!({
+                    "pbis": hits.iter().map(|h| serde_json::json!({
+                        "id": h.id, "title": h.title, "work_item_type": h.work_item_type,
+                        "project": h.project
+                    })).collect::<Vec<_>>()
+                })
+                .to_string(),
+            ),
+            Err(e) => (502, format!("Azure DevOps error: {e:?}")),
+        };
+    }
     match client.search_pbis(&ctx.org, &ctx.project, &query, 20).await {
         Ok(hits) => (
             200,
