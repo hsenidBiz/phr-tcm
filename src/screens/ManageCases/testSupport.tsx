@@ -25,7 +25,7 @@ const PLANS = [
 /** A second project, for the projects-together tests. */
 export const PAYROLL_PLANS = [
   {
-    plan: { id: 12, name: "Payslip - Test Plan", area_path: "Payroll\Slips", root_suite_id: 120 },
+    plan: { id: 12, name: "Payslip - Test Plan", area_path: "Payroll\\Slips", root_suite_id: 120 },
     suites: [
       { id: 121, name: "Slips", suite_type: "staticTestSuite", requirement_id: null, parent_id: null },
       { id: 122, name: "PBI 77 suite", suite_type: "requirementTestSuite", requirement_id: 77, parent_id: null },

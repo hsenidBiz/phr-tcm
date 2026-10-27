@@ -140,6 +140,8 @@
       <li>Hand check owed: in Search Suites, open Edit cases on a plan in a second project, and delete, retag or bulk edit one case there. The change lands in that project.</li>
       <li>Hand check owed: with a project you cannot read, "Showing plans from N of M projects." shows on both screens, and the rest still list.</li>
       <li>Hand check owed: switch off in Settings. Both screens list the picked project's plans only and Manage works as before.</li>
+      <li>Hand check owed: a project with Test Plans turned off in its project settings, and an account with Stakeholder access. If Azure DevOps answers anything other than 403 or 404 there, the whole combined list fails for the organization. Confirm the answer is one of those two, which the list skips and counts out of "Showing plans from N of M projects."</li>
+      <li>Measurement owed: after one combined Search Suites visit in the real organization, add up the size of the stored plan trees. In the developer console run <code>Object.keys(localStorage).filter(k =&gt; k.includes("plans-suites:")).reduce((n, k) =&gt; n + localStorage.getItem(k).length, 0)</code>. If the total is past about 2 million characters (the webview's storage holds roughly 5 million, shared with the rest of the cache and the settings), move the per-project plan trees to the Rust disk cache in a later phase; a write that overflows the storage clears the whole webview cache.</li>
       <li>Owed: the How To Use text for Search Suites and Suite Management says they cover every project; the screenshots are not re-taken until phase 7.</li>
     </ul>
   </div>
