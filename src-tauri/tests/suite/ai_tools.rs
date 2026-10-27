@@ -2037,7 +2037,10 @@ fn heal_explores_a_stale_area_first_and_setup_names_discover() {
     // Discovery is refused while the person's browser is open, and a replay
     // is refused while discovery holds the browser: close, explore, end,
     // then replay - in that order.
-    assert!(heal.contains("if the person's Auto Run browser is open, ask them to close it first"), "{heal}");
+    assert!(
+        heal.contains("if the person's Auto Run browser is open and no other assistant is using it, ask them to close it first"),
+        "{heal}"
+    );
     let at = |what: &str| heal.find(what).unwrap_or_else(|| panic!("/tcm:heal never says {what:?}: {heal}"));
     let discovery = at("run discovery on it");
     let start = at("`start_autorun_discovery`");
@@ -2519,4 +2522,27 @@ fn eight_threads_writing_one_path_never_tear_it() {
     let last = std::fs::read_to_string(&target).unwrap();
     assert!(all.contains(&last), "the file is one of the written documents");
     assert!(temp_files_in(dir.path()).is_empty(), "no temp file left: {:?}", temp_files_in(dir.path()));
+}
+
+/// With several assistants, "the browser" is not one: `/tcm:heal` asks the
+/// person to close theirs only when no assistant is using it, and
+/// `/tcm:gen-tests` releases the assistant's own.
+#[test]
+fn the_commands_do_not_treat_the_browser_as_the_only_one() {
+    let flat_of = |stem: &str| {
+        COMMANDS.iter().find(|c| c.stem == stem).unwrap().body.join("\n").split_whitespace().collect::<Vec<_>>().join(" ")
+    };
+    let heal = flat_of("heal");
+    assert!(
+        heal.contains("Discovery needs a browser of its own: if the person's Auto Run browser is open and no other assistant is using it, ask them to close it first."),
+        "{heal}"
+    );
+    assert!(!heal.contains("Discovery needs the Auto Run browser to itself"), "{heal}");
+    let gen = flat_of("gen-tests");
+    assert!(gen.contains("At the end, release your browser with `reset_autorun_browser` and release true."), "{gen}");
+    assert!(!gen.contains("release the browser"), "{gen}");
+    for stem in ["discover", "map-menus", "heal", "gen-tests"] {
+        let all = flat_of(stem);
+        assert!(!all.contains('\u{2014}') && !all.contains('\u{2013}'), "{stem}");
+    }
 }

@@ -23,5 +23,6 @@ other tool that does the same job, your own browser, an editor or a sub-agent in
 - A FITTED value or an unmet precondition is a divergence: report it with `report_case_divergence`,
   which changes no script. Everything else goes in your report.
 - Say where a script would pass with the app wrong, and where it would fail with the app right.
+- When your caller gave you a name, pass it as `agent` on every Auto Run and API template call.
 - Report per case: each finding with its class, the step, the case's words and the script's check,
   then the totals per class. Never mark a finding fixed: a person or the case rewriter acts on it.

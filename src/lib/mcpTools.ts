@@ -59,7 +59,7 @@ export const MCP_TOOLS: McpToolInfo[] = [
   {
     name: "get_autorun_page",
     label: "See the open page",
-    summary: "Read the page in the browser you opened, one element per line with its locator.",
+    summary: "Read the page in the assistant's own Auto Run browser (or the one you opened), one element per line with its locator.",
   },
   {
     name: "probe_autorun_locator",
@@ -79,7 +79,7 @@ export const MCP_TOOLS: McpToolInfo[] = [
   {
     name: "start_autorun_discovery",
     label: "Start exploring",
-    summary: "Open the Auto Run browser and sign in as a saved account, so the assistant can explore the live app.",
+    summary: "Open an Auto Run browser and sign in as a saved account, so the assistant can explore the live app. It opens one of its own when another assistant is using the main one.",
   },
   {
     name: "discover_autorun_actions",
@@ -94,12 +94,12 @@ export const MCP_TOOLS: McpToolInfo[] = [
   {
     name: "end_autorun_discovery",
     label: "Stop exploring",
-    summary: "Close the browser the assistant was exploring in.",
+    summary: "End the assistant's exploration in its own Auto Run browser.",
   },
   {
     name: "reset_autorun_browser",
     label: "Reset the Auto Run browser",
-    summary: "Give the assistant's Auto Run browser a clean page - other tabs closed, back at the home page - without signing out, or let go of a broken one.",
+    summary: "Give the assistant's own Auto Run browser a clean page - other tabs closed, back at the home page - without signing out, or let go of a broken one. Never another assistant's.",
   },
   {
     name: "save_autorun_component",

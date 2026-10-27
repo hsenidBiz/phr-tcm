@@ -25,6 +25,7 @@ other tool that does the same job, your own browser, an editor or a sub-agent in
   the person each record it will delete (kind, id and name) and wait for their yes in this chat;
   only then send person_said_yes. Say plainly what you cannot undo: no before value, no delete
   template, or a record changed again since.
+- When your caller gave you a name, pass it as `agent` on every Auto Run and API template call.
 - Write the summary the command asks for: the task, the account and environment, what you did,
   each check and its result, the findings, the change list, the templates saved or reused, and
   how to undo.

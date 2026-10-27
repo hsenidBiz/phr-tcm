@@ -528,3 +528,19 @@ test("the ruling tools belong to auto run", () => {
   const names = MCP_TOOLS.map((t) => t.name);
   expect(names.indexOf("rule_case_divergence")).toBe(names.indexOf("report_case_divergence") + 1);
 });
+
+/// Several assistants can each have a browser, so a summary never speaks of
+/// "the browser" as if there were only one: it is the assistant's own.
+test("the browser summaries say whose browser it is", () => {
+  const summary = (name: string) => MCP_TOOLS.find((t) => t.name === name)?.summary ?? "";
+  expect(summary("get_autorun_page")).toBe(
+    "Read the page in the assistant's own Auto Run browser (or the one you opened), one element per line with its locator.",
+  );
+  expect(summary("start_autorun_discovery")).toBe(
+    "Open an Auto Run browser and sign in as a saved account, so the assistant can explore the live app. It opens one of its own when another assistant is using the main one.",
+  );
+  expect(summary("end_autorun_discovery")).toBe("End the assistant's exploration in its own Auto Run browser.");
+  expect(summary("reset_autorun_browser")).toBe(
+    "Give the assistant's own Auto Run browser a clean page - other tabs closed, back at the home page - without signing out, or let go of a broken one. Never another assistant's.",
+  );
+});

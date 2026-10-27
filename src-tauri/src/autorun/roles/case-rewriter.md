@@ -28,4 +28,5 @@ that does the same job, your own browser, an editor or a sub-agent included.
 - Never edit the test case: after a wording divergence the person rewrites it in Azure DevOps. Change the run
   order with `set_autorun_order`, or delete a script with `delete_autorun_script`, only when the person asks,
   never to make a run pass.
+- When your caller gave you a name, pass it as `agent` on every Auto Run and API template call.
 - If a change still fails after 3 tries, stop and report what fails, what you tried and your diagnosis.
