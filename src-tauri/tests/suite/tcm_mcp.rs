@@ -4226,10 +4226,34 @@ fn the_tool_list_says_every_project_only_while_combined() {
     }
 
     // The home-project tools read the same in both modes.
-    for name in ["get_tags", "run_api_template", "list_api_templates", "send_api_request"] {
+    for name in ["run_api_template", "list_api_templates", "send_api_request"] {
         assert_eq!(description_of(&on, name), description_of(&off, name), "{name}");
     }
     assert!(!description_of(&on, "get_tags").contains("every project"));
+
+    // Tags follow the writing job's PBI only while combined, and the
+    // description says so, including the one work item read it may cost and
+    // the `project` the answer names. Off or silent, it keeps its words.
+    let tags_on = description_of(&on, "get_tags");
+    assert!(tags_on.contains("project of the PBI the job named"), "{tags_on}");
+    assert!(tags_on.contains("`project`"), "{tags_on}");
+    assert!(tags_on.contains("one work item read"), "{tags_on}");
+    for other in [&off, &silent] {
+        assert_eq!(
+            description_of(other, "get_tags"),
+            "The tag names this project already uses. Prefer an existing tag over inventing a near-duplicate. Served from the app's cache - calling this costs no Azure DevOps request."
+        );
+    }
+
+    // The words the assistant reads never use a term it is not given.
+    for tools in [&on, &off, &silent] {
+        let text = serde_json::to_string(&tools["get_wiki_page"]).unwrap();
+        assert!(!text.contains("home project"), "{text}");
+    }
+    assert_eq!(
+        on["get_wiki_page"]["inputSchema"]["properties"]["project"]["description"],
+        "The project a search_wiki hit names. Optional: the project the app is set to is read when it is left out (a page URL names its own)."
+    );
 }
 
 #[test]

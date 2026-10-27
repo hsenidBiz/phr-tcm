@@ -71,7 +71,7 @@ test("every tool carries a summary the settings screen can show", () => {
 /// the Azure DevOps rows read true in both: they name no single project.
 test("the suite and wiki summaries name no single project", () => {
   const summary = (name: string) => MCP_TOOLS.find((t) => t.name === name)?.summary;
-  expect(summary("search_test_suites")).toBe("The plans and suites in every project, by plan name, suite name or PBI id.");
+  expect(summary("search_test_suites")).toBe("The plans and suites, by plan name, suite name or PBI id.");
   expect(summary("search_wiki")).toBe("Search the wikis for documentation.");
   const wiki = visibleRows().find((r) => r.names.includes("search_wiki"));
   expect(wiki?.label).toBe("Project wiki");

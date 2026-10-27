@@ -1295,8 +1295,9 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool, unlocked: bool, all_projec
 
 /// Rewords the Azure DevOps tools that read across projects for an app that
 /// has "Treat all projects as one" on, and gives the two that take a project
-/// the optional `project` they forward. Every other tool (`get_tags`, the API
-/// templates ...) works in the home project and keeps its words.
+/// the optional `project` they forward. `get_tags` says it follows the writing
+/// job's PBI. Every other tool (the API templates ...) works in the home
+/// project and keeps its words.
 fn across_projects(t: &mut serde_json::Value) {
     let name = t["name"].as_str().unwrap_or_default().to_string();
     let reworded = match name.as_str() {
@@ -1306,6 +1307,9 @@ fn across_projects(t: &mut serde_json::Value) {
                 "The test plans and suites in every project of the organization, one row per suite with its project, plan id,",
                 1,
             ),
+        ),
+        "get_tags" => Some(
+            "The tag names the project of the current writing job already uses: the project of the PBI the job named, else the app's project; the answer's `project` says which. Prefer an existing tag over inventing a near-duplicate. Served from the app's cache - calling this costs no Azure DevOps request, except one work item read the first time a job's PBI is looked up.".to_string(),
         ),
         "search_pbis" => Some(
             "Search every project's PBIs by title text to find the right work item id; each hit names its project.".to_string(),
@@ -1320,7 +1324,7 @@ fn across_projects(t: &mut serde_json::Value) {
     }
     let project = match name.as_str() {
         "get_suite_test_cases" => Some("The project the plan is in, as search_test_suites names it. Optional: it is found from the plan id when left out."),
-        "get_wiki_page" => Some("The project a search_wiki hit names. Optional: the home project is read when it is left out (a page URL names its own)."),
+        "get_wiki_page" => Some("The project a search_wiki hit names. Optional: the project the app is set to is read when it is left out (a page URL names its own)."),
         _ => None,
     };
     if let (Some(said), Some(props)) = (project, t["inputSchema"]["properties"].as_object_mut()) {

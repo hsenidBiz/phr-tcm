@@ -32,7 +32,7 @@ export const MCP_TOOLS: McpToolInfo[] = [
   },
   { name: "get_guide", label: "Guides", summary: "The live guide for the job at hand: format rules and your org's allowed Module values for writing cases." },
   { name: "get_test_cases", label: "Cases by PBI or id", summary: "The cases on a PBI, or specific cases by their ids - style, and what is covered." },
-  { name: "search_test_suites", label: "Find a test suite", summary: "The plans and suites in every project, by plan name, suite name or PBI id." },
+  { name: "search_test_suites", label: "Find a test suite", summary: "The plans and suites, by plan name, suite name or PBI id." },
   { name: "get_suite_test_cases", label: "Cases in a test suite", summary: "The cases in one suite, in the suite's own order." },
   {
     name: "get_run_results",
