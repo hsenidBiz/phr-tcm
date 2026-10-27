@@ -94,7 +94,7 @@ export const pullRequests: Screen = {
       group: "what-to-show",
       locate: { role: "button", name: "Refresh pull requests" },
       name: "Refresh",
-      does: "Reads the lists again from Azure DevOps. If some projects could not be read, a line under the buttons says how many of the organization's projects the lists show.",
+      does: "Reads the lists again from Azure DevOps. If some projects could not be read, a line under the buttons says how many of the projects that own a repository the lists show.",
     },
     {
       id: "awaiting",
