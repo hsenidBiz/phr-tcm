@@ -188,6 +188,47 @@ async fn search_wiki_posts_search_text_and_maps_hits() {
 }
 
 #[tokio::test]
+async fn search_wiki_names_the_project_it_was_scoped_to() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/o/Payroll/_apis/search/wikisearchresults"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "results": [{ "fileName": "A.md", "wiki": {"id": "w", "name": "W"} }]
+        })))
+        .mount(&server)
+        .await;
+    let client = AdoClient::with_base_urls("tok".into(), server.uri(), server.uri());
+    let hits = client.search_wiki("o", "Payroll", "x", 5).await.unwrap();
+    assert_eq!(hits[0].project, "Payroll");
+}
+
+#[tokio::test]
+async fn search_wiki_all_posts_to_the_organization_and_reads_each_hits_project() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/my%20org/_apis/search/wikisearchresults"))
+        .and(wiremock::matchers::body_partial_json(serde_json::json!({
+            "searchText": "auth flow",
+            "$top": 7
+        })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "results": [
+                { "fileName": "A.md", "project": {"id": "1", "name": "Payroll"}, "wiki": {"id": "w1", "name": "P.wiki"} },
+                { "fileName": "B.md", "wiki": {"id": "w2", "name": "Q.wiki"} }
+            ]
+        })))
+        .mount(&server)
+        .await;
+    let client = AdoClient::with_base_urls("tok".into(), server.uri(), server.uri());
+    let hits = client.search_wiki_all("my org", "auth flow", 7).await.unwrap();
+    assert_eq!(hits.len(), 2);
+    assert_eq!(hits[0].project, "Payroll");
+    assert_eq!(hits[0].wiki_id, "w1");
+    // A hit that names no project is defensive, not a failure.
+    assert_eq!(hits[1].project, "");
+}
+
+#[tokio::test]
 async fn search_wiki_defensive_on_missing_fields() {
     let server = MockServer::start().await;
     Mock::given(method("POST"))

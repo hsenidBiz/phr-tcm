@@ -32,7 +32,7 @@ export const MCP_TOOLS: McpToolInfo[] = [
   },
   { name: "get_guide", label: "Guides", summary: "The live guide for the job at hand: format rules and your org's allowed Module values for writing cases." },
   { name: "get_test_cases", label: "Cases by PBI or id", summary: "The cases on a PBI, or specific cases by their ids - style, and what is covered." },
-  { name: "search_test_suites", label: "Find a test suite", summary: "The plans and suites in this project, by plan name, suite name or PBI id." },
+  { name: "search_test_suites", label: "Find a test suite", summary: "The plans and suites in every project, by plan name, suite name or PBI id." },
   { name: "get_suite_test_cases", label: "Cases in a test suite", summary: "The cases in one suite, in the suite's own order." },
   {
     name: "get_run_results",
@@ -307,7 +307,7 @@ export const MCP_TOOLS: McpToolInfo[] = [
     // This query filters on type = Product Backlog Item, so it returns
     // nothing else, and saying "work item" promised more than it does.
     summary: "Find a Product Backlog Item by title, or by its id." },
-  { name: "search_wiki", label: "Search the wiki", summary: "Search the project wiki for documentation." },
+  { name: "search_wiki", label: "Search the wiki", summary: "Search the wikis for documentation." },
   { name: "get_wiki_page", label: "Read a wiki page", summary: "Read a wiki page found by search_wiki." },
 ];
 
@@ -441,7 +441,7 @@ export const TOOL_PAIRS: readonly (readonly string[])[] = [
 
 /** The one human name and summary a pair shows, keyed by its first member. */
 const PAIR_ROWS: Record<string, { label: string; summary: string }> = {
-  search_wiki: { label: "Project wiki", summary: "Search the project wiki and read the pages it finds." },
+  search_wiki: { label: "Project wiki", summary: "Search the wikis and read the pages they find." },
   search_test_suites: {
     label: "Test Suites",
     summary: "Find a test suite by plan, name or PBI, and read the cases in it.",

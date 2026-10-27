@@ -67,6 +67,17 @@ test("every tool carries a summary the settings screen can show", () => {
   for (const t of MCP_TOOLS) expect(t.summary.trim()).not.toBe("");
 });
 
+/// The AI Bridge tab shows in either mode of "Treat all projects as one", so
+/// the Azure DevOps rows read true in both: they name no single project.
+test("the suite and wiki summaries name no single project", () => {
+  const summary = (name: string) => MCP_TOOLS.find((t) => t.name === name)?.summary;
+  expect(summary("search_test_suites")).toBe("The plans and suites in every project, by plan name, suite name or PBI id.");
+  expect(summary("search_wiki")).toBe("Search the wikis for documentation.");
+  const wiki = visibleRows().find((r) => r.names.includes("search_wiki"));
+  expect(wiki?.label).toBe("Project wiki");
+  expect(wiki?.summary).toBe("Search the wikis and read the pages they find.");
+});
+
 /// Past one page the list is an index, not every template in full: the
 /// summary says how it is narrowed and paged.
 test("the template list's summary describes its filters and paging", () => {

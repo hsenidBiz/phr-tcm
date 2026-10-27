@@ -88,7 +88,7 @@
       <li>Hand check owed: Auto Run with a PBI in another project reads its recipe and scripts from the home project, and Send to Azure DevOps puts the results in the PBI's project.</li>
       <li>Hand check owed: switch off in Settings. The Project picker comes back showing the PBI's project and the PBI stays; switch on again changes nothing else. Change the Home project and check Auto Run, API Templates and Playwright follow it.</li>
       <li>Hand check owed: open a pull request notification for another project while the switch is on. The Pull Requests screen lists every project, the notified pull request is expanded and ringed and reads its comments and work items in its own project, no Project picker appears, and Settings still shows the old home project. Resolve one of its comment threads and check it resolves in Azure DevOps in that project. (A work item notification opens on the board across projects; see phase 3.)</li>
-      <li>Hand check owed: with a PBI in a second project, an assistant's get_run_results for it reads that PBI's own suite and results (not the home project's). Known gap until phase 6: the assistant's other reads (suite search and suite cases, PBI search, tags and wiki) still answer for the home project while the switch is on, so they can miss a PBI or suite that lives in another project.</li>
+      <li>Hand check owed: with a PBI in a second project, an assistant's get_run_results for it reads that PBI's own suite and results (not the home project's). The assistant's other reads (suite search and suite cases, PBI search, tags and wiki) were closed in phase 6, below.</li>
       <li>Owed: the How To Use Settings and header shots and text for the switch, the Home project picker and the missing Project picker (phase 7).</li>
     </ul>
   </div>
@@ -143,6 +143,21 @@
       <li>Hand check owed: a project with Test Plans turned off in its project settings, and an account with Stakeholder access. If Azure DevOps answers anything other than 403 or 404 there, the whole combined list fails for the organization. Confirm the answer is one of those two, which the list skips and counts out of "Showing plans from N of M projects."</li>
       <li>Measurement owed: after one combined Search Suites visit in the real organization, add up the size of the stored plan trees. In the developer console run <code>Object.keys(localStorage).filter(k =&gt; k.includes("plans-suites:")).reduce((n, k) =&gt; n + localStorage.getItem(k).length, 0)</code>. If the total is past about 2 million characters (the webview's storage holds roughly 5 million, shared with the rest of the cache and the settings), move the per-project plan trees to the Rust disk cache in a later phase; a write that overflows the storage clears the whole webview cache.</li>
       <li>Owed: the How To Use text for Search Suites and Suite Management says they cover every project; the screenshots are not re-taken until phase 7.</li>
+    </ul>
+  </div>
+
+  <h2>All projects as one, phase 6: the AI bridge across projects (27 October 2026)</h2>
+  <div class="item">
+    <div class="head"><span class="title">Hand checks owed</span><span class="status todo">Waiting on you</span></div>
+    <p>Built, shipping in the next beta. With the switch on, an assistant's Azure DevOps reads cover every project of the organization: PBI search (each hit names its project), test suite search (one row per suite with its project; if the organization has more projects than the bridge reads, the answer says how many were read), a suite's cases (found from the plan id, or from the project the assistant passes), run results (read in the PBI's own project), wiki search (the organization's wikis, each page naming its project) and reading a wiki page (in the project of the hit, or of the pasted URL). Tags stay on the home project, except that a writing job which named a reference PBI reads the tags of that PBI's project. The API templates, Auto Run, quirks, accounts and test files stay on the home project. The tool descriptions an assistant is given say "every project" only while the switch is on; with the app closed they read per project. Switched off, the bridge answers exactly as before.</p>
+    <ul>
+      <li>Hand check owed: with a PBI in a second project, ask an assistant to find it. search_pbis lists it with its project, get_test_cases reads its cases, get_run_results reads its results and search_test_suites with its id finds its requirement suite in that project.</li>
+      <li>Hand check owed: search_test_suites lists suites from two projects with a project on each row, and get_suite_test_cases for a suite of the second project answers without a project argument (and with one).</li>
+      <li>Hand check owed: search_wiki finds a page in a second project's wiki and names the project; get_wiki_page with that project reads it; get_wiki_page with only a pasted page URL from the second project reads it too.</li>
+      <li>Hand check owed: start a writing job with begin_test_case_writing naming a reference PBI from a second project; get_tags then answers with that project's tags and says which project they are from. A job that names no PBI puts get_tags back on the home project.</li>
+      <li>Hand check owed: in the assistant's tool list, search_test_suites, search_pbis and search_wiki say every project with the switch on and the current project with it off; a Claude Code session started before the change keeps the old words until it is restarted.</li>
+      <li>Live check owed: the organization-wide wiki search (the search service accepts a request with no project in its address). Confirm search_wiki returns hits from more than one project's wiki; if it answers an error, wiki search must be read project by project.</li>
+      <li>Owed: the How To Use text for the AI Bridge says the assistant reads every project; the screenshots are not re-taken until phase 7.</li>
     </ul>
   </div>
 

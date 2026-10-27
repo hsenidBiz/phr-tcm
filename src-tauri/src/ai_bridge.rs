@@ -757,6 +757,9 @@ pub async fn route_as(
                 "db_no_ask": ctx.db_no_ask && ctx.db_writes,
                 // The proxy offers the network tools only on an explicit yes.
                 "network_tools": ctx.network_tools,
+                // The proxy words the Azure DevOps tools' descriptions by
+                // this: they read across every project only while it is on.
+                "all_projects": ctx.all_projects,
             })
             .to_string(),
         ),
@@ -12313,8 +12316,9 @@ async fn begin_writing(
     // its folder exists - so this is a real place a file is about to
     // appear. Watching starts now, before the assistant has written a line.
     announce_intake_path(answers.output_path.trim());
+    note_writing_job_pbi(&ctx.org, answers.examples_pbi);
 
-    let plan = crate::intake::plan_markdown(&answers, &feature);
+    let plan =crate::intake::plan_markdown(&answers, &feature);
     let plan_path = crate::intake::plan_path(&answers.output_path);
     // Advice, not a gate: `None` (never an error) when no spec file could
     // be read at all, which must not block an otherwise-ready intake.
@@ -12943,11 +12947,12 @@ async fn tags(
     client: Option<&crate::ado::AdoClient>,
     target: &str,
 ) -> (u16, String) {
-    let key = crate::cache::keys::tags(&ctx.org, &ctx.project);
+    let project = tags_project(ctx, client).await;
+    let key = crate::cache::keys::tags(&ctx.org, &project);
     let (values, source) = match crate::cache::get::<Vec<String>>(&key) {
         Some(v) => (v, "cache"),
         None => match client {
-            Some(c) => match c.get_tags(&ctx.org, &ctx.project).await {
+            Some(c) => match c.get_tags(&ctx.org, &project).await {
                 Ok(v) => {
                     crate::cache::put(&key, &v);
                     (v, "fetched")
@@ -12988,17 +12993,51 @@ async fn tags(
          JSON, never commas."
             .to_string()
     };
-    (
-        200,
-        serde_json::json!({
-            "tags": values,
-            "count": values.len(),
-            "total": total,
-            "source": source,
-            "note": note,
-        })
-        .to_string(),
-    )
+    let mut out = serde_json::json!({
+        "tags": values,
+        "count": values.len(),
+        "total": total,
+        "source": source,
+        "note": note,
+    });
+    // Tags are per project, so while combined the answer says whose they
+    // are. Off, the answer is exactly what it always was.
+    if ctx.all_projects {
+        out["project"] = serde_json::json!(project);
+    }
+    (200, out.to_string())
+}
+
+/// The organization and PBI the latest writing job named as its reference
+/// (the intake's `examples_pbi`), kept so `get_tags` can read the tags of
+/// the project the job's cases belong to. One slot, in memory only: the
+/// next job replaces it (a job naming no PBI empties it), a job in another
+/// organization is not read for this one, and it is gone when the app closes.
+static WRITING_JOB_PBI: StdMutex<Option<(String, i32)>> = StdMutex::new(None);
+
+fn note_writing_job_pbi(org: &str, pbi: Option<i32>) {
+    *WRITING_JOB_PBI.lock().unwrap_or_else(|e| e.into_inner()) = pbi.map(|p| (org.to_string(), p));
+}
+
+/// Whose tags `get_tags` reads: the home project (where cases are written),
+/// except that while combined a writing job naming a PBI points at that
+/// PBI's project. A PBI whose project cannot be read leaves it at home.
+async fn tags_project(ctx: &BridgeContext, client: Option<&crate::ado::AdoClient>) -> String {
+    if !ctx.all_projects {
+        return ctx.project.clone();
+    }
+    let pbi = WRITING_JOB_PBI
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .as_ref()
+        .filter(|(org, _)| *org == ctx.org)
+        .map(|(_, pbi)| *pbi);
+    match (pbi, client) {
+        (Some(pbi), Some(c)) => {
+            work_item_project_cached(ctx, c, pbi).await.unwrap_or_else(|_| ctx.project.clone())
+        }
+        _ => ctx.project.clone(),
+    }
 }
 
 /// The most tags a query-less get_tags answers with. High enough that a
@@ -14150,6 +14189,27 @@ async fn search_wiki(
         .and_then(|v| v.parse::<u32>().ok())
         .unwrap_or(10)
         .min(25);
+    if ctx.all_projects {
+        // The organization's wikis; each hit names its own project, which
+        // `get_wiki_page` takes back as `project`.
+        return match client.search_wiki_all(&ctx.org, &query, top).await {
+            Ok(hits) => (
+                200,
+                serde_json::json!({
+                    "results": hits.iter().map(|h| serde_json::json!({
+                        "file_name": h.file_name,
+                        "path": h.path,
+                        "wiki_name": h.wiki_name,
+                        "wiki_id": h.wiki_id,
+                        "project": h.project,
+                        "highlights": h.highlights,
+                    })).collect::<Vec<_>>()
+                })
+                .to_string(),
+            ),
+            Err(e) => (502, format!("Azure DevOps error: {e:?}")),
+        };
+    }
     match client.search_wiki(&ctx.org, &ctx.project, &query, top).await {
         Ok(hits) => (
             200,
@@ -14193,7 +14253,22 @@ async fn wiki_page(
     if wiki_id.contains('/') || wiki_id.contains('\\') || wiki_id.contains("..") {
         return (400, "the wiki parameter is a wiki name or id - it cannot contain '/', '\\' or '..'".into());
     }
-    match client.get_wiki_page(&ctx.org, &ctx.project, &wiki_id, &path).await {
+    // While combined the page may be in any project: the hit's (`?project=`),
+    // else the one a pasted URL names, else home. Off, the chosen project.
+    let project = if ctx.all_projects {
+        q(target, "project")
+            .map(|p| p.trim().to_string())
+            .filter(|p| !p.is_empty())
+            .or_else(|| {
+                crate::ado::endpoints::wiki_url_org_project(&path)
+                    .filter(|(org, _)| org.eq_ignore_ascii_case(&ctx.org))
+                    .map(|(_, project)| project)
+            })
+            .unwrap_or_else(|| ctx.project.clone())
+    } else {
+        ctx.project.clone()
+    };
+    match client.get_wiki_page(&ctx.org, &project, &wiki_id, &path).await {
         Ok(page) => (
             200,
             serde_json::json!({ "path": page.path, "content": page.content }).to_string(),

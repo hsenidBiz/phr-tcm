@@ -484,3 +484,253 @@ async fn combined_suite_cases_name_a_plan_that_is_not_in_the_organization() {
     assert_eq!(status, 404, "{body}");
     assert!(body.contains("77"), "{body}");
 }
+
+fn wiki_hits() -> serde_json::Value {
+    serde_json::json!({
+        "results": [
+            {
+                "fileName": "Pay-Run.md",
+                "path": "/Docs/Pay-Run",
+                "project": { "id": "p1", "name": "Payroll" },
+                "wiki": { "id": "w1", "name": "Payroll.wiki" },
+                "hits": [{ "highlights": ["the <hl>pay</hl> run"] }]
+            },
+            {
+                "fileName": "Login.md",
+                "path": "/Docs/Login",
+                "project": { "id": "p2", "name": "Web" },
+                "wiki": { "id": "w2", "name": "Web.wiki" },
+                "hits": [{ "highlights": ["login"] }]
+            }
+        ]
+    })
+}
+
+#[tokio::test]
+async fn combined_wiki_search_is_organization_wide_and_names_each_pages_project() {
+    let (server, client) = ado_stub().await;
+    // The organization-level search, not one project's.
+    Mock::given(wm_method("POST"))
+        .and(wm_path("/acme/_apis/search/wikisearchresults"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(wiki_hits()))
+        .mount(&server)
+        .await;
+
+    let (status, body) =
+        route(&ctx(true), Some(&client), "GET", "/search-wiki?q=pay", "", "2.3.1").await;
+    assert_eq!(status, 200, "{body}");
+    let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(v["results"][0]["wiki_id"], "w1");
+    assert_eq!(v["results"][0]["project"], "Payroll");
+    assert_eq!(v["results"][1]["wiki_id"], "w2");
+    assert_eq!(v["results"][1]["project"], "Web");
+}
+
+#[tokio::test]
+async fn switched_off_wiki_search_stays_in_the_chosen_project_and_names_none() {
+    let (server, client) = ado_stub().await;
+    Mock::given(wm_method("POST"))
+        .and(wm_path("/acme/Web/_apis/search/wikisearchresults"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(wiki_hits()))
+        .mount(&server)
+        .await;
+
+    let (status, body) =
+        route(&ctx(false), Some(&client), "GET", "/search-wiki?q=pay", "", "2.3.1").await;
+    assert_eq!(status, 200, "{body}");
+    let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert!(v["results"][0].get("project").is_none(), "{body}");
+    assert_eq!(v["results"][0]["wiki_id"], "w1");
+}
+
+#[tokio::test]
+async fn the_tool_policy_answer_says_whether_projects_are_combined() {
+    for on in [true, false] {
+        let (status, body) = route(&ctx(on), None, "GET", "/tools", "", "2.3.1").await;
+        assert_eq!(status, 200, "{body}");
+        let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(v["all_projects"], on, "{body}");
+    }
+}
+
+async fn mount_wiki_page(server: &MockServer, project: &str) {
+    Mock::given(wm_method("GET"))
+        .and(wm_path(format!("/acme/{project}/_apis/wiki/wikis/w1/pages")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "path": "/Docs/Pay-Run",
+            "content": format!("# Pay run in {project}")
+        })))
+        .mount(server)
+        .await;
+}
+
+#[tokio::test]
+async fn a_wiki_page_is_read_in_its_hits_project() {
+    let (server, client) = ado_stub().await;
+    mount_wiki_page(&server, "Payroll").await;
+
+    let (status, body) = route(
+        &ctx(true),
+        Some(&client),
+        "GET",
+        "/wiki-page?wiki=w1&path=/Docs/Pay-Run&project=Payroll",
+        "",
+        "2.3.1",
+    )
+    .await;
+    assert_eq!(status, 200, "{body}");
+    assert!(body.contains("Pay run in Payroll"), "{body}");
+}
+
+#[tokio::test]
+async fn a_pasted_wiki_url_is_read_in_the_project_it_names() {
+    let (server, client) = ado_stub().await;
+    Mock::given(wm_method("GET"))
+        .and(wm_path("/acme/Payroll/_apis/wiki/wikis/Payroll.wiki/pages/12"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "path": "/Docs/Pay-Run",
+            "content": "# Pay run from the url"
+        })))
+        .mount(&server)
+        .await;
+
+    // No `project`: the URL's own project is the one that holds the page.
+    let url = "https%3A%2F%2Fdev.azure.com%2Facme%2FPayroll%2F_wiki%2Fwikis%2FPayroll.wiki%2F12%2FPay-Run";
+    let (status, body) = route(
+        &ctx(true),
+        Some(&client),
+        "GET",
+        &format!("/wiki-page?path={url}"),
+        "",
+        "2.3.1",
+    )
+    .await;
+    assert_eq!(status, 200, "{body}");
+    assert!(body.contains("from the url"), "{body}");
+}
+
+#[tokio::test]
+async fn a_wiki_page_with_no_project_is_read_in_the_home_project() {
+    let (server, client) = ado_stub().await;
+    mount_wiki_page(&server, "Web").await;
+
+    let (status, body) = route(
+        &ctx(true),
+        Some(&client),
+        "GET",
+        "/wiki-page?wiki=w1&path=/Docs/Pay-Run",
+        "",
+        "2.3.1",
+    )
+    .await;
+    assert_eq!(status, 200, "{body}");
+    assert!(body.contains("Pay run in Web"), "{body}");
+}
+
+#[tokio::test]
+async fn switched_off_a_wiki_page_ignores_a_project_in_the_request() {
+    let (server, client) = ado_stub().await;
+    mount_wiki_page(&server, "Web").await;
+
+    let (status, body) = route(
+        &ctx(false),
+        Some(&client),
+        "GET",
+        "/wiki-page?wiki=w1&path=/Docs/Pay-Run&project=Payroll",
+        "",
+        "2.3.1",
+    )
+    .await;
+    assert_eq!(status, 200, "{body}");
+    assert!(body.contains("Pay run in Web"), "{body}");
+}
+
+/// A writing job (the intake's `ready` answer) in `c`'s organization, whose
+/// answers name `pbi` as the reference, or no PBI.
+async fn begin_job_naming(c: &BridgeContext, dir: &std::path::Path, pbi: Option<i32>) {
+    let spec = dir.join("spec.md");
+    std::fs::write(&spec, "# spec").unwrap();
+    let mut answers = serde_json::json!({
+        "output_path": "pay.json",
+        "spec_paths": [spec.to_string_lossy()],
+        "authority": "spec",
+        "ordering": "tester",
+        "reference_cases": "none",
+    });
+    if let Some(p) = pbi {
+        answers["examples_pbi"] = serde_json::json!(p);
+    }
+    let (status, body) =
+        route(c, None, "POST", "/begin?feature=Pay%20run", &answers.to_string(), "2.3.1").await;
+    assert_eq!(status, 200, "{body}");
+    assert!(body.contains("\"ready\""), "{body}");
+}
+
+async fn mount_tags(server: &MockServer, org: &str, project: &str, names: &[&str]) {
+    Mock::given(wm_method("GET"))
+        .and(wm_path(format!("/{org}/{project}/_apis/wit/tags")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "value": names.iter().map(|n| serde_json::json!({ "name": n })).collect::<Vec<_>>()
+        })))
+        .mount(server)
+        .await;
+}
+
+/// The cache and the job record have no lock, so the tags test owns an
+/// organization name no other test reads.
+fn tags_ctx(all_projects: bool, dir: &std::path::Path) -> BridgeContext {
+    let mut c = ctx(all_projects);
+    c.org = "tagsorg-p6".into();
+    c.module_ref = None;
+    c.working_dir = Some(dir.to_string_lossy().to_string());
+    c
+}
+
+#[tokio::test]
+async fn combined_tags_follow_the_writing_jobs_pbi_project() {
+    for p in ["Web", "Payroll"] {
+        v2_lib::cache::forget(&v2_lib::cache::keys::tags("tagsorg-p6", p));
+    }
+    let (server, client) = ado_stub().await;
+    Mock::given(wm_method("GET"))
+        .and(wm_path("/tagsorg-p6/_apis/wit/workitems/42"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "id": 42, "fields": { "System.TeamProject": "Payroll" }
+        })))
+        .mount(&server)
+        .await;
+    mount_tags(&server, "tagsorg-p6", "Web", &["web-only"]).await;
+    mount_tags(&server, "tagsorg-p6", "Payroll", &["payroll-only"]).await;
+
+    let dir = tempfile::tempdir().unwrap();
+    let on = tags_ctx(true, dir.path());
+    // No job yet: the home project's tags.
+    let (status, body) = route(&on, Some(&client), "GET", "/tags", "", "2.3.1").await;
+    assert_eq!(status, 200, "{body}");
+    let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(v["tags"], serde_json::json!(["web-only"]), "{body}");
+    assert_eq!(v["project"], "Web", "{body}");
+
+    // A job that names PBI 42 (in Payroll): that project's tags.
+    begin_job_naming(&on, dir.path(), Some(42)).await;
+    let (status, body) = route(&on, Some(&client), "GET", "/tags", "", "2.3.1").await;
+    assert_eq!(status, 200, "{body}");
+    let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(v["tags"], serde_json::json!(["payroll-only"]), "{body}");
+    assert_eq!(v["project"], "Payroll", "{body}");
+
+    // Switched off, the job's PBI is not a thing: the chosen project, and
+    // no `project` key in the answer.
+    let off = tags_ctx(false, dir.path());
+    let (status, body) = route(&off, Some(&client), "GET", "/tags", "", "2.3.1").await;
+    assert_eq!(status, 200, "{body}");
+    let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(v["tags"], serde_json::json!(["web-only"]), "{body}");
+    assert!(v.get("project").is_none(), "{body}");
+
+    // A later job that names no PBI puts the tags back at home.
+    begin_job_naming(&on, dir.path(), None).await;
+    let (_, body) = route(&on, Some(&client), "GET", "/tags", "", "2.3.1").await;
+    let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(v["project"], "Web", "{body}");
+}
