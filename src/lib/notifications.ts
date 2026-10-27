@@ -179,18 +179,25 @@ export function clearAll(org: string): void {
 
 // --- sources ---------------------------------------------------------------
 
-/** Work items the background poll just found assigned to you. */
-export function noteAssigned(org: string, project: string, items: AssignedItem[]): void {
-  raise(
+/** Work items the background poll just found assigned to you. Each names the
+ * project it lives in (the watch across projects returns several); `project`
+ * is the fallback for one that names none. Returns what the bell took in, so
+ * the caller announces only that: an item the bell has already raised (one the
+ * other scope of the all-projects switch announced) is not news again. */
+export function noteAssigned(org: string, project: string, items: AssignedItem[]): AppNotification[] {
+  return raise(
     org,
-    items.map((i) => ({
-      id: `assigned:${i.id}`,
-      kind: "assigned" as const,
-      title: `${i.work_item_type} #${i.id} assigned to you`,
-      body: i.title,
-      href: `https://dev.azure.com/${encodeURIComponent(org)}/${encodeURIComponent(project)}/_workitems/edit/${i.id}`,
-      target: { kind: "work-item" as const, id: i.id, project },
-    })),
+    items.map((i) => {
+      const where = i.project || project;
+      return {
+        id: `assigned:${i.id}`,
+        kind: "assigned" as const,
+        title: `${i.work_item_type} #${i.id} assigned to you`,
+        body: i.title,
+        href: `https://dev.azure.com/${encodeURIComponent(org)}/${encodeURIComponent(where)}/_workitems/edit/${i.id}`,
+        target: { kind: "work-item" as const, id: i.id, project: where },
+      };
+    }),
   );
 }
 
@@ -202,13 +209,15 @@ export function notePrOverview(
   project: string,
   overview: { mine: PullRequest[]; awaiting: PullRequest[] },
 ): void {
+  // A pull request names its own project (the overview across projects holds
+  // several); `project` is the fallback for one that names none.
   const prUrl = (pr: PullRequest) =>
-    `https://dev.azure.com/${encodeURIComponent(org)}/${encodeURIComponent(project)}/_git/${encodeURIComponent(pr.repo)}/pullrequest/${pr.id}`;
+    `https://dev.azure.com/${encodeURIComponent(org)}/${encodeURIComponent(pr.project || project)}/_git/${encodeURIComponent(pr.repo)}/pullrequest/${pr.id}`;
   const prTarget = (pr: PullRequest): NotificationTarget => ({
     kind: "pr",
     repo: pr.repo,
     id: pr.id,
-    project,
+    project: pr.project || project,
   });
   const items: Array<Omit<AppNotification, "at" | "read">> = [];
   for (const pr of overview.mine) {
@@ -243,14 +252,16 @@ export function notePrOverview(
  * while a third comment arriving raises "3 comments" fresh. */
 export function notePrComments(org: string, project: string, pr: PullRequest, unresolved: number): void {
   if (unresolved <= 0 || pr.status !== "active") return;
+  // The pull request's own project when it names one, as in notePrOverview.
+  const where = pr.project || project;
   raise(org, [
     {
       id: `pr-comments:${pr.repo}:${pr.id}:${unresolved}`,
       kind: "pr-comments",
       title: `PR #${pr.id} has ${unresolved} comment${unresolved === 1 ? "" : "s"} to resolve`,
       body: `${pr.title} (${pr.repo})`,
-      href: `https://dev.azure.com/${encodeURIComponent(org)}/${encodeURIComponent(project)}/_git/${encodeURIComponent(pr.repo)}/pullrequest/${pr.id}`,
-      target: { kind: "pr", repo: pr.repo, id: pr.id, project },
+      href: `https://dev.azure.com/${encodeURIComponent(org)}/${encodeURIComponent(where)}/_git/${encodeURIComponent(pr.repo)}/pullrequest/${pr.id}`,
+      target: { kind: "pr", repo: pr.repo, id: pr.id, project: where },
     },
   ]);
 }

@@ -49,6 +49,76 @@ test("the context bar checks for mentions in the picked project", async () => {
   expect(calls.some((c) => c.cmd === "pr_overview")).toBe(true);
 });
 
+test("combined mode checks mentions in every project", async () => {
+  const calls: Array<{ cmd: string; args: unknown }> = [];
+  mockIPC((cmd, args) => {
+    calls.push({ cmd, args });
+    if (cmd === "list_orgs") return [];
+    if (cmd === "list_projects") return [];
+    if (cmd === "pr_overview_all") return { mine: [], awaiting: [], coverage: { shown: 0, total: 0 } };
+    if (cmd === "recent_mentions_all") return [];
+  });
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  render(
+    <QueryClientProvider client={qc}>
+      <ContextBar
+        org="acme"
+        setOrg={() => {}}
+        project="Payroll"
+        setProject={() => {}}
+        allProjects
+        homeProject="Web"
+        pbi={null}
+        setPbi={() => {}}
+        account={null}
+        workMode={false}
+        onToggleWork={() => {}}
+        onOpenSettings={() => {}}
+      />
+    </QueryClientProvider>,
+  );
+  await waitFor(() =>
+    expect(calls.find((c) => c.cmd === "recent_mentions_all")?.args).toEqual({ organization: "acme" }),
+  );
+  // The organization-wide check replaces the one-project check, it does not join it.
+  expect(calls.some((c) => c.cmd === "recent_mentions")).toBe(false);
+});
+
+test("together, the Work Manager badge counts the pull requests of every project", async () => {
+  const calls: Array<{ cmd: string; args: unknown }> = [];
+  mockIPC((cmd, args) => {
+    calls.push({ cmd, args });
+    if (cmd === "list_orgs") return [];
+    if (cmd === "list_projects") return [];
+    if (cmd === "pr_overview_all") return { mine: [], awaiting: [], coverage: { shown: 0, total: 0 } };
+    if (cmd === "recent_mentions") return [];
+  });
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  render(
+    <QueryClientProvider client={qc}>
+      <ContextBar
+        org="acme"
+        setOrg={() => {}}
+        project="Payroll"
+        setProject={() => {}}
+        allProjects
+        homeProject="Web"
+        pbi={null}
+        setPbi={() => {}}
+        account={null}
+        workMode={false}
+        onToggleWork={() => {}}
+        onOpenSettings={() => {}}
+      />
+    </QueryClientProvider>,
+  );
+  await waitFor(() =>
+    expect(calls.find((c) => c.cmd === "pr_overview_all")?.args).toEqual({ organization: "acme" }),
+  );
+  // Nothing asks one project's pull requests.
+  expect(calls.some((c) => c.cmd === "pr_overview")).toBe(false);
+});
+
 /// The gear turns forward as Settings opens and back as it closes, however
 /// it closes (index.css, ico-cog-turn / ico-cog-turn-back). Each change is a
 /// fresh icon, so the turn plays again; a first render plays nothing.
@@ -221,7 +291,8 @@ describe("the Project selector follows the all-projects switch", () => {
       if (cmd === "list_orgs") return [{ name: "acme", url: "" }];
       if (cmd === "list_projects") return opts.projects.map((name, i) => ({ id: `p${i}`, name }));
       if (cmd === "pr_overview") return { mine: [], awaiting: [] };
-      if (cmd === "recent_mentions") return [];
+      if (cmd === "pr_overview_all") return { mine: [], awaiting: [], coverage: { shown: 0, total: 0 } };
+      if (cmd === "recent_mentions" || cmd === "recent_mentions_all") return [];
     });
     const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     render(
@@ -260,10 +331,13 @@ describe("the Project selector follows the all-projects switch", () => {
     expect(screen.getByLabelText("Find PBI")).toBeInTheDocument();
   });
 
-  test("combined mode checks pull requests and mentions in the home project", async () => {
+  test("combined mode checks pull requests and mentions across the organization", async () => {
     const { calls, listLoaded } = renderBar({ allProjects: true, projects: ["Web", "Payroll"] });
     await listLoaded();
-    expect(calls.find((c) => c.cmd === "recent_mentions")?.args).toEqual({ organization: "acme", project: "Web" });
+    expect(calls.find((c) => c.cmd === "recent_mentions_all")?.args).toEqual({ organization: "acme" });
+    expect(calls.find((c) => c.cmd === "pr_overview_all")?.args).toEqual({ organization: "acme" });
+    // Nothing asks one project.
+    expect(calls.some((c) => c.cmd === "recent_mentions" || c.cmd === "pr_overview")).toBe(false);
   });
 
   test("switched off with one project the selector hides", async () => {

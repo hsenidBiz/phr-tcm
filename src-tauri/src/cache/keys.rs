@@ -27,6 +27,12 @@ pub fn assigned_seen(org: &str, project: &str) -> String {
     format!("assigned-seen:{org}/{project}")
 }
 
+/// The same for the combined, all-projects watch: one baseline for the
+/// whole organization, beside (never replacing) the per-project ones.
+pub fn assigned_seen_all(org: &str) -> String {
+    format!("assigned-seen-all:{org}")
+}
+
 /// A PBI's resolved requirement suite, shared by the upload, Run Tests and
 /// the AI bridge. The client's base_url is in the key so parallel tests on
 /// different mock servers cannot poison each other.
@@ -59,6 +65,32 @@ pub const ORG_PROJECTS_TTL: Duration = Duration::from_secs(10 * 60);
 /// base_url is in the key for the same reason as `suite`'s.
 pub fn org_projects(base_url: &str, org: &str) -> String {
     format!("org-projects:{base_url}|{org}")
+}
+
+/// How long the answer to "does Azure DevOps list pull requests for the
+/// whole organization in one call?" is kept (session tier only). It is a
+/// property of the organization, not of a screen visit, so a working day is
+/// plenty; a refusal is not asked again until it lapses.
+pub const PR_SCOPE_TTL: Duration = Duration::from_secs(6 * 60 * 60);
+
+/// The pull request scope an organization answered with, `"org"` (one call
+/// for every project) or `"projects"` (one per project that owns a
+/// repository). Session tier only; the base_url is in the key for the same
+/// reason as `suite`'s.
+pub fn pr_scope(base_url: &str, org: &str) -> String {
+    format!("pr-scope:{base_url}|{org}")
+}
+
+/// How long the projects that own an enabled repository are kept (session
+/// tier only): long enough that the fan-out does not list repositories on
+/// every visit to Pull Requests, short enough that a new repository shows
+/// soon.
+pub const PROJECTS_WITH_REPOS_TTL: Duration = Duration::from_secs(10 * 60);
+
+/// The names of the projects that own at least one enabled repository
+/// (session tier only) - the only projects a pull request fan-out asks.
+pub fn projects_with_repos(base_url: &str, org: &str) -> String {
+    format!("projects-with-repos:{base_url}|{org}")
 }
 
 /// How long the board across projects reuses a work-item type's states. A

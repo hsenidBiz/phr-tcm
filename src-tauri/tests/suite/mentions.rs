@@ -87,6 +87,7 @@ async fn a_comment_mentioning_you_is_found_with_its_item_and_excerpt() {
             author: "Sam".into(),
             excerpt: "@Avin can you check this?".into(),
             created_date: "2026-09-25T08:00:00Z".into(),
+            project: "proj".into(),
         }]
     );
 }

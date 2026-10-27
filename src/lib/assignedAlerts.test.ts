@@ -16,6 +16,7 @@ const item = (id: number, title: string, type = "Task"): AssignedItem => ({
   title,
   work_item_type: type,
   state: "Active",
+  project: "Web",
 });
 
 beforeEach(() => {

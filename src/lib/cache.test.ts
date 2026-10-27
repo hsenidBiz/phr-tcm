@@ -192,6 +192,7 @@ test("cache keys are the strings earlier versions stored", () => {
   expect(cacheKeys.runHistory("acme", "Web", 7)).toBe("run-history:acme/Web/7");
   expect(cacheKeys.points("acme", "Web", 7, 71)).toBe("points:acme/Web/7/71");
   expect(cacheKeys.boardPrs("acme", "Web")).toBe("board-prs:acme/Web");
+  expect(cacheKeys.boardPrsAll("acme")).toBe("board-prs-all:acme");
   expect(cacheKeys.prPipeline("acme", "Web", 42, "abc")).toBe("pipe:acme/Web:42:abc");
   // NEW key, not one an earlier version stored: the old `tcm-v2-suite:`
   // seeds are deliberately abandoned, since App rebuilds a seed from

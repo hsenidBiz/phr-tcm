@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useLayoutEffect, useRef, type ReactNode } from "react";
+import { createContext, useContext, useLayoutEffect, useRef, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { cn } from "../../lib/cn";
 import { leaveExitGhost } from "../../lib/exitGhost";
@@ -74,7 +74,11 @@ export function Modal({
   const token = useRef({}).current;
   const depth = useContext(ModalDepthContext) + 1;
 
-  useEffect(() => {
+  // Layout effects, this and the key listener below: a modal opened by an IPC
+  // answer is in the page before its passive effects have run, and an Escape
+  // pressed in that gap would go to the modal under it. Registered in the
+  // layout phase, a modal on screen already owns Escape.
+  useLayoutEffect(() => {
     openModals.push({ token, depth });
     return () => {
       openModals = openModals.filter((m) => m.token !== token);
@@ -96,7 +100,7 @@ export function Modal({
     };
   }, []);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       // Only the topmost modal - the one nested deepest - answers Escape.
       // Every instance's listener fires on every press; ties (two modals

@@ -28,6 +28,40 @@ pub async fn pr_overview(
     ado::AdoClient::new(token).pr_overview(&organization, &project).await
 }
 
+/// Every enabled repository of the organization, in one call, each naming
+/// its project.
+#[tauri::command]
+#[specta::specta]
+pub async fn list_repos_all(
+    app: tauri::AppHandle,
+    organization: String,
+) -> Result<Vec<ado_git::RepoRef>, ado::AdoError> {
+    let token = get_fresh_token(&app).await?;
+    ado::AdoClient::new(token).list_repos_all(&organization).await
+}
+
+/// `pr_overview` across every project of the organization.
+#[tauri::command]
+#[specta::specta]
+pub async fn pr_overview_all(
+    app: tauri::AppHandle,
+    organization: String,
+) -> Result<ado_git::PrOverviewAll, ado::AdoError> {
+    let token = get_fresh_token(&app).await?;
+    ado::AdoClient::new(token).pr_overview_all(&organization).await
+}
+
+/// `board_pr_links` across every project of the organization.
+#[tauri::command]
+#[specta::specta]
+pub async fn board_pr_links_all(
+    app: tauri::AppHandle,
+    organization: String,
+) -> Result<Vec<ado_git::PrLink>, ado::AdoError> {
+    let token = get_fresh_token(&app).await?;
+    ado::AdoClient::new(token).board_pr_links_all(&organization).await
+}
+
 #[tauri::command]
 #[specta::specta]
 pub async fn pr_work_items(

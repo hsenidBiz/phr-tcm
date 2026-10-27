@@ -35,14 +35,16 @@ export const pullRequests: Screen = {
   group: "Work Manager",
   summary:
     "The pull requests that need you: the ones waiting for your review, your own, and the active ones on any repository you choose to follow. " +
-    "Open one to read its description and comments, see its checks and linked work items, and resolve comment threads. Voting and completing stay in Azure DevOps.",
+    "Open one to read its description and comments, see its checks and linked work items, and resolve comment threads. Voting and completing stay in Azure DevOps. " +
+    "The page covers every project of the organization together, unless Treat all projects as one is switched off in Settings. " +
+    "When the pull requests of several projects are listed, each row names its project, and opening or resolving anything happens in that pull request's own project.",
   shots: [
     { id: LIST, route: [...NAV, { waitFor: { role: "button", nameRe: "^!501 " } }], alt: "Pull Requests: awaiting your review, your pull requests and one followed repository" },
     { id: OPEN, route: OPEN_ROW, alt: "A pull request opened, with its comments, reviewers, last pipeline run and work items" },
     {
       id: PICKER,
       route: [...NAV, { click: { role: "button", name: "Repositories" } }, { waitFor: { role: "checkbox", name: "Your Pull Requests" } }],
-      alt: "The list of what to show: your pull requests and the project's repositories",
+      alt: "The list of what to show: your pull requests and the repositories",
     },
     { id: PIPELINE, route: OPEN_HISTORY, alt: "The pipeline history of a pull request" },
     {
@@ -66,8 +68,9 @@ export const pullRequests: Screen = {
       locate: { role: "button", name: "Repositories" },
       name: "What to show",
       does:
-        "Picks what the page lists besides the pull requests waiting for your review: **Your Pull Requests**, and any of the project's repositories. " +
-        "It shows what is picked, or how many. The choice is remembered for each project.",
+        "Picks what the page lists besides the pull requests waiting for your review: **Your Pull Requests**, and any repository of the organization (of the project, when Treat all projects as one is off). " +
+        "A repository whose name another project also uses is shown with its project in brackets. It shows what is picked, or how many. " +
+        "The choice is remembered for the organization, or for each project when Treat all projects as one is off.",
     },
     {
       id: "clear-repositories",
@@ -91,7 +94,7 @@ export const pullRequests: Screen = {
       group: "what-to-show",
       locate: { role: "button", name: "Refresh pull requests" },
       name: "Refresh",
-      does: "Reads the lists again from Azure DevOps.",
+      does: "Reads the lists again from Azure DevOps. If some projects could not be read, a line under the buttons says how many of the projects that own a repository the lists show.",
     },
     {
       id: "awaiting",

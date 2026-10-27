@@ -267,13 +267,6 @@ export default function App() {
   // item or a pull request, and the Work Manager screen that can show it
   // clears this the moment it has.
   const [workFocus, setWorkFocus] = useState<NotificationTarget | null>(null);
-  // The project a notification came from, handed to the Work Manager screens
-  // while the projects show together (there is no project selector to switch,
-  // and the home project is not theirs to overwrite). Null means the screens
-  // use their ordinary project. Interim until the Work Manager screens read
-  // every project (Phase 4); anything that changes what the screens stand
-  // for clears it.
-  const [workProject, setWorkProject] = useState<string | null>(null);
 
   // First-run walkthrough: opens once after the first sign-in, and again
   // whenever Settings asks for it. While it is up the app runs on sample
@@ -319,14 +312,12 @@ export default function App() {
   // not in an effect, so no screen is ever drawn for the old home project in
   // between. The tour refuses the switch (saveAllProjects), so this never
   // runs over the walkthrough's sample scope - and is skipped there anyway.
-  // Turning it ON changes nothing else, except that a project a notification
-  // handed to the Work Manager screens goes with either flip, and that the
-  // case selection (work item ids of the old project) goes when the PBI's
-  // project is not the home project, the same rule a PBI pick follows.
+  // Turning it ON changes nothing else, except that the case selection (work
+  // item ids of the old project) goes when the PBI's project is not the home
+  // project, the same rule a PBI pick follows.
   const [seenAllProjects, setSeenAllProjects] = useState(allProjects);
   if (seenAllProjects !== allProjects) {
     setSeenAllProjects(allProjects);
-    setWorkProject(null);
     // (Turning it off sets the home project to the PBI's just below, so the
     // effective project does not move then.)
     if (allProjects && effectiveProject(true, pbi, homeProject) !== homeProject) setCaseSelection(null);
@@ -338,9 +329,6 @@ export default function App() {
   const startTour = useCallback(() => {
     if (before.current) return; // already running
     before.current = { ...ctx.current };
-    // The walkthrough runs on sample data; a project handed over by a
-    // notification is not part of its scope.
-    setWorkProject(null);
     suspendCache(true);
     setTourExpanded(true);
     installTourBackend();
@@ -454,8 +442,6 @@ export default function App() {
       if (e.shiftKey && e.key.toLowerCase() === "m") {
         e.preventDefault();
         setWorkMode((w) => !w);
-        // A project a notification handed over is good for that visit only.
-        setWorkProject(null);
         return;
       }
       // Read at the moment of the press: the rows close up around a
@@ -550,7 +536,6 @@ export default function App() {
     // A pending notification handoff belongs to the organisation it was
     // raised in; carrying it across would open someone else's item id.
     setWorkFocus(null);
-    setWorkProject(null);
   };
   const setProject = (p: string) => {
     setHomeProjectRaw(p);
@@ -574,7 +559,6 @@ export default function App() {
         toast.info(`Home project set to ${p.project}. Change it in Settings.`);
       }
     }
-    setWorkProject(null);
     setPbiRaw(p);
   };
   // Settings' Home project picker. Moving the home project moves the
@@ -582,7 +566,6 @@ export default function App() {
   // (work item ids of the old project) goes, the same rule setPbi follows.
   const changeHomeProject = (p: string) => {
     if (effectiveProject(allProjects, pbi, p) !== project) setCaseSelection(null);
-    setWorkProject(null);
     setHomeProjectRaw(p);
   };
   // Settings opens on Modules when the "Playwright is needed" dialog sent
@@ -594,9 +577,6 @@ export default function App() {
     setStartOnModules(false);
     setWorkMode(false); // any tab click exits Work Manager mode
     setCaseSelection(null); // direct navigation returns Edit to PBI mode
-    // A project a notification handed to the Work Manager is good for that
-    // visit; leaving by any tab (or the Settings gear) ends it.
-    setWorkProject(null);
   };
   // Auto Run's Export to Playwright is a shortcut to the Playwright tab,
   // which holds the Export dialog (lib/playwrightExport).
@@ -623,7 +603,6 @@ export default function App() {
         setOrgRaw(r.org);
         setHomeProjectRaw(r.project);
         setCaseSelection(null);
-        setWorkProject(null);
       }
       if (pbi?.id !== r.pbi.id) {
         if (effectiveProject(true, r.pbi, homeProject) !== project) setCaseSelection(null);
@@ -1106,21 +1085,30 @@ export default function App() {
   useEffect(() => {
     if (tourOpen) return;
     if (!signedIn || !org || !bridgeProject) return;
-    // The home project while the projects show together, so the watch does
-    // not restart with every PBI picked (a later phase widens it).
-    commands.watchAssignedWork(org, bridgeProject).catch(() => {});
-  }, [signedIn, org, bridgeProject, tourOpen]);
+    // Together, one watch over every project seeded from the home project,
+    // so it does not restart with every PBI picked; apart, the picked project.
+    (allProjects
+      ? commands.watchAssignedWorkAll(org, bridgeProject)
+      : commands.watchAssignedWork(org, bridgeProject)
+    ).catch(() => {});
+  }, [signedIn, org, bridgeProject, allProjects, tourOpen]);
 
   useEffect(() => {
     const un = events.workAssigned.listen((e) => {
       const items = e.payload.items;
       if (items.length === 0) return;
+      // Into the bell, where it stays until dismissed. Each item names its
+      // own project; the home or picked one only fills in for one that names
+      // none. The bell skips what it has raised before, which is what happens
+      // when the all-projects switch is flipped and the other scope reports
+      // an item again: only what it took in is announced.
+      const added = new Set(noteAssigned(org, bridgeProject, items).map((n) => n.id));
+      const news = items.filter((i) => added.has(`assigned:${i.id}`));
+      if (news.length === 0) return;
       // A toast is gone in seconds - the Board badge is what remains
       // until the user actually looks at the board.
-      addWorkAlerts(items.length);
-      // And into the bell, where it stays until dismissed.
-      noteAssigned(org, bridgeProject, items);
-      const { title, body } = summarize(items);
+      addWorkAlerts(news.length);
+      const { title, body } = summarize(news);
       announce(title, body);
     });
     return () => {
@@ -1317,10 +1305,7 @@ export default function App() {
           org={org}
           allProjects={allProjects}
           onSwitchProject={setProject}
-          onToggleWork={() => {
-            setWorkMode((w) => !w);
-            setWorkProject(null);
-          }}
+          onToggleWork={() => setWorkMode((w) => !w)}
         />
       </Suspense>
 
@@ -1370,7 +1355,6 @@ export default function App() {
                 // drawer later, on a screen the user navigated to on
                 // their own and was not expecting it to react to.
                 setWorkFocus(null);
-                setWorkProject(null);
               }}
               items={WORK_ITEMS}
               badges={{ board: workAlerts }}
@@ -1403,7 +1387,6 @@ export default function App() {
                 // Manager (or entering it by hand) drops a stale focus
                 // rather than letting it surface on whatever is next.
                 setWorkFocus(null);
-                setWorkProject(null);
               }}
               onOpenSettings={toggleSettings}
               settingsOpen={section === "settings" && !workMode}
@@ -1421,9 +1404,10 @@ export default function App() {
                 // selection, not workFocus, so setting the focus after it
                 // survives). Shown together there is nothing to switch and
                 // the home project is not the notification's to overwrite:
-                // the Work Manager screens are handed the project instead.
-                if (allProjects) setWorkProject(target.project !== project ? target.project : null);
-                else if (target.project !== project) setProject(target.project);
+                // the focus carries the project, and the board and the Pull
+                // Requests panel, which read every project, open the item or
+                // pull request in it.
+                if (!allProjects && target.project !== project) setProject(target.project);
                 setWorkFocus(target);
                 setWorkSection(target.kind === "pr" ? "prs" : "board");
                 setWorkMode(true);
@@ -1580,7 +1564,7 @@ export default function App() {
                           screen decides). */}
                       <CreateWorkItem
                         org={org}
-                        project={workProject ?? (allProjects ? homeProject : project)}
+                        project={allProjects ? homeProject : project}
                         allProjects={allProjects}
                       />
                     </div>
@@ -1589,9 +1573,13 @@ export default function App() {
                   <>
                     <h1 className="mb-4 text-lg font-semibold">Pull Requests</h1>
                     <div className="min-h-0 flex-1 overflow-y-auto">
+                      {/* Together the panel lists every project and the
+                          home project only fills in for what names none; a
+                          notification names its project in the focus. */}
                       <PrPanel
                         org={org}
-                        project={workProject ?? project}
+                        project={allProjects ? homeProject : project}
+                        allProjects={allProjects}
                         focus={workFocus?.kind === "pr" ? workFocus : null}
                         onFocusHandled={() => setWorkFocus(null)}
                       />

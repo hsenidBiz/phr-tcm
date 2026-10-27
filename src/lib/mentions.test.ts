@@ -7,6 +7,7 @@ import {
   excerpt,
   forgetMentionBaselines,
   noteMentions,
+  noteMentionsAcross,
   prMentionId,
   prMentions,
   prNotification,
@@ -51,6 +52,7 @@ const wiMention: Mention = {
   author: "Sam",
   excerpt: "@Avin can you check this?",
   created_date: "2026-09-25T08:00:00Z",
+  project: "Web",
 };
 
 function thread(id: number, comments: Array<{ id: number; author: string; author_id: string; content: string }>): PrThread {
@@ -78,6 +80,17 @@ test("a work-item mention reads who, where, and opens the item", () => {
     href: "https://dev.azure.com/acme/Web/_workitems/edit/41",
     target: { kind: "work-item", id: 41, project: "Web" },
   });
+});
+
+test("a mention from another project targets that project", () => {
+  // Across projects the mention names its own project; the one passed in is
+  // only the fallback for a mention that names none.
+  const n = workItemNotification("acme", "Web", { ...wiMention, project: "Payroll" });
+  expect(n.href).toBe("https://dev.azure.com/acme/Payroll/_workitems/edit/41");
+  expect(n.target).toEqual({ kind: "work-item", id: 41, project: "Payroll" });
+
+  const fallback = workItemNotification("acme", "Web", { ...wiMention, project: "" });
+  expect(fallback.target).toEqual({ kind: "work-item", id: 41, project: "Web" });
 });
 
 test("a PR mention reads who, which PR, and opens the PR", () => {
@@ -213,6 +226,87 @@ test("forgetMentionBaselines clears every organisation's baseline, so the next c
   const later = NOW + 3_600_000;
   expect(noteMentions("acme", [found("mention:wi:9:1", "2000-01-01T00:00:00Z")], later)).toEqual([]);
   expect(localStorage.getItem("tcm-v2-mentions-baseline:acme")).toBe(String(later));
+});
+
+/// Phase 4: the scan across projects. Mentions in projects other than home
+/// have no known history, so the first scan learns them (as an assignment
+/// does) and only later scans raise what is new. Home keeps announcing.
+const inProject = (id: string, project: string, created: string): FoundMention => ({
+  notification: { id, kind: "mention", title: id, body: "", target: { kind: "work-item", id: 1, project } },
+  created,
+});
+
+test("the first scan across projects learns other projects' mentions silently, and later scans raise new ones", () => {
+  noteMentions("acme", [], NOW - 3 * 24 * 3_600_000); // the organisation was checked before
+  const recent = new Date(NOW - 3_600_000).toISOString();
+  const first = noteMentionsAcross(
+    "acme",
+    "Web",
+    [
+      inProject("mention:wi:1:1", "Web", recent),
+      inProject("mention:wi:2:1", "Payroll", recent),
+      inProject("mention:wi:3:1", "payroll", recent),
+    ],
+    NOW,
+  );
+  // Home's news is raised as usual; the others are learned, not raised.
+  expect(first.map((n) => n.id)).toEqual(["mention:wi:1:1"]);
+  expect(listed()).toEqual(["mention:wi:1:1"]);
+
+  // The next scan: the learned ones stay quiet, a new one in any project is raised.
+  const later = NOW + 300_000;
+  const second = noteMentionsAcross(
+    "acme",
+    "Web",
+    [
+      inProject("mention:wi:2:1", "Payroll", recent),
+      inProject("mention:wi:4:1", "Payroll", new Date(later - 60_000).toISOString()),
+    ],
+    later,
+  );
+  expect(second.map((n) => n.id)).toEqual(["mention:wi:4:1"]);
+});
+
+test("the first scan across projects learns even when it finds nothing outside home, and a mention with no project counts as home", () => {
+  noteMentions("acme", [], NOW - 3 * 24 * 3_600_000);
+  const recent = new Date(NOW - 3_600_000).toISOString();
+  const noProject = found("mention:wi:5:1", recent);
+  expect(noteMentionsAcross("acme", "Web", [noProject], NOW).map((n) => n.id)).toEqual(["mention:wi:5:1"]);
+  // The learning is over: a mention in another project is now news.
+  const later = NOW + 300_000;
+  expect(
+    noteMentionsAcross("acme", "Web", [inProject("mention:wi:6:1", "Payroll", new Date(later - 1000).toISOString())], later).map(
+      (n) => n.id,
+    ),
+  ).toEqual(["mention:wi:6:1"]);
+});
+
+test("each organisation learns on its own first scan across projects", () => {
+  const recent = new Date(NOW - 3_600_000).toISOString();
+  noteMentionsAcross("acme", "Web", [], NOW - 3 * 24 * 3_600_000);
+  expect(noteMentionsAcross("globex", "Web", [inProject("mention:wi:7:1", "Payroll", recent)], NOW)).toEqual([]);
+});
+
+test("a running tour learns nothing across projects either", () => {
+  setTourRunning(true);
+  const recent = new Date(NOW - 3_600_000).toISOString();
+  expect(noteMentionsAcross("acme", "Web", [inProject("mention:wi:8:1", "Payroll", recent)], NOW)).toEqual([]);
+  setTourRunning(false);
+  noteMentions("acme", [], NOW - 3 * 24 * 3_600_000);
+  // The tour left no "learned" mark: the real first scan still learns.
+  expect(noteMentionsAcross("acme", "Web", [inProject("mention:wi:8:1", "Payroll", recent)], NOW)).toEqual([]);
+  expect(listed()).toEqual([]);
+});
+
+test("the account wipe also forgets that the scan across projects has learned", () => {
+  const recent = new Date(NOW - 3_600_000).toISOString();
+  noteMentions("acme", [], NOW - 3 * 24 * 3_600_000);
+  noteMentionsAcross("acme", "Web", [], NOW);
+  forgetMentionBaselines();
+  forgetAllNotifications();
+  noteMentions("acme", [], NOW - 3 * 24 * 3_600_000);
+  // A different account's first scan across projects learns again.
+  expect(noteMentionsAcross("acme", "Web", [inProject("mention:wi:9:1", "Payroll", recent)], NOW)).toEqual([]);
 });
 
 const added = (n: number): AppNotification[] =>

@@ -32,6 +32,9 @@ export const EXCERPT_CHARS = 140;
 export const FIRST_RUN_WINDOW_MS = 24 * 60 * 60_000;
 
 const baselineKey = (org: string) => `tcm-v2-mentions-baseline:${org}`;
+/** Set once the scan across projects has run for an organisation (see
+ * `noteMentionsAcross`). */
+const learnedAcrossKey = (org: string) => `tcm-v2-mentions-baseline-all:${org}`;
 const enc = encodeURIComponent;
 
 /** Wipe every organisation's first-run baseline, alongside
@@ -41,14 +44,15 @@ const enc = encodeURIComponent;
  * previous account's mentions). */
 export function forgetMentionBaselines(): void {
   // From the key helper itself, so a rename cannot slip past the wipe.
-  const prefix = baselineKey("");
+  const prefixes = [baselineKey(""), learnedAcrossKey("")];
   try {
     for (const k of Object.keys(localStorage)) {
-      if (k.startsWith(prefix)) localStorage.removeItem(k);
+      if (prefixes.some((prefix) => k.startsWith(prefix))) localStorage.removeItem(k);
     }
   } catch {
     // storage unavailable - nothing was stored to leak
   }
+  learnedInSession.clear();
 }
 
 /** Whitespace collapsed, at most 140 characters, the last an ellipsis when
@@ -72,14 +76,17 @@ export function prMentionId(m: { repo: string; prId: number; threadId: number; c
   return `mention:pr:${m.repo}:${m.prId}:${m.threadId}:${m.commentId}`;
 }
 
+/** A mention names the project of its work item (the check across projects
+ * returns several); `project` is the fallback for one that names none. */
 export function workItemNotification(org: string, project: string, m: Mention): NewNotification {
+  const where = m.project || project;
   return {
     id: workItemMentionId(m),
     kind: "mention",
     title: `${m.author || "Someone"} mentioned you on ${m.item_type} #${m.item_id}`,
     body: m.excerpt,
-    href: `https://dev.azure.com/${enc(org)}/${enc(project)}/_workitems/edit/${m.item_id}`,
-    target: { kind: "work-item", id: m.item_id, project },
+    href: `https://dev.azure.com/${enc(org)}/${enc(where)}/_workitems/edit/${m.item_id}`,
+    target: { kind: "work-item", id: m.item_id, project: where },
   };
 }
 
@@ -162,6 +169,53 @@ export function noteMentions(org: string, found: FoundMention[], now = Date.now(
   }
   markSeen(org, old);
   return raise(org, fresh);
+}
+
+/** Organisations whose scan across projects has run, when storage cannot
+ * say so: the learning then still happens once per session. */
+const learnedInSession = new Set<string>();
+
+function learnedAcross(org: string): boolean {
+  try {
+    return localStorage.getItem(learnedAcrossKey(org)) !== null;
+  } catch {
+    return learnedInSession.has(org);
+  }
+}
+
+function markLearnedAcross(org: string): void {
+  learnedInSession.add(org);
+  try {
+    localStorage.setItem(learnedAcrossKey(org), "1");
+  } catch {
+    // session-only
+  }
+}
+
+/** `noteMentions` for the check across every project. Until it has run once
+ * for this organisation, a mention in a project other than `home` has no
+ * known history (before, only the home project was read), so the first scan
+ * records those as seen and raises nothing for them - the rule a new
+ * assignment follows. Home's mentions, and every later scan, are raised as
+ * usual. A mention naming no project counts as home's. */
+export function noteMentionsAcross(
+  org: string,
+  home: string,
+  found: FoundMention[],
+  now = Date.now(),
+): AppNotification[] {
+  if (!org || tourRunningSnapshot()) return [];
+  if (learnedAcross(org)) return noteMentions(org, found, now);
+  const inHome = (f: FoundMention) => {
+    const where = f.notification.target?.project;
+    return !where || where.toLowerCase() === home.toLowerCase();
+  };
+  markSeen(
+    org,
+    found.filter((f) => !inHome(f)).map((f) => f.notification.id),
+  );
+  markLearnedAcross(org);
+  return noteMentions(org, found.filter(inHome), now);
 }
 
 /** The moment: one announcement per check, however many mentions arrived,

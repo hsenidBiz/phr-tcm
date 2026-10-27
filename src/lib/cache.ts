@@ -76,6 +76,7 @@ export const cacheKeys = {
   points: (org: string, project: string, planId: number | undefined, suiteId: number | undefined) =>
     `points:${org}/${project}/${planId}/${suiteId}`,
   boardPrs: (org: string, project: string) => `board-prs:${org}/${project}`,
+  boardPrsAll: (org: string) => `board-prs-all:${org}`,
   areasAll: (org: string) => `areas-all:${org}`,
   prPipeline: (org: string, project: string, prId: number, mergeCommit: string) =>
     `pipe:${org}/${project}:${prId}:${mergeCommit}`,

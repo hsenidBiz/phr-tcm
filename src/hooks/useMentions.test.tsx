@@ -27,22 +27,23 @@ afterEach(() => {
   hasFocusSpy.mockRestore();
 });
 
-function Probe() {
-  useMentions("acme", "Web");
+function Probe({ allProjects }: { allProjects: boolean }) {
+  useMentions("acme", "Web", allProjects);
   return null;
 }
 
-function mount() {
+function mount(allProjects = false) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(
     <QueryClientProvider client={qc}>
-      <Probe />
+      <Probe allProjects={allProjects} />
     </QueryClientProvider>,
   );
+  return qc;
 }
 
 const stored = () =>
-  JSON.parse(localStorage.getItem("tcm-v2-notifications:acme") ?? "[]") as Array<{ id: string; title: string; kind: string }>;
+  JSON.parse(localStorage.getItem("tcm-v2-notifications:acme") ?? "[]") as Array<{ id: string; title: string; kind: string; href?: string; target?: unknown }>;
 
 test("a work-item mention reaches the bell and a toast, asked for this org and project", async () => {
   const asked: unknown[] = [];
@@ -72,6 +73,59 @@ test("a work-item mention reaches the bell and a toast, asked for this org and p
       duration: 10_000,
     }),
   );
+});
+
+test("together, one check covers every project and each mention opens in its own", async () => {
+  // The first check across projects has already run (see the next test).
+  localStorage.setItem("tcm-v2-mentions-baseline-all:acme", "1");
+  const asked: Array<{ cmd: string; args: unknown }> = [];
+  mockIPC((cmd, args) => {
+    if (cmd === "recent_mentions" || cmd === "recent_mentions_all") asked.push({ cmd, args });
+    if (cmd === "recent_mentions_all") {
+      return [
+        {
+          source: "work-item", item_id: 41, item_type: "Product Backlog Item", item_title: "Leave requests",
+          comment_id: 7, author: "Sam", excerpt: "@Avin can you check this?",
+          created_date: new Date(Date.now() - 3_600_000).toISOString(), project: "Payroll",
+        },
+      ];
+    }
+  });
+  mount(true);
+  await waitFor(() => expect(stored().map((n) => n.id)).toEqual(["mention:wi:41:7"]));
+  // One organization-wide call, no project in it, and nothing asks one project.
+  expect(asked).toEqual([{ cmd: "recent_mentions_all", args: { organization: "acme" } }]);
+  expect(stored()[0]).toMatchObject({
+    href: "https://dev.azure.com/acme/Payroll/_workitems/edit/41",
+    target: { kind: "work-item", id: 41, project: "Payroll" },
+  });
+});
+
+test("together, the first check learns other projects' mentions silently and later checks raise new ones", async () => {
+  const recent = () => new Date(Date.now() - 3_600_000).toISOString();
+  const mention = (comment: number, project: string) => ({
+    source: "work-item", item_id: 41, item_type: "Product Backlog Item", item_title: "Leave requests",
+    comment_id: comment, author: "Sam", excerpt: "@Avin can you check this?", created_date: recent(), project,
+  });
+  let answer = [mention(7, "Payroll"), mention(8, "Web")];
+  let asked = 0;
+  mockIPC((cmd) => {
+    if (cmd === "recent_mentions_all") {
+      asked += 1;
+      return answer;
+    }
+  });
+  const qc = mount(true);
+  // Web is the home project: its mention is news. Payroll's is learned.
+  await waitFor(() => expect(stored().map((n) => n.id)).toEqual(["mention:wi:41:8"]));
+  expect(toast.info).toHaveBeenCalledTimes(1);
+
+  // The next check: Payroll's learned mention stays quiet, a new one is raised.
+  answer = [mention(7, "Payroll"), mention(9, "Payroll")];
+  await qc.invalidateQueries({ queryKey: ["recent-mentions-all", "acme"] });
+  await waitFor(() => expect(stored().map((n) => n.id)).toEqual(["mention:wi:41:9", "mention:wi:41:8"]));
+  expect(asked).toBe(2);
+  expect(toast.info).toHaveBeenCalledTimes(2);
 });
 
 test("a failed check is logged, raises nothing and shows no toast", async () => {

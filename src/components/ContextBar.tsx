@@ -130,13 +130,14 @@ export default function ContextBar({
   const showProjectPicker = !allProjects && (projects.data?.length ?? 0) !== 1;
 
   // PRs with conflicts or comments still to resolve - the number on the
-  // Work Manager pill. Shares the PR panel's cache keys.
-  // Both stay on one project (the home project while the projects show
-  // together, so they do not jump with every PBI picked).
+  // Work Manager pill. Shares the PR panel's cache keys. Together it reads
+  // every project's pull requests, and the mention check below covers every
+  // project too; the home project only fills in for what names none (so
+  // nothing here jumps with every PBI picked).
   const watchedProject = allProjects ? homeProject : project;
-  const prAttention = usePrAttention(org, watchedProject);
+  const prAttention = usePrAttention(org, watchedProject, allProjects);
   // Work-item @mentions of you, into the bell beside it.
-  useMentions(org, watchedProject);
+  useMentions(org, watchedProject, allProjects);
 
   return (
     // flex-wrap: in a narrow window the right-side group drops to a second

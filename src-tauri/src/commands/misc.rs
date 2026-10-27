@@ -162,15 +162,44 @@ pub fn watch_assigned_work(
     organization: String,
     project: String,
 ) -> Result<(), String> {
-    use std::sync::Mutex;
+    arm_assigned_watch(app, WatchScope::Project { org: organization, project });
+    Ok(())
+}
+
+/// The same watch across every project: one baseline for the organization,
+/// seeded from the home project's (see `assigned_watch::check_once_all`).
+/// Shares the one loop with `watch_assigned_work`, so whichever was called
+/// last decides what the next round checks.
+#[tauri::command]
+#[specta::specta]
+pub fn watch_assigned_work_all(
+    app: tauri::AppHandle,
+    organization: String,
+    home_project: String,
+) -> Result<(), String> {
+    arm_assigned_watch(app, WatchScope::All { org: organization, home: home_project });
+    Ok(())
+}
+
+/// What the one assigned-work loop checks on its next round.
+#[derive(Clone)]
+enum WatchScope {
+    Project { org: String, project: String },
+    All { org: String, home: String },
+}
+
+static ASSIGNED_SCOPE: std::sync::Mutex<Option<WatchScope>> = std::sync::Mutex::new(None);
+static ASSIGNED_STARTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Set the scope the loop polls, and start the loop if this is the first
+/// call. Later calls only change the scope, so switching project or turning
+/// the all-projects switch never spawns a second task.
+fn arm_assigned_watch(app: tauri::AppHandle, scope: WatchScope) {
     use tauri_specta::Event;
 
-    static SCOPE: Mutex<Option<(String, String)>> = Mutex::new(None);
-    static STARTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-
-    *SCOPE.lock().unwrap() = Some((organization, project));
-    if STARTED.swap(true, std::sync::atomic::Ordering::SeqCst) {
-        return Ok(()); // already running against the new scope
+    *ASSIGNED_SCOPE.lock().unwrap() = Some(scope);
+    if ASSIGNED_STARTED.swap(true, std::sync::atomic::Ordering::SeqCst) {
+        return; // already running against the new scope
     }
 
     tauri::async_runtime::spawn(async move {
@@ -179,7 +208,7 @@ pub fn watch_assigned_work(
                 crate::assigned_watch::POLL_SECS,
             ))
             .await;
-            let Some((org, project)) = SCOPE.lock().unwrap().clone() else {
+            let Some(scope) = ASSIGNED_SCOPE.lock().unwrap().clone() else {
                 continue;
             };
             // Not signed in yet, or the token expired - skip this round
@@ -188,7 +217,15 @@ pub fn watch_assigned_work(
                 continue;
             };
             let client = crate::ado::AdoClient::new(token);
-            match crate::assigned_watch::check_once(&client, &org, &project).await {
+            let checked = match &scope {
+                WatchScope::Project { org, project } => {
+                    crate::assigned_watch::check_once(&client, org, project).await
+                }
+                WatchScope::All { org, home } => {
+                    crate::assigned_watch::check_once_all(&client, org, home).await
+                }
+            };
+            match checked {
                 Ok(items) if !items.is_empty() => {
                     crate::applog::info(format!(
                         "{} work item(s) newly assigned",
@@ -201,7 +238,6 @@ pub fn watch_assigned_work(
             }
         }
     });
-    Ok(())
 }
 
 /// Frontend UI breadcrumbs - navigation, button clicks - into the same

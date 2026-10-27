@@ -141,7 +141,7 @@ test("notePrComments raises once per PR-and-count, and again when the count grow
 });
 
 test("noteAssigned raises one item per work item, linked to it", () => {
-  noteAssigned(ORG, "Web", [{ id: 501, title: "Wire the login flow", work_item_type: "Task", state: "New" }]);
+  noteAssigned(ORG, "Web", [{ id: 501, title: "Wire the login flow", work_item_type: "Task", state: "New", project: "Web" }]);
   const full = JSON.parse(localStorage.getItem(`tcm-v2-notifications:${ORG}`) ?? "[]") as Array<{
     id: string;
     title: string;
@@ -155,12 +155,43 @@ test("noteAssigned raises one item per work item, linked to it", () => {
   expect(full[0].href).toBe("https://dev.azure.com/acme/Web/_workitems/edit/501");
 });
 
+test("noteAssigned returns only the items the bell took in", () => {
+  const a = { id: 701, title: "A", work_item_type: "Task", state: "New", project: "Web" };
+  const c = { id: 702, title: "C", work_item_type: "Bug", state: "New", project: "Payroll" };
+  expect(noteAssigned(ORG, "Web", [a]).map((n) => n.id)).toEqual(["assigned:701"]);
+  // Reported again, with a new one beside it: the known one is not returned.
+  expect(noteAssigned(ORG, "Web", [a, c]).map((n) => n.id)).toEqual(["assigned:702"]);
+  expect(noteAssigned(ORG, "Web", [c, a])).toEqual([]);
+  // Dismissed is not forgotten either.
+  dismiss(ORG, "assigned:701");
+  expect(noteAssigned(ORG, "Web", [a])).toEqual([]);
+});
+
+test("an assignment from another project targets that project", () => {
+  // Each item carries its own project; the one passed in is only the
+  // fallback for an item that names none.
+  noteAssigned(ORG, "Web", [
+    { id: 601, title: "Fix the payslip", work_item_type: "Bug", state: "New", project: "Payroll" },
+    { id: 602, title: "Tidy the docs", work_item_type: "Task", state: "New", project: "" },
+  ]);
+  const full = JSON.parse(localStorage.getItem(`tcm-v2-notifications:${ORG}`) ?? "[]") as Array<{
+    id: string;
+    href: string;
+    target?: unknown;
+  }>;
+  const byId = Object.fromEntries(full.map((n) => [n.id, n]));
+  expect(byId["assigned:601"].href).toBe("https://dev.azure.com/acme/Payroll/_workitems/edit/601");
+  expect(byId["assigned:601"].target).toEqual({ kind: "work-item", id: 601, project: "Payroll" });
+  expect(byId["assigned:602"].href).toBe("https://dev.azure.com/acme/Web/_workitems/edit/602");
+  expect(byId["assigned:602"].target).toEqual({ kind: "work-item", id: 602, project: "Web" });
+});
+
 /// The href is the browser's way in; the target is the app's own. Both are
 /// stored, so a click can stay inside the app and the browser stays one
 /// click away.
 test("sources carry a structured target beside the browser href", () => {
   noteAssigned(ORG, "Web", [
-    { id: 501, title: "Wire login", work_item_type: "Task", state: "New" },
+    { id: 501, title: "Wire login", work_item_type: "Task", state: "New", project: "Web" },
   ]);
   notePrOverview(ORG, "Web", {
     mine: [pr({ id: 12, repo: "web", has_conflicts: true })],

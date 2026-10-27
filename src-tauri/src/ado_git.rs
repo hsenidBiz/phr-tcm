@@ -11,13 +11,18 @@
 //! file's source. The read-only half is not enforceable by a scan, so it
 //! is a claim in a comment - keep it true by hand.
 
+use crate::ado::fanout::{self, ProjectCoverage};
 use crate::ado::{AdoClient, AdoError};
+use crate::cache::{self, keys};
 use serde::Serialize;
 
 #[derive(Debug, Clone, Serialize, specta::Type)]
 pub struct RepoRef {
     pub id: String,
     pub name: String,
+    /// The project that owns the repository: what Azure DevOps names, or the
+    /// project asked when a per-project answer names none.
+    pub project: String,
 }
 
 #[derive(Debug, Clone, Serialize, specta::Type)]
@@ -33,6 +38,11 @@ pub struct PullRequest {
     pub id: i32,
     pub title: String,
     pub repo: String,
+    /// The project that owns the repository: what Azure DevOps names under
+    /// `repository.project`, or the project asked when the answer names
+    /// none. The detail reads and the thread write of a combined list go
+    /// through it.
+    pub project: String,
     /// Repository GUID. The git APIs accept the name in their URL path, but
     /// the Build API's `repositoryId=` query param demands the id - passing
     /// a name there 400s, which is what broke the pipeline lookup.
@@ -65,6 +75,52 @@ pub struct PrOverview {
     pub awaiting: Vec<PullRequest>,
     /// Active PRs the user created.
     pub mine: Vec<PullRequest>,
+}
+
+/// The same two groups across every project of the organization.
+#[derive(Debug, Clone, Serialize, specta::Type)]
+pub struct PrOverviewAll {
+    pub awaiting: Vec<PullRequest>,
+    pub mine: Vec<PullRequest>,
+    /// How many projects were read, when they were read one by one. An
+    /// organization-wide listing reports `0 of 0` (nothing was left out).
+    pub coverage: ProjectCoverage,
+}
+
+/// A pull request as the board's chips need it: enough to read its work
+/// items and link back to it.
+struct LinkedPr {
+    id: i32,
+    status: String,
+    title: String,
+    repo_id: String,
+    repo_name: String,
+    project: String,
+    /// When it closed (ISO 8601), empty for one still active.
+    closed: String,
+}
+
+impl LinkedPr {
+    fn from_json(v: &serde_json::Value, status: &str, fallback_project: &str) -> Self {
+        let s = |val: &serde_json::Value| val.as_str().unwrap_or_default().to_string();
+        LinkedPr {
+            id: v["pullRequestId"].as_i64().unwrap_or_default() as i32,
+            status: status.to_string(),
+            title: s(&v["title"]),
+            repo_id: s(&v["repository"]["id"]),
+            repo_name: s(&v["repository"]["name"]),
+            project: named_project(&v["repository"]["project"], fallback_project),
+            closed: s(&v["closedDate"]),
+        }
+    }
+}
+
+/// How many completed pull requests the board reads work items for.
+const COMPLETED_PRS_ON_BOARD: usize = 25;
+
+/// The entries of an Azure DevOps list answer.
+fn values_of(data: &serde_json::Value) -> Vec<serde_json::Value> {
+    data["value"].as_array().cloned().unwrap_or_default()
 }
 
 /// A work item linked to a PR, shown as a rich chip in the PR detail the
@@ -131,19 +187,44 @@ pub struct PrLink {
     /// Repository name - the chip label, so "database ●" and "web ✓" read
     /// apart when one item carries PRs in several repos.
     pub repo: String,
+    /// The project the pull request's repository belongs to.
+    pub project: String,
     pub web_url: String,
+}
+
+/// The project a git answer names under `project` (a repository) or
+/// `repository.project` (a pull request), or `fallback` when it names none.
+fn named_project(project: &serde_json::Value, fallback: &str) -> String {
+    match project["name"].as_str() {
+        Some(name) if !name.is_empty() => name.to_string(),
+        _ => fallback.to_string(),
+    }
+}
+
+/// The web link of a pull request: deterministic, so built rather than
+/// asked for. An empty project (an answer that named none, asked for the
+/// whole organization) leaves its segment out.
+fn pr_web_url(base_url: &str, org: &str, project: &str, repo: &str, id: i32) -> String {
+    let repo = urlencoding::encode(repo);
+    if project.is_empty() {
+        format!("{base_url}/{org}/_git/{repo}/pullrequest/{id}")
+    } else {
+        format!("{base_url}/{org}/{project}/_git/{repo}/pullrequest/{id}")
+    }
 }
 
 /// One entry of the repository list, or `None` when it should not be
 /// offered. A disabled repository answers every read with a 404, so it is
-/// dropped here rather than listed and tracked into an error.
-fn parse_repo(r: &serde_json::Value) -> Option<RepoRef> {
+/// dropped here rather than listed and tracked into an error. The project
+/// is the one the entry names, else `fallback_project`.
+fn parse_repo(r: &serde_json::Value, fallback_project: &str) -> Option<RepoRef> {
     if r["isDisabled"].as_bool().unwrap_or(false) {
         return None;
     }
     Some(RepoRef {
         id: r["id"].as_str()?.to_string(),
         name: r["name"].as_str().unwrap_or_default().to_string(),
+        project: named_project(&r["project"], fallback_project),
     })
 }
 
@@ -167,6 +248,7 @@ fn parse_pr(
     let s = |val: &serde_json::Value| val.as_str().unwrap_or_default().to_string();
     let repo = s(&v["repository"]["name"]);
     let repo_id = s(&v["repository"]["id"]);
+    let project = named_project(&v["repository"]["project"], project);
     let id = v["pullRequestId"].as_i64().unwrap_or_default() as i32;
     let reviewers: Vec<PrReviewer> = v["reviewers"]
         .as_array()
@@ -202,14 +284,8 @@ fn parse_pr(
         reviewers,
         // The list responses carry no web link - ADO's PR URLs are fully
         // deterministic, so build it.
-        web_url: format!(
-            "{}/{}/{}/_git/{}/pullrequest/{}",
-            base_url,
-            org,
-            project,
-            urlencoding::encode(&repo),
-            id
-        ),
+        web_url: pr_web_url(base_url, org, &project, &repo, id),
+        project,
         repo,
         id,
     }
@@ -239,10 +315,105 @@ impl AdoClient {
             .cloned()
             .unwrap_or_default()
             .iter()
-            .filter_map(parse_repo)
+            .filter_map(|r| parse_repo(r, project))
             .collect();
         repos.sort_by_key(|r| r.name.to_lowercase());
         Ok(repos)
+    }
+
+    /// Every enabled git repository of the organization, in ONE call (the
+    /// organization-level route lists them across projects), sorted by
+    /// project then name. Read only.
+    pub async fn list_repos_all(&self, org: &str) -> Result<Vec<RepoRef>, AdoError> {
+        let url = format!("{}/{}/_apis/git/repositories?api-version=7.1", self.base_url, org);
+        let data = self.get_json(url).await?;
+        let mut repos: Vec<RepoRef> = data["value"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default()
+            .iter()
+            .filter_map(|r| parse_repo(r, ""))
+            .collect();
+        repos.sort_by_key(|r| (r.project.to_lowercase(), r.name.to_lowercase()));
+        Ok(repos)
+    }
+
+    /// The projects that own at least one enabled repository: the only
+    /// ones a pull request fan-out has anything to ask. Kept for
+    /// `PROJECTS_WITH_REPOS_TTL` (session tier only).
+    async fn projects_with_repos(&self, org: &str) -> Result<Vec<String>, AdoError> {
+        let key = keys::projects_with_repos(&self.base_url, org);
+        if let Some(hit) = cache::session_fresh::<Vec<String>>(&key, keys::PROJECTS_WITH_REPOS_TTL) {
+            return Ok(hit);
+        }
+        let mut projects: Vec<String> = vec![];
+        for repo in self.list_repos_all(org).await? {
+            if !repo.project.is_empty() && !projects.contains(&repo.project) {
+                projects.push(repo.project);
+            }
+        }
+        cache::session_put(&key, projects.clone());
+        Ok(projects)
+    }
+
+    /// The pull requests Azure DevOps lists for `query` (a query string
+    /// without the api-version) across the organization, each with the
+    /// project it was asked of (empty when the whole organization was).
+    ///
+    /// The organization-level list is tried first. An organization that
+    /// refuses it (404, 400 or 405) is asked project by project instead,
+    /// and only the projects that own an enabled repository; the answer is
+    /// remembered for `PR_SCOPE_TTL` so the refusal is not asked again.
+    /// Any other error fails the call. The coverage says how many of those
+    /// projects were read; the organization-level list reads all of them
+    /// in one go and reports `0 of 0`.
+    async fn pull_requests_across(
+        &self,
+        org: &str,
+        query: &str,
+    ) -> Result<(Vec<(String, serde_json::Value)>, ProjectCoverage), AdoError> {
+        let scope_key = keys::pr_scope(&self.base_url, org);
+        let remembered = cache::session_fresh::<String>(&scope_key, keys::PR_SCOPE_TTL);
+        if remembered.as_deref() != Some("projects") {
+            let url = format!(
+                "{}/{}/_apis/git/pullrequests?{}&api-version=7.1",
+                self.base_url, org, query
+            );
+            match self.get_json(url).await {
+                Ok(data) => {
+                    cache::session_put(&scope_key, "org".to_string());
+                    let all = values_of(&data).into_iter().map(|v| (String::new(), v)).collect();
+                    return Ok((all, ProjectCoverage { shown: 0, total: 0 }));
+                }
+                Err(AdoError::NotFound) => self.pr_scope_refused(&scope_key, 404),
+                Err(AdoError::Http { status: status @ (400 | 405), .. }) => {
+                    self.pr_scope_refused(&scope_key, status)
+                }
+                Err(e) => return Err(e),
+            }
+        }
+        let (projects, total) = fanout::capped(self.projects_with_repos(org).await?);
+        let results = fanout::per_project(&projects, |project| {
+            let url = format!(
+                "{}/{}/{}/_apis/git/pullrequests?{}&api-version=7.1",
+                self.base_url, org, project, query
+            );
+            async move { self.get_json(url).await.map(|data| values_of(&data)) }
+        })
+        .await;
+        let (read, coverage) = fanout::gather(results, total)?;
+        let all = read
+            .into_iter()
+            .flat_map(|(project, values)| values.into_iter().map(move |v| (project.clone(), v)))
+            .collect();
+        Ok((all, coverage))
+    }
+
+    fn pr_scope_refused(&self, scope_key: &str, status: u16) {
+        crate::applog::info(format!(
+            "pull requests: organization-wide listing refused ({status}); listing per project instead"
+        ));
+        cache::session_put(scope_key, "projects".to_string());
     }
 
 
@@ -291,7 +462,7 @@ impl AdoClient {
     /// per board card. Best-effort per PR; failures just mean no chip.
     /// Read only.
     pub async fn board_pr_links(&self, org: &str, project: &str) -> Result<Vec<PrLink>, AdoError> {
-        let mut prs: Vec<(i32, String, String, String, String)> = vec![]; // id, status, title, repo_id, repo_name
+        let mut prs: Vec<LinkedPr> = vec![];
         for (status, extra) in [("active", ""), ("completed", "&$top=25")] {
             let url = format!(
                 "{}/{}/{}/_apis/git/pullrequests?searchCriteria.status={}{}&api-version=7.1",
@@ -303,51 +474,107 @@ impl AdoClient {
                 Err(e) if status == "active" => return Err(e),
                 Err(_) => continue,
             };
-            for v in data["value"].as_array().cloned().unwrap_or_default() {
-                prs.push((
-                    v["pullRequestId"].as_i64().unwrap_or_default() as i32,
-                    status.to_string(),
-                    v["title"].as_str().unwrap_or_default().to_string(),
-                    v["repository"]["id"].as_str().unwrap_or_default().to_string(),
-                    v["repository"]["name"].as_str().unwrap_or_default().to_string(),
-                ));
+            for v in values_of(&data) {
+                prs.push(LinkedPr::from_json(&v, status, project));
             }
         }
+        Ok(self.links_of(org, prs, Some(project)).await)
+    }
 
+    /// The panel's two groups across every project of the organization.
+    /// See `pull_requests_across` for how the projects are reached and what
+    /// `coverage` says. Read only.
+    pub async fn pr_overview_all(&self, org: &str) -> Result<PrOverviewAll, AdoError> {
+        let me = self.my_identity_id(org).await?;
+        let (reviewing, _) = self
+            .pull_requests_across(org, &format!("searchCriteria.status=active&searchCriteria.reviewerId={me}"))
+            .await?;
+        let (created, coverage) = self
+            .pull_requests_across(org, &format!("searchCriteria.status=active&searchCriteria.creatorId={me}"))
+            .await?;
+        let parse = |(project, v): (String, serde_json::Value)| {
+            parse_pr(&v, &self.base_url, org, &project, &me)
+        };
+        let awaiting = reviewing.into_iter().map(parse).filter(|pr| pr.my_vote == 0).collect();
+        let mine = created.into_iter().map(parse).collect();
+        Ok(PrOverviewAll { awaiting, mine, coverage })
+    }
+
+    /// `board_pr_links` across every project of the organization: the
+    /// active pull requests and the 25 most recent completed ones, then each
+    /// one's work items through the pull request's own project. The
+    /// completed list stays best-effort. When the organization is asked
+    /// project by project, each project answers with its own 25, so the
+    /// merged list is cut back to the 25 most recently closed before any
+    /// work item is read. Read only.
+    pub async fn board_pr_links_all(&self, org: &str) -> Result<Vec<PrLink>, AdoError> {
+        let mut prs: Vec<LinkedPr> = vec![];
+        for (status, query) in [
+            ("active", "searchCriteria.status=active"),
+            ("completed", "searchCriteria.status=completed&$top=25"),
+        ] {
+            // A project the person cannot read is logged by the fan-out
+            // itself (`fanout::gather`), so the chips leave it out with a
+            // trace, not silently.
+            let listed = match self.pull_requests_across(org, query).await {
+                Ok((listed, _)) => listed,
+                Err(e) if status == "active" => return Err(e),
+                Err(_) => continue,
+            };
+            let mut batch: Vec<LinkedPr> = listed
+                .into_iter()
+                .map(|(project, v)| LinkedPr::from_json(&v, status, &project))
+                .collect();
+            if status == "completed" {
+                // Newest first; the sort is stable, so equal dates keep the
+                // order the projects were read in.
+                batch.sort_by(|a, b| b.closed.cmp(&a.closed));
+                batch.truncate(COMPLETED_PRS_ON_BOARD);
+            }
+            prs.extend(batch);
+        }
+        Ok(self.links_of(org, prs, None).await)
+    }
+
+    /// Each pull request's linked work items, as board chips. A pull
+    /// request whose work items cannot be read - a disabled repository
+    /// among them - just has no chips. The work items are read through
+    /// `read_project` when one project was asked (the request a project's
+    /// board has always made), else through the pull request's own.
+    async fn links_of(&self, org: &str, prs: Vec<LinkedPr>, read_project: Option<&str>) -> Vec<PrLink> {
         let mut links = vec![];
-        for (pr_id, status, title, repo_id, repo_name) in prs {
+        for pr in prs {
+            let read_in = read_project.unwrap_or(&pr.project);
+            let scope = if read_in.is_empty() {
+                org.to_string()
+            } else {
+                format!("{org}/{read_in}")
+            };
             let url = format!(
-                "{}/{}/{}/_apis/git/repositories/{}/pullRequests/{}/workitems?api-version=7.1",
+                "{}/{}/_apis/git/repositories/{}/pullRequests/{}/workitems?api-version=7.1",
                 self.base_url,
-                org,
-                project,
-                urlencoding::encode(&repo_id),
-                pr_id
+                scope,
+                urlencoding::encode(&pr.repo_id),
+                pr.id
             );
             let Ok(data) = self.get_json(url).await else { continue };
-            for r in data["value"].as_array().cloned().unwrap_or_default() {
+            for r in values_of(&data) {
                 // ResourceRef ids arrive as strings.
                 let Some(wi) = r["id"].as_str().and_then(|s| s.parse::<i32>().ok()) else {
                     continue;
                 };
                 links.push(PrLink {
                     work_item_id: wi,
-                    pr_id,
-                    status: status.clone(),
-                    title: title.clone(),
-                    repo: repo_name.clone(),
-                    web_url: format!(
-                        "{}/{}/{}/_git/{}/pullrequest/{}",
-                        self.base_url,
-                        org,
-                        project,
-                        urlencoding::encode(&repo_name),
-                        pr_id
-                    ),
+                    pr_id: pr.id,
+                    status: pr.status.clone(),
+                    title: pr.title.clone(),
+                    repo: pr.repo_name.clone(),
+                    project: pr.project.clone(),
+                    web_url: pr_web_url(&self.base_url, org, &pr.project, &pr.repo_name, pr.id),
                 });
             }
         }
-        Ok(links)
+        links
     }
 
     /// The work items linked to one PR, with the fields DevOps shows on its
