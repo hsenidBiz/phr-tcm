@@ -65,7 +65,7 @@ export const suiteManagement: Screen = {
       group: "plans",
       locate: { role: "button", name: "Show all plans" },
       name: "Show all plans",
-      does: "Shows every plan in the project. **Show only this Product Backlog Item's plan** goes back.",
+      does: "Shows every plan of the Product Backlog Item's project. **Show only this Product Backlog Item's plan** goes back.",
     },
     {
       id: "new-suite",
@@ -271,9 +271,10 @@ export const suiteManagement: Screen = {
     },
   ],
   tips: [
+    "With no Product Backlog Item chosen, the page lists the plans of every project of the organization together, unless Treat all projects as one is switched off in Settings. When plans come from more than one project, each project's plans sit under its name, and everything you do to a plan (opening its suites, putting cases in order, copying cases, making a suite) is done in that plan's own project. A project you cannot read is left out, and a note says how many projects are shown. Cases can only be copied into suites of the plan they came from. Choosing a Product Backlog Item shows its plan, as before.",
     "Nothing moves in Azure DevOps until you press **Apply order**. When you scroll down a long suite, its order buttons float at the bottom of the window, and they stay there while the order has unsaved changes.",
     "**Apply order from files** asks for one or more draft JSON files and lists them in a window. Put the files in the order their blocks should take (drag them, or use the arrows); each shows how many of the suite's cases it places. **Add more files** adds another; **Apply** arranges the list, and **Apply order** then saves it. Cases in no file stay after the blocks, in their current order.",
-    "**Manage** in Search Suites opens this screen on the suite you picked, with **Show this Product Backlog Item's plan** or **Show all plans** to go back to the usual view.",
+    "**Manage** in Search Suites opens this screen on the suite you picked, in its plan's own project, with **Show this Product Backlog Item's plan** or **Show all plans** to go back to the usual view.",
     "When the selected cases sit in a plan that is no longer shown, a line says how many are out of view, with **Clear selection**.",
     "The order saved here is the suite's own order in Azure DevOps, which is what **Spec order** means in Run Tests.",
   ],

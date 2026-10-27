@@ -265,8 +265,12 @@ export default function App() {
   } | null>(null);
   // A suite handed over from Search Suites' Manage option. Cleared once
   // Suite Management has it, so going back to the tab later shows the
-  // ordinary PBI-driven view rather than reopening an old click.
-  const [manageFocus, setManageFocus] = useState<{ planId: number; suiteId: number } | null>(null);
+  // ordinary PBI-driven view rather than reopening an old click. It carries
+  // its plan's project: Suite Management opens and writes the plan there,
+  // which with the projects together is not the effective project.
+  const [manageFocus, setManageFocus] = useState<{ planId: number; suiteId: number; project: string } | null>(
+    null,
+  );
   // The same one-shot handoff for the bell: a notification names a work
   // item or a pull request, and the Work Manager screen that can show it
   // clears this the moment it has.
@@ -1648,8 +1652,8 @@ export default function App() {
                       setSection("edit");
                       setWorkMode(false);
                     }}
-                    onManageSuite={(planId, suiteId) => {
-                      setManageFocus({ planId, suiteId });
+                    onManageSuite={(planId, suiteId, planProject) => {
+                      setManageFocus({ planId, suiteId, project: planProject || project });
                       goToSection("manage");
                     }}
                     onSetCurrentPbi={(p) =>
@@ -1677,6 +1681,7 @@ export default function App() {
                   <ManageCases
                     org={org}
                     project={project}
+                    allProjects={allProjects}
                     pbi={pbi}
                     focus={manageFocus}
                     onFocusHandled={() => setManageFocus(null)}

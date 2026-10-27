@@ -15,7 +15,7 @@ function renderSuites(
   // Accepts a caller-supplied QueryClient so a test can pre-seed the cache
   // (qc.setQueryData) before the component ever mounts.
   qc: QueryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } }),
-  onManageSuite?: (planId: number, suiteId: number) => void,
+  onManageSuite?: (planId: number, suiteId: number, project: string) => void,
   onSetCurrentPbi?: (p: { id: number; title: string; project: string }) => void,
 ) {
   return render(
@@ -813,4 +813,34 @@ test("switched off Search Suites lists the picked project as before", async () =
   expect(asked.filter((a) => a.cmd === "list_plans_with_suites").map((a) => a.args.project)).toEqual(["Web"]);
   expect(asked.some((a) => a.cmd === "list_projects")).toBe(false);
   expect(screen.queryByRole("heading", { name: "Web" })).not.toBeInTheDocument();
+});
+
+test("Manage hands a suite to Suite Management with its plan's project", async () => {
+  twoProjects();
+  const managed: unknown[] = [];
+  renderCombined({ onManageSuite: (planId, suiteId, project) => managed.push([planId, suiteId, project]) });
+  await screen.findByRole("heading", { name: "Payroll" });
+
+  // Both projects have a "Login checks"; the Payroll one is first.
+  const more = screen.getAllByRole("button", { name: "More actions for Login checks" });
+  fireEvent.click(more[0]);
+  fireEvent.click(screen.getByRole("menuitem", { name: "Manage" }));
+  fireEvent.click(more[1]);
+  fireEvent.click(screen.getByRole("menuitem", { name: "Manage" }));
+  expect(managed).toEqual([
+    [12, 121, "Payroll"],
+    [9, 91, "Web"],
+  ]);
+});
+
+test("switched off Manage names the picked project", async () => {
+  baseMock((cmd) => {
+    if (cmd === "list_plans_with_suites") return [{ plan: WEB_PLAN, suites: WEB_SUITES }];
+  });
+  const managed: unknown[] = [];
+  renderSuites(undefined, undefined, (planId, suiteId, project) => managed.push([planId, suiteId, project]));
+  await screen.findByText("Login checks");
+  fireEvent.click(screen.getByRole("button", { name: "More actions for Login checks" }));
+  fireEvent.click(screen.getByRole("menuitem", { name: "Manage" }));
+  expect(managed).toEqual([[9, 91, "Web"]]);
 });

@@ -1248,6 +1248,65 @@ test("handed-over cases from another project are edited in their own project", a
   expect(storedPrefs().project).toBe("Web");
 });
 
+// Manage hands over the suite and its plan's project: Suite Management opens
+// the plan in Payroll and reads and writes the suite there, though the home
+// project (and so the effective project, with no PBI) is Web.
+test("a suite managed from another project's plan is opened in its own project", async () => {
+  savedPrefs({ section: "suites" });
+  localStorage.setItem("tcm-v2-tour-done", "yes");
+  const entryReads: Array<Record<string, unknown>> = [];
+  const planReads: string[] = [];
+  signedInMocks((cmd, args) => {
+    if (cmd === "list_projects")
+      return [
+        { id: "p1", name: "Web" },
+        { id: "p2", name: "Payroll" },
+      ];
+    if (cmd === "list_plans_with_suites") {
+      planReads.push((args as { project: string }).project);
+      return (args as { project: string }).project === "Payroll"
+        ? [
+            {
+              plan: { id: 12, name: "Payslip - Test Plan", area_path: "Payroll\\Slips", root_suite_id: 120 },
+              suites: [
+                { id: 121, name: "Slip regression", suite_type: "staticTestSuite", requirement_id: null, parent_id: null },
+              ],
+            },
+          ]
+        : [];
+    }
+    if (cmd === "list_suite_entries") {
+      entryReads.push(args as Record<string, unknown>);
+      return [{ id: 301, sequence_number: 1, entry_type: "testCase" }];
+    }
+    if (cmd === "list_test_points")
+      return [
+        {
+          point_id: 7,
+          test_case_id: 301,
+          test_case_name: "Pay a slip",
+          config_name: "W10",
+          tester: "",
+          last_outcome: "",
+          last_run_id: null,
+          last_result_id: null,
+        },
+      ];
+  });
+  renderApp();
+  await screen.findByText("a@b.com");
+  await screen.findByText("Slip regression");
+  fireEvent.click(screen.getByRole("button", { name: "More actions for Slip regression" }));
+  fireEvent.click(screen.getByRole("menuitem", { name: "Manage" }));
+
+  expect(await screen.findByText("Showing the suite you picked in Search Suites.")).toBeInTheDocument();
+  expect(await screen.findByRole("list", { name: "Test cases in Slip regression" })).toBeInTheDocument();
+  expect(entryReads.map((a) => a.project)).toEqual(["Payroll"]);
+  // Nothing was read for the home project's plans beyond the one combined walk.
+  expect(planReads.filter((p) => p === "Payroll")).toHaveLength(1);
+  expect(storedPrefs().project).toBe("Web");
+});
+
 // The probe for Auto Run files is a local check that can answer after the
 // person has moved to another organization: its answer belongs to the old one.
 test("a late Auto Run files answer for an old organization is ignored", async () => {

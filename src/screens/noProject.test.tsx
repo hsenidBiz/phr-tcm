@@ -56,8 +56,9 @@ const SCREENS: Array<{
   },
   {
     name: "Suite Management",
-    ui: () => <ManageCases org="acme" project="" pbi={null} />,
+    ui: (allProjects) => <ManageCases org="acme" project="" allProjects={allProjects} pbi={null} />,
     tail: "to manage test cases.",
+    needsProjectTogether: false,
   },
   {
     name: "API Templates",
@@ -85,6 +86,14 @@ test("Work Manager with no project points at the Project picker once switched of
 test("Search Suites with no organization asks for one while the projects show together", () => {
   mount(<Suites org="" project="" allProjects />);
   expect(screen.getByText("Pick an organization in the bar above to browse test suites.")).toBeInTheDocument();
+});
+
+// Suite Management is the same without a PBI: it lists the plans of every
+// project, so only an organization is missing. (The combined list is covered in
+// ManageCases/index.test.tsx.)
+test("Suite Management with no organization asks for one while the projects show together", () => {
+  mount(<ManageCases org="" project="" allProjects pbi={null} />);
+  expect(screen.getByText("Pick an organization in the bar above to manage test cases.")).toBeInTheDocument();
 });
 
 for (const s of SCREENS) {

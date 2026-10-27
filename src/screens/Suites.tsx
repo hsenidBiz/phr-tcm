@@ -16,8 +16,9 @@ import { pagePalette } from "../lib/reportTheme";
 import { CACHE, cacheKeys, cacheRemove, persistentQuery } from "../lib/cache";
 import { cn } from "../lib/cn";
 import { unwrap, unwrapStr } from "../lib/ipc";
-import { fetchPlansAll, projectOfPlan, type ProjectPlans } from "../lib/plansAll";
+import { projectOfPlan, type ProjectPlans } from "../lib/plansAll";
 import { noProjectSentence } from "../lib/projectScope";
+import { plansAllKey, usePlansAll } from "../lib/usePlansAll";
 import { buildTree, type SuiteNode } from "../lib/suiteTree";
 import { outcomeLabel } from "./RunPanel";
 
@@ -159,7 +160,9 @@ export default function Suites({
   onEditCases?: (label: string, caseIds: number[], project: string) => void;
   /** Hand this suite to Suite Management, which opens its plan with the
    * suite unfolded. */
-  onManageSuite?: (planId: number, suiteId: number) => void;
+  /** The plan's project comes with it: Suite Management opens the plan there,
+   * which with the projects together is not the picked project. */
+  onManageSuite?: (planId: number, suiteId: number, project: string) => void;
   /** Make a requirement suite's PBI the app's current PBI, without leaving
    * this screen. */
   onSetCurrentPbi?: (pbi: { id: number; title: string; project: string }) => void;
@@ -175,9 +178,6 @@ export default function Suites({
   // without disturbing the normal-mode expansion state.
   const [searchExpanded, setSearchExpanded] = useState<Set<number>>(new Set());
   const [scan, setScan] = useState<{ done: number; total: number } | null>(null);
-  // Together: which project is being read right now ("Reading test plans in
-  // Payroll (2 of 9 projects)"). Cleared when the walk ends.
-  const [scanNote, setScanNote] = useState<string | null>(null);
 
   // Scanning every plan is the expensive part - cache the result for the
   // session and re-scan only on explicit Refresh.
@@ -201,35 +201,10 @@ export default function Suites({
     retry: false,
   });
 
-  // Together: the organization's projects (the same query as the context
-  // bar's, so one request), then every project's plans, one project at a
-  // time, each through its own per-project cache entry.
-  const projectList = useQuery({
-    queryKey: ["projects", org],
-    ...persistentQuery({
-      key: cacheKeys.projects(org),
-      fetcher: () => unwrap(commands.listProjects(org)),
-      ...CACHE.reference,
-    }),
-    enabled: allProjects && Boolean(org),
-  });
-  const projectNames = useMemo(() => (projectList.data ?? []).map((p) => p.name), [projectList.data]);
-  const plansAll = useQuery({
-    queryKey: ["plans-suites-all", org],
-    queryFn: async () => {
-      try {
-        return await fetchPlansAll(org, projectNames, (p, i, n) =>
-          setScanNote(`Reading test plans in ${p} (${i} of ${n} projects)`),
-        );
-      } finally {
-        setScanNote(null);
-      }
-    },
-    enabled: allProjects && Boolean(org && projectNames.length),
-    staleTime: CACHE.structure.staleMs,
-    gcTime: 60 * 60_000,
-    retry: false,
-  });
+  // Together: the organization's projects, then every project's plans, one
+  // project at a time (the same query Suite Management uses). `scanNote`
+  // says which project is being read right now.
+  const { projectList, projectNames, plansAll, scanNote } = usePlansAll(org, allProjects);
 
   useEffect(() => {
     const un = events.suiteScanProgress.listen((e) => setScan(e.payload));
@@ -460,7 +435,7 @@ export default function Suites({
       ...(onSetCurrentPbi && isRequirementSuite
         ? [{ label: "Use as current PBI", onSelect: () => useAsPbi.mutate({ suite: s, planId }) }]
         : []),
-      ...(onManageSuite ? [{ label: "Manage", onSelect: () => onManageSuite(planId, s.id) }] : []),
+      ...(onManageSuite ? [{ label: "Manage", onSelect: () => onManageSuite(planId, s.id, projectOf(planId)) }] : []),
       {
         label: "Run Tests",
         onSelect: pbiSuite
@@ -588,7 +563,7 @@ export default function Suites({
               // The combined walk trusts each project's own cache entry
               // while it is fresh, so a true re-scan drops them first.
               for (const p of projectNames) cacheRemove(cacheKeys.plansSuites(org, p));
-              qc.invalidateQueries({ queryKey: ["plans-suites-all", org] });
+              qc.invalidateQueries({ queryKey: plansAllKey(org) });
               for (const g of groups) {
                 qc.invalidateQueries({ queryKey: ["plans-suites", org, g.project] });
               }
