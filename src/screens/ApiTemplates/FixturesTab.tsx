@@ -25,6 +25,18 @@ function currentOutputs(runs: FixtureRun[]): [string, string][] {
   return Object.entries(built?.outputs ?? {}).map(([k, v]) => [k, valueText(v)]);
 }
 
+/** How the saved fixtures last went, for a summary: how many failed on
+ * their last run (the newest, which is first), and how long ago the newest
+ * of those last runs was - `null` when none has ever run. */
+export function fixturesLastRuns(list: SavedFixture[]): { failed: number; when: string | null } {
+  const lasts = list.map((f) => f.runs[0]).filter((r): r is FixtureRun => r !== undefined);
+  const newest = lasts
+    .map((r) => stampDate(r.at))
+    .filter((d): d is Date => d !== null)
+    .sort((a, b) => b.getTime() - a.getTime())[0];
+  return { failed: lasts.filter((r) => !r.ok).length, when: newest ? relativeTime(newest.toISOString()) : null };
+}
+
 function LastRun({ run }: { run: FixtureRun | undefined }) {
   if (!run) return <span className="text-xs text-faint">never run</span>;
   const d = stampDate(run.at);

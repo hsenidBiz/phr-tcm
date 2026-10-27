@@ -71,6 +71,30 @@ function mockAll() {
   });
 }
 
+test("the search finds a point by its outcome word and two words narrow", async () => {
+  mockAll();
+  renderPanel();
+  await screen.findByText("Valid login");
+  const box = screen.getByLabelText("Filter points");
+  expect(box).toHaveAttribute("placeholder", "Search by name, id, outcome, tester…");
+
+  fireEvent.change(box, { target: { value: "failed" } });
+  expect(screen.getByText("Valid login")).toBeInTheDocument();
+  expect(screen.queryByText("Invalid login")).not.toBeInTheDocument();
+
+  fireEvent.change(box, { target: { value: "never run" } });
+  expect(screen.getByText("Invalid login")).toBeInTheDocument();
+  expect(screen.queryByText("Valid login")).not.toBeInTheDocument();
+
+  // Both are on Windows 10; the second word narrows to one.
+  fireEvent.change(box, { target: { value: "windows" } });
+  expect(screen.getByText("Valid login")).toBeInTheDocument();
+  expect(screen.getByText("Invalid login")).toBeInTheDocument();
+  fireEvent.change(box, { target: { value: "windows failed" } });
+  expect(screen.getByText("Valid login")).toBeInTheDocument();
+  expect(screen.queryByText("Invalid login")).not.toBeInTheDocument();
+});
+
 test("loads suite + points as a read-only overview (outcomes live in the runner)", async () => {
   mockAll();
   renderPanel();
@@ -274,10 +298,37 @@ test("the Run in runner button sits in the filter row above the list", async () 
   await screen.findByText("Valid login");
   fireEvent.click(screen.getByText("Valid login"));
   const run = screen.getByRole("button", { name: /Run 1 in runner/ });
-  expect(screen.getByLabelText("Filter points").parentElement!.parentElement).toContainElement(run);
+  expect(toolbarOf("Filter points")).toContainElement(run);
   expect(
     screen.getByRole("button", { name: /Set execution order/ }).parentElement,
   ).not.toContainElement(run);
+});
+
+/// The toolbar line a search box sits in: input -> search span -> the
+/// search slot -> the toolbar.
+const toolbarOf = (searchLabel: string) =>
+  screen.getByLabelText(searchLabel).parentElement!.parentElement!.parentElement as HTMLElement;
+
+test("the header carries the run explanation as an info button and the actions on the right", async () => {
+  mockAll();
+  renderPanel();
+  await screen.findByText("Valid login");
+  const info = screen.getByRole("button", { name: /Outcomes are recorded through the runner window/ });
+  expect(info).toHaveAttribute("title", expect.stringContaining("step-by-step"));
+  const actions = screen.getByRole("button", { name: /Execution report/ }).parentElement as HTMLElement;
+  expect(actions).toHaveClass("ml-auto");
+  expect(actions).toContainElement(screen.getByRole("button", { name: /Set execution order/ }));
+  // The sentence no longer sits in the page body.
+  expect(screen.queryByText(/Outcomes are recorded through the runner window/)).not.toBeInTheDocument();
+});
+
+test("the filters share the wrapping toolbar with the wide search", async () => {
+  mockAll();
+  renderPanel();
+  await screen.findByText("Valid login");
+  const toolbar = toolbarOf("Filter points");
+  expect(toolbar).toHaveClass("flex-wrap");
+  expect(toolbar).toContainElement(screen.getByLabelText("Filter by last outcome"));
 });
 
 /// Re-testing after a fix goes filter -> select -> run, on purpose: the
@@ -327,7 +378,9 @@ test("the runner opens only from a selection", async () => {
   renderPanel();
   await screen.findByText("Valid login");
 
-  expect(screen.queryByRole("button", { name: /runner/i })).not.toBeInTheDocument();
+  // The header's info button names the runner window too, so look for the
+  // run buttons themselves ("Run N in runner").
+  expect(screen.queryByRole("button", { name: /^Run .*runner/i })).not.toBeInTheDocument();
 
   fireEvent.click(screen.getByText("Valid login"));
   expect(screen.getByRole("button", { name: /Run 1 in runner/ })).toBeInTheDocument();
@@ -363,7 +416,7 @@ test("the selection's actions sit in the toolbar and float once it scrolls away"
     fireEvent.click(screen.getByText("Valid login"));
     // In place: in the filter row, directly above the list.
     const run = screen.getByRole("button", { name: /Run 1 in runner/ });
-    expect(screen.getByLabelText("Filter points").parentElement!.parentElement).toContainElement(run);
+    expect(toolbarOf("Filter points")).toContainElement(run);
 
     // Assumed on screen until told otherwise, so the floating copy starts hidden.
     const dock = document.querySelector("[data-sticky-action]") as HTMLElement;
@@ -615,7 +668,7 @@ test("grouped mode hides the Select all button and Ctrl+A skips text fields", as
 
   expect(screen.queryByRole("button", { name: "Select all" })).not.toBeInTheDocument();
 
-  const filter = screen.getByPlaceholderText(/Filter/i);
+  const filter = screen.getByLabelText("Filter points");
   fireEvent.keyDown(filter, { key: "a", ctrlKey: true });
   expect(screen.queryByRole("button", { name: /Run \d+ in runner/ })).not.toBeInTheDocument();
 });

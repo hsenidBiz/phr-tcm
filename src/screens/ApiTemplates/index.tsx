@@ -7,7 +7,7 @@ import { commands, events, type Flow, type SavedTemplate, type TemplatesExportRe
 import { Button } from "../../components/ui/button";
 import { Collapse } from "../../components/ui/collapse";
 import { Input } from "../../components/ui/input";
-import { apiWritesSnapshot, subscribeApiWrites } from "../../lib/apiTemplates";
+import { API_TEMPLATES_VIEW_KEY, apiWritesSnapshot, subscribeApiWrites } from "../../lib/apiTemplates";
 import { IconCollapseAll, IconExpandAll, IconExport, IconImport, IconRemove, IconTestFiles } from "../../lib/actionIcons";
 import { cn } from "../../lib/cn";
 import { usePersistedStringSet } from "../../lib/collapsedGroups";
@@ -74,7 +74,7 @@ const JSON_FILTER = [{ name: "API templates", extensions: ["json"] }];
 
 /** The tab's three views: the templates as rows, the flows as maps, or the fixtures. */
 type View = "templates" | "flows" | "fixtures";
-const VIEW_KEY = "tcm-v2-api-templates-view";
+const VIEW_KEY = API_TEMPLATES_VIEW_KEY;
 
 function loadView(): View {
   try {

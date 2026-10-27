@@ -17,6 +17,7 @@ export default function MultiSelect({
   allLabel = "All",
   ariaLabel,
   className,
+  triggerClassName,
   checkedFirst = false,
 }: {
   options: string[];
@@ -25,6 +26,9 @@ export default function MultiSelect({
   allLabel?: string;
   ariaLabel?: string;
   className?: string;
+  /** Classes for the trigger button itself (e.g. `h-10` to sit level with
+   * a toolbar's search), as `Combobox` takes. */
+  triggerClassName?: string;
   /** Snapshot the option order (checked first, in `options` order, then
    * the rest) the moment the panel opens, rather than live - otherwise an
    * option a person just ticked would jump out from under the pointer. */
@@ -117,6 +121,7 @@ export default function MultiSelect({
           // trigger keeps the accent explicitly so every dropdown shows
           // the same lit border as a focused Input.
           open && "border-accent",
+          triggerClassName,
         )}
         onClick={() => setOpen((o) => !o)}
       >

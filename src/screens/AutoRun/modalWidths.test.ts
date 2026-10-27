@@ -30,6 +30,6 @@ test("the large class is wide, uncapped by max-w, and 90vh tall", () => {
   expect(MODAL_LARGE).toContain("max-h-[90vh]");
 });
 
-test.each(["SiteAddressDialog", "SaveWordsDialog"])("%s is the short form", (name) => {
+test.each(["SiteAddressDialog"])("%s is the short form", (name) => {
   expect(readFileSync(`src/screens/AutoRun/${name}.tsx`, "utf8")).toContain("max-w-2xl");
 });

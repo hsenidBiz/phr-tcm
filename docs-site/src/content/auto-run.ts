@@ -132,8 +132,8 @@ export const autoRun: Screen = {
     { id: SETUP, route: TO_SETUP, alt: "The Setup panel opened beside the cases: the environment, site address, sign-in, accounts, areas, discovery and components" },
     {
       id: SETUP_END,
-      route: [...TO_SETUP, { scrollTo: { role: "button", name: "Edit save words" } }],
-      alt: "The bottom of the Setup panel, scrolled into view: test files and save words",
+      route: [...TO_SETUP, { scrollTo: { role: "button", name: "Manage test files" } }],
+      alt: "The bottom of the Setup panel, scrolled into view: the test files row",
     },
     {
       id: SITE,
@@ -181,8 +181,9 @@ export const autoRun: Screen = {
       name: "Setup",
       does:
         "What a run needs before it can start, one line each: the environment runs go to, the site address, the sign-in, the accounts, the areas, what discovery has mapped, the test files and the database. " +
+        "With API templates switched on there is a **Fixtures** line too: how many fixtures you have and when one last ran. **Open** beside it takes you to the Fixtures tab of the API Templates screen. " +
         "A green dot means that part is ready, a red one that it is missing, and an amber one that it is worth a look. " +
-        "The panel opens by itself when something a run needs is missing, and says **Needs attention**. It says that too when a script uploads a file the Test files folder does not hold, and names the file.",
+        "The panel opens by itself when something a run needs is missing, and says **Needs attention**. It says that too when a script uploads a file the Test files folder does not hold, and names the file. It does so when a fixture failed on its last run, too.",
     },
     {
       id: "setup-details",
@@ -199,8 +200,8 @@ export const autoRun: Screen = {
       locate: { role: "textbox", name: "Search test cases" },
       name: "Search",
       does:
-        "At the top of the Setup panel, on both tabs. Shows only the cases whose id or title holds what you type, with or without the **#** before an id. It works together with the result filters. " +
-        "Typing in it on Past runs takes you to Test cases, and going to Past runs by its tab empties it. Press [[Escape]] or the clear button to show every case again.",
+        "At the left of the toolbar above the case list, on the Test cases tab; the toolbar stays at the top while the list scrolls. Shows only the cases whose id, title, tags, module, area or automation status hold what you type, with or without the **#** before an id. Several words narrow it: every word must be found. It works together with the result filters. " +
+        "Going to Past runs empties it, because it only narrows the case list. Press [[Escape]] or the clear button to show every case again.",
     },
     {
       id: "expand-all",
@@ -223,7 +224,7 @@ export const autoRun: Screen = {
       id: "group-by-title",
       shot: CASES,
       group: "cases",
-      locate: { role: "checkbox", name: "Group by title" },
+      locate: { role: "switch", name: "Group by title" },
       name: "Group by title",
       does: "Groups the cases whose titles start the same way, as the other test case screens do. Each group can be folded and selected as a whole.",
     },
@@ -391,7 +392,7 @@ export const autoRun: Screen = {
       name: "Must not save",
       does:
         "For a case that works on shared data and must never change it. While the case runs, any save the page tries to send is stopped before it reaches the site, and the case fails. " +
-        "The save words in the Setup panel decide what counts as a save. Only you can turn it off, here.",
+        "Only you can turn it off, here.",
     },
     {
       id: "readable-script",
@@ -815,15 +816,6 @@ export const autoRun: Screen = {
       locate: { role: "button", name: "Manage test files" },
       name: "Manage (test files)",
       does: "The documents and pictures scripts and API templates upload, kept on this computer and named in a script by file name. Add, remove or open their folder.",
-    },
-    {
-      id: "edit-save-words",
-      shot: SETUP_END,
-      group: "setup",
-      locate: { role: "button", name: "Edit save words" },
-      name: "Edit (save words)",
-      does:
-        "The words that mark a button as a save, which **Must not save** stops: the built-in ones, which cannot be removed, and your project's own.",
     },
 
     // --- Site address --------------------------------------------------------------

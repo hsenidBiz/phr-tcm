@@ -6,15 +6,22 @@
 // beside it.
 
 import { SearchInput } from "../../components/ui/search-input";
+import { matchesQuery, searchPlaceholder } from "../../lib/search";
 
-type Searchable = { id: number; title: string };
+type Searchable = {
+  id: number;
+  title: string;
+  tags?: string;
+  module_value?: string;
+  automation_status?: string;
+};
 
-/** One search on its own: "#12" finds the same ids "12" does, every id
- * with 12 in it, and any other text is looked for in the title. */
-function matchesOne(c: Searchable, q: string): boolean {
-  const bare = q.startsWith("#") ? q.slice(1).trim() : q;
-  if (bare !== "" && String(c.id).includes(bare)) return true;
-  return c.title.toLowerCase().includes(q);
+/** One search on its own, as several words that must all be found: "#12"
+ * finds the same ids "12" does (every id with 12 in it), and any other
+ * word is looked for in the title, tags, module, automation status and
+ * whatever else the caller passes (its script's area, for one). */
+function matchesOne(c: Searchable, q: string, extra: ReadonlyArray<string | null | undefined>): boolean {
+  return matchesQuery([c.id, c.title, c.tags, c.module_value, c.automation_status, ...extra], q);
 }
 
 /** Whether a case matches what was typed. Blank text matches every case,
@@ -25,10 +32,14 @@ function matchesOne(c: Searchable, q: string): boolean {
  * exact case, so "135592, 135601" shows those two cases and not 1355920;
  * other words still match titles. Empty parts ("12,,13", a trailing comma)
  * are skipped. */
-export function matchesSearch(c: Searchable, text: string): boolean {
+export function matchesSearch(
+  c: Searchable,
+  text: string,
+  extra: ReadonlyArray<string | null | undefined> = [],
+): boolean {
   const q = text.trim().toLowerCase();
   if (q === "") return true;
-  if (!q.includes(",")) return matchesOne(c, q);
+  if (!q.includes(",")) return matchesOne(c, q, extra);
   const parts = q
     .split(",")
     .map((p) => p.trim())
@@ -37,7 +48,7 @@ export function matchesSearch(c: Searchable, text: string): boolean {
   return parts.some((p) => {
     const bare = p.startsWith("#") ? p.slice(1).trim() : p;
     if (/^\d+$/.test(bare)) return c.id === Number(bare);
-    return matchesOne(c, p);
+    return matchesOne(c, p, extra);
   });
 }
 
@@ -55,8 +66,8 @@ export default function CaseSearch({
     <SearchInput
       aria-label="Search test cases"
       className={wide ? "w-full" : "w-56"}
-      placeholder="Search test cases by id or title"
-      title="Search the Test cases list by case id or title. Separate several with commas, for example 135592, 135601"
+      placeholder={searchPlaceholder(["id", "title", "tag", "module", "area", "automation status"])}
+      title="Search the Test cases list by case id, title, tag, module, area or automation status. Several words must all match. Separate several searches with commas, for example 135592, 135601"
       value={value}
       onChange={onChange}
       onKeyDown={(e) => {

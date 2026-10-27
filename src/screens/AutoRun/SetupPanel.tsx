@@ -1,7 +1,6 @@
 // The setup a run needs, beside the Test cases list: the environment runs
 // go to and its database, the site address, the sign-in, the accounts, the
-// areas, the test files and the save words. The search box for the case list
-// sits at its top, on both tabs.
+// areas and the test files.
 //
 // Collapsed, it is one line per item with a status dot. Expanded, it is the
 // full rows with their buttons, each opening its own dialog. The screen
@@ -15,7 +14,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { TriangleAlert } from "lucide-react";
 import { useId, useMemo, useState, type ReactNode } from "react";
-import { commands, type CaseScript } from "../../bindings";
+import { commands, type CaseScript, type SavedFixture } from "../../bindings";
 import { Button } from "../../components/ui/button";
 import { cn } from "../../lib/cn";
 import { activeEnvironment, effectiveSite, useEnvironments } from "../../lib/environments";
@@ -25,29 +24,27 @@ import {
   IconComponents,
   IconDiscoveryMap,
   IconHideDetails,
+  IconModuleApiTemplates,
   IconModulePaths,
-  IconProtectedRecords,
   IconRecipe,
   IconRecord,
   IconRelease,
-  IconSaveWords,
   IconShowDetails,
   IconSiteAddress,
   IconStop,
   IconTestFiles,
 } from "../../lib/actionIcons";
 import { useDiscoveryActive } from "../../lib/discoveryActive";
+import { useModule } from "../../lib/modules";
 import { plural } from "../../lib/plural";
+import { FIXTURES_KEY, fixturesLastRuns } from "../ApiTemplates/FixturesTab";
 import AccountsDialog from "./AccountsDialog";
 import AreasDialog from "./AreasDialog";
-import CaseSearch from "./CaseSearch";
 import ComponentsDialog, { componentsSummary, useComponents } from "./ComponentsDialog";
 import DiscoveryDialog, { discoverySummary, useDiscoveryMap } from "./DiscoveryDialog";
-import ProtectedRecordsDialog from "./ProtectedRecordsDialog";
 import RecipeEditor from "./RecipeEditor";
 import { noProjectHint, useAllProjects } from "../../lib/projectScope";
 import RecordSignInDialog from "./RecordSignInDialog";
-import SaveWordsDialog, { BUILT_IN_SAVE_WORDS } from "./SaveWordsDialog";
 import SiteAddressDialog from "./SiteAddressDialog";
 import TestFilesDialog, { useTestFiles } from "./TestFilesDialog";
 import { useAutoRunReadiness } from "./useAutoRunReadiness";
@@ -104,6 +101,17 @@ export function useAutoRunSetup({
   // so Remove there updates the row.
   const components = useComponents(org, project);
   const componentsLine = componentsSummary(components.data);
+
+  // The API fixtures, while that module is on. The same key and call as the
+  // API Templates screen's own, so the two share one cache entry.
+  const fixturesOn = useModule("api_templates");
+  const fixtures = useQuery({
+    queryKey: [FIXTURES_KEY, org, project],
+    queryFn: () => unwrapStr(commands.apiFixturesList(org, project)),
+    enabled: fixturesOn && setupReady,
+    retry: false,
+  });
+  const fixturesFailed = fixtures.isSuccess ? fixturesLastRuns(fixtures.data ?? []).failed : 0;
 
   const saved = recipe.data;
   // Where a run goes now: the active environment's address when it has one,
@@ -179,6 +187,8 @@ export function useAutoRunSetup({
     componentsLine,
     databases,
     activeDb,
+    fixturesOn,
+    fixtures,
     accountCount,
     testFileCount,
     areaCount,
@@ -190,9 +200,13 @@ export function useAutoRunSetup({
     essentialsSettled,
     essentialUnreadable,
     /** Something a run cannot go without is missing, or could not be read,
-     * or a script uploads a file the Test files folder does not hold. */
+     * or a script uploads a file the Test files folder does not hold, or a
+     * fixture failed on its last run. */
     attention:
-      readiness.essentialMissing || essentialUnreadable.length > 0 || readiness.missingTestFiles.length > 0,
+      readiness.essentialMissing ||
+      essentialUnreadable.length > 0 ||
+      readiness.missingTestFiles.length > 0 ||
+      fixturesFailed > 0,
   };
 }
 
@@ -299,6 +313,19 @@ function MissingFiles({ names, full = false }: { names: string[]; full?: boolean
   );
 }
 
+/** The Fixtures line for fixtures that have loaded: how many there are and
+ * when one last ran, or - a problem worth a look - how many failed on
+ * their last run. */
+function fixturesLine(list: SavedFixture[]): [Status, string] {
+  if (list.length === 0) return ["quiet", "No fixtures yet"];
+  const count = plural(list.length, "fixture");
+  const { failed, when } = fixturesLastRuns(list);
+  if (failed > 0) {
+    return ["warning", `${count}, ${failed} failed on ${failed === 1 ? "its" : "their"} last run`];
+  }
+  return when ? ["ready", `${count}, last run ${when}`] : ["quiet", `${count}, never run`];
+}
+
 /** The collapsed panel's lines: one per item, from the reads above, in
  * the full rows' own words. `missing` is set on the Test files line when a
  * script uploads a file the folder lacks: the line then names them. */
@@ -382,6 +409,13 @@ function summaryLines(
           : s.testFileCount === 0
             ? ["quiet", "None yet"]
             : ["ready", plural(s.testFileCount, "file")];
+  const fixtures: [Status, string] = !s.setupReady
+    ? ["quiet", pickProject]
+    : s.fixtures.isError
+      ? ["warning", "Could not be read"]
+      : !s.fixtures.isSuccess
+        ? ["quiet", "Loading…"]
+        : fixturesLine(s.fixtures.data ?? []);
   const db: [Status, string] = !s.activeEnv
     ? ["quiet", "No environment"]
     : s.databases.isPending
@@ -407,6 +441,7 @@ function summaryLines(
       value: files[1],
       missing: s.setupReady && !s.testFiles.isError && missingFiles > 0 ? s.readiness.missingTestFiles : undefined,
     },
+    ...(s.fixturesOn ? [{ label: "Fixtures", status: fixtures[0], value: fixtures[1] }] : []),
     { label: "Database", status: db[0], value: db[1] },
   ];
 }
@@ -418,19 +453,17 @@ export default function SetupPanel({
   caseModules,
   open,
   onToggle,
-  search,
-  onSearch,
+  onOpenFixtures,
 }: {
   setup: AutoRunSetup;
   org: string;
   project: string;
   /** The Module values of the listed cases, for the Areas dialog's picker. */
   caseModules: string[];
+  /** Takes the person to the API Templates screen's Fixtures tab. */
+  onOpenFixtures?: () => void;
   open: boolean;
   onToggle: () => void;
-  /** What the case list's search box holds, and its change. */
-  search: string;
-  onSearch: (text: string) => void;
 }) {
   const allProjects = useAllProjects();
   const headingId = useId();
@@ -443,8 +476,6 @@ export default function SetupPanel({
   const [componentsOpen, setComponentsOpen] = useState(false);
   const [siteOpen, setSiteOpen] = useState(false);
   const [testFilesOpen, setTestFilesOpen] = useState(false);
-  const [saveWordsOpen, setSaveWordsOpen] = useState(false);
-  const [protectedOpen, setProtectedOpen] = useState(false);
   // While the assistant's discovery holds the Auto Run browser, End
   // discovery is the person's way out of one the assistant never ended.
   // Nothing is lost by ending it - the map keeps what was seen - so it asks
@@ -498,11 +529,11 @@ export default function SetupPanel({
           ? `${s.activeDb.label}: ${s.activeDb.database} on ${s.activeDb.server}`
           : `${s.activeDb.label}: not set up yet`;
 
-  // The full rows carry the same status as the summary lines. Save words
-  // and Protected records have no summary line: quiet, so every row's label
-  // starts at the same place.
+  // The full rows carry the same status as the summary lines. A row with no
+  // summary line is quiet, so every row's label starts at the same place.
   const lines = summaryLines(s, allProjects);
   const statusOf = (label: string): Status => lines.find((l) => l.label === label)?.status ?? "quiet";
+  const valueOf = (label: string): string => lines.find((l) => l.label === label)?.value ?? "";
   const dbStatus = statusOf("Database");
 
   return (
@@ -538,11 +569,6 @@ export default function SetupPanel({
               that reads them off the screen reaches the button. */}
           {open ? "Hide setup details" : "Show setup details"}
         </Button>
-      </div>
-
-      {/* Finding a case: open or shut, on either tab. */}
-      <div className="shrink-0">
-        <CaseSearch value={search} onChange={onSearch} wide />
       </div>
 
       {/* The one part that scrolls. The side padding and matching negative
@@ -588,14 +614,16 @@ export default function SetupPanel({
                   ) : envs.isPending ? (
                     <span className="text-muted">Loading…</span>
                   ) : activeEnv ? (
-                    <>
+                    // Three lines with room between them (owner, 2026-10-27: they were too close).
+                    <span className="mt-1 flex flex-col gap-1.5">
                       <span className="font-medium">{activeEnv.name}</span>
-                      <span className="block text-xs text-muted">
-                        <StatusDot status={dbStatus} /> Database <span className="text-text">{dbLine}</span>
-                        {SPOKEN[dbStatus] && <span className="sr-only">{SPOKEN[dbStatus]}</span>}. Both change on the AI Bridge
-                        tab.
+                      <span className="flex items-center gap-1.5 text-xs text-muted">
+                        <StatusDot status={dbStatus} />
+                        Database: <span className="text-text">{dbLine}</span>
+                        {SPOKEN[dbStatus] && <span className="sr-only">{SPOKEN[dbStatus]}</span>}
                       </span>
-                    </>
+                      <span className="text-xs text-muted">Both change on the AI Bridge tab.</span>
+                    </span>
                   ) : (
                     <span className="text-muted">None. Environments are chosen on the AI Bridge tab.</span>
                   )
@@ -872,77 +900,39 @@ export default function SetupPanel({
                 </Button>
               </SetupRow>
 
-              {/* What a script marked Must not save has stopped: the
-                  built-in words, fixed, then the project's own. */}
-              <SetupRow
-                label="Save words"
-                status={statusOf("Save words")}
-                state={
-                  !setupReady ? (
-                    <span className="text-muted">{needsProject}</span>
-                  ) : nav.isError ? (
-                    <span className="text-danger">The save words could not be read</span>
-                  ) : nav.isPending ? (
-                    <span className="text-muted">Loading…</span>
-                  ) : (
-                    <>
-                      <span className="text-muted">
-                        {(nav.data?.built_in_save_words?.length
-                          ? nav.data.built_in_save_words
-                          : BUILT_IN_SAVE_WORDS
-                        ).join(", ")}
-                      </span>
-                      {(nav.data?.save_words ?? []).length > 0 && (
-                        <span>, {(nav.data?.save_words ?? []).join(", ")}</span>
-                      )}
-                    </>
-                  )
-                }
-              >
-                <Button
-                  size="sm"
-                  variant="outline"
-                  aria-label="Edit save words"
-                  disabled={!setupReady || nav.isPending || nav.isError}
-                  title={needsProject}
-                  onClick={() => setSaveWordsOpen(true)}
+              {/* Drafts the assistant builds test data from; they live on
+                  the API Templates screen. */}
+              {s.fixturesOn && (
+                <SetupRow
+                  label="Fixtures"
+                  status={statusOf("Fixtures")}
+                  state={
+                    !setupReady ? (
+                      <span className="text-muted">{needsProject}</span>
+                    ) : s.fixtures.isError ? (
+                      <span className="text-danger">The fixtures could not be read</span>
+                    ) : !s.fixtures.isSuccess ? (
+                      <span className="text-muted">Loading…</span>
+                    ) : statusOf("Fixtures") === "quiet" ? (
+                      <span className="text-muted">{valueOf("Fixtures")}</span>
+                    ) : (
+                      valueOf("Fixtures")
+                    )
+                  }
                 >
-                  <IconSaveWords aria-hidden />
-                  Edit
-                </Button>
-              </SetupRow>
-
-              {/* The records its tests must never edit or delete, handed to
-                  the Playwright repo on export. */}
-              <SetupRow
-                label="Protected records"
-                status={statusOf("Protected records")}
-                state={
-                  !setupReady ? (
-                    <span className="text-muted">{needsProject}</span>
-                  ) : nav.isError ? (
-                    <span className="text-danger">The protected records could not be read</span>
-                  ) : nav.isPending ? (
-                    <span className="text-muted">Loading…</span>
-                  ) : (nav.data?.protected ?? []).length === 0 ? (
-                    <span className="text-muted">None</span>
-                  ) : (
-                    <span className="text-muted">{plural((nav.data?.protected ?? []).length, "record")}</span>
-                  )
-                }
-              >
-                <Button
-                  size="sm"
-                  variant="outline"
-                  aria-label="Edit protected records"
-                  disabled={!setupReady || nav.isPending || nav.isError}
-                  title={needsProject}
-                  onClick={() => setProtectedOpen(true)}
-                >
-                  <IconProtectedRecords aria-hidden />
-                  Edit
-                </Button>
-              </SetupRow>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    aria-label="Open fixtures"
+                    disabled={!setupReady}
+                    title={needsProject}
+                    onClick={() => onOpenFixtures?.()}
+                  >
+                    <IconModuleApiTemplates aria-hidden />
+                    Open
+                  </Button>
+                </SetupRow>
+              )}
             </div>
             <p className="text-xs text-muted">
               An assistant&apos;s <span className="id-mono">/tcm:setup</span> command can walk you through this.
@@ -956,17 +946,6 @@ export default function SetupPanel({
       {recordOpen && <RecordSignInDialog org={org} project={project} onClose={() => setRecordOpen(false)} />}
       {testFilesOpen && <TestFilesDialog org={org} project={project} onClose={() => setTestFilesOpen(false)} />}
       {siteOpen && <SiteAddressDialog org={org} project={project} onClose={() => setSiteOpen(false)} />}
-      {saveWordsOpen && (
-        <SaveWordsDialog org={org} project={project} view={nav.data ?? null} onClose={() => setSaveWordsOpen(false)} />
-      )}
-      {protectedOpen && (
-        <ProtectedRecordsDialog
-          org={org}
-          project={project}
-          view={nav.data ?? null}
-          onClose={() => setProtectedOpen(false)}
-        />
-      )}
       {discoveryOpen && (
         <DiscoveryDialog org={org} project={project} onClose={() => setDiscoveryOpen(false)} />
       )}

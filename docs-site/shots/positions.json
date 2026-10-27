@@ -987,12 +987,6 @@
       "h": 900
     },
     "controls": {
-      "edit-save-words": {
-        "x": 1321,
-        "y": 608,
-        "w": 69,
-        "h": 29
-      },
       "manage-test-files": {
         "x": 1300,
         "y": 530,

@@ -1395,8 +1395,6 @@ test("the full Setup rows keep their status dot and spoken status", async () => 
     "Discovery",
     "Components",
     "Test files",
-    "Save words",
-    "Protected records",
   ];
   for (const name of rows) {
     const row = within(setupPanel()).getByRole("group", { name });
@@ -1630,11 +1628,10 @@ test("the Setup panel shows the environment and its database, all six rows, and 
     "Edit accounts",
     "Edit areas",
     "Manage test files",
-    "Edit save words",
   ]) {
     expect(within(panel).getByRole("button", { name })).toBeInTheDocument();
   }
-  for (const name of ["Site address", "Sign-in", "Accounts", "Areas", "Test files", "Save words"]) {
+  for (const name of ["Site address", "Sign-in", "Accounts", "Areas", "Test files"]) {
     expect(within(panel).getByRole("group", { name })).toBeInTheDocument();
   }
   expect(within(panel).getByText(/\/tcm:setup/)).toBeInTheDocument();
@@ -1642,7 +1639,7 @@ test("the Setup panel shows the environment and its database, all six rows, and 
   expect(within(panel).getByText("Built-in")).toBeInTheDocument();
 });
 
-// ---- The Test cases tab's header, the Setup panel's search, and the More menu ----
+// ---- The Test cases tab's header, the toolbar's search, and the More menu ----
 
 const uploadScript = (caseId: number, file: string) => ({
   case_id: caseId,
@@ -1738,40 +1735,45 @@ test("the expanded Setup panel names the environment in a row of its own", async
   expect(within(env).queryByRole("button")).not.toBeInTheDocument();
 });
 
-test("the Setup panel, with the search box, is on both tabs; searching on Past runs brings the cases back", async () => {
+test("the search is in the Test cases tab's toolbar and not in the Setup panel; going to Past runs empties it", async () => {
   mockReady();
-  renderAutoRun("Past runs");
-  await screen.findByRole("tabpanel", { name: /^Past runs/ });
-  // The panel sits beside the runs too.
-  const box = within(setupPanel()).getByRole("textbox", { name: "Search test cases" });
-  expect(screen.queryByRole("tab", { name: /^Setup/ })).not.toBeInTheDocument();
+  renderAutoRun("Test cases");
+  await screen.findByText("Valid login");
+  // The Setup panel has no search; the box sits in the tab's own toolbar,
+  // level with Group by title and Select all shown.
+  expect(within(setupPanel()).queryByRole("textbox", { name: "Search test cases" })).not.toBeInTheDocument();
+  const box = screen.getByRole("textbox", { name: "Search test cases" });
+  const toolbar = box.closest("[data-list-toolbar]") as HTMLElement;
+  expect(toolbar).not.toBeNull();
+  expect(setupPanel()).not.toContainElement(box);
+  expect(within(toolbar).getByRole("switch", { name: "Group by title" })).toBeInTheDocument();
+  expect(within(toolbar).getByRole("checkbox", { name: "Select all shown" })).toBeInTheDocument();
+  expect(within(toolbar).getByRole("button", { name: "More" })).toBeInTheDocument();
+  expect(box).toHaveAttribute("placeholder", "Search by id, title, tag, module…");
 
-  box.focus();
   fireEvent.change(box, { target: { value: "lock" } });
-  await waitFor(() => expect(tab("Test cases")).toHaveAttribute("aria-selected", "true"));
-  // The same box, still in the person's hands: the panel stayed put.
-  expect(within(setupPanel()).getByRole("textbox", { name: "Search test cases" })).toBe(box);
-  expect(box).toHaveFocus();
   expect(await screen.findByText("Locked account")).toBeInTheDocument();
   expect(screen.queryByText("Valid login")).not.toBeInTheDocument();
   // The tab's count says how many of the cases show.
   expect(tab("Test cases")).toHaveAccessibleName("Test cases 1 of 2");
 
-  // Going to Past runs by its tab empties the box: the search only ever
-  // narrows the case list, and left there it would read as filtering runs.
+  // Going to Past runs by its tab empties the search: it only ever narrows
+  // the case list, and left there it would read as filtering runs. The
+  // Past runs tab has no search box of its own.
   fireEvent.click(tab("Past runs"));
   expect(tab("Past runs")).toHaveAttribute("aria-selected", "true");
-  expect(box).toHaveValue("");
-  expect(box).toHaveAttribute("placeholder", "Search test cases by id or title");
+  expect(screen.queryByRole("textbox", { name: "Search test cases" })).not.toBeInTheDocument();
+  expect(within(setupPanel()).queryByRole("textbox", { name: "Search test cases" })).not.toBeInTheDocument();
   // The same by the keyboard: back to Test cases, search, then the arrow.
   fireEvent.click(tab("Test cases"));
-  fireEvent.change(box, { target: { value: "lock" } });
+  expect(screen.getByRole("textbox", { name: "Search test cases" })).toHaveValue("");
+  fireEvent.change(screen.getByRole("textbox", { name: "Search test cases" }), { target: { value: "lock" } });
   fireEvent.keyDown(tab("Test cases"), { key: "ArrowRight" });
   expect(tab("Past runs")).toHaveAttribute("aria-selected", "true");
-  expect(box).toHaveValue("");
   // Back on Test cases every case shows again.
   fireEvent.click(tab("Test cases"));
   expect(await screen.findByText("Valid login")).toBeInTheDocument();
+  expect(screen.getByRole("textbox", { name: "Search test cases" })).toHaveValue("");
   expect(tab("Test cases")).toHaveAccessibleName("Test cases 2");
 });
 
@@ -1783,7 +1785,7 @@ test("More holds Import scripts, with its description, and Clear scripts; Group 
   // Nothing rare sits on the toolbar.
   expect(screen.queryByRole("button", { name: "Import scripts" })).not.toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Clear scripts" })).not.toBeInTheDocument();
-  expect(screen.getByRole("checkbox", { name: "Group by title" })).toBeInTheDocument();
+  expect(screen.getByRole("switch", { name: "Group by title" })).toBeInTheDocument();
 
   fireEvent.click(screen.getByRole("button", { name: "More" }));
   const menu = screen.getByRole("menu", { name: "More" });

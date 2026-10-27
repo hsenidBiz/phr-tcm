@@ -58,7 +58,7 @@ export const searchSuites: Screen = {
       locate: { role: "textbox", name: "Search suites" },
       name: "Search plans and suites",
       does:
-        "Shows only the plans and suites whose names contain what you type, with the folders they sit in. Results start folded; a plan whose name matches keeps all its suites.",
+        "Shows only the plans and suites whose plan name, suite name, suite number or PBI number contain what you type, with the folders they sit in. Several words narrow it: every word must be found, so a plan word and a suite word work together. Results start folded; a plan whose name matches keeps all its suites.",
     },
     {
       id: "folder",

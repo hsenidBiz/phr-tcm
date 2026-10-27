@@ -6,7 +6,7 @@ import { commands } from "../../bindings";
 import ActionDock from "../../components/ActionDock";
 import ScanProgress from "../../components/ScanProgress";
 import { Button } from "../../components/ui/button";
-import { Switch } from "../../components/ui/switch";
+import { ToolbarSwitch } from "../../components/ui/list-toolbar";
 import { IconCollapseAll, IconConfirm, IconImport, IconUndo } from "../../lib/actionIcons";
 import { CACHE, cacheKeys, persistentQuery } from "../../lib/cache";
 import { unwrap, unwrapStr } from "../../lib/ipc";
@@ -168,10 +168,7 @@ export default function SuiteCases({
             the thing live bottom-right; view controls live bottom-left /
             with the other view controls) - only Apply order, Reset and
             Apply order from files are actions on the suite's order. */}
-        <label className="flex items-center gap-2 text-xs text-muted">
-          <Switch checked={grouped} onCheckedChange={setGroupedAndRemember} ariaLabel="Group by title" />
-          Group by title
-        </label>
+        <ToolbarSwitch label="Group by title" checked={grouped} onCheckedChange={setGroupedAndRemember} />
         {grouped && (
           <Button
             size="sm"

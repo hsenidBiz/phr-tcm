@@ -8,6 +8,8 @@ import { onPointRecorded, patchPointRows } from "../../lib/runnerBus";
 import { Button } from "../../components/ui/button";
 import { Checkbox } from "../../components/ui/checkbox";
 import { Collapse, useSettled } from "../../components/ui/collapse";
+import { ListToolbar } from "../../components/ui/list-toolbar";
+import { PageHeader } from "../../components/ui/page-header";
 import { SearchInput } from "../../components/ui/search-input";
 import { Select } from "../../components/ui/select";
 import HistoryDots from "../../components/HistoryDots";
@@ -25,6 +27,7 @@ import {
 } from "../../lib/sidebarState";
 import { describeAdoError, unwrap, unwrapStr } from "../../lib/ipc";
 import { outcomeLabel } from "../../lib/outcomes";
+import { matchesQuery, searchPlaceholder } from "../../lib/search";
 import { openRunnerWindow } from "../../lib/openRunner";
 import CasePreview from "./CasePreview";
 import { IconCollapseAll, IconReport, IconRun, IconSetOrder } from "../../lib/actionIcons";
@@ -74,10 +77,14 @@ const NO_POINTS: TestPoint[] = [];
 function pointMatches(p: TestPoint, filterOutcome: string, filterText: string): boolean {
   if (filterOutcome === "none" && p.last_outcome) return false;
   if (filterOutcome && filterOutcome !== "none" && p.last_outcome.toLowerCase() !== filterOutcome) return false;
-  if (filterText) {
-    const t = filterText.toLowerCase();
-    if (!p.test_case_name.toLowerCase().includes(t) && !String(p.test_case_id ?? "").includes(t)) return false;
-  }
+  if (
+    filterText &&
+    !matchesQuery(
+      [p.test_case_id, p.test_case_name, outcomeLabel(p.last_outcome) || "Never run", p.tester, p.config_name],
+      filterText,
+    )
+  )
+    return false;
   return true;
 }
 
@@ -394,32 +401,64 @@ export default function RunPanel({
 
   return (
     <section data-tour="run-list" className="space-y-3 rounded-md border border-border bg-surface p-4">
-      <div className="flex items-center justify-between gap-2">
-        <h2 className="text-sm font-semibold text-text">Run tests for #{pbiId}</h2>
+      <PageHeader
+        title={`Run tests for #${pbiId}`}
+        info="Outcomes are recorded through the runner window - a step-by-step player with screenshots and bug filing. Click rows to select cases, then run them in the runner."
+        actions={
+          <>
+            {points.data && points.data.length > 0 && (
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={order.loading}
+                title={order.loading ? "Loading the run order…" : undefined}
+                onClick={() => setOrderOpen(true)}
+              >
+                <IconSetOrder aria-hidden />
+                Set execution order
+              </Button>
+            )}
+            {suite.data && (
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={report.isPending || selected.size === 0}
+                title={
+                  selected.size === 0
+                    ? "Select the cases to report on first - click rows to select"
+                    : `Report on the ${selected.size} highlighted case${selected.size === 1 ? "" : "s"}`
+                }
+                onClick={() => report.mutate()}
+              >
+                <IconReport aria-hidden />
+                {report.isPending ? "Building report" : "Execution report"}
+              </Button>
+            )}
+          </>
+        }
+      >
         {suite.data && (
-          <div className="flex items-center gap-2">
-            <Button
-              variant="outline"
-              size="sm"
-              disabled={report.isPending || selected.size === 0}
-              title={
-                selected.size === 0
-                  ? "Select the cases to report on first - click rows to select"
-                  : `Report on the ${selected.size} highlighted case${selected.size === 1 ? "" : "s"}`
-              }
-              onClick={() => report.mutate()}
+          <p className="flex items-center gap-1.5 text-xs text-faint">
+            Plan "{suite.data.plan_name}"
+            <button
+              aria-label="Refresh outcomes"
+              title="Refresh outcomes (Shift-click: re-detect the test suite)"
+              className="rounded p-0.5 text-muted hover:text-accent"
+              onClick={(e) => (e.shiftKey ? redetectSuite() : refreshPoints())}
             >
-              <IconReport aria-hidden />
-              {report.isPending ? "Building report" : "Execution report"}
-            </Button>
-          </div>
+              <RefreshCw
+                size={12}
+                className={
+                  suite.isFetching || points.isFetching || history.isFetching
+                    ? "animate-spin"
+                    : undefined
+                }
+              />
+            </button>
+            {suite.isFetching && <span>(re-detecting)</span>}
+          </p>
         )}
-      </div>
-      <p className="text-xs text-muted">
-        Outcomes are recorded through the runner window - a step-by-step
-        player with screenshots and bug filing. Click rows to select cases,
-        then run them in the runner.
-      </p>
+      </PageHeader>
 
       {suite.isFetching && !suite.data && (
         <ScanProgress
@@ -429,28 +468,6 @@ export default function RunPanel({
         />
       )}
       {suite.isError && <p className="text-sm text-danger">{suite.error.message}</p>}
-      {suite.data && (
-        <p className="flex items-center gap-1.5 text-xs text-faint">
-          Plan "{suite.data.plan_name}"
-          <button
-            aria-label="Refresh outcomes"
-            title="Refresh outcomes (Shift-click: re-detect the test suite)"
-            className="rounded p-0.5 text-muted hover:text-accent"
-            onClick={(e) => (e.shiftKey ? redetectSuite() : refreshPoints())}
-          >
-            <RefreshCw
-              size={12}
-              className={
-                suite.isFetching || points.isFetching || history.isFetching
-                  ? "animate-spin"
-                  : undefined
-              }
-            />
-          </button>
-          {suite.isFetching && <span>(re-detecting)</span>}
-        </p>
-      )}
-
       {points.isFetching && suite.data && !points.data && (
         <p className="text-sm text-muted">Loading test points</p>
       )}
@@ -459,22 +476,8 @@ export default function RunPanel({
         <p className="text-sm text-muted">No test points in this suite yet.</p>
       )}
 
-      {points.data && points.data.length > 0 && (
-        <div className="space-y-1">
-          <div className="flex items-center gap-2">
-            <Button
-              variant="outline"
-              size="sm"
-              disabled={order.loading}
-              title={order.loading ? "Loading the run order…" : undefined}
-              onClick={() => setOrderOpen(true)}
-            >
-              <IconSetOrder aria-hidden />
-              Set execution order
-            </Button>
-          </div>
-          {order.note && <p className="text-xs text-warning">{order.note}</p>}
-        </div>
+      {points.data && points.data.length > 0 && order.note && (
+        <p className="text-xs text-warning">{order.note}</p>
       )}
       {/* Mounted fresh on every open, keyed by the suggested file's own
           timestamp: a refetch that lands while the modal is open must not
@@ -502,17 +505,21 @@ export default function RunPanel({
       )}
 
       {points.data && points.data.length > 0 && (
-        <div className="flex items-center gap-2">
-          <SearchInput
-            aria-label="Filter points"
-            className="w-56"
-            placeholder="Filter by name or id"
-            value={filterText}
-            onChange={setFilterText}
-          />
+        <ListToolbar
+          surface
+          search={
+            <SearchInput
+              aria-label="Filter points"
+              className="w-full"
+              placeholder={searchPlaceholder(["name", "id", "outcome", "tester", "configuration"])}
+              value={filterText}
+              onChange={setFilterText}
+            />
+          }
+        >
           <Select
             aria-label="Filter by last outcome"
-            triggerClassName="px-2 py-1.5"
+            triggerClassName="h-10 px-2"
             value={filterOutcome}
             onChange={(e) => setFilterOutcome(e.target.value)}
           >
@@ -528,6 +535,7 @@ export default function RunPanel({
             <Button
               variant="outline"
               size="sm"
+              className="h-10"
               disabled={filtered.length === 0}
               title="Select every case shown (Ctrl+A)"
               onClick={selectAllVisible}
@@ -540,7 +548,7 @@ export default function RunPanel({
               row scrolls away - the same dock Update Test Cases' selection
               uses. `suite.data` is what openRunner needs for the plan id. */}
           {suite.data && selected.size > 0 && (
-            <ActionDock label="Run selection" surface className="ml-auto">
+            <ActionDock label="Run selection" surface>
               {(floating) => (
                 <>
                   {/* No "N selected" text - the count is already in the
@@ -566,7 +574,7 @@ export default function RunPanel({
               )}
             </ActionDock>
           )}
-        </div>
+        </ListToolbar>
       )}
 
       {points.data && points.data.length > 0 && (
@@ -649,7 +657,11 @@ export default function RunPanel({
                   p.test_case_id != null && selected.has(p.test_case_id)
                     ? "bg-accent-soft"
                     : (outcomeRowTint[p.last_outcome.toLowerCase()] ?? ""),
-                  "hover:bg-surface-2",
+                  // The Paused and Not Applicable tints are already close to
+                  // surface-2, so the hover tint alone barely showed on them
+                  // (owner, 2026-10-27). An accent bar at the row's start
+                  // marks the hovered row on every tint, selected included.
+                  "hover:bg-surface-2 hover:shadow-[inset_3px_0_0_var(--color-accent)]",
                 )}
                 onClick={(e) => handleRowClick(p, e)}
               >

@@ -9,6 +9,8 @@ import MoreActionsMenu, { type MoreAction } from "../components/MoreActionsMenu"
 import ScanProgress from "../components/ScanProgress";
 import { Collapse, useSettled } from "../components/ui/collapse";
 import { Badge } from "../components/ui/badge";
+import { ListToolbar } from "../components/ui/list-toolbar";
+import { PageHeader } from "../components/ui/page-header";
 import { SearchInput } from "../components/ui/search-input";
 import { loadNotes } from "../lib/caseNotes";
 import { openRunnerWindow } from "../lib/openRunner";
@@ -20,6 +22,7 @@ import { projectOfPlan, type ProjectPlans } from "../lib/plansAll";
 import { noProjectSentence } from "../lib/projectScope";
 import { NO_PROJECTS_SENTENCE, refreshPlansAll, usePlansAll } from "../lib/usePlansAll";
 import { buildTree, type SuiteNode } from "../lib/suiteTree";
+import { matchesQuery, searchPlaceholder } from "../lib/search";
 import { outcomeLabel } from "./RunPanel";
 
 // The same colours Run Tests and the runner give each outcome: Paused is
@@ -38,11 +41,13 @@ function descendantIds(n: SuiteNode): number[] {
 
 /** Keep nodes whose name matches `q` (with their whole subtree) or that
  * contain a matching descendant (pruned to the matching branches). */
-function pruneTree(nodes: SuiteNode[], q: string): SuiteNode[] {
+function pruneTree(nodes: SuiteNode[], q: string, planName: string): SuiteNode[] {
   return nodes
     .map((n) => {
-      if (n.suite.name.toLowerCase().includes(q)) return n;
-      const kids = pruneTree(n.children, q);
+      // The tree holds suites only: the cases inside one load when it opens.
+      // The plan's name counts too, so "plan suite" words can be mixed.
+      if (matchesQuery([planName, n.suite.name, n.suite.id, n.suite.requirement_id], q)) return n;
+      const kids = pruneTree(n.children, q, planName);
       return kids.length ? { suite: n.suite, children: kids } : null;
     })
     .filter((n): n is SuiteNode => n !== null);
@@ -247,7 +252,7 @@ export default function Suites({
     [groups],
   );
 
-  const q = search.trim().toLowerCase();
+  const q = search.trim();
   useEffect(() => setSearchExpanded(new Set()), [q]);
   const visibleTrees = useMemo(() => {
     if (!q) return trees;
@@ -255,8 +260,8 @@ export default function Suites({
       .map(({ project: owner, plan, roots }) => {
         // A matching plan name keeps the whole plan; otherwise prune to
         // the suites (or branches) that match.
-        if (plan.name.toLowerCase().includes(q)) return { project: owner, plan, roots };
-        const pruned = pruneTree(roots, q);
+        if (matchesQuery([plan.name], q)) return { project: owner, plan, roots };
+        const pruned = pruneTree(roots, q, plan.name);
         return pruned.length ? { project: owner, plan, roots: pruned } : null;
       })
       .filter((t): t is (typeof trees)[number] => t !== null);
@@ -551,8 +556,10 @@ export default function Suites({
 
   return (
     <div data-tour="plans-tree" className="space-y-3">
-      <div className="flex items-center gap-2">
-        <h2 className="text-sm font-semibold text-muted">Test plans</h2>
+      <PageHeader
+        title="Test plans"
+        aside={
+          <>
         <button
           aria-label="Refresh test plans"
           title="Refresh test plans"
@@ -583,15 +590,22 @@ export default function Suites({
             className={fetching || pointsFetching > 0 ? "animate-spin" : undefined}
           />
         </button>
-        <SearchInput
-          aria-label="Search suites"
-          className="w-64"
-          placeholder="Search plans and suites"
-          value={search}
-          onChange={setSearch}
-        />
         {busy && <span className="text-xs text-muted">Collecting test cases</span>}
-      </div>
+          </>
+        }
+      />
+
+      <ListToolbar
+        search={
+          <SearchInput
+            aria-label="Search suites"
+            className="w-full"
+            placeholder={searchPlaceholder(["plan", "suite", "suite id", "PBI id"])}
+            value={search}
+            onChange={setSearch}
+          />
+        }
+      />
 
       {/* The bar is for the FIRST scan only - once a tree is already on
           screen, a background revalidation keeps it there and spins only
