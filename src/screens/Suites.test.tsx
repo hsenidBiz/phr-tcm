@@ -801,6 +801,68 @@ test("Refresh reads every project again", async () => {
   await vi.waitFor(() => expect(reads()).toBe(4));
 });
 
+test("Refresh is disabled while the combined walk is reading", async () => {
+  let release: (v: unknown) => void = () => {};
+  baseMock((cmd, args) => {
+    if (cmd === "list_projects")
+      return [
+        { id: "p1", name: "Web" },
+        { id: "p2", name: "Payroll" },
+      ];
+    if (cmd === "list_plans_with_suites") {
+      if ((args as { project: string }).project === "Payroll") return [{ plan: PAY_PLAN, suites: PAY_SUITES }];
+      // Web is slow: the walk stays open until the test lets it go.
+      return new Promise((resolve) => {
+        release = resolve;
+      });
+    }
+  });
+  renderCombined();
+
+  expect(await screen.findByText("Reading test plans in Web (2 of 2 projects)")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Refresh test plans" })).toBeDisabled();
+
+  release([{ plan: WEB_PLAN, suites: WEB_SUITES }]);
+  await screen.findByRole("heading", { name: "Web" });
+  await waitFor(() => expect(screen.getByRole("button", { name: "Refresh test plans" })).toBeEnabled());
+});
+
+test("a Refresh that fails partway keeps the projects it had not reached", async () => {
+  twoProjects();
+  renderCombined();
+  await screen.findByRole("heading", { name: "Payroll" });
+  const stored = (project: string) => localStorage.getItem(`tcm-v2-cache:plans-suites:acme/${project}`);
+  expect(stored("Web")).not.toBeNull();
+
+  // Payroll still answers; Web is throttled this time.
+  baseMock((cmd, args) => {
+    if (cmd === "list_projects")
+      return [
+        { id: "p1", name: "Web" },
+        { id: "p2", name: "Payroll" },
+      ];
+    if (cmd === "list_plans_with_suites") {
+      if ((args as { project: string }).project === "Web")
+        throw { kind: "RateLimited", detail: { retry_after_secs: 7 } };
+      return [{ plan: PAY_PLAN, suites: PAY_SUITES }];
+    }
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Refresh test plans" }));
+
+  expect(await screen.findByText("Rate limited - retry in 7s.")).toBeInTheDocument();
+  // Web's warm tree is still on disk for the next visit.
+  expect(JSON.parse(stored("Web") as string).data[0].plan.id).toBe(9);
+});
+
+test("an organization with no projects says so", async () => {
+  baseMock((cmd) => {
+    if (cmd === "list_projects") return [];
+  });
+  renderCombined();
+
+  expect(await screen.findByText("This organization has no projects you can read.")).toBeInTheDocument();
+});
+
 test("switched off Search Suites lists the picked project as before", async () => {
   const asked: Array<{ cmd: string; args: Record<string, unknown> }> = [];
   baseMock((cmd, args) => {

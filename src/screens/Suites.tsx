@@ -13,12 +13,12 @@ import { SearchInput } from "../components/ui/search-input";
 import { loadNotes } from "../lib/caseNotes";
 import { openRunnerWindow } from "../lib/openRunner";
 import { pagePalette } from "../lib/reportTheme";
-import { CACHE, cacheKeys, cacheRemove, persistentQuery } from "../lib/cache";
+import { CACHE, cacheKeys, persistentQuery } from "../lib/cache";
 import { cn } from "../lib/cn";
 import { unwrap, unwrapStr } from "../lib/ipc";
 import { projectOfPlan, type ProjectPlans } from "../lib/plansAll";
 import { noProjectSentence } from "../lib/projectScope";
-import { plansAllKey, usePlansAll } from "../lib/usePlansAll";
+import { NO_PROJECTS_SENTENCE, refreshPlansAll, usePlansAll } from "../lib/usePlansAll";
 import { buildTree, type SuiteNode } from "../lib/suiteTree";
 import { outcomeLabel } from "./RunPanel";
 
@@ -204,7 +204,7 @@ export default function Suites({
   // Together: the organization's projects, then every project's plans, one
   // project at a time (the same query Suite Management uses). `scanNote`
   // says which project is being read right now.
-  const { projectList, projectNames, plansAll, scanNote } = usePlansAll(org, allProjects);
+  const { projectList, projectNames, plansAll, scanNote, noProjects } = usePlansAll(org, allProjects);
 
   useEffect(() => {
     const un = events.suiteScanProgress.listen((e) => setScan(e.payload));
@@ -556,14 +556,15 @@ export default function Suites({
         <button
           aria-label="Refresh test plans"
           title="Refresh test plans"
-          className="rounded p-1 text-muted hover:text-accent"
+          className="rounded p-1 text-muted hover:text-accent disabled:cursor-not-allowed disabled:opacity-50"
+          // One walk at a time: a second Refresh would cancel the first.
+          disabled={allProjects && plansAll.isFetching}
           onClick={() => {
             setScan(null);
             if (allProjects) {
-              // The combined walk trusts each project's own cache entry
-              // while it is fresh, so a true re-scan drops them first.
-              for (const p of projectNames) cacheRemove(cacheKeys.plansSuites(org, p));
-              qc.invalidateQueries({ queryKey: plansAllKey(org) });
+              // A forced walk re-reads every project and replaces each
+              // project's cache entry only once its read succeeded.
+              refreshPlansAll(qc, org);
               for (const g of groups) {
                 qc.invalidateQueries({ queryKey: ["plans-suites", org, g.project] });
               }
@@ -609,6 +610,7 @@ export default function Suites({
           Showing plans from {coverage.shown} of {coverage.total} projects.
         </p>
       )}
+      {allProjects && noProjects && <p className="text-sm text-muted">{NO_PROJECTS_SENTENCE}</p>}
       {loaded && groups.length === 0 && (
         <p className="text-sm text-muted">
           No test plans with test suites in this {allProjects ? "organization" : "project"} yet.

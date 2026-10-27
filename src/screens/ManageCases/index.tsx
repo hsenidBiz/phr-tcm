@@ -9,7 +9,7 @@ import { unwrap } from "../../lib/ipc";
 import { projectOfPlan } from "../../lib/plansAll";
 import { noProjectSentence } from "../../lib/projectScope";
 import type { SuiteCase } from "../../lib/suiteOrder";
-import { forgetProjectPlans, usePlansAll } from "../../lib/usePlansAll";
+import { forgetProjectPlans, NO_PROJECTS_SENTENCE, usePlansAll } from "../../lib/usePlansAll";
 import PlanTable from "./PlanTable";
 import { toggleSelection, type Selection } from "./selection";
 import { plansSuitesKey } from "./suiteCasesQuery";
@@ -72,7 +72,7 @@ export default function ManageCases({
     gcTime: 60 * 60_000,
     retry: false,
   });
-  const { projectList, projectNames, plansAll, scanNote } = usePlansAll(org, together);
+  const { projectList, projectNames, plansAll, scanNote, noProjects } = usePlansAll(org, together);
 
   /** Every plan in view's source, each with its project. */
   const entries: PlanEntry[] = useMemo(
@@ -229,6 +229,7 @@ export default function ManageCases({
         <ScanProgress label="Loading test plans" />
       )}
       {together && scanNote && <p className="text-xs text-muted">{scanNote}</p>}
+      {together && noProjects && <p className="text-sm text-muted">{NO_PROJECTS_SENTENCE}</p>}
       {listError && <p className="text-sm text-danger">{listError.message}</p>}
       {coverage && coverage.shown < coverage.total && (
         <p className="text-xs text-muted">

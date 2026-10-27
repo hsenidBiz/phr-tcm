@@ -34,13 +34,20 @@ export function usePlansAll(org: string, enabled: boolean) {
   const projectNames = useMemo(() => (projectList.data ?? []).map((p) => p.name), [projectList.data]);
   const plansAll = useQuery({
     queryKey: plansAllKey(org),
-    queryFn: async () => {
+    // The query's signal ends a walk that was cancelled (a second Refresh, a
+    // new suite, the screen closing): it stops before the next project.
+    queryFn: async ({ signal }) => {
+      const force = forced.delete(org);
       try {
-        return await fetchPlansAll(org, projectNames, (p, i, n) =>
-          setScanNote(`Reading test plans in ${p} (${i} of ${n} projects)`),
+        return await fetchPlansAll(
+          org,
+          projectNames,
+          (p, i, n) => setScanNote(`Reading test plans in ${p} (${i} of ${n} projects)`),
+          { signal, force },
         );
       } finally {
-        setScanNote(null);
+        // A cancelled walk must not wipe the note of the walk that replaced it.
+        if (!signal.aborted) setScanNote(null);
       }
     },
     enabled: enabled && Boolean(org && projectNames.length),
@@ -48,7 +55,24 @@ export function usePlansAll(org: string, enabled: boolean) {
     gcTime: 60 * 60_000,
     retry: false,
   });
-  return { projectList, projectNames, plansAll, scanNote };
+  // The list came back and it is empty: there is nothing to walk, so the
+  // screen says so instead of staying blank.
+  const noProjects = enabled && Boolean(org) && projectList.isSuccess && projectNames.length === 0;
+  return { projectList, projectNames, plansAll, scanNote, noProjects };
+}
+
+/** The sentence both screens show for an organization whose project list is empty. */
+export const NO_PROJECTS_SENTENCE = "This organization has no projects you can read.";
+
+/** Organizations whose next walk re-reads every project, fresh cache or not. */
+const forced = new Set<string>();
+
+/** Refresh: read every project again. Each project's entry is replaced only
+ * after its own read succeeds, so a walk that fails partway keeps the trees
+ * it had not reached. */
+export function refreshPlansAll(qc: QueryClient, org: string): void {
+  forced.add(org);
+  qc.invalidateQueries({ queryKey: plansAllKey(org) });
 }
 
 /** A project's plans changed (a suite was created): forget what was kept for

@@ -150,6 +150,65 @@ describe("fetchPlansAll", () => {
     expect(writtenKeys()).toEqual(["plans-suites:acme/A", "plans-suites:acme/D"]);
   });
 
+  test("an aborted walk stops before the next project and writes nothing more", async () => {
+    const ctl = new AbortController();
+    const pending: Array<(a: Answer) => void> = [];
+    h.list.mockImplementation(() => new Promise<Answer>((resolve) => pending.push(resolve)));
+
+    const done = fetchPlansAll("acme", ["A", "B", "C"], undefined, { signal: ctl.signal });
+    const failed = expect(done).rejects.toMatchObject({ name: "AbortError" });
+    await vi.waitFor(() => expect(pending.length).toBe(1));
+    // The signal fires while A is still being read: A's answer is not
+    // written, and B is never asked.
+    ctl.abort();
+    pending.shift()!(ok([plan(1)]));
+    await failed;
+
+    expect(h.list).toHaveBeenCalledTimes(1);
+    expect(writtenKeys()).toEqual([]);
+  });
+
+  test("a walk whose signal is already aborted asks nothing", async () => {
+    const ctl = new AbortController();
+    ctl.abort();
+
+    await expect(fetchPlansAll("acme", ["A"], undefined, { signal: ctl.signal })).rejects.toMatchObject({
+      name: "AbortError",
+    });
+
+    expect(h.list).not.toHaveBeenCalled();
+  });
+
+  test("force reads every project again, fresh or not", async () => {
+    cacheWrite(cacheKeys.plansSuites("acme", "A"), [plan(1)]);
+    cacheWrite(cacheKeys.plansSuites("acme", "B"), [plan(2)]);
+    answerFrom({ A: ok([plan(10)]), B: ok([plan(20)]) });
+
+    const all = await fetchPlansAll("acme", ["A", "B"], undefined, { force: true });
+
+    expect(h.list.mock.calls.map((c) => c[1])).toEqual(["A", "B"]);
+    expect(all.groups.map((g) => g.plans[0].plan.id)).toEqual([10, 20]);
+    expect(
+      cacheEntry<PlanWithSuites[]>("plans-suites:acme/B", CACHE.structure.ttlMs)?.data[0].plan.id,
+    ).toBe(20);
+  });
+
+  test("a forced walk that fails partway keeps the trees it had not reached", async () => {
+    cacheWrite(cacheKeys.plansSuites("acme", "A"), [plan(1)]);
+    cacheWrite(cacheKeys.plansSuites("acme", "B"), [plan(2)]);
+    cacheWrite(cacheKeys.plansSuites("acme", "C"), [plan(3)]);
+    answerFrom({ A: ok([plan(10)]), B: fail({ kind: "RateLimited", detail: { retry_after_secs: 7 } }) });
+
+    await expect(fetchPlansAll("acme", ["A", "B", "C"], undefined, { force: true })).rejects.toThrow(
+      "Rate limited",
+    );
+
+    const idOf = (project: string) =>
+      cacheEntry<PlanWithSuites[]>(`plans-suites:acme/${project}`, CACHE.structure.ttlMs)?.data[0].plan.id;
+    // A was read again and replaced; B and C still hold their warm trees.
+    expect([idOf("A"), idOf("B"), idOf("C")]).toEqual([10, 2, 3]);
+  });
+
   test("an expired sign-in fails the whole list", async () => {
     answerFrom({ A: ok([plan(1)]), B: fail({ kind: "Unauthorized" }), C: ok([plan(3)]) });
 

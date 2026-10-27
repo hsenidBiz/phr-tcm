@@ -43,12 +43,21 @@ export type PlansAll = { groups: ProjectPlans[]; shown: number; total: number };
  *
  * A project that answers Forbidden or NotFound is skipped and not counted
  * in `shown`. A project with no plans counts as shown but gets no group.
+ *
+ * `signal` is checked before each project and again after each read: an
+ * aborted walk throws the signal's reason, asks for nothing more and writes
+ * nothing more (a stale answer must not land after the entry was dropped).
+ * `force` re-reads every project even when its cached tree is fresh; each
+ * entry is replaced only after its own read succeeded, so a walk that fails
+ * partway leaves the trees it had not reached as they were.
  */
 export async function fetchPlansAll(
   org: string,
   projects: string[],
   onProject?: (project: string, index: number, count: number) => void,
+  opts: { signal?: AbortSignal; force?: boolean } = {},
 ): Promise<PlansAll> {
+  const { signal, force = false } = opts;
   const total = projects.length;
   const covered = [...projects]
     .sort((a, b) => {
@@ -61,15 +70,17 @@ export async function fetchPlansAll(
   const groups: ProjectPlans[] = [];
   let shown = 0;
   for (let i = 0; i < covered.length; i++) {
+    signal?.throwIfAborted();
     const project = covered[i];
     const key = cacheKeys.plansSuites(org, project);
     const seed = cacheEntry<PlanWithSuites[]>(key, CACHE.structure.ttlMs);
     let plans: PlanWithSuites[];
-    if (seed && Date.now() - seed.at < CACHE.structure.staleMs) {
+    if (!force && seed && Date.now() - seed.at < CACHE.structure.staleMs) {
       plans = seed.data;
     } else {
       onProject?.(project, i + 1, covered.length);
       const result = await commands.listPlansWithSuites(org, project);
+      signal?.throwIfAborted();
       if (result.status === "error") {
         const kind = result.error.kind;
         if (kind === "Forbidden" || kind === "NotFound") continue;

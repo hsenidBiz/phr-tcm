@@ -162,6 +162,11 @@ test("combined Suite Management with plans in one project shows no project heade
   expect(screen.queryByRole("heading", { level: 2 })).not.toBeInTheDocument();
 });
 
+test("combined Suite Management says so when the organization has no projects", async () => {
+  mountScreen((cmd) => (cmd === "list_projects" ? [] : undefined), null, null, undefined, TOGETHER);
+  expect(await screen.findByText("This organization has no projects you can read.")).toBeInTheDocument();
+});
+
 test("combined Suite Management says so when a project could not be read", async () => {
   mountScreen(
     (cmd, args) => {
