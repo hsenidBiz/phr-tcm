@@ -27,6 +27,13 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.3.1-beta.15",
+    date: "2026-10-27",
+    items: [
+      "Auto Run: an assistant's own browser closes after 30 minutes without a call; the main browser never does.",
+    ],
+  },
+  {
     version: "2.3.1-beta.14",
     date: "2026-10-27",
     items: [
