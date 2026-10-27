@@ -55,9 +55,7 @@ export const settings: Screen = {
       title: "General",
       summary:
         "Whether the projects show together and your home project, running in the tray, starting with Windows, how fast the app may call Azure DevOps, and the Modules page. " +
-        "The first row, **Treat all projects as one**, is on by default: Product Backlog Items from every project show in one search and each brings its own project, new test cases go to the project of the Product Backlog Item they are for, and the board, Pull Requests, Search Suites, Suite Management and the notification bell cover every project, naming a project on an item whenever more than one is shown. " +
-        "Switch it off to pick one project in the bar, as before; you stay in the project of the Product Backlog Item you have chosen. " +
-        "While it is on and the organization has more than one project, a **Home project** picker appears under it. Auto Run, API Templates and Playwright, and new work items that have no Product Backlog Item, use the home project, because their files and templates belong to one project. Once one is set it can be changed but not cleared.",
+        "While **Treat all projects as one** is on and the organization has more than one project, a **Home project** picker appears under it. Auto Run, API Templates and Playwright, and new work items that have no Product Backlog Item, use the home project, because their files and templates belong to one project. Once one is set it can be changed but not cleared.",
     },
     { id: "modules", title: "Modules", summary: "Switch on the parts of the app you need, such as Auto Run. Each module can be switched on once the one above it is." },
     { id: "ai-tools", title: "AI tools", summary: "Where AI tools may be registered." },
@@ -91,6 +89,16 @@ export const settings: Screen = {
       locate: { role: "button", name: "Accent Theme default" },
       name: "Accent",
       does: "The highlight colour. The first swatch keeps the theme's own; the others (green, blue, violet, amber, rose) replace it in any theme.",
+    },
+    {
+      id: "all-projects",
+      shot: MAIN,
+      group: "general",
+      locate: { role: "switch", name: "Treat all projects as one" },
+      name: "Treat all projects as one",
+      does:
+        "On by default: Product Backlog Items from every project show in one search and each brings its own project, new test cases go to the project of the Product Backlog Item they are for, and the board, Pull Requests, Search Suites, Suite Management and the notification bell cover every project, naming a project on an item whenever more than one is shown. " +
+        "Switch it off to pick one project in the bar, as before; you stay in the project of the Product Backlog Item you have chosen.",
     },
     {
       id: "request-rate",
@@ -241,7 +249,7 @@ export const settings: Screen = {
     },
     {
       id: "start-minimized",
-      shot: MAIN,
+      shot: MODULES,
       group: "general",
       locate: { role: "switch", name: "Start minimized" },
       name: "Start minimized",

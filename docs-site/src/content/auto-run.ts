@@ -29,6 +29,7 @@ const SETUP = "auto-run-setup";
 const SETUP_END = "auto-run-setup-end";
 const SITE = "auto-run-site-address";
 const ACCOUNTS = "auto-run-accounts";
+const ASSISTANTS = "auto-run-assistants";
 
 const NAV: Step = { nav: "Auto Run" };
 
@@ -74,7 +75,7 @@ export const autoRun: Screen = {
     {
       id: CASES,
       route: [NAV, READY, ...OPEN_CARD(5002), ...OPEN_CARD(5005), { waitFor: { role: "button", name: "Run #5002" } }],
-      alt: "Auto Run on its Test cases tab: the result filters, the cases with their last results, two of them open, and the Setup panel beside them with the search at its top",
+      alt: "Auto Run on its Test cases tab: the result filters, the search and its toolbar, the cases with their last results, two of them open, and the Setup panel beside them",
     },
     { id: SELECTED, route: [NAV, READY, ...PICK_TWO], alt: "Two scripted cases selected, with the buttons that run them" },
     {
@@ -145,6 +146,12 @@ export const autoRun: Screen = {
       route: [...TO_SETUP, { click: { role: "button", name: "Edit accounts" } }, { waitFor: { role: "button", name: "Save accounts" } }],
       alt: "The Accounts window, with a login the assistant proposed",
     },
+    // The Assistants card shows above the tabs while an assistant is working.
+    {
+      id: ASSISTANTS,
+      route: [NAV, READY, { waitFor: { role: "heading", name: "Assistants" } }],
+      alt: "The Assistants card at the top of Auto Run: one assistant replaying a case in the main browser, and one exploring the Profile area in a browser of its own, each signed in as a different account",
+    },
   ],
   groups: [
     { id: "cases", title: "Choose what to run", summary: "The Product Backlog Item's test cases, which of them have a script, and how each one did last time." },
@@ -153,6 +160,7 @@ export const autoRun: Screen = {
     { id: "unattended", title: "Run unattended", summary: "The app runs the selection by itself and proposes a result for each case, while you carry on with other work if you like." },
     { id: "runs", title: "Past runs and reviews", summary: "What came of each run, and sending the results you confirm to Azure DevOps." },
     { id: "setup", title: "Set up", summary: "The site, the sign-in, your test accounts, the areas of the site, and the files scripts upload." },
+    { id: "assistants", title: "Assistants at work", summary: "Who is connected, which browser each one uses and what it is doing, with the buttons that stop it." },
   ],
   controls: [
     // --- Test cases ------------------------------------------------------------
@@ -776,7 +784,7 @@ export const autoRun: Screen = {
     },
     {
       id: "view-discovery",
-      shot: SETUP,
+      shot: SETUP_END,
       group: "setup",
       locate: { role: "button", name: "View discovery" },
       name: "View (discovery)",
@@ -796,7 +804,7 @@ export const autoRun: Screen = {
     },
     {
       id: "view-components",
-      shot: SETUP,
+      shot: SETUP_END,
       group: "setup",
       locate: { role: "button", name: "View components" },
       name: "View (components)",
@@ -887,6 +895,70 @@ export const autoRun: Screen = {
       name: "Save accounts",
       does: "Saves the accounts for the active environment. A changed login forgets that account's saved sign-in.",
     },
+
+    // --- Assistants ------------------------------------------------------------
+    {
+      id: "assistants-card",
+      shot: ASSISTANTS,
+      group: "assistants",
+      locate: { role: "heading", name: "Assistants" },
+      name: "Assistants",
+      does:
+        "Shows at the top of the Auto Run screen while an assistant is working (discovering, mapping menus, exploring or replaying a case), even before you pick a Product Backlog Item, and goes away when every assistant is idle. Each assistant has a row: its name, which browser it uses, the account it is signed in as and what it is doing, with a small figure that walks while the assistant explores, types while it replays and dozes when it is idle.",
+    },
+    {
+      id: "assistants-main-browser",
+      shot: ASSISTANTS,
+      group: "assistants",
+      locate: { text: "main Auto Run browser, Edge, signed in as hr_admin" },
+      name: "Main Auto Run browser",
+      does:
+        "The browser Auto Run opens when you press **Open browser** and the one an assistant uses first. A row reads **main Auto Run browser** while its assistant works in it.",
+    },
+    {
+      id: "assistants-stop",
+      shot: ASSISTANTS,
+      group: "assistants",
+      locate: { role: "button", name: "Stop Assistant 1" },
+      name: "Stop",
+      does: "Ends the replay or the run of actions that assistant is in the middle of. Its browser stays open.",
+    },
+    {
+      id: "assistants-release-main",
+      shot: ASSISTANTS,
+      group: "assistants",
+      locate: { role: "button", name: "Release Assistant 1's browser" },
+      name: "Release",
+      does: "Lets go of that assistant's browser, so another assistant can use it. A browser you opened yourself stays open.",
+    },
+    {
+      id: "assistants-own-browser",
+      shot: ASSISTANTS,
+      group: "assistants",
+      locate: { text: "its own browser, Edge, signed in as portal.tester" },
+      name: "Its own browser",
+      does:
+        "Up to three assistants can work at once, each in its own browser and signed in as an account of its own. A second assistant opens a browser of its own when the main one is in use, and its row says **its own browser**.",
+      tips: [
+        "An unattended run does not start while any assistant's browser is open: wait for them to finish, or press **Release Auto Run browser** on the Setup card, which closes them all.",
+      ],
+    },
+    {
+      id: "assistants-end-discovery",
+      shot: ASSISTANTS,
+      group: "assistants",
+      locate: { role: "button", name: "End discovery for Assistant 2" },
+      name: "End discovery",
+      does: "Ends the exploring that assistant is doing and keeps what it saw. It shows only while an assistant is exploring the site.",
+    },
+    {
+      id: "assistants-release-own",
+      shot: ASSISTANTS,
+      group: "assistants",
+      locate: { role: "button", name: "Release Assistant 2's browser" },
+      name: "Release its own browser",
+      does: "Closes the browser that assistant opened for itself and frees the account it was signed in as, so another assistant can use it.",
+    },
   ],
   tips: [
     "Nothing a script or a run does reaches Azure DevOps by itself. Results go there only when you review a run and press **Send to Azure DevOps**.",
@@ -894,8 +966,6 @@ export const autoRun: Screen = {
     "Scripts, runs, accounts and test files are kept on this computer. Each tester keeps their own accounts; scripts name them by key.",
     "Auto Run works in your home project (Settings, under General), because its scripts, areas, runs and test files belong to one project. That holds with **Treat all projects as one** on or off; with it off the home project is the project you pick in the bar. When you send a reviewed run, the results go to the project of the Product Backlog Item the cases belong to.",
     "An assistant connected on the AI Bridge tab can write scripts for a whole Product Backlog Item, repair one that broke, and walk you through the setup.",
-    "While an assistant is working (discovering, mapping menus, exploring or replaying a case), an **Assistants** card shows at the top of the Auto Run screen, and it goes away when every assistant is idle. Each assistant has a row: which browser it uses, the account it is signed in as and what it is doing, with a small figure beside it that walks while the assistant explores, types while it replays and dozes when it is idle. **Stop** ends its replay or its run of actions; **End discovery** ends its exploring and keeps what it saw; **Release** lets go of its browser; a browser you opened yourself stays open.",
-    "Up to three assistants can work at once, each in its own browser and signed in as an account of its own; a second assistant opens a browser of its own when the main one is in use, and its row on the card says **its own browser**. An unattended run does not start while any assistant's browser is open: wait for them to finish, or press **Release Auto Run browser** on the Setup card, which closes them all.",
     "When a step fails and the reason is not on the page, your assistant can inspect one element and, once you switch **Network tools** on, on the AI Bridge tab, look at the requests the page made and try a header or cookie of its own; passwords, tokens and session cookies are always hidden from it. Each environment keeps its own Network tools switch, off until you turn it on.",
   ],
   howTo: [
