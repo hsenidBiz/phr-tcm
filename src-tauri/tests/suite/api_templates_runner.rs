@@ -2226,7 +2226,7 @@ async fn a_template_run_never_waits_on_the_auto_run_browser() {
     let _l = crate::serial::account_leases();
     let mut r = rig(vec![], None);
     let env = env_of(&r);
-    let _browser = lease::try_acquire(&env, "admin", Holder::Browser).unwrap();
+    let _browser = lease::try_acquire(&env, "admin", Holder::Browser { slot: 0 }).unwrap();
     let began = Instant::now();
     let report = run_waiting(&mut r, 5_000).await;
     assert!(began.elapsed() < Duration::from_millis(500), "it waited on the Auto Run browser: {:?}", began.elapsed());

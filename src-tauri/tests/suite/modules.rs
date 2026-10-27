@@ -411,7 +411,7 @@ mod commands {
         assert!(v2_lib::commands::modules::auto_run_browser_open(), "a setup browser is open");
         drop(lease);
         assert!(!v2_lib::commands::modules::auto_run_browser_open());
-        let lease = try_acquire("env-modules-test", "acct", Holder::Browser).unwrap();
+        let lease = try_acquire("env-modules-test", "acct", Holder::Browser { slot: 0 }).unwrap();
         assert!(v2_lib::commands::modules::auto_run_browser_open(), "the supervised browser holds an account");
         drop(lease);
         // A run's own lease (a case) is the run, not an open browser.

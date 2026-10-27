@@ -3129,6 +3129,91 @@ async fn a_repair_that_leaves_the_area_out_does_not_erase_it() {
     assert_eq!(load_script(dir.path(), 7).unwrap().unwrap().area.as_deref(), Some("Manage Cycle"));
 }
 
+/// `get_accounts` says who holds each account that is held, as the asker
+/// reads it, and a free account has no such key. Never a login or a
+/// password (this environment is not a test one), never an id.
+#[tokio::test]
+async fn get_accounts_names_who_holds_each_account() {
+    use v2_lib::ai_bridge::route_as;
+    use v2_lib::autorun::accounts::{save_accounts, Account};
+    use v2_lib::autorun::agents::{self, AgentHeaders};
+    use v2_lib::autorun::lease::{self, Holder};
+    use v2_lib::autorun::slots::SlotNo;
+    use v2_lib::commands::autorun_slots as slots;
+    const ID_A: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    const ID_B: &str = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+    let _agents = crate::serial::agents();
+    let _root = crate::serial::autorun();
+    let _leases = crate::serial::account_leases();
+    let dir = TempDir::new();
+    set_root(dir.path().to_path_buf());
+    let account = |key: &str| Account {
+        key: key.into(),
+        label: format!("{key} label"),
+        username: format!("{key}_login"),
+        password: format!("{key}_secret"),
+    };
+    save_accounts(dir.path(), &[account("hr_admin"), account("hr_user"), account("batch"), account("free_one")]).unwrap();
+    let env = v2_lib::environments::active_id(dir.path()).unwrap();
+
+    agents::clear();
+    slots::clear();
+    let mut callers = Vec::new();
+    for (id, at) in [(ID_A, 1_000), (ID_B, 2_000)] {
+        let h = AgentHeaders { id: Some(id.to_string()), pid: Some(4242), client: Some("claude-code".into()), name: None };
+        agents::note_call(&h.caller(), &h, at);
+        callers.push(h.caller());
+    }
+    let b = callers[1].key().unwrap().clone();
+    slots::bind(SlotNo(1), &b);
+    let _by_b = lease::try_acquire(&env, "hr_admin", Holder::Browser { slot: 1 }).unwrap();
+    let _by_run = lease::try_acquire(&env, "hr_user", Holder::Case { run: "run-1".into() }).unwrap();
+    let _by_main = lease::try_acquire(&env, "batch", Holder::Browser { slot: 0 }).unwrap();
+
+    let read = |caller: &v2_lib::autorun::agents::Caller| {
+        let caller = caller.clone();
+        async move {
+            let (status, body) = route_as(&caller, &ctx(), None, "GET", "/accounts", "", "1.0.0").await;
+            assert_eq!(status, 200, "{body}");
+            let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+            (v, body)
+        }
+    };
+    let held_by = |v: &serde_json::Value, key: &str| -> Option<String> {
+        let one = v["accounts"].as_array().unwrap().iter().find(|a| a["key"] == key).unwrap_or_else(|| panic!("{key} is missing: {v}"));
+        one.get("in_use_by").map(|w| w.as_str().unwrap().to_string())
+    };
+
+    // The default caller (the person, an older proxy) is main's.
+    let (v, body) = read(&v2_lib::autorun::agents::Caller::Default).await;
+    assert_eq!(held_by(&v, "hr_admin").as_deref(), Some("Assistant 2's browser"), "{body}");
+    assert_eq!(held_by(&v, "hr_user").as_deref(), Some("an unattended run"), "{body}");
+    assert_eq!(held_by(&v, "batch").as_deref(), Some("your browser"), "{body}");
+    assert_eq!(held_by(&v, "free_one"), None, "{body}");
+    assert!(v["accounts"].as_array().unwrap().iter().find(|a| a["key"] == "free_one").unwrap().get("in_use_by").is_none());
+    // (The accounts list names each login, as it always did; a password only in a test environment.)
+    assert!(!body.contains("_secret"), "a password leaked: {body}");
+    for a in v["accounts"].as_array().unwrap() {
+        if let Some(by) = a.get("in_use_by") {
+            assert!(!by.as_str().unwrap().contains("_login"), "a login in in_use_by: {body}");
+        }
+    }
+    assert!(!body.contains(ID_A) && !body.contains(ID_B), "an agent id leaked: {body}");
+
+    // The assistant that holds hr_admin is told it is its own; main's
+    // holder is named by label once it is bound to an assistant.
+    let (v, body) = read(&callers[1]).await;
+    assert_eq!(held_by(&v, "hr_admin").as_deref(), Some("your browser"), "{body}");
+    assert_eq!(held_by(&v, "batch").as_deref(), Some("the main Auto Run browser"), "{body}");
+    slots::bind(SlotNo::MAIN, callers[0].key().unwrap());
+    let (v, body) = read(&callers[1]).await;
+    assert_eq!(held_by(&v, "batch").as_deref(), Some("Assistant 1's browser"), "{body}");
+    assert_eq!(held_by(&v, "hr_user").as_deref(), Some("an unattended run"), "{body}");
+
+    agents::clear();
+    slots::clear();
+}
+
 /// `get_accounts` carries the project's Test files: by name and human size,
 /// and nothing else - no path, no date. With no project open there is no
 /// folder to read, and a note says so in their place; the accounts still

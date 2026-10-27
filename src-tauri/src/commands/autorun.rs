@@ -1257,7 +1257,7 @@ async fn open_into(
         kind: which,
         cdp,
         account: None,
-        lease: crate::autorun::lease::Held::supervised(),
+        lease: crate::autorun::lease::Held::supervised_in(n),
         guarded_case: None,
         guard_owner: None,
         downloads_root,

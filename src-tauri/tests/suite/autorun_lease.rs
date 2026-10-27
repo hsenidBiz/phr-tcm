@@ -83,9 +83,9 @@ async fn a_wait_that_runs_out_says_who_had_the_account() {
 async fn nothing_waits_on_an_account_a_person_holds() {
     let _l = crate::serial::account_leases();
     let env = "env-aa00000a";
-    for (holder, said) in [(Holder::Browser, "the Auto Run browser"), (Holder::Setup, "Auto Run setup")] {
+    for (holder, said) in [(Holder::Browser { slot: 0 }, "the Auto Run browser"), (Holder::Setup, "Auto Run setup")] {
         let held = lease::try_acquire(env, KEY, holder).unwrap();
-        for asking in [case_of("run-1"), Holder::Template, Holder::Browser, Holder::Setup] {
+        for asking in [case_of("run-1"), Holder::Template, Holder::Browser { slot: 0 }, Holder::Setup] {
             let began = Instant::now();
             let refused = lease::acquire(env, KEY, asking, Duration::from_secs(5)).await.unwrap_err();
             assert!(began.elapsed() < Duration::from_millis(100), "it waited on {said}: {:?}", began.elapsed());
@@ -99,7 +99,7 @@ async fn nothing_waits_on_an_account_a_person_holds() {
 #[tokio::test]
 async fn different_accounts_never_block_each_other() {
     let _l = crate::serial::account_leases();
-    let a = lease::try_acquire("env-aa000003", "admin", Holder::Browser).unwrap();
+    let a = lease::try_acquire("env-aa000003", "admin", Holder::Browser { slot: 0 }).unwrap();
     let began = Instant::now();
     let b = lease::acquire("env-aa000003", "manager", Holder::Template, Duration::from_secs(5)).await.unwrap();
     // The same key in another environment is another account.
@@ -119,7 +119,7 @@ fn a_lease_is_released_when_it_is_dropped() {
     }
     assert!(!lease::is_held("env-aa000005", KEY));
     // Free again: the next one gets it at once.
-    let again = lease::try_acquire("env-aa000005", KEY, Holder::Browser);
+    let again = lease::try_acquire("env-aa000005", KEY, Holder::Browser { slot: 0 });
     assert!(again.is_ok(), "{again:?}");
 }
 
@@ -163,7 +163,7 @@ fn a_lease_is_released_on_a_panic() {
     });
     assert!(out.is_err());
     assert!(!lease::is_held("env-aa000008", KEY));
-    assert!(lease::try_acquire("env-aa000008", KEY, Holder::Browser).is_ok());
+    assert!(lease::try_acquire("env-aa000008", KEY, Holder::Browser { slot: 0 }).is_ok());
 }
 
 /// The supervised browser never waits: asked to sign in as an account
@@ -353,7 +353,7 @@ async fn an_unattended_case_on_a_held_account_is_blocked_and_the_run_goes_on() {
     signing_in_root(root);
     store::save_script(root, &clicking(1, Some("admin"))).unwrap();
     store::save_script(root, &clicking(2, Some("manager"))).unwrap();
-    let _browser = lease::try_acquire(&env_of(root), KEY, Holder::Browser).unwrap();
+    let _browser = lease::try_acquire(&env_of(root), KEY, Holder::Browser { slot: 0 }).unwrap();
     let (first, first_state) = common::stateful_app(false, None);
     let (second, _) = common::stateful_app(false, None);
     let mut browsers = queue(vec![first, second]);
@@ -743,4 +743,256 @@ async fn a_re_hold_does_not_bump_the_generation() {
     let manager = lease::generation(&env, "manager");
     browser.hold(root, "manager").await.unwrap();
     assert_eq!(lease::generation(&env, "manager"), manager + 1);
+}
+
+// ---------------------------------------------------------------------------
+// Accounts across browsers: a refusal names the assistant whose browser holds
+// the account, and nothing ever waits for one.
+// ---------------------------------------------------------------------------
+
+mod across_browsers {
+    use super::*;
+    use v2_lib::ai_bridge::{in_use_by_words, with_holder_named};
+    use v2_lib::autorun::agents::{self, AgentHeaders, AgentKey};
+    use v2_lib::autorun::slots::SlotNo;
+    use v2_lib::commands::autorun_slots as slots;
+
+    const ID_A: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    const ID_B: &str = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+
+    /// An agent first seen at `now`: labelled by the order they register in.
+    fn register(id: &str, now: u64) -> AgentKey {
+        let h = AgentHeaders { id: Some(id.to_string()), pid: Some(4242), client: Some("claude-code".into()), name: None };
+        agents::note_call(&h.caller(), &h, now);
+        AgentKey { id: id.to_string(), name: None }
+    }
+
+    fn fresh() {
+        agents::clear();
+        slots::clear();
+    }
+
+    fn named_by(label: &str) -> String {
+        format!(". {label} is signed in as it: work on cases that sign in as another account, or wait until {label} is done.")
+    }
+
+    #[test]
+    fn an_account_held_by_another_slot_is_refused_naming_its_label() {
+        let _a = crate::serial::agents();
+        let _l = crate::serial::account_leases();
+        fresh();
+        let env = "env-ab000001";
+        register(ID_A, 1_000);
+        let b = register(ID_B, 2_000);
+        assert_eq!(agents::info(&b).unwrap().label, "Assistant 2");
+        slots::bind(SlotNo(1), &b);
+
+        let held = lease::try_acquire(env, "hr_admin", Holder::Browser { slot: 1 }).unwrap();
+        let sentence = lease::try_acquire(env, "hr_admin", Holder::Browser { slot: 0 }).unwrap_err();
+        assert_eq!(sentence, "the account hr_admin was in use by the Auto Run browser - try again when it is free");
+
+        let named = with_holder_named((409, sentence.clone()), SlotNo::MAIN, env);
+        assert_eq!(named, (409, format!("{sentence}{}", named_by("Assistant 2"))));
+
+        // Words after the sentence stay after it, and a full stop already
+        // there is not doubled.
+        let within = format!("Could not sign in: {sentence}.");
+        let (status, text) = with_holder_named((409, within), SlotNo::MAIN, env);
+        assert_eq!(status, 409);
+        assert_eq!(text, format!("Could not sign in: {sentence}{}", named_by("Assistant 2")));
+        assert!(!text.ends_with(".."), "{text}");
+        let within = format!("{sentence} (and more words)");
+        let text = with_holder_named((409, within), SlotNo::MAIN, env).1;
+        assert_eq!(text, format!("{sentence}{} (and more words)", named_by("Assistant 2")));
+
+        // The holder asking is told nothing more; neither is an answer that
+        // holds no refusal, nor a refusal of an account nobody now holds.
+        assert_eq!(with_holder_named((409, sentence.clone()), SlotNo(1), env).1, sentence);
+        assert_eq!(with_holder_named((200, "all went well".into()), SlotNo::MAIN, env).1, "all went well");
+        assert_eq!(with_holder_named((409, sentence.clone()), SlotNo::MAIN, "env-ab0000ff").1, sentence);
+
+        // A slot nobody is bound to is named by nobody.
+        slots::unbind(SlotNo(1));
+        assert_eq!(with_holder_named((409, sentence.clone()), SlotNo::MAIN, env).1, sentence);
+        drop(held);
+        fresh();
+    }
+
+    /// An assistant on main is named too, to one on an extra browser; a gone
+    /// assistant is not.
+    #[test]
+    fn the_assistant_on_main_is_named_to_one_on_an_extra_browser() {
+        let _a = crate::serial::agents();
+        let _l = crate::serial::account_leases();
+        fresh();
+        let env = "env-ab000002";
+        let a = register(ID_A, 1_000);
+        let b = register(ID_B, 2_000);
+        slots::bind(SlotNo::MAIN, &a);
+        slots::bind(SlotNo(1), &b);
+        let held = lease::try_acquire(env, "hr_admin", Holder::Browser { slot: 0 }).unwrap();
+        let sentence = lease::try_acquire(env, "hr_admin", Holder::Browser { slot: 1 }).unwrap_err();
+        assert_eq!(
+            with_holder_named((409, sentence.clone()), SlotNo(1), env).1,
+            format!("{sentence}{}", named_by("Assistant 1"))
+        );
+        agents::note_bye(ID_A, 3_000);
+        assert_eq!(with_holder_named((409, sentence.clone()), SlotNo(1), env).1, sentence, "a gone assistant was named");
+        drop(held);
+        fresh();
+    }
+
+    #[test]
+    fn is_in_use_still_matches_the_browser_refusal() {
+        let _l = crate::serial::account_leases();
+        for slot in 0..3u8 {
+            let env = format!("env-ab00001{slot}");
+            let held = lease::try_acquire(&env, KEY, Holder::Browser { slot }).unwrap();
+            for asking in [Holder::Browser { slot: (slot + 1) % 3 }, Holder::Template, Holder::Setup, case_of("run-1")] {
+                let refused = lease::try_acquire(&env, KEY, asking).unwrap_err();
+                assert!(lease::is_in_use(&refused), "{refused}");
+                assert_eq!(refused, lease::in_use_by_browser(KEY));
+            }
+            drop(held);
+        }
+        assert!(lease::is_in_use("the account admin was in use by the Auto Run browser - try again when it is free"));
+        assert!(!lease::is_in_use("the account admin was in use by Assistant 2 - try again when it is free"));
+    }
+
+    /// A browser holds an account until a person (or the app) closes it, so
+    /// nothing waits on one, whichever slot holds it.
+    #[tokio::test]
+    async fn a_browser_holder_is_never_waited_for() {
+        let _l = crate::serial::account_leases();
+        let env = "env-ab000003";
+        let held = lease::try_acquire(env, KEY, Holder::Browser { slot: 1 }).unwrap();
+        for asking in [Holder::Browser { slot: 0 }, Holder::Browser { slot: 2 }, Holder::Template, Holder::Setup, case_of("run-9")] {
+            let began = Instant::now();
+            let refused = lease::acquire(env, KEY, asking, lease::WAIT).await;
+            assert!(began.elapsed() < Duration::from_millis(100), "it waited on a browser: {:?}", began.elapsed());
+            assert_eq!(refused.unwrap_err(), lease::in_use_by_browser(KEY));
+        }
+        drop(held);
+        assert!(!lease::is_held(env, KEY));
+    }
+
+    #[test]
+    fn who_holds_an_account_can_be_looked_up() {
+        let _l = crate::serial::account_leases();
+        let env = "env-ab000004";
+        assert_eq!(lease::holder_of(env, "one"), None);
+        assert!(lease::holders_in(env).is_empty());
+        let one = lease::try_acquire(env, "one", Holder::Browser { slot: 2 }).unwrap();
+        let two = lease::try_acquire(env, "two", case_of("run-3")).unwrap();
+        let other_env = lease::try_acquire("env-ab000005", "three", Holder::Template).unwrap();
+        assert_eq!(lease::holder_of(env, "one"), Some(Holder::Browser { slot: 2 }));
+        assert_eq!(lease::holder_of(env, "two"), Some(case_of("run-3")));
+        let mut in_env = lease::holders_in(env);
+        in_env.sort_by(|a, b| a.0.cmp(&b.0));
+        assert_eq!(in_env, vec![("one".to_string(), Holder::Browser { slot: 2 }), ("two".to_string(), case_of("run-3"))]);
+        drop((one, two, other_env));
+        assert_eq!(lease::holder_of(env, "one"), None);
+    }
+
+    #[test]
+    fn a_refusal_is_found_inside_an_answer() {
+        let sentence = |key: &str, by: &str| format!("the account {key} was in use by {by} - try again when it is free");
+        assert_eq!(
+            lease::find_in_use(&sentence("hr_admin", "the Auto Run browser")),
+            Some(("hr_admin".to_string(), "the Auto Run browser".to_string()))
+        );
+        let inside = format!("Step 1 failed: {}. Nothing else ran.", sentence("manager", "an unattended run"));
+        assert_eq!(lease::find_in_use(&inside), Some(("manager".to_string(), "an unattended run".to_string())));
+        // The first one, not the last.
+        let two = format!("{} / {}", sentence("a", "Auto Run setup"), sentence("b", "an API template run"));
+        assert_eq!(lease::find_in_use(&two).unwrap().0, "a");
+        // Not a refusal: another holder, a key with a space, no ending.
+        assert_eq!(lease::find_in_use(&sentence("a", "somebody")), None);
+        assert_eq!(lease::find_in_use("the account a b was in use by an unattended run - try again when it is free"), None);
+        assert_eq!(lease::find_in_use("the account a was in use by an unattended run"), None);
+        assert_eq!(lease::find_in_use("nothing here"), None);
+        // A text that has a bad start before a good one finds the good one.
+        let late = format!("the account was fine, the account x y z. {}", sentence("c", "the Auto Run browser"));
+        assert_eq!(lease::find_in_use(&late).unwrap().0, "c");
+    }
+
+    #[test]
+    fn a_browser_of_any_slot_counts_as_a_browser_held() {
+        let _l = crate::serial::account_leases();
+        let env = "env-ab000006";
+        for holder in [Holder::Browser { slot: 0 }, Holder::Browser { slot: 1 }, Holder::Browser { slot: 2 }, Holder::Setup] {
+            let held = lease::try_acquire(env, KEY, holder).unwrap();
+            assert!(lease::a_browser_is_held());
+            drop(held);
+        }
+    }
+
+    /// A browser opened in a slot holds its accounts as that slot, and the
+    /// person's own paths (`supervised`) as main.
+    #[tokio::test]
+    async fn a_browser_holds_its_account_as_its_own_slot() {
+        let _l = crate::serial::account_leases();
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let env = env_of(root);
+        let mut extra = Held::supervised_in(SlotNo(2));
+        extra.hold(root, "admin").await.unwrap();
+        assert_eq!(lease::holder_of(&env, "admin"), Some(Holder::Browser { slot: 2 }));
+        let mut main = Held::supervised();
+        main.hold(root, "manager").await.unwrap();
+        assert_eq!(lease::holder_of(&env, "manager"), Some(Holder::Browser { slot: 0 }));
+        // The main browser asking for the extra one's account is refused at once.
+        let refused = Held::supervised().hold(root, "admin").await.unwrap_err();
+        assert_eq!(refused, lease::in_use_by_browser("admin"));
+        drop((extra, main));
+        assert!(!lease::is_held(&env, "admin") && !lease::is_held(&env, "manager"));
+    }
+
+    #[test]
+    fn in_use_by_words_names_each_holder_as_the_asker_reads_it() {
+        let _a = crate::serial::agents();
+        fresh();
+        let a = register(ID_A, 1_000);
+        let b = register(ID_B, 2_000);
+        let browser = |slot| Holder::Browser { slot };
+        // The asker's own browser.
+        assert_eq!(in_use_by_words(&browser(1), Some(SlotNo(1)), false), "your browser");
+        assert_eq!(in_use_by_words(&browser(0), Some(SlotNo::MAIN), true), "your browser");
+        // Another assistant's, by label.
+        slots::bind(SlotNo(1), &b);
+        assert_eq!(in_use_by_words(&browser(1), Some(SlotNo::MAIN), false), "Assistant 2's browser");
+        assert_eq!(in_use_by_words(&browser(1), None, false), "Assistant 2's browser");
+        slots::bind(SlotNo::MAIN, &a);
+        assert_eq!(in_use_by_words(&browser(0), Some(SlotNo(1)), true), "Assistant 1's browser");
+        // Main, bound to nobody: the person's when they opened it.
+        slots::unbind(SlotNo::MAIN);
+        assert_eq!(in_use_by_words(&browser(0), Some(SlotNo(1)), true), "the person's browser");
+        assert_eq!(in_use_by_words(&browser(0), Some(SlotNo(1)), false), "the main Auto Run browser");
+        // A gone assistant is not named.
+        agents::note_bye(ID_B, 3_000);
+        assert_eq!(in_use_by_words(&browser(1), Some(SlotNo::MAIN), true), "another Auto Run browser");
+        // The other holders.
+        assert_eq!(in_use_by_words(&case_of("run-1"), Some(SlotNo::MAIN), false), "an unattended run");
+        assert_eq!(in_use_by_words(&Holder::Template, None, false), "an API template run");
+        assert_eq!(in_use_by_words(&Holder::Setup, None, false), "Auto Run setup");
+        fresh();
+    }
+
+    /// The browser a slot opens is made with that slot's holder, and the
+    /// refusals are named by the bridge.
+    #[test]
+    fn open_into_holds_as_its_slot_and_the_bridge_names_the_holder() {
+        let commands = include_str!("../../src/commands/autorun.rs");
+        assert!(commands.contains("lease: crate::autorun::lease::Held::supervised_in(n),"));
+        assert!(!commands.contains("lease: crate::autorun::lease::Held::supervised(),"));
+        let bridge = include_str!("../../src/ai_bridge.rs");
+        assert!(bridge.contains("with_holder_named("));
+        // One wrapper around every arm of `route_as`, after the match, not an arm at a time.
+        let route_as = &bridge[bridge.find("pub async fn route_as(").unwrap()..];
+        let route_as = &route_as[..route_as.find("\n}").unwrap()];
+        assert!(route_as.contains("let answer = match (method, path) {"));
+        assert!(route_as.trim_end().ends_with("name_the_holder(answer, caller, method, path)"));
+        assert_eq!(route_as.matches("name_the_holder(").count(), 1);
+        assert!(bridge.contains("accounts_read(ctx, crate::commands::autorun_slots::slot_if_any(caller))"));
+    }
 }

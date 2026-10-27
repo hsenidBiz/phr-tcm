@@ -1018,7 +1018,7 @@ async fn a_saves_check_holds_the_account_until_its_browser_closes() {
 
     // Held by the Auto Run browser: refused before any browser opens.
     keep_draft(stateful_draft());
-    let browser = lease::try_acquire(&env, "admin", Holder::Browser).unwrap();
+    let browser = lease::try_acquire(&env, "admin", Holder::Browser { slot: 0 }).unwrap();
     let opened = AtomicBool::new(false);
     let err = save_checked(dir.path(), "acme", "Web", "admin", &fields, &quick(), || async {
         opened.store(true, Ordering::SeqCst);

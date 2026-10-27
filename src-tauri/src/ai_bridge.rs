@@ -410,7 +410,7 @@ pub async fn route_as(
     // never whoever the bindings name at that moment. The default caller
     // holds none.
     let holder = caller.key();
-    match (method, path) {
+    let answer = match (method, path) {
         ("GET", "/ping") => (
             200,
             serde_json::json!({
@@ -648,7 +648,7 @@ pub async fn route_as(
         ("POST", "/accounts-propose") => accounts_propose(body),
         // With the project's Test files beside them, by name and size: what
         // a case uploads.
-        ("GET", "/accounts") => accounts_read(ctx),
+        ("GET", "/accounts") => accounts_read(ctx, crate::commands::autorun_slots::slot_if_any(caller)),
         // A file the assistant made, saved into those Test files.
         ("POST", "/test-file-save") => test_file_save(ctx, body),
         // The API template routes: gated with the Auto Run ones by the
@@ -803,7 +803,10 @@ pub async fn route_as(
         },
         _ if smells_like_a_write(method, target) => (403, WRITE_REFUSAL.into()),
         _ => (404, String::new()),
-    }
+    };
+    // A lease refusal in the answer of a route that signs in says whose
+    // browser holds the account, once, here, whichever arm answered.
+    name_the_holder(answer, caller, method, path)
 }
 
 /// The exact sentence an assistant is handed when it tries to write. One
@@ -10303,13 +10306,15 @@ pub const GET_ACCOUNTS_OFF: &str = "reading the accounts is switched off in Test
 /// test environment. The one place a password leaves the app; it is never
 /// logged, and the log line says only how many were read. Beside them, the
 /// project's Test files (`test_files_answer`), or `test_files_note` saying
-/// why there are none to show.
+/// why there are none to show. An account that is held right now carries
+/// `in_use_by`, who holds it as the caller reads it (`in_use_by_words`); a
+/// free one has no such key.
 ///
 /// Refused while the person has switched `get_accounts` off on the AI
 /// Bridge tab. The MCP proxy already hides a switched-off tool; this route
 /// checks again itself, as the database routes do (`stage_db`), because it
 /// is the one that can hand out passwords.
-fn accounts_read(ctx: &BridgeContext) -> (u16, String) {
+fn accounts_read(ctx: &BridgeContext, caller_slot: Option<SlotNo>) -> (u16, String) {
     if ctx.disabled_tools.iter().any(|t| t == "get_accounts") {
         return (409, GET_ACCOUNTS_OFF.to_string());
     }
@@ -10338,12 +10343,21 @@ fn accounts_read(ctx: &BridgeContext) -> (u16, String) {
         Err(e) => return accounts_failed(e),
     };
     let shown = env.test_environment;
+    // Who holds each account right now, as this caller reads it: a free
+    // account has no `in_use_by`. Main's session is looked at only when it
+    // holds one, and never waited for.
+    let held = crate::autorun::lease::holders_in(&env.id);
+    let main_is_persons = held.iter().any(|(_, h)| matches!(h, crate::autorun::lease::Holder::Browser { slot: 0 }))
+        && main_is_opened_by_the_person();
     let list: Vec<serde_json::Value> = accounts
         .iter()
         .map(|a| {
             let mut one = serde_json::json!({ "key": a.key, "label": a.label, "username": a.username });
             if shown {
                 one["password"] = serde_json::Value::String(a.password.clone());
+            }
+            if let Some((_, holder)) = held.iter().find(|(key, _)| *key == a.key) {
+                one["in_use_by"] = serde_json::Value::String(in_use_by_words(holder, caller_slot, main_is_persons));
             }
             one
         })
@@ -10370,6 +10384,112 @@ fn accounts_read(ctx: &BridgeContext) -> (u16, String) {
         if shown { ", passwords included" } else { "" }
     ));
     (200, out.to_string())
+}
+
+/// Whether main's session is open and the person opened it (`OpenedBy`),
+/// read without waiting: a session busy with a step or a replay reads as not.
+fn main_is_opened_by_the_person() -> bool {
+    use crate::commands::autorun::{session_slot, try_lock_briefly, OpenedBy};
+    try_lock_briefly(session_slot(SlotNo::MAIN))
+        .is_some_and(|session| session.as_ref().is_some_and(|s| s.opened_by == OpenedBy::Person))
+}
+
+/// The live assistant a slot's browser is in use by, by label.
+fn label_of_slot(slot: SlotNo) -> Option<String> {
+    let key = crate::commands::autorun_slots::bound(slot)?;
+    crate::autorun::agents::info(&key).filter(|i| i.gone_since_ms.is_none()).map(|i| i.label)
+}
+
+/// `get_accounts`' `in_use_by` for one held account, as `caller_slot` (the
+/// asker's own browser, if it has one) reads it:
+///
+/// - the asker's own browser: "your browser";
+/// - an assistant's: "{label}'s browser";
+/// - main's, bound to nobody: "the person's browser" when the person opened
+///   it (`main_is_persons`), else "the main Auto Run browser";
+/// - an extra browser nobody is bound to now (its assistant is gone and the
+///   browser not yet released): "another Auto Run browser";
+/// - an unattended run, an API template run, Auto Run setup: as the
+///   refusals word them.
+///
+/// Labels only: never a login, an id or a host.
+pub fn in_use_by_words(holder: &crate::autorun::lease::Holder, caller_slot: Option<SlotNo>, main_is_persons: bool) -> String {
+    use crate::autorun::lease::Holder;
+    match holder {
+        Holder::Browser { slot } => {
+            let Some(slot) = SlotNo::from_number(*slot) else {
+                return "another Auto Run browser".to_string();
+            };
+            if caller_slot == Some(slot) {
+                "your browser".to_string()
+            } else if let Some(label) = label_of_slot(slot) {
+                format!("{label}'s browser")
+            } else if slot.is_main() {
+                (if main_is_persons { "the person's browser" } else { "the main Auto Run browser" }).to_string()
+            } else {
+                "another Auto Run browser".to_string()
+            }
+        }
+        Holder::Case { .. } => "an unattended run".to_string(),
+        Holder::Template => "an API template run".to_string(),
+        Holder::Setup => "Auto Run setup".to_string(),
+    }
+}
+
+/// An answer holding a lease refusal for an account whose holder is another
+/// slot's browser, with that browser's live assistant named right after the
+/// refusal's sentence: ". {label} is signed in as it: work on cases that
+/// sign in as another account, or wait until {label} is done." The refusal
+/// itself stays word for word (`lease::is_in_use` still matches it). An
+/// answer with no refusal, an account held by the asker's own browser, by
+/// anything else, or by a browser no live assistant is bound to comes back
+/// unchanged. `env` is the active environment's id, the key the lease table
+/// uses. Labels only: never a login or an id.
+pub fn with_holder_named(answer: (u16, String), caller_slot: impl Into<Option<SlotNo>>, env: &str) -> (u16, String) {
+    use crate::autorun::lease::{holder_of, locate_in_use, Holder};
+    let (status, text) = answer;
+    let Some((key, end)) = locate_in_use(&text).map(|(key, _, end)| (key.to_string(), end)) else {
+        return (status, text);
+    };
+    let caller_slot: Option<SlotNo> = caller_slot.into();
+    let named = (|| {
+        let Holder::Browser { slot } = holder_of(env, &key)? else { return None };
+        let slot = SlotNo::from_number(slot)?;
+        if caller_slot == Some(slot) {
+            return None;
+        }
+        label_of_slot(slot)
+    })();
+    let Some(label) = named else { return (status, text) };
+    // The sentence's own full stop, if the answer has one, is the one this ends with.
+    let rest = text[end..].strip_prefix('.').unwrap_or(&text[end..]);
+    let said = format!(
+        ". {label} is signed in as it: work on cases that sign in as another account, or wait until {label} is done."
+    );
+    (status, format!("{}{said}{rest}", &text[..end]))
+}
+
+/// `with_holder_named` for the answer to one request, in the active
+/// environment, for the routes that sign an account in: those that open or
+/// act on the caller's browser, and the API template runs. Any other route's
+/// answer is returned as it is - a failure listing may quote an old refusal.
+fn name_the_holder(
+    answer: (u16, String),
+    caller: &crate::autorun::agents::Caller,
+    method: &str,
+    path: &str,
+) -> (u16, String) {
+    use crate::commands::autorun_slots::{need_of, slot_if_any, Need};
+    let signs_in = matches!(need_of(method, path), Some(Need::Open | Need::Act))
+        || (method == "POST" && matches!(path, "/api-template-run" | "/api-template-prove"));
+    if !signs_in || crate::autorun::lease::locate_in_use(&answer.1).is_none() {
+        return answer;
+    }
+    let env = autorun_root().ok().and_then(|root| crate::environments::active_id(&root).ok());
+    match env {
+        Some(env) => with_holder_named(answer, slot_if_any(caller), &env),
+        None => answer,
+    }
 }
 
 // ------------------------------------------------------- the company database
