@@ -245,7 +245,7 @@ export const board: Screen = {
       group: "scope-filters",
       locate: { role: "option", name: "By PBI…" },
       name: "By Product Backlog Item",
-      does: "Everything parented under one Product Backlog Item, and the Product Backlog Item itself. A Product Backlog Item search box appears in the toolbar; pick the Product Backlog Item there.",
+      does: "Everything parented under one Product Backlog Item, and the Product Backlog Item itself. A Product Backlog Item search box appears in the toolbar; pick the Product Backlog Item there. With **Treat all projects as one** on, the search covers every project.",
     },
     {
       id: "area",

@@ -53,7 +53,7 @@ export const intro: Intro = {
   heroShot: "import-file-queue",
   quickStart: [
     { label: "Sign in", hint: "With your Microsoft work account", link: "getting-started" },
-    { label: "Pick a Product Backlog Item", hint: "Organisation, project, backlog item", link: "getting-started/find-pbi" },
+    { label: "Pick a Product Backlog Item", hint: "From any project", link: "getting-started/find-pbi" },
     { label: "Write or import", hint: "By hand, or from a JSON file", link: "import-file/import-json" },
     { label: "Review", hint: "Check every case in the queue", link: "import-file/review" },
     { label: "Upload", hint: "Linked to the Product Backlog Item and its suite", link: "import-file/confirm" },

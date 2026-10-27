@@ -9,7 +9,7 @@ export const recipes: Recipe[] = [
     id: "first-upload",
     title: "Upload your first test cases",
     steps: [
-      { text: "Sign in, then choose the organisation, project and Product Backlog Item in the bar at the top.", link: "getting-started/find-pbi" },
+      { text: "Sign in, then choose the Product Backlog Item, from any project, in the bar at the top.", link: "getting-started/find-pbi" },
       { text: "Press **Import JSON** and pick your file, or write the cases on Manual Entry.", link: "import-file/import-json" },
       { text: "Check the queue: open a case to read its steps.", link: "import-file/expand-steps" },
       { text: "Press **Review** and deal with any duplicate it finds.", link: "import-file/review" },

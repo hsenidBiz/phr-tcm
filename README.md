@@ -16,8 +16,11 @@ to ship unless all three agree.
 
 ## What the app does
 
-Pick an organization, a project and a PBI in the context bar. Every screen
-scopes to your choice. The Rust core detects the area and iteration paths
+Pick a PBI in the context bar - from any project: with Treat all projects
+as one on (the default) every project shows together, and the organization
+picker shows only when you have more than one. Turn it off in Settings,
+General, to pick one project at a time. Every screen scopes to your
+choice. The Rust core detects the area and iteration paths
 and the PBI's requirement-based test suite, so cases you create appear in
 the board's test count.
 
@@ -127,7 +130,8 @@ the board's test count.
   such as Claude Code, VS Code, Cursor and Windsurf register the app as an MCP server
   per repository and read the same live rules the importer uses.
 - Tools: find a PBI, read a PBI's cases, read the project's tags, search
-  and read the wiki, check spec coverage, optimise a draft into a run
+  and read the wiki (finding PBIs, test suites and wiki pages looks across
+  every project while Treat all projects as one is on), check spec coverage, optimise a draft into a run
   sheet, validate a draft with the real importer, and read the run
   failures a tester recorded.
 - A writing guide tells the assistant the exact field contract, the
@@ -190,6 +194,10 @@ the board's test count.
   place.
 - Pull Requests lists your PRs and the ones waiting for your review, with
   conflicts and unresolved comments called out.
+- With Treat all projects as one on, the board, Pull Requests, mentions,
+  assigned work and the notification bell cover every project; an item
+  names its project when more than one is shown, and a change is written
+  to the item's own project.
 - A notification bell collects what happened while you were away: new
   assignments, PRs with conflicts or comments to resolve, and PRs waiting
   for your review. Opening the bell marks everything read.
@@ -205,6 +213,13 @@ the board's test count.
 
 ### Settings
 - Theme, accent and request rate. Backup and restore of app data.
+- Treat all projects as one (General, on by default): PBIs, test suites,
+  the board and pull requests span every project, and new test cases go to
+  the PBI's own project. While it is on and the organization has several
+  projects, a Home project picker sets the project that Auto Run, API
+  Templates and Playwright use. A new install takes its home project from
+  the only project, the one that already has Auto Run files, or the first
+  PBI you pick.
 - The changelog, the app's own log, Copy log, Open log folder and Report
   a bug. Report a bug opens a prefilled GitHub issue with your log
   attached. Organization, project and work item names are removed from

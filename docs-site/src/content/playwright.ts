@@ -24,6 +24,7 @@ export const playwright: Screen = {
   shots: [],
   controls: [],
   tips: [
+    "With **Treat all projects as one** on, Playwright works in your home project (Settings, under General): the Auto Run scripts it exports and keeps in sync are that project's.",
     "The top of the tab shows the clone folder in use. Press **Choose…** (or **Change…** once one is set) and pick your clone of the PHR-PLAYWRIGHT-AUTOMATION repo. It is the same folder Export to Playwright uses, so changing it in one place changes it in both. **Refresh** reads the clone again.",
     "Under the folder, a badge reads **All good** when nothing is wrong. Otherwise each badge names what stops the tab working, and pointing at it says what to do: the folder is not a clone of the repo; the clone has no node_modules, so run npm install in it; or Node was not found, so install Node.js and restart the app. Until those are fixed the Runner and Accounts tabs say why instead of showing their lists.",
     "A missing qa-options.json is only a warning: runs use the repo's default options. The app reads that file and never writes it.",
