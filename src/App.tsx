@@ -256,9 +256,13 @@ export default function App() {
   // Work Manager's own rail section; the board stays the landing view.
   const [workSection, setWorkSection] = useState<WorkSection>("board");
   // Suite-browser handoff: edit an arbitrary set of cases (not persisted).
-  const [caseSelection, setCaseSelection] = useState<{ label: string; caseIds: number[] } | null>(
-    null,
-  );
+  // The cases belong to their plan's project, which may not be the effective
+  // one: Update Test Cases deletes, edits and tags them there.
+  const [caseSelection, setCaseSelection] = useState<{
+    label: string;
+    caseIds: number[];
+    project: string;
+  } | null>(null);
   // A suite handed over from Search Suites' Manage option. Cleared once
   // Suite Management has it, so going back to the tab later shows the
   // ordinary PBI-driven view rather than reopening an old click.
@@ -299,7 +303,7 @@ export default function App() {
     pbi: PbiHit | null;
     workMode: boolean;
     workSection: WorkSection;
-    caseSelection: { label: string; caseIds: number[] } | null;
+    caseSelection: { label: string; caseIds: number[]; project: string } | null;
   } | null>(null);
   // Read inside stable callbacks, so starting the tour does not depend on
   // a fresh closure over seven pieces of state.
@@ -1615,7 +1619,9 @@ export default function App() {
                 {section === "edit" && (
                   <EditCases
                     org={org}
-                    project={project}
+                    // Cases handed over from Search Suites are edited in the
+                    // project of the plan they came from.
+                    project={caseSelection?.project ?? project}
                     pbi={pbi}
                     caseSelection={caseSelection}
                     onClearSelection={() => setCaseSelection(null)}
@@ -1632,12 +1638,13 @@ export default function App() {
                   <Suites
                     org={org}
                     project={project}
+                    allProjects={allProjects}
                     onOpenPbi={(p, target) => {
-                      setPbi({ id: p.id, title: p.title, work_item_type: "Product Backlog Item", project: project });
+                      setPbi({ id: p.id, title: p.title, work_item_type: "Product Backlog Item", project: p.project || project });
                       goToSection(target === "edit" ? "edit" : "run");
                     }}
-                    onEditCases={(label, caseIds) => {
-                      setCaseSelection({ label, caseIds });
+                    onEditCases={(label, caseIds, casesProject) => {
+                      setCaseSelection({ label, caseIds, project: casesProject || project });
                       setSection("edit");
                       setWorkMode(false);
                     }}
@@ -1646,7 +1653,7 @@ export default function App() {
                       goToSection("manage");
                     }}
                     onSetCurrentPbi={(p) =>
-                      setPbi({ id: p.id, title: p.title, work_item_type: "Product Backlog Item", project: project })
+                      setPbi({ id: p.id, title: p.title, work_item_type: "Product Backlog Item", project: p.project || project })
                     }
                   />
                 )}

@@ -13,10 +13,11 @@ import { SearchInput } from "../components/ui/search-input";
 import { loadNotes } from "../lib/caseNotes";
 import { openRunnerWindow } from "../lib/openRunner";
 import { pagePalette } from "../lib/reportTheme";
-import { CACHE, cacheKeys, persistentQuery } from "../lib/cache";
+import { CACHE, cacheKeys, cacheRemove, persistentQuery } from "../lib/cache";
 import { cn } from "../lib/cn";
 import { unwrap, unwrapStr } from "../lib/ipc";
-import { noProjectSentence, useAllProjects } from "../lib/projectScope";
+import { fetchPlansAll, projectOfPlan, type ProjectPlans } from "../lib/plansAll";
+import { noProjectSentence } from "../lib/projectScope";
 import { buildTree, type SuiteNode } from "../lib/suiteTree";
 import { outcomeLabel } from "./RunPanel";
 
@@ -137,24 +138,33 @@ type SuiteAction = { planId: number; suiteIds: number[]; label: string };
 export default function Suites({
   org,
   project,
+  allProjects,
   onOpenPbi,
   onEditCases,
   onManageSuite,
   onSetCurrentPbi,
 }: {
   org: string;
+  /** The project the screen works in when the projects are not shown
+   * together; together it is only the fallback for a plan whose project
+   * cannot be found (it always can, the plan came from the list). */
   project: string;
-  onOpenPbi?: (pbi: { id: number; title: string }, target: "edit" | "run") => void;
-  onEditCases?: (label: string, caseIds: number[]) => void;
+  /** Together, every project's plans are listed and every action on a plan
+   * or suite uses that plan's own project. */
+  allProjects: boolean;
+  /** `project` is the plan's own: a PBI of another project becomes the
+   * app's PBI with that project. */
+  onOpenPbi?: (pbi: { id: number; title: string; project: string }, target: "edit" | "run") => void;
+  /** `project` is the plan's: the cases are edited and deleted there. */
+  onEditCases?: (label: string, caseIds: number[], project: string) => void;
   /** Hand this suite to Suite Management, which opens its plan with the
    * suite unfolded. */
   onManageSuite?: (planId: number, suiteId: number) => void;
   /** Make a requirement suite's PBI the app's current PBI, without leaving
    * this screen. */
-  onSetCurrentPbi?: (pbi: { id: number; title: string }) => void;
+  onSetCurrentPbi?: (pbi: { id: number; title: string; project: string }) => void;
 }) {
   const qc = useQueryClient();
-  const allProjects = useAllProjects();
   const [openSuite, setOpenSuite] = useState<number | null>(null);
   // Folders start collapsed; clicking a folder row toggles it open.
   const [expanded, setExpanded] = useState<Set<number>>(new Set());
@@ -165,6 +175,9 @@ export default function Suites({
   // without disturbing the normal-mode expansion state.
   const [searchExpanded, setSearchExpanded] = useState<Set<number>>(new Set());
   const [scan, setScan] = useState<{ done: number; total: number } | null>(null);
+  // Together: which project is being read right now ("Reading test plans in
+  // Payroll (2 of 9 projects)"). Cleared when the walk ends.
+  const [scanNote, setScanNote] = useState<string | null>(null);
 
   // Scanning every plan is the expensive part - cache the result for the
   // session and re-scan only on explicit Refresh.
@@ -183,7 +196,37 @@ export default function Suites({
       fetcher: () => unwrap(commands.listPlansWithSuites(org, project)),
       ...CACHE.structure,
     }),
-    enabled: Boolean(org && project),
+    enabled: !allProjects && Boolean(org && project),
+    gcTime: 60 * 60_000,
+    retry: false,
+  });
+
+  // Together: the organization's projects (the same query as the context
+  // bar's, so one request), then every project's plans, one project at a
+  // time, each through its own per-project cache entry.
+  const projectList = useQuery({
+    queryKey: ["projects", org],
+    ...persistentQuery({
+      key: cacheKeys.projects(org),
+      fetcher: () => unwrap(commands.listProjects(org)),
+      ...CACHE.reference,
+    }),
+    enabled: allProjects && Boolean(org),
+  });
+  const projectNames = useMemo(() => (projectList.data ?? []).map((p) => p.name), [projectList.data]);
+  const plansAll = useQuery({
+    queryKey: ["plans-suites-all", org],
+    queryFn: async () => {
+      try {
+        return await fetchPlansAll(org, projectNames, (p, i, n) =>
+          setScanNote(`Reading test plans in ${p} (${i} of ${n} projects)`),
+        );
+      } finally {
+        setScanNote(null);
+      }
+    },
+    enabled: allProjects && Boolean(org && projectNames.length),
+    staleTime: CACHE.structure.staleMs,
     gcTime: 60 * 60_000,
     retry: false,
   });
@@ -195,10 +238,38 @@ export default function Suites({
     };
   }, []);
 
-  const settled = useSettled(Boolean(plans.data));
+  // One shape for both modes: the projects that have plans, each with its
+  // plans. Switched off it is the picked project alone.
+  const groups: ProjectPlans[] = useMemo(
+    () =>
+      allProjects
+        ? (plansAll.data?.groups ?? [])
+        : plans.data?.length
+          ? [{ project, plans: plans.data }]
+          : [],
+    [allProjects, plansAll.data, plans.data, project],
+  );
+  const loaded = allProjects ? Boolean(plansAll.data) : Boolean(plans.data);
+  const fetching = allProjects ? projectList.isFetching || plansAll.isFetching : plans.isFetching;
+  const listError = allProjects
+    ? (projectList.isError ? projectList.error : plansAll.isError ? plansAll.error : null)
+    : plans.isError
+      ? plans.error
+      : null;
+  const coverage = allProjects ? plansAll.data : undefined;
+
+  /** The project a plan belongs to: its group's, never "the effective
+   * project" - every read and write on a plan or suite goes there. */
+  const projectOf = (planId: number) =>
+    (allProjects ? projectOfPlan(plansAll.data, planId) : null) ?? project;
+
+  const settled = useSettled(loaded);
   const trees = useMemo(
-    () => (plans.data ?? []).map(({ plan, suites }) => ({ plan, roots: buildTree(suites) })),
-    [plans.data],
+    () =>
+      groups.flatMap((g) =>
+        g.plans.map(({ plan, suites }) => ({ project: g.project, plan, roots: buildTree(suites) })),
+      ),
+    [groups],
   );
 
   const q = search.trim().toLowerCase();
@@ -206,22 +277,26 @@ export default function Suites({
   const visibleTrees = useMemo(() => {
     if (!q) return trees;
     return trees
-      .map(({ plan, roots }) => {
+      .map(({ project: owner, plan, roots }) => {
         // A matching plan name keeps the whole plan; otherwise prune to
         // the suites (or branches) that match.
-        if (plan.name.toLowerCase().includes(q)) return { plan, roots };
+        if (plan.name.toLowerCase().includes(q)) return { project: owner, plan, roots };
         const pruned = pruneTree(roots, q);
-        return pruned.length ? { plan, roots: pruned } : null;
+        return pruned.length ? { project: owner, plan, roots: pruned } : null;
       })
       .filter((t): t is (typeof trees)[number] => t !== null);
   }, [trees, q]);
+  // Headers only tell projects apart: with plans from one project alone
+  // the screen reads as it always has.
+  const showHeaders = groups.length > 1;
 
   /** Collect the distinct test case ids under the given suites (a folder
    * action passes all its descendants). */
   const gatherCaseIds = async (planId: number, suiteIds: number[]) => {
+    const owner = projectOf(planId);
     const ids = new Set<number>();
     for (const sid of suiteIds) {
-      const pts = await unwrap(commands.listTestPoints(org, project, planId, sid));
+      const pts = await unwrap(commands.listTestPoints(org, owner, planId, sid));
       for (const p of pts) if (p.test_case_id != null) ids.add(p.test_case_id);
     }
     return [...ids];
@@ -248,13 +323,17 @@ export default function Suites({
   });
 
   const edit = useMutation({
-    mutationFn: async (a: SuiteAction) => ({ label: a.label, ids: await gatherCaseIds(a.planId, a.suiteIds) }),
-    onSuccess: ({ label, ids }) => {
+    mutationFn: async (a: SuiteAction) => ({
+      label: a.label,
+      ids: await gatherCaseIds(a.planId, a.suiteIds),
+      owner: projectOf(a.planId),
+    }),
+    onSuccess: ({ label, ids, owner }) => {
       if (ids.length === 0) {
         toast.info("No test cases under this item.");
         return;
       }
-      onEditCases?.(label, ids);
+      onEditCases?.(label, ids, owner);
     },
     onError: (e) => toast.error(e.message),
   });
@@ -265,18 +344,19 @@ export default function Suites({
    * their richer PBI route via onOpenPbi. */
   const runSuite = useMutation({
     mutationFn: async ({ planId, suiteId, label }: { planId: number; suiteId: number; label: string }) => {
-      const pts = await unwrap(commands.listTestPoints(org, project, planId, suiteId));
+      const owner = projectOf(planId);
+      const pts = await unwrap(commands.listTestPoints(org, owner, planId, suiteId));
       const ids: number[] = [];
       for (const p of pts)
         if (p.test_case_id != null && !ids.includes(p.test_case_id)) ids.push(p.test_case_id);
       if (ids.length === 0) throw new Error("No test cases under this item.");
       await openRunnerWindow({
         org,
-        project,
+        project: owner,
         planId,
         planName: trees.find((t) => t.plan.id === planId)?.plan.name ?? "",
         suiteId,
-        pbi: { id: 0, title: label, work_item_type: "", project },
+        pbi: { id: 0, title: label, work_item_type: "", project: owner },
         caseIds: ids,
       });
     },
@@ -289,7 +369,7 @@ export default function Suites({
         // Read at click time so the report matches the theme currently in
         // front of the user, not whatever was set at startup.
         // null = the whole suite tree - folder reports are not scoped.
-        commands.viewExecutionReport(org, project, planId, suiteIds, label, pagePalette(), null),
+        commands.viewExecutionReport(org, projectOf(planId), planId, suiteIds, label, pagePalette(), null),
       ),
     onError: (e) => toast.error(`Report failed: ${e.message ?? e}`),
   });
@@ -298,19 +378,22 @@ export default function Suites({
    * name can drift from it) and hand it up as the app's current PBI. Falls
    * back to the suite's own name if the search turns up nothing. */
   const useAsPbi = useMutation({
-    mutationFn: async (s: SuiteRef) => {
-      const hits = await unwrap(commands.searchPbis(org, project, String(s.requirement_id)));
-      return (
-        hits.find((h) => h.id === s.requirement_id) ?? {
-          id: s.requirement_id!,
-          title: s.name,
-          work_item_type: "Product Backlog Item",
-          project,
-        }
-      );
+    mutationFn: async ({ suite: s, planId }: { suite: SuiteRef; planId: number }) => {
+      // The PBI of a requirement suite lives in the suite's own project.
+      const owner = projectOf(planId);
+      const hits = await unwrap(commands.searchPbis(org, owner, String(s.requirement_id)));
+      const hit = hits.find((h) => h.id === s.requirement_id);
+      return hit
+        ? { ...hit, project: hit.project || owner }
+        : {
+            id: s.requirement_id!,
+            title: s.name,
+            work_item_type: "Product Backlog Item",
+            project: owner,
+          };
     },
     onSuccess: (p) => {
-      onSetCurrentPbi!({ id: p.id, title: p.title });
+      onSetCurrentPbi!({ id: p.id, title: p.title, project: p.project });
       toast.success(`Current PBI: #${p.id} ${p.title}`);
     },
     onError: (e) => toast.error(e.message),
@@ -319,15 +402,20 @@ export default function Suites({
   const busy =
     view.isPending || edit.isPending || report.isPending || runSuite.isPending || useAsPbi.isPending;
 
-  if (!org || !project) {
+  // Together there is no project to pick: an organization is all it needs.
+  if (!org || (!allProjects && !project)) {
     return (
-      <p className="text-sm text-muted">{noProjectSentence(allProjects, "to browse test suites")}</p>
+      <p className="text-sm text-muted">
+        {allProjects
+          ? "Pick an organization in the bar above to browse test suites."
+          : noProjectSentence(false, "to browse test suites")}
+      </p>
     );
   }
 
   /** ADO's own deep link to a suite inside the Test Plans hub. */
   const suiteUrl = (planId: number, suiteId: number) =>
-    `https://dev.azure.com/${org}/${encodeURIComponent(project)}/_testPlans/define?planId=${planId}&suiteId=${suiteId}`;
+    `https://dev.azure.com/${org}/${encodeURIComponent(projectOf(planId))}/_testPlans/define?planId=${planId}&suiteId=${suiteId}`;
 
   /** `label` names the chip for assistive tech: every row carries the same
    *  words, so the suite's name is what tells them apart. */
@@ -366,15 +454,17 @@ export default function Suites({
 
     const pbiSuite = onOpenPbi && s.suite_type === "requirementTestSuite" && s.requirement_id ? onOpenPbi : null;
     const isRequirementSuite = Boolean(s.suite_type === "requirementTestSuite" && s.requirement_id);
+    // The PBI behind a requirement suite is in the plan's own project.
+    const pbiOf = () => ({ id: s.requirement_id!, title: s.name, project: projectOf(planId) });
     const more: MoreAction[] = [
       ...(onSetCurrentPbi && isRequirementSuite
-        ? [{ label: "Use as current PBI", onSelect: () => useAsPbi.mutate(s) }]
+        ? [{ label: "Use as current PBI", onSelect: () => useAsPbi.mutate({ suite: s, planId }) }]
         : []),
       ...(onManageSuite ? [{ label: "Manage", onSelect: () => onManageSuite(planId, s.id) }] : []),
       {
         label: "Run Tests",
         onSelect: pbiSuite
-          ? () => pbiSuite({ id: s.requirement_id!, title: s.name }, "run")
+          ? () => pbiSuite(pbiOf(), "run")
           : // Own points only, not descendants: running is a sitting, and a
             // folder's whole subtree is a report's job.
             () => runSuite.mutate({ planId, suiteId: s.id, label: s.name }),
@@ -452,7 +542,7 @@ export default function Suites({
             </span>
             {chip("View", `View ${s.name}`, () => view.mutate({ planId, suiteIds: allIds, label: s.name }))}
             {pbiSuite
-              ? chip("Edit cases", `Edit cases in ${s.name}`, () => pbiSuite({ id: s.requirement_id!, title: s.name }, "edit"))
+              ? chip("Edit cases", `Edit cases in ${s.name}`, () => pbiSuite(pbiOf(), "edit"))
               : onEditCases &&
                 chip("Edit cases", `Edit cases in ${s.name}`, () => edit.mutate({ planId, suiteIds: allIds, label: s.name }))}
             {/* Use as current PBI, Manage, Run Tests and Report are the
@@ -463,7 +553,7 @@ export default function Suites({
         </button>
         {!isFolder && (
           <Collapse open={openSuite === s.id} animateIn={settled}>
-            <SuitePoints org={org} project={project} planId={planId} suite={s} indent={pointsIndent(depth)} />
+            <SuitePoints org={org} project={projectOf(planId)} planId={planId} suite={s} indent={pointsIndent(depth)} />
           </Collapse>
         )}
         {isFolder && (
@@ -494,7 +584,17 @@ export default function Suites({
           className="rounded p-1 text-muted hover:text-accent"
           onClick={() => {
             setScan(null);
-            qc.invalidateQueries({ queryKey: ["plans-suites", org, project] });
+            if (allProjects) {
+              // The combined walk trusts each project's own cache entry
+              // while it is fresh, so a true re-scan drops them first.
+              for (const p of projectNames) cacheRemove(cacheKeys.plansSuites(org, p));
+              qc.invalidateQueries({ queryKey: ["plans-suites-all", org] });
+              for (const g of groups) {
+                qc.invalidateQueries({ queryKey: ["plans-suites", org, g.project] });
+              }
+            } else {
+              qc.invalidateQueries({ queryKey: ["plans-suites", org, project] });
+            }
             qc.invalidateQueries({ queryKey: ["points"] });
           }}
         >
@@ -504,7 +604,7 @@ export default function Suites({
               same key this button just invalidated. */}
           <RefreshCw
             size={14}
-            className={plans.isFetching || pointsFetching > 0 ? "animate-spin" : undefined}
+            className={fetching || pointsFetching > 0 ? "animate-spin" : undefined}
           />
         </button>
         <SearchInput
@@ -520,31 +620,48 @@ export default function Suites({
       {/* The bar is for the FIRST scan only - once a tree is already on
           screen, a background revalidation keeps it there and spins only
           the toolbar Refresh icon above, not this bar over the tree. */}
-      {plans.isFetching && !plans.data && (
+      {(allProjects ? !loaded && !listError && (fetching || projectNames.length > 0) : fetching && !loaded) && (
         <ScanProgress
           label={scan ? "Scanning test plans" : "Loading test plans"}
           done={scan?.done}
           total={scan?.total}
         />
       )}
-      {plans.isError && <p className="text-sm text-danger">{plans.error.message}</p>}
-      {plans.data && plans.data.length === 0 && (
-        <p className="text-sm text-muted">No test plans with test suites in this project yet.</p>
+      {allProjects && scanNote && <p className="text-xs text-muted">{scanNote}</p>}
+      {listError && <p className="text-sm text-danger">{listError.message}</p>}
+      {coverage && coverage.shown < coverage.total && (
+        <p className="text-xs text-muted">
+          Showing plans from {coverage.shown} of {coverage.total} projects.
+        </p>
       )}
-      {q && (plans.data?.length ?? 0) > 0 && visibleTrees.length === 0 && (
+      {loaded && groups.length === 0 && (
+        <p className="text-sm text-muted">
+          No test plans with test suites in this {allProjects ? "organization" : "project"} yet.
+        </p>
+      )}
+      {q && groups.length > 0 && visibleTrees.length === 0 && (
         <p className="text-sm text-muted">Nothing matches "{search.trim()}".</p>
       )}
 
-      {visibleTrees.map(({ plan, roots }) => (
-        <section key={plan.id} className="rounded-md border border-border bg-surface">
-          <header className="flex items-center gap-2 border-b border-border px-3 py-2 text-sm font-medium text-text">
-            <FolderTree size={14} className="text-accent" />
-            {plan.name}
-            <span className="text-xs text-faint">{plan.area_path}</span>
-          </header>
-          <ul className="p-1">{roots.map((n) => renderNode(n, plan.id, 0))}</ul>
-        </section>
-      ))}
+      {groups.map((g) => {
+        const owned = visibleTrees.filter((t) => t.project === g.project);
+        if (owned.length === 0) return null;
+        return (
+          <div key={g.project} className="space-y-3">
+            {showHeaders && <h2 className="text-sm font-semibold text-text">{g.project}</h2>}
+            {owned.map(({ plan, roots }) => (
+              <section key={plan.id} className="rounded-md border border-border bg-surface">
+                <header className="flex items-center gap-2 border-b border-border px-3 py-2 text-sm font-medium text-text">
+                  <FolderTree size={14} className="text-accent" />
+                  {plan.name}
+                  <span className="text-xs text-faint">{plan.area_path}</span>
+                </header>
+                <ul className="p-1">{roots.map((n) => renderNode(n, plan.id, 0))}</ul>
+              </section>
+            ))}
+          </div>
+        );
+      })}
     </div>
   );
 }

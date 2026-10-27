@@ -424,7 +424,7 @@ export const updateTestCases: Screen = {
     },
   ],
   tips: [
-    "Cases picked with **Edit cases** in Search Suites open here with **Back to Product Backlog Item cases** above them, which returns to the Product Backlog Item's own list. **Move to Product Backlog Item** is greyed out for them.",
+    "Cases picked with **Edit cases** in Search Suites open here with **Back to Product Backlog Item cases** above them, which returns to the Product Backlog Item's own list. **Move to Product Backlog Item** is greyed out for them. They are edited and deleted in the project of the plan they came from.",
     "A case you open keeps what you type until you save or discard it, even if you fold its group.",
   ],
   howTo: [

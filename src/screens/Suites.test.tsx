@@ -1,6 +1,7 @@
 import { mockIPC, clearMocks } from "@tauri-apps/api/mocks";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import type { ComponentProps } from "react";
 import { afterEach, expect, test, vi } from "vitest";
 import Suites, { pointsIndent } from "./Suites";
 
@@ -10,22 +11,36 @@ afterEach(() => {
 });
 
 function renderSuites(
-  onEditCases?: (label: string, ids: number[]) => void,
+  onEditCases?: (label: string, ids: number[], project: string) => void,
   // Accepts a caller-supplied QueryClient so a test can pre-seed the cache
   // (qc.setQueryData) before the component ever mounts.
   qc: QueryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } }),
   onManageSuite?: (planId: number, suiteId: number) => void,
-  onSetCurrentPbi?: (p: { id: number; title: string }) => void,
+  onSetCurrentPbi?: (p: { id: number; title: string; project: string }) => void,
 ) {
   return render(
     <QueryClientProvider client={qc}>
       <Suites
         org="acme"
         project="Web"
+        allProjects={false}
         onEditCases={onEditCases}
         onManageSuite={onManageSuite}
         onSetCurrentPbi={onSetCurrentPbi}
       />
+    </QueryClientProvider>,
+  );
+}
+
+/** The projects-together render: the screen lists every project of the
+ * organization, and `project` is only the home project it falls back on. */
+function renderCombined(
+  props: Partial<ComponentProps<typeof Suites>> = {},
+  qc: QueryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } }),
+) {
+  return render(
+    <QueryClientProvider client={qc}>
+      <Suites org="acme" project="Web" allProjects {...props} />
     </QueryClientProvider>,
   );
 }
@@ -131,7 +146,7 @@ test("Use as current PBI resolves the PBI's own title and hands it up without le
   await screen.findByText("PBI 42 suite");
   fireEvent.click(screen.getByRole("button", { name: "More actions for PBI 42 suite" }));
   fireEvent.click(screen.getByRole("menuitem", { name: "Use as current PBI" }));
-  await waitFor(() => expect(picked).toEqual([{ id: 42, title: "Real PBI title" }]));
+  await waitFor(() => expect(picked).toEqual([{ id: 42, title: "Real PBI title", project: "Web" }]));
   expect(queries).toEqual(["42"]);
   expect(screen.getByRole("button", { name: "More actions for PBI 42 suite" })).toBeInTheDocument(); // still here
 });
@@ -146,7 +161,7 @@ test("when the lookup finds nothing the suite's own name stands in", async () =>
   await screen.findByText("PBI 42 suite");
   fireEvent.click(screen.getByRole("button", { name: "More actions for PBI 42 suite" }));
   fireEvent.click(screen.getByRole("menuitem", { name: "Use as current PBI" }));
-  await waitFor(() => expect(picked).toEqual([{ id: 42, title: "PBI 42 suite" }]));
+  await waitFor(() => expect(picked).toEqual([{ id: 42, title: "PBI 42 suite", project: "Web" }]));
 });
 
 test("a static suite offers no Use as current PBI", async () => {
@@ -271,7 +286,7 @@ test("folder Edit cases collects descendant case ids and hands off", async () =>
   await screen.findByText("Regression");
   const editChips = screen.getAllByText("Edit cases");
   fireEvent.click(editChips[0]); // the folder's chip (folder row renders first)
-  await vi.waitFor(() => expect(onEdit).toHaveBeenCalledWith("Regression", [201]));
+  await vi.waitFor(() => expect(onEdit).toHaveBeenCalledWith("Regression", [201], "Web"));
 });
 
 test("search filters the tree; results start collapsed and open on demand", async () => {
@@ -566,4 +581,236 @@ test("a Paused point and a Not Applicable point are not the same colour", async 
   expect(paused).toHaveClass("text-muted");
   expect(notApplicable).toHaveClass("text-text");
   expect(notApplicable).not.toHaveClass("text-muted");
+});
+
+// ---- Projects together -------------------------------------------------
+
+const WEB_PLAN = { id: 9, name: "Auth - Test Plan", area_path: "Web\\Auth", root_suite_id: 90 };
+const PAY_PLAN = { id: 12, name: "Payslip - Test Plan", area_path: "Payroll\\Slips", root_suite_id: 120 };
+const WEB_SUITES = [
+  { id: 91, name: "Login checks", suite_type: "staticTestSuite", requirement_id: null, parent_id: null },
+];
+const PAY_SUITES = [
+  { id: 121, name: "Login checks", suite_type: "staticTestSuite", requirement_id: null, parent_id: null },
+  { id: 122, name: "PBI 77 suite", suite_type: "requirementTestSuite", requirement_id: 77, parent_id: null },
+];
+const POINT = {
+  point_id: 7,
+  test_case_id: 301,
+  test_case_name: "Pay a slip",
+  config_name: "W10",
+  tester: "",
+  last_outcome: "",
+  last_run_id: null,
+  last_result_id: null,
+};
+
+/** Two projects, each with its own plan; `extra` answers anything else and
+ * every command asked is recorded with its arguments. */
+function twoProjects(extra?: (cmd: string, args: Record<string, unknown>) => unknown) {
+  const asked: Array<{ cmd: string; args: Record<string, unknown> }> = [];
+  baseMock((cmd, raw) => {
+    const args = (raw ?? {}) as Record<string, unknown>;
+    asked.push({ cmd, args });
+    if (cmd === "list_projects")
+      return [
+        { id: "p1", name: "Web" },
+        { id: "p2", name: "Payroll" },
+      ];
+    if (cmd === "list_plans_with_suites")
+      return args.project === "Payroll"
+        ? [{ plan: PAY_PLAN, suites: PAY_SUITES }]
+        : [{ plan: WEB_PLAN, suites: WEB_SUITES }];
+    return extra?.(cmd, args);
+  });
+  return asked;
+}
+
+test("combined Search Suites lists plans from every project under project headers", async () => {
+  twoProjects();
+  renderCombined();
+
+  expect(await screen.findByRole("heading", { name: "Payroll" })).toBeInTheDocument();
+  expect(screen.getByRole("heading", { name: "Web" })).toBeInTheDocument();
+  expect(screen.getByText("Auth - Test Plan")).toBeInTheDocument();
+  expect(screen.getByText("Payslip - Test Plan")).toBeInTheDocument();
+  // Name order, and every project was read: nothing to apologise for.
+  const headings = screen.getAllByRole("heading", { level: 2 }).map((h) => h.textContent);
+  expect(headings.indexOf("Payroll")).toBeLessThan(headings.indexOf("Web"));
+  expect(screen.queryByText(/Showing plans from/)).not.toBeInTheDocument();
+});
+
+test("one project with plans shows no header", async () => {
+  baseMock((cmd, args) => {
+    if (cmd === "list_projects")
+      return [
+        { id: "p1", name: "Web" },
+        { id: "p2", name: "Payroll" },
+      ];
+    if (cmd === "list_plans_with_suites")
+      return (args as { project: string }).project === "Payroll"
+        ? [{ plan: PAY_PLAN, suites: PAY_SUITES }]
+        : [];
+  });
+  renderCombined();
+
+  expect(await screen.findByText("Payslip - Test Plan")).toBeInTheDocument();
+  expect(screen.queryByRole("heading", { name: "Payroll" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("heading", { name: "Web" })).not.toBeInTheDocument();
+});
+
+test("search spans every project", async () => {
+  twoProjects();
+  renderCombined();
+  await screen.findByRole("heading", { name: "Payroll" });
+
+  fireEvent.change(screen.getByLabelText("Search suites"), { target: { value: "login" } });
+  // Both projects have a "Login checks" suite: both stay, each under its header.
+  expect(screen.getByRole("heading", { name: "Payroll" })).toBeInTheDocument();
+  expect(screen.getByRole("heading", { name: "Web" })).toBeInTheDocument();
+  expect(screen.getByText("Auth - Test Plan")).toBeInTheDocument();
+  expect(screen.getByText("Payslip - Test Plan")).toBeInTheDocument();
+
+  // A name only one project has narrows the list to that project's plan.
+  fireEvent.change(screen.getByLabelText("Search suites"), { target: { value: "PBI 77" } });
+  expect(screen.getByText("Payslip - Test Plan")).toBeInTheDocument();
+  expect(screen.queryByText("Auth - Test Plan")).not.toBeInTheDocument();
+});
+
+test("a suite's points are read in its plan's project", async () => {
+  const asked = twoProjects((cmd) => {
+    if (cmd === "list_test_points") return [POINT];
+  });
+  renderCombined();
+  // The Payroll "Login checks" is the first row (name order puts Payroll first).
+  const rows = await screen.findAllByText("Login checks");
+  fireEvent.click(rows[0]);
+  expect(await screen.findByText("Pay a slip")).toBeInTheDocument();
+  const points = asked.filter((a) => a.cmd === "list_test_points");
+  expect(points.map((a) => [a.args.project, a.args.planId, a.args.suiteId])).toEqual([["Payroll", 12, 121]]);
+});
+
+test("opening a requirement suite's PBI makes it the PBI with the plan's project", async () => {
+  twoProjects();
+  const opened: unknown[] = [];
+  renderCombined({ onOpenPbi: (pbi, target) => opened.push([pbi, target]) });
+  await screen.findByText("PBI 77 suite");
+
+  fireEvent.click(screen.getByRole("button", { name: "Edit cases in PBI 77 suite" }));
+  fireEvent.click(screen.getByRole("button", { name: "More actions for PBI 77 suite" }));
+  fireEvent.click(screen.getByRole("menuitem", { name: "Run Tests" }));
+  expect(opened).toEqual([
+    [{ id: 77, title: "PBI 77 suite", project: "Payroll" }, "edit"],
+    [{ id: 77, title: "PBI 77 suite", project: "Payroll" }, "run"],
+  ]);
+});
+
+test("Use as current PBI looks the PBI up in the plan's project and hands that project up", async () => {
+  const asked = twoProjects((cmd) => {
+    if (cmd === "search_pbis") return []; // nothing found: the fallback names the plan's project
+  });
+  const picked: unknown[] = [];
+  renderCombined({ onSetCurrentPbi: (p) => picked.push(p) });
+  await screen.findByText("PBI 77 suite");
+
+  fireEvent.click(screen.getByRole("button", { name: "More actions for PBI 77 suite" }));
+  fireEvent.click(screen.getByRole("menuitem", { name: "Use as current PBI" }));
+  await waitFor(() => expect(picked).toEqual([{ id: 77, title: "PBI 77 suite", project: "Payroll" }]));
+  expect(asked.filter((a) => a.cmd === "search_pbis").map((a) => a.args.project)).toEqual(["Payroll"]);
+});
+
+test("cases handed to Update Test Cases carry their plan's project", async () => {
+  const asked = twoProjects((cmd) => {
+    if (cmd === "list_test_points") return [POINT];
+  });
+  const onEdit = vi.fn();
+  renderCombined({ onEditCases: onEdit });
+  await screen.findByRole("heading", { name: "Payroll" });
+
+  // The Payroll "Login checks" row comes first; the Web one is last.
+  const chips = screen.getAllByRole("button", { name: "Edit cases in Login checks" });
+  fireEvent.click(chips[0]);
+  await vi.waitFor(() => expect(onEdit).toHaveBeenCalledWith("Login checks", [301], "Payroll"));
+  fireEvent.click(chips[1]);
+  await vi.waitFor(() => expect(onEdit).toHaveBeenCalledWith("Login checks", [301], "Web"));
+  expect(
+    asked.filter((a) => a.cmd === "list_test_points").map((a) => [a.args.project, a.args.planId]),
+  ).toEqual([
+    ["Payroll", 12],
+    ["Web", 9],
+  ]);
+});
+
+test("a suite run, a report and its link use the plan's project", async () => {
+  const asked = twoProjects((cmd) => {
+    if (cmd === "list_test_points") return [POINT];
+    if (cmd === "view_execution_report") return "report.html";
+  });
+  renderCombined();
+  const more = await screen.findAllByRole("button", { name: "More actions for Login checks" });
+
+  fireEvent.click(more[0]);
+  fireEvent.click(screen.getByRole("menuitem", { name: "Run Tests" }));
+  await vi.waitFor(() => expect(localStorage.getItem("tcm-v2-runner-session")).toBeTruthy());
+  const session = JSON.parse(localStorage.getItem("tcm-v2-runner-session") as string);
+  expect(session.project).toBe("Payroll");
+  expect(session.pbi.project).toBe("Payroll");
+  expect(session.planId).toBe(12);
+
+  fireEvent.click(more[0]);
+  fireEvent.click(screen.getByRole("menuitem", { name: "Report" }));
+  await vi.waitFor(() => expect(asked.some((a) => a.cmd === "view_execution_report")).toBe(true));
+  expect(asked.find((a) => a.cmd === "view_execution_report")?.args).toMatchObject({
+    project: "Payroll",
+    planId: 12,
+  });
+});
+
+test("a project Search Suites may not read is left out and the coverage says so", async () => {
+  baseMock((cmd, args) => {
+    if (cmd === "list_projects")
+      return [
+        { id: "p1", name: "Web" },
+        { id: "p2", name: "Payroll" },
+      ];
+    if (cmd === "list_plans_with_suites") {
+      if ((args as { project: string }).project === "Payroll") throw { kind: "Forbidden" };
+      return [{ plan: WEB_PLAN, suites: WEB_SUITES }];
+    }
+  });
+  renderCombined();
+
+  expect(await screen.findByText("Auth - Test Plan")).toBeInTheDocument();
+  expect(screen.getByText("Showing plans from 1 of 2 projects.")).toBeInTheDocument();
+});
+
+test("combined with no organization says to pick one", () => {
+  baseMock(() => undefined);
+  renderCombined({ org: "" });
+  expect(screen.getByText("Pick an organization in the bar above to browse test suites.")).toBeInTheDocument();
+});
+
+test("Refresh reads every project again", async () => {
+  const asked = twoProjects();
+  renderCombined();
+  await screen.findByRole("heading", { name: "Payroll" });
+  const reads = () => asked.filter((a) => a.cmd === "list_plans_with_suites").length;
+  expect(reads()).toBe(2);
+
+  fireEvent.click(screen.getByRole("button", { name: "Refresh test plans" }));
+  await vi.waitFor(() => expect(reads()).toBe(4));
+});
+
+test("switched off Search Suites lists the picked project as before", async () => {
+  const asked: Array<{ cmd: string; args: Record<string, unknown> }> = [];
+  baseMock((cmd, args) => {
+    asked.push({ cmd, args: (args ?? {}) as Record<string, unknown> });
+    if (cmd === "list_plans_with_suites") return [{ plan: WEB_PLAN, suites: WEB_SUITES }];
+  });
+  renderSuites();
+
+  expect(await screen.findByText("Auth - Test Plan")).toBeInTheDocument();
+  expect(asked.filter((a) => a.cmd === "list_plans_with_suites").map((a) => a.args.project)).toEqual(["Web"]);
+  expect(asked.some((a) => a.cmd === "list_projects")).toBe(false);
+  expect(screen.queryByRole("heading", { name: "Web" })).not.toBeInTheDocument();
 });
