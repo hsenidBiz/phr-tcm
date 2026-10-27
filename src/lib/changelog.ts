@@ -27,6 +27,16 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.3.1-beta.17",
+    date: "2026-10-27",
+    items: [
+      "Every list screen has one header line with its actions on the right, and a wide search with its filters beside it. The search toolbar stays at the top while the list scrolls.",
+      "Searches find more than names and ids: tags, module, automation status, priority, state, assignee, last outcome, tester and more, wherever a screen shows them. Every word you type must match.",
+      "Auto Run: the search moved into the case list's toolbar, Setup shows your API fixtures with a button that opens them, and Save words and Protected records are no longer in Setup (what they held still applies).",
+      "Run Tests marks the row under the pointer clearly, Paused and Not Applicable rows included.",
+    ],
+  },
+  {
     version: "2.3.1-beta.16",
     date: "2026-10-27",
     items: [
