@@ -17,7 +17,7 @@ function scrollParent(el: HTMLElement): HTMLElement | null {
  * wholly inside it. Watched against that scroller, not the window - the page
  * scrolls in a box under the context bar.
  */
-function useStuck() {
+function useStuck(fullWidth: boolean) {
   const ref = useRef<HTMLDivElement>(null);
   const [stuck, setStuck] = useState(false);
   // Sticky stops at the scroller's top PADDING, not its edge: the main page
@@ -54,7 +54,7 @@ function useStuck() {
     const el = ref.current;
     const parent = el?.parentElement;
     const root = el ? scrollParent(el) : null;
-    if (!stuck || !parent || !root) {
+    if (!stuck || !fullWidth || !parent || !root) {
       setBleed({ left: 0, right: 0 });
       return;
     }
@@ -75,7 +75,7 @@ function useStuck() {
     const ro = new ResizeObserver(measure);
     ro.observe(root);
     return () => ro.disconnect();
-  }, [stuck]);
+  }, [stuck, fullWidth]);
 
   return [ref, stuck, top, bleed] as const;
 }
@@ -101,21 +101,29 @@ function useStuck() {
  * with the background" once rows scroll under it, but no border "when the
  * user has scrolled all the way to the top"). The border is always there,
  * just transparent at rest, so nothing moves when it appears.
+ *
+ * Stuck, it reaches both sides of the scroller - unless the list shares the
+ * page with another column (Auto Run's Setup panel beside its case list):
+ * there `fullWidth={false}` keeps it in its own column, a bordered box all
+ * round instead (owner, 2026-10-27: "the bar crosses the setup screen").
  */
 export function ListToolbar({
   search,
   surface = false,
+  fullWidth = true,
   children,
 }: {
   search: ReactNode;
   /** It sits on a card (`bg-surface`) rather than on the page. */
   surface?: boolean;
+  /** Stuck, reach the scroller's sides (false: stay in its own column). */
+  fullWidth?: boolean;
   children?: ReactNode;
 }) {
-  const [ref, stuck, top, bleed] = useStuck();
+  const [ref, stuck, top, bleed] = useStuck(fullWidth);
   // Stuck, it reaches out by `bleed` on each side and pads back in by the
   // same amount, so its controls stay exactly where they were.
-  const style = stuck
+  const style = stuck && fullWidth
     ? {
         top,
         marginLeft: -bleed.left,
@@ -134,7 +142,11 @@ export function ListToolbar({
         "sticky z-20 flex flex-wrap items-center gap-2 border p-2 transition-colors *:shrink-0",
         // At rest a borderless rounded box; stuck, a full-width bar with a
         // line under it. The border is always 1px, so nothing moves.
-        stuck ? "rounded-none border-transparent border-b-border" : "rounded-md border-transparent",
+        !stuck
+          ? "rounded-md border-transparent"
+          : fullWidth
+            ? "rounded-none border-transparent border-b-border"
+            : "rounded-md border-border",
         surface ? "bg-surface" : "bg-bg",
       )}
     >

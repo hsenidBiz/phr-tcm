@@ -80,6 +80,38 @@ test("the border shows only while the toolbar is stuck, and goes again at the to
   }
 });
 
+test("fullWidth={false}: stuck, it stays in its column as a box bordered all round", () => {
+  let fire: (top: number, ratio: number) => void = () => {};
+  const Real = globalThis.IntersectionObserver;
+  globalThis.IntersectionObserver = class {
+    constructor(cb: IntersectionObserverCallback) {
+      fire = (top, ratio) =>
+        cb(
+          [{ intersectionRatio: ratio, boundingClientRect: { top }, rootBounds: { top: 100 } } as unknown as IntersectionObserverEntry],
+          this as unknown as IntersectionObserver,
+        );
+    }
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+    takeRecords() {
+      return [];
+    }
+  } as unknown as typeof IntersectionObserver;
+  try {
+    const { container } = render(<ListToolbar fullWidth={false} search={<input aria-label="Find" />} />);
+    const bar = container.firstElementChild as HTMLElement;
+    act(() => fire(99, 0.98));
+    expect(bar).toHaveAttribute("data-stuck");
+    expect(bar).toHaveClass("rounded-md", "border-border");
+    expect(bar).not.toHaveClass("rounded-none");
+    expect(bar.style.marginLeft).toBe("");
+    expect(bar.style.marginRight).toBe("");
+  } finally {
+    globalThis.IntersectionObserver = Real;
+  }
+});
+
 test("inside a padded scrolling box, the bar sticks at the box's edge, not under its padding", () => {
   render(
     <div style={{ overflowY: "auto", paddingTop: "24px" }}>
