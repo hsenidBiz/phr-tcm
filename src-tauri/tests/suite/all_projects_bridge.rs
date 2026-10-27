@@ -566,12 +566,22 @@ async fn switched_off_wiki_search_stays_in_the_chosen_project_and_names_none() {
 
 #[tokio::test]
 async fn the_tool_policy_answer_says_whether_projects_are_combined() {
-    for on in [true, false] {
-        let (status, body) = route(&ctx(on), None, "GET", "/tools", "", "2.3.1").await;
-        assert_eq!(status, 200, "{body}");
-        let v: serde_json::Value = serde_json::from_str(&body).unwrap();
-        assert_eq!(v["all_projects"], on, "{body}");
-    }
+    let (status, body) = route(&ctx(true), None, "GET", "/tools", "", "2.3.1").await;
+    assert_eq!(status, 200, "{body}");
+    let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(v["all_projects"], true, "{body}");
+
+    // Off, the answer carries no such key at all, so it is exactly what
+    // 2.3.1-beta.11 answered (and a proxy that never heard of it reads the
+    // same thing it always did).
+    let (status, body) = route(&ctx(false), None, "GET", "/tools", "", "2.3.1").await;
+    assert_eq!(status, 200, "{body}");
+    let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert!(v.get("all_projects").is_none(), "{body}");
+    assert!(!body.contains("all_projects"), "{body}");
+    let mut keys: Vec<&str> = v.as_object().unwrap().keys().map(String::as_str).collect();
+    keys.sort_unstable();
+    assert_eq!(keys, ["autorun", "db_no_ask", "disabled", "modules", "network_tools", "unlocked"]);
 }
 
 async fn mount_wiki_page(server: &MockServer, project: &str) {

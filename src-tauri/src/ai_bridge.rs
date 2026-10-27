@@ -744,9 +744,8 @@ pub async fn route_as(
         // `autorun` is TRANSITIONAL, for one release: a proxy from before
         // modules, still running in an editor, reads it to decide whether
         // the Auto Run tools are offered. Remove it in the release after.
-        ("GET", "/tools") => (
-            200,
-            serde_json::json!({
+        ("GET", "/tools") => {
+            let mut answer = serde_json::json!({
                 "disabled": ctx.disabled_tools,
                 "modules": crate::modules::current().iter().map(|m| m.key()).collect::<Vec<_>>(),
                 // The proxy words its refusals by this: it cannot read the
@@ -758,12 +757,16 @@ pub async fn route_as(
                 "db_no_ask": ctx.db_no_ask && ctx.db_writes,
                 // The proxy offers the network tools only on an explicit yes.
                 "network_tools": ctx.network_tools,
-                // The proxy words the Azure DevOps tools' descriptions by
-                // this: they read across every project only while it is on.
-                "all_projects": ctx.all_projects,
-            })
-            .to_string(),
-        ),
+            });
+            // The proxy words the Azure DevOps tools' descriptions by this:
+            // they read across every project only while it is on. Sent only
+            // then, so with the switch off the answer is what it always was
+            // (a proxy that does not know the key reads a missing one as off).
+            if ctx.all_projects {
+                answer["all_projects"] = serde_json::json!(true);
+            }
+            (200, answer.to_string())
+        }
         ("GET", "/run-results") => match client {
             Some(c) => run_results(ctx, c, target).await,
             None => (503, "sign in to Test Case Manager first".into()),
