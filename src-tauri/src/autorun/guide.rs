@@ -2013,6 +2013,28 @@ you set back by hand, from its before value, and then mark undone with `record_e
 Say plainly what cannot be undone: a change with no before value, a kind with no delete template,
 a record changed again since, and a create that was not verified.
 
+### Saved setups
+
+Before you build a precondition by hand, call `list_setups`: a saved setup may build it, or find
+one that is there already. `run_setup` with its name and `values` first looks for a record that
+fits and hands it back when one exists; only when none does it build one in your explore session,
+and every record it builds is on the change list, to be read and undone like any other. A setup
+runs only in an explore session.
+
+While you explore, every action that works is kept; `get_kept_actions` lists them, numbered. After
+you build by hand a precondition a later case will need again, record what it created with
+`record_explore_change`, then save the actions that built it with `save_setup`: a name, what it
+builds, the range (`from` and `to`), the typed values that become inputs (mark a record's name
+`unique`, so each run makes a new one), and always a find rule. A find rule only looks for records
+named with the test name prefix: a `database` SELECT that uses `{prefix}` outside quotes and names
+its id and name columns, a `browser` list of actions that ends in a check using `{prefix}`, or
+both. The database rule is used while Database Read Access is on; otherwise the browser rule is
+used, and with neither the run is refused. Read the places the save answer says each input
+replaced, and save again if one is a match by chance.
+
+Two assistants running the same setup at once may both find nothing and both build: split the
+work so they do not.
+
 End with a summary: the task, the account and environment, what you did, each check and its
 result, the findings, the change list, the templates saved or reused, and how to undo. Show it in
 the chat and save it to `tcm-explore/<date>-<short-task>.md` in the folder you were started in.

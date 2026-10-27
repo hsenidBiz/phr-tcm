@@ -592,7 +592,11 @@ fn each_tool_belongs_to_its_module() {
             "set_autorun_headers",
             "autorun_cookies",
             "record_explore_change",
-            "get_explore_changes"
+            "get_explore_changes",
+            "get_kept_actions",
+            "save_setup",
+            "list_setups",
+            "run_setup"
         ]
     );
     assert_eq!(
@@ -2017,6 +2021,8 @@ fn the_explore_command_does_a_task_and_ends_with_a_summary() {
         "only because the person asked",
         "`send_api_request`",
         "`get_explore_changes`",
+        "`list_setups`",
+        "`run_setup`",
     ] {
         assert!(flat.contains(said), "/tcm:explore never says {said:?}: {flat}");
     }
@@ -2482,6 +2488,9 @@ fn the_explore_tools_belong_to_their_modules() {
     assert_eq!(module_of_tool("undo_explore_creates"), Some(Module::ApiTemplates));
     assert_eq!(module_of_tool("record_explore_change"), Some(Module::AutoRun));
     assert_eq!(module_of_tool("get_explore_changes"), Some(Module::AutoRun));
+    for tool in ["get_kept_actions", "save_setup", "list_setups", "run_setup"] {
+        assert_eq!(module_of_tool(tool), Some(Module::AutoRun), "{tool}");
+    }
 }
 
 /// The two ruling tools are Auto Run's.

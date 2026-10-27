@@ -2459,6 +2459,26 @@ fn the_guide_explains_exploring_a_task() {
 }
 
 #[test]
+fn the_guide_explains_saved_setups() {
+    let guide = autorun_guide();
+    let section = guide.split_once("\n## Exploring a task").expect("an Exploring a task section").1.split("\n## ").next().unwrap();
+    assert!(section.contains("### Saved setups"), "{section}");
+    let flat = flat_guide(section);
+    for needle in [
+        "`list_setups`",
+        "`run_setup`",
+        "`get_kept_actions`",
+        "`save_setup`",
+        "{prefix}",
+        "always a find rule",
+        "both find nothing and both build",
+    ] {
+        assert!(flat.contains(needle), "{needle} not in: {flat}");
+    }
+    assert!(!section.contains('\u{2014}') && !section.contains('\u{2013}'), "no em or en dashes");
+}
+
+#[test]
 fn the_guide_says_a_delete_dialog_read_may_be_refused_in_auto_mode() {
     let g = autorun_guide();
     assert!(g.contains("can be refused as a deletion"), "the guide never says a delete-dialog read may be refused");

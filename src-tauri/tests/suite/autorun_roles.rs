@@ -214,6 +214,8 @@ fn the_explorer_carries_the_owners_rules() {
             "saved as an API template",
             "undo_explore_creates",
             "Say plainly what you cannot undo",
+            "list_setups",
+            "save_setup",
         ],
     );
 }

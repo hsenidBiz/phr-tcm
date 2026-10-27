@@ -520,6 +520,9 @@ test("the explore tools belong to their modules", () => {
   expect(moduleOfTool("undo_explore_creates")).toBe("api_templates");
   expect(moduleOfTool("record_explore_change")).toBe("auto_run");
   expect(moduleOfTool("get_explore_changes")).toBe("auto_run");
+  for (const tool of ["get_kept_actions", "save_setup", "list_setups", "run_setup"]) {
+    expect(moduleOfTool(tool)).toBe("auto_run");
+  }
 });
 
 test("the ruling tools belong to auto run", () => {

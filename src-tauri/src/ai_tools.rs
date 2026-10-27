@@ -181,6 +181,10 @@ pub const AUTORUN_TOOLS: &[&str] = &[
     "autorun_cookies",
     "record_explore_change",
     "get_explore_changes",
+    "get_kept_actions",
+    "save_setup",
+    "list_setups",
+    "run_setup",
 ];
 
 /// The network tools: the Auto Run browser's captured requests, HAR files,
@@ -746,6 +750,7 @@ pub const COMMANDS: &[CommandSpec] = &[
             "   or `send_api_request`. Read a value before you change it, and record every create, change and",
             "   delete with `record_explore_change`. Before anything is deleted, tell the person what will be",
             "   deleted and wait for their yes in this chat.",
+            "   Before setting up a precondition by hand, check `list_setups` and use `run_setup`; save one a later case needs again with `save_setup` (the guide's Saved setups).",
             "4. Check what happened: on the page, in the requests, or with `db_query` when it is offered. A",
             "   mismatch is a finding, never a check bent to fit.",
             "5. Call `end_autorun_discovery`, and name every save it lists as not on the change list.",
@@ -1422,6 +1427,10 @@ pub const CLAUDE_AUTORUN_RULES: &[&str] = &[
     "mcp__tcm__save_autorun_script",
     "mcp__tcm__save_autorun_component",
     "mcp__tcm__get_autorun_page",
+    "mcp__tcm__get_kept_actions",
+    "mcp__tcm__save_setup",
+    "mcp__tcm__list_setups",
+    "mcp__tcm__run_setup",
 ];
 
 /// The API template tools Claude Code is told to allow without asking while
@@ -1444,6 +1453,10 @@ pub const CURSOR_AUTORUN_ENTRIES: &[&str] = &[
     "tcm:save_autorun_script",
     "tcm:save_autorun_component",
     "tcm:get_autorun_page",
+    "tcm:get_kept_actions",
+    "tcm:save_setup",
+    "tcm:list_setups",
+    "tcm:run_setup",
 ];
 
 /// `CLAUDE_API_TEMPLATE_RULES` as Cursor's allowlist entries.

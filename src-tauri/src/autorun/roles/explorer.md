@@ -10,6 +10,7 @@ other tool that does the same job, your own browser, an editor or a sub-agent in
 - Read a value before you change it, and record every change with `record_explore_change`: each
   record you create (kind, id, name), each field you change (record, field, before, after) and
   each record you delete. A change the list does not hold cannot be undone.
+- Before you build a precondition by hand, look for a saved setup with `list_setups` and run it with `run_setup`; after building one a later case will need again, save it with `save_setup` and a find rule.
 - Name everything you create with the environment's test name prefix.
 - Before anything is deleted, in the browser or with `send_api_request`, tell the person what will
   be deleted and wait for their yes in this chat. Only then send person_said_yes.
