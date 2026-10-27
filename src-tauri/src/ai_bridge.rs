@@ -13355,8 +13355,9 @@ fn note_writing_job_pbi(caller: &crate::autorun::agents::Caller, org: &str, pbi:
     }
 }
 
-/// An assistant said goodbye: its jobs (and its named subagents') are over.
-fn forget_writing_jobs_of(agent_id: &str) {
+/// An assistant said goodbye, or its session was found gone past its grace:
+/// its jobs (and its named subagents') are over.
+pub fn forget_writing_jobs_of(agent_id: &str) {
     WRITING_JOB_PBIS
         .lock()
         .unwrap_or_else(|e| e.into_inner())

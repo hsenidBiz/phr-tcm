@@ -1086,37 +1086,160 @@ mod card {
         fresh();
     }
 
-    #[test]
-    fn on_sweep_unbinds_an_agent_past_grace() {
+    #[tokio::test]
+    async fn on_sweep_unbinds_an_agent_past_grace() {
         let _g = crate::serial::agents();
         let _a = crate::serial::autorun();
         fresh();
         let a = key(ID_A);
         bind(SlotNo::MAIN, &a);
-        on_sweep(&Sweep { newly_gone: vec![a.clone()], ..Sweep::default() });
+        on_sweep(&Sweep { newly_gone: vec![a.clone()], ..Sweep::default() }).await;
         assert_eq!(bound(SlotNo::MAIN), Some(a.clone()), "gone is not yet past its grace");
-        on_sweep(&Sweep { past_grace: vec![a.clone()], ..Sweep::default() });
+        on_sweep(&Sweep { past_grace: vec![a.clone()], ..Sweep::default() }).await;
         assert_eq!(bound(SlotNo::MAIN), None);
         fresh();
+    }
+
+    /// Review focus 3: a session closed mid-replay (its proxy killed, no
+    /// goodbye). Past its grace, its extra browser's replay is stopped through
+    /// that slot's own cancel, the slot is released and unbound, and its
+    /// claims end. The log names the label and says the session ended.
+    #[tokio::test]
+    async fn a_gone_agent_after_grace_releases_its_extra_slot_and_stops_its_replay() {
+        use v2_lib::autorun::claims;
+        let logged = || v2_lib::applog::recent(500).into_iter().map(|l| l.message).collect::<Vec<_>>().join("\n");
+        let _g = crate::serial::agents();
+        let _l = crate::serial::log_tail();
+        let _a = crate::serial::autorun();
+        fresh();
+        claims::clear();
+        register(ID_A, "claude-code", T0);
+        let b = register(ID_B, "claude-code", T0);
+        bind(SlotNo(1), &b);
+        claims::claim(&b, 4521, T0).unwrap();
+        let replay = OneReplay::claim_for_assistant_in(SlotNo(1)).expect("slot 1 is free");
+        let cancelled = |n: SlotNo| state(n).cancel.load(std::sync::atomic::Ordering::SeqCst);
+
+        on_sweep(&Sweep { newly_gone: vec![b.clone()], ..Sweep::default() }).await;
+        assert_eq!(bound(SlotNo(1)), Some(b.clone()), "gone is not yet past its grace");
+        assert!(!cancelled(SlotNo(1)));
+
+        on_sweep(&Sweep { past_grace: vec![b.clone()], ..Sweep::default() }).await;
+        assert!(cancelled(SlotNo(1)), "its replay was stopped through its own slot's cancel");
+        assert!(!cancelled(SlotNo::MAIN), "main's replay was not touched");
+        assert_eq!(bound(SlotNo(1)), None);
+        assert_eq!(claims::holder(4521, T0), None);
+        let lines = logged();
+        assert!(lines.contains("Auto Run: released Assistant 2's browser (its session ended)"), "{lines}");
+        assert!(!lines.contains(ID_B) && !lines.contains("4242"), "{lines}");
+        drop(replay);
+        claims::clear();
+        fresh();
+    }
+
+    /// A main binding is only cleared: the browser stays as it is, the
+    /// replay in it is not stopped, and its claims end.
+    #[tokio::test]
+    async fn a_gone_agent_bound_to_main_is_only_unbound() {
+        use v2_lib::autorun::claims;
+        let _g = crate::serial::agents();
+        let _a = crate::serial::autorun();
+        fresh();
+        claims::clear();
+        let a = register(ID_A, "claude-code", T0);
+        bind(SlotNo::MAIN, &a);
+        claims::claim(&a, 4521, T0).unwrap();
+        let replay = OneReplay::claim_for_assistant().expect("main is free");
+        on_sweep(&Sweep { past_grace: vec![a.clone()], ..Sweep::default() }).await;
+        assert_eq!(bound(SlotNo::MAIN), None);
+        assert!(!state(SlotNo::MAIN).cancel.load(std::sync::atomic::Ordering::SeqCst), "main's browser is left alone");
+        assert_eq!(claims::holder(4521, T0), None);
+        drop(replay);
+        claims::clear();
+        fresh();
+    }
+
+    /// A release that found the browser busy is asked again on each later
+    /// sweep (past grace is reported once), until it succeeds.
+    #[tokio::test]
+    async fn a_release_that_found_the_browser_busy_is_tried_again() {
+        use v2_lib::commands::autorun::try_hold_slot;
+        use v2_lib::commands::autorun_slots::on_sweep_within;
+        let short = std::time::Duration::from_millis(40);
+        let _g = crate::serial::agents();
+        let _a = crate::serial::autorun();
+        fresh();
+        let b = register(ID_B, "claude-code", T0);
+        bind(SlotNo(1), &b);
+        let busy = try_hold_slot(SlotNo(1)).expect("slot 1 is free");
+        on_sweep_within(&Sweep { past_grace: vec![b.clone()], ..Sweep::default() }, short).await;
+        assert_eq!(bound(SlotNo(1)), Some(b.clone()), "a busy browser keeps its binding");
+        on_sweep_within(&Sweep::default(), short).await;
+        assert_eq!(bound(SlotNo(1)), Some(b.clone()), "still busy, still kept");
+        drop(busy);
+        on_sweep_within(&Sweep::default(), short).await;
+        assert_eq!(bound(SlotNo(1)), None, "the next sweep releases it");
+        fresh();
+    }
+
+    /// A retry is given up when the slot is no longer bound to the gone
+    /// agent: someone else's browser is never released for it.
+    #[tokio::test]
+    async fn a_retry_is_dropped_once_the_slot_is_someone_elses() {
+        use v2_lib::commands::autorun::try_hold_slot;
+        use v2_lib::commands::autorun_slots::on_sweep_within;
+        let short = std::time::Duration::from_millis(40);
+        let _g = crate::serial::agents();
+        let _a = crate::serial::autorun();
+        fresh();
+        let b = register(ID_B, "claude-code", T0);
+        let c = register(ID_C, "claude-code", T0);
+        bind(SlotNo(1), &b);
+        let busy = try_hold_slot(SlotNo(1)).expect("slot 1 is free");
+        on_sweep_within(&Sweep { past_grace: vec![b.clone()], ..Sweep::default() }, short).await;
+        drop(busy);
+        bind(SlotNo(1), &c);
+        on_sweep_within(&Sweep::default(), short).await;
+        assert_eq!(bound(SlotNo(1)), Some(c.clone()), "the new holder keeps its browser");
+        // And the retry list is spent: a later sweep does nothing either.
+        on_sweep_within(&Sweep::default(), short).await;
+        assert_eq!(bound(SlotNo(1)), Some(c));
+        fresh();
+    }
+
+    /// The writing jobs of an agent past its grace are forgotten exactly as
+    /// its goodbye forgets them. (A unit test would take the writing-job
+    /// lock beside the registry's, which `serial.rs` forbids.)
+    #[test]
+    fn a_gone_agents_writing_jobs_are_forgotten_as_its_goodbye_does() {
+        let slots = include_str!("../../src/commands/autorun_slots.rs").replace("\r\n", "\n");
+        let head = slots.find("pub async fn on_sweep_within(").expect("on_sweep_within");
+        let body = &slots[head..];
+        let body = &body[..body.find("\n}\n").unwrap()];
+        assert!(body.contains("crate::ai_bridge::forget_writing_jobs_of(&key.id)"), "{body}");
+        let bridge = include_str!("../../src/ai_bridge.rs").replace("\r\n", "\n");
+        assert!(bridge.contains("pub fn forget_writing_jobs_of(agent_id: &str)"));
+        let bye = &bridge[bridge.find("(\"POST\", \"/agent-bye\")").unwrap()..];
+        assert!(bye[..400].contains("forget_writing_jobs_of(&key.id)"), "the goodbye still forgets them");
     }
 
     /// A quiet assistant (no call for an hour, no session seen to end) loses
     /// its binding of the main browser only: an extra browser it holds is
     /// the idle release's to deal with, not this sweep's.
-    #[test]
-    fn on_sweep_unbinds_a_quiet_assistant_from_main_only() {
+    #[tokio::test]
+    async fn on_sweep_unbinds_a_quiet_assistant_from_main_only() {
         let _g = crate::serial::agents();
         let _a = crate::serial::autorun();
         fresh();
         let (a, b) = (key(ID_A), key(ID_B));
         bind(SlotNo::MAIN, &a);
         bind(SlotNo(1), &b);
-        on_sweep(&Sweep { quiet: vec![a.clone(), b.clone()], ..Sweep::default() });
+        on_sweep(&Sweep { quiet: vec![a.clone(), b.clone()], ..Sweep::default() }).await;
         assert_eq!(bound(SlotNo::MAIN), None, "a quiet assistant does not hold main");
         assert_eq!(bound(SlotNo(1)), Some(b), "an extra browser's binding is left to the idle release");
         // Another assistant's quiet leaves main's holder alone.
         bind(SlotNo::MAIN, &a);
-        on_sweep(&Sweep { quiet: vec![key(ID_B)], ..Sweep::default() });
+        on_sweep(&Sweep { quiet: vec![key(ID_B)], ..Sweep::default() }).await;
         assert_eq!(bound(SlotNo::MAIN), Some(a));
         fresh();
     }

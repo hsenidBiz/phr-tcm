@@ -223,10 +223,10 @@ async fn on_sweep_ends_a_claim_past_grace_and_not_a_quiet_one() {
     claims::claim(&key(ID_B), 4522, T0).unwrap();
     // Gone is not yet past its grace, and a quiet entry's session was not
     // seen to end.
-    slots::on_sweep(&Sweep { newly_gone: vec![key(ID_A)], quiet: vec![key(ID_A), key(ID_B)], ..Sweep::default() });
+    slots::on_sweep(&Sweep { newly_gone: vec![key(ID_A)], quiet: vec![key(ID_A), key(ID_B)], ..Sweep::default() }).await;
     assert_eq!(claims::holder(4521, T0), Some(key(ID_A)));
     assert_eq!(claims::holder(4522, T0), Some(key(ID_B)));
-    slots::on_sweep(&Sweep { past_grace: vec![key(ID_A)], ..Sweep::default() });
+    slots::on_sweep(&Sweep { past_grace: vec![key(ID_A)], ..Sweep::default() }).await;
     assert_eq!(claims::holder(4521, T0), None);
     assert_eq!(claims::holder(4522, T0), Some(key(ID_B)));
     fresh();
@@ -263,7 +263,7 @@ fn an_assistants_own_release_does_not_end_its_claims() {
     let own = &own[..own.find("\n}\n").unwrap()];
     assert!(!own.contains("claims::"), "{own}");
     let slots_src = include_str!("../../src/commands/autorun_slots.rs").replace("\r\n", "\n");
-    let release = &slots_src[slots_src.find("pub async fn release_slot(").unwrap()..];
+    let release = &slots_src[slots_src.find("pub async fn release_slot_within(").unwrap()..];
     let release = &release[..release.find("\n}\n").unwrap()];
     let read = release.find("let held = bound(n)").expect("the bound key is read first");
     let unbound = release.find("unbind(n);").unwrap();

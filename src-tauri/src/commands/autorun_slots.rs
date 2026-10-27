@@ -334,27 +334,78 @@ pub fn clear() {
     t.bound = [const { None }; SLOT_COUNT];
     t.held = [const { None }; SLOT_COUNT];
     drop(t);
+    release_retries().clear();
     for f in FACTS.iter() {
         *f.lock().unwrap_or_else(|e| e.into_inner()) = None;
     }
 }
 
+/// The extra slots whose release for a gone assistant found the browser busy
+/// (`BROWSER_BUSY`), with the assistant they were bound to. An agent is past
+/// its grace in one sweep only, so these are asked again on each later sweep
+/// until released or bound to someone else. Coordination state, not a cache:
+/// in memory only, gone when the app closes.
+static RELEASE_RETRIES: Mutex<Vec<(SlotNo, AgentKey)>> = Mutex::new(Vec::new());
+
+fn release_retries() -> std::sync::MutexGuard<'static, Vec<(SlotNo, AgentKey)>> {
+    RELEASE_RETRIES.lock().unwrap_or_else(|e| e.into_inner())
+}
+
 /// An agent that has gone past its grace (`agents::Sweep::past_grace`) holds
-/// no browser. A quiet one (`agents::Sweep::quiet`: no call for an hour, no
+/// no browser: a main binding is only cleared (the browser stays as it is),
+/// and an extra browser bound to it is released as the person's release does
+/// (`release_slot`, its replay stopped through that slot's own cancel first).
+/// Its claims end and its writing-job entries are forgotten, as its goodbye
+/// would have. A quiet one (`agents::Sweep::quiet`: no call for an hour, no
 /// session seen to end) no longer holds the main browser; an extra browser it
-/// holds is left to the idle release. The claims of an agent past its grace
-/// end with its binding (`claims::end_for`); a quiet one's do not, for its
-/// session was not seen to end (they time out). Called by the sweeper after
-/// every sweep.
-pub fn on_sweep(s: &agents::Sweep) {
+/// holds is left to the idle release, and its claims time out. A release that
+/// found the browser busy is tried again on each later sweep. Called by the
+/// sweeper after every sweep.
+pub async fn on_sweep(s: &agents::Sweep) {
+    on_sweep_within(s, crate::commands::autorun::RELEASE_WAIT).await;
+}
+
+/// `on_sweep`, each release waiting at most `wait` for its slot's lock. The
+/// releases run side by side, so the sweep takes one wait at most however
+/// many extra browsers are let go.
+pub async fn on_sweep_within(s: &agents::Sweep, wait: std::time::Duration) {
+    let mut releases: Vec<(SlotNo, AgentKey)> = Vec::new();
     for key in &s.past_grace {
-        unbind_agent(key);
+        crate::ai_bridge::forget_writing_jobs_of(&key.id);
         crate::autorun::claims::end_for(key);
-    }
-    let mut t = bindings();
-    for key in &s.quiet {
+        let mut t = bindings();
         if t.bound[SlotNo::MAIN.index()].as_ref() == Some(key) {
             t.bound[SlotNo::MAIN.index()] = None;
+        }
+        for n in SlotNo::extras() {
+            if t.bound[n.index()].as_ref() == Some(key) {
+                releases.push((n, key.clone()));
+            }
+        }
+    }
+    // The releases an earlier sweep could not make, while the slot is still
+    // the gone assistant's.
+    let again = std::mem::take(&mut *release_retries());
+    for (n, key) in again {
+        if bound(n).as_ref() == Some(&key) && !releases.contains(&(n, key.clone())) {
+            releases.push((n, key));
+        }
+    }
+    {
+        let mut t = bindings();
+        for key in &s.quiet {
+            if t.bound[SlotNo::MAIN.index()].as_ref() == Some(key) {
+                t.bound[SlotNo::MAIN.index()] = None;
+            }
+        }
+    }
+    let answers =
+        futures::future::join_all(releases.iter().map(|(n, _)| release_slot_within(*n, ReleaseWhy::SessionEnded, wait)))
+            .await;
+    let mut failed = release_retries();
+    for ((n, key), answer) in releases.into_iter().zip(answers) {
+        if answer.is_err() {
+            failed.push((n, key));
         }
     }
 }
@@ -615,6 +666,9 @@ fn whose(n: SlotNo) -> String {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReleaseWhy {
     Person,
+    /// The assistant's session ended without a goodbye (the sweep found its
+    /// process gone, and its grace passed).
+    SessionEnded,
 }
 
 /// Stops slot `n`'s assistant's replay (never the person's) and batch, waits
@@ -627,6 +681,11 @@ pub enum ReleaseWhy {
 /// (`release_answer_in`), not the assistant's text. A browser that stays busy past the wait is refused
 /// (`BROWSER_BUSY`) and the binding kept.
 pub async fn release_slot(n: SlotNo, why: ReleaseWhy) -> Result<String, String> {
+    release_slot_within(n, why, crate::commands::autorun::RELEASE_WAIT).await
+}
+
+/// `release_slot`, waiting at most `wait` for the slot's lock.
+pub async fn release_slot_within(n: SlotNo, why: ReleaseWhy, wait: std::time::Duration) -> Result<String, String> {
     // Read first: the label is kept in the registry until its next sweep.
     let who = whose(n);
     // Read before the unbind below: whose claims end with the release.
@@ -638,8 +697,7 @@ pub async fn release_slot(n: SlotNo, why: ReleaseWhy) -> Result<String, String> 
         replay.stop();
     }
     crate::ai_bridge::stop_batch_in(n);
-    let Ok(mut slot) = tokio::time::timeout(crate::commands::autorun::RELEASE_WAIT, session_slot(n).lock()).await
-    else {
+    let Ok(mut slot) = tokio::time::timeout(wait, session_slot(n).lock()).await else {
         return Err(crate::commands::autorun::BROWSER_BUSY.to_string());
     };
     let answer = release_answer_in(&mut slot, &who).await;
@@ -656,8 +714,11 @@ pub async fn release_slot(n: SlotNo, why: ReleaseWhy) -> Result<String, String> 
     if let Some(key) = held {
         crate::autorun::claims::end_for(&key);
     }
-    let ReleaseWhy::Person = why;
-    crate::applog::info(format!("Auto Run: released {who} (the person released it)"));
+    let by = match why {
+        ReleaseWhy::Person => "the person released it",
+        ReleaseWhy::SessionEnded => "its session ended",
+    };
+    crate::applog::info(format!("Auto Run: released {who} ({by})"));
     Ok(answer)
 }
 
