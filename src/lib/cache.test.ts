@@ -237,6 +237,31 @@ describe("the entry limit", () => {
     expect(cacheRead("k-newer", Infinity)).toBe("y");
   });
 
+  /** The combined plans walk writes one `plans-suites:` entry per project
+   * (up to 100). They count against a cap of their own, so a big
+   * organization's walk never pushes out the entries of other screens. */
+  test("plan trees have their own cap and never evict other entries", () => {
+    // 30 other entries, the oldest of all; 130 plan trees, p0 the oldest of them.
+    for (let i = 0; i < 30; i++) plant(`other${i}`, 1 + i);
+    for (let i = 0; i < 130; i++) plant(cacheKeys.plansSuites("acme", `p${i}`), 1_000 + i);
+    cacheWrite(cacheKeys.plansSuites("acme", "newest"), []);
+
+    for (let i = 0; i < 30; i++) expect(cacheRead(`other${i}`, Infinity)).toBe(1);
+    const trees = cachedKeys().filter((k) => k.startsWith("tcm-v2-cache:plans-suites:"));
+    expect(trees).toHaveLength(120);
+    // 131 written, the 11 oldest are gone.
+    for (let i = 0; i < 11; i++) expect(cacheRead(cacheKeys.plansSuites("acme", `p${i}`), Infinity)).toBeNull();
+    expect(cacheRead(cacheKeys.plansSuites("acme", "p11"), Infinity)).toBe(1);
+    expect(cacheRead(cacheKeys.plansSuites("acme", "newest"), Infinity)).toEqual([]);
+  });
+
+  test("plan trees do not count toward the 150 for everything else", () => {
+    for (let i = 0; i < 100; i++) plant(cacheKeys.plansSuites("acme", `p${i}`), 1_000 + i);
+    for (let i = 0; i < 150; i++) cacheWrite(`k${i}`, i);
+    expect(cachedKeys().filter((k) => !k.startsWith("tcm-v2-cache:plans-suites:"))).toHaveLength(150);
+    expect(cachedKeys().filter((k) => k.startsWith("tcm-v2-cache:plans-suites:"))).toHaveLength(100);
+  });
+
   /** Pruning used to JSON.parse every cached entry on every write just to
    * read its age - the whole plan tree included. */
   test("a write reads no other entry", () => {
