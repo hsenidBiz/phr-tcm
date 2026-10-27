@@ -1261,6 +1261,348 @@ mod card {
         assert!(!body.contains("swept.quiet"), "{body}");
     }
 
+    // -----------------------------------------------------------------------
+    // Idle release (Task 20)
+    // -----------------------------------------------------------------------
+
+    /// Registered without a pid, so the sweep can call it quiet.
+    fn register_unaskable(id: &str, now: u64) -> AgentKey {
+        let h = AgentHeaders { id: Some(id.to_string()), pid: None, client: Some("claude-code".to_string()), name: None };
+        agents::note_call(&h.caller(), &h, now);
+        key(id)
+    }
+
+    /// An extra browser whose assistant made no call for 30 minutes is idle;
+    /// one millisecond less is not. A replay or a batch going in it is never idle.
+    #[test]
+    fn an_extra_slot_idle_30_minutes_is_released() {
+        use v2_lib::ai_bridge::BatchGoing;
+        use v2_lib::commands::autorun_slots::{idle_extras, IDLE_RELEASE_MS};
+        let _g = crate::serial::agents();
+        let _a = crate::serial::autorun();
+        fresh();
+        let b = register(ID_B, "claude-code", T0);
+        bind(SlotNo(1), &b);
+        assert_eq!(IDLE_RELEASE_MS, 1_800_000);
+        assert_eq!(idle_extras(T0 + IDLE_RELEASE_MS - 1), vec![], "just under 30 minutes is not idle");
+        assert_eq!(idle_extras(T0 + IDLE_RELEASE_MS), vec![SlotNo(1)]);
+        {
+            let _replay = OneReplay::claim_in(SlotNo(1)).expect("slot 1 is free");
+            assert_eq!(idle_extras(T0 + IDLE_RELEASE_MS), vec![], "a replay is going");
+        }
+        {
+            let _replay = OneReplay::claim_for_assistant_in(SlotNo(1)).expect("slot 1 is free");
+            assert_eq!(idle_extras(T0 + IDLE_RELEASE_MS), vec![], "an assistant's replay is going");
+        }
+        {
+            let _batch = BatchGoing::begin(SlotNo(1));
+            assert_eq!(idle_extras(T0 + IDLE_RELEASE_MS), vec![], "a batch is going");
+        }
+        assert_eq!(idle_extras(T0 + IDLE_RELEASE_MS), vec![SlotNo(1)], "idle again once they end");
+        // A call after the 30 minutes starts the count again.
+        register(ID_B, "claude-code", T0 + IDLE_RELEASE_MS);
+        assert_eq!(idle_extras(T0 + IDLE_RELEASE_MS), vec![]);
+        fresh();
+    }
+
+    /// Only the slot of the idle assistant is named, and an unbound extra slot
+    /// is nobody's to release.
+    #[test]
+    fn idleness_is_judged_per_slot_by_its_assistants_last_call() {
+        use v2_lib::commands::autorun_slots::{idle_extras, IDLE_RELEASE_MS};
+        let _g = crate::serial::agents();
+        let _a = crate::serial::autorun();
+        fresh();
+        let b = register(ID_B, "claude-code", T0);
+        let c = register(ID_C, "claude-code", T0 + IDLE_RELEASE_MS);
+        bind(SlotNo(1), &b);
+        bind(SlotNo(2), &c);
+        assert_eq!(idle_extras(T0 + IDLE_RELEASE_MS), vec![SlotNo(1)], "C called just now");
+        unbind(SlotNo(1));
+        assert_eq!(idle_extras(T0 + IDLE_RELEASE_MS), vec![], "an unbound slot has no assistant");
+        fresh();
+    }
+
+    /// The person's browser (main) is never let go for idleness.
+    #[test]
+    fn main_is_never_released_for_idleness() {
+        use v2_lib::commands::autorun_slots::idle_extras;
+        let _g = crate::serial::agents();
+        let _a = crate::serial::autorun();
+        fresh();
+        let a = register(ID_A, "claude-code", T0);
+        bind(SlotNo::MAIN, &a);
+        assert_eq!(idle_extras(T0 + 3_600_000), vec![]);
+        assert_eq!(idle_extras(T0 + 10 * 3_600_000), vec![]);
+        fresh();
+    }
+
+    /// An assistant the sweep calls quiet (an hour without a call, nothing to
+    /// ask about it) is not live, yet its extra browser is still released.
+    #[test]
+    fn a_quiet_assistants_extra_browser_is_still_released() {
+        use v2_lib::commands::autorun_slots::idle_extras;
+        let _g = crate::serial::agents();
+        let _a = crate::serial::autorun();
+        fresh();
+        let b = register_unaskable(ID_B, T0);
+        bind(SlotNo(1), &b);
+        let swept = agents::sweep(T0 + agents::QUIET_AFTER_MS, &|_| true);
+        assert_eq!(swept.quiet, vec![b.clone()], "B is reported quiet");
+        assert!(!agents::is_live(&b));
+        assert_eq!(idle_extras(T0 + agents::QUIET_AFTER_MS), vec![SlotNo(1)]);
+        fresh();
+    }
+
+    /// An assistant the registry has forgotten (a machine that slept past
+    /// every grace) holds nothing: its binding counts as idle.
+    #[test]
+    fn a_forgotten_assistants_binding_counts_as_idle() {
+        use v2_lib::commands::autorun_slots::idle_extras;
+        let _g = crate::serial::agents();
+        let _a = crate::serial::autorun();
+        fresh();
+        bind(SlotNo(2), &key(ID_D));
+        assert_eq!(agents::info(&key(ID_D)), None);
+        assert_eq!(idle_extras(T0), vec![SlotNo(2)]);
+        fresh();
+    }
+
+    /// The release for idleness lets the browser go, says why once to the
+    /// assistant's next Act or Read, then the usual rules apply. The log names
+    /// the label and the reason, never an id.
+    #[tokio::test]
+    async fn the_next_call_hears_why() {
+        use v2_lib::commands::autorun_slots::{release_slot, ReleaseWhy, IDLE_RELEASED};
+        let logged = || v2_lib::applog::recent(2000).into_iter().map(|l| l.message).collect::<Vec<_>>().join("\n");
+        let _g = crate::serial::agents();
+        let _l = crate::serial::log_tail();
+        let _a = crate::serial::autorun();
+        fresh();
+        let a = register(ID_A, "claude-code", T0);
+        let b = register(ID_B, "claude-code", T0);
+        bind(SlotNo::MAIN, &a);
+        bind(SlotNo(1), &b);
+        let mark = "autorun_slots test: the idle release starts here";
+        v2_lib::applog::info(mark);
+        release_slot(SlotNo(1), ReleaseWhy::Idle).await.expect("the release");
+        assert_eq!(bound(SlotNo(1)), None);
+        assert_eq!(slot_for(&caller(ID_B), Need::Read), Err((409, IDLE_RELEASED.to_string())));
+        assert_eq!(slot_for(&caller(ID_B), Need::Read), Err((409, NO_BROWSER_OF_YOURS.to_string())));
+        assert_eq!(slot_for(&caller(ID_B), Need::Act), Err((409, NO_BROWSER_OF_YOURS.to_string())));
+        let lines = logged();
+        let after = &lines[lines.rfind(mark).expect("the mark is in the log tail")..];
+        assert!(after.contains("Auto Run: released Assistant 2's browser (30 minutes without a call)"), "{after}");
+        assert!(!after.contains(ID_B) && !after.contains("4242"), "{after}");
+        assert!(!IDLE_RELEASED.contains('\u{2013}') && !IDLE_RELEASED.contains('\u{2014}'));
+        fresh();
+    }
+
+    /// An Act hears it too, and an Open drops the notice and opens as usual.
+    /// The default caller never has one.
+    #[tokio::test]
+    async fn an_open_after_the_release_opens_as_usual() {
+        use v2_lib::commands::autorun_slots::{release_slot, take_idle_notice, ReleaseWhy, IDLE_RELEASED};
+        let _g = crate::serial::agents();
+        let _a = crate::serial::autorun();
+        fresh();
+        let a = register(ID_A, "claude-code", T0);
+        let b = register(ID_B, "claude-code", T0);
+        bind(SlotNo::MAIN, &a);
+        bind(SlotNo(1), &b);
+        release_slot(SlotNo(1), ReleaseWhy::Idle).await.expect("the release");
+        assert_eq!(slot_for(&caller(ID_B), Need::Act), Err((409, IDLE_RELEASED.to_string())));
+        assert!(!take_idle_notice(&b), "the notice was heard once");
+
+        bind(SlotNo(1), &b);
+        release_slot(SlotNo(1), ReleaseWhy::Idle).await.expect("the release");
+        assert_eq!(slot_for(&caller(ID_B), Need::Open), Ok(SlotNo(1)), "an open opens as usual");
+        assert!(!take_idle_notice(&b), "the open dropped the notice");
+        unbind(SlotNo(1));
+        assert_eq!(slot_for(&caller(ID_B), Need::Read), Err((409, NO_BROWSER_OF_YOURS.to_string())));
+
+        // The default caller is never told anything of the kind.
+        assert_eq!(slot_for(&Caller::Default, Need::Act), Ok(SlotNo::MAIN));
+        fresh();
+    }
+
+    /// A notice is for the next call after the release: an assistant bound to
+    /// a browser again before then is not told of the old one later.
+    #[tokio::test]
+    async fn a_notice_does_not_outlive_a_new_binding() {
+        use v2_lib::commands::autorun_slots::{release_slot, take_idle_notice, ReleaseWhy};
+        let _g = crate::serial::agents();
+        let _a = crate::serial::autorun();
+        fresh();
+        let b = register(ID_B, "claude-code", T0);
+        bind(SlotNo(1), &b);
+        release_slot(SlotNo(1), ReleaseWhy::Idle).await.expect("the release");
+        bind(SlotNo(2), &b);
+        assert_eq!(slot_for(&caller(ID_B), Need::Read), Ok(SlotNo(2)));
+        assert!(!take_idle_notice(&b));
+        fresh();
+    }
+
+    /// The sweeper's release for idleness frees each idle extra browser at
+    /// once (side by side, never the person's main one) and leaves a recent one.
+    #[tokio::test]
+    async fn the_sweeps_idle_release_frees_only_the_idle_extra_slots() {
+        use v2_lib::commands::autorun_slots::{release_idle, take_idle_notice, IDLE_RELEASE_MS};
+        let _g = crate::serial::agents();
+        let _a = crate::serial::autorun();
+        fresh();
+        let a = register(ID_A, "claude-code", T0);
+        let b = register(ID_B, "claude-code", T0);
+        let c = register(ID_C, "claude-code", T0 + IDLE_RELEASE_MS);
+        bind(SlotNo::MAIN, &a);
+        bind(SlotNo(1), &b);
+        bind(SlotNo(2), &c);
+        let now = T0 + IDLE_RELEASE_MS;
+        release_idle(now).await;
+        assert_eq!(bound(SlotNo(1)), None, "B was idle");
+        assert_eq!(bound(SlotNo(2)), Some(c.clone()), "C called just now");
+        assert_eq!(bound(SlotNo::MAIN), Some(a.clone()), "main is never idle-released");
+        assert!(take_idle_notice(&b), "B is told once");
+        assert!(!take_idle_notice(&b));
+        assert!(!take_idle_notice(&c));
+        fresh();
+    }
+
+    /// A slot whose session lock is held (a call, an open, a replay step is
+    /// going in it) is not idle however long its assistant was quiet.
+    #[test]
+    fn a_slot_whose_session_lock_is_held_is_not_idle() {
+        use v2_lib::commands::autorun::try_hold_slot;
+        use v2_lib::commands::autorun_slots::{idle_extras, IDLE_RELEASE_MS};
+        let _g = crate::serial::agents();
+        let _a = crate::serial::autorun();
+        fresh();
+        let b = register(ID_B, "claude-code", T0);
+        bind(SlotNo(1), &b);
+        let held = try_hold_slot(SlotNo(1)).expect("slot 1 is free");
+        assert_eq!(idle_extras(T0 + IDLE_RELEASE_MS), vec![], "a call holds the browser");
+        drop(held);
+        assert_eq!(idle_extras(T0 + IDLE_RELEASE_MS), vec![SlotNo(1)]);
+        fresh();
+    }
+
+    /// An idle release that finds a replay or a batch going answers busy at
+    /// once, stops nothing, keeps the binding and leaves no notice.
+    #[tokio::test]
+    async fn an_idle_release_of_a_browser_with_a_replay_or_batch_going_stops_nothing() {
+        use v2_lib::ai_bridge::BatchGoing;
+        use v2_lib::commands::autorun::BROWSER_BUSY;
+        use v2_lib::commands::autorun_slots::{release_slot_within, take_idle_notice, ReleaseWhy};
+        let short = std::time::Duration::from_millis(40);
+        let _g = crate::serial::agents();
+        let _a = crate::serial::autorun();
+        fresh();
+        let b = register(ID_B, "claude-code", T0);
+        bind(SlotNo(1), &b);
+        {
+            let replay = OneReplay::claim_for_assistant_in(SlotNo(1)).expect("slot 1 is free");
+            let answer = release_slot_within(SlotNo(1), ReleaseWhy::Idle, short).await;
+            assert_eq!(answer, Err(BROWSER_BUSY.to_string()));
+            assert!(state(SlotNo(1)).is_running(), "the replay was left running");
+            assert!(!state(SlotNo(1)).cancel.load(std::sync::atomic::Ordering::SeqCst), "nothing was cancelled");
+            assert_eq!(bound(SlotNo(1)), Some(b.clone()));
+            assert!(!take_idle_notice(&b), "no notice for a release that did not happen");
+            drop(replay);
+        }
+        {
+            let batch = BatchGoing::begin(SlotNo(1));
+            let answer = release_slot_within(SlotNo(1), ReleaseWhy::Idle, short).await;
+            assert_eq!(answer, Err(BROWSER_BUSY.to_string()));
+            assert!(
+                !v2_lib::ai_bridge::batch_stop(SlotNo(1)).load(std::sync::atomic::Ordering::SeqCst),
+                "the batch was not told to stop"
+            );
+            assert_eq!(bound(SlotNo(1)), Some(b.clone()));
+            assert!(!take_idle_notice(&b));
+            drop(batch);
+        }
+        fresh();
+    }
+
+    /// The release acts on what idleness was judged on: a call made, a
+    /// rebind, or an unbind between the judgement and the release refuses it.
+    #[tokio::test]
+    async fn an_idle_release_refuses_when_the_slot_changed_since_it_was_judged() {
+        use v2_lib::commands::autorun::BROWSER_BUSY;
+        use v2_lib::commands::autorun_slots::{idle_slots, release_idle_slot, take_idle_notice, IDLE_RELEASE_MS};
+        let _g = crate::serial::agents();
+        let _a = crate::serial::autorun();
+        fresh();
+        let b = register(ID_B, "claude-code", T0);
+        let now = T0 + IDLE_RELEASE_MS;
+
+        // A call by B after the judgement.
+        bind(SlotNo(1), &b);
+        let judged = idle_slots(now).pop().expect("B's browser is idle");
+        assert_eq!((judged.slot, judged.key.clone()), (SlotNo(1), b.clone()));
+        register(ID_B, "claude-code", T0 + 1);
+        assert_eq!(release_idle_slot(&judged).await, Err(BROWSER_BUSY.to_string()));
+        assert_eq!(bound(SlotNo(1)), Some(b.clone()), "B called, so it keeps its browser");
+        assert!(!take_idle_notice(&b));
+
+        // The slot rebound to C after the judgement.
+        fresh();
+        let b = register(ID_B, "claude-code", T0);
+        let c = register(ID_C, "claude-code", T0);
+        bind(SlotNo(1), &b);
+        let judged = idle_slots(now).pop().expect("B's browser is idle");
+        bind(SlotNo(1), &c);
+        assert_eq!(release_idle_slot(&judged).await, Err(BROWSER_BUSY.to_string()));
+        assert_eq!(bound(SlotNo(1)), Some(c.clone()), "C keeps what it was given");
+        assert!(!take_idle_notice(&b) && !take_idle_notice(&c));
+
+        // Unbound after the judgement: nothing is released, nobody is told.
+        fresh();
+        let b = register(ID_B, "claude-code", T0);
+        bind(SlotNo(1), &b);
+        let judged = idle_slots(now).pop().expect("B's browser is idle");
+        unbind(SlotNo(1));
+        assert_eq!(release_idle_slot(&judged).await, Err(BROWSER_BUSY.to_string()));
+        assert!(!take_idle_notice(&b), "nothing was released, so nothing is said");
+        fresh();
+    }
+
+    /// An idle release never waits for a slot's lock: held, it answers busy at
+    /// once and the next sweep asks again.
+    #[tokio::test]
+    async fn an_idle_release_of_a_held_slot_returns_at_once() {
+        use v2_lib::commands::autorun::{try_hold_slot, BROWSER_BUSY};
+        use v2_lib::commands::autorun_slots::{idle_slots, release_idle_slot, release_slot, ReleaseWhy, IDLE_RELEASE_MS};
+        let _g = crate::serial::agents();
+        let _a = crate::serial::autorun();
+        fresh();
+        let b = register(ID_B, "claude-code", T0);
+        bind(SlotNo(1), &b);
+        let judged = idle_slots(T0 + IDLE_RELEASE_MS).pop().expect("B's browser is idle");
+        let held = try_hold_slot(SlotNo(1)).expect("slot 1 is free");
+        let began = std::time::Instant::now();
+        // release_slot waits 30 seconds for a lock; an idle release must not.
+        assert_eq!(release_idle_slot(&judged).await, Err(BROWSER_BUSY.to_string()));
+        assert_eq!(release_slot(SlotNo(1), ReleaseWhy::Idle).await, Err(BROWSER_BUSY.to_string()));
+        assert!(began.elapsed() < std::time::Duration::from_secs(2), "{:?}", began.elapsed());
+        assert_eq!(bound(SlotNo(1)), Some(b.clone()));
+        drop(held);
+        assert!(release_idle_slot(&judged).await.is_ok(), "free again, the next sweep releases it");
+        assert_eq!(bound(SlotNo(1)), None);
+        fresh();
+    }
+
+    /// The sweeper runs the idle release after the past-grace one.
+    #[test]
+    fn the_sweeper_runs_the_idle_release_after_the_sweep() {
+        let sweeper = include_str!("../../src/commands/ai_bridge.rs");
+        let head = sweeper.find("pub fn spawn_agent_sweeper()").expect("sweeper");
+        let body = &sweeper[head..head + 2600];
+        let after_grace = body.find("autorun_slots::on_sweep(").expect("on_sweep");
+        let idle = body.find("autorun_slots::release_idle(").expect("the sweeper never releases the idle");
+        assert!(after_grace < idle, "{body}");
+    }
+
     /// Before a replay's first step begins it is `step 0 of 0`, not the step
     /// it was asked to reach.
     #[test]
