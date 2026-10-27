@@ -9,7 +9,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useEffect } from "react";
 import { commands } from "../bindings";
 import { unwrap } from "../lib/ipc";
-import { announceMentions, noteMentions, workItemNotification } from "../lib/mentions";
+import { announceMentions, noteMentions, noteMentionsAcross, workItemNotification } from "../lib/mentions";
 import { logUi } from "../lib/uiLog";
 
 export const MENTIONS_POLL_MS = 5 * 60_000;
@@ -34,16 +34,14 @@ export function useMentions(org: string, project: string, allProjects: boolean):
     if (!mentions.data) return;
     // The tour guard lives in noteMentions itself (the write chokepoint),
     // not here - see mentions.ts.
-    announceMentions(
-      noteMentions(
-        org,
-        mentions.data.map((m) => ({
-          notification: workItemNotification(org, project, m),
-          created: m.created_date,
-        })),
-      ),
-    );
-  }, [mentions.data, org, project]);
+    const found = mentions.data.map((m) => ({
+      notification: workItemNotification(org, project, m),
+      created: m.created_date,
+    }));
+    // Together, the first check learns the other projects' standing mentions
+    // instead of raising them; `project` is then the home project.
+    announceMentions(allProjects ? noteMentionsAcross(org, project, found) : noteMentions(org, found));
+  }, [mentions.data, org, project, allProjects]);
 
   useEffect(() => {
     if (mentions.error) {
