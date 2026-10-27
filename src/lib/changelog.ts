@@ -27,6 +27,13 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.3.1-beta.19",
+    date: "2026-10-27",
+    items: [
+      "Your assistant can save the steps that put a test record in place as a named setup, and ask for it again in a later session: it first looks for a suitable record named with your test prefix and uses it, and only builds a new one when there is none. Everything it builds can be undone like any explore change.",
+    ],
+  },
+  {
     version: "2.3.1-beta.18",
     date: "2026-10-27",
     items: [
