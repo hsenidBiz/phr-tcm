@@ -1,10 +1,10 @@
 // The Assistants card: who is connected, which browser each one has and what
-// it is doing, with Stop, End discovery and Release per row. Nothing at all
-// while no assistant is connected.
+// it is doing, with Stop, End discovery and Release per row, and a small
+// figure on each row. Nothing at all while no assistant is working.
 
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, expect, test, vi } from "vitest";
-import type { AgentView, AutorunAgentsChanged } from "../../bindings";
+import type { AgentActivity, AgentView, AutorunAgentsChanged } from "../../bindings";
 
 const h = vi.hoisted(() => ({
   agents: vi.fn(),
@@ -36,7 +36,7 @@ vi.mock("../../bindings", () => ({
   },
 }));
 
-import AssistantsCard from "./AssistantsCard";
+import AssistantsCard, { isWorking } from "./AssistantsCard";
 
 beforeEach(() => {
   h.agents.mockReset().mockResolvedValue([]);
@@ -90,6 +90,94 @@ test("renders nothing with no assistants", async () => {
   expect(screen.queryByText("Assistants")).toBeNull();
 });
 
+test("renders nothing while every assistant is idle", async () => {
+  const { container } = await mount([
+    agent({ label: "Assistant 1", activity: { kind: "idle" } }),
+    agent({ label: "Assistant 2", slot: 1, activity: { kind: "idle" }, idle_minutes: 4 }),
+  ]);
+  expect(container).toBeEmptyDOMElement();
+  expect(screen.queryByRole("heading", { name: "Assistants" })).toBeNull();
+});
+
+test("shows every assistant while one is working, the idle one dozing", async () => {
+  await mount([
+    agent({ label: "Assistant 1", slot: 0 }),
+    agent({ label: "Assistant 2", slot: 1, activity: { kind: "idle" } }),
+  ]);
+  expect(screen.getByText("Assistant 1 - claude-code")).toBeInTheDocument();
+  expect(screen.getByText("Assistant 2 - claude-code")).toBeInTheDocument();
+  const rows = screen.getAllByRole("listitem");
+  expect(rows[0].querySelector(".assistant-scene")).toHaveAttribute("data-pose", "type");
+  expect(rows[1].querySelector(".assistant-scene")).toHaveAttribute("data-pose", "doze");
+  // The idle assistant keeps its row, so its browser can still be released.
+  expect(screen.getByRole("button", { name: "Release Assistant 2's browser" })).toBeInTheDocument();
+  expect(screen.getByText("1 working")).toBeInTheDocument();
+});
+
+test("the card goes away when the last working assistant goes idle", async () => {
+  const { container } = await mount([agent({ label: "Assistant 1" })]);
+  expect(screen.getByRole("heading", { name: "Assistants" })).toBeInTheDocument();
+  await push([agent({ label: "Assistant 1", activity: { kind: "idle" } })]);
+  expect(screen.queryByRole("heading", { name: "Assistants" })).toBeNull();
+  expect(container).toBeEmptyDOMElement();
+});
+
+test("the header counts the assistants that are working", async () => {
+  await mount([
+    agent({ label: "Assistant 1", slot: 0 }),
+    agent({ label: "Assistant 2", slot: 1, activity: { kind: "exploring" } }),
+    agent({ label: "Assistant 3", slot: 2, activity: { kind: "idle" } }),
+  ]);
+  expect(screen.getByText("2 working")).toBeInTheDocument();
+});
+
+test("isWorking is true for every activity except idle", () => {
+  expect(isWorking({ kind: "idle" })).toBe(false);
+  const busy: AgentActivity[] = [
+    { kind: "discovering", area: null },
+    { kind: "mapping", modules: [] },
+    { kind: "exploring" },
+    { kind: "replaying", case_id: 1, step: 0, of: 0 },
+    { kind: "working" },
+  ];
+  for (const a of busy) {
+    expect(isWorking(a)).toBe(true);
+  }
+});
+
+test("a replay shows its progress, full at its last step", async () => {
+  const { unmount } = await mount([agent({ activity: { kind: "replaying", case_id: 4521, step: 3, of: 7 } })]);
+  const bar = document.querySelector<HTMLElement>("[data-progress]");
+  expect(bar).not.toBeNull();
+  expect(bar).toHaveAttribute("aria-hidden", "true");
+  expect((bar!.firstElementChild as HTMLElement).style.width).toBe("43%");
+  unmount();
+
+  await mount([agent({ activity: { kind: "replaying", case_id: 4521, step: 7, of: 7 } })]);
+  const full = document.querySelector<HTMLElement>("[data-progress]");
+  expect((full!.firstElementChild as HTMLElement).style.width).toBe("100%");
+});
+
+test("a replay at step 0 of 0 shows no bar, and no NaN width", async () => {
+  await mount([agent({ activity: { kind: "replaying", case_id: 4521, step: 0, of: 0 } })]);
+  expect(document.querySelector("[data-progress]")).toBeNull();
+  expect(document.body.innerHTML).not.toContain("NaN");
+});
+
+test("only a replay has a progress bar", async () => {
+  await mount([agent({ activity: { kind: "exploring" } })]);
+  expect(document.querySelector("[data-progress]")).toBeNull();
+});
+
+test("a working assistant with no browser still gets a scene", async () => {
+  await mount([agent({ slot: null, browser: null, account: null, activity: { kind: "exploring" } })]);
+  const scene = document.querySelector(".assistant-scene");
+  expect(scene).not.toBeNull();
+  expect(scene).toHaveAttribute("data-slot", "none");
+  expect(scene).toHaveAttribute("data-pose", "walk");
+  expect(scene).toHaveAttribute("aria-hidden", "true");
+});
+
 test("names each assistant, its browser and what it does", async () => {
   await mount([agent()]);
   expect(screen.getByRole("heading", { name: "Assistants" })).toBeInTheDocument();
@@ -105,7 +193,10 @@ test("a replay that has not reached its first step says it is starting", async (
 });
 
 test("an assistant with no client or no browser says so", async () => {
-  await mount([agent({ client: null, slot: null, browser: null, account: null, activity: { kind: "idle" } })]);
+  await mount([
+    agent({ client: null, slot: null, browser: null, account: null, activity: { kind: "idle" } }),
+    agent({ label: "Assistant 2", slot: 1, activity: { kind: "exploring" } }),
+  ]);
   expect(screen.getByText("Assistant 1")).toBeInTheDocument();
   expect(screen.getByText("no Auto Run browser")).toBeInTheDocument();
 });
@@ -142,7 +233,11 @@ test.each([
   [{ kind: "exploring" }, 0, "exploring"],
   [{ kind: "working" }, 0, "working"],
 ] as const)("the activity %j after %i min reads %s", async (activity, idle, text) => {
-  await mount([agent({ activity: activity as AgentView["activity"], idle_minutes: idle })]);
+  // The card only shows while someone works, so an idle row needs a working
+  // assistant beside it.
+  const beside =
+    activity.kind === "idle" ? [agent({ label: "Assistant 2", slot: 1, activity: { kind: "exploring" } })] : [];
+  await mount([agent({ activity: activity as AgentView["activity"], idle_minutes: idle }), ...beside]);
   expect(screen.getByText(text)).toBeInTheDocument();
 });
 
