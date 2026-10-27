@@ -1,7 +1,10 @@
 // The Assistants card: every connected assistant, the browser it has, what it
 // is doing, and the three things a person can do about it - Stop its replay,
-// End its discovery, Release its browser. It draws nothing while no assistant
-// is connected. Rust sends the whole list again whenever any of it changes
+// End its discovery, Release its browser. It draws nothing until an assistant
+// is doing something: while every connected assistant is idle (or none is
+// connected) it is gone, and while it shows, an idle assistant keeps its row
+// (dozing) so its browser can still be released. Each row has a small
+// animated figure on its left. Rust sends the whole list again whenever any of it changes
 // (`autorun-agents-changed`, at most once a second), so the rows are replaced
 // outright rather than patched.
 
@@ -11,6 +14,7 @@ import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
 import { IconRelease, IconStop } from "../../lib/actionIcons";
 import { logUi } from "../../lib/uiLog";
+import AssistantScene from "./AssistantScene";
 
 /** What a row says its assistant is doing. */
 function activityText(a: AgentActivity, idleMinutes: number): string {
@@ -40,6 +44,11 @@ function browserText(a: AgentView): string {
   if (a.browser) text += `, ${a.browser}`;
   if (a.account) text += `, signed in as ${a.account}`;
   return text;
+}
+
+/** Whether the assistant is doing something, which is what brings the card up. */
+export function isWorking(a: AgentActivity): boolean {
+  return a.kind !== "idle";
 }
 
 /** Whether the assistant is exploring the app rather than running cases. */
@@ -129,13 +138,17 @@ export default function AssistantsCard() {
     }
   }
 
-  if (agents.length === 0) return null;
+  const workingCount = agents.filter((a) => isWorking(a.activity)).length;
+  if (workingCount === 0) return null;
 
   return (
     <section aria-labelledby={headingId} className="space-y-2 rounded-md border border-border bg-surface p-3">
-      <h3 id={headingId} className="text-sm font-semibold text-text">
-        Assistants
-      </h3>
+      <div className="flex items-baseline gap-2">
+        <h3 id={headingId} className="text-sm font-semibold text-text">
+          Assistants
+        </h3>
+        <span className="text-xs text-muted">{workingCount} working</span>
+      </div>
       <ul className="divide-y divide-border">
         {agents.map((a) => {
           const slot = a.slot;
@@ -144,14 +157,27 @@ export default function AssistantsCard() {
           return (
             <li key={a.label} className="py-2 first:pt-0 last:pb-0">
               <div className="flex flex-wrap items-center justify-between gap-2">
-                <div className="min-w-0 space-y-0.5 text-xs">
-                  <p className="font-medium text-text">{a.client ? `${a.label} - ${a.client}` : a.label}</p>
-                  <p className="text-muted">{browserText(a)}</p>
-                  <p className="flex flex-wrap items-center gap-1.5 text-muted">
-                    <span>{activityText(a.activity, a.idle_minutes)}</span>
-                    {a.changed_for_testing && <Badge className="bg-warning/15 text-warning">changed for testing</Badge>}
-                    {a.saves_blocked && <Badge>saves blocked</Badge>}
-                  </p>
+                <div className="flex min-w-0 items-center gap-3">
+                  <AssistantScene activity={a.activity} slot={a.slot} />
+                  <div className="min-w-0 space-y-0.5 text-xs">
+                    <p className="font-medium text-text">{a.client ? `${a.label} - ${a.client}` : a.label}</p>
+                    <p className="text-muted">{browserText(a)}</p>
+                    <p className="flex flex-wrap items-center gap-1.5 text-muted">
+                      <span>{activityText(a.activity, a.idle_minutes)}</span>
+                      {a.changed_for_testing && (
+                        <Badge className="bg-warning/15 text-warning">changed for testing</Badge>
+                      )}
+                      {a.saves_blocked && <Badge>saves blocked</Badge>}
+                    </p>
+                    {a.activity.kind === "replaying" && a.activity.of > 0 && (
+                      <div data-progress aria-hidden="true" className="h-1 w-40 rounded bg-border">
+                        <div
+                          className="h-full rounded bg-accent"
+                          style={{ width: `${Math.min(100, Math.round((a.activity.step / a.activity.of) * 100))}%` }}
+                        />
+                      </div>
+                    )}
+                  </div>
                 </div>
                 <div className="flex shrink-0 flex-wrap gap-2">
                   {a.can_stop && slot !== null && (

@@ -1990,7 +1990,8 @@ test("the Assistants card shows before a PBI is picked, and not at all with no a
     own_browser: false,
     browser: "Edge",
     account: null,
-    activity: { kind: "idle" },
+    // The card only shows while an assistant is doing something.
+    activity: { kind: "working" },
     idle_minutes: 0,
     changed_for_testing: false,
     saves_blocked: false,
