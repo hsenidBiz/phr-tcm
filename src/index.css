@@ -920,6 +920,80 @@ table {
   .ico-cog-turn-back { animation: none; }
 }
 
+/* ── Assistant scene ─────────────────────────────────────────────────────
+   The small pixel character on each Assistants card row
+   (screens/AutoRun/AssistantScene.tsx). The scene is 72 x 56 px; the
+   character is 28 x 34 and takes its colour from --assistant-hue, which the
+   component sets from the browser slot. Walking crosses the scene and turns
+   at each end; typing bobs and taps at the desk; dozing is still and dimmed
+   with a z drifting up. Under reduced motion nothing moves, but each pose
+   still looks different (desk, dim and z, or walking stance). */
+.assistant-scene__bot {
+  position: absolute;
+  bottom: 0.5rem;
+  left: 0.25rem;
+  width: 28px;
+  height: 34px;
+  color: var(--assistant-hue, var(--color-muted));
+}
+.assistant-scene__eye {
+  fill: var(--color-surface);
+  transform-box: fill-box;
+  transform-origin: center;
+}
+.assistant-scene--type .assistant-scene__bot { left: 0.375rem; }
+.assistant-scene--doze .assistant-scene__bot { left: 1.25rem; opacity: 0.55; }
+.assistant-scene--walk .assistant-scene__bot { animation: assistant-walk 8s linear infinite; }
+.assistant-scene--type .assistant-scene__bot { animation: assistant-bob 1s steps(1, end) infinite; }
+.assistant-scene--walk .assistant-scene__leg--a { animation: assistant-step 0.4s steps(1, end) infinite; }
+.assistant-scene--walk .assistant-scene__leg--b { animation: assistant-step 0.4s steps(1, end) infinite -0.2s; }
+.assistant-scene--type .assistant-scene__arm--a { animation: assistant-tap 0.4s steps(1, end) infinite; }
+.assistant-scene--type .assistant-scene__arm--b { animation: assistant-tap 0.4s steps(1, end) infinite -0.2s; }
+.assistant-scene--walk .assistant-scene__eye:not(.assistant-scene__eye--closed),
+.assistant-scene--type .assistant-scene__eye:not(.assistant-scene__eye--closed) {
+  animation: assistant-blink 5s linear infinite;
+}
+.assistant-scene__z { animation: assistant-z-drift 3s ease-out infinite; }
+@keyframes assistant-walk {
+  0% { transform: translateX(0) scaleX(1); }
+  46% { transform: translateX(34px) scaleX(1); }
+  50% { transform: translateX(34px) scaleX(-1); }
+  96% { transform: translateX(0) scaleX(-1); }
+  100% { transform: translateX(0) scaleX(1); }
+}
+@keyframes assistant-bob {
+  0% { transform: translateY(0); }
+  50% { transform: translateY(-2px); }
+}
+/* The legs and arms are SVG parts, so their px are user units (2 screen px). */
+@keyframes assistant-step {
+  0% { transform: translateY(0); }
+  50% { transform: translateY(-1px); }
+}
+@keyframes assistant-tap {
+  0% { transform: translateY(0); }
+  50% { transform: translateY(-1px); }
+}
+@keyframes assistant-blink {
+  0%, 92%, 100% { transform: scaleY(1); }
+  95% { transform: scaleY(0.15); }
+}
+@keyframes assistant-z-drift {
+  0% { transform: translate(0, 0); opacity: 0; }
+  20% { opacity: 1; }
+  100% { transform: translate(3px, -9px); opacity: 0; }
+}
+/* !important because the pose rules above out-rank a bare class selector. */
+@media (prefers-reduced-motion: reduce) {
+  .assistant-scene__bot,
+  .assistant-scene__leg--a,
+  .assistant-scene__leg--b,
+  .assistant-scene__arm--a,
+  .assistant-scene__arm--b,
+  .assistant-scene__eye,
+  .assistant-scene__z { animation: none !important; }
+}
+
 /* ── Sidebar glyph motion ────────────────────────────────────────────────
    The glyphs in components/navGlyphs.tsx: the same pictures as the lucide
    icons they replaced, split into parts so one part can move while the
