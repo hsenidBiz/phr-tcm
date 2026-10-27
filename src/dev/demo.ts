@@ -1024,6 +1024,8 @@ function applyPatches() {
     testCaseFieldValues: () => ok([]),
     listProjectTags: () => ok(["demo", "smoke", "regression"]),
     classificationPaths: () => ok(["Demo Project", "Demo Project\\Demo Team"]),
+    classificationPathsAll: () =>
+      ok({ paths: ["Demo Project", "Demo Project\\Demo Team"], coverage: { shown: 1, total: 1 } }),
     listIterations: () =>
       ok([
         { path: "Demo Project", start_date: null, finish_date: null },

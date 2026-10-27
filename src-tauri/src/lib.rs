@@ -186,6 +186,7 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             board::comment_images,
             board::create_work_item,
             discovery::classification_paths,
+            discovery::classification_paths_all,
             queue::share_queue,
             queue::fetch_shared_queue,
             queue::materialize_shared_draft,

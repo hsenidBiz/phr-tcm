@@ -1374,16 +1374,29 @@ impl AdoClient {
         project: &str,
         structure: &str,
     ) -> Result<Vec<String>, AdoError> {
+        Ok(self
+            .classification_paths_strict(organization, project, structure)
+            .await
+            .unwrap_or_default())
+    }
+
+    /// `get_classification_paths` that tells the caller why it failed. The
+    /// per-project pickers keep the forgiving one above; a fan-out over
+    /// projects must see a refusal (to skip and count the project) and an
+    /// expired sign-in (to fail whole), which "failure -> empty" hides.
+    async fn classification_paths_strict(
+        &self,
+        organization: &str,
+        project: &str,
+        structure: &str,
+    ) -> Result<Vec<String>, AdoError> {
         let url = format!(
             "{}/{}/{}/_apis/wit/classificationnodes/{}?$depth=14&api-version=7.1",
             self.base_url,
             percent_encode_segment(organization),
             percent_encode_segment(project), structure
         );
-        let root = match self.get_json(url).await {
-            Ok(v) => v,
-            Err(_) => return Ok(vec![]),
-        };
+        let root = self.get_json(url).await?;
         fn walk(node: &serde_json::Value, prefix: &str, out: &mut Vec<String>) {
             let name = node["name"].as_str().unwrap_or_default();
             let path = if prefix.is_empty() {
@@ -1399,6 +1412,31 @@ impl AdoClient {
         let mut paths = vec![];
         walk(&root, "", &mut paths);
         Ok(paths)
+    }
+
+    /// The Area paths of every project of the organization, together (the
+    /// "treat all projects as one" path): each path starts with its own
+    /// project, which is the grouping. Projects past the fan-out cap are
+    /// left out and counted in `coverage`; one the person cannot read is
+    /// skipped and counted out; a project with nothing under its root (a
+    /// repository-only project) adds no area. Read only.
+    pub async fn classification_paths_all(
+        &self,
+        organization: &str,
+    ) -> Result<crate::work_board::AreasAll, AdoError> {
+        let (projects, total) = super::fanout::capped(self.org_project_names(organization).await?);
+        let results = super::fanout::per_project(&projects, |project| async move {
+            self.classification_paths_strict(organization, &project, "areas").await
+        })
+        .await;
+        let (read, coverage) = super::fanout::gather(results, total)?;
+        let mut paths: Vec<String> = read
+            .into_iter()
+            .filter(|(project, paths)| !(paths.len() == 1 && paths[0] == *project))
+            .flat_map(|(_, paths)| paths)
+            .collect();
+        paths.sort_by_key(|p| p.to_lowercase());
+        Ok(crate::work_board::AreasAll { paths, coverage })
     }
 
     /// Iteration paths WITH their sprint dates (classificationnodes carries

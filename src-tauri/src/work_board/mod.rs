@@ -149,6 +149,15 @@ pub struct ExtraField {
     pub value: String,
 }
 
+/// The Area paths of every project of the organization, with how many of
+/// its projects they cover. Every path starts with its project's name, which
+/// is the grouping; projects with nothing under their root are left out.
+#[derive(Debug, Clone, Serialize, specta::Type)]
+pub struct AreasAll {
+    pub paths: Vec<String>,
+    pub coverage: crate::ado::fanout::ProjectCoverage,
+}
+
 /// An iteration path plus its sprint window, for DevOps-style pickers.
 #[derive(Debug, Clone, Serialize, specta::Type)]
 pub struct IterationRef {

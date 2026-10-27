@@ -304,6 +304,11 @@ export const commands = {
 	/**  The project's Area or Iteration paths for the create pickers. */
 	classificationPaths: (organization: string, project: string, structure: string) => typedError<string[], AdoError>(__TAURI_INVOKE("classification_paths", { organization, project, structure })),
 	/**
+	 *  The Area paths of every project of the organization, for the board's
+	 *  area filter while projects show together. Read only.
+	 */
+	classificationPathsAll: (organization: string) => typedError<AreasAll, AdoError>(__TAURI_INVOKE("classification_paths_all", { organization })),
+	/**
 	 *  Uploads the draft queue as an ADO attachment on the PBI and returns a
 	 *  pasteable share link. Review-before-upload sharing: the cases do NOT
 	 *  exist in ADO - only this JSON file does.
@@ -2596,6 +2601,16 @@ export type AreaView = {
 	pages: number,
 	elements: number,
 	writes: WriteEntry[],
+};
+
+/**
+ *  The Area paths of every project of the organization, with how many of
+ *  its projects they cover. Every path starts with its project's name, which
+ *  is the grouping; projects with nothing under their root are left out.
+ */
+export type AreasAll = {
+	paths: string[],
+	coverage: ProjectCoverage,
 };
 
 export type AssignedItem = {
@@ -5343,6 +5358,17 @@ export type PreviewInfo = {
 export type Project = {
 	id: string,
 	name: string,
+};
+
+/**
+ *  How many projects a fan-out showed, out of how many the organization has.
+ *  `shown < total` means the screen must say so.
+ * 
+ *  Named for projects so it never reads as the spec-coverage feature.
+ */
+export type ProjectCoverage = {
+	shown: number,
+	total: number,
 };
 
 /**

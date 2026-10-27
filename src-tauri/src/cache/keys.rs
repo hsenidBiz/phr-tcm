@@ -49,6 +49,18 @@ pub fn work_item_project(base_url: &str, org: &str, id: i32) -> String {
     format!("wi-project:{base_url}|{org}|{id}")
 }
 
+/// How long an organization's project list is reused by the fan-outs
+/// (`ado::fanout`). Projects are added and renamed rarely and a fan-out is
+/// one screen visit, so ten minutes spares the list request without hiding
+/// a new project for long.
+pub const ORG_PROJECTS_TTL: Duration = Duration::from_secs(10 * 60);
+
+/// The names of an organization's projects (session tier only). The
+/// base_url is in the key for the same reason as `suite`'s.
+pub fn org_projects(base_url: &str, org: &str) -> String {
+    format!("org-projects:{base_url}|{org}")
+}
+
 /// How long the Boards fallback reuses the ids its URL needs. A project's
 /// GUID never changes and a team's area scope changes when somebody
 /// reorganises the project, not during an upload - and the fallback only
