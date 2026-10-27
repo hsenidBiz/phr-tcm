@@ -81,6 +81,17 @@ test("a work-item mention reads who, where, and opens the item", () => {
   });
 });
 
+test("a mention from another project targets that project", () => {
+  // Across projects the mention names its own project; the one passed in is
+  // only the fallback for a mention that names none.
+  const n = workItemNotification("acme", "Web", { ...wiMention, project: "Payroll" });
+  expect(n.href).toBe("https://dev.azure.com/acme/Payroll/_workitems/edit/41");
+  expect(n.target).toEqual({ kind: "work-item", id: 41, project: "Payroll" });
+
+  const fallback = workItemNotification("acme", "Web", { ...wiMention, project: "" });
+  expect(fallback.target).toEqual({ kind: "work-item", id: 41, project: "Web" });
+});
+
 test("a PR mention reads who, which PR, and opens the PR", () => {
   const n = prNotification("acme", "Web", {
     repo: "web", prId: 12, threadId: 3, commentId: 9, author: "Sam", excerpt: "@you please look", createdDate: "",

@@ -1,9 +1,10 @@
 import { mockIPC, clearMocks } from "@tauri-apps/api/mocks";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
 import type { ComponentProps } from "react";
 import { toast } from "../lib/toast";
+import { setTourRunning } from "../tour/tourState";
 import PrPanel from "./PrPanel";
 
 // The panel's "that pull request is not here" notices are toasts; assert on
@@ -968,6 +969,30 @@ function mockTogether(
   });
   return calls;
 }
+
+test("the repositories tracked in the home project seed the combined key once", async () => {
+  localStorage.setItem("tcm-v2-pr-repos:acme/HRM", JSON.stringify(["r1"]));
+  const calls = mockTogether({ repos: [repoRef("r1", "web", "HRM")] });
+  renderPanel(together);
+  await waitFor(() => expect(calls.some((c) => c.cmd === "pr_overview_all")).toBe(true));
+  // Copied, never moved.
+  expect(localStorage.getItem("tcm-v2-pr-repos:acme/*")).toBe(JSON.stringify(["r1"]));
+  expect(localStorage.getItem("tcm-v2-pr-repos:acme/HRM")).toBe(JSON.stringify(["r1"]));
+});
+
+test("with the tour running, the repository seed is refused", async () => {
+  localStorage.setItem("tcm-v2-pr-repos:acme/HRM", JSON.stringify(["r1"]));
+  setTourRunning(true);
+  try {
+    const calls = mockTogether({ repos: [repoRef("r1", "web", "HRM")] });
+    renderPanel(together);
+    await waitFor(() => expect(calls.some((c) => c.cmd === "pr_overview_all")).toBe(true));
+    // The walkthrough runs on sample data and writes nothing of the person's.
+    expect(localStorage.getItem("tcm-v2-pr-repos:acme/*")).toBeNull();
+  } finally {
+    setTourRunning(false);
+  }
+});
 
 test("combined panel lists pull requests from every project", async () => {
   const calls = mockTogether({

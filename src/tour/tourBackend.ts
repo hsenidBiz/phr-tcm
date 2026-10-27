@@ -95,9 +95,11 @@ function standIns(): Partial<Commands> {
     listReposAll: () => ok([]),
     // The mention scan runs from the context bar the moment an org and
     // project are picked, tour or not - the sample user has no mentions
-    // and nobody to match "is this me" against.
+    // and nobody to match "is this me" against. (Together it is the
+    // organization-wide scan.)
     connectedUser: () => ok(TOUR_CONNECTED_USER),
     recentMentions: () => ok(TOUR_MENTIONS),
+    recentMentionsAll: () => ok(TOUR_MENTIONS),
 
     // AI Bridge.
     bridgeStatus: () => ok(TOUR_BRIDGE),

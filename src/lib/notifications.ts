@@ -179,18 +179,23 @@ export function clearAll(org: string): void {
 
 // --- sources ---------------------------------------------------------------
 
-/** Work items the background poll just found assigned to you. */
+/** Work items the background poll just found assigned to you. Each names the
+ * project it lives in (the watch across projects returns several); `project`
+ * is the fallback for one that names none. */
 export function noteAssigned(org: string, project: string, items: AssignedItem[]): void {
   raise(
     org,
-    items.map((i) => ({
-      id: `assigned:${i.id}`,
-      kind: "assigned" as const,
-      title: `${i.work_item_type} #${i.id} assigned to you`,
-      body: i.title,
-      href: `https://dev.azure.com/${encodeURIComponent(org)}/${encodeURIComponent(project)}/_workitems/edit/${i.id}`,
-      target: { kind: "work-item" as const, id: i.id, project },
-    })),
+    items.map((i) => {
+      const where = i.project || project;
+      return {
+        id: `assigned:${i.id}`,
+        kind: "assigned" as const,
+        title: `${i.work_item_type} #${i.id} assigned to you`,
+        body: i.title,
+        href: `https://dev.azure.com/${encodeURIComponent(org)}/${encodeURIComponent(where)}/_workitems/edit/${i.id}`,
+        target: { kind: "work-item" as const, id: i.id, project: where },
+      };
+    }),
   );
 }
 

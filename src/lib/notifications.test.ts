@@ -155,6 +155,25 @@ test("noteAssigned raises one item per work item, linked to it", () => {
   expect(full[0].href).toBe("https://dev.azure.com/acme/Web/_workitems/edit/501");
 });
 
+test("an assignment from another project targets that project", () => {
+  // Each item carries its own project; the one passed in is only the
+  // fallback for an item that names none.
+  noteAssigned(ORG, "Web", [
+    { id: 601, title: "Fix the payslip", work_item_type: "Bug", state: "New", project: "Payroll" },
+    { id: 602, title: "Tidy the docs", work_item_type: "Task", state: "New", project: "" },
+  ]);
+  const full = JSON.parse(localStorage.getItem(`tcm-v2-notifications:${ORG}`) ?? "[]") as Array<{
+    id: string;
+    href: string;
+    target?: unknown;
+  }>;
+  const byId = Object.fromEntries(full.map((n) => [n.id, n]));
+  expect(byId["assigned:601"].href).toBe("https://dev.azure.com/acme/Payroll/_workitems/edit/601");
+  expect(byId["assigned:601"].target).toEqual({ kind: "work-item", id: 601, project: "Payroll" });
+  expect(byId["assigned:602"].href).toBe("https://dev.azure.com/acme/Web/_workitems/edit/602");
+  expect(byId["assigned:602"].target).toEqual({ kind: "work-item", id: 602, project: "Web" });
+});
+
 /// The href is the browser's way in; the target is the app's own. Both are
 /// stored, so a click can stay inside the app and the browser stays one
 /// click away.

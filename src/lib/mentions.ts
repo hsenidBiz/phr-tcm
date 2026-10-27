@@ -72,14 +72,17 @@ export function prMentionId(m: { repo: string; prId: number; threadId: number; c
   return `mention:pr:${m.repo}:${m.prId}:${m.threadId}:${m.commentId}`;
 }
 
+/** A mention names the project of its work item (the check across projects
+ * returns several); `project` is the fallback for one that names none. */
 export function workItemNotification(org: string, project: string, m: Mention): NewNotification {
+  const where = m.project || project;
   return {
     id: workItemMentionId(m),
     kind: "mention",
     title: `${m.author || "Someone"} mentioned you on ${m.item_type} #${m.item_id}`,
     body: m.excerpt,
-    href: `https://dev.azure.com/${enc(org)}/${enc(project)}/_workitems/edit/${m.item_id}`,
-    target: { kind: "work-item", id: m.item_id, project },
+    href: `https://dev.azure.com/${enc(org)}/${enc(where)}/_workitems/edit/${m.item_id}`,
+    target: { kind: "work-item", id: m.item_id, project: where },
   };
 }
 

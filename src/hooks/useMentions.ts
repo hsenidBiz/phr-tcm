@@ -14,11 +14,15 @@ import { logUi } from "../lib/uiLog";
 
 export const MENTIONS_POLL_MS = 5 * 60_000;
 
-export function useMentions(org: string, project: string): void {
+/** `project` is the picked project, or the home project while the projects
+ * show together (`allProjects`): then one check covers the whole organization
+ * and `project` only fills in for a mention that names none. */
+export function useMentions(org: string, project: string, allProjects: boolean): void {
   const mentions = useQuery({
-    queryKey: ["recent-mentions", org, project],
-    queryFn: async () => (await unwrap(commands.recentMentions(org, project))) ?? [],
-    enabled: Boolean(org && project),
+    queryKey: allProjects ? ["recent-mentions-all", org] : ["recent-mentions", org, project],
+    queryFn: async () =>
+      (await unwrap(allProjects ? commands.recentMentionsAll(org) : commands.recentMentions(org, project))) ?? [],
+    enabled: allProjects ? Boolean(org) : Boolean(org && project),
     refetchInterval: MENTIONS_POLL_MS,
     // A minimised app still checks: that is when the OS notification is
     // the only way the mention is seen.

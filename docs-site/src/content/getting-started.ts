@@ -106,7 +106,7 @@ export const gettingStarted: Screen = {
       locate: { role: "button", nameRe: "^Notifications" },
       name: "Notifications",
       does:
-        "The red number counts what happened since you last looked: work assigned to you, pull requests with conflicts, reviews or comments, and mentions. Click it to open the list.",
+        "The red number counts what happened since you last looked: work assigned to you, pull requests with conflicts, reviews or comments, and mentions. With Treat all projects as one on, it covers every project of the organization. Click it to open the list.",
     },
     {
       id: "work-manager",
@@ -217,7 +217,7 @@ export const gettingStarted: Screen = {
       group: "top-right",
       locate: { role: "button", nameRe: "^Sam Doyle mentioned you on" },
       name: "Notification title",
-      does: "Takes you to the work item or pull request inside the app, in Work Manager. When the app cannot open it there, it opens in your browser instead.",
+      does: "Takes you to the work item or pull request inside the app, in Work Manager, in its own project. When the app cannot open it there, it opens in your browser instead.",
     },
 
     // --- Command palette ----------------------------------------------------

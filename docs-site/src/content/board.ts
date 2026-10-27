@@ -479,7 +479,7 @@ export const board: Screen = {
   ],
   tips: [
     "Changes you have not saved are dropped when a work item closes, and clicking outside the work item does not close it.",
-    "Clicking a work item in the notification bell opens the board with that work item open.",
+    "Clicking a work item in the notification bell opens the board with that work item open, in whichever project it belongs to.",
     "Work items are created on **New Work Item**, not on the board.",
   ],
   howTo: [
