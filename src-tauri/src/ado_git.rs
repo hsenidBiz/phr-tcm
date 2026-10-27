@@ -96,6 +96,8 @@ struct LinkedPr {
     repo_id: String,
     repo_name: String,
     project: String,
+    /// When it closed (ISO 8601), empty for one still active.
+    closed: String,
 }
 
 impl LinkedPr {
@@ -108,9 +110,13 @@ impl LinkedPr {
             repo_id: s(&v["repository"]["id"]),
             repo_name: s(&v["repository"]["name"]),
             project: named_project(&v["repository"]["project"], fallback_project),
+            closed: s(&v["closedDate"]),
         }
     }
 }
+
+/// How many completed pull requests the board reads work items for.
+const COMPLETED_PRS_ON_BOARD: usize = 25;
 
 /// The entries of an Azure DevOps list answer.
 fn values_of(data: &serde_json::Value) -> Vec<serde_json::Value> {
@@ -497,21 +503,35 @@ impl AdoClient {
     /// `board_pr_links` across every project of the organization: the
     /// active pull requests and the 25 most recent completed ones, then each
     /// one's work items through the pull request's own project. The
-    /// completed list stays best-effort. Read only.
+    /// completed list stays best-effort. When the organization is asked
+    /// project by project, each project answers with its own 25, so the
+    /// merged list is cut back to the 25 most recently closed before any
+    /// work item is read. Read only.
     pub async fn board_pr_links_all(&self, org: &str) -> Result<Vec<PrLink>, AdoError> {
         let mut prs: Vec<LinkedPr> = vec![];
         for (status, query) in [
             ("active", "searchCriteria.status=active"),
             ("completed", "searchCriteria.status=completed&$top=25"),
         ] {
+            // A project the person cannot read is logged by the fan-out
+            // itself (`fanout::gather`), so the chips leave it out with a
+            // trace, not silently.
             let listed = match self.pull_requests_across(org, query).await {
                 Ok((listed, _)) => listed,
                 Err(e) if status == "active" => return Err(e),
                 Err(_) => continue,
             };
-            for (project, v) in listed {
-                prs.push(LinkedPr::from_json(&v, status, &project));
+            let mut batch: Vec<LinkedPr> = listed
+                .into_iter()
+                .map(|(project, v)| LinkedPr::from_json(&v, status, &project))
+                .collect();
+            if status == "completed" {
+                // Newest first; the sort is stable, so equal dates keep the
+                // order the projects were read in.
+                batch.sort_by(|a, b| b.closed.cmp(&a.closed));
+                batch.truncate(COMPLETED_PRS_ON_BOARD);
             }
+            prs.extend(batch);
         }
         Ok(self.links_of(org, prs, None).await)
     }

@@ -587,3 +587,142 @@ async fn per_project_board_links_carry_the_argument_project() {
     assert_eq!(links[0].project, "proj");
     assert_eq!(links[0].web_url, format!("{}/{org}/proj/_git/api/pullrequest/5", server.uri()));
 }
+
+/// A completed pull request that closed on `day` of January 2026.
+fn closed_pr(id: i32, repo_id: &str, project: &str, day: u32) -> serde_json::Value {
+    let mut v = pr(id, "api", repo_id, Some(project), 0);
+    v["status"] = serde_json::json!("completed");
+    v["closedDate"] = serde_json::json!(format!("2026-01-{day:02}T10:00:00Z"));
+    v
+}
+
+#[tokio::test]
+async fn board_links_on_the_per_project_path_keep_the_25_most_recently_closed_in_total() {
+    let org = "prs-links-top25";
+    let (server, client) = start(org).await;
+    mount_repos(
+        &server,
+        org,
+        vec![
+            repo("ga", "api", "A", false),
+            repo("gb", "api", "B", false),
+            repo("gc", "api", "C", false),
+        ],
+    )
+    .await;
+    mount_org_refused(&server, org, 404, 1).await;
+    // Three projects with 20 completed pull requests each. Project P's
+    // pull requests have ids P*100+1..=P*100+20 and close on days 1..=20,
+    // so the 25 newest are the days 20 down to 13 of all three and one of day 12.
+    let projects = [("A", "ga", 1), ("B", "gb", 2), ("C", "gc", 3)];
+    for (project, repo_id, n) in projects {
+        Mock::given(method("GET"))
+            .and(path(format!("/{org}/{project}/_apis/git/pullrequests")))
+            .and(query_param("searchCriteria.status", "active"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(prs_body(vec![])))
+            .mount(&server)
+            .await;
+        let completed: Vec<_> = (1..=20).map(|d| closed_pr(n * 100 + d as i32, repo_id, project, d)).collect();
+        Mock::given(method("GET"))
+            .and(path(format!("/{org}/{project}/_apis/git/pullrequests")))
+            .and(query_param("searchCriteria.status", "completed"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(prs_body(completed)))
+            .mount(&server)
+            .await;
+    }
+    // Every work-item read is counted; each pull request has one item.
+    Mock::given(method("GET"))
+        .and(path_regex(format!(r"^/{org}/[ABC]/_apis/git/repositories/g[abc]/pullRequests/\d+/workitems$")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(work_item_refs(&["900"])))
+        .expect(25)
+        .mount(&server)
+        .await;
+
+    let links = client.board_pr_links_all(org).await.unwrap();
+
+    assert_eq!(links.len(), 25, "25 completed pull requests in total, not 25 per project");
+    // Days 20 down to 13 are 8 days x 3 projects = 24, and one more from
+    // day 12 fills the 25. Nothing older is read.
+    let day = |id: i32| id % 100;
+    let days: Vec<i32> = links.iter().map(|l| day(l.pr_id)).collect();
+    assert_eq!(days.iter().filter(|d| **d >= 13).count(), 24, "{days:?}");
+    assert_eq!(days.iter().filter(|d| **d == 12).count(), 1, "{days:?}");
+    server.verify().await;
+}
+
+#[tokio::test]
+async fn a_remembered_organization_scope_is_decided_again_when_a_later_call_is_refused() {
+    let org = "prs-org-then-refused";
+    let (server, client) = start(org).await;
+    mount_identity(&server, org).await;
+    mount_repos(&server, org, vec![repo("g1", "api", "A", false)]).await;
+    // An earlier call was answered organization-wide and remembered so.
+    cache::session_put(&keys::pr_scope(&server.uri(), org), "org".to_string());
+    assert_eq!(keys_scope(&server, org).as_deref(), Some("org"));
+    // Now the organization list is refused: one ask per search criterion
+    // (the reviewer list, then the creator list - the second one already
+    // goes by project, so the refusal is asked only once).
+    mount_org_refused(&server, org, 404, 1).await;
+    mount_project_prs(
+        &server,
+        org,
+        "A",
+        vec![pr(1, "api", "g1", Some("A"), 0)],
+        vec![pr(2, "api", "g1", Some("A"), 0)],
+    )
+    .await;
+
+    let overview = client.pr_overview_all(org).await.unwrap();
+
+    assert_eq!(ids(&overview.awaiting), vec![1]);
+    assert_eq!(ids(&overview.mine), vec![2]);
+    assert_eq!(overview.coverage, ProjectCoverage { shown: 1, total: 1 });
+    assert_eq!(keys_scope(&server, org).as_deref(), Some("projects"));
+    server.verify().await;
+}
+
+#[tokio::test]
+async fn the_boards_pull_request_chips_log_a_project_they_cannot_read() {
+    // The log line is read back, so no other test may flood the tail meanwhile.
+    let _log = crate::serial::log_tail();
+    let org = "prs-links-forbidden";
+    let (server, client) = start(org).await;
+    mount_repos(
+        &server,
+        org,
+        vec![repo("ga", "api", "A", false), repo("gb", "web", "Hidden", false)],
+    )
+    .await;
+    mount_org_refused(&server, org, 404, 1).await;
+    for status in ["active", "completed"] {
+        Mock::given(method("GET"))
+            .and(path(format!("/{org}/A/_apis/git/pullrequests")))
+            .and(query_param("searchCriteria.status", status))
+            .respond_with(ResponseTemplate::new(200).set_body_json(prs_body(if status == "active" {
+                vec![pr(5, "api", "ga", Some("A"), 0)]
+            } else {
+                vec![]
+            })))
+            .mount(&server)
+            .await;
+    }
+    Mock::given(method("GET"))
+        .and(path(format!("/{org}/Hidden/_apis/git/pullrequests")))
+        .respond_with(ResponseTemplate::new(403))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path(format!("/{org}/A/_apis/git/repositories/ga/pullRequests/5/workitems")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(work_item_refs(&["100"])))
+        .mount(&server)
+        .await;
+
+    let links = client.board_pr_links_all(org).await.unwrap();
+
+    assert_eq!(links.len(), 1);
+    let logged = v2_lib::applog::recent(6000)
+        .into_iter()
+        .find(|l| l.message.contains("skipped Hidden"));
+    let logged = logged.expect("the skipped project is written to the log");
+    assert!(!logged.message.contains("http"), "no URL in the log line: {}", logged.message);
+}
