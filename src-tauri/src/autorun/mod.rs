@@ -13,6 +13,7 @@ pub mod area_repair;
 pub mod capture_redact;
 pub mod capture_tools;
 pub mod case_text;
+pub mod claims;
 pub mod case_values;
 pub mod cleanup;
 pub mod defects;

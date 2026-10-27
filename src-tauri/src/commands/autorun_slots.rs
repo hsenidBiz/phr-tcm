@@ -342,10 +342,14 @@ pub fn clear() {
 /// An agent that has gone past its grace (`agents::Sweep::past_grace`) holds
 /// no browser. A quiet one (`agents::Sweep::quiet`: no call for an hour, no
 /// session seen to end) no longer holds the main browser; an extra browser it
-/// holds is left to the idle release. Called by the sweeper after every sweep.
+/// holds is left to the idle release. The claims of an agent past its grace
+/// end with its binding (`claims::end_for`); a quiet one's do not, for its
+/// session was not seen to end (they time out). Called by the sweeper after
+/// every sweep.
 pub fn on_sweep(s: &agents::Sweep) {
     for key in &s.past_grace {
         unbind_agent(key);
+        crate::autorun::claims::end_for(key);
     }
     let mut t = bindings();
     for key in &s.quiet {
@@ -625,6 +629,8 @@ pub enum ReleaseWhy {
 pub async fn release_slot(n: SlotNo, why: ReleaseWhy) -> Result<String, String> {
     // Read first: the label is kept in the registry until its next sweep.
     let who = whose(n);
+    // Read before the unbind below: whose claims end with the release.
+    let held = bound(n);
     // Only an assistant's replay is stopped; the person's goes on, and the
     // release then waits for its lock and says the browser is busy.
     let replay = crate::autorun::replay_to::state(n);
@@ -644,6 +650,12 @@ pub async fn release_slot(n: SlotNo, why: ReleaseWhy) -> Result<String, String> 
     }
     drop(slot);
     unbind(n);
+    // The person let this assistant's browser go: the cases it was working on
+    // are free for another assistant. (The assistant's own release of its
+    // browser ends nothing: it may release between two cases of one job.)
+    if let Some(key) = held {
+        crate::autorun::claims::end_for(&key);
+    }
     let ReleaseWhy::Person = why;
     crate::applog::info(format!("Auto Run: released {who} (the person released it)"));
     Ok(answer)

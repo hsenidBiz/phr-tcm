@@ -492,16 +492,21 @@ pub async fn route_as(
         ("GET", "/autorun-pw-skills") => autorun_pw_skills_answer(target),
         ("GET", "/autorun-pw-repo") => autorun_pw_repo_answer(target),
         // A save that repairs (carries `edits`) ends with the repair rules, a refusal too.
-        ("POST", "/autorun-script") => {
-            let answer =
-                save_autorun_scripts(ctx, client, body, crate::commands::autorun_slots::slot_if_any(caller)).await;
-            let parsed: serde_json::Value = serde_json::from_str(body).unwrap_or_default();
-            if crate::autorun::roles::cases_repaired_by(&parsed).is_empty() {
-                answer
-            } else {
-                crate::autorun::roles::with_rules(answer, crate::autorun::roles::RULES_REPAIR_SAVE)
+        // Every case in the bundle is claimed first: a case another
+        // assistant works on is refused before any gate reads anything.
+        ("POST", "/autorun-script") => match claim_bundle_cases(caller, body) {
+            Err(refused) => refused,
+            Ok(()) => {
+                let answer =
+                    save_autorun_scripts(ctx, client, body, crate::commands::autorun_slots::slot_if_any(caller)).await;
+                let parsed: serde_json::Value = serde_json::from_str(body).unwrap_or_default();
+                if crate::autorun::roles::cases_repaired_by(&parsed).is_empty() {
+                    answer
+                } else {
+                    crate::autorun::roles::with_rules(answer, crate::autorun::roles::RULES_REPAIR_SAVE)
+                }
             }
-        }
+        },
         // One saved script, and a delete that keeps it aside: files on this
         // machine only, never Azure DevOps.
         ("GET", "/autorun-script") => autorun_script_read(target),
@@ -536,33 +541,45 @@ pub async fn route_as(
         // One element's styles, listeners, animations and structure. Read
         // only: nothing is clicked, typed, focused or scrolled.
         ("POST", "/autorun-inspect") => autorun_inspect(body, slot).await,
-        ("POST", "/autorun-try") => {
-            let mut seen = None;
-            let answer = autorun_try(ctx, body, &mut seen, slot).await;
-            with_overrides_seen(answer, seen, slot)
+        // A try for a case another assistant works on is refused first.
+        ("POST", "/autorun-try") => match claim_named_case(caller, body) {
+            Err(refused) => refused,
+            Ok(()) => {
+                let mut seen = None;
+                let answer = autorun_try(ctx, body, &mut seen, slot).await;
+                with_overrides_seen(answer, seen, slot)
+            }
         }
         // Discovery: the assistant opens the Auto Run browser itself, signs
         // in as a saved account (the app types the password) and explores
         // the live application, one action at a time.
-        ("POST", "/autorun-discover-start") => {
-            let mut seen = None;
-            let answer = without_page(autorun_discover_start(ctx, body, &mut seen, slot, holder).await, body);
-            // A start refused or failed before it opened a browser does not
-            // keep the extra browser it reserved.
-            crate::commands::autorun_slots::free_extra_if_unused(slot, holder, answer.0);
-            let answer = with_overrides_seen(with_no_save_note(answer, discovery_no_save(slot)), seen, slot);
-            // A mapping run records areas and writes no check: no rules.
-            let mapping = serde_json::from_str::<serde_json::Value>(body)
-                .map(|v| v["mapping"].as_bool() == Some(true) || v["mapping"].as_str().map(|s| s.trim().eq_ignore_ascii_case("true")) == Some(true))
-                .unwrap_or(false);
-            // An explore session has its own rules, whatever the status.
-            let explore = serde_json::from_str::<serde_json::Value>(body).map(|v| said_true(&v["explore"])).unwrap_or(false);
-            if explore {
-                crate::autorun::roles::with_rules(answer, crate::autorun::roles::RULES_EXPLORE)
-            } else if mapping {
-                answer
-            } else {
-                crate::autorun::roles::with_rules(answer, crate::autorun::roles::RULES_DISCOVERY)
+        ("POST", "/autorun-discover-start") => match claim_named_case(caller, body) {
+            // A case another assistant works on is refused before anything
+            // opens; the extra browser reserved for the start is given back.
+            Err(refused) => {
+                crate::commands::autorun_slots::free_extra_if_unused(slot, holder, refused.0);
+                refused
+            }
+            Ok(()) => {
+                let mut seen = None;
+                let answer = without_page(autorun_discover_start(ctx, body, &mut seen, slot, holder).await, body);
+                // A start refused or failed before it opened a browser does not
+                // keep the extra browser it reserved.
+                crate::commands::autorun_slots::free_extra_if_unused(slot, holder, answer.0);
+                let answer = with_overrides_seen(with_no_save_note(answer, discovery_no_save(slot)), seen, slot);
+                // A mapping run records areas and writes no check: no rules.
+                let mapping = serde_json::from_str::<serde_json::Value>(body)
+                    .map(|v| v["mapping"].as_bool() == Some(true) || v["mapping"].as_str().map(|s| s.trim().eq_ignore_ascii_case("true")) == Some(true))
+                    .unwrap_or(false);
+                // An explore session has its own rules, whatever the status.
+                let explore = serde_json::from_str::<serde_json::Value>(body).map(|v| said_true(&v["explore"])).unwrap_or(false);
+                if explore {
+                    crate::autorun::roles::with_rules(answer, crate::autorun::roles::RULES_EXPLORE)
+                } else if mapping {
+                    answer
+                } else {
+                    crate::autorun::roles::with_rules(answer, crate::autorun::roles::RULES_DISCOVERY)
+                }
             }
         }
         ("POST", "/autorun-discover-action") => {
@@ -607,13 +624,21 @@ pub async fn route_as(
         // sign-in. Never the person's browser, never while a replay runs.
         ("POST", "/autorun-reset") => crate::commands::autorun::reset_for_assistant(slot, &ctx.org, &ctx.project).await,
         ("POST", "/autorun-discover-area") => autorun_discover_area(ctx, body, slot).await,
-        ("POST", "/autorun-replay") => {
-            release_rewritten_cases(ctx, client).await;
-            let answer = without_page(autorun_replay(ctx, body, slot, holder).await, body);
-            // A replay refused or failed before it opened a browser does not
-            // keep the extra browser it reserved.
-            crate::commands::autorun_slots::free_extra_if_unused(slot, holder, answer.0);
-            crate::autorun::roles::with_rules(answer, crate::autorun::roles::RULES_REPLAY)
+        ("POST", "/autorun-replay") => match claim_named_case(caller, body) {
+            // The claim comes before the rewritten cases are released and
+            // before anything opens.
+            Err(refused) => {
+                crate::commands::autorun_slots::free_extra_if_unused(slot, holder, refused.0);
+                refused
+            }
+            Ok(()) => {
+                release_rewritten_cases(ctx, client).await;
+                let answer = without_page(autorun_replay(ctx, body, slot, holder).await, body);
+                // A replay refused or failed before it opened a browser does not
+                // keep the extra browser it reserved.
+                crate::commands::autorun_slots::free_extra_if_unused(slot, holder, answer.0);
+                crate::autorun::roles::with_rules(answer, crate::autorun::roles::RULES_REPLAY)
+            }
         }
         // The assistant's replay going, stopped through the same stop the
         // person's Stop sets, and its answer once it has ended.
@@ -7708,6 +7733,13 @@ async fn autorun_discover_start(
     } else {
         None
     };
+    // One mapping run at a time, whoever runs it and in whichever browser:
+    // refused at once, naming whose browser it is going in.
+    if mapping.is_some() {
+        if let Some(why) = mapping_refusal(n, SlotNo::all().map(crate::commands::autorun::mapping_in)) {
+            return (409, why);
+        }
+    }
     if let Err(why) = crate::commands::autorun::refuse_discovery_while_busy(n) {
         return (409, why);
     }
@@ -10490,6 +10522,83 @@ fn name_the_holder(
         Some(env) => with_holder_named(answer, slot_if_any(caller), &env),
         None => answer,
     }
+}
+
+// ------------------------------------------------- case claims, one mapping run
+
+/// The caller works on `case_id` from now, or is told who does. An assistant
+/// claims it (`claims::claim`: refused, 409, while another live assistant
+/// holds it). The default caller (an older proxy, a test, the person's own
+/// tools) never claims, and is refused only by a LIVE assistant's claim, so
+/// with no assistant connected nothing is ever refused. The answer names the
+/// holder by label only.
+pub fn claim_for(caller: &crate::autorun::agents::Caller, case_id: i32) -> Result<(), (u16, String)> {
+    use crate::autorun::{agents, claims};
+    let now = crate::autorun::sessions::now_ms();
+    match caller {
+        agents::Caller::Agent(key) => claims::claim(key, case_id, now).map_err(|why| (409, why)),
+        agents::Caller::Default => {
+            let live = claims::holder(case_id, now).and_then(|h| agents::info(&h)).filter(|i| i.gone_since_ms.is_none());
+            match live {
+                Some(held_by) => Err((409, claims::case_claimed(case_id, &held_by.label))),
+                None => Ok(()),
+            }
+        }
+    }
+}
+
+/// The `case_id` a request body names, when it names one.
+fn named_case_id(body: &str) -> Option<i32> {
+    let v: serde_json::Value = serde_json::from_str(body).ok()?;
+    v.get("case_id")?.as_i64().and_then(|n| i32::try_from(n).ok())
+}
+
+/// `claim_for` the case a try, a discovery start or a replay body names; a
+/// body that names none claims nothing (the call answers its own 400).
+fn claim_named_case(caller: &crate::autorun::agents::Caller, body: &str) -> Result<(), (u16, String)> {
+    match named_case_id(body) {
+        Some(case_id) => claim_for(caller, case_id),
+        None => Ok(()),
+    }
+}
+
+/// `claim_for` every case a save bundle names (a list of scripts, or an
+/// object with `scripts`), in the bundle's order, before any of the save's
+/// gates: the first refusal is the answer.
+fn claim_bundle_cases(caller: &crate::autorun::agents::Caller, body: &str) -> Result<(), (u16, String)> {
+    let v: serde_json::Value = serde_json::from_str(body).unwrap_or_default();
+    let scripts = if v.is_array() { Some(&v) } else { v.get("scripts") };
+    let mut seen: Vec<i32> = Vec::new();
+    for script in scripts.and_then(|s| s.as_array()).into_iter().flatten() {
+        let Some(case_id) = script.get("case_id").and_then(|n| n.as_i64()).and_then(|n| i32::try_from(n).ok()) else {
+            continue;
+        };
+        if !seen.contains(&case_id) {
+            seen.push(case_id);
+            claim_for(caller, case_id)?;
+        }
+    }
+    Ok(())
+}
+
+/// The refusal for a second mapping run: whose browser it is going in.
+pub fn mapping_going(whose: &str) -> String {
+    format!("a mapping run is going in {whose} - one mapping run at a time; wait for it to end")
+}
+
+/// The refusal for a mapping start in `caller_slot` while a mapping run goes
+/// in another slot (`mapping`, per slot: `commands::autorun::mapping_in`), or
+/// None. It names whose browser that is: "{label}'s browser" when the slot is
+/// bound to a live assistant, else the main browser (the person's) or an
+/// Auto Run browser. Never an id, a pid or a login.
+pub fn mapping_refusal(caller_slot: SlotNo, mapping: [bool; SLOT_COUNT]) -> Option<String> {
+    let going = SlotNo::all().into_iter().find(|m| *m != caller_slot && mapping[m.index()])?;
+    let whose = match label_of_slot(going) {
+        Some(label) => format!("{label}'s browser"),
+        None if going.is_main() => "the main Auto Run browser".to_string(),
+        None => "an Auto Run browser".to_string(),
+    };
+    Some(mapping_going(&whose))
 }
 
 // ------------------------------------------------------- the company database

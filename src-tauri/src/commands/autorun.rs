@@ -757,6 +757,14 @@ pub async fn auto_run_end_discovery() -> Result<(), String> {
 static DISCOVERY_ACTIVE: [std::sync::atomic::AtomicBool; SLOT_COUNT] =
     [const { std::sync::atomic::AtomicBool::new(false) }; SLOT_COUNT];
 
+/// Whether the discovery in each slot is a mapping run, as last published
+/// with it (`publish_discovery_in`). Only one mapping run goes at a time,
+/// whoever runs it, so the start of a second reads this
+/// (`ai_bridge::mapping_refusal`). Like the flag above it is coordination
+/// state, not a cache: memory only, never kept or read from anywhere else.
+static MAPPING_ACTIVE: [std::sync::atomic::AtomicBool; SLOT_COUNT] =
+    [const { std::sync::atomic::AtomicBool::new(false) }; SLOT_COUNT];
+
 /// The window `autorun_discovery_changed` goes to. Set once during app
 /// setup: the bridge, which starts and ends discoveries, has no
 /// `AppHandle` of its own. Unset in the test binaries, where publishing
@@ -783,6 +791,8 @@ pub(crate) fn publish_discovery_in(n: SlotNo, slot: &Option<Session>) {
     use std::sync::atomic::Ordering;
     use tauri_specta::Event as _;
     let active = slot.as_ref().is_some_and(|s| s.discovery.is_some());
+    let mapping = slot.as_ref().and_then(|s| s.discovery.as_ref()).is_some_and(|d| d.mapping.is_some());
+    MAPPING_ACTIVE[n.index()].store(mapping, Ordering::SeqCst);
     if DISCOVERY_ACTIVE[n.index()].swap(active, Ordering::SeqCst) != active && n.is_main() {
         if let Some(app) = DISCOVERY_EVENTS.get() {
             let _ = crate::events::AutorunDiscoveryChanged { active }.emit(app);
@@ -801,6 +811,11 @@ pub fn auto_run_discovery_active() -> bool {
 /// Whether a discovery holds slot `n`'s browser, as last published.
 pub fn discovery_active_in(n: SlotNo) -> bool {
     DISCOVERY_ACTIVE[n.index()].load(std::sync::atomic::Ordering::SeqCst)
+}
+
+/// Whether a mapping run holds slot `n`'s browser, as last published.
+pub fn mapping_in(n: SlotNo) -> bool {
+    MAPPING_ACTIVE[n.index()].load(std::sync::atomic::Ordering::SeqCst)
 }
 
 /// Whether a discovery holds any slot's browser.
