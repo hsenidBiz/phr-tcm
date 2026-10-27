@@ -343,6 +343,50 @@ async fn the_routes_refuse_a_case_another_assistant_works_on() {
     fresh();
 }
 
+/// A refused claim happens before a browser is picked, so it binds and
+/// reserves nothing: an assistant refused for another's case is not left
+/// bound to a main that was free, and the next assistant gets main.
+#[tokio::test]
+async fn a_refused_claim_binds_nothing_not_even_a_free_main() {
+    let _g = serial::agents();
+    let _a = serial::autorun();
+    fresh();
+    register(ID_A);
+    register(ID_B);
+    let now = v2_lib::autorun::sessions::now_ms();
+    claims::claim(&key(ID_A), 4521, now).unwrap();
+    let refusal = case_claimed(4521, "Assistant 1");
+    let try_body = serde_json::json!({ "action": { "type": "wait", "ms": 1 }, "case_id": 4521 }).to_string();
+    let start = serde_json::json!({ "account": "hr_admin", "case_id": 4521 }).to_string();
+    let replay = serde_json::json!({ "case_id": 4521, "step": 1 }).to_string();
+    for (path, body) in [
+        ("/autorun-try", try_body.as_str()),
+        ("/autorun-discover-start", start.as_str()),
+        ("/autorun-replay", replay.as_str()),
+    ] {
+        assert_eq!(slots::bound(SlotNo::MAIN), None, "{path}: main starts free");
+        let (status, said) = route_as(&caller(ID_B), &ctx(), None, "POST", path, body, "1.0.0").await;
+        assert_eq!((status, said.as_str()), (409, refusal.as_str()), "{path}");
+        assert_eq!(slots::bound(SlotNo::MAIN), None, "{path}: the refused call bound the free main");
+        assert_eq!(slots::slot_of(&key(ID_B)), None, "{path}");
+    }
+    // So the next assistant, asking for a browser, gets main.
+    assert_eq!(
+        v2_lib::commands::autorun_slots::slot_for(&caller(ID_B), v2_lib::commands::autorun_slots::Need::Open),
+        Ok(SlotNo::MAIN)
+    );
+    // The claim is looked at before the browser is picked, in the source too.
+    let bridge = include_str!("../../src/ai_bridge.rs").replace("\r\n", "\n");
+    let route = &bridge[bridge.find("pub async fn route_as(").unwrap()..];
+    let route = &route[..route.find("\n}\n").unwrap()];
+    let pick = route.find("slot_for(caller,").unwrap();
+    for needle in ["claim_named_case(caller, body)", "claim_bundle_cases(caller, body)"] {
+        assert!(route.find(needle).expect(needle) < pick, "{needle} comes after the browser is picked");
+    }
+    assert_eq!(route.matches("slot_for(caller,").count(), 1);
+    fresh();
+}
+
 /// No identifier of an agent in what a refusal says.
 #[test]
 fn a_refusal_names_the_label_only() {
