@@ -5,6 +5,7 @@
 //! the bearer token never leaves the app. Modeled on note_server.rs; the
 //! TCP loop is thin, all logic lives in `route` so tests need no sockets.
 
+use crate::autorun::agents::AgentKey;
 use crate::autorun::slots::{SlotNo, SLOT_COUNT};
 use rand::RngExt;
 use serde::Serialize;
@@ -390,18 +391,38 @@ pub async fn route_as(
     if let Some(refused) = network_guard(path, ctx.network_tools) {
         return refused;
     }
+    // A case another assistant works on is refused first, before a browser is
+    // picked, so a refused call binds a free main to nobody and reserves no
+    // extra browser. Every case a try, a discovery start, a replay or a save
+    // bundle names is claimed here, before any gate reads anything.
+    let claimed = match (method, path) {
+        ("POST", "/autorun-try" | "/autorun-discover-start" | "/autorun-replay") => claim_named_case(caller, body),
+        ("POST", "/autorun-script") => claim_bundle_cases(caller, body),
+        _ => Ok(()),
+    };
+    if let Err(refused) = claimed {
+        return refused;
+    }
     // The browser this call uses, found ONCE: every handler below locks,
     // publishes to and answers for that slot. A route that uses no
     // supervised browser (or one the caller must not be refused for) is
-    // main's, as everything was before there were slots.
-    let slot = match crate::commands::autorun_slots::need_of(method, path) {
+    // main's, as everything was before there were slots. A capture read that
+    // names an imported set needs none either, so an assistant with no
+    // browser of its own can still read it.
+    let need = crate::commands::autorun_slots::need_of(method, path)
+        .filter(|_| !crate::commands::autorun_slots::reads_an_imported_set(method, path, body));
+    let slot = match need {
         Some(need) => match crate::commands::autorun_slots::slot_for(caller, need) {
             Ok(slot) => slot,
             Err(refused) => return refused,
         },
         None => SlotNo::MAIN,
     };
-    match (method, path) {
+    // Who opens a browser in `slot` if this call does: the real assistant,
+    // never whoever the bindings name at that moment. The default caller
+    // holds none.
+    let holder = caller.key();
+    let answer = match (method, path) {
         ("GET", "/ping") => (
             200,
             serde_json::json!({
@@ -483,9 +504,11 @@ pub async fn route_as(
         ("GET", "/autorun-pw-skills") => autorun_pw_skills_answer(target),
         ("GET", "/autorun-pw-repo") => autorun_pw_repo_answer(target),
         // A save that repairs (carries `edits`) ends with the repair rules, a refusal too.
+        // Every case in the bundle was claimed at the top (`claim_bundle_cases`):
+        // a case another assistant works on is refused before any gate reads
+        // anything.
         ("POST", "/autorun-script") => {
-            let answer =
-                save_autorun_scripts(ctx, client, body, crate::commands::autorun_slots::slot_if_any(caller)).await;
+            let answer = save_autorun_scripts(ctx, client, body, crate::commands::autorun_slots::slot_if_any(caller)).await;
             let parsed: serde_json::Value = serde_json::from_str(body).unwrap_or_default();
             if crate::autorun::roles::cases_repaired_by(&parsed).is_empty() {
                 answer
@@ -527,6 +550,7 @@ pub async fn route_as(
         // One element's styles, listeners, animations and structure. Read
         // only: nothing is clicked, typed, focused or scrolled.
         ("POST", "/autorun-inspect") => autorun_inspect(body, slot).await,
+        // A try for a case another assistant works on was refused at the top.
         ("POST", "/autorun-try") => {
             let mut seen = None;
             let answer = autorun_try(ctx, body, &mut seen, slot).await;
@@ -534,10 +558,15 @@ pub async fn route_as(
         }
         // Discovery: the assistant opens the Auto Run browser itself, signs
         // in as a saved account (the app types the password) and explores
-        // the live application, one action at a time.
+        // the live application, one action at a time. A case another
+        // assistant works on was refused at the top, before a browser was
+        // picked or anything opened.
         ("POST", "/autorun-discover-start") => {
             let mut seen = None;
-            let answer = without_page(autorun_discover_start(ctx, body, &mut seen, slot).await, body);
+            let answer = without_page(autorun_discover_start(ctx, body, &mut seen, slot, holder).await, body);
+            // A start refused or failed before it opened a browser does not
+            // keep the extra browser it reserved.
+            crate::commands::autorun_slots::free_extra_if_unused(slot, holder, answer.0);
             let answer = with_overrides_seen(with_no_save_note(answer, discovery_no_save(slot)), seen, slot);
             // A mapping run records areas and writes no check: no rules.
             let mapping = serde_json::from_str::<serde_json::Value>(body)
@@ -596,11 +625,14 @@ pub async fn route_as(
         ("POST", "/autorun-reset") => crate::commands::autorun::reset_for_assistant(slot, &ctx.org, &ctx.project).await,
         ("POST", "/autorun-discover-area") => autorun_discover_area(ctx, body, slot).await,
         ("POST", "/autorun-replay") => {
+            // The claim came at the top, before the rewritten cases are
+            // released and before a browser is picked or anything opens.
             release_rewritten_cases(ctx, client).await;
-            crate::autorun::roles::with_rules(
-                without_page(autorun_replay(ctx, body, slot).await, body),
-                crate::autorun::roles::RULES_REPLAY,
-            )
+            let answer = without_page(autorun_replay(ctx, body, slot, holder).await, body);
+            // A replay refused or failed before it opened a browser does not
+            // keep the extra browser it reserved.
+            crate::commands::autorun_slots::free_extra_if_unused(slot, holder, answer.0);
+            crate::autorun::roles::with_rules(answer, crate::autorun::roles::RULES_REPLAY)
         }
         // The assistant's replay going, stopped through the same stop the
         // person's Stop sets, and its answer once it has ended.
@@ -635,7 +667,7 @@ pub async fn route_as(
         ("POST", "/accounts-propose") => accounts_propose(body),
         // With the project's Test files beside them, by name and size: what
         // a case uploads.
-        ("GET", "/accounts") => accounts_read(ctx),
+        ("GET", "/accounts") => accounts_read(ctx, crate::commands::autorun_slots::slot_if_any(caller)),
         // A file the assistant made, saved into those Test files.
         ("POST", "/test-file-save") => test_file_save(ctx, body),
         // The API template routes: gated with the Auto Run ones by the
@@ -645,7 +677,11 @@ pub async fn route_as(
         ("GET", "/api-template-guide") => (200, api_template_guide(ctx)),
         ("GET", "/api-templates") => api_template_list(ctx, target),
         ("POST", "/api-template-prove") => {
-            api_template_prove(
+            // A proof refused its account because the Auto Run browser holds
+            // it asks the caller's own browser, as a run does; a caller with
+            // no browser has none to ask.
+            api_template_prove_for(
+                crate::commands::autorun_slots::slot_if_any(caller),
                 ctx,
                 body,
                 real_template_browsers,
@@ -662,7 +698,8 @@ pub async fn route_as(
             if let Some(answer) = run_saved_in_session(ctx, slot, body).await {
                 return answer;
             }
-            let answer = api_template_run(
+            let answer = api_template_run_for(
+                slot,
                 ctx,
                 body,
                 real_template_browsers,
@@ -785,7 +822,10 @@ pub async fn route_as(
         },
         _ if smells_like_a_write(method, target) => (403, WRITE_REFUSAL.into()),
         _ => (404, String::new()),
-    }
+    };
+    // A lease refusal in the answer of a route that signs in says whose
+    // browser holds the account, once, here, whichever arm answered.
+    name_the_holder(answer, caller, method, path)
 }
 
 /// The exact sentence an assistant is handed when it tries to write. One
@@ -1493,7 +1533,23 @@ const RUN_SHAPE: &str = "{ \"id\": \"<template id>\", \"account\": \"<account ke
 /// afterwards. The route arm with the browser factory (`open`) and the
 /// flow database (`open_db`, asked for only by a template on a flow)
 /// handed in, so a test reaches all of it but a real browser and server.
+/// The default caller's: a refusal for an account the Auto Run browser holds
+/// asks main's browser (`api_template_prove_for`).
 pub async fn api_template_prove<B: crate::api_templates::held::Keeps, D: crate::api_templates::gate::StageDb>(
+    ctx: &BridgeContext,
+    body: &str,
+    open: impl FnOnce(crate::browser::launch::Browser) -> B,
+    open_db: impl FnOnce(&BridgeContext) -> Result<D, (u16, String)>,
+    timing: &crate::browser::timing::Timing,
+) -> (u16, String) {
+    api_template_prove_for(Some(SlotNo::MAIN), ctx, body, open, open_db, timing).await
+}
+
+/// `api_template_prove` for a caller whose own Auto Run browser is slot
+/// `asker` (none: it has no browser). A proof refused its account because the
+/// Auto Run browser holds it says so only when THAT browser holds it.
+pub async fn api_template_prove_for<B: crate::api_templates::held::Keeps, D: crate::api_templates::gate::StageDb>(
+    asker: Option<SlotNo>,
     ctx: &BridgeContext,
     body: &str,
     open: impl FnOnce(crate::browser::launch::Browser) -> B,
@@ -1545,14 +1601,28 @@ pub async fn api_template_prove<B: crate::api_templates::held::Keeps, D: crate::
         mode: Mode::Prove { replace, why },
         template,
     };
-    run_api_template_request(ctx, &root, req, existing.as_ref(), call.browser, open, open_db, timing).await
+    run_api_template_request(ctx, &root, req, existing.as_ref(), call.browser, asker, open, open_db, timing).await
 }
 
 /// `POST /api-template-run`: run a saved template and return its outputs,
 /// or the failing step and what had been created. As
 /// `api_template_prove`, with the browser factory and the flow database
-/// handed in.
+/// handed in. The default caller's: a refusal for an account the Auto Run
+/// browser holds asks main's browser (`api_template_run_for`).
 pub async fn api_template_run<B: crate::api_templates::held::Keeps, D: crate::api_templates::gate::StageDb>(
+    ctx: &BridgeContext,
+    body: &str,
+    open: impl FnOnce(crate::browser::launch::Browser) -> B,
+    open_db: impl FnOnce(&BridgeContext) -> Result<D, (u16, String)>,
+    timing: &crate::browser::timing::Timing,
+) -> (u16, String) {
+    api_template_run_for(Some(SlotNo::MAIN), ctx, body, open, open_db, timing).await
+}
+
+/// `api_template_run` for a caller whose own Auto Run browser is slot
+/// `asker` (none: it has no browser), as `api_template_prove_for`.
+pub async fn api_template_run_for<B: crate::api_templates::held::Keeps, D: crate::api_templates::gate::StageDb>(
+    asker: Option<SlotNo>,
     ctx: &BridgeContext,
     body: &str,
     open: impl FnOnce(crate::browser::launch::Browser) -> B,
@@ -1570,7 +1640,7 @@ pub async fn api_template_run<B: crate::api_templates::held::Keeps, D: crate::ap
         Ok(read) => read,
         Err(refused) => return refused,
     };
-    run_api_template_request(ctx, &root, req, None, which, open, open_db, timing).await
+    run_api_template_request(ctx, &root, req, None, which, asker, open, open_db, timing).await
 }
 
 /// What `api_template_run` reads of its call: the saved template, the
@@ -1777,6 +1847,7 @@ async fn run_api_template_request<B: crate::api_templates::held::Keeps, D: crate
     req: crate::api_templates::runner::RunRequest,
     existing: Option<&crate::api_templates::ApiTemplate>,
     which: crate::browser::launch::Browser,
+    asker: Option<SlotNo>,
     open: impl FnOnce(crate::browser::launch::Browser) -> B,
     open_db: impl FnOnce(&BridgeContext) -> Result<D, (u16, String)>,
     timing: &crate::browser::timing::Timing,
@@ -1995,10 +2066,12 @@ async fn run_api_template_request<B: crate::api_templates::held::Keeps, D: crate
     }
     let mut text = serde_json::to_string(&report).unwrap_or_default();
     if !report.ok && held_by_the_auto_run_browser(&text, &req.account) {
-        // A template run is not the caller's own browser's: it asks main's,
-        // the only one an assistant can hold today.
-        let holds = crate::commands::autorun::assistant_browser_holds(SlotNo::MAIN, &req.account).await;
-        text = template_report_hint(text, &req.account, holds);
+        // A template run is not the caller's own browser's, so the hint asks
+        // the caller's: a caller with no browser has none to free.
+        if let Some(n) = asker {
+            let holds = crate::commands::autorun::assistant_browser_holds(n, &req.account).await;
+            text = template_report_hint(text, &req.account, holds);
+        }
     }
     (if report.ok { 200 } else { 502 }, text)
 }
@@ -7590,12 +7663,15 @@ async fn save_discovered_area<B: DiscoveryBrowser>(
 /// `/autorun-discover-start`: open the Auto Run browser for the assistant
 /// and sign in as `account` (`discover_start_in`). Refused, before
 /// anything opens, while anything else holds the browser, and for an
-/// account or recipe that is not there.
+/// account or recipe that is not there. `holder` is the assistant whose call
+/// it is: the browser opened in slot `n` stays its own through any browser it
+/// replaces.
 async fn autorun_discover_start(
     ctx: &BridgeContext,
     body: &str,
     seen: &mut Option<crate::autorun::overrides::Overrides>,
     n: SlotNo,
+    holder: Option<&AgentKey>,
 ) -> (u16, String) {
     const SHAPE: &str = "{ \"account\": <an account key>, \"area\": <an area name, optional>, \"browser\": \"edge\" | \"chrome\", optional, \"mapping\": true | false, optional, \"modules\": [<a module name>], for a mapping run, \"case_id\": <the case explored for, optional>, \"no_save\": true | false, optional, \"explore\": true | false, optional }";
     let v: serde_json::Value = match serde_json::from_str(body) {
@@ -7651,6 +7727,14 @@ async fn autorun_discover_start(
     } else {
         None
     };
+    // One mapping run at a time, whoever runs it and in whichever browser:
+    // claimed before anything opens, refused at once naming whose browser it
+    // is going in, and given back when this start returns (failed or not).
+    let _mapping_start = match mapping.is_some().then(|| crate::commands::autorun::claim_mapping_start(n)) {
+        Some(Err(going)) => return (409, mapping_refusal(n, going).unwrap_or_else(|| mapping_going("an Auto Run browser"))),
+        Some(Ok(start)) => Some(start),
+        None => None,
+    };
     if let Err(why) = crate::commands::autorun::refuse_discovery_while_busy(n) {
         return (409, why);
     }
@@ -7672,7 +7756,7 @@ async fn autorun_discover_start(
     // new one is the one last chosen (`open_for_discovery`). A guarded
     // discovery's guard is on in a browser it took over before the lock goes.
     let from = GuardFrom { root: &root, organization: &ctx.org, project: &ctx.project };
-    let made_way = match crate::commands::autorun::open_for_discovery(browser.as_deref(), mapping, asked, from, n).await {
+    let made_way = match crate::commands::autorun::open_for_discovery(browser.as_deref(), mapping, asked, from, n, holder).await {
         Ok(made_way) => made_way,
         Err(why) => return (409, why),
     };
@@ -8377,9 +8461,14 @@ pub trait ReplayHost: Send + Sync {
     /// guard held for another case, and a discovery holding the browser is
     /// ended first rather than refusing (`end_discovery_for_replay`). `Err`
     /// is a browser that would not open.
+    ///
+    /// `holder` is the assistant whose call it is, if it is one: the browser
+    /// the replay uses stays bound to it through a browser it replaces. The
+    /// default caller passes none and is never bound.
     fn replay(
         &self,
         slot: SlotNo,
+        holder: Option<AgentKey>,
         organization: String,
         project: String,
         req: crate::autorun::replay_to::ReplayRequest,
@@ -8421,11 +8510,11 @@ pub fn set_replay_host(host: Box<dyn ReplayHost>) {
 const NO_REPLAY_HOST: &str = "the app could not start replays this session - restart the app";
 
 /// Replay a case to a step in the supervised browser, for the assistant.
-async fn autorun_replay(ctx: &BridgeContext, body: &str, n: SlotNo) -> (u16, String) {
+async fn autorun_replay(ctx: &BridgeContext, body: &str, n: SlotNo, holder: Option<&AgentKey>) -> (u16, String) {
     let Some(host) = REPLAY_HOST.get() else {
         return (503, NO_REPLAY_HOST.to_string());
     };
-    autorun_replay_with(ctx, n, body, host.as_ref(), REPLAY_ANSWER_WAIT).await
+    autorun_replay_as(holder, ctx, n, body, host.as_ref(), REPLAY_ANSWER_WAIT).await
 }
 
 /// How long `replay_autorun_to_step` waits for its replay to reach its stop
@@ -8645,7 +8734,21 @@ pub async fn autorun_replay_with(
     host: &'static dyn ReplayHost,
     wait: std::time::Duration,
 ) -> (u16, String) {
-    let answer = replay_answer_with(ctx, slot, body, host, wait).await;
+    autorun_replay_as(None, ctx, slot, body, host, wait).await
+}
+
+/// `autorun_replay_with` for the assistant `holder`, whose browser the
+/// replay uses or opens in slot `slot`; none for the default caller, which
+/// holds no browser and is never bound to one by its replay.
+pub async fn autorun_replay_as(
+    holder: Option<&AgentKey>,
+    ctx: &BridgeContext,
+    slot: SlotNo,
+    body: &str,
+    host: &'static dyn ReplayHost,
+    wait: std::time::Duration,
+) -> (u16, String) {
+    let answer = replay_answer_with(holder, ctx, slot, body, host, wait).await;
     with_changes_on_a_refusal(answer, slot)
 }
 
@@ -8664,6 +8767,7 @@ pub fn with_changes_on_a_refusal(answer: (u16, String), slot: SlotNo) -> (u16, S
 
 /// `autorun_replay_with`, before a refusal names the test changes.
 async fn replay_answer_with(
+    holder: Option<&AgentKey>,
     ctx: &BridgeContext,
     n: SlotNo,
     body: &str,
@@ -8735,8 +8839,9 @@ async fn replay_answer_with(
         return wait_for_replay(n, theirs, other, case_id, step, wait).await;
     }
     let (org, project) = (ctx.org.clone(), ctx.project.clone());
+    let holder = holder.cloned();
     tokio::spawn(async move {
-        let answer = run_assistant_replay(host, n, org, project, req).await;
+        let answer = run_assistant_replay(host, n, holder, org, project, req).await;
         // Kept in the slot for the next call when none is waiting, while
         // it stays fresh (`still_fresh`).
         let done = ReplayDone {
@@ -8849,6 +8954,7 @@ fn capitalised(s: &str) -> String {
 async fn run_assistant_replay(
     host: &'static dyn ReplayHost,
     n: SlotNo,
+    holder: Option<AgentKey>,
     org: String,
     project: String,
     req: crate::autorun::replay_to::ReplayRequest,
@@ -8856,7 +8962,7 @@ async fn run_assistant_replay(
     use crate::autorun::replay_to::{ReplayEnd, ReplayFrom};
     let (case_id, step) = (req.case_id, req.step);
     let replay = crate::autorun::replay_to::state(n);
-    let (end, discovery, left_open, from, reuse, overrides) = match host.replay(n, org.clone(), project.clone(), req).await {
+    let (end, discovery, left_open, from, reuse, overrides) = match host.replay(n, holder, org.clone(), project.clone(), req).await {
         Ok(AssistantReplay { end, discovery, left_open, from, reuse, overrides }) => {
             (end, discovery, left_open, from, reuse, overrides)
         }
@@ -10227,13 +10333,15 @@ pub const GET_ACCOUNTS_OFF: &str = "reading the accounts is switched off in Test
 /// test environment. The one place a password leaves the app; it is never
 /// logged, and the log line says only how many were read. Beside them, the
 /// project's Test files (`test_files_answer`), or `test_files_note` saying
-/// why there are none to show.
+/// why there are none to show. An account that is held right now carries
+/// `in_use_by`, who holds it as the caller reads it (`in_use_by_words`); a
+/// free one has no such key.
 ///
 /// Refused while the person has switched `get_accounts` off on the AI
 /// Bridge tab. The MCP proxy already hides a switched-off tool; this route
 /// checks again itself, as the database routes do (`stage_db`), because it
 /// is the one that can hand out passwords.
-fn accounts_read(ctx: &BridgeContext) -> (u16, String) {
+fn accounts_read(ctx: &BridgeContext, caller_slot: Option<SlotNo>) -> (u16, String) {
     if ctx.disabled_tools.iter().any(|t| t == "get_accounts") {
         return (409, GET_ACCOUNTS_OFF.to_string());
     }
@@ -10262,12 +10370,21 @@ fn accounts_read(ctx: &BridgeContext) -> (u16, String) {
         Err(e) => return accounts_failed(e),
     };
     let shown = env.test_environment;
+    // Who holds each account right now, as this caller reads it: a free
+    // account has no `in_use_by`. Main's session is looked at only when it
+    // holds one, and never waited for.
+    let held = crate::autorun::lease::holders_in(&env.id);
+    let main_is_persons = held.iter().any(|(_, h)| matches!(h, crate::autorun::lease::Holder::Browser { slot: 0 }))
+        && main_is_opened_by_the_person();
     let list: Vec<serde_json::Value> = accounts
         .iter()
         .map(|a| {
             let mut one = serde_json::json!({ "key": a.key, "label": a.label, "username": a.username });
             if shown {
                 one["password"] = serde_json::Value::String(a.password.clone());
+            }
+            if let Some((_, holder)) = held.iter().find(|(key, _)| *key == a.key) {
+                one["in_use_by"] = serde_json::Value::String(in_use_by_words(holder, caller_slot, main_is_persons));
             }
             one
         })
@@ -10294,6 +10411,189 @@ fn accounts_read(ctx: &BridgeContext) -> (u16, String) {
         if shown { ", passwords included" } else { "" }
     ));
     (200, out.to_string())
+}
+
+/// Whether main's session is open and the person opened it (`OpenedBy`),
+/// read without waiting: a session busy with a step or a replay reads as not.
+fn main_is_opened_by_the_person() -> bool {
+    use crate::commands::autorun::{session_slot, try_lock_briefly, OpenedBy};
+    try_lock_briefly(session_slot(SlotNo::MAIN))
+        .is_some_and(|session| session.as_ref().is_some_and(|s| s.opened_by == OpenedBy::Person))
+}
+
+/// The live assistant a slot's browser is in use by, by label.
+fn label_of_slot(slot: SlotNo) -> Option<String> {
+    let key = crate::commands::autorun_slots::bound(slot)?;
+    crate::autorun::agents::info(&key).filter(|i| i.gone_since_ms.is_none()).map(|i| i.label)
+}
+
+/// `get_accounts`' `in_use_by` for one held account, as `caller_slot` (the
+/// asker's own browser, if it has one) reads it:
+///
+/// - the asker's own browser: "your browser";
+/// - an assistant's: "{label}'s browser";
+/// - main's, bound to nobody: "the person's browser" when the person opened
+///   it (`main_is_persons`), else "the main Auto Run browser";
+/// - an extra browser nobody is bound to now (its assistant is gone and the
+///   browser not yet released): "another Auto Run browser";
+/// - an unattended run, an API template run, Auto Run setup: as the
+///   refusals word them.
+///
+/// Labels only: never a login, an id or a host.
+pub fn in_use_by_words(holder: &crate::autorun::lease::Holder, caller_slot: Option<SlotNo>, main_is_persons: bool) -> String {
+    use crate::autorun::lease::Holder;
+    match holder {
+        Holder::Browser { slot } => {
+            let Some(slot) = SlotNo::from_number(*slot) else {
+                return "another Auto Run browser".to_string();
+            };
+            if caller_slot == Some(slot) {
+                "your browser".to_string()
+            } else if let Some(label) = label_of_slot(slot) {
+                format!("{label}'s browser")
+            } else if slot.is_main() {
+                (if main_is_persons { "the person's browser" } else { "the main Auto Run browser" }).to_string()
+            } else {
+                "another Auto Run browser".to_string()
+            }
+        }
+        Holder::Case { .. } => "an unattended run".to_string(),
+        Holder::Template => "an API template run".to_string(),
+        Holder::Setup => "Auto Run setup".to_string(),
+    }
+}
+
+/// An answer holding a lease refusal for an account whose holder is another
+/// slot's browser, with that browser's live assistant named right after the
+/// refusal's sentence: ". {label} is signed in as it: work on cases that
+/// sign in as another account, or wait until {label} is done." The refusal
+/// itself stays word for word (`lease::is_in_use` still matches it). An
+/// answer with no refusal, an account held by the asker's own browser, by
+/// anything else, or by a browser no live assistant is bound to comes back
+/// unchanged. `env` is the active environment's id, the key the lease table
+/// uses. Labels only: never a login or an id.
+pub fn with_holder_named(answer: (u16, String), caller_slot: impl Into<Option<SlotNo>>, env: &str) -> (u16, String) {
+    use crate::autorun::lease::{holder_of, locate_in_use, Holder};
+    let (status, text) = answer;
+    let Some((key, end)) = locate_in_use(&text).map(|(key, _, end)| (key.to_string(), end)) else {
+        return (status, text);
+    };
+    let caller_slot: Option<SlotNo> = caller_slot.into();
+    let named = (|| {
+        let Holder::Browser { slot } = holder_of(env, &key)? else { return None };
+        let slot = SlotNo::from_number(slot)?;
+        if caller_slot == Some(slot) {
+            return None;
+        }
+        label_of_slot(slot)
+    })();
+    let Some(label) = named else { return (status, text) };
+    // The sentence's own full stop, if the answer has one, is the one this ends with.
+    let rest = text[end..].strip_prefix('.').unwrap_or(&text[end..]);
+    let said = format!(
+        ". {label} is signed in as it: work on cases that sign in as another account, or wait until {label} is done."
+    );
+    (status, format!("{}{said}{rest}", &text[..end]))
+}
+
+/// `with_holder_named` for the answer to one request, in the active
+/// environment, for the routes that sign an account in: those that open or
+/// act on the caller's browser, and the API template runs. Any other route's
+/// answer is returned as it is - a failure listing may quote an old refusal.
+fn name_the_holder(
+    answer: (u16, String),
+    caller: &crate::autorun::agents::Caller,
+    method: &str,
+    path: &str,
+) -> (u16, String) {
+    use crate::commands::autorun_slots::{need_of, slot_if_any, Need};
+    let signs_in = matches!(need_of(method, path), Some(Need::Open | Need::Act))
+        || (method == "POST" && matches!(path, "/api-template-run" | "/api-template-prove"));
+    if !signs_in || crate::autorun::lease::locate_in_use(&answer.1).is_none() {
+        return answer;
+    }
+    let env = autorun_root().ok().and_then(|root| crate::environments::active_id(&root).ok());
+    match env {
+        Some(env) => with_holder_named(answer, slot_if_any(caller), &env),
+        None => answer,
+    }
+}
+
+// ------------------------------------------------- case claims, one mapping run
+
+/// The caller works on `case_id` from now, or is told who does. An assistant
+/// claims it (`claims::claim`: refused, 409, while another live assistant
+/// holds it). The default caller (an older proxy, a test, the person's own
+/// tools) never claims, and is refused only by a LIVE assistant's claim, so
+/// with no assistant connected nothing is ever refused. The answer names the
+/// holder by label only.
+pub fn claim_for(caller: &crate::autorun::agents::Caller, case_id: i32) -> Result<(), (u16, String)> {
+    use crate::autorun::{agents, claims};
+    let now = crate::autorun::sessions::now_ms();
+    match caller {
+        agents::Caller::Agent(key) => claims::claim(key, case_id, now).map_err(|why| (409, why)),
+        agents::Caller::Default => {
+            let live = claims::holder(case_id, now).and_then(|h| agents::info(&h)).filter(|i| i.gone_since_ms.is_none());
+            match live {
+                Some(held_by) => Err((409, claims::case_claimed(case_id, &held_by.label))),
+                None => Ok(()),
+            }
+        }
+    }
+}
+
+/// The `case_id` a request body names, when it names one.
+fn named_case_id(body: &str) -> Option<i32> {
+    let v: serde_json::Value = serde_json::from_str(body).ok()?;
+    v.get("case_id")?.as_i64().and_then(|n| i32::try_from(n).ok())
+}
+
+/// `claim_for` the case a try, a discovery start or a replay body names; a
+/// body that names none claims nothing (the call answers its own 400).
+fn claim_named_case(caller: &crate::autorun::agents::Caller, body: &str) -> Result<(), (u16, String)> {
+    match named_case_id(body) {
+        Some(case_id) => claim_for(caller, case_id),
+        None => Ok(()),
+    }
+}
+
+/// `claim_for` every case a save bundle names (a list of scripts, or an
+/// object with `scripts`), in the bundle's order, before any of the save's
+/// gates: the first refusal is the answer.
+fn claim_bundle_cases(caller: &crate::autorun::agents::Caller, body: &str) -> Result<(), (u16, String)> {
+    let v: serde_json::Value = serde_json::from_str(body).unwrap_or_default();
+    let scripts = if v.is_array() { Some(&v) } else { v.get("scripts") };
+    let mut seen: Vec<i32> = Vec::new();
+    for script in scripts.and_then(|s| s.as_array()).into_iter().flatten() {
+        let Some(case_id) = script.get("case_id").and_then(|n| n.as_i64()).and_then(|n| i32::try_from(n).ok()) else {
+            continue;
+        };
+        if !seen.contains(&case_id) {
+            seen.push(case_id);
+            claim_for(caller, case_id)?;
+        }
+    }
+    Ok(())
+}
+
+/// The refusal for a second mapping run: whose browser it is going in.
+pub fn mapping_going(whose: &str) -> String {
+    format!("a mapping run is going in {whose} - one mapping run at a time; wait for it to end")
+}
+
+/// The refusal for a mapping start in `caller_slot` while a mapping run goes
+/// in another slot (`mapping`, per slot: `commands::autorun::mapping_in`), or
+/// None. It names whose browser that is: "{label}'s browser" when the slot is
+/// bound to a live assistant, else the main browser (the person's) or an
+/// Auto Run browser. Never an id, a pid or a login.
+pub fn mapping_refusal(caller_slot: SlotNo, mapping: [bool; SLOT_COUNT]) -> Option<String> {
+    let going = SlotNo::all().into_iter().find(|m| *m != caller_slot && mapping[m.index()])?;
+    let whose = match label_of_slot(going) {
+        Some(label) => format!("{label}'s browser"),
+        None if going.is_main() => "the main Auto Run browser".to_string(),
+        None => "an Auto Run browser".to_string(),
+    };
+    Some(mapping_going(&whose))
 }
 
 // ------------------------------------------------------- the company database
@@ -13050,8 +13350,9 @@ fn note_writing_job_pbi(caller: &crate::autorun::agents::Caller, org: &str, pbi:
     }
 }
 
-/// An assistant said goodbye: its jobs (and its named subagents') are over.
-fn forget_writing_jobs_of(agent_id: &str) {
+/// An assistant said goodbye, or its session was found gone past its grace:
+/// its jobs (and its named subagents') are over.
+pub fn forget_writing_jobs_of(agent_id: &str) {
     WRITING_JOB_PBIS
         .lock()
         .unwrap_or_else(|e| e.into_inner())

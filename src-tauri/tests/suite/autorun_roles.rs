@@ -438,3 +438,15 @@ fn every_note_says_never_edit_the_clone() {
         }
     }
 }
+
+/// A subagent that was given a name by its caller passes it as `agent`, so
+/// the app gives it a browser of its own: every role says so in one line.
+#[test]
+fn every_role_tells_a_named_subagent_to_pass_its_name() {
+    let line = "When your caller gave you a name, pass it as `agent` on every Auto Run and API template call.";
+    for r in Role::ALL {
+        let rules = r.tcm_rules();
+        assert_eq!(rules.matches(line).count(), 1, "the {} text: {rules}", r.name());
+        assert!(rules.lines().any(|l| l.trim_start_matches("- ").trim() == line), "{} has it on a line of its own", r.name());
+    }
+}

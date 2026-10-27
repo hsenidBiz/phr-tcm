@@ -1971,7 +1971,7 @@ fn the_descriptions_keep_the_browser_between_replays() {
     // Stop is replay's `stop`, with the stop tool's own sentences.
     let stop = desc("replay_autorun_to_step");
     for said in [
-        "`stop: true`, sent alone, stops your replay that is still going",
+        "`stop: true`, sent alone, stops your own replay that is still going",
         "with no replay going it answers 404",
         "the person's own replay is refused",
     ] {
@@ -3793,6 +3793,95 @@ fn the_agent_name_is_held_for_the_call_only() {
     assert_eq!(path, "/autorun-explore-changes");
     let sent: serde_json::Value = serde_json::from_str(body).unwrap();
     assert_eq!(sent, serde_json::json!({ "marker": 7 }), "{body}");
+}
+
+/// `agent` is a property of the Auto Run and API template tools, never
+/// required, and of no other tool: the writing job (`begin_test_case_writing`,
+/// read back by `get_tags`) is keyed by the full caller, name included, so a
+/// subagent that named itself on one of those two and not the other would read
+/// another job. The same with "Treat all projects as one" on and off.
+#[test]
+fn every_auto_run_and_template_tool_takes_an_agent() {
+    use v2_lib::ai_tools::{API_TEMPLATE_TOOLS, AUTORUN_TOOLS};
+    for body in [r#"{"all_projects":false}"#, r#"{"all_projects":true}"#, "{}"] {
+        let tools = tools_by_name(body);
+        let mut takes = 0;
+        for (name, t) in &tools {
+            let agent = &t["inputSchema"]["properties"]["agent"];
+            let required = t["inputSchema"]["required"].as_array().cloned().unwrap_or_default();
+            assert!(!required.iter().any(|r| r == "agent"), "{name} requires agent ({body})");
+            if AUTORUN_TOOLS.contains(&name.as_str()) || API_TEMPLATE_TOOLS.contains(&name.as_str()) {
+                assert_eq!(agent["type"], "string", "{name} ({body}): {t}");
+                assert_eq!(agent["description"], v2_lib::mcp::AGENT_PROPERTY_DESCRIPTION, "{name} ({body})");
+                takes += 1;
+            } else {
+                assert!(agent.is_null(), "{name} takes an agent ({body})");
+            }
+        }
+        assert_eq!(takes, AUTORUN_TOOLS.len() + API_TEMPLATE_TOOLS.len(), "every one of them is listed ({body})");
+        assert!(tools.contains_key("get_test_cases") && tools["get_test_cases"]["inputSchema"]["properties"]["agent"].is_null());
+    }
+    let said = v2_lib::mcp::AGENT_PROPERTY_DESCRIPTION;
+    assert!(said.contains("1 to 32 letters, digits, spaces, dots, underscores or hyphens"), "{said}");
+    assert!(said.contains("Each name gets an Auto Run browser of its own; leave it out when you work alone."), "{said}");
+    assert!(said.contains("one of several subagents of one session, or one of several chats served by one connection"), "{said}");
+    assert!(!said.contains('\u{2014}') && !said.contains('\u{2013}'), "{said}");
+}
+
+/// A tool that carries a body (`try_autorun_action`) sends it to the app
+/// without `agent`: the name travels as the header `x-tcm-agent-name`.
+#[test]
+fn an_agent_argument_reaches_the_app_as_a_header_not_in_the_body() {
+    let seen = std::cell::RefCell::new(Vec::<(Option<String>, String, String)>::new());
+    let call = |_m: &str, path: &str, body: &str| -> Result<(u16, String), String> {
+        seen.borrow_mut().push((v2_lib::mcp::calling_agent(), path.to_string(), body.to_string()));
+        Ok((200, "{}".into()))
+    };
+    let req = serde_json::json!({
+        "jsonrpc": "2.0", "id": 7, "method": "tools/call",
+        "params": { "name": "try_autorun_action", "arguments": {
+            "agent": "writer-1", "case_id": 7, "action": { "kind": "click", "selector": "#go" },
+        } },
+    });
+    let v: serde_json::Value = serde_json::from_str(&handle_message(&req.to_string(), "1.0.0", &call).unwrap()).unwrap();
+    assert_ne!(v["result"]["isError"], true, "{v}");
+    let seen = seen.into_inner();
+    let tried: Vec<_> = seen.iter().filter(|(_, path, _)| path == "/autorun-try").collect();
+    assert_eq!(tried.len(), 1, "{seen:?}");
+    assert_eq!(tried[0].0.as_deref(), Some("writer-1"), "{seen:?}");
+    let sent: serde_json::Value = serde_json::from_str(&tried[0].2).unwrap();
+    assert!(sent.get("agent").is_none(), "{}", tried[0].2);
+    assert_eq!(sent["case_id"], 7, "{}", tried[0].2);
+    assert_eq!(v2_lib::mcp::calling_agent(), None);
+}
+
+/// Each Auto Run tool that said "the browser" as if there were one says whose
+/// browser it is, and `get_accounts` says what `in_use_by` is.
+#[test]
+fn the_tool_descriptions_say_whose_browser_it_is() {
+    let tools = tools_by_name("{}");
+    let said = |name: &str| description_of(&tools, name);
+    let page = said("get_autorun_page");
+    assert!(page.contains("your Auto Run browser, or the person's when you have none"), "{page}");
+    assert!(!page.contains("or your discovery browser"), "{page}");
+    let probe = said("probe_autorun_locator");
+    assert!(probe.contains("your Auto Run browser, or the person's when you have none"), "{probe}");
+    assert!(!probe.contains("Ask the open browser"), "{probe}");
+    assert!(said("replay_autorun_to_step").contains("stops your own replay that is still going"));
+    let start = said("start_autorun_discovery");
+    assert!(start.contains("It opens a browser of your own when another assistant is using the main one."), "{start}");
+    let reset = said("reset_autorun_browser");
+    assert!(reset.contains("your replays, discovery and resets share your browser and its sign-in"), "{reset}");
+    assert!(!reset.contains("share one browser"), "{reset}");
+    assert!(reset.contains("your own browser only"), "{reset}");
+    let accounts = said("get_accounts");
+    assert!(
+        accounts.contains("An account that is held right now carries `in_use_by`, naming the assistant or browser that holds it"),
+        "{accounts}"
+    );
+    for d in [&page, &probe, &start, &reset, &accounts] {
+        assert!(!d.contains('\u{2014}') && !d.contains('\u{2013}'), "a dash: {d}");
+    }
 }
 
 /// How long a test listener waits for anything: a request that never comes

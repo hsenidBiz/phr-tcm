@@ -1446,7 +1446,7 @@ fn the_guide_names_reset() {
     ] {
         assert!(full.contains(said), "the guide never says {said:?}");
     }
-    assert!(full.contains("Replays, discovery and resets share one browser and its sign-in"), "{full}");
+    assert!(full.contains("Your replays, discovery and resets share your browser and its sign-in"), "{full}");
     assert!(full.contains("\"Signed in already: went to <area>.\""), "{full}");
 }
 
@@ -1666,7 +1666,7 @@ fn every_quick_rule_is_in_the_full_guide() {
         ("Never search the disk for a picture", "Seeing the page"),
         ("Set `\"no_save\": true` on any script that works on a shared draft and must not change it", "Scripts that must not save"),
         ("A repair can turn `no_save` on, never off", "Scripts that must not save"),
-        ("Replays, discovery and resets share one browser and its sign-in", "Discovering the app"),
+        ("Your replays, discovery and resets share your browser and its sign-in", "Discovering the app"),
         ("`end_autorun_discovery` keeps it", "Discovering the app"),
         ("`reset_autorun_browser` gives a clean page", "Discovering the app"),
         ("only for a broken browser (frozen, wrong account, session gone), never between replays", "Discovering the app"),
@@ -2552,4 +2552,51 @@ fn the_guide_teaches_expect_no_change_for_a_click_on_a_disabled_control() {
         assert!(flat.contains(said), "the autorun guide never says {said:?}");
     }
     assert!(!flat.contains('\u{2013}') && !flat.contains('\u{2014}'), "no dash in text an assistant reads");
+}
+
+/// Several assistants can each have an Auto Run browser. The Quick rules and
+/// the replay part of the full guide say the browser is the reader's own, and
+/// a section of its own tells how to work beside others, including the name a
+/// subagent passes as `agent`.
+#[test]
+fn the_guide_says_each_assistant_has_its_own_browser() {
+    use v2_lib::autorun::guide::{guide_section, quick_rules, section_titles};
+    let g = autorun_guide();
+    let quick = flat_guide(&quick_rules());
+    let full = flat_guide(&g);
+    let sentence = "Your replays, discovery and resets share your browser and its sign-in. Other assistants may be working at the same time, each in a browser of its own.";
+    assert!(quick.contains(sentence), "{quick}");
+    assert!(full.contains(sentence), "{full}");
+    for old in ["share one browser and its sign-in", "Replays, discovery and resets share"] {
+        assert!(!full.contains(old), "the old wording is still there: {old}");
+    }
+    assert!(quick_rules().lines().count() <= 45, "the quick rules run to {} lines", quick_rules().lines().count());
+
+    assert!(section_titles(&g).contains(&"Working beside other assistants"));
+    let section = flat_guide(&guide_section(&g, "Working beside other assistants").expect("the section"));
+    for said in [
+        "Up to three Auto Run browsers can be open at once. One assistant working alone always uses the main one, as before.",
+        "Each assistant needs an account of its own: signing an account in anywhere ends its session everywhere else.",
+        "`get_accounts` says who uses an account (`in_use_by`)",
+        "`propose_accounts` so the person can add one.",
+        "Split the work so no two assistants share a case or an account.",
+        "is refused at once: that is not an error to retry in a loop - take other work, or report it.",
+        "One mapping run at a time, whoever runs it.",
+        "The map, the areas, the components and the quirks are shared: read an area again just before you repair it.",
+        "An unattended run cannot start while any assistant's browser is open.",
+        "When your session ends, a browser of your own is released; the main one is left open for the person.",
+        "give each subagent you start a name of its own (for example writer-1, writer-2) and tell it to pass it as `agent` on every Auto Run and API template call; each name gets its own browser.",
+        "A subagent without a name shares your browser.",
+        "A client that serves several chats through one connection (Claude desktop) is one assistant to the app: give each chat its own `agent` name too.",
+    ] {
+        assert!(section.contains(said), "the section never says {said:?}: {section}");
+    }
+    assert!(!section.contains('\u{2013}') && !section.contains('\u{2014}'), "no dash in text an assistant reads");
+    for old in ["waits until every assistant's browser is released", "Your browser is released when your session ends."] {
+        assert!(!section.contains(old), "the section still says what the code does not do: {old}");
+    }
+    // The section sits right after the one about discovering the app, which holds the replay sentence.
+    let titles = section_titles(&g);
+    let at = |t: &str| titles.iter().position(|x| *x == t).unwrap();
+    assert_eq!(at("Working beside other assistants"), at("Discovering the app") + 1, "{titles:?}");
 }

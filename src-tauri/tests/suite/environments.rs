@@ -463,6 +463,113 @@ fn switching_is_refused_while_the_supervised_browser_is_open() {
     assert_eq!(refuse_switch(false), Ok(()));
 }
 
+/// An open runs under its slot's lock and holds the opening lock for reading
+/// while it goes; a switch takes the opening lock for writing and then every
+/// slot's. Whichever comes first, neither waits on the other for ever: a
+/// switch waits out an open that is under way (bounded here), and a switch
+/// that finds an assistant's browser slot taken does not wait for it: main's
+/// lock it waits for as ever, slots 1 and 2 it tries briefly, and it is
+/// refused at once (the switch-busy sentence) and lets the opening lock go.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_switch_while_an_extra_browser_is_opening_does_not_hang() {
+    use std::time::Duration;
+    use v2_lib::autorun::slots::SlotNo;
+    use v2_lib::commands::autorun::hold_slot;
+    use v2_lib::commands::autorun_slots::opening;
+    let _claims = crate::serial::autorun();
+    let _slot = crate::serial::api_template_run();
+    let _held = crate::serial::held_browsers();
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let store = MemoryStore::default();
+    let (first, qa) = two_envs(root);
+
+    // The open is under way: slot 1's lock held, the opening lock read.
+    let in_slot = hold_slot(SlotNo(1)).await;
+    let reading = opening().try_read().expect("no switch is going");
+    let switching = set_active_with(root, &store, &qa);
+    tokio::pin!(switching);
+    assert!(
+        tokio::time::timeout(Duration::from_millis(300), &mut switching).await.is_err(),
+        "the switch went through an open that was under way"
+    );
+    assert_eq!(active_id(root).unwrap(), first, "the switch changed things beside an open");
+    drop(in_slot);
+    drop(reading);
+    let switched = tokio::time::timeout(Duration::from_secs(10), switching).await.expect("the switch hung after the open ended");
+    assert_eq!(switched.unwrap().active, qa);
+
+    // The switch is first and finds an assistant's slot taken (a replay, a
+    // batch or an open under way). It does not wait for the whole of that: it
+    // is refused promptly, with the lock it took given back, and nothing
+    // changed.
+    for n in SlotNo::extras() {
+        let in_slot = hold_slot(n).await;
+        let started = std::time::Instant::now();
+        let switched = tokio::time::timeout(Duration::from_secs(5), set_active_with(root, &store, &first))
+            .await
+            .unwrap_or_else(|_| panic!("the switch waited for slot {}", n.0));
+        assert_eq!(switched.unwrap_err(), SWITCH_BUSY, "slot {}", n.0);
+        assert!(started.elapsed() < Duration::from_secs(2), "the refusal took {:?}", started.elapsed());
+        assert_eq!(active_id(root).unwrap(), qa, "a refused switch changes nothing");
+        assert!(opening().try_read().is_ok(), "a refused switch still holds the opening lock");
+        assert!(!v2_lib::api_templates::runner::is_running(), "a refused switch keeps the template slot");
+        drop(in_slot);
+    }
+    let switched = set_active_with(root, &store, &first).await.expect("with the slots free the switch goes through");
+    assert_eq!(switched.active, first);
+    assert!(opening().try_read().is_ok(), "a finished switch still holds the opening lock");
+}
+
+/// The same for a save that moves the active address: an assistant's slot
+/// that is taken is not waited for, the save is refused promptly with the
+/// switch's own sentence. Another environment's address moves nothing in use,
+/// so it is saved whatever the slots are doing.
+#[tokio::test(flavor = "multi_thread")]
+async fn an_address_change_beside_an_extra_browser_in_use_does_not_wait_for_it() {
+    use std::time::Duration;
+    use v2_lib::autorun::slots::SlotNo;
+    use v2_lib::commands::autorun::hold_slot;
+    use v2_lib::commands::autorun_slots::opening;
+    use v2_lib::commands::environments::ADDRESS_CHANGE_REFUSED;
+    let _claims = crate::serial::autorun();
+    let _slot = crate::serial::api_template_run();
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let store = MemoryStore::default();
+    let (first, qa) = two_envs(root);
+
+    for n in SlotNo::extras() {
+        let in_slot = hold_slot(n).await;
+        let started = std::time::Instant::now();
+        let saved = tokio::time::timeout(
+            Duration::from_secs(5),
+            save_with(root, &store, edit(root, &first, "https://moved.example/", &[])),
+        )
+        .await
+        .unwrap_or_else(|_| panic!("the save waited for slot {}", n.0));
+        let err = saved.unwrap_err();
+        assert!(err.starts_with(ADDRESS_CHANGE_REFUSED) && err.contains("recorded or run"), "slot {}: {err}", n.0);
+        assert!(started.elapsed() < Duration::from_secs(2), "the refusal took {:?}", started.elapsed());
+        assert_eq!(list(root).iter().find(|e| e.id == first).unwrap().start_url, "", "a refused save changes nothing");
+        assert!(opening().try_read().is_ok(), "a refused save still holds the opening lock");
+        assert!(!v2_lib::api_templates::runner::is_running(), "a refused save keeps the template slot");
+
+        // The environment that is not active moves freely.
+        tokio::time::timeout(Duration::from_secs(5), save_with(root, &store, edit(root, &qa, "https://qa.example/", &[])))
+            .await
+            .unwrap_or_else(|_| panic!("a save of another environment waited for slot {}", n.0))
+            .unwrap();
+        assert_eq!(list(root).iter().find(|e| e.id == qa).unwrap().start_url, "https://qa.example/");
+        drop(in_slot);
+        save_with(root, &store, edit(root, &qa, "", &[])).await.unwrap();
+    }
+
+    save_with(root, &store, edit(root, &first, "https://moved.example/", &[])).await.unwrap();
+    assert_eq!(list(root).iter().find(|e| e.id == first).unwrap().start_url, "https://moved.example/");
+    assert!(opening().try_read().is_ok());
+}
+
 fn edit(root: &Path, id: &str, start_url: &str, allowed: &[&str]) -> EnvInput {
     let e = list(root).into_iter().find(|e| e.id == id).unwrap();
     EnvInput {

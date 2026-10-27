@@ -128,6 +128,9 @@ pub const AGENT_ARG: &str = "agent";
 pub const AGENT_SHAPE: &str =
     "agent must be 1 to 32 letters, digits, spaces, dots, underscores or hyphens - the name your caller gave you";
 
+/// What the `agent` property of an Auto Run or API template tool says.
+pub const AGENT_PROPERTY_DESCRIPTION: &str = "Optional: the name your caller gave you when you are one of several subagents of one session, or one of several chats served by one connection (1 to 32 letters, digits, spaces, dots, underscores or hyphens). Each name gets an Auto Run browser of its own; leave it out when you work alone.";
+
 /// `args` without `agent`, and the name it held. Absent, null or blank gives
 /// no name; present but not a string, or a name `agents::clean_name` refuses,
 /// is `Err(AGENT_SHAPE)`.
@@ -624,7 +627,7 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool, unlocked: bool, all_projec
         },
         {
             "name": "get_autorun_page",
-            "description": "Read the page in the Auto Run browser (the one the person opened, or your discovery browser) as text: Chrome's accessibility tree, one element per line, with the locator that reaches it on the end of each line. This is how you see a page before writing or repairing a script; what a password field holds is never shown. Visible text that no line's name says prints as a `text \"...\"` line; a read never counts one as matching exactly one element, so probe it before an action or a one-element check uses it. It answers the first 120 lines and how many more there are: ask for more with `limit`, or list one part with `within`. During a discovery with an area, a read records what it shows as seen under that area; only a read of the whole page marks the area explored. Needs a supervised or discovery browser to be open.",
+            "description": "Read the page in your Auto Run browser, or the person's when you have none, as text: Chrome's accessibility tree, one element per line, with the locator that reaches it on the end of each line. This is how you see a page before writing or repairing a script; what a password field holds is never shown. Visible text that no line's name says prints as a `text \"...\"` line; a read never counts one as matching exactly one element, so probe it before an action or a one-element check uses it. It answers the first 120 lines and how many more there are: ask for more with `limit`, or list one part with `within`. During a discovery with an area, a read records what it shows as seen under that area; only a read of the whole page marks the area explored. Needs a supervised or discovery browser to be open.",
             "inputSchema": schema(serde_json::json!({
                 "limit": { "type": "number", "description": "How many lines before the snapshot stops (default 120, at most 3000)." },
                 "within": {
@@ -637,7 +640,7 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool, unlocked: bool, all_projec
         },
         {
             "name": "probe_autorun_locator",
-            "description": "Ask the open browser what a locator matches RIGHT NOW: how many elements, and for each its tag, text, whether it is visible, where it sits, and its role and name. Use it before putting a locator in a script - one that matches three things is a script that clicks the wrong one. What it matched is recorded as seen, with how many elements it matched: an action needs a locator seen matching exactly one, while a check that can pass with several matches (expect_hidden, expect_count, wait_for) may use one seen matching several. A chain can pass through a same-origin iframe. Needs a supervised or discovery browser to be open. With `show` it looks deeper at ONE element instead (refused when the locator matches nothing or more than one, and nothing is recorded as seen): `styles` (computed, all or the `properties` you name), `listeners` (where each handler was written, never its source; under `listeners.ancestors` the ones above it up to the window), `animations` and `structure`, and whether a click at its centre reaches it or what covers it - see get_guide (topic autorun), section \"Network, cookies and elements\". A password field's value, attributes named like a secret and tokens in text are hidden. Read only: nothing is clicked, typed, focused or scrolled, so it works in the person's browser too.",
+            "description": "Ask your Auto Run browser, or the person's when you have none, what a locator matches RIGHT NOW: how many elements, and for each its tag, text, whether it is visible, where it sits, and its role and name. Use it before putting a locator in a script - one that matches three things is a script that clicks the wrong one. What it matched is recorded as seen, with how many elements it matched: an action needs a locator seen matching exactly one, while a check that can pass with several matches (expect_hidden, expect_count, wait_for) may use one seen matching several. A chain can pass through a same-origin iframe. Needs a supervised or discovery browser to be open. With `show` it looks deeper at ONE element instead (refused when the locator matches nothing or more than one, and nothing is recorded as seen): `styles` (computed, all or the `properties` you name), `listeners` (where each handler was written, never its source; under `listeners.ancestors` the ones above it up to the window), `animations` and `structure`, and whether a click at its centre reaches it or what covers it - see get_guide (topic autorun), section \"Network, cookies and elements\". A password field's value, attributes named like a secret and tokens in text are hidden. Read only: nothing is clicked, typed, focused or scrolled, so it works in the person's browser too.",
             "inputSchema": schema(serde_json::json!({
                 "selector": {
                     "type": ["object", "string", "array"],
@@ -672,7 +675,7 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool, unlocked: bool, all_projec
         },
         {
             "name": "replay_autorun_to_step",
-            "description": "Replay a case's saved script in the supervised Auto Run browser, steps 1 to `step` - 1, and stop before `step` runs, so you can heal the failing step where it failed. Needs no browser open: when none is, the app opens one; a discovery of yours holding the browser is ended first (what it mapped is kept). Like a run, it checks the preconditions, signs in as the case's account and goes to its area. A script marked must not save replays at once too, its saves stopped throughout. Answers a sentence and the page where it stopped, so you can try that step at once with try_autorun_action. Replay to the failing step and never past it to see what happens. The browser stays open on that step, signed in. Do not release it between replays: reset_autorun_browser gives a clean page with the sign-in kept, and its `release` is for a broken browser only. One replay at a time: one still going after about 45 seconds says so - call again with the same case and step to keep waiting on that same replay (never a new one); a different case or step is refused until it ends. `stop: true`, sent alone, stops your replay that is still going; with no replay going it answers 404, and the person's own replay is refused (only they can stop it). Carrying on from an earlier replay, a browser already signed in, and how a stop ends: get_guide (topic autorun), section \"Repairing a script that failed\". Every answer ends with the rules that apply at that moment.",
+            "description": "Replay a case's saved script in the supervised Auto Run browser, steps 1 to `step` - 1, and stop before `step` runs, so you can heal the failing step where it failed. Needs no browser open: when none is, the app opens one; a discovery of yours holding the browser is ended first (what it mapped is kept). Like a run, it checks the preconditions, signs in as the case's account and goes to its area. A script marked must not save replays at once too, its saves stopped throughout. Answers a sentence and the page where it stopped, so you can try that step at once with try_autorun_action. Replay to the failing step and never past it to see what happens. The browser stays open on that step, signed in. Do not release it between replays: reset_autorun_browser gives a clean page with the sign-in kept, and its `release` is for a broken browser only. One replay at a time: one still going after about 45 seconds says so - call again with the same case and step to keep waiting on that same replay (never a new one); a different case or step is refused until it ends. `stop: true`, sent alone, stops your own replay that is still going; with no replay going it answers 404, and the person's own replay is refused (only they can stop it). Carrying on from an earlier replay, a browser already signed in, and how a stop ends: get_guide (topic autorun), section \"Repairing a script that failed\". Every answer ends with the rules that apply at that moment.",
             "inputSchema": schema(serde_json::json!({
                 "case_id": { "type": "number", "description": "The case whose saved script is replayed." },
                 "step": { "type": "number", "description": "The step to stop before: the failing step. Steps 1 to step - 1 run." },
@@ -682,7 +685,7 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool, unlocked: bool, all_projec
         },
         {
             "name": "start_autorun_discovery",
-            "description": "Open the app's own Auto Run browser and sign in as a saved account, so you can explore the live application before you write a script. The app replays the recorded sign-in and types the password; you never see it. Answers the landing page as get_autorun_page shows it, and its address path. Refused while a run, a replay or a person's browser holds the Auto Run browser. It takes over a browser your own replay left open (its other tabs closed, not signing in again when it is signed in as the account you name) and goes home, and the answer says so. A failed sign-in closes the browser and says why: report it rather than trying again. Every locator you will put in a script must be seen on the live app first: a save refuses any locator the app has not seen. Never read the application's code to write scripts. For a case marked no_save, name it with `case_id` (or pass `no_save: true`): every save the page tries is blocked, not only reported, until the discovery ends. Call end_autorun_discovery when you are done. The first discovery start of a session that is not a mapping run opens its answer with the writer's rules; a later one opens with a line pointing back at them. Every answer that is not a mapping run's ends with the rules that apply at that moment. An explore start (explore true) opens with the explorer's rules and ends with the explore rules.",
+            "description": "Open the app's own Auto Run browser and sign in as a saved account, so you can explore the live application before you write a script. The app replays the recorded sign-in and types the password; you never see it. Answers the landing page as get_autorun_page shows it, and its address path. It opens a browser of your own when another assistant is using the main one. Refused while a run, a replay or a person's browser holds the Auto Run browser. It takes over a browser your own replay left open (its other tabs closed, not signing in again when it is signed in as the account you name) and goes home, and the answer says so. A failed sign-in closes the browser and says why: report it rather than trying again. Every locator you will put in a script must be seen on the live app first: a save refuses any locator the app has not seen. Never read the application's code to write scripts. For a case marked no_save, name it with `case_id` (or pass `no_save: true`): every save the page tries is blocked, not only reported, until the discovery ends. Call end_autorun_discovery when you are done. The first discovery start of a session that is not a mapping run opens its answer with the writer's rules; a later one opens with a line pointing back at them. Every answer that is not a mapping run's ends with the rules that apply at that moment. An explore start (explore true) opens with the explorer's rules and ends with the explore rules.",
             "inputSchema": schema(serde_json::json!({
                 "account": { "type": "string", "description": "The KEY of the saved account to sign in as, from get_accounts. Never a username or a password." },
                 "area": { "type": "string", "description": "The recorded area you are exploring, by name; what you see is filed under it (with none, under no area)." },
@@ -747,9 +750,9 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool, unlocked: bool, all_projec
         },
         {
             "name": "reset_autorun_browser",
-            "description": "Start clean in the Auto Run browser your replay or discovery left open, without signing out: it closes the other tabs, forgets the dialogs and the stopping point of your last replay, lifts your save guard and loads the home page with the sign-in kept, ending your discovery if one is going (what it mapped is kept). If the sign-in has gone it says so, and the next replay signs in again. Refused while a replay is running (replay_autorun_to_step with `stop: true` stops one), and for the person's own browser. `release: true` lets go of the browser instead - only when it is broken (frozen, on the wrong account, its session gone), or the app refuses with 'close the supervised browser first' or answers \"the browser did not answer\" while no Auto Run browser is really open. Never release between replays: replays, discovery and resets share one browser and its sign-in. Never ask the person to restart the app. A release frees a held browser that has gone, ends your own discovery, and closes a browser your own replay left open, freeing its account; it never closes the person's own browser while it is open and answering (it says the person must close it or press Release Auto Run browser), and never stops a replay that is going.",
+            "description": "Start clean in the Auto Run browser your replay or discovery left open, without signing out: it closes the other tabs, forgets the dialogs and the stopping point of your last replay, lifts your save guard and loads the home page with the sign-in kept, ending your discovery if one is going (what it mapped is kept). If the sign-in has gone it says so, and the next replay signs in again. Refused while a replay is running (replay_autorun_to_step with `stop: true` stops one), and for the person's own browser. `release: true` instead lets go of your own browser only - and only when it is broken (frozen, on the wrong account, its session gone), or the app refuses with 'close the supervised browser first' or answers \"the browser did not answer\" while no Auto Run browser is really open. Never release between replays: your replays, discovery and resets share your browser and its sign-in. Never ask the person to restart the app. A release frees a held browser that has gone, ends your own discovery, and closes a browser your own replay left open, freeing its account; it never closes the person's own browser while it is open and answering (it says the person must close it or press Release Auto Run browser), and never stops a replay that is going.",
             "inputSchema": schema(serde_json::json!({
-                "release": { "type": "boolean", "description": "true only for a broken browser: let it go instead of resetting it. Never between replays." },
+                "release": { "type": "boolean", "description": "true only for a broken browser: let go of your own browser only, instead of resetting it. Never between replays." },
             }), &[]),
         },
         {
@@ -903,7 +906,7 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool, unlocked: bool, all_projec
         },
         {
             "name": "get_accounts",
-            "description": "The app's active environment and its accounts: key, label and username - the keys are what a script's `account` or a template run names. Passwords are included only when a person has marked the environment as a test environment; otherwise a note says so. Never write a username or password into a script or template. Also the project's `test_files` (name and size), the only files a case's upload step can send; one that is missing is for the person to add in Auto Run, Setup, Test files - you cannot.",
+            "description": "The app's active environment and its accounts: key, label and username - the keys are what a script's `account` or a template run names. Passwords are included only when a person has marked the environment as a test environment; otherwise a note says so. An account that is held right now carries `in_use_by`, naming the assistant or browser that holds it; pick one that has none. Never write a username or password into a script or template. Also the project's `test_files` (name and size), the only files a case's upload step can send; one that is missing is for the person to add in Auto Run, Setup, Test files - you cannot.",
             "inputSchema": schema(serde_json::json!({}), &[]),
         },
         {
@@ -1290,7 +1293,31 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool, unlocked: bool, all_projec
             t
         })
         .collect();
-    serde_json::json!({ "tools": tools })
+    let mut tools = serde_json::json!({ "tools": tools });
+    with_agent_property(&mut tools);
+    tools
+}
+
+/// Gives every listed tool named in `ai_tools::AUTORUN_TOOLS` or
+/// `API_TEMPLATE_TOOLS` the optional `agent` property, so a subagent can name
+/// itself and be given a browser of its own. Called on the final list, after
+/// the switch filter and the all-projects rewording, so it holds with either
+/// switch on or off. Never in `required`, and on no other tool: the writing
+/// job (`begin_test_case_writing`, read back by `get_tags`) is keyed by the
+/// full caller, name included, so a subagent that named itself on one of
+/// those two and not the other would read another job.
+fn with_agent_property(tools: &mut serde_json::Value) {
+    use crate::ai_tools::{API_TEMPLATE_TOOLS, AUTORUN_TOOLS};
+    let Some(list) = tools["tools"].as_array_mut() else { return };
+    for t in list {
+        let name = t["name"].as_str().unwrap_or_default();
+        if !(AUTORUN_TOOLS.contains(&name) || API_TEMPLATE_TOOLS.contains(&name)) {
+            continue;
+        }
+        if let Some(props) = t["inputSchema"]["properties"].as_object_mut() {
+            props.insert(AGENT_ARG.to_string(), serde_json::json!({ "type": "string", "description": AGENT_PROPERTY_DESCRIPTION }));
+        }
+    }
 }
 
 /// Rewords the Azure DevOps tools that read across projects for an app that

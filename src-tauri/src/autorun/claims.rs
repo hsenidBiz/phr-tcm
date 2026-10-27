@@ -1,0 +1,84 @@
+//! Which assistant is working on which case.
+//!
+//! An assistant that discovers, tries, replays or saves for a case claims it;
+//! another assistant that asks for the same case is told at once who holds it
+//! and is not made to wait. A claim lasts `CLAIM_TIMEOUT_MS` from the last
+//! time its holder claimed the case, and ends sooner with the holder's browser
+//! being released by the person, or its session being past its grace
+//! (`commands::autorun_slots::release_slot`, `on_sweep`). A holder that is no
+//! longer live (`agents::is_live`) refuses nobody.
+//!
+//! Case ids are unique in the organization and Auto Run works in the home
+//! project, so a claim is keyed by the case id alone.
+//!
+//! The claims are coordination state, not a cache: they say who is working on
+//! what right now, so nothing here may be stored on disk or kept across a
+//! restart, and nothing else in the app may keep a second copy of them (the
+//! same rule as `IMPORTING` in `commands/autorun.rs`). They are one `static`
+//! mutex that is never held across an await. The person's own commands never
+//! claim and are never refused.
+
+use crate::autorun::agents::{self, AgentKey};
+use std::sync::Mutex;
+
+/// How long a claim holds a case after its holder last claimed it.
+pub const CLAIM_TIMEOUT_MS: u64 = 20 * 60 * 1000;
+
+struct Claim {
+    case_id: i32,
+    holder: AgentKey,
+    at_ms: u64,
+}
+
+static CLAIMS: Mutex<Vec<Claim>> = Mutex::new(Vec::new());
+
+fn claims() -> std::sync::MutexGuard<'static, Vec<Claim>> {
+    CLAIMS.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// What an assistant is told about a case another assistant holds: the label
+/// only, never an id or a pid.
+pub fn case_claimed(case_id: i32, label: &str) -> String {
+    format!("case {case_id} is being worked on by {label} - pick another case, or ask the person to release {label} on the Auto Run screen")
+}
+
+fn expired(claim: &Claim, now_ms: u64) -> bool {
+    now_ms.saturating_sub(claim.at_ms) >= CLAIM_TIMEOUT_MS
+}
+
+/// `key` works on `case_id` from now: claimed, or renewed when it already
+/// held it. Refused with `case_claimed` when another LIVE agent claimed it
+/// less than `CLAIM_TIMEOUT_MS` before `now_ms`; a holder that has gone, or
+/// whose claim ran out, is taken over.
+pub fn claim(key: &AgentKey, case_id: i32, now_ms: u64) -> Result<(), String> {
+    let mut all = claims();
+    all.retain(|c| !expired(c, now_ms));
+    match all.iter_mut().find(|c| c.case_id == case_id) {
+        Some(c) if c.holder == *key => c.at_ms = now_ms,
+        Some(c) => match agents::info(&c.holder).filter(|i| i.gone_since_ms.is_none()) {
+            Some(held_by) => return Err(case_claimed(case_id, &held_by.label)),
+            None => {
+                c.holder = key.clone();
+                c.at_ms = now_ms;
+            }
+        },
+        None => all.push(Claim { case_id, holder: key.clone(), at_ms: now_ms }),
+    }
+    Ok(())
+}
+
+/// The agent holding `case_id` at `now_ms`, if a claim on it has not run out.
+/// It does not say whether that agent is still live (`agents::is_live`).
+pub fn holder(case_id: i32, now_ms: u64) -> Option<AgentKey> {
+    claims().iter().find(|c| c.case_id == case_id && !expired(c, now_ms)).map(|c| c.holder.clone())
+}
+
+/// `key` works on nothing: every claim it holds ends.
+pub fn end_for(key: &AgentKey) {
+    claims().retain(|c| c.holder != *key);
+}
+
+/// Every claim (tests).
+pub fn clear() {
+    claims().clear();
+}

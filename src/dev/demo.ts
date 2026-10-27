@@ -532,7 +532,8 @@ let environments: EnvListView = {
 };
 
 /** Two sample assistants for the Assistants card: one replaying a case in
- * the main Auto Run browser, one connected with no browser yet. */
+ * the main Auto Run browser, one exploring in a browser of its own, each
+ * signed in as a different account. */
 const demoAgents: AgentView[] = [
   {
     label: "Assistant 1",
@@ -550,12 +551,12 @@ const demoAgents: AgentView[] = [
   {
     label: "Assistant 2",
     client: "claude-code",
-    slot: null,
-    own_browser: false,
-    browser: null,
-    account: null,
-    activity: { kind: "idle" },
-    idle_minutes: 4,
+    slot: 1,
+    own_browser: true,
+    browser: "Edge",
+    account: "portal.tester",
+    activity: { kind: "discovering", area: "Profile" },
+    idle_minutes: 0,
     changed_for_testing: false,
     saves_blocked: false,
     can_stop: false,

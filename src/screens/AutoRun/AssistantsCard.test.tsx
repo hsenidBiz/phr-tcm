@@ -115,6 +115,24 @@ test("an extra browser is called its own, and the browser and account are left o
   expect(screen.getByText("its own browser")).toBeInTheDocument();
 });
 
+test("one assistant in the main browser and one in its own browser read apart, each with its account", async () => {
+  await mount([
+    agent({ label: "Assistant 1", slot: 0, account: "hr_admin" }),
+    agent({
+      label: "Assistant 2",
+      slot: 1,
+      own_browser: true,
+      browser: "Edge",
+      account: "portal.reviewer",
+      activity: { kind: "discovering", area: "Payroll" },
+    }),
+  ]);
+  expect(screen.getByText("main Auto Run browser, Edge, signed in as hr_admin")).toBeInTheDocument();
+  expect(screen.getByText("its own browser, Edge, signed in as portal.reviewer")).toBeInTheDocument();
+  expect(screen.getByText("discovering Payroll")).toBeInTheDocument();
+  expect(screen.getAllByRole("button", { name: /^Release Assistant \d's browser$/ })).toHaveLength(2);
+});
+
 test.each([
   [{ kind: "idle" }, 0, "idle"],
   [{ kind: "idle" }, 4, "idle for 4 min"],

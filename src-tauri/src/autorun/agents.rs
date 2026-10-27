@@ -52,6 +52,17 @@ pub enum Caller {
     Agent(AgentKey),
 }
 
+impl Caller {
+    /// The agent making the call; none for the default caller (an older
+    /// proxy, a test, the person), which never holds a browser.
+    pub fn key(&self) -> Option<&AgentKey> {
+        match self {
+            Caller::Default => None,
+            Caller::Agent(key) => Some(key),
+        }
+    }
+}
+
 /// The four `x-tcm-agent*` headers as read, each None when absent or
 /// unreadable.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]

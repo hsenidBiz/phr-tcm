@@ -76,7 +76,7 @@ async fn refuse_other_sessions() -> Result<(), String> {
     if crate::commands::autorun_replay::replay_is_running() {
         return Err("an unattended run is going - wait for it, or stop it first".to_string());
     }
-    if let Some(busy) = crate::commands::autorun::open_session_refusal().await {
+    if let Some(busy) = crate::commands::autorun::open_session_refusal_any().await {
         return Err(busy);
     }
     Ok(())

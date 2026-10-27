@@ -156,10 +156,10 @@ Not covered here: call `get_guide` (topic `autorun`) with a `section`, or `full`
 - A picture: open it directly with the file reader. Never search the disk
   for a picture. Set `"no_save": true` on any script that works on a shared
   draft and must not change it. A repair can turn `no_save` on, never off.
-- Replays, discovery and resets share one browser and its sign-in. `end_autorun_discovery` keeps it;
-  a replay to a failing step ends your own discovery first, keeping what it mapped. When the sign-in
-  fails, the session expires or you reach a cap, stop and report to the person; never try again in a
-  loop. Name the `case_id` on every discovery call for a `no_save` case.
+- Your replays, discovery and resets share your browser and its sign-in. Other assistants may be working at the same
+  time, each in a browser of its own. `end_autorun_discovery` keeps it; a replay to a failing step ends your own
+  discovery first, keeping what it mapped. When the sign-in fails, the session expires or you reach a cap, stop and
+  report to the person; never try again in a loop. Name the `case_id` on every discovery call for a `no_save` case.
 - `reset_autorun_browser` gives a clean page, sign-in kept. Use its
   `release: true` only for a broken browser (frozen, wrong account,
   session gone), never between replays. Never ask the person to restart the app.
@@ -1757,10 +1757,12 @@ You open and drive a browser of your own to find what a script needs:
   (`browser`) closes the open one and opens a new one, and it says "Closed the
   browser your replay left open."
 
-Replays, discovery and resets share one browser and its sign-in. A replay in a
-browser already signed in as its case's account goes straight to the area and
-says "Signed in already: went to <area>."; `end_autorun_discovery` keeps it for
-your next replay or discovery, so nothing needs closing in between.
+Your replays, discovery and resets share your browser and its sign-in. Other
+assistants may be working at the same time, each in a browser of its own. A
+replay in a browser already signed in as its case's account goes straight to
+the area and says "Signed in already: went to <area>."; `end_autorun_discovery`
+keeps it for your next replay or discovery, so nothing needs closing in
+between.
 
 When the sign-in fails, the session expires or you reach a cap (a mapping
 run's 150 screens), stop and report to the person; never try again in a
@@ -1947,6 +1949,32 @@ made. End your discovery summary with that list under "API templates to
 make", so they can be made with the API template tools and reused by
 every case that needs the same state. Never make one from a request you
 only guessed: only from a request discovery saw.
+
+## Working beside other assistants
+
+Up to three Auto Run browsers can be open at once. One assistant working
+alone always uses the main one, as before.
+
+- Each assistant needs an account of its own: signing an account in anywhere
+  ends its session everywhere else. `get_accounts` says who uses an account
+  (`in_use_by`); pick a free one with the role your cases need, and when every
+  such account is in use, `propose_accounts` so the person can add one.
+- Split the work so no two assistants share a case or an account. A case
+  another assistant works on, or an account another browser holds, is refused
+  at once: that is not an error to retry in a loop - take other work, or
+  report it.
+- One mapping run at a time, whoever runs it.
+- The map, the areas, the components and the quirks are shared: read an area
+  again just before you repair it.
+- An unattended run cannot start while any assistant's browser is open.
+- When your session ends, a browser of your own is released; the main one is
+  left open for the person.
+- Subagents: give each subagent you start a name of its own (for example
+  writer-1, writer-2) and tell it to pass it as `agent` on every Auto Run and
+  API template call; each name gets its own browser. A subagent without a name
+  shares your browser. A client that serves several chats through one
+  connection (Claude desktop) is one assistant to the app: give each chat its
+  own `agent` name too.
 
 ## Exploring a task
 

@@ -58,6 +58,7 @@ mod autorun_roles;
 mod autorun_slots;
 mod autorun_area_trip;
 mod autorun_batches;
+mod autorun_claims;
 mod autorun_cleanup;
 mod autorun_close_popups;
 mod autorun_bridge;

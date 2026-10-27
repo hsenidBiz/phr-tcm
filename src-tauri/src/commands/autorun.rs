@@ -12,7 +12,7 @@ use crate::autorun::store;
 use crate::autorun::{CaseScript, LocalRun, StepScript};
 use crate::browser::actions::ActionOutcome;
 use crate::browser::cdp::{Cdp, Driver};
-use crate::browser::launch::{launch_in, Browser, LaunchedBrowser};
+use crate::browser::launch::{launch_in_at, Browser, LaunchedBrowser};
 use base64::Engine;
 use std::path::PathBuf;
 use tauri::Manager;
@@ -484,14 +484,6 @@ impl MappingRun {
     }
 }
 
-/// The supervised session, for the bridge's page routes. Whoever locks
-/// it holds the browser: keep the critical section to one protocol job.
-/// `ai_bridge`'s `/autorun-page`, `/autorun-probe` and `/autorun-try`
-/// are its callers - the person's own browser, borrowed for one job.
-pub(crate) fn supervised() -> &'static tokio::sync::Mutex<Option<Session>> {
-    &SESSION
-}
-
 /// Said when a step arrives with no browser behind it. Pulled out so a
 /// test can hold the wording to account - "no session" would tell the
 /// person nothing about what to do.
@@ -616,10 +608,9 @@ const UNATTENDED_GOING: &str = "an unattended run is going - wait for it, or sto
 /// (`store::last_browser`) when none is open - the same opening as Open
 /// browser, marked as opened `by`. Called with the session lock held.
 async fn open_if_none(app: &tauri::AppHandle, slot: &mut Option<Session>, n: SlotNo, by: OpenedBy) -> Result<(), String> {
-    // The assistant this call is for: a browser that has gone is let go
-    // first, which unbinds the slot, and the browser opened is still its own.
-    let caller = crate::commands::autorun_slots::bound(n);
-    // A held browser that has gone is let go, and a new one opened.
+    // A held browser that has gone is let go, and a new one opened. Whose the
+    // new one is stays with the caller (`replay_supervised` holds the
+    // assistant's binding through all of this).
     let_go_if_gone_in(n, slot).await;
     if slot.is_some() {
         return Ok(());
@@ -628,22 +619,7 @@ async fn open_if_none(app: &tauri::AppHandle, slot: &mut Option<Session>, n: Slo
         return Err(UNATTENDED_GOING.to_string());
     }
     let which = Browser::from_name(&store::last_browser(&root(app)?));
-    let opened = open_into(root(app), slot, n, which, by).await;
-    if opened.is_ok() && by == OpenedBy::Assistant {
-        rebind_if_free(n, caller);
-    }
-    opened
-}
-
-/// After the browser an assistant's call opened closed an old one in slot
-/// `n` (which unbinds the slot), the assistant whose call it is holds the
-/// new one, unless another took the slot meanwhile.
-fn rebind_if_free(n: SlotNo, caller: Option<crate::autorun::agents::AgentKey>) {
-    if let Some(key) = caller {
-        if crate::commands::autorun_slots::bound(n).is_none() {
-            crate::commands::autorun_slots::bind(n, &key);
-        }
-    }
+    open_into(root(app), slot, n, which, by).await
 }
 
 /// Said by `open_for_discovery` when the app set up no data directory.
@@ -680,21 +656,24 @@ pub(crate) fn refuse_discovery_while_busy(n: SlotNo) -> Result<(), String> {
 /// names the other browser: that one is closed, and the one named opened.
 /// With none named a new browser is the one last chosen. Says which
 /// (`MadeWay`). It all happens in slot `n`'s browser, under that slot's lock.
+/// `holder` is the assistant whose call it is, if it is one: its binding of
+/// slot `n` is kept through closing a browser that has gone, or the other
+/// kind, and through opening the new one, so no other assistant's call can
+/// take the slot in between; the default caller passes none and is never bound.
 pub(crate) async fn open_for_discovery(
     browser_name: Option<&str>,
     mapping: Option<MappingRun>,
     no_save: DiscoveryFor,
     from: crate::ai_bridge::GuardFrom<'_>,
     n: SlotNo,
+    holder: Option<&crate::autorun::agents::AgentKey>,
 ) -> Result<crate::ai_bridge::MadeWay, String> {
     use crate::ai_bridge::MadeWay;
     refuse_discovery_while_busy(n)?;
     let wanted = browser_name.map(Browser::from_name);
     let guarded = (mapping.is_some() || no_save.no_save).then_some(from);
     let mut slot = session_slot(n).lock().await;
-    // The assistant this discovery is for: closing a browser that has gone,
-    // or the other kind, unbinds the slot, and the one opened is still its own.
-    let caller = crate::commands::autorun_slots::bound(n);
+    let _hold = holder.map(|key| crate::commands::autorun_slots::hold_binding(n, key));
     // Refused only for a browser that is really there: one that has gone
     // is let go, and the discovery opens.
     let made_way = crate::ai_bridge::make_way_for_discovery(&mut slot, wanted, guarded).await;
@@ -707,7 +686,9 @@ pub(crate) async fn open_for_discovery(
         let root = store::configured_root().ok_or_else(|| NO_DATA_DIRECTORY.to_string())?;
         let which = wanted.unwrap_or_else(|| Browser::from_name(&store::last_browser(&root)));
         open_into(Ok(root), &mut slot, n, which, OpenedBy::Assistant).await?;
-        rebind_if_free(n, caller);
+    }
+    if let Some(key) = holder {
+        crate::commands::autorun_slots::bind_if_free(n, key);
     }
     if let Some(session) = slot.as_mut() {
         session.discovery = Some(DiscoveryState {
@@ -776,6 +757,14 @@ pub async fn auto_run_end_discovery() -> Result<(), String> {
 static DISCOVERY_ACTIVE: [std::sync::atomic::AtomicBool; SLOT_COUNT] =
     [const { std::sync::atomic::AtomicBool::new(false) }; SLOT_COUNT];
 
+/// Whether the discovery in each slot is a mapping run, as last published
+/// with it (`publish_discovery_in`). Only one mapping run goes at a time,
+/// whoever runs it, so the start of a second reads this
+/// (`ai_bridge::mapping_refusal`). Like the flag above it is coordination
+/// state, not a cache: memory only, never kept or read from anywhere else.
+static MAPPING_ACTIVE: [std::sync::atomic::AtomicBool; SLOT_COUNT] =
+    [const { std::sync::atomic::AtomicBool::new(false) }; SLOT_COUNT];
+
 /// The window `autorun_discovery_changed` goes to. Set once during app
 /// setup: the bridge, which starts and ends discoveries, has no
 /// `AppHandle` of its own. Unset in the test binaries, where publishing
@@ -802,6 +791,8 @@ pub(crate) fn publish_discovery_in(n: SlotNo, slot: &Option<Session>) {
     use std::sync::atomic::Ordering;
     use tauri_specta::Event as _;
     let active = slot.as_ref().is_some_and(|s| s.discovery.is_some());
+    let mapping = slot.as_ref().and_then(|s| s.discovery.as_ref()).is_some_and(|d| d.mapping.is_some());
+    MAPPING_ACTIVE[n.index()].store(mapping, Ordering::SeqCst);
     if DISCOVERY_ACTIVE[n.index()].swap(active, Ordering::SeqCst) != active && n.is_main() {
         if let Some(app) = DISCOVERY_EVENTS.get() {
             let _ = crate::events::AutorunDiscoveryChanged { active }.emit(app);
@@ -820,6 +811,46 @@ pub fn auto_run_discovery_active() -> bool {
 /// Whether a discovery holds slot `n`'s browser, as last published.
 pub fn discovery_active_in(n: SlotNo) -> bool {
     DISCOVERY_ACTIVE[n.index()].load(std::sync::atomic::Ordering::SeqCst)
+}
+
+/// Whether a mapping run holds slot `n`'s browser, as last published.
+pub fn mapping_in(n: SlotNo) -> bool {
+    MAPPING_ACTIVE[n.index()].load(std::sync::atomic::Ordering::SeqCst)
+}
+
+/// The slot whose mapping run is starting right now: taken by a mapping
+/// start before anything opens (`claim_mapping_start`) and given back when
+/// the start returns, by which time `MAPPING_ACTIVE` says whether the run is
+/// going. Coordination state, not a cache: memory only. One std mutex, never
+/// held across an await.
+static MAPPING_STARTING: std::sync::Mutex<Option<SlotNo>> = std::sync::Mutex::new(None);
+
+/// A mapping start under way in a slot; dropping it gives the start back.
+pub struct MappingStart(SlotNo);
+
+impl Drop for MappingStart {
+    fn drop(&mut self) {
+        let mut s = MAPPING_STARTING.lock().unwrap_or_else(|e| e.into_inner());
+        if *s == Some(self.0) {
+            *s = None;
+        }
+    }
+}
+
+/// Slot `n` starts a mapping run, or `Err(going)`: per slot, whether a
+/// mapping run is going or starting there. Looked at and taken in one step,
+/// so two starts at the same moment cannot both pass.
+pub fn claim_mapping_start(n: SlotNo) -> Result<MappingStart, [bool; SLOT_COUNT]> {
+    let mut s = MAPPING_STARTING.lock().unwrap_or_else(|e| e.into_inner());
+    let mut going = SlotNo::all().map(mapping_in);
+    if let Some(m) = *s {
+        going[m.index()] = true;
+    }
+    if SlotNo::all().into_iter().any(|m| m != n && going[m.index()]) {
+        return Err(going);
+    }
+    *s = Some(n);
+    Ok(MappingStart(n))
 }
 
 /// Whether a discovery holds any slot's browser.
@@ -1023,6 +1054,116 @@ pub async fn open_session_refusal() -> Option<String> {
     slot.as_ref().map(|s| busy_browser_sentence(s.discovery.is_some()).to_string())
 }
 
+/// Said when an assistant's own browser (a slot beside the main one) is open
+/// where a global check - an unattended run, a recording, the environment
+/// switch - looks. Every caller is the person's own command, so the sentence
+/// is for the person: it says what to do on the Auto Run screen.
+pub const EXTRA_BROWSER_OPEN: &str = "an assistant's Auto Run browser is open - wait for it to finish, or release it on the Assistants card at the top of the Auto Run screen";
+
+/// The lowest slot whose browser is open, if any: the one a global check
+/// names when it refuses.
+pub fn first_open(open: [bool; SLOT_COUNT]) -> Option<SlotNo> {
+    SlotNo::all().into_iter().find(|n| open[n.index()])
+}
+
+/// Which slots hold a browser, each looked at on its own (never two locks at
+/// once), a browser that has gone let go first. Stops at the first one open,
+/// so the slots after it are `false` whether or not they hold one. The
+/// second is whether main's holds a discovery, for its sentence.
+async fn slots_open() -> ([bool; SLOT_COUNT], bool) {
+    let mut open = [false; SLOT_COUNT];
+    let mut main_discovering = false;
+    for n in SlotNo::all() {
+        let mut slot = session_slot(n).lock().await;
+        let_go_if_gone_in(n, &mut slot).await;
+        if let Some(s) = slot.as_ref() {
+            open[n.index()] = true;
+            main_discovering = n.is_main() && s.discovery.is_some();
+            break;
+        }
+    }
+    (open, main_discovering)
+}
+
+/// `open_session_refusal` for every slot: main's sentence when main holds a
+/// browser (the person's, or a discovery), `EXTRA_BROWSER_OPEN` when the
+/// first one open is an assistant's beside it, `None` when none is.
+pub async fn open_session_refusal_any() -> Option<String> {
+    let (open, main_discovering) = slots_open().await;
+    first_open(open).map(|n| {
+        if n.is_main() {
+            busy_browser_sentence(main_discovering).to_string()
+        } else {
+            EXTRA_BROWSER_OPEN.to_string()
+        }
+    })
+}
+
+/// Whether any slot's session is open, as `supervised_session_is_open` says
+/// of main's alone.
+pub async fn any_session_open() -> bool {
+    first_open(slots_open().await.0).is_some()
+}
+
+/// `any_session_open` without waiting, as `supervised_session_is_open_now`
+/// does it: a lock that stays taken counts as open (something is using that
+/// browser), one held for a moment is waited out (`try_lock_briefly`).
+pub fn any_session_open_now() -> bool {
+    SlotNo::all().into_iter().any(|n| try_lock_briefly(session_slot(n)).map_or(true, |slot| slot.is_some()))
+}
+
+/// The slots' session locks as the environment save and switch hold them
+/// (`lock_every_slot`).
+pub(crate) struct EverySlot {
+    held: Vec<tokio::sync::MutexGuard<'static, Option<Session>>>,
+    /// An assistant's slot (1 or 2) stayed taken through the brief tries: a
+    /// replay, a batch or an open is using that browser. Its lock is not held.
+    pub busy: bool,
+}
+
+impl EverySlot {
+    /// Whether any slot whose lock is held has a browser open.
+    pub fn any_open(&self) -> bool {
+        self.held.iter().any(|s| s.is_some())
+    }
+}
+
+/// The slots' session locks, taken in slot order 0, 1, 2 and held together:
+/// the environment save and switch, which refuse while any holds a browser.
+/// Callers hold `opening().write()` first, so no browser opens between the
+/// first lock and the last. Main's lock is waited for, as ever; an
+/// assistant's slot is only tried briefly (`try_lock_briefly`), because what
+/// holds it can be a whole replay: a slot that stays taken sets `busy`
+/// (the caller refuses with `SWITCH_BUSY`) and the tries stop there.
+pub(crate) async fn lock_every_slot() -> EverySlot {
+    let mut every = EverySlot { held: Vec::with_capacity(SLOT_COUNT), busy: false };
+    for n in SlotNo::all() {
+        if n.is_main() {
+            every.held.push(session_slot(n).lock().await);
+        } else if let Some(slot) = try_lock_briefly(session_slot(n)) {
+            every.held.push(slot);
+        } else {
+            every.busy = true;
+            break;
+        }
+    }
+    every
+}
+
+/// A slot's session lock held, as an open or a replay holds it: for a test
+/// of what waits on a browser in use. Nothing else holds a lock this way.
+pub struct HeldSlot(#[allow(dead_code)] tokio::sync::MutexGuard<'static, Option<Session>>);
+
+/// Wait for slot `n`'s session lock and hold it until the result drops.
+pub async fn hold_slot(n: SlotNo) -> HeldSlot {
+    HeldSlot(session_slot(n).lock().await)
+}
+
+/// `hold_slot` without waiting: `None` when something holds the lock.
+pub fn try_hold_slot(n: SlotNo) -> Option<HeldSlot> {
+    session_slot(n).try_lock().ok().map(HeldSlot)
+}
+
 /// Said by `end_autorun_discovery` when the discovery's browser had
 /// already gone: it is let go, and the discovery is over.
 pub const DISCOVERY_BROWSER_HAD_GONE: &str =
@@ -1127,6 +1268,11 @@ async fn open_into(
     which: Browser,
     by: OpenedBy,
 ) -> Result<(), String> {
+    // Read for as long as this goes, never waited for: this holds its slot's
+    // lock, which a switch holding the write waits for.
+    let Ok(_opening) = crate::commands::autorun_slots::opening().try_read() else {
+        return Err(crate::commands::autorun_slots::OPEN_WHILE_SWITCHING.to_string());
+    };
     // Looked at with the session lock held: a recording claims its slot and
     // then waits on this lock to look for a session, so the two can never
     // both miss each other.
@@ -1139,7 +1285,7 @@ async fn open_into(
     if let Some(old) = slot.take() {
         close_session(old);
     }
-    let browser = launch_in(which)?;
+    let browser = launch_in_at(which, crate::commands::autorun_slots::window_position(n))?;
     // The browser binds its port when it is ready, which varies with what
     // else the machine is doing: asked until it answers, as an unattended
     // run's launch asks, rather than after one fixed sleep that a busy
@@ -1188,7 +1334,7 @@ async fn open_into(
         kind: which,
         cdp,
         account: None,
-        lease: crate::autorun::lease::Held::supervised(),
+        lease: crate::autorun::lease::Held::supervised_in(n),
         guarded_case: None,
         guard_owner: None,
         downloads_root,
@@ -1314,11 +1460,12 @@ pub async fn auto_run_close_browser() -> Result<(), String> {
 
 /// Release Auto Run browser, on Auto Run's Setup card: for a browser the
 /// app still holds after it is gone, so a restart is never needed. A replay
-/// going is stopped and a case's setup between its template steps; then
-/// every Auto Run browser record is cleared - the supervised browser, the
-/// discovery in it (a mapping run keeps its summary) and the replay's,
-/// which is that same browser - and the browser closed through its normal
-/// close; then the signed-in template browsers held for API templates; then
+/// going is stopped (in every slot) and a case's setup between its template
+/// steps; then every Auto Run browser record is cleared - every slot's
+/// supervised browser, the discovery in it (a mapping run keeps its summary)
+/// and the replay's, which is that same browser - and the browser closed
+/// through its normal close, with each assistant's hold on it; then the
+/// signed-in template browsers held for API templates; then
 /// every browser still in the app's registry (`browser::tree::end_all`).
 /// Each is ended through the job the app put it in, so nothing outside the
 /// app's own jobs - the person's own Edge or Chrome, or any other program -
@@ -1341,17 +1488,34 @@ pub async fn release_autorun_browsers() -> Result<String, String> {
     }
     crate::autorun::setup::stop();
     crate::ai_bridge::stop_all_batches();
-    let Ok(mut slot) = tokio::time::timeout(RELEASE_WAIT, SESSION.lock()).await else {
+    // No browser opens while this goes (an open reads the opening lock and is
+    // refused when it is written), and then every slot's session is locked in
+    // slot order, each within `RELEASE_WAIT`.
+    let Ok(_opening) = tokio::time::timeout(RELEASE_WAIT, crate::commands::autorun_slots::opening().write()).await
+    else {
         return Err(BROWSER_BUSY.to_string());
     };
-    let held = crate::ai_bridge::close_browser_in(&mut slot);
-    publish_discovery(&slot);
+    let mut slots = Vec::with_capacity(SLOT_COUNT);
+    for n in SlotNo::all() {
+        let Ok(slot) = tokio::time::timeout(RELEASE_WAIT, session_slot(n).lock()).await else {
+            return Err(BROWSER_BUSY.to_string());
+        };
+        slots.push(slot);
+    }
+    let mut held = false;
+    for (n, slot) in SlotNo::all().into_iter().zip(slots.iter_mut()) {
+        held |= crate::ai_bridge::close_browser_in(slot);
+        publish_discovery_in(n, slot);
+        // Nobody holds a browser that is gone, one bound while it had none
+        // included.
+        crate::commands::autorun_slots::unbind(n);
+    }
     crate::browser::tree::blocking(crate::api_templates::held::close_all);
     let others = crate::browser::tree::held_profiles().len();
     let left = crate::browser::tree::blocking(crate::browser::tree::end_all);
-    // The lock and the claims go only now: nothing could start a browser
+    // The locks and the claims go only now: nothing could start a browser
     // that `end_all` would then have ended.
-    drop(slot);
+    drop(slots);
     tell_panes_closed();
     let answer = released_sentence(held, others, left);
     crate::applog::info(format!("Auto Run: {answer}"));
@@ -1426,6 +1590,16 @@ pub(crate) fn tell_panes(changed: Option<crate::events::AutorunSessionChanged>) 
 pub(crate) fn tell_panes_in(n: SlotNo, changed: Option<crate::events::AutorunSessionChanged>) {
     if n.is_main() {
         tell_panes(changed);
+    }
+}
+
+/// Tell the panes `event` of the browser of slot `n`, when it is the main
+/// browser. The panes show the person's browser only, so an extra browser's
+/// replay (it opening, signing in, stepping, closing) tells them nothing.
+/// Every pane event of `replay_supervised` goes through this.
+fn emit_if_main<E: tauri_specta::Event + serde::Serialize + Clone>(n: SlotNo, app: &tauri::AppHandle, event: E) {
+    if n.is_main() {
+        let _ = event.emit(app);
     }
 }
 
@@ -1943,17 +2117,26 @@ pub async fn close_autorun_browsers() {
     }
     crate::autorun::setup::stop();
     crate::ai_bridge::stop_all_batches();
-    let mut slot = SESSION.lock().await;
-    // A mapping run going keeps its summary, as any other ending does.
-    crate::ai_bridge::finish_mapping(&mut slot);
-    // An explore session going has its change list closed the same way.
-    crate::ai_bridge::finish_explore(&mut slot);
-    let session = slot.take();
-    drop(slot);
-    // Closing waits for the browser's processes to go: on a blocking
-    // thread, so the caller's bound around this future still holds.
-    if let Some(s) = session {
-        let _ = tauri::async_runtime::spawn_blocking(move || close_session(s)).await;
+    // Every slot's browser, taken in slot order, one lock at a time. Each
+    // closes on a blocking thread of its own, so the caller's bound is not
+    // spent three times over.
+    let mut closing = Vec::new();
+    for n in SlotNo::all() {
+        let mut slot = session_slot(n).lock().await;
+        // A mapping run going keeps its summary, as any other ending does.
+        crate::ai_bridge::finish_mapping(&mut slot);
+        // An explore session going has its change list closed the same way.
+        crate::ai_bridge::finish_explore(&mut slot);
+        let session = slot.take();
+        drop(slot);
+        // Closing waits for the browser's processes to go: on a blocking
+        // thread, so the caller's bound around this future still holds.
+        if let Some(s) = session {
+            closing.push(tauri::async_runtime::spawn_blocking(move || close_session(s)));
+        }
+    }
+    for done in closing {
+        let _ = done.await;
         crate::applog::info("Auto-run browser closed as the app exits");
     }
     let _ = held.await;
@@ -2110,7 +2293,7 @@ pub async fn auto_run_replay_to_step(
     let req = crate::autorun::replay_to::ReplayRequest { case_id, step, db_read_access };
     // The person's own replay, as their own step: it may lift an earlier
     // case's guard. The tabs its steps ran in go to the pane beside them.
-    let (end, tabs, _, _, _, _, _) = replay_supervised(&app, SlotNo::MAIN, &organization, &project, req, ReplayBy::Person).await?;
+    let (end, tabs, _, _, _, _, _) = replay_supervised(&app, SlotNo::MAIN, &organization, &project, req, ReplayBy::Person, None).await?;
     // The clean-up named as such: noted by this replay's steps.
     let cleanup = crate::autorun::replay_to::cleanup_at();
     Ok(crate::autorun::replay_to::ReplayAnswer::with_tabs(end, tabs, cleanup))
@@ -2174,7 +2357,11 @@ impl ReplayBy {
 /// ended, if any. With the end come the tabs its steps ran in outside
 /// `main` (`replay_to_traced`), and, last, what it made of a browser
 /// already signed in as the case's account (`replay_to_traced`'s `reuse`).
-/// `Err` is a browser that would not open.
+/// `Err` is a browser that would not open. `holder` is the assistant whose
+/// call it is, if it is one: its binding of slot `n` is kept through ending a
+/// discovery, letting a gone browser go and opening the browser the replay
+/// uses, so no other assistant's call can take the slot in between. The
+/// person's replay and the default caller pass none.
 pub(crate) async fn replay_supervised(
     app: &tauri::AppHandle,
     n: SlotNo,
@@ -2182,6 +2369,7 @@ pub(crate) async fn replay_supervised(
     project: &str,
     req: crate::autorun::replay_to::ReplayRequest,
     by: ReplayBy,
+    holder: Option<&crate::autorun::agents::AgentKey>,
 ) -> Result<
     (
         crate::autorun::replay_to::ReplayEnd,
@@ -2196,7 +2384,6 @@ pub(crate) async fn replay_supervised(
 > {
     use crate::ai_bridge::DiscoveryEnded;
     use crate::autorun::replay_to::{self, OneReplay, ReplayEnd, ReplayFrom};
-    use tauri_specta::Event;
     const BEGINNING: ReplayFrom = ReplayFrom::Beginning;
     // Whose it is: the replay tool's `stop` stops the assistant's only.
     let claimed = match by {
@@ -2219,10 +2406,7 @@ pub(crate) async fn replay_supervised(
     let (case_id, step, db_read_access) = (req.case_id, req.step, req.db_read_access);
     let secrets = std::sync::Arc::clone(&app.state::<crate::db::DbSecrets>().0);
     let mut slot = session_slot(n).lock().await;
-    // The assistant this replay is for: ending its discovery, or letting a
-    // gone browser go, unbinds the slot, and the browser the replay then
-    // uses is still its own.
-    let caller = crate::commands::autorun_slots::bound(n);
+    let hold = holder.map(|key| crate::commands::autorun_slots::hold_binding(n, key));
     // A Close that took the lock first is respected: no browser is opened
     // again for a replay the person has already stopped.
     if let Some(stopped) = replay_to::stopped_before_opening(&replay_to::state(n).cancel) {
@@ -2249,13 +2433,18 @@ pub(crate) async fn replay_supervised(
     if let Err(why) = open_if_none(app, &mut slot, n, by.opens_as()).await {
         return Err(crate::ai_bridge::after_ended_discovery(discovery.ended, &why));
     }
-    if by == ReplayBy::Assistant {
-        rebind_if_free(n, caller);
+    if let Some(key) = holder {
+        crate::commands::autorun_slots::bind_if_free(n, key);
     }
+    // The hold covered the open only: a browser that closes during the
+    // replay, or at its end, leaves the slot empty and unbound
+    // (`close_session`), as it does for anyone else.
+    drop(hold);
     // The panes hear of a browser this replay opened, and of the account
-    // it leaves the browser signed in as, before the lock lets them in.
+    // it leaves the browser signed in as, before the lock lets them in. Only
+    // the person's browser is theirs to hear of (`emit_if_main`).
     if let Some(changed) = replay_to::opened_event(had_browser) {
-        let _ = changed.emit(app);
+        emit_if_main(n, app, changed);
     }
     let session = slot.as_mut().ok_or_else(describe_session_error)?;
     // The person's replay makes a browser already open theirs; the
@@ -2345,7 +2534,7 @@ pub(crate) async fn replay_supervised(
                 &crate::browser::timing::Timing::supervised(),
                 replay_to::state(n),
                 |k, of| {
-                    let _ = crate::events::AutorunReplayProgress { case_id, step: k, of }.emit(app);
+                    emit_if_main(n, app, crate::events::AutorunReplayProgress { case_id, step: k, of });
                 },
                 &mut tabs,
                 replay_to::wrote_before(stand.as_ref(), k),
@@ -2368,7 +2557,7 @@ pub(crate) async fn replay_supervised(
                 &crate::browser::timing::Timing::supervised(),
                 replay_to::state(n),
                 |k, of| {
-                    let _ = crate::events::AutorunReplayProgress { case_id, step: k, of }.emit(app);
+                    emit_if_main(n, app, crate::events::AutorunReplayProgress { case_id, step: k, of });
                 },
                 &mut tabs,
                 false,
@@ -2392,7 +2581,7 @@ pub(crate) async fn replay_supervised(
                 replay_to::state(n),
                 || crate::autorun::preconditions::for_run(&root, Some(secrets.as_ref()), db_read_access),
                 |k, of| {
-                    let _ = crate::events::AutorunReplayProgress { case_id, step: k, of }.emit(app);
+                    emit_if_main(n, app, crate::events::AutorunReplayProgress { case_id, step: k, of });
                 },
                 &mut tabs,
                 &mut reuse,
@@ -2419,7 +2608,7 @@ pub(crate) async fn replay_supervised(
         reuse.not_carried = not_carried;
     }
     if let Some(changed) = replay_to::signed_in_event(&account_before, &session.account) {
-        let _ = changed.emit(app);
+        emit_if_main(n, app, changed);
     }
     // A guard this replay put on for its case is the replay's; one it
     // lifted has no owner left; one it kept keeps its own - but a no_save
@@ -2449,7 +2638,7 @@ pub(crate) async fn replay_supervised(
             ReplayEnd::Stopped { step } => ReplayEnd::BrowserGone { step, why: None, outcomes: Vec::new() },
             other => other,
         };
-        let _ = crate::events::AutorunSessionChanged { opened: false, account: None }.emit(app);
+        emit_if_main(n, app, crate::events::AutorunSessionChanged { opened: false, account: None });
     }
     let how = match &end {
         ReplayEnd::Ready { .. } => match from {
@@ -2568,14 +2757,25 @@ pub async fn auto_run_check_preconditions(
 }
 
 /// The supervised browser making way for a setup that signs in as `key`
-/// (`setup::make_way`). `SESSION` is held for that alone, never while the
-/// setup runs.
+/// (`setup::make_way`). The main browser always makes way, as it always did
+/// (it only lets go of an account it holds); an extra browser does only when
+/// it holds `key` - the account is held by one browser at a time, so that is
+/// where the setup's sign-in would meet it. Each slot's lock is held for that
+/// alone, one after the other, never while the setup runs.
 pub async fn make_way_for_setup(key: String, timing: &crate::browser::timing::Timing) {
-    let mut slot = SESSION.lock().await;
-    if let Some(s) = slot.as_mut() {
+    for n in SlotNo::all() {
+        let mut slot = session_slot(n).lock().await;
+        let Some(s) = slot.as_mut() else { continue };
+        let holds = s.lease.account() == Some(key.as_str()) || s.account.as_deref() == Some(key.as_str());
+        if !n.is_main() && !holds {
+            continue;
+        }
         s.used_otherwise();
-        note_session_use();
+        note_session_use_in(n);
         crate::autorun::setup::make_way(&mut s.cdp, &mut s.account, &mut s.lease, &key, timing).await;
+        if holds {
+            break;
+        }
     }
 }
 
@@ -3846,7 +4046,7 @@ pub async fn refuse_while_a_run_is_going() -> Result<(), String> {
     if crate::commands::autorun_replay::replay_is_running() {
         return Err("an unattended run is going - wait for it, or stop it first".to_string());
     }
-    if let Some(busy) = open_session_refusal().await {
+    if let Some(busy) = open_session_refusal_any().await {
         return Err(busy);
     }
     Ok(())

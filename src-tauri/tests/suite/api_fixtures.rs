@@ -1442,7 +1442,7 @@ mod running {
     /// at once.
     async fn lease_is_free(r: &Rig) -> bool {
         let env = v2_lib::environments::active(r.root.path()).unwrap().id;
-        v2_lib::autorun::lease::acquire(&env, "admin", v2_lib::autorun::lease::Holder::Browser, std::time::Duration::ZERO)
+        v2_lib::autorun::lease::acquire(&env, "admin", v2_lib::autorun::lease::Holder::Browser { slot: 0 }, std::time::Duration::ZERO)
             .await
             .is_ok()
     }
@@ -1513,7 +1513,7 @@ mod running {
         let held = v2_lib::autorun::lease::acquire(
             &env,
             "admin",
-            v2_lib::autorun::lease::Holder::Browser,
+            v2_lib::autorun::lease::Holder::Browser { slot: 0 },
             std::time::Duration::ZERO,
         )
         .await

@@ -8,7 +8,7 @@
 //! | Holder | Holds the lease | Asks for a held one |
 //! |---|---|---|
 //! | An unattended case | From before its sign-in until its browser is closed at the case's end | Waits |
-//! | The supervised Auto Run browser | From a sign-in until it is closed or signs in as another account | Refused at once |
+//! | A supervised Auto Run browser (main or an assistant's own, by slot) | From a sign-in until it is closed or signs in as another account | Refused at once, by an asker of any slot |
 //! | An API template run or prove | For its whole run, its browser's close included | Waits |
 //! | Auto Run setup: the module-path check, Try and recording, and the recorded sign-in's check | Until its own browser is closed | Refused at once |
 //!
@@ -50,8 +50,11 @@ const POLL: Duration = Duration::from_millis(250);
 /// Who holds a lease, as the sentence names it to whoever is asking.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Holder {
-    /// The supervised Auto Run browser.
-    Browser,
+    /// The supervised Auto Run browser in this slot (`autorun::slots`; 0 is
+    /// the main one). Which slot is how a refusal can name the assistant
+    /// whose browser holds an account (`ai_bridge::with_holder_named`); every
+    /// slot's browser is worded alike to whoever is refused (`seen_by`).
+    Browser { slot: u8 },
     /// An API template run or prove.
     Template,
     /// A case of the unattended run with this id.
@@ -66,7 +69,7 @@ impl Holder {
     /// "another case in this run", one of any other run "an unattended run".
     fn seen_by(&self, asking: &Holder) -> &'static str {
         match (self, asking) {
-            (Holder::Browser, _) => BROWSER_WORDS,
+            (Holder::Browser { .. }, _) => BROWSER_WORDS,
             (Holder::Template, _) => "an API template run",
             (Holder::Case { run }, Holder::Case { run: mine }) if run == mine => "another case in this run",
             (Holder::Case { .. }, _) => "an unattended run",
@@ -203,7 +206,46 @@ pub fn is_held(env: &str, key: &str) -> bool {
 /// Whether the supervised Auto Run browser or an Auto Run setup browser holds
 /// an account right now - the two holders only a person closes. Only looks.
 pub fn a_browser_is_held() -> bool {
-    table().values().any(|e| matches!(e.holder, Holder::Browser | Holder::Setup))
+    table().values().any(|e| matches!(e.holder, Holder::Browser { .. } | Holder::Setup))
+}
+
+/// Who holds the account `key` in `env` right now. Only looks.
+pub fn holder_of(env: &str, key: &str) -> Option<Holder> {
+    table().get(&(env.to_string(), key.to_string())).map(|e| e.holder.clone())
+}
+
+/// Every account held in `env` right now, as (account key, holder), in no
+/// particular order. Only looks.
+pub fn holders_in(env: &str) -> Vec<(String, Holder)> {
+    table().iter().filter(|((e, _), _)| e == env).map(|((_, key), entry)| (key.clone(), entry.holder.clone())).collect()
+}
+
+/// The first lease refusal sentence inside `text` (`in_use`), as (account
+/// key, holder words): `the account <key> was in use by <holder> - try again
+/// when it is free`, with a key that has no space and a holder this module
+/// names. `None` when there is none.
+pub fn find_in_use(text: &str) -> Option<(String, String)> {
+    let (key, holder, _) = locate_in_use(text)?;
+    Some((key.to_string(), holder.to_string()))
+}
+
+/// `find_in_use`, with where the sentence ends in `text` as well: (key,
+/// holder words, the byte after its last character).
+pub fn locate_in_use(text: &str) -> Option<(&str, &'static str, usize)> {
+    for (at, _) in text.match_indices(IN_USE_START) {
+        let rest = &text[at + IN_USE_START.len()..];
+        let Some(key_len) = rest.find(char::is_whitespace) else { continue };
+        let key = &rest[..key_len];
+        let Some(after_by) = rest[key_len..].strip_prefix(IN_USE_BY) else { continue };
+        for holder in HOLDER_WORDS {
+            let Some(after_holder) = after_by.strip_prefix(holder) else { continue };
+            if !key.is_empty() && after_holder.starts_with(IN_USE_END) {
+                let end = text.len() - after_holder.len() + IN_USE_END.len();
+                return Some((key, holder, end));
+            }
+        }
+    }
+    None
 }
 
 /// The lease, now, or the sentence that says who has it.
@@ -290,10 +332,16 @@ impl Held {
         Held { holder, wait, lease: None, signed_in: None, ignored: std::collections::BTreeSet::new() }
     }
 
-    /// The supervised Auto Run browser's: a held account is refused at
-    /// once, never waited for.
+    /// The main Auto Run browser's, and the person's paths': a held account
+    /// is refused at once, never waited for.
     pub fn supervised() -> Self {
-        Held::new(Holder::Browser, Duration::ZERO)
+        Held::supervised_in(crate::autorun::slots::SlotNo::MAIN)
+    }
+
+    /// The Auto Run browser in `slot`'s: a held account is refused at once,
+    /// never waited for, and it holds its own as that slot's.
+    pub fn supervised_in(slot: crate::autorun::slots::SlotNo) -> Self {
+        Held::new(Holder::Browser { slot: slot.0 }, Duration::ZERO)
     }
 
     /// Auto Run setup's (a module-path check, Try or recording, or the

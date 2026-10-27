@@ -93,7 +93,7 @@ fn the_supervised_browser_and_setup_also_bump_the_generation() {
     let _l = crate::serial::account_leases();
     let key = "held.others";
     assert_eq!(lease::generation(ENV, key), 0, "a key never taken starts at 0");
-    drop(lease::try_acquire(ENV, key, Holder::Browser).unwrap());
+    drop(lease::try_acquire(ENV, key, Holder::Browser { slot: 0 }).unwrap());
     drop(lease::try_acquire(ENV, key, Holder::Setup).unwrap());
     assert_eq!(lease::generation(ENV, key), 2);
     assert_eq!(lease::generation("another-env", key), 0, "a generation is per environment");
@@ -120,7 +120,7 @@ fn a_refused_take_does_not_bump_the_generation() {
     let key = "held.refused";
     let _template = lease::try_acquire(ENV, key, Holder::Template).unwrap();
     let before = lease::generation(ENV, key);
-    assert!(lease::try_acquire(ENV, key, Holder::Browser).is_err());
+    assert!(lease::try_acquire(ENV, key, Holder::Browser { slot: 0 }).is_err());
     assert_eq!(lease::generation(ENV, key), before, "a lease that was never taken took the account");
 }
 
@@ -203,7 +203,7 @@ fn the_sweep_closes_a_browser_that_gave_way_before_its_idle_time_runs_out() {
     let (moved, still) = ("held.swept", "held.kept");
     held::put_at(ENV, moved, entry(11, ENV, moved), now);
     held::put_at(ENV, still, entry(12, ENV, still), now);
-    drop(lease::try_acquire(ENV, moved, Holder::Browser).unwrap());
+    drop(lease::try_acquire(ENV, moved, Holder::Browser { slot: 0 }).unwrap());
 
     let gone = held::expired_at::<Tag>(now);
     assert_eq!(gone.into_iter().map(|e| e.driver).collect::<Vec<_>>(), vec![Tag(11)]);
