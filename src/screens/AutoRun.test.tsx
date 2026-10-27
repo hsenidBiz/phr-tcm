@@ -1395,8 +1395,6 @@ test("the full Setup rows keep their status dot and spoken status", async () => 
     "Discovery",
     "Components",
     "Test files",
-    "Save words",
-    "Protected records",
   ];
   for (const name of rows) {
     const row = within(setupPanel()).getByRole("group", { name });
@@ -1630,11 +1628,10 @@ test("the Setup panel shows the environment and its database, all six rows, and 
     "Edit accounts",
     "Edit areas",
     "Manage test files",
-    "Edit save words",
   ]) {
     expect(within(panel).getByRole("button", { name })).toBeInTheDocument();
   }
-  for (const name of ["Site address", "Sign-in", "Accounts", "Areas", "Test files", "Save words"]) {
+  for (const name of ["Site address", "Sign-in", "Accounts", "Areas", "Test files"]) {
     expect(within(panel).getByRole("group", { name })).toBeInTheDocument();
   }
   expect(within(panel).getByText(/\/tcm:setup/)).toBeInTheDocument();

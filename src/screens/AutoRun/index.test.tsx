@@ -1739,22 +1739,16 @@ test("a redraw with no hidden case ticked queues no selection update", async () 
   expect(screen.getByRole("checkbox", { name: "Select #1" })).toBeChecked();
 });
 
-test("the Save words row shows the built-in words and the project's own, and Edit opens its dialog", async () => {
-  const builtIn = ["save", "update", "delete", "submit", "approve", "publish", "assign"];
-  mockList([caseRow(1, "Login - valid credentials")], [1], [], (cmd) =>
-    cmd === "auto_run_load_nav"
-      ? { direct_urls: true, modules: [], save_words: ["recalc"], built_in_save_words: builtIn }
-      : null,
-  );
+test("the Setup panel's full rows have no Save words or Protected records row", async () => {
+  mockList([caseRow(1, "Login - valid credentials")], [1]);
   renderScreen();
   await screen.findByText("Login - valid credentials");
   openSetup();
-  const words = row("Save words");
-  await waitFor(() => expect(words).toHaveTextContent(`${builtIn.join(", ")}, recalc`));
-  fireEvent.click(within(words).getByRole("button", { name: "Edit save words" }));
-  expect(await screen.findByRole("heading", { name: "Save words" })).toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "Remove save word recalc" })).toBeInTheDocument();
-  expect(screen.queryByRole("button", { name: "Remove save word save" })).not.toBeInTheDocument();
+  row("Site address");
+  expect(screen.queryByRole("group", { name: "Save words" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("group", { name: "Protected records" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Edit save words" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Edit protected records" })).not.toBeInTheDocument();
 });
 
 /** An unattended run of this PBI in which case 1 failed at step 2. */

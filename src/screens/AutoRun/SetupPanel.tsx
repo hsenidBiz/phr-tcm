@@ -1,6 +1,6 @@
 // The setup a run needs, beside the Test cases list: the environment runs
 // go to and its database, the site address, the sign-in, the accounts, the
-// areas, the test files and the save words.
+// areas and the test files.
 //
 // Collapsed, it is one line per item with a status dot. Expanded, it is the
 // full rows with their buttons, each opening its own dialog. The screen
@@ -25,11 +25,9 @@ import {
   IconDiscoveryMap,
   IconHideDetails,
   IconModulePaths,
-  IconProtectedRecords,
   IconRecipe,
   IconRecord,
   IconRelease,
-  IconSaveWords,
   IconShowDetails,
   IconSiteAddress,
   IconStop,
@@ -41,11 +39,9 @@ import AccountsDialog from "./AccountsDialog";
 import AreasDialog from "./AreasDialog";
 import ComponentsDialog, { componentsSummary, useComponents } from "./ComponentsDialog";
 import DiscoveryDialog, { discoverySummary, useDiscoveryMap } from "./DiscoveryDialog";
-import ProtectedRecordsDialog from "./ProtectedRecordsDialog";
 import RecipeEditor from "./RecipeEditor";
 import { noProjectHint, useAllProjects } from "../../lib/projectScope";
 import RecordSignInDialog from "./RecordSignInDialog";
-import SaveWordsDialog, { BUILT_IN_SAVE_WORDS } from "./SaveWordsDialog";
 import SiteAddressDialog from "./SiteAddressDialog";
 import TestFilesDialog, { useTestFiles } from "./TestFilesDialog";
 import { useAutoRunReadiness } from "./useAutoRunReadiness";
@@ -436,8 +432,6 @@ export default function SetupPanel({
   const [componentsOpen, setComponentsOpen] = useState(false);
   const [siteOpen, setSiteOpen] = useState(false);
   const [testFilesOpen, setTestFilesOpen] = useState(false);
-  const [saveWordsOpen, setSaveWordsOpen] = useState(false);
-  const [protectedOpen, setProtectedOpen] = useState(false);
   // While the assistant's discovery holds the Auto Run browser, End
   // discovery is the person's way out of one the assistant never ended.
   // Nothing is lost by ending it - the map keeps what was seen - so it asks
@@ -491,9 +485,8 @@ export default function SetupPanel({
           ? `${s.activeDb.label}: ${s.activeDb.database} on ${s.activeDb.server}`
           : `${s.activeDb.label}: not set up yet`;
 
-  // The full rows carry the same status as the summary lines. Save words
-  // and Protected records have no summary line: quiet, so every row's label
-  // starts at the same place.
+  // The full rows carry the same status as the summary lines. A row with no
+  // summary line is quiet, so every row's label starts at the same place.
   const lines = summaryLines(s, allProjects);
   const statusOf = (label: string): Status => lines.find((l) => l.label === label)?.status ?? "quiet";
   const dbStatus = statusOf("Database");
@@ -859,78 +852,6 @@ export default function SetupPanel({
                   Manage
                 </Button>
               </SetupRow>
-
-              {/* What a script marked Must not save has stopped: the
-                  built-in words, fixed, then the project's own. */}
-              <SetupRow
-                label="Save words"
-                status={statusOf("Save words")}
-                state={
-                  !setupReady ? (
-                    <span className="text-muted">{needsProject}</span>
-                  ) : nav.isError ? (
-                    <span className="text-danger">The save words could not be read</span>
-                  ) : nav.isPending ? (
-                    <span className="text-muted">Loading…</span>
-                  ) : (
-                    <>
-                      <span className="text-muted">
-                        {(nav.data?.built_in_save_words?.length
-                          ? nav.data.built_in_save_words
-                          : BUILT_IN_SAVE_WORDS
-                        ).join(", ")}
-                      </span>
-                      {(nav.data?.save_words ?? []).length > 0 && (
-                        <span>, {(nav.data?.save_words ?? []).join(", ")}</span>
-                      )}
-                    </>
-                  )
-                }
-              >
-                <Button
-                  size="sm"
-                  variant="outline"
-                  aria-label="Edit save words"
-                  disabled={!setupReady || nav.isPending || nav.isError}
-                  title={needsProject}
-                  onClick={() => setSaveWordsOpen(true)}
-                >
-                  <IconSaveWords aria-hidden />
-                  Edit
-                </Button>
-              </SetupRow>
-
-              {/* The records its tests must never edit or delete, handed to
-                  the Playwright repo on export. */}
-              <SetupRow
-                label="Protected records"
-                status={statusOf("Protected records")}
-                state={
-                  !setupReady ? (
-                    <span className="text-muted">{needsProject}</span>
-                  ) : nav.isError ? (
-                    <span className="text-danger">The protected records could not be read</span>
-                  ) : nav.isPending ? (
-                    <span className="text-muted">Loading…</span>
-                  ) : (nav.data?.protected ?? []).length === 0 ? (
-                    <span className="text-muted">None</span>
-                  ) : (
-                    <span className="text-muted">{plural((nav.data?.protected ?? []).length, "record")}</span>
-                  )
-                }
-              >
-                <Button
-                  size="sm"
-                  variant="outline"
-                  aria-label="Edit protected records"
-                  disabled={!setupReady || nav.isPending || nav.isError}
-                  title={needsProject}
-                  onClick={() => setProtectedOpen(true)}
-                >
-                  <IconProtectedRecords aria-hidden />
-                  Edit
-                </Button>
-              </SetupRow>
             </div>
             <p className="text-xs text-muted">
               An assistant&apos;s <span className="id-mono">/tcm:setup</span> command can walk you through this.
@@ -944,17 +865,6 @@ export default function SetupPanel({
       {recordOpen && <RecordSignInDialog org={org} project={project} onClose={() => setRecordOpen(false)} />}
       {testFilesOpen && <TestFilesDialog org={org} project={project} onClose={() => setTestFilesOpen(false)} />}
       {siteOpen && <SiteAddressDialog org={org} project={project} onClose={() => setSiteOpen(false)} />}
-      {saveWordsOpen && (
-        <SaveWordsDialog org={org} project={project} view={nav.data ?? null} onClose={() => setSaveWordsOpen(false)} />
-      )}
-      {protectedOpen && (
-        <ProtectedRecordsDialog
-          org={org}
-          project={project}
-          view={nav.data ?? null}
-          onClose={() => setProtectedOpen(false)}
-        />
-      )}
       {discoveryOpen && (
         <DiscoveryDialog org={org} project={project} onClose={() => setDiscoveryOpen(false)} />
       )}

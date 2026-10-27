@@ -132,8 +132,8 @@ export const autoRun: Screen = {
     { id: SETUP, route: TO_SETUP, alt: "The Setup panel opened beside the cases: the environment, site address, sign-in, accounts, areas, discovery and components" },
     {
       id: SETUP_END,
-      route: [...TO_SETUP, { scrollTo: { role: "button", name: "Edit save words" } }],
-      alt: "The bottom of the Setup panel, scrolled into view: test files and save words",
+      route: [...TO_SETUP, { scrollTo: { role: "button", name: "Manage test files" } }],
+      alt: "The bottom of the Setup panel, scrolled into view: the test files row",
     },
     {
       id: SITE,
@@ -391,7 +391,7 @@ export const autoRun: Screen = {
       name: "Must not save",
       does:
         "For a case that works on shared data and must never change it. While the case runs, any save the page tries to send is stopped before it reaches the site, and the case fails. " +
-        "The save words in the Setup panel decide what counts as a save. Only you can turn it off, here.",
+        "Only you can turn it off, here.",
     },
     {
       id: "readable-script",
@@ -815,15 +815,6 @@ export const autoRun: Screen = {
       locate: { role: "button", name: "Manage test files" },
       name: "Manage (test files)",
       does: "The documents and pictures scripts and API templates upload, kept on this computer and named in a script by file name. Add, remove or open their folder.",
-    },
-    {
-      id: "edit-save-words",
-      shot: SETUP_END,
-      group: "setup",
-      locate: { role: "button", name: "Edit save words" },
-      name: "Edit (save words)",
-      does:
-        "The words that mark a button as a save, which **Must not save** stops: the built-in ones, which cannot be removed, and your project's own.",
     },
 
     // --- Site address --------------------------------------------------------------
