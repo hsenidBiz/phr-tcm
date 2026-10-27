@@ -1107,7 +1107,7 @@ mod card {
     #[tokio::test]
     async fn a_gone_agent_after_grace_releases_its_extra_slot_and_stops_its_replay() {
         use v2_lib::autorun::claims;
-        let logged = || v2_lib::applog::recent(500).into_iter().map(|l| l.message).collect::<Vec<_>>().join("\n");
+        let logged = || v2_lib::applog::recent(2000).into_iter().map(|l| l.message).collect::<Vec<_>>().join("\n");
         let _g = crate::serial::agents();
         let _l = crate::serial::log_tail();
         let _a = crate::serial::autorun();
@@ -1124,14 +1124,20 @@ mod card {
         assert_eq!(bound(SlotNo(1)), Some(b.clone()), "gone is not yet past its grace");
         assert!(!cancelled(SlotNo(1)));
 
+        // A mark in the log tail: only what the sweep wrote after it is read,
+        // so lines other tests left behind cannot decide the result.
+        let mark = "autorun_slots test: the past-grace sweep starts here";
+        v2_lib::applog::info(mark);
         on_sweep(&Sweep { past_grace: vec![b.clone()], ..Sweep::default() }).await;
         assert!(cancelled(SlotNo(1)), "its replay was stopped through its own slot's cancel");
         assert!(!cancelled(SlotNo::MAIN), "main's replay was not touched");
         assert_eq!(bound(SlotNo(1)), None);
         assert_eq!(claims::holder(4521, T0), None);
         let lines = logged();
-        assert!(lines.contains("Auto Run: released Assistant 2's browser (its session ended)"), "{lines}");
-        assert!(!lines.contains(ID_B) && !lines.contains("4242"), "{lines}");
+        let after = &lines[lines.rfind(mark).expect("the mark is in the log tail")..];
+        assert!(after.contains("Auto Run: released Assistant 2's browser (its session ended)"), "{after}");
+        assert!(!after.contains("(the person released it)"), "the sweep's release was logged as the person's: {after}");
+        assert!(!after.contains(ID_B) && !after.contains("4242"), "{after}");
         drop(replay);
         claims::clear();
         fresh();
