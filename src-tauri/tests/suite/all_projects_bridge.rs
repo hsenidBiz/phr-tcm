@@ -33,7 +33,7 @@ fn ctx(all_projects: bool) -> BridgeContext {
 fn forget_memos(uri: &str) {
     for org in ["acme", "tagsorg-p6", "tagsorg-p6-callers", "tagsorg-p6-bye", "tagsorg-p6-account"] {
         cache::forget(&keys::org_projects(uri, org));
-        for p in ["Web", "Payroll", "Locked"] {
+        for p in ["Web", "Payroll", "Locked", "P1", "P2", "P3"] {
             cache::forget(&keys::suite_tree(uri, org, p));
         }
         for id in [9, 42, 43, 77, 4201, 4202, 4203, 4204] {
@@ -367,6 +367,55 @@ async fn combined_suite_search_reads_only_the_capped_projects() {
         !seen.iter().any(|p| p.starts_with("/acme/P101/") || p.starts_with("/acme/P100/")),
         "{seen:?}"
     );
+}
+
+#[tokio::test]
+async fn combined_suite_search_answers_what_it_read_when_its_time_is_spent() {
+    use std::time::Duration;
+    let (server, client) = ado_stub().await;
+    mount_projects(&server, &["P1", "P2", "P3"]).await;
+    // Every project's plan list takes a while, as a big project's does.
+    Mock::given(wm_method("GET"))
+        .and(path_regex(r"^/acme/[^/]+/_apis/testplan/plans$"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_json(serde_json::json!({ "value": [] }))
+                .set_delay(Duration::from_millis(300)),
+        )
+        .mount(&server)
+        .await;
+
+    // A budget one project's read already overruns: the walk reads the first
+    // project, then stops before the second and says so.
+    let budget = Duration::from_millis(100);
+    let (status, body) =
+        v2_lib::ai_bridge::suites_within(&ctx(true), &client, "/suites", budget).await;
+    assert_eq!(status, 200, "{body}");
+    let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(v["projects_shown"], 1, "{body}");
+    assert_eq!(v["projects_total"], 3, "{body}");
+    let note = v["note"].as_str().unwrap();
+    assert!(note.contains("1 of 3 projects"), "{body}");
+    assert!(note.contains("not read in time"), "{body}");
+    assert!(note.contains("call again"), "{body}");
+    assert!(!note.contains("P1") && !note.contains("http"), "no project name or URL: {body}");
+    let seen = paths(&server.received_requests().await.unwrap());
+    assert!(!seen.iter().any(|p| p.starts_with("/acme/P2/") || p.starts_with("/acme/P3/")), "{seen:?}");
+
+    // The tree it did read is kept, so the next call carries on from there.
+    let (_, body) = v2_lib::ai_bridge::suites_within(&ctx(true), &client, "/suites", budget).await;
+    let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(v["projects_shown"], 2, "{body}");
+    let seen = paths(&server.received_requests().await.unwrap());
+    let first = seen.iter().filter(|p| p.starts_with("/acme/P1/")).count();
+    assert_eq!(first, 1, "P1 is not read twice: {seen:?}");
+
+    // With time to spare the whole organization is read and no note is given.
+    let (_, body) =
+        v2_lib::ai_bridge::suites_within(&ctx(true), &client, "/suites", Duration::from_secs(60)).await;
+    let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert!(v.get("projects_shown").is_none(), "{body}");
+    assert!(v.get("note").is_none(), "{body}");
 }
 
 #[tokio::test]

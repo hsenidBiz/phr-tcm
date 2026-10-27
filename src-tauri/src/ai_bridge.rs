@@ -13744,6 +13744,26 @@ async fn suites(
     client: &crate::ado::AdoClient,
     target: &str,
 ) -> (u16, String) {
+    suites_within(ctx, client, target, SUITES_WALK_BUDGET).await
+}
+
+/// How long the combined suites walk goes on starting projects. A cold walk
+/// of a big organization can outlast the MCP proxy's own limit on a call
+/// (mcp.rs, 300 s), which would report the app unreachable; past this the
+/// walk answers with what it has read, and the trees it did read stay cached
+/// so the next call carries on from there.
+const SUITES_WALK_BUDGET: std::time::Duration = std::time::Duration::from_secs(120);
+
+/// `suites` with the time the combined walk may spend starting projects. A
+/// project already started is read to the end, so a call can run up to one
+/// project's read past the budget.
+pub async fn suites_within(
+    ctx: &BridgeContext,
+    client: &crate::ado::AdoClient,
+    target: &str,
+    budget: std::time::Duration,
+) -> (u16, String) {
+    let started = std::time::Instant::now();
     const CAP: usize = 200;
     let query = q(target, "q").map(|s| s.trim().to_lowercase()).unwrap_or_default();
     let refresh = matches!(q(target, "refresh").as_deref(), Some("true") | Some("1"));
@@ -13760,6 +13780,11 @@ async fn suites(
         // several requests at once.
         let mut results = Vec::with_capacity(names.len());
         for name in &names {
+            // Out of time: answer with what is read (the coverage note below
+            // says how much that is). Always at least one project is read.
+            if !results.is_empty() && started.elapsed() >= budget {
+                break;
+            }
             let result = suite_tree(ctx, client, name, refresh).await;
             let stop = matches!(&result, Err(e) if !matches!(e, crate::ado::AdoError::Forbidden | crate::ado::AdoError::NotFound));
             results.push((name.clone(), result));
@@ -13823,7 +13848,7 @@ async fn suites(
             out["projects_shown"] = serde_json::json!(cov.shown);
             out["projects_total"] = serde_json::json!(cov.total);
             notes.push(format!(
-                "Suites from {} of {} projects are listed; the rest are past the {} project limit or not readable with this sign-in.",
+                "Suites from {} of {} projects are listed; the rest are past the {} project limit, not readable with this sign-in, or not read in time (call again to read more of them).",
                 cov.shown,
                 cov.total,
                 crate::ado::fanout::MAX_FANOUT_PROJECTS
