@@ -42,7 +42,7 @@
 <body>
 <main>
   <h1>Test Case Manager backlog</h1>
-  <p class="sub">Updated 27 October 2026, after 2.3.1-beta.19. All projects as one and several assistants are complete (through 2.3.1-beta.15); the faster suite lookup shipped in 2.3.1-beta.18 and saved setups in 2.3.1-beta.19. Next: the final screenshot run, released as 2.4.0 (owner, 27 October 2026). What is left is below.</p>
+  <p class="sub">Updated 28 October 2026, after 2.4.0. All projects as one and several assistants are complete (through 2.3.1-beta.15); the faster suite lookup shipped in 2.3.1-beta.18 and saved setups in 2.3.1-beta.19, and the final screenshot run in 2.4.0, the stable release the owner asked for on 27 October 2026. What is left is the owner's hand checks and the Manage Cycle items, below. What is left is below.</p>
 
   <h2>Agreed, not built yet</h2>
   <div class="item">
@@ -50,7 +50,7 @@
     <ul>
       <li>Faster suite lookup: shipped in 2.3.1-beta.18. Hand checks owed on a live org before 2.4.0: Run Tests finds a real PBI's suite quickly (the suites-by-test-case answer has requirement suites and names their project), a PBI with requirement suites in two plans picks your area's plan, and "Reading a large plan (page N)" shows on plan 55291 when the full walk runs.</li>
       <li>Saved setups: shipped in 2.3.1-beta.19 (assistant tools get_kept_actions, save_setup, list_setups, run_setup; no UI). Hand checks owed on a live org before 2.4.0: save a setup that creates a leave type with a database find rule, run it twice (built, then found); run it with Database Read Access off and a browser find rule; undo a record a setup built with undo_explore_creates.</li>
-      <li>The final screenshot run, after both. Owed shots: the Assistants card (new shot id), the header shots, every list screen's new toolbar, the Auto Run case list (its search moved out of Setup; drop "with the search at its top" from the alt text after the recapture), the end of the Setup panel (Save words and Protected records are gone), the Fixtures row in Setup, the Settings "Treat all projects as one" switch as a located control, and the UI round's shots. Two prepared patches are in .superpowers/sdd/ (final-shots-*.patch). The owner allows closing the installed app for it.</li>
+      <li>The final screenshot run: shipped in 2.4.0. All 90 shots retaken in both themes, plus the new Assistants card shot; the Settings switch to treat all projects as one is a located control.</li>
       <li>From the Manage Cycle comparison, not in item 39 (yours to pick): expect_response cannot require a query parameter to be absent; absence checks have no run-time positive control; precondition records not tied to the case's names; components still wait for "Showing 1-1 of 1" rather than the search response; nothing flags nth where a label exists; script fixes for 141706, 142514, 141708, 141727.</li>
     </ul>
   </div>
