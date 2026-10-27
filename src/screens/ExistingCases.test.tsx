@@ -435,3 +435,24 @@ test("the selection dock floats, holding the count and its buttons, once scrolle
   expect(within(dock).getByText("1 selected")).toBeInTheDocument();
   expect(within(dock).getByRole("button", { name: "Bulk edit", hidden: true })).toBeInTheDocument();
 });
+
+test("the search is the wide first item of one toolbar, with Group by title as a switch chip", async () => {
+  mockIPC((cmd) => {
+    if (cmd === "list_test_case_fields") return [];
+    if (cmd === "pbi_test_cases_full") return [fullCase, secondCase];
+  });
+  renderCases();
+  await screen.findByText("Valid login");
+
+  const search = screen.getByLabelText("Search test cases");
+  const bar = search.closest(".flex-wrap")!;
+  expect(search.parentElement).toHaveClass("w-full");
+  expect(search.parentElement!.parentElement).toHaveClass("flex-1", "min-w-64");
+  const group = screen.getByRole("switch", { name: "Group by title" });
+  expect(bar).toContainElement(group);
+  expect(group.parentElement).toHaveClass("h-10");
+  // The header line holds the count and Refresh, nothing else.
+  expect(screen.getByRole("heading", { level: 2 }).parentElement).toContainElement(
+    screen.getByRole("button", { name: "Refresh" }),
+  );
+});

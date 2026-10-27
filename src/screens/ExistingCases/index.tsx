@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { save } from "@tauri-apps/plugin-dialog";
-import { ChevronDown, ChevronRight, RefreshCw } from "lucide-react";
+import { ChevronDown, ChevronRight } from "lucide-react";
 import { memo, useMemo, useRef, useState, useSyncExternalStore, type MouseEvent } from "react";
 import { createPortal } from "react-dom";
 import { toast } from "../../lib/toast";
@@ -15,6 +15,8 @@ import CountTo from "../../components/CountTo";
 import { Button } from "../../components/ui/button";
 import { Checkbox } from "../../components/ui/checkbox";
 import { Collapse, useRegroupMotion, useSettled } from "../../components/ui/collapse";
+import { ListToolbar, ToolbarSwitch } from "../../components/ui/list-toolbar";
+import { PageHeader } from "../../components/ui/page-header";
 import { SearchInput } from "../../components/ui/search-input";
 import { Skeleton } from "../../components/ui/skeleton";
 import { useFieldRefs } from "../../hooks/useFieldRefs";
@@ -321,9 +323,11 @@ export default function ExistingCases({
 
   return (
     <section data-tour="case-list" className="space-y-2">
-      <div className="flex flex-wrap items-center gap-2">
-        <h2 className="text-sm font-semibold text-muted">
-          {label ? (
+      {/* Viewing (incl. the browser report) lives in the View Test Cases
+          tab now - this screen stays focused on editing. */}
+      <PageHeader
+        title={
+          label ? (
             `${label} (${q ? `${visible.length}/${list.length}` : list.length})`
           ) : q ? (
             `${visible.length} of ${list.length} Test Cases`
@@ -333,44 +337,37 @@ export default function ExistingCases({
                   motion, and a screen reader hears only the total. */}
               <CountTo value={list.length} play /> Total Test Cases
             </>
-          )}
-        </h2>
-        <button
-          aria-label="Refresh"
-          title="Refresh"
-          className="rounded p-1 text-muted hover:text-accent"
-          onClick={refresh}
-        >
-          <RefreshCw size={14} className={cases.isFetching ? "animate-spin" : undefined} />
-        </button>
-        {/* Viewing (incl. the browser report) lives in the View Test Cases
-            tab now - this screen stays focused on editing. */}
-      </div>
+          )
+        }
+        onRefresh={refresh}
+        refreshing={cases.isFetching}
+      />
 
       {list.length > 0 && (
-        <div className="flex gap-2">
-          <SearchInput
-            aria-label="Search test cases"
-            className="w-56"
-            placeholder="Filter by name or id"
-            value={search}
-            onChange={setSearch}
-          />
-          <label className="flex items-center gap-1.5 text-xs text-muted">
-            <Checkbox
-              checked={grouped}
-              onCheckedChange={(v) => {
-                setGrouped(v);
-                try {
-                  localStorage.setItem("tcm-v2-group-cases", v ? "on" : "off");
-                } catch {
-                  // session-only
-                }
-              }}
+        <ListToolbar
+          search={
+            <SearchInput
+              aria-label="Search test cases"
+              className="w-full"
+              placeholder="Filter by name or id"
+              value={search}
+              onChange={setSearch}
             />
-            Group by title
-          </label>
-        </div>
+          }
+        >
+          <ToolbarSwitch
+            label="Group by title"
+            checked={grouped}
+            onCheckedChange={(v) => {
+              setGrouped(v);
+              try {
+                localStorage.setItem("tcm-v2-group-cases", v ? "on" : "off");
+              } catch {
+                // session-only
+              }
+            }}
+          />
+        </ListToolbar>
       )}
 
       {selected.size > 0 && (

@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ChevronDown, ChevronRight, MessageSquare, RefreshCw } from "lucide-react";
+import { ChevronDown, ChevronRight, MessageSquare } from "lucide-react";
 import { memo, useEffect, useMemo, useRef, useState, useSyncExternalStore, type MouseEvent } from "react";
 import { createPortal } from "react-dom";
 import { toast } from "../../lib/toast";
@@ -9,6 +9,8 @@ import PickPbiEmpty from "../../components/PickPbiEmpty";
 import { Button } from "../../components/ui/button";
 import { Checkbox } from "../../components/ui/checkbox";
 import { Collapse, useRegroupMotion, useSettled } from "../../components/ui/collapse";
+import { ListToolbar, ToolbarSwitch } from "../../components/ui/list-toolbar";
+import { PageHeader } from "../../components/ui/page-header";
 import { SearchInput } from "../../components/ui/search-input";
 import { Skeleton } from "../../components/ui/skeleton";
 import { useFieldRefs } from "../../hooks/useFieldRefs";
@@ -367,9 +369,9 @@ export default function ViewCases({
 
   return (
     <section data-tour="view-list" className="space-y-2">
-      <div className="flex flex-wrap items-center gap-2">
-        <h2 className="text-sm font-semibold text-muted">
-          {q ? (
+      <PageHeader
+        title={
+          q ? (
             `${visible.length} of ${list.length} Test Cases`
           ) : (
             <>
@@ -377,67 +379,60 @@ export default function ViewCases({
                   motion, and a screen reader hears only the total. */}
               <CountTo value={list.length} play /> Total Test Cases
             </>
-          )}
-        </h2>
-        <button
-          aria-label="Refresh"
-          title="Refresh"
-          className="rounded p-1 text-muted hover:text-accent"
-          onClick={() => qc.invalidateQueries({ queryKey })}
-        >
-          {/* The refetch keeps the old rows on screen while it runs, so the
-              spin is the ONLY sign the click did anything. */}
-          <RefreshCw size={14} className={cases.isFetching ? "animate-spin" : undefined} />
-        </button>
-        <div className="ml-auto flex items-center gap-2">
-          <Button
-            variant="outline"
-            size="sm"
-            title="Save as JSON for Import Test Cases - selected cases when any are highlighted, otherwise everything shown. Ids are included, so re-importing updates these cases."
-            disabled={chosen.length === 0 || exportJson.isPending}
-            onClick={() => exportJson.mutate()}
-          >
-            <IconExport aria-hidden />
-            {selected.size > 0 ? `Export ${selected.size} JSON` : "Export JSON"}
-          </Button>
-          <Button
-            variant="outline"
-            size="sm"
-            disabled={chosen.length === 0 || viewHtml.isPending}
-            onClick={() => viewHtml.mutate()}
-          >
-            <IconOpenInBrowser aria-hidden />
-            {selected.size > 0
-              ? `View ${selected.size} Test Case${selected.size === 1 ? "" : "s"} in Browser`
-              : "View All Test Cases in Browser"}
-          </Button>
-        </div>
-      </div>
+          )
+        }
+        onRefresh={() => qc.invalidateQueries({ queryKey })}
+        refreshing={cases.isFetching}
+        actions={
+          <>
+            <Button
+              variant="outline"
+              size="sm"
+              title="Save as JSON for Import Test Cases - selected cases when any are highlighted, otherwise everything shown. Ids are included, so re-importing updates these cases."
+              disabled={chosen.length === 0 || exportJson.isPending}
+              onClick={() => exportJson.mutate()}
+            >
+              <IconExport aria-hidden />
+              {selected.size > 0 ? `Export ${selected.size} JSON` : "Export JSON"}
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={chosen.length === 0 || viewHtml.isPending}
+              onClick={() => viewHtml.mutate()}
+            >
+              <IconOpenInBrowser aria-hidden />
+              {selected.size > 0 ? `Open ${selected.size} in browser` : "Open in browser"}
+            </Button>
+          </>
+        }
+      />
 
       {list.length > 0 && (
-        <div className="flex gap-2">
-          <SearchInput
-            aria-label="Search test cases"
-            className="w-56"
-            placeholder="Filter by name or id"
-            value={search}
-            onChange={setSearch}
-          />
-          <label className="flex items-center gap-1.5 text-xs text-muted">
-            <Checkbox
-              checked={grouped}
-              onCheckedChange={(v) => {
-                setGrouped(v);
-                try {
-                  localStorage.setItem("tcm-v2-group-view", v ? "on" : "off");
-                } catch {
-                  // session-only
-                }
-              }}
+        <ListToolbar
+          search={
+            <SearchInput
+              aria-label="Search test cases"
+              className="w-full"
+              placeholder="Filter by name or id"
+              value={search}
+              onChange={setSearch}
             />
-            Group by title
-          </label>
-        </div>
+          }
+        >
+          <ToolbarSwitch
+            label="Group by title"
+            checked={grouped}
+            onCheckedChange={(v) => {
+              setGrouped(v);
+              try {
+                localStorage.setItem("tcm-v2-group-view", v ? "on" : "off");
+              } catch {
+                // session-only
+              }
+            }}
+          />
+        </ListToolbar>
       )}
 
       {selected.size > 0 && (

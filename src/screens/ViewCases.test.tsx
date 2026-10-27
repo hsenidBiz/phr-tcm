@@ -165,14 +165,14 @@ test("selection drives View in browser; nothing selected sends all visible", asy
 
   // No selection: everything visible goes to the report.
   await screen.findByText("Login - valid");
-  fireEvent.click(screen.getByRole("button", { name: "View All Test Cases in Browser" }));
+  fireEvent.click(screen.getByRole("button", { name: "Open in browser" }));
   await waitFor(() => expect(sent).toHaveLength(1));
   expect(sent[0]).toEqual([201, 202, 203]);
 
   // Click + shift-click selects a range; the button reflects the count.
   fireEvent.click(screen.getByText("Login - valid"));
   fireEvent.click(screen.getByText("Login - locked out"), { shiftKey: true });
-  fireEvent.click(screen.getByRole("button", { name: "View 2 Test Cases in Browser" }));
+  fireEvent.click(screen.getByRole("button", { name: "Open 2 in browser" }));
   await waitFor(() => expect(sent).toHaveLength(2));
   expect(sent[1]).toEqual([201, 202]);
 
@@ -200,7 +200,7 @@ test("the keep-in-step refresh never reopens the browser", async () => {
   renderView();
 
   await screen.findByText("Login - valid");
-  fireEvent.click(screen.getByRole("button", { name: "View All Test Cases in Browser" }));
+  fireEvent.click(screen.getByRole("button", { name: "Open in browser" }));
   await waitFor(() => expect(sent).toHaveLength(1));
 
   // Coming back to the app re-reads notes and re-renders - the exact
@@ -219,7 +219,7 @@ test("Group by title folds cases under shared prefixes and persists collapse", a
   renderView();
   await screen.findByText("Login - valid");
 
-  fireEvent.click(screen.getByRole("checkbox"));
+  fireEvent.click(screen.getByRole("switch", { name: "Group by title" }));
   const header = await screen.findByRole("button", { name: "Login (2)" });
 
   // The header CHECKBOX selects the group.
@@ -242,7 +242,7 @@ test("open details survive a group collapse until Collapse all", async () => {
   mockCases();
   renderView();
   await screen.findByText("Login - valid");
-  fireEvent.click(screen.getByRole("checkbox")); // Group by title
+  fireEvent.click(screen.getByRole("switch", { name: "Group by title" }));
 
   // Grouping alone already gives the sticky something to fold: the open
   // groups count, before any detail is expanded (Login + Ungrouped).
@@ -276,7 +276,7 @@ test("the header checkbox carries the group's selection state through a collapse
   mockCases();
   renderView();
   await screen.findByText("Login - valid");
-  fireEvent.click(screen.getByRole("checkbox")); // Group by title
+  fireEvent.click(screen.getByRole("switch", { name: "Group by title" }));
 
   // ONE case selected, not the whole group: the checkbox reads mixed.
   fireEvent.click(screen.getByText("Login - valid"));
@@ -345,4 +345,25 @@ test("a click on one case draws only that row again", async () => {
   // select it again instead of clearing it.
   fireEvent.click(screen.getByText("Checkout"));
   expect(screen.queryByText("1 selected")).not.toBeInTheDocument();
+});
+
+test("Export JSON and Open in browser sit on the header line; the search is the wide toolbar item", async () => {
+  mockCases();
+  renderView();
+  await screen.findByText("Login - valid");
+
+  const header = screen.getByRole("heading", { level: 2 }).parentElement!;
+  expect(header).toContainElement(screen.getByRole("button", { name: "Export JSON" }));
+  expect(header).toContainElement(screen.getByRole("button", { name: "Open in browser" }));
+  expect(header).toContainElement(screen.getByRole("button", { name: "Refresh" }));
+
+  const search = screen.getByLabelText("Search test cases");
+  expect(search.parentElement).toHaveClass("w-full");
+  expect(search.parentElement!.parentElement).toHaveClass("flex-1", "min-w-64");
+  expect(screen.getByRole("switch", { name: "Group by title" })).toBeInTheDocument();
+
+  // A selection switches both buttons to their "N" wording.
+  fireEvent.click(screen.getByText("Login - valid"));
+  expect(screen.getByRole("button", { name: "Export 1 JSON" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Open 1 in browser" })).toBeInTheDocument();
 });
