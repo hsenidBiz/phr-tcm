@@ -112,6 +112,18 @@ fn paths(reqs: &[wiremock::Request]) -> Vec<String> {
     reqs.iter().map(|r| r.url.path().to_string()).collect()
 }
 
+/// The paths of the work item reads that look a PBI's PROJECT up. The suite
+/// lookup also reads the PBI, with its relations, to ask its test cases
+/// where their suite is (2.3.1-beta.18); that read is not a project lookup,
+/// so it is left out here.
+fn project_lookups(reqs: &[wiremock::Request]) -> Vec<String> {
+    reqs.iter()
+        .filter(|r| !r.url.query().unwrap_or_default().contains("expand=relations"))
+        .map(|r| r.url.path().to_string())
+        .filter(|p| p.starts_with("/acme/_apis/wit/workitems"))
+        .collect()
+}
+
 #[tokio::test]
 async fn combined_run_results_read_the_pbis_own_project() {
     let (server, client) = ado_stub().await;
@@ -152,8 +164,9 @@ async fn combined_run_results_ask_for_a_pbis_project_once() {
             route(&ctx(true), Some(&client), "GET", "/run-results?pbi=4202", "", "2.3.1").await;
         assert_eq!(status, 200, "{body}");
     }
-    let seen = paths(&server.received_requests().await.unwrap());
-    let reads = seen.iter().filter(|p| *p == "/acme/_apis/wit/workitems/4202").count();
+    let reqs = server.received_requests().await.unwrap();
+    let seen = paths(&reqs);
+    let reads = project_lookups(&reqs).iter().filter(|p| *p == "/acme/_apis/wit/workitems/4202").count();
     assert_eq!(reads, 1, "the PBI's project does not change, so it is read once: {seen:?}");
 }
 
@@ -167,11 +180,9 @@ async fn switched_off_run_results_stay_in_the_chosen_project() {
     let (status, body) =
         route(&ctx(false), Some(&client), "GET", "/run-results?pbi=4203", "", "2.3.1").await;
     assert_eq!(status, 200, "{body}");
-    let seen = paths(&server.received_requests().await.unwrap());
-    assert!(
-        !seen.iter().any(|p| p.starts_with("/acme/_apis/wit/workitems")),
-        "no work item lookup when switched off: {seen:?}"
-    );
+    let reqs = server.received_requests().await.unwrap();
+    let seen = paths(&reqs);
+    assert!(project_lookups(&reqs).is_empty(), "no project lookup when switched off: {seen:?}");
     assert!(seen.iter().any(|p| p.starts_with("/acme/Web/_apis/testplan/")), "{seen:?}");
 }
 
