@@ -21,6 +21,7 @@ import { CHANGELOG } from "./lib/changelog";
 import { flagSessionExpired } from "./lib/sessionExpired";
 import { allProjectsSnapshot, saveAllProjects } from "./lib/projectScope";
 import { toast } from "./lib/toast";
+import { clearWorkAlerts, workAlertsSnapshot } from "./lib/workAlerts";
 
 // Every test here mounts the WHOLE app - sidebar, context bar, screens,
 // queries - and several walk the tour across most of its stops. Idle, they
@@ -2941,6 +2942,53 @@ test("combined mode watches assigned work in every project", async () => {
     href: "https://dev.azure.com/acme/Payroll/_workitems/edit/601",
     target: { kind: "work-item", id: 601, project: "Payroll" },
   });
+});
+
+test("the toast and the Board badge show only the assignments the bell had not already raised", async () => {
+  // Flipping the all-projects switch makes the watch report items the other
+  // scope already announced: the bell skips them, so the toast and the badge
+  // must too.
+  savedPrefs();
+  localStorage.setItem("tcm-v2-tour-done", "yes");
+  claimCacheFor("a@b.com");
+  clearWorkAlerts();
+  const info = vi.spyOn(toast, "info");
+  try {
+    assignedWatchMocks([]);
+    renderApp();
+    await screen.findByText("a@b.com");
+    const { emit } = await import("@tauri-apps/api/event");
+    const first = { id: 601, title: "Fix the payslip", work_item_type: "Bug", state: "New", project: "Payroll" };
+    const second = { id: 602, title: "Tidy the docs", work_item_type: "Task", state: "New", project: "Web" };
+    const toasts = () => info.mock.calls.map((c) => String(c[0]));
+
+    await act(async () => {
+      await emit("work-assigned", { items: [first] });
+    });
+    await vi.waitFor(() => expect(toasts()).toEqual(["Bug #601 assigned to you"]));
+    expect(workAlertsSnapshot()).toBe(1);
+
+    // One known item and one new one: only the new one is announced.
+    await act(async () => {
+      await emit("work-assigned", { items: [first, second] });
+    });
+    await vi.waitFor(() => expect(toasts()).toEqual(["Bug #601 assigned to you", "Task #602 assigned to you"]));
+    expect(workAlertsSnapshot()).toBe(2);
+
+    // Nothing but known items: no toast, no badge.
+    await act(async () => {
+      await emit("work-assigned", { items: [second, first] });
+    });
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 50));
+    });
+    expect(toasts()).toHaveLength(2);
+    expect(workAlertsSnapshot()).toBe(2);
+    expect(bellItems().map((n) => n.id).sort()).toEqual(["assigned:601", "assigned:602"]);
+  } finally {
+    info.mockRestore();
+    clearWorkAlerts();
+  }
 });
 
 test("switched off, assigned work is watched in the picked project only", async () => {

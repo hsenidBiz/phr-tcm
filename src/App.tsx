@@ -1097,14 +1097,18 @@ export default function App() {
     const un = events.workAssigned.listen((e) => {
       const items = e.payload.items;
       if (items.length === 0) return;
+      // Into the bell, where it stays until dismissed. Each item names its
+      // own project; the home or picked one only fills in for one that names
+      // none. The bell skips what it has raised before, which is what happens
+      // when the all-projects switch is flipped and the other scope reports
+      // an item again: only what it took in is announced.
+      const added = new Set(noteAssigned(org, bridgeProject, items).map((n) => n.id));
+      const news = items.filter((i) => added.has(`assigned:${i.id}`));
+      if (news.length === 0) return;
       // A toast is gone in seconds - the Board badge is what remains
       // until the user actually looks at the board.
-      addWorkAlerts(items.length);
-      // And into the bell, where it stays until dismissed. Each item names
-      // its own project; the home or picked one only fills in for one that
-      // names none.
-      noteAssigned(org, bridgeProject, items);
-      const { title, body } = summarize(items);
+      addWorkAlerts(news.length);
+      const { title, body } = summarize(news);
       announce(title, body);
     });
     return () => {

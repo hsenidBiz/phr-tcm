@@ -181,9 +181,11 @@ export function clearAll(org: string): void {
 
 /** Work items the background poll just found assigned to you. Each names the
  * project it lives in (the watch across projects returns several); `project`
- * is the fallback for one that names none. */
-export function noteAssigned(org: string, project: string, items: AssignedItem[]): void {
-  raise(
+ * is the fallback for one that names none. Returns what the bell took in, so
+ * the caller announces only that: an item the bell has already raised (one the
+ * other scope of the all-projects switch announced) is not news again. */
+export function noteAssigned(org: string, project: string, items: AssignedItem[]): AppNotification[] {
+  return raise(
     org,
     items.map((i) => {
       const where = i.project || project;
