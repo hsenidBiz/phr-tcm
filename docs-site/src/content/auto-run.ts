@@ -223,7 +223,7 @@ export const autoRun: Screen = {
       id: "group-by-title",
       shot: CASES,
       group: "cases",
-      locate: { role: "checkbox", name: "Group by title" },
+      locate: { role: "switch", name: "Group by title" },
       name: "Group by title",
       does: "Groups the cases whose titles start the same way, as the other test case screens do. Each group can be folded and selected as a whole.",
     },

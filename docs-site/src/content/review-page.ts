@@ -1,5 +1,5 @@
 // The review page: the browser page that View in browser (Import Test
-// Cases) and View All Test Cases in Browser (View Test Cases) open, and
+// Cases) and Open in browser (View Test Cases) open, and
 // the Test map it links to.
 //
 // These are pages the app writes for the browser, not app screens: every
@@ -27,7 +27,7 @@ export const reviewPage: Screen = {
   group: "Test cases",
   summary:
     "The test cases as one page in your browser, for reading them through and leaving comments. **View in browser** on Import Test Cases opens it for a draft, " +
-    "and **View All Test Cases in Browser** on View Test Cases for the cases already in Azure DevOps. It opens in the app's theme and stays in step with the app while it is open.",
+    "and **Open in browser** on View Test Cases for the cases already in Azure DevOps. It opens in the app's theme and stays in step with the app while it is open.",
   shots: [
     {
       id: PAGE,

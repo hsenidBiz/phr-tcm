@@ -279,7 +279,7 @@ export const board: Screen = {
       id: "this-sprint",
       shot: AREA,
       group: "scope-filters",
-      locate: { role: "checkbox", name: "This sprint" },
+      locate: { role: "switch", name: "This sprint" },
       name: "This sprint",
       does: "On an area board: shows only the items in the current sprint of the area's team (or of its project's default team, when the area is not a team). Remembered.",
     },

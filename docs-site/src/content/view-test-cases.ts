@@ -67,8 +67,8 @@ export const viewTestCases: Screen = {
     {
       id: "view-in-browser",
       shot: LIST,
-      locate: { role: "button", name: "View All Test Cases in Browser" },
-      name: "View All Test Cases in Browser",
+      locate: { role: "button", name: "Open in browser" },
+      name: "Open in browser",
       does:
         "Opens the cases as a page in your browser: the selected ones, or every case shown when none is selected. It is the same page as **View in browser** on Import Test Cases. " +
         "Comments typed on it are kept as the cases' local comments here.",
@@ -84,7 +84,7 @@ export const viewTestCases: Screen = {
     {
       id: "group-by-title",
       shot: LIST,
-      locate: { role: "checkbox", name: "Group by title" },
+      locate: { role: "switch", name: "Group by title" },
       name: "Group by title",
       does:
         "Gathers cases whose titles start the same way under one heading, as on Update Test Cases. The heading's arrow and name fold the group; its box selects every case in it. The choice is remembered.",
@@ -211,7 +211,7 @@ export const viewTestCases: Screen = {
       shot: SELECTED,
       locate: { text: "1 selected" },
       name: "Selected",
-      does: "How many cases are selected. **Export** and **View in Browser** above then act on the selection only.",
+      does: "How many cases are selected. **Export** and **Open in browser** above then act on the selection only.",
     },
     {
       id: "clear",
@@ -230,8 +230,8 @@ export const viewTestCases: Screen = {
     {
       id: "view-selected",
       shot: SELECTED,
-      locate: { role: "button", nameRe: "^View \\d+ Test Cases? in Browser$" },
-      name: "View N Test Cases in Browser",
+      locate: { role: "button", nameRe: "^Open \\d+ in browser$" },
+      name: "Open N in browser",
       does: "The browser button while cases are selected: the page shows only those.",
     },
   ],

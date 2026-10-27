@@ -14,6 +14,7 @@ import { sidebarCollapsedSnapshot, stickyLeftPx, subscribeSidebar } from "../../
 import { commands, events, type AutorunResetNeeded, type Divergence, type PbiHit, type PlanView } from "../../bindings";
 import { loadScript } from "../../lib/scriptBatch";
 import { Checkbox } from "../../components/ui/checkbox";
+import { ToolbarSwitch } from "../../components/ui/list-toolbar";
 import MoreActionsMenu from "../../components/MoreActionsMenu";
 import { Collapse, useSettled } from "../../components/ui/collapse";
 import { groupIndices } from "../../lib/grouping";
@@ -853,21 +854,18 @@ export default function AutoRun({
                 </div>
 
                 <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
-                  <label className="flex cursor-pointer items-center gap-2 text-xs text-muted">
-                    <Checkbox
-                      checked={grouped}
-                      ariaLabel="Group by title"
-                      onCheckedChange={(on) => {
-                        setGrouped(on);
-                        try {
-                          localStorage.setItem("tcm-v2-autorun-group", on ? "on" : "off");
-                        } catch {
-                          // storage unavailable -> the choice lasts this session
-                        }
-                      }}
-                    />
-                    Group by title
-                  </label>
+                  <ToolbarSwitch
+                    label="Group by title"
+                    checked={grouped}
+                    onCheckedChange={(on) => {
+                      setGrouped(on);
+                      try {
+                        localStorage.setItem("tcm-v2-autorun-group", on ? "on" : "off");
+                      } catch {
+                        // storage unavailable -> the choice lasts this session
+                      }
+                    }}
+                  />
                   {/* Ticks what the search and the filters show (scripted
                       cases only), so "run everything that failed" is two
                       clicks. Off while nothing shown could be run. */}

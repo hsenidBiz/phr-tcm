@@ -43,7 +43,7 @@ export const updateTestCases: Screen = {
     },
     {
       id: GROUPED,
-      route: [NAV, { click: { role: "checkbox", name: "Group by title" } }],
+      route: [NAV, { click: { role: "switch", name: "Group by title" } }],
       alt: "The test cases grouped by the start of their titles",
     },
     { id: SELECTED, route: [NAV, SELECT_FIRST], alt: "One test case selected, with the selection actions" },
@@ -103,7 +103,7 @@ export const updateTestCases: Screen = {
       id: "group-by-title",
       shot: LIST,
       group: "find-case",
-      locate: { role: "checkbox", name: "Group by title" },
+      locate: { role: "switch", name: "Group by title" },
       name: "Group by title",
       does: "Gathers cases whose titles start the same way, such as every case beginning with **Login**, under one heading. The choice is remembered.",
     },

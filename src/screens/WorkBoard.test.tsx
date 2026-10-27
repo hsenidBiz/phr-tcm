@@ -381,13 +381,13 @@ test("This sprint shows only for an area scope, and only then filters the fetch"
   await screen.findByText("Write docs");
 
   // My work: no sprint checkbox, no sprint filter.
-  expect(screen.queryByRole("checkbox", { name: /This sprint/ })).not.toBeInTheDocument();
+  expect(screen.queryByRole("switch", { name: /This sprint/ })).not.toBeInTheDocument();
   expect(calls[calls.length - 1].currentSprint).toBe(false);
 
   // Pick an area: the checkbox appears and toggling it filters the fetch.
   fireEvent.click(screen.getByLabelText("Board scope"));
   fireEvent.click(await screen.findByText("Area: Web"));
-  fireEvent.click(await screen.findByRole("checkbox", { name: /This sprint/ }));
+  fireEvent.click(await screen.findByRole("switch", { name: /This sprint/ }));
   await vi.waitFor(() =>
     expect(calls[calls.length - 1].currentSprint).toBe(true),
   );
@@ -400,7 +400,7 @@ test("This sprint shows only for an area scope, and only then filters the fetch"
   fireEvent.click(screen.getByLabelText("Board scope"));
   fireEvent.click(await screen.findByText("My work"));
   await screen.findByText("Write docs");
-  expect(screen.queryByRole("checkbox", { name: /This sprint/ })).not.toBeInTheDocument();
+  expect(screen.queryByRole("switch", { name: /This sprint/ })).not.toBeInTheDocument();
   expect(calls.slice(before).every((c) => c.currentSprint === false)).toBe(true);
   localStorage.removeItem("tcm-v2-this-sprint");
 });

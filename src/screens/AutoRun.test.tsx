@@ -1783,7 +1783,7 @@ test("More holds Import scripts, with its description, and Clear scripts; Group 
   // Nothing rare sits on the toolbar.
   expect(screen.queryByRole("button", { name: "Import scripts" })).not.toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Clear scripts" })).not.toBeInTheDocument();
-  expect(screen.getByRole("checkbox", { name: "Group by title" })).toBeInTheDocument();
+  expect(screen.getByRole("switch", { name: "Group by title" })).toBeInTheDocument();
 
   fireEvent.click(screen.getByRole("button", { name: "More" }));
   const menu = screen.getByRole("menu", { name: "More" });

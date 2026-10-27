@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { Check, ChevronDown, ChevronRight, GitPullRequest, RefreshCw } from "lucide-react";
+import { Check, ChevronDown, ChevronRight, GitPullRequest } from "lucide-react";
 import { memo, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties } from "react";
 import { createPortal } from "react-dom";
 import { toast } from "../lib/toast";
@@ -10,12 +10,12 @@ import ProjectChip from "../components/ProjectChip";
 import WorkItemDrawer from "../components/WorkItemDrawer";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
-import { Checkbox } from "../components/ui/checkbox";
 import Combobox from "../components/ui/combobox";
 import { SearchInput } from "../components/ui/search-input";
 import MultiSelect from "../components/ui/multiselect";
 import { Skeleton } from "../components/ui/skeleton";
-import { Switch } from "../components/ui/switch";
+import { ListToolbar, ToolbarSwitch } from "../components/ui/list-toolbar";
+import { PageHeader } from "../components/ui/page-header";
 import { cn } from "../lib/cn";
 import { requiredFieldsFromError } from "../lib/adoFieldErrors";
 import { unwrap } from "../lib/ipc";
@@ -797,7 +797,37 @@ export default function WorkBoard({
   return (
     <div className="flex h-full min-h-0 gap-0">
       <div className="min-w-0 flex-1 space-y-3 overflow-y-auto pr-3">
-        <div className="flex flex-wrap items-center gap-2">
+        <PageHeader
+          title="Work items"
+          onRefresh={() => qc.invalidateQueries({ queryKey: boardKey })}
+          refreshLabel="Refresh work items"
+          // The one spinner on this page. The PR first-load note beside it
+          // used to carry its own - two spinning arrows side by side for one
+          // wait - so that load spins THIS icon too and the note stays
+          // text-only.
+          refreshing={board.isFetching || (prLinks.isFetching && !prLinks.data)}
+          aside={
+            // Only the FIRST-ever load - once the disk cache has an answer,
+            // chips paint instantly and the background refresh needs no
+            // announcement.
+            prLinks.isFetching && !prLinks.data ? (
+              <span role="status" className="text-xs text-faint">
+                Loading pull requests…
+              </span>
+            ) : undefined
+          }
+        />
+        <ListToolbar
+          search={
+            <SearchInput
+              aria-label="Filter items"
+              className="w-full"
+              placeholder="Filter by title, id, tag"
+              value={filterText}
+              onChange={setFilterText}
+            />
+          }
+        >
           {/* Searchable scope: type to find a team in long team lists. */}
           <Combobox
             ariaLabel="Board scope"
@@ -845,13 +875,6 @@ export default function WorkBoard({
               <PbiPicker perProject={!allProjects} org={org} project={project} pbi={pbiScope} onChange={setPbiScope} />
             </div>
           )}
-          <SearchInput
-            aria-label="Filter items"
-            className="w-56"
-            placeholder="Filter by title, id, tag"
-            value={filterText}
-            onChange={setFilterText}
-          />
           <MultiSelect
             ariaLabel="Filter type"
             className="w-44"
@@ -860,68 +883,43 @@ export default function WorkBoard({
             selected={typeFilter}
             onChange={changeTypeFilter}
           />
-          <button
-            aria-label="Refresh work items"
-            title="Refresh work items"
-            className="rounded p-1.5 text-muted transition-colors hover:text-accent"
-            onClick={() => qc.invalidateQueries({ queryKey: boardKey })}
-          >
-            {/* The one spinner in this toolbar. The PR first-load note
-                beside it used to carry its own - two spinning arrows side
-                by side for one wait - so that load spins THIS icon too and
-                the note stays text-only. */}
-            <RefreshCw
-              size={14}
-              className={
-                board.isFetching || (prLinks.isFetching && !prLinks.data)
-                  ? "animate-spin"
-                  : undefined
-              }
-            />
-          </button>
-          {/* Only the FIRST-ever load - once the disk cache has an answer,
-              chips paint instantly and the background refresh needs no
-              announcement. */}
-          {prLinks.isFetching && !prLinks.data && (
-            <span role="status" className="text-xs text-faint">
-              Loading pull requests…
-            </span>
-          )}
           {sprintApplies && (
-            <label className="flex items-center gap-1.5 text-xs text-muted" title="Only items in the current sprint (project default team's iteration)">
-              <Checkbox
-                checked={thisSprint}
-                onCheckedChange={(v) => {
-                  setThisSprint(v);
-                  try {
-                    localStorage.setItem("tcm-v2-this-sprint", v ? "on" : "off");
-                  } catch {
-                    // session-only
-                  }
-                }}
-              />
-              This sprint
-            </label>
+            <ToolbarSwitch
+              label="This sprint"
+              title="Only items in the current sprint (project default team's iteration)"
+              checked={thisSprint}
+              onCheckedChange={(v) => {
+                setThisSprint(v);
+                try {
+                  localStorage.setItem("tcm-v2-this-sprint", v ? "on" : "off");
+                } catch {
+                  // session-only
+                }
+              }}
+            />
           )}
-          <label className="flex items-center gap-1.5 text-xs text-muted" title="Group cards under their parent work item">
-            <Switch checked={swimlanes} onCheckedChange={changeSwimlanes} ariaLabel="Swimlanes" />
-            Swimlanes
-          </label>
+          <ToolbarSwitch
+            label="Swimlanes"
+            title="Group cards under their parent work item"
+            checked={swimlanes}
+            onCheckedChange={changeSwimlanes}
+          />
           {swimlanes && (
-            <label
-              className="flex items-center gap-1.5 text-xs text-muted"
-              title="Hide the lanes whose cards are all Done"
-            >
-              <Switch checked={openLanesOnly} onCheckedChange={changeOpenLanesOnly} ariaLabel="Open lanes only" />
-              Open lanes only
+            <span className="flex items-center gap-2">
+              <ToolbarSwitch
+                label="Open lanes only"
+                title="Hide the lanes whose cards are all Done"
+                checked={openLanesOnly}
+                onCheckedChange={changeOpenLanesOnly}
+              />
               {openLanesOnly && doneLanes > 0 && (
-                <span className="text-faint">({doneLanes} done hidden)</span>
+                <span className="text-xs text-faint">({doneLanes} done hidden)</span>
               )}
-            </label>
+            </span>
           )}
           {/* Creation moved to the sidebar's "New Work Item" screen - the
               board stays a read-and-move surface. */}
-        </div>
+        </ListToolbar>
 
         {/* The area list is capped at a number of projects: say so when it
             left some out, rather than look complete. */}
