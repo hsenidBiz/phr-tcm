@@ -447,6 +447,7 @@ export const apiTemplates: Screen = {
     "This screen only shows templates and removes them. Building, proving and running them is your assistant's work, through the app's AI tools on the AI Bridge tab.",
     "Proving or running a template writes real test data to your site, so it is allowed only while **API templates** is switched on, on the AI Bridge tab.",
     "Templates and flows are kept on this computer, per project. Use **Export** and **Import** to share them with your team.",
+    "With **Treat all projects as one** on, API Templates works in your home project (Settings, under General), and its templates and flows belong to that project.",
   ],
   howTo: [
     {

@@ -89,7 +89,7 @@
       <li>Hand check owed: switch off in Settings. The Project picker comes back showing the PBI's project and the PBI stays; switch on again changes nothing else. Change the Home project and check Auto Run, API Templates and Playwright follow it.</li>
       <li>Hand check owed: open a pull request notification for another project while the switch is on. The Pull Requests screen lists every project, the notified pull request is expanded and ringed and reads its comments and work items in its own project, no Project picker appears, and Settings still shows the old home project. Resolve one of its comment threads and check it resolves in Azure DevOps in that project. (A work item notification opens on the board across projects; see phase 3.)</li>
       <li>Hand check owed: with a PBI in a second project, an assistant's get_run_results for it reads that PBI's own suite and results (not the home project's). The assistant's other reads (suite search and suite cases, PBI search, tags and wiki) were closed in phase 6, below.</li>
-      <li>Owed: the How To Use Settings and header shots and text for the switch, the Home project picker and the missing Project picker (phase 7).</li>
+      <li>Owed: the How To Use Settings and header shots (phase 7; the text for the switch, the Home project picker and the missing Project picker is written, see the phase 7 section below).</li>
     </ul>
   </div>
 
@@ -160,6 +160,16 @@
       <li>Hand check owed: in the assistant's tool list, search_test_suites, search_pbis and search_wiki say every project with the switch on and the current project with it off; a Claude Code session started before the change keeps the old words until it is restarted.</li>
       <li>Live check owed: the organization-wide wiki search (the search service accepts a request with no project in its address). Confirm search_wiki returns hits from more than one project's wiki; if it answers an error, wiki search must be read project by project.</li>
       <li>Owed: the How To Use text for the AI Bridge says the assistant reads every project; the screenshots are not re-taken until phase 7.</li>
+    </ul>
+  </div>
+
+  <h2>All projects as one, phase 7: the README and the How To Use guide (27 October 2026)</h2>
+  <div class="item">
+    <div class="head"><span class="title">Guide text done, screenshots owed</span><span class="status todo">Follow-ups</span></div>
+    <p>The README and the guide text now describe working across every project: Treat all projects as one and the Home project picker (Settings, General), the hidden Organization and Project pickers, a PBI from any project, which screens use the home project, the project label on board and pull request items, plans grouped by project with "Showing plans from N of M projects.", and the assistants' cross-project search. The built guide is rebuilt from that text.</p>
+    <ul>
+      <li>Owed: re-take the How To Use shots (docs:dev, docs:shots) with the installed app closed. Stale in particular: the Getting started header shot and command palette shot (the palette no longer lists the projects while the switch is on; its route now scrolls to Check for updates), the Settings General card, and every screen's header.</li>
+      <li>Owed: once the shots are re-taken, the Settings Treat all projects as one row can become a located control with its own box; today it is described in the General group's text because a control cannot be added without a captured position.</li>
     </ul>
   </div>
 

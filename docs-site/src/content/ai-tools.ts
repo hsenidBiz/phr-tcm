@@ -200,6 +200,7 @@ export const aiBridge: Screen = {
       name: "Tool switch",
       does:
         "Switch a tool off to keep it out of an assistant's reach: Test Suites, Run results, Project tags, Find a Product Backlog Item and Project wiki. A connected assistant sees the change without being restarted. " +
+        "With **Treat all projects as one** on in Settings, the tools that find Product Backlog Items, test suites and wiki pages search every project, and each hit names its project; the other tools, including Auto Run, API Templates and Playwright, work in your home project. " +
         "The tools of a module you switched on in Settings (Auto Run, API Templates and Database Access) have no switch here: the module being on is what gives an assistant those tools, and switching the module off takes them away. " +
         "The switch is for the active environment only, and so is **Turn all on** under the list. A new environment starts with every tool on.",
     },

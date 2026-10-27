@@ -71,7 +71,7 @@ export const newWorkItem: Screen = {
       shot: FORM,
       locate: { role: "textbox", name: "Find PBI" },
       name: "Parent Product Backlog Item",
-      does: "Optional. Search for a Product Backlog Item by number or title and pick it: the new item is linked under it, so it sits beneath that Product Backlog Item on boards and backlogs.",
+      does: "Optional. Search for a Product Backlog Item by number or title and pick it: the new item is linked under it, so it sits beneath that Product Backlog Item on boards and backlogs. With **Treat all projects as one** on, the new item is created in the parent's own project (the team members, areas, iterations and tags offered follow it), and without a parent in your home project. When there is more than one project, a line under the box says which project it will be created in.",
     },
     {
       id: "description",
