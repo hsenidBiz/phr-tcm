@@ -1,7 +1,6 @@
 // The setup a run needs, beside the Test cases list: the environment runs
 // go to and its database, the site address, the sign-in, the accounts, the
-// areas, the test files and the save words. The search box for the case list
-// sits at its top, on both tabs.
+// areas, the test files and the save words.
 //
 // Collapsed, it is one line per item with a status dot. Expanded, it is the
 // full rows with their buttons, each opening its own dialog. The screen
@@ -40,7 +39,6 @@ import { useDiscoveryActive } from "../../lib/discoveryActive";
 import { plural } from "../../lib/plural";
 import AccountsDialog from "./AccountsDialog";
 import AreasDialog from "./AreasDialog";
-import CaseSearch from "./CaseSearch";
 import ComponentsDialog, { componentsSummary, useComponents } from "./ComponentsDialog";
 import DiscoveryDialog, { discoverySummary, useDiscoveryMap } from "./DiscoveryDialog";
 import ProtectedRecordsDialog from "./ProtectedRecordsDialog";
@@ -418,8 +416,6 @@ export default function SetupPanel({
   caseModules,
   open,
   onToggle,
-  search,
-  onSearch,
 }: {
   setup: AutoRunSetup;
   org: string;
@@ -428,9 +424,6 @@ export default function SetupPanel({
   caseModules: string[];
   open: boolean;
   onToggle: () => void;
-  /** What the case list's search box holds, and its change. */
-  search: string;
-  onSearch: (text: string) => void;
 }) {
   const allProjects = useAllProjects();
   const headingId = useId();
@@ -538,11 +531,6 @@ export default function SetupPanel({
               that reads them off the screen reaches the button. */}
           {open ? "Hide setup details" : "Show setup details"}
         </Button>
-      </div>
-
-      {/* Finding a case: open or shut, on either tab. */}
-      <div className="shrink-0">
-        <CaseSearch value={search} onChange={onSearch} wide />
       </div>
 
       {/* The one part that scrolls. The side padding and matching negative

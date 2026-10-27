@@ -14,7 +14,7 @@ import { sidebarCollapsedSnapshot, stickyLeftPx, subscribeSidebar } from "../../
 import { commands, events, type AutorunResetNeeded, type Divergence, type PbiHit, type PlanView } from "../../bindings";
 import { loadScript } from "../../lib/scriptBatch";
 import { Checkbox } from "../../components/ui/checkbox";
-import { ToolbarSwitch } from "../../components/ui/list-toolbar";
+import { ListToolbar, ToolbarSwitch } from "../../components/ui/list-toolbar";
 import MoreActionsMenu from "../../components/MoreActionsMenu";
 import { Collapse, useSettled } from "../../components/ui/collapse";
 import { groupIndices } from "../../lib/grouping";
@@ -48,7 +48,7 @@ import {
 } from "../../lib/backgroundRun";
 import { Modal } from "../../components/ui/modal";
 import CaseCard from "./CaseCard";
-import { matchesSearch } from "./CaseSearch";
+import CaseSearch, { matchesSearch } from "./CaseSearch";
 import ExecutionOrderDialog from "./ExecutionOrderDialog";
 import { requestPlaywrightExport } from "../../lib/playwrightExport";
 import { useModule } from "../../lib/modules";
@@ -456,13 +456,9 @@ export default function AutoRun({
   const projectKey = `${org}/${project}`;
   const scriptedOnly = scriptedOnlyIn.has(projectKey);
   /** What the search box holds. Lives here for the same reason as the
-   * filter, and is not saved. The box is in the Setup panel, on both tabs:
-   * typing in it on Past runs brings the list it narrows into view. */
+   * filter, and is not saved. The box is in the Test cases tab's toolbar,
+   * so it only exists while that tab is shown. */
   const [search, setSearch] = useState("");
-  const onSearch = (text: string) => {
-    setSearch(text);
-    if (text.trim() !== "") setTab("cases");
-  };
   /** A tab the person picks. Going to Past runs empties the search, which
    * only ever narrows the case list: left there it would read as filtering
    * runs it does not touch. */
@@ -554,8 +550,6 @@ export default function AutoRun({
       caseModules={caseModules}
       open={panelOpen}
       onToggle={() => setPanelChoice(!panelOpen)}
-      search={search}
-      onSearch={onSearch}
     />
   );
   /** Only scripted cases can be run, so only they can be ticked. */
@@ -813,8 +807,7 @@ export default function AutoRun({
               its full reading width (48rem, a 1rem gap, then 20rem).
               Narrower, the panel goes above the list at the list's width: it
               comes first in the page, and moves last only where there is
-              room. One panel for both tabs, so a switch keeps it as it is -
-              the search box in it keeps its focus. */}
+              room. One panel for both tabs, so a switch keeps it as it is. */}
           <div className={TWO_COLUMNS}>
             <SetupColumn>{setupPanel}</SetupColumn>
 
@@ -822,7 +815,8 @@ export default function AutoRun({
               <section className="min-w-0 space-y-2">
                 {/* Narrowing the list: the last-result filters, the marked
                     cases, and the cases with a script. The search is in the
-                    Setup panel. The tab's own label carries the count. */}
+                    toolbar below, which stays at the top while the list
+                    scrolls. The tab's own label carries the count. */}
                 <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
                   {rows.length > 0 &&
                     (runsFailed ? (
@@ -853,7 +847,7 @@ export default function AutoRun({
                   )}
                 </div>
 
-                <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+                <ListToolbar search={<CaseSearch value={search} onChange={setSearch} wide />} fullWidth={false}>
                   <ToolbarSwitch
                     label="Group by title"
                     checked={grouped}
@@ -871,7 +865,7 @@ export default function AutoRun({
                       clicks. Off while nothing shown could be run. */}
                   <label
                     className={cn(
-                      "flex items-center gap-2 text-xs",
+                      "flex h-10 items-center gap-2 text-xs",
                       shownRunnable.length === 0 ? "text-faint" : "cursor-pointer text-muted",
                     )}
                   >
@@ -933,7 +927,7 @@ export default function AutoRun({
                       ]}
                     />
                   </span>
-                </div>
+                </ListToolbar>
 
                 {cases.isLoading && <p className="text-sm text-muted">Loading test cases…</p>}
                 {cases.isError && <p className="text-sm text-danger">{cases.error.message}</p>}

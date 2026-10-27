@@ -199,8 +199,8 @@ export const autoRun: Screen = {
       locate: { role: "textbox", name: "Search test cases" },
       name: "Search",
       does:
-        "At the top of the Setup panel, on both tabs. Shows only the cases whose id, title, tags, module, area or automation status hold what you type, with or without the **#** before an id. Several words narrow it: every word must be found. It works together with the result filters. " +
-        "Typing in it on Past runs takes you to Test cases, and going to Past runs by its tab empties it. Press [[Escape]] or the clear button to show every case again.",
+        "At the left of the toolbar above the case list, on the Test cases tab; the toolbar stays at the top while the list scrolls. Shows only the cases whose id, title, tags, module, area or automation status hold what you type, with or without the **#** before an id. Several words narrow it: every word must be found. It works together with the result filters. " +
+        "Going to Past runs empties it, because it only narrows the case list. Press [[Escape]] or the clear button to show every case again.",
     },
     {
       id: "expand-all",
