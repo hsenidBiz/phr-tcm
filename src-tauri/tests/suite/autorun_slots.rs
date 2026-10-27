@@ -1721,14 +1721,19 @@ mod global_checks {
             let b = body(&envs, f);
             assert!(b.contains("opening().write()"), "{f}: {b}");
             assert!(b.contains("lock_every_slot()"), "{f}: {b}");
-            assert!(b.contains("refuse_switch(slots.iter().any(|s| s.is_some()))"), "{f}: {b}");
+            assert!(b.contains("refuse_switch(slots.any_open())"), "{f}: {b}");
+            // A slot an assistant keeps taken refuses the switch at once.
+            assert!(b.contains("slots.busy") && b.contains("SWITCH_BUSY"), "{f}: {b}");
             assert!(!b.contains("supervised().lock()"), "{f}: {b}");
         }
 
-        // The one place the slots are locked together, in slot order.
+        // The one place the slots are locked together, in slot order: main's
+        // lock is waited for, an assistant's only tried briefly.
         let autorun = norm(include_str!("../../src/commands/autorun.rs"));
         let every = body(&autorun, "pub(crate) async fn lock_every_slot(");
         assert!(every.contains("for n in SlotNo::all() {") && every.contains("session_slot(n).lock().await"), "{every}");
+        assert!(every.contains("try_lock_briefly(session_slot(n))") && every.contains("every.busy = true"), "{every}");
+        assert_eq!(every.matches(".lock().await").count(), 1, "only main's lock is waited for: {every}");
 
         // The clear buttons look at every slot too.
         let clear = body(&autorun, "pub async fn refuse_while_a_run_is_going(");

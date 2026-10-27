@@ -189,11 +189,17 @@ pub async fn save_with(root: &Path, store: &dyn SecretStore, env: EnvInput) -> R
     // active environment halfway through.
     let refused = |e: String| e.replacen(SWITCH_REFUSED, ADDRESS_CHANGE_REFUSED, 1);
     // And across every Auto Run browser: no open begins (`opening()`), and
-    // each slot's session is locked in slot order.
+    // each slot's session is locked in slot order - an assistant's only
+    // tried briefly, so an address that is in use is refused at once beside
+    // an assistant's replay rather than after it. Another environment's
+    // address is in nobody's use, so a taken slot does not refuse that save.
     let _opening = crate::commands::autorun_slots::opening().write().await;
     let slots = crate::commands::autorun::lock_every_slot().await;
     let run_slot = if environments::active_id(root)? == env.id {
-        refuse_switch(slots.iter().any(|s| s.is_some())).map_err(refused)?;
+        if slots.busy {
+            return Err(refused(SWITCH_BUSY.to_string()));
+        }
+        refuse_switch(slots.any_open()).map_err(refused)?;
         Some(crate::api_templates::runner::claim().ok_or_else(|| refused(SWITCH_TEMPLATE_RUNNING.to_string()))?)
     } else {
         None
@@ -355,10 +361,15 @@ pub async fn switch_with<T: Send + 'static>(
     // Held across the switch, so no supervised browser, the main one or an
     // assistant's, can open halfway through it: the opening lock for writing
     // first (an open in progress finishes, a new one is refused), then every
-    // slot's session in slot order.
+    // slot's session in slot order. An assistant's slot is only tried
+    // briefly: one that stays taken is a replay, a batch or an open under
+    // way, and the switch is refused at once rather than after it.
     let _opening = crate::commands::autorun_slots::opening().write().await;
     let slots = crate::commands::autorun::lock_every_slot().await;
-    refuse_switch(slots.iter().any(|s| s.is_some()))?;
+    if slots.busy {
+        return Err(SWITCH_BUSY.to_string());
+    }
+    refuse_switch(slots.any_open())?;
     // The template slot is TAKEN, not just looked at, for the write: a run
     // that started between the look in `refuse_switch` and the write would
     // otherwise sign in to one environment and finish in another.

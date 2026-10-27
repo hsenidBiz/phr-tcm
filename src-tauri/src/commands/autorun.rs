@@ -1112,16 +1112,42 @@ pub fn any_session_open_now() -> bool {
     SlotNo::all().into_iter().any(|n| try_lock_briefly(session_slot(n)).map_or(true, |slot| slot.is_some()))
 }
 
-/// Every slot's session lock, taken in slot order 0, 1, 2 and held together:
+/// The slots' session locks as the environment save and switch hold them
+/// (`lock_every_slot`).
+pub(crate) struct EverySlot {
+    held: Vec<tokio::sync::MutexGuard<'static, Option<Session>>>,
+    /// An assistant's slot (1 or 2) stayed taken through the brief tries: a
+    /// replay, a batch or an open is using that browser. Its lock is not held.
+    pub busy: bool,
+}
+
+impl EverySlot {
+    /// Whether any slot whose lock is held has a browser open.
+    pub fn any_open(&self) -> bool {
+        self.held.iter().any(|s| s.is_some())
+    }
+}
+
+/// The slots' session locks, taken in slot order 0, 1, 2 and held together:
 /// the environment save and switch, which refuse while any holds a browser.
 /// Callers hold `opening().write()` first, so no browser opens between the
-/// first lock and the last.
-pub(crate) async fn lock_every_slot() -> Vec<tokio::sync::MutexGuard<'static, Option<Session>>> {
-    let mut slots = Vec::with_capacity(SLOT_COUNT);
+/// first lock and the last. Main's lock is waited for, as ever; an
+/// assistant's slot is only tried briefly (`try_lock_briefly`), because what
+/// holds it can be a whole replay: a slot that stays taken sets `busy`
+/// (the caller refuses with `SWITCH_BUSY`) and the tries stop there.
+pub(crate) async fn lock_every_slot() -> EverySlot {
+    let mut every = EverySlot { held: Vec::with_capacity(SLOT_COUNT), busy: false };
     for n in SlotNo::all() {
-        slots.push(session_slot(n).lock().await);
+        if n.is_main() {
+            every.held.push(session_slot(n).lock().await);
+        } else if let Some(slot) = try_lock_briefly(session_slot(n)) {
+            every.held.push(slot);
+        } else {
+            every.busy = true;
+            break;
+        }
     }
-    slots
+    every
 }
 
 /// A slot's session lock held, as an open or a replay holds it: for a test
