@@ -116,6 +116,7 @@ mod autorun_scripts_changed;
 mod autorun_session_refused;
 mod autorun_setup;
 mod autorun_setup_find;
+mod autorun_setup_run;
 mod autorun_setups;
 mod autorun_signin;
 mod autorun_store;

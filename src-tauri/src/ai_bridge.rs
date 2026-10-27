@@ -643,6 +643,37 @@ pub async fn route_as(
             }
             Err(refused) => refused,
         },
+        // Run a saved setup in the going explore session: it finds a test
+        // record or builds one in the caller's own browser, and the build
+        // goes on the change list. The database rule is one SELECT.
+        ("POST", "/autorun-setup-run") => {
+            let answer = match (unattended_run_is_using_the_browser(), autorun_root()) {
+                (Some(busy), _) => busy,
+                (None, Err(refused)) => refused,
+                (None, Ok(root)) => {
+                    let now = crate::autorun::sessions::now_ms();
+                    let timing = crate::browser::timing::Timing::supervised();
+                    let reading = crate::modules::current().contains(&crate::modules::Module::DbAccess);
+                    let mut held = crate::commands::autorun::session_slot(slot).lock().await;
+                    match reading.then(|| db_ready(ctx)).and_then(Result::ok) {
+                        Some((conn, exe)) => {
+                            let rows = crate::autorun::setup_find::SqlcmdRows { runner: crate::db::RealRunner, exe, conn };
+                            crate::autorun::setup_run::run_setup_in(
+                                &mut held, &root, &ctx.org, &ctx.project, body, Some(&rows), &timing, now,
+                            )
+                            .await
+                        }
+                        None => {
+                            crate::autorun::setup_run::run_setup_in::<_, crate::autorun::setup_find::SqlcmdRows<crate::db::RealRunner>>(
+                                &mut held, &root, &ctx.org, &ctx.project, body, None, &timing, now,
+                            )
+                            .await
+                        }
+                    }
+                }
+            };
+            crate::autorun::roles::with_rules(answer, crate::autorun::roles::RULES_EXPLORE)
+        }
         ("POST", "/autorun-explore-changes") => match autorun_root() {
             Ok(root) => explore_changes(&root, &ctx.org, &ctx.project, body),
             Err(refused) => refused,
@@ -4854,7 +4885,7 @@ async fn lift_a_calls_guard<D: crate::browser::cdp::Driver>(
 /// (`nav::load_home`, which keeps the cookies and waits for the signed-in
 /// marker), so the replay's page is never filed under the discovery's area.
 /// False when it did not arrive: the discovery then signs in.
-async fn went_home<D: crate::browser::cdp::Driver>(
+pub(crate) async fn went_home<D: crate::browser::cdp::Driver>(
     d: &mut D,
     root: &std::path::Path,
     organization: &str,

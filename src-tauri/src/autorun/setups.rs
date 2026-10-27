@@ -639,3 +639,16 @@ pub fn save(root: &Path, org: &str, project: &str, built: Built, why: Option<&st
         }
     })
 }
+
+/// A setup was used - a record found, or one built: its `last_used_at` is
+/// `now`. A name the file does not hold, or one that is already stamped
+/// `now`, changes nothing.
+pub fn stamp_used(root: &Path, org: &str, project: &str, name: &str, now: u64) -> Result<(), String> {
+    update_with(root, org, project, |file| {
+        let k = key(name);
+        if let Some(s) = file.setups.iter_mut().find(|s| key(&s.name) == k) {
+            s.last_used_at = now;
+        }
+        Ok(())
+    })
+}
