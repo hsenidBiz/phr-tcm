@@ -913,7 +913,7 @@ function mockCombined(
     calls.push({ cmd, args: (args ?? {}) as Record<string, unknown> });
     if (cmd === "fetch_board_all") return data;
     if (cmd === "classification_paths_all") return areas;
-    if (cmd === "board_pr_links") return [];
+    if (cmd === "board_pr_links_all") return [];
     return extra(cmd, args);
   });
   return calls;
@@ -1250,7 +1250,7 @@ test("the open drawer keeps its item's project when a refetch drops the item fro
     asked.push({ cmd, args: (args ?? {}) as Record<string, unknown> });
     if (cmd === "fetch_board_all") return dropped ? { ...combinedData, items: [hrmCard] } : combinedData;
     if (cmd === "classification_paths_all") return noAreas;
-    if (cmd === "board_pr_links") return [];
+    if (cmd === "board_pr_links_all") return [];
     if (cmd === "update_work_item") {
       dropped = true;
       return null;
@@ -1290,7 +1290,7 @@ test("when the areas of every project cannot be listed, the board says so, and a
   mockIPC((cmd) => {
     asked.push(cmd);
     if (cmd === "fetch_board_all") return combinedData;
-    if (cmd === "board_pr_links") return [];
+    if (cmd === "board_pr_links_all") return [];
     if (cmd === "classification_paths_all")
       throw { kind: "Network", detail: "Azure DevOps could not be reached. Try again in a moment." };
   });
@@ -1328,4 +1328,29 @@ test("a later visit to the board does not list the areas of every project again"
   fireEvent.click(screen.getByLabelText("Board scope"));
   await screen.findByText("Area: HRM\\Alpha");
   expect(calls.filter((c) => c.cmd === "classification_paths_all")).toHaveLength(1);
+});
+
+test("combined PR chips come from every project", async () => {
+  const calls: Array<{ cmd: string; args: Record<string, unknown> }> = [];
+  mockIPC((cmd, args) => {
+    calls.push({ cmd, args: (args ?? {}) as Record<string, unknown> });
+    if (cmd === "fetch_board_all") return combinedData;
+    if (cmd === "classification_paths_all") return noAreas;
+    if (cmd === "board_pr_links_all")
+      return [
+        { work_item_id: 31, pr_id: 5, status: "active", title: "Leave", repo: "hrm-web", project: "HRM", web_url: "https://x/5" },
+        { work_item_id: 32, pr_id: 8, status: "active", title: "Pay", repo: "payroll-api", project: "Payroll", web_url: "https://x/8" },
+      ];
+  });
+  renderBoard(combined);
+  const hrm = (await screen.findByText("Leave form")).closest("[draggable]") as HTMLElement;
+  const pay = screen.getByText("Run payroll").closest("[draggable]") as HTMLElement;
+  expect(await within(hrm).findByTitle("Active PR !5 in hrm-web: Leave")).toBeInTheDocument();
+  expect(await within(pay).findByTitle("Active PR !8 in payroll-api: Pay")).toBeInTheDocument();
+  // One organization-wide read, under its own cache key; the per-project read is never asked.
+  expect(calls.filter((c) => c.cmd === "board_pr_links_all").map((c) => c.args)).toEqual([
+    { organization: "acme" },
+  ]);
+  expect(calls.some((c) => c.cmd === "board_pr_links")).toBe(false);
+  expect(localStorage.getItem("tcm-v2-cache:board-prs-all:acme")).not.toBeNull();
 });

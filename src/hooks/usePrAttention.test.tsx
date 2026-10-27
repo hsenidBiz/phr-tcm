@@ -54,8 +54,16 @@ function pr(id: number, opts: { conflicts?: boolean; repo?: string } = {}) {
   };
 }
 
-function Probe({ org, project }: { org: string; project: string }) {
-  const n = usePrAttention(org, project);
+function Probe({
+  org,
+  project,
+  allProjects = false,
+}: {
+  org: string;
+  project: string;
+  allProjects?: boolean;
+}) {
+  const n = usePrAttention(org, project, allProjects);
   return <output>{n}</output>;
 }
 
@@ -323,4 +331,134 @@ test("a PR that leaves the list and comes back is scanned again", async () => {
     await qc.refetchQueries({ queryKey: ["pr-overview", "acme", "Web"] });
   });
   await waitFor(() => expect(scanned()).toEqual([2]));
+});
+
+// ---- the projects shown together --------------------------------------------
+
+const inProject = (id: number, project: string, opts: { conflicts?: boolean; repo?: string } = {}) => ({
+  ...pr(id, opts),
+  project,
+});
+
+const openThread = { id: 1, status: "active", comments: [], file: null, line: null };
+const notificationList = () =>
+  JSON.parse(localStorage.getItem("tcm-v2-notifications:acme") ?? "[]") as Array<Record<string, unknown>>;
+
+function mountTogether(home: string) {
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  render(
+    <QueryClientProvider client={qc}>
+      <Probe org="acme" project={home} allProjects />
+    </QueryClientProvider>,
+  );
+}
+
+test("together, one organization-wide overview feeds the badge, and each pull request's threads are read in its project", async () => {
+  const asked: Array<{ cmd: string; args: Record<string, unknown> }> = [];
+  mockIPC((cmd, args) => {
+    asked.push({ cmd, args: (args ?? {}) as Record<string, unknown> });
+    if (cmd === "pr_overview_all")
+      return {
+        mine: [inProject(1, "HRM", { conflicts: true }), inProject(2, "Payroll", { repo: "payroll-api" })],
+        awaiting: [],
+        coverage: { shown: 0, total: 0 },
+      };
+    if (cmd === "pr_threads") return (args as { prId: number }).prId === 2 ? [openThread] : [];
+  });
+  mountTogether("HRM");
+  // #1 has conflicts, #2 an open thread.
+  await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("2"));
+
+  expect(asked.filter((a) => a.cmd === "pr_overview_all").map((a) => a.args)).toEqual([
+    { organization: "acme" },
+  ]);
+  expect(asked.some((a) => a.cmd === "pr_overview")).toBe(false);
+  const threads = asked
+    .filter((a) => a.cmd === "pr_threads")
+    .map((a) => `${a.args.prId}:${a.args.project}`);
+  expect(new Set(threads)).toEqual(new Set(["1:HRM", "2:Payroll"]));
+});
+
+test("together, the bell's links and targets are built from each pull request's own project", async () => {
+  mockIPC((cmd, args) => {
+    if (cmd === "pr_overview_all")
+      return {
+        mine: [inProject(1, "Payroll", { conflicts: true, repo: "payroll-api" })],
+        awaiting: [inProject(2, "HRM")],
+        coverage: { shown: 0, total: 0 },
+      };
+    if (cmd === "pr_threads") return (args as { prId: number }).prId === 1 ? [openThread] : [];
+  });
+  mountTogether("Home");
+  await waitFor(() => expect(notificationList().map((n) => n.id)).toContain("pr-comments:payroll-api:1:1"));
+  const byId = Object.fromEntries(notificationList().map((n) => [n.id as string, n]));
+  expect(byId["pr-conflict:payroll-api:1"]).toMatchObject({
+    href: "https://dev.azure.com/acme/Payroll/_git/payroll-api/pullrequest/1",
+    target: { kind: "pr", repo: "payroll-api", id: 1, project: "Payroll" },
+  });
+  expect(byId["pr-comments:payroll-api:1:1"]).toMatchObject({
+    target: { kind: "pr", repo: "payroll-api", id: 1, project: "Payroll" },
+  });
+  expect(byId["pr-review:web:2"]).toMatchObject({
+    href: "https://dev.azure.com/acme/HRM/_git/web/pullrequest/2",
+    target: { kind: "pr", repo: "web", id: 2, project: "HRM" },
+  });
+});
+
+test("together, a mention on a pull request targets that pull request's project", async () => {
+  const hourAgo = new Date(Date.now() - 3_600_000).toISOString();
+  mockIPC((cmd) => {
+    if (cmd === "connected_user") return { id: "me-guid", display_name: "Avin" };
+    if (cmd === "pr_overview_all")
+      return {
+        mine: [inProject(1, "Payroll", { repo: "payroll-api" })],
+        awaiting: [],
+        coverage: { shown: 0, total: 0 },
+      };
+    if (cmd === "pr_threads")
+      return [
+        {
+          id: 30, status: "active", file_path: "", line: 0, last_updated: hourAgo,
+          comments: [
+            { id: 5, author: "Sam", author_id: "sam-guid", avatar: "", content: "@<me-guid> look", published: hourAgo, edited: false },
+          ],
+        },
+      ];
+  });
+  mountTogether("Home");
+  await waitFor(() => expect(notificationList().map((n) => n.id)).toContain("mention:pr:payroll-api:1:30:5"));
+  expect(notificationList().find((n) => n.id === "mention:pr:payroll-api:1:30:5")).toMatchObject({
+    href: "https://dev.azure.com/acme/Payroll/_git/payroll-api/pullrequest/1",
+    target: { kind: "pr", repo: "payroll-api", id: 1, project: "Payroll" },
+  });
+});
+
+test("together, a pull request that names no project falls back to the home project", async () => {
+  const asked: Array<Record<string, unknown>> = [];
+  mockIPC((cmd, args) => {
+    if (cmd === "pr_overview_all")
+      return { mine: [pr(1, { conflicts: true })], awaiting: [], coverage: { shown: 0, total: 0 } };
+    if (cmd === "pr_threads") {
+      asked.push(args as Record<string, unknown>);
+      return [];
+    }
+  });
+  mountTogether("Home");
+  await waitFor(() => expect(asked.length).toBeGreaterThan(0));
+  expect(asked.every((a) => a.project === "Home")).toBe(true);
+  await waitFor(() =>
+    expect(notificationList().find((n) => n.id === "pr-conflict:web:1")).toMatchObject({
+      target: { kind: "pr", repo: "web", id: 1, project: "Home" },
+    }),
+  );
+});
+
+test("together, an organization with no home project still counts", async () => {
+  mockIPC((cmd) => {
+    if (cmd === "pr_overview_all")
+      return { mine: [inProject(1, "HRM", { conflicts: true })], awaiting: [], coverage: { shown: 0, total: 0 } };
+    if (cmd === "pr_threads") return [];
+  });
+  mountTogether("");
+  await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("1"));
 });

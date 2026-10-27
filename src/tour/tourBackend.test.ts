@@ -89,6 +89,13 @@ test("every stand-in command is answered locally", async () => {
   await expect(commands.prOverview(TOUR_ORG, TOUR_PROJECT)).resolves.toMatchObject({
     status: "ok",
   });
+  // The projects-together reads answer from the sample data too.
+  await expect(commands.prOverviewAll(TOUR_ORG)).resolves.toEqual({
+    status: "ok",
+    data: { awaiting: [], mine: [], coverage: { shown: 1, total: 1 } },
+  });
+  await expect(commands.listReposAll(TOUR_ORG)).resolves.toEqual({ status: "ok", data: [] });
+  await expect(commands.boardPrLinksAll(TOUR_ORG)).resolves.toEqual({ status: "ok", data: [] });
   await expect(commands.listPlansWithSuites(TOUR_ORG, TOUR_PROJECT)).resolves.toMatchObject({
     status: "ok",
   });

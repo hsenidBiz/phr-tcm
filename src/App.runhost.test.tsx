@@ -157,18 +157,29 @@ test("a run from another organization drops the project a notification handed ov
   );
   resetNotifications();
   const asked: Array<{ organization: string; project: string }> = [];
+  // Together the screen lists the whole organization, so the project it
+  // stands for only shows in how a pull request that names none is read.
+  const projectless = {
+    id: 8, title: "Tidy the docs", repo: "docs", repo_id: "repo-docs", project: "", status: "active",
+    closed: "", merge_commit: "", author: "Sam", source_branch: "f", target_branch: "main",
+    created: "2026-07-18T01:00:00Z", description: "", is_draft: false, has_conflicts: false, my_vote: 0,
+    reviewers: [], web_url: "https://example.invalid/pr/8",
+  };
   mount(null, (cmd, args) => {
-    if (cmd === "pr_overview") {
+    if (cmd === "pr_overview_all")
+      return { awaiting: [], mine: [projectless], coverage: { shown: 0, total: 0 } };
+    if (cmd === "list_repos_all") return [];
+    if (cmd === "pr_threads") {
       asked.push(args as { organization: string; project: string });
-      return { awaiting: [], mine: [] };
+      return [];
     }
-    if (cmd === "list_repos") return [];
   });
   await screen.findByText("a@b.com");
   fireEvent.click(await screen.findByRole("button", { name: /Notifications/ }));
   fireEvent.click(screen.getByRole("button", { name: "Pull request 7 needs your review" }));
   expect(await screen.findByRole("heading", { name: "Pull Requests" })).toBeInTheDocument();
-  await waitFor(() => expect(asked[asked.length - 1]?.project).toBe("Payroll"));
+  // The notification's project is not the screen's: the home project is.
+  await waitFor(() => expect(asked[asked.length - 1]?.project).toBe("Web"));
 
   act(() =>
     store.set({

@@ -1589,9 +1589,13 @@ export default function App() {
                   <>
                     <h1 className="mb-4 text-lg font-semibold">Pull Requests</h1>
                     <div className="min-h-0 flex-1 overflow-y-auto">
+                      {/* Together the panel lists every project and the
+                          home project only fills in for what names none; a
+                          notification names its project in the focus. */}
                       <PrPanel
                         org={org}
-                        project={workProject ?? project}
+                        project={allProjects ? homeProject : (workProject ?? project)}
+                        allProjects={allProjects}
                         focus={workFocus?.kind === "pr" ? workFocus : null}
                         onFocusHandled={() => setWorkFocus(null)}
                       />

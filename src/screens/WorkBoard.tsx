@@ -462,16 +462,21 @@ export default function WorkBoard({
   // last visit's answer while a background refetch brings them current.
   // 5 min stale keeps the previous throttle - resolving is one list plus
   // a small call per PR, not something to redo on every mount.
+  // Together: the organization's links, each naming the project its pull
+  // request lives in, under their own keys.
   const prLinks = useQuery({
-    queryKey: ["board-prs", org, project],
+    queryKey: allProjects ? ["board-prs-all", org] : ["board-prs", org, project],
     ...persistentQuery({
-      key: cacheKeys.boardPrs(org, project),
-      fetcher: () => unwrap(commands.boardPrLinks(org, project)),
+      key: allProjects ? cacheKeys.boardPrsAll(org) : cacheKeys.boardPrs(org, project),
+      fetcher: () =>
+        allProjects
+          ? unwrap(commands.boardPrLinksAll(org))
+          : unwrap(commands.boardPrLinks(org, project)),
       // A week on disk like any structure, but PR links move within minutes.
       ...CACHE.structure,
       staleMs: 5 * 60_000,
     }),
-    enabled: Boolean(org && project),
+    enabled: allProjects ? Boolean(org) : Boolean(org && project),
     retry: false,
   });
   const prByItem = useMemo(() => {

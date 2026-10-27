@@ -288,7 +288,7 @@ export const gettingStarted: Screen = {
       group: "top-right",
       locate: { testId: "nav-prs" },
       name: "Pull Requests",
-      does: "The project's pull requests, with their checks and comments.",
+      does: "The pull requests of every project (of the project picked in the bar, when Treat all projects as one is off), with their checks and comments.",
     },
     {
       id: "nav-board",

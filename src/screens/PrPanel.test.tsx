@@ -22,7 +22,7 @@ function renderPanel(props: Partial<ComponentProps<typeof PrPanel>> = {}) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={qc}>
-      <PrPanel org="acme" project="Web" {...props} />
+      <PrPanel org="acme" project="Web" allProjects={false} {...props} />
     </QueryClientProvider>,
   );
 }
@@ -926,4 +926,334 @@ test("when the repository list fails, the panel says so once instead of dropping
   // No "tracked but missing" line is invented from a list that never loaded.
   expect(screen.queryByText(/is disabled in Azure DevOps, or no longer/)).not.toBeInTheDocument();
   expect(localStorage.getItem("tcm-v2-pr-repos:acme/Web")).toBe(JSON.stringify(["r1", "r2"]));
+});
+
+// ---- the projects shown together --------------------------------------------
+
+/** The home project only fills in for what names none; the lists are the
+ * organization's. */
+const together = { allProjects: true, project: "HRM" } as const;
+
+const hrmPr = (id: number, over: Partial<Record<string, unknown>> = {}) =>
+  pr(id, { project: "HRM", ...over });
+const payrollPr = (id: number, over: Partial<Record<string, unknown>> = {}) =>
+  pr(id, { project: "Payroll", repo: "payroll-api", repo_id: "repo-pay", ...over });
+const repoRef = (id: string, name: string, project: string) => ({ id, name, project });
+
+type Call = { cmd: string; args: Record<string, unknown> };
+
+/** Answers the organization-wide overview and repository list; records every
+ * command. `extra` answers the rest. */
+function mockTogether(
+  answer: {
+    awaiting?: unknown[];
+    mine?: unknown[];
+    repos?: unknown[];
+    coverage?: { shown: number; total: number };
+  } = {},
+  extra: (cmd: string, args: Record<string, unknown>) => unknown = () => undefined,
+): Call[] {
+  const calls: Call[] = [];
+  mockIPC((cmd, args) => {
+    const a = (args ?? {}) as Record<string, unknown>;
+    calls.push({ cmd, args: a });
+    if (cmd === "pr_overview_all")
+      return {
+        awaiting: answer.awaiting ?? [],
+        mine: answer.mine ?? [],
+        coverage: answer.coverage ?? { shown: 0, total: 0 },
+      };
+    if (cmd === "list_repos_all") return answer.repos ?? [];
+    return extra(cmd, a);
+  });
+  return calls;
+}
+
+test("combined panel lists pull requests from every project", async () => {
+  const calls = mockTogether({
+    awaiting: [hrmPr(1)],
+    mine: [payrollPr(2)],
+    repos: [repoRef("r1", "web", "HRM"), repoRef("rp", "payroll-api", "Payroll")],
+  });
+  renderPanel(together);
+
+  expect(await screen.findByText("!1")).toBeInTheDocument();
+  expect(await screen.findByText("!2")).toBeInTheDocument();
+  // One organization-wide read each, and nothing asks a single project.
+  expect(calls.filter((c) => c.cmd === "pr_overview_all").map((c) => c.args)).toEqual([
+    { organization: "acme" },
+  ]);
+  expect(calls.filter((c) => c.cmd === "list_repos_all").map((c) => c.args)).toEqual([
+    { organization: "acme" },
+  ]);
+  expect(calls.some((c) => c.cmd === "pr_overview" || c.cmd === "list_repos")).toBe(false);
+});
+
+test("pull requests name their project only across two projects", async () => {
+  mockTogether({ awaiting: [hrmPr(1)], mine: [hrmPr(2)] });
+  const one = renderPanel(together);
+  await screen.findByText("!2");
+  expect(screen.queryByText("Project:", { exact: false })).not.toBeInTheDocument();
+  one.unmount();
+
+  mockTogether({ awaiting: [hrmPr(1)], mine: [payrollPr(2)] });
+  renderPanel(together);
+  const hrm = (await screen.findByText("!1")).closest("button")!;
+  const pay = (await screen.findByText("!2")).closest("button")!;
+  expect(within(hrm).getByText("HRM")).toBeInTheDocument();
+  expect(within(pay).getByText("Payroll")).toBeInTheDocument();
+});
+
+test("repository sections name their project only across two projects", async () => {
+  localStorage.setItem("tcm-v2-pr-repos:acme/*", JSON.stringify(["r1", "rp"]));
+  mockTogether(
+    { repos: [repoRef("r1", "web", "HRM"), repoRef("rp", "payroll-api", "Payroll")] },
+    (cmd, args) => {
+      if (cmd === "repo_pull_requests")
+        return args.repoId === "r1" ? [hrmPr(11)] : [payrollPr(12)];
+    },
+  );
+  renderPanel(together);
+  const web = (await screen.findByText("Active on web")).closest("section")!;
+  const api = (await screen.findByText("Active on payroll-api")).closest("section")!;
+  expect(within(web).getAllByText("HRM").length).toBeGreaterThan(0);
+  expect(within(api).getAllByText("Payroll").length).toBeGreaterThan(0);
+});
+
+test("a pull request's detail is read in its own project", async () => {
+  const calls = mockTogether(
+    { awaiting: [hrmPr(1)], mine: [payrollPr(2)], repos: [repoRef("r1", "web", "HRM")] },
+    (cmd) => {
+      if (cmd === "pr_threads") return [];
+      if (cmd === "pr_work_items") return [];
+      if (cmd === "pr_pipeline") return [];
+      if (cmd === "pr_build_states") return [];
+    },
+  );
+  renderPanel(together);
+  const pay = (await screen.findByText("!2")).closest("button")!;
+  fireEvent.click(pay);
+
+  await vi.waitFor(() => {
+    expect(calls.some((c) => c.cmd === "pr_work_items" && c.args.prId === 2)).toBe(true);
+    expect(calls.some((c) => c.cmd === "pr_pipeline" && c.args.prId === 2)).toBe(true);
+  });
+  // Every per-pull-request read carries the project of that pull request.
+  const projectOf = (cmd: string, prId: number) =>
+    calls.filter((c) => c.cmd === cmd && c.args.prId === prId).map((c) => c.args.project);
+  for (const cmd of ["pr_threads", "pr_work_items", "pr_pipeline"]) {
+    expect(new Set(projectOf(cmd, 2))).toEqual(new Set(["Payroll"]));
+  }
+  expect(new Set(projectOf("pr_threads", 1))).toEqual(new Set(["HRM"]));
+  // Build states are asked per repository, in that repository's project.
+  const states = calls.filter((c) => c.cmd === "pr_build_states");
+  expect(states.map((c) => [c.args.repoId, c.args.project]).sort()).toEqual([
+    ["repo-guid-1", "HRM"],
+    ["repo-pay", "Payroll"],
+  ]);
+});
+
+test("resolving a thread writes to the pull request's project", async () => {
+  const calls = mockTogether({ mine: [payrollPr(2)] }, (cmd) => {
+    if (cmd === "pr_threads") return [thread(5, "active")];
+    if (cmd === "pr_work_items") return [];
+    if (cmd === "pr_pipeline") return [];
+    if (cmd === "set_pr_thread_status") return "fixed";
+  });
+  renderPanel(together);
+  fireEvent.click((await screen.findByText("!2")).closest("button")!);
+
+  fireEvent.click(await screen.findByRole("button", { name: "Resolve" }));
+  await vi.waitFor(() => expect(calls.some((c) => c.cmd === "set_pr_thread_status")).toBe(true));
+  expect(calls.filter((c) => c.cmd === "set_pr_thread_status").map((c) => c.args)).toEqual([
+    {
+      organization: "acme",
+      project: "Payroll",
+      repo: "payroll-api",
+      prId: 2,
+      threadId: 5,
+      status: "fixed",
+    },
+  ]);
+});
+
+test("a pull request that names no project is read in the home project", async () => {
+  const calls = mockTogether({ mine: [pr(3, { project: "" })] }, (cmd) => {
+    if (cmd === "pr_threads") return [];
+  });
+  renderPanel(together);
+  await screen.findByText("!3");
+  await vi.waitFor(() => expect(calls.some((c) => c.cmd === "pr_threads")).toBe(true));
+  expect(new Set(calls.filter((c) => c.cmd === "pr_threads").map((c) => c.args.project))).toEqual(
+    new Set(["HRM"]),
+  );
+});
+
+test("two repositories with one name are told apart by project", async () => {
+  const calls = mockTogether(
+    {
+      repos: [
+        repoRef("r1", "web", "HRM"),
+        repoRef("r2", "web", "Payroll"),
+        repoRef("r3", "api", "HRM"),
+      ],
+    },
+    (cmd) => {
+      if (cmd === "repo_pull_requests") return [];
+    },
+  );
+  renderPanel(together);
+  await vi.waitFor(() => expect(calls.some((c) => c.cmd === "list_repos_all")).toBe(true));
+
+  const trigger = screen.getByLabelText("Repositories");
+  fireEvent.click(trigger);
+  await vi.waitFor(() => {
+    const dropdown = trigger.parentElement!.querySelector(".t-dropdown")!;
+    const labels = [...dropdown.querySelectorAll("li")].map((li) => li.textContent);
+    // Only the clashing name is qualified.
+    expect(labels).toEqual(["Your Pull Requests", "web (HRM)", "web (Payroll)", "api"]);
+  });
+
+  // The label maps back to the right repository: its id is stored and
+  // its pull requests are asked in its own project.
+  await tickRepo("web (Payroll)");
+  expect(await screen.findByText("Active on web (Payroll)")).toBeInTheDocument();
+  expect(localStorage.getItem("tcm-v2-pr-repos:acme/*")).toBe(JSON.stringify(["r2"]));
+  await vi.waitFor(() =>
+    expect(calls.filter((c) => c.cmd === "repo_pull_requests").map((c) => [c.args.project, c.args.repoId])).toEqual([
+      ["Payroll", "r2"],
+    ]),
+  );
+});
+
+test("combined tracked repositories seed once from the home project", async () => {
+  localStorage.setItem("tcm-v2-pr-repos:acme/HRM", JSON.stringify(["r1"]));
+  localStorage.setItem("tcm-v2-pr-yours:acme/HRM", "off");
+  mockTogether({ repos: [repoRef("r1", "web", "HRM"), repoRef("r2", "api", "Payroll")] }, (cmd) => {
+    if (cmd === "repo_pull_requests") return [];
+  });
+  const first = renderPanel(together);
+
+  // Copied across, and the home project's own keys are exactly as they were.
+  expect(await screen.findByText("Active on web")).toBeInTheDocument();
+  expect(localStorage.getItem("tcm-v2-pr-repos:acme/*")).toBe(JSON.stringify(["r1"]));
+  expect(localStorage.getItem("tcm-v2-pr-yours:acme/*")).toBe("off");
+  expect(localStorage.getItem("tcm-v2-pr-repos:acme/HRM")).toBe(JSON.stringify(["r1"]));
+  expect(localStorage.getItem("tcm-v2-pr-yours:acme/HRM")).toBe("off");
+  expect(screen.queryByText("Your pull requests")).not.toBeInTheDocument();
+
+  // Changing the choice writes the combined key and leaves the home project's alone.
+  fireEvent.click(screen.getByLabelText("Repositories"));
+  await tickRepo("api");
+  expect(localStorage.getItem("tcm-v2-pr-repos:acme/*")).toBe(JSON.stringify(["r1", "r2"]));
+  expect(localStorage.getItem("tcm-v2-pr-repos:acme/HRM")).toBe(JSON.stringify(["r1"]));
+  first.unmount();
+
+  // A second visit never overwrites it, even when the home project's key has since moved.
+  localStorage.setItem("tcm-v2-pr-repos:acme/HRM", JSON.stringify(["r9"]));
+  localStorage.setItem("tcm-v2-pr-yours:acme/HRM", "on");
+  renderPanel(together);
+  expect(await screen.findByText("Active on api")).toBeInTheDocument();
+  expect(localStorage.getItem("tcm-v2-pr-repos:acme/*")).toBe(JSON.stringify(["r1", "r2"]));
+  expect(localStorage.getItem("tcm-v2-pr-yours:acme/*")).toBe("off");
+});
+
+test("a profile with only the old single-repository key is carried over too", async () => {
+  // A raw id, not JSON - the one key a plain key copy cannot carry.
+  localStorage.setItem("tcm-v2-pr-repo:acme/HRM", "r2");
+  mockTogether({ repos: [repoRef("r1", "web", "HRM"), repoRef("r2", "api", "HRM")] }, (cmd) => {
+    if (cmd === "repo_pull_requests") return [];
+  });
+  renderPanel(together);
+
+  expect(await screen.findByText("Active on api")).toBeInTheDocument();
+  expect(localStorage.getItem("tcm-v2-pr-repos:acme/*")).toBe(JSON.stringify(["r2"]));
+  expect(localStorage.getItem("tcm-v2-pr-repo:acme/HRM")).toBe("r2");
+  expect(localStorage.getItem("tcm-v2-pr-repos:acme/HRM")).toBeNull();
+});
+
+test("nothing saved for the home project leaves the combined keys unwritten", async () => {
+  mockTogether({ repos: [repoRef("r1", "web", "HRM")] });
+  renderPanel(together);
+  await screen.findByText("Awaiting your review");
+  expect(localStorage.getItem("tcm-v2-pr-repos:acme/*")).toBeNull();
+  expect(localStorage.getItem("tcm-v2-pr-yours:acme/*")).toBeNull();
+});
+
+test("projects left out are reported", async () => {
+  mockTogether({ awaiting: [hrmPr(1)], coverage: { shown: 3, total: 5 } });
+  renderPanel(together);
+  expect(
+    await screen.findByText("Showing pull requests from 3 of 5 projects."),
+  ).toBeInTheDocument();
+});
+
+test("nothing is said when every project was read", async () => {
+  mockTogether({ awaiting: [hrmPr(1)], coverage: { shown: 5, total: 5 } });
+  renderPanel(together);
+  await screen.findByText("!1");
+  expect(screen.queryByText(/Showing pull requests from/)).not.toBeInTheDocument();
+});
+
+test("a tracked repository the list no longer offers says organization, not project", async () => {
+  localStorage.setItem("tcm-v2-pr-repos:acme/*", JSON.stringify(["r9"]));
+  mockTogether({ repos: [repoRef("r1", "web", "HRM")] });
+  renderPanel(together);
+  expect(
+    await screen.findByText(
+      "A repository you tracked is disabled in Azure DevOps, or no longer in this organization.",
+    ),
+  ).toBeInTheDocument();
+});
+
+test("the refresh button reloads the organization's overview", async () => {
+  const calls = mockTogether({ awaiting: [hrmPr(1)] });
+  renderPanel(together);
+  await screen.findByText("!1");
+  const before = calls.filter((c) => c.cmd === "pr_overview_all").length;
+  fireEvent.click(screen.getByLabelText("Refresh pull requests"));
+  await vi.waitFor(() =>
+    expect(calls.filter((c) => c.cmd === "pr_overview_all").length).toBeGreaterThan(before),
+  );
+});
+
+test("a notification for a same-named repository in another project is not claimed here", async () => {
+  localStorage.setItem("tcm-v2-pr-repos:acme/*", JSON.stringify(["r1"]));
+  mockTogether({ repos: [repoRef("r1", "web", "HRM"), repoRef("r2", "web", "Payroll")] }, (cmd) => {
+    if (cmd === "repo_pull_requests") return [];
+  });
+  const handled = vi.fn();
+  // Payroll's web is not tracked; HRM's is. The name alone must not count.
+  renderPanel({ ...together, focus: { repo: "web", id: 99, project: "Payroll" }, onFocusHandled: handled });
+  await vi.waitFor(() =>
+    expect(toast.info).toHaveBeenCalledWith(
+      "PR #99 is not listed here. Track the web repository to see it.",
+    ),
+  );
+  expect(handled).toHaveBeenCalledTimes(1);
+});
+
+test("switched off the panel asks the picked project as before", async () => {
+  const calls: Call[] = [];
+  mockIPC((cmd, args) => {
+    calls.push({ cmd, args: (args ?? {}) as Record<string, unknown> });
+    if (cmd === "pr_overview") return { awaiting: [pr(1)], mine: [] };
+    if (cmd === "list_repos") return [{ id: "r1", name: "web" }];
+  });
+  renderPanel({ allProjects: false, project: "Web" });
+  await screen.findByText("!1");
+  await vi.waitFor(() => expect(calls.some((c) => c.cmd === "list_repos")).toBe(true));
+
+  expect(calls.find((c) => c.cmd === "pr_overview")!.args).toEqual({
+    organization: "acme",
+    project: "Web",
+  });
+  expect(calls.find((c) => c.cmd === "list_repos")!.args).toEqual({
+    organization: "acme",
+    project: "Web",
+  });
+  expect(calls.some((c) => c.cmd === "pr_overview_all" || c.cmd === "list_repos_all")).toBe(false);
+  // Nothing names a project while the projects are apart, and the keys are the per-project ones.
+  expect(screen.queryByText("Project:", { exact: false })).not.toBeInTheDocument();
+  expect(localStorage.getItem("tcm-v2-pr-repos:acme/*")).toBeNull();
 });

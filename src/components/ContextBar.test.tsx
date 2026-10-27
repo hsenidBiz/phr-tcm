@@ -49,6 +49,41 @@ test("the context bar checks for mentions in the picked project", async () => {
   expect(calls.some((c) => c.cmd === "pr_overview")).toBe(true);
 });
 
+test("together, the Work Manager badge counts the pull requests of every project", async () => {
+  const calls: Array<{ cmd: string; args: unknown }> = [];
+  mockIPC((cmd, args) => {
+    calls.push({ cmd, args });
+    if (cmd === "list_orgs") return [];
+    if (cmd === "list_projects") return [];
+    if (cmd === "pr_overview_all") return { mine: [], awaiting: [], coverage: { shown: 0, total: 0 } };
+    if (cmd === "recent_mentions") return [];
+  });
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  render(
+    <QueryClientProvider client={qc}>
+      <ContextBar
+        org="acme"
+        setOrg={() => {}}
+        project="Payroll"
+        setProject={() => {}}
+        allProjects
+        homeProject="Web"
+        pbi={null}
+        setPbi={() => {}}
+        account={null}
+        workMode={false}
+        onToggleWork={() => {}}
+        onOpenSettings={() => {}}
+      />
+    </QueryClientProvider>,
+  );
+  await waitFor(() =>
+    expect(calls.find((c) => c.cmd === "pr_overview_all")?.args).toEqual({ organization: "acme" }),
+  );
+  // Nothing asks one project's pull requests.
+  expect(calls.some((c) => c.cmd === "pr_overview")).toBe(false);
+});
+
 /// The gear turns forward as Settings opens and back as it closes, however
 /// it closes (index.css, ico-cog-turn / ico-cog-turn-back). Each change is a
 /// fresh icon, so the turn plays again; a first render plays nothing.

@@ -112,7 +112,7 @@ test("Pull Requests panel is accessible", async () => {
     if (cmd === "list_repos") return [{ id: "r1", name: "web" }];
     if (cmd === "repo_pull_requests") return [];
   });
-  await expectAccessible(<PrPanel org="acme" project="Web" />);
+  await expectAccessible(<PrPanel org="acme" project="Web" allProjects={false} />);
 });
 
 test("Work Manager board with swimlanes is accessible", async () => {

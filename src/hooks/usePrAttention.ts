@@ -24,11 +24,18 @@ import { logUi } from "../lib/uiLog";
  * and the bell's OS notifications are then the only way news is seen. */
 const POLL_MS = 5 * 60_000;
 
-export function usePrAttention(org: string, project: string): number {
+export function usePrAttention(org: string, project: string, allProjects: boolean): number {
+  // Together, the organization's own overview (the panel's key, so the two
+  // share one cache) and each pull request is read in the project it names;
+  // one that names none falls back to `project`, the home project.
+  const projectOf = (pr: PullRequest) => (allProjects ? pr.project || project : project);
   const overview = useQuery({
-    queryKey: ["pr-overview", org, project],
-    queryFn: () => unwrap(commands.prOverview(org, project)),
-    enabled: Boolean(org && project),
+    queryKey: allProjects ? ["pr-overview-all", org] : ["pr-overview", org, project],
+    queryFn: () =>
+      allProjects
+        ? unwrap(commands.prOverviewAll(org))
+        : unwrap(commands.prOverview(org, project)),
+    enabled: allProjects ? Boolean(org) : Boolean(org && project),
     refetchInterval: POLL_MS,
     refetchIntervalInBackground: true,
     retry: false,
@@ -53,8 +60,8 @@ export function usePrAttention(org: string, project: string): number {
 
   const threads = useQueries({
     queries: prs.map((pr) => ({
-      queryKey: ["pr-threads", org, project, pr.repo, pr.id],
-      queryFn: () => unwrap(commands.prThreads(org, project, pr.repo, pr.id)),
+      queryKey: ["pr-threads", org, projectOf(pr), pr.repo, pr.id],
+      queryFn: () => unwrap(commands.prThreads(org, projectOf(pr), pr.repo, pr.id)),
       staleTime: 2 * 60_000,
       refetchInterval: POLL_MS,
       refetchIntervalInBackground: true,
@@ -68,11 +75,13 @@ export function usePrAttention(org: string, project: string): number {
   // Comments to resolve go to the bell as well - the number that used to
   // ride on the Work Manager pill. Keyed on the count in the store, so
   // this can run on every thread refresh and only a changed count raises.
-  const signature = prs.map((pr, i) => `${pr.repo}:${pr.id}:${unresolvedFor(i)}`).join("|");
+  const signature = prs
+    .map((pr, i) => `${projectOf(pr)}:${pr.repo}:${pr.id}:${unresolvedFor(i)}`)
+    .join("|");
   useEffect(() => {
-    prs.forEach((pr, i) => notePrComments(org, project, pr, unresolvedFor(i)));
+    prs.forEach((pr, i) => notePrComments(org, projectOf(pr), pr, unresolvedFor(i)));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [signature, org, project]);
+  }, [signature, org, project, allProjects]);
 
   // Who "you" are, for the mention scan: the same in-memory, once-per-org
   // lookup the comments panel uses. `staleTime: Infinity` means it is
@@ -126,7 +135,7 @@ export function usePrAttention(org: string, project: string): number {
     const at = new Map<string, number>();
     const found = prs.flatMap((pr, i) => {
       const t = threads[i];
-      const key = `${pr.repo}:${pr.id}`;
+      const key = `${projectOf(pr)}:${pr.repo}:${pr.id}`;
       const last = before.get(key);
       if (!t?.data) {
         if (last !== undefined) at.set(key, last);
@@ -135,7 +144,7 @@ export function usePrAttention(org: string, project: string): number {
       at.set(key, t.dataUpdatedAt);
       if (last === t.dataUpdatedAt) return [];
       return prMentions(pr, t.data, myId).map((m) => ({
-        notification: prNotification(org, project, m),
+        notification: prNotification(org, projectOf(pr), m),
         created: m.createdDate,
       }));
     });
@@ -144,7 +153,7 @@ export function usePrAttention(org: string, project: string): number {
     // what sets its first-run baseline (mentions.ts).
     announceMentions(noteMentions(org, found));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [threadStamp, myId, me.isFetching, me.isError, me.dataUpdatedAt, org, project]);
+  }, [threadStamp, myId, me.isFetching, me.isError, me.dataUpdatedAt, org, project, allProjects]);
 
   return prs.filter((pr, i) => pr.has_conflicts || unresolvedFor(i) > 0).length;
 }

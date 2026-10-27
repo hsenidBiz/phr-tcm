@@ -202,13 +202,15 @@ export function notePrOverview(
   project: string,
   overview: { mine: PullRequest[]; awaiting: PullRequest[] },
 ): void {
+  // A pull request names its own project (the overview across projects holds
+  // several); `project` is the fallback for one that names none.
   const prUrl = (pr: PullRequest) =>
-    `https://dev.azure.com/${encodeURIComponent(org)}/${encodeURIComponent(project)}/_git/${encodeURIComponent(pr.repo)}/pullrequest/${pr.id}`;
+    `https://dev.azure.com/${encodeURIComponent(org)}/${encodeURIComponent(pr.project || project)}/_git/${encodeURIComponent(pr.repo)}/pullrequest/${pr.id}`;
   const prTarget = (pr: PullRequest): NotificationTarget => ({
     kind: "pr",
     repo: pr.repo,
     id: pr.id,
-    project,
+    project: pr.project || project,
   });
   const items: Array<Omit<AppNotification, "at" | "read">> = [];
   for (const pr of overview.mine) {
@@ -243,14 +245,16 @@ export function notePrOverview(
  * while a third comment arriving raises "3 comments" fresh. */
 export function notePrComments(org: string, project: string, pr: PullRequest, unresolved: number): void {
   if (unresolved <= 0 || pr.status !== "active") return;
+  // The pull request's own project when it names one, as in notePrOverview.
+  const where = pr.project || project;
   raise(org, [
     {
       id: `pr-comments:${pr.repo}:${pr.id}:${unresolved}`,
       kind: "pr-comments",
       title: `PR #${pr.id} has ${unresolved} comment${unresolved === 1 ? "" : "s"} to resolve`,
       body: `${pr.title} (${pr.repo})`,
-      href: `https://dev.azure.com/${encodeURIComponent(org)}/${encodeURIComponent(project)}/_git/${encodeURIComponent(pr.repo)}/pullrequest/${pr.id}`,
-      target: { kind: "pr", repo: pr.repo, id: pr.id, project },
+      href: `https://dev.azure.com/${encodeURIComponent(org)}/${encodeURIComponent(where)}/_git/${encodeURIComponent(pr.repo)}/pullrequest/${pr.id}`,
+      target: { kind: "pr", repo: pr.repo, id: pr.id, project: where },
     },
   ]);
 }

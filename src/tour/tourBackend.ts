@@ -87,7 +87,12 @@ function standIns(): Partial<Commands> {
     fetchBoard: () => ok(TOUR_BOARD),
     fetchBoardAll: () => ok(TOUR_BOARD_ALL),
     boardPrLinks: () => ok([]),
+    boardPrLinksAll: () => ok([]),
     prOverview: () => ok(TOUR_PR_OVERVIEW),
+    // The projects-together reads: the sample organization has one project,
+    // all of it read, and no pull requests or repositories to list.
+    prOverviewAll: () => ok({ ...TOUR_PR_OVERVIEW, coverage: { shown: 1, total: 1 } }),
+    listReposAll: () => ok([]),
     // The mention scan runs from the context bar the moment an org and
     // project are picked, tour or not - the sample user has no mentions
     // and nobody to match "is this me" against.

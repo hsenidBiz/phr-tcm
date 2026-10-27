@@ -1056,10 +1056,54 @@ test("the Settings Home project picker changes the home project", async () => {
   expect(screen.getByRole("combobox", { name: "Home project" })).toHaveTextContent("Payroll");
 });
 
+/// Together, the Pull Requests screen lists the whole organization, so the
+/// project it stands for only fills in for a pull request that names none.
+/// This one names none, which makes the screen's own project visible: its
+/// threads are read in it. (A pull request that names a project is read in
+/// that one - see "a pull request notification opens that pull request".)
+const PROJECTLESS_PR = {
+  id: 8,
+  title: "Tidy the docs",
+  repo: "docs",
+  repo_id: "repo-docs",
+  project: "",
+  status: "active",
+  closed: "",
+  merge_commit: "",
+  author: "Sam",
+  source_branch: "feature/docs",
+  target_branch: "main",
+  created: "2026-07-18T01:00:00Z",
+  description: "",
+  is_draft: false,
+  has_conflicts: false,
+  my_vote: 0,
+  reviewers: [],
+  web_url: "https://example.invalid/pr/8",
+};
+
+/// What the screen is asked while the projects show together. Records the
+/// project each pull request's threads are read in.
+function togetherPrAnswers(
+  asked: Array<{ organization: string; project: string }>,
+  cmd: string,
+  args: unknown,
+): unknown {
+  if (cmd === "pr_overview_all")
+    return { awaiting: [], mine: [PROJECTLESS_PR], coverage: { shown: 0, total: 0 } };
+  if (cmd === "list_repos_all") return [];
+  if (cmd === "pr_threads") {
+    asked.push(args as { organization: string; project: string });
+    return [];
+  }
+  return undefined;
+}
+
 /// A notification for a Payroll pull request, opened while the projects show
-/// together: the Pull Requests screen is handed Payroll while the home project
-/// stays Web. Resolves with every pull request overview the app asked for. (The
-/// board is not the observer: it reads every project and is handed nothing.)
+/// together: the notification's project does not become the Pull Requests
+/// screen's, which stands for the home project Web. Resolves with every
+/// project the screen read a pull request in. (The board is not the observer:
+/// it reads every project and is handed nothing.)
 async function openPayrollNotification() {
   savedPrefs();
   localStorage.setItem("tcm-v2-tour-done", "yes");
@@ -1092,13 +1136,14 @@ async function openPayrollNotification() {
       return { awaiting: [], mine: [] };
     }
     if (cmd === "list_repos") return [];
+    return togetherPrAnswers(asked, cmd, args);
   });
   renderApp();
   await screen.findByText("a@b.com");
   fireEvent.click(await screen.findByRole("button", { name: /Notifications/ }));
   fireEvent.click(screen.getByRole("button", { name: "Pull request 7 needs your review" }));
   expect(await screen.findByRole("heading", { name: "Pull Requests" })).toBeInTheDocument();
-  await waitFor(() => expect(asked[asked.length - 1]?.project).toBe("Payroll"));
+  await waitFor(() => expect(asked[asked.length - 1]?.project).toBe("Web"));
   return asked;
 }
 
@@ -2666,7 +2711,7 @@ function prMocks(asked: PrAsk[], extra: (cmd: string, args: unknown) => unknown 
       return { awaiting: [], mine: [] };
     }
     if (cmd === "list_repos") return [];
-    return extra(cmd, args);
+    return togetherPrAnswers(asked, cmd, args) ?? extra(cmd, args);
   });
 }
 
@@ -2678,7 +2723,10 @@ async function openNotification(title: string, heading: string) {
 
 const lastAsk = (asked: PrAsk[]) => asked[asked.length - 1];
 
-/** Mounts with the home project Web, a pull request bell item for `project`, and opens it. */
+/** Mounts with the home project Web, a pull request bell item for `project`, and opens it.
+ * The notification's project is not the screen's: together, the screen stands
+ * for the home project (the pull request is read in its own project, see
+ * "a pull request notification opens that pull request"). */
 async function mountAndOpenPrFrom(project: string, extra?: (cmd: string, args: unknown) => unknown) {
   savedPrefs();
   localStorage.setItem("tcm-v2-tour-done", "yes");
@@ -2688,7 +2736,7 @@ async function mountAndOpenPrFrom(project: string, extra?: (cmd: string, args: u
   renderApp();
   await screen.findByText("a@b.com");
   await openNotification(PR_TITLE, "Pull Requests");
-  await waitFor(() => expect(lastAsk(asked)?.project).toBe(project));
+  await waitFor(() => expect(lastAsk(asked)?.project).toBe("Web"));
   return asked;
 }
 
@@ -2809,8 +2857,13 @@ test("picking a PBI drops the project a notification handed over", async () => {
 
   await pickPbiFromBar("login", /Login flow/);
 
-  // The PBI's project is the effective one from here on.
-  await waitFor(() => expect(lastAsk(asked)?.project).toBe("Mobile"));
+  // The PBI's project is the effective one from here on, but the pull request
+  // screen lists every project and stands for the home project, never for the PBI's.
+  await act(async () => {
+    await new Promise((r) => setTimeout(r, 30));
+  });
+  expect(lastAsk(asked)?.project).toBe("Web");
+  expect(storedPrefs().project).toBe("Web");
 });
 
 test("changing the organization drops the project a notification handed over", async () => {
@@ -2839,11 +2892,12 @@ test("changing the organization drops the project a notification handed over", a
       return { awaiting: [], mine: [] };
     }
     if (cmd === "list_repos") return [];
+    return togetherPrAnswers(asked, cmd, args);
   });
   renderApp();
   await screen.findByText("a@b.com");
   await openNotification(PR_TITLE, "Pull Requests");
-  await waitFor(() => expect(lastAsk(asked)?.project).toBe("Payroll"));
+  await waitFor(() => expect(lastAsk(asked)?.project).toBe("Web"));
 
   fireEvent.click(await screen.findByRole("combobox", { name: "Organization" }));
   fireEvent.click(await screen.findByRole("option", { name: "other" }));
@@ -2851,6 +2905,39 @@ test("changing the organization drops the project a notification handed over", a
   await waitFor(() =>
     expect(lastAsk(asked)).toEqual(expect.objectContaining({ organization: "other", project: "Solo" })),
   );
+});
+
+test("a pull request notification opens that pull request, read in its own project", async () => {
+  savedPrefs();
+  localStorage.setItem("tcm-v2-tour-done", "yes");
+  seedNotification("Payroll", "pr");
+  const scroll = vi.spyOn(Element.prototype, "scrollIntoView").mockImplementation(() => {});
+  const reads: Array<{ cmd: string; project: unknown; prId: unknown }> = [];
+  signedInMocks((cmd, args) => {
+    const a = (args ?? {}) as { project?: unknown; prId?: unknown };
+    if (cmd === "pr_threads" || cmd === "pr_work_items" || cmd === "pr_pipeline")
+      reads.push({ cmd, project: a.project, prId: a.prId });
+    if (cmd === "list_projects") return PROJECTS;
+    if (cmd === "fetch_board_all") return emptyAllBoard;
+    if (cmd === "pr_overview_all")
+      return {
+        awaiting: [],
+        mine: [{ ...PROJECTLESS_PR, id: 7, title: "Fix the payslip", repo: "api", project: "Payroll" }],
+        coverage: { shown: 0, total: 0 },
+      };
+    if (cmd === "list_repos_all") return [];
+    if (cmd === "pr_threads" || cmd === "pr_work_items" || cmd === "pr_pipeline") return [];
+  });
+  renderApp();
+  await screen.findByText("a@b.com");
+  await openNotification(PR_TITLE, "Pull Requests");
+
+  // The row is claimed and expanded, and everything it reads is in Payroll,
+  // not the home project Web.
+  await waitFor(() => expect(reads.some((r) => r.cmd === "pr_work_items")).toBe(true));
+  expect(reads.filter((r) => r.prId === 7).every((r) => r.project === "Payroll")).toBe(true);
+  expect(storedPrefs().project).toBe("Web");
+  scroll.mockRestore();
 });
 
 // Auto Run and API Templates keep their files per project, belonging to the

@@ -24,9 +24,20 @@ import {
 import { Collapse } from "../components/ui/collapse";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "../lib/toast";
-import { commands, type PrBuild, type PullRequest, type PrWorkItem } from "../bindings";
+import {
+  commands,
+  type PrBuild,
+  type PrOverview,
+  type PrOverviewAll,
+  type PullRequest,
+  type PrWorkItem,
+  type RepoRef,
+} from "../bindings";
 import PipelineDialog, { duration, failurePath, label, tone } from "../components/PipelineDialog";
 import PrThreads from "../components/PrThreads";
+import ProjectChip from "../components/ProjectChip";
+import { scopeSegment, seedCombinedKey, spansProjects } from "../lib/projectScope";
+import { tourRunningSnapshot } from "../tour/tourState";
 import { isResolved } from "../lib/threadStatus";
 import MultiSelect from "../components/ui/multiselect";
 import { Modal } from "../components/ui/modal";
@@ -43,8 +54,9 @@ const PR_PAGE = 25;
 
 /** The one pull request a notification asked this panel to show. Structural
  * rather than the notification's own union: the panel only needs to know
- * which row to claim. */
-type PrFocus = { repo: string; id: number };
+ * which row to claim. `project` is the notification's own: together, two
+ * projects can each have a repository of that name. */
+type PrFocus = { repo: string; id: number; project?: string };
 
 /** ADO reviewer votes: 10 approved, 5 approved w/ suggestions, 0 waiting,
  * -5 waiting for author, -10 rejected. */
@@ -324,6 +336,13 @@ function BuildCard({ b, total }: { b: PrBuild; total: number }) {
   );
 }
 
+/** The project a pull request is read and written in: its own while the
+ * projects show together (the home project fills in for one that names
+ * none), otherwise the one the panel stands for. */
+function prProject(pr: { project?: string }, project: string, allProjects: boolean): string {
+  return allProjects ? pr.project || project : project;
+}
+
 /**
  * Validation state for every PR on screen, in one call per REPOSITORY.
  *
@@ -336,19 +355,27 @@ function BuildCard({ b, total }: { b: PrBuild; total: number }) {
  * same as passing: the caller shows nothing for either, but it must not
  * turn "no build" into a green claim.
  */
-function usePrBuildStates(org: string, project: string, prs: PullRequest[]) {
+function usePrBuildStates(org: string, project: string, prs: PullRequest[], allProjects: boolean) {
   const byRepo = useMemo(() => {
-    const m = new Map<string, number[]>();
-    for (const pr of prs) m.set(pr.repo_id, [...(m.get(pr.repo_id) ?? []), pr.id]);
+    // Together a list holds several projects: one call per repository, in
+    // the project that owns it (under the key a per-project panel uses).
+    const m = new Map<string, { project: string; repoId: string; ids: number[] }>();
+    for (const pr of prs) {
+      const inProject = prProject(pr, project, allProjects);
+      const k = `${inProject}\u0001${pr.repo_id}`;
+      const entry = m.get(k) ?? { project: inProject, repoId: pr.repo_id, ids: [] };
+      entry.ids.push(pr.id);
+      m.set(k, entry);
+    }
     // Sorted so the query key is stable across re-orders of the same set.
-    return [...m.entries()].map(([repoId, ids]) => ({ repoId, ids: [...ids].sort((a, b) => a - b) }));
-  }, [prs]);
+    return [...m.values()].map((e) => ({ ...e, ids: [...e.ids].sort((a, b) => a - b) }));
+  }, [prs, project, allProjects]);
 
   const results = useQueries({
-    queries: byRepo.map(({ repoId, ids }) => ({
-      queryKey: ["pr-build-states", org, project, repoId, ids],
-      queryFn: () => unwrap(commands.prBuildStates(org, project, repoId, ids)),
-      enabled: Boolean(org && project) && ids.length > 0,
+    queries: byRepo.map(({ project: inProject, repoId, ids }) => ({
+      queryKey: ["pr-build-states", org, inProject, repoId, ids],
+      queryFn: () => unwrap(commands.prBuildStates(org, inProject, repoId, ids)),
+      enabled: Boolean(org && inProject) && ids.length > 0,
       staleTime: 60_000,
       retry: false,
     })),
@@ -388,13 +415,17 @@ function PrRow({
   pr,
   org,
   project,
+  showProject = false,
   buildState,
   focused = false,
   onFocused,
 }: {
   pr: PullRequest;
   org: string;
+  /** The project this pull request is read and written in. */
   project: string;
+  /** The panel lists more than one project: name this pull request's. */
+  showProject?: boolean;
   buildState?: string;
   /** This is the pull request a notification asked for. */
   focused?: boolean;
@@ -549,6 +580,7 @@ function PrRow({
             <span className="rounded-full bg-accent-soft px-1.5 py-0.5 text-[10px] font-medium text-accent">
               <span className="label-trim">{pr.repo}</span>
             </span>
+            {showProject && pr.project && <ProjectChip project={pr.project} />}
             <span className="flex items-center gap-1">
               <GitBranch size={11} />
               {pr.source_branch} → {pr.target_branch}
@@ -690,6 +722,9 @@ function PrGroup({
   error,
   org,
   project,
+  allProjects,
+  showProject = false,
+  titleProject,
   focus = null,
   onFocusHandled,
 }: {
@@ -701,11 +736,17 @@ function PrGroup({
    * the list, so a failing group still says which one it is. */
   error?: string;
   org: string;
+  /** The panel's project: every pull request's own while together. */
   project: string;
+  allProjects: boolean;
+  /** The panel lists more than one project: each row names its own. */
+  showProject?: boolean;
+  /** A repository section's project, named beside its heading. */
+  titleProject?: string;
   focus?: PrFocus | null;
   onFocusHandled?: () => void;
 }) {
-  const buildStates = usePrBuildStates(org, project, prs);
+  const buildStates = usePrBuildStates(org, project, prs, allProjects);
   return (
     <section className="space-y-2">
       <h2
@@ -716,6 +757,11 @@ function PrGroup({
       >
         {title}
         {prs.length > 0 && <span className="ml-2 text-xs font-normal text-faint">{prs.length}</span>}
+        {titleProject && (
+          <span className="ml-2 align-middle">
+            <ProjectChip project={titleProject} />
+          </span>
+        )}
       </h2>
       {error && <p className="text-sm text-danger">{error}</p>}
       {prs.length === 0 ? (
@@ -731,7 +777,8 @@ function PrGroup({
               key={`${pr.repo}-${pr.id}`}
               pr={pr}
               org={org}
-              project={project}
+              project={prProject(pr, project, allProjects)}
+              showProject={showProject}
               buildState={buildStates.get(pr.id)}
               focused={focus != null && focus.repo === pr.repo && focus.id === pr.id}
               onFocused={onFocusHandled}
@@ -765,23 +812,72 @@ function readRepoIds(org: string, project: string): string[] {
  * needing both is not a case worth complicating the picker's shape for. */
 const YOURS = "Your Pull Requests";
 
+/** Copies what a person tracked in the home project into the keys the
+ * projects-together panel uses (`<org>/*`), once. Nothing is moved: the home
+ * project's keys stay exactly as they were, so switching the projects apart
+ * finds them. The repositories come from `readRepoIds`, so a profile that
+ * only has the old single-repository key (a raw id, not JSON, which a plain
+ * key copy cannot carry) is carried over too. An existing combined key is
+ * never overwritten, and the tour (sample data) copies nothing. */
+function seedCombinedTracking(org: string, home: string): void {
+  if (tourRunningSnapshot()) return;
+  const reposKey = `tcm-v2-pr-repos:${org}/${scopeSegment(home, true)}`;
+  try {
+    if (localStorage.getItem(reposKey) === null) {
+      const ids = readRepoIds(org, home);
+      if (ids.length > 0) localStorage.setItem(reposKey, JSON.stringify(ids));
+    }
+  } catch {
+    // unreadable storage -> nothing is copied
+  }
+  seedCombinedKey(`tcm-v2-pr-yours:${org}/*`, `tcm-v2-pr-yours:${org}/${home}`);
+}
+
+/** What the picker shows for a repository: its name, and its project too
+ * when another listed repository has the same name (names are unique only
+ * within a project). Only the label differs - ids are what is stored. */
+function repoLabels(repos: RepoRef[], allProjects: boolean): Map<string, string> {
+  const count = new Map<string, number>();
+  for (const r of repos) count.set(r.name, (count.get(r.name) ?? 0) + 1);
+  return new Map(
+    repos.map((r) => [
+      r.id,
+      allProjects && r.project && (count.get(r.name) ?? 0) > 1 ? `${r.name} (${r.project})` : r.name,
+    ]),
+  );
+}
+
 export default function PrPanel({
   org,
   project,
+  allProjects,
   focus = null,
   onFocusHandled,
 }: {
   org: string;
+  /** The project the panel stands for: the picked one, or the home project
+   * while the projects show together (it then only fills in for what names
+   * none, and seeds the combined choices). */
   project: string;
+  /** The projects show together: every project's pull requests and repositories. */
+  allProjects: boolean;
   /** A notification's handoff: the pull request to expand and ring. */
   focus?: PrFocus | null;
   onFocusHandled?: () => void;
 }) {
   const qc = useQueryClient();
-  const repoKey = `tcm-v2-pr-repos:${org}/${project}`;
+  // Together, tracked repositories and the toggle live under `<org>/*`,
+  // copied once from the home project's.
+  const seededFrom = useRef("");
+  if (allProjects && seededFrom.current !== `${org}/${project}`) {
+    seededFrom.current = `${org}/${project}`;
+    seedCombinedTracking(org, project);
+  }
+  const segment = scopeSegment(project, allProjects);
+  const repoKey = `tcm-v2-pr-repos:${org}/${segment}`;
   // "Your Pull Requests" is ON unless the user deselected it - the panel's
   // default view is your own PRs, with repositories opted into alongside.
-  const yoursKey = `tcm-v2-pr-yours:${org}/${project}`;
+  const yoursKey = `tcm-v2-pr-yours:${org}/${segment}`;
   const [showYours, setShowYoursRaw] = useState(() => localStorage.getItem(yoursKey) !== "off");
   const setShowYours = (on: boolean) => {
     setShowYoursRaw(on);
@@ -791,7 +887,7 @@ export default function PrPanel({
       // session-only
     }
   };
-  const [repoIds, setRepoIdsRaw] = useState<string[]>(() => readRepoIds(org, project));
+  const [repoIds, setRepoIdsRaw] = useState<string[]>(() => readRepoIds(org, segment));
   // The seed above runs once, but repoKey changes the moment the user
   // switches org or project - and the previous project's repos stayed
   // selected, so the panel asked Azure DevOps for pull requests on repos
@@ -802,7 +898,7 @@ export default function PrPanel({
   const seededFor = useRef(repoKey);
   if (seededFor.current !== repoKey) {
     seededFor.current = repoKey;
-    setRepoIdsRaw(readRepoIds(org, project));
+    setRepoIdsRaw(readRepoIds(org, segment));
     setShowYoursRaw(localStorage.getItem(yoursKey) !== "off");
   }
   const setRepoIds = (ids: string[]) => {
@@ -814,18 +910,27 @@ export default function PrPanel({
     }
   };
 
-  const overview = useQuery({
-    queryKey: ["pr-overview", org, project],
-    queryFn: () => unwrap(commands.prOverview(org, project)),
-    enabled: Boolean(org && project),
+  // Together: the organization's overview and repositories, each naming the
+  // project it belongs to. Apart: the picked project's, as ever.
+  const overview = useQuery<PrOverview | PrOverviewAll>({
+    queryKey: allProjects ? ["pr-overview-all", org] : ["pr-overview", org, project],
+    queryFn: () =>
+      allProjects
+        ? unwrap(commands.prOverviewAll(org))
+        : unwrap(commands.prOverview(org, project)),
+    enabled: allProjects ? Boolean(org) : Boolean(org && project),
     retry: false,
   });
   const repos = useQuery({
-    queryKey: ["repos", org, project],
-    queryFn: () => unwrap(commands.listRepos(org, project)),
-    enabled: Boolean(org && project),
+    queryKey: allProjects ? ["repos-all", org] : ["repos", org, project],
+    queryFn: () =>
+      allProjects ? unwrap(commands.listReposAll(org)) : unwrap(commands.listRepos(org, project)),
+    enabled: allProjects ? Boolean(org) : Boolean(org && project),
     staleTime: 60 * 60_000,
   });
+  // Projects a fan-out did not read are said, never dropped quietly.
+  const coverage =
+    allProjects && overview.data && "coverage" in overview.data ? overview.data.coverage : null;
   // Active vs completed on the chosen repo. Completed is a separate ADO
   // query (capped server-side), not a client filter.
   const statusKey = "tcm-v2-pr-status";
@@ -862,6 +967,18 @@ export default function PrPanel({
     [repos.data, repoIds],
   );
 
+  // Together, name the project beside each pull request and repository
+  // section only when what is listed spans more than one - a single-project
+  // panel stays as quiet as before. The sections' pull requests all belong
+  // to their repository's project, so the tracked repositories stand for them.
+  const showProject =
+    allProjects &&
+    spansProjects([
+      ...(overview.data?.awaiting ?? []),
+      ...(showYours ? (overview.data?.mine ?? []) : []),
+      ...trackedRepos,
+    ]);
+
   // A notification named a pull request. A row claims it (expands, scrolls,
   // rings) - but only if a group on this page can hold it at all, and only
   // if that group's page is the one it is on. Both dead ends say so rather
@@ -876,7 +993,12 @@ export default function PrPanel({
     const couldHold =
       holds(overview.data.awaiting) ||
       (showYours && isMine) ||
-      trackedRepos.some((r) => r.name === focus.repo);
+      // Together a repository is told apart by its project as well as its
+      // name: two projects can each have a "web".
+      trackedRepos.some(
+        (r) =>
+          r.name === focus.repo && (!allProjects || !focus.project || r.project === focus.project),
+      );
     if (!couldHold) {
       // "Your Pull Requests" hidden is a different dead end than not
       // tracking the repo: the PR IS on this page's data, just not
@@ -896,7 +1018,7 @@ export default function PrPanel({
       handledRef.current?.();
     }, 4000);
     return () => window.clearTimeout(timer);
-  }, [focus, overview.isSuccess, overview.data, showYours, trackedRepos]);
+  }, [focus, overview.isSuccess, overview.data, showYours, trackedRepos, allProjects]);
 
   // A tick whose repository the fresh list no longer offers - disabled in
   // Azure DevOps, or gone from the project. It is not requested at all (it
@@ -910,8 +1032,12 @@ export default function PrPanel({
 
   // Repo NAMES face the MultiSelect (they are what a person recognises,
   // and ADO keeps them unique within a project); ids face storage and the
-  // API, which survive a repo being renamed.
-  const anyRepoFetching = useIsFetching({ queryKey: ["repo-prs", org, project] }) > 0;
+  // API, which survive a repo being renamed. Together, a name another
+  // listed repository shares carries its project too: `name (project)`.
+  const labels = useMemo(() => repoLabels(repos.data ?? [], allProjects), [repos.data, allProjects]);
+  const labelOf = (r: RepoRef) => labels.get(r.id) ?? r.name;
+  const anyRepoFetching =
+    useIsFetching({ queryKey: allProjects ? ["repo-prs", org] : ["repo-prs", org, project] }) > 0;
 
   return (
     // Pull requests are a list, so width costs nothing: the cap steps up
@@ -923,13 +1049,13 @@ export default function PrPanel({
           ariaLabel="Repositories"
           className="w-64"
           allLabel="Pick pull requests…"
-          options={[YOURS, ...(repos.data ?? []).map((r) => r.name)]}
-          selected={[...(showYours ? [YOURS] : []), ...trackedRepos.map((r) => r.name)]}
+          options={[YOURS, ...(repos.data ?? []).map(labelOf)]}
+          selected={[...(showYours ? [YOURS] : []), ...trackedRepos.map(labelOf)]}
           checkedFirst
           onChange={(names) => {
             setShowYours(names.includes(YOURS));
             setRepoIds(
-              (repos.data ?? []).filter((r) => names.includes(r.name)).map((r) => r.id),
+              (repos.data ?? []).filter((r) => names.includes(labelOf(r))).map((r) => r.id),
             );
           }}
         />
@@ -954,8 +1080,13 @@ export default function PrPanel({
           title="Refresh pull requests"
           className="rounded p-1.5 text-muted transition-colors hover:text-accent"
           onClick={() => {
-            qc.invalidateQueries({ queryKey: ["pr-overview", org, project] });
-            qc.invalidateQueries({ queryKey: ["repo-prs", org, project] });
+            if (allProjects) {
+              qc.invalidateQueries({ queryKey: ["pr-overview-all", org] });
+              qc.invalidateQueries({ queryKey: ["repo-prs", org] });
+            } else {
+              qc.invalidateQueries({ queryKey: ["pr-overview", org, project] });
+              qc.invalidateQueries({ queryKey: ["repo-prs", org, project] });
+            }
           }}
         >
           <RefreshCw
@@ -966,6 +1097,11 @@ export default function PrPanel({
       </div>
 
       {overview.isError && <p className="text-sm text-danger">{overview.error.message}</p>}
+      {coverage && coverage.shown < coverage.total && (
+        <p className="text-xs text-muted">
+          Showing pull requests from {coverage.shown} of {coverage.total} projects.
+        </p>
+      )}
       {overview.isLoading && (
         <div className="space-y-2">
           <Skeleton className="h-4 w-40" />
@@ -983,6 +1119,8 @@ export default function PrPanel({
             empty="Nothing waiting on you."
             org={org}
             project={project}
+            allProjects={allProjects}
+            showProject={showProject}
             focus={focus}
             onFocusHandled={onFocusHandled}
           />
@@ -993,6 +1131,8 @@ export default function PrPanel({
               empty="You have no active pull requests."
               org={org}
               project={project}
+              allProjects={allProjects}
+              showProject={showProject}
               focus={focus}
               onFocusHandled={onFocusHandled}
             />
@@ -1008,7 +1148,8 @@ export default function PrPanel({
         <div className="flex items-center gap-2 rounded-md border border-dashed border-border px-3 py-2 text-xs text-faint">
           {/* Only the ids are saved, so the names are not known here. */}
           <p className="min-w-0 flex-1">
-            A repository you tracked is disabled in Azure DevOps, or no longer in this project.
+            A repository you tracked is disabled in Azure DevOps, or no longer in this{" "}
+            {allProjects ? "organization" : "project"}.
           </p>
           {/* A repository the list no longer offers has no tick to remove. */}
           <button
@@ -1026,9 +1167,12 @@ export default function PrPanel({
         <RepoPrSection
           key={r.id}
           org={org}
-          project={project}
+          project={allProjects ? r.project || project : project}
+          allProjects={allProjects}
+          showProject={showProject}
+          showRepoProject={allProjects && spansProjects(trackedRepos)}
           repoId={r.id}
-          repoName={r.name}
+          repoName={labelOf(r)}
           prStatus={prStatus}
           shownAbove={shownAbove}
           focus={focus}
@@ -1046,6 +1190,9 @@ export default function PrPanel({
 function RepoPrSection({
   org,
   project,
+  allProjects,
+  showProject,
+  showRepoProject,
   repoId,
   repoName,
   prStatus,
@@ -1054,7 +1201,13 @@ function RepoPrSection({
   onFocusHandled,
 }: {
   org: string;
+  /** The repository's own project while together. */
   project: string;
+  allProjects: boolean;
+  /** The panel lists more than one project: each row names its own. */
+  showProject: boolean;
+  /** The tracked repositories span more than one project: name this one's. */
+  showRepoProject: boolean;
   repoId: string;
   repoName: string;
   prStatus: "active" | "completed";
@@ -1098,6 +1251,9 @@ function RepoPrSection({
         }
         org={org}
         project={project}
+        allProjects={allProjects}
+        showProject={showProject}
+        titleProject={showRepoProject ? project : undefined}
         focus={focus}
         onFocusHandled={onFocusHandled}
       />
