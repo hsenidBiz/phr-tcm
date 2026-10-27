@@ -5,6 +5,7 @@
 // on this machine.
 
 import type { BoardItem, BoardParent } from "../bindings";
+import { COMBINED, seedCombinedKey } from "./projectScope";
 
 /** The lane id of cards with no parent. Work item ids start at 1. */
 export const NO_PARENT = 0;
@@ -76,6 +77,13 @@ export function saveSwimlanes(on: boolean): void {
 
 export function collapsedLanesKey(org: string, project: string): string {
   return `tcm-v2-board-lanes-collapsed:${org}/${project}`;
+}
+
+/** The board across projects keeps its collapsed lanes under `<org>/*`. The
+ * first time it opens, it starts from what the home project had collapsed:
+ * copied, never moved, and never over lanes already kept there. */
+export function seedCombinedLanes(org: string, homeProject: string): void {
+  seedCombinedKey(collapsedLanesKey(org, COMBINED), collapsedLanesKey(org, homeProject));
 }
 
 /** The lanes collapsed on this org/project's board: parent ids, 0 for No

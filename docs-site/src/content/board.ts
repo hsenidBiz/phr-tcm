@@ -37,7 +37,8 @@ export const board: Screen = {
   group: "Work Manager",
   summary:
     "Your work items as cards in To Do, In Progress and Done. Drag a card to another column to change its state, or click it to open the work item: " +
-    "edit its fields, read and add comments, and see its history. Switch the board to an area or a Product Backlog Item to see more than your own work.",
+    "edit its fields, read and add comments, and see its history. Switch the board to an area or a Product Backlog Item to see more than your own work. " +
+    "The board covers every project of the organization together, unless Treat all projects as one is switched off in Settings.",
   shots: [
     { id: COLUMNS, route: [...NAV, { waitFor: { text: CARD } }], alt: "The board with its three columns and a work item's pull request chips" },
     { id: SWIMLANES, route: [...NAV, { click: { role: "switch", name: "Swimlanes" } }, { waitFor: { role: "button", nameRe: "^Collapse all" } }], alt: "The board in swimlanes, one lane per parent work item" },
@@ -149,7 +150,8 @@ export const board: Screen = {
       locate: { text: "Wire the login form to the session service" },
       name: "Card",
       does:
-        "A work item: its type, number, who it is assigned to, title, state and tags. Click it to open it. Drag it to another column to change its state in Azure DevOps.",
+        "A work item: its type, number, who it is assigned to, title, state and tags. Click it to open it. Drag it to another column to change its state in Azure DevOps. " +
+        "When the board holds work from more than one project, each card also names its project, and a change is made in that card's own project.",
       tips: [
         "If Azure DevOps needs fields filled in before the state can change, the card goes back, the work item opens and those fields are marked.",
         "A card with an amber left edge has not changed for a week or more (cards in Done never get it). Hover it to see how long.",
@@ -199,7 +201,7 @@ export const board: Screen = {
       group: "lanes",
       locate: { role: "button", name: "Login and session flow, 2 cards, collapse" },
       name: "Fold a lane",
-      does: "Folds or opens this lane on its own. Folded lanes are remembered for each project.",
+      does: "Folds or opens this lane on its own. Folded lanes are remembered.",
     },
     {
       id: "lane-title",
@@ -235,7 +237,7 @@ export const board: Screen = {
       group: "scope-filters",
       locate: { role: "option", name: "My work" },
       name: "My work",
-      does: "The work items assigned to you in this project.",
+      does: "The work items assigned to you, in every project (or in the project picked in the bar, when Treat all projects as one is off).",
     },
     {
       id: "by-pbi",
@@ -251,7 +253,7 @@ export const board: Screen = {
       group: "scope-filters",
       locate: { role: "option", name: "Area: Customer Portal" },
       name: "Area",
-      does: "Everything in that area of the project, whoever it is assigned to.",
+      does: "Everything in that area, whoever it is assigned to. With all projects together, every area starts with its project's name.",
     },
     {
       id: "pin-area",
@@ -261,7 +263,7 @@ export const board: Screen = {
       name: "Pin",
       does:
         "Point at an area to show its pin, and click the pin to keep that area at the top of the list, above **My work**. " +
-        "Pin the few teams you look at most and they are always one click away. Pins are kept for each project; click a pin again to unpin.",
+        "Pin the few teams you look at most and they are always one click away. Pins are remembered; click a pin again to unpin.",
     },
 
     // --- An area board --------------------------------------------------------------------------
@@ -279,7 +281,7 @@ export const board: Screen = {
       group: "scope-filters",
       locate: { role: "checkbox", name: "This sprint" },
       name: "This sprint",
-      does: "On an area board: shows only the items in the current sprint of the project's default team. Remembered.",
+      does: "On an area board: shows only the items in the current sprint of each project's default team. Remembered.",
     },
 
     // --- The work item ---------------------------------------------------------------------------

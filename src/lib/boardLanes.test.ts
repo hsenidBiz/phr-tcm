@@ -15,8 +15,10 @@ import {
   saveCollapsedLanes,
   saveOpenLanesOnly,
   saveSwimlanes,
+  seedCombinedLanes,
   type Lane,
 } from "./boardLanes";
+import { COMBINED } from "./projectScope";
 
 afterEach(() => localStorage.clear());
 
@@ -133,4 +135,27 @@ test("Open lanes only is off unless turned on, and is remembered", () => {
   expect(loadOpenLanesOnly()).toBe(true);
   saveOpenLanesOnly(false);
   expect(loadOpenLanesOnly()).toBe(false);
+});
+
+test("combined lanes seed once from the home project and keep it", () => {
+  saveCollapsedLanes("acme", "HRM", new Set([0, 500]));
+
+  seedCombinedLanes("acme", "HRM");
+  expect([...loadCollapsedLanes("acme", COMBINED)]).toEqual([0, 500]);
+  // Copied, never moved: switching the projects apart again finds them.
+  expect(localStorage.getItem(collapsedLanesKey("acme", "HRM"))).toBe("[0,500]");
+
+  // An edit while combined is not undone by the next seed, and the home
+  // project's own lanes stay as they were.
+  saveCollapsedLanes("acme", COMBINED, new Set([600]));
+  seedCombinedLanes("acme", "HRM");
+  expect([...loadCollapsedLanes("acme", COMBINED)]).toEqual([600]);
+  expect(localStorage.getItem(collapsedLanesKey("acme", "HRM"))).toBe("[0,500]");
+});
+
+test("combined lanes seed nothing when the home project collapsed none", () => {
+  seedCombinedLanes("acme", "HRM");
+  expect(localStorage.getItem(collapsedLanesKey("acme", COMBINED))).toBeNull();
+  seedCombinedLanes("acme", "");
+  expect(localStorage.getItem(collapsedLanesKey("acme", COMBINED))).toBeNull();
 });

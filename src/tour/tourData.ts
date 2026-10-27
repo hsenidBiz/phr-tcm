@@ -248,6 +248,14 @@ export const TOUR_BOARD: BoardData = {
   parent_projects: {},
 };
 
+/** The same board as the organization-wide board answers it: no type-wide
+ * states, every project's filed under its own name. */
+export const TOUR_BOARD_ALL: BoardData = {
+  ...TOUR_BOARD,
+  states_by_type: {},
+  states_by_project: { [TOUR_PROJECT]: TOUR_BOARD.states_by_type },
+};
+
 export const TOUR_PR_OVERVIEW: PrOverview = { awaiting: [], mine: [] };
 
 // Identity for the mention scan's "is this me" check, and the mentions

@@ -2,7 +2,7 @@ import { mockIPC, clearMocks } from "@tauri-apps/api/mocks";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
-import type { ComponentProps } from "react";
+import { useState, type ComponentProps } from "react";
 import WorkBoard from "./WorkBoard";
 
 afterEach(() => {
@@ -16,7 +16,7 @@ function renderBoard(props: Partial<ComponentProps<typeof WorkBoard>> = {}) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={qc}>
-      <WorkBoard org="acme" project="Web" {...props} />
+      <WorkBoard org="acme" project="Web" allProjects={false} homeProject="Web" {...props} />
     </QueryClientProvider>,
   );
 }
@@ -72,7 +72,7 @@ test("a remount within staleTime reuses the cached board", async () => {
   const renderWithClient = () =>
     render(
       <QueryClientProvider client={qc}>
-        <WorkBoard org="acme" project="Web" />
+        <WorkBoard org="acme" project="Web" allProjects={false} homeProject="Web" />
       </QueryClientProvider>,
     );
 
@@ -873,4 +873,364 @@ test("Open lanes only is offered with Swimlanes, and says so when every lane is 
   fireEvent.change(screen.getByLabelText("Filter items"), { target: { value: "review" } });
   expect(screen.queryByTestId(/^lane-/)).not.toBeInTheDocument();
   expect(screen.getByText("Every lane here is done. Turn off Open lanes only to see them.")).toBeInTheDocument();
+});
+
+// ---- every project as one --------------------------------------------------
+
+const payrollStates = {
+  Task: [
+    { name: "To Do", color: "b2b2b2", category: "Proposed" },
+    { name: "In Progress", color: "ff0000", category: "InProgress" },
+    { name: "Done", color: "339933", category: "Completed" },
+  ],
+};
+
+function inProject(item: ReturnType<typeof task>, project: string) {
+  return { ...item, project };
+}
+
+const hrmCard = inProject(task(31, "Leave form", "To Do", "2026-07-12T05:00:00Z", null), "HRM");
+const payrollCard = inProject(task(32, "Run payroll", "To Do", "2026-07-12T04:00:00Z", null), "Payroll");
+
+const combinedData = {
+  items: [hrmCard, payrollCard],
+  // The organization-wide board has no project-less states.
+  states_by_type: {},
+  states_by_project: { HRM: boardData.states_by_type, Payroll: payrollStates },
+  parent_projects: {},
+};
+
+const noAreas = { paths: [], coverage: { shown: 2, total: 2 } };
+
+/** Answers the organization-wide board and areas; records every command. */
+function mockCombined(
+  data: unknown = combinedData,
+  areas: unknown = noAreas,
+  extra: (cmd: string, args: unknown) => unknown = () => undefined,
+) {
+  const calls: Array<{ cmd: string; args: Record<string, unknown> }> = [];
+  mockIPC((cmd, args) => {
+    calls.push({ cmd, args: (args ?? {}) as Record<string, unknown> });
+    if (cmd === "fetch_board_all") return data;
+    if (cmd === "classification_paths_all") return areas;
+    if (cmd === "board_pr_links") return [];
+    return extra(cmd, args);
+  });
+  return calls;
+}
+
+const combined = { allProjects: true, homeProject: "HRM", project: "HRM" } as const;
+
+function detailFor(id: number, title: string) {
+  return {
+    id, title, work_item_type: "Task", state: "To Do", assigned_to: "Avin",
+    assigned_to_unique: "a@x.com", activity: "", tags: "", area_path: "P",
+    iteration_path: "P\\S1", remaining_work: null, completed_work: null,
+    original_estimate: null, start_date: "", target_date: "", description_text: "",
+    description_html: "", description_field: "System.Description", extra_pages: [],
+    extra_pages_error: null, inline_images: [],
+  };
+}
+
+/** The drawer's reads, recording the project each asked in. */
+function drawerReads(opened: Array<Record<string, unknown>>) {
+  return (cmd: string, args: unknown) => {
+    if (cmd === "work_item_detail") {
+      const a = args as Record<string, unknown>;
+      opened.push(a);
+      return detailFor(a.id as number, "Opened item");
+    }
+    if (cmd === "list_team_members") return [];
+    if (cmd === "activity_values") return [];
+    if (cmd === "work_item_comments") return [];
+    return undefined;
+  };
+}
+
+test("combined board asks every project", async () => {
+  const calls = mockCombined(combinedData, { paths: ["HRM\\Alpha", "Payroll\\Beta"], coverage: { shown: 2, total: 2 } });
+  renderBoard({ ...combined, project: "" });
+  await screen.findByText("Leave form");
+  expect(screen.getByText("Run payroll")).toBeInTheDocument();
+  const board = calls.filter((c) => c.cmd === "fetch_board_all");
+  expect(board).toHaveLength(1);
+  expect(board[0].args).toEqual({ organization: "acme", area: null, pbiId: null, currentSprint: false });
+  // Nothing asks one project.
+  expect(calls.some((c) => c.cmd === "fetch_board" || c.cmd === "classification_paths")).toBe(false);
+
+  // The areas are every project's, and picking one scopes the board to it.
+  fireEvent.click(screen.getByLabelText("Board scope"));
+  fireEvent.click(await screen.findByText("Area: Payroll\\Beta"));
+  await vi.waitFor(() =>
+    expect(calls.filter((c) => c.cmd === "fetch_board_all").pop()!.args).toMatchObject({
+      organization: "acme",
+      area: "Payroll\\Beta",
+    }),
+  );
+});
+
+test("the combined board needs no project, only an organization", () => {
+  mockCombined();
+  renderBoard({ ...combined, org: "", project: "" });
+  expect(screen.getByText("Pick an organization in the bar above first.")).toBeInTheDocument();
+});
+
+test("cards name their project only when two projects are on the board", async () => {
+  mockCombined({ ...combinedData, items: [hrmCard] });
+  const one = renderBoard(combined);
+  await screen.findByText("Leave form");
+  expect(screen.queryByText("Project:", { exact: false })).not.toBeInTheDocument();
+  one.unmount();
+
+  mockCombined();
+  renderBoard(combined);
+  await screen.findByText("Run payroll");
+  const hrm = screen.getByText("Leave form").closest("[draggable]") as HTMLElement;
+  const pay = screen.getByText("Run payroll").closest("[draggable]") as HTMLElement;
+  expect(within(hrm).getByText("HRM")).toBeInTheDocument();
+  expect(within(pay).getByText("Payroll")).toBeInTheDocument();
+  expect(within(pay).queryByText("HRM")).not.toBeInTheDocument();
+});
+
+test("switched off, cards never name a project even when the items span two", async () => {
+  mockIPC((cmd) => {
+    if (cmd === "fetch_board") return { ...combinedData, states_by_type: boardData.states_by_type };
+    if (cmd === "classification_paths") return [];
+  });
+  renderBoard();
+  await screen.findByText("Run payroll");
+  expect(screen.queryByText("Payroll")).not.toBeInTheDocument();
+  expect(screen.queryByText("Project:", { exact: false })).not.toBeInTheDocument();
+});
+
+test("a lane header names its project under the same rule", async () => {
+  localStorage.setItem("tcm-v2-board-swimlanes", "on");
+  const leave500 = { id: 500, title: "Leave requests", work_item_type: "Product Backlog Item" };
+  const pay600 = { id: 600, title: "Payroll export", work_item_type: "Product Backlog Item" };
+  const items = [
+    inProject(task(41, "Draft the form", "To Do", "2026-07-12T05:00:00Z", leave500), "HRM"),
+    inProject(task(42, "Wire the API", "To Do", "2026-07-12T04:00:00Z", pay600), "Payroll"),
+  ];
+  const header = (lane: string) =>
+    within(screen.getByTestId(lane)).getByRole("button", { name: /, (collapse|expand)$/ }).parentElement as HTMLElement;
+
+  mockCombined({ ...combinedData, items, parent_projects: { 500: "HRM", 600: "Payroll" } });
+  const two = renderBoard(combined);
+  await screen.findByTestId("lane-500");
+  expect(within(header("lane-500")).getByText("HRM")).toBeInTheDocument();
+  expect(within(header("lane-600")).getByText("Payroll")).toBeInTheDocument();
+  two.unmount();
+
+  mockCombined({ ...combinedData, items: [items[0]] });
+  renderBoard(combined);
+  await screen.findByTestId("lane-500");
+  expect(within(header("lane-500")).queryByText("HRM")).not.toBeInTheDocument();
+});
+
+test("moving a card writes to that card's project", async () => {
+  const calls = mockCombined(combinedData, noAreas, (cmd) => {
+    if (cmd === "move_board_item") return "In Progress";
+  });
+  // The effective project is HRM; the card belongs to Payroll.
+  renderBoard(combined);
+  const card = await screen.findByText("Run payroll");
+  fireEvent.dragStart(card.closest("[draggable]")!);
+  fireEvent.drop(screen.getByTestId("col-In Progress"));
+
+  await vi.waitFor(() => expect(calls.some((c) => c.cmd === "move_board_item")).toBe(true));
+  expect(calls.find((c) => c.cmd === "move_board_item")!.args).toEqual({
+    organization: "acme",
+    project: "Payroll",
+    itemId: 32,
+    workItemType: "Task",
+    column: "In Progress",
+  });
+  // The colour comes from that project's own states, not a type-wide list.
+  const moved = (await within(screen.getByTestId("col-In Progress")).findByText("Run payroll")).closest(
+    "[draggable]",
+  ) as HTMLElement;
+  await vi.waitFor(() =>
+    expect(moved.querySelector("span.h-2.w-2")).toHaveStyle({ backgroundColor: "rgb(255, 0, 0)" }),
+  );
+});
+
+test("the drawer opens in the item's own project, and saves there", async () => {
+  const opened: Array<Record<string, unknown>> = [];
+  let patched: Record<string, unknown> = {};
+  mockCombined(combinedData, noAreas, (cmd, args) => {
+    if (cmd === "update_work_item") {
+      patched = args as Record<string, unknown>;
+      return null;
+    }
+    return drawerReads(opened)(cmd, args);
+  });
+  renderBoard(combined);
+  fireEvent.click(await screen.findByText("Run payroll"));
+
+  const title = await screen.findByLabelText(/Title/);
+  expect(opened[0]).toMatchObject({ organization: "acme", project: "Payroll", id: 32 });
+  fireEvent.change(title, { target: { value: "Run payroll twice" } });
+  fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+  await vi.waitFor(() => expect(patched.patches).toBeTruthy());
+  expect(patched).toMatchObject({ organization: "acme", project: "Payroll", id: 32 });
+});
+
+test("a lane parent from another project opens in its project", async () => {
+  localStorage.setItem("tcm-v2-board-swimlanes", "on");
+  const opened: Array<Record<string, unknown>> = [];
+  const parent = { id: 500, title: "Leave requests", work_item_type: "Product Backlog Item" };
+  const items = [
+    inProject(task(41, "Draft the form", "To Do", "2026-07-12T05:00:00Z", parent), "HRM"),
+    inProject(task(42, "Wire the API", "To Do", "2026-07-12T04:00:00Z", null), "Payroll"),
+  ];
+  mockCombined({ ...combinedData, items, parent_projects: { 500: "Payroll" } }, noAreas, drawerReads(opened));
+  renderBoard(combined);
+  fireEvent.click(await screen.findByRole("button", { name: "#500 Leave requests" }));
+  await vi.waitFor(() => expect(opened).toHaveLength(1));
+  expect(opened[0]).toMatchObject({ project: "Payroll", id: 500 });
+});
+
+test("a notification's item outside the board opens in the notification's project", async () => {
+  const opened: Array<Record<string, unknown>> = [];
+  mockCombined(combinedData, noAreas, drawerReads(opened));
+  // The caller clears the focus the moment the board reports it handled, as
+  // App does - the drawer must keep the project it opened in.
+  function Harness() {
+    const [focus, setFocus] = useState<{ id: number; project: string } | null>({ id: 99, project: "Payroll" });
+    const [qc] = useState(() => new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+    return (
+      <QueryClientProvider client={qc}>
+        <WorkBoard
+          org="acme"
+          project="HRM"
+          allProjects
+          homeProject="HRM"
+          focusItem={focus?.id ?? null}
+          focusProject={focus?.project ?? null}
+          onFocusHandled={() => setFocus(null)}
+        />
+      </QueryClientProvider>
+    );
+  }
+  render(<Harness />);
+  expect(await screen.findByRole("dialog", { name: "Work item 99" })).toBeInTheDocument();
+  await vi.waitFor(() => expect(opened.length).toBeGreaterThan(0));
+  expect(opened.every((o) => o.project === "Payroll" && o.id === 99)).toBe(true);
+});
+
+test("a focused item the board holds opens in the board item's project", async () => {
+  const opened: Array<Record<string, unknown>> = [];
+  mockCombined(combinedData, noAreas, drawerReads(opened));
+  renderBoard({ ...combined, focusItem: 32, focusProject: "HRM", onFocusHandled: vi.fn() });
+  await screen.findByRole("dialog", { name: "Work item 32" });
+  await vi.waitFor(() => expect(opened.length).toBeGreaterThan(0));
+  expect(opened[0]).toMatchObject({ project: "Payroll", id: 32 });
+});
+
+test("areas left out over the cap are reported", async () => {
+  mockCombined(combinedData, { paths: ["HRM\\Alpha"], coverage: { shown: 98, total: 100 } });
+  const capped = renderBoard(combined);
+  expect(await screen.findByText("Showing areas from 98 of 100 projects.")).toBeInTheDocument();
+  capped.unmount();
+
+  mockCombined(combinedData, { paths: ["HRM\\Alpha"], coverage: { shown: 100, total: 100 } });
+  renderBoard(combined);
+  await screen.findByText("Leave form");
+  fireEvent.click(screen.getByLabelText("Board scope"));
+  await screen.findByText("Area: HRM\\Alpha");
+  expect(screen.queryByText(/Showing areas from/)).not.toBeInTheDocument();
+});
+
+test("an empty My work says no project, and the switched-off board says this one", async () => {
+  mockCombined({ ...combinedData, items: [] });
+  const on = renderBoard(combined);
+  expect(
+    await screen.findByText(
+      "Nothing assigned to you in any project - quick create one above, or switch to an area board.",
+    ),
+  ).toBeInTheDocument();
+  on.unmount();
+
+  mockIPC((cmd) => {
+    if (cmd === "fetch_board") return { items: [], states_by_type: {} };
+    if (cmd === "classification_paths") return [];
+  });
+  renderBoard();
+  expect(
+    await screen.findByText("Nothing assigned to you in this project - quick create one above, or switch to an area board."),
+  ).toBeInTheDocument();
+});
+
+test("By PBI in the combined board searches every project and fetches with the pick", async () => {
+  const calls = mockCombined(combinedData, noAreas, (cmd) => {
+    if (cmd === "search_pbis_all")
+      return [{ id: 4242, title: "Login flow", work_item_type: "Product Backlog Item", project: "Payroll" }];
+  });
+  renderBoard(combined);
+  await screen.findByText("Leave form");
+  fireEvent.click(screen.getByLabelText("Board scope"));
+  fireEvent.click(await screen.findByText("By PBI…"));
+  const find = screen.getByLabelText("Find PBI");
+  fireEvent.change(find, { target: { value: "Login" } });
+  fireEvent.keyDown(find, { key: "Enter" });
+  fireEvent.click(await screen.findByText(/Login flow/));
+  await vi.waitFor(() =>
+    expect(calls.filter((c) => c.cmd === "fetch_board_all").pop()!.args).toMatchObject({
+      pbiId: 4242,
+      area: null,
+    }),
+  );
+  expect(calls.some((c) => c.cmd === "search_pbis")).toBe(false);
+});
+
+test("switched off the board asks the picked project as before", async () => {
+  const calls: Array<{ cmd: string; args: Record<string, unknown> }> = [];
+  mockIPC((cmd, args) => {
+    calls.push({ cmd, args: (args ?? {}) as Record<string, unknown> });
+    if (cmd === "fetch_board") return boardData;
+    if (cmd === "classification_paths") return [];
+  });
+  renderBoard();
+  await screen.findByText("Write docs");
+  expect(calls.find((c) => c.cmd === "fetch_board")!.args).toEqual({
+    organization: "acme",
+    project: "Web",
+    area: null,
+    pbiId: null,
+    currentSprint: false,
+  });
+  expect(calls.find((c) => c.cmd === "classification_paths")!.args).toMatchObject({ project: "Web" });
+  expect(calls.some((c) => c.cmd === "fetch_board_all" || c.cmd === "classification_paths_all")).toBe(false);
+});
+
+test("the combined board keeps the pins and collapsed lanes of the home project, copied once", async () => {
+  localStorage.setItem("tcm-v2-board-swimlanes", "on");
+  localStorage.setItem("tcm-v2-board-pinned-areas:acme/HRM", JSON.stringify(["HRM\\Gamma"]));
+  localStorage.setItem("tcm-v2-board-lanes-collapsed:acme/HRM", JSON.stringify([500]));
+  const parent = { id: 500, title: "Leave requests", work_item_type: "Product Backlog Item" };
+  const items = [
+    inProject(task(41, "Draft the form", "To Do", "2026-07-12T05:00:00Z", parent), "HRM"),
+    inProject(task(42, "Wire the API", "To Do", "2026-07-12T04:00:00Z", null), "Payroll"),
+  ];
+  mockCombined(
+    { ...combinedData, items },
+    { paths: ["HRM\\Alpha", "HRM\\Gamma"], coverage: { shown: 2, total: 2 } },
+  );
+  renderBoard(combined);
+  await screen.findByTestId("lane-500");
+  // The home project's collapsed lane arrives collapsed; its pin leads the list.
+  expect(
+    within(screen.getByTestId("lane-500")).getByRole("button", { name: "Leave requests, 1 card, expand" }),
+  ).toBeInTheDocument();
+  fireEvent.click(screen.getByLabelText("Board scope"));
+  await screen.findByText("Area: HRM\\Gamma");
+  expect(screen.getAllByRole("option")[0].textContent).toBe("Area: HRM\\Gamma");
+
+  // Copied, never moved; later edits go to the combined key only.
+  expect(localStorage.getItem("tcm-v2-board-pinned-areas:acme/*")).toBe('["HRM\\\\Gamma"]');
+  expect(localStorage.getItem("tcm-v2-board-lanes-collapsed:acme/*")).toBe("[500]");
+  fireEvent.click(screen.getByRole("button", { name: "Unpin Area: HRM\\Gamma" }));
+  expect(localStorage.getItem("tcm-v2-board-pinned-areas:acme/*")).toBe("[]");
+  expect(localStorage.getItem("tcm-v2-board-pinned-areas:acme/HRM")).toBe('["HRM\\\\Gamma"]');
+  expect(localStorage.getItem("tcm-v2-board-lanes-collapsed:acme/HRM")).toBe("[500]");
 });

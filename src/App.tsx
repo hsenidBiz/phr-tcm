@@ -1562,8 +1562,11 @@ export default function App() {
                     <div className="min-h-0 flex-1">
                       <WorkBoard
                         org={org}
-                        project={workProject ?? project}
+                        project={project}
+                        allProjects={allProjects}
+                        homeProject={homeProject}
                         focusItem={workFocus?.kind === "work-item" ? workFocus.id : null}
+                        focusProject={workFocus?.kind === "work-item" ? workFocus.project : null}
                         onFocusHandled={() => setWorkFocus(null)}
                       />
                     </div>

@@ -133,7 +133,7 @@ test("Work Manager board with swimlanes is accessible", async () => {
     if (cmd === "classification_paths") return [];
     if (cmd === "board_pr_links") return [];
   });
-  await expectAccessible(<WorkBoard org="acme" project="Web" />);
+  await expectAccessible(<WorkBoard org="acme" project="Web" allProjects={false} homeProject="Web" />);
 });
 
 test("the Queue, grouped by area with a case selected, is accessible", async () => {

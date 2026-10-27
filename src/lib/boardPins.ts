@@ -3,8 +3,17 @@
 // Remembered per org/project on this machine, in the order they were
 // pinned.
 
+import { COMBINED, seedCombinedKey } from "./projectScope";
+
 export function pinnedAreasKey(org: string, project: string): string {
   return `tcm-v2-board-pinned-areas:${org}/${project}`;
+}
+
+/** The board across projects keeps its pins under `<org>/*`. The first time
+ * it opens, it starts from what the home project had pinned: copied, never
+ * moved, and never over pins already kept there. */
+export function seedCombinedPins(org: string, homeProject: string): void {
+  seedCombinedKey(pinnedAreasKey(org, COMBINED), pinnedAreasKey(org, homeProject));
 }
 
 /** This org/project's pinned areas, oldest pin first. Anything unreadable

@@ -1056,9 +1056,10 @@ test("the Settings Home project picker changes the home project", async () => {
   expect(screen.getByRole("combobox", { name: "Home project" })).toHaveTextContent("Payroll");
 });
 
-/// A notification for a Payroll work item, opened while the projects show
-/// together: the Work Manager is handed Payroll while the home project stays
-/// Web. Resolves with every board the app asked for.
+/// A notification for a Payroll pull request, opened while the projects show
+/// together: the Pull Requests screen is handed Payroll while the home project
+/// stays Web. Resolves with every pull request overview the app asked for. (The
+/// board is not the observer: it reads every project and is handed nothing.)
 async function openPayrollNotification() {
   savedPrefs();
   localStorage.setItem("tcm-v2-tour-done", "yes");
@@ -1067,74 +1068,73 @@ async function openPayrollNotification() {
     "tcm-v2-notifications:acme",
     JSON.stringify([
       {
-        id: "assigned:Payroll:55",
-        kind: "assigned",
-        title: "Item 55 was assigned to you",
+        id: "pr-review:Payroll:api:7",
+        kind: "pr-review",
+        title: "Pull request 7 needs your review",
         body: "Fix the payslip",
         at: new Date().toISOString(),
         read: false,
-        href: "https://x/55",
-        target: { kind: "work-item", id: 55, project: "Payroll" },
+        href: "https://x/pr/7",
+        target: { kind: "pr", repo: "api", id: 7, project: "Payroll" },
       },
     ]),
   );
   resetNotifications();
-  const boards: Array<{ organization: string; project: string }> = [];
+  const asked: Array<{ organization: string; project: string }> = [];
   signedInMocks((cmd, args) => {
     if (cmd === "list_projects")
       return [
         { id: "p1", name: "Web" },
         { id: "p2", name: "Payroll" },
       ];
-    if (cmd === "fetch_board") {
-      boards.push(args as { organization: string; project: string });
-      return { items: [], states_by_type: {} };
+    if (cmd === "pr_overview") {
+      asked.push(args as { organization: string; project: string });
+      return { awaiting: [], mine: [] };
     }
-    if (cmd === "pr_overview") return { awaiting: [], mine: [] };
     if (cmd === "list_repos") return [];
   });
   renderApp();
   await screen.findByText("a@b.com");
   fireEvent.click(await screen.findByRole("button", { name: /Notifications/ }));
-  fireEvent.click(screen.getByRole("button", { name: "Item 55 was assigned to you" }));
-  expect(await screen.findByRole("heading", { name: "Board" })).toBeInTheDocument();
-  await waitFor(() => expect(boards[boards.length - 1]?.project).toBe("Payroll"));
-  return boards;
+  fireEvent.click(screen.getByRole("button", { name: "Pull request 7 needs your review" }));
+  expect(await screen.findByRole("heading", { name: "Pull Requests" })).toBeInTheDocument();
+  await waitFor(() => expect(asked[asked.length - 1]?.project).toBe("Payroll"));
+  return asked;
 }
 
 // The project a notification handed to the Work Manager is good for that visit
-// only. Coming back to the board any other way shows the person's own project,
+// only. Coming back to the screen any other way shows the person's own project,
 // so a work item made there is not quietly made in the notification's.
 test("Ctrl+Shift+M back into the Work Manager drops a notification's project", async () => {
-  const boards = await openPayrollNotification();
+  const asked = await openPayrollNotification();
   fireEvent.keyDown(window, { key: "1", ctrlKey: true });
-  await waitFor(() => expect(screen.queryByRole("heading", { name: "Board" })).not.toBeInTheDocument());
+  await waitFor(() => expect(screen.queryByRole("heading", { name: "Pull Requests" })).not.toBeInTheDocument());
 
   fireEvent.keyDown(window, { key: "m", ctrlKey: true, shiftKey: true });
-  expect(await screen.findByRole("heading", { name: "Board" })).toBeInTheDocument();
-  await waitFor(() => expect(boards[boards.length - 1]?.project).toBe("Web"));
+  expect(await screen.findByRole("heading", { name: "Pull Requests" })).toBeInTheDocument();
+  await waitFor(() => expect(asked[asked.length - 1]?.project).toBe("Web"));
 });
 
 test("the palette's Work Manager toggle drops a notification's project", async () => {
-  const boards = await openPayrollNotification();
+  const asked = await openPayrollNotification();
   fireEvent.keyDown(window, { key: "1", ctrlKey: true });
-  await waitFor(() => expect(screen.queryByRole("heading", { name: "Board" })).not.toBeInTheDocument());
+  await waitFor(() => expect(screen.queryByRole("heading", { name: "Pull Requests" })).not.toBeInTheDocument());
 
   fireEvent.keyDown(window, { key: "k", ctrlKey: true });
   fireEvent.click(await screen.findByText("Toggle Work Manager"));
-  expect(await screen.findByRole("heading", { name: "Board" })).toBeInTheDocument();
-  await waitFor(() => expect(boards[boards.length - 1]?.project).toBe("Web"));
+  expect(await screen.findByRole("heading", { name: "Pull Requests" })).toBeInTheDocument();
+  await waitFor(() => expect(asked[asked.length - 1]?.project).toBe("Web"));
 });
 
 test("a visit to Settings drops a notification's project", async () => {
-  const boards = await openPayrollNotification();
+  const asked = await openPayrollNotification();
   fireEvent.click(screen.getByLabelText("Settings"));
-  await waitFor(() => expect(screen.queryByRole("heading", { name: "Board" })).not.toBeInTheDocument());
+  await waitFor(() => expect(screen.queryByRole("heading", { name: "Pull Requests" })).not.toBeInTheDocument());
 
   // The gear again goes back to the Work Manager it came from.
   fireEvent.click(screen.getByLabelText("Close settings"));
-  expect(await screen.findByRole("heading", { name: "Board" })).toBeInTheDocument();
-  await waitFor(() => expect(boards[boards.length - 1]?.project).toBe("Web"));
+  expect(await screen.findByRole("heading", { name: "Pull Requests" })).toBeInTheDocument();
+  await waitFor(() => expect(asked[asked.length - 1]?.project).toBe("Web"));
 });
 
 /// Search Suites hands a set of work item ids to Update Test Cases. The ids
@@ -2615,10 +2615,12 @@ test("the Modules page gets the full height with no shell scrollbar, and Back gi
 // ---- Opening a notification from another project, projects together ----
 //
 // The bell names the project of what it opens. While the projects show
-// together there is no project to switch, so the Work Manager screen is
+// together there is no project to switch, so the Pull Requests screen is
 // handed that project directly and the home project (where Auto Run keeps its
 // files) is left alone. Anything that changes what the screens stand for
-// drops the handed-over project.
+// drops the handed-over project. The board is the exception: it reads every
+// project, so it is handed nothing and a work item opens in the notification's
+// project.
 
 const PROJECTS = [
   { id: "p1", name: "Web" },
@@ -2626,70 +2628,114 @@ const PROJECTS = [
   { id: "p3", name: "Mobile" },
 ];
 
-function seedItemNotification(project = "Payroll") {
+const ITEM_TITLE = "Item 55 was assigned to you";
+const PR_TITLE = "Pull request 7 needs your review";
+
+/** A bell item for `project`: a work item, or a pull request. */
+function seedNotification(project = "Payroll", kind: "work-item" | "pr" = "pr") {
   claimCacheFor("a@b.com");
   localStorage.setItem(
     "tcm-v2-notifications:acme",
     JSON.stringify([
       {
-        id: `assigned:${project}:55`,
-        kind: "assigned",
-        title: "Item 55 was assigned to you",
+        id: `${kind}:${project}:55`,
+        kind: kind === "pr" ? "pr-review" : "assigned",
+        title: kind === "pr" ? PR_TITLE : ITEM_TITLE,
         body: "Fix the payslip",
         at: new Date().toISOString(),
         read: false,
         href: "https://x/55",
-        target: { kind: "work-item", id: 55, project },
+        target: kind === "pr" ? { kind: "pr", repo: "api", id: 7, project } : { kind: "work-item", id: 55, project },
       },
     ]),
   );
   resetNotifications(); // the store caches per org in memory
 }
 
-/** One board asked for. */
-type BoardAsk = { organization: string; project: string };
+/** One pull request overview asked for. */
+type PrAsk = { organization: string; project: string };
 
-function boardMocks(boards: BoardAsk[], extra: (cmd: string, args: unknown) => unknown = () => undefined) {
+const emptyAllBoard = { items: [], states_by_type: {}, states_by_project: {}, parent_projects: {} };
+
+function prMocks(asked: PrAsk[], extra: (cmd: string, args: unknown) => unknown = () => undefined) {
   signedInMocks((cmd, args) => {
     if (cmd === "list_projects") return PROJECTS;
-    if (cmd === "fetch_board") {
-      boards.push(args as BoardAsk);
-      return { items: [], states_by_type: {} };
+    if (cmd === "fetch_board_all") return emptyAllBoard;
+    if (cmd === "pr_overview") {
+      asked.push(args as PrAsk);
+      return { awaiting: [], mine: [] };
     }
-    if (cmd === "pr_overview") return { awaiting: [], mine: [] };
     if (cmd === "list_repos") return [];
     return extra(cmd, args);
   });
 }
 
-async function openItemNotification() {
+async function openNotification(title: string, heading: string) {
   fireEvent.click(await screen.findByRole("button", { name: /Notifications/ }));
-  fireEvent.click(screen.getByRole("button", { name: "Item 55 was assigned to you" }));
-  expect(await screen.findByRole("heading", { name: "Board" })).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: title }));
+  expect(await screen.findByRole("heading", { name: heading })).toBeInTheDocument();
 }
 
-const lastBoard = (boards: BoardAsk[]) => boards[boards.length - 1];
+const lastAsk = (asked: PrAsk[]) => asked[asked.length - 1];
 
-/** Mounts with the home project Web, a bell item for `project`, and opens it. */
-async function mountAndOpenItemFrom(project: string, extra?: (cmd: string, args: unknown) => unknown) {
+/** Mounts with the home project Web, a pull request bell item for `project`, and opens it. */
+async function mountAndOpenPrFrom(project: string, extra?: (cmd: string, args: unknown) => unknown) {
   savedPrefs();
   localStorage.setItem("tcm-v2-tour-done", "yes");
-  seedItemNotification(project);
-  const boards: BoardAsk[] = [];
-  boardMocks(boards, extra);
+  seedNotification(project, "pr");
+  const asked: PrAsk[] = [];
+  prMocks(asked, extra);
   renderApp();
   await screen.findByText("a@b.com");
-  await openItemNotification();
-  await waitFor(() => expect(lastBoard(boards)?.project).toBe(project));
-  return boards;
+  await openNotification(PR_TITLE, "Pull Requests");
+  await waitFor(() => expect(lastAsk(asked)?.project).toBe(project));
+  return asked;
 }
 
-test("in combined mode a notification from another project opens without switching project", async () => {
-  const boards = await mountAndOpenItemFrom("Payroll");
+/** A work item notification: the board reads every project (it is handed no
+ * project), and the item opens in the notification's own. */
+async function mountAndOpenItemFrom(project: string) {
+  savedPrefs();
+  localStorage.setItem("tcm-v2-tour-done", "yes");
+  seedNotification(project, "work-item");
+  const boards: Array<Record<string, unknown>> = [];
+  const details: Array<Record<string, unknown>> = [];
+  signedInMocks((cmd, args) => {
+    if (cmd === "list_projects") return PROJECTS;
+    if (cmd === "fetch_board_all") {
+      boards.push(args as Record<string, unknown>);
+      return emptyAllBoard;
+    }
+    if (cmd === "work_item_detail") {
+      const a = args as Record<string, unknown>;
+      details.push(a);
+      return {
+        id: a.id, title: "Fix the payslip", work_item_type: "Task", state: "To Do", assigned_to: "Avin",
+        assigned_to_unique: "a@x.com", activity: "", tags: "", area_path: "P", iteration_path: "P\\S1",
+        remaining_work: null, completed_work: null, original_estimate: null, start_date: "", target_date: "",
+        description_text: "", description_html: "", description_field: "System.Description",
+        extra_pages: [], extra_pages_error: null, inline_images: [],
+      };
+    }
+    if (cmd === "list_team_members" || cmd === "activity_values" || cmd === "work_item_comments") return [];
+    if (cmd === "pr_overview") return { awaiting: [], mine: [] };
+    if (cmd === "list_repos") return [];
+  });
+  renderApp();
+  await screen.findByText("a@b.com");
+  await openNotification(ITEM_TITLE, "Board");
+  await waitFor(() => expect(details.length).toBeGreaterThan(0));
+  return { boards, details };
+}
 
-  // No Project selector appears, and the board is the target's project's.
+test("in combined mode a work item notification opens on the board of every project, in its own project", async () => {
+  const { boards, details } = await mountAndOpenItemFrom("Payroll");
+
+  // No Project selector appears; the board asked the whole organization, and
+  // the item opened where it lives.
   expect(screen.queryByRole("combobox", { name: "Project" })).not.toBeInTheDocument();
-  expect(lastBoard(boards)).toEqual(expect.objectContaining({ organization: "acme", project: "Payroll" }));
+  expect(boards[boards.length - 1]).toEqual({ organization: "acme", area: null, pbiId: null, currentSprint: false });
+  expect(details[0]).toMatchObject({ organization: "acme", project: "Payroll", id: 55 });
   // The home project is untouched.
   await act(async () => {
     await new Promise((r) => setTimeout(r, 30));
@@ -2697,37 +2743,37 @@ test("in combined mode a notification from another project opens without switchi
   expect(storedPrefs().project).toBe("Web");
 });
 
-test("a notification from the project on screen opens that project's board", async () => {
-  const boards = await mountAndOpenItemFrom("Web");
-  expect(lastBoard(boards)?.project).toBe("Web");
+test("a work item notification from the project on screen opens in that project", async () => {
+  const { details } = await mountAndOpenItemFrom("Web");
+  expect(details[0]).toMatchObject({ project: "Web", id: 55 });
   expect(storedPrefs().project).toBe("Web");
 });
 
 test("the handed-over project goes when the Work Manager is left and entered by hand", async () => {
-  const boards = await mountAndOpenItemFrom("Payroll");
+  const asked = await mountAndOpenPrFrom("Payroll");
 
   fireEvent.click(screen.getByRole("button", { name: /Test Case Manager/ }));
   fireEvent.click(screen.getByRole("button", { name: /Work Manager/ }));
-  expect(await screen.findByRole("heading", { name: "Board" })).toBeInTheDocument();
-  await waitFor(() => expect(lastBoard(boards)?.project).toBe("Web"));
+  expect(await screen.findByRole("heading", { name: "Pull Requests" })).toBeInTheDocument();
+  await waitFor(() => expect(lastAsk(asked)?.project).toBe("Web"));
 });
 
 test("turning the switch off drops the project a notification handed over", async () => {
-  const boards = await mountAndOpenItemFrom("Payroll");
+  const asked = await mountAndOpenPrFrom("Payroll");
 
-  // Settings and back is the way into the board that keeps what it had.
+  // Settings and back is the way into the screen that keeps what it had.
   fireEvent.click(screen.getByLabelText("Settings"));
   fireEvent.click(await screen.findByRole("switch", { name: "Treat all projects as one" }));
   await waitFor(() => expect(localStorage.getItem("tcm-v2-all-projects")).toBe("0"));
   fireEvent.click(screen.getByLabelText("Close settings"));
 
-  expect(await screen.findByRole("heading", { name: "Board" })).toBeInTheDocument();
-  await waitFor(() => expect(lastBoard(boards)?.project).toBe("Web"));
+  expect(await screen.findByRole("heading", { name: "Pull Requests" })).toBeInTheDocument();
+  await waitFor(() => expect(lastAsk(asked)?.project).toBe("Web"));
   expect(screen.getByRole("combobox", { name: "Project" })).toHaveTextContent("Web");
 });
 
 test("turning the switch on drops the project a notification handed over", async () => {
-  const boards = await mountAndOpenItemFrom("Payroll");
+  const asked = await mountAndOpenPrFrom("Payroll");
 
   // Off and back on without leaving Settings: each flip clears it.
   fireEvent.click(screen.getByLabelText("Settings"));
@@ -2737,13 +2783,13 @@ test("turning the switch on drops the project a notification handed over", async
   await waitFor(() => expect(localStorage.getItem("tcm-v2-all-projects")).toBe("1"));
   fireEvent.click(screen.getByLabelText("Close settings"));
 
-  expect(await screen.findByRole("heading", { name: "Board" })).toBeInTheDocument();
-  await waitFor(() => expect(lastBoard(boards)?.project).toBe("Web"));
+  expect(await screen.findByRole("heading", { name: "Pull Requests" })).toBeInTheDocument();
+  await waitFor(() => expect(lastAsk(asked)?.project).toBe("Web"));
   expect(screen.queryByRole("combobox", { name: "Project" })).not.toBeInTheDocument();
 });
 
 test("changing the home project drops the project a notification handed over", async () => {
-  const boards = await mountAndOpenItemFrom("Payroll");
+  const asked = await mountAndOpenPrFrom("Payroll");
 
   fireEvent.click(screen.getByLabelText("Settings"));
   fireEvent.click(await screen.findByRole("combobox", { name: "Home project" }));
@@ -2751,12 +2797,12 @@ test("changing the home project drops the project a notification handed over", a
   await vi.waitFor(() => expect(storedPrefs().project).toBe("Mobile"));
   fireEvent.click(screen.getByLabelText("Close settings"));
 
-  expect(await screen.findByRole("heading", { name: "Board" })).toBeInTheDocument();
-  await waitFor(() => expect(lastBoard(boards)?.project).toBe("Mobile"));
+  expect(await screen.findByRole("heading", { name: "Pull Requests" })).toBeInTheDocument();
+  await waitFor(() => expect(lastAsk(asked)?.project).toBe("Mobile"));
 });
 
 test("picking a PBI drops the project a notification handed over", async () => {
-  const boards = await mountAndOpenItemFrom("Payroll", (cmd) => {
+  const asked = await mountAndOpenPrFrom("Payroll", (cmd) => {
     if (cmd === "search_pbis_all")
       return [{ id: 9, title: "Login flow", work_item_type: "Product Backlog Item", project: "Mobile" }];
   });
@@ -2764,14 +2810,14 @@ test("picking a PBI drops the project a notification handed over", async () => {
   await pickPbiFromBar("login", /Login flow/);
 
   // The PBI's project is the effective one from here on.
-  await waitFor(() => expect(lastBoard(boards)?.project).toBe("Mobile"));
+  await waitFor(() => expect(lastAsk(asked)?.project).toBe("Mobile"));
 });
 
 test("changing the organization drops the project a notification handed over", async () => {
   savedPrefs();
   localStorage.setItem("tcm-v2-tour-done", "yes");
-  seedItemNotification("Payroll");
-  const boards: BoardAsk[] = [];
+  seedNotification("Payroll", "pr");
+  const asked: PrAsk[] = [];
   // Two organizations (signedInMocks answers with one), so the picker shows;
   // the second has a single project, which is chosen for you.
   mockIPC((cmd, args) => {
@@ -2787,23 +2833,23 @@ test("changing the organization drops the project a notification handed over", a
       ];
     if (cmd === "list_projects")
       return (args as { organization: string }).organization === "other" ? [{ id: "s1", name: "Solo" }] : PROJECTS;
-    if (cmd === "fetch_board") {
-      boards.push(args as BoardAsk);
-      return { items: [], states_by_type: {} };
+    if (cmd === "fetch_board_all") return emptyAllBoard;
+    if (cmd === "pr_overview") {
+      asked.push(args as PrAsk);
+      return { awaiting: [], mine: [] };
     }
-    if (cmd === "pr_overview") return { awaiting: [], mine: [] };
     if (cmd === "list_repos") return [];
   });
   renderApp();
   await screen.findByText("a@b.com");
-  await openItemNotification();
-  await waitFor(() => expect(lastBoard(boards)?.project).toBe("Payroll"));
+  await openNotification(PR_TITLE, "Pull Requests");
+  await waitFor(() => expect(lastAsk(asked)?.project).toBe("Payroll"));
 
   fireEvent.click(await screen.findByRole("combobox", { name: "Organization" }));
   fireEvent.click(await screen.findByRole("option", { name: "other" }));
 
   await waitFor(() =>
-    expect(lastBoard(boards)).toEqual(expect.objectContaining({ organization: "other", project: "Solo" })),
+    expect(lastAsk(asked)).toEqual(expect.objectContaining({ organization: "other", project: "Solo" })),
   );
 });
 
