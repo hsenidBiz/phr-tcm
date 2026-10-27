@@ -27,6 +27,14 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.4.0",
+    date: "2026-10-28",
+    items: [
+      "How To Use is up to date with every change in this release, with fresh screenshots of every screen in light and dark.",
+      "This release gathers the 2.3.1 betas: projects shown as one, several assistants at once with a small figure each, one toolbar and a wider search on every list, faster test suite lookups, and saved setups for your assistant.",
+    ],
+  },
+  {
     version: "2.3.1-beta.19",
     date: "2026-10-27",
     items: [
