@@ -33,6 +33,12 @@ pub async fn ensure_pbi_suite(
 ) -> Result<ado_testplan::EnsuredSuite, ado::AdoError> {
     let token = get_fresh_token(&app).await?;
     let client = ado::AdoClient::new(token);
+    // This resolves from scratch: Run Tests asks only when it has nothing
+    // remembered of its own, or its remembered suite is gone / a Shift-click
+    // asked for a re-detect. Whatever the app remembered for this PBI may be
+    // that very suite, so it is forgotten first (and the entry written
+    // below replaces it); a lookup that fails leaves nothing stale behind.
+    ado_testplan::forget_suite(&client.base_url, &organization, &project, pbi_id);
     let (area, iteration) = client
         .get_work_item_paths(&organization, &project, pbi_id)
         .await?;
@@ -62,6 +68,12 @@ pub async fn find_pbi_suite(
 ) -> Result<Option<ado_testplan::EnsuredSuite>, ado::AdoError> {
     let token = get_fresh_token(&app).await?;
     let client = ado::AdoClient::new(token);
+    // A suite already found for this PBI (this session or an earlier launch,
+    // within 30 days) is the answer: no request at all. Run Tests' own
+    // resolver forgets it when it turns out to be gone.
+    if let Some(s) = ado_testplan::cached_suite(&client.base_url, &organization, &project, pbi_id) {
+        return Ok(Some(s));
+    }
     let (area, _iteration) = client
         .get_work_item_paths(&organization, &project, pbi_id)
         .await?;

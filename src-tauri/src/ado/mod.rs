@@ -16,6 +16,7 @@ pub use endpoints::{tags_write_ops, RelinkOutcome};
 /// The single, audited exception to the no-DELETE rule. See its header.
 pub mod deletion;
 pub mod permissions;
+pub mod single_flight;
 pub mod throttle;
 mod transport;
 pub use transport::{network_error, said, NET_GENERIC, NET_TIMEOUT, NET_UNREACHABLE, REPO_UNAVAILABLE};
@@ -324,6 +325,7 @@ fn client_for(base_url: &str) -> reqwest::Client {
     }
 }
 
+#[derive(Clone)]
 pub struct AdoClient {
     pub(crate) http: reqwest::Client,
     pub(crate) token: String,

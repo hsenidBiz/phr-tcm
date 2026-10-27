@@ -7,11 +7,29 @@ use super::{
     area_matches, default_plan_name, EnsuredSuite, PlanWithSuites, SuiteRef, TestPlan,
     SUITE_SCAN_CONCURRENCY,
 };
+use crate::ado::single_flight::Flights;
 use crate::ado::{AdoClient, AdoError};
 
 /// How many of a PBI's test cases `suite_from_cases` asks about before it
 /// gives up and lets the plans be walked.
 const SUITE_FROM_CASES_ASKED: usize = 3;
+
+/// What looking for a PBI's suite came to: the suite if there is one, and
+/// the project's plans when they had to be read (so a caller about to
+/// create a suite does not read them again). `plans` is empty when the
+/// PBI's own test cases answered.
+#[derive(Clone)]
+struct SuiteWalk {
+    found: Option<EnsuredSuite>,
+    plans: std::sync::Arc<Vec<TestPlan>>,
+}
+
+/// The suite lookups running now, one per (server, org, project, PBI, how
+/// far it looks). See `ado::single_flight`.
+static SUITE_WALKS: Flights<Result<SuiteWalk, AdoError>> = Flights::new();
+
+/// The plans-and-suites walks running now, one per (server, org, project).
+static PLAN_TREES: Flights<Result<Vec<PlanWithSuites>, AdoError>> = Flights::new();
 
 impl AdoClient {
     /// All test plans in the project (paginated). Read only.
@@ -168,6 +186,31 @@ impl AdoClient {
     /// Same, reporting (done, total) after each plan scanned so the UI can
     /// show "Scanning plans X of Y".
     pub async fn list_plans_with_suites_cb(
+        &self,
+        org: &str,
+        project: &str,
+        progress: impl FnMut(u32, u32),
+    ) -> Result<Vec<PlanWithSuites>, AdoError> {
+        // Every screen that wants the tree shares one walk; a failed walk
+        // is shared too, and never kept.
+        let key = format!("{}|{org}|{project}", self.base_url);
+        let (me, org, project) = (self.clone(), org.to_string(), project.to_string());
+        PLAN_TREES
+            .run(
+                &key,
+                None,
+                move |tx| async move {
+                    me.walk_plans_with_suites(&org, &project, |done, total| {
+                        let _ = tx.send((done, total));
+                    })
+                    .await
+                },
+                progress,
+            )
+            .await
+    }
+
+    async fn walk_plans_with_suites(
         &self,
         org: &str,
         project: &str,
@@ -437,11 +480,51 @@ impl AdoClient {
         pbi_id: i32,
         area_path: &str,
     ) -> Result<Option<EnsuredSuite>, AdoError> {
-        if let Some(found) = self.suite_from_cases(org, project, pbi_id).await? {
-            return Ok(Some(found));
-        }
-        let plans = self.get_test_plans(org, project).await?;
-        self.scan_plans_for_suite(org, project, pbi_id, area_path, &plans, true, &mut |_, _| {})
+        Ok(self
+            .suite_walk(org, project, pbi_id, area_path, true, |_, _| {})
+            .await?
+            .found)
+    }
+
+    /// Look for the PBI's suite: its own test cases first, then the plans
+    /// (`exhaustive`: every plan; otherwise the area-matched ones when
+    /// there are any). Lookups for the same PBI started together share one
+    /// walk, and a lookup that only needs the area-matched plans joins an
+    /// exhaustive walk already running, since it covers them too. A failed
+    /// walk is shared with whoever was waiting and is never kept.
+    async fn suite_walk(
+        &self,
+        org: &str,
+        project: &str,
+        pbi_id: i32,
+        area_path: &str,
+        exhaustive: bool,
+        progress: impl FnMut(u32, u32),
+    ) -> Result<SuiteWalk, AdoError> {
+        let key = |all: bool| format!("{}|{org}|{project}|{pbi_id}|{all}", self.base_url);
+        let own = key(exhaustive);
+        let wider = key(true);
+        let also = if exhaustive { None } else { Some(wider.as_str()) };
+        let (me, org, project, area) =
+            (self.clone(), org.to_string(), project.to_string(), area_path.to_string());
+        SUITE_WALKS
+            .run(
+                &own,
+                also,
+                move |tx| async move {
+                    if let Some(found) = me.suite_from_cases(&org, &project, pbi_id).await? {
+                        return Ok(SuiteWalk { found: Some(found), plans: Default::default() });
+                    }
+                    let plans = me.get_test_plans(&org, &project).await?;
+                    let found = me
+                        .scan_plans_for_suite(&org, &project, pbi_id, &area, &plans, exhaustive, &mut |d, t| {
+                            let _ = tx.send((d, t));
+                        })
+                        .await?;
+                    Ok(SuiteWalk { found, plans: std::sync::Arc::new(plans) })
+                },
+                progress,
+            )
             .await
     }
 
@@ -501,23 +584,17 @@ impl AdoClient {
         area_path: &str,
         iteration: &str,
         skip_remembered: bool,
-        mut progress: impl FnMut(u32, u32),
+        progress: impl FnMut(u32, u32),
     ) -> Result<EnsuredSuite, AdoError> {
-        // The PBI's own test cases know their suite: ask them before reading
-        // any plan.
-        if let Some(found) = self.suite_from_cases(org, project, pbi_id).await? {
+        // The PBI's own test cases know their suite: they are asked before
+        // any plan is read. Not exhaustive: a suite found under a plan for
+        // another area is not one this would create under, so the
+        // area-matched plans are the whole search when there are any.
+        let walk = self.suite_walk(org, project, pbi_id, area_path, false, progress).await?;
+        if let Some(found) = walk.found {
             return Ok(found);
         }
-        let plans = self.get_test_plans(org, project).await?;
-        // Not exhaustive: a suite found under a plan for another area is
-        // not one this would create under, so the area-matched plans are
-        // the whole search when there are any.
-        if let Some(found) = self
-            .scan_plans_for_suite(org, project, pbi_id, area_path, &plans, false, &mut progress)
-            .await?
-        {
-            return Ok(found);
-        }
+        let plans = walk.plans;
 
         // No suite anywhere. Every area-matched plan is a candidate, ranked
         // so the first is the one a person would pick: the most specific
