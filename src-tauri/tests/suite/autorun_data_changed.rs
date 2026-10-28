@@ -165,6 +165,9 @@ fn a_test_file_saved_and_removed_say_test_files_and_a_refused_one_says_nothing()
 
 #[test]
 fn a_listener_that_panics_cannot_break_the_write() {
+    // The "a bad listener" panic message on stderr is expected: `notify` catches it. The listener
+    // stays registered for the rest of the process, harmlessly - it only panics for this test's own
+    // temp folder (`at == mine`), which no other test writes under, and `notify` catches that too.
     let dir = tempfile::tempdir().unwrap();
     let mine = dir.path().to_path_buf();
     data_changed::on_data_changed(move |at, _| {

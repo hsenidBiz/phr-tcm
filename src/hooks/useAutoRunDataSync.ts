@@ -28,6 +28,10 @@ export const DATA_KIND_KEYS: Record<AutorunDataKind, readonly unknown[]> = {
   proposals: envKeys.proposals,
 };
 
+/** One array, not one per event: `pending` compares keys by reference, so a
+ * burst of fixture events collapses to a single read. */
+const FIXTURES_QUERY_KEY: readonly unknown[] = [FIXTURES_KEY];
+
 export function useAutoRunDataSync(): void {
   const qc = useQueryClient();
   useEffect(() => {
@@ -48,7 +52,7 @@ export function useAutoRunDataSync(): void {
       events.autorunDataChanged.listen((e) => {
         for (const kind of e.payload.kinds) want(DATA_KIND_KEYS[kind]);
       }),
-      events.apiTemplatesChanged.listen(() => want([FIXTURES_KEY])),
+      events.apiTemplatesChanged.listen(() => want(FIXTURES_QUERY_KEY)),
     ];
     return () => {
       if (timer !== undefined) clearTimeout(timer);

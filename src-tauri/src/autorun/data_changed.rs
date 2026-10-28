@@ -23,7 +23,8 @@ pub fn on_data_changed(f: impl Fn(&Path, &[AutorunDataKind]) + Send + Sync + 'st
 }
 
 /// Tell every listener that `kind` changed under `at`. A listener runs with
-/// no lock of this module held, and one that panics cannot break the write
+/// no lock of this module held and no store lock held either (callers
+/// release theirs first), and one that panics cannot break the write
 /// that announced it.
 pub fn notify(at: &Path, kind: AutorunDataKind) {
     let listeners: Vec<DataListener> = LISTENERS.lock().unwrap_or_else(|e| e.into_inner()).clone();

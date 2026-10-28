@@ -272,7 +272,7 @@ fn commit(folder: &Path, name: &str, bytes: &[u8], replace: bool, check_content:
     }
     // From the "already there" check to the rename, one save at a time: two assistants' saves of
     // one name must not both pass the check, and the later one silently replace the earlier.
-    let _one_at_a_time = write_lock();
+    let one_at_a_time = write_lock();
     if dest.exists() && !replace {
         return Err(already_there(name));
     }
@@ -290,8 +290,9 @@ fn commit(folder: &Path, name: &str, bytes: &[u8], replace: bool, check_content:
         let _ = std::fs::remove_file(&part);
         return Err(failed("added", name, e));
     }
+    drop(one_at_a_time);
     crate::autorun::data_changed::notify(folder, crate::events::AutorunDataKind::TestFiles);
-    let meta = std::fs::metadata(&dest).map_err(|e| failed("read", name, e))?;
+    let meta =std::fs::metadata(&dest).map_err(|e| failed("read", name, e))?;
     Ok(entry(name, &meta))
 }
 

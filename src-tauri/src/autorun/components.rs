@@ -156,7 +156,7 @@ fn update_with<T>(
     project: &str,
     change: impl FnOnce(&mut ComponentFile) -> Result<T, String>,
 ) -> Result<T, String> {
-    let _guard = write_lock().lock().unwrap_or_else(|e| e.into_inner());
+    let guard = write_lock().lock().unwrap_or_else(|e| e.into_inner());
     let mut file = load_components(root, org, project)?;
     let before = file.clone();
     let out = change(&mut file)?;
@@ -169,6 +169,7 @@ fn update_with<T>(
     }
     let text = serde_json::to_string_pretty(&file).map_err(|e| e.to_string())?;
     crate::ai_tools::atomic_write(&path, &text)?;
+    drop(guard);
     super::data_changed::notify(root, crate::events::AutorunDataKind::Components);
     Ok(out)
 }
@@ -206,7 +207,7 @@ pub fn remove(root: &Path, org: &str, project: &str, name: &str) -> Result<(), S
 /// beside it so an empty one starts; never deleted. Hands back the
 /// project-relative name it was moved to. A file that reads is refused.
 pub fn reset_components(root: &Path, org: &str, project: &str) -> Result<String, String> {
-    let _guard = write_lock().lock().unwrap_or_else(|e| e.into_inner());
+    let guard = write_lock().lock().unwrap_or_else(|e| e.into_inner());
     let from = components_path(root, org, project);
     let file = components_file_name(org, project);
     if !from.exists() {
@@ -219,6 +220,7 @@ pub fn reset_components(root: &Path, org: &str, project: &str) -> Result<String,
     std::fs::rename(&from, from.with_file_name(&aside))
         .map_err(|e| format!("The components file {file} could not be moved aside: {e}"))?;
     crate::applog::info(format!("Components: a damaged file was moved aside as projects/{aside}"));
+    drop(guard);
     super::data_changed::notify(root, crate::events::AutorunDataKind::Components);
     Ok(format!("projects/{aside}"))
 }

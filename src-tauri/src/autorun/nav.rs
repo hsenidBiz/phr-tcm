@@ -375,6 +375,20 @@ pub fn validate(nav: &NavFile) -> Result<(), String> {
 /// file and renamed, so a reader never sees half a file and a refused save
 /// leaves the earlier one exactly as it was.
 pub fn save_nav(root: &Path, org: &str, project: &str, nav: &NavFile) -> Result<(), String> {
+    write_nav(root, org, project, nav)?;
+    announce_areas(root);
+    Ok(())
+}
+
+/// Tell the window the areas changed. A caller that holds `nav_lock` while it
+/// writes (`write_nav`) releases it first, then calls this.
+pub(crate) fn announce_areas(root: &Path) {
+    super::data_changed::notify(root, crate::events::AutorunDataKind::Areas);
+}
+
+/// `save_nav` without the announcement, for a caller that holds `nav_lock`:
+/// a listener must never run under a store lock.
+pub(crate) fn write_nav(root: &Path, org: &str, project: &str, nav: &NavFile) -> Result<(), String> {
     validate(nav)?;
     if org.trim().is_empty() || project.trim().is_empty() {
         return Err("pick an organization and a project first".to_string());
@@ -383,7 +397,6 @@ pub fn save_nav(root: &Path, org: &str, project: &str, nav: &NavFile) -> Result<
     std::fs::create_dir_all(path.parent().expect("projects folder")).map_err(|e| e.to_string())?;
     let json = serde_json::to_string_pretty(nav).map_err(|e| e.to_string())?;
     crate::ai_tools::atomic_write(&path, &json)?;
-    super::data_changed::notify(root, crate::events::AutorunDataKind::Areas);
     Ok(())
 }
 
@@ -504,7 +517,7 @@ pub fn put_path_if(
 ) -> Result<NavFile, String> {
     path.module = path.module.trim().to_string();
     path.area = path.name().to_string();
-    let _one_writer = nav_lock();
+    let one_writer = nav_lock();
     let mut nav = load_nav(root, org, project)?;
     let key = module_key(&path.area);
     let now = nav.modules.iter().find(|m| module_key(m.name()) == key);
@@ -527,18 +540,22 @@ pub fn put_path_if(
         Some(slot) => *slot = path,
         None => nav.modules.push(path),
     }
-    save_nav(root, org, project, &nav)?;
+    write_nav(root, org, project, &nav)?;
+    drop(one_writer);
+    announce_areas(root);
     Ok(nav)
 }
 
 /// Remove the area of this name, ignoring case. The module's other areas
 /// stay.
 pub fn remove_path(root: &Path, org: &str, project: &str, area: &str) -> Result<NavFile, String> {
-    let _one_writer = nav_lock();
+    let one_writer = nav_lock();
     let mut nav = load_nav(root, org, project)?;
     let key = module_key(area);
     nav.modules.retain(|m| module_key(m.name()) != key);
-    save_nav(root, org, project, &nav)?;
+    write_nav(root, org, project, &nav)?;
+    drop(one_writer);
+    announce_areas(root);
     Ok(nav)
 }
 
@@ -547,27 +564,33 @@ pub fn remove_path(root: &Path, org: &str, project: &str, area: &str) -> Result<
 /// list leaves the words already saved exactly as they were.
 pub fn set_save_words(root: &Path, org: &str, project: &str, words: &[String]) -> Result<NavFile, String> {
     let words = crate::browser::save_guard::check_words(words)?;
-    let _one_writer = nav_lock();
+    let one_writer = nav_lock();
     let mut nav = load_nav(root, org, project)?;
     nav.save_words = words;
-    save_nav(root, org, project, &nav)?;
+    write_nav(root, org, project, &nav)?;
+    drop(one_writer);
+    announce_areas(root);
     Ok(nav)
 }
 
 /// Replace the project's protected baseline, tidied (`tidy_protected`).
 pub fn set_protected(root: &Path, org: &str, project: &str, records: &[ProtectedRecord]) -> Result<NavFile, String> {
-    let _one_writer = nav_lock();
+    let one_writer = nav_lock();
     let mut nav = load_nav(root, org, project)?;
     nav.protected = tidy_protected(records);
-    save_nav(root, org, project, &nav)?;
+    write_nav(root, org, project, &nav)?;
+    drop(one_writer);
+    announce_areas(root);
     Ok(nav)
 }
 
 pub fn set_direct_urls(root: &Path, org: &str, project: &str, allowed: bool) -> Result<NavFile, String> {
-    let _one_writer = nav_lock();
+    let one_writer = nav_lock();
     let mut nav = load_nav(root, org, project)?;
     nav.direct_urls = allowed;
-    save_nav(root, org, project, &nav)?;
+    write_nav(root, org, project, &nav)?;
+    drop(one_writer);
+    announce_areas(root);
     Ok(nav)
 }
 

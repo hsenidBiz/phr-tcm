@@ -84,6 +84,18 @@ test("a burst of events is read once", async () => {
   expect(counts).toEqual({ nav: 2, components: 2, fixtures: 1 });
 });
 
+test("a burst of fixture events reads the fixtures once", async () => {
+  const counts: Record<string, number> = {};
+  await mount(counts);
+  await act(async () => {
+    for (let i = 0; i < 5; i++) await emit("api-templates-changed", { id: "goals-remove-goal" });
+  });
+  await waitFor(() => expect(counts.fixtures).toBe(2));
+  // Nothing more is read afterwards.
+  await new Promise((r) => setTimeout(r, 500));
+  expect(counts).toEqual({ nav: 1, components: 1, fixtures: 2 });
+});
+
 test("every kind of data has its query key", () => {
   const kinds: AutorunDataKind[] = ["areas", "components", "map", "mappingSummary", "quirks", "testFiles", "proposals"];
   for (const k of kinds) expect(DATA_KIND_KEYS[k].length).toBeGreaterThan(0);
