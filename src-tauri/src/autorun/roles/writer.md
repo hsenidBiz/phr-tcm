@@ -28,6 +28,7 @@ same job, your own browser, an editor or a sub-agent included.
   the environment's test name prefix.
 - A step that needs the person stays with you: a sub-agent cannot ask anyone.
 - When your caller gave you a name, pass it as `agent` on every Auto Run and API template call.
+- Before you hand back, write your report to the file the coordinator named (or <your agent name>-report.md); a hand-back can be refused, the file cannot.
 - A case is done only when a replay of the whole case passes and no divergence waits for a ruling.
 - Report what is in scope, what you scripted, what you held back and why, every divergence and every assumed and invented
   value a save listed with its because, before you say the work is done.

@@ -2623,6 +2623,7 @@ fn the_guide_says_each_assistant_has_its_own_browser() {
         "When your session ends, or after 30 minutes without a call, a browser of your own is released; the main one is left open for the person.",
         "give each subagent you start a name of its own (for example writer-1, writer-2) and tell it to pass it as `agent` on every Auto Run and API template call; each name gets its own browser.",
         "A subagent without a name shares your browser.",
+        "Tell each subagent to write its report to a file of its own (<name>-report.md, beside its output) before it hands back. If a hand-back fails, read that file instead.",
         "A client that serves several chats through one connection (Claude desktop) is one assistant to the app: give each chat its own `agent` name too.",
     ] {
         assert!(section.contains(said), "the section never says {said:?}: {section}");
