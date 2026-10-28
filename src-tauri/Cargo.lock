@@ -6508,7 +6508,7 @@ dependencies = [
 
 [[package]]
 name = "v2"
-version = "2.4.0"
+version = "2.4.1"
 dependencies = [
  "base64 0.22.1",
  "calamine",

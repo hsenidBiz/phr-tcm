@@ -27,6 +27,16 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.4.1",
+    date: "2026-10-28",
+    items: [
+      "When Auto Run's Setup panel says Needs attention, it now says what for, such as no accounts or a test file missing.",
+      "The sidebar groups its screens: the test case screens under Test Case Management, and Auto Run, Playwright and API Templates together under Advanced at the bottom. Search Suites, Suite Management and AI Bridge now open with Ctrl+6, Ctrl+7 and Ctrl+8, and Auto Run with Ctrl+9.",
+      "The pill beside the Playwright title now counts the files the script pipeline follows (its agents, gen-test, skills and CLAUDE.md) instead of the repo's tests, and names any that are missing.",
+      "Areas, components, discovery, quirks, test files, proposed accounts and fixtures that an assistant adds now show on the Auto Run screen straight away, without reloading it.",
+    ],
+  },
+  {
     version: "2.4.0",
     date: "2026-10-28",
     items: [
