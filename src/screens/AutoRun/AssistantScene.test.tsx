@@ -165,6 +165,37 @@ test("each corner has its props: a lit screen per lab occupant, a z per sleeper,
   expect(c.querySelectorAll(".assistant-scene__pin--live")).toHaveLength(1);
 });
 
+test("the Test lab is a chemistry lab, the Map room has a hologram, the Lounge is furnished", () => {
+  const c = office([agent("Assistant 1", 0, replaying)]);
+  const corner = (id: Corner) => c.querySelector(`.assistant-scene__corner[data-corner="${id}"]`)!;
+  const lab = corner("lab");
+  expect(lab.querySelectorAll(".assistant-scene__flask").length).toBeGreaterThanOrEqual(2);
+  expect(lab.querySelectorAll(".assistant-scene__tube")).toHaveLength(3);
+  expect(lab.querySelectorAll(".assistant-scene__fizz").length).toBeGreaterThan(0);
+  const map = corner("map");
+  expect(map.querySelector(".assistant-scene__beam")).not.toBeNull();
+  const holo = map.querySelector(".assistant-scene__holo")!;
+  expect(holo.querySelector(".assistant-scene__pin--live")).not.toBeNull();
+  expect(holo.querySelector(".assistant-scene__scan")).not.toBeNull();
+  const lounge = corner("lounge");
+  for (const part of ["__rug", "__bookcase", "__sofa", "__lamp", "__steam"]) {
+    expect(lounge.querySelector(`.assistant-scene${part}`), part).not.toBeNull();
+  }
+});
+
+test("an assistant in the Test lab wears a lab coat, and only there", () => {
+  const c = office([agent("Assistant 1", 0, replaying), agent("Assistant 2", 1, exploring), agent("Assistant 3", 2, idle)]);
+  const [lab, map, lounge] = [...c.querySelectorAll(".assistant-scene__walker")];
+  expect(lab.querySelector(".assistant-scene__bot")).toHaveClass("assistant-scene__bot--coat");
+  expect(lab.querySelectorAll(".assistant-scene__coat")).toHaveLength(2);
+  for (const w of [map, lounge]) {
+    expect(w.querySelector(".assistant-scene__bot")).not.toHaveClass("assistant-scene__bot--coat");
+    expect(w.querySelector(".assistant-scene__coat")).toBeNull();
+  }
+  // White in either scheme, from theme tokens.
+  expect(css).toMatch(/--assistant-coat:\s*light-dark\(var\(--color-surface\),\s*var\(--color-text\)\)/);
+});
+
 test("three replaying assistants each get their own seat", () => {
   const walkers = office([1, 2, 3].map((n) => agent(`Assistant ${n}`, n - 1, replaying))).querySelectorAll<HTMLElement>(
     ".assistant-scene__walker",
@@ -260,7 +291,8 @@ test("the css walks the wrapper across the floor, paces by translateX, and still
   expect(block, "a reduced-motion block names .assistant-scene").toBeDefined();
   expect(block).toMatch(/\.assistant-scene__walker\s*\{\s*transition:\s*none/);
   expect(block).toMatch(/animation:\s*none/);
-  for (const part of ["__walker", "__pace", "__bot", "__eye", "__z"]) {
+  for (const k of ["fizz", "scan", "flicker", "steam"]) expect(css).toMatch(new RegExp(`@keyframes\\s+assistant-${k}\\b`));
+  for (const part of ["__walker", "__pace", "__bot", "__eye", "__z", "__fizz", "__holo", "__scan", "__steam"]) {
     expect(block, `reduced motion stops ${part}`).toContain(`.assistant-scene${part}`);
   }
 });

@@ -947,6 +947,39 @@ table {
 .assistant-scene__corner[data-empty="true"] .assistant-scene__strip { background: var(--color-border); }
 .assistant-scene__corner[data-empty="true"] .assistant-scene__props { opacity: 0.4; }
 .assistant-scene__pin--live { animation: assistant-pin 1.6s steps(1, end) infinite; }
+/* The corners' furniture (OfficeProps.tsx). A lab coat is white in either
+   scheme: the surface in light, the text colour in dark. */
+.assistant-scene__walker { --assistant-coat: light-dark(var(--color-surface), var(--color-text)); }
+.assistant-scene__coat,
+.assistant-scene__bot--coat .assistant-scene__arm { fill: var(--assistant-coat); }
+.assistant-scene__pocket { fill: var(--color-border-strong); }
+.assistant-scene__fizz { animation: assistant-fizz 1.8s ease-out infinite; }
+.assistant-scene__beam {
+  clip-path: polygon(44% 100%, 56% 100%, 100% 0, 0 0);
+  background: linear-gradient(to top, color-mix(in srgb, var(--color-info) 35%, transparent), color-mix(in srgb, var(--color-info) 6%, transparent));
+}
+.assistant-scene__holo {
+  border-color: color-mix(in srgb, var(--color-info) 60%, transparent);
+  background-color: color-mix(in srgb, var(--color-info) 10%, transparent);
+  background-image:
+    linear-gradient(color-mix(in srgb, var(--color-info) 22%, transparent) 1px, transparent 1px),
+    linear-gradient(90deg, color-mix(in srgb, var(--color-info) 22%, transparent) 1px, transparent 1px);
+  background-size: 0.5rem 0.5rem;
+  box-shadow: 0 0 0.5rem color-mix(in srgb, var(--color-info) 35%, transparent);
+  animation: assistant-flicker 5s steps(1, end) infinite;
+}
+.assistant-scene__land { background: color-mix(in srgb, var(--color-info) 40%, transparent); }
+.assistant-scene__scan {
+  background: color-mix(in srgb, var(--color-info) 75%, transparent);
+  animation: assistant-scan 2.4s linear infinite;
+}
+.assistant-scene__rug { background: color-mix(in srgb, var(--color-success) 18%, transparent); }
+.assistant-scene__shade {
+  clip-path: polygon(20% 0, 80% 0, 100% 100%, 0 100%);
+  background: color-mix(in srgb, var(--color-warning) 55%, var(--color-surface));
+}
+.assistant-scene__glow { background: radial-gradient(closest-side, color-mix(in srgb, var(--color-warning) 28%, transparent), transparent); }
+.assistant-scene__steam { animation: assistant-steam 2s ease-out infinite; }
 .assistant-scene__screen {
   left: var(--spot);
   transform: translateX(-50%);
@@ -1019,6 +1052,25 @@ table {
   0%, 92%, 100% { transform: scaleY(1); }
   95% { transform: scaleY(0.15); }
 }
+@keyframes assistant-fizz {
+  0% { transform: translateY(0); opacity: 0; }
+  20% { opacity: 1; }
+  100% { transform: translateY(-0.75rem); opacity: 0; }
+}
+@keyframes assistant-scan {
+  0% { transform: translateY(0); }
+  100% { transform: translateY(3.5rem); }
+}
+@keyframes assistant-flicker {
+  0%, 46%, 50%, 78%, 100% { opacity: 1; }
+  48% { opacity: 0.7; }
+  80% { opacity: 0.85; }
+}
+@keyframes assistant-steam {
+  0% { transform: translate(0, 0); opacity: 0; }
+  30% { opacity: 0.8; }
+  100% { transform: translate(2px, -0.625rem); opacity: 0; }
+}
 @keyframes assistant-z-drift {
   0% { transform: translate(0, 0); opacity: 0; }
   20% { opacity: 1; }
@@ -1036,7 +1088,11 @@ table {
   .assistant-scene__arm--a,
   .assistant-scene__arm--b,
   .assistant-scene__eye,
-  .assistant-scene__z { animation: none !important; }
+  .assistant-scene__z,
+  .assistant-scene__fizz,
+  .assistant-scene__holo,
+  .assistant-scene__scan,
+  .assistant-scene__steam { animation: none !important; }
   .assistant-scene__bot { transform: none !important; }
 }
 

@@ -22,6 +22,7 @@
 
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from "react";
 import type { AgentActivity, AgentView } from "../../bindings";
+import OfficeProps from "./OfficeProps";
 
 export type ScenePose = "walk" | "type" | "doze";
 
@@ -127,11 +128,12 @@ export function spotLeft(corner: Corner, k: number, m: number): string {
 }
 
 /** One pixel character, 14 x 17 "pixels" drawn at twice that, sized in rem so
- * it scales with everything around it. */
-function Bot({ asleep, style }: { asleep: boolean; style?: CSSProperties }) {
+ * it scales with everything around it. In the Test lab it wears a lab coat:
+ * white sleeves and two panels open over its coloured front, with a pocket. */
+function Bot({ asleep, coat, style }: { asleep: boolean; coat: boolean; style?: CSSProperties }) {
   return (
     <svg
-      className="assistant-scene__bot block h-[2.125rem] w-7 shrink-0"
+      className={`assistant-scene__bot block h-[2.125rem] w-7 shrink-0${coat ? " assistant-scene__bot--coat" : ""}`}
       style={style}
       viewBox="0 0 14 17"
       shapeRendering="crispEdges"
@@ -144,6 +146,13 @@ function Bot({ asleep, style }: { asleep: boolean; style?: CSSProperties }) {
       <rect x="3" y="10" width="8" height="5" />
       <rect className="assistant-scene__leg assistant-scene__leg--a" x="4" y="15" width="2" height="2" />
       <rect className="assistant-scene__leg assistant-scene__leg--b" x="8" y="15" width="2" height="2" />
+      {coat && (
+        <>
+          <rect className="assistant-scene__coat" x="3" y="10" width="2" height="5" />
+          <rect className="assistant-scene__coat" x="9" y="10" width="2" height="5" />
+          <rect className="assistant-scene__pocket" x="9" y="12" width="1" height="1" />
+        </>
+      )}
       {asleep ? (
         <>
           <rect className="assistant-scene__eye assistant-scene__eye--closed" x="4" y="6" width="2" height="1" />
@@ -222,32 +231,6 @@ function useWalking(spots: Map<string, number>): Map<string, "left" | "right"> {
   return walking;
 }
 
-function Props({ corner }: { corner: Corner }) {
-  if (corner === "lab") {
-    return (
-      <div className="absolute inset-x-3 bottom-7 h-5 rounded-t-sm border border-b-0 border-border-strong bg-surface-2" />
-    );
-  }
-  if (corner === "map") {
-    return (
-      <>
-        <div className="absolute left-1/2 top-7 h-11 w-20 -translate-x-1/2 rounded-sm border border-border-strong bg-surface">
-          <span className="absolute left-2 top-2 h-1.5 w-1.5 rounded-full bg-muted" />
-          <span className="assistant-scene__pin--live absolute right-3 top-3 h-1.5 w-1.5 rounded-full bg-accent" />
-          <span className="absolute bottom-2 left-1/2 h-1.5 w-1.5 rounded-full bg-muted" />
-        </div>
-        <div className="absolute bottom-7 right-3 h-6 w-3 rounded-t-full bg-success" />
-      </>
-    );
-  }
-  return (
-    <>
-      <div className="absolute bottom-7 left-1/2 h-6 w-20 -translate-x-1/2 rounded-t-md border border-b-0 border-border-strong bg-surface-2" />
-      <div className="absolute bottom-7 right-3 h-8 w-4 rounded-t-sm border border-b-0 border-border-strong bg-surface" />
-    </>
-  );
-}
-
 export default function AssistantOffice({ agents }: { agents: AgentView[] }) {
   const placed = agents.map((a) => {
     const corner = cornerFor(a.activity);
@@ -277,7 +260,7 @@ export default function AssistantOffice({ agents }: { agents: AgentView[] }) {
               {c.name}
             </span>
             <div className="assistant-scene__props absolute inset-0">
-              <Props corner={c.id} />
+              <OfficeProps corner={c.id} />
             </div>
             <div className="assistant-scene__strip absolute inset-x-0 bottom-0 h-[3px]" />
           </div>
@@ -331,7 +314,7 @@ export default function AssistantOffice({ agents }: { agents: AgentView[] }) {
                 </span>
               )}
               <div className="relative">
-                <Bot asleep={pose === "doze"} style={pace ? { animationDelay: delay } : undefined} />
+                <Bot asleep={pose === "doze"} coat={corner === "lab"} style={pace ? { animationDelay: delay } : undefined} />
                 {pose === "doze" && (
                   <span className="assistant-scene__z absolute left-full top-0 text-[0.625rem] font-bold text-muted">z</span>
                 )}
