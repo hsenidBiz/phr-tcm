@@ -1647,6 +1647,7 @@ fn record_area(root: &std::path::Path, org: &str, project: &str, name: &str) {
             repaired_by_assistant: None,
             preferences: Default::default(),
             mode: None,
+            variants: Vec::new(),
         },
     )
     .unwrap();

@@ -82,6 +82,22 @@ pub struct ModulePath {
     /// project's recipe names no modes.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mode: Option<String>,
+    /// Other ways in from the home page, one per menu shape the area has
+    /// (half of an environment's accounts see the other shape). A walk tries
+    /// the primary path above first and these in order only when the
+    /// primary meets a click it never found. Absent in a file written
+    /// before variants existed.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub variants: Vec<PathVariant>,
+}
+
+/// One more menu path to an area (`ModulePath::variants`): the clicks from
+/// the home page and where they end.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct PathVariant {
+    pub clicks: Vec<Target>,
+    /// The path part of the address the clicks end on.
+    pub arrived: String,
 }
 
 /// An assistant's repair of an area's path: what the area held before, so
@@ -366,6 +382,18 @@ pub fn validate(nav: &NavFile) -> Result<(), String> {
         }
         if !m.arrived.starts_with('/') {
             return Err(format!("area \"{name}\": where it ends must be an address path such as /hr/leave/apply"));
+        }
+        for (n, v) in m.variants.iter().enumerate() {
+            let which = n + 2;
+            if v.clicks.is_empty() {
+                return Err(format!("area \"{name}\", menu path {which} has no clicks"));
+            }
+            for (i, click) in v.clicks.iter().enumerate() {
+                click.validate().map_err(|e| format!("area \"{name}\", menu path {which}, click {}: {e}", i + 1))?;
+            }
+            if !v.arrived.starts_with('/') {
+                return Err(format!("area \"{name}\", menu path {which}: where it ends must be an address path such as /hr/leave/apply"));
+            }
         }
     }
     Ok(())
@@ -722,7 +750,7 @@ pub struct PathFailure {
 /// area was recorded with. One sentence, never a path per menu shape.
 pub fn menu_differs(account: &str, locator: &str) -> String {
     format!(
-        "the menu as {account} has no {locator} - this account's menu differs from the one the area was recorded with; script this area as an account whose menu has it"
+        "the menu as {account} has no {locator} - this account's menu differs from the one the area was recorded with; script this area as an account whose menu has it, or record this account's path with save_autorun_area and variant: true"
     )
 }
 
@@ -1142,7 +1170,55 @@ pub async fn go_to_module<D: Driver>(
 /// differ: the area's clicks are for that menu. A dialog that cannot be read
 /// is a note, and the trip walks on - the path's own click then fails with
 /// its own sentence, if the menu really is not the one it knows.
+///
+/// An area with menu paths for other menu shapes (`ModulePath::variants`)
+/// walks the primary path first. When that meets a click that was never
+/// found, the home page is loaded afresh and each variant is tried in
+/// order; the first to arrive wins, and the notes say which. When none
+/// does, the primary path's failure is the answer.
 pub async fn go_to_module_noted<D: Driver>(
+    d: &mut D,
+    route: &Route,
+    from: TripFrom,
+    timing: &Timing,
+    notes: &mut Vec<String>,
+) -> Result<String, PathFailure> {
+    let failure = match walk_primary(d, route, from, timing, notes).await {
+        Ok(at) => return Ok(at),
+        Err(f) => f,
+    };
+    if route.path.variants.is_empty() || !failure.never_found() {
+        return Err(failure);
+    }
+    for (i, variant) in route.path.variants.iter().enumerate() {
+        let home = load_home(d, &route.home, timing).await;
+        if !home.ok {
+            return Err(PathFailure { at: Where::Home, reason: home.detail, harness: home.harness });
+        }
+        let other = Route {
+            home: route.home.clone(),
+            path: ModulePath {
+                clicks: variant.clicks.clone(),
+                arrived: variant.arrived.clone(),
+                start: String::new(),
+                variants: Vec::new(),
+                ..route.path.clone()
+            },
+        };
+        // A fresh load has run `after_sign_in`: a menu it opened stays open.
+        match click_path(d, &other, timing, Skip::WhenNextIsReady, &mut 0, None).await {
+            Ok(at) => {
+                notes.push(format!("reached \"{}\" by its menu path {}", route.path.name(), i + 2));
+                return Ok(at);
+            }
+            Err(f) if f.harness => return Err(f),
+            Err(_) => {}
+        }
+    }
+    Err(failure)
+}
+
+async fn walk_primary<D: Driver>(
     d: &mut D,
     route: &Route,
     from: TripFrom,
@@ -1235,7 +1311,11 @@ async fn the_old_way<D: Driver>(
     if !home.ok {
         return Err(PathFailure { at: Where::Home, reason: home.detail, harness: home.harness });
     }
-    click_path(d, route, timing, Skip::Never, &mut 0, pins).await
+    // A menu already open (a toggle the page remembers, or `after_sign_in`
+    // opened) keeps its toggle unclicked - except while pinning, which must
+    // keep every click of the path it records.
+    let skip = if pins.is_some() { Skip::Never } else { Skip::WhenNextIsReady };
+    click_path(d, route, timing, skip, &mut 0, pins).await
 }
 
 /// Whether `click_path` may leave a click out.
@@ -1294,7 +1374,13 @@ async fn click_path<D: Driver>(
                 }
             }
         }
-        let out = execute_in(d, &Action::Click { selector: click.clone() }, timing, &policy).await;
+        let mut out = execute_in(d, &Action::Click { selector: click.clone() }, timing, &policy).await;
+        // Something drawn over the target (a toast, a loading veil) goes
+        // within a moment: wait for it, bounded by the nav wait, and click
+        // once more. A cover that stays fails as it always did.
+        if !out.ok && !out.harness && out.detail.contains(crate::browser::input::COVERED_BY) && cover_goes(d, &click, timing).await {
+            out = execute_in(d, &Action::Click { selector: click.clone() }, timing, &policy).await;
+        }
         if !out.ok {
             let mut reason = out.detail;
             if pins.is_none() && !out.harness && resolve(d, &click).await.is_ok_and(|found| found.len() > 1) {
@@ -1337,6 +1423,21 @@ async fn click_path<D: Driver>(
                 reason: format!("the page ended on {seen}, not {}", route.path.arrived),
                 harness: false,
             });
+        }
+        d.idle(Duration::from_millis(timing.poll_ms)).await;
+    }
+}
+
+/// Wait up to `nav_ms`, looking every `poll_ms`, for `click` to be
+/// clickable. False when it never was: the cover stayed.
+async fn cover_goes<D: Driver>(d: &mut D, click: &Target, timing: &Timing) -> bool {
+    let deadline = Instant::now() + Duration::from_millis(timing.nav_ms);
+    loop {
+        if crate::browser::input::clickable_now(d, click).await {
+            return true;
+        }
+        if Instant::now() >= deadline {
+            return false;
         }
         d.idle(Duration::from_millis(timing.poll_ms)).await;
     }

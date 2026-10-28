@@ -736,6 +736,10 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool, unlocked: bool, all_projec
                     },
                     "required": ["reason"],
                 },
+                "variant": {
+                    "type": "boolean",
+                    "description": "Optional: this account's menu has another shape than the one the area was recorded with. Send the area's name and the clicks that reach the same screen in this account's menu, with variant: true, and they are added to the existing area as another menu path (send the area's own module): a walk tries the area's first path, then each other one. Answers `saved as menu path <n> of \"<area>\"`; a path the area already has is not added twice.",
+                },
                 "clicks": {
                     "type": "array",
                     "description": "In order, the locators clicked from the home page to reach the screen, each as a snapshot line's locator.",

@@ -295,6 +295,20 @@ fn save_autorun_area_takes_an_optional_repair_with_a_reason() {
     assert!(said.contains("put the old path back"), "{said}");
 }
 
+/// `save_autorun_area` takes an optional `variant: true` to add the clicks
+/// to an existing area as another menu path; the tool still needs a name, a
+/// module and clicks, and the call goes to the same route.
+#[test]
+fn save_autorun_area_takes_an_optional_variant_flag() {
+    let req = r#"{"jsonrpc":"2.0","id":7,"method":"tools/list"}"#;
+    let call = |_: &str, _: &str, _: &str| Ok((200, r#"{"disabled":[]}"#.to_string()));
+    let v: serde_json::Value = serde_json::from_str(&handle_message(req, "1.10.3", &call).unwrap()).unwrap();
+    let tool = v["result"]["tools"].as_array().unwrap().iter().find(|t| t["name"] == "save_autorun_area").unwrap();
+    assert_eq!(tool["inputSchema"]["required"], serde_json::json!(["name", "module", "clicks"]));
+    assert_eq!(tool["inputSchema"]["properties"]["variant"]["type"], "boolean");
+    assert!(tool["inputSchema"]["properties"]["variant"]["description"].as_str().unwrap().contains("saved as menu path"));
+}
+
 #[test]
 fn get_test_cases_requires_neither_a_pbi_nor_ids_in_its_schema() {
     let req = r#"{"jsonrpc":"2.0","id":7,"method":"tools/list"}"#;

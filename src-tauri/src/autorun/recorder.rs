@@ -528,6 +528,7 @@ pub fn finish(module: &str, area: &str, captured: Captured, recorded: &str) -> R
                 repaired_by_assistant: None,
                 preferences: Default::default(),
                 mode: None,
+                variants: Vec::new(),
             })
         }
     }

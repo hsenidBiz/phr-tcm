@@ -5289,6 +5289,7 @@ async fn land_at_area<D: crate::browser::cdp::Driver>(
             Ok(_) => Err(no_saved_area_to_start_at(a)),
         }
     });
+    let mut walked = false;
     match route {
         None => {}
         Some(Err(why)) => {
@@ -5296,6 +5297,7 @@ async fn land_at_area<D: crate::browser::cdp::Driver>(
             landing.walk = Some(why);
         }
         Some(Ok(route)) => {
+            walked = true;
             // A banner up over the menu would take the first click.
             if let Some(recipe) = &recipe {
                 crate::autorun::popups::close_shown_within(d, recipe, 0, timing).await;
@@ -5322,7 +5324,42 @@ async fn land_at_area<D: crate::browser::cdp::Driver>(
     if let Some(recipe) = &recipe {
         crate::autorun::popups::close_shown_within(d, recipe, remaining, timing).await;
     }
+    if walked {
+        settle_landing(d, timing).await;
+    }
     landing
+}
+
+/// After a walk to an area: let the page finish what it does on arriving,
+/// as a run lets it before a click (`actions::settle`), then wait for its
+/// address to hold still for `SETTLE_QUIET` (at most `SETTLE_CAP`), since a
+/// screen can redirect itself a moment after it loads. The answer that
+/// follows then describes where the browser is. Never fails: a page that
+/// will not hold still is answered as it stands.
+async fn settle_landing<D: crate::browser::cdp::Driver>(d: &mut D, timing: &crate::browser::timing::Timing) {
+    use crate::browser::actions::{SETTLE_CAP, SETTLE_QUIET};
+    crate::browser::actions::settle(d, timing).await;
+    let began = std::time::Instant::now();
+    let mut seen = String::new();
+    let mut since = began;
+    loop {
+        match crate::browser::page::eval_value(d, "location.href").await {
+            Ok(v) => {
+                let at = v.as_str().map(crate::autorun::nav::path_of).unwrap_or_default();
+                if at != seen {
+                    seen = at;
+                    since = std::time::Instant::now();
+                }
+            }
+            // Between two documents the page refuses: that is a change.
+            Err(e) if e.is_transient() => since = std::time::Instant::now(),
+            Err(_) => return,
+        }
+        if since.elapsed() >= SETTLE_QUIET || began.elapsed() >= SETTLE_CAP {
+            return;
+        }
+        d.idle(std::time::Duration::from_millis(timing.poll_ms.max(10))).await;
+    }
 }
 
 /// A discovery start's `detail` when the browser it took over was signed in
@@ -7722,6 +7759,144 @@ async fn stand_in_saved_area<D: crate::browser::cdp::Driver>(
     }
 }
 
+/// `save_autorun_area` with `variant: true`: the clicks the discovery found
+/// are added to the existing area `name` as another menu path
+/// (`ModulePath::variants`), for the other menu shape. They are replayed from
+/// a fresh home exactly as a new area's are and must arrive where the
+/// discovery browser stands; the area's primary path, name, module and
+/// scripts are untouched. A path the area already has is not added twice
+/// (`{saved: false, unchanged: true}`). Not in a mapping run, which adds and
+/// updates its own areas only.
+pub async fn variant_area_in<B: DiscoveryBrowser>(
+    slot: &mut Option<B>,
+    root: &std::path::Path,
+    organization: &str,
+    project: &str,
+    name: &str,
+    clicks: Vec<crate::browser::locator::Target>,
+    timing: &crate::browser::timing::Timing,
+) -> (u16, String) {
+    let answer = save_area_variant(slot, root, organization, project, name, clicks, timing).await;
+    if let Some(browser) = slot.as_mut() {
+        let p = browser.parts();
+        count_blocked_writes(p.driver, p.discovery.as_mut(), &[]);
+    }
+    answer
+}
+
+async fn save_area_variant<B: DiscoveryBrowser>(
+    slot: &mut Option<B>,
+    root: &std::path::Path,
+    organization: &str,
+    project: &str,
+    name: &str,
+    clicks: Vec<crate::browser::locator::Target>,
+    timing: &crate::browser::timing::Timing,
+) -> (u16, String) {
+    use crate::autorun::nav;
+    let Some(browser) = slot.as_mut() else {
+        return (409, NO_DISCOVERY.to_string());
+    };
+    let p = browser.parts();
+    let Some(state) = p.discovery.as_ref() else {
+        return (409, NO_DISCOVERY.to_string());
+    };
+    let name = name.trim();
+    if name.is_empty() || clicks.is_empty() {
+        return (400, "a menu path needs the name of an existing area and at least one click".to_string());
+    }
+    if state.mapping.is_some() {
+        return (409, "a mapping run does not add menu paths; end it and add the menu path in an ordinary discovery".to_string());
+    }
+    let navfile = match nav::load_nav(root, organization, project) {
+        Ok(n) => n,
+        Err(why) => return (409, why),
+    };
+    let Some(found) = nav::find_area(&navfile, name).cloned() else {
+        return (409, format!("there is no area named '{name}' to add a menu path to - save it first, without variant"));
+    };
+    let recipe = match crate::autorun::recipe::load_effective_recipe(root, organization, project) {
+        Ok(r) => r,
+        Err(why) => return (409, why),
+    };
+    let account = state.account.clone().or_else(|| p.signed_in.clone());
+    let d = p.driver;
+    let href = crate::browser::page::eval_value(d, "location.href").await;
+    let href = href.ok().and_then(|v| v.as_str().map(str::to_string)).unwrap_or_default();
+    if href.trim().is_empty() {
+        return (409, "the page would not say where it is - read the page and try again".to_string());
+    }
+    let arrived = nav::path_of(&href);
+    let home = nav::Home::of(&recipe);
+    let went = match fresh_home_for_area(
+        d,
+        &home,
+        timing,
+        root,
+        organization,
+        project,
+        account.as_deref(),
+        p.lease,
+        p.signed_in,
+    )
+    .await
+    {
+        Ok(went) => went,
+        Err(refused) => return refused,
+    };
+    let tried = if went.ok {
+        let path = nav::ModulePath {
+            clicks,
+            arrived,
+            start: String::new(),
+            variants: Vec::new(),
+            repaired_by_assistant: None,
+            ..found.clone()
+        };
+        nav::go_to_module_pinning(d, &nav::Route::new(&recipe, path), timing).await
+    } else {
+        Err(nav::PathFailure { at: nav::Where::Home, reason: went.detail, harness: went.harness })
+    };
+    let (at, pinned_clicks, pinned) = match tried {
+        Ok(found) => found,
+        Err(failure) => {
+            let (status, page) = read_page(d, crate::browser::snapshot::DEFAULT_LIMIT, None).await;
+            let showed = if status == 200 {
+                page.lines().take(AREA_PAGE_LINES).collect::<Vec<_>>().join("\n")
+            } else {
+                "nothing - the page could not be read".to_string()
+            };
+            return (409, format!("The clicks did not arrive: {}. The page showed: {showed}", failure.for_dialog()));
+        }
+    };
+    let kept = found.name().to_string();
+    let same = |clicks: &[crate::browser::locator::Target], arrived: &str| clicks == pinned_clicks.as_slice() && arrived == at;
+    let held = if same(&found.clicks, &found.arrived) {
+        Some(1)
+    } else {
+        found.variants.iter().position(|v| same(&v.clicks, &v.arrived)).map(|i| i + 2)
+    };
+    if let Some(n) = held {
+        stand_in_saved_area(d, p.discovery, p.signed_in.as_deref(), root, organization, project, kept.clone()).await;
+        let message = format!("already menu path {n} of \"{kept}\"");
+        return (200, serde_json::json!({ "saved": false, "unchanged": true, "arrived": at, "message": message }).to_string());
+    }
+    let mut updated = found.clone();
+    updated.variants.push(nav::PathVariant { clicks: pinned_clicks, arrived: at.clone() });
+    let n = updated.variants.len() + 1;
+    if let Err(why) = nav::put_path_if(root, organization, project, updated, nav::AreaExpect::Was(&found)) {
+        return (409, why);
+    }
+    stand_in_saved_area(d, p.discovery, p.signed_in.as_deref(), root, organization, project, kept.clone()).await;
+    crate::applog::info(format!("Auto Run discovery added menu path {n} to an area"));
+    let message = format!("saved as menu path {n} of \"{kept}\"");
+    let mut answer = serde_json::json!({ "saved": true, "arrived": at, "message": message });
+    if !pinned.is_empty() {
+        answer["pinned"] = serde_json::json!(pinned);
+    }
+    (200, answer.to_string())
+}
+
 /// `discover_area_in` and `repair_area_in`, before the blocked saves are
 /// counted. `repair` is the repair's reason, as the assistant sent it.
 #[allow(clippy::too_many_arguments)]
@@ -7937,6 +8112,8 @@ async fn save_discovered_area<B: DiscoveryBrowser>(
                 // What an area already saved keeps when a read fails below.
                 preferences: existing.as_ref().map(|old| old.preferences.clone()).unwrap_or_default(),
                 mode: existing.as_ref().and_then(|old| old.mode.clone()),
+                // The menu paths for other menu shapes stay with the area.
+                variants: existing.as_ref().map(|old| old.variants.clone()).unwrap_or_default(),
             },
         };
         if let Some(read) = preferences {
@@ -8805,7 +8982,7 @@ pub(crate) fn refuse_outside_the_recipe(
 /// `/autorun-discover-area`: save the clicks a discovery found as an area
 /// (`discover_area_in`), once a replay of them arrives.
 async fn autorun_discover_area(ctx: &BridgeContext, body: &str, n: SlotNo) -> (u16, String) {
-    const SHAPE: &str = "{ \"name\": <the area's name>, \"module\": <the test-case Module it belongs to>, \"clicks\": [<a script's click selector>, ...], \"repair\": <optional: { \"reason\": <one line> } to replace an existing area's path> }";
+    const SHAPE: &str = "{ \"name\": <the area's name>, \"module\": <the test-case Module it belongs to>, \"clicks\": [<a script's click selector>, ...], \"repair\": <optional: { \"reason\": <one line> } to replace an existing area's path>, \"variant\": <optional: true to add these clicks to the existing area as another menu path> }";
     let v: serde_json::Value = match serde_json::from_str(body) {
         Ok(v) => v,
         Err(e) => return (400, format!("that is not readable JSON: {e}. Expected {SHAPE}.")),
@@ -8820,10 +8997,19 @@ async fn autorun_discover_area(ctx: &BridgeContext, body: &str, n: SlotNo) -> (u
             None => return (400, format!("\"repair\" is {{ \"reason\": <one line> }}. Expected {SHAPE}.")),
         },
     };
-    // A repair keeps the area's own module, so it may leave it out.
+    let variant = match v.get("variant") {
+        None | Some(serde_json::Value::Null) => false,
+        Some(serde_json::Value::Bool(b)) => *b,
+        Some(_) => return (400, format!("\"variant\" is true or false. Expected {SHAPE}.")),
+    };
+    if variant && repair.is_some() {
+        return (400, format!("a menu path is added with \"variant\" or an area is repaired with \"repair\", not both. Expected {SHAPE}."));
+    }
+    // A repair keeps the area's own module, and so does a menu path added to
+    // an existing area: either may leave it out.
     let module = match named(v.get("module").and_then(|a| a.as_str())) {
         Some(module) => module,
-        None if repair.is_some() => String::new(),
+        None if repair.is_some() || variant => String::new(),
         None => return (400, format!("this call needs the \"module\" the area belongs to. Expected {SHAPE}.")),
     };
     let clicks: Vec<crate::browser::locator::Target> = match v.get("clicks").cloned().map(serde_json::from_value) {
@@ -8847,6 +9033,18 @@ async fn autorun_discover_area(ctx: &BridgeContext, body: &str, n: SlotNo) -> (u
         Err(refused) => return refused,
     };
     let mut slot = crate::commands::autorun::session_slot(n).lock().await;
+    if variant {
+        return variant_area_in(
+            &mut slot,
+            &root,
+            &ctx.org,
+            &ctx.project,
+            &name,
+            clicks,
+            &crate::browser::timing::Timing::supervised(),
+        )
+        .await;
+    }
     if let Some(reason) = repair {
         return repair_area_in(
             &mut slot,

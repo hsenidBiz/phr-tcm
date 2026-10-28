@@ -349,6 +349,7 @@ fn recorded_area(root: &std::path::Path, name: &str, module: &str) {
             repaired_by_assistant: None,
             preferences: Default::default(),
             mode: None,
+            variants: Vec::new(),
         },
     )
     .unwrap();

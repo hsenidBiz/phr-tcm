@@ -3842,6 +3842,7 @@ async fn a_bridge_saved_script_vouches_for_its_locators() {
             repaired_by_assistant: None,
             preferences: Default::default(),
             mode: None,
+            variants: Vec::new(),
         },
     )
     .unwrap();
@@ -3901,6 +3902,7 @@ async fn resave_a_legacy_script(another_project_has_areas: bool) -> CaseScript {
                 repaired_by_assistant: None,
                 preferences: Default::default(),
                 mode: None,
+                variants: Vec::new(),
             },
         )
         .unwrap()
@@ -4211,6 +4213,7 @@ fn record_area(root: &std::path::Path, name: &str) {
         repaired_by_assistant: None,
         preferences: Default::default(),
         mode: None,
+        variants: Vec::new(),
     };
     v2_lib::autorun::nav::put_path(root, "acme", "Web", path).unwrap();
 }

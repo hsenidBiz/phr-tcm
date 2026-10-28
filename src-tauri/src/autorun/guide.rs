@@ -1730,6 +1730,15 @@ You open and drive a browser of your own to find what a script needs:
   refused too. The new clicks must arrive where you are, as for a new area.
   The area keeps its name and module, so its scripts are unchanged; tell
   the person what you repaired and that they can put the old path back.
+- Half of an environment's accounts can see the other menu shape. When a
+  walk fails with "the menu as <account> has no ...", reach the same screen
+  through this account's menu and call `save_autorun_area` with the area's
+  name, its module, those clicks and `variant: true`: the clicks are
+  replayed from a fresh home, must arrive where you are, and are added to
+  the existing area as another menu path ("saved as menu path 2 of ..."); a
+  path the area already has is not added twice. A walk takes the area's first
+  path, and only when that meets a click that was never found does it load
+  the home page again and try each other path in order.
 - A project's recipe may name its menu preferences (`menu_preferences`: how
   to open the dialog, each setting's control and the value its areas need).
   An area records the values in force when it was saved; after each sign-in
