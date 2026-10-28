@@ -113,8 +113,8 @@ test("a sitting assistant stands just left of its desk", () => {
   const walkers = office([agent("Assistant 1", 0, replaying), agent("Assistant 2", 1, idle)]).querySelectorAll<HTMLElement>(
     ".assistant-scene__walker",
   );
-  expect(walkers[0].style.left).toBe("calc(25% - 2.5rem)");
-  expect(walkers[1].style.left).toBe("calc(75% - 2.5rem)");
+  expect(walkers[0].style.left).toBe("calc(25% - 3.5rem)");
+  expect(walkers[1].style.left).toBe("calc(75% - 3.5rem)");
 });
 
 test("two walkers start at different points of the walk", () => {
@@ -123,6 +123,16 @@ test("two walkers start at different points of the walk", () => {
   );
   expect(walkers[0].style.animationDelay).not.toBe(walkers[1].style.animationDelay);
   expect(walkers[1].style.animationDelay).toBe("-2.7s");
+});
+
+test("a walker paces around its own desk, kept inside the room", () => {
+  const walkers = office([agent("Assistant 1", 0, exploring), agent("Assistant 2", 1, exploring)]).querySelectorAll<HTMLElement>(
+    ".assistant-scene__walker",
+  );
+  const room = "calc(100% - 2.25rem)";
+  expect(walkers[0].style.getPropertyValue("--walk-from")).toBe(`clamp(0.5rem, calc(25% - 5rem), ${room})`);
+  expect(walkers[0].style.getPropertyValue("--walk-to")).toBe(`clamp(0.5rem, calc(25% + 3rem), ${room})`);
+  expect(walkers[1].style.getPropertyValue("--walk-from")).toBe(`clamp(0.5rem, calc(75% - 5rem), ${room})`);
 });
 
 test("the bubble rides inside its walker and ellipsises a long line", () => {
@@ -164,7 +174,8 @@ test("every slot colour is a theme token, never danger or warning, and the first
 
 test("the css walks the wrapper across the room, flips only the svg, and stills it all under reduced motion", () => {
   const walkFrames = css.match(/@keyframes\s+assistant-walk\b[\s\S]*?\n\}/);
-  expect(walkFrames![0]).toContain("calc(100% - 2.25rem)");
+  expect(walkFrames![0]).toContain("var(--walk-from");
+  expect(walkFrames![0]).toContain("var(--walk-to");
   expect(walkFrames![0]).not.toContain("scaleX");
   expect(css).toMatch(/@keyframes\s+assistant-flip\b[\s\S]*?scaleX\(-1\)/);
   expect(css).toMatch(/\.assistant-scene__walker\[data-pose="walk"\]\s*\{\s*animation:\s*assistant-walk/);

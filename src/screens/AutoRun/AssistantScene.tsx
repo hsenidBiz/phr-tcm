@@ -2,8 +2,8 @@
 // with a numbered desk for each assistant, spread evenly in the card's order,
 // and one pixel character per assistant whose pose shows what it is doing.
 // Typing at its desk while it replays or works, dozing there (dimmed, a "z"
-// drifting) when idle, and walking back and forth across the whole room while
-// it discovers, maps or explores (its desk faded). Walkers start at different
+// drifting) when idle, and pacing back and forth near its own desk while
+// it discovers, maps or explores (pacing near its own desk, which is faded). Walkers start at different
 // points of the walk so they do not move as one. A speech bubble floats above
 // the character's head and travels with it; only the character flips at each
 // end of the walk, never the bubble. All of it is decorative (the rows below
@@ -145,20 +145,28 @@ export default function AssistantOffice({ agents }: { agents: AgentView[] }) {
       {agents.map((a, i) => {
         const pose = poseFor(a.activity);
         const bubble = bubbleFor(a.activity);
-        // Sitting poses stand just left of their desk; a walker's `left` is
-        // animated by the css, and its start point is staggered by index.
+        // Sitting poses stand left of their desk, far enough that the bubble
+        // clears the monitor. A walker paces in a small area around its own
+        // desk: the css animates `left` between --walk-from and --walk-to
+        // (kept inside the room), and the start point is staggered by index.
         const delay = `${-(i * 2.7)}s`;
-        const walkerStyle = {
-          "--assistant-hue": hueFor(a.slot),
-          ...(pose === "walk" ? { animationDelay: delay } : { left: `calc(${deskLeft(i, n)} - 2.5rem)` }),
-        } as CSSProperties;
+        const desk = deskLeft(i, n);
+        const inRoom = (x: string) => `clamp(0.5rem, ${x}, calc(100% - 2.25rem))`;
+        const walkerStyle: Record<string, string> = { "--assistant-hue": hueFor(a.slot) };
+        if (pose === "walk") {
+          walkerStyle["--walk-from"] = inRoom(`calc(${desk} - 5rem)`);
+          walkerStyle["--walk-to"] = inRoom(`calc(${desk} + 3rem)`);
+          walkerStyle.animationDelay = delay;
+        } else {
+          walkerStyle.left = `calc(${desk} - 3.5rem)`;
+        }
         return (
           <div
             key={`walker-${a.label}`}
             data-pose={pose}
             data-slot={a.slot === null ? "none" : String(a.slot)}
             className="assistant-scene__walker absolute bottom-6 h-[34px] w-7"
-            style={walkerStyle}
+            style={walkerStyle as CSSProperties}
           >
             {bubble && (
               <span className="assistant-scene__bubble label-trim absolute bottom-full left-1/2 mb-0.5 max-w-[12rem] -translate-x-1/2 overflow-x-clip text-ellipsis whitespace-nowrap rounded border border-border bg-surface px-1.5 text-[11px] text-text">

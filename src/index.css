@@ -926,7 +926,7 @@ table {
    96 px tall; each assistant has a desk, always drawn, and a walker wrapper
    holding its 28 x 34 character (colour from --assistant-hue, set from the
    browser slot) and its speech bubble. Walking animates the wrapper's left
-   across the whole room (a percentage, so it fits any width) while only the
+   between --walk-from and --walk-to (set inline from its desk, clamped inside the room) while only the
    svg flips at each end, so the bubble never mirrors; the component gives each
    walker a negative animation-delay so they do not move as one. Typing bobs
    at the desk; dozing is still and dimmed with a z drifting up. Under reduced
@@ -943,8 +943,8 @@ table {
   transform-origin: center;
 }
 .assistant-scene__walker[data-pose="doze"] .assistant-scene__bot { opacity: 0.55; }
-.assistant-scene__walker[data-pose="walk"] { animation: assistant-walk 8s linear infinite; }
-.assistant-scene__walker[data-pose="walk"] .assistant-scene__bot { animation: assistant-flip 8s linear infinite; }
+.assistant-scene__walker[data-pose="walk"] { animation: assistant-walk 6s linear infinite; }
+.assistant-scene__walker[data-pose="walk"] .assistant-scene__bot { animation: assistant-flip 6s linear infinite; }
 .assistant-scene__walker[data-pose="type"] .assistant-scene__bot { animation: assistant-bob 1s steps(1, end) infinite; }
 .assistant-scene__walker[data-pose="walk"] .assistant-scene__leg--a { animation: assistant-step 0.4s steps(1, end) infinite; }
 .assistant-scene__walker[data-pose="walk"] .assistant-scene__leg--b { animation: assistant-step 0.4s steps(1, end) infinite -0.2s; }
@@ -956,11 +956,11 @@ table {
 }
 .assistant-scene__z { animation: assistant-z-drift 3s ease-out infinite; }
 @keyframes assistant-walk {
-  0% { left: 0.5rem; }
-  46% { left: calc(100% - 2.25rem); }
-  50% { left: calc(100% - 2.25rem); }
-  96% { left: 0.5rem; }
-  100% { left: 0.5rem; }
+  0% { left: var(--walk-from, 0.5rem); }
+  46% { left: var(--walk-to, 0.5rem); }
+  50% { left: var(--walk-to, 0.5rem); }
+  96% { left: var(--walk-from, 0.5rem); }
+  100% { left: var(--walk-from, 0.5rem); }
 }
 /* The same timing as the walk, on the svg alone: facing right on the way
    out, left on the way back. */
