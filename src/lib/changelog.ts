@@ -27,6 +27,14 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.4.2-beta.1",
+    date: "2026-10-28",
+    items: [
+      "The Assistants card on Auto Run now has a small office: assistants replaying a case sit in the Test lab, ones discovering or exploring walk around the Map room, and idle ones doze in the Lounge. Each one walks to its new corner when what it is doing changes.",
+      "On the Assistants card, each row now has a small square in its assistant's colour, and the browser and activity lines start with a capital letter.",
+    ],
+  },
+  {
     version: "2.4.1",
     date: "2026-10-28",
     items: [
