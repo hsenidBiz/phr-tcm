@@ -594,38 +594,38 @@
         "h": 20
       },
       "assistants-end-discovery": {
-        "x": 1183,
-        "y": 293,
+        "x": 1173,
+        "y": 459,
         "w": 123,
         "h": 29
       },
       "assistants-main-browser": {
-        "x": 329,
-        "y": 223,
-        "w": 283,
+        "x": 245,
+        "y": 391,
+        "w": 282,
         "h": 16
       },
       "assistants-own-browser": {
-        "x": 329,
-        "y": 300,
+        "x": 245,
+        "y": 466,
         "w": 258,
         "h": 16
       },
       "assistants-release-main": {
-        "x": 1314,
-        "y": 220,
+        "x": 1304,
+        "y": 388,
         "w": 90,
         "h": 29
       },
       "assistants-release-own": {
-        "x": 1314,
-        "y": 293,
+        "x": 1304,
+        "y": 459,
         "w": 90,
         "h": 29
       },
       "assistants-stop": {
-        "x": 1233,
-        "y": 220,
+        "x": 1223,
+        "y": 388,
         "w": 73,
         "h": 29
       }

@@ -150,7 +150,7 @@ export const autoRun: Screen = {
     {
       id: ASSISTANTS,
       route: [NAV, READY, { waitFor: { role: "heading", name: "Assistants" } }],
-      alt: "The Assistants card at the top of Auto Run: one assistant replaying a case in the main browser, and one exploring the Profile area in a browser of its own, each signed in as a different account",
+      alt: "The Assistants card at the top of Auto Run: the office, with one assistant replaying a case in the Test lab and one discovering the Profile area in the Map room, and below it their rows, each signed in as a different account",
     },
   ],
   groups: [
@@ -904,16 +904,16 @@ export const autoRun: Screen = {
       locate: { role: "heading", name: "Assistants" },
       name: "Assistants",
       does:
-        "Shows at the top of the Auto Run screen while an assistant is working (discovering, mapping menus, exploring or replaying a case), even before you pick a Product Backlog Item, and goes away when every assistant is idle. Each assistant has a row: its name, which browser it uses, the account it is signed in as and what it is doing, with a small figure that walks while the assistant explores, types while it replays and dozes when it is idle.",
+        "Shows at the top of the Auto Run screen while an assistant is working (discovering, mapping menus, exploring or replaying a case), even before you pick a Product Backlog Item, and goes away when every assistant is idle. Above the rows is a small office with three corners: assistants replaying a case sit at the bench in the Test lab, assistants discovering, mapping menus or exploring pace in the Map room, and idle ones doze in the Lounge. An assistant walks to its new corner when what it is doing changes. Each assistant also has a row, marked with its own colour: its name, which browser it uses, the account it is signed in as and what it is doing.",
     },
     {
       id: "assistants-main-browser",
       shot: ASSISTANTS,
       group: "assistants",
-      locate: { text: "main Auto Run browser, Edge, signed in as hr_admin" },
+      locate: { text: "Main Auto Run browser, Edge, signed in as hr_admin" },
       name: "Main Auto Run browser",
       does:
-        "The browser Auto Run opens when you press **Open browser** and the one an assistant uses first. A row reads **main Auto Run browser** while its assistant works in it.",
+        "The browser Auto Run opens when you press **Open browser** and the one an assistant uses first. A row reads **Main Auto Run browser** while its assistant works in it.",
     },
     {
       id: "assistants-stop",
@@ -935,10 +935,10 @@ export const autoRun: Screen = {
       id: "assistants-own-browser",
       shot: ASSISTANTS,
       group: "assistants",
-      locate: { text: "its own browser, Edge, signed in as portal.tester" },
+      locate: { text: "Its own browser, Edge, signed in as portal.tester" },
       name: "Its own browser",
       does:
-        "Up to three assistants can work at once, each in its own browser and signed in as an account of its own. A second assistant opens a browser of its own when the main one is in use, and its row says **its own browser**.",
+        "Up to three assistants can work at once, each in its own browser and signed in as an account of its own. A second assistant opens a browser of its own when the main one is in use, and its row says **Its own browser**.",
       tips: [
         "An unattended run does not start while any assistant's browser is open: wait for them to finish, or press **Release Auto Run browser** on the Setup card, which closes them all.",
       ],
