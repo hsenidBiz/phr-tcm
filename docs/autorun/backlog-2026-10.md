@@ -791,6 +791,95 @@ information in the slots the Playwright pipeline already reads; it never overrid
       staying blank (record it with `record_quirk` on a live run) and the upstream hand-back
       refusal.
 
+## The second three-writer run (agreed 2026-10-28)
+
+42. **What batch 2 found** (PBI 138416 To Be Automated cases, QA Automation, after the update to
+    the build with item 41; writer-1 as common / automation15, writer-2 as evelyn /
+    automation7530251, writer-3 as five participants of cycle 11573). Isolation held again: no
+    refusal, no `in_use_by`, no lost sign-in, no foreign browser. 14 scripts saved, 13 replayed
+    green (145811 fails at its divergence as intended). Every writer reported the same handful:
+    - **The area menu shape, again, and wider than one account.** The My Assessments area clicks
+      button "Self Service" (`#ehrm-modulemenus-8`). Evelyn (manager), automation4569 and
+      automation51 (employees) have no such button, although all are `GROUPID` 2: their
+      Performance & Evaluation lists the links directly. automation27 has the button. So the
+      menu shape is not the user group alone. writer-2's first script stopped at the area and
+      was deleted. The way round that worked: start from the "Goals / Goal Cascading" area and
+      make step 1 walk the menu (`#sidebar-toggle-menu`, then "Performance & Evaluation", then
+      link "My Assessments" exact). Item 41 chose the failure sentence over a path per menu
+      shape; with half the accounts on each shape, revisit the path per shape (or let a
+      writer record the second shape as a variant of the same area).
+    - **The first click on Talent after sign-in is covered** by `div.mode-overlay__desc`
+      (automation7530251, writer-3's first walk). The area walk waits for the overlay to go
+      before clicking. Talent stays expanded across loads, so clicking it collapses the menu;
+      the walk checks the expanded state before a toggle click.
+    - **`start_autorun_discovery` with an area answers a stale page.** It says `at_area` true
+      and shows the home page while the browser has already moved to My Assessments; the
+      next click failed "outside the visible part of the page". Snapshot after the walk
+      settles.
+    - **`probe_autorun_locator` miscounts.** `main i` answers "matches: 1" while nth 0-3 all
+      exist: it reports the first match only. Its labels are 1-based ("#3" for nth 2) while
+      `nth` is 0-based. A Playwright pseudo-selector (`:text-is`) is refused with a raw
+      SyntaxError; refuse it with a sentence naming the CSS / role forms. `show: structure`
+      does not give the parent element, so finding a card wrapper took several probes.
+    - **Icons cannot be read.** No read tool shows an element's class or HTML; writers learnt
+      `fa-regular fa-user` etc. by an `expect_attribute` with a wrong value and its failure
+      text. Give `probe_autorun_locator` an outer-HTML / attributes option.
+    - **`exact: true` never matched a button whose name ends in a space** (144580), and the
+      failure did not say the name had trailing whitespace. Trim both sides, or name it.
+    - **Page dumps cost most of the tokens.** `discover_autorun_actions`, `replay_autorun_to_step`
+      and `get_autorun_page` answer the whole page tree, repeated side menu included, on every
+      call (about 5k tokens, even for one action). `get_autorun_page` ignores `query`, and its
+      `within` needs exactly one match. `get_guide` with `section` reprints the whole rules
+      preamble each time. Give the page answers a compact form (main only, or what changed) and
+      let a section call skip the preamble once the role's rules were read.
+    - **Dry-run save notes are noisy or unclear.** "a because names a value which no check of
+      the step uses" fires for values another step checks; it suggests `exact: true` for a name
+      that only matches itself; a refusal for a check text that is not in the case does not
+      name the field the because goes in (`{value, why}` on the step).
+    - **`save_autorun_script` with `edits` answered the whole case-rewriter prompt** to a writer.
+    - **The "seen" record is per area.** Locators met while the discovery's area was
+      My Assessments could not be saved under another area; writer-3 restarted its discovery.
+      Key it by page (or keep it across an area change within one discovery).
+    - **A false "saved something" note.** The 145796 replay said "case 145795 saved something
+      in the shared steps"; both are no_save, look-only scripts.
+    - **`reset_autorun_browser` dropped the sign-in** (writer-1), though it promises "without
+      signing out"; the next replay signed in again.
+    - **`report_case_divergence`** refuses a `case_says` with an ellipsis, caps `case_says` /
+      `app_shows` at 300 characters, and has no field for the writer's proposal.
+    - **Guide gaps.** No one-page list of each action's fields (`expect_attribute` takes `name`,
+      `probe_autorun_locator` takes `selector`; the refusals say so, after a wasted call);
+      the guide does not say that `start_autorun_discovery` with `case_id` keeps the save guard
+      on (it does - writer-3 saw "save guard stayed on"), which writers took for a missing
+      `no_save` parameter.
+    - **A cycle-selection race** on My Assessments: another cycle with "0 of 0 stages" shows
+      first, then the chosen one. A quirk to record (`record_quirk`), and scripts wait on a
+      stage button; not a code change.
+    - Calls took 5-15 s each with three browsers open; worth a timing line in the log per call
+      to see whether that is the site or the bridge.
+    - Tests: an area walk past an overlay waits for it; a probe of a 4-match selector answers
+      4; a 0-based nth label; a pseudo-selector refused with a sentence; `exact` on a
+      trailing-space name; a section call without the preamble; a no_save replay never reports
+      a save; `reset_autorun_browser` keeps the sign-in.
+
+43. **Data a script needs is made, not held back** (Avin, 2026-10-28: "any data the test script
+    requires should be created without being held back or the user asking for permission and
+    that the agent can use API templates or hand make the required data"). Today a writer holds
+    a case back when its precondition is missing or when scripting it would use up a shared
+    state (batch 2 held back 28 of 42 cases that way: savers on cycle 11573, acknowledgement OFF,
+    OKR, a cascaded goal, a 4-stage cycle, a reviewer role...). Instead the writer (or a data
+    builder it starts) creates what the case needs - by a proven API template / fixture
+    (`run_api_template`, `run_api_fixture`) or by hand in the live app (explore discovery,
+    `record_explore_change`) - and then scripts the case, without asking. Each case that
+    consumes a state gets its own data (its own participant or cycle), so cases do not fight
+    over one record and a saver can be replayed twice. What the item has to settle, because
+    today's rules forbid it: publishing a cycle (now only on the person's word in chat),
+    database writes (never), and the shared published cycles writers must not touch - the
+    change lifts the ask for data the run creates itself and keeps the rest (never alter or
+    delete data the run did not create; demo-friendly names; drafts stay drafts unless the case
+    needs a published cycle). The guide's writer rules, `/tcm:script-pbi` step 6 and the
+    "Hold the case back" wording change with it; the data made is listed in the run report and
+    saved as a fixture so it can be rebuilt.
+
 ## Smaller
 
 - `save_autorun_script` through MCP drops `edits`, so repairs had to go through
