@@ -6,6 +6,23 @@ Owner request, 2026-10-28: make the Assistants card on Auto Run more fun, as a s
 
 The card stays the at-a-glance view of what each assistant is doing, but reads as a little office: each assistant has its own cubicle and you watch it work. Nothing it tells a person today is lost.
 
+## Revision 2, 2026-10-28 (owner, from a reference of themed rooms): three corners on one floor
+
+Wins over everything below. The office stays one shared floor across the full card width (about 160 px tall, `aria-hidden`), with the rows below it exactly as in Revision 1 (colour square, capitalised lines, buttons). The floor is split by two low partitions into three equal corners, each named in small caps at its top-left:
+
+| Corner | Who is there | Props |
+|---|---|---|
+| **Test lab** (left) | replaying, working | a bench with one screen per occupant, lit and scrolling |
+| **Map room** (middle) | discovering, mapping, exploring | a wall map with pins, one pin blinking; a plant |
+| **Lounge** (right) | idle | a sofa, a coffee machine |
+
+- Occupants of a corner are spread evenly across it, in the card's order. In the Test lab they sit at the bench typing; in the Map room each paces a short stretch (about 2.5rem each way) around its own spot, never leaving the corner, with several pacers out of step; in the Lounge they doze on the sofa, dimmed, with a drifting "z".
+- A corner with anyone in it lights up (a light tint and a coloured strip along its floor edge, from theme tokens, never danger or warning); an empty corner is dimmed with its props faded.
+- Each character has a name tag under it (its label, ellipsised if long) and the speech bubble above it (strings as below; "Working" has no bubble).
+- When an assistant's corner changes, it walks across the floor to its new spot (about 2.5 s, legs moving, facing the way it goes) rather than jumping. Under reduced motion it jumps and nothing moves.
+
+Revision 1 and the cubicle text are kept for the record.
+
 ## Revision, 2026-10-28 (owner, after seeing the cubicles on a wide screen)
 
 The cubicle grid left most of a wide card empty. **Switched to mockup A:** one shared office strip across the full width of the card, with the rows below it as they were before this change (label, browser line, activity line with badges, replay bar, buttons on the right, status / alert lines), plus a small square before each row's label in that assistant's character colour, so a row and its character are matched at a glance. Capitals stay as below.
