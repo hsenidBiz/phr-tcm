@@ -6,6 +6,17 @@ Owner request, 2026-10-28: make the Assistants card on Auto Run more fun, as a s
 
 The card stays the at-a-glance view of what each assistant is doing, but reads as a little office: each assistant has its own cubicle and you watch it work. Nothing it tells a person today is lost.
 
+## Revision, 2026-10-28 (owner, after seeing the cubicles on a wide screen)
+
+The cubicle grid left most of a wide card empty. **Switched to mockup A:** one shared office strip across the full width of the card, with the rows below it as they were before this change (label, browser line, activity line with badges, replay bar, buttons on the right, status / alert lines), plus a small square before each row's label in that assistant's character colour, so a row and its character are matched at a glance. Capitals stay as below.
+
+The office (about 96 px tall, full card width, `aria-hidden`):
+- One desk per assistant in the card's order, spread evenly: desk *i* of *n* centred at `(i + 0.5) / n` of the width. The desk number (from the label) is on the desk's front.
+- Replaying or working: the assistant sits at its desk, typing, its screen lit. Idle: dozes at its desk, dimmed, "z" drifting. Discovering, mapping, exploring: it walks back and forth across the whole room, its own desk faded; several walkers start at different points of the walk so they do not move as one.
+- The speech bubble (same strings as below) floats above the character's head and moves with it; the character flips at each end of the walk, the bubble does not.
+
+The cubicle-grid text below is kept for the record; where it conflicts, this revision wins.
+
 ## Decided with the owner
 
 - **Layout: the hybrid of mockups A and B.** The card's rows become cubicles sitting side by side (a responsive grid, about 190 px minimum per cubicle, wrapping on a narrow window). Each cubicle is a scene (about 96 px tall, full cubicle width) with the assistant's numbered desk and its character. Under the scene, everything a row shows today: the label line, the full browser line, the full activity line with its badges, the replay progress bar, and the Stop / End discovery / Release buttons, plus the row's status / alert lines.
