@@ -778,6 +778,18 @@ information in the slots the Playwright pipeline already reads; it never overrid
       another's alone; a `wait_for` without `timeout_ms` runs with the default; a refused
       action names the expected field; an area walk on an account whose menu lacks a click
       fails with the menu-shape sentence; a discovery start names an area and lands there.
+    - **Done in 2.4.2-beta.2** (plan `docs/superpowers/plans/2026-10-28-backlog-41-several-writers.md`).
+      `agent` was already on every Auto Run and API template tool; the coordinator ran an older
+      installed build (2.3.1-beta.4 has no `agent`). A test now fails when a tool that takes a
+      browser slot is missing from the agent lists. Built: refusals name the field and show an
+      example; a discovery or try `wait_for` without `timeout_ms` gets 10 s (saved scripts still
+      need it), waits are capped at 120 s and every call answers within 280 s; a failed area walk
+      names the account whose menu lacks the click (owner's choice over a path per menu shape);
+      refused-session log lines name the browser, the refusal and the session's age; a discovery
+      naming a saved area walks there as a run does, then closes a listed banner; subagents
+      write a report file; `/tcm:gen-tests` has a Several writers split. Not code: My Assessments
+      staying blank (record it with `record_quirk` on a live run) and the upstream hand-back
+      refusal.
 
 ## Smaller
 
