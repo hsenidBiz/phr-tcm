@@ -711,6 +711,63 @@ information in the slots the Playwright pipeline already reads; it never overrid
       sign-in on an expired account reports "stopped on the password reset page" and leaves
       the browser open there.
 
+## Several writers at once (agreed 2026-10-28)
+
+41. **What the first three-writer run found** (PBI 138416, QA Automation: writer-1 as common,
+    writer-2 as automation15, writer-3 as gabriel then common, plus a coordinator). The
+    isolation held: three browsers at once, no refusal, no `in_use_by`, no account kicked
+    out, 6 scripts saved and replayed. What got in the way:
+    - **`end_autorun_discovery` takes no `agent`.** The coordinator's explore discovery,
+      started with `agent: "coordinator"`, could not be ended ("you have no Auto Run browser
+      ... another assistant is using the main one"); only `reset_autorun_browser` with
+      `release: true` and the agent closed it. Give `end_autorun_discovery` (and every other
+      Auto Run and API template tool still without one) the `agent` parameter; a test lists
+      every tool and fails when an Auto Run tool lacks it.
+    - **A malformed action can hang an agent.** writer-2 sent `discover_autorun_actions` a
+      `wait_for` without `timeout_ms`, got a 400, and then made no progress for 10 minutes
+      until the watchdog stopped it. Earlier calls were refused for field names (`kind`,
+      `selector`, `timeout_ms`; `replay_autorun_to_step` wants `step`) without saying the
+      right one. A refused action answers the field it expected and an example of the
+      action (from the vocabulary in the guide); `wait_for` and the other waits get a
+      default timeout (the step default) rather than refusing; no call waits longer than
+      its own timeout plus a margin before answering.
+    - **The area's menu path depends on the account's user group.** The recorded
+      My Assessments area clicks button "Self Service" in `#ehrm-modulemenus-8`. Gabriel
+      (`HS_SM_USER_ACCOUNT.GROUPID` 4) has no Admin / Self Service / Setup buttons: Goals and
+      Reviews sit straight under Performance & Evaluation, so every replay as him stopped at
+      the area. Group 2 accounts (Automation01, common, automation15) have the buttons. His
+      Group Menu Items preference was already the same as Automation01's
+      (`HS_HR_USER_PREFERENCE` PREF_MODE 7 = `SectionWiseModeOff`), so no preference fixes
+      it. Either an area keeps a path per menu shape (the run picks the one whose first
+      differing click is on the page), or a failed area walk says "the menu as <account> has
+      no button "Self Service" - this account's menu differs from the one the area was
+      recorded with" and `get_accounts` / Check sign-in (item 40) shows each account's menu
+      shape, so a writer picks a matching account before scripting. Related to item 32.
+    - **A writer's first session can be refused.** writer-3's first My Team Assessment load
+      as gabriel said "Unable to load performance cycles"; the reload answered "the site
+      refused the saved session, gabriel signed in fresh". Log which browser's session it
+      was and why it was refused (expired, another sign-in, the shared cookie store) so it
+      can be told apart from item 40's active-session clash.
+    - **The cookie banner takes the first click of a discovery.** Every writer's first
+      `discover_autorun_actions` after a start failed once because `#cookieBanner` covered
+      the target, though the runner closes it in runs. Discovery closes it the same way
+      (`#btnCookieClose`, never Accept All) before the first action.
+    - **Discovery and replay start in different places.** A `start_autorun_discovery` after
+      a replay takes over the replay's browser and goes home, not to the area, and the side
+      menu's open/closed state differs between the two, so writer-1 had to find a toggle
+      (`{"role":"link","nth":1}`) that works in both. Start a discovery that names an area at
+      that area, by the same walk a run uses, with the menu in the state the run leaves it.
+    - **My Assessments stays blank for several seconds** after its menu click; record it as
+      a quirk (writers had to add a `wait_for`), not a code change.
+    - **The coordinator's part.** Splitting cases by account had to be done by hand from
+      `perf_cycle_participant` (who is Self, manager, reviewer in which published cycle). A
+      `/tcm:script-pbi` run with several writers could list, per free account, the roles
+      and cycles it holds, so the split and the held-back reasons come from one query.
+    - Tests: `end_autorun_discovery` with an agent ends that agent's discovery and leaves
+      another's alone; a `wait_for` without `timeout_ms` runs with the default; a refused
+      action names the expected field; an area walk on an account whose menu lacks a click
+      fails with the menu-shape sentence; a discovery start names an area and lands there.
+
 ## Smaller
 
 - `save_autorun_script` through MCP drops `edits`, so repairs had to go through
