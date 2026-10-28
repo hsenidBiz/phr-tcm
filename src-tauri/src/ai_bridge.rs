@@ -520,7 +520,7 @@ pub async fn route_as(
         // machine only, never Azure DevOps.
         ("GET", "/autorun-script") => autorun_script_read(target),
         ("POST", "/autorun-script-delete") => autorun_script_delete(body),
-        ("GET", "/autorun-page") => autorun_page(ctx, target, slot).await,
+        ("GET", "/autorun-page") => autorun_page(ctx, target, slot, &page_owner(caller)).await,
         // Read only: whether an unattended run is paused for the network.
         // Nothing here stops or answers the wait.
         ("GET", "/autorun-network-wait") => (200, autorun_network_wait_answer()),
@@ -565,7 +565,7 @@ pub async fn route_as(
             let mut seen = None;
             // A new discovery may be a new reader of this slot: it is told the whole page.
             crate::autorun::page_compact::forget(slot);
-            let answer = with_compact_page(without_page(autorun_discover_start(ctx, body, &mut seen, slot, holder).await, body), body, slot);
+            let answer = Box::pin(compacted(slot, &page_owner(caller), page_full(body), Box::pin(async { without_page(autorun_discover_start(ctx, body, &mut seen, slot, holder).await, body) }))).await;
             // A start refused or failed before it opened a browser does not
             // keep the extra browser it reserved.
             crate::commands::autorun_slots::free_extra_if_unused(slot, holder, answer.0);
@@ -591,19 +591,22 @@ pub async fn route_as(
         }
         ("POST", "/autorun-discover-action") => {
             let mut seen = None;
-            let answer = with_compact_page(without_page(autorun_discover_action(ctx, body, &mut seen, slot).await, body), body, slot);
+            let answer = Box::pin(compacted(slot, &page_owner(caller), page_full(body), Box::pin(async { without_page(autorun_discover_action(ctx, body, &mut seen, slot).await, body) }))).await;
             with_overrides_seen(with_no_save_note(answer, discovery_no_save(slot)), seen, slot)
         }
         ("POST", "/autorun-discover-actions") => {
             let mut seen = None;
-            let answer = with_compact_page(without_page(autorun_discover_actions(ctx, body, &mut seen, slot).await, body), body, slot);
+            let answer = Box::pin(compacted(slot, &page_owner(caller), page_full(body), Box::pin(async { without_page(autorun_discover_actions(ctx, body, &mut seen, slot).await, body) }))).await;
             with_overrides_seen(with_no_save_note(answer, discovery_no_save(slot)), seen, slot)
         }
         // A replay going has already ended any discovery, and holds the
         // browser: said at once rather than waited for.
         ("POST", "/autorun-discover-end") => match replay_is_holding_the_browser(slot) {
             Some(going) => with_overrides_seen(going, None, slot),
-            None => crate::commands::autorun::end_discovery(EndedBy::Assistant, slot).await,
+            None => {
+                crate::autorun::page_compact::forget(slot);
+                crate::commands::autorun::end_discovery(EndedBy::Assistant, slot).await
+            }
         },
         // An explore session's change list, recorded and read back. Files
         // on this machine only: nothing here sends a request to the
@@ -688,17 +691,24 @@ pub async fn route_as(
         // Release: every Auto Run browser record the app holds is cleared
         // and the app's own browsers closed, for a browser held after it
         // is gone. Never a process outside the app's own jobs.
-        ("POST", "/autorun-release") => crate::commands::autorun::release_for_assistant(slot).await,
+        ("POST", "/autorun-release") => {
+            crate::autorun::page_compact::forget(slot);
+            crate::commands::autorun::release_for_assistant(slot).await
+        }
         // Reset: a clean page in the assistant's own browser - other tabs
         // closed, dialogs and its guard cleared, back home - keeping the
         // sign-in. Never the person's browser, never while a replay runs.
-        ("POST", "/autorun-reset") => crate::commands::autorun::reset_for_assistant(slot, &ctx.org, &ctx.project).await,
+        ("POST", "/autorun-reset") => {
+            crate::autorun::page_compact::forget(slot);
+            crate::commands::autorun::reset_for_assistant(slot, &ctx.org, &ctx.project).await
+        }
         ("POST", "/autorun-discover-area") => autorun_discover_area(ctx, body, slot).await,
         ("POST", "/autorun-replay") => {
             // The claim came at the top, before the rewritten cases are
             // released and before a browser is picked or anything opens.
             release_rewritten_cases(ctx, client).await;
-            let answer = with_compact_page(without_page(autorun_replay(ctx, body, slot, holder).await, body), body, slot);
+            crate::autorun::page_compact::forget(slot);
+            let answer = without_page(autorun_replay(ctx, body, slot, holder).await, body);
             // A replay refused or failed before it opened a browser does not
             // keep the extra browser it reserved.
             crate::commands::autorun_slots::free_extra_if_unused(slot, holder, answer.0);
@@ -1281,28 +1291,39 @@ pub fn page_full(body: &str) -> bool {
         .is_some_and(|v| v.get("page").and_then(|p| p.as_str()).is_some_and(|p| p.trim().eq_ignore_ascii_case("full")))
 }
 
-/// `answer` with the side menu of the page it carries left out when it is
-/// the one the last answer of slot `n` already gave (`page_compact`): the
-/// `page` of a JSON answer, or the text of a plain one. Not for an answer
-/// that failed, or one whose call asked for `"page": "full"` (that one still
-/// says what it gave, for the next answer).
-pub fn with_compact_page(answer: (u16, String), body: &str, n: SlotNo) -> (u16, String) {
-    use crate::autorun::page_compact::compact;
-    let full = page_full(body);
-    let (status, text) = answer;
-    if status != 200 {
-        return (status, text);
+/// Who reads the pages of a call: the caller as `kept::owner_of` names it.
+pub fn page_owner(caller: &crate::autorun::agents::Caller) -> String {
+    crate::autorun::kept::owner_of(caller)
+}
+
+/// The page an answer carries: the `page` of a JSON answer, or the text of a
+/// plain one (a batch's lines and its page).
+fn page_of(text: &str) -> Option<String> {
+    match serde_json::from_str::<serde_json::Value>(text) {
+        Ok(serde_json::Value::Object(map)) => map.get("page").and_then(|p| p.as_str()).map(str::to_string),
+        Ok(_) => None,
+        Err(_) => Some(text.to_string()),
     }
-    match serde_json::from_str::<serde_json::Value>(&text) {
-        Ok(serde_json::Value::Object(mut map)) => {
-            if let Some(page) = map.get("page").and_then(|p| p.as_str()).map(|p| compact(n, p, full)) {
-                map.insert("page".to_string(), serde_json::Value::String(page));
-                return (status, serde_json::Value::Object(map).to_string());
-            }
-            (status, text)
+}
+
+/// `read` (a call that reads the page) for slot `n`'s reader `owner`: the
+/// landmarks that reader already has are one line each in the page it
+/// reads (`page_compact`), unless `full`; and what the answer printed is what
+/// the reader is remembered to have. A failed answer remembers nothing.
+pub async fn compacted<F: std::future::Future<Output = (u16, String)>>(
+    n: SlotNo,
+    owner: &str,
+    full: bool,
+    read: F,
+) -> (u16, String) {
+    use crate::autorun::page_compact::{known_for, remember, scoped};
+    let answer = scoped(known_for(n, owner, full), read).await;
+    if answer.0 == 200 {
+        if let Some(page) = page_of(&answer.1) {
+            remember(n, owner, &page);
         }
-        _ => (status, compact(n, &text, full)),
     }
+    answer
 }
 
 /// `answer` with its `page` dump left out when the call's body sent
@@ -3291,7 +3312,7 @@ pub fn capture_tool_begin<B: DiscoveryBrowser>(
 /// chain), its `nth` (`within_target_nth`) and `limit`
 /// (`PAGE_LINES_DEFAULT` when left out, at most `PAGE_LINES_MAX`) are read
 /// from the query.
-async fn autorun_page(ctx: &BridgeContext, target: &str, n: SlotNo) -> (u16, String) {
+async fn autorun_page(ctx: &BridgeContext, target: &str, n: SlotNo, owner: &str) -> (u16, String) {
     if let Some(busy) = unattended_run_is_using_the_browser() {
         return busy;
     }
@@ -3301,23 +3322,16 @@ async fn autorun_page(ctx: &BridgeContext, target: &str, n: SlotNo) -> (u16, Str
         Err(why) => return (400, why),
     };
     let query = q(target, "query").map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
-    let (status, text) = supervised_page_read_in(
-        n,
-        &ctx.org,
-        &ctx.project,
-        page_limit(q(target, "limit").as_deref()),
-        within.as_ref(),
-        query.as_deref(),
-    )
-    .await;
-    // The whole page's side menu is answered when it changed since the last
-    // answer (`page_compact`), or on `page=full`; a part of the page, or the
-    // lines of a query, are answered as they are.
-    if status == 200 && within.is_none() && query.is_none() {
+    let limit = page_limit(q(target, "limit").as_deref());
+    let read = supervised_page_read_in(n, &ctx.org, &ctx.project, limit, within.as_ref(), query.as_deref());
+    // The whole page: a landmark this reader already has is one line, before
+    // the limit cuts the page (`page_compact`), unless `page=full`. A part of
+    // the page, or the lines of a query, are answered as they are.
+    if within.is_none() && query.is_none() {
         let full = q(target, "page").is_some_and(|p| p.trim().eq_ignore_ascii_case("full"));
-        return (status, crate::autorun::page_compact::compact(n, &text, full));
+        return Box::pin(compacted(n, owner, full, read)).await;
     }
-    (status, text)
+    read.await
 }
 
 /// The line limit a page read was asked for: `PAGE_LINES_DEFAULT` when
@@ -4188,7 +4202,7 @@ async fn counted<D: crate::browser::cdp::Driver>(
     if !css {
         return Some((matched, matched));
     }
-    let all = match crate::browser::snapshot::probe(d, &target.including_hidden()).await {
+    let all = match crate::browser::snapshot::probe_exact(d, &target.including_hidden()).await {
         Ok(t) => read_probe_answer(&t).matches.max(matched),
         Err(_) => NOT_ONE as usize,
     };
@@ -4208,14 +4222,19 @@ pub async fn probe_page<D: crate::browser::cdp::Driver>(
         Err(e) => return (503, format!("the browser did not answer: {e}")),
     };
     if let Some(at) = at {
-        match counted(d, target, &text).await {
+        // Filed as a run takes the target (a plain string: its first match), not as shown.
+        let as_run = match target {
+            crate::browser::locator::Target::Legacy(_) => crate::browser::snapshot::probe_exact(d, target).await.unwrap_or_else(|_| text.clone()),
+            _ => text.clone(),
+        };
+        match counted(d, target, &as_run).await {
             Some((matched, all)) => {
                 let (href, _) = page_address(d).await;
                 record_matched_targets(at, &href, &[(target, matched, all)]);
             }
             // Nothing seen: what no page read can print of it is taken off
             // this page (`discovery_map::record_matched_counts` with 0).
-            None if read_probe_answer(&text).visible == 0 => {
+            None if read_probe_answer(&as_run).visible == 0 => {
                 let (href, _) = page_address(d).await;
                 record_matched_targets(at, &href, &[(target, 0, 0)]);
             }
@@ -4276,7 +4295,7 @@ pub async fn record_refused_in<B: DiscoveryBrowser>(
             continue;
         }
         probed.push(described.clone());
-        let Ok(text) = crate::browser::snapshot::probe(p.driver, target).await else {
+        let Ok(text) = crate::browser::snapshot::probe_exact(p.driver, target).await else {
             unchecked += 1;
             continue;
         };
@@ -4392,7 +4411,7 @@ pub fn probe_target(selector: serde_json::Value) -> Result<crate::browser::locat
 
 /// Said, with 400, to a probe whose CSS holds a Playwright pseudo-selector.
 pub const NOT_A_PLAYWRIGHT_SELECTOR: &str =
-    "that is a Playwright selector, which Auto Run does not take: use a CSS selector or a role and name (see get_guide topic autorun, Locators).";
+    "that is a Playwright selector, which Auto Run does not take: use a CSS selector or a role and name (see get_guide topic autorun, Selectors).";
 
 /// Is `css` written with a Playwright-only selector (`:text-is`,
 /// `:has-text`, `:text(`, or the `>>` chain), which no browser's CSS takes?
@@ -9646,8 +9665,13 @@ async fn replay_answer_with(
     }
     let (org, project) = (ctx.org.clone(), ctx.project.clone());
     let holder = holder.cloned();
+    let reader = match &holder {
+        Some(key) => format!("{}:{}", key.id, key.name.as_deref().unwrap_or("")),
+        None => String::new(),
+    };
+    let full = page_full(body);
     tokio::spawn(async move {
-        let answer = run_assistant_replay(host, n, holder, org, project, req).await;
+        let answer = run_assistant_replay(host, n, holder, org, project, req, reader, full).await;
         // Kept in the slot for the next call when none is waiting, while
         // it stays fresh (`still_fresh`).
         let done = ReplayDone {
@@ -9764,6 +9788,8 @@ async fn run_assistant_replay(
     org: String,
     project: String,
     req: crate::autorun::replay_to::ReplayRequest,
+    reader: String,
+    full: bool,
 ) -> (u16, String) {
     use crate::autorun::replay_to::{ReplayEnd, ReplayFrom};
     let (case_id, step) = (req.case_id, req.step);
@@ -9860,7 +9886,7 @@ async fn run_assistant_replay(
         // Where the browser stands: before the step, or at the failure it
         // stopped on (a browser that went is never `StoppedAt`).
         ReplayEnd::Ready { .. } | ReplayEnd::StoppedAt { .. } => {
-            let answer = match host.page(n, org, project).await {
+            let answer = match compacted(n, &reader, full, host.page(n, org, project)).await {
                 (200, page) => serde_json::json!({ "sentence": sentence, "page": page }),
                 (_, why) => serde_json::json!({ "sentence": sentence, "page_unavailable": why }),
             };
@@ -10106,7 +10132,7 @@ async fn try_action<D: crate::browser::cdp::Driver>(
         })
         .collect();
     for (target, _) in legacy {
-        let text = crate::browser::snapshot::probe(d, target).await.ok();
+        let text = crate::browser::snapshot::probe_exact(d, target).await.ok();
         match text {
             Some(text) => match counted(d, target, &text).await {
                 Some((n, all)) => matched.push((target, n, all)),
@@ -10229,14 +10255,14 @@ async fn try_action<D: crate::browser::cdp::Driver>(
         let list_chain = list_chain_of(action);
         let mut matched = matched;
         for target in list_targets(action).into_iter().chain(list_chain.as_ref()) {
-            if let Ok(text) = crate::browser::snapshot::probe(d, target).await {
+            if let Ok(text) = crate::browser::snapshot::probe_exact(d, target).await {
                 if let Some((n, all)) = counted(d, target, &text).await {
                     matched.push((target, n, all));
                 }
             }
         }
         if let Some(target) = waited {
-            let found = match crate::browser::snapshot::probe(d, target).await {
+            let found = match crate::browser::snapshot::probe_exact(d, target).await {
                 Ok(text) => counted(d, target, &text).await,
                 Err(_) => None,
             };

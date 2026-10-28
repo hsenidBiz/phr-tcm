@@ -367,7 +367,7 @@ fn a_second_guide_section_leaves_the_rules_out_and_says_they_hold() {
         let out = handle_message_in(&msg, "1.0.0", &call, s).expect("an answer");
         texts(&serde_json::from_str::<Value>(&out).unwrap()["result"]).concat()
     };
-    let args = json!({ "topic": "autorun", "section": "Selectors" });
+    let args = json!({ "topic": "autorun", "section": "Selectors", "agent": "writer-1" });
     let mut s = Session::new();
     s.tick(1_000);
     let first = ask(&mut s, args.clone());
@@ -376,6 +376,13 @@ fn a_second_guide_section_leaves_the_rules_out_and_says_they_hold() {
     assert!(second.contains(v2_lib::mcp::RULES_HOLD), "{second}");
     assert!(!second.contains(quick_rules().trim_end()), "the rules are not repeated");
     assert!(second.contains("## Selectors"), "the section itself is still there");
+    // A call that names no agent shares nobody's memory: the rules are never left out of it.
+    let unnamed = json!({ "topic": "autorun", "section": "Selectors" });
+    assert!(ask(&mut s, unnamed.clone()).contains(quick_rules().trim_end()));
+    assert!(ask(&mut s, unnamed).contains(quick_rules().trim_end()));
+    // Nor from an answer to a call without a section.
+    let whole = ask(&mut s, json!({ "topic": "autorun", "agent": "writer-1" }));
+    assert!(whole.contains(quick_rules().trim_end()), "no section: the rules stay");
     // An untracked session (every caller but the proxy) never leaves them out.
     let mut plain = Session::untracked();
     ask(&mut plain, args.clone());

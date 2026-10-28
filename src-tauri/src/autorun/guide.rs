@@ -92,12 +92,7 @@ pub fn section_titles(guide: &str) -> Vec<&str> {
 /// parts included. The Quick rules asked for by name come once. An
 /// unknown title is refused with every title there is, one to a line.
 pub fn guide_section(guide: &str, title: &str) -> Result<String, String> {
-    let mut want = title.trim().to_lowercase();
-    // The probe's refusal of a Playwright selector points at "Locators"
-    // (`ai_bridge::NOT_A_PLAYWRIGHT_SELECTOR`): that is the Selectors section.
-    if want == "locators" {
-        want = "selectors".to_string();
-    }
+    let want = title.trim().to_lowercase();
     let lines: Vec<&str> = guide.lines().collect();
     let at = lines.iter().position(|l| l.strip_prefix("## ").is_some_and(|t| t.trim().to_lowercase() == want));
     let Some(at) = at else {

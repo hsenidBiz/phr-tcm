@@ -270,7 +270,8 @@ impl RoleNotes for &crate::mcp_session::SessionBook {
 
 /// Said in place of the Quick rules a `get_guide` section answer opens with
 /// when an answer to this session carried them already.
-pub const RULES_HOLD: &str = "(the rules given earlier in this session still hold)";
+pub const RULES_HOLD: &str =
+    "(the rules given earlier in this session still hold; get_guide section \"Quick rules\" repeats them)";
 
 /// A `get_guide` (topic autorun) answer that is going out whole: when it
 /// carries the Quick rules, the first such answer of the session marks them
@@ -352,7 +353,7 @@ fn answer_with<N: RoleNotes>(msg: &str, version: &str, call: BridgeCall, session
                 if let Some(role) = args["role"].as_str().and_then(crate::autorun::roles::Role::from_key) {
                     session.mark_read(agent, role);
                 }
-                if args["topic"].as_str().map(str::trim) == Some("autorun") {
+                if args["topic"].as_str().map(str::trim) == Some("autorun") && says(&args["section"]) && agent.is_some() {
                     leave_out_given_rules(&mut result, agent, session);
                 }
             }

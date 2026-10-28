@@ -8,7 +8,7 @@
 //! text with a locator on every line, rather than re-deriving any of it.
 
 use super::cdp::{CdpError, Driver};
-use super::locator::{resolve_explained, Target, FRAME_JS, VISIBLE_JS};
+use super::locator::{resolve_explained, LocatorStep, Target, FRAME_JS, VISIBLE_JS};
 use super::page;
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -543,10 +543,16 @@ fn render_read(nodes: &[AxNode], frames: &[FrameTree], limit: usize, within: Opt
         let text = if within.is_some() { EMPTY_WITHIN } else { EMPTY };
         return PageRead { text: text.to_string(), lines: vec![], cut: within.is_some(), page_lines };
     }
+    // A landmark the reader already has is one line, before the limit cuts the
+    // page, so what it saves shows more of the page; what it files is kept.
+    let (lines, collapsed): (Vec<Printed>, Vec<Printed>) = match within {
+        None => crate::autorun::page_compact::collapse(lines).into_iter().partition(|(t, _)| !t.is_empty()),
+        Some(_) => (lines, vec![]),
+    };
     let total = lines.len();
     let lines = within_cap(lines, limit);
     let mut out = lines.iter().map(|(t, _)| t.clone()).collect::<Vec<_>>().join("\n");
-    let data: Vec<SnapLine> = lines.into_iter().filter_map(|(_, d)| d).collect();
+    let data: Vec<SnapLine> = lines.into_iter().chain(collapsed).filter_map(|(_, d)| d).collect();
     if total > limit {
         if !out.is_empty() {
             out.push('\n');
@@ -887,10 +893,36 @@ fn trim_chars(s: &str, n: usize) -> String {
     s.chars().take(n).collect()
 }
 
+/// What an assistant is shown of `target` (`probe_exact` is how a run takes it).
+/// A plain css string is a step's FIRST match only (`LEGACY_JS` is
+/// `querySelector`), so counting and listing it that way hides the others: it is
+/// probed in its css form, hidden ones included, and the answer says a step
+/// written with the plain string acts on the first.
+pub async fn probe<D: Driver>(d: &mut D, target: &Target) -> Result<String, CdpError> {
+    let Target::Legacy(sel) = target else { return probe_exact(d, target).await };
+    if sel.trim_start().starts_with("text=") {
+        return probe_exact(d, target).await;
+    }
+    let css = Target::One(LocatorStep { css: Some(sel.clone()), visible: Some(false), ..LocatorStep::default() });
+    let mut out = probe_exact(d, &css).await?;
+    if out.starts_with("matches: ") && !out.starts_with("matches: 0") && !out.starts_with("matches: 1
+") {
+        let note = "a step written with this plain string acts on the first match (nth 0); to act on another, write {\"css\": ..., \"nth\": i}";
+        match out.rfind("
+narrow the locator") {
+            Some(at) => out.insert_str(at + 1, &format!("{note}
+")),
+            None => out.push_str(&format!("
+{note}")),
+        }
+    }
+    Ok(out)
+}
+
 /// What a locator matches right now, for a person or an assistant deciding
 /// whether it is safe to use. Empty is reported, not treated as an error:
 /// a target that matches nothing is exactly what a caller needs to know.
-pub async fn probe<D: Driver>(d: &mut D, target: &Target) -> Result<String, CdpError> {
+pub async fn probe_exact<D: Driver>(d: &mut D, target: &Target) -> Result<String, CdpError> {
     let found = resolve_explained(d, target).await?;
     let handles = found.handles;
     if handles.is_empty() {

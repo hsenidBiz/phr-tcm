@@ -212,15 +212,20 @@ pub const HTML_JS: &str = r#"function() {
   const copy = this.cloneNode(true);
   for (const e of [copy, ...copy.querySelectorAll('*')]) {
     const tag = e.tagName.toLowerCase();
-    if (tag === 'script' || tag === 'textarea') e.textContent = '';
+    if (tag === 'script' || tag === 'textarea' || tag === 'style' || tag === 'noscript') e.textContent = '';
     for (const a of Array.from(e.attributes || [])) {
       const n = a.name;
       if (/^on/i.test(n) || urlName.test(n) || urlValue(a.value) || secretName.test(n) || /url\(/i.test(a.value) ||
+          n.toLowerCase() === 'srcdoc' || (/^data-/i.test(n) && /[\/?]/.test(a.value)) ||
           (n.toLowerCase() === 'value' && (tag === 'input' || tag === 'textarea' || tag === 'select'))) {
         e.setAttribute(n, '(hidden)');
       }
     }
   }
+  const walker = this.ownerDocument.createTreeWalker(copy, NodeFilter.SHOW_COMMENT);
+  const comments = [];
+  while (walker.nextNode()) comments.push(walker.currentNode);
+  for (const c of comments) c.remove();
   const attributes = Array.from(this.attributes || []).map((a) => [a.name, a.value]);
   return { tag: this.tagName.toLowerCase(), attributes, html: String(copy.outerHTML || '').slice(0, 3000) };
 }"#;
@@ -394,7 +399,8 @@ fn html_attribute(name: &str, value: &str, tag: &str) -> String {
             || v.contains("://")
             || ["javascript:", "data:", "blob:", "file:"].iter().any(|p| v.starts_with(p))
     };
-    if secret_name(name) || address || is_handler_attribute(name) || (lower == "value" && matches!(tag, "input" | "textarea" | "select")) {
+    let path_in_data = lower.starts_with("data-") && value.contains(['/', '?']);
+    if secret_name(name) || address || path_in_data || lower == "srcdoc" || is_handler_attribute(name) || (lower == "value" && matches!(tag, "input" | "textarea" | "select")) {
         HTML_HIDDEN.to_string()
     } else {
         redact_text(value)

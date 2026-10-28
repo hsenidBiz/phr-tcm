@@ -657,3 +657,17 @@ fn the_exact_text_rule_accepts_the_written_words_in_other_capitals() {
         "the exact rule must also take the written words when only the capitals differ"
     );
 }
+
+/// Case 144580 reported `exact: true` missing a button whose name ends in a
+/// space. Every name comparison folds whitespace first, so the stray space
+/// (a plain, no-break, tab or newline one) cannot be what stopped it: the
+/// failure was not reproduced here, and the probe says when a page's name has
+/// the spaces (`snapshot::probe`).
+#[test]
+fn exact_ignores_stray_whitespace_round_a_name() {
+    for got in ["Save ", " Save", "Save\u{a0}", "\tSave\n", "Sa  ve\u{2009}".replace("Sa  ve", "Save").as_str()] {
+        assert!(name_matches(got, "Save", true), "{got:?}");
+        assert!(name_matches("Save", got, true), "{got:?}");
+    }
+    assert!(!name_matches("Save draft", "Save", true));
+}

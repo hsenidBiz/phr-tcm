@@ -224,6 +224,8 @@ pub fn crystal() -> MutexGuard<'static, ()> {
 
 /// What each browser slot was last told of its side menu (`autorun::page_compact`):
 /// a test that compares two answers takes this, and `forget`s its slot first.
+/// The route tests that reset, release or start a browser forget the same slots,
+/// and they hold `autorun()`: a test that reads the memory takes both, this one first.
 pub fn page_menu() -> MutexGuard<'static, ()> {
     static L: Mutex<()> = Mutex::new(());
     hold(&L)

@@ -1217,3 +1217,40 @@ async fn a_within_match_that_cannot_be_named_is_an_element() {
     assert!(refused.starts_with("within matched 2 elements: section must match exactly one"), "{refused}");
     assert!(refused.ends_with(" They are: an element; an element."), "{refused}");
 }
+
+/// A plain css string is a step's first match only (`LEGACY_JS`); the probe
+/// lists it in its css form, so every match shows by `nth`, and says a step
+/// using the plain string acts on the first. The fake models both.
+#[tokio::test]
+async fn probe_of_a_plain_css_string_lists_every_match_and_says_a_step_takes_the_first() {
+    use v2_lib::browser::locator::{CSS_JS, LEGACY_JS};
+    let build = || {
+        ScriptedDriver::new(|method, params| {
+            let f = params["functionDeclaration"].as_str().unwrap_or("");
+            let on = params["objectId"].as_str().unwrap_or("");
+            match method {
+                "Runtime.evaluate" => Ok(json!({ "result": { "objectId": "doc" } })),
+                "Runtime.callFunctionOn" if f == LEGACY_JS => Ok(json!({ "result": { "objectId": "one" } })),
+                "Runtime.callFunctionOn" if f == CSS_JS => Ok(json!({ "result": { "objectId": "four" } })),
+                "Runtime.callFunctionOn" if f == VISIBLE_JS => Ok(json!({ "result": { "value": true } })),
+                "Accessibility.getPartialAXTree" => Ok(json!({ "nodes": [] })),
+                "Runtime.callFunctionOn" if f == PROBE_SUMMARY_JS => {
+                    Ok(json!({ "result": { "value": { "tag": "i", "text": "x", "rect": [0.0, 0.0, 1.0, 1.0] } } }))
+                }
+                "Runtime.callFunctionOn" => Ok(json!({ "result": { "objectId": "arr" } })),
+                "Runtime.getProperties" => {
+                    let n = if on == "one" { 1 } else { 4 };
+                    Ok(json!({ "result": (0..n).map(|i| json!({ "name": i.to_string(), "value": { "objectId": format!("el-{i}") } })).collect::<Vec<_>>() }))
+                }
+                other => panic!("unexpected {other}"),
+            }
+        })
+    };
+    let out = probe(&mut build(), &Target::from("main i")).await.unwrap();
+    assert!(out.starts_with("matches: 4\nnth 0: i "), "{out}");
+    assert!(out.contains("nth 3: i "), "{out}");
+    assert!(out.contains("acts on the first match (nth 0)"), "{out}");
+    // As a run takes it, the same string is one match.
+    let exact = v2_lib::browser::snapshot::probe_exact(&mut build(), &Target::from("main i")).await.unwrap();
+    assert!(exact.starts_with("matches: 1"), "{exact}");
+}

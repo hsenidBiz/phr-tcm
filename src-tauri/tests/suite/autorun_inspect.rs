@@ -75,7 +75,7 @@ impl Default for Page {
             }),
             html: json!({
                 "tag": "input",
-                "attributes": [["type", "text"], ["class", "field invalid"], ["value", "typed-by-a-person"], ["href", "https://hr.example/x?session=abc"], ["onblur", "steal()"], ["data-session-id", "abc"]],
+                "attributes": [["type", "text"], ["class", "field invalid"], ["value", "typed-by-a-person"], ["href", "https://hr.example/x?session=abc"], ["onblur", "steal()"], ["data-session-id", "abc"], ["data-url", "/api/x?id=7"], ["srcdoc", "<p>secret</p>"], ["data-kind", "plain"]],
                 "html": "<input type=\"text\" class=\"field invalid\" value=\"(hidden)\"><script></script>",
             }),
             name: "Save".into(),
@@ -613,6 +613,8 @@ async fn html_shows_each_matchs_opening_tag_and_a_short_cut_of_its_html() {
     }
     assert!(opening.contains("value=\"(hidden)\"") && opening.contains("href=\"(hidden)\"") && opening.contains("onblur=\"(hidden)\""), "{opening}");
     assert!(opening.contains("data-session-id=\"(hidden)\""), "{opening}");
+    assert!(opening.contains("data-url=\"(hidden)\"") && opening.contains("srcdoc=\"(hidden)\"") && opening.contains("data-kind=\"plain\""), "{opening}");
+    assert!(!text.contains("/api/x"), "{text}");
     read_only(&d);
     // A string `show` is one part, as a list is.
     let mut d = driver(Page::default());

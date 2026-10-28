@@ -1961,7 +1961,7 @@ fn a_playwright_selector_is_refused_by_the_probe() {
     use v2_lib::ai_bridge::{probe_target, NOT_A_PLAYWRIGHT_SELECTOR};
     assert_eq!(
         NOT_A_PLAYWRIGHT_SELECTOR,
-        "that is a Playwright selector, which Auto Run does not take: use a CSS selector or a role and name (see get_guide topic autorun, Locators)."
+        "that is a Playwright selector, which Auto Run does not take: use a CSS selector or a role and name (see get_guide topic autorun, Selectors)."
     );
     for css in ["button:has-text(\"Save\")", "li:text-is(\"Leave\")", "a:text(\"x\")", "div >> text=Save", "BUTTON:HAS-TEXT('x')"] {
         for selector in [serde_json::json!(css), serde_json::json!({ "css": css }), serde_json::json!([{ "css": "form" }, { "css": css }])] {
@@ -1971,9 +1971,9 @@ fn a_playwright_selector_is_refused_by_the_probe() {
     for fine in ["a:hover", "li:nth-child(2)", "input:not(:disabled)", "a > b", "text=Save"] {
         assert!(probe_target(serde_json::json!(fine)).is_ok(), "{fine}");
     }
-    // The section the sentence points at answers to the name it uses.
+    // The section the sentence points at exists.
     let guide = v2_lib::autorun::guide::autorun_guide();
-    assert!(v2_lib::autorun::guide::guide_section(&guide, "Locators").unwrap().contains("## Selectors"));
+    assert!(v2_lib::autorun::guide::guide_section(&guide, "Selectors").unwrap().contains("## Selectors"));
 }
 
 /// A chain - a dialog, then the button inside it - is probed as a script
