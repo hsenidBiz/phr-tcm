@@ -15,7 +15,7 @@ use std::sync::{Arc, Mutex};
 use crate::common::route_without_rules as route;
 use v2_lib::ai_bridge::{
     close_browser_in, discover_action_in, discover_area_in, discover_start_in, discovery_sighting, end_discovery_in,
-    read_page, refuse_while_discovering, repair_area_in, BridgeContext, DiscoveryBrowser, DiscoveryParts,
+    read_page, refuse_while_discovering, repair_area_in, variant_area_in, BridgeContext, DiscoveryBrowser, DiscoveryParts,
     NO_DISCOVERY,
 };
 use v2_lib::autorun::area_repair::{LONG_REASON, NOTHING_TO_REPAIR, SAME_PATH};
@@ -157,6 +157,7 @@ pub(crate) fn opened_for_discovery() -> Option<DiscoveryState> {
         call_no_save: false,
         call_case_id: None,
         explore: None,
+        carried: Vec::new(),
     })
 }
 
@@ -172,6 +173,7 @@ pub(crate) fn exploring(area: &str) -> Option<DiscoveryState> {
         call_no_save: false,
         call_case_id: None,
         explore: None,
+        carried: Vec::new(),
     })
 }
 
@@ -1345,6 +1347,7 @@ async fn a_discovery_page_read_stamps_explored_at_and_the_account_key() {
         call_no_save: false,
         call_case_id: None,
         explore: None,
+        carried: Vec::new(),
     };
     let at = discovery_sighting(dir.path(), ORG, PROJECT, Some(&state), None, Some("manager"))
         .expect("a project is chosen, so there is somewhere to file it");
@@ -1534,6 +1537,72 @@ async fn an_area_whose_clicks_arrive_is_saved_and_becomes_current() {
     assert_eq!(state.area.as_deref(), Some("Leave Apply"));
 }
 
+/// `save_autorun_area` with `variant: true`: the clicks are replayed from
+/// home, must arrive where the browser stands, and are appended to the
+/// existing area as another menu path; the primary path stays, and the same
+/// path again is not added twice.
+#[tokio::test]
+async fn a_variant_menu_path_is_appended_to_the_area_and_not_twice() {
+    let dir = root_with_recipe_and_account();
+    let (mut browser, _) = slot(menu_app(true, "/hr/leave/apply"), exploring("Leave"));
+    browser.as_mut().unwrap().account = Some("admin".into());
+    let first = vec![css("#leave"), css("#apply")];
+    let (status, body) =
+        discover_area_in(&mut browser, dir.path(), ORG, PROJECT, "Leave Apply", "Leave", first.clone(), &quick()).await;
+    assert_eq!(status, 200, "{body}");
+
+    let (status, body) =
+        variant_area_in(&mut browser, dir.path(), ORG, PROJECT, " leave apply ", "", vec![css("#apply")], &quick()).await;
+    assert_eq!(status, 200, "{body}");
+    let v = parsed(&body);
+    assert_eq!(v["saved"], true, "{body}");
+    assert_eq!(v["message"], "saved as menu path 2 of \"Leave Apply\"", "{body}");
+    let nav = load_nav(dir.path(), ORG, PROJECT).unwrap();
+    let saved = find_area(&nav, "Leave Apply").unwrap();
+    assert_eq!(saved.clicks, first, "the primary path is untouched");
+    assert_eq!(saved.variants.len(), 1);
+    assert_eq!(saved.variants[0].clicks, vec![css("#apply")]);
+    assert_eq!(saved.variants[0].arrived, "/hr/leave/apply");
+
+    // The same path again, and the primary path as a variant, add nothing.
+    for again in [vec![css("#apply")], first.clone()] {
+        let (status, body) = variant_area_in(&mut browser, dir.path(), ORG, PROJECT, "Leave Apply", "leave", again, &quick()).await;
+        assert_eq!(status, 200, "{body}");
+        assert_eq!(parsed(&body)["saved"], false, "{body}");
+        assert!(parsed(&body)["message"].as_str().unwrap().starts_with("already menu path"), "{body}");
+    }
+    let nav = load_nav(dir.path(), ORG, PROJECT).unwrap();
+    assert_eq!(find_area(&nav, "Leave Apply").unwrap().variants.len(), 1);
+}
+
+/// A variant needs an existing area, and clicks that arrive.
+#[tokio::test]
+async fn a_variant_menu_path_needs_an_area_and_clicks_that_arrive() {
+    let dir = root_with_recipe_and_account();
+    let (mut browser, _) = slot(menu_app(true, "/hr/leave/apply"), exploring("Leave"));
+    browser.as_mut().unwrap().account = Some("admin".into());
+    let (status, out) = variant_area_in(&mut browser, dir.path(), ORG, PROJECT, "Leave Apply", "", vec![css("#apply")], &quick()).await;
+    assert_eq!(status, 409, "{out}");
+    assert!(out.contains("no area named 'Leave Apply'"), "{out}");
+
+    let (status, _) =
+        discover_area_in(&mut browser, dir.path(), ORG, PROJECT, "Leave Apply", "Leave", vec![css("#leave"), css("#apply")], &quick())
+            .await;
+    assert_eq!(status, 200);
+    let (status, out) =
+        variant_area_in(&mut browser, dir.path(), ORG, PROJECT, "Leave Apply", "", vec![css("#leave"), css("#missing")], &quick()).await;
+    assert_eq!(status, 409, "{out}");
+    assert!(out.starts_with("The clicks did not arrive: click 2"), "{out}");
+    assert!(find_area(&load_nav(dir.path(), ORG, PROJECT).unwrap(), "Leave Apply").unwrap().variants.is_empty());
+
+    // A module that is not the area's is refused; the area's own is fine.
+    let (status, out) =
+        variant_area_in(&mut browser, dir.path(), ORG, PROJECT, "Leave Apply", "Payroll", vec![css("#apply")], &quick()).await;
+    assert_eq!(status, 409, "{out}");
+    assert!(out.contains("belongs to module 'Leave'"), "{out}");
+    assert!(find_area(&load_nav(dir.path(), ORG, PROJECT).unwrap(), "Leave Apply").unwrap().variants.is_empty());
+}
+
 /// A browser whose saved session has gone signs in again, as the
 /// discovery's account, before the clicks are replayed.
 #[tokio::test]
@@ -1587,6 +1656,7 @@ async fn an_existing_area_name_is_refused() {
         repaired_by_assistant: None,
         preferences: Default::default(),
         mode: None,
+        variants: Vec::new(),
     };
     put_path(dir.path(), ORG, PROJECT, existing.clone()).unwrap();
     let (mut browser, _) = slot(menu_app(true, "/hr/leave/apply"), exploring("Leave"));
@@ -1909,6 +1979,7 @@ async fn a_pin_refusal_is_reported_at_its_click() {
         repaired_by_assistant: None,
         preferences: Default::default(),
         mode: None,
+        variants: Vec::new(),
     };
     let recipe = v2_lib::autorun::recipe::load_effective_recipe(dir.path(), ORG, PROJECT).unwrap();
     let route = Route { home: Home::of(&recipe), path };
@@ -1930,6 +2001,7 @@ fn older_objectives(made_by: MadeBy, arrived: &str) -> ModulePath {
         repaired_by_assistant: None,
         preferences: Default::default(),
         mode: None,
+        variants: Vec::new(),
     }
 }
 
@@ -2022,6 +2094,7 @@ fn persons_leave_apply(clicks: Vec<Target>) -> ModulePath {
         repaired_by_assistant: None,
         preferences: Default::default(),
         mode: None,
+        variants: Vec::new(),
     }
 }
 
@@ -2177,6 +2250,28 @@ async fn the_area_route_reads_a_repair() {
         assert!(out.contains("\"repair\" is"), "{bad}: {out}");
     }
     let body = json!({ "name": "Leave Apply", "clicks": [{ "css": "#leave" }], "repair": { "reason": MOVED } }).to_string();
+    let (status, out) = route(&ctx(), None, "POST", "/autorun-discover-area", &body, "1.0.0").await;
+    assert_eq!(status, 409, "{out}");
+    assert!(out.contains("start_autorun_discovery"), "{out}");
+}
+
+/// The route takes `variant` as true or false, may leave the module out for
+/// it, and refuses it beside a repair; a variant with no discovery is the
+/// same sentence any area save gives.
+#[tokio::test]
+async fn the_area_route_reads_a_variant() {
+    let dir = root_with_recipe_and_account();
+    let _g = crate::serial::autorun();
+    set_root(dir.path().to_path_buf());
+    for bad in [
+        json!({ "name": "Leave Apply", "module": "Leave", "clicks": [{ "css": "#leave" }], "variant": "yes" }),
+        json!({ "name": "Leave Apply", "module": "Leave", "clicks": [{ "css": "#leave" }], "variant": true, "repair": { "reason": MOVED } }),
+    ] {
+        let (status, out) = route(&ctx(), None, "POST", "/autorun-discover-area", &bad.to_string(), "1.0.0").await;
+        assert_eq!(status, 400, "{bad}: {out}");
+        assert!(out.contains("variant"), "{bad}: {out}");
+    }
+    let body = json!({ "name": "Leave Apply", "clicks": [{ "css": "#leave" }], "variant": true }).to_string();
     let (status, out) = route(&ctx(), None, "POST", "/autorun-discover-area", &body, "1.0.0").await;
     assert_eq!(status, 409, "{out}");
     assert!(out.contains("start_autorun_discovery"), "{out}");
@@ -2342,6 +2437,7 @@ fn leave_apply(made_by: MadeBy, clicks: Vec<Target>, arrived: &str) -> ModulePat
         repaired_by_assistant: None,
         preferences: Default::default(),
         mode: None,
+        variants: Vec::new(),
     }
 }
 
@@ -3142,6 +3238,7 @@ fn recorded(dir: &std::path::Path, name: &str) {
             repaired_by_assistant: None,
             preferences: Default::default(),
             mode: None,
+            variants: Vec::new(),
         },
     )
     .unwrap();
@@ -5743,6 +5840,114 @@ async fn a_start_naming_a_saved_area_walks_to_it() {
     assert_eq!(state.area.as_deref(), Some("Leave Apply"));
     let area = mapped_area(dir.path(), "Leave Apply").expect("the area's page was not filed");
     assert!(area.pages.iter().any(|p| p.path == "/hr/leave/apply"), "{:?}", area.pages);
+}
+
+/// `menu_app`, except that a client-side redirect follows `#apply` after a
+/// moment: 150 ms on, the page is `/hr/leave/apply/late` and shows a "Late
+/// page" button, as an application that finishes loading its screen does.
+fn menu_app_redirecting_late() -> ScriptedDriver {
+    let path = Arc::new(Mutex::new("/".to_string()));
+    let signed = Arc::new(AtomicBool::new(false));
+    let applied_at = Arc::new(Mutex::new(None::<std::time::Instant>));
+    let mut last_css = String::new();
+    let current = {
+        let (path, applied_at) = (path.clone(), applied_at.clone());
+        move || {
+            let late = path.lock().unwrap().as_str() == "/hr/leave/apply"
+                && applied_at.lock().unwrap().is_some_and(|t| t.elapsed() >= std::time::Duration::from_millis(150));
+            if late { "/hr/leave/apply/late".to_string() } else { path.lock().unwrap().clone() }
+        }
+    };
+    let mut d = ScriptedDriver::new(move |method, params| {
+        let f = params["functionDeclaration"].as_str().unwrap_or("");
+        Ok(match method {
+            "Page.navigate" => {
+                *path.lock().unwrap() = v2_lib::autorun::nav::path_of(params["url"].as_str().unwrap_or(""));
+                json!({ "frameId": "F", "loaderId": "L" })
+            }
+            "Runtime.evaluate" if params["expression"] == "document" => json!({ "result": { "objectId": "doc" } }),
+            "Runtime.evaluate" if params["expression"] == "location.href" => {
+                json!({ "result": { "value": format!("https://hr.example.internal{}", current()) } })
+            }
+            "Runtime.evaluate" if params["expression"] == "document.title" => json!({ "result": { "value": "Home" } }),
+            "Runtime.evaluate" => {
+                json!({ "result": { "value": { "origin": "https://hr.example.internal", "entries": [] } } })
+            }
+            "Accessibility.getFullAXTree" => {
+                let late = current().ends_with("/late");
+                let mut nodes = vec![json!({ "nodeId": "1", "ignored": false, "role": { "value": "form" },
+                  "name": { "value": "Leave" }, "childIds": if late { json!(["2"]) } else { json!([]) } })];
+                if late {
+                    nodes.push(json!({ "nodeId": "2", "ignored": false, "role": { "value": "button" },
+                      "name": { "value": "Late page" }, "childIds": [] }));
+                }
+                json!({ "nodes": nodes })
+            }
+            "Network.getAllCookies" => json!({ "cookies": [] }),
+            "Runtime.callFunctionOn" if f == PROBE_JS => json!({ "result": { "value": ready_probe() } }),
+            "Runtime.callFunctionOn" if f == VISIBLE_JS || f == HIGHLIGHT_JS || f == HAS_FOCUS_JS => {
+                json!({ "result": { "value": true } })
+            }
+            "Runtime.callFunctionOn" if f == FOCUS_JS => json!({ "result": { "value": "text" } }),
+            "Runtime.callFunctionOn" if f == CHECK_TEXT_JS => json!({ "result": { "value": true } }),
+            "Runtime.callFunctionOn" => {
+                if let Some(sel) = params["arguments"][0]["value"].as_str() {
+                    last_css = sel.to_string();
+                }
+                json!({ "result": { "objectId": "arr" } })
+            }
+            "Runtime.getProperties" => {
+                let there = match last_css.as_str() {
+                    "#marker" => signed.load(Ordering::SeqCst),
+                    "#missing" => false,
+                    _ => true,
+                };
+                json!({ "result": if there { vec![json!({ "name": "0", "value": { "objectId": "el" } })] } else { vec![] } })
+            }
+            "Input.dispatchMouseEvent" if params["type"] == "mouseReleased" => {
+                let to = match last_css.as_str() {
+                    "#go" => {
+                        signed.store(true, Ordering::SeqCst);
+                        Some("/hr/home/index")
+                    }
+                    "#leave" => Some("/hr/leave"),
+                    "#apply" => {
+                        *applied_at.lock().unwrap() = Some(std::time::Instant::now());
+                        Some("/hr/leave/apply")
+                    }
+                    _ => None,
+                };
+                if let Some(to) = to {
+                    *path.lock().unwrap() = to.to_string();
+                }
+                json!({})
+            }
+            _ => json!({}),
+        })
+    });
+    d.on_every_call_events.push((
+        "Page.navigate".into(),
+        Event { method: "Page.lifecycleEvent".into(), params: json!({ "frameId": "F", "loaderId": "L", "name": "load" }) },
+    ));
+    d
+}
+
+/// A start whose walk ends on a screen that then redirects within the
+/// moment after it arrives answers the page the browser settled on: `path`
+/// and `page` describe where it is, not where the last click first landed.
+#[tokio::test]
+async fn a_start_waits_for_the_page_to_settle_before_it_answers() {
+    let dir = root_with_recipe_and_account();
+    put_path(dir.path(), ORG, PROJECT, persons_leave_apply(vec![css("#leave"), css("#apply")])).unwrap();
+    let (mut browser, _) = slot(menu_app_redirecting_late(), opened_for_discovery());
+
+    let (status, body) =
+        discover_start_in(&mut browser, dir.path(), ORG, PROJECT, "admin", Some("Leave Apply"), &quick()).await;
+    assert_eq!(status, 200, "{body}");
+    let v = parsed(&body);
+    assert_eq!(v["at_area"], true, "{body}");
+    assert_eq!(v["path"], "/hr/leave/apply/late", "{body}");
+    assert!(v["page"].as_str().unwrap_or("").contains("Late page"), "{body}");
 }
 
 /// An area that is not saved starts at home, as before, and says so.

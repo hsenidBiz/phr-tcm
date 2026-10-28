@@ -481,6 +481,14 @@ pub async fn clickable_now<D: Driver>(d: &mut D, target: &Target) -> bool {
     matches!(look_with(d, target, false, true, false).await, Ok(Look::Ready(_)))
 }
 
+/// `clickable_now`, except that two or more matches are fine: the first is
+/// looked at. For a wait that only wants to know the target is no longer
+/// covered.
+pub async fn clickable_first<D: Driver>(d: &mut D, target: &Target) -> bool {
+    page::release(d).await;
+    matches!(look_with(d, target, false, false, false).await, Ok(Look::Ready(_)))
+}
+
 /// What a wait loop says it last saw when its budget ran out inside a
 /// call rather than between two of them.
 pub(crate) const STILL_LOOKING: &str = "was still being checked when the time ran out";

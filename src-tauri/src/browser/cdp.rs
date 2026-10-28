@@ -2628,6 +2628,20 @@ impl<T: Transport> Cdp<T> {
         })
     }
 
+    /// The paths (no query) of the writing requests the guard did not stop
+    /// since `mark`, in any open tab: what `net_wrote_since` counted, for the
+    /// log. Never a host, query or body.
+    pub fn net_posted_paths(&self, mark: u64) -> Vec<String> {
+        let marks = self.net_marks.lock().unwrap_or_else(|e| e.into_inner());
+        let each = if self.whole_browser { marks.1.iter().find(|(id, _)| *id == mark).map(|(_, e)| e) } else { None };
+        let mut out = Vec::new();
+        for t in &self.tabs {
+            let from = each.map_or(mark, |each| each.get(&t.session_id).copied().unwrap_or(0));
+            out.extend(super::save_guard::posted_paths(&t.net_record.since(from)));
+        }
+        out
+    }
+
     /// The Network domain is on: the record sees every request from now.
     pub fn note_net_recording(&mut self) {
         self.net_recording = true;
@@ -2900,6 +2914,11 @@ pub trait Driver {
             Some(sent) => super::save_guard::sent_a_save(&sent),
         }
     }
+    /// The paths of the writing requests the guard did not stop since
+    /// `mark` (`Cdp::net_posted_paths`), for the log.
+    fn net_posted_paths(&self, mark: u64) -> Vec<String> {
+        self.net_since_held(mark).map(|sent| super::save_guard::posted_paths(&sent)).unwrap_or_default()
+    }
     /// Whether the network record sees every request
     /// (`Cdp::net_recording`). A driver that keeps none (a test's fake) is
     /// taken to.
@@ -3163,6 +3182,9 @@ impl<T: Transport> Driver for Cdp<T> {
     }
     fn net_wrote_since(&self, mark: u64) -> bool {
         Cdp::net_wrote_since(self, mark)
+    }
+    fn net_posted_paths(&self, mark: u64) -> Vec<String> {
+        Cdp::net_posted_paths(self, mark)
     }
     fn net_recording(&self) -> bool {
         Cdp::net_recording(self)

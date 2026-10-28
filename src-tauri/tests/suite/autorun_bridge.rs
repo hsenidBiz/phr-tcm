@@ -53,6 +53,21 @@ fn ctx() -> BridgeContext {
     BridgeContext { org: "acme".into(), project: "Web".into(), ..BridgeContext::default() }
 }
 
+/// Backlog 42: every bridge call leaves one log line with its route and how
+/// long it took, and never its query or its body.
+#[tokio::test]
+async fn every_bridge_call_logs_its_route_and_its_time_but_no_arguments() {
+    let _log = crate::serial::log_tail();
+    let (status, _) =
+        v2_lib::ai_bridge::route(&ctx(), None, "GET", "/ping?token=SECRETQUERY99", "{\"x\":\"SECRETBODY99\"}", "1.0.0").await;
+    assert_eq!(status, 200);
+    let lines: Vec<String> =
+        v2_lib::applog::recent(500).into_iter().map(|l| l.message).filter(|m| m.starts_with("Bridge call: GET /ping ")).collect();
+    let line = lines.last().expect("the call left no line");
+    assert!(line.starts_with("Bridge call: GET /ping answered 200 in ") && line.ends_with(" ms"), "{line}");
+    assert!(!line.contains("SECRET"), "{line}");
+}
+
 // The store root is process-wide state, and cargo runs tests in parallel -
 // every test that sets it holds `crate::serial::autorun()` so one test's
 // root cannot swap out from under another mid-save. The same lock covers
@@ -1954,6 +1969,28 @@ async fn a_matched_probe_records_a_locator_the_snapshot_cut_off() {
     assert!(holds_css(page, "#archive"), "{:?}", page.elements);
 }
 
+/// A Playwright pseudo-selector is refused with the sentence that says what to
+/// write instead; plain CSS (a colon pseudo-class among it) is not.
+#[test]
+fn a_playwright_selector_is_refused_by_the_probe() {
+    use v2_lib::ai_bridge::{probe_target, NOT_A_PLAYWRIGHT_SELECTOR};
+    assert_eq!(
+        NOT_A_PLAYWRIGHT_SELECTOR,
+        "that is a Playwright selector, which Auto Run does not take: use a CSS selector or a role and name (see get_guide topic autorun, Selectors)."
+    );
+    for css in ["button:has-text(\"Save\")", "li:text-is(\"Leave\")", "a:text(\"x\")", "div >> text=Save", "BUTTON:HAS-TEXT('x')"] {
+        for selector in [serde_json::json!(css), serde_json::json!({ "css": css }), serde_json::json!([{ "css": "form" }, { "css": css }])] {
+            assert_eq!(probe_target(selector.clone()).unwrap_err(), NOT_A_PLAYWRIGHT_SELECTOR, "{selector}");
+        }
+    }
+    for fine in ["a:hover", "li:nth-child(2)", "input:not(:disabled)", "a > b", "text=Save"] {
+        assert!(probe_target(serde_json::json!(fine)).is_ok(), "{fine}");
+    }
+    // The section the sentence points at exists.
+    let guide = v2_lib::autorun::guide::autorun_guide();
+    assert!(v2_lib::autorun::guide::guide_section(&guide, "Selectors").unwrap().contains("## Selectors"));
+}
+
 /// A chain - a dialog, then the button inside it - is probed as a script
 /// writes it: a list of links, or that list sent as JSON text by a client
 /// that sends only strings. It resolves, and is filed whole with what it
@@ -3790,6 +3827,54 @@ async fn a_script_using_a_component_saves() {
     assert!(load_script(dir.path(), 7).unwrap().is_some());
 }
 
+/// Backlog 42: a save made while a discovery goes on reads what that
+/// discovery carried from the area it left (`DiscoveryState::carried`), and
+/// nothing is written to the saved map: without the carried set the same
+/// script is refused, and so it is once the discovery has ended.
+#[tokio::test]
+async fn a_save_during_a_discovery_reads_what_it_carried_from_the_area_it_left() {
+    use v2_lib::autorun::discovery_map::{carry_seen, keep_carried, load_map};
+    let dir = TempDir::new();
+    let _root = crate::serial::autorun();
+    set_root(dir.path().to_path_buf());
+    let (_server, client) = client_with_cases(&[(7, "Edit a request", &[""])]).await;
+    record_two_areas(dir.path());
+    let row: v2_lib::browser::locator::Target =
+        serde_json::from_value(serde_json::json!({ "role": "row", "name": "Alpha" })).unwrap();
+    let now = v2_lib::autorun::sessions::now_ms();
+    // Seen while the discovery stood in "My Assessments".
+    v2_lib::autorun::discovery_map::record_matched(dir.path(), "acme", "Web", Some("My Assessments"), "/a", &row, now).unwrap();
+    let body = serde_json::json!([{
+        "case_id": 7,
+        "title": "Edit a request",
+        "area": "Manage Cycle",
+        "steps": [{ "step_number": 1, "actions": [
+            { "kind": "click", "selector": { "role": "row", "name": "Alpha" } }
+        ]}]
+    }])
+    .to_string();
+    let saved = load_map(dir.path(), "acme", "Web").unwrap();
+    let mut carried = vec![];
+    keep_carried(&mut carried, carry_seen(&saved, "My Assessments", "Manage Cycle", now - 1).expect("something to carry"));
+
+    // The discovery has ended (nothing carried): area "Manage Cycle" has not seen the row.
+    let (status, out) =
+        v2_lib::ai_bridge::save_autorun_scripts_carrying(&ctx(), Some(&client), &body, None, vec![]).await;
+    assert_eq!(status, 400, "{out}");
+    assert!(out.contains("never seen"), "{out}");
+    assert_eq!(load_script(dir.path(), 7).unwrap(), None);
+
+    // While it goes on, the carried set vouches for it.
+    let (status, out) =
+        v2_lib::ai_bridge::save_autorun_scripts_carrying(&ctx(), Some(&client), &body, None, carried).await;
+    assert_eq!(status, 200, "{out}");
+    assert!(load_script(dir.path(), 7).unwrap().is_some());
+    assert!(
+        !load_map(dir.path(), "acme", "Web").unwrap().areas.iter().any(|a| a.area == "Manage Cycle"),
+        "the carried area reached the saved map"
+    );
+}
+
 /// A failed try names its picture by the full path of a file that is there,
 /// never by the bare name: an assistant given only a name searched the
 /// whole disk for it.
@@ -3842,6 +3927,7 @@ async fn a_bridge_saved_script_vouches_for_its_locators() {
             repaired_by_assistant: None,
             preferences: Default::default(),
             mode: None,
+            variants: Vec::new(),
         },
     )
     .unwrap();
@@ -3901,6 +3987,7 @@ async fn resave_a_legacy_script(another_project_has_areas: bool) -> CaseScript {
                 repaired_by_assistant: None,
                 preferences: Default::default(),
                 mode: None,
+                variants: Vec::new(),
             },
         )
         .unwrap()
@@ -4211,6 +4298,7 @@ fn record_area(root: &std::path::Path, name: &str) {
         repaired_by_assistant: None,
         preferences: Default::default(),
         mode: None,
+        variants: Vec::new(),
     };
     v2_lib::autorun::nav::put_path(root, "acme", "Web", path).unwrap();
 }
@@ -5016,4 +5104,35 @@ async fn a_replay_answer_ends_with_its_rules() {
 
     let (_, out) = ruled(&ctx(), None, "POST", "/autorun-replay-stop", "{}").await;
     assert!(out.ends_with(RULES_REPLAY), "{out}");
+}
+
+/// A `within` that matches several elements lists the first (`nth` 0) and
+/// says how many matched; one that matches one, or that already has an
+/// `nth`, is left as it is.
+#[tokio::test]
+async fn a_within_matching_several_lists_the_first_and_says_how_many() {
+    use v2_lib::ai_bridge::first_of_many;
+    use v2_lib::browser::locator::{LocatorStep, Target};
+    let page = |n: usize| {
+        crate::common::ScriptedDriver::new(move |method, _| match method {
+            "Runtime.evaluate" => Ok(serde_json::json!({ "result": { "objectId": "doc" } })),
+            "Runtime.callFunctionOn" => Ok(serde_json::json!({ "result": { "objectId": "arr" } })),
+            "Runtime.getProperties" => Ok(serde_json::json!({ "result": (0..n)
+                .map(|i| serde_json::json!({ "name": i.to_string(), "value": { "objectId": format!("el-{i}") } }))
+                .collect::<Vec<_>>() })),
+            other => panic!("unexpected {other}"),
+        })
+    };
+    let step = LocatorStep { css: Some(".row".into()), ..LocatorStep::default() };
+    let within = Target::One(step.clone());
+
+    let (target, said) = first_of_many(&mut page(3), Some(&within)).await;
+    assert_eq!(target, Some(Target::One(LocatorStep { nth: Some(0), ..step.clone() })));
+    assert!(said.as_deref().is_some_and(|s| s.starts_with("within matched 3 elements")), "{said:?}");
+
+    let (same, said) = first_of_many(&mut page(1), Some(&within)).await;
+    assert_eq!((same, said), (Some(within.clone()), None));
+    let picked = Target::One(LocatorStep { nth: Some(2), ..step });
+    assert_eq!(first_of_many(&mut page(3), Some(&picked)).await, (Some(picked.clone()), None));
+    assert_eq!(first_of_many(&mut page(3), None).await, (None, None));
 }

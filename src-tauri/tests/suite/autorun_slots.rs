@@ -467,7 +467,7 @@ mod routing {
             "async fn api_template_explore_undo(",
             "async fn record_refused_on_page(",
             "async fn run_saved_in_session(",
-            "pub async fn supervised_page_within_in(",
+            "async fn supervised_page_read_in(",
         ] {
             let b = body(&bridge, head);
             assert!(b.contains("session_slot(n).lock()"), "{head} does not lock its slot's session");

@@ -1647,6 +1647,7 @@ fn record_area(root: &std::path::Path, org: &str, project: &str, name: &str) {
             repaired_by_assistant: None,
             preferences: Default::default(),
             mode: None,
+            variants: Vec::new(),
         },
     )
     .unwrap();
@@ -3435,6 +3436,17 @@ fn a_loose_record_name_seen_inside_a_longer_one_is_noted_once() {
     let elsewhere = map_with("Other", "/cycles", &[role("button", REVIEW), role("button", &format!("{REVIEW} Copy"))]);
     let c = one_step("Cycles", serde_json::json!([click(serde_json::json!({ "role": "button", "name": REVIEW }))]));
     assert!(loose_name_notes(&elsewhere, &none(), &c, None).is_empty());
+}
+
+#[test]
+fn a_longer_name_seen_only_on_another_page_is_not_a_reason_for_exact() {
+    let mut two_pages = map_with("Cycles", "/cycles", &[role("button", REVIEW)]);
+    let other = map_with("Cycles", "/archive", &[role("button", &format!("{REVIEW} Copy"))]);
+    two_pages.areas[0].pages.extend(other.areas[0].pages.clone());
+    let click_it = one_step("Cycles", serde_json::json!([click(serde_json::json!({ "role": "button", "name": REVIEW }))]));
+    assert!(loose_name_notes(&two_pages, &none(), &click_it, None).is_empty());
+    // Together on one page the suggestion stands.
+    assert_eq!(loose_name_notes(&review_map(), &none(), &click_it, None).len(), 1);
 }
 
 #[test]

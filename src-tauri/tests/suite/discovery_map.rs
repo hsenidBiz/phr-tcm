@@ -349,6 +349,7 @@ fn recorded_area(root: &std::path::Path, name: &str, module: &str) {
             repaired_by_assistant: None,
             preferences: Default::default(),
             mode: None,
+            variants: Vec::new(),
         },
     )
     .unwrap();
@@ -614,6 +615,46 @@ fn matching_nothing_on_a_page_forgets_its_elements_but_no_sighting() {
     assert!(!p.elements.iter().any(|e| e.locator == css), "{:?}", p.elements);
     let q = a.pages.iter().find(|p| p.path == "/q").unwrap();
     assert!(q.elements.iter().any(|e| e.locator == css), "the other page lost it");
+}
+
+/// Backlog 42: a discovery that moves from one area to another holds what it
+/// saw since it started for the new area, in its own state: the seen check of
+/// a save reads it while the discovery goes on, and the saved map never
+/// holds it, so once the discovery ends the new area does not accept the old
+/// area's locators.
+#[test]
+fn a_discovery_moving_area_carries_what_it_saw_in_its_own_state_not_in_the_map() {
+    use v2_lib::autorun::discovery_map::{add_carried, carry_seen, keep_carried};
+    let dir = tempfile::tempdir().unwrap();
+    let new_one = Target::One(LocatorStep { css: Some("#new".into()), ..LocatorStep::default() });
+    let old_one = Target::One(LocatorStep { css: Some("#old".into()), ..LocatorStep::default() });
+    record_matched(dir.path(), "Acme", "Web", Some("My Assessments"), "/a", &old_one, 1000).unwrap();
+    record_matched(dir.path(), "Acme", "Web", Some("My Assessments"), "/a", &new_one, 5000).unwrap();
+    let saved = load_map(dir.path(), "Acme", "Web").unwrap();
+    let key = |css: &str| SeenKey::Css(css.into());
+
+    // The discovery's state holds the copy; what was seen before it began is left.
+    let mut held = vec![];
+    keep_carried(&mut held, carry_seen(&saved, "My Assessments", "Manage Cycle", 4000).expect("something to carry"));
+    assert_eq!(held.len(), 1);
+    assert!(held[0].sightings.iter().any(|s| s.key == key("#new")));
+    assert!(!held[0].sightings.iter().any(|s| s.key == key("#old")), "a sighting from before the discovery was carried");
+
+    // While it goes on, the save's map shows the carried locators under the new area ...
+    let mut during = saved.clone();
+    add_carried(&mut during, &held);
+    let to = during.areas.iter().find(|a| a.area == "Manage Cycle").expect("the new area");
+    assert!(to.sightings.iter().any(|s| s.key == key("#new")));
+    assert!(to.pages.iter().any(|p| p.elements.iter().any(|e| e.locator == new_one)));
+
+    // ... but the saved map never held them: after the discovery ends, nothing carries.
+    let after = load_map(dir.path(), "Acme", "Web").unwrap();
+    assert_eq!(after, saved);
+    assert!(!after.areas.iter().any(|a| a.area == "Manage Cycle"), "the carried area was written to the map");
+
+    // Moving to the same area, or from a nameless one, carries nothing.
+    assert!(carry_seen(&saved, "my  assessments", "My Assessments", 0).is_none());
+    assert!(carry_seen(&saved, "", "Manage Cycle", 0).is_none());
 }
 
 /// #42/#65: a probe that matches nothing files the locator as seen

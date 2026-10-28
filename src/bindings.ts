@@ -3827,7 +3827,7 @@ export type Divergence_Deserialize = {
 	id: string,
 	case_id: number,
 	step: number,
-	/**  Scrubbed (`defects::scrub_note`), at most `MAX_TEXT` characters. */
+	/**  Scrubbed (`defects::scrub_note`), at most `MAX_CASE_TEXT` characters. */
 	case_says: string,
 	app_shows: string,
 	kind: DivergenceKind,
@@ -3857,6 +3857,11 @@ export type Divergence_Deserialize = {
 	said?: string | null,
 	/**  For an assistant's ruling: the assistant's own note, scrubbed. */
 	note?: string | null,
+	/**
+	 *  What the reporter suggests be done about it (a rewording, a data
+	 *  fix), scrubbed; shown wherever the divergence is listed.
+	 */
+	proposal?: string | null,
 };
 
 export type Divergence_Serialize = {
@@ -3864,7 +3869,7 @@ export type Divergence_Serialize = {
 	id: string,
 	case_id: number,
 	step: number,
-	/**  Scrubbed (`defects::scrub_note`), at most `MAX_TEXT` characters. */
+	/**  Scrubbed (`defects::scrub_note`), at most `MAX_CASE_TEXT` characters. */
 	case_says: string,
 	app_shows: string,
 	kind: DivergenceKind,
@@ -3894,6 +3899,11 @@ export type Divergence_Serialize = {
 	said?: string | null,
 	/**  For an assistant's ruling: the assistant's own note, scrubbed. */
 	note?: string | null,
+	/**
+	 *  What the reporter suggests be done about it (a rewording, a data
+	 *  fix), scrubbed; shown wherever the divergence is listed.
+	 */
+	proposal?: string | null,
 };
 
 /**

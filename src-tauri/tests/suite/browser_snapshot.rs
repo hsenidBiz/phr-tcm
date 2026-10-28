@@ -464,11 +464,70 @@ async fn probe_of_several_matches_lists_each_and_asks_to_narrow() {
     assert_eq!(
         out,
         "matches: 3\n\
-         button \"Save\" visible at 10,20 80x24\n\
-         button \"Save\" hidden at 10,60 80x24\n\
-         a \"Save draft\" visible at 10,100 80x24\n\
+         nth 0: button \"Save\" visible at 10,20 80x24\n\
+         nth 1: button \"Save\" hidden at 10,60 80x24\n\
+         nth 2: a \"Save draft\" visible at 10,100 80x24\n\
          narrow the locator (add \"name\", \"exact\": true, a scope, or \"nth\")"
     );
+}
+
+/// Twelve matches: the probe counts every one, lists the first ten each with
+/// the 0-based `nth` that picks it, and says so.
+#[tokio::test]
+async fn probe_counts_every_match_and_labels_the_listed_ones_by_nth() {
+    let mut d = ScriptedDriver::new(|method, params| {
+        let f = params["functionDeclaration"].as_str().unwrap_or("");
+        match method {
+            "Runtime.evaluate" => Ok(json!({ "result": { "objectId": "doc" } })),
+            "Runtime.callFunctionOn" if f == VISIBLE_JS => Ok(json!({ "result": { "value": true } })),
+            "Accessibility.getPartialAXTree" => Ok(json!({ "nodes": [] })),
+            "Runtime.callFunctionOn" if f == PROBE_SUMMARY_JS => {
+                Ok(json!({ "result": { "value": { "tag": "li", "text": "Row", "rect": [0.0, 0.0, 10.0, 10.0] } } }))
+            }
+            "Runtime.callFunctionOn" => Ok(json!({ "result": { "objectId": "arr" } })),
+            "Runtime.getProperties" => Ok(json!({ "result": (0..12)
+                .map(|i| json!({ "name": i.to_string(), "value": { "objectId": format!("el-{i}") } }))
+                .collect::<Vec<_>>() })),
+            other => panic!("unexpected {other}"),
+        }
+    });
+    let out = probe(&mut d, &Target::from("li")).await.unwrap();
+    let lines: Vec<&str> = out.lines().collect();
+    assert_eq!(lines[0], "matches: 12");
+    assert_eq!(lines[1], "nth 0: li \"Row\" visible at 0,0 10x10");
+    assert_eq!(lines[10], "nth 9: li \"Row\" visible at 0,0 10x10");
+    assert_eq!(lines[11], "(the first 10 are listed, nth 0 to 9; 12 matched in all)");
+    assert!(lines.last().unwrap().contains("narrow the locator"), "{out}");
+    assert!(!out.contains("nth 10"), "{out}");
+}
+
+/// A page name with spaces round it is said, and an `exact` name is compared
+/// trimmed, so the spaces never stop it matching.
+#[tokio::test]
+async fn probe_says_when_the_pages_name_has_leading_or_trailing_spaces() {
+    let mut d = ScriptedDriver::new(|method, params| {
+        let f = params["functionDeclaration"].as_str().unwrap_or("");
+        match method {
+            "Runtime.evaluate" => Ok(json!({ "result": { "objectId": "doc" } })),
+            "Runtime.callFunctionOn" if f == VISIBLE_JS => Ok(json!({ "result": { "value": true } })),
+            "Accessibility.getPartialAXTree" => Ok(json!({ "nodes": [
+                { "nodeId": "1", "role": { "value": "button" }, "name": { "value": "  Save " }, "ignored": false }
+            ] })),
+            "Runtime.callFunctionOn" if f == PROBE_SUMMARY_JS => {
+                Ok(json!({ "result": { "value": { "tag": "button", "text": "Save", "rect": [1.0, 2.0, 3.0, 4.0] } } }))
+            }
+            "Runtime.callFunctionOn" => Ok(json!({ "result": { "objectId": "arr" } })),
+            "Runtime.getProperties" => Ok(json!({ "result": [ { "name": "0", "value": { "objectId": "el-0" } } ] })),
+            other => panic!("unexpected {other}"),
+        }
+    });
+    let out = probe(&mut d, &Target::from("#save")).await.unwrap();
+    assert!(out.starts_with("matches: 1\nbutton \"Save\" visible at 1,2 3x4"), "{out}");
+    assert!(out.contains("the page's name has leading or trailing spaces"), "{out}");
+    assert!(out.contains("\"exact\": true still matches it"), "{out}");
+    // The comparison the note promises.
+    assert!(v2_lib::browser::locator::name_matches("  Save ", "Save", true));
+    assert!(v2_lib::browser::locator::name_matches("Save", " Save  ", true));
 }
 
 /// C1: a password input's typed value is never printed by the probe -
@@ -1157,4 +1216,76 @@ async fn a_within_match_that_cannot_be_named_is_an_element() {
     let refused = within_node(&mut d, &within_target("section").unwrap()).await.unwrap().unwrap_err();
     assert!(refused.starts_with("within matched 2 elements: section must match exactly one"), "{refused}");
     assert!(refused.ends_with(" They are: an element; an element."), "{refused}");
+}
+
+/// A plain css string is a step's first match only (`LEGACY_JS`); the probe
+/// lists it in its css form, so every match shows by `nth`, and says a step
+/// using the plain string acts on the first. The fake models both.
+#[tokio::test]
+async fn probe_of_a_plain_css_string_lists_every_match_and_says_a_step_takes_the_first() {
+    use v2_lib::browser::locator::{CSS_JS, LEGACY_JS};
+    let build = || {
+        ScriptedDriver::new(|method, params| {
+            let f = params["functionDeclaration"].as_str().unwrap_or("");
+            let on = params["objectId"].as_str().unwrap_or("");
+            match method {
+                "Runtime.evaluate" => Ok(json!({ "result": { "objectId": "doc" } })),
+                "Runtime.callFunctionOn" if f == LEGACY_JS => Ok(json!({ "result": { "objectId": "one" } })),
+                "Runtime.callFunctionOn" if f == CSS_JS => Ok(json!({ "result": { "objectId": "four" } })),
+                "Runtime.callFunctionOn" if f == VISIBLE_JS => Ok(json!({ "result": { "value": true } })),
+                "Accessibility.getPartialAXTree" => Ok(json!({ "nodes": [] })),
+                "Runtime.callFunctionOn" if f == PROBE_SUMMARY_JS => {
+                    Ok(json!({ "result": { "value": { "tag": "i", "text": "x", "rect": [0.0, 0.0, 1.0, 1.0] } } }))
+                }
+                "Runtime.callFunctionOn" => Ok(json!({ "result": { "objectId": "arr" } })),
+                "Runtime.getProperties" => {
+                    let n = if on == "one" { 1 } else { 4 };
+                    Ok(json!({ "result": (0..n).map(|i| json!({ "name": i.to_string(), "value": { "objectId": format!("el-{i}") } })).collect::<Vec<_>>() }))
+                }
+                other => panic!("unexpected {other}"),
+            }
+        })
+    };
+    let out = probe(&mut build(), &Target::from("main i")).await.unwrap();
+    assert!(out.starts_with("matches: 4\nnth 0: i "), "{out}");
+    assert!(out.contains("nth 3: i "), "{out}");
+    assert!(out.contains("acts on the first match (nth 0)"), "{out}");
+    // As a run takes it, the same string is one match.
+    let exact = v2_lib::browser::snapshot::probe_exact(&mut build(), &Target::from("main i")).await.unwrap();
+    assert!(exact.starts_with("matches: 1"), "{exact}");
+}
+
+/// The css-form listing is numbered among visible matches, as
+/// `{"css": ..., "nth": i}` counts them; a hidden match before them is one
+/// line, not a number.
+#[tokio::test]
+async fn probe_of_a_plain_css_string_numbers_visible_matches_and_counts_the_hidden() {
+    use v2_lib::browser::locator::CSS_JS;
+    let mut d = ScriptedDriver::new(|method, params| {
+        let f = params["functionDeclaration"].as_str().unwrap_or("");
+        let on = params["objectId"].as_str().unwrap_or("");
+        match method {
+            "Runtime.evaluate" => Ok(json!({ "result": { "objectId": "doc" } })),
+            "Runtime.callFunctionOn" if f == CSS_JS => {
+                let visible_only = params["arguments"][1]["value"].as_bool().unwrap_or(true);
+                Ok(json!({ "result": { "objectId": if visible_only { "vis" } else { "all" } } }))
+            }
+            "Runtime.callFunctionOn" if f == VISIBLE_JS => Ok(json!({ "result": { "value": true } })),
+            "Accessibility.getPartialAXTree" => Ok(json!({ "nodes": [] })),
+            "Runtime.callFunctionOn" if f == PROBE_SUMMARY_JS => {
+                Ok(json!({ "result": { "value": { "tag": "i", "text": "x", "rect": [0.0, 0.0, 1.0, 1.0] } } }))
+            }
+            "Runtime.callFunctionOn" => Ok(json!({ "result": { "objectId": "arr" } })),
+            "Runtime.getProperties" => {
+                // All three, a hidden one first; the visible two after it.
+                let n = if on == "vis" { 2 } else { 3 };
+                Ok(json!({ "result": (0..n).map(|i| json!({ "name": i.to_string(), "value": { "objectId": format!("el-{i}") } })).collect::<Vec<_>>() }))
+            }
+            other => panic!("unexpected {other}"),
+        }
+    });
+    let out = probe(&mut d, &Target::from("main i")).await.unwrap();
+    assert!(out.starts_with("matches: 2\nnth 0: i "), "{out}");
+    assert!(out.contains("nth 1: i ") && !out.contains("nth 2"), "{out}");
+    assert!(out.contains("plus 1 hidden, which a step skips unless it says visible: false"), "{out}");
 }

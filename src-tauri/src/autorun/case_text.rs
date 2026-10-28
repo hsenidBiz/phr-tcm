@@ -91,6 +91,37 @@ impl CaseText {
         has_phrase(&all, &phrase) || range_members(&all).iter().any(|m| *m == phrase)
     }
 
+    /// Whether the case holds a quotation: `holds`, or several quoted pieces
+    /// joined by `...` (or the ellipsis character) that the case holds in
+    /// that order, each as a whole word run. Only a divergence's `case_says`
+    /// is read this way; a check's text never is.
+    pub fn holds_quote(&self, quote: &str) -> bool {
+        if !(quote.contains("...") || quote.contains('\u{2026}')) {
+            return self.holds(quote);
+        }
+        let all = self.all_folded();
+        let mut from = 0;
+        let mut any = false;
+        for piece in quote.split('\u{2026}').flat_map(|p| p.split("...")) {
+            let piece = fold(piece);
+            if piece.is_empty() {
+                continue;
+            }
+            any = true;
+            let found = all[from..].match_indices(piece.as_str()).find(|(i, _)| {
+                let at = from + i;
+                let before = all[..at].chars().next_back();
+                let after = all[at + piece.len()..].chars().next();
+                !before.is_some_and(char::is_alphanumeric) && !after.is_some_and(char::is_alphanumeric)
+            });
+            match found {
+                Some((i, _)) => from += i + piece.len(),
+                None => return false,
+            }
+        }
+        any
+    }
+
     /// Every number the case holds: the digit runs of its words, plus the
     /// size of each range it spells out ("Level 1 to Level 4" holds 4).
     pub fn case_numbers(&self) -> BTreeSet<u32> {

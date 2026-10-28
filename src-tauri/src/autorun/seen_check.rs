@@ -2208,8 +2208,11 @@ pub fn loose_name_notes(
     let seen = Sightings::new(&present_only(map), &areas);
     let mut notes: Vec<String> = Vec::new();
     for (step, link, want) in found {
+        // Only a longer name on a page the link itself was seen on: a name
+        // that matches one element wherever the script looks needs no
+        // "exact" (`matching` reads the pages).
         let Some(longer) = seen
-            .holders(&link)
+            .matching(&link)
             .into_iter()
             .find(|h| norm_name(h.name.as_deref().or(h.text.as_deref()).unwrap_or("")) != want)
         else {

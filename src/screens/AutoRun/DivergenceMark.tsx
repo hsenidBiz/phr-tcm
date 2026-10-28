@@ -25,7 +25,7 @@ export function badgeText(d: Divergence): string {
 
 export function DivergenceBadge({ divergence }: { divergence: Divergence }) {
   const describedBy = useId();
-  const detail = `Step ${divergence.step}: the case says "${divergence.case_says}"; the app shows "${divergence.app_shows}" (${divergence.kind})`;
+  const detail = `Step ${divergence.step}: the case says "${divergence.case_says}"; the app shows "${divergence.app_shows}" (${divergence.kind})${divergence.proposal ? `; proposed: "${divergence.proposal}"` : ""}`;
   const ruled = divergence.status === "ruled";
   return (
     <>
@@ -129,6 +129,7 @@ export function DivergenceRow({
       <DivergenceBadge divergence={divergence} />
       <span className="min-w-0 flex-1 break-words text-xs text-text">
         Step {step}: the case says &quot;{divergence.case_says}&quot;; the app shows &quot;{divergence.app_shows}&quot;.
+        {divergence.proposal && <> Proposed: &quot;{divergence.proposal}&quot;.</>}
         {waiting && " Ask the assistant to repair the script (/tcm:heal)."}
       </span>
       {divergence.status === "open" && (

@@ -382,7 +382,7 @@ fn a_click_that_never_found_its_target_says_the_accounts_menu_differs() {
     use v2_lib::autorun::nav::{menu_differs, AREA_PATH_NOT_EXACT};
     assert_eq!(
         menu_differs("gabriel", "button \"Self Service\""),
-        "the menu as gabriel has no button \"Self Service\" - this account's menu differs from the one the area was recorded with; script this area as an account whose menu has it"
+        "the menu as gabriel has no button \"Self Service\" - this account's menu differs from the one the area was recorded with; script this area as an account whose menu has it, or record this account's path with save_autorun_area and variant: true"
     );
     let locator = "link \"Apply Leave\"";
     let failed = |reason: &str| PathFailure {
@@ -557,6 +557,8 @@ struct Sidebar {
     log: Arc<Mutex<Vec<String>>>,
     cover_on_toggle: Arc<AtomicBool>,
     outside_on: Arc<Mutex<String>>,
+    /// When set, the cover (`covered`) goes at that moment, as a toast does.
+    cover_gone_at: Arc<Mutex<Option<std::time::Instant>>>,
 }
 
 impl Sidebar {
@@ -579,7 +581,13 @@ fn sidebar_app(at: &str, open: bool, covered: bool) -> (common::ScriptedDriver, 
     let path = Arc::new(Mutex::new(at.to_string()));
     let cover_on_toggle = Arc::new(AtomicBool::new(false));
     let outside_on = Arc::new(Mutex::new(String::new()));
-    let app = Sidebar { log: log.clone(), cover_on_toggle: cover_on_toggle.clone(), outside_on: outside_on.clone() };
+    let cover_gone_at = Arc::new(Mutex::new(None::<std::time::Instant>));
+    let app = Sidebar {
+        log: log.clone(),
+        cover_on_toggle: cover_on_toggle.clone(),
+        outside_on: outside_on.clone(),
+        cover_gone_at: cover_gone_at.clone(),
+    };
     let mut last_css = String::new();
     let mut last_probed = String::new();
     let mut d = common::ScriptedDriver::new(move |method, params| {
@@ -615,6 +623,9 @@ fn sidebar_app(at: &str, open: bool, covered: bool) -> (common::ScriptedDriver, 
             "DOM.resolveNode" => json!({ "object": { "objectId": format!("ax-{}", params["backendNodeId"]) } }),
             "Runtime.callFunctionOn" if f == PROBE_JS => {
                 last_probed = object.clone();
+                if cover_gone_at.lock().unwrap().is_some_and(|t| std::time::Instant::now() >= t) {
+                    covered.store(false, Ordering::SeqCst);
+                }
                 let hit = !covered.load(Ordering::SeqCst);
                 let mut p = common::ready_probe();
                 p["visible"] = json!(shows(&object));
@@ -649,6 +660,8 @@ fn sidebar_app(at: &str, open: bool, covered: bool) -> (common::ScriptedDriver, 
                 } else if last_probed == "ax-101" {
                     log.lock().unwrap().push("click outside Leave".to_string());
                     *path.lock().unwrap() = "/hr/elsewhere".to_string();
+                    // The breadcrumb is gone with the page it was on.
+                    outside_on.lock().unwrap().clear();
                 } else if last_probed == "ax-100" {
                     log.lock().unwrap().push("click Leave".to_string());
                     *path.lock().unwrap() = "/hr/leave".to_string();
@@ -879,6 +892,202 @@ async fn a_trip_from_about_blank_makes_no_quick_try() {
         !m[..home].iter().any(|x| x == "Accessibility.queryAXTree" || x == "Runtime.callFunctionOn"),
         "a quick try looked for a click before going home: {m:?}"
     );
+}
+
+// ---- Menu-shape variants, covers and toggles ---------------------------------
+
+/// An area whose primary path clicks a control this account's menu does not
+/// have, with `variants` for the other shapes.
+fn leave_with_variants(primary: &str, variants: &[&str], start: &str) -> ModulePath {
+    let mut p: ModulePath = serde_json::from_value(json!({
+        "module": "Leave",
+        "clicks": [ { "role": "link", "name": primary, "exact": true } ],
+        "arrived": "/hr/leave",
+        "start": start,
+        "recorded": "2026-10-28T10:00:00Z",
+        "variants": variants.iter().map(|v| json!({
+            "clicks": [ { "role": "link", "name": v, "exact": true } ],
+            "arrived": "/hr/leave"
+        })).collect::<Vec<_>>()
+    }))
+    .unwrap();
+    p.area = "Leave".into();
+    p
+}
+
+/// A file written before variants existed loads with none and walks as it
+/// always did.
+#[tokio::test]
+async fn an_areas_file_without_variants_loads_and_walks_as_before() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = nav_path(dir.path(), "acme", "Web");
+    std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+    std::fs::write(
+        &file,
+        r#"{"modules":[{"module":"Leave","clicks":[{"role":"link","name":"Leave","exact":true}],"arrived":"/hr/leave","recorded":"2026-09-30T10:00:00Z"}]}"#,
+    )
+    .unwrap();
+    let nav = load_nav(dir.path(), "acme", "Web").unwrap();
+    assert!(nav.modules[0].variants.is_empty());
+    save_nav(dir.path(), "acme", "Web", &nav).unwrap();
+    assert!(!std::fs::read_to_string(&file).unwrap().contains("variants"), "no variants, no key");
+
+    let (mut d, app) = sidebar_app("/hr/payroll", true, false);
+    let route = Route::new(&login_home_recipe("/hr/security/login"), nav.modules[0].clone());
+    let out = go_to_module(&mut d, &route, TripFrom::Elsewhere, &common::quick()).await;
+    assert_eq!(out, Ok("/hr/leave".to_string()));
+    assert_eq!(app.log(), vec!["click Leave"]);
+}
+
+/// A primary click this account's menu lacks: the walk goes home again, takes
+/// the variant, and says which menu path got there.
+#[tokio::test]
+async fn a_variant_path_is_taken_when_the_primary_click_is_missing() {
+    let (mut d, app) = sidebar_app("/hr/payroll", true, false);
+    let route = Route::new(&login_home_recipe("/hr/security/login"), leave_with_variants("Self Service", &["Leave"], ""));
+    let mut notes = Vec::new();
+    let out = v2_lib::autorun::nav::go_to_module_noted(&mut d, &route, TripFrom::Elsewhere, &common::quick(), &mut notes).await;
+    assert_eq!(out, Ok("/hr/leave".to_string()));
+    assert_eq!(app.log().last().map(String::as_str), Some("click Leave"), "{:?}", app.log());
+    assert!(notes.contains(&"reached \"Leave\" by its menu path 2".to_string()), "{notes:?}");
+    // The run's line says so too.
+    let said = v2_lib::autorun::nav::reached_noted("Leave", out, &notes, Some("gabriel"));
+    assert!(said.ok && said.detail.contains("reached \"Leave\" by its menu path 2"), "{said:?}");
+}
+
+/// A walk whose primary path works never looks at a variant.
+#[tokio::test]
+async fn a_working_primary_path_leaves_the_variants_alone() {
+    let (mut d, app) = sidebar_app("/hr/payroll", true, false);
+    let route = Route::new(&login_home_recipe("/hr/security/login"), leave_with_variants("Leave", &["Elsewhere"], ""));
+    let mut notes = Vec::new();
+    let out = v2_lib::autorun::nav::go_to_module_noted(&mut d, &route, TripFrom::Elsewhere, &common::quick(), &mut notes).await;
+    assert_eq!(out, Ok("/hr/leave".to_string()));
+    assert_eq!(app.log(), vec!["click Leave"]);
+    assert!(notes.is_empty(), "{notes:?}");
+}
+
+/// Every path missing: the failure is the primary's, with the menu sentence
+/// that now names the way out.
+#[tokio::test]
+async fn when_every_menu_path_fails_the_menu_sentence_names_the_variant_save() {
+    let (mut d, _app) = sidebar_app("/hr/payroll", true, false);
+    let route = Route::new(
+        &login_home_recipe("/hr/security/login"),
+        leave_with_variants("Self Service", &["Staff Hub", "Employee Hub"], ""),
+    );
+    let failure = go_to_module(&mut d, &route, TripFrom::Elsewhere, &common::quick()).await.unwrap_err();
+    assert!(matches!(failure.at, Where::Click { n: 1, .. }), "{:?}", failure.at);
+    let said = failure.for_run_as("Leave", Some("gabriel"));
+    assert!(
+        said.ends_with(
+            "script this area as an account whose menu has it, or record this account's path with save_autorun_area and variant: true."
+        ),
+        "{said}"
+    );
+    assert!(said.contains("click 1, link \"Self Service\""), "{said}");
+}
+
+/// Variants are checked like the primary path when the file is saved.
+#[test]
+fn a_variant_needs_clicks_and_an_address_path() {
+    let mut p = leave_with_variants("Leave", &["Staff Hub"], "");
+    assert!(v2_lib::autorun::nav::validate(&with(vec![p.clone()])).is_ok());
+    p.variants[0].clicks.clear();
+    assert!(v2_lib::autorun::nav::validate(&with(vec![p.clone()])).unwrap_err().contains("menu path 2 has no clicks"));
+    p.variants[0].clicks = leave_path().clicks;
+    p.variants[0].arrived = "hr/leave".into();
+    assert!(v2_lib::autorun::nav::validate(&with(vec![p])).unwrap_err().contains("menu path 2"));
+}
+
+/// A click covered by a toast waits for it to go (within the nav wait) and
+/// clicks once more.
+#[tokio::test]
+async fn a_covered_click_waits_for_the_cover_to_go_and_clicks_again() {
+    let (mut d, app) = sidebar_app("/hr/payroll", true, true);
+    *app.cover_gone_at.lock().unwrap() = Some(std::time::Instant::now() + std::time::Duration::from_millis(250));
+    let mut path = leave_path();
+    path.start = "/hr/payroll".into();
+    let route = Route::new(&login_home_recipe("/hr/security/login"), path);
+    let timing = v2_lib::browser::timing::Timing { action_ms: 100, nav_ms: 800, ..common::quick() };
+    let out = go_to_module(&mut d, &route, TripFrom::SignIn, &timing).await;
+    assert_eq!(out, Ok("/hr/leave".to_string()));
+    assert_eq!(app.log(), vec!["click Leave"]);
+}
+
+/// A cover that stays fails as it always did, naming what covers it.
+#[tokio::test]
+async fn a_click_that_stays_covered_still_fails() {
+    let (mut d, app) = sidebar_app("/hr/payroll", true, true);
+    let mut path = leave_path();
+    path.start = "/hr/payroll".into();
+    let route = Route::new(&login_home_recipe("/hr/security/login"), path);
+    let timing = v2_lib::browser::timing::Timing { action_ms: 100, nav_ms: 200, ..common::quick() };
+    let failure = go_to_module(&mut d, &route, TripFrom::SignIn, &timing).await.unwrap_err();
+    assert!(failure.reason.contains(v2_lib::browser::input::COVERED_BY), "{}", failure.reason);
+    assert!(app.log().is_empty(), "{:?}", app.log());
+}
+
+/// The old way (a walk from home) no longer closes a menu the page opened:
+/// `after_sign_in` opens it, and the path's own toggle is then left out
+/// because the entry after it can already be clicked.
+#[tokio::test]
+async fn the_old_way_keeps_an_open_menu_open() {
+    let (mut d, app) = sidebar_app("/hr/payroll", false, false);
+    let route = Route::new(&login_home_recipe("/hr/security/login"), toggle_then_leave(""));
+    let out = go_to_module(&mut d, &route, TripFrom::SignIn, &common::quick()).await;
+    assert_eq!(out, Ok("/hr/leave".to_string()));
+    assert_eq!(app.log(), vec!["navigate /hr/security/login", "click #toggle", "click Leave"], "the path's toggle closed the menu");
+}
+
+/// A skipped click that was not a toggle: the next entry's name shows once
+/// on the home page too, so the walk clicks it and lands elsewhere. The walk
+/// goes home again, makes every click, and arrives.
+#[tokio::test]
+async fn a_walk_that_skipped_a_click_and_failed_walks_again_with_every_click() {
+    let (mut d, app) = sidebar_app("/hr/payroll", false, false);
+    *app.outside_on.lock().unwrap() = "/hr/home/index".to_string();
+    let route = Route::new(&common::menu_recipe(), toggle_then_leave(""));
+    let out = go_to_module(&mut d, &route, TripFrom::SignIn, &common::quick()).await;
+    assert_eq!(out, Ok("/hr/leave".to_string()));
+    assert_eq!(
+        app.log(),
+        vec!["navigate /hr/home/index", "click outside Leave", "navigate /hr/home/index", "click #toggle", "click Leave"]
+    );
+}
+
+/// Every path failed: the failure that got furthest is the answer, and the
+/// hint to record a variant stays because that click was never found.
+#[tokio::test]
+async fn when_every_path_fails_the_furthest_failure_is_the_answer() {
+    let (mut d, _app) = sidebar_app("/hr/payroll", true, false);
+    let mut p = leave_with_variants("Self Service", &[], "");
+    p.variants = vec![serde_json::from_value(json!({
+        "clicks": [
+            { "role": "link", "name": "Leave", "exact": true },
+            { "role": "link", "name": "Nowhere", "exact": true }
+        ],
+        "arrived": "/hr/leave"
+    }))
+    .unwrap()];
+    let route = Route::new(&login_home_recipe("/hr/security/login"), p);
+    let failure = go_to_module(&mut d, &route, TripFrom::Elsewhere, &common::quick()).await.unwrap_err();
+    assert!(matches!(&failure.at, Where::Click { n: 2, locator } if locator.contains("Nowhere")), "{:?}", failure.at);
+    assert!(failure.for_run_as("Leave", Some("gabriel")).contains("variant: true"));
+}
+
+/// A person's re-record keeps the area's other menu paths, minus one the new
+/// primary path now equals.
+#[test]
+fn a_re_record_keeps_the_other_menu_paths() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut old = leave_with_variants("Leave", &["Staff Hub", "Employee Hub"], "");
+    old.module = "Leave".into();
+    save_nav(dir.path(), "acme", "Web", &with(vec![old])).unwrap();
+    let mut fresh = leave_with_variants("Employee Hub", &[], "");
+    v2_lib::autorun::nav::keep_recorded_values(dir.path(), "acme", "Web", &mut fresh);
+    assert_eq!(fresh.variants.len(), 1);
+    assert_eq!(fresh.variants[0].clicks[0], leave_with_variants("Staff Hub", &[], "").clicks[0]);
 }
 
 // ---- Areas ---------------------------------------------------------------

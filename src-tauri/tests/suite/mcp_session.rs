@@ -109,6 +109,45 @@ fn a_repair_save_brings_the_case_rewriters_rules_and_a_new_script_save_does_not(
 }
 
 #[test]
+fn a_writer_saving_with_edits_gets_the_save_answer_and_no_other_roles_rules() {
+    let fake = Fake::new();
+    let mut s = Session::new();
+    s.tick(1_000);
+    let started = texts(&send(&fake, &mut s, "start_autorun_discovery", json!({ "account": "a" })));
+    assert_eq!(started, vec![Role::Writer.text(), ANSWER.to_string()]);
+    let edit = texts(&send(&fake, &mut s, "save_autorun_script", repair_args()));
+    assert_eq!(edit, vec![ANSWER.to_string()]);
+    s.tick(2_000);
+    let again = texts(&send(&fake, &mut s, "save_autorun_script", repair_args()));
+    assert_eq!(again, vec![ANSWER.to_string()]);
+    // A session that was never a writer still gets the rewriter's rules.
+    let mut other = Session::new();
+    other.tick(1_000);
+    assert_eq!(texts(&send(&fake, &mut other, "save_autorun_script", repair_args()))[0], Role::CaseRewriter.text());
+}
+
+#[test]
+fn a_healers_first_repair_save_still_brings_the_case_rewriters_rules() {
+    let fake = Fake::new();
+    let mut s = Session::new();
+    s.tick(1_000);
+    failures(&fake, &mut s);
+    let repair = texts(&send(&fake, &mut s, "save_autorun_script", repair_args()));
+    assert_eq!(repair, vec![Role::CaseRewriter.text(), ANSWER.to_string()]);
+}
+
+#[test]
+fn a_writer_session_that_then_heals_still_gets_the_rewriters_rules_on_its_repair() {
+    let fake = Fake::new();
+    let mut s = Session::new();
+    s.tick(1_000);
+    texts(&send(&fake, &mut s, "start_autorun_discovery", json!({ "account": "a" })));
+    failures(&fake, &mut s);
+    let repair = texts(&send(&fake, &mut s, "save_autorun_script", repair_args()));
+    assert_eq!(repair, vec![Role::CaseRewriter.text(), ANSWER.to_string()]);
+}
+
+#[test]
 fn a_component_save_brings_the_case_rewriters_rules() {
     let fake = Fake::new();
     let mut s = Session::new();
@@ -200,7 +239,8 @@ fn a_session_pays_each_role_once() {
         for (tool, args) in [
             ("start_autorun_discovery", json!({ "account": "a" })),
             ("get_autorun_failures", json!({})),
-            ("save_autorun_script", repair_args()),
+            // (A repair save after the writer's rules says nothing: see
+            // a_writer_saving_with_edits_gets_the_save_answer_and_no_other_roles_rules.)
             ("save_autorun_component", json!({ "name": "n", "actions": [] })),
         ] {
             let t = texts(&send(&fake, &mut s, tool, args));
@@ -347,4 +387,47 @@ fn the_shared_body_gives_each_agent_name_the_rules_once() {
     handle_message_shared(&init, "1.0.0", &call, &book).unwrap();
     assert_eq!(ask(None)[0], Role::Healer.text());
     assert_eq!(ask(Some("healer-1"))[0], Role::Healer.text());
+}
+
+/// A guide section answer opens with the Quick rules; a session that has had
+/// them leaves them out of the next section and says they still hold.
+#[test]
+fn a_second_guide_section_leaves_the_rules_out_and_says_they_hold() {
+    use v2_lib::autorun::guide::{autorun_guide, guide_section, quick_rules};
+    let section = guide_section(&autorun_guide(), "Selectors").unwrap();
+    assert!(section.starts_with(quick_rules().trim_end()), "the answer opens with the rules");
+    let call = |m: &str, p: &str, _b: &str| -> Result<(u16, String), String> {
+        if m == "GET" && p == "/tools" {
+            return Ok((200, json!({ "disabled": [], "modules": v2_lib::modules::Module::ALL.iter().map(|m| m.key()).collect::<Vec<_>>() }).to_string()));
+        }
+        Ok((200, section.clone()))
+    };
+    let ask = |s: &mut Session, args: Value| {
+        let msg = json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": { "name": "get_guide", "arguments": args } }).to_string();
+        let out = handle_message_in(&msg, "1.0.0", &call, s).expect("an answer");
+        texts(&serde_json::from_str::<Value>(&out).unwrap()["result"]).concat()
+    };
+    let args = json!({ "topic": "autorun", "section": "Selectors", "agent": "writer-1" });
+    let mut s = Session::new();
+    s.tick(1_000);
+    let first = ask(&mut s, args.clone());
+    assert!(first.contains(quick_rules().trim_end()), "the first answer keeps the rules: {}", &first[..first.len().min(300)]);
+    let second = ask(&mut s, args.clone());
+    assert!(second.contains(v2_lib::mcp::RULES_HOLD), "{second}");
+    assert!(!second.contains(quick_rules().trim_end()), "the rules are not repeated");
+    assert!(second.contains("## Selectors"), "the section itself is still there");
+    // A call that names no agent shares nobody's memory: the rules are never left out of it.
+    let unnamed = json!({ "topic": "autorun", "section": "Selectors" });
+    assert!(ask(&mut s, unnamed.clone()).contains(quick_rules().trim_end()));
+    assert!(ask(&mut s, unnamed).contains(quick_rules().trim_end()));
+    // Nor from an answer to a call without a section.
+    let whole = ask(&mut s, json!({ "topic": "autorun", "agent": "writer-1" }));
+    assert!(whole.contains(quick_rules().trim_end()), "no section: the rules stay");
+    // An untracked session (every caller but the proxy) never leaves them out.
+    let mut plain = Session::untracked();
+    ask(&mut plain, args.clone());
+    assert!(ask(&mut plain, args.clone()).contains(quick_rules().trim_end()));
+    // An initialize starts the session over: the rules come again.
+    s.reset();
+    assert!(ask(&mut s, args).contains(quick_rules().trim_end()));
 }

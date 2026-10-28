@@ -1074,7 +1074,31 @@ pub fn stalling_menu_app(
     lag: usize,
     stalls: usize,
 ) -> (ScriptedDriver, MenuApp) {
+    menu_app_shaped(entries, landing, lag, stalls, false)
+}
+
+/// `stalling_menu_app` for a menu that opens as it goes: each entry after the
+/// first is hidden until the entry before it has been clicked since the
+/// page last loaded, as a real submenu is. A path through it must click
+/// every entry; a walk that leaves one out cannot see the next.
+pub fn nested_menu_app(
+    entries: &[(&'static str, &'static str, &'static str)],
+    landing: &'static str,
+    lag: usize,
+    stalls: usize,
+) -> (ScriptedDriver, MenuApp) {
+    menu_app_shaped(entries, landing, lag, stalls, true)
+}
+
+fn menu_app_shaped(
+    entries: &[(&'static str, &'static str, &'static str)],
+    landing: &'static str,
+    lag: usize,
+    stalls: usize,
+    nested: bool,
+) -> (ScriptedDriver, MenuApp) {
     let mut stalls = stalls;
+    let mut clicked = vec![false; entries.len()];
     let app = MenuApp { log: Arc::new(Mutex::new(vec![])), path: Arc::new(Mutex::new("/".to_string())) };
     let (log, path) = (app.log.clone(), app.path.clone());
     let entries: Vec<(String, String, String)> =
@@ -1082,6 +1106,11 @@ pub fn stalling_menu_app(
     let mut last_css = String::new();
     let mut last_probed = String::new();
     let mut pending: Option<(String, usize)> = None;
+    // Whether the element `object` shows: all do, unless the menu is nested.
+    let shown = move |object: &str, clicked: &[bool]| match object.strip_prefix("ax-").and_then(|s| s.parse::<usize>().ok()) {
+        Some(id) if nested && id > 100 => clicked.get(id - 101).copied().unwrap_or(true),
+        _ => true,
+    };
     let mut d = ScriptedDriver::new(move |method, params| {
         let f = params["functionDeclaration"].as_str().unwrap_or("");
         Ok(match method {
@@ -1090,6 +1119,7 @@ pub fn stalling_menu_app(
                 log.lock().unwrap().push(format!("navigate {p}"));
                 *path.lock().unwrap() = p;
                 pending = None;
+                clicked.iter_mut().for_each(|c| *c = false);
                 json!({ "frameId": "F", "loaderId": "L" })
             }
             "Runtime.evaluate" if params["expression"] == "document" => json!({ "result": { "objectId": "doc" } }),
@@ -1122,9 +1152,14 @@ pub fn stalling_menu_app(
             "DOM.resolveNode" => json!({ "object": { "objectId": format!("ax-{}", params["backendNodeId"]) } }),
             "Runtime.callFunctionOn" if f == PROBE_JS => {
                 last_probed = params["objectId"].as_str().unwrap_or("").to_string();
-                json!({ "result": { "value": ready_probe() } })
+                let mut p = ready_probe();
+                p["visible"] = json!(shown(&last_probed, &clicked));
+                json!({ "result": { "value": p } })
             }
-            "Runtime.callFunctionOn" if f == VISIBLE_JS || f == v2_lib::browser::input::SHOWN_JS || f == HIGHLIGHT_JS || f == HAS_FOCUS_JS => {
+            "Runtime.callFunctionOn" if f == VISIBLE_JS || f == v2_lib::browser::input::SHOWN_JS => {
+                json!({ "result": { "value": shown(params["objectId"].as_str().unwrap_or(""), &clicked) } })
+            }
+            "Runtime.callFunctionOn" if f == HIGHLIGHT_JS || f == HAS_FOCUS_JS => {
                 json!({ "result": { "value": true } })
             }
             "Runtime.callFunctionOn" if f == CHECK_TEXT_JS => {
@@ -1150,6 +1185,7 @@ pub fn stalling_menu_app(
                 } else if let Some(id) = last_probed.strip_prefix("ax-").and_then(|s| s.parse::<usize>().ok()) {
                     if let Some((_, name, dest)) = id.checked_sub(100).and_then(|i| entries.get(i)) {
                         log.lock().unwrap().push(format!("click {name}"));
+                        clicked[id - 100] = true;
                         if stalls > 0 {
                             stalls -= 1;
                         } else if lag == 0 {

@@ -1186,6 +1186,11 @@ async fn run_steps_marked<D: Driver>(
 ) -> Option<ReplayEnd> {
     let stopped = || replay.cancel.load(Ordering::SeqCst);
     let in_range = |k: i32| k >= from && k < n;
+    // A look-only replay (the script must not save, or the browser is
+    // guarded for another case) cannot save: the guard stops every request
+    // it takes for a save, so a write that got through is not called a save
+    // (`Unclean::Posted`).
+    let look_only = script.no_save || guarding_other.is_some() || d.is_guarding_saves();
     // The other areas their `return_to_area` actions name are read once,
     // before the first.
     let names = runner::named_areas(script.in_run_order().filter(|s| in_range(s.step_number)).flat_map(|s| s.actions.iter()));
@@ -1297,8 +1302,22 @@ async fn run_steps_marked<D: Driver>(
     // Every step passed, the clean-up too: what the whole run did.
     marks.unclean = if !d.net_recording() {
         Some(Unclean::Unrecorded)
-    } else if wrote_before || d.net_wrote_since(mark) {
+    } else if wrote_before && !look_only {
         Some(Unclean::Saved)
+    } else if wrote_before || d.net_wrote_since(mark) {
+        // A look-only script cannot have saved (its guard stops what it takes
+        // for a save), but the guard is a list of words: a write it let
+        // through may still have changed the page's state. Say so, by path.
+        // An earlier part of the same case that posted (`wrote_before`) counts the same way.
+        if look_only {
+            crate::applog::info(format!(
+                "Auto Run: a look-only replay sent a request the save guard let through: {}",
+                d.net_posted_paths(mark).join(", ")
+            ));
+            Some(Unclean::Posted)
+        } else {
+            Some(Unclean::Saved)
+        }
     } else if d.tabs_opened() > tabs_before {
         Some(Unclean::Tabs)
     } else {
@@ -1315,6 +1334,9 @@ pub enum Unclean {
     /// A save went out (or the record can no longer rule one out): in the
     /// steps, after the shared ones, or in the clean-up.
     Saved,
+    /// A look-only replay's page sent a write the save guard let through
+    /// (it is a list of words): not a save, but the state may have changed.
+    Posted,
     /// The network record was not on, so no save could have been seen.
     Unrecorded,
     /// A second tab was open at some point.
@@ -1329,6 +1351,9 @@ impl Unclean {
         match self {
             Unclean::Saved if in_shared => format!("case {case_id} saved something in the shared steps."),
             Unclean::Saved => format!("case {case_id} saved something after the shared steps."),
+            Unclean::Posted => {
+                format!("case {case_id}'s page sent a request the save guard let through, so its state may have changed.")
+            }
             Unclean::Unrecorded => {
                 format!("case {case_id} ran without a network record, so a save could not be ruled out.")
             }

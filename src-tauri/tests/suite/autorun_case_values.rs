@@ -275,7 +275,7 @@ fn a_matches_pattern_taken_from_the_page_with_no_because_is_refused() {
     let r = check_case_values(&bare, &text_of(&case), None, "AUTOTEST");
     assert_eq!(
         r.refusals,
-        vec!["step 1: the pattern \"^Customer Focus$\" is not in the case - take it from the case's steps, expected results or preconditions as written, or give it a \"because\" on the step ({ \"value\": \"^Customer Focus$\", \"why\": \"where the case defines it\" })".to_string()]
+        vec!["step 1: the pattern \"^Customer Focus$\" is not in the case - take it from the case's steps, expected results or preconditions as written, or add it to the step's \"because\" list as { \"value\": \"^Customer Focus$\", \"why\": \"where the case defines it\" }".to_string()]
     );
     let covered = script(json!([{ "step_number": 1, "actions": [action],
         "because": [{ "value": "^Customer Focus$", "why": "the heading step 2 expects" }] }]));
@@ -369,6 +369,19 @@ fn a_repair_checks_only_its_declared_steps() {
     assert!(check(&case, &s, Some(&[3])).refusals.is_empty());
     assert_eq!(check(&case, &s, Some(&[2])).refusals.len(), 1);
     assert_eq!(check(&case, &s, None).refusals.len(), 1);
+}
+
+#[test]
+fn a_because_another_step_uses_is_not_noted() {
+    let case = case_147556();
+    let s = script(json!([
+        { "step_number": 1, "actions": [{ "kind": "navigate", "url": "https://app.example/def" }] },
+        { "step_number": 2, "actions": [{ "kind": "expect_contains_text", "selector": "#a", "value": "Level 2" }],
+          "because": [{ "value": "Level 9", "why": "step 3 names it" }] },
+        { "step_number": 3, "actions": [{ "kind": "expect_contains_text", "selector": "#a", "value": "Level 9" }] },
+    ]));
+    let notes = check(&case, &s, None).notes;
+    assert!(notes.is_empty(), "{notes:?}");
 }
 
 #[test]

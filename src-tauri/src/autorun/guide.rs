@@ -77,6 +77,28 @@ pub fn autorun_guide() -> String {
     out.push_str(QUICK_RULES);
     out.push('\n');
     out.push_str(&crate::browser::viewport::size_in_force(GUIDE_BODY));
+    out.push_str(&actions_at_a_glance());
+    out
+}
+
+/// The guide's one-page list of every action kind with a valid example of
+/// its fields, built from `action_help::example_for`, the examples a refused
+/// action shows, so the list cannot drift from them.
+pub fn actions_at_a_glance() -> String {
+    let mut out = String::from(
+        "
+## Every action at a glance
+
+One valid example of each action kind, with its field names; the same examples a refused action shows. Copy one and change the values.
+
+",
+    );
+    for kind in super::action_help::kinds() {
+        if let Some(example) = super::action_help::example_for(kind) {
+            out.push_str(&format!("- `{example}`
+"));
+        }
+    }
     out
 }
 
@@ -1104,7 +1126,8 @@ ends. `no_save: true` on one discovery action or batch lasts for that call
 only. A call that names a marked case (a replay, a try or a discovery call) is
 guarded for that call, and every call when the discovery is for that case (it
 started with it, or it was the first case named). Name the `case_id` on every
-discovery call for a `no_save` case. The replay that ends a guarded discovery is guarded too, for
+discovery call for a `no_save` case. `start_autorun_discovery` with a `case_id`
+keeps the save guard on when that case is marked `no_save`. The replay that ends a guarded discovery is guarded too, for
 that replay only; the next replay of a case that may save is not guarded.
 
 When the page tries to save, the case fails at once with:
@@ -1232,6 +1255,21 @@ from a fresh draft of its own. Its outputs reach the steps as
 Use a setup only when the case needs its own fresh draft, for example
 because it changes or uses up the draft. Otherwise use a shared
 `{{fixture...}}`: it costs no run per case.
+
+Data a case needs is made, not waited for. When a case's data is missing,
+or the case uses up a state, do not hold it back and do not ask: make what
+it needs with a proven API template or fixture (`run_api_template`,
+`run_api_fixture`), or by hand in the live app in an explore discovery
+(`record_explore_change` lists it), then script the case. Never make data
+with your own SQL: `db_query` only reads. Give each case that uses up a
+state its own record (its own participant, record or cycle), so cases never
+fight over one and a saver can replay twice. Name what you make with the
+environment's test name prefix and a natural name. Never alter or delete
+data the run did not create. A draft stays a draft unless the case needs a
+published cycle, and only a cycle the run made may be published. Save what
+you made as a fixture (`save_api_fixture`) so it can be rebuilt, and list
+it in your report. Hold a case back only when its data cannot be made (no
+template and no way in the app), and say why.
 
 ## Shared state a case changes
 
@@ -1565,14 +1603,20 @@ browser (see "Discovering the app"):
   line. It answers the first 120 lines, then a line saying how many more
   there are. Ask for more with `limit` (at most 3000), or list one part
   of the page with `within`: a locator, written as a script writes one,
-  that matches exactly one element, such as a dialog or a form. Only that
-  element and what is inside it is listed; a `within` that matches none
-  or several is refused with the count, naming up to 3 of several; a css
-  string counts every visible match. `nth` beside `within` picks one of
-  several, counting from 0 as a locator's `nth` does. The page a replay,
+  such as a dialog or a form. Only that element and what is inside it is
+  listed; a `within` that matches none is refused; one that matches
+  several lists the first and says how many matched. A css string counts
+  every visible match. `nth` beside `within` picks one, counting from 0
+  as a locator's `nth` does. `query` lists only the lines that contain
+  it (case ignored) with the lines they sit under, from the whole page,
+  and records nothing as seen. The page a replay,
   `start_autorun_discovery` and `discover_autorun_actions` answer stops
   at 120 lines too; send
-  `page: false` to any of them to leave the page out of the answer.
+  `page: false` to any of them to leave the page out of the answer. Every
+  page answer prints the side menu (the navigation landmark) only when it
+  changed since your last answer, else one line saying it did not;
+  `page: "full"` on any of them (or on `get_autorun_page`) gives the whole
+  tree.
 - Visible text that no line's name already says (a span, a div, a
   paragraph: "Self 20%", a status badge) prints as a `text "..."` line
   with a text locator on its end. A read counts a text line against every
@@ -1588,7 +1632,11 @@ browser (see "Discovering the app"):
 - `probe_autorun_locator` says how many elements a locator matches right
   now, before it goes into a script, and for each the role and name the
   page read gives it (`page read: button "Edit ..."`) when its own text
-  is not that name.
+  is not that name. `matches: N` counts every match; of several, the first
+  ten are listed, each as `nth i:` (counting from 0, as a locator's `nth`
+  does). A Playwright selector (`:has-text`, `:text-is`, `>>`) is refused:
+  use CSS or a role and name. `show: "html"` answers each match's opening
+  tag with its attributes (`class` too) and 300 characters of its HTML.
 - `try_autorun_action` runs one action in that same browser and says what
   happened - a rehearsal, not a run: no run or step record is kept, but
   what the try found on the page counts as seen. Every try names
@@ -1730,6 +1778,15 @@ You open and drive a browser of your own to find what a script needs:
   refused too. The new clicks must arrive where you are, as for a new area.
   The area keeps its name and module, so its scripts are unchanged; tell
   the person what you repaired and that they can put the old path back.
+- Half of an environment's accounts can see the other menu shape. When a
+  walk fails with "the menu as <account> has no ...", reach the same screen
+  through this account's menu and call `save_autorun_area` with the area's
+  name, its module, those clicks and `variant: true`: the clicks are
+  replayed from a fresh home, must arrive where you are, and are added to
+  the existing area as another menu path ("saved as menu path 2 of ..."); a
+  path the area already has is not added twice. A walk takes the area's first
+  path, and only when that meets a click that was never found does it load
+  the home page again and try each other path in order.
 - A project's recipe may name its menu preferences (`menu_preferences`: how
   to open the dialog, each setting's control and the value its areas need).
   An area records the values in force when it was saved; after each sign-in
@@ -2202,10 +2259,12 @@ own expected result was seen. The save refuses that script: "step 2: the check c
 says 4 ("exactly 4 levels")".
 
 `report_case_divergence { case_id, step, case_says, app_shows, kind }` stores what you found for the
-person and never changes the script:
+person and never changes the script; add `proposal` (optional) with what you suggest be done:
 
 - `case_says` quotes the case's own words (that step, another expected result or the preconditions), at
-  most 300 characters; words the case does not hold are refused. `app_shows` is what the page showed.
+  most 1000 characters; put `...` between quoted pieces to skip the words between them. Words the case
+  does not hold are refused. `app_shows` is what the page showed, at most 1000 characters. `proposal`
+  is optional: what you suggest be done (a rewording, a data fix); it is shown with the divergence.
 - `kind` is `data` when the environment does not meet the case's precondition (6 levels where the case
   needs 4), `app` when the application does not do what the case expects, and `wording` when the case is
   unclear or out of date.

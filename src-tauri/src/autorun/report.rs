@@ -653,11 +653,12 @@ fn divergence_words(d: &Divergence) -> String {
         _ => String::new(),
     };
     format!(
-        "step {}: the case says \"{}\", the app shows \"{}\" ({}, {status}{by})",
+        "step {}: the case says \"{}\", the app shows \"{}\" ({}, {status}{by}){}",
         d.step,
         d.case_says,
         d.app_shows,
-        d.kind.word()
+        d.kind.word(),
+        crate::autorun::divergences::proposal_words(d)
     )
 }
 

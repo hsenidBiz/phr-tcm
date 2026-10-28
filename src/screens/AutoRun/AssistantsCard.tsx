@@ -1,5 +1,5 @@
-// The Assistants card: every connected assistant, the browser it has, what it
-// is doing, and the three things a person can do about it - Stop its replay,
+// The Assistants card: every connected assistant that has an Auto Run browser
+// (one without is left out), the browser it has, what it is doing, and the three things a person can do about it - Stop its replay,
 // End its discovery, Release its browser. It draws nothing until an assistant
 // is doing something: while every connected assistant is idle (or none is
 // connected) it is gone, and while it shows, an idle assistant keeps its row
@@ -42,7 +42,6 @@ function activityText(a: AgentActivity, idleMinutes: number): string {
 
 /** Which browser the assistant has, and who is signed in there. */
 function browserText(a: AgentView): string {
-  if (a.slot === null) return "No Auto Run browser";
   let text = a.own_browser ? "Its own browser" : "Main Auto Run browser";
   if (a.browser) text += `, ${a.browser}`;
   if (a.account) text += `, signed in as ${a.account}`;
@@ -141,7 +140,10 @@ export default function AssistantsCard() {
     }
   }
 
-  const workingCount = agents.filter((a) => isWorking(a.activity)).length;
+  // An assistant connected without an Auto Run browser has nothing here to
+  // stop or release: it gets no row and no place in the office.
+  const shown = agents.filter((a) => a.slot !== null);
+  const workingCount = shown.filter((a) => isWorking(a.activity)).length;
   if (workingCount === 0) return null;
 
   return (
@@ -152,9 +154,9 @@ export default function AssistantsCard() {
         </h3>
         <span className="text-xs text-muted">{workingCount} working</span>
       </div>
-      <AssistantOffice agents={agents} />
+      <AssistantOffice agents={shown} />
       <ul className="divide-y divide-border">
-        {agents.map((a) => {
+        {shown.map((a) => {
           const slot = a.slot;
           const note = notes[a.label];
           const working = busy.has(a.label);

@@ -893,6 +893,33 @@ fn the_guide_teaches_setups_and_shared_fixtures() {
     assert!(!section.contains('\u{2014}') && !section.contains('\u{2013}'), "no em or en dashes");
 }
 
+/// A case's missing data is made, not waited for, within the owner's limits (backlog 43).
+#[test]
+fn the_guide_says_a_cases_data_is_made_not_held_back() {
+    let g = autorun_guide();
+    let start = g.find("## Drafts a case needs: fixtures and setups").expect("the section is missing");
+    let section = g[start..].split("\n## ").next().unwrap();
+    let flat = section.split_whitespace().collect::<Vec<_>>().join(" ");
+    for needle in [
+        "Data a case needs is made, not waited for.",
+        "do not hold it back and do not ask",
+        "(`run_api_template`, `run_api_fixture`)",
+        "by hand in the live app in an explore discovery",
+        "Never make data with your own SQL: `db_query` only reads.",
+        "its own record (its own participant, record or cycle)",
+        "a saver can replay twice",
+        "test name prefix and a natural name",
+        "Never alter or delete data the run did not create.",
+        "only a cycle the run made may be published",
+        "Save what you made as a fixture (`save_api_fixture`)",
+        "list it in your report",
+        "Hold a case back only when its data cannot be made (no template and no way in the app), and say why.",
+    ] {
+        assert!(flat.contains(needle), "{needle} not in: {flat}");
+    }
+    assert!(!section.contains('\u{2014}') && !section.contains('\u{2013}'), "no em or en dashes");
+}
+
 /// The guide teaches the five tab actions and the spec's three scenarios,
 /// one example each, and every example is a script the runner accepts.
 #[test]
@@ -1470,6 +1497,27 @@ fn the_guide_says_how_long_must_not_save_lasts() {
         assert!(section.contains(said), "the section never says {said:?}: {section}");
     }
     assert!(!section.contains('\u{2014}'));
+}
+
+/// Backlog 42: a discovery with a case id keeps the guard on, and the guide
+/// has one page listing every action kind with its fields, built from the
+/// examples a refused action shows.
+#[test]
+fn the_guide_says_a_case_id_keeps_the_guard_on_and_lists_every_action_with_its_fields() {
+    let flat = |text: &str| text.split_whitespace().collect::<Vec<_>>().join(" ");
+    let g = autorun_guide();
+    assert!(flat(&g).contains("`start_autorun_discovery` with a `case_id` keeps the save guard on"));
+    let at = g.find("\n## Every action at a glance\n").expect("no action list section");
+    let section = &g[at + 1..];
+    let section = section.split("\n## ").next().unwrap();
+    for kind in v2_lib::autorun::action_help::kinds() {
+        let example = v2_lib::autorun::action_help::example_for(kind).unwrap();
+        assert!(section.contains(example), "the list lacks the example of {kind}");
+    }
+    for kind in ACTION_KINDS {
+        assert!(section.contains(&format!("\"kind\":\"{kind}\"")), "the list lacks {kind}");
+    }
+    assert!(section.lines().count() < 60, "the list is a page");
 }
 
 /// The Quick rules open the guide, short enough to read every time, and

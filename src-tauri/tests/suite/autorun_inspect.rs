@@ -15,7 +15,7 @@ use serde_json::{json, Value};
 use v2_lib::ai_bridge::inspect_page;
 use v2_lib::browser::inspect::{
     capture_above, ANCESTORS_CUT_JS, ANCESTORS_JS, ANCESTORS_STOPPED, ANIMATIONS_JS, ATTRIBUTE_HANDLERS_JS, COVER_AT_JS, HANDLER_NOT_SHOWN, NODE_NAME_JS,
-    STRUCTURE_JS, STYLES_JS, TEXT_MAX,
+    HTML_JS, STRUCTURE_JS, STYLES_JS, TEXT_MAX,
 };
 use v2_lib::browser::page::GROUP;
 use v2_lib::browser::input::PROBE_JS;
@@ -44,6 +44,8 @@ struct Page {
     styles: Value,
     animations: Value,
     structure: Value,
+    /// What `HTML_JS` reads of each element.
+    html: Value,
     /// The element's own accessible name, and its cover's.
     name: String,
     cover_name: String,
@@ -69,6 +71,12 @@ impl Default for Page {
                 "children": {},
                 "frames": [],
                 "path": "/hr/login",
+                "parent": { "tag": "form", "id": "login", "classes": ["card", "wide"], "role": "form", "name": "Sign in" },
+            }),
+            html: json!({
+                "tag": "input",
+                "attributes": [["type", "text"], ["class", "field invalid"], ["value", "typed-by-a-person"], ["href", "https://hr.example/x?session=abc"], ["onblur", "steal()"], ["data-session-id", "abc"], ["data-url", "/api/x?id=7"], ["srcdoc", "<p>secret</p>"], ["data-kind", "plain"]],
+                "html": "<input type=\"text\" class=\"field invalid\" value=\"(hidden)\"><script></script>",
             }),
             name: "Save".into(),
             cover_name: "Confirm delete".into(),
@@ -103,6 +111,7 @@ fn driver(p: Page) -> ScriptedDriver {
             }
             "Runtime.callFunctionOn" if f == ANIMATIONS_JS => json!({ "result": { "value": p.animations.clone() } }),
             "Runtime.callFunctionOn" if f == STRUCTURE_JS => json!({ "result": { "value": p.structure.clone() } }),
+            "Runtime.callFunctionOn" if f == HTML_JS => json!({ "result": { "value": p.html.clone() } }),
             "Runtime.callFunctionOn" if f == COVER_AT_JS => json!({ "result": { "objectId": "cover-arr" } }),
             // Above the element: a form, the app's root, the document and the window.
             "Runtime.callFunctionOn" if f == ANCESTORS_JS => json!({ "result": { "objectId": "anc-arr" } }),
@@ -564,4 +573,65 @@ async fn a_bad_ask_is_refused_before_the_browser_is_asked() {
         assert!(v.as_str().unwrap().contains(says), "{args}: {v}");
         assert!(d.calls.is_empty(), "{args}: the browser was asked");
     }
+}
+
+/// The structure names the element's parent: tag, id, classes, role and name.
+#[tokio::test]
+async fn the_structure_includes_the_elements_parent() {
+    let mut d = driver(Page::default());
+    let (status, v) = inspect(&mut d, json!({ "locator": "#email", "show": ["structure"] })).await;
+    assert_eq!(status, 200, "{v}");
+    assert_eq!(
+        v["structure"]["parent"],
+        json!({ "tag": "form", "id": "login", "classes": ["card", "wide"], "role": "form", "name": "Sign in" })
+    );
+    read_only(&d);
+}
+
+/// `show: ["html"]` answers every match's opening tag with its attributes
+/// (class included) and its outer HTML cut to 300 characters - and never a
+/// script's body, an input's value, an address, a handler or a secret.
+#[tokio::test]
+async fn html_shows_each_matchs_opening_tag_and_a_short_cut_of_its_html() {
+    let mut page = Page { found: 2, ..Page::default() };
+    page.html["html"] = json!(format!("<div>{}</div>", "x".repeat(600)));
+    let mut d = driver(page);
+    let (status, v) = inspect(&mut d, json!({ "locator": ".row", "show": ["html"] })).await;
+    assert_eq!(status, 200, "{v}");
+    assert_eq!(v["matches"], 2);
+    let shown = v["html"].as_array().expect("one entry per match");
+    assert_eq!(shown.len(), 2, "{v}");
+    assert_eq!((shown[0]["nth"].clone(), shown[1]["nth"].clone()), (json!(0), json!(1)));
+    let opening = shown[0]["opening_tag"].as_str().unwrap();
+    assert!(opening.starts_with("<input type=\"text\" class=\"field invalid\""), "{opening}");
+    let cut = shown[0]["html"].as_str().unwrap();
+    assert_eq!(cut.chars().count(), 303, "300 characters and the ellipsis: {cut}");
+    assert!(cut.ends_with("..."), "{cut}");
+    let text = v.to_string();
+    for leak in ["typed-by-a-person", "hr.example", "session=abc", "steal", "data-session-id\":\"abc"] {
+        assert!(!text.contains(leak), "{leak} in {text}");
+    }
+    assert!(opening.contains("value=\"(hidden)\"") && opening.contains("href=\"(hidden)\"") && opening.contains("onblur=\"(hidden)\""), "{opening}");
+    assert!(opening.contains("data-session-id=\"(hidden)\""), "{opening}");
+    assert!(opening.contains("data-url=\"(hidden)\"") && opening.contains("srcdoc=\"(hidden)\"") && opening.contains("data-kind=\"plain\""), "{opening}");
+    assert!(!text.contains("/api/x"), "{text}");
+    read_only(&d);
+    // A string `show` is one part, as a list is.
+    let mut d = driver(Page::default());
+    let (status, v) = inspect(&mut d, json!({ "locator": "#email", "show": "html" })).await;
+    assert_eq!(status, 200, "{v}");
+    assert_eq!(v["matches"], 1);
+}
+
+/// With other parts the html is of the one element they are of, and several
+/// matches are refused as before.
+#[tokio::test]
+async fn html_beside_other_parts_is_of_one_element() {
+    let mut d = driver(Page::default());
+    let (status, v) = inspect(&mut d, json!({ "locator": "#email", "show": ["structure", "html"] })).await;
+    assert_eq!(status, 200, "{v}");
+    assert!(v["structure"].is_object() && v["html"].as_array().is_some_and(|h| h.len() == 1), "{v}");
+    let mut d = driver(Page { found: 2, ..Page::default() });
+    let (status, _) = inspect(&mut d, json!({ "locator": ".row", "show": ["structure", "html"] })).await;
+    assert_eq!(status, 409);
 }

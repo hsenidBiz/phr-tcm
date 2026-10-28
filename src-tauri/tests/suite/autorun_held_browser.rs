@@ -116,6 +116,7 @@ fn discovering() -> Option<DiscoveryState> {
         call_no_save: false,
         call_case_id: None,
         explore: None,
+        carried: Vec::new(),
     })
 }
 
@@ -316,8 +317,8 @@ fn every_refusal_for_a_held_browser_asks_first_whether_it_is_alive() {
     assert!(body("pub async fn auto_run_step").contains("let_go_if_gone(&mut slot)"));
     assert!(body("pub async fn open_session_refusal").contains("let_go_if_gone(&mut slot)"));
     let bridge = include_str!("../../src/ai_bridge.rs").replace("\r\n", "\n");
-    // `supervised_page` hands its read to `supervised_page_within_in`.
-    let page = &bridge[bridge.find("pub async fn supervised_page_within_in").unwrap()..];
+    // `supervised_page` hands its read to `supervised_page_read_in`.
+    let page = &bridge[bridge.find("async fn supervised_page_read_in").unwrap()..];
     assert!(page[..page.find("\n}\n").unwrap()].contains("let_go_if_silent"), "the page read keeps a dead browser");
 }
 

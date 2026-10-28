@@ -56,9 +56,13 @@ pub enum Part {
     Listeners,
     Animations,
     Structure,
+    /// Each match's opening tag and a short cut of its outer HTML. Asked for
+    /// by name only: `show: true` and a plain list are the four above.
+    Html,
 }
 
 impl Part {
+    /// What `show: true` (or no `show`) is: every part but `Html`.
     pub const ALL: [Part; 4] = [Part::Styles, Part::Listeners, Part::Animations, Part::Structure];
 
     pub fn word(self) -> &'static str {
@@ -67,11 +71,12 @@ impl Part {
             Part::Listeners => "listeners",
             Part::Animations => "animations",
             Part::Structure => "structure",
+            Part::Html => "html",
         }
     }
 
     fn from_word(word: &str) -> Option<Part> {
-        Part::ALL.into_iter().find(|p| p.word().eq_ignore_ascii_case(word.trim()))
+        Part::ALL.into_iter().chain([Part::Html]).find(|p| p.word().eq_ignore_ascii_case(word.trim()))
     }
 }
 
@@ -84,7 +89,7 @@ pub struct Ask {
 }
 
 const SHOW_SAYS: &str =
-    "show is a list of any of: styles, listeners, animations, structure (all four when left out)";
+    "show is a list of any of: styles, listeners, animations, structure (all four when left out), or \"html\" (each match's opening tag and a short cut of its HTML)";
 const PROPERTIES_SAY: &str =
     "properties is a list of CSS property names, such as [\"color\", \"border-color\"] (every computed value when left out)";
 
@@ -92,6 +97,7 @@ const PROPERTIES_SAY: &str =
 pub fn read_ask(args: &Value) -> Result<Ask, String> {
     let parts = match args.get("show") {
         None | Some(Value::Null) => Part::ALL.to_vec(),
+        Some(Value::String(word)) => vec![Part::from_word(word).ok_or_else(|| SHOW_SAYS.to_string())?],
         Some(Value::Array(items)) if !items.is_empty() => {
             let mut parts = Vec::new();
             for item in items {
@@ -176,7 +182,52 @@ pub const STRUCTURE_JS: &str = r#"function(max) {
   const frames = [];
   let w = this.ownerDocument.defaultView;
   while (w && w.frameElement) { frames.unshift(say(w.frameElement)); w = w.parent; }
-  return { tag: this.tagName.toLowerCase(), attributes, text, children, frames, path: this.ownerDocument.location.pathname };
+  const up = this.parentElement;
+  const parent = up ? {
+    tag: up.tagName.toLowerCase(),
+    id: up.id || '',
+    classes: typeof up.className === 'string' ? up.className.trim().split(/\s+/).filter(Boolean).slice(0, 6) : [],
+    role: up.getAttribute('role') || '',
+    name: up.getAttribute('aria-label') || '',
+  } : null;
+  return { tag: this.tagName.toLowerCase(), attributes, text, children, frames, path: this.ownerDocument.location.pathname, parent };
+}"#;
+
+/// The most characters of an element's outer HTML the `html` part shows.
+pub const HTML_MAX: usize = 300;
+
+/// Said in place of a value the `html` part does not show.
+pub const HTML_HIDDEN: &str = "(hidden)";
+
+/// `this` is the element. Its tag, its own attributes as [name, value], and
+/// its outer HTML cut to a few thousand characters, read from a copy with
+/// the parts the `html` part never shows taken out first: a script's body
+/// (and its address), an input's value, a textarea's text, an `on<event>`
+/// handler, and any attribute that holds an address (`href`, `src`, `action`
+/// and the like, or a value that begins like one) or is named like a secret.
+pub const HTML_JS: &str = r#"function() {
+  const urlName = /^(href|src|action|formaction|srcset|poster|cite|ping|background|data|manifest|xlink:href)$/i;
+  const urlValue = (v) => /^\s*([a-z][a-z0-9+.\-]*:)?\/\//i.test(v) || /^\s*(javascript|data|blob|file):/i.test(v);
+  const secretName = /pass|secret|token|cookie|auth|session|csrf|api[-_]?key|credential/i;
+  const copy = this.cloneNode(true);
+  for (const e of [copy, ...copy.querySelectorAll('*')]) {
+    const tag = e.tagName.toLowerCase();
+    if (tag === 'script' || tag === 'textarea' || tag === 'style' || tag === 'noscript') e.textContent = '';
+    for (const a of Array.from(e.attributes || [])) {
+      const n = a.name;
+      if (/^on/i.test(n) || urlName.test(n) || urlValue(a.value) || secretName.test(n) || /url\(/i.test(a.value) ||
+          n.toLowerCase() === 'srcdoc' || (/^data-/i.test(n) && /[\/?]/.test(a.value)) ||
+          (n.toLowerCase() === 'value' && (tag === 'input' || tag === 'textarea' || tag === 'select'))) {
+        e.setAttribute(n, '(hidden)');
+      }
+    }
+  }
+  const walker = this.ownerDocument.createTreeWalker(copy, NodeFilter.SHOW_COMMENT);
+  const comments = [];
+  while (walker.nextNode()) comments.push(walker.currentNode);
+  for (const c of comments) c.remove();
+  const attributes = Array.from(this.attributes || []).map((a) => [a.name, a.value]);
+  return { tag: this.tagName.toLowerCase(), attributes, html: String(copy.outerHTML || '').slice(0, 3000) };
 }"#;
 
 /// `this` is the top document. Arguments: a point in the top window, as
@@ -238,6 +289,22 @@ async fn look<D: Driver>(d: &mut D, target: &Target, ask: &Ask) -> Result<Value,
         let why = found.unreachable_frame.unwrap_or_else(|| format!("{described} {NOT_FOUND}"));
         return Err(Stop::Refused(404, why));
     }
+    // `html` alone looks at every match (up to `HTML_MATCHES`); anything else
+    // is of the one element.
+    if ask.parts == [Part::Html] {
+        let mut out = Map::new();
+        out.insert("element".into(), json!(described));
+        out.insert("matches".into(), json!(handles.len()));
+        let mut shown = Vec::new();
+        for (i, h) in handles.iter().take(HTML_MATCHES).enumerate() {
+            let mut one = html_of(d, h).await?;
+            one.insert("nth".into(), json!(i));
+            shown.push(Value::Object(one));
+        }
+        out.insert("html".into(), json!(shown));
+        out.insert("note".into(), json!(HTML_NOTE));
+        return Ok(Value::Object(out));
+    }
     if handles.len() > 1 {
         return Err(Stop::Refused(409, format!("{described} {}", matched_many(handles.len()))));
     }
@@ -294,6 +361,7 @@ async fn look<D: Driver>(d: &mut D, target: &Target, ask: &Ask) -> Result<Value,
                 let raw = page::call_value(d, &el, STRUCTURE_JS, &[json!(TEXT_READ)]).await?;
                 shown_structure(&raw)
             }
+            Part::Html => json!([html_of(d, &el).await?]),
         };
         out.insert(part.word().into(), shown);
     }
@@ -302,6 +370,61 @@ async fn look<D: Driver>(d: &mut D, target: &Target, ask: &Ask) -> Result<Value,
         json!("Read only: nothing was clicked, typed, focused or scrolled. `listeners.element` are the element's own; `listeners.ancestors` counts the click, pointer, mouse, touch and submit listeners above it, up to the document and the window - where a page that delegates events (React, jQuery's .on with a selector) listens."),
     );
     Ok(Value::Object(out))
+}
+
+/// The most matches the `html` part shows when it is asked alone.
+pub const HTML_MATCHES: usize = 10;
+
+/// Said with the `html` part.
+pub const HTML_NOTE: &str = "Read only. Each match's opening tag, then its outer HTML cut to 300 characters. Left out: a script's body, an input's value, a textarea's text, handlers, and any address or secret.";
+
+/// One element's `html` part: its opening tag with every attribute
+/// (`class` included) and up to `HTML_MAX` characters of its outer HTML.
+async fn html_of<D: Driver>(d: &mut D, el: &Handle) -> Result<Map<String, Value>, CdpError> {
+    let raw = page::call_value(d, el, HTML_JS, &[]).await?;
+    Ok(shown_html(&raw))
+}
+
+/// An attribute written into the opening tag: a secret's name, a missing
+/// value, an address and a handler hidden as `shown_structure` hides what it
+/// does, and a field's `value` too.
+fn html_attribute(name: &str, value: &str, tag: &str) -> String {
+    let lower = name.to_ascii_lowercase();
+    let address = matches!(
+        lower.as_str(),
+        "href" | "src" | "action" | "formaction" | "srcset" | "poster" | "cite" | "ping" | "background" | "data" | "manifest" | "xlink:href"
+    ) || {
+        let v = value.trim_start().to_ascii_lowercase();
+        v.starts_with("//")
+            || v.contains("://")
+            || ["javascript:", "data:", "blob:", "file:"].iter().any(|p| v.starts_with(p))
+    };
+    let path_in_data = lower.starts_with("data-") && value.contains(['/', '?']);
+    if secret_name(name) || address || path_in_data || lower == "srcdoc" || is_handler_attribute(name) || (lower == "value" && matches!(tag, "input" | "textarea" | "select")) {
+        HTML_HIDDEN.to_string()
+    } else {
+        redact_text(value)
+    }
+}
+
+fn shown_html(raw: &Value) -> Map<String, Value> {
+    let tag = raw["tag"].as_str().unwrap_or("");
+    let mut opening = format!("<{tag}");
+    for a in raw["attributes"].as_array().into_iter().flatten() {
+        let (Some(name), value) = (a[0].as_str(), a[1].as_str().unwrap_or("")) else { continue };
+        opening.push_str(&format!(" {name}=\"{}\"", html_attribute(name, value, tag).replace('"', "&quot;")));
+    }
+    opening.push('>');
+    let html = redact_text(raw["html"].as_str().unwrap_or(""));
+    let html = if html.chars().count() > HTML_MAX {
+        format!("{}...", html.chars().take(HTML_MAX).collect::<String>())
+    } else {
+        html
+    };
+    let mut out = Map::new();
+    out.insert("opening_tag".into(), json!(opening));
+    out.insert("html".into(), json!(html));
+    out
 }
 
 /// The element a click at (`x`, `y`) lands on (`COVER_AT_JS`), unless it
@@ -655,11 +778,23 @@ fn shown_structure(raw: &Value) -> Value {
         .flatten()
         .map(|(k, v)| (k.clone(), json!(v.as_u64().unwrap_or(0))))
         .collect();
+    // The element's parent as the structure names it: tag, id, classes,
+    // role and name, each through the redaction.
+    let parent = match raw["parent"].as_object() {
+        Some(p) => {
+            let said = |k: &str| redact_text(p.get(k).and_then(Value::as_str).unwrap_or(""));
+            let classes: Vec<String> =
+                p.get("classes").and_then(Value::as_array).into_iter().flatten().filter_map(|c| c.as_str().map(redact_text)).collect();
+            json!({ "tag": said("tag"), "id": said("id"), "classes": classes, "role": said("role"), "name": said("name") })
+        }
+        None => Value::Null,
+    };
     json!({
         "tag": raw["tag"].as_str().unwrap_or(""),
         "attributes": attributes,
         "text": text,
         "children": children,
+        "parent": parent,
         "frame": frame,
     })
 }

@@ -677,13 +677,35 @@ fn browsers_of(drivers: Vec<common::ScriptedDriver>) -> FakeBrowsers {
     FakeBrowsers { queue: drivers.into_iter().map(Some).collect(), opened: 0, closed: 0, returned: vec![] }
 }
 
+/// On a flat menu (every entry showing at once) the walk leaves out the
+/// click whose next target can already be clicked, and still arrives.
+#[tokio::test]
+async fn a_flat_menu_walk_clicks_only_the_last_entry_and_arrives() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    menu_project(root);
+    store::save_script(root, &one_check(Some("admin"))).unwrap();
+    let (d, app) = common::menu_app(MENU, "/hr/welcome", 0);
+    let mut browsers = browsers_of(vec![d]);
+    let mut run = new_run("run-x");
+    let cancel = AtomicBool::new(false);
+    run_cases(&mut browsers, root, "Acme", "Web", &mut run, &[to_run(1, Some(" leave "))], None, false, &quick(), &cancel, &mut |_p: ReplayProgress| {})
+        .await
+        .unwrap();
+    assert_eq!(
+        *app.log.lock().unwrap(),
+        vec!["navigate /hr/home/index", "click #go", "navigate /hr/home/index", "click Apply Leave", "check yes"]
+    );
+    assert_eq!(run.cases[0].proposed, "Passed", "{}", run.cases[0].reason);
+}
+
 #[tokio::test]
 async fn a_case_signs_in_goes_home_clicks_to_its_module_checks_it_arrived_then_runs_its_steps() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
     menu_project(root);
     store::save_script(root, &one_check(Some("admin"))).unwrap();
-    let (d, app) = common::menu_app(MENU, "/hr/welcome", 0);
+    let (d, app) = common::nested_menu_app(MENU, "/hr/welcome", 0, 0);
     let mut browsers = browsers_of(vec![d]);
     let mut run = new_run("run-x");
     let cancel = AtomicBool::new(false);
@@ -719,7 +741,7 @@ async fn a_case_with_addresses_switched_off_still_signs_in_goes_home_and_reaches
     save_accounts(root, &[common::account()]).unwrap();
     save_nav(root, "Acme", "Web", &NavFile { direct_urls: false, modules: leave_nav().modules, save_words: vec![], protected: vec![] }).unwrap();
     store::save_script(root, &one_check(Some("admin"))).unwrap();
-    let (d, app) = common::menu_app(MENU, "/hr/welcome", 0);
+    let (d, app) = common::nested_menu_app(MENU, "/hr/welcome", 0, 0);
     let mut browsers = browsers_of(vec![d]);
     let mut run = new_run("run-x");
     let cancel = AtomicBool::new(false);
@@ -985,7 +1007,7 @@ async fn a_stalled_trip_reloads_the_start_page_and_the_second_go_reaches_the_mod
     menu_project(root);
     store::save_script(root, &script(4721, Some("admin"), serde_json::json!([{ "step_number": 1, "actions": [{ "kind": "check_text", "value": "yes" }] }]))).unwrap();
     // The first two menu clicks land nowhere: the first trip stalls.
-    let (mut d, app) = common::stalling_menu_app(MENU, "/hr/home/index", 0, 2);
+    let (mut d, app) = common::nested_menu_app(MENU, "/hr/home/index", 0, 2);
     d.page_log = vec!["request still waiting after 14s: GET https://hr.example.internal/hr/menu".to_string()];
     let mut browsers = browsers_of(vec![d]);
     let mut run = new_run("run-x");
@@ -1065,7 +1087,7 @@ async fn a_mid_script_sign_ins_stalled_trip_back_goes_once_more() {
     let signs_in = script(1, Some("admin"), serde_json::json!([{ "step_number": 1, "actions": [
         { "kind": "sign_in", "account": "admin" }, { "kind": "check_text", "value": "yes" }
     ] }]));
-    let (mut d, app) = common::stalling_menu_app(MENU, "/hr/home/index", 0, 2);
+    let (mut d, app) = common::nested_menu_app(MENU, "/hr/home/index", 0, 2);
     let route = Route::new(&common::menu_recipe(), leave_nav().modules[0].clone());
     let mut account = None;
     let mut held = Held::supervised();
@@ -1307,7 +1329,7 @@ async fn a_sign_in_in_the_middle_of_a_script_goes_back_to_the_module_before_the_
         ])),
     )
     .unwrap();
-    let (d, app) = common::menu_app(MENU, "/hr/home/index", 0);
+    let (d, app) = common::nested_menu_app(MENU, "/hr/home/index", 0, 0);
     let mut browsers = browsers_of(vec![d]);
     let mut run = new_run("run-x");
     let cancel = AtomicBool::new(false);

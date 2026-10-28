@@ -965,6 +965,7 @@ async fn a_no_save_discovery_stays_guarded_until_it_ends() {
         call_no_save: false,
         call_case_id: None,
         explore: None,
+        carried: Vec::new(),
     });
     b.d.guard_saves(&[]).await.unwrap();
     b.guard_owner = Some(GuardOwner::Discovery);
@@ -1977,6 +1978,7 @@ fn begun_discovery() -> Option<v2_lib::commands::autorun::DiscoveryState> {
         call_no_save: false,
         call_case_id: None,
         explore: None,
+        carried: Vec::new(),
     })
 }
 
@@ -2429,6 +2431,37 @@ async fn a_reset_ends_the_assistants_discovery_and_keeps_the_browser() {
     assert_eq!(sign_ins(&b.d), 0);
 }
 
+/// Backlog 42: the reset of a browser a discovery left, without `release`,
+/// keeps the sign-in - its account, lease and cookies - and the next replay
+/// goes to the area without signing in again.
+#[tokio::test]
+async fn a_reset_of_a_discoverys_browser_keeps_the_sign_in_for_the_next_replay() {
+    use v2_lib::commands::autorun::{reset_in_for_assistant, reset_sentence};
+    let _l = crate::serial::account_leases();
+    let dir = tempfile::tempdir().unwrap();
+    project(dir.path(), &script(three_steps()));
+    let (mut slot, app, _jar) = left_by_a_replay(dir.path()).await;
+    {
+        let b = slot.as_mut().unwrap();
+        b.discovery = begun_discovery().map(|s| v2_lib::commands::autorun::DiscoveryState {
+            area: Some("Leave".into()),
+            account: Some("admin".into()),
+            ..s
+        });
+    }
+    let (status, said) = reset_in_for_assistant(&mut slot, dir.path(), "acme", "Web", &quick()).await;
+    assert_eq!(status, 200, "{said} {:?}", log(&app));
+    assert!(said.ends_with(&reset_sentence("admin")), "{said}");
+    let mut b = slot.unwrap();
+    assert!(b.lease.sign_in_print().is_some(), "the sign-in's cookies were forgotten");
+    let (mut account, mut held) = (b.account.take(), b.lease);
+    assert_eq!(account.as_deref(), Some("admin"));
+    let (end, reused) = replay_kept(&mut b.d, dir.path(), 3, &mut account, &mut held).await;
+    assert!(matches!(end, ReplayEnd::Ready { .. }), "{end:?}");
+    assert_eq!(reused.went.as_deref(), Some("Leave"), "the replay after the reset signed in again");
+    assert_eq!(sign_ins(&b.d), 0, "{:?}", log(&app));
+}
+
 /// A reset whose home page never shows the app's sign-in - its session
 /// gone - says so, and forgets the account and its cookies' print, so the
 /// next replay signs in again rather than trust it.
@@ -2544,6 +2577,73 @@ async fn a_reset_keeps_the_sign_in_when_its_home_load_reissues_a_session_cookie(
     assert!(matches!(end, ReplayEnd::Ready { .. }), "{end:?}");
     assert_eq!(reused.went.as_deref(), Some("Leave"), "the replay after a reset signed in again");
     assert_eq!(sign_ins(&b.d), 0, "{:?}", log(&app));
+}
+
+/// Backlog 42 (writer-1): the app re-issues its session cookie while the
+/// assistant's discovery moves about it. The discovery call prints the
+/// sign-in again, so the reset after it does not take the same sign-in for a
+/// changed one, and the next replay does not sign in again.
+#[tokio::test]
+async fn a_discovery_that_sees_the_session_cookie_reissued_still_resets_with_its_sign_in() {
+    use v2_lib::commands::autorun::{reset_in_for_assistant, reset_sentence};
+    let _l = crate::serial::account_leases();
+    let dir = tempfile::tempdir().unwrap();
+    project(dir.path(), &script(three_steps()));
+    let (mut slot, app, jar) = left_by_a_replay(dir.path()).await;
+    {
+        let b = slot.as_mut().unwrap();
+        b.discovery = begun_discovery().map(|s| v2_lib::commands::autorun::DiscoveryState {
+            area: Some("Leave".into()),
+            account: Some("admin".into()),
+            ..s
+        });
+    }
+    // The page's requests during the call re-issue the session cookie.
+    let armed = Arc::new(AtomicBool::new(false));
+    let (j, on) = (jar.clone(), armed.clone());
+    answering_first(slot.as_mut().unwrap(), move |method, _| {
+        if on.load(Ordering::SeqCst) && method.starts_with("Input.") {
+            j.set(".ASPXAUTH", "auth-admin-2");
+        }
+        None
+    });
+    armed.store(true, Ordering::SeqCst);
+    let go = v2_lib::browser::actions::Action::Click { selector: "#s1".into() };
+    let (status, said) = v2_lib::ai_bridge::discover_action_in(&mut slot, dir.path(), "acme", "Web", &go, None, None).await;
+    armed.store(false, Ordering::SeqCst);
+    assert_eq!(status, 200, "{said} {:?}", log(&app));
+    assert!(jar.now.lock().unwrap().iter().any(|(n, v)| n == ".ASPXAUTH" && v == "auth-admin-2"), "the cookie was not re-issued: {said}");
+
+    let (status, said) = reset_in_for_assistant(&mut slot, dir.path(), "acme", "Web", &quick()).await;
+    assert_eq!(status, 200, "{said} {:?}", log(&app));
+    assert!(said.ends_with(&reset_sentence("admin")), "the reset dropped the sign-in: {said}");
+    let mut b = slot.unwrap();
+    let (mut account, mut held) = (b.account.take(), b.lease);
+    let (end, reused) = replay_kept(&mut b.d, dir.path(), 3, &mut account, &mut held).await;
+    assert!(matches!(end, ReplayEnd::Ready { .. }), "{end:?}");
+    assert_eq!(reused.went.as_deref(), Some("Leave"), "the replay after the reset signed in again");
+    assert_eq!(sign_ins(&b.d), 0, "{:?}", log(&app));
+}
+
+/// Backlog 42: a discovery call that could have swapped the login (a sign-in,
+/// a password field filled, the sign-in address visited) never re-prints the
+/// sign-in's cookies as the same sign-in; any other call may.
+#[test]
+fn a_call_that_could_swap_the_login_is_not_taken_as_the_same_sign_in() {
+    use v2_lib::ai_bridge::call_touches_sign_in;
+    use v2_lib::browser::actions::Action;
+    let recipe = menu_recipe();
+    let target = |v: Value| serde_json::from_value(v).unwrap();
+    assert_eq!(call_touches_sign_in(&[Action::SignIn { account: "other".into() }], &recipe), Some("signed in"));
+    let fill = Action::Fill { selector: target(json!({ "css": "input[type=password]" })), value: "x".into() };
+    assert_eq!(call_touches_sign_in(&[fill], &recipe), Some("filled a password field"));
+    let go = Action::Navigate { url: recipe.start_url.clone() };
+    assert_eq!(call_touches_sign_in(&[go], &recipe), Some("went to the sign-in address"));
+    let plain = [
+        Action::Click { selector: "#s1".into() },
+        Action::Fill { selector: target(json!({ "css": "#search" })), value: "x".into() },
+    ];
+    assert_eq!(call_touches_sign_in(&plain, &recipe), None);
 }
 
 /// A sign-in cookie that changed before the reset is a different sign-in:
@@ -3412,6 +3512,63 @@ async fn a_save_after_the_shared_steps_leaves_a_stand_that_is_not_carried_across
     let (from, why) = carry_across_why(Some(&stand), &b, 5, &now, AT + 1);
     assert_eq!(from, ReplayFrom::Beginning);
     assert_eq!(why.as_deref(), Some("case 77 saved something after the shared steps."));
+}
+
+/// Backlog 42: a look-only (no_save) script's replay never "saved something":
+/// a POST that got past its guard is a read the page makes.
+#[tokio::test]
+async fn a_look_only_replay_never_reports_a_save_but_is_not_carried_on_from() {
+    let _l = crate::serial::account_leases();
+    let dir = tempfile::tempdir().unwrap();
+    let mut a = case_with_fourth(77, &["#open"]);
+    a.no_save = true;
+    project(dir.path(), &a);
+    let (d, app) = app();
+    let mut d = d.with_net_record();
+    d.events_when = Some((post_after_clicking(&app, "#open"), vec![a_post()]));
+    let (mut account, mut held, mut guarded) = (None, Held::supervised(), None);
+    let (end, marks) = whole_replay(&mut d, dir.path(), &a, &mut account, &mut held, &mut guarded).await;
+    assert!(matches!(end, ReplayEnd::Ready { .. }), "{end:?} {:?}", log(&app));
+    // Never "saved", but the page sent a write the guard let through: the next
+    // case still starts from the beginning, and the sentence says so truthfully.
+    assert_eq!(marks.unclean, Some(Unclean::Posted));
+    let now = page_state(&mut d).await;
+    let stand = ReplayStand::of(&a, 5, &now.0, AT, marks.checkpoints.clone()).with_unclean(marks.unclean);
+    let mut b = case_with_fourth(78, &["#b4"]);
+    b.no_save = true;
+    let (from, why) = carry_across_why(Some(&stand), &b, 5, &now, AT + 1);
+    assert_eq!(from, ReplayFrom::Beginning);
+    let why = why.expect("a sentence");
+    assert!(why.starts_with("case 77's page sent a request the save guard let through"), "{why}");
+    assert!(!why.contains("saved"), "{why}");
+}
+
+/// Backlog 42: carrying a look-only case on after a read POST (the earlier
+/// part's checkpoint says `wrote`) still never says it "saved something".
+#[tokio::test]
+async fn a_look_only_case_carried_on_after_a_post_never_says_saved() {
+    let _l = crate::serial::account_leases();
+    let dir = tempfile::tempdir().unwrap();
+    let mut a = case_with_fourth(77, &["#open"]);
+    a.no_save = true;
+    project(dir.path(), &a);
+    let (d, _app) = app();
+    let mut d = d.with_net_record();
+    let (mut account, mut held, mut guarded) = (None, Held::supervised(), None);
+    let (end, _) = whole_replay(&mut d, dir.path(), &a, &mut account, &mut held, &mut guarded).await;
+    assert!(matches!(end, ReplayEnd::Ready { .. }), "{end:?}");
+    let r = ReplayRequest { case_id: 77, step: 5, db_read_access: false };
+    let state = ReplayState::new();
+    let mut marks = Marks::default();
+    // `wrote_before` is true: the first part of this case posted a request.
+    let end = carry_on(
+        &mut d, dir.path(), "acme", "Web", &r, 4, &mut account, &mut held, &mut guarded, &quick(), &state, |_, _| {},
+        &mut Vec::new(), true, &mut marks,
+    )
+    .await;
+    assert!(matches!(end, ReplayEnd::Ready { .. }), "{end:?}");
+    assert_eq!(marks.unclean, Some(Unclean::Posted));
+    assert!(!Unclean::Posted.why(77, false).contains("saved"));
 }
 
 #[tokio::test]
