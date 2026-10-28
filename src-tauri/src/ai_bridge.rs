@@ -9652,17 +9652,28 @@ async fn try_action<D: crate::browser::cdp::Driver>(
     let timing = crate::browser::timing::Timing::supervised();
     let own = crate::autorun::action_help::wait_budget_ms(action, timing.nav_ms);
     let budget = crate::autorun::action_help::action_budget(own, crate::autorun::action_help::call_elapsed_ms());
-    let ran = crate::autorun::action_help::within_budget(
-        budget.unwrap_or(0),
-        crate::autorun::runner::run_step_in_run(d, root, organization, project, &step, &timing, account, lease, None, area, &mut run),
-    )
-    .await;
-    let outcomes = match ran {
-        Ok(Ok(v)) => v,
-        Ok(Err(why)) => return Err((500, why)),
-        Err(seconds) => vec![crate::browser::actions::ActionOutcome::failed(crate::autorun::action_help::did_not_answer(
-            if budget.is_some() { seconds } else { crate::autorun::action_help::CALL_BUDGET_MS / 1000 },
-        ))],
+    // With no time left the action is not started at all.
+    let mut timed_out = false;
+    let outcomes = match crate::autorun::action_help::time_to_run(budget) {
+        Err(spent) => {
+            timed_out = true;
+            vec![crate::browser::actions::ActionOutcome::failed(spent)]
+        }
+        Ok(ms) => {
+            let ran = crate::autorun::action_help::within_budget(
+                ms,
+                crate::autorun::runner::run_step_in_run(d, root, organization, project, &step, &timing, account, lease, None, area, &mut run),
+            )
+            .await;
+            match ran {
+                Ok(Ok(v)) => v,
+                Ok(Err(why)) => return Err((500, why)),
+                Err(seconds) => {
+                    timed_out = true;
+                    vec![crate::browser::actions::ActionOutcome::failed(crate::autorun::action_help::did_not_answer(seconds))]
+                }
+            }
+        }
     };
     // What a component's waits and reads found is filed though a later
     // action of it failed: each passed (`component_finds`).
@@ -9673,6 +9684,11 @@ async fn try_action<D: crate::browser::cdp::Driver>(
     // A `use_component` runs as its component's actions, one outcome each:
     // every one is answered, and the try as a whole is ok only when all are.
     let steps: Vec<(String, crate::browser::actions::ActionOutcome)> = match action {
+        // A timeout is one outcome for the whole component, labelled as the
+        // component, not as its first action.
+        crate::browser::actions::Action::UseComponent { .. } if timed_out => {
+            vec![(describe_action(action), outcomes[0].clone())]
+        }
         crate::browser::actions::Action::UseComponent { .. } => {
             let expanded = crate::autorun::components::expand_step(root, organization, project, std::slice::from_ref(action))
                 .map(|(x, _)| x.into_iter().map(|(a, _)| describe_action(&a)).collect::<Vec<_>>())

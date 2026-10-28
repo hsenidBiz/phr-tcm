@@ -251,6 +251,12 @@ pub fn action_budget(own_ms: u64, call_elapsed_ms: u64) -> Option<u64> {
     Some(own_ms.min(CALL_BUDGET_MS).min(left))
 }
 
+/// How long an action may run: its budget, or the failed detail it gets
+/// without being started when the call has no time left.
+pub fn time_to_run(budget: Option<u64>) -> Result<u64, String> {
+    budget.ok_or_else(|| did_not_answer(CALL_BUDGET_MS / 1000))
+}
+
 /// How long the call being served has run, when it is one (`CALL_STARTED`).
 pub fn call_elapsed_ms() -> u64 {
     CALL_STARTED.try_with(|started| started.elapsed().as_millis() as u64).unwrap_or(0)

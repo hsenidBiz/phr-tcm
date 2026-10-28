@@ -5,7 +5,7 @@
 
 use serde_json::json;
 use v2_lib::autorun::action_help::{
-    action_budget, clamp_wait, did_not_answer, example_for, fill_wait_defaults, kinds, no_answer, prepare_waits,
+    action_budget, clamp_wait, time_to_run, did_not_answer, example_for, fill_wait_defaults, kinds, no_answer, prepare_waits,
     refusal_for, wait_budget_ms, within_budget, CALL_BUDGET_MS, MAX_DISCOVERY_WAIT_MS, WAIT_MARGIN_MS,
 };
 use v2_lib::browser::actions::Action;
@@ -164,6 +164,9 @@ fn a_batch_gives_each_action_what_is_left_of_the_call() {
     assert_eq!(action_budget(CALL_BUDGET_MS * 2, 0), Some(CALL_BUDGET_MS));
     assert_eq!(action_budget(30_000, CALL_BUDGET_MS), None);
     assert_eq!(action_budget(30_000, CALL_BUDGET_MS + 1), None);
+    // No time left: the action is not run, it fails as one that did not answer.
+    assert_eq!(time_to_run(None), Err("did not answer within 280 s".to_string()));
+    assert_eq!(time_to_run(Some(5_000)), Ok(5_000));
     assert_eq!(did_not_answer(125), "did not answer within 125 s");
 }
 
