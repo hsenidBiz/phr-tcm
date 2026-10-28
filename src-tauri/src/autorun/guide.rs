@@ -1674,6 +1674,12 @@ You open and drive a browser of your own to find what a script needs:
 - `start_autorun_discovery` opens the Auto Run browser and signs in as a
   saved account, named by its key. The app replays the recorded sign-in
   and types the password; you never see it. It answers the landing page.
+  Pass `area` with a saved area's name and the start walks to it the way a
+  run does (`at_area: true`) and closes the project's cookie banner if it
+  is up, so your first action is never covered. If the walk fails the
+  browser stays where it stopped, the discovery goes on, and the answer
+  says `at_area: false` with the reason in `area_walk`. An `area` that is
+  not saved starts at home and files what you see under that name.
   If the sign-in fails, report it and stop; never try again in a loop. It
   is refused while a run, a replay or the person's own browser holds the
   Auto Run browser. Pass `case_id` with the case you explore for: when

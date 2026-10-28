@@ -2011,7 +2011,9 @@ async fn a_discovery_for_another_account_signs_in_as_it() {
     let v: Value = serde_json::from_str(&out).unwrap();
     assert_eq!((v["signed_in"].as_bool(), v["detail"].as_str()), (Some(true), Some(discovery_signed_in_already("admin").as_str())));
     assert_eq!(discovery_signed_in_already("admin"), "signed in already as admin; went to the home page");
-    assert_eq!(v["path"], "/hr/home/index", "the replay's page was read as the discovery's landing page: {out}");
+    // The project saves a Leave area, so the start walks there after going home.
+    assert_eq!(v["at_area"], true, "{out}");
+    assert_eq!(v["path"], "/hr/leave", "the discovery did not land at its area: {out}");
     let b = slot.as_mut().expect("the browser was closed");
     assert_eq!(sign_ins(&b.d), 0, "the discovery signed in again: {:?}", log(&app));
     assert!(log(&app).contains(&"navigate /hr/home/index".to_string()), "it did not go home: {:?}", log(&app));

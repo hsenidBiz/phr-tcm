@@ -383,3 +383,89 @@ async fn a_project_with_no_list_closes_nothing() {
     assert!(!out[0].ok && out[0].detail.contains(COVERED_BY), "{:?}", out[0]);
     assert_eq!(seen.looks_for("#cookieBanner.show"), 0);
 }
+
+// ------------------------------------------------- a discovery's first look
+
+/// `banner_page` whose banner comes up only on the `nth` look at it (a
+/// banner that appears a moment after the page), closes with `#btnCookieClose`,
+/// and is never up again once closed.
+fn late_banner_page(nth: usize) -> (ScriptedDriver, Seen) {
+    let banner = Arc::new(AtomicBool::new(false));
+    let closed = Arc::new(AtomicBool::new(false));
+    let clicks = Arc::new(Mutex::new(Vec::<String>::new()));
+    let looks = Arc::new(Mutex::new(Vec::<String>::new()));
+    let seen = Seen { clicks: clicks.clone(), looks: looks.clone(), banner: banner.clone() };
+    let mut last = String::new();
+    let d = ScriptedDriver::new(move |method, params| {
+        let f = params["functionDeclaration"].as_str().unwrap_or("");
+        Ok(match method {
+            "Runtime.evaluate" if params["expression"] == "document" => json!({ "result": { "objectId": "doc" } }),
+            "Runtime.callFunctionOn" if f == v2_lib::browser::input::PROBE_JS => {
+                json!({ "result": { "value": common::ready_probe() } })
+            }
+            "Runtime.callFunctionOn"
+                if f == v2_lib::browser::locator::VISIBLE_JS
+                    || f == v2_lib::browser::input::SHOWN_JS
+                    || f == v2_lib::browser::input::HAS_FOCUS_JS =>
+            {
+                json!({ "result": { "value": true } })
+            }
+            "Runtime.callFunctionOn" if params["arguments"][0]["value"].is_string() && params["objectId"] == "doc" => {
+                last = params["arguments"][0]["value"].as_str().unwrap().to_string();
+                let mut l = looks.lock().unwrap();
+                l.push(last.clone());
+                if last == "#cookieBanner.show" && !closed.load(Ordering::SeqCst) {
+                    let n = l.iter().filter(|s| *s == "#cookieBanner.show").count();
+                    banner.store(n >= nth, Ordering::SeqCst);
+                }
+                json!({ "result": { "objectId": "arr" } })
+            }
+            "Runtime.getProperties" => {
+                let there = match last.as_str() {
+                    "#cookieBanner.show" | "#btnCookieClose" => banner.load(Ordering::SeqCst),
+                    _ => true,
+                };
+                json!({ "result": if there { vec![json!({ "name": "0", "value": { "objectId": "el" } })] } else { vec![] } })
+            }
+            "Runtime.callFunctionOn" => json!({ "result": { "value": "text" } }),
+            "Runtime.evaluate" => json!({ "result": { "value": { "origin": "https://hr.example.internal", "entries": [] } } }),
+            "Input.dispatchMouseEvent" if params["type"] == "mouseReleased" => {
+                clicks.lock().unwrap().push(last.clone());
+                if last == "#btnCookieClose" {
+                    banner.store(false, Ordering::SeqCst);
+                    closed.store(true, Ordering::SeqCst);
+                }
+                json!({})
+            }
+            _ => json!({}),
+        })
+    });
+    (d, seen)
+}
+
+/// A banner that comes up a few looks in is waited for and closed with its
+/// own x, and nothing else is clicked.
+#[tokio::test]
+async fn a_banner_that_comes_up_late_is_closed_within_the_wait_and_nothing_else_is_clicked() {
+    use v2_lib::autorun::popups::close_shown_within;
+    let (mut d, seen) = late_banner_page(3);
+    let r = recipe(with_popups(json!([cookie_banner()])));
+    let closed = close_shown_within(&mut d, &r, 3_000, &quick()).await;
+    assert_eq!(closed, 1);
+    assert_eq!(seen.clicks(), vec!["#btnCookieClose".to_string()]);
+    assert!(seen.looks_for("#cookieBanner.show") >= 3);
+}
+
+/// With no banner, the wait ends at its limit, clicks nothing, and reports 0;
+/// a wait of 0 is one look.
+#[tokio::test]
+async fn with_no_banner_up_nothing_is_clicked_and_a_zero_wait_is_one_look() {
+    use v2_lib::autorun::popups::close_shown_within;
+    let (mut d, seen) = banner_page(false, true);
+    let r = recipe(with_popups(json!([cookie_banner()])));
+    assert_eq!(close_shown_within(&mut d, &r, 0, &quick()).await, 0);
+    assert_eq!(seen.looks_for("#cookieBanner.show"), 1);
+    assert_eq!(close_shown_within(&mut d, &r, 150, &quick()).await, 0);
+    assert!(seen.looks_for("#cookieBanner.show") > 2);
+    assert!(seen.clicks().is_empty());
+}

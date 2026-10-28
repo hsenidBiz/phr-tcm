@@ -13,7 +13,7 @@
 //! through, so what an assistant sees while writing a script is what a run
 //! does.
 
-use super::recipe::ClosePopup;
+use super::recipe::{ClosePopup, SignInRecipe};
 use crate::browser::actions::{execute_in, shown_now, Action, ActionOutcome, Policy};
 use crate::browser::cdp::Driver;
 use crate::browser::timing::Timing;
@@ -88,4 +88,45 @@ pub fn add_notes(out: &mut ActionOutcome, notes: &[String]) {
     if !notes.is_empty() {
         out.detail.push_str(&format!(" ({})", notes.join("; ")));
     }
+}
+
+/// Right after a discovery lands: each of the recipe's pop-ups that is up -
+/// or comes up within `within_ms`, since a banner often appears a moment
+/// after the page - has its close control clicked, so the first action is
+/// never covered. Looks at the timing's `poll_ms` rhythm; one look at least,
+/// so `0` is a single look. Only a listed `close` selector is ever clicked,
+/// each pop-up at most once. How many it closed. Returns early once every
+/// listed pop-up has been closed.
+pub async fn close_shown_within<D: Driver>(d: &mut D, recipe: &SignInRecipe, within_ms: u64, timing: &Timing) -> usize {
+    let popups = &recipe.close_when_shown;
+    if popups.is_empty() {
+        return 0;
+    }
+    let policy = Policy::only(recipe.origins());
+    let short = Timing { action_ms: timing.action_ms.min(CLOSE_MS), ..timing.clone() };
+    let deadline = std::time::Instant::now() + std::time::Duration::from_millis(within_ms);
+    let mut done = vec![false; popups.len()];
+    let mut closed = 0;
+    loop {
+        for (i, p) in popups.iter().enumerate() {
+            if done[i] || !matches!(shown_now(d, &p.shown).await, Ok(Some(true))) {
+                continue;
+            }
+            let name = p.name.trim();
+            let out = execute_in(d, &Action::Click { selector: p.close.clone() }, &short, &policy).await;
+            // Tried once either way: a close that did not work is not retried.
+            done[i] = true;
+            if out.ok {
+                closed += 1;
+                crate::applog::info(format!("Auto Run: closed the {name} before the discovery's first look"));
+            } else {
+                crate::applog::warn(format!("Auto Run: the {name} was showing and could not be closed: {}", out.detail));
+            }
+        }
+        if done.iter().all(|x| *x) || std::time::Instant::now() >= deadline {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(timing.poll_ms.max(1))).await;
+    }
+    closed
 }

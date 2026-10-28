@@ -5166,6 +5166,18 @@ pub async fn discover_start_in<B: DiscoveryBrowser>(
                     if is_mapping || must_not_save {
                         crate::commands::autorun::claim_guard(p.guard_owner, crate::commands::autorun::GuardOwner::Discovery);
                     }
+                    // Landed: at the area when it names a saved one, else home.
+                    let named_area = p.discovery.as_ref().and_then(|s| s.area.clone());
+                    let landing = land_at_area(
+                        p.driver,
+                        root,
+                        organization,
+                        project,
+                        key,
+                        named_area.as_deref(),
+                        timing,
+                    )
+                    .await;
                     // The landing page is filed, but does not mark the area
                     // explored: nothing of the area itself has been seen yet.
                     let at =
@@ -5182,6 +5194,15 @@ pub async fn discover_start_in<B: DiscoveryBrowser>(
                     });
                     if status != 200 {
                         answer["page_unavailable"] = serde_json::json!(page);
+                    }
+                    if let Some(at_area) = landing.at_area {
+                        answer["at_area"] = serde_json::json!(at_area);
+                    }
+                    if let Some(walk) = &landing.walk {
+                        answer["area_walk"] = serde_json::json!(walk);
+                    }
+                    if !landing.notes.is_empty() {
+                        answer["area_notes"] = serde_json::json!(landing.notes);
                     }
                     if must_not_save && !is_mapping {
                         answer["no_save"] = serde_json::json!(true);
@@ -5213,6 +5234,86 @@ pub async fn discover_start_in<B: DiscoveryBrowser>(
     }
     crate::applog::info(format!("Auto Run discovery as {key} did not start; its browser is closed"));
     (409, failed)
+}
+
+/// Said in a discovery start's answer (`area_walk`) when `area` is no saved
+/// area: the discovery starts at home and files what it sees under that name.
+pub fn no_saved_area_to_start_at(area: &str) -> String {
+    format!("no saved area is called {area}; the discovery starts at home and files what it sees under that name")
+}
+
+/// Where a discovery start landed and what it says about the area.
+#[derive(Default)]
+struct AreaLanding {
+    /// `Some` when an area was named: whether the browser now stands at it.
+    at_area: Option<bool>,
+    /// Why it does not, when an area was named.
+    walk: Option<String>,
+    /// What the walk did on the way besides clicking the path.
+    notes: Vec<String>,
+}
+
+/// After a discovery's sign-in: walk to the saved area `area` as a run
+/// does (`nav::reach_module_noted`, from the sign-in), and close the
+/// project's known pop-ups - waiting a moment for one to come up - so the
+/// first action is never covered by a cookie banner. A walk that fails
+/// leaves the browser where it stopped and the discovery going; an area that
+/// is not saved leaves it at home. Never closes the browser.
+async fn land_at_area<D: crate::browser::cdp::Driver>(
+    d: &mut D,
+    root: &std::path::Path,
+    organization: &str,
+    project: &str,
+    account: &str,
+    area: Option<&str>,
+    timing: &crate::browser::timing::Timing,
+) -> AreaLanding {
+    /// How long a banner is waited for once the browser has landed.
+    const BANNER_WAIT_MS: u64 = 3_000;
+    let recipe = crate::autorun::recipe::load_effective_recipe_if_any(root, organization, project).ok().flatten();
+    let mut landing = AreaLanding::default();
+    let route = area.map(str::trim).filter(|a| !a.is_empty()).map(|a| {
+        let saved = crate::autorun::nav::load_nav(root, organization, project)
+            .ok()
+            .is_some_and(|nav| crate::autorun::nav::find_area(&nav, a).is_some());
+        if saved {
+            crate::autorun::runner::discovery_area_route(root, organization, project, Some(a))
+        } else {
+            Err(no_saved_area_to_start_at(a))
+        }
+    });
+    match route {
+        None => {}
+        Some(Err(why)) => {
+            landing.at_area = Some(false);
+            landing.walk = Some(why);
+        }
+        Some(Ok(route)) => {
+            // A banner up over the menu would take the first click.
+            if let Some(recipe) = &recipe {
+                crate::autorun::popups::close_shown_within(d, recipe, 0, timing).await;
+            }
+            let (out, notes) = crate::autorun::nav::reach_module_noted(
+                d,
+                &route,
+                crate::autorun::nav::TripFrom::SignIn,
+                timing,
+                "Auto Run discovery",
+                Some(account),
+            )
+            .await;
+            landing.at_area = Some(out.ok);
+            landing.notes = notes;
+            if !out.ok {
+                crate::applog::info(format!("Auto Run discovery: the walk to its area did not arrive ({})", out.detail));
+                landing.walk = Some(out.detail);
+            }
+        }
+    }
+    if let Some(recipe) = &recipe {
+        crate::autorun::popups::close_shown_within(d, recipe, BANNER_WAIT_MS, timing).await;
+    }
+    landing
 }
 
 /// A discovery start's `detail` when the browser it took over was signed in
