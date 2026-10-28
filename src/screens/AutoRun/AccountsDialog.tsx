@@ -57,8 +57,8 @@ export default function AccountsDialog({ onClose }: { onClose: () => void }) {
     queryFn: () => unwrapStr(commands.autoRunListAccounts()),
     retry: false,
   });
-  // Read afresh on every open (nothing tells this screen when the assistant
-  // writes one): always fetched again when the dialog mounts.
+  // Read afresh on every open, and again whenever the assistant proposes
+  // one while the dialog is open (useAutoRunDataSync).
   const proposed = useQuery({
     queryKey: PROPOSALS_KEY,
     queryFn: async () => (await unwrapStr(commands.envProposals())) ?? [],
