@@ -92,6 +92,9 @@ struct FakeHost {
     /// The page read after the replay ends waits until this is notified:
     /// the gap between the replay freeing its slot and its answer.
     hold_page: Option<tokio::sync::Notify>,
+    /// The page it reads has a side menu, collapsed as the renderer collapses what the
+    /// reader already has (`page_compact::collapse`).
+    menu_page: bool,
     /// The replay holds the one replay slot, as the app's does, and runs
     /// on action 1 of step 2 until it is asked to stop (its slot's
     /// `replay_to::state(..).cancel`);
@@ -122,6 +125,7 @@ impl FakeHost {
             open_failed: None,
             release: None,
             hold_page: None,
+            menu_page: false,
             until_stopped: false,
             left_open: None,
             from: v2_lib::autorun::replay_to::ReplayFrom::Beginning,
@@ -200,6 +204,17 @@ impl ReplayHost for FakeHost {
             self.page_slots.lock().unwrap().push(slot);
             if let Some(hold) = &self.hold_page {
                 hold.notified().await;
+            }
+            if self.menu_page {
+                let page = "RootWebArea \"x\"
+ navigation \"Side menu\"
+  link \"Home\"
+ main \"\"
+  button \"Submit\"";
+                let lines = page.lines().map(|l| (l.to_string(), ())).collect();
+                let kept = v2_lib::autorun::page_compact::collapse(lines);
+                return (200, kept.into_iter().map(|(t, _)| t).filter(|t| !t.is_empty()).collect::<Vec<_>>().join("
+"));
             }
             (200, "- button \"Submit\" [role=button name=\"Submit\"]".to_string())
         })
@@ -1409,4 +1424,35 @@ async fn the_answer_says_why_it_did_not_carry_on_from_another_case() {
         v["sentence"],
         "Started from the beginning: case 12 saved something after the shared steps. Replayed case 77 to step 3 - the browser is on the page before step 3 runs"
     );
+}
+
+/// The page a replay answers goes through the page compaction for the
+/// assistant that asked: the same reader is told an unchanged side menu in
+/// one line, another reader or `page: "full"` gets it whole.
+#[tokio::test]
+async fn a_replays_page_is_compacted_for_its_reader_and_page_full_gives_it_whole() {
+    let _m = crate::serial::page_menu();
+    let _a = crate::serial::autorun();
+    let dir = tempfile::tempdir().unwrap();
+    store::set_root(dir.path().to_path_buf());
+    project(dir.path(), &script(false));
+    let slot = SlotNo(1);
+    v2_lib::autorun::page_compact::forget(slot);
+    let key = AgentKey { id: "e".repeat(32), name: Some("writer".to_string()) };
+    let other = AgentKey { id: "f".repeat(32), name: None };
+    let host = leak(FakeHost { menu_page: true, ..FakeHost::ready() });
+    let page = |answer: (u16, String)| -> String {
+        assert_eq!(answer.0, 200, "{}", answer.1);
+        serde_json::from_str::<Value>(&answer.1).unwrap()["page"].as_str().unwrap().to_string()
+    };
+    async fn ask(who: &AgentKey, body: String, host: &'static FakeHost) -> (u16, String) {
+        autorun_replay_as(Some(who), &ctx(), SlotNo(1), &body, host, WAIT).await
+    }
+    assert!(page(ask(&key, body(3), host).await).contains("link \"Home\""), "the first answer is whole");
+    let again = page(ask(&key, body(2), host).await);
+    assert!(again.contains("unchanged since the last answer") && !again.contains("link \"Home\""), "{again}");
+    let whole = page(ask(&key, json!({ "case_id": ID, "step": 3, "page": "full" }).to_string(), host).await);
+    assert!(whole.contains("link \"Home\""), "page full: {whole}");
+    assert!(page(ask(&other, body(2), host).await).contains("link \"Home\""), "another reader was told nothing");
+    v2_lib::autorun::page_compact::forget(slot);
 }

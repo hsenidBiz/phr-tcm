@@ -903,17 +903,27 @@ pub async fn probe<D: Driver>(d: &mut D, target: &Target) -> Result<String, CdpE
     if sel.trim_start().starts_with("text=") {
         return probe_exact(d, target).await;
     }
-    let css = Target::One(LocatorStep { css: Some(sel.clone()), visible: Some(false), ..LocatorStep::default() });
-    let mut out = probe_exact(d, &css).await?;
-    if out.starts_with("matches: ") && !out.starts_with("matches: 0") && !out.starts_with("matches: 1
-") {
-        let note = "a step written with this plain string acts on the first match (nth 0); to act on another, write {\"css\": ..., \"nth\": i}";
-        match out.rfind("
-narrow the locator") {
-            Some(at) => out.insert_str(at + 1, &format!("{note}
-")),
-            None => out.push_str(&format!("
-{note}")),
+    // Listed among the visible matches, as `{"css": ..., "nth": i}` counts them;
+    // the hidden ones (which a structured step skips) are counted in one line.
+    let count = |text: &str| -> usize {
+        text.strip_prefix("matches: ").map(|r| r.chars().take_while(char::is_ascii_digit).collect::<String>()).and_then(|n| n.parse().ok()).unwrap_or(0)
+    };
+    let visible = Target::One(LocatorStep { css: Some(sel.clone()), ..LocatorStep::default() });
+    let all = Target::One(LocatorStep { css: Some(sel.clone()), visible: Some(false), ..LocatorStep::default() });
+    let mut out = probe_exact(d, &visible).await?;
+    let hidden = count(&probe_exact(d, &all).await?).saturating_sub(count(&out));
+    let mut extra: Vec<String> = Vec::new();
+    if count(&out) > 1 {
+        extra.push("a step written with this plain string acts on the first match (nth 0); to act on another, write {\"css\": ..., \"nth\": i}".to_string());
+    }
+    if hidden > 0 {
+        extra.push(format!("plus {hidden} hidden, which a step skips unless it says visible: false"));
+    }
+    if !extra.is_empty() {
+        let extra = extra.join("\n");
+        match out.rfind("\nnarrow the locator") {
+            Some(at) => out.insert_str(at + 1, &format!("{extra}\n")),
+            None => out.push_str(&format!("\n{extra}")),
         }
     }
     Ok(out)

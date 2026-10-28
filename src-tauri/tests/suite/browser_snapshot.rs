@@ -1254,3 +1254,38 @@ async fn probe_of_a_plain_css_string_lists_every_match_and_says_a_step_takes_the
     let exact = v2_lib::browser::snapshot::probe_exact(&mut build(), &Target::from("main i")).await.unwrap();
     assert!(exact.starts_with("matches: 1"), "{exact}");
 }
+
+/// The css-form listing is numbered among visible matches, as
+/// `{"css": ..., "nth": i}` counts them; a hidden match before them is one
+/// line, not a number.
+#[tokio::test]
+async fn probe_of_a_plain_css_string_numbers_visible_matches_and_counts_the_hidden() {
+    use v2_lib::browser::locator::CSS_JS;
+    let mut d = ScriptedDriver::new(|method, params| {
+        let f = params["functionDeclaration"].as_str().unwrap_or("");
+        let on = params["objectId"].as_str().unwrap_or("");
+        match method {
+            "Runtime.evaluate" => Ok(json!({ "result": { "objectId": "doc" } })),
+            "Runtime.callFunctionOn" if f == CSS_JS => {
+                let visible_only = params["arguments"][1]["value"].as_bool().unwrap_or(true);
+                Ok(json!({ "result": { "objectId": if visible_only { "vis" } else { "all" } } }))
+            }
+            "Runtime.callFunctionOn" if f == VISIBLE_JS => Ok(json!({ "result": { "value": true } })),
+            "Accessibility.getPartialAXTree" => Ok(json!({ "nodes": [] })),
+            "Runtime.callFunctionOn" if f == PROBE_SUMMARY_JS => {
+                Ok(json!({ "result": { "value": { "tag": "i", "text": "x", "rect": [0.0, 0.0, 1.0, 1.0] } } }))
+            }
+            "Runtime.callFunctionOn" => Ok(json!({ "result": { "objectId": "arr" } })),
+            "Runtime.getProperties" => {
+                // All three, a hidden one first; the visible two after it.
+                let n = if on == "vis" { 2 } else { 3 };
+                Ok(json!({ "result": (0..n).map(|i| json!({ "name": i.to_string(), "value": { "objectId": format!("el-{i}") } })).collect::<Vec<_>>() }))
+            }
+            other => panic!("unexpected {other}"),
+        }
+    });
+    let out = probe(&mut d, &Target::from("main i")).await.unwrap();
+    assert!(out.starts_with("matches: 2\nnth 0: i "), "{out}");
+    assert!(out.contains("nth 1: i ") && !out.contains("nth 2"), "{out}");
+    assert!(out.contains("plus 1 hidden, which a step skips unless it says visible: false"), "{out}");
+}
