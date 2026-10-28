@@ -18,9 +18,16 @@ pub const WAIT_MARGIN_MS: u64 = 5_000;
 /// `within_ms` above it is lowered to it.
 pub const MAX_DISCOVERY_WAIT_MS: u32 = 120_000;
 
-/// How long an action that is several actions (a component, a page walk, a
-/// list reset) may take in all, besides the waits it names.
-const COMPOSITE_MS: u64 = 600_000;
+/// The most one discovery or try call may take, below the proxy's own limit
+/// on a call (300 s): the call answers by then whatever the browser is doing.
+/// An action's budget never goes past it, and a batch shares it.
+pub const CALL_BUDGET_MS: u64 = 280_000;
+
+tokio::task_local! {
+    /// When the discovery or try call being served began, so every action of
+    /// it can be given what is left of `CALL_BUDGET_MS`.
+    pub static CALL_STARTED: std::time::Instant;
+}
 
 /// One compact valid example of every action kind, taken from the guide's
 /// vocabulary. A test parses each as an `Action`, so the table cannot drift
@@ -166,24 +173,30 @@ pub fn fill_wait_defaults(action: &mut Value, default_ms: u32) -> bool {
 }
 
 /// Lowers every `timeout_ms` and `within_ms` above `MAX_DISCOVERY_WAIT_MS`
-/// to it (inside a `then` too). Returns whether it lowered one.
-pub fn clamp_wait(action: &mut Value) -> bool {
+/// to it (inside a `then` too). Returns the keys it lowered, each once.
+pub fn clamp_wait(action: &mut Value) -> Vec<&'static str> {
+    let mut lowered = Vec::new();
+    clamp_into(action, &mut lowered);
+    lowered
+}
+
+fn clamp_into(action: &mut Value, lowered: &mut Vec<&'static str>) {
     let Some(o) = action.as_object_mut() else {
-        return false;
+        return;
     };
-    let mut lowered = false;
     for key in ["timeout_ms", "within_ms"] {
         if o.get(key).and_then(Value::as_u64).is_some_and(|ms| ms > u64::from(MAX_DISCOVERY_WAIT_MS)) {
             o.insert(key.to_string(), Value::from(MAX_DISCOVERY_WAIT_MS));
-            lowered = true;
+            if !lowered.contains(&key) {
+                lowered.push(key);
+            }
         }
     }
     if let Some(Value::Array(then)) = o.get_mut("then") {
         for inner in then {
-            lowered |= clamp_wait(inner);
+            clamp_into(inner, lowered);
         }
     }
-    lowered
 }
 
 /// What a discovery or try did to one action's waits before running it, as
@@ -193,8 +206,9 @@ pub fn prepare_waits(action: &mut Value, default_ms: u32) -> Vec<String> {
     if fill_wait_defaults(action, default_ms) {
         notes.push(format!("no timeout_ms given, used {default_ms} (a saved script needs one)"));
     }
-    if clamp_wait(action) {
-        notes.push(format!("timeout_ms lowered to {MAX_DISCOVERY_WAIT_MS}"));
+    let lowered = clamp_wait(action);
+    if !lowered.is_empty() {
+        notes.push(format!("{} lowered to {MAX_DISCOVERY_WAIT_MS}", lowered.join(" and ")));
     }
     notes
 }
@@ -212,31 +226,48 @@ fn named_waits(v: &Value) -> u64 {
 
 /// The most a discovery or try action may take before the call stops
 /// waiting: the waits it names (or `nav_ms` when they are shorter), the
-/// longest a loading indicator is waited out before it
-/// (`autorun::loading::DEFAULT_MAX_MS`), and `WAIT_MARGIN_MS`. An action
-/// made of several (a component, a page walk, a list reset) gets a long
-/// allowance of its own besides.
+/// longest a loading indicator may be waited out before it
+/// (`autorun::loading::MAX_MAX_MS`), and `WAIT_MARGIN_MS`, never past
+/// `CALL_BUDGET_MS`. An action that is several (a tried component, a page
+/// walk, a list reset) gets the whole `CALL_BUDGET_MS`.
 pub fn wait_budget_ms(action: &crate::browser::actions::Action, nav_ms: u64) -> u64 {
     let v = serde_json::to_value(action).unwrap_or(Value::Null);
     let composite = matches!(
         v.get("kind").and_then(Value::as_str),
         Some("use_component" | "page_until" | "repeat_while_visible")
     );
+    if composite {
+        return CALL_BUDGET_MS;
+    }
     let own = named_waits(&v).max(nav_ms);
-    let loading = u64::from(super::loading::DEFAULT_MAX_MS);
-    own + loading + WAIT_MARGIN_MS + if composite { COMPOSITE_MS } else { 0 }
+    (own + u64::from(super::loading::MAX_MAX_MS) + WAIT_MARGIN_MS).min(CALL_BUDGET_MS)
 }
+
+/// What an action may take given its own budget and how long the call has
+/// run: the smaller of the budget and what is left of `CALL_BUDGET_MS`.
+/// `None` when the call has no time left.
+pub fn action_budget(own_ms: u64, call_elapsed_ms: u64) -> Option<u64> {
+    let left = CALL_BUDGET_MS.checked_sub(call_elapsed_ms).filter(|left| *left > 0)?;
+    Some(own_ms.min(CALL_BUDGET_MS).min(left))
+}
+
+/// How long the call being served has run, when it is one (`CALL_STARTED`).
+pub fn call_elapsed_ms() -> u64 {
+    CALL_STARTED.try_with(|started| started.elapsed().as_millis() as u64).unwrap_or(0)
+}
+
+/// The detail of an action that did not answer in time.
+pub fn did_not_answer(seconds: u64) -> String {
+    format!("{DID_NOT_ANSWER} {seconds} s")
+}
+
+/// How `did_not_answer` begins: a batch that meets it stops there.
+pub const DID_NOT_ANSWER: &str = "did not answer within";
 
 /// What a call says when action `n` did not answer in time; `seconds` is
 /// the time it was given.
 pub fn no_answer(n: usize, seconds: u64) -> String {
     format!("action {n} did not answer within {seconds} s; the batch stopped there")
-}
-
-/// What a try or a single discovery action says when it did not answer in
-/// time.
-pub fn no_answer_single(seconds: u64) -> String {
-    format!("the action did not answer within {seconds} s")
 }
 
 /// Runs `work`, giving up after `budget_ms`. `Err` carries the seconds the

@@ -4614,27 +4614,26 @@ async fn autorun_try(
     // An explore session files nothing (`files_finds` is false), and notes the
     // saves the try sent, as its actions do.
     let explore_session = session.discovery.as_ref().and_then(|s| s.explore_session()).map(str::to_string);
-    // An action that never answers (a wait it was given and then some) ends
-    // the call, not the assistant's turn.
-    let budget = crate::autorun::action_help::wait_budget_ms(&action, crate::browser::timing::Timing::supervised().nav_ms);
-    let answer = crate::autorun::action_help::within_budget(
-        budget,
-        try_in_session(
-            &mut session.cdp,
-            &mut session.tabs_case,
-            &mut session.account,
-            &mut session.lease,
-            &root,
-            &ctx.org,
-            &ctx.project,
-            case_id,
-            discovery_area.as_deref(),
-            explore_session.as_deref(),
-            &action,
-        ),
-    )
-    .await
-    .unwrap_or_else(|seconds| (504, crate::autorun::action_help::no_answer_single(seconds)));
+    // An action that never answers ends inside `try_action`, as a failed
+    // action; the call as a whole is bounded by `CALL_BUDGET_MS`.
+    let answer = crate::autorun::action_help::CALL_STARTED
+        .scope(
+            std::time::Instant::now(),
+            try_in_session(
+                &mut session.cdp,
+                &mut session.tabs_case,
+                &mut session.account,
+                &mut session.lease,
+                &root,
+                &ctx.org,
+                &ctx.project,
+                case_id,
+                discovery_area.as_deref(),
+                explore_session.as_deref(),
+                &action,
+            ),
+        )
+        .await;
     let answer = with_wait_notes(answer, &wait_notes);
     let answer = let_go_if_silent(&mut slot, answer).await;
     crate::commands::autorun::publish_discovery_in(n, &slot);
@@ -5487,13 +5486,12 @@ pub async fn discover_action_in<B: DiscoveryBrowser>(
 ) -> (u16, String) {
     let mut heard = Heard::default();
     let was_guarding = guarding_saves(slot);
-    let budget = crate::autorun::action_help::wait_budget_ms(action, crate::browser::timing::Timing::supervised().nav_ms);
-    let answer = crate::autorun::action_help::within_budget(
-        budget,
-        discover_action_heard(slot, root, organization, project, action, draft, area, &mut heard, 0, true),
-    )
-    .await
-    .unwrap_or_else(|seconds| (504, crate::autorun::action_help::no_answer_single(seconds)));
+    let answer = crate::autorun::action_help::CALL_STARTED
+        .scope(
+            std::time::Instant::now(),
+            discover_action_heard(slot, root, organization, project, action, draft, area, &mut heard, 0, true),
+        )
+        .await;
     heard.remember(root, organization, project);
     heard.forget(slot);
     end_call_guard(slot, root, was_guarding).await;
@@ -6055,20 +6053,24 @@ pub async fn discover_actions_paged<B: DiscoveryBrowser>(
 ) -> (u16, String) {
     let mut heard = Heard::default();
     let was_guarding = guarding_saves(slot);
-    let answer = discover_actions_heard(
-        slot,
-        root,
-        organization,
-        project,
-        actions,
-        draft,
-        area,
-        stop_on_failure,
-        stop,
-        page,
-        &mut heard,
-    )
-    .await;
+    let answer = crate::autorun::action_help::CALL_STARTED
+        .scope(
+            std::time::Instant::now(),
+            discover_actions_heard(
+                slot,
+                root,
+                organization,
+                project,
+                actions,
+                draft,
+                area,
+                stop_on_failure,
+                stop,
+                page,
+                &mut heard,
+            ),
+        )
+        .await;
     heard.remember(root, organization, project);
     heard.forget(slot);
     end_call_guard(slot, root, was_guarding).await;
@@ -6127,27 +6129,36 @@ async fn discover_actions_heard<B: DiscoveryBrowser>(
                 break;
             }
         }
-        let budget = crate::autorun::action_help::wait_budget_ms(action, crate::browser::timing::Timing::supervised().nav_ms);
-        let answered = crate::autorun::action_help::within_budget(
-            budget,
-            discover_action_heard(slot, root, organization, project, action, draft_for(action, draft), None, heard, i, false),
-        )
-        .await;
+        // The call has a time of its own (`CALL_BUDGET_MS`); when it has run
+        // out, nothing more is started and the page is not read.
+        if crate::autorun::action_help::action_budget(1, crate::autorun::action_help::call_elapsed_ms()).is_none() {
+            let secs = crate::autorun::action_help::CALL_BUDGET_MS / 1000;
+            rows.push(Row::Said(format!("{}. failed: {}", i + 1, crate::autorun::action_help::no_answer(i + 1, secs))));
+            let mut lines = batch_rows(actions, &rows, heard);
+            if i + 1 < actions.len() {
+                lines.push(not_run_line(actions.len() - i - 1));
+            }
+            return (504, lines.join("
+"));
+        }
+        let (status, body) =
+            discover_action_heard(slot, root, organization, project, action, draft_for(action, draft), None, heard, i, false)
+                .await;
         ran = i + 1;
-        let (status, body) = match answered {
-            Ok(answer) => answer,
-            Err(seconds) => {
-                // Nothing after an action that never answered can run, and the
-                // page is not read: the browser that did not answer may not
-                // answer that either.
-                rows.push(Row::Said(format!("{}. failed: {}", i + 1, crate::autorun::action_help::no_answer(i + 1, seconds))));
+        if status == 200 && body.contains(crate::autorun::action_help::DID_NOT_ANSWER) {
+            // An action that did not answer: the browser may not answer the
+            // next either, so the batch stops here and does not read the page.
+            let v: serde_json::Value = serde_json::from_str(&body).unwrap_or(serde_json::Value::Null);
+            if v["detail"].as_str().is_some_and(|d| d.starts_with(crate::autorun::action_help::DID_NOT_ANSWER)) {
+                rows.push(Row::Ran(i, v));
                 let mut lines = batch_rows(actions, &rows, heard);
                 if ran < actions.len() {
                     lines.push(not_run_line(actions.len() - ran));
                 }
-                return (504, lines.join("\n"));
+                return (504, lines.join("
+"));
             }
-        };
+        }
         if status != 200 {
             // The browser failed or the discovery is gone: nothing after
             // it can run.
@@ -9635,23 +9646,23 @@ async fn try_action<D: crate::browser::cdp::Driver>(
     // A discovery's `noted` carries its last action that changed the page
     // to the next action, as a run's steps carry it.
     let mut run = InRun { areas: Some(&areas), saves_only_counted, refusals_fail: true, noted, ..Default::default() };
-    let outcomes = match crate::autorun::runner::run_step_in_run(
-        d,
-        root,
-        organization,
-        project,
-        &step,
-        &crate::browser::timing::Timing::supervised(),
-        account,
-        lease,
-        None,
-        area,
-        &mut run,
+    // An action that never answers is a failed action, so everything that
+    // follows (what its writes and finds filed) still runs. It is given its
+    // own wait and a margin, and no more than the call has left.
+    let timing = crate::browser::timing::Timing::supervised();
+    let own = crate::autorun::action_help::wait_budget_ms(action, timing.nav_ms);
+    let budget = crate::autorun::action_help::action_budget(own, crate::autorun::action_help::call_elapsed_ms());
+    let ran = crate::autorun::action_help::within_budget(
+        budget.unwrap_or(0),
+        crate::autorun::runner::run_step_in_run(d, root, organization, project, &step, &timing, account, lease, None, area, &mut run),
     )
-    .await
-    {
-        Ok(v) => v,
-        Err(why) => return Err((500, why)),
+    .await;
+    let outcomes = match ran {
+        Ok(Ok(v)) => v,
+        Ok(Err(why)) => return Err((500, why)),
+        Err(seconds) => vec![crate::browser::actions::ActionOutcome::failed(crate::autorun::action_help::did_not_answer(
+            if budget.is_some() { seconds } else { crate::autorun::action_help::CALL_BUDGET_MS / 1000 },
+        ))],
     };
     // What a component's waits and reads found is filed though a later
     // action of it failed: each passed (`component_finds`).

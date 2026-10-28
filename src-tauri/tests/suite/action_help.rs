@@ -5,8 +5,8 @@
 
 use serde_json::json;
 use v2_lib::autorun::action_help::{
-    clamp_wait, example_for, fill_wait_defaults, kinds, no_answer, prepare_waits, refusal_for, wait_budget_ms,
-    within_budget, MAX_DISCOVERY_WAIT_MS, WAIT_MARGIN_MS,
+    action_budget, clamp_wait, did_not_answer, example_for, fill_wait_defaults, kinds, no_answer, prepare_waits,
+    refusal_for, wait_budget_ms, within_budget, CALL_BUDGET_MS, MAX_DISCOVERY_WAIT_MS, WAIT_MARGIN_MS,
 };
 use v2_lib::browser::actions::Action;
 
@@ -49,19 +49,26 @@ fn a_saved_wait_for_still_needs_its_timeout() {
 #[test]
 fn a_huge_wait_is_lowered_to_the_ceiling() {
     let mut huge = json!({ "kind": "wait_for", "selector": "#x", "timeout_ms": 4_000_000_000u64 });
-    assert!(clamp_wait(&mut huge));
+    assert_eq!(clamp_wait(&mut huge), vec!["timeout_ms"]);
     assert_eq!(huge["timeout_ms"], MAX_DISCOVERY_WAIT_MS);
     serde_json::from_value::<Action>(huge).expect("still an action");
 
     let mut within = json!({ "kind": "expect_tab", "name": "t", "within_ms": 999_999_999u64 });
-    assert!(clamp_wait(&mut within));
+    assert_eq!(clamp_wait(&mut within), vec!["within_ms"]);
     assert_eq!(within["within_ms"], MAX_DISCOVERY_WAIT_MS);
 
     let mut fine = json!({ "kind": "wait_for", "selector": "#x", "timeout_ms": MAX_DISCOVERY_WAIT_MS });
-    assert!(!clamp_wait(&mut fine));
+    assert!(clamp_wait(&mut fine).is_empty());
 
     let mut notes = json!({ "kind": "wait_for", "selector": "#x", "timeout_ms": 4_000_000_000u64 });
     assert_eq!(prepare_waits(&mut notes, 10_000), vec!["timeout_ms lowered to 120000".to_string()]);
+    // The note names the key that was lowered, `within_ms` or one in a `then`.
+    let mut within = json!({ "kind": "expect_tab", "name": "t", "within_ms": 999_999_999u64 });
+    assert_eq!(prepare_waits(&mut within, 10_000), vec!["within_ms lowered to 120000".to_string()]);
+    let mut nested = json!({ "kind": "when_visible", "selector": "#b", "within_ms": 5, "then": [
+        { "kind": "wait_for", "selector": "#c", "timeout_ms": 999_999_999u64 }
+    ] });
+    assert_eq!(prepare_waits(&mut nested, 10_000), vec!["timeout_ms lowered to 120000".to_string()]);
     let mut bare = json!({ "kind": "wait_for", "selector": "#x" });
     let said = prepare_waits(&mut bare, 10_000);
     assert_eq!(said.len(), 1);
@@ -72,7 +79,18 @@ fn a_huge_wait_is_lowered_to_the_ceiling() {
 /// cannot drift from the type; every kind of the type has one.
 #[test]
 fn every_example_parses_as_an_action_of_its_kind() {
-    assert!(kinds().len() >= 40, "{:?}", kinds());
+    // Every kind of the type has an example: serde's own list of the kinds
+    // it knows is the table's.
+    let err = serde_json::from_value::<Action>(json!({ "kind": "zzz" })).unwrap_err().to_string();
+    let listed: std::collections::BTreeSet<String> = err
+        .split("expected one of ")
+        .nth(1)
+        .unwrap_or_else(|| panic!("{err}"))
+        .split(", ")
+        .map(|k| k.trim_matches('`').to_string())
+        .collect();
+    let ours: std::collections::BTreeSet<String> = kinds().into_iter().map(str::to_string).collect();
+    assert_eq!(listed, ours);
     for kind in kinds() {
         let example = example_for(kind).expect("listed");
         let value: serde_json::Value = serde_json::from_str(example).unwrap_or_else(|e| panic!("{kind}: {e}"));
@@ -120,12 +138,33 @@ fn an_actions_budget_is_its_wait_plus_the_margin() {
     .unwrap();
     let budget = wait_budget_ms(&wait, 30_000);
     assert!(budget >= u64::from(MAX_DISCOVERY_WAIT_MS) + WAIT_MARGIN_MS, "{budget}");
-    assert!(budget < 600_000, "{budget}");
+    assert!(budget <= CALL_BUDGET_MS, "{budget}");
     let small: Action = serde_json::from_value(json!({ "kind": "wait_for", "selector": "#x", "timeout_ms": 100 })).unwrap();
     assert!(wait_budget_ms(&small, 30_000) < budget);
     let component: Action = serde_json::from_value(json!({ "kind": "use_component", "component": "c" })).unwrap();
-    assert!(wait_budget_ms(&component, 30_000) > budget);
+    assert!(wait_budget_ms(&component, 30_000) >= budget);
+    // No action, a component or a page walk included, may be given longer
+    // than the call: the proxy gives up on the call at 300 s.
+    assert_eq!(wait_budget_ms(&component, 30_000), CALL_BUDGET_MS);
+    let walk: Action = serde_json::from_value(json!({ "kind": "page_until", "next": "#n", "until": "#u", "max_pages": 100 })).unwrap();
+    assert!(wait_budget_ms(&walk, 30_000) <= CALL_BUDGET_MS);
+    // A recipe's longest loading wait (180 s) still fits before a click.
+    let click: Action = serde_json::from_value(json!({ "kind": "click", "selector": "#x" })).unwrap();
+    assert!(wait_budget_ms(&click, 30_000) >= 180_000 + 15_000, "{}", wait_budget_ms(&click, 30_000));
+    assert!(CALL_BUDGET_MS < 300_000);
     assert_eq!(no_answer(3, 125), "action 3 did not answer within 125 s; the batch stopped there");
+}
+
+/// A batch shares the call's time: each action gets the smaller of its own
+/// budget and what is left, and none once it is spent.
+#[test]
+fn a_batch_gives_each_action_what_is_left_of_the_call() {
+    assert_eq!(action_budget(30_000, 0), Some(30_000));
+    assert_eq!(action_budget(30_000, CALL_BUDGET_MS - 10_000), Some(10_000));
+    assert_eq!(action_budget(CALL_BUDGET_MS * 2, 0), Some(CALL_BUDGET_MS));
+    assert_eq!(action_budget(30_000, CALL_BUDGET_MS), None);
+    assert_eq!(action_budget(30_000, CALL_BUDGET_MS + 1), None);
+    assert_eq!(did_not_answer(125), "did not answer within 125 s");
 }
 
 /// A future that never resolves is given up on after its budget, not waited
