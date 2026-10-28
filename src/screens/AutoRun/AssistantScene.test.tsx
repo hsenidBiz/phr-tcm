@@ -1,14 +1,23 @@
-// The shared office on the Assistants card: a desk and a pixel character per
-// assistant, whose pose follows what the assistant is doing. jsdom does no
-// animation, so the motion itself is checked the way other CSS contracts here
-// are: as text in src/index.css.
+// The shared office on the Assistants card: three corners (Test lab, Map room,
+// Lounge) and a pixel character per assistant, standing in the corner its
+// activity belongs to. jsdom does no animation, so the motion itself is checked
+// the way other CSS contracts here are: as text in src/index.css.
 
-import { render } from "@testing-library/react";
+import { act, render } from "@testing-library/react";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { expect, test } from "vitest";
+import { afterEach, expect, test, vi } from "vitest";
 import type { AgentActivity, AgentView } from "../../bindings";
-import AssistantOffice, { bubbleFor, deskLeft, deskNumber, hueFor, poseFor, type ScenePose } from "./AssistantScene";
+import AssistantOffice, {
+  bubbleFor,
+  cornerFor,
+  deskNumber,
+  hueFor,
+  poseFor,
+  spotLeft,
+  type Corner,
+  type ScenePose,
+} from "./AssistantScene";
 
 const css = readFileSync(resolve(__dirname, "../../index.css"), "utf8");
 
@@ -34,6 +43,8 @@ const replaying: AgentActivity = { kind: "replaying", case_id: 4, step: 2, of: 7
 
 const office = (agents: AgentView[]) => render(<AssistantOffice agents={agents} />).container;
 const one = (a: AgentActivity, slot: number | null = 0, label = "Assistant 1") => office([agent(label, slot, a)]);
+
+afterEach(() => vi.useRealTimers());
 
 test.each<[AgentActivity, ScenePose]>([
   [{ kind: "discovering", area: null }, "walk"],
@@ -64,94 +75,138 @@ test.each([
   ["", null],
 ])("deskNumber(%s) is %s", (l, n) => expect(deskNumber(l)).toBe(n));
 
-test.each([
-  [0, 1, "50%"],
-  [0, 2, "25%"],
-  [1, 2, "75%"],
-])("deskLeft(%i, %i) is %s", (i, n, left) => expect(deskLeft(i, n)).toBe(left));
+test.each<[AgentActivity, Corner]>([
+  [replaying, "lab"],
+  [{ kind: "working" }, "lab"],
+  [{ kind: "discovering", area: null }, "map"],
+  [{ kind: "mapping", modules: ["Leave"] }, "map"],
+  [exploring, "map"],
+  [idle, "lounge"],
+])("cornerFor maps %j to %s", (activity, corner) => expect(cornerFor(activity)).toBe(corner));
 
-test("the office is decorative, with one desk per assistant at its share of the width and its number on it", () => {
+test("spotLeft puts an occupant in its corner's third, never nearer than 2.75rem to an edge", () => {
+  expect(spotLeft("lab", 0, 1)).toContain("16.6");
+  expect(spotLeft("lounge", 0, 1)).toContain("83.3");
+  expect(new Set([0, 1, 2].map((k) => spotLeft("lab", k, 3))).size).toBe(3);
+  for (const corner of ["lab", "map", "lounge"] as const) {
+    for (const [k, m] of [
+      [0, 1],
+      [0, 3],
+      [2, 3],
+    ]) {
+      expect(spotLeft(corner, k, m)).toContain("2.75rem");
+    }
+  }
+});
+
+test("the office is decorative, with three named corners in order, lit only when occupied", () => {
   const c = office([agent("Assistant 1", 0, replaying), agent("Assistant 2", 1, idle)]);
   const root = c.firstElementChild as HTMLElement;
   expect(root).toHaveAttribute("aria-hidden", "true");
   expect(root).toHaveClass("assistant-scene");
-  const desks = c.querySelectorAll<HTMLElement>(".assistant-scene__desk");
-  expect(desks).toHaveLength(2);
-  expect(desks[0].style.left).toBe("25%");
-  expect(desks[1].style.left).toBe("75%");
-  expect(desks[0].querySelector(".assistant-scene__number")).toHaveTextContent("1");
-  expect(desks[1].querySelector(".assistant-scene__number")).toHaveTextContent("2");
+  const corners = c.querySelectorAll<HTMLElement>(".assistant-scene__corner");
+  expect([...corners].map((e) => e.dataset.corner)).toEqual(["lab", "map", "lounge"]);
+  expect([...corners].map((e) => e.textContent)).toEqual(["Test lab", "Map room", "Lounge"]);
+  expect([...corners].map((e) => e.dataset.empty)).toEqual(["false", "true", "false"]);
 });
 
-test.each<[AgentActivity, ScenePose]>([
-  [exploring, "walk"],
-  [replaying, "type"],
-  [idle, "doze"],
-])("the walker for %j carries its pose and slot", (activity, pose) => {
-  const walker = one(activity, 1).querySelector(".assistant-scene__walker")!;
-  expect(walker).toHaveAttribute("data-pose", pose);
-  expect(walker).toHaveAttribute("data-slot", "1");
-  expect(walker.querySelector(".assistant-scene__bot")).not.toBeNull();
+test("each walker has its corner, pose, slot, spot, name tag and (only when there is one) bubble", () => {
+  const c = office([agent("Assistant 1", 0, replaying), agent("Assistant 2", 1, idle)]);
+  const walkers = c.querySelectorAll<HTMLElement>(".assistant-scene__walker");
+  expect(walkers).toHaveLength(2);
+  expect(walkers[0]).toHaveAttribute("data-corner", "lab");
+  expect(walkers[0]).toHaveAttribute("data-pose", "type");
+  expect(walkers[0]).toHaveAttribute("data-slot", "0");
+  expect(walkers[0].style.getPropertyValue("--spot")).toBe(spotLeft("lab", 0, 1));
+  expect(walkers[1].style.getPropertyValue("--spot")).toBe(spotLeft("lounge", 0, 1));
+  const tag = walkers[0].querySelector(".assistant-scene__tag")!;
+  expect(tag).toHaveTextContent("Assistant 1");
+  expect(tag).toHaveClass("text-ellipsis");
+  expect(tag).not.toHaveClass("truncate");
+  expect(walkers[0].querySelector(".assistant-scene__bubble")).toHaveTextContent("Step 2 of 7");
+  expect(walkers[1].querySelector(".assistant-scene__bubble")).toBeNull();
 });
 
-test("only typing shows the screen, walking fades the desk, and only dozing drifts a z", () => {
-  const walk = one(exploring);
-  const type = one(replaying);
-  const doze = one(idle);
-  expect(walk.querySelector(".assistant-scene__desk")).toHaveClass("assistant-scene__desk--empty");
-  expect(type.querySelector(".assistant-scene__desk")).not.toHaveClass("assistant-scene__desk--empty");
-  expect(doze.querySelector(".assistant-scene__desk")).not.toHaveClass("assistant-scene__desk--empty");
-  expect(type.querySelector(".assistant-scene__screen")).not.toBeNull();
-  expect(walk.querySelector(".assistant-scene__screen")).toBeNull();
-  expect(doze.querySelector(".assistant-scene__screen")).toBeNull();
-  expect(doze.querySelector(".assistant-scene__z")).not.toBeNull();
-  expect(walk.querySelector(".assistant-scene__z")).toBeNull();
-  expect(type.querySelector(".assistant-scene__z")).toBeNull();
+test("the bubble is in flow directly above the character, never absolutely positioned", () => {
+  const c = one({ kind: "discovering", area: "Profile" }, 1, "Assistant 2");
+  const bubble = c.querySelector<HTMLElement>(".assistant-scene__bubble")!;
+  const column = bubble.parentElement!;
+  expect(column).toHaveClass("flex", "flex-col");
+  expect(column.closest(".assistant-scene__walker")).not.toBeNull();
+  expect(bubble.className).not.toMatch(/\babsolute\b|\bfixed\b|\bbottom-/);
+  expect(bubble.nextElementSibling!.querySelector(".assistant-scene__bot")).not.toBeNull();
+  // The tag follows the character in the same column.
+  expect(column.lastElementChild).toHaveClass("assistant-scene__tag");
+  // The character is sized in rem like everything around it, not fixed px.
+  const bot = c.querySelector(".assistant-scene__bot")!;
+  expect(bot.getAttribute("width")).toBeNull();
+  expect(bot).toHaveClass("h-[2.125rem]", "w-7");
 });
 
-test("a sitting assistant stands just left of its desk", () => {
-  const walkers = office([agent("Assistant 1", 0, replaying), agent("Assistant 2", 1, idle)]).querySelectorAll<HTMLElement>(
+test("each corner has its props: a lit screen per lab occupant, a z per sleeper, one live pin", () => {
+  const c = office([
+    agent("Assistant 1", 0, replaying),
+    agent("Assistant 2", 1, { kind: "working" }),
+    agent("Assistant 3", 2, exploring),
+    agent("Assistant 4", 3, idle),
+  ]);
+  expect(c.querySelectorAll(".assistant-scene__screen")).toHaveLength(2);
+  expect(c.querySelectorAll(".assistant-scene__z")).toHaveLength(1);
+  expect(c.querySelectorAll(".assistant-scene__pin--live")).toHaveLength(1);
+});
+
+test("three replaying assistants each get their own seat", () => {
+  const walkers = office([1, 2, 3].map((n) => agent(`Assistant ${n}`, n - 1, replaying))).querySelectorAll<HTMLElement>(
     ".assistant-scene__walker",
   );
-  expect(walkers[0].style.getPropertyValue("--seat")).toBe("clamp(0.5rem, calc(25% - 3.5rem), calc(100% - 2.25rem))");
-  expect(walkers[1].style.getPropertyValue("--seat")).toBe("clamp(0.5rem, calc(75% - 3.5rem), calc(100% - 2.25rem))");
+  expect(new Set([...walkers].map((w) => w.style.getPropertyValue("--spot"))).size).toBe(3);
 });
 
-test("two walkers start at different points of the walk", () => {
-  const walkers = office([agent("Assistant 1", 0, exploring), agent("Assistant 2", 1, exploring)]).querySelectorAll<HTMLElement>(
-    ".assistant-scene__walker",
+test("two Map room pacers are out of step", () => {
+  const paces = office([agent("Assistant 1", 0, exploring), agent("Assistant 2", 1, exploring)]).querySelectorAll<HTMLElement>(
+    ".assistant-scene__pace",
   );
-  expect(walkers[0].style.animationDelay).not.toBe(walkers[1].style.animationDelay);
-  expect(walkers[1].style.animationDelay).toBe("-2.7s");
-});
-
-test("a walker paces around its own desk, kept inside the room", () => {
-  const walkers = office([agent("Assistant 1", 0, exploring), agent("Assistant 2", 1, exploring)]).querySelectorAll<HTMLElement>(
-    ".assistant-scene__walker",
-  );
-  const room = "calc(100% - 2.25rem)";
-  expect(walkers[0].style.getPropertyValue("--walk-from")).toBe(`clamp(0.5rem, calc(25% - 5rem), ${room})`);
-  expect(walkers[0].style.getPropertyValue("--walk-to")).toBe(`clamp(0.5rem, calc(25% + 3rem), ${room})`);
-  expect(walkers[1].style.getPropertyValue("--walk-from")).toBe(`clamp(0.5rem, calc(75% - 5rem), ${room})`);
-  // Stilled walkers stay at the start of their walk, not piled at the edge.
-  expect(css).toMatch(/\.assistant-scene__walker\s*\{[^}]*left:\s*var\(--seat,\s*var\(--walk-from/);
-  // The svg keeps its walker's timing so the flip lines up with the walk.
-  for (const w of walkers) {
-    expect(w.querySelector<SVGElement>(".assistant-scene__bot")!.style.animationDelay).toBe(w.style.animationDelay);
+  expect(paces).toHaveLength(2);
+  expect(paces[0].style.animationDelay).not.toBe(paces[1].style.animationDelay);
+  for (const p of paces) {
+    expect(p.querySelector<SVGElement>(".assistant-scene__bot")!.style.animationDelay).toBe(p.style.animationDelay);
   }
 });
 
-test("the bubble rides inside its walker and ellipsises a long line", () => {
+test("only the Map room paces", () => {
+  expect(one(replaying).querySelector(".assistant-scene__pace")).toBeNull();
+  expect(one(idle).querySelector(".assistant-scene__pace")).toBeNull();
+});
+
+test("an assistant that changes corner walks, facing the way it goes, until the walk ends", () => {
+  vi.useFakeTimers();
+  const discovering: AgentActivity = { kind: "discovering", area: "Profile" };
+  const { container, rerender } = render(<AssistantOffice agents={[agent("Assistant 1", 0, discovering)]} />);
+  const walker = () => container.querySelector<HTMLElement>(".assistant-scene__walker")!;
+  expect(walker()).not.toHaveAttribute("data-moving");
+  rerender(<AssistantOffice agents={[agent("Assistant 1", 0, replaying)]} />);
+  expect(walker()).toHaveAttribute("data-moving", "true");
+  expect(walker()).toHaveAttribute("data-facing", "left");
+  act(() => {
+    vi.advanceTimersByTime(2600);
+  });
+  expect(walker()).not.toHaveAttribute("data-moving");
+  rerender(<AssistantOffice agents={[agent("Assistant 1", 0, idle)]} />);
+  expect(walker()).toHaveAttribute("data-facing", "right");
+});
+
+test("a different assistant arriving in the same place does not inherit a walk", () => {
+  vi.useFakeTimers();
+  const { container, rerender } = render(<AssistantOffice agents={[agent("Assistant 1", 0, replaying)]} />);
+  rerender(<AssistantOffice agents={[agent("Assistant 2", 0, replaying)]} />);
+  expect(container.querySelector(".assistant-scene__walker")).not.toHaveAttribute("data-moving");
+});
+
+test("the bubble ellipsises a long line", () => {
   const c = one({ kind: "discovering", area: "Leave Encashment Approvals" }, 1, "Assistant 2");
   const bubble = c.querySelector(".assistant-scene__walker .assistant-scene__bubble")!;
   expect(bubble).toHaveTextContent("Leave Encashment Approvals");
   expect(bubble).toHaveClass("text-ellipsis", "max-w-[8rem]");
-});
-
-test("no bubble or number when there is nothing to say", () => {
-  const c = one(idle, 0, "Assistant");
-  expect(c.querySelector(".assistant-scene__bubble")).toBeNull();
-  expect(c.querySelector(".assistant-scene__number")).toBeNull();
 });
 
 const hueOf = (slot: number | null) =>
@@ -178,14 +233,13 @@ test("every slot colour is a theme token, never danger or warning, and the first
   expect(hues[3]).toBe("var(--color-muted)");
 });
 
-test("the css walks the wrapper across the room, flips only the svg, and stills it all under reduced motion", () => {
-  const walkFrames = css.match(/@keyframes\s+assistant-walk\b[\s\S]*?\n\}/);
-  expect(walkFrames![0]).toContain("var(--walk-from");
-  expect(walkFrames![0]).toContain("var(--walk-to");
-  expect(walkFrames![0]).not.toContain("scaleX");
+test("the css walks the wrapper across the floor, paces by translateX, and stills it all under reduced motion", () => {
+  expect(css).toMatch(/\.assistant-scene__walker\s*\{[^}]*left:\s*var\(--spot\)[^}]*transition:\s*left 2\.5s/);
+  const pace = css.match(/@keyframes\s+assistant-pace\b[\s\S]*?\n\}/)![0];
+  expect(pace).toContain("translateX");
+  expect(pace).toContain("2.5rem");
+  expect(pace).not.toContain("left:");
   expect(css).toMatch(/@keyframes\s+assistant-flip\b[\s\S]*?scaleX\(-1\)/);
-  expect(css).toMatch(/\.assistant-scene__walker\[data-pose="walk"\]\s*\{\s*animation:\s*assistant-walk/);
-  expect(css).toMatch(/\[data-pose="walk"\] \.assistant-scene__bot\s*\{\s*animation:\s*assistant-flip/);
   expect(css).toMatch(/@keyframes\s+assistant-bob\b/);
   expect(css).toMatch(/@keyframes\s+assistant-z-drift\b/);
   expect(css).toMatch(/@keyframes\s+assistant-blink\b/);
@@ -193,8 +247,9 @@ test("the css walks the wrapper across the room, flips only the svg, and stills 
   const blocks = [...css.matchAll(/@media \(prefers-reduced-motion: reduce\)\s*\{([\s\S]*?)\n\}/g)].map((m) => m[1]);
   const block = blocks.find((b) => b.includes(".assistant-scene"));
   expect(block, "a reduced-motion block names .assistant-scene").toBeDefined();
+  expect(block).toMatch(/\.assistant-scene__walker\s*\{\s*transition:\s*none/);
   expect(block).toMatch(/animation:\s*none/);
-  for (const part of ["__walker", "__bot", "__eye", "__z"]) {
+  for (const part of ["__walker", "__pace", "__bot", "__eye", "__z"]) {
     expect(block, `reduced motion stops ${part}`).toContain(`.assistant-scene${part}`);
   }
 });

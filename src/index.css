@@ -922,22 +922,38 @@ table {
 
 /* ── Assistant scene ─────────────────────────────────────────────────────
    The shared office on the Assistants card
-   (screens/AutoRun/AssistantScene.tsx). The room is full card width and
-   96 px tall; each assistant has a desk, always drawn, and a walker wrapper
-   holding its 28 x 34 character (colour from --assistant-hue, set from the
-   browser slot) and its speech bubble. Walking animates the wrapper's left
-   between --walk-from and --walk-to (set inline from its desk, clamped inside
-   the room) while only the svg flips at each end, so the bubble never mirrors; the component gives each
-   walker a negative animation-delay so they do not move as one. Typing bobs
-   at the desk; dozing is still and dimmed with a z drifting up. Under reduced
-   motion nothing moves, but each pose still looks different (screen, dim and
-   z, or walking stance). */
-.assistant-scene__desk--empty { opacity: 0.5; }
+   (screens/AutoRun/AssistantScene.tsx). One floor, full card width and 10rem
+   tall, in three corners (Test lab, Map room, Lounge). A corner with anyone in
+   it (data-empty="false") gets a light tint and a coloured strip on its floor
+   edge, both from --corner-c (a theme token); an empty one is dimmed with its
+   props faded. Each assistant is a walker wrapper placed at `left: var(--spot)`
+   holding a flex column (bubble, 1.75rem x 2.125rem character, name tag); its
+   colour is --assistant-hue, set from the browser slot. When its corner
+   changes, `left` transitions over 2.5 s and the component sets data-moving
+   (legs step, no pacing) and data-facing for the duration. In the Map room the
+   column paces: a translateX keyframe of at most 2.5rem each way, so it never
+   fights the left transition, while only the svg flips at each end and the
+   bubble never mirrors. Typing bobs at the bench; dozing is still and dimmed
+   with a z drifting up. Under reduced motion nothing moves and the walker
+   jumps, but each pose still looks different (screen, dim and z, or walking
+   stance). */
+.assistant-scene__corner[data-empty="false"] {
+  background: color-mix(in srgb, var(--corner-c) 8%, transparent);
+}
+.assistant-scene__corner-name { color: var(--corner-c); }
+.assistant-scene__strip { background: var(--corner-c); }
+.assistant-scene__corner[data-empty="true"] .assistant-scene__corner-name { color: var(--color-muted); }
+.assistant-scene__corner[data-empty="true"] .assistant-scene__strip { background: var(--color-border); }
+.assistant-scene__corner[data-empty="true"] .assistant-scene__props { opacity: 0.4; }
+.assistant-scene__pin--live { animation: assistant-pin 1.6s steps(1, end) infinite; }
+.assistant-scene__screen {
+  left: var(--spot);
+  transform: translateX(-50%);
+}
 .assistant-scene__walker {
-  /* Where it stands when not animated: its seat, else the start of its walk
-     (so stilled walkers stay at their own desks, not piled at the edge). */
-  left: var(--seat, var(--walk-from, 0.5rem));
+  left: var(--spot);
   color: var(--assistant-hue, var(--color-muted));
+  transition: left 2.5s ease-in-out;
 }
 .assistant-scene__eye {
   fill: var(--color-surface);
@@ -945,8 +961,8 @@ table {
   transform-origin: center;
 }
 .assistant-scene__walker[data-pose="doze"] .assistant-scene__bot { opacity: 0.55; }
-.assistant-scene__walker[data-pose="walk"] { animation: assistant-walk 6s linear infinite; }
-.assistant-scene__walker[data-pose="walk"] .assistant-scene__bot { animation: assistant-flip 6s linear infinite; }
+.assistant-scene__pace { animation: assistant-pace 6s linear infinite; }
+.assistant-scene__pace .assistant-scene__bot { animation: assistant-flip 6s linear infinite; }
 .assistant-scene__walker[data-pose="type"] .assistant-scene__bot { animation: assistant-bob 1s steps(1, end) infinite; }
 .assistant-scene__walker[data-pose="walk"] .assistant-scene__leg--a { animation: assistant-step 0.4s steps(1, end) infinite; }
 .assistant-scene__walker[data-pose="walk"] .assistant-scene__leg--b { animation: assistant-step 0.4s steps(1, end) infinite -0.2s; }
@@ -956,20 +972,31 @@ table {
 .assistant-scene__walker[data-pose="type"] .assistant-scene__eye:not(.assistant-scene__eye--closed) {
   animation: assistant-blink 5s linear infinite;
 }
+/* Crossing the floor: legs step whatever the pose, no pacing, and the
+   character faces the way it goes. These come after the pose rules. */
+.assistant-scene__walker[data-moving="true"] .assistant-scene__pace,
+.assistant-scene__walker[data-moving="true"] .assistant-scene__bot { animation: none; }
+.assistant-scene__walker[data-moving="true"] .assistant-scene__leg--a { animation: assistant-step 0.4s steps(1, end) infinite; }
+.assistant-scene__walker[data-moving="true"] .assistant-scene__leg--b { animation: assistant-step 0.4s steps(1, end) infinite -0.2s; }
+.assistant-scene__walker[data-moving="true"][data-facing="left"] .assistant-scene__bot { transform: scaleX(-1); }
 .assistant-scene__z { animation: assistant-z-drift 3s ease-out infinite; }
-@keyframes assistant-walk {
-  0% { left: var(--walk-from, 0.5rem); }
-  46% { left: var(--walk-to, 0.5rem); }
-  50% { left: var(--walk-to, 0.5rem); }
-  96% { left: var(--walk-from, 0.5rem); }
-  100% { left: var(--walk-from, 0.5rem); }
+@keyframes assistant-pace {
+  0% { transform: translateX(-2.5rem); }
+  46% { transform: translateX(2.5rem); }
+  50% { transform: translateX(2.5rem); }
+  96% { transform: translateX(-2.5rem); }
+  100% { transform: translateX(-2.5rem); }
 }
-/* The same timing as the walk, on the svg alone: facing right on the way
+/* The same timing as the pace, on the svg alone: facing right on the way
    out, left on the way back. */
 @keyframes assistant-flip {
   0%, 48% { transform: scaleX(1); }
   50%, 98% { transform: scaleX(-1); }
   100% { transform: scaleX(1); }
+}
+@keyframes assistant-pin {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.2; }
 }
 @keyframes assistant-bob {
   0% { transform: translateY(0); }
@@ -995,7 +1022,10 @@ table {
 }
 /* !important because the pose rules above out-rank a bare class selector. */
 @media (prefers-reduced-motion: reduce) {
+  .assistant-scene__walker { transition: none !important; }
   .assistant-scene__walker,
+  .assistant-scene__pace,
+  .assistant-scene__pin--live,
   .assistant-scene__bot,
   .assistant-scene__leg--a,
   .assistant-scene__leg--b,

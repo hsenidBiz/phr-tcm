@@ -197,7 +197,8 @@ test("an assistant with no client or no browser says so", async () => {
     agent({ client: null, slot: null, browser: null, account: null, activity: { kind: "idle" } }),
     agent({ label: "Assistant 2", slot: 1, activity: { kind: "exploring" } }),
   ]);
-  expect(screen.getByText("Assistant 1")).toBeInTheDocument();
+  // Once in the row and once on the office name tag (which is aria-hidden).
+  expect(screen.getAllByText("Assistant 1")).toHaveLength(2);
   expect(screen.getByText("No Auto Run browser")).toBeInTheDocument();
 });
 

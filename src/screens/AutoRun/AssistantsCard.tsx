@@ -3,10 +3,10 @@
 // End its discovery, Release its browser. It draws nothing until an assistant
 // is doing something: while every connected assistant is idle (or none is
 // connected) it is gone, and while it shows, an idle assistant keeps its row
-// (dozing) so its browser can still be released. One shared office strip
-// (AssistantScene.tsx) runs across the top of the card, a desk and a character
-// per assistant, and the rows sit below it, each with a small square in its
-// character's colour. Rust sends the whole list again whenever any of it
+// (dozing) so its browser can still be released. One shared office floor
+// (AssistantScene.tsx) runs across the top of the card, in three corners with
+// each assistant standing in the one matching its activity, and the rows sit
+// below it, each with a small square in its character's colour. Rust sends the whole list again whenever any of it
 // changes (`autorun-agents-changed`, at most once a second), so the rows are
 // replaced outright rather than patched.
 
