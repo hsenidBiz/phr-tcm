@@ -392,7 +392,7 @@ fn a_click_that_never_found_its_target_says_the_accounts_menu_differs() {
     };
     let never_found = failed("waited 3000ms: link \"Apply Leave\" not found");
     let said = never_found.for_run_as(" Leave ", Some("gabriel"));
-    assert!(said.ends_with(&menu_differs("gabriel", locator)), "{said}");
+    assert!(said.ends_with(&format!("{}.", menu_differs("gabriel", locator))), "{said}");
     assert!(said.starts_with("Could not reach module \"Leave\": click 2, link \"Apply Leave\" - waited 3000ms"), "{said}");
     assert_eq!(never_found.for_run("Leave"), never_found.for_run_as("Leave", None), "no account, no sentence");
     assert!(!never_found.for_run("Leave").contains("menu"), "{}", never_found.for_run("Leave"));
@@ -822,7 +822,7 @@ async fn a_path_click_that_matches_two_elements_says_to_repair_the_area() {
     // A real never-found click, with the account known: the run says the
     // menu differs.
     let said = failure.for_run_as("Leave", Some("gabriel"));
-    assert!(said.ends_with(&v2_lib::autorun::nav::menu_differs("gabriel", "link \"Leave\"")), "{said}");
+    assert!(said.ends_with(&format!("{}.", v2_lib::autorun::nav::menu_differs("gabriel", "link \"Leave\""))), "{said}");
     assert!(!failure.for_run("Leave").contains("menu as"), "{}", failure.for_run("Leave"));
 }
 

@@ -285,5 +285,5 @@ async fn a_refused_session_is_logged_with_its_browser_its_kind_and_its_age() {
         .iter()
         .find(|m| m.starts_with("Auto Run, step 1:") && m.contains("refused the session for admin"))
         .unwrap_or_else(|| panic!("no mid-case line: {logged:?}"));
-    assert!(mid.contains("browser (the session was tampered with; the saved session was 3 min old)"), "{mid}");
+    assert!(mid.contains("in the main Auto Run browser (the session was tampered with; the saved session was 3 min old)"), "{mid}");
 }

@@ -1159,7 +1159,6 @@ async fn run_expanded<D: Driver>(
         policy: &policy,
         direct_urls: nav_file.direct_urls,
         step: step.step_number,
-        account: account.clone(),
         popups,
         loaders,
         cancel: run.cancel,
@@ -1310,7 +1309,7 @@ async fn run_expanded<D: Driver>(
                             Some(rt) => {
                                 let who_key = who.key.clone();
                                 let who = format!("Auto Run, step {}", step.step_number);
-                                let went = nav::reach_module_as(d, rt, nav::TripFrom::SignIn, timing, &who, Some(&who_key)).await;
+                                let went = nav::reach_module(d, rt, nav::TripFrom::SignIn, timing, &who, Some(&who_key)).await;
                                 if !went.ok {
                                     blocked = Some(AFTER_UNREACHED);
                                 }
@@ -1375,8 +1374,8 @@ async fn run_expanded<D: Driver>(
                     }
                     Ok(notes) => {
                         let (mut outcome, stop) = match action {
-                            Action::WhenVisible { .. } => when_visible(d, &here, action, &area, areas, timing).await,
-                            _ => repeat_while_visible(d, &here, action, &area, areas, timing).await,
+                            Action::WhenVisible { .. } => when_visible(d, &here, action, &area, areas, account.as_deref(), timing).await,
+                            _ => repeat_while_visible(d, &here, action, &area, areas, account.as_deref(), timing).await,
                         };
                         popups::add_notes(&mut outcome, &notes);
                         blocked = stop;
@@ -1680,9 +1679,6 @@ struct Here<'a> {
     policy: &'a Policy,
     direct_urls: bool,
     step: i32,
-    /// The account the browser was signed in as when the step began: the
-    /// one a failed trip back to an area is said for (`nav::menu_differs`).
-    account: Option<String>,
     /// The recipe's `close_when_shown`: closed before an action that
     /// touches the page (`popups::close_shown`).
     popups: &'a [super::recipe::ClosePopup],
@@ -1840,6 +1836,7 @@ async fn when_visible<D: Driver>(
     action: &Action,
     area: &AreaRoute<'_>,
     areas: Option<&NamedAreas>,
+    account: Option<&str>,
     timing: &Timing,
 ) -> (ActionOutcome, Option<&'static str>) {
     if let Err(why) = action.validate() {
@@ -1863,7 +1860,7 @@ async fn when_visible<D: Driver>(
         // walking back to the area, as the step's own `return_to_area`
         // would; not reaching it stops the step the same way.
         let (out, stop) = match guarded {
-            Action::ReturnToArea { .. } => return_to_area(d, guarded, area, areas, here.step, here.account.as_deref(), timing).await,
+            Action::ReturnToArea { .. } => return_to_area(d, guarded, area, areas, here.step, account, timing).await,
             _ => plain(d, here, guarded, timing).await,
         };
         said.push(out.detail);
@@ -1889,6 +1886,7 @@ async fn repeat_while_visible<D: Driver>(
     action: &Action,
     area: &AreaRoute<'_>,
     areas: Option<&NamedAreas>,
+    account: Option<&str>,
     timing: &Timing,
 ) -> (ActionOutcome, Option<&'static str>) {
     use crate::browser::repeat::{self, ROW_RULE};
@@ -1951,7 +1949,7 @@ async fn repeat_while_visible<D: Driver>(
                 return (ActionOutcome::failed(AFTER_STOP), Some(AFTER_STOP));
             }
             let (out, stop) = match step {
-                Action::ReturnToArea { .. } => return_to_area(d, step, area, areas, here.step, here.account.as_deref(), timing).await,
+                Action::ReturnToArea { .. } => return_to_area(d, step, area, areas, here.step, account, timing).await,
                 _ => plain(d, here, step, timing).await,
             };
             said.push(out.detail);
@@ -2011,7 +2009,7 @@ async fn return_to_area<D: Driver>(
     if let Some(name) = action.area_named() {
         return match named_route(areas, name) {
             Ok(rt) => {
-                let went = nav::reach_module_as(d, rt, nav::TripFrom::Elsewhere, timing, &who, account).await;
+                let went = nav::reach_module(d, rt, nav::TripFrom::Elsewhere, timing, &who, account).await;
                 let stop = (!went.ok).then_some(AFTER_NAMED_AREA_UNREACHED);
                 (went, stop)
             }
@@ -2020,7 +2018,7 @@ async fn return_to_area<D: Driver>(
     }
     match area {
         AreaRoute::To(rt) => {
-            let went = nav::reach_module_as(d, rt, nav::TripFrom::Elsewhere, timing, &who, account).await;
+            let went = nav::reach_module(d, rt, nav::TripFrom::Elsewhere, timing, &who, account).await;
             let stop = (!went.ok).then_some(AFTER_AREA_UNREACHED);
             (went, stop)
         }

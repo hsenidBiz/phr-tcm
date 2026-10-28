@@ -748,7 +748,7 @@ impl PathFailure {
             Where::Click { n, locator } => {
                 let run = format!("{UNREACHED_PREFIX}{module}\": click {n}, {locator} - {reason}");
                 match account.map(str::trim).filter(|a| !a.is_empty()) {
-                    Some(account) if self.never_found() => format!("{run}; {}", menu_differs(account, locator)),
+                    Some(account) if self.never_found() => format!("{run}; {}.", menu_differs(account, locator)),
                     _ => format!("{run}."),
                 }
             }
@@ -1344,17 +1344,14 @@ async fn click_path<D: Driver>(
 
 /// A trip to a module as the one outcome the run's "Go to X" line shows.
 pub fn reached(module: &str, result: Result<String, PathFailure>) -> ActionOutcome {
-    reached_noted(module, result, &[])
+    reached_noted(module, result, &[], None)
 }
 
 /// `reached`, with what the trip did on the way (`go_to_module_noted`) said
-/// beside the module: "Go to Leave (Group Menu Items turned off)".
-pub fn reached_noted(module: &str, result: Result<String, PathFailure>, notes: &[String]) -> ActionOutcome {
-    reached_noted_as(module, result, notes, None)
-}
-
-/// `reached_noted` for a trip made as `account` (`PathFailure::for_run_as`).
-pub fn reached_noted_as(
+/// beside the module: "Go to Leave (Group Menu Items turned off)". For a
+/// trip made as `account`, a click that never found its target also says the
+/// account's menu differs (`PathFailure::for_run_as`).
+pub fn reached_noted(
     module: &str,
     result: Result<String, PathFailure>,
     notes: &[String],
@@ -1405,38 +1402,16 @@ pub async fn reach_module<D: Driver>(
     from: TripFrom,
     timing: &Timing,
     who: &str,
-) -> ActionOutcome {
-    reach_module_noted(d, route, from, timing, who).await.0
-}
-
-/// `reach_module` for a trip made as `account` (`PathFailure::for_run_as`).
-pub async fn reach_module_as<D: Driver>(
-    d: &mut D,
-    route: &Route,
-    from: TripFrom,
-    timing: &Timing,
-    who: &str,
     account: Option<&str>,
 ) -> ActionOutcome {
-    reach_module_noted_as(d, route, from, timing, who, account).await.0
+    reach_module_noted(d, route, from, timing, who, account).await.0
 }
 
 /// `reach_module`, with the notes the trip made (`go_to_module_noted`) as
 /// well: they are already in a passed outcome's words, and the replay to a
-/// step says them in its own answer.
-pub async fn reach_module_noted<D: Driver>(
-    d: &mut D,
-    route: &Route,
-    from: TripFrom,
-    timing: &Timing,
-    who: &str,
-) -> (ActionOutcome, Vec<String>) {
-    reach_module_noted_as(d, route, from, timing, who, None).await
-}
-
-/// `reach_module_noted` for a trip made as `account`: a failure whose click
+/// step says them in its own answer. A trip made as `account` whose click
 /// never found its target says the account's menu differs (`menu_differs`).
-pub async fn reach_module_noted_as<D: Driver>(
+pub async fn reach_module_noted<D: Driver>(
     d: &mut D,
     route: &Route,
     from: TripFrom,
@@ -1447,7 +1422,7 @@ pub async fn reach_module_noted_as<D: Driver>(
     let module = route.path.name();
     let mut notes = Vec::new();
     let went = go_to_module_noted(d, route, from, timing, &mut notes).await;
-    let first = reached_noted_as(module, went, &notes, account);
+    let first = reached_noted(module, went, &notes, account);
     if first.ok || first.harness {
         log_notes(&notes);
         return (first, notes);
@@ -1458,7 +1433,7 @@ pub async fn reach_module_noted_as<D: Driver>(
         // Right after a fresh load the browser sits where a sign-in leaves
         // it: on the path's own first page, there is no going home again.
         let went = go_to_module_noted(d, route, TripFrom::SignIn, timing, &mut notes).await;
-        reached_noted_as(module, went, &notes, account)
+        reached_noted(module, went, &notes, account)
     } else {
         reached(module, Err(PathFailure { at: Where::Home, reason: reload.detail, harness: reload.harness }))
     };
