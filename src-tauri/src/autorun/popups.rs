@@ -126,7 +126,7 @@ pub async fn close_shown_within<D: Driver>(d: &mut D, recipe: &SignInRecipe, wit
         if done.iter().all(|x| *x) || std::time::Instant::now() >= deadline {
             break;
         }
-        tokio::time::sleep(std::time::Duration::from_millis(timing.poll_ms.max(1))).await;
+        d.idle(std::time::Duration::from_millis(timing.poll_ms.max(1))).await;
     }
     closed
 }

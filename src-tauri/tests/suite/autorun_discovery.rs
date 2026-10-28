@@ -5790,9 +5790,33 @@ async fn a_start_whose_walk_fails_stays_started_and_says_why() {
     assert_eq!(v["signed_in"], true, "{body}");
     assert_eq!(v["at_area"], false, "{body}");
     assert!(v["area_walk"].as_str().unwrap_or("").contains("Leave Apply"), "{body}");
+    assert!(v["area_walk"].as_str().unwrap().contains("the menu as admin has no"), "the account was not passed to the walk: {body}");
     assert!(!closed.load(Ordering::SeqCst), "the browser was closed");
     let b = browser.as_ref().expect("the browser stays");
     let state = b.discovery.as_ref().expect("the discovery stays started");
     assert_eq!(state.area.as_deref(), Some("Leave Apply"));
     assert_eq!(state.account.as_deref(), Some("admin"));
+}
+
+/// The project's cookie banner, up when the start lands, is closed by the
+/// start itself: one more click than the same start in a project with no
+/// pop-ups list.
+#[tokio::test]
+async fn a_start_closes_the_projects_banner_before_it_answers() {
+    async fn mouse_releases(with_banner: bool) -> usize {
+        let dir = root_with_recipe_and_account();
+        if with_banner {
+            let mut r = recipe();
+            r.close_when_shown = serde_json::from_value(json!([
+                { "name": "cookie banner", "shown": { "css": "#cookieBanner.show" }, "close": { "css": "#btnCookieClose" } }
+            ]))
+            .unwrap();
+            save_recipe(dir.path(), ORG, PROJECT, &r).unwrap();
+        }
+        let (mut browser, _) = slot(menu_app(false, "/"), opened_for_discovery());
+        let (status, body) = discover_start_in(&mut browser, dir.path(), ORG, PROJECT, "admin", None, &quick()).await;
+        assert_eq!(status, 200, "{body}");
+        browser.as_ref().unwrap().d.calls_to("Input.dispatchMouseEvent").iter().filter(|c| c["type"] == "mouseReleased").count()
+    }
+    assert_eq!(mouse_releases(true).await, mouse_releases(false).await + 1);
 }

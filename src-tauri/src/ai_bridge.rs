@@ -5095,6 +5095,7 @@ pub async fn discover_start_in<B: DiscoveryBrowser>(
                 Ok(out) => Ok(out.detail),
             }
         };
+        let signed_at = std::time::Instant::now();
         match signed {
             Err(why) => why,
             Ok(detail) => {
@@ -5175,6 +5176,7 @@ pub async fn discover_start_in<B: DiscoveryBrowser>(
                         project,
                         key,
                         named_area.as_deref(),
+                        signed_at,
                         timing,
                     )
                     .await;
@@ -5197,6 +5199,11 @@ pub async fn discover_start_in<B: DiscoveryBrowser>(
                     }
                     if let Some(at_area) = landing.at_area {
                         answer["at_area"] = serde_json::json!(at_area);
+                        if at_area {
+                            if let Some(name) = named_area.as_deref() {
+                                answer["detail"] = serde_json::json!(format!("{detail}, then to {name}"));
+                            }
+                        }
                     }
                     if let Some(walk) = &landing.walk {
                         answer["area_walk"] = serde_json::json!(walk);
@@ -5266,20 +5273,20 @@ async fn land_at_area<D: crate::browser::cdp::Driver>(
     project: &str,
     account: &str,
     area: Option<&str>,
+    signed_at: std::time::Instant,
     timing: &crate::browser::timing::Timing,
 ) -> AreaLanding {
-    /// How long a banner is waited for once the browser has landed.
+    /// How long, from when the sign-in finished, a banner is waited for.
     const BANNER_WAIT_MS: u64 = 3_000;
     let recipe = crate::autorun::recipe::load_effective_recipe_if_any(root, organization, project).ok().flatten();
     let mut landing = AreaLanding::default();
     let route = area.map(str::trim).filter(|a| !a.is_empty()).map(|a| {
-        let saved = crate::autorun::nav::load_nav(root, organization, project)
-            .ok()
-            .is_some_and(|nav| crate::autorun::nav::find_area(&nav, a).is_some());
-        if saved {
-            crate::autorun::runner::discovery_area_route(root, organization, project, Some(a))
-        } else {
-            Err(no_saved_area_to_start_at(a))
+        match crate::autorun::nav::load_nav(root, organization, project) {
+            Err(why) => Err(why),
+            Ok(nav) if crate::autorun::nav::find_area(&nav, a).is_some() => {
+                crate::autorun::runner::discovery_area_route(root, organization, project, Some(a))
+            }
+            Ok(_) => Err(no_saved_area_to_start_at(a)),
         }
     });
     match route {
@@ -5310,8 +5317,10 @@ async fn land_at_area<D: crate::browser::cdp::Driver>(
             }
         }
     }
+    // The walk's own time counts toward the wait: a banner not up by then is not coming.
+    let remaining = BANNER_WAIT_MS.saturating_sub(signed_at.elapsed().as_millis() as u64);
     if let Some(recipe) = &recipe {
-        crate::autorun::popups::close_shown_within(d, recipe, BANNER_WAIT_MS, timing).await;
+        crate::autorun::popups::close_shown_within(d, recipe, remaining, timing).await;
     }
     landing
 }

@@ -2009,7 +2009,8 @@ async fn a_discovery_for_another_account_signs_in_as_it() {
     let (status, out) = discover_start_in(&mut slot, dir.path(), "acme", "Web", "admin", Some("Leave"), &quick()).await;
     assert_eq!(status, 200, "{out}");
     let v: Value = serde_json::from_str(&out).unwrap();
-    assert_eq!((v["signed_in"].as_bool(), v["detail"].as_str()), (Some(true), Some(discovery_signed_in_already("admin").as_str())));
+    assert_eq!(v["signed_in"].as_bool(), Some(true));
+    assert_eq!(v["detail"].as_str(), Some(format!("{}, then to Leave", discovery_signed_in_already("admin")).as_str()));
     assert_eq!(discovery_signed_in_already("admin"), "signed in already as admin; went to the home page");
     // The project saves a Leave area, so the start walks there after going home.
     assert_eq!(v["at_area"], true, "{out}");
