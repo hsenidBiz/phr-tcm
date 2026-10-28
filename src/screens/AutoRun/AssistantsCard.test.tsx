@@ -170,12 +170,23 @@ test("only a replay has a progress bar", async () => {
   expect(document.querySelector("[data-progress]")).toBeNull();
 });
 
-test("a working assistant with no browser still gets a character in the office", async () => {
-  await mount([agent({ slot: null, browser: null, account: null, activity: { kind: "exploring" } })]);
-  expect(document.querySelector(".assistant-scene")).toHaveAttribute("aria-hidden", "true");
-  const walker = document.querySelector(".assistant-scene__walker");
-  expect(walker).toHaveAttribute("data-slot", "none");
-  expect(walker).toHaveAttribute("data-pose", "walk");
+test("an assistant with no Auto Run browser has no row and no place in the office", async () => {
+  await mount([
+    agent({ label: "Assistant 1", slot: null, browser: null, account: null, activity: { kind: "idle" } }),
+    agent({ label: "Assistant 2", slot: 1, activity: { kind: "exploring" } }),
+  ]);
+  expect(screen.queryByText(/^Assistant 1/, { ignore: "script, style" })).toBeNull();
+  expect(screen.queryByText("No Auto Run browser")).toBeNull();
+  expect(screen.getByText("1 working")).toBeInTheDocument();
+  const walkers = document.querySelectorAll(".assistant-scene__walker");
+  expect(walkers).toHaveLength(1);
+  expect(walkers[0]).toHaveAttribute("data-slot", "1");
+});
+
+test("the card stays away while only assistants with no Auto Run browser are working", async () => {
+  await mount([agent({ slot: null, browser: null, account: null, activity: { kind: "working" } })]);
+  expect(screen.queryByRole("heading", { name: "Assistants" })).toBeNull();
+  expect(document.querySelector(".assistant-scene")).toBeNull();
 });
 
 test("names each assistant, its browser and what it does", async () => {
@@ -192,14 +203,10 @@ test("a replay that has not reached its first step says it is starting", async (
   expect(screen.queryByText(/step 0 of 0/)).toBeNull();
 });
 
-test("an assistant with no client or no browser says so", async () => {
-  await mount([
-    agent({ client: null, slot: null, browser: null, account: null, activity: { kind: "idle" } }),
-    agent({ label: "Assistant 2", slot: 1, activity: { kind: "exploring" } }),
-  ]);
+test("an assistant with no client is named by its label alone", async () => {
+  await mount([agent({ client: null })]);
   // The office's name tag repeats the label, so look only at the row.
   expect(screen.getByText("Assistant 1", { ignore: ".assistant-scene *, script, style" })).toBeInTheDocument();
-  expect(screen.getByText("No Auto Run browser")).toBeInTheDocument();
 });
 
 test("an extra browser is called its own, and the browser and account are left out while unknown", async () => {
@@ -264,7 +271,7 @@ test("Stop shows only when the assistant can be stopped, End discovery only whil
   expect(screen.getByRole("button", { name: "End discovery for Assistant 2" })).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Release Assistant 1's browser" })).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Release Assistant 2's browser" })).toBeInTheDocument();
-  // No slot, so nothing to release.
+  // No slot, so no row and nothing to release.
   expect(screen.queryByRole("button", { name: "Release Assistant 3's browser" })).toBeNull();
 });
 
