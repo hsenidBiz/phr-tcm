@@ -979,10 +979,9 @@ table {
 .assistant-scene__walker[data-moving="true"] .assistant-scene__bot { animation: none; }
 .assistant-scene__walker[data-moving="true"] .assistant-scene__leg--a { animation: assistant-step 0.4s steps(1, end) infinite; }
 .assistant-scene__walker[data-moving="true"] .assistant-scene__leg--b { animation: assistant-step 0.4s steps(1, end) infinite -0.2s; }
-/* Facing is a walk, so under reduced motion the character just jumps. */
-@media (prefers-reduced-motion: no-preference) {
-  .assistant-scene__walker[data-moving="true"][data-facing="left"] .assistant-scene__bot { transform: scaleX(-1); }
-}
+/* Facing is a walk, so under reduced motion the character just jumps
+   (undone in the reduced-motion block below). */
+.assistant-scene__walker[data-moving="true"][data-facing="left"] .assistant-scene__bot { transform: scaleX(-1); }
 .assistant-scene__z { animation: assistant-z-drift 3s ease-out infinite; }
 /* Starts and ends at the spot (0), so entering or leaving the pace never
    jumps: out to 2.5rem right, across to 2.5rem left, back home. */
@@ -1038,6 +1037,7 @@ table {
   .assistant-scene__arm--b,
   .assistant-scene__eye,
   .assistant-scene__z { animation: none !important; }
+  .assistant-scene__bot { transform: none !important; }
 }
 
 /* ── Sidebar glyph motion ────────────────────────────────────────────────
