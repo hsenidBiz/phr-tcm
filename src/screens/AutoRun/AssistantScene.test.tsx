@@ -76,13 +76,13 @@ test.each([
   ["", null],
 ])("deskNumber(%s) is %s", (l, n) => expect(deskNumber(l)).toBe(n));
 
-test("the scene shows the bubble and desk number, truncating a long bubble", () => {
+test("the scene shows the bubble and desk number, ellipsising a long bubble", () => {
   const { container } = render(
     <AssistantScene activity={{ kind: "discovering", area: "Leave Encashment Approvals" }} slot={1} label="Assistant 2" />,
   );
   const bubble = container.querySelector(".assistant-scene__bubble")!;
   expect(bubble).toHaveTextContent("Leave Encashment Approvals");
-  expect(bubble).toHaveClass("truncate");
+  expect(bubble).toHaveClass("text-ellipsis");
   expect(container.querySelector(".assistant-scene__number")).toHaveTextContent("2");
 });
 

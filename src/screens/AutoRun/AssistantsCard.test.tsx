@@ -340,7 +340,7 @@ test("a row's buttons wait while its own command is on its way", async () => {
   for (const n of one) expect(screen.getByRole("button", { name: n })).toBeEnabled();
 });
 
-test("each row keeps one status element, and only its text changes", async () => {
+test("each cubicle keeps one status element, and only its text changes", async () => {
   await mount([agent({ label: "Assistant 1", slot: 0 }), agent({ label: "Assistant 2", slot: 1 })]);
   const rows = screen.getAllByRole("listitem");
   const before = within(rows[0]).getByRole("status");

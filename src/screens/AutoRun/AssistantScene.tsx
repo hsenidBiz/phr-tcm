@@ -102,7 +102,7 @@ export default function AssistantScene({
         <div className="absolute bottom-5 left-1/2 h-7 w-14 -translate-x-1/2 rounded-sm border border-border-strong bg-surface-2" />
       </div>
       {bubble && (
-        <span className="assistant-scene__bubble label-trim absolute left-1.5 top-1.5 max-w-[70%] truncate rounded border border-border bg-surface px-1.5 text-[11px] text-text">
+        <span className="assistant-scene__bubble label-trim absolute left-1.5 top-1.5 max-w-[70%] overflow-x-clip text-ellipsis whitespace-nowrap rounded border border-border bg-surface px-1.5 text-[11px] text-text">
           {bubble}
         </span>
       )}
