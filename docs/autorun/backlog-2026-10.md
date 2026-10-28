@@ -759,6 +759,17 @@ information in the slots the Playwright pipeline already reads; it never overrid
       that area, by the same walk a run uses, with the menu in the state the run leaves it.
     - **My Assessments stays blank for several seconds** after its menu click; record it as
       a quirk (writers had to add a `wait_for`), not a code change.
+    - **A subagent could not hand its report back after the permission mode changed.** The
+      scoping agent (reading all 900 cases of PBI 138416) was started in auto mode; Avin then
+      switched the session to bypass permissions. Its `SubagentHandback` was refused four
+      times with "the session is not in auto mode", it made no progress after that, and the
+      watchdog stopped it after 600 s; its report arrived only as the failed task's last
+      words (it had written its file first, so nothing was lost). That refusal is Claude
+      Code's, not TCM's, but the TCM side should not depend on the hand-back: every TCM skill
+      that runs subagents (`/tcm:script-pbi` with several writers, data builders) tells each
+      one to write its report to a file before handing back, and the coordinator reads the
+      file when a hand-back fails. Worth reporting upstream: a hand-back refused for a
+      mode change the subagent cannot control should fall back to returning the report.
     - **The coordinator's part.** Splitting cases by account had to be done by hand from
       `perf_cycle_participant` (who is Self, manager, reviewer in which published cycle). A
       `/tcm:script-pbi` run with several writers could list, per free account, the roles
