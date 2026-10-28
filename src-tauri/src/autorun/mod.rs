@@ -41,6 +41,7 @@ pub mod roles;
 pub mod network;
 pub mod one_browser;
 pub mod overrides;
+pub mod page_compact;
 pub mod page_errors;
 pub mod patterns;
 pub mod plan;

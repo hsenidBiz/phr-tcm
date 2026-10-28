@@ -899,15 +899,19 @@ pub async fn probe<D: Driver>(d: &mut D, target: &Target) -> Result<String, CdpE
             None => format!("matches: 0 - nothing on the page answers to {}", target.describe()),
         });
     }
+    let many = handles.len() > 1;
     let mut lines = vec![format!("matches: {}", handles.len())];
-    for handle in handles.iter().take(10) {
+    let mut padded: Vec<usize> = Vec::new();
+    for (i, handle) in handles.iter().take(PROBE_LISTED).enumerate() {
         let visible = page::call_value(d, handle, VISIBLE_JS, &[]).await?.as_bool().unwrap_or(false);
         let summary = page::call_value(d, handle, PROBE_SUMMARY_JS, &[]).await?;
         let tag = summary["tag"].as_str().unwrap_or("");
         let text = trim_chars(&sanitize(summary["text"].as_str().unwrap_or("")), 60);
         let rect = |i: usize| summary["rect"][i].as_f64().unwrap_or(0.0).round() as i64;
+        // With several matches each line says the `nth` that picks it.
+        let label = if many { format!("nth {i}: ") } else { String::new() };
         let mut line = format!(
-            "{tag} \"{text}\" {} at {},{} {}x{}",
+            "{label}{tag} \"{text}\" {} at {},{} {}x{}",
             if visible { "visible" } else { "hidden" },
             rect(0),
             rect(1),
@@ -918,12 +922,34 @@ pub async fn probe<D: Driver>(d: &mut D, target: &Target) -> Result<String, CdpE
         // is its aria-label. Said as the page read says it, so the two can
         // be matched up.
         if let Some((role, name)) = read_name(d, handle).await {
+            if name != name.trim() {
+                padded.push(i);
+            }
             line.push_str(&format!("{PAGE_READ_NAME}{role} \"{}\"", truncate_name(&sanitize(&name))));
         }
         lines.push(line);
     }
-    if handles.len() > 1 {
+    if handles.len() > PROBE_LISTED {
+        lines.push(format!(
+            "(the first {PROBE_LISTED} are listed, nth 0 to {}; {} matched in all)",
+            PROBE_LISTED - 1,
+            handles.len()
+        ));
+    }
+    if !padded.is_empty() {
+        let which = if many {
+            let nths: Vec<String> = padded.iter().map(|i| format!("nth {i}")).collect();
+            format!("the page's name for {} has", nths.join(", "))
+        } else {
+            "the page's name has".to_string()
+        };
+        lines.push(format!("{which} leading or trailing spaces: a name is compared trimmed, so \"exact\": true still matches it"));
+    }
+    if many {
         lines.push("narrow the locator (add \"name\", \"exact\": true, a scope, or \"nth\")".to_string());
     }
     Ok(lines.join("\n"))
 }
+
+/// The most elements a probe lists one by one; `matches: N` counts them all.
+pub const PROBE_LISTED: usize = 10;

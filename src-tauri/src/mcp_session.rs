@@ -11,6 +11,8 @@ pub struct Session {
     tracked: bool,
     delivered: BTreeSet<Role>,
     last_call_ms: u64,
+    /// The autorun guide's Quick rules went out in an answer already.
+    quick_rules_given: bool,
 }
 
 impl Session {
@@ -32,6 +34,7 @@ impl Session {
         }
         if self.last_call_ms != 0 && now_ms.saturating_sub(self.last_call_ms) >= IDLE_RESET_MS {
             self.delivered.clear();
+            self.quick_rules_given = false;
         }
         self.last_call_ms = now_ms;
     }
@@ -39,6 +42,14 @@ impl Session {
     /// `initialize`: clears what was told (stays tracked or untracked).
     pub fn reset(&mut self) {
         self.delivered.clear();
+        self.quick_rules_given = false;
+    }
+
+    /// An answer carrying the autorun guide's Quick rules is going out: whether an earlier one did
+    /// (then the rules are left out of this one), and from now on that one has. Untracked: always
+    /// false, so the rules are never left out.
+    pub fn quick_rules_given(&mut self) -> bool {
+        self.tracked && std::mem::replace(&mut self.quick_rules_given, true)
     }
 
     pub fn delivered(&self, role: Role) -> bool {
@@ -116,5 +127,9 @@ impl SessionBook {
 
     pub fn note_kind(&self, agent: Option<&str>, tool: &str, args: &serde_json::Value) -> Option<Note> {
         self.with(agent, |s| s.note_kind(tool, args))
+    }
+
+    pub fn quick_rules_given(&self, agent: Option<&str>) -> bool {
+        self.with(agent, |s| s.quick_rules_given())
     }
 }

@@ -348,3 +348,39 @@ fn the_shared_body_gives_each_agent_name_the_rules_once() {
     assert_eq!(ask(None)[0], Role::Healer.text());
     assert_eq!(ask(Some("healer-1"))[0], Role::Healer.text());
 }
+
+/// A guide section answer opens with the Quick rules; a session that has had
+/// them leaves them out of the next section and says they still hold.
+#[test]
+fn a_second_guide_section_leaves_the_rules_out_and_says_they_hold() {
+    use v2_lib::autorun::guide::{autorun_guide, guide_section, quick_rules};
+    let section = guide_section(&autorun_guide(), "Selectors").unwrap();
+    assert!(section.starts_with(quick_rules().trim_end()), "the answer opens with the rules");
+    let call = |m: &str, p: &str, _b: &str| -> Result<(u16, String), String> {
+        if m == "GET" && p == "/tools" {
+            return Ok((200, json!({ "disabled": [], "modules": v2_lib::modules::Module::ALL.iter().map(|m| m.key()).collect::<Vec<_>>() }).to_string()));
+        }
+        Ok((200, section.clone()))
+    };
+    let ask = |s: &mut Session, args: Value| {
+        let msg = json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": { "name": "get_guide", "arguments": args } }).to_string();
+        let out = handle_message_in(&msg, "1.0.0", &call, s).expect("an answer");
+        texts(&serde_json::from_str::<Value>(&out).unwrap()["result"]).concat()
+    };
+    let args = json!({ "topic": "autorun", "section": "Selectors" });
+    let mut s = Session::new();
+    s.tick(1_000);
+    let first = ask(&mut s, args.clone());
+    assert!(first.contains(quick_rules().trim_end()), "the first answer keeps the rules: {}", &first[..first.len().min(300)]);
+    let second = ask(&mut s, args.clone());
+    assert!(second.contains(v2_lib::mcp::RULES_HOLD), "{second}");
+    assert!(!second.contains(quick_rules().trim_end()), "the rules are not repeated");
+    assert!(second.contains("## Selectors"), "the section itself is still there");
+    // An untracked session (every caller but the proxy) never leaves them out.
+    let mut plain = Session::untracked();
+    ask(&mut plain, args.clone());
+    assert!(ask(&mut plain, args.clone()).contains(quick_rules().trim_end()));
+    // An initialize starts the session over: the rules come again.
+    s.reset();
+    assert!(ask(&mut s, args).contains(quick_rules().trim_end()));
+}

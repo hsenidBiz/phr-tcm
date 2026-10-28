@@ -221,3 +221,10 @@ pub fn crystal() -> MutexGuard<'static, ()> {
     static L: Mutex<()> = Mutex::new(());
     hold(&L)
 }
+
+/// What each browser slot was last told of its side menu (`autorun::page_compact`):
+/// a test that compares two answers takes this, and `forget`s its slot first.
+pub fn page_menu() -> MutexGuard<'static, ()> {
+    static L: Mutex<()> = Mutex::new(());
+    hold(&L)
+}

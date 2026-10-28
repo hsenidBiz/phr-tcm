@@ -1954,6 +1954,28 @@ async fn a_matched_probe_records_a_locator_the_snapshot_cut_off() {
     assert!(holds_css(page, "#archive"), "{:?}", page.elements);
 }
 
+/// A Playwright pseudo-selector is refused with the sentence that says what to
+/// write instead; plain CSS (a colon pseudo-class among it) is not.
+#[test]
+fn a_playwright_selector_is_refused_by_the_probe() {
+    use v2_lib::ai_bridge::{probe_target, NOT_A_PLAYWRIGHT_SELECTOR};
+    assert_eq!(
+        NOT_A_PLAYWRIGHT_SELECTOR,
+        "that is a Playwright selector, which Auto Run does not take: use a CSS selector or a role and name (see get_guide topic autorun, Locators)."
+    );
+    for css in ["button:has-text(\"Save\")", "li:text-is(\"Leave\")", "a:text(\"x\")", "div >> text=Save", "BUTTON:HAS-TEXT('x')"] {
+        for selector in [serde_json::json!(css), serde_json::json!({ "css": css }), serde_json::json!([{ "css": "form" }, { "css": css }])] {
+            assert_eq!(probe_target(selector.clone()).unwrap_err(), NOT_A_PLAYWRIGHT_SELECTOR, "{selector}");
+        }
+    }
+    for fine in ["a:hover", "li:nth-child(2)", "input:not(:disabled)", "a > b", "text=Save"] {
+        assert!(probe_target(serde_json::json!(fine)).is_ok(), "{fine}");
+    }
+    // The section the sentence points at answers to the name it uses.
+    let guide = v2_lib::autorun::guide::autorun_guide();
+    assert!(v2_lib::autorun::guide::guide_section(&guide, "Locators").unwrap().contains("## Selectors"));
+}
+
 /// A chain - a dialog, then the button inside it - is probed as a script
 /// writes it: a list of links, or that list sent as JSON text by a client
 /// that sends only strings. It resolves, and is filed whole with what it
@@ -5019,4 +5041,35 @@ async fn a_replay_answer_ends_with_its_rules() {
 
     let (_, out) = ruled(&ctx(), None, "POST", "/autorun-replay-stop", "{}").await;
     assert!(out.ends_with(RULES_REPLAY), "{out}");
+}
+
+/// A `within` that matches several elements lists the first (`nth` 0) and
+/// says how many matched; one that matches one, or that already has an
+/// `nth`, is left as it is.
+#[tokio::test]
+async fn a_within_matching_several_lists_the_first_and_says_how_many() {
+    use v2_lib::ai_bridge::first_of_many;
+    use v2_lib::browser::locator::{LocatorStep, Target};
+    let page = |n: usize| {
+        crate::common::ScriptedDriver::new(move |method, _| match method {
+            "Runtime.evaluate" => Ok(serde_json::json!({ "result": { "objectId": "doc" } })),
+            "Runtime.callFunctionOn" => Ok(serde_json::json!({ "result": { "objectId": "arr" } })),
+            "Runtime.getProperties" => Ok(serde_json::json!({ "result": (0..n)
+                .map(|i| serde_json::json!({ "name": i.to_string(), "value": { "objectId": format!("el-{i}") } }))
+                .collect::<Vec<_>>() })),
+            other => panic!("unexpected {other}"),
+        })
+    };
+    let step = LocatorStep { css: Some(".row".into()), ..LocatorStep::default() };
+    let within = Target::One(step.clone());
+
+    let (target, said) = first_of_many(&mut page(3), Some(&within)).await;
+    assert_eq!(target, Some(Target::One(LocatorStep { nth: Some(0), ..step.clone() })));
+    assert!(said.as_deref().is_some_and(|s| s.starts_with("within matched 3 elements")), "{said:?}");
+
+    let (same, said) = first_of_many(&mut page(1), Some(&within)).await;
+    assert_eq!((same, said), (Some(within.clone()), None));
+    let picked = Target::One(LocatorStep { nth: Some(2), ..step });
+    assert_eq!(first_of_many(&mut page(3), Some(&picked)).await, (Some(picked.clone()), None));
+    assert_eq!(first_of_many(&mut page(3), None).await, (None, None));
 }

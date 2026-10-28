@@ -3078,7 +3078,7 @@ fn page_false_reaches_the_bridge_for_every_tool_that_answers_the_page() {
         ("replay_autorun_to_step", "/autorun-replay", serde_json::json!({ "case_id": 7, "step": 2, "page": false })),
     ] {
         let page = &find(tool)["inputSchema"]["properties"]["page"];
-        assert_eq!(page["type"], "boolean", "{tool} declares page");
+        assert_eq!(page["type"], serde_json::json!(["boolean", "string"]), "{tool} declares page: false, or \"full\"");
         assert!(page["description"].as_str().is_some_and(|d| d.contains("get_autorun_page")), "{tool}: {page}");
         let calls = std::cell::RefCell::new(vec![]);
         let call = |method: &str, path: &str, body: &str| {
@@ -4503,4 +4503,36 @@ fn suite_cases_and_wiki_pages_forward_an_explicit_project() {
         (200, "{}"),
     );
     assert_eq!(paths_of(&made), vec!["/wiki-page?wiki=w1&path=%2FDocs%2FPay-Run"]);
+}
+
+/// `show: "html"` (a string, also sent as text or in a list) goes to the
+/// inspect route as the one part `html`; any other string is still refused.
+#[test]
+fn probe_autorun_locator_show_html_goes_to_the_inspect_route() {
+    for show in [serde_json::json!("html"), serde_json::json!(["html"]), serde_json::json!("[\"html\"]")] {
+        assert_eq!(
+            reached("probe_autorun_locator", serde_json::json!({ "selector": ".row", "show": show })),
+            ("POST".into(), "/autorun-inspect".into(), serde_json::json!({ "locator": ".row", "show": ["html"] })),
+            "{show}"
+        );
+    }
+    // `coerce_args` cannot read these now that `show` takes a string.
+    assert_eq!(reached("probe_autorun_locator", serde_json::json!({ "selector": ".row", "show": "true" })).2, serde_json::json!({ "locator": ".row" }));
+    assert_eq!(reached("probe_autorun_locator", serde_json::json!({ "selector": ".row", "show": "false" })).1, "/autorun-probe");
+    refused_before_the_app("probe_autorun_locator", serde_json::json!({ "selector": ".row", "show": "markup" }), v2_lib::mcp::SHOW_IS_TRUE_OR_PARTS);
+}
+
+/// `get_autorun_page` forwards `query` and `page` (percent-encoded); a
+/// discovery, start or replay carries `page: "full"` in its body as written.
+#[test]
+fn get_autorun_page_takes_a_query_and_the_page_argument() {
+    assert_eq!(
+        reached("get_autorun_page", serde_json::json!({ "query": "Save draft", "page": "full", "limit": 50 })).1,
+        "/autorun-page?limit=50&query=Save%20draft&page=full"
+    );
+    assert_eq!(reached("get_autorun_page", serde_json::json!({ "query": "  " })).1, "/autorun-page");
+    let body = serde_json::json!({ "action": { "kind": "reload" }, "page": "full" });
+    assert_eq!(reached("discover_autorun_actions", body.clone()).2, body);
+    let replay = serde_json::json!({ "case_id": 7, "step": 3, "page": "full" });
+    assert_eq!(reached("replay_autorun_to_step", replay.clone()).2, replay);
 }

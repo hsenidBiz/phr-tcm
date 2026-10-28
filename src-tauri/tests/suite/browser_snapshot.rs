@@ -464,11 +464,70 @@ async fn probe_of_several_matches_lists_each_and_asks_to_narrow() {
     assert_eq!(
         out,
         "matches: 3\n\
-         button \"Save\" visible at 10,20 80x24\n\
-         button \"Save\" hidden at 10,60 80x24\n\
-         a \"Save draft\" visible at 10,100 80x24\n\
+         nth 0: button \"Save\" visible at 10,20 80x24\n\
+         nth 1: button \"Save\" hidden at 10,60 80x24\n\
+         nth 2: a \"Save draft\" visible at 10,100 80x24\n\
          narrow the locator (add \"name\", \"exact\": true, a scope, or \"nth\")"
     );
+}
+
+/// Twelve matches: the probe counts every one, lists the first ten each with
+/// the 0-based `nth` that picks it, and says so.
+#[tokio::test]
+async fn probe_counts_every_match_and_labels_the_listed_ones_by_nth() {
+    let mut d = ScriptedDriver::new(|method, params| {
+        let f = params["functionDeclaration"].as_str().unwrap_or("");
+        match method {
+            "Runtime.evaluate" => Ok(json!({ "result": { "objectId": "doc" } })),
+            "Runtime.callFunctionOn" if f == VISIBLE_JS => Ok(json!({ "result": { "value": true } })),
+            "Accessibility.getPartialAXTree" => Ok(json!({ "nodes": [] })),
+            "Runtime.callFunctionOn" if f == PROBE_SUMMARY_JS => {
+                Ok(json!({ "result": { "value": { "tag": "li", "text": "Row", "rect": [0.0, 0.0, 10.0, 10.0] } } }))
+            }
+            "Runtime.callFunctionOn" => Ok(json!({ "result": { "objectId": "arr" } })),
+            "Runtime.getProperties" => Ok(json!({ "result": (0..12)
+                .map(|i| json!({ "name": i.to_string(), "value": { "objectId": format!("el-{i}") } }))
+                .collect::<Vec<_>>() })),
+            other => panic!("unexpected {other}"),
+        }
+    });
+    let out = probe(&mut d, &Target::from("li")).await.unwrap();
+    let lines: Vec<&str> = out.lines().collect();
+    assert_eq!(lines[0], "matches: 12");
+    assert_eq!(lines[1], "nth 0: li \"Row\" visible at 0,0 10x10");
+    assert_eq!(lines[10], "nth 9: li \"Row\" visible at 0,0 10x10");
+    assert_eq!(lines[11], "(the first 10 are listed, nth 0 to 9; 12 matched in all)");
+    assert!(lines.last().unwrap().contains("narrow the locator"), "{out}");
+    assert!(!out.contains("nth 10"), "{out}");
+}
+
+/// A page name with spaces round it is said, and an `exact` name is compared
+/// trimmed, so the spaces never stop it matching.
+#[tokio::test]
+async fn probe_says_when_the_pages_name_has_leading_or_trailing_spaces() {
+    let mut d = ScriptedDriver::new(|method, params| {
+        let f = params["functionDeclaration"].as_str().unwrap_or("");
+        match method {
+            "Runtime.evaluate" => Ok(json!({ "result": { "objectId": "doc" } })),
+            "Runtime.callFunctionOn" if f == VISIBLE_JS => Ok(json!({ "result": { "value": true } })),
+            "Accessibility.getPartialAXTree" => Ok(json!({ "nodes": [
+                { "nodeId": "1", "role": { "value": "button" }, "name": { "value": "  Save " }, "ignored": false }
+            ] })),
+            "Runtime.callFunctionOn" if f == PROBE_SUMMARY_JS => {
+                Ok(json!({ "result": { "value": { "tag": "button", "text": "Save", "rect": [1.0, 2.0, 3.0, 4.0] } } }))
+            }
+            "Runtime.callFunctionOn" => Ok(json!({ "result": { "objectId": "arr" } })),
+            "Runtime.getProperties" => Ok(json!({ "result": [ { "name": "0", "value": { "objectId": "el-0" } } ] })),
+            other => panic!("unexpected {other}"),
+        }
+    });
+    let out = probe(&mut d, &Target::from("#save")).await.unwrap();
+    assert!(out.starts_with("matches: 1\nbutton \"Save\" visible at 1,2 3x4"), "{out}");
+    assert!(out.contains("the page's name has leading or trailing spaces"), "{out}");
+    assert!(out.contains("\"exact\": true still matches it"), "{out}");
+    // The comparison the note promises.
+    assert!(v2_lib::browser::locator::name_matches("  Save ", "Save", true));
+    assert!(v2_lib::browser::locator::name_matches("Save", " Save  ", true));
 }
 
 /// C1: a password input's typed value is never printed by the probe -

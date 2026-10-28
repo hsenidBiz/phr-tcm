@@ -92,7 +92,12 @@ pub fn section_titles(guide: &str) -> Vec<&str> {
 /// parts included. The Quick rules asked for by name come once. An
 /// unknown title is refused with every title there is, one to a line.
 pub fn guide_section(guide: &str, title: &str) -> Result<String, String> {
-    let want = title.trim().to_lowercase();
+    let mut want = title.trim().to_lowercase();
+    // The probe's refusal of a Playwright selector points at "Locators"
+    // (`ai_bridge::NOT_A_PLAYWRIGHT_SELECTOR`): that is the Selectors section.
+    if want == "locators" {
+        want = "selectors".to_string();
+    }
     let lines: Vec<&str> = guide.lines().collect();
     let at = lines.iter().position(|l| l.strip_prefix("## ").is_some_and(|t| t.trim().to_lowercase() == want));
     let Some(at) = at else {
@@ -1565,14 +1570,20 @@ browser (see "Discovering the app"):
   line. It answers the first 120 lines, then a line saying how many more
   there are. Ask for more with `limit` (at most 3000), or list one part
   of the page with `within`: a locator, written as a script writes one,
-  that matches exactly one element, such as a dialog or a form. Only that
-  element and what is inside it is listed; a `within` that matches none
-  or several is refused with the count, naming up to 3 of several; a css
-  string counts every visible match. `nth` beside `within` picks one of
-  several, counting from 0 as a locator's `nth` does. The page a replay,
+  such as a dialog or a form. Only that element and what is inside it is
+  listed; a `within` that matches none is refused; one that matches
+  several lists the first and says how many matched. A css string counts
+  every visible match. `nth` beside `within` picks one, counting from 0
+  as a locator's `nth` does. `query` lists only the lines that contain
+  it (case ignored) with the lines they sit under, from the whole page,
+  and records nothing as seen. The page a replay,
   `start_autorun_discovery` and `discover_autorun_actions` answer stops
   at 120 lines too; send
-  `page: false` to any of them to leave the page out of the answer.
+  `page: false` to any of them to leave the page out of the answer. Every
+  page answer prints the side menu (the navigation landmark) only when it
+  changed since your last answer, else one line saying it did not;
+  `page: "full"` on any of them (or on `get_autorun_page`) gives the whole
+  tree.
 - Visible text that no line's name already says (a span, a div, a
   paragraph: "Self 20%", a status badge) prints as a `text "..."` line
   with a text locator on its end. A read counts a text line against every
@@ -1588,7 +1599,11 @@ browser (see "Discovering the app"):
 - `probe_autorun_locator` says how many elements a locator matches right
   now, before it goes into a script, and for each the role and name the
   page read gives it (`page read: button "Edit ..."`) when its own text
-  is not that name.
+  is not that name. `matches: N` counts every match; of several, the first
+  ten are listed, each as `nth i:` (counting from 0, as a locator's `nth`
+  does). A Playwright selector (`:has-text`, `:text-is`, `>>`) is refused:
+  use CSS or a role and name. `show: "html"` answers each match's opening
+  tag with its attributes (`class` too) and 300 characters of its HTML.
 - `try_autorun_action` runs one action in that same browser and says what
   happened - a rehearsal, not a run: no run or step record is kept, but
   what the try found on the page counts as seen. Every try names

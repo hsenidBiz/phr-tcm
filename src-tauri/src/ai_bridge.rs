@@ -563,7 +563,9 @@ pub async fn route_as(
         // picked or anything opened.
         ("POST", "/autorun-discover-start") => {
             let mut seen = None;
-            let answer = without_page(autorun_discover_start(ctx, body, &mut seen, slot, holder).await, body);
+            // A new discovery may be a new reader of this slot: it is told the whole page.
+            crate::autorun::page_compact::forget(slot);
+            let answer = with_compact_page(without_page(autorun_discover_start(ctx, body, &mut seen, slot, holder).await, body), body, slot);
             // A start refused or failed before it opened a browser does not
             // keep the extra browser it reserved.
             crate::commands::autorun_slots::free_extra_if_unused(slot, holder, answer.0);
@@ -589,12 +591,12 @@ pub async fn route_as(
         }
         ("POST", "/autorun-discover-action") => {
             let mut seen = None;
-            let answer = without_page(autorun_discover_action(ctx, body, &mut seen, slot).await, body);
+            let answer = with_compact_page(without_page(autorun_discover_action(ctx, body, &mut seen, slot).await, body), body, slot);
             with_overrides_seen(with_no_save_note(answer, discovery_no_save(slot)), seen, slot)
         }
         ("POST", "/autorun-discover-actions") => {
             let mut seen = None;
-            let answer = without_page(autorun_discover_actions(ctx, body, &mut seen, slot).await, body);
+            let answer = with_compact_page(without_page(autorun_discover_actions(ctx, body, &mut seen, slot).await, body), body, slot);
             with_overrides_seen(with_no_save_note(answer, discovery_no_save(slot)), seen, slot)
         }
         // A replay going has already ended any discovery, and holds the
@@ -696,7 +698,7 @@ pub async fn route_as(
             // The claim came at the top, before the rewritten cases are
             // released and before a browser is picked or anything opens.
             release_rewritten_cases(ctx, client).await;
-            let answer = without_page(autorun_replay(ctx, body, slot, holder).await, body);
+            let answer = with_compact_page(without_page(autorun_replay(ctx, body, slot, holder).await, body), body, slot);
             // A replay refused or failed before it opened a browser does not
             // keep the extra browser it reserved.
             crate::commands::autorun_slots::free_extra_if_unused(slot, holder, answer.0);
@@ -1261,8 +1263,46 @@ pub const PAGE_LEFT_OUT: &str = "left out (page: false) - get_autorun_page reads
 /// Whether a call's body wants the page in its answer: every body but one
 /// that sent `"page": false`.
 pub fn page_wanted(body: &str) -> bool {
-    let asked = serde_json::from_str::<serde_json::Value>(body).ok().and_then(|v| v.get("page").and_then(|p| p.as_bool()));
+    // `page` takes text too (`"full"`), which `coerce_args` then leaves as
+    // text: the text `false` is the boolean.
+    let asked = serde_json::from_str::<serde_json::Value>(body).ok().and_then(|v| match v.get("page")? {
+        serde_json::Value::Bool(b) => Some(*b),
+        serde_json::Value::String(s) if s.trim().eq_ignore_ascii_case("false") => Some(false),
+        _ => None,
+    });
     asked != Some(false)
+}
+
+/// Whether a call's body asked for the whole page tree (`"page": "full"`)
+/// rather than the compact one (`page_compact`).
+pub fn page_full(body: &str) -> bool {
+    serde_json::from_str::<serde_json::Value>(body)
+        .ok()
+        .is_some_and(|v| v.get("page").and_then(|p| p.as_str()).is_some_and(|p| p.trim().eq_ignore_ascii_case("full")))
+}
+
+/// `answer` with the side menu of the page it carries left out when it is
+/// the one the last answer of slot `n` already gave (`page_compact`): the
+/// `page` of a JSON answer, or the text of a plain one. Not for an answer
+/// that failed, or one whose call asked for `"page": "full"` (that one still
+/// says what it gave, for the next answer).
+pub fn with_compact_page(answer: (u16, String), body: &str, n: SlotNo) -> (u16, String) {
+    use crate::autorun::page_compact::compact;
+    let full = page_full(body);
+    let (status, text) = answer;
+    if status != 200 {
+        return (status, text);
+    }
+    match serde_json::from_str::<serde_json::Value>(&text) {
+        Ok(serde_json::Value::Object(mut map)) => {
+            if let Some(page) = map.get("page").and_then(|p| p.as_str()).map(|p| compact(n, p, full)) {
+                map.insert("page".to_string(), serde_json::Value::String(page));
+                return (status, serde_json::Value::Object(map).to_string());
+            }
+            (status, text)
+        }
+        _ => (status, compact(n, &text, full)),
+    }
 }
 
 /// `answer` with its `page` dump left out when the call's body sent
@@ -3260,7 +3300,24 @@ async fn autorun_page(ctx: &BridgeContext, target: &str, n: SlotNo) -> (u16, Str
         Ok(t) => t,
         Err(why) => return (400, why),
     };
-    supervised_page_within_in(n, &ctx.org, &ctx.project, page_limit(q(target, "limit").as_deref()), within.as_ref()).await
+    let query = q(target, "query").map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
+    let (status, text) = supervised_page_read_in(
+        n,
+        &ctx.org,
+        &ctx.project,
+        page_limit(q(target, "limit").as_deref()),
+        within.as_ref(),
+        query.as_deref(),
+    )
+    .await;
+    // The whole page's side menu is answered when it changed since the last
+    // answer (`page_compact`), or on `page=full`; a part of the page, or the
+    // lines of a query, are answered as they are.
+    if status == 200 && within.is_none() && query.is_none() {
+        let full = q(target, "page").is_some_and(|p| p.trim().eq_ignore_ascii_case("full"));
+        return (status, crate::autorun::page_compact::compact(n, &text, full));
+    }
+    (status, text)
 }
 
 /// The line limit a page read was asked for: `PAGE_LINES_DEFAULT` when
@@ -3383,6 +3440,23 @@ pub async fn supervised_page_within_in(
     limit: usize,
     within: Option<&crate::browser::locator::Target>,
 ) -> (u16, String) {
+    supervised_page_read_in(n, organization, project, limit, within, None).await
+}
+
+/// `get_autorun_page`'s read in slot `n`'s browser. A `within` that matches
+/// several elements lists the first and says how many there were
+/// (`first_of_many`). With a `query` (the lines of the whole page, or of the
+/// `within` element, that contain it, case ignored, each with the lines above
+/// it that it sits under) the page is read whole, nothing of it is recorded
+/// as seen (the answer says so), and `limit` cuts the matching lines.
+async fn supervised_page_read_in(
+    n: SlotNo,
+    organization: &str,
+    project: &str,
+    limit: usize,
+    within: Option<&crate::browser::locator::Target>,
+    query: Option<&str>,
+) -> (u16, String) {
     if crate::autorun::replay_to::state(n).is_running() {
         return (409, replay_going_for_a_page_read(n));
     }
@@ -3392,13 +3466,98 @@ pub async fn supervised_page_within_in(
     let Some(session) = slot.as_mut() else {
         return (409, NO_SUPERVISED_BROWSER.to_string());
     };
+    let (within, many) = first_of_many(&mut session.cdp, within).await;
     let root = if project.trim().is_empty() { None } else { crate::autorun::store::configured_root() };
     let tabs_case = session.tabs_case;
-    let answer = page_read_in_within(session, root.as_deref(), organization, project, tabs_case, limit, within).await;
+    let answer = match query {
+        Some(query) => {
+            let (status, text, _) =
+                read_and_file_within(&mut session.cdp, crate::browser::snapshot::PAGE_LINES_MAX, within.as_ref(), None).await;
+            if status == 200 { (status, query_lines(&text, query, limit)) } else { (status, text) }
+        }
+        None => {
+            page_read_in_within(session, root.as_deref(), organization, project, tabs_case, limit, within.as_ref()).await
+        }
+    };
+    let answer = match many {
+        Some(said) if answer.0 == 200 => (answer.0, format!("{said}\n{}", answer.1)),
+        _ => answer,
+    };
     // A browser that has gone is let go here, not kept to answer 503 again.
     let answer = let_go_if_silent(&mut slot, answer).await;
     crate::commands::autorun::publish_discovery_in(n, &slot);
     answer
+}
+
+/// A `within` that matches several elements, as the first of them (`nth` 0)
+/// and the sentence that says how many matched. A `within` that already has
+/// an `nth`, matches one or none, or cannot be counted is returned as it is.
+pub async fn first_of_many<D: crate::browser::cdp::Driver>(
+    d: &mut D,
+    within: Option<&crate::browser::locator::Target>,
+) -> (Option<crate::browser::locator::Target>, Option<String>) {
+    use crate::browser::locator::Target;
+    let Some(target) = within else { return (None, None) };
+    let mut links = target.links();
+    if links.is_empty() || links.last().is_some_and(|l| l.nth.is_some()) {
+        return (Some(target.clone()), None);
+    }
+    let count = match crate::browser::locator::resolve_explained(d, target).await {
+        Ok(found) => found.handles.len(),
+        Err(_) => return (Some(target.clone()), None),
+    };
+    if count < 2 {
+        return (Some(target.clone()), None);
+    }
+    if let Some(last) = links.last_mut() {
+        last.nth = Some(0);
+    }
+    let first = if links.len() == 1 { Target::One(links.remove(0)) } else { Target::Chain(links) };
+    (
+        Some(first),
+        Some(format!("within matched {count} elements: this lists the first (nth 0) - send nth to list another.")),
+    )
+}
+
+/// The lines of a page read (`text`, one line each, the indent showing the
+/// depth) that contain `query` (case ignored), each with the lines above it
+/// that it sits under, at most `limit` of them in all. Said when nothing
+/// matches, and that nothing was recorded as seen.
+pub fn query_lines(text: &str, query: &str, limit: usize) -> String {
+    let want = query.trim().to_lowercase();
+    let lines: Vec<&str> = text.lines().collect();
+    let depth = |l: &str| l.len() - l.trim_start().len();
+    let mut keep = vec![false; lines.len()];
+    let mut matched = 0usize;
+    for (i, line) in lines.iter().enumerate() {
+        if !line.to_lowercase().contains(&want) {
+            continue;
+        }
+        matched += 1;
+        keep[i] = true;
+        let mut need = depth(line);
+        for j in (0..i).rev() {
+            if need == 0 {
+                break;
+            }
+            if depth(lines[j]) < need {
+                keep[j] = true;
+                need = depth(lines[j]);
+            }
+        }
+    }
+    let said = "Recorded nothing as seen: a read with a query lists only the matching lines.";
+    if matched == 0 {
+        return format!("no line of the page contains \"{}\"\n{said}", query.trim());
+    }
+    let shown: Vec<&str> = lines.iter().zip(&keep).filter(|(_, k)| **k).map(|(l, _)| *l).collect();
+    let total = shown.len();
+    let mut out: Vec<String> = shown.iter().take(limit).map(|l| (*l).to_string()).collect();
+    if total > limit {
+        out.push(format!("{} more lines - call get_autorun_page with a larger limit or a narrower query", total - limit));
+    }
+    out.push(format!("{matched} lines contain \"{}\". {said}", query.trim()));
+    out.join("\n")
 }
 
 /// Said at the end of a page read during a discovery that has no area yet:
@@ -4225,7 +4384,21 @@ pub fn probe_target(selector: serde_json::Value) -> Result<crate::browser::locat
     let target: crate::browser::locator::Target =
         serde_json::from_value(selector).map_err(|e| format!("that is not a locator: {e}"))?;
     target.validate()?;
+    if target.links().iter().filter_map(|l| l.css.as_deref()).any(is_playwright_selector) {
+        return Err(NOT_A_PLAYWRIGHT_SELECTOR.to_string());
+    }
     Ok(target)
+}
+
+/// Said, with 400, to a probe whose CSS holds a Playwright pseudo-selector.
+pub const NOT_A_PLAYWRIGHT_SELECTOR: &str =
+    "that is a Playwright selector, which Auto Run does not take: use a CSS selector or a role and name (see get_guide topic autorun, Locators).";
+
+/// Is `css` written with a Playwright-only selector (`:text-is`,
+/// `:has-text`, `:text(`, or the `>>` chain), which no browser's CSS takes?
+fn is_playwright_selector(css: &str) -> bool {
+    let lower = css.to_ascii_lowercase();
+    [":text-is", ":has-text", ":text(", ">>"].iter().any(|p| lower.contains(p))
 }
 
 /// Said, with 409, to a page read, a probe, a try or the assistant's End

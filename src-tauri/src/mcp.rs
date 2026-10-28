@@ -234,6 +234,8 @@ trait RoleNotes {
     fn reset_all(&mut self);
     fn mark_read(&mut self, agent: Option<&str>, role: crate::autorun::roles::Role);
     fn note_kind(&mut self, agent: Option<&str>, tool: &str, args: &serde_json::Value) -> Option<crate::mcp_session::Note>;
+    /// As `Session::quick_rules_given`.
+    fn quick_rules_given(&mut self, agent: Option<&str>) -> bool;
 }
 
 impl RoleNotes for crate::mcp_session::Session {
@@ -245,6 +247,9 @@ impl RoleNotes for crate::mcp_session::Session {
     }
     fn note_kind(&mut self, _agent: Option<&str>, tool: &str, args: &serde_json::Value) -> Option<crate::mcp_session::Note> {
         crate::mcp_session::Session::note_kind(self, tool, args)
+    }
+    fn quick_rules_given(&mut self, _agent: Option<&str>) -> bool {
+        crate::mcp_session::Session::quick_rules_given(self)
     }
 }
 
@@ -258,6 +263,34 @@ impl RoleNotes for &crate::mcp_session::SessionBook {
     fn note_kind(&mut self, agent: Option<&str>, tool: &str, args: &serde_json::Value) -> Option<crate::mcp_session::Note> {
         crate::mcp_session::SessionBook::note_kind(self, agent, tool, args)
     }
+    fn quick_rules_given(&mut self, agent: Option<&str>) -> bool {
+        crate::mcp_session::SessionBook::quick_rules_given(self, agent)
+    }
+}
+
+/// Said in place of the Quick rules a `get_guide` section answer opens with
+/// when an answer to this session carried them already.
+pub const RULES_HOLD: &str = "(the rules given earlier in this session still hold)";
+
+/// A `get_guide` (topic autorun) answer that is going out whole: when it
+/// carries the Quick rules, the first such answer of the session marks them
+/// given, and a later one has them cut out for `RULES_HOLD` (never the
+/// Quick rules section asked for by name, which is nothing else). Only a
+/// tracked session leaves anything out.
+fn leave_out_given_rules<N: RoleNotes>(result: &mut serde_json::Value, agent: Option<&str>, session: &mut N) {
+    let quick = crate::autorun::guide::quick_rules();
+    let quick = quick.trim_end();
+    let Some(text) = result["content"][0]["text"].as_str().map(str::to_string) else { return };
+    let Some(at) = text.find(quick) else { return };
+    if !session.quick_rules_given(agent) {
+        return;
+    }
+    let rest = format!("{}{}", &text[..at], &text[at + quick.len()..]);
+    if rest.trim().is_empty() {
+        return;
+    }
+    let cut = format!("{}{RULES_HOLD}{}", &text[..at], &text[at + quick.len()..]);
+    result["content"][0]["text"] = serde_json::Value::String(cut);
 }
 
 fn answer_with<N: RoleNotes>(msg: &str, version: &str, call: BridgeCall, session: &mut N) -> Option<String> {
@@ -318,6 +351,9 @@ fn answer_with<N: RoleNotes>(msg: &str, version: &str, call: BridgeCall, session
             if reached && result["isError"] != serde_json::Value::Bool(true) && name == "get_guide" {
                 if let Some(role) = args["role"].as_str().and_then(crate::autorun::roles::Role::from_key) {
                     session.mark_read(agent, role);
+                }
+                if args["topic"].as_str().map(str::trim) == Some("autorun") {
+                    leave_out_given_rules(&mut result, agent, session);
                 }
             }
             if reached {
@@ -633,9 +669,11 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool, unlocked: bool, all_projec
                 "within": {
                     "type": ["object", "string", "array"],
                     "items": { "type": "object" },
-                    "description": "A locator, written as a script writes one (a css string, a role-and-name object, or a chain): list only what is inside the one element it matches, such as a dialog or a form. A css string counts every visible match. Refused, naming the count and up to 3 of the matches, when it matches none or several.",
+                    "description": "A locator, written as a script writes one (a css string, a role-and-name object, or a chain): list only what is inside the one element it matches, such as a dialog or a form. A css string counts every visible match. Refused when it matches none; when it matches several, the first is listed and the answer says how many matched.",
                 },
-                "nth": { "type": "number", "description": "Optional, with `within`: which of the elements it matches to list, counting from 0, as a locator's nth does." },
+                "nth": { "type": "number", "description": "Optional, with `within`: which of the elements it matches to list, counting from 0, as a locator's nth does. Without it, a `within` that matches several lists the first and says how many matched." },
+                "query": { "type": "string", "description": "Optional: only the lines that contain this text (case ignored), each with the lines above it that it sits under. Reads the whole page (or the `within` element) and records nothing as seen." },
+                "page": { "type": "string", "enum": ["full"], "description": "Optional: \"full\" answers the whole tree. By default the side menu is answered in full only when it changed since this browser's last answer, else as one line." },
             }), &[]),
         },
         {
@@ -648,9 +686,9 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool, unlocked: bool, all_projec
                     "description": "A script target, exactly as the script writes it: a CSS selector string, the role-and-accessible-name object a snapshot line ends with, or a chain - a list of those objects, outermost first (a dialog, then the button inside it). A chain is recorded as seen as a whole.",
                 },
                 "show": {
-                    "type": ["array", "boolean"],
+                    "type": ["array", "boolean", "string"],
                     "items": { "type": "string", "enum": SHOW_PARTS },
-                    "description": "Optional: the parts of the one element to show, or true for all four.",
+                    "description": "Optional: the parts of the one element to show, or true for the first four. `structure` includes the element's parent (tag, id, classes, role, name). \"html\" alone answers EVERY match's opening tag with all its attributes (class included) and up to 300 characters of outer HTML; scripts, inputs' values, addresses and secrets are left out.",
                 },
                 "properties": {
                     "type": "array",
@@ -679,7 +717,7 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool, unlocked: bool, all_projec
             "inputSchema": schema(serde_json::json!({
                 "case_id": { "type": "number", "description": "The case whose saved script is replayed." },
                 "step": { "type": "number", "description": "The step to stop before: the failing step. Steps 1 to step - 1 run." },
-                "page": { "type": "boolean", "description": "Optional: false leaves the page out of the answer; get_autorun_page reads it. Default true." },
+                "page": { "type": ["boolean", "string"], "description": "Optional: false leaves the page out of the answer; get_autorun_page reads it. \"full\" gives the whole tree: by default the side menu is answered in full only when it changed since your last answer. Default true." },
                 "stop": { "type": "boolean", "description": "true, with nothing else: stop your replay that is going instead." },
             }), &[]),
         },
@@ -693,7 +731,7 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool, unlocked: bool, all_projec
                 "mapping": { "type": "boolean", "description": "Optional: true starts a menu mapping run of `modules` (used by /tcm:map-menus). It is read-only: every save the page tries is blocked and counted, and each answer carries `blocked`." },
                 "modules": { "type": "array", "items": { "type": "string" }, "description": "With `mapping`: the modules to map, by name (at least one)." },
                 "case_id": { "type": "number", "description": "Optional: the case you explore for. When its script is marked no_save, every save the page tries is BLOCKED until the discovery ends (named in `blocked_writes`)." },
-                "page": { "type": "boolean", "description": "Optional: false leaves the landing page out of the answer (it is still recorded as seen; get_autorun_page reads it)." },
+                "page": { "type": ["boolean", "string"], "description": "Optional: false leaves the landing page out of the answer (it is still recorded as seen; get_autorun_page reads it). \"full\" gives the whole tree: by default the side menu is answered in full only when it changed since your last answer." },
                 "no_save": { "type": "boolean", "description": "Optional: true blocks every save the page tries until the discovery ends, as for a case marked no_save." },
                 "explore": { "type": "boolean", "description": "Optional: true starts an explore session for a task with no test case: nothing is filed as seen, and every change goes on a change list (record_explore_change). Not with mapping." },
             }), &["account"]),
@@ -712,7 +750,7 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool, unlocked: bool, all_projec
                     "items": { "type": "object" },
                 },
                 "stop_on_failure": { "type": "boolean", "description": "Optional, with `actions`: false carries on past a failed action. True when left out." },
-                "page": { "type": "boolean", "description": "Optional: false leaves the page out of the answer (it is still recorded as seen; get_autorun_page reads it)." },
+                "page": { "type": ["boolean", "string"], "description": "Optional: false leaves the page out of the answer (it is still recorded as seen; get_autorun_page reads it). \"full\" gives the whole tree: by default the side menu is answered in full only when it changed since your last answer." },
                 "area": { "type": "string", "description": "Optional: the area this exploring belongs to, by name; what is seen from now on is filed under it." },
                 "case_id": { "type": "number", "description": "Optional: the case this call is for. When its script is marked no_save, every save the page tries is BLOCKED for this call only (named in `blocked_writes`), so name it on every call for such a case." },
                 "no_save": { "type": "boolean", "description": "Optional: true blocks every save the page tries for this call only, as for a case marked no_save." },
@@ -1771,12 +1809,12 @@ fn discover_call(args: &serde_json::Value, call: BridgeCall) -> Result<(u16, Str
 }
 
 /// The parts of one element `probe_autorun_locator` shows with `show`.
-pub const SHOW_PARTS: [&str; 4] = ["styles", "listeners", "animations", "structure"];
+pub const SHOW_PARTS: [&str; 5] = ["styles", "listeners", "animations", "structure", "html"];
 
 /// Said when `probe_autorun_locator` is sent a `show` that is neither true
 /// nor a list of parts.
 pub const SHOW_IS_TRUE_OR_PARTS: &str =
-    "`show` is true (every part) or a list of the parts to show: styles, listeners, animations, structure";
+    "`show` is true (the first four parts) or a list of the parts to show: styles, listeners, animations, structure, html (or \"html\" alone)";
 
 /// Said when `probe_autorun_locator` is sent `properties` without `show`:
 /// a plain probe reads no styles.
@@ -1792,11 +1830,28 @@ pub const SHOW_NEEDS_A_SELECTOR: &str =
 /// the read-only look at one element (the inspect route, which takes the
 /// locator as `locator`; `show: true` is every part, the route's default).
 fn probe_call(args: &serde_json::Value, call: BridgeCall) -> Result<(u16, String), String> {
-    let show = match args.get("show") {
+    // `show` takes a string too (`"html"`), which leaves it out of the
+    // boolean and list reading `coerce_args` gives a text: `"true"`, `"false"`
+    // and a list sent as JSON text are read here.
+    let given_show = match args.get("show") {
+        Some(serde_json::Value::String(text)) => match text.trim().to_ascii_lowercase().as_str() {
+            "true" => Some(serde_json::Value::Bool(true)),
+            "false" => Some(serde_json::Value::Bool(false)),
+            _ => Some(
+                serde_json::from_str::<serde_json::Value>(text.trim())
+                    .ok()
+                    .filter(serde_json::Value::is_array)
+                    .unwrap_or_else(|| serde_json::Value::String(text.clone())),
+            ),
+        },
+        other => other.cloned(),
+    };
+    let show = match given_show {
         None | Some(serde_json::Value::Null) | Some(serde_json::Value::Bool(false)) => None,
         Some(serde_json::Value::Bool(true)) => Some(None),
+        Some(serde_json::Value::String(word)) if word.trim().eq_ignore_ascii_case("html") => Some(Some(serde_json::json!(["html"]))),
         Some(serde_json::Value::Array(parts)) if parts.is_empty() => return Ok((400, SHOW_IS_TRUE_OR_PARTS.to_string())),
-        Some(parts @ serde_json::Value::Array(_)) => Some(Some(parts.clone())),
+        Some(parts @ serde_json::Value::Array(_)) => Some(Some(parts)),
         Some(_) => return Ok((400, SHOW_IS_TRUE_OR_PARTS.to_string())),
     };
     let Some(parts) = show else {
@@ -2540,6 +2595,11 @@ fn tools_call_outcome(params: &serde_json::Value, call: BridgeCall) -> (serde_js
                 serde_json::Value::Number(n) => params.push(format!("nth={n}")),
                 serde_json::Value::String(s) => params.push(format!("nth={}", urlencoding::encode(s))),
                 other => params.push(format!("nth={}", urlencoding::encode(&other.to_string()))),
+            }
+            for key in ["query", "page"] {
+                if let Some(s) = args[key].as_str().map(str::trim).filter(|s| !s.is_empty()) {
+                    params.push(format!("{key}={}", urlencoding::encode(s)));
+                }
             }
             let target = if params.is_empty() { "/autorun-page".to_string() } else { format!("/autorun-page?{}", params.join("&")) };
             call("GET", &target, "")
