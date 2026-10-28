@@ -1256,6 +1256,21 @@ Use a setup only when the case needs its own fresh draft, for example
 because it changes or uses up the draft. Otherwise use a shared
 `{{fixture...}}`: it costs no run per case.
 
+Data a case needs is made, not waited for. When a case's data is missing,
+or the case uses up a state, do not hold it back and do not ask: make what
+it needs with a proven API template or fixture (`run_api_template`,
+`run_api_fixture`), or by hand in the live app in an explore discovery
+(`record_explore_change` lists it), then script the case. Never make data
+with your own SQL: `db_query` only reads. Give each case that uses up a
+state its own record (its own participant, record or cycle), so cases never
+fight over one and a saver can replay twice. Name what you make with the
+environment's test name prefix and a natural name. Never alter or delete
+data the run did not create. A draft stays a draft unless the case needs a
+published cycle, and only a cycle the run made may be published. Save what
+you made as a fixture (`save_api_fixture`) so it can be rebuilt, and list
+it in your report. Hold a case back only when its data cannot be made (no
+template and no way in the app), and say why.
+
 ## Shared state a case changes
 
 Some cases change shared state, for example publishing a cycle. Other

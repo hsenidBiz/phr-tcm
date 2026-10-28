@@ -893,6 +893,33 @@ fn the_guide_teaches_setups_and_shared_fixtures() {
     assert!(!section.contains('\u{2014}') && !section.contains('\u{2013}'), "no em or en dashes");
 }
 
+/// A case's missing data is made, not waited for, within the owner's limits (backlog 43).
+#[test]
+fn the_guide_says_a_cases_data_is_made_not_held_back() {
+    let g = autorun_guide();
+    let start = g.find("## Drafts a case needs: fixtures and setups").expect("the section is missing");
+    let section = g[start..].split("\n## ").next().unwrap();
+    let flat = section.split_whitespace().collect::<Vec<_>>().join(" ");
+    for needle in [
+        "Data a case needs is made, not waited for.",
+        "do not hold it back and do not ask",
+        "(`run_api_template`, `run_api_fixture`)",
+        "by hand in the live app in an explore discovery",
+        "Never make data with your own SQL: `db_query` only reads.",
+        "its own record (its own participant, record or cycle)",
+        "a saver can replay twice",
+        "test name prefix and a natural name",
+        "Never alter or delete data the run did not create.",
+        "only a cycle the run made may be published",
+        "Save what you made as a fixture (`save_api_fixture`)",
+        "list it in your report",
+        "Hold a case back only when its data cannot be made (no template and no way in the app), and say why.",
+    ] {
+        assert!(flat.contains(needle), "{needle} not in: {flat}");
+    }
+    assert!(!section.contains('\u{2014}') && !section.contains('\u{2013}'), "no em or en dashes");
+}
+
 /// The guide teaches the five tab actions and the spec's three scenarios,
 /// one example each, and every example is a script the runner accepts.
 #[test]
