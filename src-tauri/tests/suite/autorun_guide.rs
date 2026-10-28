@@ -2362,6 +2362,21 @@ fn the_guide_says_no_action_runs_page_script_waits_or_retries() {
     assert!(!flat.contains('\u{2014}') && !flat.contains('\u{2013}'));
 }
 
+/// A discovery fills a missing wait timeout and lowers a huge one, but the
+/// guide says a saved script still needs it.
+#[test]
+fn the_guide_says_discovery_fills_a_wait_timeout_but_a_save_still_needs_it() {
+    let flat = autorun_guide().split_whitespace().collect::<Vec<_>>().join(" ");
+    for said in [
+        "A discovery or a try fills a `wait_for` that has no `timeout_ms` with 10 seconds and says so in its answer, and lowers a wait above 120 seconds to 120.",
+        "a saved script still needs a `timeout_ms` on every `wait_for`, and the save is rejected without it.",
+        "ends the call with \"did not answer\"",
+    ] {
+        assert!(flat.contains(said), "the guide never says {said:?}");
+    }
+    assert!(!flat.contains('\u{2014}') && !flat.contains('\u{2013}'));
+}
+
 #[test]
 fn the_repair_section_says_a_repair_cannot_let_the_page_decide() {
     let g = autorun_guide();

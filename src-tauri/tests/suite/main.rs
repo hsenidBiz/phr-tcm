@@ -21,6 +21,7 @@ mod common;
 mod serial;
 mod serial_order;
 
+mod action_help;
 mod activity_log;
 mod ado;
 mod ado_boards;

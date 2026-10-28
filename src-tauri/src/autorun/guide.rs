@@ -362,6 +362,12 @@ saw. Prefer them to `check_text`, which looks once and cannot tell you
 where on the page the words were. Text is compared with runs of
 whitespace collapsed, and case matters.
 
+A discovery or a try fills a `wait_for` that has no `timeout_ms` with 10 seconds and says so in its
+answer, and lowers a wait above 120 seconds to 120. That is only for finding things out: a saved
+script still needs a `timeout_ms` on every `wait_for`, and the save is rejected without it. An action
+that has not answered once its wait and a margin have passed ends the call with "did not answer"
+rather than holding it.
+
 Never add a fixed pause. There is no action for one, on purpose.
 
 **Loading pages are waited for by the runner.** The project's sign-in

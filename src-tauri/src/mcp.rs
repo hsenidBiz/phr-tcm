@@ -1820,6 +1820,11 @@ fn probe_call(args: &serde_json::Value, call: BridgeCall) -> Result<(u16, String
 pub const STOP_TAKES_NOTHING_ELSE: &str =
     "`stop: true` takes nothing else - it stops your replay that is going, whichever case and step it is at";
 
+/// The arguments `replay_autorun_to_step` reads: any other (a `step_index`
+/// for a `step`) is refused by name rather than dropped, so a replay never
+/// runs a step the assistant did not ask for.
+pub const REPLAY_KEYS: [&str; 4] = ["case_id", "step", "page", "stop"];
+
 /// `replay_autorun_to_step`: a replay, or with `stop: true` (alone) the stop
 /// of the assistant's own replay that is going.
 fn replay_call(args: &serde_json::Value, call: BridgeCall) -> Result<(u16, String), String> {
@@ -1827,6 +1832,10 @@ fn replay_call(args: &serde_json::Value, call: BridgeCall) -> Result<(u16, Strin
         Err(refused) => Ok((400, refused)),
         Ok(true) if !others(args, &["stop"]).is_empty() => Ok((400, STOP_TAKES_NOTHING_ELSE.to_string())),
         Ok(true) => call("POST", "/autorun-replay-stop", "{}"),
+        Ok(false) if !others(args, &REPLAY_KEYS).is_empty() => {
+            let stray = others(args, &REPLAY_KEYS).join(", ");
+            Ok((400, format!("`replay_autorun_to_step` takes {} - not {stray}", REPLAY_KEYS.map(|k| format!("`{k}`")).join(", "))))
+        }
         Ok(false) => {
             let mut body = args.clone();
             if let Some(o) = body.as_object_mut() {

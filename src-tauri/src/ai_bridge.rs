@@ -4519,6 +4519,37 @@ fn tried_addresses(action: &crate::browser::actions::Action) -> Vec<&str> {
         .collect()
 }
 
+/// One action of a try or a discovery, read from the assistant's JSON. A
+/// `wait_for` with no `timeout_ms` gets the discovery's own wait, and a wait
+/// above the ceiling is lowered (`action_help`); `notes` say which. What is
+/// not an action is refused with the field it expected and an example. A
+/// saved script is read elsewhere and never gets either.
+fn tried_action_from(mut raw: serde_json::Value) -> Result<(crate::browser::actions::Action, Vec<String>), String> {
+    let default_ms = u32::try_from(crate::browser::timing::Timing::supervised().expect_ms).unwrap_or(u32::MAX);
+    let notes = crate::autorun::action_help::prepare_waits(&mut raw, default_ms);
+    match serde_json::from_value::<crate::browser::actions::Action>(raw.clone()) {
+        Ok(action) => Ok((action, notes)),
+        Err(e) => Err(crate::autorun::action_help::refusal_for(&raw, &e.to_string())),
+    }
+}
+
+/// `answer`, with what was done to the action's waits said in it: a `waits`
+/// field of a JSON answer, else a line before the text.
+fn with_wait_notes(answer: (u16, String), notes: &[String]) -> (u16, String) {
+    if notes.is_empty() {
+        return answer;
+    }
+    let (status, text) = answer;
+    let said = notes.join("; ");
+    match serde_json::from_str::<serde_json::Value>(&text) {
+        Ok(mut v @ serde_json::Value::Object(_)) => {
+            v["waits"] = serde_json::json!(said);
+            (status, v.to_string())
+        }
+        _ => (status, format!("Waits: {said}.\n{text}")),
+    }
+}
+
 /// Run ONE action against the open page, so an assistant can find out
 /// whether a repair works before it writes the repair down.
 async fn autorun_try(
@@ -4534,14 +4565,9 @@ async fn autorun_try(
     if let Some(r) = crate::autorun::forbidden_fixes::forbidden_in(&raw) {
         return (400, r);
     }
-    let action: crate::browser::actions::Action = match serde_json::from_value(raw) {
-        Ok(a) => a,
-        Err(e) => {
-            return (
-                400,
-                format!("that is not an action: {e} - call get_guide (topic autorun) for the vocabulary."),
-            )
-        }
+    let (action, wait_notes) = match tried_action_from(raw) {
+        Ok(read) => read,
+        Err(refused) => return (400, refused),
     };
     if let Err(refused) = refuse_as_a_tried_action(&action) {
         return refused;
@@ -4588,20 +4614,28 @@ async fn autorun_try(
     // An explore session files nothing (`files_finds` is false), and notes the
     // saves the try sent, as its actions do.
     let explore_session = session.discovery.as_ref().and_then(|s| s.explore_session()).map(str::to_string);
-    let answer = try_in_session(
-        &mut session.cdp,
-        &mut session.tabs_case,
-        &mut session.account,
-        &mut session.lease,
-        &root,
-        &ctx.org,
-        &ctx.project,
-        case_id,
-        discovery_area.as_deref(),
-        explore_session.as_deref(),
-        &action,
+    // An action that never answers (a wait it was given and then some) ends
+    // the call, not the assistant's turn.
+    let budget = crate::autorun::action_help::wait_budget_ms(&action, crate::browser::timing::Timing::supervised().nav_ms);
+    let answer = crate::autorun::action_help::within_budget(
+        budget,
+        try_in_session(
+            &mut session.cdp,
+            &mut session.tabs_case,
+            &mut session.account,
+            &mut session.lease,
+            &root,
+            &ctx.org,
+            &ctx.project,
+            case_id,
+            discovery_area.as_deref(),
+            explore_session.as_deref(),
+            &action,
+        ),
     )
-    .await;
+    .await
+    .unwrap_or_else(|seconds| (504, crate::autorun::action_help::no_answer_single(seconds)));
+    let answer = with_wait_notes(answer, &wait_notes);
     let answer = let_go_if_silent(&mut slot, answer).await;
     crate::commands::autorun::publish_discovery_in(n, &slot);
     *seen = Some(crate::commands::autorun::overrides_of(&slot));
@@ -5453,7 +5487,13 @@ pub async fn discover_action_in<B: DiscoveryBrowser>(
 ) -> (u16, String) {
     let mut heard = Heard::default();
     let was_guarding = guarding_saves(slot);
-    let answer = discover_action_heard(slot, root, organization, project, action, draft, area, &mut heard, 0, true).await;
+    let budget = crate::autorun::action_help::wait_budget_ms(action, crate::browser::timing::Timing::supervised().nav_ms);
+    let answer = crate::autorun::action_help::within_budget(
+        budget,
+        discover_action_heard(slot, root, organization, project, action, draft, area, &mut heard, 0, true),
+    )
+    .await
+    .unwrap_or_else(|seconds| (504, crate::autorun::action_help::no_answer_single(seconds)));
     heard.remember(root, organization, project);
     heard.forget(slot);
     end_call_guard(slot, root, was_guarding).await;
@@ -6087,10 +6127,27 @@ async fn discover_actions_heard<B: DiscoveryBrowser>(
                 break;
             }
         }
-        let (status, body) =
-            discover_action_heard(slot, root, organization, project, action, draft_for(action, draft), None, heard, i, false)
-                .await;
+        let budget = crate::autorun::action_help::wait_budget_ms(action, crate::browser::timing::Timing::supervised().nav_ms);
+        let answered = crate::autorun::action_help::within_budget(
+            budget,
+            discover_action_heard(slot, root, organization, project, action, draft_for(action, draft), None, heard, i, false),
+        )
+        .await;
         ran = i + 1;
+        let (status, body) = match answered {
+            Ok(answer) => answer,
+            Err(seconds) => {
+                // Nothing after an action that never answered can run, and the
+                // page is not read: the browser that did not answer may not
+                // answer that either.
+                rows.push(Row::Said(format!("{}. failed: {}", i + 1, crate::autorun::action_help::no_answer(i + 1, seconds))));
+                let mut lines = batch_rows(actions, &rows, heard);
+                if ran < actions.len() {
+                    lines.push(not_run_line(actions.len() - ran));
+                }
+                return (504, lines.join("\n"));
+            }
+        };
         if status != 200 {
             // The browser failed or the discovery is gone: nothing after
             // it can run.
@@ -8130,14 +8187,9 @@ async fn autorun_discover_action(
     if let Some(r) = crate::autorun::forbidden_fixes::forbidden_in(&raw) {
         return (400, r);
     }
-    let action: crate::browser::actions::Action = match serde_json::from_value(raw) {
-        Ok(a) => a,
-        Err(e) => {
-            return (
-                400,
-                format!("that is not an action: {e} - call get_guide (topic autorun) for the vocabulary."),
-            )
-        }
+    let (action, wait_notes) = match tried_action_from(raw) {
+        Ok(read) => read,
+        Err(refused) => return (400, refused),
     };
     if let Err(refused) = refuse_as_a_tried_action(&action) {
         return refused;
@@ -8177,6 +8229,7 @@ async fn autorun_discover_action(
     let mut slot = crate::commands::autorun::session_slot(n).lock().await;
     mark_discovery_for(&mut slot, asked);
     let answer = discover_action_in(&mut slot, &root, &ctx.org, &ctx.project, &action, draft.as_ref(), area.as_deref()).await;
+    let answer = with_wait_notes(answer, &wait_notes);
     let answer = let_go_if_silent(&mut slot, answer).await;
     crate::commands::autorun::publish_discovery_in(n, &slot);
     *seen = Some(crate::commands::autorun::overrides_of(&slot));
@@ -8207,18 +8260,17 @@ async fn autorun_discover_actions(
         return refused;
     }
     let mut actions = Vec::with_capacity(raw.len());
+    let mut wait_notes = Vec::new();
     for (i, one) in raw.iter().enumerate() {
         if let Some(r) = crate::autorun::forbidden_fixes::forbidden_in(one) {
             return (400, format!("action {}: {r}", i + 1));
         }
-        match serde_json::from_value::<crate::browser::actions::Action>(one.clone()) {
-            Ok(a) => actions.push(a),
-            Err(e) => {
-                return (
-                    400,
-                    format!("action {} is not an action: {e} - call get_guide (topic autorun) for the vocabulary.", i + 1),
-                )
+        match tried_action_from(one.clone()) {
+            Ok((a, notes)) => {
+                wait_notes.extend(notes.into_iter().map(|n| format!("action {}: {n}", i + 1)));
+                actions.push(a);
             }
+            Err(refused) => return (400, format!("action {}: {refused}", i + 1)),
         }
     }
     for (i, action) in actions.iter().enumerate() {
@@ -8300,6 +8352,7 @@ async fn autorun_discover_actions(
         page_wanted(body),
     )
     .await;
+    let answer = with_wait_notes(answer, &wait_notes);
     crate::commands::autorun::publish_discovery_in(n, &slot);
     *seen = Some(crate::commands::autorun::overrides_of(&slot));
     answer

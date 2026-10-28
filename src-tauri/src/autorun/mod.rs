@@ -7,6 +7,7 @@
 //! a person has reviewed a run and presses Send.
 
 pub mod accounts;
+pub mod action_help;
 pub mod agents;
 pub mod api_checks;
 pub mod area_repair;
