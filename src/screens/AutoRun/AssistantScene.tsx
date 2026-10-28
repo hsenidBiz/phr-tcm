@@ -1,7 +1,11 @@
-// The small scene on each Assistants card row: one pixel character whose pose
-// shows what the assistant is doing. Walking while it explores, typing at a
-// desk while it replays or works, dozing when it is idle. Purely decorative
-// (the activity line already says it in words), so it is aria-hidden.
+// The cubicle on each Assistants card cell: a full-width scene with the
+// assistant's numbered desk and one pixel character whose pose shows what it is
+// doing. Walking back and forth across the cubicle while it explores (the desk
+// left empty and faded), typing at the desk while it replays or works, dozing
+// at the desk when it is idle. A speech bubble in the top-left carries the
+// short version of the activity, the desk number sits in the top-right. All of
+// it is decorative (the text lines below already say it in words), so the
+// whole scene is aria-hidden.
 //
 // The character is inline SVG rects, so it takes its colours from theme
 // tokens like everything else; the motion is CSS keyframes in src/index.css
@@ -41,30 +45,71 @@ function hueFor(slot: number | null): string {
   return "color-mix(in srgb, var(--color-accent) 50%, var(--color-info))";
 }
 
-export default function AssistantScene({ activity, slot }: { activity: AgentActivity; slot: number | null }) {
+/** The short line for the speech bubble, or null when there is nothing short
+ * worth saying (idle, working, exploring, or discovering with no area). */
+export function bubbleFor(a: AgentActivity): string | null {
+  switch (a.kind) {
+    case "replaying":
+      return a.of > 0 ? `Step ${a.step} of ${a.of}` : "Starting";
+    case "discovering":
+      return a.area ? a.area : null;
+    case "mapping":
+      return "Menus";
+    default:
+      return null;
+  }
+}
+
+/** The assistant's own number, from the end of its label ("Assistant 2" is
+ * "2"), or null when the label carries none. */
+export function deskNumber(label: string): string | null {
+  return /(\d+)$/.exec(label)?.[1] ?? null;
+}
+
+export default function AssistantScene({
+  activity,
+  slot,
+  label,
+}: {
+  activity: AgentActivity;
+  slot: number | null;
+  label: string;
+}) {
   const pose = poseFor(activity);
   const asleep = pose === "doze";
+  const bubble = bubbleFor(activity);
+  const number = deskNumber(label);
   const style = { "--assistant-hue": hueFor(slot) } as CSSProperties;
   return (
     <div
       aria-hidden="true"
       data-pose={pose}
       data-slot={slot === null ? "none" : String(slot)}
-      className={`assistant-scene assistant-scene--${pose} relative h-14 w-[4.5rem] shrink-0 overflow-hidden rounded-md border border-border bg-bg`}
+      className={`assistant-scene assistant-scene--${pose} relative h-24 w-full overflow-hidden rounded-md border border-border bg-bg`}
       style={style}
     >
       {/* The floor. */}
-      <div className="absolute inset-x-0 bottom-0 h-2 border-t border-border bg-surface-2" />
-      {pose === "type" && (
-        <div className="assistant-scene__desk">
-          <div className="absolute bottom-6 right-3 flex h-4 w-5 flex-col justify-center gap-0.5 rounded-sm border border-border-strong bg-surface px-0.5">
+      <div className="absolute inset-x-0 bottom-0 h-6 border-t border-border bg-surface-2" />
+      {/* The desk stays in the cubicle whatever the pose; it is faded while its
+          assistant is away walking. The screen only lights up while typing. */}
+      <div className={`assistant-scene__desk${pose === "walk" ? " assistant-scene__desk--empty" : ""}`}>
+        {pose === "type" && (
+          <div className="assistant-scene__screen absolute bottom-12 left-1/2 flex h-5 w-7 -translate-x-1/2 flex-col justify-center gap-0.5 rounded-sm border border-border-strong bg-surface px-1">
+            <div className="h-0.5 w-4 bg-muted" />
             <div className="h-0.5 w-3 bg-muted" />
-            <div className="h-0.5 w-2 bg-muted" />
           </div>
-          <div className="absolute bottom-2 right-1.5 h-4 w-7 rounded-sm border border-border-strong bg-surface-2" />
-        </div>
+        )}
+        <div className="absolute bottom-5 left-1/2 h-7 w-14 -translate-x-1/2 rounded-sm border border-border-strong bg-surface-2" />
+      </div>
+      {bubble && (
+        <span className="assistant-scene__bubble label-trim absolute left-1.5 top-1.5 max-w-[70%] truncate rounded border border-border bg-surface px-1.5 text-[11px] text-text">
+          {bubble}
+        </span>
       )}
-      {asleep && <span className="assistant-scene__z absolute left-[3.25rem] top-1.5 text-[10px] font-bold text-muted">z</span>}
+      {number && (
+        <span className="assistant-scene__number absolute right-1.5 top-1.5 text-[11px] text-muted">{number}</span>
+      )}
+      {asleep && <span className="assistant-scene__z absolute left-[calc(50%-4.25rem)] top-5 text-[10px] font-bold text-muted">z</span>}
       {/* 14 x 17 "pixels", drawn at twice that. */}
       <svg
         className="assistant-scene__bot"
