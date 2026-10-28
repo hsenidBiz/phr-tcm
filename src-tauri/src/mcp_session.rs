@@ -85,6 +85,7 @@ impl Session {
         // what was saved and nothing else.
         if tool == "save_autorun_script"
             && role == Role::CaseRewriter
+            && !self.delivered.contains(&Role::Healer)
             && [Role::Writer, Role::Explorer].iter().any(|r| self.delivered.contains(r))
         {
             return None;

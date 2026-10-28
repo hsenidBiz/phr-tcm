@@ -2625,6 +2625,27 @@ async fn a_discovery_that_sees_the_session_cookie_reissued_still_resets_with_its
     assert_eq!(sign_ins(&b.d), 0, "{:?}", log(&app));
 }
 
+/// Backlog 42: a discovery call that could have swapped the login (a sign-in,
+/// a password field filled, the sign-in address visited) never re-prints the
+/// sign-in's cookies as the same sign-in; any other call may.
+#[test]
+fn a_call_that_could_swap_the_login_is_not_taken_as_the_same_sign_in() {
+    use v2_lib::ai_bridge::call_touches_sign_in;
+    use v2_lib::browser::actions::Action;
+    let recipe = menu_recipe();
+    let target = |v: Value| serde_json::from_value(v).unwrap();
+    assert_eq!(call_touches_sign_in(&[Action::SignIn { account: "other".into() }], &recipe), Some("signed in"));
+    let fill = Action::Fill { selector: target(json!({ "css": "input[type=password]" })), value: "x".into() };
+    assert_eq!(call_touches_sign_in(&[fill], &recipe), Some("filled a password field"));
+    let go = Action::Navigate { url: recipe.start_url.clone() };
+    assert_eq!(call_touches_sign_in(&[go], &recipe), Some("went to the sign-in address"));
+    let plain = [
+        Action::Click { selector: "#s1".into() },
+        Action::Fill { selector: target(json!({ "css": "#search" })), value: "x".into() },
+    ];
+    assert_eq!(call_touches_sign_in(&plain, &recipe), None);
+}
+
 /// A sign-in cookie that changed before the reset is a different sign-in:
 /// the reset says it has gone, and the app log says which condition failed.
 #[tokio::test]
@@ -3520,6 +3541,34 @@ async fn a_look_only_replay_never_reports_a_save_but_is_not_carried_on_from() {
     let why = why.expect("a sentence");
     assert!(why.starts_with("case 77's page sent a request the save guard let through"), "{why}");
     assert!(!why.contains("saved"), "{why}");
+}
+
+/// Backlog 42: carrying a look-only case on after a read POST (the earlier
+/// part's checkpoint says `wrote`) still never says it "saved something".
+#[tokio::test]
+async fn a_look_only_case_carried_on_after_a_post_never_says_saved() {
+    let _l = crate::serial::account_leases();
+    let dir = tempfile::tempdir().unwrap();
+    let mut a = case_with_fourth(77, &["#open"]);
+    a.no_save = true;
+    project(dir.path(), &a);
+    let (d, _app) = app();
+    let mut d = d.with_net_record();
+    let (mut account, mut held, mut guarded) = (None, Held::supervised(), None);
+    let (end, _) = whole_replay(&mut d, dir.path(), &a, &mut account, &mut held, &mut guarded).await;
+    assert!(matches!(end, ReplayEnd::Ready { .. }), "{end:?}");
+    let r = ReplayRequest { case_id: 77, step: 5, db_read_access: false };
+    let state = ReplayState::new();
+    let mut marks = Marks::default();
+    // `wrote_before` is true: the first part of this case posted a request.
+    let end = carry_on(
+        &mut d, dir.path(), "acme", "Web", &r, 4, &mut account, &mut held, &mut guarded, &quick(), &state, |_, _| {},
+        &mut Vec::new(), true, &mut marks,
+    )
+    .await;
+    assert!(matches!(end, ReplayEnd::Ready { .. }), "{end:?}");
+    assert_eq!(marks.unclean, Some(Unclean::Posted));
+    assert!(!Unclean::Posted.why(77, false).contains("saved"));
 }
 
 #[tokio::test]

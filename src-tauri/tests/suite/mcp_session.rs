@@ -137,6 +137,17 @@ fn a_healers_first_repair_save_still_brings_the_case_rewriters_rules() {
 }
 
 #[test]
+fn a_writer_session_that_then_heals_still_gets_the_rewriters_rules_on_its_repair() {
+    let fake = Fake::new();
+    let mut s = Session::new();
+    s.tick(1_000);
+    texts(&send(&fake, &mut s, "start_autorun_discovery", json!({ "account": "a" })));
+    failures(&fake, &mut s);
+    let repair = texts(&send(&fake, &mut s, "save_autorun_script", repair_args()));
+    assert_eq!(repair, vec![Role::CaseRewriter.text(), ANSWER.to_string()]);
+}
+
+#[test]
 fn a_component_save_brings_the_case_rewriters_rules() {
     let fake = Fake::new();
     let mut s = Session::new();

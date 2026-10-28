@@ -5862,9 +5862,47 @@ pub async fn discover_action_in<B: DiscoveryBrowser>(
     heard.remember(root, organization, project);
     heard.forget(slot);
     end_call_guard(slot, root, was_guarding).await;
-    let signs_in = matches!(action, crate::browser::actions::Action::SignIn { .. });
-    retake_print_after_call(slot, root, organization, project, stood && !signs_in).await;
+    retake_print_after_call(slot, root, organization, project, stood, std::slice::from_ref(action)).await;
     answer
+}
+
+/// Whether a discovery call's actions could have changed who is signed in:
+/// a `sign_in`, a fill of a password-type input (or of the recipe's own
+/// password field), or a navigation to the recipe's sign-in address. Says
+/// which, in a few words.
+pub fn call_touches_sign_in(
+    actions: &[crate::browser::actions::Action],
+    recipe: &crate::autorun::recipe::SignInRecipe,
+) -> Option<&'static str> {
+    use crate::browser::actions::Action;
+    let text = |t: &crate::browser::locator::Target| serde_json::to_string(t).unwrap_or_default().to_lowercase();
+    let recipe_password: Vec<String> = recipe
+        .steps
+        .iter()
+        .filter_map(|st| match st {
+            crate::autorun::recipe::RecipeStep::Do(Action::Fill { selector, value }) if value.to_lowercase().contains("password") => {
+                Some(text(selector))
+            }
+            _ => None,
+        })
+        .collect();
+    let start = crate::autorun::discovery_map::path_only(&recipe.start_url);
+    for a in actions {
+        match a {
+            Action::SignIn { .. } => return Some("signed in"),
+            Action::Fill { selector, .. } => {
+                let t = text(selector);
+                if t.contains("password") || recipe_password.contains(&t) {
+                    return Some("filled a password field");
+                }
+            }
+            Action::Navigate { url } if crate::autorun::discovery_map::path_only(url) == start => {
+                return Some("went to the sign-in address");
+            }
+            _ => {}
+        }
+    }
+    None
 }
 
 /// Whether the browser in `slot` is signed in as its session's account and
@@ -5896,6 +5934,7 @@ async fn retake_print_after_call<B: DiscoveryBrowser>(
     organization: &str,
     project: &str,
     stood: bool,
+    actions: &[crate::browser::actions::Action],
 ) {
     if !stood {
         return;
@@ -5904,6 +5943,12 @@ async fn retake_print_after_call<B: DiscoveryBrowser>(
     let p = b.parts();
     let Some(key) = p.signed_in.clone() else { return };
     let Ok(recipe) = crate::autorun::recipe::load_effective_recipe(root, organization, project) else { return };
+    // The page cannot say who is signed in, so a call that could have swapped
+    // the login is never taken as the same sign-in.
+    if let Some(why) = call_touches_sign_in(actions, &recipe) {
+        crate::applog::info(format!("Auto Run: a discovery call {why}, so the sign-in's cookies were not printed again"));
+        return;
+    }
     let timing = crate::browser::timing::Timing::supervised();
     let shows = crate::autorun::signin::already_signed_in_why(
         p.driver,
@@ -6475,7 +6520,6 @@ pub async fn discover_actions_paged<B: DiscoveryBrowser>(
     let mut heard = Heard::default();
     let was_guarding = guarding_saves(slot);
     let stood = sign_in_stands_now(slot, root, organization, project).await;
-    let signs_in = actions.iter().any(|a| matches!(a, crate::browser::actions::Action::SignIn { .. }));
     let answer = crate::autorun::action_help::CALL_STARTED
         .scope(
             std::time::Instant::now(),
@@ -6497,7 +6541,7 @@ pub async fn discover_actions_paged<B: DiscoveryBrowser>(
     heard.remember(root, organization, project);
     heard.forget(slot);
     end_call_guard(slot, root, was_guarding).await;
-    retake_print_after_call(slot, root, organization, project, stood && !signs_in).await;
+    retake_print_after_call(slot, root, organization, project, stood, actions).await;
     answer
 }
 
@@ -12398,6 +12442,21 @@ async fn save_autorun_scripts(
     body: &str,
     asker: Option<SlotNo>,
 ) -> (u16, String) {
+    // What the caller's discovery carried from the areas it left, while it goes on.
+    let carried = carried_of(asker).await;
+    save_autorun_scripts_carrying(ctx, client, body, asker, carried).await
+}
+
+/// [`save_autorun_scripts`] with the areas the caller's discovery carried
+/// (`DiscoveryState::carried`) already read: the save's seen check lays them
+/// over the saved map (`discovery_map::add_carried`).
+pub async fn save_autorun_scripts_carrying(
+    ctx: &BridgeContext,
+    client: Option<&crate::ado::AdoClient>,
+    body: &str,
+    asker: Option<SlotNo>,
+    carried: Vec<crate::autorun::discovery_map::AreaMap>,
+) -> (u16, String) {
     // Parsing reads the saved script of a repair (to merge its patch onto
     // it); that read, not the later one at Gate 1, is the version the
     // bundle is built from, so it is the one the write checks against.
@@ -12793,8 +12852,6 @@ async fn save_autorun_scripts(
         if seen_scope.is_empty() { Vec::new() } else { crate::autorun::store::list_scripts(&root) };
     // The project's own save words, for what counts as saving a record.
     let save_words = crate::autorun::nav::load_nav(&root, &ctx.org, &ctx.project).map(|n| n.save_words).unwrap_or_default();
-    // What the caller's discovery carried from the areas it left, while it goes on.
-    let carried = carried_of(asker).await;
     let check_and_save = || -> Result<Vec<String>, SaveRefusal> {
         // What the save noticed without refusing: said after its answer.
         let mut notes: Vec<String> = Vec::new();

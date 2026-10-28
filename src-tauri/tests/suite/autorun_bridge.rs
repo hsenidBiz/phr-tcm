@@ -3827,6 +3827,54 @@ async fn a_script_using_a_component_saves() {
     assert!(load_script(dir.path(), 7).unwrap().is_some());
 }
 
+/// Backlog 42: a save made while a discovery goes on reads what that
+/// discovery carried from the area it left (`DiscoveryState::carried`), and
+/// nothing is written to the saved map: without the carried set the same
+/// script is refused, and so it is once the discovery has ended.
+#[tokio::test]
+async fn a_save_during_a_discovery_reads_what_it_carried_from_the_area_it_left() {
+    use v2_lib::autorun::discovery_map::{carry_seen, keep_carried, load_map};
+    let dir = TempDir::new();
+    let _root = crate::serial::autorun();
+    set_root(dir.path().to_path_buf());
+    let (_server, client) = client_with_cases(&[(7, "Edit a request", &[""])]).await;
+    record_two_areas(dir.path());
+    let row: v2_lib::browser::locator::Target =
+        serde_json::from_value(serde_json::json!({ "role": "row", "name": "Alpha" })).unwrap();
+    let now = v2_lib::autorun::sessions::now_ms();
+    // Seen while the discovery stood in "My Assessments".
+    v2_lib::autorun::discovery_map::record_matched(dir.path(), "acme", "Web", Some("My Assessments"), "/a", &row, now).unwrap();
+    let body = serde_json::json!([{
+        "case_id": 7,
+        "title": "Edit a request",
+        "area": "Manage Cycle",
+        "steps": [{ "step_number": 1, "actions": [
+            { "kind": "click", "selector": { "role": "row", "name": "Alpha" } }
+        ]}]
+    }])
+    .to_string();
+    let saved = load_map(dir.path(), "acme", "Web").unwrap();
+    let mut carried = vec![];
+    keep_carried(&mut carried, carry_seen(&saved, "My Assessments", "Manage Cycle", now - 1).expect("something to carry"));
+
+    // The discovery has ended (nothing carried): area "Manage Cycle" has not seen the row.
+    let (status, out) =
+        v2_lib::ai_bridge::save_autorun_scripts_carrying(&ctx(), Some(&client), &body, None, vec![]).await;
+    assert_eq!(status, 400, "{out}");
+    assert!(out.contains("never seen"), "{out}");
+    assert_eq!(load_script(dir.path(), 7).unwrap(), None);
+
+    // While it goes on, the carried set vouches for it.
+    let (status, out) =
+        v2_lib::ai_bridge::save_autorun_scripts_carrying(&ctx(), Some(&client), &body, None, carried).await;
+    assert_eq!(status, 200, "{out}");
+    assert!(load_script(dir.path(), 7).unwrap().is_some());
+    assert!(
+        !load_map(dir.path(), "acme", "Web").unwrap().areas.iter().any(|a| a.area == "Manage Cycle"),
+        "the carried area reached the saved map"
+    );
+}
+
 /// A failed try names its picture by the full path of a file that is there,
 /// never by the bare name: an assistant given only a name searched the
 /// whole disk for it.

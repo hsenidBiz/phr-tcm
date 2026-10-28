@@ -1302,12 +1302,13 @@ async fn run_steps_marked<D: Driver>(
     // Every step passed, the clean-up too: what the whole run did.
     marks.unclean = if !d.net_recording() {
         Some(Unclean::Unrecorded)
-    } else if wrote_before {
+    } else if wrote_before && !look_only {
         Some(Unclean::Saved)
-    } else if d.net_wrote_since(mark) {
+    } else if wrote_before || d.net_wrote_since(mark) {
         // A look-only script cannot have saved (its guard stops what it takes
         // for a save), but the guard is a list of words: a write it let
         // through may still have changed the page's state. Say so, by path.
+        // An earlier part of the same case that posted (`wrote_before`) counts the same way.
         if look_only {
             crate::applog::info(format!(
                 "Auto Run: a look-only replay sent a request the save guard let through: {}",
