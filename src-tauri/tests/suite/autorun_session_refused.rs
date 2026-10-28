@@ -265,7 +265,8 @@ async fn a_refused_session_is_logged_with_its_browser_its_kind_and_its_age() {
     let logged: Vec<String> = v2_lib::applog::recent(400).into_iter().map(|l| l.message).collect();
     let at_sign_in = logged
         .iter()
-        .find(|m| m.contains("the main Auto Run browser") && m.contains("refused the session for admin"))
+        // Matched by its age too: other tests log refusals for admin alongside.
+        .find(|m| m.contains("the main Auto Run browser") && m.contains("refused the session for admin") && m.contains("5 min old"))
         .unwrap_or_else(|| panic!("no sign-in line: {logged:?}"));
     assert!(at_sign_in.contains("the session was tampered with") && at_sign_in.contains("5 min old"), "{at_sign_in}");
     assert!(!at_sign_in.contains("OLD") && !at_sign_in.contains("http"), "{at_sign_in}");
@@ -283,7 +284,7 @@ async fn a_refused_session_is_logged_with_its_browser_its_kind_and_its_age() {
     let logged: Vec<String> = v2_lib::applog::recent(400).into_iter().map(|l| l.message).collect();
     let mid = logged
         .iter()
-        .find(|m| m.starts_with("Auto Run, step 1:") && m.contains("refused the session for admin"))
+        .find(|m| m.starts_with("Auto Run, step 1:") && m.contains("refused the session for admin") && m.contains("3 min old"))
         .unwrap_or_else(|| panic!("no mid-case line: {logged:?}"));
     assert!(mid.contains("in the main Auto Run browser (the session was tampered with; the saved session was 3 min old)"), "{mid}");
 }

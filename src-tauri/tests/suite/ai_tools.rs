@@ -1976,15 +1976,9 @@ fn subagent_texts_ask_for_a_report_file_and_gen_tests_splits_cases_between_write
         assert!(gen.contains(said), "/tcm:gen-tests never says {said:?}: {gen}");
     }
     assert!(!gen.contains('\u{2014}') && !gen.contains('\u{2013}'), "no em or en dashes");
-
-    let dir = TempDir::new();
-    write_agents_in(dir.path(), &[], "").unwrap();
-    let writer = std::fs::read_to_string(dir.path().join("tcm-writer.md")).unwrap();
-    let writer = writer.split_whitespace().collect::<Vec<_>>().join(" ");
-    assert!(
-        writer.contains("Before you hand back, write your report to the file the coordinator named (or <your agent name>-report.md); a hand-back can be refused, the file cannot."),
-        "{writer}"
-    );
+    // The writer role is at its size cap: the coordinator tells each writer
+    // its report file instead (step d above).
+    assert!(gen.contains("told its account, its cases and its report file"), "{gen}");
 }
 
 /// `RENAMED_COMMANDS` is empty since 2.3.0: the `script-pbi` stand-in for `gen-tests` is gone, so no
