@@ -112,6 +112,7 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             events::ApiTemplatesChanged,
             events::CrystalReportChanged,
             events::AutorunScriptsChanged,
+            events::AutorunDataChanged,
             events::AutorunCleanupProgress,
             events::GuideProgress,
             events::PwOutput,
@@ -554,6 +555,15 @@ pub fn run() {
                 autorun::store::on_scripts_changed(move |_, ids| {
                     use tauri_specta::Event as _;
                     let _ = events::AutorunScriptsChanged { case_ids: ids.to_vec() }.emit(&app);
+                });
+            }
+            // The same for the data an assistant adds beside the scripts
+            // (areas, components, the map, quirks, test files, accounts).
+            {
+                let app = app.handle().clone();
+                autorun::data_changed::on_data_changed(move |_, kinds| {
+                    use tauri_specta::Event as _;
+                    let _ = events::AutorunDataChanged { kinds: kinds.to_vec() }.emit(&app);
                 });
             }
 

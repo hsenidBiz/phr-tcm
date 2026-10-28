@@ -383,6 +383,7 @@ pub fn save_nav(root: &Path, org: &str, project: &str, nav: &NavFile) -> Result<
     std::fs::create_dir_all(path.parent().expect("projects folder")).map_err(|e| e.to_string())?;
     let json = serde_json::to_string_pretty(nav).map_err(|e| e.to_string())?;
     crate::ai_tools::atomic_write(&path, &json)?;
+    super::data_changed::notify(root, crate::events::AutorunDataKind::Areas);
     Ok(())
 }
 

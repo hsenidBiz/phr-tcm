@@ -312,6 +312,7 @@ pub fn save_quirks(root: &Path, org: &str, project: &str, quirks: &[Quirk]) -> R
     std::fs::create_dir_all(path.parent().expect("projects folder")).map_err(|e| e.to_string())?;
     let json = serde_json::to_string_pretty(&list).map_err(|e| e.to_string())?;
     crate::ai_tools::atomic_write(&path, &json)?;
+    super::data_changed::notify(root, crate::events::AutorunDataKind::Quirks);
     Ok(())
 }
 

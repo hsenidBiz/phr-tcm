@@ -554,6 +554,7 @@ pub fn reset_map(root: &Path, org: &str, project: &str, now: u64) -> Result<Opti
     std::fs::rename(&from, from.with_file_name(&aside))
         .map_err(|e| format!("The discovery map {} could not be moved aside: {e}", map_file_name(org, project)))?;
     crate::applog::info(format!("Discovery map: a damaged map was moved aside as projects/{aside}"));
+    super::data_changed::notify(root, crate::events::AutorunDataKind::Map);
     Ok(Some(format!("projects/{aside}")))
 }
 
@@ -592,7 +593,9 @@ fn update(root: &Path, org: &str, project: &str, change: impl FnOnce(&mut Discov
         std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     }
     let text = serde_json::to_string_pretty(&map).map_err(|e| e.to_string())?;
-    crate::ai_tools::atomic_write(&path, &text)
+    crate::ai_tools::atomic_write(&path, &text)?;
+    super::data_changed::notify(root, crate::events::AutorunDataKind::Map);
+    Ok(())
 }
 
 /// The map's entry for `area`, compared by `area_key`. A new entry is filed

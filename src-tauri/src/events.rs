@@ -50,6 +50,27 @@ pub enum ScanKind {
     Plans,
 }
 
+/// Which of the data an assistant adds through the AI bridge changed. The
+/// Auto Run screen reads each kind from its own queries.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub enum AutorunDataKind {
+    Areas,
+    Components,
+    Map,
+    MappingSummary,
+    Quirks,
+    TestFiles,
+    Proposals,
+}
+
+/// Emitted after a successful write to that data, whoever made it, so the
+/// Auto Run screen reads it again without a reload.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, specta::Type, tauri_specta::Event)]
+pub struct AutorunDataChanged {
+    pub kinds: Vec<AutorunDataKind>,
+}
+
 /// Emitted while test plans are being scanned for suites, so Run Tests and
 /// the Suites browser can show "Scanning plans X of Y" instead of a bare
 /// skeleton. `kind` says which walk this is. `pages` is set only while the

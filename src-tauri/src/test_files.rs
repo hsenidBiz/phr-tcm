@@ -290,6 +290,7 @@ fn commit(folder: &Path, name: &str, bytes: &[u8], replace: bool, check_content:
         let _ = std::fs::remove_file(&part);
         return Err(failed("added", name, e));
     }
+    crate::autorun::data_changed::notify(folder, crate::events::AutorunDataKind::TestFiles);
     let meta = std::fs::metadata(&dest).map_err(|e| failed("read", name, e))?;
     Ok(entry(name, &meta))
 }
@@ -385,6 +386,7 @@ pub fn remove(folder: &Path, name: &str) -> Result<(), String> {
     match std::fs::remove_file(&path) {
         Ok(()) => {
             crate::applog::info(format!("test files: removed \"{name}\""));
+            crate::autorun::data_changed::notify(folder, crate::events::AutorunDataKind::TestFiles);
             Ok(())
         }
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Err(format!("\"{name}\" is no longer in Test files")),
