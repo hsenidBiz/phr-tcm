@@ -1,5 +1,5 @@
 import { ChevronsLeft, ChevronsRight } from "lucide-react";
-import { useSyncExternalStore, type ComponentType } from "react";
+import { Fragment, useSyncExternalStore, type ComponentType } from "react";
 import {
   GlyphAi,
   GlyphApiTemplates,
@@ -75,33 +75,43 @@ type Item<T extends string> = {
   /** A short status pill after the label ("In Dev") - for features that
    * ship early. Keep it to a word or two: the label span caps at max-w-40. */
   note?: string;
+  /** Rows sharing a group sit together under its heading (GROUP_LABEL). */
+  group?: "cases" | "advanced";
+};
+
+/** The heading each group of rows carries in the open rail. Collapsed to
+ * icons it is a thin rule instead. */
+const GROUP_LABEL: Record<NonNullable<Item<string>["group"]>, string> = {
+  cases: "Test Case Management",
+  advanced: "Advanced",
 };
 
 export const CASE_ITEMS: Item<Section>[] = [
-  { id: "manual", label: "Manual Entry", icon: GlyphManual, tone: "nav-ico nav-ico-manual" },
-  { id: "import", label: "Import Test Cases", icon: GlyphImport, tone: "nav-ico nav-ico-import" },
+  { id: "manual", label: "Manual Entry", icon: GlyphManual, tone: "nav-ico nav-ico-manual", group: "cases" },
+  { id: "import", label: "Import Test Cases", icon: GlyphImport, tone: "nav-ico nav-ico-import", group: "cases" },
   // A circular arrow, not a second pencil: Manual Entry already owns the
   // pencil, and two pencils in one rail are indistinguishable at 16px.
-  { id: "edit", label: "Update Test Cases", icon: GlyphUpdate, tone: "nav-ico nav-ico-edit" },
-  { id: "view", label: "View Test Cases", icon: GlyphView, tone: "nav-ico nav-ico-view" },
-  { id: "run", label: "Run Tests", icon: GlyphRun, tone: "nav-ico nav-ico-run" },
+  { id: "edit", label: "Update Test Cases", icon: GlyphUpdate, tone: "nav-ico nav-ico-edit", group: "cases" },
+  { id: "view", label: "View Test Cases", icon: GlyphView, tone: "nav-ico nav-ico-view", group: "cases" },
+  { id: "run", label: "Run Tests", icon: GlyphRun, tone: "nav-ico nav-ico-run", group: "cases" },
+  { id: "suites", label: "Search Suites", icon: GlyphSuites, tone: "nav-ico nav-ico-suites", group: "cases" },
+  // An ordered list, because ordering is the first thing this screen does.
+  { id: "manage", label: "Suite Management", icon: GlyphManage, tone: "nav-ico nav-ico-manage", group: "cases" },
+  { id: "ai", label: "AI Bridge", icon: GlyphAi, tone: "nav-ico nav-ico-ai", group: "cases" },
+  // The advanced tools, together at the bottom under their own heading, so
+  // the everyday screens above keep the low Ctrl+numbers.
   // A radar sweep, not a second play button: Run Tests owns the play
   // glyph, and the rail has to stay scannable at 16px.
-  { id: "autorun", label: "Auto Run", icon: GlyphAutoRun, tone: "nav-ico nav-ico-autorun" },
+  { id: "autorun", label: "Auto Run", icon: GlyphAutoRun, tone: "nav-ico nav-ico-autorun", group: "advanced" },
   // Beside Auto Run, whose scripts it exports, but left out of the Ctrl+N
-  // order (NO_SHORTCUT) so every tab below keeps its number. The theatre
-  // masks are Playwright's own picture.
-  { id: "playwright", label: "Playwright", icon: GlyphPlaywright, tone: "nav-ico nav-ico-playwright" },
-  { id: "suites", label: "Search Suites", icon: GlyphSuites, tone: "nav-ico nav-ico-suites" },
-  // An ordered list, because ordering is the first thing this screen does.
-  { id: "manage", label: "Suite Management", icon: GlyphManage, tone: "nav-ico nav-ico-manage" },
-  { id: "ai", label: "AI Bridge", icon: GlyphAi, tone: "nav-ico nav-ico-ai" },
-  // Last, so every tab above keeps its Ctrl+number; it has none of its
-  // own (see sectionShortcut). Braces, for the JSON a template is.
-  { id: "apitemplates", label: "API Templates", icon: GlyphApiTemplates, tone: "nav-ico nav-ico-apitemplates" },
-  // After API Templates and outside the Ctrl+N order (NO_SHORTCUT), so no
-  // number moves. A report page with its bars: the preview is the screen.
-  { id: "crystal-reports", label: "Crystal Reports", icon: GlyphCrystalReports, tone: "nav-ico nav-ico-crystal-reports" },
+  // order (NO_SHORTCUT). The theatre masks are Playwright's own picture.
+  { id: "playwright", label: "Playwright", icon: GlyphPlaywright, tone: "nav-ico nav-ico-playwright", group: "advanced" },
+  // Braces, for the JSON a template is. Past the ninth row, so it has no
+  // Ctrl+number (see sectionShortcut).
+  { id: "apitemplates", label: "API Templates", icon: GlyphApiTemplates, tone: "nav-ico nav-ico-apitemplates", group: "advanced" },
+  // Outside the Ctrl+N order (NO_SHORTCUT). A report page with its bars:
+  // the preview is the screen.
+  { id: "crystal-reports", label: "Crystal Reports", icon: GlyphCrystalReports, tone: "nav-ico nav-ico-crystal-reports", group: "advanced" },
 ];
 
 /** Rows shown in the rail but left out of the Ctrl+N order, so the tabs
@@ -208,16 +218,44 @@ export default function Sidebar<T extends string = Section>({
       )}
       style={{ transitionDelay: collapsed ? "120ms" : "0ms" }}
     >
-      {list.map(({ id, label, icon: Icon, tone, note }) => {
+      {list.map(({ id, label, icon: Icon, tone, note, group }, index) => {
+        // The first row of a group carries the group's heading above it.
+        const heading = group && list[index - 1]?.group !== group ? GROUP_LABEL[group] : null;
         const badge = badges?.[id] ?? 0;
         const dead = locked && id !== liveItem;
         const fresh = showMarks && isNewNav(id, marks);
         const tip = note ? `${label} (In Development)` : label;
         const name = badge > 0 ? `${label} (${badge} new)` : label;
         return (
-        // Only when collapsed: with the rail open the label is right there.
-        // The note joins the tooltip so the status survives the icon rail.
-        <Tooltip key={id} label={fresh ? `${tip} · new` : tip} side="right" disabled={!collapsed}>
+        <Fragment key={id}>
+        {heading && (
+          // Open, a small heading; collapsed to icons, a thin rule in its
+          // place, so the group still reads as one. Said once to a screen
+          // reader, not per row.
+          <div role="presentation" className={cn("px-3", index > 0 && "mt-2")} data-nav-group={group}>
+            <div
+              aria-hidden={collapsed}
+              className={cn(
+                "overflow-hidden whitespace-nowrap text-[10px] font-semibold uppercase tracking-wider text-faint transition-[opacity,max-height] duration-200",
+                collapsed ? "max-h-0 opacity-0" : "max-h-6 pb-1 opacity-100",
+              )}
+              style={labelDelay}
+            >
+              {heading}
+            </div>
+            <div
+              aria-hidden
+              className={cn(
+                "border-t border-border transition-opacity duration-200",
+                // No rule above the very first row: there is nothing to part.
+                collapsed && index > 0 ? "mb-1 opacity-100" : "h-0 opacity-0",
+              )}
+            />
+          </div>
+        )}
+        {/* Only when collapsed: with the rail open the label is right there.
+            The note joins the tooltip so the status survives the icon rail. */}
+        <Tooltip label={fresh ? `${tip} · new` : tip} side="right" disabled={!collapsed}>
         <button
           data-tour={`nav-${id}`}
           disabled={dead}
@@ -293,6 +331,7 @@ export default function Sidebar<T extends string = Section>({
           </span>
         </button>
         </Tooltip>
+        </Fragment>
         );
       })}
       <div className="mt-auto space-y-1">

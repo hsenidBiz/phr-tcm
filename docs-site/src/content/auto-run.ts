@@ -70,7 +70,7 @@ export const autoRun: Screen = {
   summary:
     "Let the app run a test case for you. A script tells it what to do at each step, and the app does it in a real browser: with you watching and deciding the result, or unattended while you work on something else. " +
     "Results stay on this computer until you review a run and send it to Azure DevOps. " +
-    "Auto Run is a module: switch it on in Settings, under General, on the **Modules** page (it needs Database Access), and it appears in the sidebar under Run Tests.",
+    "Auto Run is a module: switch it on in Settings, under General, on the **Modules** page (it needs Database Access), and it appears in the group at the bottom of the sidebar.",
   shots: [
     {
       id: CASES,
@@ -974,7 +974,7 @@ export const autoRun: Screen = {
       steps: [
         "Open Settings with the gear at the top right.",
         "Under **General**, press **Modules**. Switch on **Database Access** if it is off, then **Auto Run**.",
-        "**Auto Run** appears in the sidebar under Run Tests. Switch on **Playwright** or **API Templates** on the same page when you need them: they appear under Auto Run and at the end.",
+        "**Auto Run** appears in the group at the bottom of the sidebar. Switch on **Playwright** or **API Templates** on the same page when you need them: they join it in that group.",
       ],
     },
     {
