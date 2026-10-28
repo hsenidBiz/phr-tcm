@@ -931,9 +931,10 @@ table {
    colour is --assistant-hue, set from the browser slot. When its corner
    changes, `left` transitions over 2.5 s and the component sets data-moving
    (legs step, no pacing) and data-facing for the duration. In the Map room the
-   column paces: a translateX keyframe of at most 2.5rem each way, so it never
-   fights the left transition, while only the svg flips at each end and the
-   bubble never mirrors. Typing bobs at the bench; dozing is still and dimmed
+   bubble and character pace: a translateX keyframe of at most 2.5rem each way
+   around the spot (which the component keeps 3.5rem from the corner edges),
+   so it never fights the left transition. The name tag stays fixed under the
+   spot, only the svg flips at each end and the bubble never mirrors. Typing bobs at the bench; dozing is still and dimmed
    with a z drifting up. Under reduced motion nothing moves and the walker
    jumps, but each pose still looks different (screen, dim and z, or walking
    stance). */
@@ -978,21 +979,25 @@ table {
 .assistant-scene__walker[data-moving="true"] .assistant-scene__bot { animation: none; }
 .assistant-scene__walker[data-moving="true"] .assistant-scene__leg--a { animation: assistant-step 0.4s steps(1, end) infinite; }
 .assistant-scene__walker[data-moving="true"] .assistant-scene__leg--b { animation: assistant-step 0.4s steps(1, end) infinite -0.2s; }
-.assistant-scene__walker[data-moving="true"][data-facing="left"] .assistant-scene__bot { transform: scaleX(-1); }
-.assistant-scene__z { animation: assistant-z-drift 3s ease-out infinite; }
-@keyframes assistant-pace {
-  0% { transform: translateX(-2.5rem); }
-  46% { transform: translateX(2.5rem); }
-  50% { transform: translateX(2.5rem); }
-  96% { transform: translateX(-2.5rem); }
-  100% { transform: translateX(-2.5rem); }
+/* Facing is a walk, so under reduced motion the character just jumps. */
+@media (prefers-reduced-motion: no-preference) {
+  .assistant-scene__walker[data-moving="true"][data-facing="left"] .assistant-scene__bot { transform: scaleX(-1); }
 }
-/* The same timing as the pace, on the svg alone: facing right on the way
-   out, left on the way back. */
+.assistant-scene__z { animation: assistant-z-drift 3s ease-out infinite; }
+/* Starts and ends at the spot (0), so entering or leaving the pace never
+   jumps: out to 2.5rem right, across to 2.5rem left, back home. */
+@keyframes assistant-pace {
+  0% { transform: translateX(0); }
+  23%, 27% { transform: translateX(2.5rem); }
+  73%, 77% { transform: translateX(-2.5rem); }
+  100% { transform: translateX(0); }
+}
+/* The same timing as the pace, on the svg alone: facing right while going
+   right, left while going left, right again on the way home. */
 @keyframes assistant-flip {
-  0%, 48% { transform: scaleX(1); }
-  50%, 98% { transform: scaleX(-1); }
-  100% { transform: scaleX(1); }
+  0%, 26% { transform: scaleX(1); }
+  27%, 76% { transform: scaleX(-1); }
+  77%, 100% { transform: scaleX(1); }
 }
 @keyframes assistant-pin {
   0%, 100% { opacity: 1; }

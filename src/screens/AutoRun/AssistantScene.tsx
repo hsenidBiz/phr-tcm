@@ -20,7 +20,7 @@
 // (`.assistant-scene*`), which a reduced-motion setting stills (the walker
 // jumps) while the pose itself still differs.
 
-import { useEffect, useRef, useState, type CSSProperties } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from "react";
 import type { AgentActivity, AgentView } from "../../bindings";
 
 export type ScenePose = "walk" | "type" | "doze";
@@ -99,7 +99,11 @@ export function cornerFor(a: AgentActivity): Corner {
 }
 
 const THIRD = 100 / 3;
-const EDGE = "2.75rem";
+/** How close to a corner edge a spot may be. The Map room needs 3.5rem: half
+ * the character (0.875rem) plus its pacing (2.5rem each way) is 3.375rem. */
+export function edgeFor(corner: Corner): string {
+  return corner === "map" ? "3.5rem" : "2.75rem";
+}
 const round = (n: number) => Math.round(n * 1000) / 1000;
 const cornerStart = (c: Corner) => CORNERS.findIndex((x) => x.id === c) * THIRD;
 
@@ -110,13 +114,15 @@ function spotPercent(corner: Corner, k: number, m: number): number {
 }
 
 /** Where occupant `k` of `m` stands in `corner`, as a CSS length: its even
- * share of the corner's third, but never closer than 2.75rem to either corner
- * edge, so the character, its pacing (at most 2.5rem each way) and its tag
- * stay inside the corner even on the narrowest card. */
+ * share of the corner's third, but never closer to either corner edge than
+ * `edgeFor(corner)` (2.75rem; 3.5rem in the Map room, whose character paces up
+ * to 2.5rem each way), so the character and its pacing stay inside the corner
+ * even on the narrowest card. */
 export function spotLeft(corner: Corner, k: number, m: number): string {
   const start = round(cornerStart(corner));
   const end = round(cornerStart(corner) + THIRD);
-  return `clamp(calc(${start}% + ${EDGE}), ${spotPercent(corner, k, m)}%, calc(${end}% - ${EDGE}))`;
+  const edge = edgeFor(corner);
+  return `clamp(calc(${start}% + ${edge}), ${spotPercent(corner, k, m)}%, calc(${end}% - ${edge}))`;
 }
 
 /** One pixel character, 14 x 17 "pixels" drawn at twice that, sized in rem so
@@ -164,7 +170,7 @@ function useWalking(spots: Map<string, number>): Map<string, "left" | "right"> {
   const [walking, setWalking] = useState<Map<string, "left" | "right">>(new Map());
   const signature = [...spots].map(([l, p]) => `${l}:${p}`).join("|");
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const started = new Map<string, "left" | "right">();
     for (const [label, pct] of spots) {
       const prev = last.current.get(label);
@@ -266,7 +272,7 @@ export default function AssistantOffice({ agents }: { agents: AgentView[] }) {
             className="assistant-scene__corner absolute inset-y-0 w-1/3"
             style={{ left: `${round(cornerStart(c.id))}%`, "--corner-c": c.colour } as CSSProperties}
           >
-            <span className="assistant-scene__corner-name absolute left-2 top-1.5 text-[11px] font-medium uppercase tracking-wider">
+            <span className="assistant-scene__corner-name absolute left-2 top-1.5 text-[0.6875rem] font-medium uppercase tracking-wider">
               {c.name}
             </span>
             <div className="assistant-scene__props absolute inset-0">
@@ -285,7 +291,7 @@ export default function AssistantOffice({ agents }: { agents: AgentView[] }) {
           <div
             key={`screen-${p.a.label}`}
             className="assistant-scene__screen absolute bottom-12 flex h-6 w-8 flex-col justify-center gap-0.5 rounded-sm border border-border-strong bg-surface px-1"
-            style={{ "--spot": `calc(${spotLeft(p.corner, p.k, p.m)} + 1.75rem)` } as CSSProperties}
+            style={{ "--spot": `calc(${spotLeft(p.corner, p.k, p.m)} + 1.5rem)` } as CSSProperties}
           >
             <div className="h-0.5 w-4 bg-muted" />
             <div className="h-0.5 w-3 bg-muted" />
@@ -311,23 +317,26 @@ export default function AssistantOffice({ agents }: { agents: AgentView[] }) {
           >
             {/* A column in normal flow (bubble, bot, tag), so the bubble sits
                 right above the head at any scale. The walker's bottom is the
-                floor line less the tag's 1rem. */}
-            <div
-              className={`flex w-full flex-col items-center${pace ? " assistant-scene__pace" : ""}`}
-              style={pace ? { animationDelay: delay } : undefined}
-            >
+                floor line less the tag's 1rem. Only the bubble and bot pace;
+                the tag stays fixed under the spot. */}
+            <div className="flex w-full flex-col items-center">
+              <div
+                className={`flex flex-col items-center${pace ? " assistant-scene__pace" : ""}`}
+                style={pace ? { animationDelay: delay } : undefined}
+              >
               {bubble && (
-                <span className="assistant-scene__bubble label-trim mb-0.5 max-w-[8rem] overflow-x-clip text-ellipsis whitespace-nowrap rounded border border-border bg-surface px-1.5 text-[11px] text-text">
+                <span className="assistant-scene__bubble label-trim mb-0.5 max-w-[8rem] overflow-x-clip text-ellipsis whitespace-nowrap rounded border border-border bg-surface px-1.5 text-[0.6875rem] text-text">
                   {bubble}
                 </span>
               )}
               <div className="relative">
                 <Bot asleep={pose === "doze"} style={pace ? { animationDelay: delay } : undefined} />
                 {pose === "doze" && (
-                  <span className="assistant-scene__z absolute left-full top-0 text-[10px] font-bold text-muted">z</span>
+                  <span className="assistant-scene__z absolute left-full top-0 text-[0.625rem] font-bold text-muted">z</span>
                 )}
               </div>
-              <span className="assistant-scene__tag label-trim h-4 max-w-[7rem] overflow-x-clip text-ellipsis whitespace-nowrap text-[11px] leading-4 text-muted">
+              </div>
+              <span className="assistant-scene__tag label-trim h-4 max-w-[5rem] overflow-x-clip text-ellipsis whitespace-nowrap text-[0.6875rem] leading-4 text-muted">
                 {a.label}
               </span>
             </div>

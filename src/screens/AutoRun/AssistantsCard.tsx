@@ -6,9 +6,10 @@
 // (dozing) so its browser can still be released. One shared office floor
 // (AssistantScene.tsx) runs across the top of the card, in three corners with
 // each assistant standing in the one matching its activity, and the rows sit
-// below it, each with a small square in its character's colour. Rust sends the whole list again whenever any of it
-// changes (`autorun-agents-changed`, at most once a second), so the rows are
-// replaced outright rather than patched.
+// below it, each with a small square in its character's colour. Rust sends
+// the whole list again whenever any of it changes (`autorun-agents-changed`,
+// at most once a second), so the rows are replaced outright rather than
+// patched.
 
 import { useEffect, useId, useRef, useState } from "react";
 import { commands, events, type AgentActivity, type AgentView } from "../../bindings";

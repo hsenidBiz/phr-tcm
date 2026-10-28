@@ -84,7 +84,7 @@ test.each<[AgentActivity, Corner]>([
   [idle, "lounge"],
 ])("cornerFor maps %j to %s", (activity, corner) => expect(cornerFor(activity)).toBe(corner));
 
-test("spotLeft puts an occupant in its corner's third, never nearer than 2.75rem to an edge", () => {
+test("spotLeft puts an occupant in its corner's third, 2.75rem from the edges (3.5rem in the Map room)", () => {
   expect(spotLeft("lab", 0, 1)).toContain("16.6");
   expect(spotLeft("lounge", 0, 1)).toContain("83.3");
   expect(new Set([0, 1, 2].map((k) => spotLeft("lab", k, 3))).size).toBe(3);
@@ -94,7 +94,11 @@ test("spotLeft puts an occupant in its corner's third, never nearer than 2.75rem
       [0, 3],
       [2, 3],
     ]) {
-      expect(spotLeft(corner, k, m)).toContain("2.75rem");
+      const spot = spotLeft(corner, k, m);
+      const edge = corner === "map" ? "3.5rem" : "2.75rem";
+      const other = corner === "map" ? "2.75rem" : "3.5rem";
+      expect(spot.match(new RegExp(edge.replace(".", "\\."), "g"))).toHaveLength(2);
+      expect(spot).not.toContain(other);
     }
   }
 });
@@ -130,13 +134,16 @@ test("each walker has its corner, pose, slot, spot, name tag and (only when ther
 test("the bubble is in flow directly above the character, never absolutely positioned", () => {
   const c = one({ kind: "discovering", area: "Profile" }, 1, "Assistant 2");
   const bubble = c.querySelector<HTMLElement>(".assistant-scene__bubble")!;
-  const column = bubble.parentElement!;
+  const stack = bubble.parentElement!;
+  expect(stack).toHaveClass("flex", "flex-col");
+  const column = stack.parentElement!;
   expect(column).toHaveClass("flex", "flex-col");
   expect(column.closest(".assistant-scene__walker")).not.toBeNull();
   expect(bubble.className).not.toMatch(/\babsolute\b|\bfixed\b|\bbottom-/);
   expect(bubble.nextElementSibling!.querySelector(".assistant-scene__bot")).not.toBeNull();
-  // The tag follows the character in the same column.
+  // The tag follows the character in the column, outside what paces.
   expect(column.lastElementChild).toHaveClass("assistant-scene__tag");
+  expect(stack.querySelector(".assistant-scene__tag")).toBeNull();
   // The character is sized in rem like everything around it, not fixed px.
   const bot = c.querySelector(".assistant-scene__bot")!;
   expect(bot.getAttribute("width")).toBeNull();
