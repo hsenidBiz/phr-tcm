@@ -79,13 +79,27 @@ pub async fn trip_to_module_noted<D: Driver>(
     timing: &Timing,
     who: &str,
 ) -> (ActionOutcome, Vec<String>) {
+    trip_to_module_noted_as(d, root, route, from, timing, who, None).await
+}
+
+/// `trip_to_module_noted` for a trip made as `account`: a failure whose click
+/// never found its target says the account's menu differs (`nav::menu_differs`).
+pub async fn trip_to_module_noted_as<D: Driver>(
+    d: &mut D,
+    root: &Path,
+    route: &Route,
+    from: nav::TripFrom,
+    timing: &Timing,
+    who: &str,
+    account: Option<&str>,
+) -> (ActionOutcome, Vec<String>) {
     // The application's site for a supervised browser's capture, from the
     // route's own start page: a browser signed in by hand never ran the
     // sign-in that would have named it.
     if !route.home.start_url.trim().is_empty() {
         d.set_capture_site(Some(&route.home.start_url));
     }
-    let (mut out, notes) = nav::reach_module_noted(d, route, from, timing, who).await;
+    let (mut out, notes) = nav::reach_module_noted_as(d, route, from, timing, who, account).await;
     // A save the module's page sent as it opened fails the case here,
     // before step 1 acts on it.
     if let Some(sentence) = d.take_save_blocked() {
@@ -467,7 +481,7 @@ async fn run_case_in<D: Driver>(
             let out = match signin::prepare(root, organization, project, key) {
                 Err(why) => vec![ActionOutcome::failed(why)],
                 Ok((recipe, who)) => {
-                    let signed = signin::sign_in(d, root, &recipe, &who, timing).await;
+                    let signed = signin::sign_in_in(d, root, &recipe, &who, timing, "an unattended run's browser").await;
                     let mut all = signed.steps.clone();
                     all.push(as_action_outcome(&signed));
                     all

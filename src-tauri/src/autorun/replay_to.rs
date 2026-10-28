@@ -780,7 +780,7 @@ pub async fn replay_to_traced<D: Driver, P: StageDb, B: Browsers>(
             false
         };
         if reused {
-            let (went, menu) = replay::trip_to_module_noted(d, root, &route, TripFrom::Elsewhere, timing, &who(id)).await;
+            let (went, menu) = replay::trip_to_module_noted_as(d, root, &route, TripFrom::Elsewhere, timing, &who(id), Some(key)).await;
             if !menu.is_empty() {
                 reuse.menu.extend(menu);
                 reuse.account = Some(key.to_string());
@@ -843,7 +843,7 @@ pub async fn replay_to_traced<D: Driver, P: StageDb, B: Browsers>(
     }
     if reuse.went.is_none() {
         let from = if signed_now { TripFrom::SignIn } else { TripFrom::Elsewhere };
-        let (went, menu) = replay::trip_to_module_noted(d, root, &route, from, timing, &who(id)).await;
+        let (went, menu) = replay::trip_to_module_noted_as(d, root, &route, from, timing, &who(id), script.account.as_deref()).await;
         if !menu.is_empty() {
             reuse.menu.extend(menu);
             if reuse.account.is_none() {

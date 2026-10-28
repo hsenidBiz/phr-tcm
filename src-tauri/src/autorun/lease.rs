@@ -344,6 +344,20 @@ impl Held {
         Held::new(Holder::Browser { slot: slot.0 }, Duration::ZERO)
     }
 
+    /// This browser as a log line names it: the assistant's browser, the main
+    /// Auto Run browser, or the run that owns it. Never an id or a pid.
+    pub fn browser_words(&self) -> String {
+        match &self.holder {
+            Holder::Browser { slot } => match crate::autorun::slots::SlotNo::from_number(*slot) {
+                Some(n) => crate::commands::autorun_slots::whose(n),
+                None => "an Auto Run browser".to_string(),
+            },
+            Holder::Case { .. } => "an unattended run's browser".to_string(),
+            Holder::Template => "an API template run's browser".to_string(),
+            Holder::Setup => "Auto Run setup's browser".to_string(),
+        }
+    }
+
     /// Auto Run setup's (a module-path check, Try or recording, or the
     /// recorded sign-in's check): refused at once, never waited for.
     pub fn setup() -> Self {

@@ -717,9 +717,27 @@ pub struct PathFailure {
     pub harness: bool,
 }
 
+/// What a failed area walk adds when its click never found its target and
+/// the account is known: the account's menu does not have the control the
+/// area was recorded with. One sentence, never a path per menu shape.
+pub fn menu_differs(account: &str, locator: &str) -> String {
+    format!(
+        "the menu as {account} has no {locator} - this account's menu differs from the one the area was recorded with; script this area as an account whose menu has it"
+    )
+}
+
 impl PathFailure {
     /// The run's sentence (design §5).
     pub fn for_run(&self, module: &str) -> String {
+        self.for_run_as(module, None)
+    }
+
+    /// `for_run`, for a trip made as `account`: a click that never found its
+    /// target also says the account's menu differs (`menu_differs`). Not for
+    /// a click that found several elements (`AREA_PATH_NOT_EXACT`: the area
+    /// is what to repair), nor one that found its target and could not use
+    /// it, nor with no account known.
+    pub fn for_run_as(&self, module: &str, account: Option<&str>) -> String {
         let module = module.trim();
         let reason = self.reason.trim_end_matches('.');
         match &self.at {
@@ -727,8 +745,21 @@ impl PathFailure {
             // with no clicks fails its arrival check here too: the reason
             // stands alone.
             Where::Home => format!("{UNREACHED_PREFIX}{module}\": {reason}."),
-            Where::Click { n, locator } => format!("{UNREACHED_PREFIX}{module}\": click {n}, {locator} - {reason}."),
+            Where::Click { n, locator } => {
+                let run = format!("{UNREACHED_PREFIX}{module}\": click {n}, {locator} - {reason}");
+                match account.map(str::trim).filter(|a| !a.is_empty()) {
+                    Some(account) if self.never_found() => format!("{run}; {}", menu_differs(account, locator)),
+                    _ => format!("{run}."),
+                }
+            }
         }
+    }
+
+    /// The failing click found nothing at all: its reason ends in
+    /// `input::NOT_FOUND`, and the area-needs-repair sentence is not there.
+    fn never_found(&self) -> bool {
+        !self.reason.contains(AREA_PATH_NOT_EXACT.trim())
+            && self.reason.trim_end_matches('.').ends_with(crate::browser::input::NOT_FOUND)
     }
 
     /// The Areas dialog's shorter form (design §4).
@@ -1319,11 +1350,21 @@ pub fn reached(module: &str, result: Result<String, PathFailure>) -> ActionOutco
 /// `reached`, with what the trip did on the way (`go_to_module_noted`) said
 /// beside the module: "Go to Leave (Group Menu Items turned off)".
 pub fn reached_noted(module: &str, result: Result<String, PathFailure>, notes: &[String]) -> ActionOutcome {
+    reached_noted_as(module, result, notes, None)
+}
+
+/// `reached_noted` for a trip made as `account` (`PathFailure::for_run_as`).
+pub fn reached_noted_as(
+    module: &str,
+    result: Result<String, PathFailure>,
+    notes: &[String],
+    account: Option<&str>,
+) -> ActionOutcome {
     match result {
         Ok(_) if !notes.is_empty() => ActionOutcome::passed(format!("Go to {} ({})", module.trim(), notes.join("; "))),
         Ok(_) => ActionOutcome::passed(format!("Go to {}", module.trim())),
         Err(f) => {
-            let mut out = ActionOutcome::failed(f.for_run(module));
+            let mut out = ActionOutcome::failed(f.for_run_as(module, account));
             out.harness = f.harness;
             out
         }
@@ -1368,6 +1409,18 @@ pub async fn reach_module<D: Driver>(
     reach_module_noted(d, route, from, timing, who).await.0
 }
 
+/// `reach_module` for a trip made as `account` (`PathFailure::for_run_as`).
+pub async fn reach_module_as<D: Driver>(
+    d: &mut D,
+    route: &Route,
+    from: TripFrom,
+    timing: &Timing,
+    who: &str,
+    account: Option<&str>,
+) -> ActionOutcome {
+    reach_module_noted_as(d, route, from, timing, who, account).await.0
+}
+
 /// `reach_module`, with the notes the trip made (`go_to_module_noted`) as
 /// well: they are already in a passed outcome's words, and the replay to a
 /// step says them in its own answer.
@@ -1378,10 +1431,23 @@ pub async fn reach_module_noted<D: Driver>(
     timing: &Timing,
     who: &str,
 ) -> (ActionOutcome, Vec<String>) {
+    reach_module_noted_as(d, route, from, timing, who, None).await
+}
+
+/// `reach_module_noted` for a trip made as `account`: a failure whose click
+/// never found its target says the account's menu differs (`menu_differs`).
+pub async fn reach_module_noted_as<D: Driver>(
+    d: &mut D,
+    route: &Route,
+    from: TripFrom,
+    timing: &Timing,
+    who: &str,
+    account: Option<&str>,
+) -> (ActionOutcome, Vec<String>) {
     let module = route.path.name();
     let mut notes = Vec::new();
     let went = go_to_module_noted(d, route, from, timing, &mut notes).await;
-    let first = reached_noted(module, went, &notes);
+    let first = reached_noted_as(module, went, &notes, account);
     if first.ok || first.harness {
         log_notes(&notes);
         return (first, notes);
@@ -1392,7 +1458,7 @@ pub async fn reach_module_noted<D: Driver>(
         // Right after a fresh load the browser sits where a sign-in leaves
         // it: on the path's own first page, there is no going home again.
         let went = go_to_module_noted(d, route, TripFrom::SignIn, timing, &mut notes).await;
-        reached_noted(module, went, &notes)
+        reached_noted_as(module, went, &notes, account)
     } else {
         reached(module, Err(PathFailure { at: Where::Home, reason: reload.detail, harness: reload.harness }))
     };

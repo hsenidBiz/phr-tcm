@@ -7748,7 +7748,7 @@ async fn save_discovered_area<B: DiscoveryBrowser>(
             return (409, format!("the area's saved path could not be tried: {}", went.detail));
         }
         let route = nav::Route::new(&recipe, old.clone());
-        let tried = nav::reach_module(d, &route, nav::TripFrom::SignIn, timing, "Auto Run area repair").await;
+        let tried = nav::reach_module_as(d, &route, nav::TripFrom::SignIn, timing, "Auto Run area repair", account.as_deref()).await;
         if tried.ok {
             return (409, area_repair::NOTHING_TO_REPAIR.to_string());
         }

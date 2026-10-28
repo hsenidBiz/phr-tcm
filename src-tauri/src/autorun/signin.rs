@@ -119,6 +119,32 @@ pub enum SessionRefusal {
     EmptyBadRequest,
 }
 
+impl SessionRefusal {
+    /// The refusal in words, for the application log.
+    pub fn words(self) -> &'static str {
+        match self {
+            SessionRefusal::Tampered => "the session was tampered with",
+            SessionRefusal::EmptyBadRequest => "an empty Bad Request",
+        }
+    }
+}
+
+/// What the application log calls a browser when the caller did not say
+/// which one it is (`sign_in_in`).
+pub const UNNAMED_BROWSER: &str = "an Auto Run browser";
+
+/// The application log's line for a session the application refused, in
+/// `browser`: the account (by key, never a login), the refusal in words and
+/// the saved session's age in minutes, when one was on file. No cookie, no
+/// address.
+pub fn session_refused_line(browser: &str, key: &str, refusal: SessionRefusal, age_minutes: Option<u64>) -> String {
+    let age = match age_minutes {
+        Some(m) => format!("the saved session was {m} min old"),
+        None => "no saved session was on file".to_string(),
+    };
+    format!("the application refused the session for {key} in {browser} ({}; {age})", refusal.words())
+}
+
 /// An expression this app wrote, with no input in it: `tampered` for the
 /// PeoplesHR error page, `empty400` for an empty 400 page, else empty. It
 /// hands back a word, never the page's text.
@@ -259,7 +285,20 @@ pub async fn sign_in<D: Driver>(
     account: &Account,
     timing: &Timing,
 ) -> SignInOutcome {
-    sign_in_with(d, root, recipe, account, timing, true).await
+    sign_in_in(d, root, recipe, account, timing, UNNAMED_BROWSER).await
+}
+
+/// `sign_in` in the browser `browser` names (`lease::Held::browser_words`),
+/// which is what the log says if the application refuses the saved session.
+pub async fn sign_in_in<D: Driver>(
+    d: &mut D,
+    root: &Path,
+    recipe: &SignInRecipe,
+    account: &Account,
+    timing: &Timing,
+    browser: &str,
+) -> SignInOutcome {
+    sign_in_with(d, root, recipe, account, timing, true, browser).await
 }
 
 /// The supervised browser's sign-in as `account_key`: its account lease
@@ -283,7 +322,7 @@ pub async fn sign_in_leased<D: Driver>(
 ) -> Result<SignInOutcome, String> {
     let (recipe, account) = prepare(root, org, project, account_key)?;
     lease.hold(root, &account.key).await?;
-    let out = sign_in(d, root, &recipe, &account, timing).await;
+    let out = sign_in_in(d, root, &recipe, &account, timing, &lease.browser_words()).await;
     *signed_in = out.ok.then(|| account.key.clone());
     // The sign-in as its cookies left it, for a later replay to know the
     // browser still holds it (`replay_to`): memory only, never said.
@@ -307,7 +346,7 @@ pub async fn sign_in_fresh<D: Driver>(
     account: &Account,
     timing: &Timing,
 ) -> SignInOutcome {
-    sign_in_with(d, root, recipe, account, timing, false).await
+    sign_in_with(d, root, recipe, account, timing, false, UNNAMED_BROWSER).await
 }
 
 /// A no-save case's guard is held from the moment the sign-in has arrived
@@ -323,11 +362,12 @@ async fn sign_in_with<D: Driver>(
     account: &Account,
     timing: &Timing,
     try_saved_session: bool,
+    browser: &str,
 ) -> SignInOutcome {
     // What the page met while the run signed in is the run's doing, not a
     // step's: let go of it once the sign-in is over.
     let errors_before = d.page_error_book().map(|b| b.len());
-    let out = sign_in_held(d, root, recipe, account, timing, try_saved_session).await;
+    let out = sign_in_held(d, root, recipe, account, timing, try_saved_session, browser).await;
     if let (Some(n), Some(book)) = (errors_before, d.page_error_book()) {
         book.drop_after(n);
     }
@@ -353,6 +393,7 @@ async fn sign_in_held<D: Driver>(
     account: &Account,
     timing: &Timing,
     try_saved_session: bool,
+    browser: &str,
 ) -> SignInOutcome {
     let origins = recipe.origins();
     let policy = Policy::only(origins.clone());
@@ -381,10 +422,11 @@ async fn sign_in_held<D: Driver>(
                 // dropped and signed in fresh below, without waiting for a
                 // marker that cannot come.
                 let refused = if arrived.ok { session_refused(d).await } else { None };
-                if refused.is_some() {
+                if let Some(refusal) = refused {
+                    let age = now_ms().saturating_sub(saved.saved_at_ms) / 60_000;
                     crate::applog::info(format!(
-                        "Auto Run: the application no longer accepts the saved session for {}; it is dropped and the account signed in fresh",
-                        account.key
+                        "Auto Run: {}; it is dropped and the account signed in fresh",
+                        session_refused_line(browser, &account.key, refusal, Some(age))
                     ));
                 }
                 // Short-circuit exactly like the plain `&&` this replaces:

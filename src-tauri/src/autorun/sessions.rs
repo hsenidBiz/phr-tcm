@@ -33,6 +33,18 @@ pub fn load_fresh_session(root: &Path, key: &str, max_age_minutes: u32, now_ms: 
     (age <= u64::from(max_age_minutes) * 60_000).then_some(s)
 }
 
+/// How old the saved session for `key` is, in whole minutes, whether or not
+/// it is still fresh enough to use; `None` when there is none to read. For
+/// the log, which says how old a refused session was.
+pub fn saved_session_age_minutes(root: &Path, key: &str) -> Option<u64> {
+    if !valid_key(key) {
+        return None;
+    }
+    let text = std::fs::read_to_string(session_path(root, key).ok()?).ok()?;
+    let s: SavedSession = serde_json::from_str(&text).ok()?;
+    Some(now_ms().saturating_sub(s.saved_at_ms) / 60_000)
+}
+
 pub fn forget_session(root: &Path, key: &str) {
     if valid_key(key) {
         if let Ok(p) = session_path(root, key) {

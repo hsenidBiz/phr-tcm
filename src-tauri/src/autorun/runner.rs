@@ -1159,6 +1159,7 @@ async fn run_expanded<D: Driver>(
         policy: &policy,
         direct_urls: nav_file.direct_urls,
         step: step.step_number,
+        account: account.clone(),
         popups,
         loaders,
         cancel: run.cancel,
@@ -1293,7 +1294,7 @@ async fn run_expanded<D: Driver>(
                     // The account is this browser's from here, whichever
                     // way the sign-in goes.
                     Ok(()) => {
-                        let signed = signin::sign_in(d, root, &r, &who, timing).await;
+                        let signed = signin::sign_in_in(d, root, &r, &who, timing, &lease.browser_words()).await;
                         *account = signed.ok.then(|| who.key.clone());
                         let print = match signed.ok {
                             true => crate::browser::session::cookie_print(d, &r.origins()).await,
@@ -1307,8 +1308,9 @@ async fn run_expanded<D: Driver>(
                             }
                             None => as_action_outcome(&signed),
                             Some(rt) => {
+                                let who_key = who.key.clone();
                                 let who = format!("Auto Run, step {}", step.step_number);
-                                let went = nav::reach_module(d, rt, nav::TripFrom::SignIn, timing, &who).await;
+                                let went = nav::reach_module_as(d, rt, nav::TripFrom::SignIn, timing, &who, Some(&who_key)).await;
                                 if !went.ok {
                                     blocked = Some(AFTER_UNREACHED);
                                 }
@@ -1325,7 +1327,7 @@ async fn run_expanded<D: Driver>(
             // A named area: its own route, read before the steps. Not
             // reaching it stops the step the same way.
             Action::ReturnToArea { .. } => {
-                let (went, stop) = return_to_area(d, action, &area, areas, step.step_number, timing).await;
+                let (went, stop) = return_to_area(d, action, &area, areas, step.step_number, account.as_deref(), timing).await;
                 blocked = stop;
                 went
             }
@@ -1436,8 +1438,8 @@ async fn run_expanded<D: Driver>(
         let stop_pending = run.cancel.is_some_and(|c| c.load(Ordering::SeqCst));
         if !outcome.ok && !outcome.harness && outcome.detail != AFTER_STOP && blocked.is_none() && !stop_pending {
             if let Some(key) = account.clone() {
-                if signin::session_refused(d).await.is_some() {
-                    outcome = after_session_refused(d, &here, &key, step.step_number, timing, account, lease).await;
+                if let Some(refusal) = signin::session_refused(d).await {
+                    outcome = after_session_refused(d, &here, &key, refusal, step.step_number, timing, account, lease).await;
                     blocked = Some(AFTER_SESSION_REFUSED);
                 }
             }
@@ -1678,6 +1680,9 @@ struct Here<'a> {
     policy: &'a Policy,
     direct_urls: bool,
     step: i32,
+    /// The account the browser was signed in as when the step began: the
+    /// one a failed trip back to an area is said for (`nav::menu_differs`).
+    account: Option<String>,
     /// The recipe's `close_when_shown`: closed before an action that
     /// touches the page (`popups::close_shown`).
     popups: &'a [super::recipe::ClosePopup],
@@ -1725,18 +1730,22 @@ pub fn session_refused_mid_case(account_key: &str) -> String {
 /// itself fails with `session_refused_mid_case`. Nothing is tried again.
 /// A fresh sign-in the application refuses as well says so
 /// (`signin::session_refused_again`).
+#[allow(clippy::too_many_arguments)]
 async fn after_session_refused<D: Driver>(
     d: &mut D,
     here: &Here<'_>,
     key: &str,
+    refusal: signin::SessionRefusal,
     step_number: i32,
     timing: &Timing,
     account: &mut Option<String>,
     lease: &mut Held,
 ) -> ActionOutcome {
+    let age = super::sessions::saved_session_age_minutes(here.root, key);
     super::sessions::forget_session(here.root, key);
     crate::applog::info(format!(
-        "Auto Run, step {step_number}: the site refused the session for {key}; it is signed in fresh"
+        "Auto Run, step {step_number}: {}; it is signed in fresh",
+        signin::session_refused_line(&lease.browser_words(), key, refusal, age)
     ));
     let (r, who) = match signin::prepare(here.root, here.organization, here.project, key) {
         Ok(found) => found,
@@ -1854,7 +1863,7 @@ async fn when_visible<D: Driver>(
         // walking back to the area, as the step's own `return_to_area`
         // would; not reaching it stops the step the same way.
         let (out, stop) = match guarded {
-            Action::ReturnToArea { .. } => return_to_area(d, guarded, area, areas, here.step, timing).await,
+            Action::ReturnToArea { .. } => return_to_area(d, guarded, area, areas, here.step, here.account.as_deref(), timing).await,
             _ => plain(d, here, guarded, timing).await,
         };
         said.push(out.detail);
@@ -1942,7 +1951,7 @@ async fn repeat_while_visible<D: Driver>(
                 return (ActionOutcome::failed(AFTER_STOP), Some(AFTER_STOP));
             }
             let (out, stop) = match step {
-                Action::ReturnToArea { .. } => return_to_area(d, step, area, areas, here.step, timing).await,
+                Action::ReturnToArea { .. } => return_to_area(d, step, area, areas, here.step, here.account.as_deref(), timing).await,
                 _ => plain(d, here, step, timing).await,
             };
             said.push(out.detail);
@@ -1995,13 +2004,14 @@ async fn return_to_area<D: Driver>(
     area: &AreaRoute<'_>,
     areas: Option<&NamedAreas>,
     step_number: i32,
+    account: Option<&str>,
     timing: &Timing,
 ) -> (ActionOutcome, Option<&'static str>) {
     let who = format!("Auto Run, step {step_number}");
     if let Some(name) = action.area_named() {
         return match named_route(areas, name) {
             Ok(rt) => {
-                let went = nav::reach_module(d, rt, nav::TripFrom::Elsewhere, timing, &who).await;
+                let went = nav::reach_module_as(d, rt, nav::TripFrom::Elsewhere, timing, &who, account).await;
                 let stop = (!went.ok).then_some(AFTER_NAMED_AREA_UNREACHED);
                 (went, stop)
             }
@@ -2010,7 +2020,7 @@ async fn return_to_area<D: Driver>(
     }
     match area {
         AreaRoute::To(rt) => {
-            let went = nav::reach_module(d, rt, nav::TripFrom::Elsewhere, timing, &who).await;
+            let went = nav::reach_module_as(d, rt, nav::TripFrom::Elsewhere, timing, &who, account).await;
             let stop = (!went.ok).then_some(AFTER_AREA_UNREACHED);
             (went, stop)
         }
