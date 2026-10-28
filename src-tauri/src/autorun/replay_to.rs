@@ -1188,8 +1188,8 @@ async fn run_steps_marked<D: Driver>(
     let in_range = |k: i32| k >= from && k < n;
     // A look-only replay (the script must not save, or the browser is
     // guarded for another case) cannot save: the guard stops every request
-    // it takes for a save, so a write that got through is a read the page
-    // posts (a search, a grid), never "saved something".
+    // it takes for a save, so a write that got through is not called a save
+    // (`Unclean::Posted`).
     let look_only = script.no_save || guarding_other.is_some() || d.is_guarding_saves();
     // The other areas their `return_to_area` actions name are read once,
     // before the first.
@@ -1294,7 +1294,7 @@ async fn run_steps_marked<D: Driver>(
             // the request must not turn it back into "nothing saved".
             let wrote = wrote_before
                 || marks.checkpoints.last().is_some_and(|c| c.wrote)
-                || (!look_only && d.net_wrote_since(mark));
+                || d.net_wrote_since(mark);
             let (path, tab, dialogs) = page_state(d).await;
             marks.checkpoints.push(Checkpoint { k, prefix: steps_fingerprint(script, k), path, tab, dialogs, wrote });
         }
@@ -1302,8 +1302,21 @@ async fn run_steps_marked<D: Driver>(
     // Every step passed, the clean-up too: what the whole run did.
     marks.unclean = if !d.net_recording() {
         Some(Unclean::Unrecorded)
-    } else if wrote_before || (!look_only && d.net_wrote_since(mark)) {
+    } else if wrote_before {
         Some(Unclean::Saved)
+    } else if d.net_wrote_since(mark) {
+        // A look-only script cannot have saved (its guard stops what it takes
+        // for a save), but the guard is a list of words: a write it let
+        // through may still have changed the page's state. Say so, by path.
+        if look_only {
+            crate::applog::info(format!(
+                "Auto Run: a look-only replay sent a request the save guard let through: {}",
+                d.net_posted_paths(mark).join(", ")
+            ));
+            Some(Unclean::Posted)
+        } else {
+            Some(Unclean::Saved)
+        }
     } else if d.tabs_opened() > tabs_before {
         Some(Unclean::Tabs)
     } else {
@@ -1320,6 +1333,9 @@ pub enum Unclean {
     /// A save went out (or the record can no longer rule one out): in the
     /// steps, after the shared ones, or in the clean-up.
     Saved,
+    /// A look-only replay's page sent a write the save guard let through
+    /// (it is a list of words): not a save, but the state may have changed.
+    Posted,
     /// The network record was not on, so no save could have been seen.
     Unrecorded,
     /// A second tab was open at some point.
@@ -1334,6 +1350,9 @@ impl Unclean {
         match self {
             Unclean::Saved if in_shared => format!("case {case_id} saved something in the shared steps."),
             Unclean::Saved => format!("case {case_id} saved something after the shared steps."),
+            Unclean::Posted => {
+                format!("case {case_id}'s page sent a request the save guard let through, so its state may have changed.")
+            }
             Unclean::Unrecorded => {
                 format!("case {case_id} ran without a network record, so a save could not be ruled out.")
             }

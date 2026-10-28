@@ -366,6 +366,11 @@ pub struct DiscoveryState {
     /// plain task with no test case, nothing is filed in the discovery map,
     /// and its change list is its own file (`autorun::explore`).
     pub explore: Option<crate::autorun::explore::ExploreRun>,
+    /// What this discovery saw in the areas it left, filed under the area it
+    /// moved to (`discovery_map::carry_seen`): read by the save's seen check
+    /// while this discovery goes on, never written to the map, gone with the
+    /// discovery.
+    pub carried: Vec<crate::autorun::discovery_map::AreaMap>,
 }
 
 impl DiscoveryState {
@@ -702,6 +707,7 @@ pub(crate) async fn open_for_discovery(
             call_no_save: false,
             call_case_id: None,
             explore: no_save.explore.then(crate::autorun::explore::ExploreRun::default),
+            carried: Vec::new(),
         });
     }
     publish_discovery_in(n, &slot);

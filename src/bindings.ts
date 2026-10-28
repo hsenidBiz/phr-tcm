@@ -3827,7 +3827,7 @@ export type Divergence_Deserialize = {
 	id: string,
 	case_id: number,
 	step: number,
-	/**  Scrubbed (`defects::scrub_note`), at most `MAX_TEXT` characters. */
+	/**  Scrubbed (`defects::scrub_note`), at most `MAX_CASE_TEXT` characters. */
 	case_says: string,
 	app_shows: string,
 	kind: DivergenceKind,
@@ -3869,7 +3869,7 @@ export type Divergence_Serialize = {
 	id: string,
 	case_id: number,
 	step: number,
-	/**  Scrubbed (`defects::scrub_note`), at most `MAX_TEXT` characters. */
+	/**  Scrubbed (`defects::scrub_note`), at most `MAX_CASE_TEXT` characters. */
 	case_says: string,
 	app_shows: string,
 	kind: DivergenceKind,

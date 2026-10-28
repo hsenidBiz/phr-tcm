@@ -147,6 +147,19 @@ pub fn sent_a_save(sent: &[crate::browser::net_record::NetEntry]) -> bool {
     sent.iter().any(|e| SAVE_METHODS.contains(&e.method.as_str()) && !stopped_by_guard(e))
 }
 
+/// The paths (query left out) of the writing requests among `sent` that the
+/// guard did not stop, each once.
+pub fn posted_paths(sent: &[crate::browser::net_record::NetEntry]) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for e in sent.iter().filter(|e| SAVE_METHODS.contains(&e.method.as_str()) && !stopped_by_guard(e)) {
+        let path = path_of(&e.path_query);
+        if !out.contains(&path) {
+            out.push(path);
+        }
+    }
+    out
+}
+
 /// Is this one of `blocked`'s sentences?
 pub fn is_blocked(detail: &str) -> bool {
     detail.starts_with(BLOCKED_START) && detail.ends_with(BLOCKED_END)

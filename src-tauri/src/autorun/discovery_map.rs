@@ -1121,44 +1121,73 @@ pub fn mark_failed(root: &Path, org: &str, project: &str, area: &str) -> Result<
     update(root, org, project, |map| area_mut(map, &area).failed_since = true)
 }
 
-/// A discovery that moves from the area `from` to the area `to` keeps what it
-/// has seen: every sighting, whole sighting and page element of `from` last
-/// seen at or after `since` (when the discovery started) is filed under `to`
-/// too, unless `to` already holds it. Locators met while the discovery stood
-/// in one area can then be saved in a script of another. Nothing leaves
-/// `from`, and nothing `to` already holds is changed.
-pub fn carry_seen(root: &Path, org: &str, project: &str, from: &str, to: &str, since: u64) -> Result<(), String> {
-    let (from, to) = (canonical_area(root, org, project, from), canonical_area(root, org, project, to));
-    if from.is_empty() || to.is_empty() || area_key(&from) == area_key(&to) {
-        return Ok(());
+/// What a discovery that moves from the area `from` to the area `to` keeps:
+/// every sighting, whole sighting and page element of `from` in `map` last
+/// seen at or after `since` (when the discovery started), as an area entry
+/// named `to`. `None` when `from` is not in `map` or holds nothing new.
+/// Nothing is written: the discovery keeps the result in its own state
+/// (`DiscoveryState::carried`), and `add_carried` lays it over a map read for
+/// a save's seen check while that discovery goes on.
+pub fn carry_seen(map: &DiscoveryMap, from: &str, to: &str, since: u64) -> Option<AreaMap> {
+    let (from_key, to_key) = (area_key(from), area_key(to));
+    if from_key.is_empty() || to_key.is_empty() || from_key == to_key {
+        return None;
     }
-    update(root, org, project, |map| {
-        let key = area_key(&from);
-        let Some(src) = map.areas.iter().find(|a| area_key(&a.area) == key).cloned() else { return };
-        let dst = area_mut(map, &to);
-        for s in src.sightings.iter().filter(|s| s.last_seen >= since) {
-            if !dst.sightings.iter().any(|d| d.key == s.key) {
-                dst.sightings.push(s.clone());
+    let src = map.areas.iter().find(|a| area_key(&a.area) == from_key)?;
+    let mut out = AreaMap { area: to.trim().to_string(), ..AreaMap::default() };
+    merge_seen(&mut out, src, since);
+    (!out.sightings.is_empty() && out.area_key_is(&to_key)).then_some(out)
+}
+
+impl AreaMap {
+    fn area_key_is(&self, key: &str) -> bool {
+        area_key(&self.area) == key
+    }
+}
+
+/// Adds to `dst` what `src` saw at or after `since`, unless `dst` holds it.
+fn merge_seen(dst: &mut AreaMap, src: &AreaMap, since: u64) {
+    for s in src.sightings.iter().filter(|s| s.last_seen >= since) {
+        if !dst.sightings.iter().any(|d| d.key == s.key) {
+            dst.sightings.push(s.clone());
+        }
+    }
+    for w in src.wholes.iter().filter(|w| w.last_seen >= since) {
+        if !dst.wholes.iter().any(|d| d.locator == w.locator) {
+            dst.wholes.push(w.clone());
+        }
+    }
+    for page in &src.pages {
+        let fresh: Vec<&SeenElement> = page.elements.iter().filter(|e| e.seen_at >= since).collect();
+        if fresh.is_empty() {
+            continue;
+        }
+        let into = page_mut(dst, &page.path, &page.title);
+        for e in fresh {
+            if !into.elements.iter().any(|d| d.key == e.key) {
+                into.elements.push(e.clone());
             }
         }
-        for w in src.wholes.iter().filter(|w| w.last_seen >= since) {
-            if !dst.wholes.iter().any(|d| d.locator == w.locator) {
-                dst.wholes.push(w.clone());
-            }
-        }
-        for page in &src.pages {
-            let fresh: Vec<&SeenElement> = page.elements.iter().filter(|e| e.seen_at >= since).collect();
-            if fresh.is_empty() {
-                continue;
-            }
-            let into = page_mut(dst, &page.path, &page.title);
-            for e in fresh {
-                if !into.elements.iter().any(|d| d.key == e.key) {
-                    into.elements.push(e.clone());
-                }
-            }
-        }
-    })
+    }
+}
+
+/// Keeps `more` (from `carry_seen`) in `held`, the discovery's carried areas:
+/// merged into the entry of the same area, else added.
+pub fn keep_carried(held: &mut Vec<AreaMap>, more: AreaMap) {
+    let key = area_key(&more.area);
+    match held.iter_mut().find(|a| area_key(&a.area) == key) {
+        Some(a) => merge_seen(a, &more, 0),
+        None => held.push(more),
+    }
+}
+
+/// `map` as the save's seen check reads it while a discovery that carried
+/// `carried` goes on: each carried area's entries laid over the area of the
+/// same name. The saved map is not touched.
+pub fn add_carried(map: &mut DiscoveryMap, carried: &[AreaMap]) {
+    for c in carried {
+        merge_seen(area_mut(map, &c.area), c, 0);
+    }
 }
 
 pub fn forget_area(root: &Path, org: &str, project: &str, area: &str) -> Result<(), String> {

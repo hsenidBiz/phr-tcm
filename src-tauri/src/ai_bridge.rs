@@ -5365,6 +5365,7 @@ pub async fn discover_start_in<B: DiscoveryBrowser>(
                     call_no_save: false,
                     call_case_id: None,
                     explore,
+                    carried: Vec::new(),
                 };
                 let must_not_save = discovery_must_not_save(root, &state);
                 *p.discovery = Some(crate::commands::autorun::DiscoveryState { no_save: must_not_save, ..state });
@@ -5851,6 +5852,7 @@ pub async fn discover_action_in<B: DiscoveryBrowser>(
 ) -> (u16, String) {
     let mut heard = Heard::default();
     let was_guarding = guarding_saves(slot);
+    let stood = sign_in_stands_now(slot, root, organization, project).await;
     let answer = crate::autorun::action_help::CALL_STARTED
         .scope(
             std::time::Instant::now(),
@@ -5860,7 +5862,61 @@ pub async fn discover_action_in<B: DiscoveryBrowser>(
     heard.remember(root, organization, project);
     heard.forget(slot);
     end_call_guard(slot, root, was_guarding).await;
+    let signs_in = matches!(action, crate::browser::actions::Action::SignIn { .. });
+    retake_print_after_call(slot, root, organization, project, stood && !signs_in).await;
     answer
+}
+
+/// Whether the browser in `slot` is signed in as its session's account and
+/// still holds that sign-in's cookies as they were printed
+/// (`replay_to::sign_in_stands`): looked at before a discovery call.
+async fn sign_in_stands_now<B: DiscoveryBrowser>(
+    slot: &mut Option<B>,
+    root: &std::path::Path,
+    organization: &str,
+    project: &str,
+) -> bool {
+    let Some(b) = slot.as_mut() else { return false };
+    let p = b.parts();
+    let Some(key) = p.signed_in.clone() else { return false };
+    crate::autorun::replay_to::sign_in_stands(p.driver, root, organization, project, &key, &*p.signed_in, &*p.lease)
+        .await
+        .is_ok()
+}
+
+/// After a discovery call that began with the sign-in standing (`stood`) and
+/// did not sign in itself: when the page still shows it is signed in, the
+/// sign-in's cookies are printed again. The app's own pages re-issue the
+/// session cookie as they load (`replay_to::retake_sign_in`); without this a
+/// long discovery leaves a stale print, and a later reset or replay takes the
+/// same sign-in for a changed one and signs in again.
+async fn retake_print_after_call<B: DiscoveryBrowser>(
+    slot: &mut Option<B>,
+    root: &std::path::Path,
+    organization: &str,
+    project: &str,
+    stood: bool,
+) {
+    if !stood {
+        return;
+    }
+    let Some(b) = slot.as_mut() else { return };
+    let p = b.parts();
+    let Some(key) = p.signed_in.clone() else { return };
+    let Ok(recipe) = crate::autorun::recipe::load_effective_recipe(root, organization, project) else { return };
+    let timing = crate::browser::timing::Timing::supervised();
+    let shows = crate::autorun::signin::already_signed_in_why(
+        p.driver,
+        &recipe,
+        Some(&key),
+        &key,
+        &timing,
+        crate::autorun::signin::SIGNED_IN_LOOK_MS,
+    )
+    .await;
+    if shows.is_ok() {
+        let _ = crate::autorun::replay_to::retake_sign_in(p.driver, &recipe.origins(), &mut *p.lease, "a discovery call").await;
+    }
 }
 
 /// Whether the browser in `slot` guards saves now.
@@ -6418,6 +6474,8 @@ pub async fn discover_actions_paged<B: DiscoveryBrowser>(
 ) -> (u16, String) {
     let mut heard = Heard::default();
     let was_guarding = guarding_saves(slot);
+    let stood = sign_in_stands_now(slot, root, organization, project).await;
+    let signs_in = actions.iter().any(|a| matches!(a, crate::browser::actions::Action::SignIn { .. }));
     let answer = crate::autorun::action_help::CALL_STARTED
         .scope(
             std::time::Instant::now(),
@@ -6439,6 +6497,7 @@ pub async fn discover_actions_paged<B: DiscoveryBrowser>(
     heard.remember(root, organization, project);
     heard.forget(slot);
     end_call_guard(slot, root, was_guarding).await;
+    retake_print_after_call(slot, root, organization, project, stood && !signs_in).await;
     answer
 }
 
@@ -7951,9 +8010,9 @@ async fn fresh_home_for_area<D: crate::browser::cdp::Driver>(
 }
 
 /// The discovery now stands in the area `moved`. What it has seen since it
-/// started, in the area it leaves, is kept for the new one
-/// (`discovery_map::carry_seen`), so a script saved after the move can use
-/// locators met before it. A mapping run reads and saves nothing, so it
+/// started, in the area it leaves, is kept in its own state for the new one
+/// (`discovery_map::carry_seen`), so a script saved while this discovery goes
+/// on can use locators met before the move. Never written to the map. A mapping run reads and saves nothing, so it
 /// carries nothing.
 fn stand_in_area(
     state: &mut crate::commands::autorun::DiscoveryState,
@@ -7965,10 +8024,13 @@ fn stand_in_area(
     let to = crate::autorun::discovery_map::canonical_area(root, organization, project, moved);
     if state.mapping.is_none() {
         if let Some(from) = state.area.as_deref() {
-            if let Err(why) =
-                crate::autorun::discovery_map::carry_seen(root, organization, project, from, &to, state.started_at)
-            {
-                unrecorded(&why);
+            match crate::autorun::discovery_map::load_map(root, organization, project) {
+                Ok(map) => {
+                    if let Some(more) = crate::autorun::discovery_map::carry_seen(&map, from, &to, state.started_at) {
+                        crate::autorun::discovery_map::keep_carried(&mut state.carried, more);
+                    }
+                }
+                Err(why) => unrecorded(&why),
             }
         }
     }
@@ -10795,7 +10857,7 @@ async fn autorun_divergence(ctx: &BridgeContext, client: Option<&crate::ado::Ado
     if b.step < 1 || b.step as usize > case.steps.len() {
         return (400, format!("case {} has {} steps - \"step\" is one of them", b.case_id, case.steps.len()));
     }
-    if !crate::autorun::case_text::CaseText::from_case(&case).holds(&b.case_says) {
+    if !crate::autorun::case_text::CaseText::from_case(&case).holds_quote(&b.case_says) {
         return (
             400,
             format!(
@@ -12731,11 +12793,13 @@ async fn save_autorun_scripts(
         if seen_scope.is_empty() { Vec::new() } else { crate::autorun::store::list_scripts(&root) };
     // The project's own save words, for what counts as saving a record.
     let save_words = crate::autorun::nav::load_nav(&root, &ctx.org, &ctx.project).map(|n| n.save_words).unwrap_or_default();
+    // What the caller's discovery carried from the areas it left, while it goes on.
+    let carried = carried_of(asker).await;
     let check_and_save = || -> Result<Vec<String>, SaveRefusal> {
         // What the save noticed without refusing: said after its answer.
         let mut notes: Vec<String> = Vec::new();
         if !seen_scope.is_empty() {
-            let (map, components, files) = seen_check_inputs(&root, ctx, uses_components, &saved_scripts)
+            let (map, components, files) = seen_check_inputs(&root, ctx, uses_components, &saved_scripts, &carried)
                 .map_err(|e| SaveRefusal::Other(400, e))?;
             // The placement of a timed or same_document check, again with each component expanded.
             if uses_components {
@@ -12856,7 +12920,7 @@ async fn save_autorun_scripts(
     // Never on a dry run: it records nothing.
     let mut recorded: Option<Vec<String>> = None;
     if !dry_run && matches!(checked, Err(SaveRefusal::Unseen(_))) {
-        let targets = seen_check_inputs(&root, ctx, uses_components, &saved_scripts).ok().and_then(|(map, components, files)| {
+        let targets = seen_check_inputs(&root, ctx, uses_components, &saved_scripts, &carried).ok().and_then(|(map, components, files)| {
             let mut all: Vec<crate::browser::locator::Target> = Vec::new();
             for (case_id, only) in &seen_scope {
                 let script = prepared.iter().find(|s| s.case_id == *case_id)?;
@@ -13083,16 +13147,30 @@ fn case_step_text(case: &crate::ado::TestCaseFull) -> Vec<String> {
 /// never holds up a save that does not need it) and its Test files, so the
 /// size the app shows for one a script uploads passes as the script's own
 /// data.
+/// The areas the discovery in the asker's browser carried over from areas it
+/// left (`DiscoveryState::carried`); none with no discovery or no browser, or
+/// when the browser is busy.
+async fn carried_of(asker: Option<SlotNo>) -> Vec<crate::autorun::discovery_map::AreaMap> {
+    let Some(n) = asker else { return Vec::new() };
+    let Ok(slot) = tokio::time::timeout(std::time::Duration::from_millis(500), crate::commands::autorun::session_slot(n).lock()).await
+    else {
+        return Vec::new();
+    };
+    slot.as_ref().and_then(|s| s.discovery.as_ref()).map(|d| d.carried.clone()).unwrap_or_default()
+}
+
 fn seen_check_inputs(
     root: &std::path::Path,
     ctx: &BridgeContext,
     uses_components: bool,
     saved_scripts: &[crate::autorun::CaseScript],
+    carried: &[crate::autorun::discovery_map::AreaMap],
 ) -> Result<
     (crate::autorun::discovery_map::DiscoveryMap, crate::autorun::components::ComponentFile, Vec<crate::test_files::TestFile>),
     String,
 > {
-    let map = crate::autorun::seen_check::load_checked_map_with(root, &ctx.org, &ctx.project, saved_scripts)?;
+    let mut map = crate::autorun::seen_check::load_checked_map_with(root, &ctx.org, &ctx.project, saved_scripts)?;
+    crate::autorun::discovery_map::add_carried(&mut map, carried);
     let components = if uses_components {
         crate::autorun::components::load_components(root, &ctx.org, &ctx.project)?
     } else {

@@ -249,10 +249,13 @@ fn a_report_is_checked_before_it_is_stored() {
 #[test]
 fn a_quote_may_skip_words_with_an_ellipsis() {
     let text = CaseText::from_case(&case_147556());
-    assert!(text.holds("The dropdown lists ... Level 4"));
-    assert!(text.holds("exactly 4 levels\u{2026}dropdown lists"));
-    assert!(!text.holds("The dropdown lists ... Level 9"));
-    assert!(!text.holds("..."), "an ellipsis alone quotes nothing");
+    assert!(text.holds_quote("The dropdown lists ... Level 4"));
+    assert!(text.holds_quote("dropdown lists\u{2026}exactly 4 levels"), "the step comes before the preconditions");
+    assert!(!text.holds_quote("The dropdown lists ... Level 9"));
+    assert!(!text.holds_quote("exactly 4 levels ... dropdown lists"), "the pieces must come in the case's order");
+    assert!(!text.holds_quote("..."), "an ellipsis alone quotes nothing");
+    // A check's text is never read this way.
+    assert!(!text.holds("The dropdown lists ... Level 4"));
 }
 
 #[test]

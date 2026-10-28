@@ -965,6 +965,7 @@ async fn a_no_save_discovery_stays_guarded_until_it_ends() {
         call_no_save: false,
         call_case_id: None,
         explore: None,
+        carried: Vec::new(),
     });
     b.d.guard_saves(&[]).await.unwrap();
     b.guard_owner = Some(GuardOwner::Discovery);
@@ -1977,6 +1978,7 @@ fn begun_discovery() -> Option<v2_lib::commands::autorun::DiscoveryState> {
         call_no_save: false,
         call_case_id: None,
         explore: None,
+        carried: Vec::new(),
     })
 }
 
@@ -2574,6 +2576,52 @@ async fn a_reset_keeps_the_sign_in_when_its_home_load_reissues_a_session_cookie(
     let (end, reused) = replay_kept(&mut b.d, dir.path(), 3, &mut account, &mut held).await;
     assert!(matches!(end, ReplayEnd::Ready { .. }), "{end:?}");
     assert_eq!(reused.went.as_deref(), Some("Leave"), "the replay after a reset signed in again");
+    assert_eq!(sign_ins(&b.d), 0, "{:?}", log(&app));
+}
+
+/// Backlog 42 (writer-1): the app re-issues its session cookie while the
+/// assistant's discovery moves about it. The discovery call prints the
+/// sign-in again, so the reset after it does not take the same sign-in for a
+/// changed one, and the next replay does not sign in again.
+#[tokio::test]
+async fn a_discovery_that_sees_the_session_cookie_reissued_still_resets_with_its_sign_in() {
+    use v2_lib::commands::autorun::{reset_in_for_assistant, reset_sentence};
+    let _l = crate::serial::account_leases();
+    let dir = tempfile::tempdir().unwrap();
+    project(dir.path(), &script(three_steps()));
+    let (mut slot, app, jar) = left_by_a_replay(dir.path()).await;
+    {
+        let b = slot.as_mut().unwrap();
+        b.discovery = begun_discovery().map(|s| v2_lib::commands::autorun::DiscoveryState {
+            area: Some("Leave".into()),
+            account: Some("admin".into()),
+            ..s
+        });
+    }
+    // The page's requests during the call re-issue the session cookie.
+    let armed = Arc::new(AtomicBool::new(false));
+    let (j, on) = (jar.clone(), armed.clone());
+    answering_first(slot.as_mut().unwrap(), move |method, _| {
+        if on.load(Ordering::SeqCst) && method.starts_with("Input.") {
+            j.set(".ASPXAUTH", "auth-admin-2");
+        }
+        None
+    });
+    armed.store(true, Ordering::SeqCst);
+    let go = v2_lib::browser::actions::Action::Click { selector: "#s1".into() };
+    let (status, said) = v2_lib::ai_bridge::discover_action_in(&mut slot, dir.path(), "acme", "Web", &go, None, None).await;
+    armed.store(false, Ordering::SeqCst);
+    assert_eq!(status, 200, "{said} {:?}", log(&app));
+    assert!(jar.now.lock().unwrap().iter().any(|(n, v)| n == ".ASPXAUTH" && v == "auth-admin-2"), "the cookie was not re-issued: {said}");
+
+    let (status, said) = reset_in_for_assistant(&mut slot, dir.path(), "acme", "Web", &quick()).await;
+    assert_eq!(status, 200, "{said} {:?}", log(&app));
+    assert!(said.ends_with(&reset_sentence("admin")), "the reset dropped the sign-in: {said}");
+    let mut b = slot.unwrap();
+    let (mut account, mut held) = (b.account.take(), b.lease);
+    let (end, reused) = replay_kept(&mut b.d, dir.path(), 3, &mut account, &mut held).await;
+    assert!(matches!(end, ReplayEnd::Ready { .. }), "{end:?}");
+    assert_eq!(reused.went.as_deref(), Some("Leave"), "the replay after the reset signed in again");
     assert_eq!(sign_ins(&b.d), 0, "{:?}", log(&app));
 }
 
@@ -3448,7 +3496,7 @@ async fn a_save_after_the_shared_steps_leaves_a_stand_that_is_not_carried_across
 /// Backlog 42: a look-only (no_save) script's replay never "saved something":
 /// a POST that got past its guard is a read the page makes.
 #[tokio::test]
-async fn a_look_only_replay_never_reports_a_save() {
+async fn a_look_only_replay_never_reports_a_save_but_is_not_carried_on_from() {
     let _l = crate::serial::account_leases();
     let dir = tempfile::tempdir().unwrap();
     let mut a = case_with_fourth(77, &["#open"]);
@@ -3460,8 +3508,18 @@ async fn a_look_only_replay_never_reports_a_save() {
     let (mut account, mut held, mut guarded) = (None, Held::supervised(), None);
     let (end, marks) = whole_replay(&mut d, dir.path(), &a, &mut account, &mut held, &mut guarded).await;
     assert!(matches!(end, ReplayEnd::Ready { .. }), "{end:?} {:?}", log(&app));
-    assert_eq!(marks.unclean, None);
-    assert!(marks.checkpoints.iter().all(|c| !c.wrote), "{:?}", marks.checkpoints);
+    // Never "saved", but the page sent a write the guard let through: the next
+    // case still starts from the beginning, and the sentence says so truthfully.
+    assert_eq!(marks.unclean, Some(Unclean::Posted));
+    let now = page_state(&mut d).await;
+    let stand = ReplayStand::of(&a, 5, &now.0, AT, marks.checkpoints.clone()).with_unclean(marks.unclean);
+    let mut b = case_with_fourth(78, &["#b4"]);
+    b.no_save = true;
+    let (from, why) = carry_across_why(Some(&stand), &b, 5, &now, AT + 1);
+    assert_eq!(from, ReplayFrom::Beginning);
+    let why = why.expect("a sentence");
+    assert!(why.starts_with("case 77's page sent a request the save guard let through"), "{why}");
+    assert!(!why.contains("saved"), "{why}");
 }
 
 #[tokio::test]

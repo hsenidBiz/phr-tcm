@@ -84,7 +84,7 @@ pub struct Divergence {
     pub id: String,
     pub case_id: i32,
     pub step: i32,
-    /// Scrubbed (`defects::scrub_note`), at most `MAX_TEXT` characters.
+    /// Scrubbed (`defects::scrub_note`), at most `MAX_CASE_TEXT` characters.
     pub case_says: String,
     pub app_shows: String,
     pub kind: DivergenceKind,
