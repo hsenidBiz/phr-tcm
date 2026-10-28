@@ -78,10 +78,10 @@ export const gettingStarted: Screen = {
       locate: { testId: "nav-manual" },
       name: "Sidebar",
       does:
-        "Lists the test case screens: Manual Entry, Import Test Cases, Update Test Cases, View Test Cases, Run Tests, Search Suites, Suite Management and AI Bridge. " +
-        "With the matching modules switched on in Settings, it also lists Auto Run, under Run Tests, Playwright, under Auto Run, and API Templates, at the end. " +
+        "Lists the test case screens under **Test Case Management**: Manual Entry, Import Test Cases, Update Test Cases, View Test Cases, Run Tests, Search Suites, Suite Management and AI Bridge. " +
+        "With the matching modules switched on in Settings, a second group at the bottom, below them, lists Auto Run, Playwright and API Templates. " +
         "Click one to open it. The highlighted row is the screen you are on.",
-      tips: ["[[Ctrl+1]] to [[Ctrl+8]] open the screens in the order they are listed, or [[Ctrl+1]] to [[Ctrl+9]] with Auto Run switched on. Playwright and API Templates have no shortcut and are skipped in that count."],
+      tips: ["[[Ctrl+1]] to [[Ctrl+8]] open the screens in the order they are listed, and [[Ctrl+9]] opens Auto Run when it is switched on. Playwright and API Templates have no shortcut."],
     },
     {
       id: "pbi",

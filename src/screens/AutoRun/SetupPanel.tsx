@@ -174,6 +174,23 @@ export function useAutoRunSetup({
   });
   const activeDb = databases.data?.find((d) => d.id === activeEnv?.db_id);
 
+  /** What the panel's "Needs attention" is about, each as a few words for
+   * its header: something a run cannot go without is missing, or could not
+   * be read, or a script uploads a file the Test files folder does not
+   * hold, or a fixture failed on its last run. Empty when all is well. */
+  const attentionReasons = [
+    ...(!setupReady ? ["no project picked"] : []),
+    ...(setupReady && knownSiteUrl !== undefined && !knownSiteUrl.trim() ? ["no site address"] : []),
+    ...(accountCount === 0 ? ["no accounts"] : []),
+    ...(envs.isError ? ["environments could not be read"] : []),
+    ...(setupReady && recipe.isError ? ["sign-in recipe could not be read"] : []),
+    ...(accounts.isError ? ["accounts could not be read"] : []),
+    ...(readiness.missingTestFiles.length > 0
+      ? [`${plural(readiness.missingTestFiles.length, "test file")} missing`]
+      : []),
+    ...(fixturesFailed > 0 ? [`${plural(fixturesFailed, "fixture")} failed`] : []),
+  ];
+
   return {
     setupReady,
     recipe,
@@ -199,14 +216,7 @@ export function useAutoRunSetup({
     readiness,
     essentialsSettled,
     essentialUnreadable,
-    /** Something a run cannot go without is missing, or could not be read,
-     * or a script uploads a file the Test files folder does not hold, or a
-     * fixture failed on its last run. */
-    attention:
-      readiness.essentialMissing ||
-      essentialUnreadable.length > 0 ||
-      readiness.missingTestFiles.length > 0 ||
-      fixturesFailed > 0,
+    attentionReasons,
   };
 }
 
@@ -548,12 +558,14 @@ export default function SetupPanel({
         <h2 id={headingId} className="text-sm font-semibold text-text">
           Setup
         </h2>
-        {/* There is no site address, no way to sign in, or no account, or
-            one of them could not be read - said in words too. */}
-        {s.attention && (
-          <span className="inline-flex items-center gap-1 text-xs text-warning">
-            <TriangleAlert aria-hidden className="size-3.5" />
-            Needs attention
+        {/* What needs attention is said right beside it, so the warning
+            never leaves the person guessing what it is for. */}
+        {s.attentionReasons.length > 0 && (
+          <span className="inline-flex min-w-0 items-start gap-1 text-xs text-warning">
+            <TriangleAlert aria-hidden className="mt-px size-3.5 shrink-0" />
+            <span className="min-w-0 break-words">
+              <span>Needs attention</span>: {s.attentionReasons.join(", ")}
+            </span>
           </span>
         )}
         <Button

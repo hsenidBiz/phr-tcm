@@ -57,8 +57,8 @@ test("Ctrl+number opening a marked tab clears its mark", async () => {
   await screen.findByText("a@b.com");
   expect(await screen.findByRole("button", { name: "Auto Run (new)" })).toBeInTheDocument();
 
-  // Auto Run is the sixth numbered tab with every module on.
-  fireEvent.keyDown(window, { key: "6", ctrlKey: true });
+  // Auto Run is the ninth numbered tab, first of the Advanced group.
+  fireEvent.keyDown(window, { key: "9", ctrlKey: true });
   expect(await screen.findByRole("heading", { name: "Auto Run" })).toBeInTheDocument();
   await waitFor(() => expect(isNewNav("autorun")).toBe(false));
   expect(screen.getByRole("button", { name: "Auto Run" })).not.toHaveClass("nav-new");

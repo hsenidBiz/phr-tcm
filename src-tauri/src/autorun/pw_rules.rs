@@ -327,12 +327,12 @@ pub const REPO_FILES: [&str; 8] = [
     "doc-drift-auditor.md",
 ];
 
-const SKILLS_DIR: &str = ".claude/skills";
-const SKILL_FILE: &str = "SKILL.md";
+pub const SKILLS_DIR: &str = ".claude/skills";
+pub const SKILL_FILE: &str = "SKILL.md";
 
 /// A skill folder's name: letters, digits, `_` and `-` and nothing else, so a
 /// name is never a path.
-fn plain_skill_name(name: &str) -> bool {
+pub fn plain_skill_name(name: &str) -> bool {
     !name.is_empty() && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
 }
 

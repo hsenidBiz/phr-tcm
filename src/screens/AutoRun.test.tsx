@@ -1321,6 +1321,10 @@ test("with no site address the Setup panel starts open and says it needs attenti
     ),
   );
   expect(within(setupPanel()).getByText("Needs attention")).toBeInTheDocument();
+  // It says what for, right beside it.
+  expect(within(setupPanel()).getByText("Needs attention").parentElement).toHaveTextContent(
+    /^Needs attention: no site address$/,
+  );
   expect(within(setupPanel()).getByRole("button", { name: "Edit site address" })).toBeInTheDocument();
   // The screen stays on the cases: the panel is beside them.
   expect(tab("Test cases")).toHaveAttribute("aria-selected", "true");
@@ -1332,7 +1336,9 @@ test("with no accounts the Setup panel starts open", async () => {
   await waitFor(() =>
     expect(within(setupPanel()).getByRole("button", { name: "Hide setup details" })).toBeInTheDocument(),
   );
-  expect(within(setupPanel()).getByText("Needs attention")).toBeInTheDocument();
+  expect(within(setupPanel()).getByText("Needs attention").parentElement).toHaveTextContent(
+    /^Needs attention: no accounts$/,
+  );
   expect(within(setupPanel()).getByRole("button", { name: "Edit accounts" })).toBeInTheDocument();
 });
 

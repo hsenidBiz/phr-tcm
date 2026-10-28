@@ -298,6 +298,20 @@ fn trim_retired(list: &mut Vec<Quirk>) {
 /// file and renamed, so a reader never sees a half-written list and a
 /// refused save leaves the earlier one exactly as it was.
 pub fn save_quirks(root: &Path, org: &str, project: &str, quirks: &[Quirk]) -> Result<(), String> {
+    write_quirks(root, org, project, quirks)?;
+    announce_quirks(root);
+    Ok(())
+}
+
+/// Tell the window the quirks changed; a caller holding the write lock
+/// releases it first.
+fn announce_quirks(root: &Path) {
+    super::data_changed::notify(root, crate::events::AutorunDataKind::Quirks);
+}
+
+/// `save_quirks` without the announcement, for a caller that holds the write
+/// lock: a listener must never run under a store lock.
+fn write_quirks(root: &Path, org: &str, project: &str, quirks: &[Quirk]) -> Result<(), String> {
     let mut list = quirks.to_vec();
     ensure_ids(&mut list);
     validate(&list)?;
@@ -323,12 +337,14 @@ pub fn update_quirks<T>(
     project: &str,
     change: impl FnOnce(&mut Vec<Quirk>) -> Result<T, String>,
 ) -> Result<(T, Vec<Quirk>), String> {
-    let _held = write_lock();
+    let held = write_lock();
     let mut list = load_quirks(root, org, project)?;
     let out = change(&mut list)?;
-    save_quirks(root, org, project, &list)?;
+    write_quirks(root, org, project, &list)?;
     // What was written, retired trimming included.
     let saved = load_quirks(root, org, project)?;
+    drop(held);
+    announce_quirks(root);
     Ok((out, saved))
 }
 
@@ -872,7 +888,7 @@ pub fn record_run_evidence(root: &Path, org: &str, project: &str, cases: &[CaseR
         return false;
     }
     mark_failed_areas(root, org, project, cases);
-    let _held = write_lock();
+    let held = write_lock();
     let mut list = match load_quirks(root, org, project) {
         Ok(l) => l,
         Err(e) => {
@@ -888,8 +904,13 @@ pub fn record_run_evidence(root: &Path, org: &str, project: &str, cases: &[CaseR
     if !apply_run_evidence(&mut list, cases, &scripts, now_ms) {
         return false;
     }
-    match save_quirks(root, org, project, &list) {
-        Ok(()) => true,
+    let written = write_quirks(root, org, project, &list);
+    drop(held);
+    match written {
+        Ok(()) => {
+            announce_quirks(root);
+            true
+        }
         Err(e) => {
             crate::applog::warn(format!("Auto Run: the project's quirks were not updated after the run: {e}"));
             false

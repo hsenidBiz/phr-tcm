@@ -45,6 +45,8 @@ export function useSpecsWatch({
   const latest = useRef({ clone, busy, process });
   latest.current = { clone, busy, process };
   const inFlight = useRef(false);
+  /** The pipeline rule files' fingerprint at the last look. */
+  const rulesSeen = useRef<{ clone: string; fingerprint: string } | null>(null);
   /** The fingerprint a re-read failed at: the timer does not try it again. */
   const failedAt = useRef<{ clone: string; fingerprint: string } | null>(null);
 
@@ -64,7 +66,15 @@ export function useSpecsWatch({
         if (!got || typeof got.fingerprint !== "string") throw new Error("The spec files could not be read.");
         if (latest.current.clone !== forClone) return;
         print = got.fingerprint;
-        patch(forClone, { walk: { count: got.count, fingerprint: got.fingerprint } });
+        patch(forClone, { walk: { count: got.count, fingerprint: got.fingerprint, pipeline: got.pipeline } });
+        // A pipeline rule file changed since the last look: the assistants'
+        // agent files are written from those rules, so they catch up now
+        // rather than the next time Auto Run opens. Never on the first look.
+        const rules = got.pipeline.fingerprint;
+        if (rulesSeen.current?.clone === forClone && rulesSeen.current.fingerprint !== rules) {
+          void commands.pwRulesStatus().catch(() => {});
+        }
+        rulesSeen.current = { clone: forClone, fingerprint: rules };
       } catch (e) {
         if (latest.current.clone !== forClone) return;
         patch(forClone, { walk: { error: message(e) } });

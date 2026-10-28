@@ -66,6 +66,7 @@ mod autorun_case_values;
 mod autorun_proven;
 mod autorun_capture_tools;
 mod autorun_commands;
+mod autorun_data_changed;
 mod autorun_defects;
 mod autorun_divergences;
 mod autorun_dialogs;

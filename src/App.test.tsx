@@ -434,11 +434,11 @@ test("Ctrl+2 jumps to Import Test Cases; Ctrl+Shift+M toggles Work Manager", asy
   expect(await screen.findByRole("heading", { name: "Import Test Cases" })).toBeInTheDocument();
 });
 
-// The sidebar's CASE_ITEMS order is manual, import, edit, view, run,
-// autorun, suites, manage, ai (9 rows) - the Ctrl+N shortcut order must
-// match it row for row, or a number opens the wrong screen and the last
-// row loses its shortcut entirely.
-test("Ctrl+6 jumps to Auto Run, Ctrl+7 to Search Suites, Ctrl+8 to Suite Management and Ctrl+9 to AI Bridge", async () => {
+// The sidebar's numbered CASE_ITEMS order is manual, import, edit, view,
+// run, suites, manage, ai, then the Advanced group's autorun (9 rows) - the
+// Ctrl+N shortcut order must match it row for row, or a number opens the
+// wrong screen and the last row loses its shortcut entirely.
+test("Ctrl+6 jumps to Search Suites, Ctrl+7 to Suite Management, Ctrl+8 to AI Bridge and Ctrl+9 to Auto Run", async () => {
   // A returning user: the first-run tour opens after sign-in and locks the
   // rail, and these tests wait for each lazily loaded screen, which gives
   // it time to arrive before the next tab click.
@@ -448,22 +448,22 @@ test("Ctrl+6 jumps to Auto Run, Ctrl+7 to Search Suites, Ctrl+8 to Suite Managem
   await screen.findByText("a@b.com");
 
   fireEvent.keyDown(window, { key: "6", ctrlKey: true });
-  expect(await screen.findByRole("heading", { name: "Auto Run" })).toBeInTheDocument();
-  // No In Development pill beside the heading.
-  expect(screen.queryByText("In Development")).not.toBeInTheDocument();
-
-  fireEvent.keyDown(window, { key: "7", ctrlKey: true });
   expect(await screen.findByRole("heading", { name: "Search Suites" })).toBeInTheDocument();
   // Search Suites is finished, so it carries no pill.
   expect(screen.queryByText("In Development")).not.toBeInTheDocument();
 
-  fireEvent.keyDown(window, { key: "8", ctrlKey: true });
+  fireEvent.keyDown(window, { key: "7", ctrlKey: true });
   expect(await screen.findByRole("heading", { name: "Suite Management" })).toBeInTheDocument();
   // Suite Management is finished too: no pill.
   expect(screen.queryByText("In Development")).not.toBeInTheDocument();
 
-  fireEvent.keyDown(window, { key: "9", ctrlKey: true });
+  fireEvent.keyDown(window, { key: "8", ctrlKey: true });
   expect(await screen.findByRole("heading", { name: "AI Bridge" })).toBeInTheDocument();
+
+  fireEvent.keyDown(window, { key: "9", ctrlKey: true });
+  expect(await screen.findByRole("heading", { name: "Auto Run" })).toBeInTheDocument();
+  // No In Development pill beside the heading.
+  expect(screen.queryByText("In Development")).not.toBeInTheDocument();
 });
 
 // API Templates comes after AI Bridge with no number of its own. Like Auto

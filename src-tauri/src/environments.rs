@@ -687,12 +687,18 @@ pub fn save_proposals(root: &Path, env_id: &str, list: &[StoredProposal]) -> Res
             Err(e) if e.kind() != std::io::ErrorKind::NotFound => {
                 Err(format!("the proposed accounts could not be removed: {e}"))
             }
+            Ok(()) => {
+                crate::autorun::data_changed::notify(root, crate::events::AutorunDataKind::Proposals);
+                Ok(())
+            }
             _ => Ok(()),
         };
     }
     std::fs::create_dir_all(path.parent().unwrap_or(root)).map_err(|e| e.to_string())?;
     let json = serde_json::to_string_pretty(list).map_err(|e| e.to_string())?;
-    crate::ai_tools::atomic_write(&path, &json)
+    crate::ai_tools::atomic_write(&path, &json)?;
+    crate::autorun::data_changed::notify(root, crate::events::AutorunDataKind::Proposals);
+    Ok(())
 }
 
 /// Make `id` the active environment. Whether a switch is allowed right now

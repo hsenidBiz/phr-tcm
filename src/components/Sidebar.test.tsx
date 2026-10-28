@@ -65,7 +65,7 @@ test("Auto Run, API Templates and Playwright follow their own modules, live", as
   expect(screen.queryByRole("button", { name: /API Templates/ })).not.toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Playwright" })).not.toBeInTheDocument();
   expect(shortcutOrder()).toContain("autorun");
-  expect(sectionShortcut("autorun")).toBe("mod+6");
+  expect(sectionShortcut("autorun")).toBe("mod+9");
 
   act(() => setModulesForTest(["db_access", "auto_run", "api_templates"]));
   expect(screen.getByRole("button", { name: /API Templates/ })).toBeInTheDocument();
@@ -74,10 +74,10 @@ test("Auto Run, API Templates and Playwright follow their own modules, live", as
   act(() => setModulesForTest(["db_access", "auto_run", "playwright"]));
   expect(screen.queryByRole("button", { name: /API Templates/ })).not.toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Playwright" })).toBeInTheDocument();
-  // Playwright takes no Ctrl number, so the tabs below keep theirs.
+  // Playwright takes no Ctrl number.
   expect(shortcutOrder()).not.toContain("playwright");
   expect(sectionShortcut("playwright")).toBeUndefined();
-  expect(sectionShortcut("ai")).toBe("mod+9");
+  expect(sectionShortcut("ai")).toBe("mod+8");
 
   await act(() => setModule("db_access", false));
   expect(screen.queryByRole("button", { name: /Auto Run/ })).not.toBeInTheDocument();
@@ -131,34 +131,63 @@ test("the shortcut order with and without Auto Run", () => {
     "edit",
     "view",
     "run",
-    "autorun",
     "suites",
     "manage",
     "ai",
+    "autorun",
     "apitemplates",
   ]);
   expect(shortcutOrder(NONE)).toEqual(["manual", "import", "edit", "view", "run", "suites", "manage", "ai"]);
 });
 
-/// Playwright sits right under Auto Run in the rail, but has no Ctrl number,
-/// so Search Suites, Suite Management and AI Bridge keep theirs.
-test("Playwright sits under Auto Run and moves no one's Ctrl number", () => {
+/// Playwright sits right under Auto Run in the rail, but has no Ctrl number.
+/// The everyday screens above the Advanced group keep the low numbers.
+test("Playwright sits under Auto Run and takes no Ctrl number", () => {
   const rows = visibleCaseItems(ON).map((i) => i.id);
   expect(rows.indexOf("playwright")).toBe(rows.indexOf("autorun") + 1);
   expect(sectionShortcut("playwright", ON)).toBeUndefined();
-  expect(sectionShortcut("suites", ON)).toBe("mod+7");
-  expect(sectionShortcut("manage", ON)).toBe("mod+8");
-  expect(sectionShortcut("ai", ON)).toBe("mod+9");
+  expect(sectionShortcut("suites", ON)).toBe("mod+6");
+  expect(sectionShortcut("manage", ON)).toBe("mod+7");
+  expect(sectionShortcut("ai", ON)).toBe("mod+8");
 });
 
-/// API Templates sits after AI Bridge so every existing tab keeps its
-/// Ctrl+number, and it gets none of its own: App's handler only reaches
-/// Ctrl+1..9, and a hint for a key that does nothing would be a lie.
-test("API Templates comes last and has no Ctrl number", () => {
+/// API Templates is the tenth numbered row, and gets no number: App's
+/// handler only reaches Ctrl+1..9, and a hint for a key that does nothing
+/// would be a lie.
+test("API Templates has no Ctrl number", () => {
   expect(sectionShortcut("apitemplates", ON)).toBeUndefined();
-  expect(sectionShortcut("ai", ON)).toBe("mod+9");
-  expect(sectionShortcut("autorun", ON)).toBe("mod+6");
+  expect(sectionShortcut("autorun", ON)).toBe("mod+9");
   expect(sectionShortcut("apitemplates", NONE)).toBeUndefined();
+});
+
+/// The everyday screens sit under a "Test Case Management" heading; Auto
+/// Run, Playwright, API Templates and Crystal Reports sit together at the
+/// bottom under one "Advanced" heading, shown only while one of them is.
+test("the rail's rows sit under two headings, the advanced tools last", () => {
+  const rows = visibleCaseItems(ON).map((i) => i.id);
+  expect(rows.slice(-4)).toEqual(["autorun", "playwright", "apitemplates", "crystal-reports"]);
+
+  setModulesForTest([...ALL_MODULES]);
+  const { unmount } = render(<Sidebar section="manual" onSelect={() => {}} />);
+  expect(screen.getAllByText("Advanced")).toHaveLength(1);
+  expect(screen.getAllByText("Test Case Management")).toHaveLength(1);
+  // That one comes before the first row, Manual Entry.
+  expect(
+    screen.getByText("Test Case Management").compareDocumentPosition(screen.getByRole("button", { name: "Manual Entry" })) &
+      Node.DOCUMENT_POSITION_FOLLOWING,
+  ).toBeTruthy();
+  // The heading comes right before Auto Run, after AI Bridge.
+  const heading = screen.getByText("Advanced");
+  const ai = screen.getByRole("button", { name: "AI Bridge" });
+  const autorun = screen.getByRole("button", { name: "Auto Run" });
+  expect(ai.compareDocumentPosition(heading) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(heading.compareDocumentPosition(autorun) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  unmount();
+
+  setModulesForTest([]);
+  render(<Sidebar section="manual" onSelect={() => {}} />);
+  expect(screen.queryByText("Advanced")).not.toBeInTheDocument();
+  expect(screen.getByText("Test Case Management")).toBeInTheDocument();
 });
 
 /// API Templates and Playwright are separate modules under Auto Run: either

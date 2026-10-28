@@ -10,7 +10,13 @@
 //! `suites/`), size and modified time, sorted. Adding, removing or editing a
 //! spec changes it; nothing else does. When it differs from the one the
 //! webview last processed, the webview reads the clone again.
+//!
+//! The same look checks the rule files the script pipeline follows (the
+//! agent files, `gen-test`, the skills and the repo's `CLAUDE.md`, as
+//! `autorun::pw_rules` reads them): which the clone holds, which it lacks,
+//! and a fingerprint of their own. Those are what the pill counts.
 
+use crate::autorun::pw_rules::{plain_skill_name, READ_LIMIT, SKILLS_DIR, SKILL_FILE, SNAPSHOT};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
@@ -35,6 +41,24 @@ pub struct SpecsStatus {
     /// How many `*.spec.ts` / `*.spec.js` files `suites/` holds.
     pub count: u32,
     /// SHA-256 (hex) of each spec's relative path, size and modified time.
+    pub fingerprint: String,
+    /// The rule files the script pipeline follows.
+    pub pipeline: PipelineFiles,
+}
+
+/// The rule files the script pipeline follows, as the clone holds them.
+/// Each is named by its path as the repo lays it out
+/// (`.claude/agents/playwright-test-healer.md`, `CLAUDE.md`) - never a
+/// clone path.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, specta::Type)]
+pub struct PipelineFiles {
+    /// The ones the clone holds, sorted: every shipped rule file it has, and
+    /// any skill of its own.
+    pub found: Vec<String>,
+    /// Shipped rule files the clone does not hold, sorted. The copy shipped
+    /// with the app stands in for each.
+    pub missing: Vec<String>,
+    /// SHA-256 (hex) of each found file's path, size and modified time.
     pub fingerprint: String,
 }
 
@@ -73,7 +97,56 @@ fn walk(dir: &Path, rel: &Path, out: &mut Vec<String>) -> Result<(), String> {
     Ok(())
 }
 
-/// Counts and fingerprints the specs under `clone/suites`.
+/// `<size>:<modified>` of `rel` in `clone` when it is a regular file no
+/// bigger than a rule file can be (the size `pw_rules` reads up to), else
+/// `None`. Metadata only: the file is not opened.
+fn rule_file(clone: &Path, rel: &str) -> Option<String> {
+    let m = std::fs::metadata(clone.join(rel)).ok()?;
+    if !m.is_file() || m.len() > READ_LIMIT {
+        return None;
+    }
+    let at = m
+        .modified()
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    Some(format!("{}:{at}", m.len()))
+}
+
+/// Which of the pipeline's rule files `clone` holds: every file the app
+/// ships a copy of, plus each skill folder of the clone's own.
+pub fn pipeline_files(clone: &Path) -> PipelineFiles {
+    let mut wanted: Vec<String> = SNAPSHOT.iter().map(|(k, _)| (*k).to_string()).collect();
+    if let Ok(entries) = std::fs::read_dir(clone.join(SKILLS_DIR)) {
+        for e in entries.flatten() {
+            let Some(name) = e.file_name().to_str().map(str::to_string) else { continue };
+            if plain_skill_name(&name) && e.path().is_dir() {
+                wanted.push(format!("{SKILLS_DIR}/{name}/{SKILL_FILE}"));
+            }
+        }
+    }
+    wanted.sort();
+    wanted.dedup();
+    let (mut found, mut missing, mut lines) = (Vec::new(), Vec::new(), Vec::new());
+    for rel in wanted {
+        match rule_file(clone, &rel) {
+            Some(meta) => {
+                lines.push(format!("{rel}:{meta}"));
+                found.push(rel);
+            }
+            // A skill of the clone's own with no SKILL.md is no rule file;
+            // only a shipped one is missing.
+            None if SNAPSHOT.iter().any(|(k, _)| *k == rel) => missing.push(rel),
+            None => {}
+        }
+    }
+    let fingerprint = Sha256::digest(lines.join("\n").as_bytes()).iter().map(|b| format!("{b:02x}")).collect();
+    PipelineFiles { found, missing, fingerprint }
+}
+
+/// Counts and fingerprints the specs under `clone/suites`, and checks the
+/// pipeline's rule files.
 pub fn read(clone: &Path) -> Result<SpecsStatus, String> {
     if !clone.is_dir() {
         return Err(CLONE_MISSING.to_string());
@@ -86,5 +159,5 @@ pub fn read(clone: &Path) -> Result<SpecsStatus, String> {
     walk(&suites, Path::new(""), &mut lines)?;
     lines.sort();
     let fingerprint = Sha256::digest(lines.join("\n").as_bytes()).iter().map(|b| format!("{b:02x}")).collect();
-    Ok(SpecsStatus { count: lines.len() as u32, fingerprint })
+    Ok(SpecsStatus { count: lines.len() as u32, fingerprint, pipeline: pipeline_files(clone) })
 }

@@ -4,7 +4,8 @@
 
 use std::fs;
 use std::path::Path;
-use v2_lib::pw_repo::specs_status::{read, CLONE_MISSING, SUITES_MISSING};
+use v2_lib::autorun::pw_rules::{READ_LIMIT, SNAPSHOT};
+use v2_lib::pw_repo::specs_status::{pipeline_files, read, CLONE_MISSING, SUITES_MISSING};
 
 fn put(root: &Path, rel: &str, text: &str) {
     let p = root.join(rel);
@@ -139,4 +140,85 @@ fn a_suites_that_is_a_file_is_not_a_suites_folder() {
     let d = tempfile::tempdir().unwrap();
     put(d.path(), "suites", "not a folder");
     assert_eq!(read(d.path()).unwrap_err(), SUITES_MISSING);
+}
+
+// --- The pipeline's rule files -----------------------------------------
+
+/// A clone holding every rule file the app ships a copy of.
+fn clone_with_rules() -> tempfile::TempDir {
+    let d = clone();
+    for (rel, text) in SNAPSHOT {
+        put(d.path(), rel, text);
+    }
+    d
+}
+
+#[test]
+fn every_shipped_rule_file_in_the_clone_is_found_and_none_missing() {
+    let d = clone_with_rules();
+    let p = read(d.path()).unwrap().pipeline;
+    let mut shipped: Vec<String> = SNAPSHOT.iter().map(|(k, _)| k.to_string()).collect();
+    shipped.sort();
+    assert_eq!(p.found, shipped);
+    assert!(p.missing.is_empty());
+    assert_eq!(p.fingerprint.len(), 64);
+    // The test specs are not rule files, and are still counted on their own.
+    assert_eq!(read(d.path()).unwrap().count, 2);
+}
+
+#[test]
+fn a_rule_file_the_clone_lacks_is_missing_by_its_repo_path() {
+    let d = clone_with_rules();
+    fs::remove_file(d.path().join(".claude/agents/test-refactorer.md")).unwrap();
+    let p = read(d.path()).unwrap().pipeline;
+    assert_eq!(p.missing, vec![".claude/agents/test-refactorer.md".to_string()]);
+    assert!(!p.found.contains(&".claude/agents/test-refactorer.md".to_string()));
+    // Names no clone path.
+    assert!(p.missing.iter().all(|m| !m.contains(&d.path().to_string_lossy().to_string())));
+}
+
+#[test]
+fn a_clone_with_no_rule_files_has_every_shipped_one_missing() {
+    let d = clone();
+    let p = read(d.path()).unwrap().pipeline;
+    assert!(p.found.is_empty());
+    assert_eq!(p.missing.len(), SNAPSHOT.len());
+}
+
+#[test]
+fn a_skill_of_the_clones_own_is_found_and_one_without_skill_md_is_not_missing() {
+    let d = clone_with_rules();
+    put(d.path(), ".claude/skills/our-own/SKILL.md", "# ours");
+    fs::create_dir_all(d.path().join(".claude/skills/empty-one")).unwrap();
+    let p = read(d.path()).unwrap().pipeline;
+    assert!(p.found.contains(&".claude/skills/our-own/SKILL.md".to_string()));
+    assert!(!p.found.iter().chain(&p.missing).any(|f| f.contains("empty-one")));
+    assert!(p.missing.is_empty());
+}
+
+#[test]
+fn a_rule_file_too_big_to_be_one_is_missing() {
+    let d = clone_with_rules();
+    put(d.path(), "CLAUDE.md", &"x".repeat(READ_LIMIT as usize + 1));
+    assert_eq!(read(d.path()).unwrap().pipeline.missing, vec!["CLAUDE.md".to_string()]);
+}
+
+#[test]
+fn editing_a_rule_file_moves_only_the_pipeline_fingerprint() {
+    let d = clone_with_rules();
+    let before = read(d.path()).unwrap();
+    put(d.path(), ".claude/commands/gen-test.md", "a different, longer gen-test command");
+    let after = read(d.path()).unwrap();
+    assert_ne!(after.pipeline.fingerprint, before.pipeline.fingerprint);
+    // The Overview's re-read follows the test specs alone.
+    assert_eq!(after.fingerprint, before.fingerprint);
+    assert_eq!(pipeline_files(d.path()), after.pipeline);
+}
+
+#[test]
+fn editing_a_spec_leaves_the_pipeline_fingerprint_alone() {
+    let d = clone_with_rules();
+    let before = read(d.path()).unwrap();
+    put(d.path(), "suites/sl/admin/rating/specs/a.spec.ts", "test('a'); test('a2');");
+    assert_eq!(read(d.path()).unwrap().pipeline, before.pipeline);
 }

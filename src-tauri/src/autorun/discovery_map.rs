@@ -542,7 +542,7 @@ pub fn load_map(root: &Path, org: &str, project: &str) -> Result<DiscoveryMap, S
 /// (project-relative), or `None` when there was no file. A map that reads
 /// is refused: Forget map clears an area of a healthy one.
 pub fn reset_map(root: &Path, org: &str, project: &str, now: u64) -> Result<Option<String>, String> {
-    let _guard = write_lock().lock().unwrap_or_else(|e| e.into_inner());
+    let guard = write_lock().lock().unwrap_or_else(|e| e.into_inner());
     let from = map_path(root, org, project);
     if !from.exists() {
         return Ok(None);
@@ -554,6 +554,8 @@ pub fn reset_map(root: &Path, org: &str, project: &str, now: u64) -> Result<Opti
     std::fs::rename(&from, from.with_file_name(&aside))
         .map_err(|e| format!("The discovery map {} could not be moved aside: {e}", map_file_name(org, project)))?;
     crate::applog::info(format!("Discovery map: a damaged map was moved aside as projects/{aside}"));
+    drop(guard);
+    super::data_changed::notify(root, crate::events::AutorunDataKind::Map);
     Ok(Some(format!("projects/{aside}")))
 }
 
@@ -580,7 +582,7 @@ pub fn canonical_area(root: &Path, org: &str, project: &str, name: &str) -> Stri
 /// Load, change and write back under the lock. A change that leaves the
 /// map as it was writes nothing: most page reads see nothing new.
 fn update(root: &Path, org: &str, project: &str, change: impl FnOnce(&mut DiscoveryMap)) -> Result<(), String> {
-    let _guard = write_lock().lock().unwrap_or_else(|e| e.into_inner());
+    let guard = write_lock().lock().unwrap_or_else(|e| e.into_inner());
     let mut map = load_map(root, org, project)?;
     let before = map.clone();
     change(&mut map);
@@ -592,7 +594,10 @@ fn update(root: &Path, org: &str, project: &str, change: impl FnOnce(&mut Discov
         std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     }
     let text = serde_json::to_string_pretty(&map).map_err(|e| e.to_string())?;
-    crate::ai_tools::atomic_write(&path, &text)
+    crate::ai_tools::atomic_write(&path, &text)?;
+    drop(guard);
+    super::data_changed::notify(root, crate::events::AutorunDataKind::Map);
+    Ok(())
 }
 
 /// The map's entry for `area`, compared by `area_key`. A new entry is filed

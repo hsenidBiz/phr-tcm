@@ -1685,6 +1685,7 @@ export const events = {
 	audioSpectrum: makeEvent<AudioSpectrum>("audio-spectrum"),
 	autorunAgentsChanged: makeEvent<AutorunAgentsChanged>("autorun-agents-changed"),
 	autorunCleanupProgress: makeEvent<AutorunCleanupProgress>("autorun-cleanup-progress"),
+	autorunDataChanged: makeEvent<AutorunDataChanged>("autorun-data-changed"),
 	autorunDiscoveryChanged: makeEvent<AutorunDiscoveryChanged>("autorun-discovery-changed"),
 	autorunNetworkWait: makeEvent<AutorunNetworkWait>("autorun-network-wait"),
 	autorunReplayProgress: makeEvent<AutorunReplayProgress>("autorun-replay-progress"),
@@ -2702,6 +2703,20 @@ export type AutorunCleanupProgress = {
 	id: string,
 	outcome: string,
 };
+
+/**
+ *  Emitted after a successful write to that data, whoever made it, so the
+ *  Auto Run screen reads it again without a reload.
+ */
+export type AutorunDataChanged = {
+	kinds: AutorunDataKind[],
+};
+
+/**
+ *  Which of the data an assistant adds through the AI bridge changed. The
+ *  Auto Run screen reads each kind from its own queries.
+ */
+export type AutorunDataKind = "areas" | "components" | "map" | "mappingSummary" | "quirks" | "testFiles" | "proposals";
 
 /**
  *  Emitted when a discovery starts or ends in the Auto Run browser: while
@@ -5047,6 +5062,27 @@ export type PdfSpec_Serialize = {
 export type Phrases = string | string[];
 
 /**
+ *  The rule files the script pipeline follows, as the clone holds them.
+ *  Each is named by its path as the repo lays it out
+ *  (`.claude/agents/playwright-test-healer.md`, `CLAUDE.md`) - never a
+ *  clone path.
+ */
+export type PipelineFiles = {
+	/**
+	 *  The ones the clone holds, sorted: every shipped rule file it has, and
+	 *  any skill of its own.
+	 */
+	found: string[],
+	/**
+	 *  Shipped rule files the clone does not hold, sorted. The copy shipped
+	 *  with the app stands in for each.
+	 */
+	missing: string[],
+	/**  SHA-256 (hex) of each found file's path, size and modified time. */
+	fingerprint: string,
+};
+
+/**
  *  Where one area's specs live: the feature folder's path under `suites/`,
  *  such as `sl/admin/performance/definition-wizard/competencies`.
  * 
@@ -6767,6 +6803,8 @@ export type SpecsStatus = {
 	count: number,
 	/**  SHA-256 (hex) of each spec's relative path, size and modified time. */
 	fingerprint: string,
+	/**  The rule files the script pipeline follows. */
+	pipeline: PipelineFiles,
 };
 
 export type Stage = {

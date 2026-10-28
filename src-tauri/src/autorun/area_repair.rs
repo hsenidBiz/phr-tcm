@@ -127,7 +127,7 @@ pub fn save_repair_recording(
 ) -> Result<NavFile, String> {
     // The whole load-check-save holds the areas lock: a save of another
     // area between them would otherwise be written over.
-    let _one_writer = nav::nav_lock();
+    let one_writer = nav::nav_lock();
     let mut nav = nav::load_nav(root, org, project)?;
     let key = nav::module_key(tried.name());
     let Some(slot) = nav.modules.iter_mut().find(|m| nav::module_key(m.name()) == key) else {
@@ -151,7 +151,9 @@ pub fn save_repair_recording(
             slot.mode = mode;
         }
     }
-    nav::save_nav(root, org, project, &nav)?;
+    nav::write_nav(root, org, project, &nav)?;
+    drop(one_writer);
+    nav::announce_areas(root);
     Ok(nav)
 }
 
@@ -160,7 +162,7 @@ pub fn save_repair_recording(
 /// and the page they began on - and clear the note. Nothing is replayed:
 /// the person chose it.
 pub fn put_old_path_back(root: &Path, org: &str, project: &str, area: &str) -> Result<NavFile, String> {
-    let _one_writer = nav::nav_lock();
+    let one_writer = nav::nav_lock();
     let mut nav = nav::load_nav(root, org, project)?;
     let key = nav::module_key(area);
     let slot = nav
@@ -174,6 +176,8 @@ pub fn put_old_path_back(root: &Path, org: &str, project: &str, area: &str) -> R
     slot.clicks = repair.previous_clicks;
     slot.arrived = repair.previous_arrived;
     slot.start = repair.previous_start;
-    nav::save_nav(root, org, project, &nav)?;
+    nav::write_nav(root, org, project, &nav)?;
+    drop(one_writer);
+    nav::announce_areas(root);
     Ok(nav)
 }
