@@ -172,15 +172,16 @@ test("the Queue, grouped by area with a case selected, is accessible", async () 
   );
 });
 
-test("the Playwright specs pill is accessible in each of its states", async () => {
+test("the Playwright pipeline pill is accessible in each of its states", async () => {
   for (const pill of [
-    { tone: "success" as const, label: "4 specs ready", why: "4 specs found and read." },
+    { tone: "success" as const, label: "11 pipeline files ready", why: "11 files the script pipeline follows were found in the clone." },
+    { tone: "warning" as const, label: "1 pipeline file missing", why: "CLAUDE.md is not in the clone." },
     { tone: "warning" as const, label: "Updating specs…", why: "The spec files changed." },
     { tone: "danger" as const, label: "No specs found", why: "The clone has no suites folder." },
   ]) {
     setSpecsPill(pill);
     await expectAccessible(<SpecsStatusPill />);
-    expect(screen.getByRole("status", { name: `Playwright specs: ${pill.label}. ${pill.why}` })).toBeInTheDocument();
+    expect(screen.getByRole("status", { name: `Playwright pipeline: ${pill.label}. ${pill.why}` })).toBeInTheDocument();
     cleanup();
   }
   setSpecsPill(null);
