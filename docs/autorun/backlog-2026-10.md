@@ -671,6 +671,29 @@ information in the slots the Playwright pipeline already reads; it never overrid
       then the browser route (type the three fields, press `#btnsubmit`) is the fallback.
     - After a reset the saved account's password must change too, or the next sign-in fails
       with the old one: the app stores the new password on the account itself.
+    - **Someone else already signed in.** PeoplesHR allows one session per user, and
+      signing in anyway ("Continue here") logs the other session out - its next requests
+      come back as empty 400s mid-run. `PeoplesHR.HS_SM_ACTIVE_LOGIN` holds every sign-in:
+      `ACTLOG_USER_ID` (lower case), `ACTLOG_SESSIONID`, `ACTLOG_DATETIME`,
+      `ACTLOG_ACT_FLG` (1 = signed in now, 0 = ended), `ACTLOG_LOGOFF_DATETIME`,
+      `ACTLOG_IP_ADDRESS` and `ACTLOG_LOGGED_TO` (`ehrm` the main site, `sshr`,
+      `Mobile-IOS`). `HS_SM_ACTIVE_LOGIN_HISTORY` has the same columns for older rows.
+      Read the flag, not the log-off column: on 2026-10-28, 82 rows had flag 0 and no
+      log-off time. Landing on the password reset page and resetting the password made no
+      row (Automation51). Before a run or a discovery signs in, and with the expiry check on
+      Check sign-in and in `propose_accounts`, the app asks:
+      ```sql
+      SELECT ACTLOG_DATETIME, ACTLOG_LOGGED_TO FROM PeoplesHR.HS_SM_ACTIVE_LOGIN
+      WHERE ACTLOG_USER_ID = @user AND ACTLOG_ACT_FLG = 1
+      ```
+      A row that is not the app's own Auto Run session warns "Automation01 is signed in
+      elsewhere since 09:40 - signing in will log that session out" and waits for the person
+      (a run) or refuses (an agent's discovery, which picks another account or reports).
+      `propose_accounts` prefers logins nobody is signed in as, beside the expiry rule. Like
+      the expiry query it is PeoplesHR-specific, so it lives in the environment's settings
+      (an "active session query"). Tests: an account with a flag-1 row from another session
+      warns before a run and is refused for a discovery; the app's own open Auto Run
+      session does not count; a flag-0 row with no log-off time does not count.
     - **Check sign-in on each account.** Auto Run, Setup, Accounts gets a Check sign-in
       button on every saved account: it opens the Auto Run browser, signs in as that account
       and leaves the browser where the sign-in stopped, with the steps and the result shown
