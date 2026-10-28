@@ -921,23 +921,20 @@ table {
 }
 
 /* ── Assistant scene ─────────────────────────────────────────────────────
-   The cubicle on each Assistants card cell
-   (screens/AutoRun/AssistantScene.tsx). The scene is full cell width and
-   96 px tall; the desk is centred and always drawn, the character is 28 x 34
-   and takes its colour from --assistant-hue, which the component sets from
-   the browser slot. Walking crosses the whole cubicle (left runs from 0.5rem
-   to the far end, a percentage of the scene so it fits any width) and turns
-   at each end, with the desk faded; typing sits left of the desk and bobs;
-   dozing is still and dimmed with a z drifting up. Under reduced motion
-   nothing moves, but each pose still looks different (screen, dim and z, or
-   walking stance). */
+   The shared office on the Assistants card
+   (screens/AutoRun/AssistantScene.tsx). The room is full card width and
+   96 px tall; each assistant has a desk, always drawn, and a walker wrapper
+   holding its 28 x 34 character (colour from --assistant-hue, set from the
+   browser slot) and its speech bubble. Walking animates the wrapper's left
+   across the whole room (a percentage, so it fits any width) while only the
+   svg flips at each end, so the bubble never mirrors; the component gives each
+   walker a negative animation-delay so they do not move as one. Typing bobs
+   at the desk; dozing is still and dimmed with a z drifting up. Under reduced
+   motion nothing moves, but each pose still looks different (screen, dim and
+   z, or walking stance). */
 .assistant-scene__desk--empty { opacity: 0.5; }
-.assistant-scene__bot {
-  position: absolute;
-  bottom: 1.5rem;
+.assistant-scene__walker {
   left: 0.5rem;
-  width: 28px;
-  height: 34px;
   color: var(--assistant-hue, var(--color-muted));
 }
 .assistant-scene__eye {
@@ -945,25 +942,32 @@ table {
   transform-box: fill-box;
   transform-origin: center;
 }
-.assistant-scene--type .assistant-scene__bot { left: calc(50% - 4.5rem); }
-.assistant-scene--doze .assistant-scene__bot { left: calc(50% - 4.5rem); opacity: 0.55; }
-.assistant-scene--walk .assistant-scene__bot { animation: assistant-walk 8s linear infinite; }
-.assistant-scene--type .assistant-scene__bot { animation: assistant-bob 1s steps(1, end) infinite; }
-.assistant-scene--walk .assistant-scene__leg--a { animation: assistant-step 0.4s steps(1, end) infinite; }
-.assistant-scene--walk .assistant-scene__leg--b { animation: assistant-step 0.4s steps(1, end) infinite -0.2s; }
-.assistant-scene--type .assistant-scene__arm--a { animation: assistant-tap 0.4s steps(1, end) infinite; }
-.assistant-scene--type .assistant-scene__arm--b { animation: assistant-tap 0.4s steps(1, end) infinite -0.2s; }
-.assistant-scene--walk .assistant-scene__eye:not(.assistant-scene__eye--closed),
-.assistant-scene--type .assistant-scene__eye:not(.assistant-scene__eye--closed) {
+.assistant-scene__walker[data-pose="doze"] .assistant-scene__bot { opacity: 0.55; }
+.assistant-scene__walker[data-pose="walk"] { animation: assistant-walk 8s linear infinite; }
+.assistant-scene__walker[data-pose="walk"] .assistant-scene__bot { animation: assistant-flip 8s linear infinite; }
+.assistant-scene__walker[data-pose="type"] .assistant-scene__bot { animation: assistant-bob 1s steps(1, end) infinite; }
+.assistant-scene__walker[data-pose="walk"] .assistant-scene__leg--a { animation: assistant-step 0.4s steps(1, end) infinite; }
+.assistant-scene__walker[data-pose="walk"] .assistant-scene__leg--b { animation: assistant-step 0.4s steps(1, end) infinite -0.2s; }
+.assistant-scene__walker[data-pose="type"] .assistant-scene__arm--a { animation: assistant-tap 0.4s steps(1, end) infinite; }
+.assistant-scene__walker[data-pose="type"] .assistant-scene__arm--b { animation: assistant-tap 0.4s steps(1, end) infinite -0.2s; }
+.assistant-scene__walker[data-pose="walk"] .assistant-scene__eye:not(.assistant-scene__eye--closed),
+.assistant-scene__walker[data-pose="type"] .assistant-scene__eye:not(.assistant-scene__eye--closed) {
   animation: assistant-blink 5s linear infinite;
 }
 .assistant-scene__z { animation: assistant-z-drift 3s ease-out infinite; }
 @keyframes assistant-walk {
-  0% { left: 0.5rem; transform: scaleX(1); }
-  46% { left: calc(100% - 2.25rem); transform: scaleX(1); }
-  50% { left: calc(100% - 2.25rem); transform: scaleX(-1); }
-  96% { left: 0.5rem; transform: scaleX(-1); }
-  100% { left: 0.5rem; transform: scaleX(1); }
+  0% { left: 0.5rem; }
+  46% { left: calc(100% - 2.25rem); }
+  50% { left: calc(100% - 2.25rem); }
+  96% { left: 0.5rem; }
+  100% { left: 0.5rem; }
+}
+/* The same timing as the walk, on the svg alone: facing right on the way
+   out, left on the way back. */
+@keyframes assistant-flip {
+  0%, 48% { transform: scaleX(1); }
+  50%, 98% { transform: scaleX(-1); }
+  100% { transform: scaleX(1); }
 }
 @keyframes assistant-bob {
   0% { transform: translateY(0); }
@@ -989,6 +993,7 @@ table {
 }
 /* !important because the pose rules above out-rank a bare class selector. */
 @media (prefers-reduced-motion: reduce) {
+  .assistant-scene__walker,
   .assistant-scene__bot,
   .assistant-scene__leg--a,
   .assistant-scene__leg--b,

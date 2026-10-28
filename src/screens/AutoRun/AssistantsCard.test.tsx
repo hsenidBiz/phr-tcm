@@ -1,6 +1,6 @@
 // The Assistants card: who is connected, which browser each one has and what
-// it is doing, with Stop, End discovery and Release per row, and a small
-// cubicle scene on each assistant. Nothing at all while no assistant is working.
+// it is doing, with Stop, End discovery and Release per row, a colour square
+// per row, and one shared office above the rows. Nothing at all while no assistant is working.
 
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, expect, test, vi } from "vitest";
@@ -37,6 +37,7 @@ vi.mock("../../bindings", () => ({
 }));
 
 import AssistantsCard, { isWorking } from "./AssistantsCard";
+import { hueFor } from "./AssistantScene";
 
 beforeEach(() => {
   h.agents.mockReset().mockResolvedValue([]);
@@ -106,9 +107,9 @@ test("shows every assistant while one is working, the idle one dozing", async ()
   ]);
   expect(screen.getByText("Assistant 1 - claude-code")).toBeInTheDocument();
   expect(screen.getByText("Assistant 2 - claude-code")).toBeInTheDocument();
-  const rows = screen.getAllByRole("listitem");
-  expect(rows[0].querySelector(".assistant-scene")).toHaveAttribute("data-pose", "type");
-  expect(rows[1].querySelector(".assistant-scene")).toHaveAttribute("data-pose", "doze");
+  const walkers = document.querySelectorAll(".assistant-scene__walker");
+  expect(walkers[0]).toHaveAttribute("data-pose", "type");
+  expect(walkers[1]).toHaveAttribute("data-pose", "doze");
   // The idle assistant keeps its row, so its browser can still be released.
   expect(screen.getByRole("button", { name: "Release Assistant 2's browser" })).toBeInTheDocument();
   expect(screen.getByText("1 working")).toBeInTheDocument();
@@ -169,13 +170,12 @@ test("only a replay has a progress bar", async () => {
   expect(document.querySelector("[data-progress]")).toBeNull();
 });
 
-test("a working assistant with no browser still gets a scene", async () => {
+test("a working assistant with no browser still gets a character in the office", async () => {
   await mount([agent({ slot: null, browser: null, account: null, activity: { kind: "exploring" } })]);
-  const scene = document.querySelector(".assistant-scene");
-  expect(scene).not.toBeNull();
-  expect(scene).toHaveAttribute("data-slot", "none");
-  expect(scene).toHaveAttribute("data-pose", "walk");
-  expect(scene).toHaveAttribute("aria-hidden", "true");
+  expect(document.querySelector(".assistant-scene")).toHaveAttribute("aria-hidden", "true");
+  const walker = document.querySelector(".assistant-scene__walker");
+  expect(walker).toHaveAttribute("data-slot", "none");
+  expect(walker).toHaveAttribute("data-pose", "walk");
 });
 
 test("names each assistant, its browser and what it does", async () => {
@@ -340,7 +340,7 @@ test("a row's buttons wait while its own command is on its way", async () => {
   for (const n of one) expect(screen.getByRole("button", { name: n })).toBeEnabled();
 });
 
-test("each cubicle keeps one status element, and only its text changes", async () => {
+test("each row keeps one status element, and only its text changes", async () => {
   await mount([agent({ label: "Assistant 1", slot: 0 }), agent({ label: "Assistant 2", slot: 1 })]);
   const rows = screen.getAllByRole("listitem");
   const before = within(rows[0]).getByRole("status");
@@ -439,11 +439,16 @@ test("unmounting stops listening", async () => {
   await waitFor(() => expect(h.unlisten).toHaveBeenCalledTimes(1));
 });
 
-test("each assistant is a cubicle in a grid that keeps its width when alone", async () => {
-  await mount([agent()]);
+test("the office renders once, above a plain list of rows, each with a square in its character's colour", async () => {
+  await mount([agent({ label: "Assistant 1", slot: 0 }), agent({ label: "Assistant 2", slot: 1 })]);
+  expect(document.querySelectorAll(".assistant-scene")).toHaveLength(1);
   const list = await screen.findByRole("list");
-  expect(list).toHaveClass("grid");
-  expect(list.className).toContain("auto-fill");
-  expect(list.querySelectorAll(":scope > li")).toHaveLength(1);
-  expect(list.querySelector("li .assistant-scene")).not.toBeNull();
+  expect(list).not.toHaveClass("grid");
+  expect(list.querySelector(".assistant-scene")).toBeNull();
+  const office = document.querySelector(".assistant-scene")!;
+  expect(office.compareDocumentPosition(list) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  const squares = list.querySelectorAll<HTMLElement>("[data-hue]");
+  expect(squares).toHaveLength(2);
+  expect(squares[0].style.background).toBe(hueFor(0));
+  expect(squares[1].style.background).toBe(hueFor(1));
 });
