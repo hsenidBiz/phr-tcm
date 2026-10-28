@@ -643,13 +643,34 @@ information in the slots the Playwright pipeline already reads; it never overrid
       `#txtConfirmPassword` (`ConfirmPassword`, "Confirm New Password"), each `maxlength`
       20, and two submit inputs `#btnsubmit` ("Submit") and `#btnreset` ("Reset", which
       clears the form - never press it for the reset). An "Info!" label below the buttons is
-      where the site's answer shows. The page loads `jsencrypt.js` and `jquery.base64.js`
-      (the site has `ENABLE_PASSWORD_ENCRYPTION` = 1), so the passwords are most likely
-      encrypted in the page before the post: the app types into the three fields and
-      presses Submit in the browser, never posts the form itself. Recognise the page by the
-      path `/hr/security/PasswordReset` and the `#txtOldPassword` field, not by the
-      wording. What a refused new password (reuse, pattern `PASSWORD_STYLE`) shows in
-      "Info!", and where a successful reset lands, were not tried: nothing was submitted.
+      where the site's answer shows. Recognise the page by the path
+      `/hr/security/PasswordReset` and the `#txtOldPassword` field, not by the wording.
+    - **The reset, done once by hand** (2026-10-28, Automation51 to `Abc@123`, the
+      assistant typing in the browser pane on Avin's say-so). Submit does not post the form:
+      the page sends one XHR, `POST /hr/api/securityapi/PasswordResetVerification`, JSON
+      `{"userName", "OPassword", "NPassword", "CPassword", "captchaResponse": ""}` (current,
+      new, confirm), and answers 200 `{"Action":"1","Value":null,"Code":null}` on success;
+      the page then goes to `/hr/security/login?ReturnUrl=%2fhr%2fhome%2findex`, so the
+      sign-in has to run again with the new password. The database showed it at once:
+      `USRACC_PWD_ACTIVATE_DATE` became 2026-10-28 and `HS_SM_PASSWORD_HISTORY` got a row.
+    - **Every value is RSA-encrypted in the page**, the user name too: each is 344
+      characters of base64 (a 2048-bit RSA block). The sign-in page's own script does it
+      the same way for `getauthuser` (`{clientID, userName, password, returnurl}`): it takes
+      `#hdnPublicKey`, base64-decodes it to a PEM public key, and encrypts with JSEncrypt
+      (RSA PKCS#1 v1.5), sending the hidden `__RequestVerificationToken` as a request header
+      of that name. Keys live in `HS_SM_RSA_KEY_STORE` (`RSA_TOKEN_ID`, 24 h life, about 50
+      at a time), so a key belongs to the page that handed it out - never save one.
+    - **So the reset can skip the page.** The app can do it as a request: GET the sign-in
+      (or reset) page to get the cookies, `#hdnPublicKey` and `__RequestVerificationToken`;
+      encrypt the user name, current, new and confirm passwords with that key (PKCS#1 v1.5);
+      POST `PasswordResetVerification` with the token header; `Action` "1" is success. Not
+      yet proved: whether it works without a `getauthuser` first in the same session (the
+      hand reset had one, which is what opened the reset page), and what `Action` / `Value`
+      a refused password returns (reuse within `SOX_PWD_REUSE_NO` = 6, `PASSWORD_STYLE`, a
+      wrong current password). Prove both as an API template before building on it; until
+      then the browser route (type the three fields, press `#btnsubmit`) is the fallback.
+    - After a reset the saved account's password must change too, or the next sign-in fails
+      with the old one: the app stores the new password on the account itself.
     - **Check sign-in on each account.** Auto Run, Setup, Accounts gets a Check sign-in
       button on every saved account: it opens the Auto Run browser, signs in as that account
       and leaves the browser where the sign-in stopped, with the steps and the result shown
