@@ -27,6 +27,19 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.4.2-beta.3",
+    date: "2026-10-29",
+    items: [
+      "The Assistants office has furnished rooms: the Test lab is a chemistry lab where assistants wear lab coats, the Map room has a holographic map, and the Lounge has a sofa, a bookcase, a lamp and more.",
+      "In the Assistants office, each assistant's name now walks with it, and an assistant without an Auto Run browser no longer gets a row or a place in the office.",
+      "An area can keep a second menu path for accounts whose menu is laid out differently, and Auto Run tries each path before giving up.",
+      "Auto Run waits for an overlay to clear before clicking a menu, and no longer closes a menu that is already open.",
+      "Assistants writing scripts now make the data a case needs, through the app or API templates, instead of holding the case back.",
+      "Clearer answers for assistants: every matching element is listed, an element's attributes can be read, repeated side menus are left out, and a replay that saved nothing no longer says it did.",
+      "Resetting an assistant's browser keeps it signed in, and a reported difference from the case can carry the assistant's proposal.",
+    ],
+  },
+  {
     version: "2.4.2-beta.2",
     date: "2026-10-28",
     items: [
