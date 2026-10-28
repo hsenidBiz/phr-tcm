@@ -685,10 +685,10 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool, unlocked: bool, all_projec
         },
         {
             "name": "start_autorun_discovery",
-            "description": "Open the app's own Auto Run browser and sign in as a saved account, so you can explore the live application before you write a script. The app replays the recorded sign-in and types the password; you never see it. Answers the landing page as get_autorun_page shows it, and its address path. It opens a browser of your own when another assistant is using the main one. Refused while a run, a replay or a person's browser holds the Auto Run browser. It takes over a browser your own replay left open (its other tabs closed, not signing in again when it is signed in as the account you name) and goes home, and the answer says so. A failed sign-in closes the browser and says why: report it rather than trying again. Every locator you will put in a script must be seen on the live app first: a save refuses any locator the app has not seen. Never read the application's code to write scripts. For a case marked no_save, name it with `case_id` (or pass `no_save: true`): every save the page tries is blocked, not only reported, until the discovery ends. Call end_autorun_discovery when you are done. The first discovery start of a session that is not a mapping run opens its answer with the writer's rules; a later one opens with a line pointing back at them. Every answer that is not a mapping run's ends with the rules that apply at that moment. An explore start (explore true) opens with the explorer's rules and ends with the explore rules.",
+            "description": "Open the app's own Auto Run browser and sign in as a saved account, so you can explore the live application before you write a script. The app replays the recorded sign-in and types the password; you never see it. Answers the landing page as get_autorun_page shows it, and its address path. When `area` names a saved area, the start walks to it the way a run does (the answer says `at_area: true`) and closes the project's cookie banner if it is up, so your first action is never covered; when the walk fails, the browser stays where it stopped and the answer says `at_area: false` and why in `area_walk`; an `area` that is not saved starts at home and files what you see under that name. It opens a browser of your own when another assistant is using the main one. Refused while a run, a replay or a person's browser holds the Auto Run browser. It takes over a browser your own replay left open (its other tabs closed, not signing in again when it is signed in as the account you name) and goes home, and the answer says so. A failed sign-in closes the browser and says why: report it rather than trying again. Every locator you will put in a script must be seen on the live app first: a save refuses any locator the app has not seen. Never read the application's code to write scripts. For a case marked no_save, name it with `case_id` (or pass `no_save: true`): every save the page tries is blocked, not only reported, until the discovery ends. Call end_autorun_discovery when you are done. The first discovery start of a session that is not a mapping run opens its answer with the writer's rules; a later one opens with a line pointing back at them. Every answer that is not a mapping run's ends with the rules that apply at that moment. An explore start (explore true) opens with the explorer's rules and ends with the explore rules.",
             "inputSchema": schema(serde_json::json!({
                 "account": { "type": "string", "description": "The KEY of the saved account to sign in as, from get_accounts. Never a username or a password." },
-                "area": { "type": "string", "description": "The recorded area you are exploring, by name; what you see is filed under it (with none, under no area)." },
+                "area": { "type": "string", "description": "The recorded area you are exploring, by name; the browser starts there when it is a saved area, and what you see is filed under it (with none, it starts at home and files under no area)." },
                 "browser": { "type": "string", "enum": ["edge", "chrome"], "description": "Optional; the one last used when left out." },
                 "mapping": { "type": "boolean", "description": "Optional: true starts a menu mapping run of `modules` (used by /tcm:map-menus). It is read-only: every save the page tries is blocked and counted, and each answer carries `blocked`." },
                 "modules": { "type": "array", "items": { "type": "string" }, "description": "With `mapping`: the modules to map, by name (at least one)." },
@@ -1820,6 +1820,11 @@ fn probe_call(args: &serde_json::Value, call: BridgeCall) -> Result<(u16, String
 pub const STOP_TAKES_NOTHING_ELSE: &str =
     "`stop: true` takes nothing else - it stops your replay that is going, whichever case and step it is at";
 
+/// The arguments `replay_autorun_to_step` reads: any other (a `step_index`
+/// for a `step`) is refused by name rather than dropped, so a replay never
+/// runs a step the assistant did not ask for.
+pub const REPLAY_KEYS: [&str; 4] = ["case_id", "step", "page", "stop"];
+
 /// `replay_autorun_to_step`: a replay, or with `stop: true` (alone) the stop
 /// of the assistant's own replay that is going.
 fn replay_call(args: &serde_json::Value, call: BridgeCall) -> Result<(u16, String), String> {
@@ -1827,6 +1832,10 @@ fn replay_call(args: &serde_json::Value, call: BridgeCall) -> Result<(u16, Strin
         Err(refused) => Ok((400, refused)),
         Ok(true) if !others(args, &["stop"]).is_empty() => Ok((400, STOP_TAKES_NOTHING_ELSE.to_string())),
         Ok(true) => call("POST", "/autorun-replay-stop", "{}"),
+        Ok(false) if !others(args, &REPLAY_KEYS).is_empty() => {
+            let stray = others(args, &REPLAY_KEYS).join(", ");
+            Ok((400, format!("`replay_autorun_to_step` takes {} - not {stray}", REPLAY_KEYS.map(|k| format!("`{k}`")).join(", "))))
+        }
         Ok(false) => {
             let mut body = args.clone();
             if let Some(o) = body.as_object_mut() {

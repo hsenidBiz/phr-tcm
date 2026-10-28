@@ -65,12 +65,14 @@ pub async fn trip_to_module<D: Driver>(
     from: nav::TripFrom,
     timing: &Timing,
     who: &str,
+    account: Option<&str>,
 ) -> ActionOutcome {
-    trip_to_module_noted(d, root, route, from, timing, who).await.0
+    trip_to_module_noted(d, root, route, from, timing, who, account).await.0
 }
 
 /// `trip_to_module`, with what the trip did on the way besides click the
 /// path - the menu preferences it set - as well (`nav::go_to_module_noted`).
+/// `account` is who the trip is made as (`nav::menu_differs`).
 pub async fn trip_to_module_noted<D: Driver>(
     d: &mut D,
     root: &Path,
@@ -78,6 +80,7 @@ pub async fn trip_to_module_noted<D: Driver>(
     from: nav::TripFrom,
     timing: &Timing,
     who: &str,
+    account: Option<&str>,
 ) -> (ActionOutcome, Vec<String>) {
     // The application's site for a supervised browser's capture, from the
     // route's own start page: a browser signed in by hand never ran the
@@ -85,7 +88,7 @@ pub async fn trip_to_module_noted<D: Driver>(
     if !route.home.start_url.trim().is_empty() {
         d.set_capture_site(Some(&route.home.start_url));
     }
-    let (mut out, notes) = nav::reach_module_noted(d, route, from, timing, who).await;
+    let (mut out, notes) = nav::reach_module_noted(d, route, from, timing, who, account).await;
     // A save the module's page sent as it opened fails the case here,
     // before step 1 acts on it.
     if let Some(sentence) = d.take_save_blocked() {
@@ -467,7 +470,7 @@ async fn run_case_in<D: Driver>(
             let out = match signin::prepare(root, organization, project, key) {
                 Err(why) => vec![ActionOutcome::failed(why)],
                 Ok((recipe, who)) => {
-                    let signed = signin::sign_in(d, root, &recipe, &who, timing).await;
+                    let signed = signin::sign_in_in(d, root, &recipe, &who, timing, &lease.browser_words()).await;
                     let mut all = signed.steps.clone();
                     all.push(as_action_outcome(&signed));
                     all
@@ -491,7 +494,7 @@ async fn run_case_in<D: Driver>(
             // the browser comes as it was left.
             let from = if signed_in == Some(true) { nav::TripFrom::SignIn } else { nav::TripFrom::Elsewhere };
             let reaching = Instant::now();
-            let out = trip_to_module(d, root, r, from, timing, &who(script.case_id)).await;
+            let out = trip_to_module(d, root, r, from, timing, &who(script.case_id), account).await;
             area_took = ms(reaching.elapsed());
             if save_guard::is_blocked(&out.detail) {
                 skip = Some(AFTER_FAILED_STEP);

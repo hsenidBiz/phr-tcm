@@ -346,7 +346,7 @@ async fn a_no_save_case_still_sets_its_preferences() {
 async fn the_run_report_and_the_replay_answer_say_what_was_changed() {
     let (mut d, _app) = app(true);
     let route = Route::new(&recipe(), leave(json!({})));
-    let out = v2_lib::autorun::nav::reach_module(&mut d, &route, TripFrom::SignIn, &quick(), "test").await;
+    let out = v2_lib::autorun::nav::reach_module(&mut d, &route, TripFrom::SignIn, &quick(), "test", None).await;
     assert!(out.ok, "{out:?}");
     assert_eq!(out.detail, format!("Go to Leave ({GROUP} turned off)"));
 

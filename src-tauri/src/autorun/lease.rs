@@ -77,6 +77,21 @@ impl Holder {
         }
     }
 
+    /// The holder's browser as a log line names it: the assistant's browser,
+    /// the main Auto Run browser, or the run that owns it. Never an id or a
+    /// pid.
+    pub fn browser_words(&self) -> String {
+        match self {
+            Holder::Browser { slot } => match crate::autorun::slots::SlotNo::from_number(*slot) {
+                Some(n) => crate::commands::autorun_slots::whose(n),
+                None => "an Auto Run browser".to_string(),
+            },
+            Holder::Case { .. } => "an unattended run's browser".to_string(),
+            Holder::Template => "an API template run's browser".to_string(),
+            Holder::Setup => "Auto Run setup's browser".to_string(),
+        }
+    }
+
     /// Whether this holder lets its account go on its own. The supervised
     /// browser and Auto Run setup hold theirs until a person closes them.
     fn ends_on_its_own(&self) -> bool {
@@ -342,6 +357,11 @@ impl Held {
     /// never waited for, and it holds its own as that slot's.
     pub fn supervised_in(slot: crate::autorun::slots::SlotNo) -> Self {
         Held::new(Holder::Browser { slot: slot.0 }, Duration::ZERO)
+    }
+
+    /// This browser as a log line names it (`Holder::browser_words`).
+    pub fn browser_words(&self) -> String {
+        self.holder.browser_words()
     }
 
     /// Auto Run setup's (a module-path check, Try or recording, or the

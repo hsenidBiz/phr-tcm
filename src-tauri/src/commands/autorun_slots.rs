@@ -796,7 +796,7 @@ pub async fn auto_run_release_agent(slot: u8) -> Result<String, String> {
 
 /// Who a release or stop is logged for: the assistant's label when slot `n`
 /// is bound to one, else the slot. Never an id or a pid.
-fn whose(n: SlotNo) -> String {
+pub(crate) fn whose(n: SlotNo) -> String {
     match bound(n).and_then(|key| agents::info(&key)) {
         Some(info) => format!("{}'s browser", info.label),
         None if n.is_main() => "the main Auto Run browser".to_string(),

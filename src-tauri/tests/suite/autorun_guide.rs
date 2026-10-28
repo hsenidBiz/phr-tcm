@@ -2362,6 +2362,21 @@ fn the_guide_says_no_action_runs_page_script_waits_or_retries() {
     assert!(!flat.contains('\u{2014}') && !flat.contains('\u{2013}'));
 }
 
+/// A discovery fills a missing wait timeout and lowers a huge one, but the
+/// guide says a saved script still needs it.
+#[test]
+fn the_guide_says_discovery_fills_a_wait_timeout_but_a_save_still_needs_it() {
+    let flat = autorun_guide().split_whitespace().collect::<Vec<_>>().join(" ");
+    for said in [
+        "A discovery or a try fills a `wait_for` that has no `timeout_ms` with 10 seconds and says so in its answer, and lowers a wait above 120 seconds to 120.",
+        "a saved script still needs a `timeout_ms` on every `wait_for`, and the save is rejected without it.",
+        "ends the call with \"did not answer\"",
+    ] {
+        assert!(flat.contains(said), "the guide never says {said:?}");
+    }
+    assert!(!flat.contains('\u{2014}') && !flat.contains('\u{2013}'));
+}
+
 #[test]
 fn the_repair_section_says_a_repair_cannot_let_the_page_decide() {
     let g = autorun_guide();
@@ -2608,6 +2623,7 @@ fn the_guide_says_each_assistant_has_its_own_browser() {
         "When your session ends, or after 30 minutes without a call, a browser of your own is released; the main one is left open for the person.",
         "give each subagent you start a name of its own (for example writer-1, writer-2) and tell it to pass it as `agent` on every Auto Run and API template call; each name gets its own browser.",
         "A subagent without a name shares your browser.",
+        "Tell each subagent to write its report to a file of its own (<name>-report.md, beside its output) before it hands back. If a hand-back fails, read that file instead.",
         "A client that serves several chats through one connection (Claude desktop) is one assistant to the app: give each chat its own `agent` name too.",
     ] {
         assert!(section.contains(said), "the section never says {said:?}: {section}");

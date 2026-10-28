@@ -3878,6 +3878,66 @@ fn every_auto_run_and_template_tool_takes_an_agent() {
     assert!(!said.contains('\u{2014}') && !said.contains('\u{2013}'), "{said}");
 }
 
+/// A tool that reaches a route which uses an Auto Run browser (the routes
+/// `commands::autorun_slots::need_of` gives a slot) is one the assistant can
+/// name itself on. Each tool is called with a few argument shapes through a
+/// recording bridge, and every route it reaches is asked of `need_of`, so a
+/// new tool on a browser route that is left out of `AUTORUN_TOOLS` or
+/// `API_TEMPLATE_TOOLS` fails here instead of leaving two writers sharing a
+/// browser.
+#[test]
+fn every_tool_routed_through_a_browser_slot_takes_an_agent() {
+    use v2_lib::ai_tools::{API_TEMPLATE_TOOLS, AUTORUN_TOOLS};
+    use v2_lib::commands::autorun_slots::need_of;
+    let shapes = [
+        serde_json::json!({}),
+        serde_json::json!({ "case_id": 1, "step": 2 }),
+        serde_json::json!({ "selector": "#a" }),
+        serde_json::json!({ "action": { "kind": "reload" } }),
+        serde_json::json!({ "case_id": 1, "action": { "kind": "reload" } }),
+        serde_json::json!({ "name": "a" }),
+        serde_json::json!({ "release": true }),
+        serde_json::json!({ "account": "admin" }),
+    ];
+    let mut on_a_slot = std::collections::BTreeSet::new();
+    for name in tools_by_name("{}").keys() {
+        for args in &shapes {
+            let (_, reached) = call_recorded(name, args.clone());
+            if reached.iter().any(|(method, path, _)| need_of(method, path).is_some()) {
+                on_a_slot.insert(name.clone());
+            }
+        }
+    }
+    assert!(on_a_slot.len() >= 8, "too few tools reached a browser route to trust the check: {on_a_slot:?}");
+    for name in &on_a_slot {
+        assert!(
+            AUTORUN_TOOLS.contains(&name.as_str()) || API_TEMPLATE_TOOLS.contains(&name.as_str()),
+            "{name} reaches a browser route but does not take an agent"
+        );
+    }
+    for name in ["end_autorun_discovery", "try_autorun_action", "replay_autorun_to_step", "reset_autorun_browser"] {
+        assert!(on_a_slot.contains(name), "{name} should reach a browser route: {on_a_slot:?}");
+    }
+}
+
+/// `replay_autorun_to_step` reads `case_id`, `step`, `page` and `stop`; any
+/// other argument (a `step_index`) is refused by name before the app, so a
+/// replay never runs a step nobody asked for.
+#[test]
+fn replay_autorun_to_step_refuses_an_argument_it_does_not_read() {
+    refused_before_the_app("replay_autorun_to_step", serde_json::json!({ "case_id": 1, "step_index": 2 }), "step_index");
+    let (v, _) = call_recorded("replay_autorun_to_step", serde_json::json!({ "case_id": 1, "step_index": 2 }));
+    let text = v["result"]["content"][0]["text"].as_str().unwrap();
+    for named in ["`case_id`", "`step`", "`page`", "`stop`"] {
+        assert!(text.contains(named), "{text}");
+    }
+    // The arguments it reads still go through.
+    assert_eq!(
+        reached("replay_autorun_to_step", serde_json::json!({ "case_id": 1, "step": 2, "page": false })).1,
+        "/autorun-replay"
+    );
+}
+
 /// A tool that carries a body (`try_autorun_action`) sends it to the app
 /// without `agent`: the name travels as the header `x-tcm-agent-name`.
 #[test]

@@ -4519,6 +4519,37 @@ fn tried_addresses(action: &crate::browser::actions::Action) -> Vec<&str> {
         .collect()
 }
 
+/// One action of a try or a discovery, read from the assistant's JSON. A
+/// `wait_for` with no `timeout_ms` gets the discovery's own wait, and a wait
+/// above the ceiling is lowered (`action_help`); `notes` say which. What is
+/// not an action is refused with the field it expected and an example. A
+/// saved script is read elsewhere and never gets either.
+fn tried_action_from(mut raw: serde_json::Value) -> Result<(crate::browser::actions::Action, Vec<String>), String> {
+    let default_ms = u32::try_from(crate::browser::timing::Timing::supervised().expect_ms).unwrap_or(u32::MAX);
+    let notes = crate::autorun::action_help::prepare_waits(&mut raw, default_ms);
+    match serde_json::from_value::<crate::browser::actions::Action>(raw.clone()) {
+        Ok(action) => Ok((action, notes)),
+        Err(e) => Err(crate::autorun::action_help::refusal_for(&raw, &e.to_string())),
+    }
+}
+
+/// `answer`, with what was done to the action's waits said in it: a `waits`
+/// field of a JSON answer, else a line before the text.
+fn with_wait_notes(answer: (u16, String), notes: &[String]) -> (u16, String) {
+    if notes.is_empty() {
+        return answer;
+    }
+    let (status, text) = answer;
+    let said = notes.join("; ");
+    match serde_json::from_str::<serde_json::Value>(&text) {
+        Ok(mut v @ serde_json::Value::Object(_)) => {
+            v["waits"] = serde_json::json!(said);
+            (status, v.to_string())
+        }
+        _ => (status, format!("Waits: {said}.\n{text}")),
+    }
+}
+
 /// Run ONE action against the open page, so an assistant can find out
 /// whether a repair works before it writes the repair down.
 async fn autorun_try(
@@ -4534,14 +4565,9 @@ async fn autorun_try(
     if let Some(r) = crate::autorun::forbidden_fixes::forbidden_in(&raw) {
         return (400, r);
     }
-    let action: crate::browser::actions::Action = match serde_json::from_value(raw) {
-        Ok(a) => a,
-        Err(e) => {
-            return (
-                400,
-                format!("that is not an action: {e} - call get_guide (topic autorun) for the vocabulary."),
-            )
-        }
+    let (action, wait_notes) = match tried_action_from(raw) {
+        Ok(read) => read,
+        Err(refused) => return (400, refused),
     };
     if let Err(refused) = refuse_as_a_tried_action(&action) {
         return refused;
@@ -4588,20 +4614,27 @@ async fn autorun_try(
     // An explore session files nothing (`files_finds` is false), and notes the
     // saves the try sent, as its actions do.
     let explore_session = session.discovery.as_ref().and_then(|s| s.explore_session()).map(str::to_string);
-    let answer = try_in_session(
-        &mut session.cdp,
-        &mut session.tabs_case,
-        &mut session.account,
-        &mut session.lease,
-        &root,
-        &ctx.org,
-        &ctx.project,
-        case_id,
-        discovery_area.as_deref(),
-        explore_session.as_deref(),
-        &action,
-    )
-    .await;
+    // An action that never answers ends inside `try_action`, as a failed
+    // action; the call as a whole is bounded by `CALL_BUDGET_MS`.
+    let answer = crate::autorun::action_help::CALL_STARTED
+        .scope(
+            std::time::Instant::now(),
+            try_in_session(
+                &mut session.cdp,
+                &mut session.tabs_case,
+                &mut session.account,
+                &mut session.lease,
+                &root,
+                &ctx.org,
+                &ctx.project,
+                case_id,
+                discovery_area.as_deref(),
+                explore_session.as_deref(),
+                &action,
+            ),
+        )
+        .await;
+    let answer = with_wait_notes(answer, &wait_notes);
     let answer = let_go_if_silent(&mut slot, answer).await;
     crate::commands::autorun::publish_discovery_in(n, &slot);
     *seen = Some(crate::commands::autorun::overrides_of(&slot));
@@ -5062,6 +5095,7 @@ pub async fn discover_start_in<B: DiscoveryBrowser>(
                 Ok(out) => Ok(out.detail),
             }
         };
+        let signed_at = std::time::Instant::now();
         match signed {
             Err(why) => why,
             Ok(detail) => {
@@ -5133,6 +5167,19 @@ pub async fn discover_start_in<B: DiscoveryBrowser>(
                     if is_mapping || must_not_save {
                         crate::commands::autorun::claim_guard(p.guard_owner, crate::commands::autorun::GuardOwner::Discovery);
                     }
+                    // Landed: at the area when it names a saved one, else home.
+                    let named_area = p.discovery.as_ref().and_then(|s| s.area.clone());
+                    let landing = land_at_area(
+                        p.driver,
+                        root,
+                        organization,
+                        project,
+                        key,
+                        named_area.as_deref(),
+                        signed_at,
+                        timing,
+                    )
+                    .await;
                     // The landing page is filed, but does not mark the area
                     // explored: nothing of the area itself has been seen yet.
                     let at =
@@ -5149,6 +5196,20 @@ pub async fn discover_start_in<B: DiscoveryBrowser>(
                     });
                     if status != 200 {
                         answer["page_unavailable"] = serde_json::json!(page);
+                    }
+                    if let Some(at_area) = landing.at_area {
+                        answer["at_area"] = serde_json::json!(at_area);
+                        if at_area {
+                            if let Some(name) = named_area.as_deref() {
+                                answer["detail"] = serde_json::json!(format!("{detail}, then to {name}"));
+                            }
+                        }
+                    }
+                    if let Some(walk) = &landing.walk {
+                        answer["area_walk"] = serde_json::json!(walk);
+                    }
+                    if !landing.notes.is_empty() {
+                        answer["area_notes"] = serde_json::json!(landing.notes);
                     }
                     if must_not_save && !is_mapping {
                         answer["no_save"] = serde_json::json!(true);
@@ -5180,6 +5241,88 @@ pub async fn discover_start_in<B: DiscoveryBrowser>(
     }
     crate::applog::info(format!("Auto Run discovery as {key} did not start; its browser is closed"));
     (409, failed)
+}
+
+/// Said in a discovery start's answer (`area_walk`) when `area` is no saved
+/// area: the discovery starts at home and files what it sees under that name.
+pub fn no_saved_area_to_start_at(area: &str) -> String {
+    format!("no saved area is called {area}; the discovery starts at home and files what it sees under that name")
+}
+
+/// Where a discovery start landed and what it says about the area.
+#[derive(Default)]
+struct AreaLanding {
+    /// `Some` when an area was named: whether the browser now stands at it.
+    at_area: Option<bool>,
+    /// Why it does not, when an area was named.
+    walk: Option<String>,
+    /// What the walk did on the way besides clicking the path.
+    notes: Vec<String>,
+}
+
+/// After a discovery's sign-in: walk to the saved area `area` as a run
+/// does (`nav::reach_module_noted`, from the sign-in), and close the
+/// project's known pop-ups - waiting a moment for one to come up - so the
+/// first action is never covered by a cookie banner. A walk that fails
+/// leaves the browser where it stopped and the discovery going; an area that
+/// is not saved leaves it at home. Never closes the browser.
+async fn land_at_area<D: crate::browser::cdp::Driver>(
+    d: &mut D,
+    root: &std::path::Path,
+    organization: &str,
+    project: &str,
+    account: &str,
+    area: Option<&str>,
+    signed_at: std::time::Instant,
+    timing: &crate::browser::timing::Timing,
+) -> AreaLanding {
+    /// How long, from when the sign-in finished, a banner is waited for.
+    const BANNER_WAIT_MS: u64 = 3_000;
+    let recipe = crate::autorun::recipe::load_effective_recipe_if_any(root, organization, project).ok().flatten();
+    let mut landing = AreaLanding::default();
+    let route = area.map(str::trim).filter(|a| !a.is_empty()).map(|a| {
+        match crate::autorun::nav::load_nav(root, organization, project) {
+            Err(why) => Err(why),
+            Ok(nav) if crate::autorun::nav::find_area(&nav, a).is_some() => {
+                crate::autorun::runner::discovery_area_route(root, organization, project, Some(a))
+            }
+            Ok(_) => Err(no_saved_area_to_start_at(a)),
+        }
+    });
+    match route {
+        None => {}
+        Some(Err(why)) => {
+            landing.at_area = Some(false);
+            landing.walk = Some(why);
+        }
+        Some(Ok(route)) => {
+            // A banner up over the menu would take the first click.
+            if let Some(recipe) = &recipe {
+                crate::autorun::popups::close_shown_within(d, recipe, 0, timing).await;
+            }
+            let (out, notes) = crate::autorun::nav::reach_module_noted(
+                d,
+                &route,
+                crate::autorun::nav::TripFrom::SignIn,
+                timing,
+                "Auto Run discovery",
+                Some(account),
+            )
+            .await;
+            landing.at_area = Some(out.ok);
+            landing.notes = notes;
+            if !out.ok {
+                crate::applog::info(format!("Auto Run discovery: the walk to its area did not arrive ({})", out.detail));
+                landing.walk = Some(out.detail);
+            }
+        }
+    }
+    // The walk's own time counts toward the wait: a banner not up by then is not coming.
+    let remaining = BANNER_WAIT_MS.saturating_sub(signed_at.elapsed().as_millis() as u64);
+    if let Some(recipe) = &recipe {
+        crate::autorun::popups::close_shown_within(d, recipe, remaining, timing).await;
+    }
+    landing
 }
 
 /// A discovery start's `detail` when the browser it took over was signed in
@@ -5453,7 +5596,12 @@ pub async fn discover_action_in<B: DiscoveryBrowser>(
 ) -> (u16, String) {
     let mut heard = Heard::default();
     let was_guarding = guarding_saves(slot);
-    let answer = discover_action_heard(slot, root, organization, project, action, draft, area, &mut heard, 0, true).await;
+    let answer = crate::autorun::action_help::CALL_STARTED
+        .scope(
+            std::time::Instant::now(),
+            discover_action_heard(slot, root, organization, project, action, draft, area, &mut heard, 0, true),
+        )
+        .await;
     heard.remember(root, organization, project);
     heard.forget(slot);
     end_call_guard(slot, root, was_guarding).await;
@@ -6015,20 +6163,24 @@ pub async fn discover_actions_paged<B: DiscoveryBrowser>(
 ) -> (u16, String) {
     let mut heard = Heard::default();
     let was_guarding = guarding_saves(slot);
-    let answer = discover_actions_heard(
-        slot,
-        root,
-        organization,
-        project,
-        actions,
-        draft,
-        area,
-        stop_on_failure,
-        stop,
-        page,
-        &mut heard,
-    )
-    .await;
+    let answer = crate::autorun::action_help::CALL_STARTED
+        .scope(
+            std::time::Instant::now(),
+            discover_actions_heard(
+                slot,
+                root,
+                organization,
+                project,
+                actions,
+                draft,
+                area,
+                stop_on_failure,
+                stop,
+                page,
+                &mut heard,
+            ),
+        )
+        .await;
     heard.remember(root, organization, project);
     heard.forget(slot);
     end_call_guard(slot, root, was_guarding).await;
@@ -6087,10 +6239,36 @@ async fn discover_actions_heard<B: DiscoveryBrowser>(
                 break;
             }
         }
+        // The call has a time of its own (`CALL_BUDGET_MS`); when it has run
+        // out, nothing more is started and the page is not read.
+        if crate::autorun::action_help::action_budget(1, crate::autorun::action_help::call_elapsed_ms()).is_none() {
+            let secs = crate::autorun::action_help::CALL_BUDGET_MS / 1000;
+            rows.push(Row::Said(format!("{}. failed: {}", i + 1, crate::autorun::action_help::no_answer(i + 1, secs))));
+            let mut lines = batch_rows(actions, &rows, heard);
+            if i + 1 < actions.len() {
+                lines.push(not_run_line(actions.len() - i - 1));
+            }
+            return (504, lines.join("
+"));
+        }
         let (status, body) =
             discover_action_heard(slot, root, organization, project, action, draft_for(action, draft), None, heard, i, false)
                 .await;
         ran = i + 1;
+        if status == 200 && body.contains(crate::autorun::action_help::DID_NOT_ANSWER) {
+            // An action that did not answer: the browser may not answer the
+            // next either, so the batch stops here and does not read the page.
+            let v: serde_json::Value = serde_json::from_str(&body).unwrap_or(serde_json::Value::Null);
+            if v["detail"].as_str().is_some_and(|d| d.starts_with(crate::autorun::action_help::DID_NOT_ANSWER)) {
+                rows.push(Row::Ran(i, v));
+                let mut lines = batch_rows(actions, &rows, heard);
+                if ran < actions.len() {
+                    lines.push(not_run_line(actions.len() - ran));
+                }
+                return (504, lines.join("
+"));
+            }
+        }
         if status != 200 {
             // The browser failed or the discovery is gone: nothing after
             // it can run.
@@ -7680,7 +7858,7 @@ async fn save_discovered_area<B: DiscoveryBrowser>(
             return (409, format!("the area's saved path could not be tried: {}", went.detail));
         }
         let route = nav::Route::new(&recipe, old.clone());
-        let tried = nav::reach_module(d, &route, nav::TripFrom::SignIn, timing, "Auto Run area repair").await;
+        let tried = nav::reach_module(d, &route, nav::TripFrom::SignIn, timing, "Auto Run area repair", account.as_deref()).await;
         if tried.ok {
             return (409, area_repair::NOTHING_TO_REPAIR.to_string());
         }
@@ -8130,14 +8308,9 @@ async fn autorun_discover_action(
     if let Some(r) = crate::autorun::forbidden_fixes::forbidden_in(&raw) {
         return (400, r);
     }
-    let action: crate::browser::actions::Action = match serde_json::from_value(raw) {
-        Ok(a) => a,
-        Err(e) => {
-            return (
-                400,
-                format!("that is not an action: {e} - call get_guide (topic autorun) for the vocabulary."),
-            )
-        }
+    let (action, wait_notes) = match tried_action_from(raw) {
+        Ok(read) => read,
+        Err(refused) => return (400, refused),
     };
     if let Err(refused) = refuse_as_a_tried_action(&action) {
         return refused;
@@ -8177,6 +8350,7 @@ async fn autorun_discover_action(
     let mut slot = crate::commands::autorun::session_slot(n).lock().await;
     mark_discovery_for(&mut slot, asked);
     let answer = discover_action_in(&mut slot, &root, &ctx.org, &ctx.project, &action, draft.as_ref(), area.as_deref()).await;
+    let answer = with_wait_notes(answer, &wait_notes);
     let answer = let_go_if_silent(&mut slot, answer).await;
     crate::commands::autorun::publish_discovery_in(n, &slot);
     *seen = Some(crate::commands::autorun::overrides_of(&slot));
@@ -8207,18 +8381,17 @@ async fn autorun_discover_actions(
         return refused;
     }
     let mut actions = Vec::with_capacity(raw.len());
+    let mut wait_notes = Vec::new();
     for (i, one) in raw.iter().enumerate() {
         if let Some(r) = crate::autorun::forbidden_fixes::forbidden_in(one) {
             return (400, format!("action {}: {r}", i + 1));
         }
-        match serde_json::from_value::<crate::browser::actions::Action>(one.clone()) {
-            Ok(a) => actions.push(a),
-            Err(e) => {
-                return (
-                    400,
-                    format!("action {} is not an action: {e} - call get_guide (topic autorun) for the vocabulary.", i + 1),
-                )
+        match tried_action_from(one.clone()) {
+            Ok((a, notes)) => {
+                wait_notes.extend(notes.into_iter().map(|n| format!("action {}: {n}", i + 1)));
+                actions.push(a);
             }
+            Err(refused) => return (400, format!("action {}: {refused}", i + 1)),
         }
     }
     for (i, action) in actions.iter().enumerate() {
@@ -8300,6 +8473,7 @@ async fn autorun_discover_actions(
         page_wanted(body),
     )
     .await;
+    let answer = with_wait_notes(answer, &wait_notes);
     crate::commands::autorun::publish_discovery_in(n, &slot);
     *seen = Some(crate::commands::autorun::overrides_of(&slot));
     answer
@@ -9582,23 +9756,34 @@ async fn try_action<D: crate::browser::cdp::Driver>(
     // A discovery's `noted` carries its last action that changed the page
     // to the next action, as a run's steps carry it.
     let mut run = InRun { areas: Some(&areas), saves_only_counted, refusals_fail: true, noted, ..Default::default() };
-    let outcomes = match crate::autorun::runner::run_step_in_run(
-        d,
-        root,
-        organization,
-        project,
-        &step,
-        &crate::browser::timing::Timing::supervised(),
-        account,
-        lease,
-        None,
-        area,
-        &mut run,
-    )
-    .await
-    {
-        Ok(v) => v,
-        Err(why) => return Err((500, why)),
+    // An action that never answers is a failed action, so everything that
+    // follows (what its writes and finds filed) still runs. It is given its
+    // own wait and a margin, and no more than the call has left.
+    let timing = crate::browser::timing::Timing::supervised();
+    let own = crate::autorun::action_help::wait_budget_ms(action, timing.nav_ms);
+    let budget = crate::autorun::action_help::action_budget(own, crate::autorun::action_help::call_elapsed_ms());
+    // With no time left the action is not started at all.
+    let mut timed_out = false;
+    let outcomes = match crate::autorun::action_help::time_to_run(budget) {
+        Err(spent) => {
+            timed_out = true;
+            vec![crate::browser::actions::ActionOutcome::failed(spent)]
+        }
+        Ok(ms) => {
+            let ran = crate::autorun::action_help::within_budget(
+                ms,
+                crate::autorun::runner::run_step_in_run(d, root, organization, project, &step, &timing, account, lease, None, area, &mut run),
+            )
+            .await;
+            match ran {
+                Ok(Ok(v)) => v,
+                Ok(Err(why)) => return Err((500, why)),
+                Err(seconds) => {
+                    timed_out = true;
+                    vec![crate::browser::actions::ActionOutcome::failed(crate::autorun::action_help::did_not_answer(seconds))]
+                }
+            }
+        }
     };
     // What a component's waits and reads found is filed though a later
     // action of it failed: each passed (`component_finds`).
@@ -9609,6 +9794,11 @@ async fn try_action<D: crate::browser::cdp::Driver>(
     // A `use_component` runs as its component's actions, one outcome each:
     // every one is answered, and the try as a whole is ok only when all are.
     let steps: Vec<(String, crate::browser::actions::ActionOutcome)> = match action {
+        // A timeout is one outcome for the whole component, labelled as the
+        // component, not as its first action.
+        crate::browser::actions::Action::UseComponent { .. } if timed_out => {
+            vec![(describe_action(action), outcomes[0].clone())]
+        }
         crate::browser::actions::Action::UseComponent { .. } => {
             let expanded = crate::autorun::components::expand_step(root, organization, project, std::slice::from_ref(action))
                 .map(|(x, _)| x.into_iter().map(|(a, _)| describe_action(&a)).collect::<Vec<_>>())

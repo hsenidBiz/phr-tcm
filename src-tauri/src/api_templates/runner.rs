@@ -41,7 +41,8 @@ use crate::autorun::lease;
 use crate::autorun::nav::path_of;
 use crate::autorun::recipe::{origin_of, SignInRecipe};
 use crate::autorun::sessions::forget_session;
-use crate::autorun::signin::{prepare, sign_in, SignInOutcome};
+use crate::autorun::lease::Holder;
+use crate::autorun::signin::{prepare, sign_in_in, SignInOutcome};
 use crate::browser::actions::{execute_in, Action, Policy};
 use crate::browser::cdp::{CdpError, Driver};
 use crate::browser::page::{call_value, call_value_within, document, eval_value, Handle};
@@ -1090,7 +1091,7 @@ async fn sign_in_once<D: Driver>(
     };
     let ctx = Ctx { root, req, timing, recipe, account, origin, reused: false, on_page: None, in_page: None };
 
-    let signed = sign_in(d, root, &ctx.recipe, &ctx.account, timing).await;
+    let signed = sign_in_in(d, root, &ctx.recipe, &ctx.account, timing, &Holder::Template.browser_words()).await;
     if !signed.ok {
         progress.fail(None, ctx.could_not_sign_in(&signed));
         return None;
@@ -1275,7 +1276,7 @@ async fn token<D: Driver>(d: &mut D, ctx: &Ctx<'_>, progress: &mut Progress, fir
         applog::info(format!("api template {}: the session had ended ({why}) - signing in again", ctx.id()));
         forget_session(ctx.root, &ctx.account.key);
         progress.at(SIGN_IN, None);
-        let again = sign_in(d, ctx.root, &ctx.recipe, &ctx.account, ctx.timing).await;
+        let again = sign_in_in(d, ctx.root, &ctx.recipe, &ctx.account, ctx.timing, &Holder::Template.browser_words()).await;
         if !again.ok {
             progress.fail(None, ctx.could_not_sign_in(&again));
             return None;

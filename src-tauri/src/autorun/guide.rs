@@ -362,6 +362,12 @@ saw. Prefer them to `check_text`, which looks once and cannot tell you
 where on the page the words were. Text is compared with runs of
 whitespace collapsed, and case matters.
 
+A discovery or a try fills a `wait_for` that has no `timeout_ms` with 10 seconds and says so in its
+answer, and lowers a wait above 120 seconds to 120. That is only for finding things out: a saved
+script still needs a `timeout_ms` on every `wait_for`, and the save is rejected without it. An action
+that has not answered once its wait and a margin have passed ends the call with "did not answer"
+rather than holding it.
+
 Never add a fixed pause. There is no action for one, on purpose.
 
 **Loading pages are waited for by the runner.** The project's sign-in
@@ -1668,6 +1674,12 @@ You open and drive a browser of your own to find what a script needs:
 - `start_autorun_discovery` opens the Auto Run browser and signs in as a
   saved account, named by its key. The app replays the recorded sign-in
   and types the password; you never see it. It answers the landing page.
+  Pass `area` with a saved area's name and the start walks to it the way a
+  run does (`at_area: true`) and closes the project's cookie banner if it
+  is up, so your first action is never covered. If the walk fails the
+  browser stays where it stopped, the discovery goes on, and the answer
+  says `at_area: false` with the reason in `area_walk`. An `area` that is
+  not saved starts at home and files what you see under that name.
   If the sign-in fails, report it and stop; never try again in a loop. It
   is refused while a run, a replay or the person's own browser holds the
   Auto Run browser. Pass `case_id` with the case you explore for: when
@@ -1972,7 +1984,9 @@ alone always uses the main one, as before.
 - Subagents: give each subagent you start a name of its own (for example
   writer-1, writer-2) and tell it to pass it as `agent` on every Auto Run and
   API template call; each name gets its own browser. A subagent without a name
-  shares your browser. A client that serves several chats through one
+  shares your browser. Tell each subagent to write its report to a file of its
+  own (<name>-report.md, beside its output) before it hands back. If a
+  hand-back fails, read that file instead. A client that serves several chats through one
   connection (Claude desktop) is one assistant to the app: give each chat its
   own `agent` name too.
 

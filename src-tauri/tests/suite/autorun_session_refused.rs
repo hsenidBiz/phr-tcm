@@ -18,7 +18,7 @@ use v2_lib::autorun::accounts::{save_accounts, session_path};
 use v2_lib::autorun::recipe::save_recipe;
 use v2_lib::autorun::runner::{run_step, session_refused_mid_case, AFTER_SESSION_REFUSED};
 use v2_lib::autorun::sessions::{load_fresh_session, now_ms, save_session};
-use v2_lib::autorun::signin::{session_complete, session_refused_again, sign_in, SESSION_REFUSED_JS};
+use v2_lib::autorun::signin::{session_complete, session_refused_again, session_refused_line, sign_in, SessionRefusal, SESSION_REFUSED_JS};
 use v2_lib::autorun::StepScript;
 use v2_lib::browser::actions::Action;
 use v2_lib::browser::cdp::{CdpError, Driver, Event};
@@ -242,4 +242,49 @@ fn the_tampered_check_needs_the_error_pages_shape() {
     assert!(SESSION_REFUSED_JS.contains("doc.title"));
     assert!(SESSION_REFUSED_JS.contains("contentDocument"));
     assert!(!SESSION_REFUSED_JS.contains("outerHTML"), "a page merely mentioning the module would count");
+}
+
+/// The log says which browser met the refusal, why in words, and how old the
+/// saved session was - never a cookie or an address - at both places a
+/// refused session is dropped: a restore at sign-in, and a page mid-case.
+#[tokio::test]
+async fn a_refused_session_is_logged_with_its_browser_its_kind_and_its_age() {
+    let _l = crate::serial::account_leases();
+    let _t = crate::serial::log_tail();
+    let line = session_refused_line("Assistant 2's browser", "admin", SessionRefusal::Tampered, Some(7));
+    assert_eq!(line, "the application refused the session for admin in Assistant 2's browser (the session was tampered with; the saved session was 7 min old)");
+    assert!(session_refused_line("x", "admin", SessionRefusal::EmptyBadRequest, None).contains("an empty Bad Request; no saved session"));
+
+    // At sign-in: a restored session refused, saved 5 minutes ago.
+    let dir = tempfile::tempdir().unwrap();
+    let s = SavedSession { saved_at_ms: now_ms() - 5 * 60_000, cookies: vec![cookie("sid", "OLD")], local_storage: vec![] };
+    save_session(dir.path(), "admin", &s).unwrap();
+    let mut d = App::new(true, true, false);
+    let out = v2_lib::autorun::signin::sign_in_in(&mut d, dir.path(), &recipe(), &account(), &quick(), "the main Auto Run browser").await;
+    assert!(out.ok, "{}", out.detail);
+    let logged: Vec<String> = v2_lib::applog::recent(400).into_iter().map(|l| l.message).collect();
+    let at_sign_in = logged
+        .iter()
+        // Matched by its age too: other tests log refusals for admin alongside.
+        .find(|m| m.contains("the main Auto Run browser") && m.contains("refused the session for admin") && m.contains("5 min old"))
+        .unwrap_or_else(|| panic!("no sign-in line: {logged:?}"));
+    assert!(at_sign_in.contains("the session was tampered with") && at_sign_in.contains("5 min old"), "{at_sign_in}");
+    assert!(!at_sign_in.contains("OLD") && !at_sign_in.contains("http"), "{at_sign_in}");
+
+    // Mid-case: the page refuses; the browser is the step's lease's own.
+    let dir = tempfile::tempdir().unwrap();
+    project(dir.path());
+    let s = SavedSession { saved_at_ms: now_ms() - 3 * 60_000, cookies: vec![cookie("sid", "OLD")], local_storage: vec![] };
+    save_session(dir.path(), "admin", &s).unwrap();
+    let mut d = App::new(false, true, false);
+    let mut acc = Some("admin".to_string());
+    let marker: Action = serde_json::from_value(json!({ "kind": "expect_visible", "selector": { "css": "#marker" } })).unwrap();
+    let out = run_step(&mut d, dir.path(), "Acme", "Web", &step(vec![marker]), &quick(), &mut acc).await.unwrap();
+    assert!(!out[0].ok);
+    let logged: Vec<String> = v2_lib::applog::recent(400).into_iter().map(|l| l.message).collect();
+    let mid = logged
+        .iter()
+        .find(|m| m.starts_with("Auto Run, step 1:") && m.contains("refused the session for admin") && m.contains("3 min old"))
+        .unwrap_or_else(|| panic!("no mid-case line: {logged:?}"));
+    assert!(mid.contains("in the main Auto Run browser (the session was tampered with; the saved session was 3 min old)"), "{mid}");
 }

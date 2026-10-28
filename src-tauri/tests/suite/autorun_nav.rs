@@ -373,6 +373,38 @@ fn a_failed_trip_reads_as_the_designs_sentence_in_a_run_and_its_short_form_in_th
     assert!(dotted.for_run("Leave").ends_with("it moved."), "one full stop, not two");
 }
 
+/// A click that never found its target, for an account whose menu is not
+/// the one the area was recorded with, says so; one that found several
+/// elements (the area is what to repair), one that found it and could not
+/// use it, and a trip with no account known, do not.
+#[test]
+fn a_click_that_never_found_its_target_says_the_accounts_menu_differs() {
+    use v2_lib::autorun::nav::{menu_differs, AREA_PATH_NOT_EXACT};
+    assert_eq!(
+        menu_differs("gabriel", "button \"Self Service\""),
+        "the menu as gabriel has no button \"Self Service\" - this account's menu differs from the one the area was recorded with; script this area as an account whose menu has it"
+    );
+    let locator = "link \"Apply Leave\"";
+    let failed = |reason: &str| PathFailure {
+        at: Where::Click { n: 2, locator: locator.into() },
+        reason: reason.into(),
+        harness: false,
+    };
+    let never_found = failed("waited 3000ms: link \"Apply Leave\" not found");
+    let said = never_found.for_run_as(" Leave ", Some("gabriel"));
+    assert!(said.ends_with(&format!("{}.", menu_differs("gabriel", locator))), "{said}");
+    assert!(said.starts_with("Could not reach module \"Leave\": click 2, link \"Apply Leave\" - waited 3000ms"), "{said}");
+    assert_eq!(never_found.for_run("Leave"), never_found.for_run_as("Leave", None), "no account, no sentence");
+    assert!(!never_found.for_run("Leave").contains("menu"), "{}", never_found.for_run("Leave"));
+
+    let ambiguous = failed(&format!("waited 3000ms: link \"Apply Leave\" matched 2{}.{AREA_PATH_NOT_EXACT}", v2_lib::browser::input::MATCHED_MANY_TAIL));
+    assert!(!ambiguous.for_run_as("Leave", Some("gabriel")).contains("menu as"), "{}", ambiguous.for_run_as("Leave", Some("gabriel")));
+    let not_visible = failed("waited 3000ms: link \"Apply Leave\" is not visible");
+    assert!(!not_visible.for_run_as("Leave", Some("gabriel")).contains("menu as"));
+    let at_home = PathFailure { at: Where::Home, reason: "the home page did not load".into(), harness: false };
+    assert_eq!(at_home.for_run_as("Leave", Some("gabriel")), at_home.for_run("Leave"));
+}
+
 /// Review m2: right after a sign-in a redirect may still be in flight, and
 /// the page refuses to say where it is. That is "not home yet", not a
 /// failed trip.
@@ -786,6 +818,12 @@ async fn a_path_click_that_matches_two_elements_says_to_repair_the_area() {
     let route = Route::new(&login_home_recipe("/hr/security/login"), path);
     let failure = go_to_module(&mut d, &route, TripFrom::SignIn, &common::quick()).await.unwrap_err();
     assert!(!failure.reason.contains(AREA_PATH_NOT_EXACT), "{}", failure.reason);
+
+    // A real never-found click, with the account known: the run says the
+    // menu differs.
+    let said = failure.for_run_as("Leave", Some("gabriel"));
+    assert!(said.ends_with(&format!("{}.", v2_lib::autorun::nav::menu_differs("gabriel", "link \"Leave\""))), "{said}");
+    assert!(!failure.for_run("Leave").contains("menu as"), "{}", failure.for_run("Leave"));
 }
 
 /// Which ids may scope a click. A scope must outlast the next render: an

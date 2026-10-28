@@ -1950,6 +1950,37 @@ fn the_gen_tests_command_scripts_a_batch_within_the_bounds() {
     assert!(!body.contains('\u{2014}') && !body.contains('\u{2013}'), "no em or en dashes");
 }
 
+/// Subagents leave their report in a file, and a several-writer run splits cases by what each
+/// account can do.
+#[test]
+fn subagent_texts_ask_for_a_report_file_and_gen_tests_splits_cases_between_writers() {
+    let flat = |stem: &str| {
+        let c = COMMANDS.iter().find(|c| c.stem == stem).unwrap_or_else(|| panic!("no {stem} command"));
+        c.body.join("\n").split_whitespace().collect::<Vec<_>>().join(" ")
+    };
+    let report_file = "Tell each subagent to write its report to a file of its own (<name>-report.md, beside its output) before it hands back. If a hand-back fails, read that file instead.";
+    let begin = flat("begin-test-case-writing");
+    assert!(begin.contains(report_file), "{begin}");
+    let gen = flat("gen-tests");
+    assert!(gen.contains(report_file), "{gen}");
+    for said in [
+        "Several writers",
+        "`get_accounts`",
+        "`db_query`",
+        "held back",
+        "account, roles, records",
+        "`writer-1`",
+        "passes its name as `agent`",
+        "read every report file (also when a hand-back failed) and summarise",
+    ] {
+        assert!(gen.contains(said), "/tcm:gen-tests never says {said:?}: {gen}");
+    }
+    assert!(!gen.contains('\u{2014}') && !gen.contains('\u{2013}'), "no em or en dashes");
+    // The writer role is at its size cap: the coordinator tells each writer
+    // its report file instead (step d above).
+    assert!(gen.contains("told its account, its cases and its report file"), "{gen}");
+}
+
 /// `RENAMED_COMMANDS` is empty since 2.3.0: the `script-pbi` stand-in for `gen-tests` is gone, so no
 /// install is offered the old name any more.
 #[test]

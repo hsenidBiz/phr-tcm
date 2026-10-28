@@ -1044,6 +1044,10 @@ async fn a_trip_that_fails_twice_is_reported_once_after_one_reload() {
     assert!(!module.ok);
     assert!(module.detail.starts_with("Could not reach module \"Leave\": click 2, link \"Apply Leave\" - "), "{}", module.detail);
     assert!(module.detail.ends_with(TRIED_TWICE), "{}", module.detail);
+    // The case's account is known, and the click never found its target:
+    // the account's menu is named, and the sentence ends before the second go's.
+    let menu = v2_lib::autorun::nav::menu_differs("admin", "link \"Apply Leave\"");
+    assert!(module.detail.ends_with(&format!("{menu}.{TRIED_TWICE}")), "{}", module.detail);
     assert_eq!(TRIED_TWICE, " Tried twice, reloading the start page between.");
     assert_eq!(rec.proposed, "Blocked");
     assert_eq!(rec.reason, module.detail);
