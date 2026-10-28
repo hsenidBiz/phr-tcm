@@ -3,10 +3,11 @@
 // End its discovery, Release its browser. It draws nothing until an assistant
 // is doing something: while every connected assistant is idle (or none is
 // connected) it is gone, and while it shows, an idle assistant keeps its row
-// (dozing) so its browser can still be released. Each row has a small
-// animated figure on its left. Rust sends the whole list again whenever any of it changes
-// (`autorun-agents-changed`, at most once a second), so the rows are replaced
-// outright rather than patched.
+// (dozing) so its browser can still be released. The assistants sit side by
+// side as cubicles in a grid: each cell is its animated scene (desk number,
+// speech bubble) with the full text and buttons under it. Rust sends the whole
+// list again whenever any of it changes (`autorun-agents-changed`, at most
+// once a second), so the cubicles are replaced outright rather than patched.
 
 import { useEffect, useId, useRef, useState } from "react";
 import { commands, events, type AgentActivity, type AgentView } from "../../bindings";
@@ -16,31 +17,31 @@ import { IconRelease, IconStop } from "../../lib/actionIcons";
 import { logUi } from "../../lib/uiLog";
 import AssistantScene from "./AssistantScene";
 
-/** What a row says its assistant is doing. */
+/** What a cubicle says its assistant is doing. */
 function activityText(a: AgentActivity, idleMinutes: number): string {
   switch (a.kind) {
     case "idle":
-      return idleMinutes > 0 ? `idle for ${idleMinutes} min` : "idle";
+      return idleMinutes > 0 ? `Idle for ${idleMinutes} min` : "Idle";
     case "discovering":
-      return a.area ? `discovering ${a.area}` : "discovering";
+      return a.area ? `Discovering ${a.area}` : "Discovering";
     case "mapping":
-      return `mapping menus (${a.modules.join(", ")})`;
+      return `Mapping menus (${a.modules.join(", ")})`;
     case "exploring":
-      return "exploring";
+      return "Exploring";
     case "replaying":
       // Before the first step the count is 0 of 0, which is not worth saying.
       return a.step === 0 && a.of === 0
-        ? `replaying case ${a.case_id} (starting)`
-        : `replaying case ${a.case_id} (step ${a.step} of ${a.of})`;
+        ? `Replaying case ${a.case_id} (starting)`
+        : `Replaying case ${a.case_id} (step ${a.step} of ${a.of})`;
     case "working":
-      return "working";
+      return "Working";
   }
 }
 
 /** Which browser the assistant has, and who is signed in there. */
 function browserText(a: AgentView): string {
-  if (a.slot === null) return "no Auto Run browser";
-  let text = a.own_browser ? "its own browser" : "main Auto Run browser";
+  if (a.slot === null) return "No Auto Run browser";
+  let text = a.own_browser ? "Its own browser" : "Main Auto Run browser";
   if (a.browser) text += `, ${a.browser}`;
   if (a.account) text += `, signed in as ${a.account}`;
   return text;
@@ -149,90 +150,86 @@ export default function AssistantsCard() {
         </h3>
         <span className="text-xs text-muted">{workingCount} working</span>
       </div>
-      <ul className="divide-y divide-border">
+      <ul className="grid gap-4 [grid-template-columns:repeat(auto-fill,minmax(12rem,1fr))]">
         {agents.map((a) => {
           const slot = a.slot;
           const note = notes[a.label];
           const working = busy.has(a.label);
           return (
-            <li key={a.label} className="py-2 first:pt-0 last:pb-0">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <div className="flex min-w-0 items-center gap-3">
-                  <AssistantScene activity={a.activity} slot={a.slot} />
-                  <div className="min-w-0 space-y-0.5 text-xs">
-                    <p className="font-medium text-text">{a.client ? `${a.label} - ${a.client}` : a.label}</p>
-                    <p className="text-muted">{browserText(a)}</p>
-                    <p className="flex flex-wrap items-center gap-1.5 text-muted">
-                      <span>{activityText(a.activity, a.idle_minutes)}</span>
-                      {a.changed_for_testing && (
-                        <Badge className="bg-warning/15 text-warning">changed for testing</Badge>
-                      )}
-                      {a.saves_blocked && <Badge>saves blocked</Badge>}
-                    </p>
-                    {a.activity.kind === "replaying" && a.activity.of > 0 && (
-                      <div data-progress aria-hidden="true" className="h-1 w-40 rounded bg-border">
-                        <div
-                          className="h-full rounded bg-accent"
-                          style={{ width: `${Math.min(100, Math.round((a.activity.step / a.activity.of) * 100))}%` }}
-                        />
-                      </div>
-                    )}
+            <li key={a.label} className="min-w-0 space-y-2">
+              <AssistantScene activity={a.activity} slot={a.slot} label={a.label} />
+              <div className="min-w-0 space-y-0.5 text-xs">
+                <p className="font-medium text-text">{a.client ? `${a.label} - ${a.client}` : a.label}</p>
+                <p className="text-muted">{browserText(a)}</p>
+                <p className="flex flex-wrap items-center gap-1.5 text-muted">
+                  <span>{activityText(a.activity, a.idle_minutes)}</span>
+                  {a.changed_for_testing && (
+                    <Badge className="bg-warning/15 text-warning">changed for testing</Badge>
+                  )}
+                  {a.saves_blocked && <Badge>saves blocked</Badge>}
+                </p>
+                {a.activity.kind === "replaying" && a.activity.of > 0 && (
+                  <div data-progress aria-hidden="true" className="h-1 w-full rounded bg-border">
+                    <div
+                      className="h-full rounded bg-accent"
+                      style={{ width: `${Math.min(100, Math.round((a.activity.step / a.activity.of) * 100))}%` }}
+                    />
                   </div>
-                </div>
-                <div className="flex shrink-0 flex-wrap gap-2">
-                  {a.can_stop && slot !== null && (
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      aria-label={`Stop ${a.label}`}
-                      disabled={working}
-                      onClick={() =>
-                        void press(a.label, () => commands.autoRunStopAgent(slot), "stop", `Could not stop ${a.label}.`)
-                      }
-                    >
-                      <IconStop aria-hidden />
-                      Stop
-                    </Button>
-                  )}
-                  {isDiscovering(a.activity) && slot !== null && (
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      aria-label={`End discovery for ${a.label}`}
-                      disabled={working}
-                      onClick={() =>
-                        void press(
-                          a.label,
-                          () => commands.autoRunEndAgentDiscovery(slot),
-                          "end discovery",
-                          `Could not end ${a.label}'s discovery.`,
-                        )
-                      }
-                    >
-                      <IconStop aria-hidden />
-                      End discovery
-                    </Button>
-                  )}
-                  {slot !== null && (
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      aria-label={`Release ${a.label}'s browser`}
-                      disabled={working}
-                      onClick={() =>
-                        void press(
-                          a.label,
-                          () => commands.autoRunReleaseAgent(slot),
-                          "release",
-                          `Could not release ${a.label}'s browser.`,
-                        )
-                      }
-                    >
-                      <IconRelease aria-hidden />
-                      Release
-                    </Button>
-                  )}
-                </div>
+                )}
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {a.can_stop && slot !== null && (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    aria-label={`Stop ${a.label}`}
+                    disabled={working}
+                    onClick={() =>
+                      void press(a.label, () => commands.autoRunStopAgent(slot), "stop", `Could not stop ${a.label}.`)
+                    }
+                  >
+                    <IconStop aria-hidden />
+                    Stop
+                  </Button>
+                )}
+                {isDiscovering(a.activity) && slot !== null && (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    aria-label={`End discovery for ${a.label}`}
+                    disabled={working}
+                    onClick={() =>
+                      void press(
+                        a.label,
+                        () => commands.autoRunEndAgentDiscovery(slot),
+                        "end discovery",
+                        `Could not end ${a.label}'s discovery.`,
+                      )
+                    }
+                  >
+                    <IconStop aria-hidden />
+                    End discovery
+                  </Button>
+                )}
+                {slot !== null && (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    aria-label={`Release ${a.label}'s browser`}
+                    disabled={working}
+                    onClick={() =>
+                      void press(
+                        a.label,
+                        () => commands.autoRunReleaseAgent(slot),
+                        "release",
+                        `Could not release ${a.label}'s browser.`,
+                      )
+                    }
+                  >
+                    <IconRelease aria-hidden />
+                    Release
+                  </Button>
+                )}
               </div>
               {/* Always present, so a screen reader that watches it hears the
                   answer arrive; only its text changes. A failure is its own
