@@ -880,6 +880,24 @@ information in the slots the Playwright pipeline already reads; it never overrid
     "Hold the case back" wording change with it; the data made is listed in the run report and
     saved as a fixture so it can be rebuilt.
 
+**Items 42 and 43 done in 2.4.2-beta.3** (plan `docs/superpowers/plans/2026-10-28-backlog-42-43.md`).
+Built: an area keeps a menu path per menu shape (`save_autorun_area` with `variant: true`; a
+walk tries each path, the item 41 sentence only when all fail, the furthest failure answers); a
+walk waits out a covering overlay, skips a click whose next target already shows (and walks again
+with every click when that goes wrong); a discovery start settles before it answers; probes list
+every visible match by `nth`, show attributes and parents, refuse Playwright selectors with a
+sentence; page answers collapse unchanged side menus per reader; `get_autorun_page` takes
+`query`; a guide section skips the preamble for a named agent; truer save notes; a look-only
+replay never says "saved" (a request the guard let through is said as such); the sign-in print is
+retaken after each discovery call, so a reset keeps the sign-in; carried locators last only for
+their discovery; divergences take "..." between quoted pieces (in order), 1000 characters and a
+`proposal`; an action list in the guide; each bridge call's time in the log (debug level).
+Item 43: writers make the data a case needs (API template, fixture, or by hand in the app; never
+their own SQL - owner, 2026-10-28), one record per consuming case, publish only a cycle the run
+made when the case needs it, save it as a fixture, list it; held back only when it cannot be
+made. Not code: the cycle-selection race (record it as a quirk on a live run). Not reproduced
+offline: 144580's trailing-space `exact` failure (every name path already folds whitespace).
+
 ## Smaller
 
 - `save_autorun_script` through MCP drops `edits`, so repairs had to go through
