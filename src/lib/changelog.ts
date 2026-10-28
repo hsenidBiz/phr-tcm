@@ -27,6 +27,17 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.4.2-beta.2",
+    date: "2026-10-28",
+    items: [
+      "A long area name in an Assistants speech bubble now wraps onto another line instead of being cut off.",
+      "Assistants writing Auto Run scripts get clearer answers: an action written wrongly says what it expected and shows an example, a wait with no time limit uses 10 seconds, and no call is left waiting.",
+      "When an area cannot be reached because the signed-in account's menu is different, Auto Run now says so and names the account.",
+      "An assistant's discovery that names a saved area now starts in that area, with the cookie banner already closed.",
+      "Several assistants can share a Product Backlog Item's cases: /tcm:gen-tests splits them by what each free account can do, and each assistant leaves its report in a file.",
+    ],
+  },
+  {
     version: "2.4.2-beta.1",
     date: "2026-10-28",
     items: [
