@@ -588,6 +588,85 @@ information in the slots the Playwright pipeline already reads; it never overrid
       fails when a dialog opens; an `expect_response` after a filter click in the same step
       matches the filter's request.
 
+## Expired passwords (agreed 2026-10-28)
+
+40. **An account whose password has expired stops every sign-in.** PeoplesHR sends a login
+    whose password is too old to a reset page instead of home, so the recorded sign-in waits
+    for `#sidebar-toggle-menu`, gives up after 30 s ("sign-in stopped at step 5") and the agent
+    is stuck: it cannot type a password and has no other way in. Seen 2026-10-28 on QA
+    Automation with Automation51 and Automation27, both saved accounts in the app.
+    - **Where the date is.** No column holds the reset date; it is worked out:
+      `HS_SM_USER_ACCOUNT.USRACC_PWD_ACTIVATE_DATE` (when the password was last set) plus
+      `HS_PR_PARAMETERS` `Password_Valid_Days` (120 on QA Automation), switched on by
+      `Password_valid_Days_Enabale` = 1. The database's own reminder view
+      `VW_HS_HR_JS_PWD_ACTIVATE_D` computes it the same way. `USRACC_PROMPT_CHANGE_PW` = 1
+      forces a change at the next sign-in whatever the date says. `USRACC_NDAYS_TO_EXPIRE`
+      and `USRACC_EXPIRATION_DATE` are empty for every test login and play no part.
+      `USRACC_POLICY_TYPE` is 0 on some logins and 1 on others; Automation27 (type 0) was
+      stopped the same way as Automation51 (type 1), so type 0 does not mean "never
+      expires" (or its saved password is also wrong - the reset page will tell).
+    - **Check before a run, a discovery and a proposal.** Before a run or discovery signs in,
+      read each account's days left with one SELECT (only `Password_Valid_Days` from
+      `HS_PR_PARAMETERS`: that table also holds plain-text secrets, never read it whole):
+      ```sql
+      SELECT USRACC_USER_ID,
+             DATEADD(day, CONVERT(int, p.PAR_VALUE), USRACC_PWD_ACTIVATE_DATE) AS reset_due,
+             USRACC_PROMPT_CHANGE_PW
+      FROM PeoplesHR.HS_SM_USER_ACCOUNT, PeoplesHR.HS_PR_PARAMETERS p
+      WHERE p.PAR_NAME = 'Password_Valid_Days' AND USRACC_USER_ID IN (...)
+      ```
+      Show it on the account card ("password due 2027-02-02, 97 days") and warn in the run
+      window for any account under 7 days. A sign-in that stops on the reset page fails as
+      "password expired", not as a missing `#sidebar-toggle-menu`. The query is
+      PeoplesHR-specific, so it belongs to the environment's settings (a "password expiry
+      query" beside the site address), not to the code.
+    - **Proposing accounts.** `propose_accounts` (and `/tcm:setup` step 3) runs the same check
+      on every login it proposes: it prefers logins whose password is not expired and not
+      due within 7 days, and marks any it still proposes as expired. An agent that needs a
+      particular employee whose login has expired resets the password itself (below) rather
+      than proposing a login that cannot sign in.
+    - **Reset it and carry on.** On a test environment only (the environment's Test
+      environment switch), when the sign-in lands on the reset page the app fills the
+      current password from the saved account, a new simple one (`Abc@123`, or `Test@1234`
+      when the site refuses one used recently - `SOX_PWD_REUSE_NO` is 6 on QA Automation),
+      submits, stores the new password on the account, logs "password reset for <key>"
+      and finishes the sign-in. The agent never sees or types either password; the app does
+      it, as it does every sign-in. Never on an environment that is not marked test.
+    - **The reset page** (inspected 2026-10-28 on QA Automation as Automation51, signed in by
+      Avin in the browser pane). After the sign-in's POST `/hr/api/securityapi/getauthuser`
+      the site loads GET `/hr/security/PasswordReset` instead of home: heading "Reset
+      Password", "Welcome to the Password Reset Process", the text "The user account has
+      expired!" and "Please enter new password and confirm it to reset the your password."
+      One form, `method="post"` `action="/hr/Security/Login"`, with a hidden
+      `__RequestVerificationToken`, password inputs `#txtOldPassword` (`OldPassword`, label
+      "Current Password"), `#txtNewPassword` (`NewPassword`, "New Password") and
+      `#txtConfirmPassword` (`ConfirmPassword`, "Confirm New Password"), each `maxlength`
+      20, and two submit inputs `#btnsubmit` ("Submit") and `#btnreset` ("Reset", which
+      clears the form - never press it for the reset). An "Info!" label below the buttons is
+      where the site's answer shows. The page loads `jsencrypt.js` and `jquery.base64.js`
+      (the site has `ENABLE_PASSWORD_ENCRYPTION` = 1), so the passwords are most likely
+      encrypted in the page before the post: the app types into the three fields and
+      presses Submit in the browser, never posts the form itself. Recognise the page by the
+      path `/hr/security/PasswordReset` and the `#txtOldPassword` field, not by the
+      wording. What a refused new password (reuse, pattern `PASSWORD_STYLE`) shows in
+      "Info!", and where a successful reset lands, were not tried: nothing was submitted.
+    - **Check sign-in on each account.** Auto Run, Setup, Accounts gets a Check sign-in
+      button on every saved account: it opens the Auto Run browser, signs in as that account
+      and leaves the browser where the sign-in stopped, with the steps and the result shown
+      beside it ("signed in, landed on Home", "stopped on the password reset page",
+      "password refused"). Today the only browser a person can open signs in as a case
+      script's own account, so reaching the reset page for Automation51 needed a hand sign-in
+      in another browser. The same check runs the expiry query above and shows the due date.
+      With the reset switched on it offers "Reset the password" for an expired account on a
+      test environment. The assistant gets the same as a tool (`check_autorun_sign_in`
+      with the account key), answering the result and the landing path without passwords.
+    - Tests: an account whose computed due date is past shows as expired and the run window
+      warns; a sign-in that reaches the reset page on a test environment resets, saves the new
+      password and lands home; the same on a non-test environment fails as "password
+      expired" without touching it; `propose_accounts` marks an expired login; Check
+      sign-in on an expired account reports "stopped on the password reset page" and leaves
+      the browser open there.
+
 ## Smaller
 
 - `save_autorun_script` through MCP drops `edits`, so repairs had to go through
