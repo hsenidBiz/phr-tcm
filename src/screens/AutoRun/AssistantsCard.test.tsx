@@ -1,6 +1,6 @@
 // The Assistants card: who is connected, which browser each one has and what
-// it is doing, with Stop, End discovery and Release per row, and a small
-// figure on each row. Nothing at all while no assistant is working.
+// it is doing, with Stop, End discovery and Release per row, a colour square
+// per row, and one shared office above the rows. Nothing at all while no assistant is working.
 
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, expect, test, vi } from "vitest";
@@ -37,6 +37,7 @@ vi.mock("../../bindings", () => ({
 }));
 
 import AssistantsCard, { isWorking } from "./AssistantsCard";
+import { hueFor } from "./AssistantScene";
 
 beforeEach(() => {
   h.agents.mockReset().mockResolvedValue([]);
@@ -106,9 +107,9 @@ test("shows every assistant while one is working, the idle one dozing", async ()
   ]);
   expect(screen.getByText("Assistant 1 - claude-code")).toBeInTheDocument();
   expect(screen.getByText("Assistant 2 - claude-code")).toBeInTheDocument();
-  const rows = screen.getAllByRole("listitem");
-  expect(rows[0].querySelector(".assistant-scene")).toHaveAttribute("data-pose", "type");
-  expect(rows[1].querySelector(".assistant-scene")).toHaveAttribute("data-pose", "doze");
+  const walkers = document.querySelectorAll(".assistant-scene__walker");
+  expect(walkers[0]).toHaveAttribute("data-pose", "type");
+  expect(walkers[1]).toHaveAttribute("data-pose", "doze");
   // The idle assistant keeps its row, so its browser can still be released.
   expect(screen.getByRole("button", { name: "Release Assistant 2's browser" })).toBeInTheDocument();
   expect(screen.getByText("1 working")).toBeInTheDocument();
@@ -169,26 +170,25 @@ test("only a replay has a progress bar", async () => {
   expect(document.querySelector("[data-progress]")).toBeNull();
 });
 
-test("a working assistant with no browser still gets a scene", async () => {
+test("a working assistant with no browser still gets a character in the office", async () => {
   await mount([agent({ slot: null, browser: null, account: null, activity: { kind: "exploring" } })]);
-  const scene = document.querySelector(".assistant-scene");
-  expect(scene).not.toBeNull();
-  expect(scene).toHaveAttribute("data-slot", "none");
-  expect(scene).toHaveAttribute("data-pose", "walk");
-  expect(scene).toHaveAttribute("aria-hidden", "true");
+  expect(document.querySelector(".assistant-scene")).toHaveAttribute("aria-hidden", "true");
+  const walker = document.querySelector(".assistant-scene__walker");
+  expect(walker).toHaveAttribute("data-slot", "none");
+  expect(walker).toHaveAttribute("data-pose", "walk");
 });
 
 test("names each assistant, its browser and what it does", async () => {
   await mount([agent()]);
   expect(screen.getByRole("heading", { name: "Assistants" })).toBeInTheDocument();
   expect(screen.getByText("Assistant 1 - claude-code")).toBeInTheDocument();
-  expect(screen.getByText("main Auto Run browser, Edge, signed in as hr_admin")).toBeInTheDocument();
-  expect(screen.getByText("replaying case 4521 (step 3 of 7)")).toBeInTheDocument();
+  expect(screen.getByText("Main Auto Run browser, Edge, signed in as hr_admin")).toBeInTheDocument();
+  expect(screen.getByText("Replaying case 4521 (step 3 of 7)")).toBeInTheDocument();
 });
 
 test("a replay that has not reached its first step says it is starting", async () => {
   await mount([agent({ activity: { kind: "replaying", case_id: 4521, step: 0, of: 0 } })]);
-  expect(screen.getByText("replaying case 4521 (starting)")).toBeInTheDocument();
+  expect(screen.getByText("Replaying case 4521 (starting)")).toBeInTheDocument();
   expect(screen.queryByText(/step 0 of 0/)).toBeNull();
 });
 
@@ -197,13 +197,14 @@ test("an assistant with no client or no browser says so", async () => {
     agent({ client: null, slot: null, browser: null, account: null, activity: { kind: "idle" } }),
     agent({ label: "Assistant 2", slot: 1, activity: { kind: "exploring" } }),
   ]);
-  expect(screen.getByText("Assistant 1")).toBeInTheDocument();
-  expect(screen.getByText("no Auto Run browser")).toBeInTheDocument();
+  // The office's name tag repeats the label, so look only at the row.
+  expect(screen.getByText("Assistant 1", { ignore: ".assistant-scene *, script, style" })).toBeInTheDocument();
+  expect(screen.getByText("No Auto Run browser")).toBeInTheDocument();
 });
 
 test("an extra browser is called its own, and the browser and account are left out while unknown", async () => {
   await mount([agent({ own_browser: true, browser: null, account: null })]);
-  expect(screen.getByText("its own browser")).toBeInTheDocument();
+  expect(screen.getByText("Its own browser")).toBeInTheDocument();
 });
 
 test("one assistant in the main browser and one in its own browser read apart, each with its account", async () => {
@@ -218,20 +219,20 @@ test("one assistant in the main browser and one in its own browser read apart, e
       activity: { kind: "discovering", area: "Payroll" },
     }),
   ]);
-  expect(screen.getByText("main Auto Run browser, Edge, signed in as hr_admin")).toBeInTheDocument();
-  expect(screen.getByText("its own browser, Edge, signed in as portal.reviewer")).toBeInTheDocument();
-  expect(screen.getByText("discovering Payroll")).toBeInTheDocument();
+  expect(screen.getByText("Main Auto Run browser, Edge, signed in as hr_admin")).toBeInTheDocument();
+  expect(screen.getByText("Its own browser, Edge, signed in as portal.reviewer")).toBeInTheDocument();
+  expect(screen.getByText("Discovering Payroll")).toBeInTheDocument();
   expect(screen.getAllByRole("button", { name: /^Release Assistant \d's browser$/ })).toHaveLength(2);
 });
 
 test.each([
-  [{ kind: "idle" }, 0, "idle"],
-  [{ kind: "idle" }, 4, "idle for 4 min"],
-  [{ kind: "discovering", area: "Payroll" }, 0, "discovering Payroll"],
-  [{ kind: "discovering", area: null }, 0, "discovering"],
-  [{ kind: "mapping", modules: ["Payroll", "Leave"] }, 0, "mapping menus (Payroll, Leave)"],
-  [{ kind: "exploring" }, 0, "exploring"],
-  [{ kind: "working" }, 0, "working"],
+  [{ kind: "idle" }, 0, "Idle"],
+  [{ kind: "idle" }, 4, "Idle for 4 min"],
+  [{ kind: "discovering", area: "Payroll" }, 0, "Discovering Payroll"],
+  [{ kind: "discovering", area: null }, 0, "Discovering"],
+  [{ kind: "mapping", modules: ["Payroll", "Leave"] }, 0, "Mapping menus (Payroll, Leave)"],
+  [{ kind: "exploring" }, 0, "Exploring"],
+  [{ kind: "working" }, 0, "Working"],
 ] as const)("the activity %j after %i min reads %s", async (activity, idle, text) => {
   // The card only shows while someone works, so an idle row needs a working
   // assistant beside it.
@@ -437,4 +438,18 @@ test("unmounting stops listening", async () => {
   const { unmount } = await mount([agent()]);
   unmount();
   await waitFor(() => expect(h.unlisten).toHaveBeenCalledTimes(1));
+});
+
+test("the office renders once, above a plain list of rows, each with a square in its character's colour", async () => {
+  await mount([agent({ label: "Assistant 1", slot: 0 }), agent({ label: "Assistant 2", slot: 1 })]);
+  expect(document.querySelectorAll(".assistant-scene")).toHaveLength(1);
+  const list = await screen.findByRole("list");
+  expect(list).not.toHaveClass("grid");
+  expect(list.querySelector(".assistant-scene")).toBeNull();
+  const office = document.querySelector(".assistant-scene")!;
+  expect(office.compareDocumentPosition(list) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  const squares = list.querySelectorAll<HTMLElement>("[data-hue]");
+  expect(squares).toHaveLength(2);
+  expect(squares[0].style.background).toBe(hueFor(0));
+  expect(squares[1].style.background).toBe(hueFor(1));
 });

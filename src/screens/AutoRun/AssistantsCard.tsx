@@ -3,10 +3,13 @@
 // End its discovery, Release its browser. It draws nothing until an assistant
 // is doing something: while every connected assistant is idle (or none is
 // connected) it is gone, and while it shows, an idle assistant keeps its row
-// (dozing) so its browser can still be released. Each row has a small
-// animated figure on its left. Rust sends the whole list again whenever any of it changes
-// (`autorun-agents-changed`, at most once a second), so the rows are replaced
-// outright rather than patched.
+// (dozing) so its browser can still be released. One shared office floor
+// (AssistantScene.tsx) runs across the top of the card, in three corners with
+// each assistant standing in the one matching its activity, and the rows sit
+// below it, each with a small square in its character's colour. Rust sends
+// the whole list again whenever any of it changes (`autorun-agents-changed`,
+// at most once a second), so the rows are replaced outright rather than
+// patched.
 
 import { useEffect, useId, useRef, useState } from "react";
 import { commands, events, type AgentActivity, type AgentView } from "../../bindings";
@@ -14,33 +17,33 @@ import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
 import { IconRelease, IconStop } from "../../lib/actionIcons";
 import { logUi } from "../../lib/uiLog";
-import AssistantScene from "./AssistantScene";
+import AssistantOffice, { hueFor } from "./AssistantScene";
 
 /** What a row says its assistant is doing. */
 function activityText(a: AgentActivity, idleMinutes: number): string {
   switch (a.kind) {
     case "idle":
-      return idleMinutes > 0 ? `idle for ${idleMinutes} min` : "idle";
+      return idleMinutes > 0 ? `Idle for ${idleMinutes} min` : "Idle";
     case "discovering":
-      return a.area ? `discovering ${a.area}` : "discovering";
+      return a.area ? `Discovering ${a.area}` : "Discovering";
     case "mapping":
-      return `mapping menus (${a.modules.join(", ")})`;
+      return `Mapping menus (${a.modules.join(", ")})`;
     case "exploring":
-      return "exploring";
+      return "Exploring";
     case "replaying":
       // Before the first step the count is 0 of 0, which is not worth saying.
       return a.step === 0 && a.of === 0
-        ? `replaying case ${a.case_id} (starting)`
-        : `replaying case ${a.case_id} (step ${a.step} of ${a.of})`;
+        ? `Replaying case ${a.case_id} (starting)`
+        : `Replaying case ${a.case_id} (step ${a.step} of ${a.of})`;
     case "working":
-      return "working";
+      return "Working";
   }
 }
 
 /** Which browser the assistant has, and who is signed in there. */
 function browserText(a: AgentView): string {
-  if (a.slot === null) return "no Auto Run browser";
-  let text = a.own_browser ? "its own browser" : "main Auto Run browser";
+  if (a.slot === null) return "No Auto Run browser";
+  let text = a.own_browser ? "Its own browser" : "Main Auto Run browser";
   if (a.browser) text += `, ${a.browser}`;
   if (a.account) text += `, signed in as ${a.account}`;
   return text;
@@ -149,6 +152,7 @@ export default function AssistantsCard() {
         </h3>
         <span className="text-xs text-muted">{workingCount} working</span>
       </div>
+      <AssistantOffice agents={agents} />
       <ul className="divide-y divide-border">
         {agents.map((a) => {
           const slot = a.slot;
@@ -158,9 +162,16 @@ export default function AssistantsCard() {
             <li key={a.label} className="py-2 first:pt-0 last:pb-0">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div className="flex min-w-0 items-center gap-3">
-                  <AssistantScene activity={a.activity} slot={a.slot} />
                   <div className="min-w-0 space-y-0.5 text-xs">
-                    <p className="font-medium text-text">{a.client ? `${a.label} - ${a.client}` : a.label}</p>
+                    <p className="flex items-center gap-1.5 font-medium text-text">
+                      <span
+                        data-hue
+                        aria-hidden="true"
+                        className="inline-block size-2.5 shrink-0 rounded-sm"
+                        style={{ background: hueFor(a.slot) }}
+                      />
+                      {a.client ? `${a.label} - ${a.client}` : a.label}
+                    </p>
                     <p className="text-muted">{browserText(a)}</p>
                     <p className="flex flex-wrap items-center gap-1.5 text-muted">
                       <span>{activityText(a.activity, a.idle_minutes)}</span>
