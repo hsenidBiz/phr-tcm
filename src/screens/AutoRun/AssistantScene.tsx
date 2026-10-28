@@ -325,7 +325,7 @@ export default function AssistantOffice({ agents }: { agents: AgentView[] }) {
                 style={pace ? { animationDelay: delay } : undefined}
               >
               {bubble && (
-                <span className="assistant-scene__bubble label-trim mb-0.5 max-w-[8rem] overflow-x-clip text-ellipsis whitespace-nowrap rounded border border-border bg-surface px-1.5 text-[0.6875rem] text-text">
+                <span className="assistant-scene__bubble label-trim mb-0.5 max-w-[8rem] whitespace-normal break-words rounded border border-border bg-surface px-1.5 py-0.5 text-center text-[0.6875rem] leading-tight text-text">
                   {bubble}
                 </span>
               )}

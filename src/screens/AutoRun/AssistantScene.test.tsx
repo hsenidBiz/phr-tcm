@@ -209,11 +209,12 @@ test("a different assistant arriving in the same place does not inherit a walk",
   expect(container.querySelector(".assistant-scene__walker")).not.toHaveAttribute("data-moving");
 });
 
-test("the bubble ellipsises a long line", () => {
-  const c = one({ kind: "discovering", area: "Leave Encashment Approvals" }, 1, "Assistant 2");
+test("a long bubble wraps onto more lines instead of being cut off", () => {
+  const c = one({ kind: "discovering", area: "Performance & Evaluation Approvals" }, 1, "Assistant 2");
   const bubble = c.querySelector(".assistant-scene__walker .assistant-scene__bubble")!;
-  expect(bubble).toHaveTextContent("Leave Encashment Approvals");
-  expect(bubble).toHaveClass("text-ellipsis", "max-w-[8rem]");
+  expect(bubble).toHaveTextContent("Performance & Evaluation Approvals");
+  expect(bubble).toHaveClass("max-w-[8rem]", "whitespace-normal", "break-words", "text-center");
+  expect(bubble.className).not.toMatch(/\btext-ellipsis\b|\bwhitespace-nowrap\b|\btruncate\b|\boverflow-/);
 });
 
 const hueOf = (slot: number | null) =>
