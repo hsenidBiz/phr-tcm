@@ -7773,10 +7773,11 @@ pub async fn variant_area_in<B: DiscoveryBrowser>(
     organization: &str,
     project: &str,
     name: &str,
+    module: &str,
     clicks: Vec<crate::browser::locator::Target>,
     timing: &crate::browser::timing::Timing,
 ) -> (u16, String) {
-    let answer = save_area_variant(slot, root, organization, project, name, clicks, timing).await;
+    let answer = save_area_variant(slot, root, organization, project, name, module, clicks, timing).await;
     if let Some(browser) = slot.as_mut() {
         let p = browser.parts();
         count_blocked_writes(p.driver, p.discovery.as_mut(), &[]);
@@ -7790,6 +7791,7 @@ async fn save_area_variant<B: DiscoveryBrowser>(
     organization: &str,
     project: &str,
     name: &str,
+    module: &str,
     clicks: Vec<crate::browser::locator::Target>,
     timing: &crate::browser::timing::Timing,
 ) -> (u16, String) {
@@ -7815,6 +7817,12 @@ async fn save_area_variant<B: DiscoveryBrowser>(
     let Some(found) = nav::find_area(&navfile, name).cloned() else {
         return (409, format!("there is no area named '{name}' to add a menu path to - save it first, without variant"));
     };
+    if !module.trim().is_empty() && nav::module_key(module) != nav::module_key(&found.module) {
+        return (
+            409,
+            format!("area '{name}' belongs to module '{}', not '{}' - a menu path never moves an area", found.module, module.trim()),
+        );
+    }
     let recipe = match crate::autorun::recipe::load_effective_recipe(root, organization, project) {
         Ok(r) => r,
         Err(why) => return (409, why),
@@ -9040,6 +9048,7 @@ async fn autorun_discover_area(ctx: &BridgeContext, body: &str, n: SlotNo) -> (u
             &ctx.org,
             &ctx.project,
             &name,
+            &module,
             clicks,
             &crate::browser::timing::Timing::supervised(),
         )

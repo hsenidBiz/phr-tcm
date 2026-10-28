@@ -1549,7 +1549,7 @@ async fn a_variant_menu_path_is_appended_to_the_area_and_not_twice() {
     assert_eq!(status, 200, "{body}");
 
     let (status, body) =
-        variant_area_in(&mut browser, dir.path(), ORG, PROJECT, " leave apply ", vec![css("#apply")], &quick()).await;
+        variant_area_in(&mut browser, dir.path(), ORG, PROJECT, " leave apply ", "", vec![css("#apply")], &quick()).await;
     assert_eq!(status, 200, "{body}");
     let v = parsed(&body);
     assert_eq!(v["saved"], true, "{body}");
@@ -1563,7 +1563,7 @@ async fn a_variant_menu_path_is_appended_to_the_area_and_not_twice() {
 
     // The same path again, and the primary path as a variant, add nothing.
     for again in [vec![css("#apply")], first.clone()] {
-        let (status, body) = variant_area_in(&mut browser, dir.path(), ORG, PROJECT, "Leave Apply", again, &quick()).await;
+        let (status, body) = variant_area_in(&mut browser, dir.path(), ORG, PROJECT, "Leave Apply", "leave", again, &quick()).await;
         assert_eq!(status, 200, "{body}");
         assert_eq!(parsed(&body)["saved"], false, "{body}");
         assert!(parsed(&body)["message"].as_str().unwrap().starts_with("already menu path"), "{body}");
@@ -1578,7 +1578,7 @@ async fn a_variant_menu_path_needs_an_area_and_clicks_that_arrive() {
     let dir = root_with_recipe_and_account();
     let (mut browser, _) = slot(menu_app(true, "/hr/leave/apply"), exploring("Leave"));
     browser.as_mut().unwrap().account = Some("admin".into());
-    let (status, out) = variant_area_in(&mut browser, dir.path(), ORG, PROJECT, "Leave Apply", vec![css("#apply")], &quick()).await;
+    let (status, out) = variant_area_in(&mut browser, dir.path(), ORG, PROJECT, "Leave Apply", "", vec![css("#apply")], &quick()).await;
     assert_eq!(status, 409, "{out}");
     assert!(out.contains("no area named 'Leave Apply'"), "{out}");
 
@@ -1587,9 +1587,16 @@ async fn a_variant_menu_path_needs_an_area_and_clicks_that_arrive() {
             .await;
     assert_eq!(status, 200);
     let (status, out) =
-        variant_area_in(&mut browser, dir.path(), ORG, PROJECT, "Leave Apply", vec![css("#leave"), css("#missing")], &quick()).await;
+        variant_area_in(&mut browser, dir.path(), ORG, PROJECT, "Leave Apply", "", vec![css("#leave"), css("#missing")], &quick()).await;
     assert_eq!(status, 409, "{out}");
     assert!(out.starts_with("The clicks did not arrive: click 2"), "{out}");
+    assert!(find_area(&load_nav(dir.path(), ORG, PROJECT).unwrap(), "Leave Apply").unwrap().variants.is_empty());
+
+    // A module that is not the area's is refused; the area's own is fine.
+    let (status, out) =
+        variant_area_in(&mut browser, dir.path(), ORG, PROJECT, "Leave Apply", "Payroll", vec![css("#apply")], &quick()).await;
+    assert_eq!(status, 409, "{out}");
+    assert!(out.contains("belongs to module 'Leave'"), "{out}");
     assert!(find_area(&load_nav(dir.path(), ORG, PROJECT).unwrap(), "Leave Apply").unwrap().variants.is_empty());
 }
 

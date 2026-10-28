@@ -677,6 +677,28 @@ fn browsers_of(drivers: Vec<common::ScriptedDriver>) -> FakeBrowsers {
     FakeBrowsers { queue: drivers.into_iter().map(Some).collect(), opened: 0, closed: 0, returned: vec![] }
 }
 
+/// On a flat menu (every entry showing at once) the walk leaves out the
+/// click whose next target can already be clicked, and still arrives.
+#[tokio::test]
+async fn a_flat_menu_walk_clicks_only_the_last_entry_and_arrives() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    menu_project(root);
+    store::save_script(root, &one_check(Some("admin"))).unwrap();
+    let (d, app) = common::menu_app(MENU, "/hr/welcome", 0);
+    let mut browsers = browsers_of(vec![d]);
+    let mut run = new_run("run-x");
+    let cancel = AtomicBool::new(false);
+    run_cases(&mut browsers, root, "Acme", "Web", &mut run, &[to_run(1, Some(" leave "))], None, false, &quick(), &cancel, &mut |_p: ReplayProgress| {})
+        .await
+        .unwrap();
+    assert_eq!(
+        *app.log.lock().unwrap(),
+        vec!["navigate /hr/home/index", "click #go", "navigate /hr/home/index", "click Apply Leave", "check yes"]
+    );
+    assert_eq!(run.cases[0].proposed, "Passed", "{}", run.cases[0].reason);
+}
+
 #[tokio::test]
 async fn a_case_signs_in_goes_home_clicks_to_its_module_checks_it_arrived_then_runs_its_steps() {
     let dir = tempfile::tempdir().unwrap();

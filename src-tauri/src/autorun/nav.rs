@@ -486,6 +486,14 @@ pub fn keep_recorded_values(root: &Path, org: &str, project: &str, path: &mut Mo
     if path.mode.is_none() {
         path.mode = old.mode.clone();
     }
+    // Other menu shapes' paths do not depend on the path re-recorded: they
+    // stay, except one the new primary path now equals.
+    path.variants = old
+        .variants
+        .iter()
+        .filter(|v| !(v.clicks == path.clicks && v.arrived == path.arrived))
+        .cloned()
+        .collect();
 }
 
 /// Add an area, or replace the one already recorded under the same name
@@ -1190,6 +1198,7 @@ pub async fn go_to_module_noted<D: Driver>(
     if route.path.variants.is_empty() || !failure.never_found() {
         return Err(failure);
     }
+    let mut failures = vec![failure];
     for (i, variant) in route.path.variants.iter().enumerate() {
         let home = load_home(d, &route.home, timing).await;
         if !home.ok {
@@ -1206,16 +1215,51 @@ pub async fn go_to_module_noted<D: Driver>(
             },
         };
         // A fresh load has run `after_sign_in`: a menu it opened stays open.
-        match click_path(d, &other, timing, Skip::WhenNextIsReady, &mut 0, None).await {
+        match walk_skipping(d, &other, timing).await {
             Ok(at) => {
                 notes.push(format!("reached \"{}\" by its menu path {}", route.path.name(), i + 2));
                 return Ok(at);
             }
             Err(f) if f.harness => return Err(f),
-            Err(_) => {}
+            Err(f) => failures.push(f),
         }
     }
-    Err(failure)
+    // Every path failed. Each failure is logged; the answer is the one that
+    // got furthest, so its words point at the path that needs the fix.
+    let name = route.path.name().to_string();
+    for (i, f) in failures.iter().enumerate() {
+        crate::applog::info(format!("area {name}: menu path {} failed: {}", i + 1, f.for_dialog()));
+    }
+    let clicks_done = |f: &PathFailure| match f.at {
+        Where::Home => 0,
+        Where::Click { n, .. } => n,
+    };
+    let mut best = 0;
+    for (i, f) in failures.iter().enumerate() {
+        if clicks_done(f) > clicks_done(&failures[best]) {
+            best = i;
+        }
+    }
+    Err(failures.swap_remove(best))
+}
+
+/// A walk from home that may leave clicks out (`Skip::WhenNextIsReady`).
+/// When it left one out and then failed, the skip may have been wrong (a
+/// click that changes the context, not a toggle): home is loaded afresh and
+/// the same path walked again with every click made.
+async fn walk_skipping<D: Driver>(d: &mut D, route: &Route, timing: &Timing) -> Result<String, PathFailure> {
+    let mut skipped = 0;
+    match click_path(d, route, timing, Skip::WhenNextIsReady, &mut 0, &mut skipped, None).await {
+        Err(f) if skipped > 0 && !f.harness => {
+            crate::applog::info(format!("went home and walked {} again, every click made", route.path.name()));
+            let home = load_home(d, &route.home, timing).await;
+            if !home.ok {
+                return Err(PathFailure { at: Where::Home, reason: home.detail, harness: home.harness });
+            }
+            click_path(d, route, timing, Skip::Never, &mut 0, &mut 0, None).await
+        }
+        other => other,
+    }
 }
 
 async fn walk_primary<D: Driver>(
@@ -1252,7 +1296,7 @@ async fn walk_primary<D: Driver>(
         // Any failure falls back, a browser that seemed silent included:
         // under the 3 s cap a busy page can look silent, which is no proof
         // the browser is gone (`reach_module` still sees a real one).
-        if let Ok(at) = click_path(d, route, &quick, Skip::WhenNextIsReady, &mut made, None).await {
+        if let Ok(at) = click_path(d, route, &quick, Skip::WhenNextIsReady, &mut made, &mut 0, None).await {
             return Ok(at);
         }
         crate::applog::info(format!("went home and tried {} again", route.path.name()));
@@ -1265,7 +1309,7 @@ async fn walk_primary<D: Driver>(
             if !home.ok {
                 return Err(PathFailure { at: Where::Home, reason: home.detail, harness: home.harness });
             }
-            return click_path(d, route, timing, Skip::Never, &mut 0, None).await;
+            return click_path(d, route, timing, Skip::Never, &mut 0, &mut 0, None).await;
         }
     }
     the_old_way(d, route, from, timing, None).await
@@ -1314,8 +1358,10 @@ async fn the_old_way<D: Driver>(
     // A menu already open (a toggle the page remembers, or `after_sign_in`
     // opened) keeps its toggle unclicked - except while pinning, which must
     // keep every click of the path it records.
-    let skip = if pins.is_some() { Skip::Never } else { Skip::WhenNextIsReady };
-    click_path(d, route, timing, skip, &mut 0, pins).await
+    match pins {
+        Some(pins) => click_path(d, route, timing, Skip::Never, &mut 0, &mut 0, Some(pins)).await,
+        None => walk_skipping(d, route, timing).await,
+    }
 }
 
 /// Whether `click_path` may leave a click out.
@@ -1333,7 +1379,7 @@ enum Skip {
 /// Each of the path's clicks from where the page is, then wait up to
 /// `nav_ms` for the address path to equal `arrived`. `made` counts the
 /// clicks tried, whether or not they went through: a click that failed
-/// may still have sent its events.
+/// may still have sent its events. `skipped` counts the clicks left out.
 ///
 /// With `pins`, each click is first made to find exactly one element
 /// (`pin_one`) and the clicks made are kept there. Without them, a click
@@ -1345,6 +1391,7 @@ async fn click_path<D: Driver>(
     timing: &Timing,
     skip: Skip,
     made: &mut usize,
+    skipped: &mut usize,
     mut pins: Option<&mut Pins>,
 ) -> Result<String, PathFailure> {
     let policy = Policy::only(route.home.origins.clone());
@@ -1353,6 +1400,7 @@ async fn click_path<D: Driver>(
         if skip == Skip::WhenNextIsReady {
             if let Some(next) = clicks.get(i + 1) {
                 if crate::browser::input::clickable_now(d, next).await {
+                    *skipped += 1;
                     continue;
                 }
             }
@@ -1429,11 +1477,12 @@ async fn click_path<D: Driver>(
 }
 
 /// Wait up to `nav_ms`, looking every `poll_ms`, for `click` to be
-/// clickable. False when it never was: the cover stayed.
+/// clickable (its first match, so several matches count as present). False
+/// when it never was: the cover stayed.
 async fn cover_goes<D: Driver>(d: &mut D, click: &Target, timing: &Timing) -> bool {
     let deadline = Instant::now() + Duration::from_millis(timing.nav_ms);
     loop {
-        if crate::browser::input::clickable_now(d, click).await {
+        if crate::browser::input::clickable_first(d, click).await {
             return true;
         }
         if Instant::now() >= deadline {

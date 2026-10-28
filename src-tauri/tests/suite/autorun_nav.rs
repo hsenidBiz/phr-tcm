@@ -660,6 +660,8 @@ fn sidebar_app(at: &str, open: bool, covered: bool) -> (common::ScriptedDriver, 
                 } else if last_probed == "ax-101" {
                     log.lock().unwrap().push("click outside Leave".to_string());
                     *path.lock().unwrap() = "/hr/elsewhere".to_string();
+                    // The breadcrumb is gone with the page it was on.
+                    outside_on.lock().unwrap().clear();
                 } else if last_probed == "ax-100" {
                     log.lock().unwrap().push("click Leave".to_string());
                     *path.lock().unwrap() = "/hr/leave".to_string();
@@ -1036,6 +1038,56 @@ async fn the_old_way_keeps_an_open_menu_open() {
     let out = go_to_module(&mut d, &route, TripFrom::SignIn, &common::quick()).await;
     assert_eq!(out, Ok("/hr/leave".to_string()));
     assert_eq!(app.log(), vec!["navigate /hr/security/login", "click #toggle", "click Leave"], "the path's toggle closed the menu");
+}
+
+/// A skipped click that was not a toggle: the next entry's name shows once
+/// on the home page too, so the walk clicks it and lands elsewhere. The walk
+/// goes home again, makes every click, and arrives.
+#[tokio::test]
+async fn a_walk_that_skipped_a_click_and_failed_walks_again_with_every_click() {
+    let (mut d, app) = sidebar_app("/hr/payroll", false, false);
+    *app.outside_on.lock().unwrap() = "/hr/home/index".to_string();
+    let route = Route::new(&common::menu_recipe(), toggle_then_leave(""));
+    let out = go_to_module(&mut d, &route, TripFrom::SignIn, &common::quick()).await;
+    assert_eq!(out, Ok("/hr/leave".to_string()));
+    assert_eq!(
+        app.log(),
+        vec!["navigate /hr/home/index", "click outside Leave", "navigate /hr/home/index", "click #toggle", "click Leave"]
+    );
+}
+
+/// Every path failed: the failure that got furthest is the answer, and the
+/// hint to record a variant stays because that click was never found.
+#[tokio::test]
+async fn when_every_path_fails_the_furthest_failure_is_the_answer() {
+    let (mut d, _app) = sidebar_app("/hr/payroll", true, false);
+    let mut p = leave_with_variants("Self Service", &[], "");
+    p.variants = vec![serde_json::from_value(json!({
+        "clicks": [
+            { "role": "link", "name": "Leave", "exact": true },
+            { "role": "link", "name": "Nowhere", "exact": true }
+        ],
+        "arrived": "/hr/leave"
+    }))
+    .unwrap()];
+    let route = Route::new(&login_home_recipe("/hr/security/login"), p);
+    let failure = go_to_module(&mut d, &route, TripFrom::Elsewhere, &common::quick()).await.unwrap_err();
+    assert!(matches!(&failure.at, Where::Click { n: 2, locator } if locator.contains("Nowhere")), "{:?}", failure.at);
+    assert!(failure.for_run_as("Leave", Some("gabriel")).contains("variant: true"));
+}
+
+/// A person's re-record keeps the area's other menu paths, minus one the new
+/// primary path now equals.
+#[test]
+fn a_re_record_keeps_the_other_menu_paths() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut old = leave_with_variants("Leave", &["Staff Hub", "Employee Hub"], "");
+    old.module = "Leave".into();
+    save_nav(dir.path(), "acme", "Web", &with(vec![old])).unwrap();
+    let mut fresh = leave_with_variants("Employee Hub", &[], "");
+    v2_lib::autorun::nav::keep_recorded_values(dir.path(), "acme", "Web", &mut fresh);
+    assert_eq!(fresh.variants.len(), 1);
+    assert_eq!(fresh.variants[0].clicks[0], leave_with_variants("Staff Hub", &[], "").clicks[0]);
 }
 
 // ---- Areas ---------------------------------------------------------------
