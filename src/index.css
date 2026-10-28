@@ -931,10 +931,10 @@ table {
    colour is --assistant-hue, set from the browser slot. When its corner
    changes, `left` transitions over 2.5 s and the component sets data-moving
    (legs step, no pacing) and data-facing for the duration. In the Map room the
-   bubble and character pace: a translateX keyframe of at most 2.5rem each way
-   around the spot (which the component keeps 3.5rem from the corner edges),
-   so it never fights the left transition. The name tag stays fixed under the
-   spot, only the svg flips at each end and the bubble never mirrors. Typing bobs at the bench; dozing is still and dimmed
+   bubble, character and name tag pace together: a translateX keyframe of at
+   most 2.5rem each way around the spot (which the component keeps 5rem from
+   the corner edges), so it never fights the left transition. Only the svg
+   flips at each end; the bubble and tag never mirror. Typing bobs at the bench; dozing is still and dimmed
    with a z drifting up. Under reduced motion nothing moves and the walker
    jumps, but each pose still looks different (screen, dim and z, or walking
    stance). */

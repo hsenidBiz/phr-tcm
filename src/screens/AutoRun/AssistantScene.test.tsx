@@ -84,7 +84,7 @@ test.each<[AgentActivity, Corner]>([
   [idle, "lounge"],
 ])("cornerFor maps %j to %s", (activity, corner) => expect(cornerFor(activity)).toBe(corner));
 
-test("spotLeft puts an occupant in its corner's third, 2.75rem from the edges (3.5rem in the Map room)", () => {
+test("spotLeft puts an occupant in its corner's third, 2.75rem from the edges (5rem in the Map room)", () => {
   expect(spotLeft("lab", 0, 1)).toContain("16.6");
   expect(spotLeft("lounge", 0, 1)).toContain("83.3");
   expect(new Set([0, 1, 2].map((k) => spotLeft("lab", k, 3))).size).toBe(3);
@@ -95,10 +95,12 @@ test("spotLeft puts an occupant in its corner's third, 2.75rem from the edges (3
       [2, 3],
     ]) {
       const spot = spotLeft(corner, k, m);
-      const edge = corner === "map" ? "3.5rem" : "2.75rem";
-      const other = corner === "map" ? "2.75rem" : "3.5rem";
-      expect(spot.match(new RegExp(edge.replace(".", "\\."), "g"))).toHaveLength(2);
-      expect(spot).not.toContain(other);
+      const edge = corner === "map" ? "5rem" : "2.75rem";
+      const other = corner === "map" ? "2.75rem" : "5rem";
+      // Whole values only: "2.75rem" ends in "5rem".
+      const whole = (v: string) => new RegExp(`(?<![\\d.])${v.replace(".", "\\.")}`, "g");
+      expect(spot.match(whole(edge))).toHaveLength(2);
+      expect(spot).not.toMatch(whole(other));
     }
   }
 });
@@ -141,9 +143,10 @@ test("the bubble is in flow directly above the character, never absolutely posit
   expect(column.closest(".assistant-scene__walker")).not.toBeNull();
   expect(bubble.className).not.toMatch(/\babsolute\b|\bfixed\b|\bbottom-/);
   expect(bubble.nextElementSibling!.querySelector(".assistant-scene__bot")).not.toBeNull();
-  // The tag follows the character in the column, outside what paces.
-  expect(column.lastElementChild).toHaveClass("assistant-scene__tag");
-  expect(stack.querySelector(".assistant-scene__tag")).toBeNull();
+  // The tag follows the character inside what paces, so a pacing
+  // character never leaves its name behind.
+  expect(stack.lastElementChild).toHaveClass("assistant-scene__tag");
+  expect(stack).toHaveClass("assistant-scene__pace");
   // The character is sized in rem like everything around it, not fixed px.
   const bot = c.querySelector(".assistant-scene__bot")!;
   expect(bot.getAttribute("width")).toBeNull();

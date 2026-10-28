@@ -99,10 +99,11 @@ export function cornerFor(a: AgentActivity): Corner {
 }
 
 const THIRD = 100 / 3;
-/** How close to a corner edge a spot may be. The Map room needs 3.5rem: half
- * the character (0.875rem) plus its pacing (2.5rem each way) is 3.375rem. */
+/** How close to a corner edge a spot may be. The Map room needs 5rem: its
+ * name tag paces with the character, and half the widest tag (2.5rem) plus
+ * the pacing (2.5rem each way) is 5rem. */
 export function edgeFor(corner: Corner): string {
-  return corner === "map" ? "3.5rem" : "2.75rem";
+  return corner === "map" ? "5rem" : "2.75rem";
 }
 const round = (n: number) => Math.round(n * 1000) / 1000;
 const cornerStart = (c: Corner) => CORNERS.findIndex((x) => x.id === c) * THIRD;
@@ -115,8 +116,8 @@ function spotPercent(corner: Corner, k: number, m: number): number {
 
 /** Where occupant `k` of `m` stands in `corner`, as a CSS length: its even
  * share of the corner's third, but never closer to either corner edge than
- * `edgeFor(corner)` (2.75rem; 3.5rem in the Map room, whose character paces up
- * to 2.5rem each way), so the character and its pacing stay inside the corner
+ * `edgeFor(corner)` (2.75rem; 5rem in the Map room, whose character and name
+ * tag pace up to 2.5rem each way), so the character and its pacing stay inside the corner
  * even on the narrowest card. */
 export function spotLeft(corner: Corner, k: number, m: number): string {
   const start = round(cornerStart(corner));
@@ -317,8 +318,8 @@ export default function AssistantOffice({ agents }: { agents: AgentView[] }) {
           >
             {/* A column in normal flow (bubble, bot, tag), so the bubble sits
                 right above the head at any scale. The walker's bottom is the
-                floor line less the tag's 1rem. Only the bubble and bot pace;
-                the tag stays fixed under the spot. */}
+                floor line less the tag's 1rem. Bubble, bot and name tag pace
+                together, so the name never leaves its character. */}
             <div className="flex w-full flex-col items-center">
               <div
                 className={`flex flex-col items-center${pace ? " assistant-scene__pace" : ""}`}
@@ -335,10 +336,10 @@ export default function AssistantOffice({ agents }: { agents: AgentView[] }) {
                   <span className="assistant-scene__z absolute left-full top-0 text-[0.625rem] font-bold text-muted">z</span>
                 )}
               </div>
-              </div>
               <span className="assistant-scene__tag label-trim h-4 max-w-[5rem] overflow-x-clip text-ellipsis whitespace-nowrap text-[0.6875rem] leading-4 text-muted">
                 {a.label}
               </span>
+              </div>
             </div>
           </div>
         );
