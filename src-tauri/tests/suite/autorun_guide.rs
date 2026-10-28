@@ -1472,6 +1472,27 @@ fn the_guide_says_how_long_must_not_save_lasts() {
     assert!(!section.contains('\u{2014}'));
 }
 
+/// Backlog 42: a discovery with a case id keeps the guard on, and the guide
+/// has one page listing every action kind with its fields, built from the
+/// examples a refused action shows.
+#[test]
+fn the_guide_says_a_case_id_keeps_the_guard_on_and_lists_every_action_with_its_fields() {
+    let flat = |text: &str| text.split_whitespace().collect::<Vec<_>>().join(" ");
+    let g = autorun_guide();
+    assert!(flat(&g).contains("`start_autorun_discovery` with a `case_id` keeps the save guard on"));
+    let at = g.find("\n## Every action at a glance\n").expect("no action list section");
+    let section = &g[at + 1..];
+    let section = section.split("\n## ").next().unwrap();
+    for kind in v2_lib::autorun::action_help::kinds() {
+        let example = v2_lib::autorun::action_help::example_for(kind).unwrap();
+        assert!(section.contains(example), "the list lacks the example of {kind}");
+    }
+    for kind in ACTION_KINDS {
+        assert!(section.contains(&format!("\"kind\":\"{kind}\"")), "the list lacks {kind}");
+    }
+    assert!(section.lines().count() < 60, "the list is a page");
+}
+
 /// The Quick rules open the guide, short enough to read every time, and
 /// with nothing in them an assistant must never read: no dash, no banned
 /// phrase, no hidden feature.

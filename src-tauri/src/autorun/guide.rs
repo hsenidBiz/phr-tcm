@@ -77,6 +77,28 @@ pub fn autorun_guide() -> String {
     out.push_str(QUICK_RULES);
     out.push('\n');
     out.push_str(&crate::browser::viewport::size_in_force(GUIDE_BODY));
+    out.push_str(&actions_at_a_glance());
+    out
+}
+
+/// The guide's one-page list of every action kind with a valid example of
+/// its fields, built from `action_help::example_for`, the examples a refused
+/// action shows, so the list cannot drift from them.
+pub fn actions_at_a_glance() -> String {
+    let mut out = String::from(
+        "
+## Every action at a glance
+
+One valid example of each action kind, with its field names; the same examples a refused action shows. Copy one and change the values.
+
+",
+    );
+    for kind in super::action_help::kinds() {
+        if let Some(example) = super::action_help::example_for(kind) {
+            out.push_str(&format!("- `{example}`
+"));
+        }
+    }
     out
 }
 
@@ -1104,7 +1126,8 @@ ends. `no_save: true` on one discovery action or batch lasts for that call
 only. A call that names a marked case (a replay, a try or a discovery call) is
 guarded for that call, and every call when the discovery is for that case (it
 started with it, or it was the first case named). Name the `case_id` on every
-discovery call for a `no_save` case. The replay that ends a guarded discovery is guarded too, for
+discovery call for a `no_save` case. `start_autorun_discovery` with a `case_id`
+keeps the save guard on when that case is marked `no_save`. The replay that ends a guarded discovery is guarded too, for
 that replay only; the next replay of a case that may save is not guarded.
 
 When the page tries to save, the case fails at once with:
@@ -2221,10 +2244,12 @@ own expected result was seen. The save refuses that script: "step 2: the check c
 says 4 ("exactly 4 levels")".
 
 `report_case_divergence { case_id, step, case_says, app_shows, kind }` stores what you found for the
-person and never changes the script:
+person and never changes the script; add `proposal` (optional) with what you suggest be done:
 
 - `case_says` quotes the case's own words (that step, another expected result or the preconditions), at
-  most 300 characters; words the case does not hold are refused. `app_shows` is what the page showed.
+  most 1000 characters; put `...` between quoted pieces to skip the words between them. Words the case
+  does not hold are refused. `app_shows` is what the page showed, at most 1000 characters. `proposal`
+  is optional: what you suggest be done (a rewording, a data fix); it is shown with the divergence.
 - `kind` is `data` when the environment does not meet the case's precondition (6 levels where the case
   needs 4), `app` when the application does not do what the case expects, and `wording` when the case is
   unclear or out of date.

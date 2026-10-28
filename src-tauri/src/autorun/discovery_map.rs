@@ -1121,6 +1121,46 @@ pub fn mark_failed(root: &Path, org: &str, project: &str, area: &str) -> Result<
     update(root, org, project, |map| area_mut(map, &area).failed_since = true)
 }
 
+/// A discovery that moves from the area `from` to the area `to` keeps what it
+/// has seen: every sighting, whole sighting and page element of `from` last
+/// seen at or after `since` (when the discovery started) is filed under `to`
+/// too, unless `to` already holds it. Locators met while the discovery stood
+/// in one area can then be saved in a script of another. Nothing leaves
+/// `from`, and nothing `to` already holds is changed.
+pub fn carry_seen(root: &Path, org: &str, project: &str, from: &str, to: &str, since: u64) -> Result<(), String> {
+    let (from, to) = (canonical_area(root, org, project, from), canonical_area(root, org, project, to));
+    if from.is_empty() || to.is_empty() || area_key(&from) == area_key(&to) {
+        return Ok(());
+    }
+    update(root, org, project, |map| {
+        let key = area_key(&from);
+        let Some(src) = map.areas.iter().find(|a| area_key(&a.area) == key).cloned() else { return };
+        let dst = area_mut(map, &to);
+        for s in src.sightings.iter().filter(|s| s.last_seen >= since) {
+            if !dst.sightings.iter().any(|d| d.key == s.key) {
+                dst.sightings.push(s.clone());
+            }
+        }
+        for w in src.wholes.iter().filter(|w| w.last_seen >= since) {
+            if !dst.wholes.iter().any(|d| d.locator == w.locator) {
+                dst.wholes.push(w.clone());
+            }
+        }
+        for page in &src.pages {
+            let fresh: Vec<&SeenElement> = page.elements.iter().filter(|e| e.seen_at >= since).collect();
+            if fresh.is_empty() {
+                continue;
+            }
+            let into = page_mut(dst, &page.path, &page.title);
+            for e in fresh {
+                if !into.elements.iter().any(|d| d.key == e.key) {
+                    into.elements.push(e.clone());
+                }
+            }
+        }
+    })
+}
+
 pub fn forget_area(root: &Path, org: &str, project: &str, area: &str) -> Result<(), String> {
     let key = area_key(area);
     update(root, org, project, |map| map.areas.retain(|a| area_key(&a.area) != key))

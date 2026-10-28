@@ -53,6 +53,21 @@ fn ctx() -> BridgeContext {
     BridgeContext { org: "acme".into(), project: "Web".into(), ..BridgeContext::default() }
 }
 
+/// Backlog 42: every bridge call leaves one log line with its route and how
+/// long it took, and never its query or its body.
+#[tokio::test]
+async fn every_bridge_call_logs_its_route_and_its_time_but_no_arguments() {
+    let _log = crate::serial::log_tail();
+    let (status, _) =
+        v2_lib::ai_bridge::route(&ctx(), None, "GET", "/ping?token=SECRETQUERY99", "{\"x\":\"SECRETBODY99\"}", "1.0.0").await;
+    assert_eq!(status, 200);
+    let lines: Vec<String> =
+        v2_lib::applog::recent(500).into_iter().map(|l| l.message).filter(|m| m.starts_with("Bridge call: GET /ping ")).collect();
+    let line = lines.last().expect("the call left no line");
+    assert!(line.starts_with("Bridge call: GET /ping answered 200 in ") && line.ends_with(" ms"), "{line}");
+    assert!(!line.contains("SECRET"), "{line}");
+}
+
 // The store root is process-wide state, and cargo runs tests in parallel -
 // every test that sets it holds `crate::serial::autorun()` so one test's
 // root cannot swap out from under another mid-save. The same lock covers

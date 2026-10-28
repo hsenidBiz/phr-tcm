@@ -115,6 +115,10 @@ pub struct Divergence {
     /// For an assistant's ruling: the assistant's own note, scrubbed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub note: Option<String>,
+    /// What the reporter suggests be done about it (a rewording, a data
+    /// fix), scrubbed; shown wherever the divergence is listed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub proposal: Option<String>,
 }
 
 impl Divergence {
@@ -136,6 +140,9 @@ impl Divergence {
 }
 
 pub const MAX_TEXT: usize = 300;
+/// The cap on `case_says`, `app_shows` and `proposal`: a long expected result
+/// is quoted whole.
+pub const MAX_CASE_TEXT: usize = 1000;
 pub const SAID_EMPTY: &str = "\"said\" quotes the person's own words from this chat that gave this ruling: a ruling is applied only on what the person said, never with an empty \"said\"";
 pub const SAID_TOO_LONG: &str = "\"said\" is one line of at most 300 characters: quote the words that gave the ruling";
 pub const NOTE_TOO_LONG: &str = "\"note\" is one line of at most 300 characters";
@@ -247,6 +254,21 @@ pub fn report_in(
     kind: DivergenceKind,
     now_ms: u64,
 ) -> Result<Reported, String> {
+    report_with_proposal_in(list, case_id, step, case_says, app_shows, kind, None, now_ms)
+}
+
+/// [`report_in`], with the reporter's optional `proposal`.
+#[allow(clippy::too_many_arguments)]
+pub fn report_with_proposal_in(
+    list: &mut Vec<Divergence>,
+    case_id: i32,
+    step: i32,
+    case_says: &str,
+    app_shows: &str,
+    kind: DivergenceKind,
+    proposal: Option<&str>,
+    now_ms: u64,
+) -> Result<Reported, String> {
     if case_id < 1 {
         return Err("case_id is a test case's id".to_string());
     }
@@ -258,9 +280,13 @@ pub fn report_in(
         return Err("a divergence needs \"case_says\" (the case's own words) and \"app_shows\" (what the page showed)"
             .to_string());
     }
-    let too_long = |s: &str| s.chars().count() > MAX_TEXT || s.contains('\n') || s.contains('\r');
+    let too_long = |s: &str| s.chars().count() > MAX_CASE_TEXT || s.contains('\n') || s.contains('\r');
     if too_long(case_says) || too_long(app_shows) {
-        return Err("\"case_says\" and \"app_shows\" are each one line of at most 300 characters".to_string());
+        return Err("\"case_says\" and \"app_shows\" are each one line of at most 1000 characters".to_string());
+    }
+    let proposal = proposal.map(str::trim).filter(|p| !p.is_empty());
+    if proposal.is_some_and(too_long) {
+        return Err("\"proposal\" is one line of at most 1000 characters".to_string());
     }
     let (fold_says, fold_shows) = (fold(case_says), fold(app_shows));
     if let Some(d) = list.iter().find(|d| {
@@ -288,6 +314,9 @@ pub fn report_in(
     }) {
         d.case_says = case_says.to_string();
         d.app_shows = app_shows.to_string();
+        if proposal.is_some() {
+            d.proposal = proposal.map(str::to_string);
+        }
         d.reported_at = now;
         return Ok(Reported::Updated(d.id.clone()));
     }
@@ -315,6 +344,7 @@ pub fn report_in(
         ruled_by: None,
         said: None,
         note: None,
+        proposal: proposal.map(str::to_string),
     });
     Ok(Reported::New(id))
 }
@@ -463,6 +493,11 @@ pub fn blocking(list: &[Divergence], case_id: i32) -> Option<&Divergence> {
         .or_else(|| first(&|d| d.status == DivergenceStatus::AwaitingRepair))
 }
 
+/// ` Proposed: "..."` when the reporter suggested something, else nothing.
+pub fn proposal_words(d: &Divergence) -> String {
+    d.proposal.as_deref().map(|p| format!(" Proposed: \"{p}\".")).unwrap_or_default()
+}
+
 /// The sentence a blocked run (and the assistant) reads.
 pub fn run_sentence(d: &Divergence) -> String {
     match d.status {
@@ -471,11 +506,12 @@ pub fn run_sentence(d: &Divergence) -> String {
             d.step
         ),
         _ => format!(
-            "{NEEDS_RULING_PREFIX}step {}: the case says \"{}\" but the app shows \"{}\" ({}) - a person rules on it in Auto Run",
+            "{NEEDS_RULING_PREFIX}step {}: the case says \"{}\" but the app shows \"{}\" ({}) - a person rules on it in Auto Run{}",
             d.step,
             d.case_says,
             d.app_shows,
-            d.kind.word()
+            d.kind.word(),
+            proposal_words(d)
         ),
     }
 }
@@ -617,12 +653,13 @@ pub fn failures_lines(list: &[Divergence], case_ids: &[i32], now_ms: u64) -> Vec
         for d in mine {
             match (d.status, d.ruling) {
                 (DivergenceStatus::Open, _) => out.push(format!(
-                    "- case {case_id} step {} ({}, {}): needs a ruling - the case says \"{}\", the app shows \"{}\". Leave the script as the case says; the person rules in Auto Run.",
+                    "- case {case_id} step {} ({}, {}): needs a ruling - the case says \"{}\", the app shows \"{}\". Leave the script as the case says; the person rules in Auto Run.{}",
                     d.step,
                     d.kind.word(),
                     d.id,
                     d.case_says,
-                    d.app_shows
+                    d.app_shows,
+                    proposal_words(d)
                 )),
                 (DivergenceStatus::AwaitingRepair, _) => out.push(format!(
                     "- case {case_id} step {} (rewrite, {}): the person is rewriting the case - repair that step's checks to the case as it now reads, declared in edits; the repair closes it.",

@@ -80,6 +80,15 @@ impl Session {
             return None;
         }
         let role = roles::role_for_call(tool, args)?;
+        // A writer, healer or explorer saving with `edits` is amending its own
+        // work: the case rewriter's rules are not for it, so the save answers
+        // what was saved and nothing else.
+        if tool == "save_autorun_script"
+            && role == Role::CaseRewriter
+            && [Role::Writer, Role::Healer, Role::Explorer].iter().any(|r| self.delivered.contains(r))
+        {
+            return None;
+        }
         Some(if self.delivered.insert(role) { Note::Rules(role) } else { Note::Pointer(role) })
     }
 }

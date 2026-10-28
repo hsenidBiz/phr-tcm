@@ -841,6 +841,10 @@ pub fn check_case_values_against(
 ) -> ValueReport {
     let ex = exemptions(script, test_prefix);
     let numbers = case.case_numbers();
+    // Every value any check anywhere in the script uses: a "because" is
+    // unused only when none of them is its value.
+    let script_used: BTreeSet<String> =
+        script.case_steps().flat_map(|st| values_of_step(st)).map(|v| fold(&v.value)).collect();
     let mut report = ValueReport::default();
     let push_refusal = |r: &mut ValueReport, s: String| {
         if !r.refusals.contains(&s) {
@@ -920,7 +924,7 @@ pub fn check_case_values_against(
                     push_refusal(
                         &mut report,
                         format!(
-                            "step {n}: {} \"{}\" is not in the case - take it from the case's steps, expected results or preconditions as written, or give it a \"because\" on the step ({{ \"value\": \"{}\", \"why\": \"where the case defines it\" }}){}",
+                            "step {n}: {} \"{}\" is not in the case - take it from the case's steps, expected results or preconditions as written, or add it to the step's \"because\" list as {{ \"value\": \"{}\", \"why\": \"where the case defines it\" }}{}",
                             v.what,
                             v.value,
                             v.value,
@@ -932,7 +936,7 @@ pub fn check_case_values_against(
         }
         for b in &step.because {
             let folded = fold(&b.value);
-            if !folded.is_empty() && !used.contains(&folded) {
+            if !folded.is_empty() && !used.contains(&folded) && !script_used.contains(&folded) {
                 report.notes.push(format!(
                     "step {n}: note: \"because\" names \"{}\", which no check of the step uses",
                     b.value

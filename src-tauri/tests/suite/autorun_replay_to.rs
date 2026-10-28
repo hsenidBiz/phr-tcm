@@ -2429,6 +2429,37 @@ async fn a_reset_ends_the_assistants_discovery_and_keeps_the_browser() {
     assert_eq!(sign_ins(&b.d), 0);
 }
 
+/// Backlog 42: the reset of a browser a discovery left, without `release`,
+/// keeps the sign-in - its account, lease and cookies - and the next replay
+/// goes to the area without signing in again.
+#[tokio::test]
+async fn a_reset_of_a_discoverys_browser_keeps_the_sign_in_for_the_next_replay() {
+    use v2_lib::commands::autorun::{reset_in_for_assistant, reset_sentence};
+    let _l = crate::serial::account_leases();
+    let dir = tempfile::tempdir().unwrap();
+    project(dir.path(), &script(three_steps()));
+    let (mut slot, app, _jar) = left_by_a_replay(dir.path()).await;
+    {
+        let b = slot.as_mut().unwrap();
+        b.discovery = begun_discovery().map(|s| v2_lib::commands::autorun::DiscoveryState {
+            area: Some("Leave".into()),
+            account: Some("admin".into()),
+            ..s
+        });
+    }
+    let (status, said) = reset_in_for_assistant(&mut slot, dir.path(), "acme", "Web", &quick()).await;
+    assert_eq!(status, 200, "{said} {:?}", log(&app));
+    assert!(said.ends_with(&reset_sentence("admin")), "{said}");
+    let mut b = slot.unwrap();
+    assert!(b.lease.sign_in_print().is_some(), "the sign-in's cookies were forgotten");
+    let (mut account, mut held) = (b.account.take(), b.lease);
+    assert_eq!(account.as_deref(), Some("admin"));
+    let (end, reused) = replay_kept(&mut b.d, dir.path(), 3, &mut account, &mut held).await;
+    assert!(matches!(end, ReplayEnd::Ready { .. }), "{end:?}");
+    assert_eq!(reused.went.as_deref(), Some("Leave"), "the replay after the reset signed in again");
+    assert_eq!(sign_ins(&b.d), 0, "{:?}", log(&app));
+}
+
 /// A reset whose home page never shows the app's sign-in - its session
 /// gone - says so, and forgets the account and its cookies' print, so the
 /// next replay signs in again rather than trust it.
@@ -3412,6 +3443,25 @@ async fn a_save_after_the_shared_steps_leaves_a_stand_that_is_not_carried_across
     let (from, why) = carry_across_why(Some(&stand), &b, 5, &now, AT + 1);
     assert_eq!(from, ReplayFrom::Beginning);
     assert_eq!(why.as_deref(), Some("case 77 saved something after the shared steps."));
+}
+
+/// Backlog 42: a look-only (no_save) script's replay never "saved something":
+/// a POST that got past its guard is a read the page makes.
+#[tokio::test]
+async fn a_look_only_replay_never_reports_a_save() {
+    let _l = crate::serial::account_leases();
+    let dir = tempfile::tempdir().unwrap();
+    let mut a = case_with_fourth(77, &["#open"]);
+    a.no_save = true;
+    project(dir.path(), &a);
+    let (d, app) = app();
+    let mut d = d.with_net_record();
+    d.events_when = Some((post_after_clicking(&app, "#open"), vec![a_post()]));
+    let (mut account, mut held, mut guarded) = (None, Held::supervised(), None);
+    let (end, marks) = whole_replay(&mut d, dir.path(), &a, &mut account, &mut held, &mut guarded).await;
+    assert!(matches!(end, ReplayEnd::Ready { .. }), "{end:?} {:?}", log(&app));
+    assert_eq!(marks.unclean, None);
+    assert!(marks.checkpoints.iter().all(|c| !c.wrote), "{:?}", marks.checkpoints);
 }
 
 #[tokio::test]

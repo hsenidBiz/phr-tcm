@@ -122,6 +122,7 @@ fn divergence(id: &str, case_id: i32, step: i32, kind: DivergenceKind, reported_
         ruled_by: None,
         said: None,
         note: None,
+        proposal: None,
     }
 }
 
@@ -238,11 +239,40 @@ fn a_report_is_checked_before_it_is_stored() {
     let blank = "a divergence needs \"case_says\" (the case's own words) and \"app_shows\" (what the page showed)";
     assert_eq!(r(&mut list, 1, 1, "  ", "b"), blank);
     assert_eq!(r(&mut list, 1, 1, "a", ""), blank);
-    let one_line = "\"case_says\" and \"app_shows\" are each one line of at most 300 characters";
-    assert_eq!(r(&mut list, 1, 1, &"x".repeat(301), "b"), one_line);
+    let one_line = "\"case_says\" and \"app_shows\" are each one line of at most 1000 characters";
+    assert_eq!(r(&mut list, 1, 1, &"x".repeat(1001), "b"), one_line);
     assert_eq!(r(&mut list, 1, 1, "a", "two\nlines"), one_line);
     assert!(list.is_empty());
-    assert!(report_in(&mut list, 1, 1, &"x".repeat(300), "b", DivergenceKind::Data, NOW).is_ok());
+    assert!(report_in(&mut list, 1, 1, &"x".repeat(1000), "b", DivergenceKind::Data, NOW).is_ok());
+}
+
+#[test]
+fn a_quote_may_skip_words_with_an_ellipsis() {
+    let text = CaseText::from_case(&case_147556());
+    assert!(text.holds("The dropdown lists ... Level 4"));
+    assert!(text.holds("exactly 4 levels\u{2026}dropdown lists"));
+    assert!(!text.holds("The dropdown lists ... Level 9"));
+    assert!(!text.holds("..."), "an ellipsis alone quotes nothing");
+}
+
+#[test]
+fn a_proposal_is_stored_capped_and_listed_with_the_divergence() {
+    use v2_lib::autorun::divergences::report_with_proposal_in;
+    let mut list = vec![];
+    let r = report_with_proposal_in(
+        &mut list, 147556, 2, "exactly 4 levels", "6 levels", DivergenceKind::Data, Some(" Seed 2 levels "), NOW,
+    )
+    .unwrap();
+    assert_eq!(r, Reported::New("d1".into()));
+    assert_eq!(list[0].proposal.as_deref(), Some("Seed 2 levels"));
+    assert!(run_sentence(&list[0]).ends_with(" Proposed: \"Seed 2 levels\"."), "{}", run_sentence(&list[0]));
+    let why = report_with_proposal_in(&mut list, 147556, 3, "a", "b", DivergenceKind::Data, Some(&"p".repeat(1001)), NOW)
+        .unwrap_err();
+    assert!(why.contains("\"proposal\""), "{why}");
+    let mut plain = vec![];
+    data_report(&mut plain);
+    assert_eq!(plain[0].proposal, None);
+    assert!(!run_sentence(&plain[0]).contains("Proposed"));
 }
 
 #[test]
@@ -400,6 +430,24 @@ async fn the_route_stores_a_divergence_quoting_the_case() {
     assert_eq!(status, 400, "{out}");
     assert!(out.starts_with("a divergence needs"), "{out}");
     assert_eq!(std::fs::read_to_string(path(dir.path(), "acme", "Web")).unwrap(), before);
+}
+
+#[tokio::test]
+async fn the_route_takes_an_ellipsis_in_the_quote_and_a_proposal() {
+    let dir = TempDir::new();
+    let _root = crate::serial::autorun();
+    set_root(dir.path().to_path_buf());
+    let (_server, client) = client_with_case().await;
+    let body = serde_json::json!({
+        "case_id": 147556, "step": 2, "case_says": "The dropdown lists ... Level 4",
+        "app_shows": "6 levels", "kind": "wording", "proposal": "Reword to Level 1 to Level 6"
+    })
+    .to_string();
+    let (status, out) = post(Some(&client), &body).await;
+    assert_eq!(status, 200, "{out}");
+    let stored = load(dir.path(), "acme", "Web").unwrap();
+    assert_eq!(stored[0].proposal.as_deref(), Some("Reword to Level 1 to Level 6"));
+    assert!(run_sentence(&stored[0]).contains("Proposed: \"Reword to Level 1 to Level 6\""));
 }
 
 #[tokio::test]

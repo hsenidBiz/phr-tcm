@@ -109,6 +109,24 @@ fn a_repair_save_brings_the_case_rewriters_rules_and_a_new_script_save_does_not(
 }
 
 #[test]
+fn a_writer_saving_with_edits_gets_the_save_answer_and_no_other_roles_rules() {
+    let fake = Fake::new();
+    let mut s = Session::new();
+    s.tick(1_000);
+    let started = texts(&send(&fake, &mut s, "start_autorun_discovery", json!({ "account": "a" })));
+    assert_eq!(started, vec![Role::Writer.text(), ANSWER.to_string()]);
+    let edit = texts(&send(&fake, &mut s, "save_autorun_script", repair_args()));
+    assert_eq!(edit, vec![ANSWER.to_string()]);
+    s.tick(2_000);
+    let again = texts(&send(&fake, &mut s, "save_autorun_script", repair_args()));
+    assert_eq!(again, vec![ANSWER.to_string()]);
+    // A session that was never a writer still gets the rewriter's rules.
+    let mut other = Session::new();
+    other.tick(1_000);
+    assert_eq!(texts(&send(&fake, &mut other, "save_autorun_script", repair_args()))[0], Role::CaseRewriter.text());
+}
+
+#[test]
 fn a_component_save_brings_the_case_rewriters_rules() {
     let fake = Fake::new();
     let mut s = Session::new();
@@ -200,7 +218,8 @@ fn a_session_pays_each_role_once() {
         for (tool, args) in [
             ("start_autorun_discovery", json!({ "account": "a" })),
             ("get_autorun_failures", json!({})),
-            ("save_autorun_script", repair_args()),
+            // (A repair save after the writer's rules says nothing: see
+            // a_writer_saving_with_edits_gets_the_save_answer_and_no_other_roles_rules.)
             ("save_autorun_component", json!({ "name": "n", "actions": [] })),
         ] {
             let t = texts(&send(&fake, &mut s, tool, args));

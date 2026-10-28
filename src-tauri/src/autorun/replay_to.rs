@@ -1186,6 +1186,11 @@ async fn run_steps_marked<D: Driver>(
 ) -> Option<ReplayEnd> {
     let stopped = || replay.cancel.load(Ordering::SeqCst);
     let in_range = |k: i32| k >= from && k < n;
+    // A look-only replay (the script must not save, or the browser is
+    // guarded for another case) cannot save: the guard stops every request
+    // it takes for a save, so a write that got through is a read the page
+    // posts (a search, a grid), never "saved something".
+    let look_only = script.no_save || guarding_other.is_some() || d.is_guarding_saves();
     // The other areas their `return_to_area` actions name are read once,
     // before the first.
     let names = runner::named_areas(script.in_run_order().filter(|s| in_range(s.step_number)).flat_map(|s| s.actions.iter()));
@@ -1289,7 +1294,7 @@ async fn run_steps_marked<D: Driver>(
             // the request must not turn it back into "nothing saved".
             let wrote = wrote_before
                 || marks.checkpoints.last().is_some_and(|c| c.wrote)
-                || d.net_wrote_since(mark);
+                || (!look_only && d.net_wrote_since(mark));
             let (path, tab, dialogs) = page_state(d).await;
             marks.checkpoints.push(Checkpoint { k, prefix: steps_fingerprint(script, k), path, tab, dialogs, wrote });
         }
@@ -1297,7 +1302,7 @@ async fn run_steps_marked<D: Driver>(
     // Every step passed, the clean-up too: what the whole run did.
     marks.unclean = if !d.net_recording() {
         Some(Unclean::Unrecorded)
-    } else if wrote_before || d.net_wrote_since(mark) {
+    } else if wrote_before || (!look_only && d.net_wrote_since(mark)) {
         Some(Unclean::Saved)
     } else if d.tabs_opened() > tabs_before {
         Some(Unclean::Tabs)

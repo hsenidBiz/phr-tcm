@@ -366,10 +366,36 @@ pub async fn route(
     body: &str,
     version: &str,
 ) -> (u16, String) {
-    route_as(&crate::autorun::agents::Caller::Default, ctx, client, method, target, body, version).await
+    route_timed(&crate::autorun::agents::Caller::Default, ctx, client, method, target, body, version).await
 }
 
-/// `route` for one caller: what the listener calls, with the caller read from
+/// [`route_as`], leaving the log one line for the call: its route, status
+/// and how long it took. What `route` and the listener call.
+pub async fn route_timed(
+    caller: &crate::autorun::agents::Caller,
+    ctx: &BridgeContext,
+    client: Option<&crate::ado::AdoClient>,
+    method: &str,
+    target: &str,
+    body: &str,
+    version: &str,
+) -> (u16, String) {
+    let started = std::time::Instant::now();
+    let answer = route_as(caller, ctx, client, method, target, body, version).await;
+    // One line per call: the route and how long it took, so a slow call can
+    // be told from a slow site. The query and the body are never logged.
+    crate::applog::debug(call_time_line(method, target, answer.0, started.elapsed().as_millis()));
+    answer
+}
+
+/// The log line a bridge call leaves: method, path (the query left out),
+/// status and milliseconds. Never an argument.
+pub fn call_time_line(method: &str, target: &str, status: u16, ms: u128) -> String {
+    let path = target.split_once('?').map(|(p, _)| p).unwrap_or(target);
+    format!("Bridge call: {method} {path} answered {status} in {ms} ms")
+}
+
+/// `route` for one caller: what the listener's `route_timed` calls, with the caller read from
 /// the request's `x-tcm-agent*` headers. `route` is this for the default
 /// caller (an older proxy, a test, the person).
 pub async fn route_as(
@@ -5899,7 +5925,7 @@ async fn discover_action_heard<B: DiscoveryBrowser>(
         _ => None,
     };
     if let Some(moved) = named(area) {
-        state.area = Some(crate::autorun::discovery_map::canonical_area(root, organization, project, &moved));
+        stand_in_area(state, root, organization, project, &moved);
     }
     let area_name = state.area.clone();
     heard.area = area_name.clone();
@@ -6439,7 +6465,7 @@ async fn discover_actions_heard<B: DiscoveryBrowser>(
         return (409, NO_DISCOVERY.to_string());
     };
     if let Some(moved) = named(area) {
-        state.area = Some(crate::autorun::discovery_map::canonical_area(root, organization, project, &moved));
+        stand_in_area(state, root, organization, project, &moved);
     }
     let blocked_by = if state.mapping.is_some() { "the mapping run" } else { "the no-save guard" };
     let mut rows = Vec::new();
@@ -7924,6 +7950,31 @@ async fn fresh_home_for_area<D: crate::browser::cdp::Driver>(
     }
 }
 
+/// The discovery now stands in the area `moved`. What it has seen since it
+/// started, in the area it leaves, is kept for the new one
+/// (`discovery_map::carry_seen`), so a script saved after the move can use
+/// locators met before it. A mapping run reads and saves nothing, so it
+/// carries nothing.
+fn stand_in_area(
+    state: &mut crate::commands::autorun::DiscoveryState,
+    root: &std::path::Path,
+    organization: &str,
+    project: &str,
+    moved: &str,
+) {
+    let to = crate::autorun::discovery_map::canonical_area(root, organization, project, moved);
+    if state.mapping.is_none() {
+        if let Some(from) = state.area.as_deref() {
+            if let Err(why) =
+                crate::autorun::discovery_map::carry_seen(root, organization, project, from, &to, state.started_at)
+            {
+                unrecorded(&why);
+            }
+        }
+    }
+    state.area = Some(to);
+}
+
 /// Where a discovery stands once the area `kept` is saved or found as it
 /// was. An ordinary discovery goes on to explore that area, so it becomes
 /// current. A mapping run files the screen it arrived on under `kept` now,
@@ -7940,7 +7991,7 @@ async fn stand_in_saved_area<D: crate::browser::cdp::Driver>(
 ) {
     let Some(state) = discovery.as_mut() else { return };
     let mapping = state.mapping.is_some();
-    state.area = Some(kept);
+    stand_in_area(state, root, organization, project, &kept);
     if !mapping {
         return;
     }
@@ -10702,6 +10753,8 @@ async fn autorun_divergence(ctx: &BridgeContext, client: Option<&crate::ado::Ado
         case_says: String,
         app_shows: String,
         kind: divergences::DivergenceKind,
+        #[serde(default)]
+        proposal: Option<String>,
     }
     let shape = "{ \"case_id\": 147556, \"step\": 2, \"case_says\": \"exactly 4 levels\", \"app_shows\": \"6 levels\", \"kind\": \"data\" }";
     let b: DivergenceBody = match serde_json::from_str(body) {
@@ -10753,10 +10806,11 @@ async fn autorun_divergence(ctx: &BridgeContext, client: Option<&crate::ado::Ado
     }
     let (case_says, app_shows) =
         (crate::autorun::defects::scrub_note(&b.case_says), crate::autorun::defects::scrub_note(&b.app_shows));
+    let proposal = b.proposal.as_deref().map(crate::autorun::defects::scrub_note);
     let now = crate::autorun::sessions::now_ms();
     let mut refused: Option<String> = None;
     let reported = divergences::update(&root, &ctx.org, &ctx.project, |list| {
-        let r = divergences::report_in(list, b.case_id, b.step, &case_says, &app_shows, b.kind, now)
+        let r = divergences::report_with_proposal_in(list, b.case_id, b.step, &case_says, &app_shows, b.kind, proposal.as_deref(), now)
             .inspect_err(|why| refused = Some(why.clone()))?;
         let id = match &r {
             Reported::New(id) | Reported::Updated(id) => id,
@@ -15650,7 +15704,7 @@ pub async fn start_listener(
                     let caller = agent.caller();
                     let label = crate::autorun::agents::note_call(&caller, &agent, crate::autorun::sessions::now_ms());
                     let (status, payload) =
-                        route_as(&caller, &ctx, client.as_ref(), &method, &target, &body, &state.version).await;
+                        route_timed(&caller, &ctx, client.as_ref(), &method, &target, &body, &state.version).await;
                     if let Some(line) = tool_call_line_for(tool.as_deref(), label.as_deref(), &target, status, &payload) {
                         crate::applog::debug(line);
                     }

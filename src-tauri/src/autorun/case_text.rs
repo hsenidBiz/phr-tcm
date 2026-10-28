@@ -83,6 +83,16 @@ impl CaseText {
     /// Whether the folded `phrase` (at least 1 char) is in `all_folded` as
     /// whole words.
     pub fn holds(&self, phrase: &str) -> bool {
+        // An ellipsis between quoted pieces skips the words between them:
+        // every piece must be held.
+        if phrase.contains("...") || phrase.contains('\u{2026}') {
+            let pieces: Vec<&str> = phrase
+                .split('\u{2026}')
+                .flat_map(|p| p.split("..."))
+                .filter(|p| !fold(p).is_empty())
+                .collect();
+            return !pieces.is_empty() && pieces.iter().all(|p| self.holds(p));
+        }
         let phrase = fold(phrase);
         if phrase.is_empty() {
             return false;

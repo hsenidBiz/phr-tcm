@@ -3857,6 +3857,11 @@ export type Divergence_Deserialize = {
 	said?: string | null,
 	/**  For an assistant's ruling: the assistant's own note, scrubbed. */
 	note?: string | null,
+	/**
+	 *  What the reporter suggests be done about it (a rewording, a data
+	 *  fix), scrubbed; shown wherever the divergence is listed.
+	 */
+	proposal?: string | null,
 };
 
 export type Divergence_Serialize = {
@@ -3894,6 +3899,11 @@ export type Divergence_Serialize = {
 	said?: string | null,
 	/**  For an assistant's ruling: the assistant's own note, scrubbed. */
 	note?: string | null,
+	/**
+	 *  What the reporter suggests be done about it (a rewording, a data
+	 *  fix), scrubbed; shown wherever the divergence is listed.
+	 */
+	proposal?: string | null,
 };
 
 /**

@@ -50,6 +50,11 @@ test("an open data divergence offers three rulings", () => {
   expect(screen.getByRole("button", { name: "Rewrite case #147556 in Azure DevOps" })).toBeInTheDocument();
 });
 
+test("a reporter's proposal is shown with the divergence", () => {
+  show({ ...base, proposal: "Seed 2 levels" });
+  expect(screen.getByText(/Proposed: "Seed 2 levels"/)).toBeInTheDocument();
+});
+
 test("an app divergence offers no data fixed", () => {
   show({ ...base, kind: "app" });
   expect(screen.getByText("Divergence")).toBeInTheDocument();

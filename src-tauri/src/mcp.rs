@@ -875,9 +875,10 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool, unlocked: bool, all_projec
             "inputSchema": schema(serde_json::json!({
                 "case_id": { "type": "number", "description": "The test case." },
                 "step": { "type": "number", "description": "The case's step whose check differs." },
-                "case_says": { "type": "string", "description": "The case's own words, quoted, at most 300 characters." },
-                "app_shows": { "type": "string", "description": "What the page showed, in a few words, at most 300 characters." },
+                "case_says": { "type": "string", "description": "The case's own words, quoted, at most 1000 characters; \"...\" between quoted pieces skips the words between them." },
+                "app_shows": { "type": "string", "description": "What the page showed, in a few words, at most 1000 characters." },
                 "kind": { "type": "string", "enum": ["data", "app", "wording"] },
+                "proposal": { "type": "string", "description": "Optional: what you suggest be done about it (a rewording, a data fix), at most 1000 characters; shown with the divergence." },
             }), &["case_id", "step", "case_says", "app_shows", "kind"]),
         },
         {
