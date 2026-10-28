@@ -16,8 +16,8 @@ Same as the Global Constraints of `docs/superpowers/plans/2026-10-28-assistants-
 
 ## Review Focus
 
-- Two or three walkers must not move as one figure: each walker gets a negative `animation-delay` by its index (`-(i * 2.7)s` on an 8 s walk). Test: two walkers render with different `animation-delay` values.
-- A walker's bubble must not mirror when the character flips: the flip (`scaleX(-1)`) is on the svg only; the walker wrapper animates `left`. Test: the walk keyframes contain `calc(100% - 2.25rem)`, and a separate flip keyframe exists.
+- Two or three walkers must not move as one figure: each walker gets a negative `animation-delay` by its index (`-(i * 2.7)s` on a 6 s walk). Test: two walkers render with different `animation-delay` values.
+- A walker's bubble must not mirror when the character flips: the flip (`scaleX(-1)`) is on the svg only; the walker wrapper animates `left`. Test: the walk keyframes read `--walk-from` / `--walk-to` (set inline from the desk, clamped inside the room), and a separate flip keyframe exists.
 - One assistant: its desk is centred. Test: `deskLeft(0,1)` is `"50%"`, `deskLeft(0,2)` `"25%"`, `deskLeft(1,2)` `"75%"`.
 - A long bubble ellipsises (`text-ellipsis`, `max-w-[12rem]`) and never clips descenders.
 - The office is only drawn while the card is (visibility rule unchanged).

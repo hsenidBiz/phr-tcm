@@ -12,7 +12,7 @@ The cubicle grid left most of a wide card empty. **Switched to mockup A:** one s
 
 The office (about 96 px tall, full card width, `aria-hidden`):
 - One desk per assistant in the card's order, spread evenly: desk *i* of *n* centred at `(i + 0.5) / n` of the width. The desk number (from the label) is on the desk's front.
-- Replaying or working: the assistant sits at its desk, typing, its screen lit. Idle: dozes at its desk, dimmed, "z" drifting. Discovering, mapping, exploring: it walks back and forth across the whole room, its own desk faded; several walkers start at different points of the walk so they do not move as one.
+- Replaying or working: the assistant sits at its desk, typing, its screen lit. Idle: dozes at its desk, dimmed, "z" drifting. Discovering, mapping, exploring: it paces a short stretch around its own desk (about 5rem to its left to 3rem to its right, kept inside the room, about 6 s per round trip), its desk faded; several walkers start at different points of the walk so they do not move as one.
 - The speech bubble (same strings as below) floats above the character's head and moves with it; the character flips at each end of the walk, the bubble does not.
 
 The cubicle-grid text below is kept for the record; where it conflicts, this revision wins.

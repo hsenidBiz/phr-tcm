@@ -113,8 +113,8 @@ test("a sitting assistant stands just left of its desk", () => {
   const walkers = office([agent("Assistant 1", 0, replaying), agent("Assistant 2", 1, idle)]).querySelectorAll<HTMLElement>(
     ".assistant-scene__walker",
   );
-  expect(walkers[0].style.left).toBe("calc(25% - 3.5rem)");
-  expect(walkers[1].style.left).toBe("calc(75% - 3.5rem)");
+  expect(walkers[0].style.getPropertyValue("--seat")).toBe("clamp(0.5rem, calc(25% - 3.5rem), calc(100% - 2.25rem))");
+  expect(walkers[1].style.getPropertyValue("--seat")).toBe("clamp(0.5rem, calc(75% - 3.5rem), calc(100% - 2.25rem))");
 });
 
 test("two walkers start at different points of the walk", () => {
@@ -133,13 +133,19 @@ test("a walker paces around its own desk, kept inside the room", () => {
   expect(walkers[0].style.getPropertyValue("--walk-from")).toBe(`clamp(0.5rem, calc(25% - 5rem), ${room})`);
   expect(walkers[0].style.getPropertyValue("--walk-to")).toBe(`clamp(0.5rem, calc(25% + 3rem), ${room})`);
   expect(walkers[1].style.getPropertyValue("--walk-from")).toBe(`clamp(0.5rem, calc(75% - 5rem), ${room})`);
+  // Stilled walkers stay at the start of their walk, not piled at the edge.
+  expect(css).toMatch(/\.assistant-scene__walker\s*\{[^}]*left:\s*var\(--seat,\s*var\(--walk-from/);
+  // The svg keeps its walker's timing so the flip lines up with the walk.
+  for (const w of walkers) {
+    expect(w.querySelector<SVGElement>(".assistant-scene__bot")!.style.animationDelay).toBe(w.style.animationDelay);
+  }
 });
 
 test("the bubble rides inside its walker and ellipsises a long line", () => {
   const c = one({ kind: "discovering", area: "Leave Encashment Approvals" }, 1, "Assistant 2");
   const bubble = c.querySelector(".assistant-scene__walker .assistant-scene__bubble")!;
   expect(bubble).toHaveTextContent("Leave Encashment Approvals");
-  expect(bubble).toHaveClass("text-ellipsis", "max-w-[12rem]");
+  expect(bubble).toHaveClass("text-ellipsis", "max-w-[8rem]");
 });
 
 test("no bubble or number when there is nothing to say", () => {

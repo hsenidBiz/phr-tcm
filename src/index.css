@@ -926,15 +926,17 @@ table {
    96 px tall; each assistant has a desk, always drawn, and a walker wrapper
    holding its 28 x 34 character (colour from --assistant-hue, set from the
    browser slot) and its speech bubble. Walking animates the wrapper's left
-   between --walk-from and --walk-to (set inline from its desk, clamped inside the room) while only the
-   svg flips at each end, so the bubble never mirrors; the component gives each
+   between --walk-from and --walk-to (set inline from its desk, clamped inside
+   the room) while only the svg flips at each end, so the bubble never mirrors; the component gives each
    walker a negative animation-delay so they do not move as one. Typing bobs
    at the desk; dozing is still and dimmed with a z drifting up. Under reduced
    motion nothing moves, but each pose still looks different (screen, dim and
    z, or walking stance). */
 .assistant-scene__desk--empty { opacity: 0.5; }
 .assistant-scene__walker {
-  left: 0.5rem;
+  /* Where it stands when not animated: its seat, else the start of its walk
+     (so stilled walkers stay at their own desks, not piled at the edge). */
+  left: var(--seat, var(--walk-from, 0.5rem));
   color: var(--assistant-hue, var(--color-muted));
 }
 .assistant-scene__eye {

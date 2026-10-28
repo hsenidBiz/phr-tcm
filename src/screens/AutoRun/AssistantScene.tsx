@@ -3,8 +3,8 @@
 // and one pixel character per assistant whose pose shows what it is doing.
 // Typing at its desk while it replays or works, dozing there (dimmed, a "z"
 // drifting) when idle, and pacing back and forth near its own desk while
-// it discovers, maps or explores (pacing near its own desk, which is faded). Walkers start at different
-// points of the walk so they do not move as one. A speech bubble floats above
+// it discovers, maps or explores (its own desk faded). Walkers start at
+// different points of the walk so they do not move as one. A speech bubble floats above
 // the character's head and travels with it; only the character flips at each
 // end of the walk, never the bubble. All of it is decorative (the rows below
 // say it in words), so the whole office is aria-hidden.
@@ -158,7 +158,7 @@ export default function AssistantOffice({ agents }: { agents: AgentView[] }) {
           walkerStyle["--walk-to"] = inRoom(`calc(${desk} + 3rem)`);
           walkerStyle.animationDelay = delay;
         } else {
-          walkerStyle.left = `calc(${desk} - 3.5rem)`;
+          walkerStyle["--seat"] = inRoom(`calc(${desk} - 3.5rem)`);
         }
         return (
           <div
@@ -169,7 +169,7 @@ export default function AssistantOffice({ agents }: { agents: AgentView[] }) {
             style={walkerStyle as CSSProperties}
           >
             {bubble && (
-              <span className="assistant-scene__bubble label-trim absolute bottom-full left-1/2 mb-0.5 max-w-[12rem] -translate-x-1/2 overflow-x-clip text-ellipsis whitespace-nowrap rounded border border-border bg-surface px-1.5 text-[11px] text-text">
+              <span className="assistant-scene__bubble label-trim absolute bottom-full left-1/2 mb-0.5 max-w-[8rem] -translate-x-1/2 overflow-x-clip text-ellipsis whitespace-nowrap rounded border border-border bg-surface px-1.5 text-[11px] text-text">
                 {bubble}
               </span>
             )}
