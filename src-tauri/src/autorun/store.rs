@@ -1320,10 +1320,20 @@ pub fn save_shot(root: &Path, bytes: &[u8]) -> Result<String, String> {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis())
         .unwrap_or_default();
-    let seq = SHOT_SEQ.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-    let name = format!("shot-{ms}-{seq:06}.jpg");
-    std::fs::write(dir.join(&name), bytes).map_err(|e| e.to_string())?;
-    Ok(name)
+    // Create-new, so a name that is already there (a clock stepping back)
+    // is never written through, whatever it is linked to.
+    loop {
+        let seq = SHOT_SEQ.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let name = format!("shot-{ms}-{seq:06}.jpg");
+        match std::fs::OpenOptions::new().write(true).create_new(true).open(dir.join(&name)) {
+            Ok(mut f) => {
+                std::io::Write::write_all(&mut f, bytes).map_err(|e| e.to_string())?;
+                return Ok(name);
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(e) => return Err(e.to_string()),
+        }
+    }
 }
 
 /// Drop the oldest screenshots beyond the newest `MAX_SHOTS`, sparing any

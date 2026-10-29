@@ -160,6 +160,48 @@ const LINKED_ITEMS: [&str; 2] = ["shots", "downloads"];
 
 const STAGING_PREFIX: &str = ".envs-staging-";
 
+/// How long the one-time folder rename waits for another program (often
+/// antivirus, still scanning the files just written) to let go: about 15
+/// seconds in all, once per install, and only when a hold is actually seen.
+pub const MIGRATION_RENAME_WAITS_MS: [u64; 11] = [50, 100, 200, 400, 800, 1000, 1500, 2000, 3000, 3000, 3000];
+
+/// A small file in the shared root counting copy attempts that failed one
+/// after another; gone once a start succeeds.
+const FAILED_STARTS_FILE: &str = "migration-failed-starts.txt";
+
+fn failed_starts(shared: &Path) -> u32 {
+    std::fs::read_to_string(shared.join(FAILED_STARTS_FILE)).ok().and_then(|t| t.trim().parse().ok()).unwrap_or(0)
+}
+
+fn record_failed_start(shared: &Path) -> u32 {
+    let n = failed_starts(shared) + 1;
+    let _ = std::fs::create_dir_all(shared);
+    if let Err(e) = std::fs::write(shared.join(FAILED_STARTS_FILE), n.to_string()) {
+        crate::applog::debug(format!("Auto Run: the failed-start count could not be saved: {e}"));
+    }
+    n
+}
+
+fn clear_failed_starts(shared: &Path) {
+    let _ = std::fs::remove_file(shared.join(FAILED_STARTS_FILE));
+}
+
+/// The start-up warning for a copy that did not finish. From the third
+/// failed start in a row it says so and what usually causes it. Names no
+/// path (`why` is empty when the reason would have).
+pub fn failure_warning(why: &str, starts_in_a_row: u32) -> String {
+    let mut line = String::from("Auto Run: the per-environment copy did not finish and will be tried again at the next start");
+    if !why.is_empty() {
+        line.push_str(&format!(" ({why})"));
+    }
+    if starts_in_a_row >= 3 {
+        line.push_str(&format!(
+            ". It has failed {starts_in_a_row} starts in a row; another program holding the files (often antivirus) is the usual cause"
+        ));
+    }
+    line
+}
+
 /// Whether an error string is safe to log: it names no path.
 pub fn path_free(message: &str) -> bool {
     !message.contains(['\\', '/'])
@@ -302,7 +344,10 @@ pub fn migrate_with(shared: &Path, ops: MigrationOps) -> Result<Option<Migration
     };
     let staging = shared.join(format!("{STAGING_PREFIX}{}", crate::cache::now_ms()));
     let built = (ops.fan_out)(shared, &staging, &ids, Some(&active))
-        .and_then(|items| crate::ai_tools::rename_retrying(&staging, &envs, ops.rename, ops.sleep).map(|_| items));
+        .and_then(|items| {
+            crate::ai_tools::rename_retrying_waits(&staging, &envs, ops.rename, ops.sleep, &MIGRATION_RENAME_WAITS_MS)
+                .map(|_| items)
+        });
     match built {
         Ok(items) => Ok(Some(MigrationReport { environments: ids.len(), items })),
         Err(e) => {
@@ -322,6 +367,8 @@ pub struct StartUp {
     pub failed: Option<String>,
     /// A development build left the copy alone.
     pub skipped: bool,
+    /// How many starts in a row the copy has now failed (0 when it did not).
+    pub failed_starts: u32,
 }
 
 /// Whether this build may run the one-time copy. A development build
@@ -337,8 +384,14 @@ pub fn start_up(shared: &Path, allowed: bool) -> StartUp {
     let mut out = StartUp::default();
     if allowed {
         match migrate_once(shared) {
-            Ok(r) => out.report = r,
-            Err(e) => out.failed = Some(if path_free(&e) { e } else { String::new() }),
+            Ok(r) => {
+                out.report = r;
+                clear_failed_starts(shared);
+            }
+            Err(e) => {
+                out.failed = Some(if path_free(&e) { e } else { String::new() });
+                out.failed_starts = record_failed_start(shared);
+            }
         }
     } else {
         out.skipped = true;
@@ -380,28 +433,64 @@ pub fn seed_into_with(
     Ok(true)
 }
 
-/// A seed a failed handover left in `_seed` goes to the first environment
-/// once that environment exists and its folder is absent or empty. Run at
-/// start-up; logs (no path) and never fails.
-pub fn retry_seed(shared: &Path) {
-    if !env_root(shared, SEED_ID).is_dir() {
-        return;
+/// What `retry_seed` did.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct SeedHandover {
+    /// Top-level items moved into the first environment.
+    pub moved: usize,
+    /// Items left in `_seed` because the environment already had one.
+    pub kept: usize,
+}
+
+/// A seed a failed handover left in `_seed` reaches the first environment:
+/// each top-level item it LACKS is moved over (one it has is never
+/// overwritten), and `_seed` is removed once empty. Run at start-up; logs
+/// (no path) and never fails.
+pub fn retry_seed(shared: &Path) -> SeedHandover {
+    let mut done = SeedHandover::default();
+    let seed = env_root(shared, SEED_ID);
+    if !seed.is_dir() {
+        return done;
     }
-    let Ok(Some((ids, _))) = crate::environments::read_ids(shared) else { return };
-    let Some(first) = ids.first() else { return };
-    let folder = env_root(shared, first);
-    let empty = match std::fs::read_dir(&folder) {
-        Ok(mut entries) => entries.next().is_none(),
-        Err(e) => e.kind() == std::io::ErrorKind::NotFound,
-    };
-    if !empty {
-        return;
+    let Ok(Some((ids, _))) = crate::environments::read_ids(shared) else { return done };
+    let Some(first) = ids.first() else { return done };
+    let target = env_root(shared, first);
+    if let Err(e) = std::fs::create_dir_all(&target) {
+        crate::applog::warn(format!("Auto Run: the data the update copied could not be handed over yet: {e}"));
+        return done;
     }
-    match seed_into(shared, first) {
-        Ok(true) => crate::applog::info("Auto Run: the data the update copied was handed to the first environment"),
-        Ok(false) => {}
-        Err(e) => crate::applog::warn(format!(
-            "Auto Run: the data the update copied could not be handed to the first environment yet: {e}"
-        )),
+    let Ok(entries) = std::fs::read_dir(&seed) else { return done };
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let to = target.join(&name);
+        if std::fs::symlink_metadata(&to).is_ok() {
+            done.kept += 1;
+            continue;
+        }
+        let moved = crate::ai_tools::rename_retrying(
+            &entry.path(),
+            &to,
+            &mut |a, b| std::fs::rename(a, b),
+            &mut std::thread::sleep,
+        );
+        match moved {
+            Ok(()) => done.moved += 1,
+            Err(e) => {
+                done.kept += 1;
+                crate::applog::warn(format!("Auto Run: an item the update copied could not be handed over yet: {e}"));
+            }
+        }
     }
+    // Only an empty seed goes.
+    let _ = std::fs::remove_dir(&seed);
+    if done.moved > 0 {
+        crate::applog::info(format!("Auto Run: {} item(s) the update copied were handed to the first environment", done.moved));
+    }
+    if done.kept > 0 {
+        crate::applog::warn(format!(
+            "Auto Run: {} item(s) the update copied were kept aside because the first environment already had its own",
+            done.kept
+        ));
+    }
+    done
 }

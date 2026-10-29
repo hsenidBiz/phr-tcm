@@ -650,10 +650,7 @@ pub fn run() {
                 }
                 if let Some(why) = &started.failed {
                     // `why` is empty when the reason would have named a path.
-                    applog::warn(format!(
-                        "Auto Run: the per-environment copy did not finish and will be tried again at the next start{}",
-                        if why.is_empty() { String::new() } else { format!(" ({why})") }
-                    ));
+                    applog::warn(autorun::roots::failure_warning(why, started.failed_starts));
                 }
                 let per_env = started.per_env;
                 if per_env {

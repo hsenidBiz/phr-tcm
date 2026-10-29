@@ -466,14 +466,87 @@ fn a_seed_left_behind_is_handed_over_at_the_next_start() {
 }
 
 #[test]
-fn a_start_does_not_hand_the_seed_to_an_environment_that_has_data() {
+fn the_migration_rename_waits_much_longer_than_an_ordinary_one() {
     let t = tempfile::tempdir().unwrap();
+    two_envs(t.path());
+    put(t.path(), "scripts/case-1.json", "S");
+    let waited = RefCell::new(0u64);
+    let r = roots::migrate_with(
+        t.path(),
+        MigrationOps {
+            fan_out: &roots::fan_out,
+            rename: &mut |_, _| Err(std::io::Error::from_raw_os_error(5)),
+            sleep: &mut |d| *waited.borrow_mut() += d.as_millis() as u64,
+        },
+    );
+    assert!(r.is_err());
+    let ms = *waited.borrow();
+    assert!((14_000..=20_000).contains(&ms), "waited {ms} ms");
+    assert_flat_and_no_envs(t.path());
+}
+
+#[test]
+fn failed_starts_are_counted_and_cleared_on_success() {
+    let t = tempfile::tempdir().unwrap();
+    put(t.path(), "scripts/case-1.json", "S");
+    put(t.path(), "environments.json", "{ not json");
+    assert_eq!(roots::start_up(t.path(), true).failed_starts, 1);
+    assert_eq!(roots::start_up(t.path(), true).failed_starts, 2);
+    assert_eq!(roots::start_up(t.path(), true).failed_starts, 3);
+    two_envs(t.path());
+    let ok = roots::start_up(t.path(), true);
+    assert!(ok.per_env && ok.failed_starts == 0);
+    // Cleared: a later failure starts again from one.
+    std::fs::remove_dir_all(t.path().join("envs")).unwrap();
+    put(t.path(), "environments.json", "{ not json");
+    assert_eq!(roots::start_up(t.path(), true).failed_starts, 1);
+}
+
+#[test]
+fn the_warning_explains_itself_from_the_third_failed_start() {
+    let early = roots::failure_warning("Access is denied.", 2);
+    assert!(!early.contains("in a row"), "{early}");
+    let late = roots::failure_warning("Access is denied.", 3);
+    assert!(late.contains("3 starts in a row") && late.contains("antivirus"), "{late}");
+    assert!(roots::path_free(&late));
+}
+
+#[test]
+fn a_left_behind_seed_moves_into_an_empty_first_environment() {
+    let t = tempfile::tempdir().unwrap();
+    two_envs(t.path());
     put(t.path(), "envs/_seed/scripts/a.json", "S");
-    let file = environments::load_or_init(t.path(), None).unwrap();
-    let id = file.active.clone();
-    std::fs::rename(at(t.path(), &id, ""), at(t.path(), "_seed", "")).unwrap();
-    put(t.path(), &format!("envs/{id}/scripts/own.json"), "O");
-    roots::start_up(t.path(), false);
+    put(t.path(), "envs/_seed/orders/o.json", "O");
+    let r = roots::retry_seed(t.path());
+    assert_eq!((r.moved, r.kept), (2, 0));
+    assert!(at(t.path(), A, "scripts/a.json").is_file() && at(t.path(), A, "orders/o.json").is_file());
+    assert!(!at(t.path(), "_seed", "").exists());
+}
+
+#[test]
+fn a_left_behind_seed_fills_only_what_the_first_environment_lacks() {
+    let t = tempfile::tempdir().unwrap();
+    two_envs(t.path());
+    put(t.path(), "envs/_seed/scripts/a.json", "S");
+    put(t.path(), "envs/_seed/orders/o.json", "O");
+    put(t.path(), &format!("envs/{A}/orders/own.json"), "OWN");
+    let r = roots::retry_seed(t.path());
+    assert_eq!((r.moved, r.kept), (1, 1));
+    assert!(at(t.path(), A, "scripts/a.json").is_file());
+    assert_eq!(std::fs::read_to_string(at(t.path(), A, "orders/own.json")).unwrap(), "OWN");
+    assert!(!at(t.path(), A, "orders/o.json").exists());
+    // What was kept aside stays in the seed.
+    assert!(at(t.path(), "_seed", "orders/o.json").is_file());
+    assert!(!at(t.path(), "_seed", "scripts").exists());
+}
+
+#[test]
+fn a_new_environment_gets_nothing_from_a_left_behind_seed() {
+    let t = tempfile::tempdir().unwrap();
+    environments::load_or_init(t.path(), None).unwrap();
+    put(t.path(), "envs/_seed/scripts/a.json", "S");
+    let file = environments::save_env(t.path(), env_named("", "Second"), &["dev-read".to_string()]).unwrap();
+    let new = file.environments.iter().find(|e| e.name == "Second").unwrap();
+    assert!(!at(t.path(), &new.id, "scripts").exists());
     assert!(at(t.path(), "_seed", "scripts/a.json").is_file());
-    assert!(!at(t.path(), &id, "scripts/a.json").exists());
 }

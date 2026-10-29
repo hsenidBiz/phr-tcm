@@ -1732,8 +1732,20 @@ pub fn rename_retrying(
     rename: &mut dyn FnMut(&std::path::Path, &std::path::Path) -> std::io::Result<()>,
     sleep: &mut dyn FnMut(std::time::Duration),
 ) -> Result<(), String> {
+    rename_retrying_waits(from, to, rename, sleep, &RENAME_RETRY_WAITS_MS)
+}
+
+/// `rename_retrying` with its own list of waits (milliseconds), for the
+/// rare rename worth a longer patience.
+pub fn rename_retrying_waits(
+    from: &std::path::Path,
+    to: &std::path::Path,
+    rename: &mut dyn FnMut(&std::path::Path, &std::path::Path) -> std::io::Result<()>,
+    sleep: &mut dyn FnMut(std::time::Duration),
+    waits_ms: &[u64],
+) -> Result<(), String> {
     let mut result = rename(from, to);
-    for wait in RENAME_RETRY_WAITS_MS {
+    for &wait in waits_ms {
         match &result {
             Err(e) if held_by_another_process(e) => {
                 sleep(std::time::Duration::from_millis(wait));

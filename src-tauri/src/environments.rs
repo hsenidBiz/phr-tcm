@@ -411,13 +411,11 @@ pub fn save_env_with(
     let known_db_ids = known_db_ids();
     let mut file = load_or_init_locked(root, None)?;
     let mut env = tidy(env);
-    let mut is_new = false;
     if env.id.is_empty() {
         env.id = new_id(&env.name, &file.environments);
         // A new environment never arrives with writes asked about less.
         env.db_auto_approve = false;
         file.environments.push(env.clone());
-        is_new = true;
     } else {
         let slot = file
             .environments
@@ -433,9 +431,6 @@ pub fn save_env_with(
     known.extend(file.environments.iter().filter(|e| e.id != env.id).map(|e| e.db_id.clone()));
     validate(&file, &known)?;
     write(root, &file)?;
-    if is_new {
-        take_seed(root, &env.id);
-    }
     Ok(file)
 }
 
