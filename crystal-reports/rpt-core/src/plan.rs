@@ -42,6 +42,36 @@ pub struct LayoutOperation {
     pub source: Option<String>,
     /// addRunningTotal: the aggregate (sum/average/count/…).
     pub operation: Option<String>,
+    /// Tier-A property batch: rotation degrees (0/90/180/270).
+    pub degrees: Option<i16>,
+    /// Tier-A: vertical alignment (top/center/bottom).
+    pub vertical_alignment: Option<String>,
+    /// Tier-A: keep object together.
+    pub keep: Option<bool>,
+    /// Tier-A: word wrap on/off.
+    pub wrap: Option<bool>,
+    /// Tier-A: max displayed lines (0 = unlimited).
+    pub lines: Option<u16>,
+    /// Tier-A: text interpretation (plain/html/rtf).
+    pub interpretation: Option<String>,
+    /// Tier-A: indents in twips.
+    pub first_indent: Option<i64>,
+    pub left_indent: Option<i64>,
+    pub right_indent: Option<i64>,
+    /// Tier-A: reading order (ltr/rtl).
+    pub reading_order: Option<String>,
+    /// Tier-A: boolean output (true_false/one_zero/t_f).
+    pub boolean_output: Option<String>,
+    /// Tier-A: section flag cluster.
+    pub keep_together: Option<bool>,
+    pub reset_page_number: Option<bool>,
+    pub print_at_bottom: Option<bool>,
+    pub underlay: Option<bool>,
+    /// setParameter: the optional-prompt flag.
+    pub optional_prompt: Option<bool>,
+    /// When set, the action applies INSIDE this embedded subreport (its own object
+    /// scope) — e.g. `{"action":"setFont","subreport":"StageWise",…}`.
+    pub subreport: Option<String>,
     /// addRunningTotal: evaluate on change of this field (empty = no condition).
     pub evaluate_field: Option<String>,
     /// addRunningTotal: reset on change of this field (empty = no condition).
@@ -110,7 +140,10 @@ pub fn lower(plan: &LayoutPlan) -> Result<Vec<EditOp>, String> {
     let mut errors = Vec::new();
     for (i, o) in plan.operations.iter().enumerate() {
         match lower_one(o) {
-            Ok(op) => ops.push(op),
+            Ok(op) => ops.push(match &o.subreport {
+                Some(sub) => EditOp::InSubreport { subreport: sub.clone(), ops: vec![op] },
+                None => op,
+            }),
             Err(e) => errors.push(format!("[op {i}] {e}")),
         }
     }
@@ -314,6 +347,60 @@ fn lower_one(o: &LayoutOperation) -> Result<EditOp, String> {
             operation: need(&o.operation, "operation")?,
             evaluate_field: o.evaluate_field.clone(),
             reset_field: o.reset_field.clone(),
+        }),
+        "setSectionVisibility" => Ok(EditOp::SetSectionVisibility {
+            section: SecSel { area: None, section: need(&o.section, "section")? },
+            source: need(&o.source, "source")?,
+        }),
+        "setTextRotation" => Ok(EditOp::SetTextRotation {
+            object: ObjSel { id: None, name: o.target.clone(), index: None }, degrees: need(&o.degrees, "degrees")?,
+        }),
+        "setVerticalAlignment" => Ok(EditOp::SetVerticalAlignment {
+            object: ObjSel { id: None, name: o.target.clone(), index: None }, alignment: need(&o.vertical_alignment, "verticalAlignment")?,
+        }),
+        "setKeepTogether" => Ok(EditOp::SetKeepObjectTogether {
+            object: ObjSel { id: None, name: o.target.clone(), index: None }, keep: need(&o.keep, "keep")?,
+        }),
+        "setWordWrap" => Ok(EditOp::SetWordWrap {
+            object: ObjSel { id: None, name: o.target.clone(), index: None }, wrap: need(&o.wrap, "wrap")?,
+        }),
+        "setMaxLines" => Ok(EditOp::SetMaxLines {
+            object: ObjSel { id: None, name: o.target.clone(), index: None }, lines: need(&o.lines, "lines")?,
+        }),
+        "setTextInterpretation" => Ok(EditOp::SetTextInterpretation {
+            object: ObjSel { id: None, name: o.target.clone(), index: None }, format: need(&o.interpretation, "interpretation")?,
+        }),
+        "setIndents" => Ok(EditOp::SetIndents {
+            object: ObjSel { id: None, name: o.target.clone(), index: None }, first: o.first_indent, left: o.left_indent, right: o.right_indent,
+        }),
+        "setReadingOrder" => Ok(EditOp::SetReadingOrder {
+            object: ObjSel { id: None, name: o.target.clone(), index: None }, order: need(&o.reading_order, "readingOrder")?,
+        }),
+        "setBooleanFormat" => Ok(EditOp::SetBooleanFormat {
+            object: ObjSel { id: None, name: o.target.clone(), index: None }, output: need(&o.boolean_output, "booleanOutput")?,
+        }),
+        "setSectionFlags" => Ok(EditOp::SetSectionFlags {
+            section: SecSel { area: None, section: need(&o.section, "section")? },
+            keep_together: o.keep_together,
+            reset_page_number_after: o.reset_page_number,
+            print_at_bottom_of_page: o.print_at_bottom,
+            underlay_section: o.underlay,
+        }),
+        "addSummary" => Ok(EditOp::AddSummary {
+            name: need(&o.new_name, "newName")?,
+            summarize: need(&o.field_ref, "fieldRef")?,
+            operation: need(&o.operation, "operation")?,
+        }),
+        "setParameter" => Ok(EditOp::SetParameter {
+            name: need(&o.target, "target")?,
+            prompt_text: o.text.clone(),
+            optional: o.optional_prompt,
+        }),
+        "removeSort" => Ok(EditOp::RemoveSort {
+            field_ref: need(&o.field_ref, "fieldRef")?,
+        }),
+        "setGroupSelection" => Ok(EditOp::SetGroupSelection {
+            source: need(&o.source, "source")?,
         }),
         "setFormula" => Ok(EditOp::SetFormula {
             formula: need(&o.target, "target")?,

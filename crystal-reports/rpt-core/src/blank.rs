@@ -14,9 +14,9 @@
 //! round-trips byte-identically. A pure-synthesis follow-up (phase B) is documented in
 //! `docs/engine-notes.md` and would diff its output against this golden skeleton.
 //!
-//! Known boundary: the blank carries **no page-DEVMODE record** (its area carries no
-//! printer), so `orientation`/`paper_size` options refuse with the standard explanation —
-//! the same semantics as editing any DEVMODE-less report.
+//! Orientation / paper size: a fresh blank carries no page-DEVMODE record (saved with no
+//! printer), so these options SYNTHESIZE one first (`pagesetup.rs`) and then patch it —
+//! the same path as editing any DEVMODE-less report.
 
 use serde::{Deserialize, Serialize};
 
@@ -52,7 +52,7 @@ pub struct NewReportOptions {
     /// `portrait` / `landscape` — refused when the blank lacks a DEVMODE record (it does;
     /// see module docs).
     pub orientation: Option<String>,
-    /// Windows DMPAPER id (1=letter, 9=A4, …) — same DEVMODE condition as orientation.
+    /// Windows DMPAPER id (1=letter, 9=A4, …) — same synthesis path as orientation.
     pub paper_size: Option<u16>,
     /// Page margins in twips.
     pub margins: Option<Margins>,

@@ -772,3 +772,16 @@ mod the_screen {
         crystal::close();
     }
 }
+
+#[test]
+fn an_in_subreport_op_is_refused_and_nothing_is_saved() {
+    let _lock = serial::crystal();
+    let dir = tempfile::tempdir().unwrap();
+    let path = copy_sample(dir.path(), SAMPLE);
+    let before = std::fs::read(&path).unwrap();
+    crystal::open(&path).unwrap();
+    let why = crystal::edit(Some(json!([{ "op": "in_subreport", "subreport": "x", "ops": [] }])), None).unwrap_err();
+    assert_eq!(why, crystal::SUBREPORT_EDIT_REFUSED);
+    assert_eq!(std::fs::read(&path).unwrap(), before);
+    crystal::close();
+}

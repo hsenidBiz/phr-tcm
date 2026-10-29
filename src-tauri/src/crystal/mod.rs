@@ -239,6 +239,9 @@ fn narrow(ir: &Value, filter: &ReadFilter, name: &str) -> Result<Value, String> 
 /// exactly one of the two - and save it over the file. Answers with the
 /// new IR. A batch the bundle refuses saves nothing: the report is read
 /// again from disk and the answer is the refusal.
+/// The sentence for an `in_subreport` op, which is not offered yet.
+pub const SUBREPORT_EDIT_REFUSED: &str = "Editing inside a subreport is not offered yet. Nothing was saved.";
+
 pub fn edit(ops: Option<Value>, plan: Option<Value>) -> Result<Value, String> {
     let ops: Vec<EditOp> = match (ops, plan) {
         (Some(ops), None) => {
@@ -254,6 +257,9 @@ pub fn edit(ops: Option<Value>, plan: Option<Value>) -> Result<Value, String> {
             return Err("Give the changes as ops (native edit ops) or as a plan (a layout plan).".to_string())
         }
     };
+    if ops.iter().any(|op| matches!(op, EditOp::InSubreport { .. })) {
+        return Err(SUBREPORT_EDIT_REFUSED.to_string());
+    }
     if ops.is_empty() {
         return Err("The batch is empty: there is nothing to change.".to_string());
     }

@@ -201,10 +201,27 @@ fn group_number_of(s: &str) -> Option<usize> {
 /// No formula of that name; an unresolvable reference in the new source; or a writer failure.
 pub fn set_formula(rpt: &Rpt, target: &str, source: &str) -> Result<Vec<u8>, String> {
     let want = target.trim().trim_start_matches('@').to_ascii_lowercase();
-    rewrite_formula(rpt, source, |name, kind| {
+    rewrite_formula(rpt, source, |name, kind, _| {
         kind == 0 && name.trim_start_matches('@').to_ascii_lowercase() == want
     })
     .and_then(|r| r.ok_or_else(|| format!("no formula named `{target}` in this report")))
+}
+
+/// Replace the `nth` formula body's source (0-based, the GLOBAL ordinal of `0x76` records
+/// in pre-order — the index space conditional-format slots reference). Used by the section
+/// visibility op, whose slot names a formula by index, not by name.
+///
+/// # Errors
+///
+/// No formula at that ordinal; an unresolvable reference; or a writer failure.
+pub(crate) fn set_formula_by_ordinal(rpt: &Rpt, nth: usize, source: &str) -> Result<Vec<u8>, String> {
+    rewrite_formula(rpt, source, move |_name, _kind, ordinal| ordinal == nth)
+        .and_then(|r| r.ok_or_else(|| format!("no formula body at ordinal {nth}")))
+}
+
+pub fn set_group_selection(rpt: &Rpt, source: &str) -> Result<Vec<u8>, String> {
+    rewrite_formula(rpt, source, |_name, kind, _| kind == 2)
+        .and_then(|r| r.ok_or_else(|| "this report has no Group Selection formula to edit".to_string()))
 }
 
 /// Replace the report's Record Selection formula source.
@@ -214,7 +231,7 @@ pub fn set_formula(rpt: &Rpt, target: &str, source: &str) -> Result<Vec<u8>, Str
 /// The report carries no Record Selection formula (creating one is a separate splice); an
 /// unresolvable reference; or a writer failure.
 pub fn set_record_selection(rpt: &Rpt, source: &str) -> Result<Vec<u8>, String> {
-    rewrite_formula(rpt, source, |_name, kind| kind == 1)
+    rewrite_formula(rpt, source, |_name, kind, _| kind == 1)
         .and_then(|r| r.ok_or_else(|| "this report has no Record Selection formula to edit".to_string()))
 }
 
@@ -223,15 +240,19 @@ pub fn set_record_selection(rpt: &Rpt, source: &str) -> Result<Vec<u8>, String> 
 fn rewrite_formula(
     rpt: &Rpt,
     source: &str,
-    matches: impl Fn(&str, u32) -> bool,
+    matches: impl Fn(&str, u32, usize) -> bool,
 ) -> Result<Option<Vec<u8>>, String> {
     let report = rpt.report();
     let stream = rpt.stream(&StreamId::Contents).ok_or("no Contents stream")?;
     let logical = stream.logical_bytes();
     let tree = stream.record_tree();
 
+    // The global 0x76 ordinal (pre-order) — the index space conditional-format slots use.
+    let mut ordinal = 0usize;
     for w in tree.iter().filter(|n| n.rtype == 0x0077) {
         let Some(f) = w.children.iter().find(|c| c.rtype == 0x0076) else { continue };
+        let this_ordinal = ordinal;
+        ordinal += 1;
         let read = rpt_reader::fields::read(f, logical, rpt_reader::raw::Dialect::Contents)
             .ok_or("the formula record's field table refused it")?;
         let kind = u32::try_from(
@@ -259,7 +280,7 @@ fn rewrite_formula(
                 _ => None,
             })
             .unwrap_or_default();
-        if !matches(&name, kind) {
+        if !matches(&name, kind, this_ordinal) {
             continue;
         }
 

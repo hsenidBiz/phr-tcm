@@ -5,7 +5,7 @@ against it by path (`rpt-core` and `rpt-db-mssql` in `src-tauri/Cargo.toml`);
 it is not a fork, and nothing in it is ours to change.
 
 - **Source:** `C:\Users\Admin\Desktop\Main Menu\Software\Personal Projects\CrystalReports ReImplementation\Out`
-- **Copied:** 2026-10-22 (first copied 2026-10-16)
+- **Copied:** 2026-10-29 (first copied 2026-10-16)
 - **Source commit:** none - the source folder is not a git repository, so
   there is no commit to record. The copy is identified by the date above.
 
@@ -48,6 +48,7 @@ Before a refreshed copy ships, check each line below against the new code.
   `crystal_bundle::the_vendored_live_preview_still_fetches_no_subreport_data`
   fails the day a refreshed copy passes `scope`, which is the cue to extend
   `live_target` first.
+  Checked again at the 2026-10-29 refresh: still unset.
 
 ## Licence
 

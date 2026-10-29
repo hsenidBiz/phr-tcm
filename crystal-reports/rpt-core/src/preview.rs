@@ -233,6 +233,137 @@ pub fn preview(bytes: &[u8]) -> Result<PreviewOutput, String> {
     preview_report(&rpt)
 }
 
+/// A list-view thumbnail: page 1 only, as a one-page PDF (much smaller than the full
+/// document). A `.rpt`'s stored embedded thumbnail is a DIB in the SummaryInformation
+/// property set, which needs a raster backend this bundle does not carry; a one-page PDF
+/// serves the same UI role — a front end shows it the same way it shows [`preview`]'s
+/// output.
+///
+/// # Errors
+///
+/// As [`preview`].
+pub fn thumbnail(bytes: &[u8]) -> Result<PreviewOutput, String> {
+    let rpt = crate::open_bytes(bytes)?;
+    thumbnail_report(&rpt)
+}
+
+/// Export-oriented render options: what an "Export PDF" surface varies beyond the plain
+/// preview. The b-level archival conformances are offered; the level-A accessibility levels
+/// and PDF/UA also require a document language and are refused here with that explanation
+/// rather than half-configured.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct PdfExportOptions {
+    /// The document title written into the PDF's metadata (default: the report's own
+    /// summary title, when the author filled one in).
+    pub title: Option<String>,
+    /// PDF/A archival conformance: `Some("1b" | "2b" | "3b" | "1a" | "2a" | "3a" | "ua")`.
+    /// The level-A standards and PDF/UA additionally require [`lang`](Self::lang), and
+    /// PDF/UA additionally requires a title.
+    pub pdfa: Option<String>,
+    /// The document's natural language as an RFC 3066 tag (`en-US`) — REQUIRED by the
+    /// level-A conformance levels and PDF/UA; also the natural-language metadata of any
+    /// export when set.
+    pub lang: Option<String>,
+    /// Emit a structure tree (accessibility / reliable text extraction) without claiming a
+    /// standard.
+    pub tagged: bool,
+    /// The render locale (number/date conventions), defaulting to en-US — pass e.g.
+    /// `en-GB` to render with British conventions. Only the built-in locale table's
+    /// languages resolve (en, de, fr, es, it); an unknown tag is refused naming it.
+    pub locale: Option<String>,
+}
+
+fn conformance_of(
+    pdfa: &Option<String>,
+    lang: &Option<String>,
+    title: &Option<String>,
+) -> Result<rpt_render::Conformance, String> {
+    use rpt_render::Conformance;
+    Ok(match pdfa.as_deref() {
+        None | Some("") => Conformance::None,
+        Some("1b") => Conformance::PdfA1b,
+        Some("2b") => Conformance::PdfA2b,
+        Some("3b") => Conformance::PdfA3b,
+        Some(level @ ("1a" | "2a" | "3a")) => {
+            if lang.as_deref().map_or(true, str::is_empty) {
+                return Err(format!(
+                    "PDF/A level `{level}` requires a document language (RFC 3066 tag, e.g.                      `en-US`) — pass it as `lang`"
+                ));
+            }
+            match level {
+                "1a" => Conformance::PdfA1a,
+                "2a" => Conformance::PdfA2a,
+                _ => Conformance::PdfA3a,
+            }
+        }
+        Some("ua") => {
+            if lang.as_deref().map_or(true, str::is_empty) {
+                return Err("PDF/UA requires a document language — pass it as `lang`".to_string());
+            }
+            if title.as_deref().map_or(true, str::is_empty) {
+                return Err("PDF/UA requires a document title — pass it as `title`".to_string());
+            }
+            Conformance::PdfUa1
+        }
+        Some(other) => return Err(format!(
+            "unknown pdfa level `{other}` (1b/2b/3b/1a/2a/3a/ua)"
+        )),
+    })
+}
+
+/// [`preview_report`] with export options: the same saved-data render, written through the
+/// PDF backend with the requested title / conformance / tagging.
+///
+/// # Errors
+///
+/// As [`preview_report`], plus an unknown or unsupported `pdfa` level.
+pub fn preview_report_with(rpt: &Rpt, opts: &PdfExportOptions) -> Result<PreviewOutput, String> {
+    let report = rpt.report();
+    let conformance = conformance_of(&opts.pdfa, &opts.lang, &opts.title)?;
+    let locale = match &opts.locale {
+        Some(tag) if !tag.is_empty() => rpt_render::Locale::lookup(tag).ok_or_else(|| {
+            format!("locale `{tag}` is not in the built-in table (en, de, fr, es, it language roots)")
+        })?,
+        _ => rpt_render::Locale::default(),
+    };
+    let mut pdf_opts = rpt_render::PdfOptions::default();
+    pdf_opts.conformance = conformance;
+    pdf_opts.tagged = opts.tagged;
+    {
+        let mut sem = rpt_render::semantics_of(report);
+        if let Some(t) = &opts.title {
+            sem.title = Some(t.clone());
+        }
+        if let Some(l) = &opts.lang {
+            sem.language = Some(l.clone());
+        }
+        pdf_opts.semantics = sem;
+    }
+    let doc = rpt_render::render_with(
+        report,
+        rpt_render::RenderOptions { locale, ..Default::default() },
+    );
+    let page_count = doc.pages.len();
+    let diagnostics = doc.diagnostics.iter().map(|d| d.describe()).collect();
+    let pdf = rpt_render::try_render_document(&doc, &pdf_opts)
+        .map_err(|e| format!("PDF export failed: {e}"))?;
+    Ok(PreviewOutput { pdf, page_count, diagnostics })
+}
+
+/// [`thumbnail`] over an already-decoded report.
+///
+/// # Errors
+///
+/// As [`preview_report`].
+pub fn thumbnail_report(rpt: &Rpt) -> Result<PreviewOutput, String> {
+    let mut doc = rpt_render::render(rpt.report());
+    if doc.pages.len() > 1 {
+        doc.pages.truncate(1);
+        doc.checkpoints.truncate(1);
+    }
+    finish_preview(doc, Vec::new(), !rpt.report().has_saved_data)
+}
+
 /// [`preview_live_report`] over `.rpt` file bytes (decode + fetch + render).
 ///
 /// # Errors
