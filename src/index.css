@@ -242,6 +242,24 @@
   --color-warning: #fbbf24;
   --color-info: #60a5fa;
 }
+:root[data-theme="halloween"] {
+  --color-bg: #0b0709;
+  --color-surface: #17100f;
+  --color-surface-2: #221714;
+  --color-border: #3a2620;
+  --color-border-strong: #5a3a2c;
+  --color-text: #fbefe3;
+  --color-muted: #c4a99a;
+  --color-faint: #8a7064;
+  --color-accent: #f97316;
+  --color-accent-hover: #fb923c;
+  --color-accent-soft: rgb(249 115 22 / 0.16);
+  --color-on-accent: #0b0709;
+  --color-danger: #f87171;
+  --color-success: #4ade80;
+  --color-warning: #fbbf24;
+  --color-info: #60a5fa;
+}
 :root[data-theme="ocean"] {
   --color-bg: #071a1f;
   --color-surface: #0d262e;

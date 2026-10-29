@@ -99,3 +99,9 @@ test("cn merges tailwind classes with later-wins semantics", () => {
   expect(cn("px-2", "px-4")).toBe("px-4");
   expect(cn("text-sm", false && "hidden", "font-bold")).toBe("text-sm font-bold");
 });
+
+test("Halloween is a dark full theme", () => {
+  setThemeChoice("halloween");
+  expect(document.documentElement.getAttribute("data-theme")).toBe("halloween");
+  expect(document.documentElement.classList.contains("dark")).toBe(true);
+});

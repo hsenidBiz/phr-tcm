@@ -421,7 +421,13 @@ export default function App() {
     [],
   );
 
-  useEffect(() => initTheme(), []);
+  // Also hourly, so a window left open past the Halloween week still gets
+  // its restore without a relaunch.
+  useEffect(() => {
+    initTheme();
+    const id = setInterval(() => initTheme(), 60 * 60 * 1000);
+    return () => clearInterval(id);
+  }, []);
   // Push the saved ADO pacing into the Rust limiter before anything fetches.
   useEffect(() => applyRateLevel(), []);
 
