@@ -151,6 +151,18 @@ pub fn resolve_root() -> Result<PathBuf, String> {
     }
 }
 
+/// The root that is selected right now, as it is: nothing is resolved,
+/// selected or made, and no other lock is taken. For a caller that may hold
+/// the environments lock, where `resolve_root` (which reads the active
+/// environment from that file) would wait on itself.
+pub fn selected_root() -> Option<PathBuf> {
+    match &*layout() {
+        Layout::Unset => None,
+        Layout::Flat(root) => Some(root.clone()),
+        Layout::PerEnv { active, .. } => active.clone(),
+    }
+}
+
 /// `resolve_root` for a caller with no sentence to give.
 pub fn configured_root() -> Option<PathBuf> {
     resolve_root().ok()

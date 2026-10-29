@@ -296,7 +296,7 @@ pub const REMOVED_READ_ONLY: &str =
 
 /// Whether `root` is a folder under `removed-envs/`.
 fn in_removed_area(root: &Path) -> bool {
-    root.ancestors().skip(1).any(|a| a.file_name().is_some_and(|n| n == REMOVED_DIR))
+    root.parent().and_then(Path::file_name).is_some_and(|n| n == REMOVED_DIR)
 }
 
 /// How long a removed environment's folder is kept.
@@ -337,7 +337,10 @@ struct RemovedRecord {
 ///
 /// HOOK FOR TASK 7: the export environment does not exist yet, so no
 /// environment is it. Task 7 makes this read the named export environment,
-/// and [`removal_refusal`] then refuses to remove it.
+/// and [`removal_refusal`] then refuses to remove it. It must NOT take the
+/// environments lock or resolve/select a root: `remove_env` calls the
+/// refusal before taking that lock, but `retire` calls it under the switch
+/// lock, and the lock order is switch, then environments.
 pub fn is_export_environment(_shared: &Path, _id: &str) -> bool {
     false
 }
@@ -350,7 +353,9 @@ pub fn removal_refusal(shared: &Path, id: &str) -> Option<&'static str> {
         return None;
     }
     let folder = env_root(shared, id);
-    if crate::autorun::store::configured_root().as_deref() == Some(folder.as_path()) {
+    // `selected_root`, never `configured_root`: that one reads the
+    // environments file, and a caller may hold its lock.
+    if crate::autorun::store::selected_root().as_deref() == Some(folder.as_path()) {
         return Some(REMOVE_ACTIVE);
     }
     if ALLOWED.lock().unwrap_or_else(|e| e.into_inner()).iter().any(|p| *p == folder) {
@@ -407,11 +412,41 @@ pub fn retire(shared: &Path, env_id: &str, name: &str, reason: &str, now_ms: u64
     let text = serde_json::to_string_pretty(&record).map_err(|e| e.to_string())?;
     let record_path = from.join(REMOVED_RECORD);
     crate::ai_tools::atomic_write(&record_path, &text)?;
-    if let Err(e) = std::fs::rename(&from, &to) {
+    // Short waits: this runs on the command thread. A rename that still
+    // fails is retried by `retire_unlisted` at the next start.
+    if let Err(e) = crate::ai_tools::rename_retrying_waits(
+        &from,
+        &to,
+        &mut |a, b| std::fs::rename(a, b),
+        &mut |d| std::thread::sleep(d),
+        &[50, 100, 200],
+    ) {
         let _ = std::fs::remove_file(&record_path);
-        return Err(e.to_string());
+        return Err(e);
     }
     Ok(Some(key))
+}
+
+/// Retires every `envs/<id>` folder whose id is not in `environments.json`
+/// (a removal whose move failed, or a folder brought back by a late write)
+/// under the usual naming and 30-day rules, and returns how many. The seed
+/// and anything that is not an environment id are skipped. Nothing happens
+/// when the environments file cannot be read or is not there yet.
+pub fn retire_unlisted(shared: &Path, now_ms: u64) -> usize {
+    let Some(listed) = crate::environments::listed_ids(shared) else { return 0 };
+    let mut retired = 0;
+    for folder in env_roots(shared) {
+        let Some(id) = env_id_of(&folder) else { continue };
+        if id == SEED_ID || listed.iter().any(|l| *l == id) {
+            continue;
+        }
+        match retire(shared, &id, "Removed environment", "removed", now_ms) {
+            Ok(Some(_)) => retired += 1,
+            Ok(None) => {}
+            Err(e) => crate::applog::warn(format!("Auto Run: a removed environment's folder stayed in place: {e}")),
+        }
+    }
+    retired
 }
 
 /// The retired folders still within 30 days that have a readable record,

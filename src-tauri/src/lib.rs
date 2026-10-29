@@ -671,7 +671,14 @@ pub fn run() {
                 // Scripts deleted more than 30 days ago go for good, in
                 // every environment's folder.
                 if per_env {
-                    let gone = autorun::roots::purge_removed(&shared, autorun::sessions::now_ms());
+                    let now = autorun::sessions::now_ms();
+                    let moved = autorun::roots::retire_unlisted(&shared, now);
+                    if moved > 0 {
+                        applog::info(format!(
+                            "Auto Run: {moved} removed environment folder(s) moved to the removed area"
+                        ));
+                    }
+                    let gone = autorun::roots::purge_removed(&shared, now);
                     if gone > 0 {
                         applog::info(format!(
                             "Auto Run: {gone} removed environment folder(s) older than 30 days purged"

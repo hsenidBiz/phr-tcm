@@ -456,9 +456,22 @@ pub fn when_db_unused<T>(
     }
 }
 
+/// The ids in `environments.json`, or `None` when the file is not there or
+/// cannot be read. Takes the environments lock.
+pub fn listed_ids(root: &Path) -> Option<Vec<String>> {
+    let _held = lock();
+    read(root).ok().flatten().map(|f| f.environments.into_iter().map(|e| e.id).collect())
+}
+
 /// Remove an environment and its local files: accounts, saved sessions and
 /// proposals. Refused for the last one and the active one.
 pub fn remove_env(root: &Path, id: &str) -> Result<EnvFile, String> {
+    // Busy or the export environment: refused before anything changes. This
+    // is before the lock on purpose - the refusal must never wait on it.
+    let shared = crate::autorun::roots::shared_of(root);
+    if let Some(why) = crate::autorun::roots::removal_refusal(&shared, id) {
+        return Err(why.to_string());
+    }
     let (file, name) = {
         let _held = lock();
         let mut file = load_or_init_locked(root, None)?;
@@ -470,10 +483,6 @@ pub fn remove_env(root: &Path, id: &str) -> Result<EnvFile, String> {
         }
         if file.active == id {
             return Err(crate::autorun::roots::REMOVE_ACTIVE.to_string());
-        }
-        // Busy or the export environment: refused before anything changes.
-        if let Some(why) = crate::autorun::roots::removal_refusal(&crate::autorun::roots::shared_of(root), id) {
-            return Err(why.to_string());
         }
         file.environments.retain(|e| e.id != id);
         write(root, &file)?;
@@ -494,7 +503,6 @@ pub fn remove_env(root: &Path, id: &str) -> Result<EnvFile, String> {
     // after the environments lock is released (the move takes the switch
     // lock), and a failure is logged, not fatal: the environment is gone
     // from the list already.
-    let shared = crate::autorun::roots::shared_of(root);
     if let Err(e) = crate::autorun::roots::retire(&shared, id, &name, "removed", crate::autorun::sessions::now_ms()) {
         crate::applog::warn(format!("Environments: a removed environment's Auto Run folder stayed in place: {e}"));
     }

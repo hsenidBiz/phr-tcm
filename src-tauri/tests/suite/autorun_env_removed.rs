@@ -53,6 +53,7 @@ const NOW: u64 = 5_000_000_000_000;
 
 #[test]
 fn removing_an_environment_keeps_its_autorun_folder_in_the_removed_area() {
+    let _lock = crate::serial::autorun();
     let t = tempfile::tempdir().unwrap();
     let (a, b) = two_envs_with_scripts(t.path());
     environments::remove_env(t.path(), &b).unwrap();
@@ -70,6 +71,7 @@ fn removing_an_environment_keeps_its_autorun_folder_in_the_removed_area() {
 
 #[test]
 fn removed_folders_lists_only_the_last_30_days() {
+    let _lock = crate::serial::autorun();
     let t = tempfile::tempdir().unwrap();
     let (_a, b) = two_envs_with_scripts(t.path());
     roots::retire(t.path(), &b, "QA", "removed", NOW - 31 * DAY_MS).unwrap().unwrap();
@@ -84,6 +86,7 @@ fn removed_folders_lists_only_the_last_30_days() {
 
 #[test]
 fn purge_removes_folders_older_than_30_days_only() {
+    let _lock = crate::serial::autorun();
     let t = tempfile::tempdir().unwrap();
     let (_a, b) = two_envs_with_scripts(t.path());
     let old = roots::retire(t.path(), &b, "QA", "removed", NOW - 31 * DAY_MS).unwrap().unwrap();
@@ -99,6 +102,7 @@ fn purge_removes_folders_older_than_30_days_only() {
 
 #[test]
 fn a_removed_environment_without_a_folder_is_removed_cleanly() {
+    let _lock = crate::serial::autorun();
     let t = tempfile::tempdir().unwrap();
     let (_a, b) = two_envs_with_scripts(t.path());
     std::fs::remove_dir_all(roots::env_root(t.path(), &b)).unwrap();
@@ -110,6 +114,7 @@ fn a_removed_environment_without_a_folder_is_removed_cleanly() {
 
 #[test]
 fn removed_root_refuses_unknown_and_expired_keys() {
+    let _lock = crate::serial::autorun();
     let t = tempfile::tempdir().unwrap();
     let (_a, b) = two_envs_with_scripts(t.path());
     let old = roots::retire(t.path(), &b, "QA", "removed", NOW - 31 * DAY_MS).unwrap().unwrap();
@@ -168,4 +173,67 @@ fn nothing_writes_into_a_removed_folder_through_the_normal_stores() {
     assert!(!kept.join("x").exists());
     // A change there is not something the person is looking at.
     assert!(!roots::is_on_screen(&kept));
+}
+
+/// Runs `f` on a thread and fails, instead of hanging the binary, when it
+/// does not finish in time.
+fn within_10_seconds<T: Send + 'static>(f: impl FnOnce() -> T + Send + 'static) -> T {
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = tx.send(f());
+    });
+    rx.recv_timeout(std::time::Duration::from_secs(10)).expect("deadlocked: did not finish in 10 seconds")
+}
+
+#[test]
+fn removing_with_nothing_selected_does_not_lock_itself() {
+    // PerEnv with no environment selected yet: `resolve_root` would read the
+    // active environment, which takes the environments lock `remove_env`
+    // holds. Before the fix this hung for ever.
+    let _lock = crate::serial::autorun();
+    let _restore = Restore;
+    let t = tempfile::tempdir().unwrap();
+    let (_a, b) = two_envs_with_scripts(t.path());
+    store::set_shared_root(t.path().to_path_buf());
+    let path = t.path().to_path_buf();
+    let id = b.clone();
+    let file = within_10_seconds(move || environments::remove_env(&path, &id)).unwrap();
+    assert_eq!(file.environments.len(), 1);
+    assert!(!roots::env_root(t.path(), &b).exists());
+    assert_eq!(roots::removed_folders(t.path(), v2_lib::autorun::sessions::now_ms()).len(), 1);
+}
+
+#[test]
+fn a_folder_that_could_not_be_moved_is_moved_at_the_next_start() {
+    let _lock = crate::serial::autorun();
+    let t = tempfile::tempdir().unwrap();
+    let (a, b) = two_envs_with_scripts(t.path());
+    // The seed, a staging folder and an unrelated name are never retired.
+    std::fs::create_dir_all(roots::env_root(t.path(), roots::SEED_ID)).unwrap();
+    std::fs::create_dir_all(t.path().join(roots::ENVS_DIR).join(".copying-x-1")).unwrap();
+    // `b` left the list but its folder stayed (the move failed).
+    let mut file = environments::load_or_init(t.path(), None).unwrap();
+    file.environments.retain(|e| e.id != b);
+    std::fs::write(t.path().join("environments.json"), serde_json::to_string(&file).unwrap()).unwrap();
+    assert_eq!(roots::retire_unlisted(t.path(), NOW), 1);
+    assert!(!roots::env_root(t.path(), &b).exists());
+    assert!(roots::env_root(t.path(), &a).exists());
+    assert!(roots::env_root(t.path(), roots::SEED_ID).exists());
+    let listed = roots::removed_folders(t.path(), NOW);
+    assert_eq!(listed.len(), 1);
+    assert_eq!(listed[0].env_id, b);
+    // Nothing more to do the second time.
+    assert_eq!(roots::retire_unlisted(t.path(), NOW), 0);
+}
+
+#[test]
+fn the_start_up_sweep_does_nothing_without_a_readable_environments_file() {
+    let _lock = crate::serial::autorun();
+    let t = tempfile::tempdir().unwrap();
+    let (_a, b) = two_envs_with_scripts(t.path());
+    std::fs::write(t.path().join("environments.json"), "{ not json").unwrap();
+    assert_eq!(roots::retire_unlisted(t.path(), NOW), 0);
+    assert!(roots::env_root(t.path(), &b).exists(), "nothing is moved on a guess");
+    std::fs::remove_file(t.path().join("environments.json")).unwrap();
+    assert_eq!(roots::retire_unlisted(t.path(), NOW), 0);
 }
