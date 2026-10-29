@@ -27,6 +27,22 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.4.2",
+    date: "2026-10-29",
+    items: [
+      "Happy Halloween! A new Halloween theme in orange and black, with pumpkins hanging under the PBI bar, bats flying from place to place, spiders dropping on their threads and a cobweb with a few bugs stuck in it. Click a pumpkin or a spider on an empty part of the page to see what it does.",
+      "Updating switches you to the Halloween theme for a week, then your own theme and accent come back. Pick another theme in Settings to change it sooner, or pick Halloween to keep it.",
+      "The Assistants card on Auto Run now has a small office: assistants replaying a case sit in the Test lab (a chemistry lab, in lab coats), ones discovering or exploring walk around the Map room with its holographic map, and idle ones relax in the furnished Lounge. Each name walks with its assistant, and an assistant without an Auto Run browser is not shown.",
+      "An area can keep a second menu path for accounts whose menu is laid out differently, and Auto Run tries each path before giving up. When an area cannot be reached because the account's menu is different, Auto Run says so and names the account.",
+      "Auto Run waits for an overlay to clear before clicking a menu, and no longer closes a menu that is already open.",
+      "Several assistants can share a Product Backlog Item's cases: /tcm:gen-tests splits them by what each free account can do, and each assistant leaves its report in a file.",
+      "Assistants writing scripts now make the data a case needs, through the app or API templates, instead of holding the case back.",
+      "Clearer answers for assistants: an action written wrongly says what it expected and shows an example, every matching element is listed, an element's attributes can be read, and a replay that saved nothing no longer says it did. A wait with no time limit uses 10 seconds, and no call is left waiting.",
+      "Resetting an assistant's browser keeps it signed in, a discovery that names a saved area starts in that area, and a reported difference from the case can carry the assistant's proposal.",
+      "The number on the notification bell now sits in the middle of its circle.",
+    ],
+  },
+  {
     version: "2.4.2-beta.5",
     date: "2026-10-29",
     items: [
