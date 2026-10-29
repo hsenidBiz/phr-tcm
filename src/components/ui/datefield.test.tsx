@@ -1,7 +1,7 @@
 // DateField: the app's date input - a button showing the date that opens
 // XiodUI's calendar in an inline panel. Value is "" or "YYYY-MM-DD".
 
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { useState } from "react";
 import { expect, test, vi } from "vitest";
 import DateField from "./datefield";
@@ -52,12 +52,30 @@ test("Clear empties it", () => {
   expect(screen.getByRole("button", { name: "Target date" })).toHaveTextContent("Pick a date");
 });
 
-test("the calendar's own Today sets today, closes the panel, and returns focus", () => {
+// One footer row: Today at the start and Clear at the end, under one
+// divider. The calendar's own Today row is hidden (it stays in the DOM:
+// jsdom does not apply the class), so the live Today is the one beside Clear.
+function footerToday() {
+  const clear = screen.getByRole("button", { name: "Clear" });
+  return within(clear.parentElement!).getByRole("button", { name: "Today" });
+}
+
+test("Today and Clear share one footer row, and the calendar's own row is hidden", () => {
+  render(<Host initial="2026-09-10" />);
+  fireEvent.click(screen.getByRole("button", { name: "Target date" }));
+  const row = screen.getByRole("button", { name: "Clear" }).parentElement!;
+  expect(row).toHaveClass("justify-between");
+  expect(row.firstElementChild).toBe(footerToday());
+  const others = screen.getAllByRole("button", { name: "Today" }).filter((b) => b !== footerToday());
+  for (const b of others) expect(b.closest(".hidden")).not.toBeNull();
+});
+
+test("Today sets today, closes the panel, and returns focus", () => {
   const onChange = vi.fn();
   render(<Host onChange={onChange} />);
   const field = screen.getByRole("button", { name: "Target date" });
   fireEvent.click(field);
-  fireEvent.click(screen.getByRole("button", { name: "Today" }));
+  fireEvent.click(footerToday());
   expect(onChange).toHaveBeenLastCalledWith(iso(new Date()));
   expect(screen.queryByRole("button", { name: "Today" })).not.toBeInTheDocument();
   expect(field).toHaveFocus();
