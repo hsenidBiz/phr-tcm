@@ -134,7 +134,7 @@ fn update_with<T>(
         std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     }
     let text = serde_json::to_string_pretty(&file).map_err(|e| e.to_string())?;
-    crate::ai_tools::atomic_write(&path, &text)?;
+    crate::autorun::roots::write_file(root, &path, &text)?;
     Ok(out)
 }
 

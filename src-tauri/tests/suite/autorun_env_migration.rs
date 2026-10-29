@@ -392,6 +392,8 @@ fn saving_a_migrated_run_leaves_the_flat_original_unchanged() {
     let flat = std::fs::read(t.path().join("runs/run-1.json")).unwrap();
     roots::migrate_once(t.path()).unwrap().unwrap();
     let env = roots::env_root(t.path(), A);
+    // Not the selected environment: writes into it are allowed on purpose.
+    let _allow = roots::allow_writes_to(&env);
     let mut changed = a_run("run-1");
     changed.mode = "published-later".to_string();
     store::save_run(&env, &changed).unwrap();

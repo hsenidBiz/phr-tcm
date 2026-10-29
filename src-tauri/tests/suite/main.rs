@@ -63,6 +63,7 @@ mod autorun_claims;
 mod autorun_cleanup;
 mod autorun_env_migration;
 mod autorun_env_roots;
+mod autorun_env_switch;
 mod autorun_close_popups;
 mod autorun_bridge;
 mod autorun_case_values;

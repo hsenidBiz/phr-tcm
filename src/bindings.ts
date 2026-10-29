@@ -1687,6 +1687,7 @@ export const events = {
 	autorunCleanupProgress: makeEvent<AutorunCleanupProgress>("autorun-cleanup-progress"),
 	autorunDataChanged: makeEvent<AutorunDataChanged>("autorun-data-changed"),
 	autorunDiscoveryChanged: makeEvent<AutorunDiscoveryChanged>("autorun-discovery-changed"),
+	autorunEnvironmentChanged: makeEvent<AutorunEnvironmentChanged>("autorun-environment-changed"),
 	autorunNetworkWait: makeEvent<AutorunNetworkWait>("autorun-network-wait"),
 	autorunReplayProgress: makeEvent<AutorunReplayProgress>("autorun-replay-progress"),
 	autorunResetNeeded: makeEvent<AutorunResetNeeded>("autorun-reset-needed"),
@@ -2725,6 +2726,16 @@ export type AutorunDataKind = "areas" | "components" | "map" | "mappingSummary" 
  */
 export type AutorunDiscoveryChanged = {
 	active: boolean,
+};
+
+/**
+ *  Emitted once a switch of environment has landed, after Rust's Auto Run
+ *  folder, the environments file and the bridge all name the new one. Every
+ *  screen that shows per-environment Auto Run data reads it again, and an
+ *  editor open on the old environment's data closes.
+ */
+export type AutorunEnvironmentChanged = {
+	env_id: string,
 };
 
 /**

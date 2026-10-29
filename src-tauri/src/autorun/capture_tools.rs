@@ -721,7 +721,7 @@ pub fn write_export(root: &Path, taken: TakenExport) -> (u16, String) {
             return (500, "the captures folder could not be made - see Settings, Logs".to_string());
         }
     }
-    if let Err(e) = crate::ai_tools::atomic_write(&path, &text) {
+    if let Err(e) = crate::autorun::roots::write_file(root, &path, &text) {
         crate::applog::warn(format!("Auto Run: a capture export could not be saved: {e}"));
         return (500, "the export could not be saved - see Settings, Logs".to_string());
     }

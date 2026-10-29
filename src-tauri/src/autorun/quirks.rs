@@ -325,7 +325,7 @@ fn write_quirks(root: &Path, org: &str, project: &str, quirks: &[Quirk]) -> Resu
     let path = quirks_path(root, org, project);
     std::fs::create_dir_all(path.parent().expect("projects folder")).map_err(|e| e.to_string())?;
     let json = serde_json::to_string_pretty(&list).map_err(|e| e.to_string())?;
-    crate::ai_tools::atomic_write(&path, &json)?;
+    crate::autorun::roots::write_file(root, &path, &json)?;
     Ok(())
 }
 

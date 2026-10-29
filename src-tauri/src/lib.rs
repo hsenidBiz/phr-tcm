@@ -113,6 +113,7 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             events::CrystalReportChanged,
             events::AutorunScriptsChanged,
             events::AutorunDataChanged,
+            events::AutorunEnvironmentChanged,
             events::AutorunCleanupProgress,
             events::GuideProgress,
             events::PwOutput,
@@ -552,8 +553,12 @@ pub fn run() {
             // the window: the Auto Run screen reads those scripts again.
             {
                 let app = app.handle().clone();
-                autorun::store::on_scripts_changed(move |_, ids| {
+                autorun::store::on_scripts_changed(move |root, ids| {
                     use tauri_specta::Event as _;
+                    // Only the active environment's scripts are on screen.
+                    if !autorun::roots::is_on_screen(root) {
+                        return;
+                    }
                     let _ = events::AutorunScriptsChanged { case_ids: ids.to_vec() }.emit(&app);
                 });
             }
@@ -561,8 +566,13 @@ pub fn run() {
             // (areas, components, the map, quirks, test files, accounts).
             {
                 let app = app.handle().clone();
-                autorun::data_changed::on_data_changed(move |_, kinds| {
+                autorun::data_changed::on_data_changed(move |at, kinds| {
                     use tauri_specta::Event as _;
+                    // Only the active environment's data is on screen (the
+                    // shared kinds are told from the shared root as well).
+                    if !autorun::roots::is_on_screen(at) {
+                        return;
+                    }
                     let _ = events::AutorunDataChanged { kinds: kinds.to_vec() }.emit(&app);
                 });
             }

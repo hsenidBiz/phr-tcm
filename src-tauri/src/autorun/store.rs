@@ -255,7 +255,7 @@ pub fn save_script(root: &Path, script: &CaseScript) -> Result<(), String> {
     let dir = scripts_dir(root);
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let json = serde_json::to_string_pretty(script).map_err(|e| e.to_string())?;
-    std::fs::write(dir.join(format!("case-{}.json", script.case_id)), json).map_err(|e| e.to_string())?;
+    super::roots::write_bytes(root, &dir.join(format!("case-{}.json", script.case_id)), json.as_bytes())?;
     scripts_changed(root, &[script.case_id]);
     Ok(())
 }
@@ -279,6 +279,9 @@ pub enum SaveScriptsError {
     /// time (the file is damaged or the disk said no), so nothing can be
     /// said of whether it changed. Nothing is written; a retry might work.
     Unreadable { case_id: i32 },
+    /// The environment was switched while the save was being made, so its
+    /// root is no longer the active one. Nothing is written.
+    EnvironmentSwitched,
 }
 
 impl std::fmt::Display for SaveScriptsError {
@@ -296,6 +299,7 @@ impl std::fmt::Display for SaveScriptsError {
             SaveScriptsError::Unreadable { case_id } => {
                 write!(f, "case {case_id} could not be read while this save was checked - try again")
             }
+            SaveScriptsError::EnvironmentSwitched => write!(f, "{}", super::roots::ENVIRONMENT_SWITCHED),
         }
     }
 }
@@ -709,6 +713,15 @@ impl ScriptReads {
     }
 }
 
+/// A refusal from the roots module as this save reports it.
+fn switched_or_io(e: String) -> SaveScriptsError {
+    if e == super::roots::ENVIRONMENT_SWITCHED {
+        SaveScriptsError::EnvironmentSwitched
+    } else {
+        SaveScriptsError::Io(e)
+    }
+}
+
 /// The writing half of a bundle save, for a caller that holds `scripts_lock`
 /// (the guard is the proof).
 fn write_scripts_held(
@@ -716,6 +729,9 @@ fn write_scripts_held(
     root: &Path,
     scripts: &[CaseScript],
 ) -> Result<(), SaveScriptsError> {
+    // Refused before anything is made, so a save from before a switch leaves
+    // no folder behind either. Each write below is checked again.
+    super::roots::guard(root).map(drop).map_err(switched_or_io)?;
     let dir = scripts_dir(root);
     std::fs::create_dir_all(&dir).map_err(|e| SaveScriptsError::Io(e.to_string()))?;
 
@@ -765,7 +781,7 @@ fn write_scripts_held(
 
     // Pass 3: stage then commit.
     for (path, json) in &entries {
-        crate::ai_tools::atomic_write(path, json).map_err(SaveScriptsError::Io)?;
+        super::roots::write_file(root, path, json).map_err(switched_or_io)?;
     }
     let ids: Vec<i32> = scripts.iter().map(|s| s.case_id).collect();
     scripts_changed(root, &ids);
@@ -870,7 +886,7 @@ fn clear_mark(
 fn write_script(root: &Path, script: &CaseScript) -> Result<(), String> {
     let json = serde_json::to_string_pretty(script).map_err(|e| e.to_string())?;
     let path = scripts_dir(root).join(format!("case-{}.json", script.case_id));
-    crate::ai_tools::atomic_write(&path, &json)?;
+    super::roots::write_file(root, &path, &json)?;
     scripts_changed(root, &[script.case_id]);
     Ok(())
 }
@@ -965,7 +981,7 @@ pub fn save_run(root: &Path, run: &LocalRun) -> Result<(), String> {
     let json = serde_json::to_string_pretty(run).map_err(|e| e.to_string())?;
     // Atomic, so a run that was linked into place at the update is replaced
     // rather than rewritten through the link, and a crash never half-writes it.
-    crate::ai_tools::atomic_write(&dir.join(format!("{}.json", run.id)), &json)
+    super::roots::write_file(root, &dir.join(format!("{}.json", run.id)), &json)
 }
 
 /// `save_run`, but refuses to overwrite a run that has already been sent
@@ -1314,6 +1330,8 @@ pub fn shot_exists(root: &Path, name: &str) -> bool {
 /// Names sort by time: epoch milliseconds, then a zero-padded counter for
 /// shots in the same millisecond.
 pub fn save_shot(root: &Path, bytes: &[u8]) -> Result<String, String> {
+    // Held across the write: a switch waits for it.
+    let _held = super::roots::guard(root)?;
     let dir = shots_dir(root);
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let ms = std::time::SystemTime::now()
@@ -1529,7 +1547,10 @@ pub fn delete_script(root: &Path, case_id: i32, now_ms: u64) -> Result<String, S
         }
         stamp += 1;
     };
-    std::fs::rename(&from, &to).map_err(|e| format!("the script could not be kept aside: {e}"))?;
+    {
+        let _held = super::roots::guard(root)?;
+        std::fs::rename(&from, &to).map_err(|e| format!("the script could not be kept aside: {e}"))?;
+    }
     super::replay_record::forget(root, case_id);
     scripts_changed(root, &[case_id]);
     Ok(to.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default())
@@ -1692,7 +1713,7 @@ pub fn remember_browser(root: &Path, name: &str) {
     let shared = crate::autorun::roots::shared_of(root);
     let written = std::fs::create_dir_all(&shared)
         .map_err(|e| e.to_string())
-        .and_then(|()| crate::ai_tools::atomic_write(&shared.join(LAST_BROWSER), &browser_name(name)));
+        .and_then(|()| crate::ai_tools::atomic_write(&shared.join(LAST_BROWSER), &browser_name(name))); // outside the Auto Run root
     if let Err(e) = written {
         crate::applog::warn(format!("auto-run: the browser chosen could not be remembered: {e}"));
     }
@@ -1746,6 +1767,7 @@ pub fn load_order(root: &Path, pbi_id: i32) -> Option<Vec<i32>> {
 /// appears. Written by a temporary file and a rename, so a reader never
 /// sees half of it. An empty order is refused: clearing is `clear_order`.
 pub fn save_order(root: &Path, pbi_id: i32, case_ids: &[i32]) -> Result<(), String> {
+    super::roots::guard(root).map(drop)?;
     let mut ids: Vec<i32> = Vec::with_capacity(case_ids.len());
     for id in case_ids {
         if !ids.contains(id) {
@@ -1766,7 +1788,11 @@ pub fn save_order(root: &Path, pbi_id: i32, case_ids: &[i32]) -> Result<(), Stri
         std::fs::create_dir_all(dir).map_err(|e| not_saved(e.to_string()))?;
     }
     let json = serde_json::to_string_pretty(&SavedOrder { case_ids: ids }).map_err(|e| not_saved(e.to_string()))?;
-    crate::ai_tools::atomic_write(&path, &json).map_err(not_saved)
+    match super::roots::write_file(root, &path, &json) {
+        // Not a disk failure: nothing to look up in the log.
+        Err(e) if e == super::roots::ENVIRONMENT_SWITCHED => Err(e),
+        other => other.map_err(not_saved),
+    }
 }
 
 /// Said when an order could not be written; the details are in the log.

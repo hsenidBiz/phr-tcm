@@ -71,6 +71,15 @@ pub struct AutorunDataChanged {
     pub kinds: Vec<AutorunDataKind>,
 }
 
+/// Emitted once a switch of environment has landed, after Rust's Auto Run
+/// folder, the environments file and the bridge all name the new one. Every
+/// screen that shows per-environment Auto Run data reads it again, and an
+/// editor open on the old environment's data closes.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, specta::Type, tauri_specta::Event)]
+pub struct AutorunEnvironmentChanged {
+    pub env_id: String,
+}
+
 /// Emitted while test plans are being scanned for suites, so Run Tests and
 /// the Suites browser can show "Scanning plans X of Y" instead of a bare
 /// skeleton. `kind` says which walk this is. `pages` is set only while the

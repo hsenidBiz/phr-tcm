@@ -74,7 +74,7 @@ pub fn save_summary(root: &Path, org: &str, project: &str, summary: &MappingSumm
         std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     }
     let text = serde_json::to_string_pretty(summary).map_err(|e| e.to_string())?;
-    crate::ai_tools::atomic_write(&path, &text)?;
+    crate::autorun::roots::write_file(root, &path, &text)?;
     super::data_changed::notify(root, crate::events::AutorunDataKind::MappingSummary);
     Ok(())
 }

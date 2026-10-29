@@ -150,14 +150,23 @@ pub fn load_at(p: &Path) -> Result<ExportMap, String> {
 }
 
 pub fn save(root: &Path, org: &str, project: &str, map: &ExportMap) -> Result<(), String> {
-    save_at(&path(root, org, project), map)
+    let p = path(root, org, project);
+    let body = prepare(&p, map)?;
+    crate::autorun::roots::write_file(root, &p, &body)
 }
 
-/// Writes the export file at `p`, replacing it whole.
+/// Writes the export file at `p`, replacing it whole. `p` is a record found
+/// beside the Playwright clone (a rename there moves what it names), not a
+/// file under an environment's root.
 pub fn save_at(p: &Path, map: &ExportMap) -> Result<(), String> {
+    let body = prepare(p, map)?;
+    crate::ai_tools::atomic_write(p, &body) // outside the Auto Run root
+}
+
+/// Makes the folder for `p` and serialises `map`.
+fn prepare(p: &Path, map: &ExportMap) -> Result<String, String> {
     if let Some(dir) = p.parent() {
         std::fs::create_dir_all(dir).map_err(|e| format!("failed to create {}: {e}", dir.display()))?;
     }
-    let body = serde_json::to_string_pretty(map).map_err(|e| e.to_string())?;
-    crate::ai_tools::atomic_write(p, &body)
+    serde_json::to_string_pretty(map).map_err(|e| e.to_string())
 }

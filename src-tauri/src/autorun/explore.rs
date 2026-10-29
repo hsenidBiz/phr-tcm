@@ -223,7 +223,7 @@ fn load_locked(root: &Path, session: &str) -> Result<ExploreSession, String> {
 
 fn write_locked(root: &Path, s: &ExploreSession) -> Result<(), String> {
     let json = serde_json::to_string_pretty(s).map_err(|e| e.to_string())?;
-    crate::ai_tools::atomic_write(&session_path(root, &s.session), &json)
+    crate::autorun::roots::write_file(root, &session_path(root, &s.session), &json)
 }
 
 /// Starts a session's change list for the signed-in account `account` (a
@@ -232,6 +232,8 @@ fn write_locked(root: &Path, s: &ExploreSession) -> Result<(), String> {
 pub fn begin(root: &Path, org: &str, project: &str, account: &str, started_at_ms: u64) -> Result<String, String> {
     let env = crate::environments::active(root)?;
     let _held = lock();
+    // Refused (and nothing made) for a root that is no longer the active one.
+    crate::autorun::roots::guard(root).map(drop)?;
     let dir = root.join(EXPLORE_DIR);
     std::fs::create_dir_all(&dir).map_err(|e| format!("the explore folder could not be made: {e}"))?;
     let base = session_id(started_at_ms, account);

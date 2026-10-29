@@ -122,7 +122,7 @@ pub fn save(root: &Path, org: &str, project: &str, t: &ApiTemplate) -> Result<()
     let dir = templates_dir(root, org, project);
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let json = serde_json::to_string_pretty(t).map_err(|e| e.to_string())?;
-    crate::ai_tools::atomic_write(&template_path(root, org, project, &t.id), &json)
+    crate::autorun::roots::write_file(root, &template_path(root, org, project, &t.id), &json)
 }
 
 /// Every saved template for this project, with its run history, sorted by
@@ -215,5 +215,5 @@ pub fn append_run(root: &Path, org: &str, project: &str, id: &str, r: RunRecord)
     let dir = templates_dir(root, org, project);
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let json = serde_json::to_string_pretty(&runs).map_err(|e| e.to_string())?;
-    crate::ai_tools::atomic_write(&runs_path(root, org, project, id), &json)
+    crate::autorun::roots::write_file(root, &runs_path(root, org, project, id), &json)
 }

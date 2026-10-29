@@ -123,7 +123,7 @@ pub fn note(root: &Path, case_id: i32, title: &str, to_step: i32, end: &ReplayEn
     let written = std::fs::create_dir_all(dir(root))
         .map_err(|e| e.to_string())
         .and_then(|()| serde_json::to_string_pretty(&record).map_err(|e| e.to_string()))
-        .and_then(|json| crate::ai_tools::atomic_write(&path, &json));
+        .and_then(|json| crate::autorun::roots::write_file(root, &path, &json));
     if written.is_err() {
         crate::applog::warn(format!("Auto Run: the replay failure of case {case_id} could not be kept"));
     }

@@ -139,6 +139,8 @@ fn selecting_something_that_is_not_an_environment_is_refused() {
 fn per_environment_stores_write_under_the_environment_root() {
     let t = tempfile::tempdir().unwrap();
     let e = roots::env_root(t.path(), A);
+    // Not the selected environment: writes into it are allowed on purpose.
+    let _allow = roots::allow_writes_to(&e);
     let inside = |p: PathBuf, what: &str| assert!(p.starts_with(&e), "{what}: {}", p.display());
 
     // Writes.
@@ -384,6 +386,7 @@ fn cleanup_preview_in_another_environment_uses_its_templates() {
         environment: Some(b.name.clone()),
         via: None,
     });
+    let _allow = roots::allow_writes_to(&b_root);
     template_store::save(&b_root, ORG, PROJECT, &template).unwrap();
 
     let made = TestMade {

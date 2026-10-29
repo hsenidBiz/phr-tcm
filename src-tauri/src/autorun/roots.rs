@@ -202,6 +202,93 @@ pub fn failure_warning(why: &str, starts_in_a_row: u32) -> String {
     line
 }
 
+/// Said when a write holds the root of an environment that is no longer the
+/// active one: the person switched while it was being made.
+pub const ENVIRONMENT_SWITCHED: &str = "the environment was switched while this was being saved - nothing was saved; read it again in the environment now active";
+
+/// Held for reading by every write into an environment root (see [`guard`])
+/// and for writing by a switch around the move itself, so a switch waits for
+/// the writes in flight and a write that starts after it sees the new
+/// environment.
+///
+/// LOCK RULE: never call a store write while holding this lock in any mode.
+/// `guard` takes the read lock, and a second read lock taken while a switch
+/// waits for the write lock can deadlock.
+pub fn switch_lock() -> &'static std::sync::RwLock<()> {
+    static LOCK: std::sync::RwLock<()> = std::sync::RwLock::new(());
+    &LOCK
+}
+
+/// The environment roots other than the active one that may be written to
+/// right now (the copy tasks, the export environment's records), one entry
+/// per hold.
+static ALLOWED: std::sync::Mutex<Vec<PathBuf>> = std::sync::Mutex::new(Vec::new());
+
+/// A hold on one non-active environment root that lets writes through
+/// [`guard`] until it is dropped.
+#[must_use = "writes into the root are refused again as soon as this is dropped"]
+pub struct AllowedTarget(PathBuf);
+
+impl Drop for AllowedTarget {
+    fn drop(&mut self) {
+        let mut held = ALLOWED.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(at) = held.iter().position(|p| *p == self.0) {
+            held.swap_remove(at);
+        }
+    }
+}
+
+/// Let writes into `root` through [`guard`] while the returned value lives,
+/// though `root` is not the active environment's.
+pub fn allow_writes_to(root: &Path) -> AllowedTarget {
+    ALLOWED.lock().unwrap_or_else(|e| e.into_inner()).push(root.to_path_buf());
+    AllowedTarget(root.to_path_buf())
+}
+
+/// Takes the switch lock for reading and checks that `root` may be written:
+/// an environment root must be the active one (or allowed); anything else,
+/// the flat layout's folder included, is never refused. Keep the guard for
+/// the length of the write.
+pub fn guard(root: &Path) -> Result<std::sync::RwLockReadGuard<'static, ()>, String> {
+    let held = switch_lock().read().unwrap_or_else(|e| e.into_inner());
+    if env_id_of(root).is_none() {
+        return Ok(held);
+    }
+    if crate::autorun::store::configured_root().as_deref() == Some(root) {
+        return Ok(held);
+    }
+    if ALLOWED.lock().unwrap_or_else(|e| e.into_inner()).iter().any(|p| p == root) {
+        return Ok(held);
+    }
+    Err(ENVIRONMENT_SWITCHED.to_string())
+}
+
+/// Whether a change announced for `changed` concerns what the person is
+/// looking at: the active environment's root, or the shared root beside it.
+/// A change to another environment's folder (a copy, an edit with a root
+/// from before a switch) is not on screen.
+pub fn is_on_screen(changed: &Path) -> bool {
+    match crate::autorun::store::configured_root() {
+        Some(active) => active == changed || shared_of(&active) == changed,
+        // No environment is chosen yet: nothing is on screen to be wrong.
+        None => true,
+    }
+}
+
+/// Writes `text` to `path` inside `root` (atomically), refused when `root`
+/// stopped being the active environment.
+pub fn write_file(root: &Path, path: &Path, text: &str) -> Result<(), String> {
+    let _held = guard(root)?;
+    crate::ai_tools::atomic_write(path, text)
+}
+
+/// Writes `bytes` to `path` inside `root`, refused when `root` stopped
+/// being the active environment.
+pub fn write_bytes(root: &Path, path: &Path, bytes: &[u8]) -> Result<(), String> {
+    let _held = guard(root)?;
+    std::fs::write(path, bytes).map_err(|e| e.to_string())
+}
+
 /// Whether an error string is safe to log: it names no path.
 pub fn path_free(message: &str) -> bool {
     !message.contains(['\\', '/'])

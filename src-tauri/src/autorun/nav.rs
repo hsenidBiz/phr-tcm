@@ -424,7 +424,7 @@ pub(crate) fn write_nav(root: &Path, org: &str, project: &str, nav: &NavFile) ->
     let path = nav_path(root, org, project);
     std::fs::create_dir_all(path.parent().expect("projects folder")).map_err(|e| e.to_string())?;
     let json = serde_json::to_string_pretty(nav).map_err(|e| e.to_string())?;
-    crate::ai_tools::atomic_write(&path, &json)?;
+    crate::autorun::roots::write_file(root, &path, &json)?;
     Ok(())
 }
 

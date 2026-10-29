@@ -94,7 +94,7 @@ pub fn save(root: &Path, org: &str, project: &str, f: &Fixture) -> Result<(), Ve
     let dir = fixtures_dir(root, org, project);
     std::fs::create_dir_all(&dir).map_err(|e| vec![e.to_string()])?;
     let json = serde_json::to_string_pretty(f).map_err(|e| vec![e.to_string()])?;
-    crate::ai_tools::atomic_write(&fixture_path(root, org, project, &f.id), &json).map_err(|e| vec![e])
+    crate::autorun::roots::write_file(root, &fixture_path(root, org, project, &f.id), &json).map_err(|e| vec![e])
 }
 
 /// Every saved fixture for this project with its history, sorted by name.
@@ -161,7 +161,7 @@ pub fn append_run(root: &Path, org: &str, project: &str, id: &str, r: FixtureRun
     runs.truncate(MAX_RUNS);
     std::fs::create_dir_all(fixtures_dir(root, org, project)).map_err(|e| e.to_string())?;
     let json = serde_json::to_string_pretty(&runs).map_err(|e| e.to_string())?;
-    crate::ai_tools::atomic_write(&runs_path(root, org, project, id), &json)
+    crate::autorun::roots::write_file(root, &runs_path(root, org, project, id), &json)
 }
 
 /// The outputs of the newest successful run, or `None` when the fixture

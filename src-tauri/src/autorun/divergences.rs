@@ -191,7 +191,7 @@ pub fn update<T>(
     let p = path(root, org, project);
     std::fs::create_dir_all(p.parent().expect("projects folder")).map_err(|e| e.to_string())?;
     let json = serde_json::to_string_pretty(&list).map_err(|e| e.to_string())?;
-    crate::ai_tools::atomic_write(&p, &json)?;
+    crate::autorun::roots::write_file(root, &p, &json)?;
     let mut touched: Vec<i32> = before
         .iter()
         .filter(|d| !list.contains(d))

@@ -92,7 +92,7 @@ fn write(root: &Path, org: &str, project: &str, f: &Flow) -> Result<(), String> 
     }
     std::fs::create_dir_all(flows_dir(root, org, project)).map_err(|e| e.to_string())?;
     let json = serde_json::to_string_pretty(f).map_err(|e| e.to_string())?;
-    crate::ai_tools::atomic_write(&flow_path(root, org, project, &f.id), &json)
+    crate::autorun::roots::write_file(root, &flow_path(root, org, project, &f.id), &json)
 }
 
 /// Every saved flow for this project, sorted by `title`. A flow file that

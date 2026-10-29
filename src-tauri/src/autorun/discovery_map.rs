@@ -551,8 +551,11 @@ pub fn reset_map(root: &Path, org: &str, project: &str, now: u64) -> Result<Opti
         return Err("The discovery map can be read, so there is nothing to reset. Forget map clears one area.".to_string());
     }
     let aside = format!("{}-map.corrupt-{now}.json", project_slug(org, project));
-    std::fs::rename(&from, from.with_file_name(&aside))
-        .map_err(|e| format!("The discovery map {} could not be moved aside: {e}", map_file_name(org, project)))?;
+    {
+        let _held = crate::autorun::roots::guard(root)?;
+        std::fs::rename(&from, from.with_file_name(&aside))
+            .map_err(|e| format!("The discovery map {} could not be moved aside: {e}", map_file_name(org, project)))?;
+    }
     crate::applog::info(format!("Discovery map: a damaged map was moved aside as projects/{aside}"));
     drop(guard);
     super::data_changed::notify(root, crate::events::AutorunDataKind::Map);
@@ -594,7 +597,7 @@ fn update(root: &Path, org: &str, project: &str, change: impl FnOnce(&mut Discov
         std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     }
     let text = serde_json::to_string_pretty(&map).map_err(|e| e.to_string())?;
-    crate::ai_tools::atomic_write(&path, &text)?;
+    crate::autorun::roots::write_file(root, &path, &text)?;
     drop(guard);
     super::data_changed::notify(root, crate::events::AutorunDataKind::Map);
     Ok(())

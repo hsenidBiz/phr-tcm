@@ -50,6 +50,11 @@ pub struct EnvInput {
     pub test_prefix: Option<String>,
 }
 
+/// Said while an Auto Run browser holds a signed-in account: the person
+/// closes it before the environment changes.
+pub const SWITCH_BROWSER_SIGNED_IN: &str =
+    "the environment cannot be switched while an Auto Run browser is signed in to an account - close it first";
+
 /// Said when a switch would land in the middle of a run, recording, check
 /// or Try - which would mix two environments' accounts and sessions.
 pub const SWITCH_BUSY: &str =
@@ -266,6 +271,11 @@ pub fn refuse_switch(supervised_open: bool) -> Result<(), String> {
     if crate::api_templates::runner::is_running() {
         return Err(SWITCH_TEMPLATE_RUNNING.to_string());
     }
+    // A browser signed in to an account belongs to the environment it signed
+    // in to; only the person closes it.
+    if crate::autorun::lease::a_browser_is_held() {
+        return Err(SWITCH_BROWSER_SIGNED_IN.to_string());
+    }
     if supervised_open {
         return Err(SWITCH_SUPERVISED_OPEN.to_string());
     }
@@ -390,7 +400,12 @@ pub async fn switch_with<T: Send + 'static>(
     // that started between the look in `refuse_switch` and the write would
     // otherwise sign in to one environment and finish in another.
     let run_slot = crate::api_templates::runner::claim().ok_or_else(|| SWITCH_TEMPLATE_RUNNING.to_string())?;
-    let file = move_bridge_to(root, store, id, bridge)?;
+    // The writes in flight finish first; one that starts after sees the new
+    // environment. No store write happens inside this lock (see `switch_lock`).
+    let file = {
+        let _switching = crate::autorun::roots::switch_lock().write().unwrap_or_else(|e| e.into_inner());
+        move_bridge_to(root, store, id, bridge)?
+    };
     // The hold `move_bridge_to` took ends when this does, however it ends.
     let release = super::ai_bridge::HeldWrites(bridge);
     // A browser a template run kept signed in belongs to the environment
@@ -653,6 +668,11 @@ pub async fn env_set_active(
     // taken out when it does not. What was done comes back with the list.
     let after = switch_reconciler(root.clone(), working_dir, super::ai_tools::ToolHome::real());
     let (view, allow) = switch_with(&root, &*secrets.0, &id, bridge.as_deref().map(|b| &b.ctx), after).await?;
+    // Every open screen reads the new environment's data again.
+    {
+        use tauri_specta::Event as _;
+        let _ = crate::events::AutorunEnvironmentChanged { env_id: view.active.clone() }.emit(&app);
+    }
     let allow = allow.unwrap_or_else(|| {
         vec![crate::commands::ai_tools::AutoApproveOutcome {
             tool: "Your AI tools".to_string(),

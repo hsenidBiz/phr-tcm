@@ -12953,6 +12953,9 @@ pub async fn save_autorun_scripts_carrying(
             Err(unread @ crate::autorun::store::SaveScriptsError::Unreadable { .. }) => {
                 Err(SaveRefusal::Other(500, unread.to_string()))
             }
+            Err(switched @ crate::autorun::store::SaveScriptsError::EnvironmentSwitched) => {
+                Err(SaveRefusal::Other(409, switched.to_string()))
+            }
             Err(crate::autorun::store::SaveScriptsError::Io(e)) => {
                 Err(SaveRefusal::Other(500, format!("could not save the bundle: {e}")))
             }
