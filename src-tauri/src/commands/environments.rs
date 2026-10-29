@@ -318,9 +318,23 @@ pub fn move_bridge_to(
     bridge: Option<&Mutex<BridgeContext>>,
 ) -> Result<EnvFile, String> {
     let mut held = bridge.map(|b| b.lock().unwrap_or_else(|e| e.into_inner()));
+    let previous = environments::active_id(root)?;
     let file = environments::set_active(root, id)?;
     // Every Auto Run store now reads and writes the new environment's folder.
-    crate::autorun::store::select_environment(&file.active)?;
+    // If that cannot be made, the file goes back: the list, the Auto Run
+    // folder and the bridge must all name the same environment.
+    // (Before app set-up there is no layout to move: tests of the bridge alone.)
+    let selected = if crate::autorun::store::shared_root().is_some() {
+        crate::autorun::store::select_environment(&file.active).map(|_| ())
+    } else {
+        Ok(())
+    };
+    if let Err(e) = selected {
+        if let Err(back) = environments::set_active(root, &previous) {
+            crate::applog::warn(format!("Environments: the switch could not be undone: {back}"));
+        }
+        return Err(e);
+    }
     if let (Some(ctx), Some(env)) = (held.as_deref_mut(), file.environments.iter().find(|e| e.id == file.active)) {
         // Held until the caller has brought the allow files in line
         // (`release_writes`, which `switch_with` calls once they are).
@@ -566,8 +580,12 @@ pub fn env_list(
     current_db: Option<String>,
     working_dir: Option<String>,
 ) -> Result<EnvListView, String> {
-    let root = super::autorun::root(&app)?;
+    // The shared root: this call is the one that makes Default (with the
+    // Company database the person chose), so it cannot need an
+    // environment's folder to exist first.
+    let root = crate::autorun::store::shared_root().ok_or_else(|| super::autorun::NO_DATA_DIRECTORY.to_string())?;
     let view = env_list_with(&root, &*secrets.0, current_db.as_deref())?;
+    crate::autorun::store::select_environment(&view.active)?;
     // Once a run, with the working repository the bridge's start could not
     // know: each AI tool's own "always allow" made to match the active
     // environment, writes held off meanwhile (`repair_allow_files`).

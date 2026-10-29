@@ -229,65 +229,123 @@ const NOT_AUTORUN_ROOTS: [&str; 7] = [
     "commands/guide.rs",
 ];
 
-/// The string value of `const NAME: &str = "..."` in `text`.
+/// The string value of `const NAME: &str = "..."` in `text`. The name must
+/// match exactly: the next character is `:` or a space, never more name.
 fn const_value(text: &str, name: &str) -> Option<String> {
     for line in text.lines() {
         let l = line.trim_start();
         let l = l.strip_prefix("pub(crate) ").or_else(|| l.strip_prefix("pub ")).unwrap_or(l);
-        if let Some(rest) = l.strip_prefix("const ").and_then(|r| r.strip_prefix(name)) {
-            if let Some(v) = rest.split_once('=').map(|(_, v)| v.trim()) {
-                return v.strip_prefix('"').and_then(|v| v.split_once('"')).map(|(s, _)| s.to_string());
-            }
+        let Some(rest) = l.strip_prefix("const ").and_then(|r| r.strip_prefix(name)) else { continue };
+        if !rest.starts_with(':') && !rest.starts_with(' ') {
+            continue;
+        }
+        if let Some(v) = rest.split_once('=').map(|(_, v)| v.trim()) {
+            return v.strip_prefix('"').and_then(|v| v.split_once('"')).map(|(s, _)| s.to_string());
         }
     }
     None
 }
 
+/// The first path segment a `.join(` argument names, when it can be read:
+/// a string literal, a `format!` whose first argument is one (up to its
+/// first `{`), or a `CONST` of this file or any other file (`a::B::CONST`).
+/// `Ok(None)` is a variable or a call, which cannot be read here; `Err` is
+/// a constant that no file defines, which fails the test.
+fn first_segment(arg: &str, text: &str, all: &[(String, String)]) -> Result<Option<String>, String> {
+    let literal = |s: &str| {
+        let s = s.split('{').next().unwrap_or("");
+        s.split('/').next().unwrap_or("").to_string()
+    };
+    if let Some(lit) = arg.strip_prefix('"') {
+        return Ok(lit.split_once('"').map(|(s, _)| literal(s)));
+    }
+    if let Some(inner) = arg.strip_prefix("format!(\"") {
+        return Ok(inner.split_once('"').map(|(s, _)| literal(s)));
+    }
+    let path: String = arg.chars().take_while(|c| c.is_ascii_alphanumeric() || *c == '_' || *c == ':').collect();
+    let name = path.rsplit("::").next().unwrap_or("");
+    if name.is_empty() || name.chars().any(|c| c.is_ascii_lowercase()) {
+        return Ok(None);
+    }
+    let found = const_value(text, name).or_else(|| all.iter().find_map(|(_, t)| const_value(t, name)));
+    found.map(|v| Some(literal(&v))).ok_or_else(|| format!("the constant {name} is not defined as a &str here"))
+}
+
+/// The expression just before a `.join(`: what it is called on.
+fn receiver(before: &str) -> String {
+    let line = before.rsplit('\n').next().unwrap_or("");
+    // `shared_of(root)` ends in `)`; take it with the call's name.
+    if line.ends_with(')') {
+        let open = line.rfind("shared_of(").map(|i| &line[i..]).unwrap_or("(call)");
+        return open.to_string();
+    }
+    line.chars().rev().take_while(|c| c.is_ascii_alphanumeric() || *c == '_').collect::<Vec<_>>().into_iter().rev().collect()
+}
+
+/// A `root.join(..)` in a file other than a test, scanned for where the
+/// name it joins belongs: a name in neither pinned list is unclassified, a
+/// SHARED name joined on a bare `root` would split shared data per
+/// environment, and a per-environment name joined on the shared root would
+/// put one environment's data where all of them read it.
+///
+/// What it cannot see (so a reviewer still must): a path built by a
+/// variable or a call (`root.join(name)`, `root.join(x.path())`), a
+/// receiver renamed to something else for an unlisted name (only `root` is
+/// held to the unclassified rule; `dir`, `base` and the like are everywhere
+/// for unrelated folders), and a string pushed with `PathBuf::push`.
 #[test]
 fn every_root_join_in_src_is_classified() {
     let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
-    let mut files = vec![];
-    collect_rs(&src, &mut files);
-    assert!(files.len() > 50, "the walk found {} files", files.len());
-    let known: Vec<&str> = roots::PER_ENV_ITEMS.iter().map(|(n, _)| *n).chain(roots::SHARED_ITEMS).collect();
+    let mut paths = vec![];
+    collect_rs(&src, &mut paths);
+    assert!(paths.len() > 50, "the walk found {} files", paths.len());
+    let all: Vec<(String, String)> = paths
+        .iter()
+        .map(|p| {
+            let rel = p.strip_prefix(&src).unwrap().to_string_lossy().replace('\\', "/");
+            (rel, std::fs::read_to_string(p).unwrap())
+        })
+        .collect();
+    let per_env: Vec<&str> = roots::PER_ENV_ITEMS.iter().map(|(n, _)| *n).collect();
+    let shared_names: Vec<&str> = roots::SHARED_ITEMS.to_vec();
+    // Where a shared name is joined on a bare `root` on purpose: backup.rs
+    // works on the shared root already, and remove_legacy_files re-binds
+    // `root` to `shared_of(root)` on its first line.
+    let shared_on_root_ok = |rel: &str| rel == "backup.rs" || rel == "environments.rs";
     let mut bad = vec![];
     let mut seen = 0;
-    for file in files {
-        let rel = file.strip_prefix(&src).unwrap().to_string_lossy().replace('\\', "/");
+    for (rel, text) in &all {
         if NOT_AUTORUN_ROOTS.iter().any(|p| rel.starts_with(p)) {
             continue;
         }
-        let text = std::fs::read_to_string(&file).unwrap();
-        for (at, _) in text.match_indices("root.join(") {
-            // Only a bare `root`; `x_root.join(` is something else.
-            let before = text[..at].chars().next_back();
-            if before.is_some_and(|c| c.is_ascii_alphanumeric() || c == '_') {
-                continue;
-            }
-            let arg = &text[at + "root.join(".len()..];
-            let segment = if let Some(lit) = arg.strip_prefix('"') {
-                lit.split_once('"').map(|(s, _)| s.to_string())
-            } else {
-                let ident: String = arg.chars().take_while(|c| c.is_ascii_alphanumeric() || *c == '_').collect();
-                if ident.is_empty() || ident.chars().any(|c| c.is_ascii_lowercase()) {
-                    continue; // a variable, not a constant
+        for (at, _) in text.match_indices(".join(") {
+            let who = receiver(&text[..at]);
+            let arg = &text[at + ".join(".len()..];
+            let segment = match first_segment(arg, text, &all) {
+                Ok(Some(s)) => s,
+                Ok(None) => continue,
+                Err(e) => {
+                    bad.push(format!("{rel}: {e}"));
+                    continue;
                 }
-                const_value(&text, &ident)
             };
-            let Some(segment) = segment else { continue };
-            seen += 1;
-            let first = segment.split('/').next().unwrap_or("").to_string();
-            if !known.contains(&first.as_str()) {
-                bad.push(format!("{rel}: root.join(\"{segment}\")"));
+            let is_shared_name = shared_names.contains(&segment.as_str());
+            let is_per_env_name = per_env.contains(&segment.as_str());
+            let on_shared = who.starts_with("shared_of(") || who == "shared" || who == "shared_root";
+            if who == "root" {
+                seen += 1;
+                if !is_shared_name && !is_per_env_name {
+                    bad.push(format!("{rel}: root.join(\"{segment}\") is in neither pinned list"));
+                } else if is_shared_name && !shared_on_root_ok(rel) {
+                    bad.push(format!("{rel}: shared \"{segment}\" joined on a bare `root` (use shared_of(root))"));
+                }
+            } else if on_shared && is_per_env_name {
+                bad.push(format!("{rel}: per-environment \"{segment}\" joined on the shared root"));
             }
         }
     }
-    assert!(seen > 20, "the scan saw only {seen} joins; the tripwire is not looking");
-    assert!(
-        bad.is_empty(),
-        "a path under the Auto Run root is in neither roots::PER_ENV_ITEMS nor roots::SHARED_ITEMS:\n{}",
-        bad.join("\n")
-    );
+    assert!(seen > 20, "the scan saw only {seen} joins on `root`; the tripwire is not looking");
+    assert!(bad.is_empty(), "the Auto Run layout tripwire found:\n{}", bad.join("\n"));
 }
 
 #[test]
@@ -351,4 +409,121 @@ fn cleanup_preview_in_another_environment_uses_its_templates() {
     let lines = v2_lib::autorun::cleanup::preview(&a_root, ORG, PROJECT, &query, now).unwrap();
     assert_eq!(lines.len(), 1, "{lines:?}");
     assert!(lines[0].deletable, "{lines:?}");
+}
+
+#[test]
+fn a_fresh_install_has_no_root_until_default_is_made_with_the_chosen_database() {
+    use v2_lib::commands::environments::list_view;
+    use v2_lib::db::credentials::MemoryStore;
+    let _lock = crate::serial::autorun();
+    let _restore = Restore;
+    let t = tempfile::tempdir().unwrap();
+    store::set_shared_root(t.path().to_path_buf());
+
+    // Resolving the root never makes an environment.
+    assert_eq!(store::resolve_root(), Err(store::NO_ENVIRONMENT_YET.to_string()));
+    assert_eq!(store::configured_root(), None);
+    assert!(!t.path().join("environments.json").exists());
+
+    // The list is what makes Default, with the database the person chose.
+    let view = list_view(t.path(), &MemoryStore::default(), Some("qa-read")).unwrap();
+    assert_eq!(view.environments[0].db_id, "qa-read");
+    store::select_environment(&view.active).unwrap();
+    assert_eq!(store::configured_root(), Some(roots::env_root(t.path(), &view.active)));
+}
+
+#[test]
+fn a_failed_switch_leaves_the_file_the_root_and_the_bridge_on_the_old_environment() {
+    use v2_lib::ai_bridge::BridgeContext;
+    use v2_lib::commands::environments::move_bridge_to;
+    use v2_lib::db::credentials::MemoryStore;
+    let _lock = crate::serial::autorun();
+    let _restore = Restore;
+    let t = tempfile::tempdir().unwrap();
+    store::set_shared_root(t.path().to_path_buf());
+    let a = environments::load_or_init(t.path(), Some("dev-read")).unwrap().active;
+    let b = environments::save_env(t.path(), env_named("", "QA"), &["dev-read".to_string()])
+        .unwrap()
+        .environments
+        .into_iter()
+        .find(|e| e.name == "QA")
+        .unwrap()
+        .id;
+    store::select_environment(&a).unwrap();
+    let ctx = std::sync::Mutex::new(BridgeContext::default());
+    ctx.lock().unwrap().gate.env_id = Some(a.clone());
+
+    // Something that is a file where B's folder has to be: the create fails.
+    std::fs::create_dir_all(t.path().join("envs")).unwrap();
+    std::fs::write(roots::env_root(t.path(), &b), "in the way").unwrap();
+
+    let err = move_bridge_to(t.path(), &MemoryStore::default(), &b, Some(&ctx)).unwrap_err();
+    assert!(err.contains("folder could not be made"), "{err}");
+    assert_eq!(environments::active_id(t.path()).unwrap(), a, "the file went back");
+    assert_eq!(store::configured_root(), Some(roots::env_root(t.path(), &a)));
+    assert_eq!(ctx.lock().unwrap().gate.env_id.as_deref(), Some(a.as_str()), "the bridge never moved");
+
+    // And with the way clear, the same switch lands everywhere.
+    std::fs::remove_file(roots::env_root(t.path(), &b)).unwrap();
+    move_bridge_to(t.path(), &MemoryStore::default(), &b, Some(&ctx)).unwrap();
+    assert_eq!(environments::active_id(t.path()).unwrap(), b);
+    assert_eq!(store::configured_root(), Some(roots::env_root(t.path(), &b)));
+    assert_eq!(ctx.lock().unwrap().gate.env_id.as_deref(), Some(b.as_str()));
+}
+
+#[test]
+fn an_unreadable_environment_list_says_so_and_is_logged_without_a_path() {
+    let _log = crate::serial::log_tail();
+    let _lock = crate::serial::autorun();
+    let _restore = Restore;
+    let t = tempfile::tempdir().unwrap();
+    std::fs::write(t.path().join("environments.json"), "{ half a file").unwrap();
+    store::set_shared_root(t.path().to_path_buf());
+
+    let said = store::resolve_root().unwrap_err();
+    assert_eq!(said, store::ENVIRONMENTS_UNREADABLE);
+    assert!(said.contains("environments") && said.contains("Logs"), "{said}");
+    assert!(!said.contains("restart"), "restarting changes nothing: {said}");
+    assert!(!said.contains(t.path().to_str().unwrap()), "{said}");
+    let line = v2_lib::applog::recent(50)
+        .into_iter()
+        .rev()
+        .find(|l| l.message.contains("the environments could not be read"))
+        .expect("the reason is in the log");
+    assert_eq!(line.level, "warn");
+    assert!(!line.message.contains(t.path().to_str().unwrap()), "{}", line.message);
+    // The broken file is left exactly as it was.
+    assert_eq!(std::fs::read_to_string(t.path().join("environments.json")).unwrap(), "{ half a file");
+}
+
+#[test]
+fn the_seed_is_not_an_environment_that_can_be_selected() {
+    let _lock = crate::serial::autorun();
+    let _restore = Restore;
+    let t = tempfile::tempdir().unwrap();
+    store::set_shared_root(t.path().to_path_buf());
+    assert!(store::select_environment("_seed").is_err());
+    assert!(!roots::env_root(t.path(), "_seed").exists());
+}
+
+#[test]
+fn the_first_lookup_does_not_undo_a_switch_that_got_there_first() {
+    let _lock = crate::serial::autorun();
+    let _restore = Restore;
+    let t = tempfile::tempdir().unwrap();
+    store::set_shared_root(t.path().to_path_buf());
+    // The file says A is active; B is selected before anything has looked.
+    let a = environments::load_or_init(t.path(), Some("dev-read")).unwrap().active;
+    assert_ne!(a, B);
+    store::select_environment(B).unwrap();
+    assert_eq!(store::resolve_root(), Ok(roots::env_root(t.path(), B)));
+}
+
+#[test]
+fn shared_stores_do_not_make_an_environment_folder() {
+    let t = tempfile::tempdir().unwrap();
+    let gone = roots::env_root(t.path(), A);
+    // A stale environment root (the folder was removed): shared writes go to the shared root only.
+    environments::load_or_init(&gone, None).unwrap();
+    assert!(!gone.exists(), "a shared write recreated an environment's folder");
 }

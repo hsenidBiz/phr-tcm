@@ -498,15 +498,14 @@ pub fn describe_session_error() -> String {
 
 /// Where scripts and runs live: beside the app's other data.
 ///
-/// Prefers the value app setup published process-wide, because the AI
-/// bridge writes through that same value and has no `AppHandle` to derive
-/// one from. Two independent derivations of "the autorun directory" is
-/// exactly how an assistant's saved script ends up somewhere this screen
-/// never looks. The handle is the fallback for any path that runs before
-/// setup.
-pub fn root(app: &tauri::AppHandle) -> Result<PathBuf, String> {
-    let _ = app;
-    store::configured_root().ok_or_else(|| NO_DATA_DIRECTORY.to_string())
+/// The value app setup published process-wide: the active environment's
+/// folder. The AI bridge writes through that same value and has no
+/// `AppHandle` to derive one from, and two independent derivations of "the
+/// autorun directory" is exactly how an assistant's saved script ends up
+/// somewhere this screen never looks. There is no fallback, so the handle
+/// is unused; it stays so every caller keeps its shape.
+pub fn root(_app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    store::resolve_root()
 }
 
 /// Guards a run id from escaping the runs directory. The rule itself lives

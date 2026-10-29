@@ -630,14 +630,15 @@ pub fn run() {
                 // reads it from here, so a script an assistant saves lands
                 // where the Auto Run screen actually looks.
                 let shared = dir.join("autorun");
-                if autorun::roots::is_per_env_layout(&shared) {
+                let per_env = autorun::roots::is_per_env_layout(&shared);
+                if per_env {
                     autorun::store::set_shared_root(shared.clone());
                 } else {
                     autorun::store::set_root(shared.clone());
                 }
                 // Scripts deleted more than 30 days ago go for good, in
                 // every environment's folder.
-                let stores = if autorun::roots::is_per_env_layout(&shared) {
+                let stores = if per_env {
                     autorun::roots::env_roots(&shared)
                 } else {
                     vec![shared.clone()]

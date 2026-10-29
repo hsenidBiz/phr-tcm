@@ -62,46 +62,97 @@ pub fn shared_root() -> Option<PathBuf> {
     }
 }
 
+/// Said when the list of environments cannot be read, so no environment's
+/// folder can be chosen. Restarting changes nothing; the log says why.
+pub const ENVIRONMENTS_UNREADABLE: &str =
+    "the environments could not be read, so Auto Run has no folder to use - see Settings, Logs for why";
+
+/// Said when no environment exists yet: the first list of environments
+/// makes Default (with the Company database the person chose), and only
+/// then is there a folder to use.
+pub const NO_ENVIRONMENT_YET: &str = "no environment is set up yet - open Settings, Environments first";
+
+/// The environment folder for `env_id` under `shared`, made. Takes no lock:
+/// a slow disk must not hold every other reader of the root.
+fn make_env_root(shared: &Path, env_id: &str) -> Result<PathBuf, String> {
+    if !crate::environments::valid_id(env_id) {
+        return Err("that environment is not there any more".to_string());
+    }
+    let root = crate::autorun::roots::env_root(shared, env_id);
+    std::fs::create_dir_all(&root).map_err(|e| {
+        crate::applog::warn(format!("auto-run: an environment's folder could not be made: {e}"));
+        "that environment's folder could not be made - see Settings, Logs".to_string()
+    })?;
+    Ok(root)
+}
+
 /// Make `env_id` the environment whose root `configured_root` returns, and
-/// make its folder. Flat keeps its one folder.
+/// make its folder. Flat keeps its one folder. Only a real environment
+/// (not the seed) can be selected. Nothing changes when it fails.
 pub fn select_environment(env_id: &str) -> Result<PathBuf, String> {
+    select_inner(env_id, false)
+}
+
+/// `select_environment`; with `only_if_unset`, an environment already
+/// selected (a switch that got there first) is left alone and returned.
+fn select_inner(env_id: &str, only_if_unset: bool) -> Result<PathBuf, String> {
+    let shared = match &*layout() {
+        Layout::Unset => return Err(crate::commands::autorun::NO_DATA_DIRECTORY.to_string()),
+        Layout::Flat(root) => return Ok(root.clone()),
+        Layout::PerEnv { shared, .. } => shared.clone(),
+    };
+    let root = make_env_root(&shared, env_id)?;
     let mut held = layout();
     match &mut *held {
-        Layout::Unset => Err(crate::commands::autorun::NO_DATA_DIRECTORY.to_string()),
-        Layout::Flat(root) => Ok(root.clone()),
-        Layout::PerEnv { shared, active } => {
-            if !crate::autorun::roots::valid_folder_id(env_id) {
-                return Err("that environment is not there any more".to_string());
+        Layout::PerEnv { shared: now, active } if *now == shared => {
+            if only_if_unset {
+                if let Some(taken) = active {
+                    return Ok(taken.clone());
+                }
             }
-            let root = crate::autorun::roots::env_root(shared, env_id);
-            std::fs::create_dir_all(&root).map_err(|e| {
-                crate::applog::warn(format!("auto-run: an environment's folder could not be made: {e}"));
-                "that environment's folder could not be made - see Settings -> Logs".to_string()
-            })?;
             *active = Some(root.clone());
             Ok(root)
+        }
+        // The layout was replaced while the folder was made: the choice is moot.
+        Layout::Flat(root) => Ok(root.clone()),
+        _ => Err(crate::commands::autorun::NO_DATA_DIRECTORY.to_string()),
+    }
+}
+
+/// The root the stores read and write, or the sentence that says why there
+/// is none: the active environment's under the per-environment layout. A
+/// caller with no handle must say so rather than guessing a path and
+/// writing somewhere nobody reads. Never makes an environment.
+pub fn resolve_root() -> Result<PathBuf, String> {
+    let shared = {
+        let held = layout();
+        match &*held {
+            Layout::Unset => return Err(crate::commands::autorun::NO_DATA_DIRECTORY.to_string()),
+            Layout::Flat(root) => return Ok(root.clone()),
+            Layout::PerEnv { active: Some(root), .. } => return Ok(root.clone()),
+            Layout::PerEnv { shared, active: None } => shared.clone(),
+        }
+    };
+    // No lock held here: reading the environments takes their own lock.
+    match crate::environments::read_active(&shared) {
+        Ok(Some(env)) => select_inner(&env.id, true),
+        Ok(None) => Err(NO_ENVIRONMENT_YET.to_string()),
+        Err(e) => {
+            // Said once per distinct reason, not on every call.
+            static LAST: Mutex<String> = Mutex::new(String::new());
+            let mut last = LAST.lock().unwrap_or_else(|e| e.into_inner());
+            if *last != e {
+                crate::applog::warn(format!("auto-run: the environments could not be read: {e}"));
+                *last = e;
+            }
+            Err(ENVIRONMENTS_UNREADABLE.to_string())
         }
     }
 }
 
-/// The root the stores read and write: the active environment's under the
-/// per-environment layout. `None` before setup has run - a caller with no
-/// handle must say so rather than guessing a path and writing somewhere
-/// nobody reads.
+/// `resolve_root` for a caller with no sentence to give.
 pub fn configured_root() -> Option<PathBuf> {
-    let shared = {
-        let held = layout();
-        match &*held {
-            Layout::Unset => return None,
-            Layout::Flat(root) => return Some(root.clone()),
-            Layout::PerEnv { active: Some(root), .. } => return Some(root.clone()),
-            Layout::PerEnv { shared, active: None } => shared.clone(),
-        }
-    };
-    // No lock held here: reading the active id may make Default, which
-    // takes the environments lock.
-    let id = crate::environments::active_id(&shared).ok()?;
-    select_environment(&id).ok()
+    resolve_root().ok()
 }
 
 /// Read the active environment from disk again and select it (after the

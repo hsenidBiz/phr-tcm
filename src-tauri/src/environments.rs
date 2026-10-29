@@ -216,7 +216,7 @@ fn read(root: &Path) -> Result<Option<EnvFile>, String> {
 }
 
 fn write(root: &Path, file: &EnvFile) -> Result<(), String> {
-    std::fs::create_dir_all(root).map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(crate::autorun::roots::shared_of(root)).map_err(|e| e.to_string())?;
     let json = serde_json::to_string_pretty(file).map_err(|e| e.to_string())?;
     crate::ai_tools::atomic_write(&file_path(root), &json)
 }
