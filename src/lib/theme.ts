@@ -5,7 +5,9 @@
  * accent presets still compose on top (data-accent wins over the theme's
  * default accent because its CSS comes later). */
 
-export type ThemeId = "light" | "slate" | "midnight" | "graphite" | "ocean" | "oled";
+import { runSeason, seasonAccentPicked, seasonThemePicked } from "./season";
+
+export type ThemeId = "light" | "slate" | "midnight" | "graphite" | "ocean" | "oled" | "halloween";
 /** What the user picked - "system" follows the OS light/dark preference. */
 export type ThemeChoice = ThemeId | "system";
 
@@ -22,6 +24,7 @@ export const THEMES: {
   { id: "graphite", label: "Graphite", dark: true, preview: { bg: "#141416", surface: "#1d1d21", accent: "#f59e0b" } },
   { id: "ocean", label: "Ocean", dark: true, preview: { bg: "#071a1f", surface: "#0d262e", accent: "#22d3ee" } },
   { id: "oled", label: "Onyx", dark: true, preview: { bg: "#000000", surface: "#0b0b0d", accent: "#22c55e" } },
+  { id: "halloween", label: "Halloween", dark: true, preview: { bg: "#0b0709", surface: "#17100f", accent: "#f97316" } },
 ];
 
 const ID_KEY = "tcm-v2-theme-id";
@@ -72,12 +75,14 @@ export function setThemeChoice(choice: ThemeChoice) {
   // Stored explicitly - including "system" - so a deliberate pick is never
   // indistinguishable from nobody having chosen anything (getThemeChoice's
   // unset default is "light", not "system").
+  seasonThemePicked(choice); // a pick during the Halloween week is never undone
   localStorage.setItem(ID_KEY, choice);
   if (choice !== "system" && THEMES.find((x) => x.id === choice)?.dark) {
     localStorage.setItem(DARK_PREF_KEY, choice);
   }
   localStorage.removeItem(LEGACY_KEY);
   applyThemeChoice(choice);
+  applyAccent(getAccent()); // leaving Halloween early puts the accent back
 }
 
 /* Legacy light/dark helpers - the sun/moon toggle and the Toaster only
@@ -115,6 +120,7 @@ export function setAccent(accent: Accent) {
   // Stored explicitly, including "default" - so picking "the theme's own
   // colour" is remembered as a real choice rather than read back later as
   // "nothing chosen" (which now means violet, not "default").
+  seasonAccentPicked();
   localStorage.setItem(ACCENT_KEY, accent);
   applyAccent(accent);
 }
@@ -124,8 +130,10 @@ function applyAccent(accent: Accent) {
   else document.documentElement.setAttribute("data-accent", accent);
 }
 
-/** Call once on startup. */
-export function initTheme() {
+/** Call on startup, and hourly (a window left open past the Halloween week
+ * still gets its restore). `now` is a seam for tests. */
+export function initTheme(now: number = Date.now()) {
+  runSeason(now);
   applyThemeChoice(getThemeChoice());
   applyAccent(getAccent());
 }

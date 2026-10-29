@@ -49,6 +49,7 @@ const DARK_THEMES: Record<string, string> = {
   Graphite: ':root[data-theme="graphite"]',
   OLED: ':root[data-theme="oled"]',
   Ocean: ':root[data-theme="ocean"]',
+  Halloween: ':root[data-theme="halloween"]',
 };
 
 const violet = () => rule(css, '.dark[data-accent="violet"]');

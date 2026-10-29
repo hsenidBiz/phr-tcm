@@ -33,4 +33,12 @@ describe("backup localStorage half", () => {
     expect(localStorage.getItem("evil")).toBeNull();
     expect(localStorage.getItem("tcm-v2-ok")).toBe("2");
   });
+
+  it("apply keeps this machine's Halloween season record", () => {
+    localStorage.setItem("tcm-v2-season-halloween-2026", "mine");
+    applyLocalStorage({ "tcm-v2-theme": "dark" });
+    expect(localStorage.getItem("tcm-v2-season-halloween-2026")).toBe("mine");
+    applyLocalStorage({ "tcm-v2-season-halloween-2026": "theirs" });
+    expect(localStorage.getItem("tcm-v2-season-halloween-2026")).toBe("mine");
+  });
 });
