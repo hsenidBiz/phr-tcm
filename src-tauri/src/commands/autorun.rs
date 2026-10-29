@@ -505,14 +505,8 @@ pub fn describe_session_error() -> String {
 /// never looks. The handle is the fallback for any path that runs before
 /// setup.
 pub fn root(app: &tauri::AppHandle) -> Result<PathBuf, String> {
-    if let Some(configured) = store::configured_root() {
-        return Ok(configured);
-    }
-    Ok(app
-        .path()
-        .app_data_dir()
-        .map_err(|e| e.to_string())?
-        .join("autorun"))
+    let _ = app;
+    store::configured_root().ok_or_else(|| NO_DATA_DIRECTORY.to_string())
 }
 
 /// Guards a run id from escaping the runs directory. The rule itself lives

@@ -225,7 +225,7 @@ fn lines_with_templates(
         ENVIRONMENT_UNREADABLE.to_string()
     })?;
     let env = envs.environments.iter().find(|e| e.id == query.environment).ok_or(NO_SUCH_ENVIRONMENT.to_string())?;
-    let templates: Vec<ApiTemplate> = template_store::list(root, org, project)
+    let templates: Vec<ApiTemplate> = template_store::list(&crate::autorun::roots::env_root_beside(root, &query.environment), org, project)
         .unwrap_or_else(|e| {
             applog::warn(format!("clean up: the api templates could not be listed: {e}"));
             vec![]

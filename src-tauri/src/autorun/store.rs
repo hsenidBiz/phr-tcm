@@ -18,25 +18,105 @@ pub fn safe_run_id(id: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
 }
 
+/// How the app's Auto Run files are laid out on disk.
+enum Layout {
+    /// `set_root` has not run.
+    Unset,
+    /// One flat folder: tests, and a session whose update to the
+    /// per-environment layout failed (retried on the next start).
+    Flat(PathBuf),
+    /// `shared` holds the shared stores and `envs/<id>/` one environment's.
+    /// `active` is that environment's root once one has been selected.
+    PerEnv { shared: PathBuf, active: Option<PathBuf> },
+}
+
 /// Where scripts and runs live, remembered process-wide.
 ///
 /// Commands get the path from their `AppHandle`, but the AI bridge has no
 /// handle - it is a router, not a Tauri command - and still has to write
 /// a script an assistant sends. The app sets this once at startup, the
 /// same way `/begin` publishes its plan path, and the bridge reads it.
-static ROOT: Mutex<Option<PathBuf>> = Mutex::new(None);
+static ROOT: Mutex<Layout> = Mutex::new(Layout::Unset);
 
-/// Called once during app setup.
+fn layout() -> std::sync::MutexGuard<'static, Layout> {
+    ROOT.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// Called once during app setup, or by a test: one flat folder.
 pub fn set_root(root: PathBuf) {
-    if let Ok(mut slot) = ROOT.lock() {
-        *slot = Some(root);
+    *layout() = Layout::Flat(root);
+}
+
+/// Called during app setup once the per-environment layout is in force.
+/// No environment is selected yet; `configured_root` picks the active one.
+pub fn set_shared_root(shared: PathBuf) {
+    *layout() = Layout::PerEnv { shared, active: None };
+}
+
+/// The shared root: the flat folder, or the folder `envs/` sits in.
+pub fn shared_root() -> Option<PathBuf> {
+    match &*layout() {
+        Layout::Unset => None,
+        Layout::Flat(root) => Some(root.clone()),
+        Layout::PerEnv { shared, .. } => Some(shared.clone()),
     }
 }
 
-/// `None` before setup has run - a caller with no handle must say so
-/// rather than guessing a path and writing somewhere nobody reads.
+/// Make `env_id` the environment whose root `configured_root` returns, and
+/// make its folder. Flat keeps its one folder.
+pub fn select_environment(env_id: &str) -> Result<PathBuf, String> {
+    let mut held = layout();
+    match &mut *held {
+        Layout::Unset => Err(crate::commands::autorun::NO_DATA_DIRECTORY.to_string()),
+        Layout::Flat(root) => Ok(root.clone()),
+        Layout::PerEnv { shared, active } => {
+            if !crate::autorun::roots::valid_folder_id(env_id) {
+                return Err("that environment is not there any more".to_string());
+            }
+            let root = crate::autorun::roots::env_root(shared, env_id);
+            std::fs::create_dir_all(&root).map_err(|e| {
+                crate::applog::warn(format!("auto-run: an environment's folder could not be made: {e}"));
+                "that environment's folder could not be made - see Settings -> Logs".to_string()
+            })?;
+            *active = Some(root.clone());
+            Ok(root)
+        }
+    }
+}
+
+/// The root the stores read and write: the active environment's under the
+/// per-environment layout. `None` before setup has run - a caller with no
+/// handle must say so rather than guessing a path and writing somewhere
+/// nobody reads.
 pub fn configured_root() -> Option<PathBuf> {
-    ROOT.lock().ok().and_then(|s| s.clone())
+    let shared = {
+        let held = layout();
+        match &*held {
+            Layout::Unset => return None,
+            Layout::Flat(root) => return Some(root.clone()),
+            Layout::PerEnv { active: Some(root), .. } => return Some(root.clone()),
+            Layout::PerEnv { shared, active: None } => shared.clone(),
+        }
+    };
+    // No lock held here: reading the active id may make Default, which
+    // takes the environments lock.
+    let id = crate::environments::active_id(&shared).ok()?;
+    select_environment(&id).ok()
+}
+
+/// Read the active environment from disk again and select it (after the
+/// environments file changed under us, such as a backup import).
+pub fn reselect_from_disk() -> Result<Option<PathBuf>, String> {
+    let shared = {
+        let held = layout();
+        match &*held {
+            Layout::Unset => return Ok(None),
+            Layout::Flat(root) => return Ok(Some(root.clone())),
+            Layout::PerEnv { shared, .. } => shared.clone(),
+        }
+    };
+    let id = crate::environments::active_id(&shared)?;
+    select_environment(&id).map(Some)
 }
 
 fn scripts_dir(root: &Path) -> PathBuf {
@@ -1302,7 +1382,7 @@ fn deleted_dir(root: &Path) -> PathBuf {
 /// How long a deleted script is kept aside before it is purged.
 pub const DELETED_KEPT_DAYS: u64 = 30;
 
-const DAY_MS: u64 = 86_400_000;
+pub const DAY_MS: u64 = 86_400_000;
 
 /// The cases a replay is running right now: a replay to a step, a case of
 /// an unattended run, or the case a watched step-by-step run is on. Their
@@ -1535,16 +1615,17 @@ const LAST_BROWSER: &str = "last-browser.txt";
 /// `edge` when none was chosen yet, or the file cannot be read. A replay
 /// to a step that finds no browser open opens this one.
 pub fn last_browser(root: &Path) -> String {
-    let name = std::fs::read_to_string(root.join(LAST_BROWSER)).unwrap_or_default();
+    let name = std::fs::read_to_string(crate::autorun::roots::shared_of(root).join(LAST_BROWSER)).unwrap_or_default();
     browser_name(&name)
 }
 
 /// Remember `name` as the browser last chosen. Best effort: a choice that
 /// cannot be written is logged, and the next replay opens Edge.
 pub fn remember_browser(root: &Path, name: &str) {
-    let written = std::fs::create_dir_all(root)
+    let shared = crate::autorun::roots::shared_of(root);
+    let written = std::fs::create_dir_all(&shared)
         .map_err(|e| e.to_string())
-        .and_then(|()| crate::ai_tools::atomic_write(&root.join(LAST_BROWSER), &browser_name(name)));
+        .and_then(|()| crate::ai_tools::atomic_write(&shared.join(LAST_BROWSER), &browser_name(name)));
     if let Err(e) = written {
         crate::applog::warn(format!("auto-run: the browser chosen could not be remembered: {e}"));
     }

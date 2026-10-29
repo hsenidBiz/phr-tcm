@@ -629,16 +629,30 @@ pub fn run() {
                 // through their AppHandle; the AI bridge has no handle and
                 // reads it from here, so a script an assistant saves lands
                 // where the Auto Run screen actually looks.
-                autorun::store::set_root(dir.join("autorun"));
-                // Scripts deleted more than 30 days ago go for good.
-                let purged = autorun::store::purge_deleted_scripts(&dir.join("autorun"), autorun::sessions::now_ms());
+                let shared = dir.join("autorun");
+                if autorun::roots::is_per_env_layout(&shared) {
+                    autorun::store::set_shared_root(shared.clone());
+                } else {
+                    autorun::store::set_root(shared.clone());
+                }
+                // Scripts deleted more than 30 days ago go for good, in
+                // every environment's folder.
+                let stores = if autorun::roots::is_per_env_layout(&shared) {
+                    autorun::roots::env_roots(&shared)
+                } else {
+                    vec![shared.clone()]
+                };
+                let now = autorun::sessions::now_ms();
+                let purged: usize = stores.iter().map(|r| autorun::store::purge_deleted_scripts(r, now)).sum();
                 if purged > 0 {
                     applog::info(format!("Auto Run: {purged} deleted script(s) older than 30 days purged"));
                 }
                 // Downloads whose run is gone, swept here, before any run can
                 // be started and saving into a folder its file does not
                 // name yet.
-                autorun::store::sweep_orphan_downloads(&dir.join("autorun"));
+                for r in &stores {
+                    autorun::store::sweep_orphan_downloads(r);
+                }
             }
             applog::info(format!(
                 "Test Case Manager {} started (set up {} ms after launch)",

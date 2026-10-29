@@ -57,7 +57,7 @@ pub fn scope_key(tool: &str, repo: Option<&str>) -> String {
 
 impl AllowRecord {
     pub fn path(root: &Path) -> PathBuf {
-        root.join(FILE_NAME)
+        crate::autorun::roots::shared_of(root).join(FILE_NAME)
     }
 
     /// The record kept in `root`. When there is none, or it cannot be read,

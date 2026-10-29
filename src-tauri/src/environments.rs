@@ -98,12 +98,12 @@ fn lock() -> std::sync::MutexGuard<'static, ()> {
 }
 
 pub(crate) fn file_path(root: &Path) -> PathBuf {
-    root.join("environments.json")
+    crate::autorun::roots::shared_of(root).join("environments.json")
 }
 
 /// The assistant's proposed accounts for one environment.
 pub fn proposals_path_for(root: &Path, env_id: &str) -> PathBuf {
-    root.join("proposals").join(format!("{env_id}.json"))
+    crate::autorun::roots::shared_of(root).join("proposals").join(format!("{env_id}.json"))
 }
 
 /// Where an environment's default password is kept in the secret store.
@@ -236,7 +236,7 @@ fn load_or_init_locked(root: &Path, current_db: Option<&str>) -> Result<EnvFile,
     // The machine's one accounts list becomes Default's. Copied before the
     // file is written: if the copy fails nothing is saved, and the next
     // call tries again from scratch.
-    let legacy = root.join("accounts.json");
+    let legacy = crate::autorun::roots::shared_of(root).join("accounts.json");
     if legacy.is_file() {
         let to = accounts_path_for(root, &id);
         std::fs::create_dir_all(to.parent().unwrap_or(root)).map_err(|e| e.to_string())?;
@@ -271,6 +271,7 @@ fn load_or_init_locked(root: &Path, current_db: Option<&str>) -> Result<EnvFile,
 /// (`sessions/<env id>/`) are not touched. Best effort: a file that will
 /// not go is logged, and nothing reads it any more.
 pub fn remove_legacy_files(root: &Path) {
+    let root = &crate::autorun::roots::shared_of(root);
     let warn = |e: std::io::Error| {
         crate::applog::warn(format!("Environments: an old accounts or session file stayed behind: {e}"))
     };

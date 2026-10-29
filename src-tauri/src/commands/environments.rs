@@ -319,6 +319,8 @@ pub fn move_bridge_to(
 ) -> Result<EnvFile, String> {
     let mut held = bridge.map(|b| b.lock().unwrap_or_else(|e| e.into_inner()));
     let file = environments::set_active(root, id)?;
+    // Every Auto Run store now reads and writes the new environment's folder.
+    crate::autorun::store::select_environment(&file.active)?;
     if let (Some(ctx), Some(env)) = (held.as_deref_mut(), file.environments.iter().find(|e| e.id == file.active)) {
         // Held until the caller has brought the allow files in line
         // (`release_writes`, which `switch_with` calls once they are).
