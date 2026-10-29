@@ -449,3 +449,31 @@ fn start_up_falls_back_to_the_flat_folder_when_the_copy_fails() {
     let s = roots::start_up(t.path(), true);
     assert!(s.per_env && s.report.is_some() && s.failed.is_none());
 }
+
+#[test]
+fn a_seed_left_behind_is_handed_over_at_the_next_start() {
+    let t = tempfile::tempdir().unwrap();
+    put(t.path(), "envs/_seed/scripts/a.json", "S");
+    let file = environments::load_or_init(t.path(), None).unwrap();
+    let id = file.active.clone();
+    // The handover that happened with the list failed: put the seed back.
+    std::fs::rename(at(t.path(), &id, ""), at(t.path(), "_seed", "")).unwrap();
+    assert!(at(t.path(), "_seed", "scripts/a.json").is_file());
+    let s = roots::start_up(t.path(), false);
+    assert!(s.per_env);
+    assert!(at(t.path(), &id, "scripts/a.json").is_file());
+    assert!(!at(t.path(), "_seed", "").exists());
+}
+
+#[test]
+fn a_start_does_not_hand_the_seed_to_an_environment_that_has_data() {
+    let t = tempfile::tempdir().unwrap();
+    put(t.path(), "envs/_seed/scripts/a.json", "S");
+    let file = environments::load_or_init(t.path(), None).unwrap();
+    let id = file.active.clone();
+    std::fs::rename(at(t.path(), &id, ""), at(t.path(), "_seed", "")).unwrap();
+    put(t.path(), &format!("envs/{id}/scripts/own.json"), "O");
+    roots::start_up(t.path(), false);
+    assert!(at(t.path(), "_seed", "scripts/a.json").is_file());
+    assert!(!at(t.path(), &id, "scripts/a.json").exists());
+}

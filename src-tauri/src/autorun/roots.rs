@@ -344,6 +344,9 @@ pub fn start_up(shared: &Path, allowed: bool) -> StartUp {
         out.skipped = true;
     }
     out.per_env = is_per_env_layout(shared);
+    if out.per_env {
+        retry_seed(shared);
+    }
     out
 }
 
@@ -375,4 +378,30 @@ pub fn seed_into_with(
     }
     crate::ai_tools::rename_retrying(&seed, &target, rename, sleep)?;
     Ok(true)
+}
+
+/// A seed a failed handover left in `_seed` goes to the first environment
+/// once that environment exists and its folder is absent or empty. Run at
+/// start-up; logs (no path) and never fails.
+pub fn retry_seed(shared: &Path) {
+    if !env_root(shared, SEED_ID).is_dir() {
+        return;
+    }
+    let Ok(Some((ids, _))) = crate::environments::read_ids(shared) else { return };
+    let Some(first) = ids.first() else { return };
+    let folder = env_root(shared, first);
+    let empty = match std::fs::read_dir(&folder) {
+        Ok(mut entries) => entries.next().is_none(),
+        Err(e) => e.kind() == std::io::ErrorKind::NotFound,
+    };
+    if !empty {
+        return;
+    }
+    match seed_into(shared, first) {
+        Ok(true) => crate::applog::info("Auto Run: the data the update copied was handed to the first environment"),
+        Ok(false) => {}
+        Err(e) => crate::applog::warn(format!(
+            "Auto Run: the data the update copied could not be handed to the first environment yet: {e}"
+        )),
+    }
 }
