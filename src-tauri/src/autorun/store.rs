@@ -70,7 +70,8 @@ pub const ENVIRONMENTS_UNREADABLE: &str =
 /// Said when no environment exists yet: the first list of environments
 /// makes Default (with the Company database the person chose), and only
 /// then is there a folder to use.
-pub const NO_ENVIRONMENT_YET: &str = "no environment is set up yet - open Settings, Environments first";
+pub const NO_ENVIRONMENT_YET: &str =
+    "the environments are not loaded yet - they appear a moment after sign-in, so try again shortly";
 
 /// The environment folder for `env_id` under `shared`, made. Takes no lock:
 /// a slow disk must not hold every other reader of the root.
@@ -166,8 +167,11 @@ pub fn reselect_from_disk() -> Result<Option<PathBuf>, String> {
             Layout::PerEnv { shared, .. } => shared.clone(),
         }
     };
-    let id = crate::environments::active_id(&shared)?;
-    select_environment(&id).map(Some)
+    // Never makes Default: that is the list's job, with the chosen database.
+    match crate::environments::read_active(&shared)? {
+        Some(env) => select_environment(&env.id).map(Some),
+        None => Err(NO_ENVIRONMENT_YET.to_string()),
+    }
 }
 
 fn scripts_dir(root: &Path) -> PathBuf {

@@ -2726,11 +2726,11 @@ fn unattended_run_is_using_the_browser() -> Option<(u16, String)> {
 }
 
 /// Where scripts, runs and quirks live, or the refusal to guess.
-fn autorun_root() -> Result<std::path::PathBuf, (u16, String)> {
-    crate::autorun::store::configured_root().ok_or((
-        503,
-        "the app could not set up its data directory this session - restart the app".to_string(),
-    ))
+/// The refusal is the store's own sentence: no data directory, no
+/// environment yet, or an unreadable list each tell the assistant (and so
+/// the person) what is actually wrong.
+pub fn autorun_root() -> Result<std::path::PathBuf, (u16, String)> {
+    crate::autorun::store::resolve_root().map_err(|e| (503, e))
 }
 
 /// The active environment's live guide section, or None when the list

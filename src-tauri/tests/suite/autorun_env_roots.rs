@@ -428,7 +428,7 @@ fn a_fresh_install_has_no_root_until_default_is_made_with_the_chosen_database() 
     // The list is what makes Default, with the database the person chose.
     let view = list_view(t.path(), &MemoryStore::default(), Some("qa-read")).unwrap();
     assert_eq!(view.environments[0].db_id, "qa-read");
-    store::select_environment(&view.active).unwrap();
+    // The first read of the root after that selects it; the list does not.
     assert_eq!(store::configured_root(), Some(roots::env_root(t.path(), &view.active)));
 }
 
@@ -526,4 +526,54 @@ fn shared_stores_do_not_make_an_environment_folder() {
     // A stale environment root (the folder was removed): shared writes go to the shared root only.
     environments::load_or_init(&gone, None).unwrap();
     assert!(!gone.exists(), "a shared write recreated an environment's folder");
+}
+
+#[test]
+fn the_assistant_is_told_the_real_reason_there_is_no_root() {
+    let _lock = crate::serial::autorun();
+    let _restore = Restore;
+    let t = tempfile::tempdir().unwrap();
+    store::set_shared_root(t.path().to_path_buf());
+    let (status, said) = v2_lib::ai_bridge::autorun_root().unwrap_err();
+    assert_eq!(status, 503);
+    assert_eq!(said, store::NO_ENVIRONMENT_YET);
+    assert!(!said.contains("restart") && !said.contains("Settings"), "{said}");
+
+    std::fs::write(t.path().join("environments.json"), "[ a different break, never the one the log test uses").unwrap();
+    let (_, said) = v2_lib::ai_bridge::autorun_root().unwrap_err();
+    assert_eq!(said, store::ENVIRONMENTS_UNREADABLE);
+}
+
+#[test]
+fn a_list_never_moves_the_root_back() {
+    use v2_lib::commands::environments::{env_list_with, move_bridge_to};
+    use v2_lib::db::credentials::MemoryStore;
+    let _lock = crate::serial::autorun();
+    let _restore = Restore;
+    let t = tempfile::tempdir().unwrap();
+    store::set_shared_root(t.path().to_path_buf());
+    let secrets = MemoryStore::default();
+    let a = env_list_with(t.path(), &secrets, Some("dev-read")).unwrap().active;
+    let b = environments::save_env(t.path(), env_named("", "QA"), &["dev-read".to_string()])
+        .unwrap()
+        .environments
+        .into_iter()
+        .find(|e| e.name == "QA")
+        .unwrap()
+        .id;
+    assert_eq!(store::configured_root(), Some(roots::env_root(t.path(), &a)));
+    move_bridge_to(t.path(), &secrets, &b, None).unwrap();
+    // A list read taken before the switch, or any list after it.
+    let _ = env_list_with(t.path(), &secrets, Some("dev-read")).unwrap();
+    assert_eq!(store::configured_root(), Some(roots::env_root(t.path(), &b)));
+}
+
+#[test]
+fn reselecting_from_disk_never_makes_default() {
+    let _lock = crate::serial::autorun();
+    let _restore = Restore;
+    let t = tempfile::tempdir().unwrap();
+    store::set_shared_root(t.path().to_path_buf());
+    assert_eq!(store::reselect_from_disk(), Err(store::NO_ENVIRONMENT_YET.to_string()));
+    assert!(!t.path().join("environments.json").exists());
 }

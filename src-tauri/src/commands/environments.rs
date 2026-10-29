@@ -585,7 +585,9 @@ pub fn env_list(
     // environment's folder to exist first.
     let root = crate::autorun::store::shared_root().ok_or_else(|| super::autorun::NO_DATA_DIRECTORY.to_string())?;
     let view = env_list_with(&root, &*secrets.0, current_db.as_deref())?;
-    crate::autorun::store::select_environment(&view.active)?;
+    // No selection here: a list must never move the Auto Run folder (a
+    // stale one would undo a switch) or fail for want of a folder. The
+    // first read of the root selects the active environment.
     // Once a run, with the working repository the bridge's start could not
     // know: each AI tool's own "always allow" made to match the active
     // environment, writes held off meanwhile (`repair_allow_files`).
