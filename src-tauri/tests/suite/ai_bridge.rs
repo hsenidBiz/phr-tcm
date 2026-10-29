@@ -5341,6 +5341,10 @@ fn the_playwright_rule_routes_answer_from_the_shipped_copy_with_no_clone() {
 /// them, and a body over the cap is still refused.
 #[tokio::test]
 async fn the_agent_headers_do_not_take_room_from_the_body() {
+    // Its token-bearing request with agent headers registers an assistant:
+    // held, and cleared after, so a test that expects nobody live is not
+    // handed this one.
+    let _agents = crate::serial::agents();
     let shared = v2_lib::ai_bridge::BridgeState::new(ctx(), "0.0.0-test".into());
     let (port, token) = v2_lib::ai_bridge::start_listener(Arc::clone(&shared), None, None).await.unwrap();
     async fn post(port: u16, token: &str, body_len: usize) -> String {
@@ -5371,4 +5375,5 @@ async fn the_agent_headers_do_not_take_room_from_the_body() {
     assert!(!fits.starts_with("HTTP/1.1 413"), "a body under the old cap was refused: {fits}");
     let over = post(port, &token, 65536 + 1024).await;
     assert!(over.starts_with("HTTP/1.1 413"), "a body over the cap was not refused: {over:?}");
+    v2_lib::autorun::agents::clear();
 }
