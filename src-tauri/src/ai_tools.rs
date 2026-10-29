@@ -238,6 +238,7 @@ pub const CRYSTAL_TOOLS: &[&str] = &[
     "check_report",
     "preview_report",
     "preview_report_live",
+    "get_report_parameters",
 ];
 
 /// The module a tool belongs to; `None` for a tool that is part of Core.

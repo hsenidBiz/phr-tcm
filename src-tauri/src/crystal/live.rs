@@ -237,6 +237,26 @@ fn shown(name: &str) -> &str {
 /// here and NULL for the rest, never a saved one. Each refusal names the
 /// parameters.
 pub fn check_live_params(report: &Report, params: &[(String, String)]) -> Result<(), String> {
+    check_param_names(report, params)?;
+    let key = rpt_db_mssql::param_key;
+    let fields: Vec<_> = report.data_definition.parameter_fields().collect();
+    let missing: Vec<&str> = fields
+        .iter()
+        .filter(|(_, p)| p.report_name.is_none() && !p.optional_prompt && !p.allow_null_value)
+        .map(|(f, _)| shown(&f.name))
+        .filter(|n| !params.iter().any(|(given, _)| key(given) == key(n)))
+        .collect();
+    if !missing.is_empty() {
+        return Err(format!("the report needs a value for {}: give it in params", missing.join(", ")));
+    }
+    Ok(())
+}
+
+/// Every name in `params` must be one of the report's parameters (matched
+/// like the bundle matches them: in any case, with or without the `@`).
+/// The coercion alone lets an unknown name through as text, which would
+/// quietly draw without it.
+pub fn check_param_names(report: &Report, params: &[(String, String)]) -> Result<(), String> {
     let key = rpt_db_mssql::param_key;
     let fields: Vec<_> = report.data_definition.parameter_fields().collect();
     // The procedure's own parameters are names the bundle binds too.
@@ -255,15 +275,6 @@ pub fn check_live_params(report: &Report, params: &[(String, String)]) -> Result
     if !unknown.is_empty() {
         let has = if known.is_empty() { "none".to_string() } else { known.join(", ") };
         return Err(format!("this report has no parameter named {} (its parameters: {has})", unknown.join(", ")));
-    }
-    let missing: Vec<&str> = fields
-        .iter()
-        .filter(|(_, p)| p.report_name.is_none() && !p.optional_prompt && !p.allow_null_value)
-        .map(|(f, _)| shown(&f.name))
-        .filter(|n| !params.iter().any(|(given, _)| key(given) == key(n)))
-        .collect();
-    if !missing.is_empty() {
-        return Err(format!("the report needs a value for {}: give it in params", missing.join(", ")));
     }
     Ok(())
 }

@@ -1303,8 +1303,10 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool, unlocked: bool, all_projec
         },
         {
             "name": "preview_report",
-            "description": "Draw the open report to a PDF from the data saved in it, and say how many pages that is and what the renderer noted (an object it does not draw, a formula that failed). The person sees the same PDF on the Crystal Reports screen. A page count of 0 means the drawing failed; the notes say why.",
-            "inputSchema": schema(serde_json::json!({}), &[]),
+            "description": "Draw the open report to a PDF from the data saved in it, and say how many pages that is and what the renderer noted (an object it does not draw, a formula that failed). The person sees the same PDF on the Crystal Reports screen. A page count of 0 means the drawing failed; the notes say why. Give values in `params` (names from get_report_parameters) to draw what depends on them; they are used for this drawing only and never saved. A name the report does not have, or a value that does not fit its kind, is refused before drawing.",
+            "inputSchema": schema(serde_json::json!({
+                "params": { "type": "object", "description": "The report's parameters, name to value, e.g. { \"performance_cycle_id\": \"42\" }. Dates as YYYY-MM-DD, times as HH:MM:SS, true/false for yes-or-no parameters." },
+            }), &[]),
         },
         {
             "name": "preview_report_live",
@@ -1312,6 +1314,11 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool, unlocked: bool, all_projec
             "inputSchema": schema(serde_json::json!({
                 "params": { "type": "object", "description": "The report's parameters, name to value, e.g. { \"performance_cycle_id\": \"42\" }. Dates as YYYY-MM-DD, times as HH:MM:SS, true/false for yes-or-no parameters." },
             }), &[]),
+        },
+        {
+            "name": "get_report_parameters",
+            "description": "List the open report's parameters: name, kind (Number, String, Currency, Boolean, Date, Time, DateTime), prompt text, whether it may be left out or empty, its pick list and any value saved in the report. Pass values by these names to preview_report or preview_report_live in `params`.",
+            "inputSchema": schema(serde_json::json!({}), &[]),
         },
         {
             "name": "optimize_cases",
@@ -2748,6 +2755,7 @@ fn tools_call_outcome(params: &serde_json::Value, call: BridgeCall) -> (serde_js
         "check_report" => call("POST", "/crystal-check", &args.to_string()),
         "preview_report" => call("POST", "/crystal-preview", &args.to_string()),
         "preview_report_live" => call("POST", "/crystal-preview-live", &args.to_string()),
+        "get_report_parameters" => call("POST", "/crystal-parameters", &args.to_string()),
         "optimize_cases" => {
             let entry = args["entry"].as_str().unwrap_or("");
             let mut params: Vec<String> = vec![];

@@ -1,0 +1,127 @@
+//! The hidden module's parameters: the open report lists them, and a
+//! saved-data preview takes values for them, checked before anything is
+//! drawn and kept for that drawing only.
+
+use std::path::Path;
+
+use v2_lib::commands::crystal as screen;
+use v2_lib::commands::crystal::ParameterValue;
+use v2_lib::crystal;
+
+use crate::crystal_reports::{fitting_values, typed_parameter, with_value};
+use crate::serial;
+
+const SAMPLES: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../crystal-reports/Sample Report");
+const SAMPLE: &str = "PMSV10_GoalAlignCascade.rpt";
+
+fn copy_sample(dir: &Path) -> String {
+    let to = dir.join(SAMPLE);
+    std::fs::copy(Path::new(SAMPLES).join(SAMPLE), &to).expect("the sample copies");
+    to.to_string_lossy().into_owned()
+}
+
+#[test]
+fn the_sample_lists_its_five_parameters() {
+    let _lock = serial::crystal();
+    let dir = tempfile::tempdir().unwrap();
+    crystal::open(&copy_sample(dir.path())).unwrap();
+    let listed = crystal::parameters().unwrap();
+    assert_eq!(listed.len(), 5);
+    assert_eq!(listed[0].name, "@performance_cycle_id");
+    assert_eq!(listed[0].value_kind, "Number");
+    crystal::close();
+}
+
+#[test]
+fn nothing_open_lists_no_parameters() {
+    let _lock = serial::crystal();
+    crystal::close();
+    assert!(crystal::parameters().unwrap_err().contains("No report is open"));
+}
+
+#[test]
+fn a_preview_with_values_draws_pages() {
+    let _lock = serial::crystal();
+    let dir = tempfile::tempdir().unwrap();
+    let path = copy_sample(dir.path());
+    crystal::open(&path).unwrap();
+    let info = crystal::preview_saved_with(fitting_values(&path)).unwrap();
+    assert!(info.page_count > 0, "{info:?}");
+    assert!(crystal::last_pdf().unwrap().1.starts_with(b"%PDF"));
+    crystal::close();
+}
+
+#[test]
+fn a_bad_value_or_unknown_name_is_refused_and_the_last_preview_stays() {
+    let _lock = serial::crystal();
+    let dir = tempfile::tempdir().unwrap();
+    let path = copy_sample(dir.path());
+    crystal::open(&path).unwrap();
+    crystal::preview_saved_with(fitting_values(&path)).unwrap();
+    let before = crystal::last_pdf().unwrap();
+
+    let name = typed_parameter(&path);
+    let bad = with_value(fitting_values(&path), &name, "not-a-number");
+    let said = crystal::preview_saved_with(bad).unwrap_err();
+    assert!(said.contains(&name) && said.contains("cannot be previewed with these values"), "{said}");
+
+    let said = crystal::preview_saved_with(vec![("perfomance_cycle".into(), "1".into())]).unwrap_err();
+    assert!(said.contains("perfomance_cycle"), "{said}");
+
+    let after = crystal::last_pdf().unwrap();
+    assert_eq!(after.1, before.1);
+    assert_eq!(after.0.page_count, before.0.page_count);
+    crystal::close();
+}
+
+#[test]
+fn values_are_not_saved_into_the_file() {
+    let _lock = serial::crystal();
+    let dir = tempfile::tempdir().unwrap();
+    let path = copy_sample(dir.path());
+    let original = std::fs::read(&path).unwrap();
+    crystal::open(&path).unwrap();
+    crystal::preview_saved_with(fitting_values(&path)).unwrap();
+    assert_eq!(std::fs::read(&path).unwrap(), original);
+    crystal::close();
+}
+
+#[test]
+fn no_values_is_todays_preview() {
+    let _lock = serial::crystal();
+    let dir = tempfile::tempdir().unwrap();
+    crystal::open(&copy_sample(dir.path())).unwrap();
+    let plain = crystal::preview_saved().unwrap();
+    let none = crystal::preview_saved_with(vec![]).unwrap();
+    assert_eq!(plain.page_count, none.page_count);
+    assert_eq!(plain.diagnostics, none.diagnostics);
+    crystal::close();
+}
+
+#[test]
+fn the_screen_commands_follow_the_module_switch_and_drop_blank_values() {
+    let _e = serial::extras();
+    let _lock = serial::crystal();
+    let dir = tempfile::tempdir().unwrap();
+    crystal::open(&copy_sample(dir.path())).unwrap();
+    let off = v2_lib::modules::Module::CrystalReports.off_sentence();
+    assert_eq!(screen::parameters_with(false).unwrap_err(), off);
+    assert_eq!(screen::draw_with(false, vec![]).unwrap_err(), off);
+    assert_eq!(screen::parameters_with(true).unwrap().len(), 5);
+    screen::draw_with(true, vec![ParameterValue { name: "@performance_cycle_id".into(), value: "  ".into() }])
+        .expect("a blank value is dropped, so this is a plain preview");
+    crystal::close();
+}
+
+#[test]
+fn a_screen_refusal_names_no_path() {
+    let _e = serial::extras();
+    let _lock = serial::crystal();
+    let dir = tempfile::tempdir().unwrap();
+    let path = copy_sample(dir.path());
+    crystal::open(&path).unwrap();
+    let said = screen::draw_with(true, vec![ParameterValue { name: "nope".into(), value: "1".into() }]).unwrap_err();
+    assert!(said.contains("nope"), "{said}");
+    assert!(!said.contains(dir.path().to_string_lossy().as_ref()), "{said}");
+    crystal::close();
+}

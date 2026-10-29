@@ -165,6 +165,7 @@ fn tools_list_names_every_tool() {
             "check_report",
             "preview_report",
             "preview_report_live",
+            "get_report_parameters",
             "optimize_cases",
             "transform_cases",
             "validate_cases",
@@ -2792,7 +2793,7 @@ fn the_network_tools_are_off_until_the_app_says_yes() {
             assert!(v["result"]["content"][0]["text"].as_str().unwrap().contains("Network tools switch"), "{tool}: {v}");
         }
         assert!(names.contains(&"get_autorun_page") && names.contains(&"get_autorun_network_wait"), "{names:?}");
-        assert_eq!(names.len(), 64, "{names:?}");
+        assert_eq!(names.len(), 65, "{names:?}");
     }
     // The proxy's own fallback when the app does not answer names no switch.
     let saved = v2_lib::mcp::tools_reply_or_saved(Err("down".into()), Some((Module::ALL.into_iter().collect(), true)));
@@ -2942,6 +2943,8 @@ fn the_crystal_tools_reach_their_routes() {
         ("compare_reports", serde_json::json!({ "a": "a.rpt", "b": "b.rpt" }), "POST", "/crystal-compare"),
         ("check_report", serde_json::json!({}), "POST", "/crystal-check"),
         ("preview_report", serde_json::json!({}), "POST", "/crystal-preview"),
+        ("preview_report", serde_json::json!({ "params": { "a": "1" } }), "POST", "/crystal-preview"),
+        ("get_report_parameters", serde_json::json!({}), "POST", "/crystal-parameters"),
         (
             "preview_report_live",
             serde_json::json!({ "params": { "performance_cycle_id": "42" } }),

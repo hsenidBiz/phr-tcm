@@ -623,7 +623,8 @@ fn each_tool_belongs_to_its_module() {
             "compare_reports",
             "check_report",
             "preview_report",
-            "preview_report_live"
+            "preview_report_live",
+            "get_report_parameters"
         ]
     );
     for t in AUTORUN_TOOLS {

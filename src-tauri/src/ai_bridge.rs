@@ -872,7 +872,8 @@ pub async fn route_as(
         ("POST", "/crystal-compare") => crystal_compare(body).await,
         ("POST", "/crystal-check") => crystal_check(body).await,
         ("POST", "/crystal-new") => crystal_new(body).await,
-        ("POST", "/crystal-preview") => crystal_preview().await,
+        ("POST", "/crystal-preview") => crystal_preview(body).await,
+        ("POST", "/crystal-parameters") => crystal_parameters().await,
         // Runs the report's stored procedure on the chosen database, so it
         // is gated like a database write besides (`crystal_preview_live`).
         ("POST", "/crystal-preview-live") => {
@@ -11839,11 +11840,21 @@ async fn crystal_new(body: &str) -> (u16, String) {
     crystal_answer(done)
 }
 
-async fn crystal_preview() -> (u16, String) {
-    let done = crystal_blocking(crate::crystal::preview_saved).await;
+async fn crystal_preview(body: &str) -> (u16, String) {
+    let params = match crystal_args(body).and_then(|args| crystal_params(&args)) {
+        Ok(params) => params,
+        Err(refused) => return refused,
+    };
+    let done = crystal_blocking(move || crate::crystal::preview_saved_with(params)).await;
     // A render that failed is kept as the preview too, so the screen shows why.
     crystal_changed().await;
     crystal_answer(done.and_then(|info| serde_json::to_value(info).map_err(|e| (500, e.to_string()))))
+}
+
+/// The open report's parameters, in the order it declares them.
+async fn crystal_parameters() -> (u16, String) {
+    let done = crystal_blocking(crate::crystal::parameters).await;
+    crystal_answer(done.and_then(|list| serde_json::to_value(list).map_err(|e| (500, e.to_string()))))
 }
 
 /// The two doors of a live preview that need no connection to check:

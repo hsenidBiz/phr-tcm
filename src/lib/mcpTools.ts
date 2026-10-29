@@ -318,6 +318,11 @@ export const MCP_TOOLS: McpToolInfo[] = [
     summary:
       "Draw the open report from fresh rows: run its stored procedure on the chosen database. Needs writes switched on and the Dev login.",
   },
+  {
+    name: "get_report_parameters",
+    label: "Report parameters",
+    summary: "List the open report's parameters, their kinds and pick lists.",
+  },
   { name: "validate_cases", label: "Check a draft", summary: "Check a draft with the app's real importer." },
   { name: "get_tags", label: "Project tags", summary: "Tag names this project already uses." },
   { name: "optimize_cases", label: "Build the run sheet", summary: "Reorganise a draft into a tester-ready run sheet." },
@@ -416,6 +421,7 @@ export const CRYSTAL_TOOLS = [
   "check_report",
   "preview_report",
   "preview_report_live",
+  "get_report_parameters",
 ] as const;
 
 /** The module a tool belongs to; null for a tool that is part of Core.

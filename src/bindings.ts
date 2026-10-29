@@ -181,6 +181,10 @@ export const commands = {
 	crystalOpenInDesigner: () => typedError<null, string>(__TAURI_INVOKE("crystal_open_in_designer")),
 	/**  Open a report the person picked; it becomes the open report. */
 	crystalOpenFile: (path: string) => typedError<null, string>(__TAURI_INVOKE("crystal_open_file", { path })),
+	/**  The open report's parameters. */
+	crystalParameters: () => typedError<ReportParameter[], string>(__TAURI_INVOKE("crystal_parameters")),
+	/**  Draw the open report with the parameter values typed on the screen. */
+	crystalDraw: (values: ParameterValue[]) => typedError<null, string>(__TAURI_INVOKE("crystal_draw", { values })),
 	/**
 	 *  Open the activity folder - the full DB (and, later, API) statement
 	 *  trail `activity_log` writes, kept apart from the app log's own daily
@@ -4996,6 +5000,18 @@ export type Param_Serialize = {
 	default?: unknown | null,
 };
 
+/**  One pick-list or saved value of a parameter. */
+export type ParameterChoice = {
+	value: string,
+	description: string | null,
+};
+
+/**  One value the person typed for a parameter of the open report. */
+export type ParameterValue = {
+	name: string,
+	value: string,
+};
+
 /**
  *  A pause before batch `batch` (1-based), which starts with
  *  `before_case_id`: a person sets each setting in `set` to its value and
@@ -6242,6 +6258,23 @@ export type ReportPalette = {
 	warning: string,
 	/**  Drives `color-scheme`, so form controls and scrollbars follow too. */
 	dark: boolean,
+};
+
+/**  One parameter of the open report, shaped for a prompt. */
+export type ReportParameter = {
+	name: string,
+	/**  Number, String, Currency, Boolean, Date, Time or DateTime. */
+	value_kind: string,
+	prompt_text: string | null,
+	/**  The prompt may be left out. */
+	optional_prompt: boolean,
+	allow_multiple_values: boolean,
+	/**  An empty value is allowed. */
+	allow_null_value: boolean,
+	/**  The report's authored pick list. */
+	choices: ParameterChoice[],
+	/**  The value the report was saved with, if any. */
+	saved: ParameterChoice[],
 };
 
 /**  One archived run's headline numbers. */

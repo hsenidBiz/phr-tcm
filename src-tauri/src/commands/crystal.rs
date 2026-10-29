@@ -12,7 +12,7 @@ use std::path::Path;
 
 use base64::Engine;
 
-use crate::crystal::{self, PreviewInfo};
+use crate::crystal::{self, PreviewInfo, ReportParameter};
 use crate::modules::{self, Module};
 
 /// Said when the open report's file has been moved or deleted since.
@@ -88,6 +88,32 @@ pub fn open_file_with(on: bool, path: &str) -> Result<(), String> {
     })
 }
 
+/// One value the person typed for a parameter of the open report.
+#[derive(Debug, Clone, serde::Deserialize, specta::Type)]
+pub struct ParameterValue {
+    pub name: String,
+    pub value: String,
+}
+
+/// The open report's parameters, for the panel.
+pub fn parameters_with(on: bool) -> Result<Vec<ReportParameter>, String> {
+    offered(on)?;
+    crystal::parameters()
+}
+
+/// Draw the open report again with the values typed. A blank value is no
+/// value. They are used for this drawing only and are never saved. The
+/// refusal sentences name the file and the parameter, never a path.
+pub fn draw_with(on: bool, values: Vec<ParameterValue>) -> Result<(), String> {
+    offered(on)?;
+    let params = values
+        .into_iter()
+        .filter(|v| !v.value.trim().is_empty())
+        .map(|v| (v.name, v.value.trim().to_string()))
+        .collect();
+    crystal::preview_saved_with(params).map(|_| ())
+}
+
 fn file_name(path: &str) -> String {
     Path::new(path).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| path.to_string())
 }
@@ -97,6 +123,20 @@ fn file_name(path: &str) -> String {
 #[specta::specta]
 pub fn crystal_open_file(path: String) -> Result<(), String> {
     open_file_with(modules::on(Module::CrystalReports), &path)
+}
+
+/// The open report's parameters.
+#[tauri::command(async)]
+#[specta::specta]
+pub fn crystal_parameters() -> Result<Vec<ReportParameter>, String> {
+    parameters_with(modules::on(Module::CrystalReports))
+}
+
+/// Draw the open report with the parameter values typed on the screen.
+#[tauri::command(async)]
+#[specta::specta]
+pub fn crystal_draw(values: Vec<ParameterValue>) -> Result<(), String> {
+    draw_with(modules::on(Module::CrystalReports), values)
 }
 
 /// The report TCM has open and how it last drew; `None` when none is open.

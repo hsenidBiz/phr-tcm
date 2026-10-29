@@ -156,7 +156,13 @@ function current(over: Record<string, unknown> = {}, missing = false) {
   };
 }
 
-type Answers = { current?: unknown; pdf?: unknown; open?: () => void; openFile?: (path: string) => void };
+type Answers = {
+  current?: unknown;
+  pdf?: unknown;
+  open?: () => void;
+  openFile?: (path: string) => void;
+  parameters?: unknown;
+};
 
 /** Mocks the three commands; `answers` is read on every call, so a test can change what they say. */
 function mockCrystal(answers: Answers) {
@@ -167,6 +173,7 @@ function mockCrystal(answers: Answers) {
       if (cmd === "crystal_current") return answers.current ?? null;
       if (cmd === "crystal_preview_pdf") return answers.pdf ?? null;
       if (cmd === "crystal_open_in_designer") return answers.open?.() ?? null;
+      if (cmd === "crystal_parameters") return answers.parameters ?? [];
       if (cmd === "crystal_open_file") return answers.openFile?.((args as { path: string }).path) ?? null;
       return undefined;
     },
@@ -690,4 +697,33 @@ test("an_open_report_can_be_swapped_from_its_header", async () => {
   await screen.findByText("PMSV10_GoalAlignCascade.rpt");
   fireEvent.click(within(header()).getByRole("button", { name: "Open report" }));
   await waitFor(() => expect(opened).toEqual(["C:\r\C.rpt"]));
+});
+
+test("the_parameters_panel_starts_empty_for_another_report", async () => {
+  const param = {
+    name: "@cycle",
+    value_kind: "Number",
+    prompt_text: null,
+    optional_prompt: false,
+    allow_multiple_values: false,
+    allow_null_value: false,
+    choices: [],
+    saved: [],
+  };
+  const answers: Answers = { current: current(), pdf: PDF, parameters: [param] };
+  mockCrystal(answers);
+  render(<CrystalReports />);
+
+  const box = await screen.findByRole("textbox", { name: "@cycle" });
+  fireEvent.change(box, { target: { value: "42" } });
+  expect(box).toHaveValue("42");
+
+  // Another report is opened (by the assistant): the values typed for the first are gone.
+  const other = "C:\\Reports\\Other.rpt";
+  answers.current = current({ path: other });
+  await act(async () => {
+    await emit("crystal-report-changed", { path: other });
+  });
+  await within(header()).findByText("Other.rpt");
+  expect(await screen.findByRole("textbox", { name: "@cycle" })).toHaveValue("");
 });

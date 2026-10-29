@@ -15,6 +15,7 @@
 mod compare;
 mod guide;
 mod live;
+mod params;
 
 pub use live::{check_live_params, live_target, live_target_of, preview_live, preview_live_with};
 
@@ -25,6 +26,8 @@ use rpt_core::edit::{apply_edits_on, ApplyOutcome, EditOp};
 use rpt_core::plan::LayoutPlan;
 use rpt_core::rpt_reader::Rpt;
 use serde_json::Value;
+
+pub use params::{parameters, preview_saved_with, ParameterChoice, ReportParameter, NO_SAVED_DATA};
 
 /// The open report, if any.
 static OPEN: Mutex<Option<Open>> = Mutex::new(None);
@@ -367,8 +370,7 @@ pub fn compare(a: &str, b: &str) -> Result<Vec<String>, String> {
 /// Render the open report from the data saved in it, and keep the PDF for
 /// the screen.
 pub fn preview_saved() -> Result<PreviewInfo, String> {
-    let mut slot = state();
-    render(slot.as_mut().ok_or(NOTHING_OPEN)?)
+    preview_saved_with(Vec::new())
 }
 
 /// The open report's last render and its PDF (empty when that render

@@ -159,6 +159,7 @@ mod comment_images;
 mod components;
 mod crystal_bundle;
 mod crystal_open;
+mod crystal_params;
 mod crystal_reports;
 mod db_batch;
 mod db_credentials;

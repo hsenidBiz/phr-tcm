@@ -4553,7 +4553,7 @@ mod crystal_routes {
     const SAMPLES: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../crystal-reports/Sample Report");
     const SAMPLE: &str = "PMSV10_GoalAlignCascade.rpt";
 
-    const PATHS: [&str; 8] = [
+    const PATHS: [&str; 9] = [
         "/crystal-open",
         "/crystal-read",
         "/crystal-change",
@@ -4562,6 +4562,7 @@ mod crystal_routes {
         "/crystal-new",
         "/crystal-preview",
         "/crystal-preview-live",
+        "/crystal-parameters",
     ];
 
     /// A copy of the sample inside `dir`, as a path string.
@@ -4656,6 +4657,27 @@ mod crystal_routes {
         let (status, guide) = route(&ctx(), None, "GET", "/crystal-guide", "", "1.0.0").await;
         assert_eq!(status, 200);
         assert_eq!(guide, v2_lib::crystal::guide());
+        v2_lib::crystal::close();
+    }
+
+    #[tokio::test]
+    async fn the_parameters_route_lists_them_and_the_preview_route_takes_values() {
+        let _on = crate::serial::crystal_on();
+        let _lock = crate::serial::crystal();
+        let dir = tempfile::tempdir().unwrap();
+        let path = copy_sample(dir.path());
+        json_of(&post("/crystal-open", json!({ "path": path })).await);
+
+        let listed = json_of(&post("/crystal-parameters", json!({})).await);
+        assert_eq!(listed.as_array().unwrap().len(), 5, "{listed}");
+        assert_eq!(listed[0]["name"], "@performance_cycle_id");
+
+        let good = json_of(&post("/crystal-preview", json!({ "params": { "performance_cycle_id": "42" } })).await);
+        assert!(good["page_count"].as_u64().unwrap() >= 1, "{good}");
+
+        let (status, why) = post("/crystal-preview", json!({ "params": { "perfomance_cycle": "1" } })).await;
+        assert_eq!(status, 400, "{why}");
+        assert!(why.contains("perfomance_cycle"), "{why}");
         v2_lib::crystal::close();
     }
 
