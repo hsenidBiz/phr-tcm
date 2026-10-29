@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { createContext, useContext, useEffect, useRef, useState } from "react";
 import { isCaptureMode } from "../dev/capture";
 
 /** The Halloween theme's scenery: pumpkins hanging under the PBI bar, bats
@@ -6,8 +6,10 @@ import { isCaptureMode } from "../dev/capture";
  * cobweb with bugs in the content area's bottom-left corner. All colours
  * come from the theme through the .halloween-* classes in index.css, so it
  * follows the palette. It is decoration: aria-hidden, takes no height, and
- * only the pumpkin and spider bodies answer a click (no focus, no role).
- * Rendered only while the Halloween theme is on. */
+ * takes no click itself (pointer-events none everywhere). A pumpkin or
+ * spider answers a press on the page under it through one document
+ * listener that leaves anything interactive alone. Rendered only while the
+ * Halloween theme is on. */
 
 const PUMPKINS = [
   { right: "48%", string: 6, delay: "-0.9s", grin: "smile" },
@@ -16,10 +18,11 @@ const PUMPKINS = [
   { right: "22%", string: 20, delay: "-0.4s", grin: "teeth" },
 ] as const;
 
-// Pumpkins fill 52%..78% from the left; 54% sits in the gap before them.
+// Pumpkins' right edges sit at 52%..78% from the left, each 32px wide; the
+// middle spider at 40% stays clear of them down to a 760px column.
 const SPIDERS = [
   { left: "10%", drop: 70, duration: "20s", delay: "-4s" },
-  { left: "54%", drop: 45, duration: "16s", delay: "-9s" },
+  { left: "40%", drop: 45, duration: "16s", delay: "-9s" },
   { left: "86%", drop: 90, duration: "27s", delay: "-15s" },
 ] as const;
 
@@ -28,6 +31,26 @@ const BATS = [{ width: 26 }, { width: 22 }, { width: 24 }] as const;
 const WHACK_MS = 1200;
 const SCURRY_MS = 7000;
 const EDGE = 40;
+const HIT_PAD = 4;
+const INTERACTIVE =
+  'button, a, input, select, textarea, label, summary, [role="button"], [role="link"], [role="menuitem"], [role="option"], [role="tab"], [role="checkbox"], [role="switch"], [role="combobox"], [contenteditable=""], [contenteditable="true"], [tabindex]:not([tabindex="-1"])';
+
+/** A decoration's clickable body and what it does when pressed. */
+type Hit = { el: Element; react: () => void };
+type Register = (hit: Hit) => () => void;
+const HitContext = createContext<Register>(() => () => {});
+
+/** Registers a body with the decor's document listener; `react` may change
+ * every render. */
+function useHit(body: React.RefObject<Element | null>, react: () => void) {
+  const register = useContext(HitContext);
+  const latest = useRef(react);
+  latest.current = react;
+  useEffect(() => {
+    const el = body.current;
+    return el ? register({ el, react: () => latest.current() }) : undefined;
+  }, [register, body]);
+}
 
 type Random = () => number;
 
@@ -35,8 +58,25 @@ function themeIsHalloween(): boolean {
   return document.documentElement.getAttribute("data-theme") === "halloween";
 }
 
+const REDUCE = "(prefers-reduced-motion: reduce)";
+
 function prefersReducedMotion(): boolean {
-  return typeof window.matchMedia === "function" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  return typeof window.matchMedia === "function" && window.matchMedia(REDUCE).matches;
+}
+
+/** The reduced-motion setting, live. */
+function useReducedMotion(): boolean {
+  const [reduced, setReduced] = useState(prefersReducedMotion);
+  useEffect(() => {
+    if (typeof window.matchMedia !== "function") return;
+    const mq = window.matchMedia(REDUCE);
+    if (typeof mq?.addEventListener !== "function") return;
+    const sync = () => setReduced(mq.matches);
+    mq.addEventListener("change", sync);
+    sync();
+    return () => mq.removeEventListener("change", sync);
+  }, []);
+  return reduced;
 }
 
 /** True while the Halloween theme is on (and this is not a docs capture). */
@@ -55,28 +95,47 @@ function useHalloween(): boolean {
   return on && !isCaptureMode();
 }
 
-/** True for `ms` after start(); a new start restarts it, unmounting cancels. */
-function useBriefState(ms: number): [boolean, () => void] {
+/** True for `ms` after start(); a new start restarts it, unmounting cancels.
+ * `live` reads true at once, for guards that run before a re-render. */
+function useBriefState(ms: number): [boolean, () => void, React.RefObject<boolean>] {
   const [active, setActive] = useState(false);
+  const live = useRef(false);
   const timer = useRef<ReturnType<typeof setTimeout>>(undefined);
   useEffect(() => () => clearTimeout(timer.current), []);
   const start = () => {
     clearTimeout(timer.current);
+    live.current = true;
     setActive(true);
-    timer.current = setTimeout(() => setActive(false), ms);
+    timer.current = setTimeout(() => {
+      live.current = false;
+      setActive(false);
+    }, ms);
   };
-  return [active, start];
+  return [active, start, live];
 }
 
 function Pumpkin({ right, string, delay, grin }: (typeof PUMPKINS)[number]) {
   const [whacked, whack] = useBriefState(WHACK_MS);
+  const [everWhacked, setEverWhacked] = useState(false);
+  const root = useRef<HTMLDivElement>(null);
+  const body = useRef<SVGSVGElement>(null);
+  useHit(body, () => {
+    // Restart the swing on every press: drop the class, flush, add it back.
+    const el = root.current;
+    if (el) {
+      el.classList.remove("is-whack");
+      void el.offsetWidth;
+      el.classList.add("is-whack");
+    }
+    setEverWhacked(true);
+    whack();
+  });
+  // After a whack the sway starts at rest too, so the hand-off has no snap.
+  const style = { right, "--sway-delay": everWhacked ? "0s" : delay } as React.CSSProperties;
   return (
-    <div
-      className={`halloween-pumpkin${whacked ? " is-whack" : ""}`}
-      style={{ right, animationDelay: delay }}
-    >
+    <div ref={root} className={`halloween-pumpkin${whacked ? " is-whack" : ""}`} style={style}>
       <div className="halloween-string" style={{ height: string }} />
-      <svg width="32" height="27" viewBox="0 0 28 24" onClick={whack}>
+      <svg ref={body} width="32" height="27" viewBox="0 0 28 24">
         <rect className="halloween-stem" x="12.5" y="0" width="3" height="5" rx="1" />
         <ellipse className="halloween-body" cx="14" cy="14" rx="13" ry="10" />
         <path className="halloween-rib" d="M9 5 Q6 14 9 23 M19 5 Q22 14 19 23" />
@@ -98,28 +157,29 @@ function Pumpkin({ right, string, delay, grin }: (typeof PUMPKINS)[number]) {
 }
 
 function Spider({ left, drop, duration, delay }: (typeof SPIDERS)[number]) {
-  const [scurrying, scurry] = useBriefState(SCURRY_MS);
+  const [scurrying, scurry, live] = useBriefState(SCURRY_MS);
   const thread = useRef<HTMLDivElement>(null);
+  const body = useRef<HTMLDivElement>(null);
   const [from, setFrom] = useState(0);
+  useHit(body, () => {
+    if (live.current) return;
+    // Start the climb from wherever the thread is right now.
+    setFrom(thread.current?.getBoundingClientRect().height ?? 0);
+    scurry();
+  });
   const style = {
     left,
     animationDuration: duration,
     animationDelay: delay,
     "--drop": `${drop}px`,
+    "--drop-n": drop,
     "--from": `${from}px`,
+    "--from-n": from,
   } as React.CSSProperties;
   return (
     <div className={`halloween-spider${scurrying ? " is-scurry" : ""}`} style={style}>
       <div ref={thread} className="halloween-spider-thread" />
-      <div
-        className="halloween-spider-body"
-        onClick={() => {
-          if (scurrying) return;
-          // Start the climb from wherever the thread is right now.
-          setFrom(thread.current?.getBoundingClientRect().height ?? 0);
-          scurry();
-        }}
-      >
+      <div ref={body} className="halloween-spider-body">
         <svg width="16" height="12" viewBox="0 0 16 12">
           <ellipse cx="8" cy="6" rx="4" ry="4" />
           <path d="M4 5 L0 2 M4 7 L0 9 M12 5 L16 2 M12 7 L16 9" />
@@ -135,16 +195,19 @@ function Spider({ left, drop, duration, delay }: (typeof SPIDERS)[number]) {
 function Bat({ width, random }: { width: number; random: Random }) {
   const bat = useRef<HTMLDivElement>(null);
   const face = useRef<HTMLDivElement>(null);
+  const reduced = useReducedMotion();
 
   useEffect(() => {
     const el = bat.current;
     const faceEl = face.current;
-    if (!el || !faceEl || prefersReducedMotion()) return;
+    if (!el || !faceEl || reduced) return;
     const height = Math.round(width * 0.55);
     let x = 0;
     let y = 0;
     let timer: ReturnType<typeof setTimeout> | undefined;
 
+    const maxX = () => Math.max(EDGE, window.innerWidth - EDGE - width);
+    const maxY = () => Math.max(EDGE, window.innerHeight * 0.6 - height);
     const point = () => ({
       x: EDGE + random() * Math.max(0, window.innerWidth - 2 * EDGE - width),
       y: EDGE + random() * Math.max(0, window.innerHeight * 0.6 - EDGE - height),
@@ -168,6 +231,13 @@ function Bat({ width, random }: { width: number; random: Random }) {
     const onEnd = (e: TransitionEvent) => {
       if (e.target === el) landed();
     };
+    // A resize that leaves the target, or the bat itself, outside the
+    // window sends it to a new point in view at once.
+    const onResize = () => {
+      const r = el.getBoundingClientRect();
+      const lost = r.left > window.innerWidth || r.top > window.innerHeight;
+      if (lost || x > maxX() || y > maxY()) fly();
+    };
 
     // Start from a random spot with no transition, then fly.
     ({ x, y } = point());
@@ -175,12 +245,14 @@ function Bat({ width, random }: { width: number; random: Random }) {
     el.style.transform = `translate(${x}px, ${y}px)`;
     void el.offsetWidth;
     el.addEventListener("transitionend", onEnd);
+    window.addEventListener("resize", onResize);
     fly();
     return () => {
       clearTimeout(timer);
       el.removeEventListener("transitionend", onEnd);
+      window.removeEventListener("resize", onResize);
     };
-  }, [width, random]);
+  }, [width, random, reduced]);
 
   return (
     <div ref={bat} className="halloween-bat">
@@ -194,9 +266,40 @@ function Bat({ width, random }: { width: number; random: Random }) {
 }
 
 export default function HalloweenDecor({ random = Math.random }: { random?: Random }) {
-  if (!useHalloween()) return null;
+  const on = useHalloween();
+  const hits = useRef(new Set<Hit>());
+  const register = useRef<Register>((hit) => {
+    hits.current.add(hit);
+    return () => void hits.current.delete(hit);
+  });
+
+  // The decor takes no click, so a press on the page under a pumpkin or
+  // spider is what sets it off, unless the press landed on a control.
+  useEffect(() => {
+    if (!on) return;
+    const onDown = (e: PointerEvent) => {
+      const target = e.target;
+      if (e.button !== 0 || !(target instanceof Element) || target.closest(INTERACTIVE)) return;
+      for (const { el, react } of hits.current) {
+        const r = el.getBoundingClientRect();
+        if (
+          e.clientX >= r.left - HIT_PAD &&
+          e.clientX <= r.right + HIT_PAD &&
+          e.clientY >= r.top - HIT_PAD &&
+          e.clientY <= r.bottom + HIT_PAD
+        ) {
+          react();
+        }
+      }
+    };
+    document.addEventListener("pointerdown", onDown, { capture: true, passive: true });
+    return () => document.removeEventListener("pointerdown", onDown, { capture: true });
+  }, [on]);
+
+  if (!on) return null;
 
   return (
+    <HitContext.Provider value={register.current}>
     <div className="halloween-decor" aria-hidden="true">
       {PUMPKINS.map((p) => (
         <Pumpkin key={p.right} {...p} />
@@ -208,6 +311,7 @@ export default function HalloweenDecor({ random = Math.random }: { random?: Rand
         <Spider key={s.left} {...s} />
       ))}
     </div>
+    </HitContext.Provider>
   );
 }
 
@@ -217,7 +321,7 @@ export function HalloweenWeb() {
   if (!useHalloween()) return null;
 
   return (
-    <svg className="halloween-web" width="110" height="110" viewBox="0 0 80 80" aria-hidden="true">
+    <svg className="halloween-web" width="90" height="90" viewBox="0 0 80 80" aria-hidden="true">
       <path d="M0 80 L0 0 M0 80 L31 6 M0 80 L57 23 M0 80 L74 49 M0 80 L80 80" />
       <path d="M0 56 Q4 59 9 58 Q12 63 17 63 Q17 68 22 71 Q20 76 24 80" />
       <path d="M0 36 Q8 43 17 39 Q21 48 31 49 Q32 60 41 63 Q37 73 44 80" />

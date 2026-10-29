@@ -1472,10 +1472,13 @@ table {
   position: absolute;
   top: 0;
   transform-origin: top center;
-  animation: halloween-sway 3.2s ease-in-out infinite alternate;
+  animation: halloween-sway 6.4s ease-in-out infinite;
+  animation-delay: var(--sway-delay, 0s);
 }
+/* The whack always plays from its start, whatever the sway's delay. */
 .halloween-pumpkin.is-whack {
   animation: halloween-whack 1.2s ease-out;
+  animation-delay: 0s;
 }
 .halloween-string {
   width: 1px;
@@ -1485,11 +1488,6 @@ table {
 .halloween-pumpkin svg,
 .halloween-spider svg {
   display: block;
-}
-/* The only parts of the scenery that take a click. */
-.halloween-pumpkin svg {
-  pointer-events: auto;
-  cursor: pointer;
 }
 .halloween-stem {
   fill: var(--color-success);
@@ -1548,43 +1546,68 @@ table {
   fill: var(--color-faint);
   fill-opacity: 0.7;
   stroke: none;
-  transform-box: fill-box;
-  transform-origin: center;
   animation: halloween-twitch 7s ease-in-out infinite;
 }
-/* The body hangs at the thread's end: it is the thread's next sibling, so
-   the thread lengthening is all the motion there is. */
+/* The thread is drawn at its full drop and scaled from the top; the body
+   is translated by the same amount on the same timeline (see the shared
+   rule below), so it stays at the thread's end with no layout work. */
 .halloween-spider {
   position: absolute;
   top: 0;
+  width: 16px;
 }
-.halloween-spider-thread {
-  width: 1px;
-  height: 14px;
-  margin: 0 auto;
-  background: var(--color-muted);
-  animation: halloween-drop 20s ease-in-out infinite;
+.halloween-spider-thread,
+.halloween-spider-body {
+  position: absolute;
+  top: 0;
+  animation: 20s ease-in-out infinite;
   animation-duration: inherit;
   animation-delay: inherit;
 }
+.halloween-spider-thread {
+  left: 7px;
+  width: 1px;
+  height: var(--drop);
+  background: var(--color-muted);
+  transform-origin: top;
+  transform: scaleY(calc(14 / var(--drop-n)));
+  animation-name: halloween-drop;
+}
 .halloween-spider-body {
-  pointer-events: auto;
-  cursor: pointer;
+  left: 0;
+  transform: translateY(14px);
+  animation-name: halloween-drop-body;
 }
 .halloween-spider svg {
   opacity: 0.8;
   fill: var(--color-text);
   stroke: var(--color-text);
 }
-.halloween-spider.is-scurry .halloween-spider-thread {
-  animation: halloween-up 7s linear;
+.halloween-spider.is-scurry .halloween-spider-thread,
+.halloween-spider.is-scurry .halloween-spider-body {
+  animation-duration: 7s;
+  animation-timing-function: linear;
+  animation-delay: 0s;
+  animation-iteration-count: 1;
 }
+.halloween-spider.is-scurry .halloween-spider-thread {
+  animation-name: halloween-up;
+}
+.halloween-spider.is-scurry .halloween-spider-body {
+  animation-name: halloween-up-body;
+}
+/* Sway and whack both start and end at rest (0deg), so the hand-off
+   between them is smooth. */
 @keyframes halloween-sway {
-  from {
-    transform: rotate(-6deg);
+  0%,
+  100% {
+    transform: rotate(0);
   }
-  to {
+  25% {
     transform: rotate(6deg);
+  }
+  75% {
+    transform: rotate(-6deg);
   }
 }
 @keyframes halloween-whack {
@@ -1642,39 +1665,62 @@ table {
   0%,
   90%,
   100% {
-    transform: rotate(0);
+    opacity: 1;
   }
   93% {
-    transform: rotate(-16deg);
+    opacity: 0.25;
   }
   96% {
-    transform: rotate(10deg);
+    opacity: 0.9;
   }
 }
-/* The thread is the only thing that moves: it lengthens, and the body
-   rides at its end. */
+/* The thread lengthens (scaleY) and the body rides at its end (translateY);
+   the two sets of keyframes share their stops. */
 @keyframes halloween-drop {
   0%,
   70%,
   100% {
-    height: 14px;
+    transform: scaleY(calc(14 / var(--drop-n)));
   }
   80%,
   90% {
-    height: var(--drop);
+    transform: scaleY(1);
+  }
+}
+@keyframes halloween-drop-body {
+  0%,
+  70%,
+  100% {
+    transform: translateY(14px);
+  }
+  80%,
+  90% {
+    transform: translateY(var(--drop));
   }
 }
 /* Up the thread fast, wait, then back down to rest. */
 @keyframes halloween-up {
   0% {
-    height: var(--from);
+    transform: scaleY(calc(var(--from-n) / var(--drop-n)));
   }
   6%,
   94% {
-    height: 2px;
+    transform: scaleY(calc(2 / var(--drop-n)));
   }
   100% {
-    height: 14px;
+    transform: scaleY(calc(14 / var(--drop-n)));
+  }
+}
+@keyframes halloween-up-body {
+  0% {
+    transform: translateY(var(--from));
+  }
+  6%,
+  94% {
+    transform: translateY(2px);
+  }
+  100% {
+    transform: translateY(14px);
   }
 }
 @media (prefers-reduced-motion: reduce) {
@@ -1682,7 +1728,9 @@ table {
   .halloween-pumpkin.is-whack,
   .halloween-spider,
   .halloween-spider-thread,
+  .halloween-spider-body,
   .halloween-spider.is-scurry .halloween-spider-thread,
+  .halloween-spider.is-scurry .halloween-spider-body,
   .halloween-fly-wing,
   .halloween-bat svg {
     animation: none;
