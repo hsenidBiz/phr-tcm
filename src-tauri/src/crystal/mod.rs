@@ -18,7 +18,7 @@ mod guide;
 mod live;
 mod params;
 
-pub use live::{check_live_params, live_target, live_target_of, preview_live, preview_live_with};
+pub use live::{check_live_params, check_typed_value, live_target, live_target_of, preview_live, preview_live_with};
 
 use std::path::Path;
 use std::sync::{Mutex, MutexGuard};
@@ -28,7 +28,7 @@ use rpt_core::plan::LayoutPlan;
 use rpt_core::rpt_reader::Rpt;
 use serde_json::Value;
 
-pub use find::{find, replace, FindHit, ReplaceChange, ReplaceOutcome};
+pub use find::{find, replace, replace_expecting, FindHit, ReplaceChange, ReplaceOutcome};
 pub use params::{parameters, preview_saved_with, ParameterChoice, ReportParameter, NO_SAVED_DATA};
 
 /// The open report, if any.
@@ -71,7 +71,7 @@ pub struct ReadFilter {
     pub object: Option<String>,
 }
 
-const NOTHING_OPEN: &str = "No report is open. Open one with open_report first.";
+pub(crate) const NOTHING_OPEN: &str = "No report is open. Open one with open_report first.";
 
 fn state() -> MutexGuard<'static, Option<Open>> {
     // A panic mid-call leaves the slot as it was before that call wrote it,

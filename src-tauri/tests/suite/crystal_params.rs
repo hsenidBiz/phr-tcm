@@ -125,3 +125,55 @@ fn a_screen_refusal_names_no_path() {
     assert!(!said.contains(dir.path().to_string_lossy().as_ref()), "{said}");
     crystal::close();
 }
+
+#[test]
+fn numbers_that_are_not_finite_are_refused_before_drawing() {
+    let _lock = serial::crystal();
+    let dir = tempfile::tempdir().unwrap();
+    let path = copy_sample(dir.path());
+    crystal::open(&path).unwrap();
+    crystal::preview_saved_with(fitting_values(&path)).unwrap();
+    let before = crystal::last_pdf().unwrap();
+    let name = typed_parameter(&path);
+    for bad in ["NaN", "inf", "-infinity", "1e309"] {
+        let said = crystal::preview_saved_with(with_value(fitting_values(&path), &name, bad)).unwrap_err();
+        assert!(said.contains(&name) && said.contains("not a number"), "{bad}: {said}");
+    }
+    assert_eq!(crystal::last_pdf().unwrap().1, before.1);
+    crystal::close();
+}
+
+#[test]
+fn dates_out_of_range_are_refused() {
+    use rpt_core::rpt_reader::model::ParameterValueKind as K;
+    for ok in ["2024-02-29", "2026-01-31", "0001-01-01", "9999-12-31"] {
+        crystal::check_typed_value(K::DateParameter, ok).unwrap_or_else(|e| panic!("{ok}: {e}"));
+    }
+    for bad in ["2024-13-45", "2023-02-29", "2026-00-10", "2026-04-31", "2026-01-00", "0000-01-01", "10000-01-01"] {
+        let said = crystal::check_typed_value(K::DateParameter, bad).unwrap_err();
+        assert!(said.contains(bad) && said.contains("not a real date"), "{bad}: {said}");
+    }
+    crystal::check_typed_value(K::DateTimeParameter, "2026-01-31T10:30:00").unwrap();
+    assert!(crystal::check_typed_value(K::DateTimeParameter, "2026-02-30 10:30:00").is_err());
+    assert!(crystal::check_typed_value(K::DateTimeParameter, "2026-01-31T25:00:00").is_err());
+    assert!(crystal::check_typed_value(K::TimeParameter, "24:00:00").is_err());
+    assert!(crystal::check_typed_value(K::TimeParameter, "10:61").is_err());
+    crystal::check_typed_value(K::TimeParameter, "23:59:59").unwrap();
+    crystal::check_typed_value(K::NumberParameter, "-12.5e3").unwrap();
+}
+
+#[test]
+fn the_screen_never_shows_an_assistant_only_sentence() {
+    let _e = serial::extras();
+    let _lock = serial::crystal();
+    crystal::close();
+    let said = [
+        screen::parameters_with(true).map(|_| ()).unwrap_err(),
+        screen::draw_with(true, vec![]).unwrap_err(),
+        screen::find_with(true, "a", false).map(|_| ()).unwrap_err(),
+        screen::replace_with(true, "a", "b", false, true, None).map(|_| ()).unwrap_err(),
+    ];
+    for s in said {
+        assert!(s.contains("No report is open") && !s.contains("open_report"), "{s}");
+    }
+}

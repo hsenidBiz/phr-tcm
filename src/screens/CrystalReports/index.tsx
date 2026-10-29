@@ -205,7 +205,7 @@ export default function CrystalReports() {
           )}
         </div>
       </header>
-      {!missing && <ParametersPanel key={preview.path} path={preview.path} onPreviewed={() => void load()} />}
+      {!missing && <ParametersPanel key={preview.path} path={preview.path} stamp={preview} onPreviewed={() => void load()} />}
       {!missing && <FindReplace key={`find:${preview.path}`} onChanged={() => void load()} />}
       {missing && <p className="text-sm text-danger">{FILE_GONE}</p>}
       {!missing && !drawn && <p className="text-sm text-text">{NOT_DRAWN}</p>}

@@ -35,6 +35,11 @@ pub struct CurrentReport {
     pub missing: bool,
 }
 
+/// The assistant-only "open_report" hint becomes the screen's own sentence.
+fn for_screen(e: String) -> String {
+    e.replace(crystal::NOTHING_OPEN, NOTHING_OPEN)
+}
+
 fn offered(on: bool) -> Result<(), String> {
     modules::require(Module::CrystalReports, on)
 }
@@ -98,7 +103,7 @@ pub struct ParameterValue {
 /// The open report's parameters, for the panel.
 pub fn parameters_with(on: bool) -> Result<Vec<ReportParameter>, String> {
     offered(on)?;
-    crystal::parameters()
+    crystal::parameters().map_err(for_screen)
 }
 
 /// Draw the open report again with the values typed. A blank value is no
@@ -111,13 +116,13 @@ pub fn draw_with(on: bool, values: Vec<ParameterValue>) -> Result<(), String> {
         .filter(|v| !v.value.trim().is_empty())
         .map(|v| (v.name, v.value.trim().to_string()))
         .collect();
-    crystal::preview_saved_with(params).map(|_| ())
+    crystal::preview_saved_with(params).map(|_| ()).map_err(for_screen)
 }
 
 /// Every object of the open report and its subreports that holds `text`.
 pub fn find_with(on: bool, text: &str, match_case: bool) -> Result<Vec<FindHit>, String> {
     offered(on)?;
-    crystal::find(text, match_case)
+    crystal::find(text, match_case).map_err(for_screen)
 }
 
 /// Replace text in the open report. With `dry_run` it only lists what would
@@ -129,12 +134,15 @@ pub fn replace_with(
     replace: &str,
     match_case: bool,
     dry_run: bool,
+    expected: Option<u32>,
 ) -> Result<ReplaceOutcome, String> {
     offered(on)?;
-    crystal::replace(find, replace, match_case, dry_run).map_err(|e| match crystal::current_path() {
-        Some(path) => e.replace(&path, &file_name(&path)),
-        None => e,
-    })
+    crystal::replace_expecting(find, replace, match_case, dry_run, expected)
+        .map_err(|e| match crystal::current_path() {
+            Some(path) => e.replace(&path, &file_name(&path)),
+            None => e,
+        })
+        .map_err(for_screen)
 }
 
 fn file_name(path: &str) -> String {
@@ -163,8 +171,9 @@ pub fn crystal_replace(
     replace: String,
     match_case: bool,
     dry_run: bool,
+    expected: Option<u32>,
 ) -> Result<ReplaceOutcome, String> {
-    replace_with(modules::on(Module::CrystalReports), &find, &replace, match_case, dry_run)
+    replace_with(modules::on(Module::CrystalReports), &find, &replace, match_case, dry_run, expected)
 }
 
 /// The open report's parameters.

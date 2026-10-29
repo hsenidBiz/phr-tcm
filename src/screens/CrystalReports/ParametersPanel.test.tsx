@@ -21,7 +21,12 @@ const CYCLE = {
   prompt_text: "Cycle",
   choices: [{ value: "42", description: "FY24" }],
 };
-const FROM = { ...base, name: "@from", value_kind: "Date", optional_prompt: true };
+const FROM = {
+  ...base,
+  name: "@from",
+  value_kind: "Date",
+  optional_prompt: true,
+};
 
 function mock(list: unknown[], draw: (values: unknown) => void = () => {}) {
   const calls: Array<{ cmd: string; args: unknown }> = [];
@@ -68,7 +73,9 @@ test("a refused value is shown and nothing reloads", async () => {
     throw "A.rpt cannot be previewed with these values: parameter @cycle: `x` is not a number.";
   });
   render(<ParametersPanel path="a.rpt" onPreviewed={onPreviewed} />);
-  fireEvent.change(await screen.findByRole("textbox", { name: "@from" }), { target: { value: "x" } });
+  fireEvent.change(await screen.findByRole("textbox", { name: "@from" }), {
+    target: { value: "x" },
+  });
   fireEvent.click(screen.getByRole("button", { name: "Preview with these values" }));
   expect(await screen.findByRole("alert")).toHaveTextContent("`x` is not a number");
   expect(onPreviewed).not.toHaveBeenCalled();
@@ -79,4 +86,48 @@ test("a report without parameters shows no panel", async () => {
   const { container } = render(<ParametersPanel path="a.rpt" onPreviewed={() => {}} />);
   await waitFor(() => expect(calls.some((c) => c.cmd === "crystal_parameters")).toBe(true));
   await waitFor(() => expect(container).toBeEmptyDOMElement());
+});
+
+test("a failed list is shown instead of hiding the panel", async () => {
+  mockIPC((cmd) => {
+    if (cmd === "crystal_parameters") throw "The parameters could not be listed.";
+    return undefined;
+  });
+  render(<ParametersPanel path="a.rpt" onPreviewed={() => {}} />);
+  expect(await screen.findByRole("alert")).toHaveTextContent("The parameters could not be listed.");
+});
+
+test("the list is fetched again when the open report changes, and typed values stay", async () => {
+  let list: unknown[] = [CYCLE];
+  const calls: string[] = [];
+  mockIPC((cmd) => {
+    calls.push(cmd);
+    if (cmd === "crystal_parameters") return list;
+    return undefined;
+  });
+  const { rerender } = render(<ParametersPanel path="a.rpt" stamp={1} onPreviewed={() => {}} />);
+  fireEvent.change(await screen.findByRole("combobox", { name: "@cycle" }), {
+    target: { value: "7" },
+  });
+  list = [CYCLE, FROM];
+  rerender(<ParametersPanel path="a.rpt" stamp={2} onPreviewed={() => {}} />);
+  expect(await screen.findByRole("textbox", { name: "@from" })).toBeInTheDocument();
+  expect(calls.filter((c) => c === "crystal_parameters")).toHaveLength(2);
+});
+
+test("typed values survive a redraw of the same report", async () => {
+  mock([CYCLE, FROM]);
+  const { rerender } = render(<ParametersPanel path="a.rpt" stamp={1} onPreviewed={() => {}} />);
+  fireEvent.change(await screen.findByRole("textbox", { name: "@from" }), {
+    target: { value: "2026-01-31" },
+  });
+  rerender(<ParametersPanel path="a.rpt" stamp={2} onPreviewed={() => {}} />);
+  await waitFor(() => expect(screen.getByRole("textbox", { name: "@from" })).toHaveValue("2026-01-31"));
+});
+
+test("a parameter's field is described by its prompt", async () => {
+  mock([{ ...FROM, prompt_text: "Start of the range" }]);
+  render(<ParametersPanel path="a.rpt" onPreviewed={() => {}} />);
+  const from = await screen.findByRole("textbox", { name: "@from" });
+  expect(from).toHaveAccessibleDescription("Start of the range");
 });

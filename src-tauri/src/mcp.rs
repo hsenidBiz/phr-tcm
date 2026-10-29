@@ -1330,7 +1330,7 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool, unlocked: bool, all_projec
         },
         {
             "name": "replace_in_report",
-            "description": "Replace text in every text object of the open report and its subreports that contains `find`. Run it with dry_run: true first: that lists each change (before and after, naming the subreport) and changes nothing. Without dry_run the changes are saved over the file at once, like edit_report, and cannot be taken back inside TCM. Text holding fields is skipped and counted in skipped_locked, never rewritten; fields are never replaced. Ids may change: read_report before the next edit.",
+            "description": "Replace text in every text object of the open report and its subreports that contains `find`. Run it with dry_run: true first: that lists each change (before and after, naming the subreport) and changes nothing. Without dry_run the changes are saved over the file at once, like edit_report, and cannot be taken back inside TCM. Matches that cannot be replaced (fields, and text that holds fields or cannot be edited) are skipped and counted in skipped_locked, never rewritten. Ids may change: read_report before the next edit.",
             "inputSchema": schema(serde_json::json!({
                 "find": { "type": "string", "description": "The text to replace. Spaces count." },
                 "replace": { "type": "string", "description": "What to put in its place. May be empty, to remove the text." },

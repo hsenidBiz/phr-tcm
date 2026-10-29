@@ -287,7 +287,7 @@ test("the_page_view_fits_the_width_by_default_and_zooms", async () => {
   const controls = screen.getByRole("group", { name: "Page view" });
   expect(within(controls).getByText("1 page")).toBeInTheDocument();
   // The zoom is plain text, not a live region announced on every re-fit.
-  expect(screen.queryByRole("status")).not.toBeInTheDocument();
+  expect(within(controls).queryByRole("status")).not.toBeInTheDocument();
   await waitFor(() => expect(sheet(0).width).toBe(400));
   expect(sheet(0).style.width).toBe("400px");
 

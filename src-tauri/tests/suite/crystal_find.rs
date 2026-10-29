@@ -12,14 +12,6 @@ use crate::serial;
 
 const SAMPLES: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../crystal-reports/Sample Report");
 const SAMPLE: &str = "PMSV10_GoalAlignCascade.rpt";
-const ALL: [&str; 6] = [
-    "PMSV10_GoalAlignCascade.rpt",
-    "PMSV10_GoalAlignCascadeSS.rpt",
-    "PMSV10_IndDetailedEval.rpt",
-    "PMSV10_IndDetailedEvalSS.rpt",
-    "PMSV10_IndPerfOverview.rpt",
-    "PMSV10_IndPerfOverviewSS.rpt",
-];
 
 fn copy_sample(dir: &Path, name: &str) -> String {
     let to = dir.join(name);
@@ -127,61 +119,172 @@ fn a_replace_is_saved_like_any_edit() {
     crystal::close();
 }
 
+/// The object's record without its id (a replace may renumber ids).
+fn record(o: &Value) -> Value {
+    let mut o = o.clone();
+    o.as_object_mut().unwrap().remove("id");
+    o
+}
+
+/// A tracked fixture with both what the six samples lack: a text object that holds
+/// fields, and a subreport with plain text.
+const FIXTURE: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../crystal-reports/tests/fixtures/reports/benbrahim777/Top5USAwithSub.rpt"
+);
+
+fn copy_fixture(dir: &Path) -> String {
+    let to = dir.join("Top5USAwithSub.rpt");
+    std::fs::copy(FIXTURE, &to).unwrap_or_else(|e| panic!("the fixture {FIXTURE} is missing: {e}"));
+    to.to_string_lossy().into_owned()
+}
+
 #[test]
 fn text_holding_fields_is_found_but_never_replaced() {
+    use rpt_core::rpt_reader::model::ReportObjectKind;
     let _lock = serial::crystal();
-    for sample in ALL {
-        let dir = tempfile::tempdir().unwrap();
-        let path = copy_sample(dir.path(), sample);
-        let ir = crystal::open(&path).unwrap();
-        let Some(locked) = objects(&ir).iter().find(|o| {
-            o["text"]["editable"] == false && o["text"]["display"].as_str().is_some_and(|t| !t.trim().is_empty())
-        }) else {
-            continue;
-        };
-        let shown = display(locked);
-        let hits = crystal::find(&shown, true).unwrap();
-        let hit = hits.iter().find(|h| h.object_id == locked["id"].as_str().unwrap()).expect("listed");
-        assert!(!hit.replaceable, "{sample}");
+    let dir = tempfile::tempdir().unwrap();
+    let path = copy_fixture(dir.path());
+    let ir = crystal::open(&path).unwrap();
 
-        let out = crystal::replace(&shown, "X", true, false).unwrap();
-        assert!(out.skipped_locked >= 1, "{sample}: {out:?}");
-        let now = crystal::read(&ReadFilter::default()).unwrap();
-        let same = objects(&now).iter().find(|o| o["name"] == locked["name"] && o["kind"] == locked["kind"]);
-        let same = same.expect("still there");
-        assert_eq!(same["text"]["display"], locked["text"]["display"], "{sample}");
-        crystal::close();
-        return;
+    // The report's own model says which text objects hold fields.
+    let rpt = rpt_core::open_bytes(&std::fs::read(&path).unwrap()).unwrap();
+    let holders: Vec<String> = rpt
+        .report()
+        .report_definition
+        .areas
+        .iter()
+        .flat_map(|a| a.sections.iter())
+        .flat_map(|s| s.objects.iter())
+        .filter(|o| matches!(&o.kind, ReportObjectKind::Text(t) if !t.embedded_fields.is_empty() && t.display.trim().len() >= 3))
+        .map(|o| o.name.clone())
+        .collect();
+    let all = objects(&ir);
+    let locked = holders
+        .iter()
+        .find_map(|n| {
+            let same: Vec<&Value> = all.iter().filter(|o| &o["name"] == n).collect();
+            (same.len() == 1).then(|| same[0].clone())
+        })
+        .unwrap_or_else(|| panic!("the fixture has no text object that holds fields (found {holders:?}); this test would prove nothing"));
+    assert_eq!(locked["text"]["editable"], false);
+    assert!(!locked["field"].is_object(), "a text object, not a field object");
+
+    let shown = display(&locked);
+    let hits = crystal::find(&shown, true).unwrap();
+    let hit = hits.iter().find(|h| h.object_id == locked["id"].as_str().unwrap()).expect("listed");
+    assert!(!hit.replaceable && hit.matched == "text");
+
+    let out = crystal::replace(&shown, "X", true, false).unwrap();
+    assert!(out.skipped_locked >= 1, "{out:?}");
+    assert!(out.changes.iter().all(|c| c.object_id != locked["id"].as_str().unwrap()), "{out:?}");
+    let now = crystal::read(&ReadFilter::default()).unwrap();
+    let same = objects(&now).iter().find(|o| o["name"] == locked["name"]);
+    assert_eq!(record(same.expect("still there")), record(&locked));
+    // Read back from the file: the object is as it was.
+    crystal::open(&path).unwrap();
+    let reread = crystal::read(&ReadFilter::default()).unwrap();
+    let same = objects(&reread).iter().find(|o| o["name"] == locked["name"]);
+    assert_eq!(record(same.expect("still there")), record(&locked));
+    crystal::close();
+}
+
+/// The fixture's subreport with a plain text object: (path, subreport, its text).
+fn sample_with_subreport_text(dir: &Path) -> (String, String, String) {
+    let path = copy_fixture(dir);
+    let rpt = rpt_core::open_bytes(&std::fs::read(&path).unwrap()).unwrap();
+    for sub in &rpt.report().subreports {
+        let Ok(sir) = rpt_core::subedit::subreport_ir(&rpt, &sub.name) else { continue };
+        let found =
+            sir.objects.iter().find(|o| o.text.as_ref().is_some_and(|t| t.editable && t.display.trim().len() >= 3));
+        if let Some(o) = found {
+            return (path, sub.name.clone(), o.text.as_ref().unwrap().display.clone());
+        }
     }
-    eprintln!("no sample has text that holds fields; the locked-text rule is untested here");
+    panic!("the fixture has no subreport with plain text; these tests would prove nothing");
+}
+
+#[test]
+fn a_replace_in_subreport_text_is_saved_and_reads_back() {
+    let _lock = serial::crystal();
+    let dir = tempfile::tempdir().unwrap();
+    let (path, sub, shown) = sample_with_subreport_text(dir.path());
+    crystal::open(&path).unwrap();
+    let main_before = crystal::read(&ReadFilter::default()).unwrap();
+
+    let out = crystal::replace(&shown, "Sub text changed", true, false).unwrap();
+    assert!(out.applied && out.changes.iter().any(|c| c.subreport.as_deref() == Some(sub.as_str())), "{out:?}");
+
+    // The file read back fresh holds the new text in that subreport.
+    let after = rpt_core::open_bytes(&std::fs::read(&path).unwrap()).unwrap();
+    let sub_after = rpt_core::subedit::subreport_ir(&after, &sub).expect("the subreport still opens");
+    assert!(
+        sub_after.objects.iter().any(|o| o.text.as_ref().is_some_and(|t| t.display.contains("Sub text changed"))),
+        "the new text is not in the subreport"
+    );
+    assert!(
+        !sub_after.objects.iter().any(|o| o.text.as_ref().is_some_and(|t| t.editable && t.display == shown)),
+        "the old text is still there"
+    );
+    // Main-report objects that did not hold the text are unchanged.
+    crystal::open(&path).unwrap();
+    let main_after = crystal::read(&ReadFilter::default()).unwrap();
+    let kept = |ir: &Value| -> Vec<Value> {
+        objects(ir)
+            .iter()
+            .filter(|o| !o["text"]["display"].as_str().is_some_and(|t| t.contains(&shown)))
+            .map(record)
+            .collect()
+    };
+    assert_eq!(kept(&main_after), kept(&main_before));
     crystal::close();
 }
 
 #[test]
-fn a_replace_reaches_subreport_text_and_a_dry_run_names_the_subreport() {
+fn a_dry_run_names_the_subreport() {
     let _lock = serial::crystal();
-    for sample in ALL {
-        let dir = tempfile::tempdir().unwrap();
-        let path = copy_sample(dir.path(), sample);
-        crystal::open(&path).unwrap();
-        let reread = rpt_core::open_bytes(&std::fs::read(&path).unwrap()).unwrap();
-        for sub in &reread.report().subreports {
-            let Ok(sir) = rpt_core::subedit::subreport_ir(&reread, &sub.name) else { continue };
-            let Some(o) =
-                sir.objects.iter().find(|o| o.text.as_ref().is_some_and(|t| t.editable && t.display.trim().len() >= 3))
-            else {
-                continue;
-            };
-            let shown = o.text.as_ref().unwrap().display.clone();
-            let hits = crystal::find(&shown, true).unwrap();
-            assert!(hits.iter().any(|h| h.subreport.as_deref() == Some(sub.name.as_str())), "{sample}");
-            let out = crystal::replace(&shown, "Sub text changed", true, true).unwrap();
-            assert!(out.changes.iter().any(|c| c.subreport.as_deref() == Some(sub.name.as_str())), "{out:?}");
-            crystal::close();
-            return;
-        }
-    }
-    eprintln!("no sample has a subreport with plain text; subreport replace is untested here");
+    let dir = tempfile::tempdir().unwrap();
+    let (path, sub, shown) = sample_with_subreport_text(dir.path());
+    let before = std::fs::read(&path).unwrap();
+    crystal::open(&path).unwrap();
+    let hits = crystal::find(&shown, true).unwrap();
+    assert!(hits.iter().any(|h| h.subreport.as_deref() == Some(sub.as_str())));
+    let out = crystal::replace(&shown, "Sub text changed", true, true).unwrap();
+    assert!(!out.applied && out.changes.iter().any(|c| c.subreport.as_deref() == Some(sub.as_str())), "{out:?}");
+    assert_eq!(std::fs::read(&path).unwrap(), before);
+    crystal::close();
+}
+
+#[test]
+fn a_replace_that_expects_another_count_applies_nothing() {
+    let _lock = serial::crystal();
+    let dir = tempfile::tempdir().unwrap();
+    let (path, ir) = open_sample(dir.path());
+    let text = editable_text(&ir);
+    let before = std::fs::read(&path).unwrap();
+    let dry = crystal::replace(&display(&text), "Reviewed", true, true).unwrap();
+
+    let said = crystal::replace_expecting(&display(&text), "Reviewed", true, false, Some(dry.replaced + 1)).unwrap_err();
+    assert!(said.contains("changed since") && said.contains("review"), "{said}");
+    assert_eq!(std::fs::read(&path).unwrap(), before);
+
+    let out = crystal::replace_expecting(&display(&text), "Reviewed", true, false, Some(dry.replaced)).unwrap();
+    assert!(out.applied && out.replaced == dry.replaced, "{out:?}");
+    crystal::close();
+}
+
+#[test]
+fn a_replace_that_changes_nothing_does_not_rewrite_the_file() {
+    let _lock = serial::crystal();
+    let dir = tempfile::tempdir().unwrap();
+    let (path, ir) = open_sample(dir.path());
+    let text = editable_text(&ir);
+    let shown = display(&text);
+    let before = std::fs::read(&path).unwrap();
+    // Replacing the text with itself is no change.
+    let out = crystal::replace(&shown, &shown, true, false).unwrap();
+    assert_eq!((out.replaced, out.applied, out.changes.len()), (0, false, 0), "{out:?}");
+    assert_eq!(std::fs::read(&path).unwrap(), before);
     crystal::close();
 }
 
@@ -227,10 +330,10 @@ fn the_screen_commands_follow_the_module_switch() {
     let (_, ir) = open_sample(dir.path());
     let off = v2_lib::modules::Module::CrystalReports.off_sentence();
     assert_eq!(screen::find_with(false, "a", false).unwrap_err(), off);
-    assert_eq!(screen::replace_with(false, "a", "b", false, true).unwrap_err(), off);
+    assert_eq!(screen::replace_with(false, "a", "b", false, true, None).unwrap_err(), off);
     let text = editable_text(&ir);
     assert!(!screen::find_with(true, &display(&text), true).unwrap().is_empty());
-    let out = screen::replace_with(true, &display(&text), "Typed on the screen", true, true).unwrap();
+    let out = screen::replace_with(true, &display(&text), "Typed on the screen", true, true, None).unwrap();
     assert!(!out.applied && out.replaced >= 1);
     crystal::close();
 }

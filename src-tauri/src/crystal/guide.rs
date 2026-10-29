@@ -70,7 +70,7 @@ A batch is all or nothing. When the bundle refuses one operation, nothing in tha
 
 ## Find and replace
 
-`find_in_report` finds text, and field references such as `{Command.name}`, across the report and its subreports. Each hit says whether it is `replaceable`. `replace_in_report` rewrites plain text across them. Run it with `dry_run: true` first: it lists every change (naming the subreport) and saves nothing; then run it again without. An applied replace is saved at once and cannot be taken back from TCM. Text that holds fields is skipped and counted in `skipped_locked`, and fields are never replaced. `find` keeps its spaces, and an empty `replace` removes the text. A replace can renumber objects, so read ids again after it.
+`find_in_report` finds text, and field references such as `{Command.name}`, across the report and its subreports. Each hit says whether it is `replaceable`. `replace_in_report` rewrites plain text across them. Run it with `dry_run: true` first: it lists every change (naming the subreport) and saves nothing; then run it again without. An applied replace is saved at once and cannot be taken back from TCM. Matches that cannot be replaced (fields, and text that holds fields or cannot be edited) are skipped and counted in `skipped_locked`; fields are never replaced. `find` keeps its spaces, and an empty `replace` removes the text. A replace can renumber objects, so read ids again after it.
 
 ## Parameters
 

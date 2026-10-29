@@ -188,7 +188,7 @@ export const commands = {
 	/**  Find text and field references in the open report and its subreports. */
 	crystalFind: (text: string, matchCase: boolean) => typedError<FindHit[], string>(__TAURI_INVOKE("crystal_find", { text, matchCase })),
 	/**  Replace text in the open report; `dry_run` lists the changes and saves nothing. */
-	crystalReplace: (find: string, replace: string, matchCase: boolean, dryRun: boolean) => typedError<ReplaceOutcome, string>(__TAURI_INVOKE("crystal_replace", { find, replace, matchCase, dryRun })),
+	crystalReplace: (find: string, replace: string, matchCase: boolean, dryRun: boolean, expected: number | null) => typedError<ReplaceOutcome, string>(__TAURI_INVOKE("crystal_replace", { find, replace, matchCase, dryRun, expected })),
 	/**
 	 *  Open the activity folder - the full DB (and, later, API) statement
 	 *  trail `activity_log` writes, kept apart from the app log's own daily
@@ -6017,7 +6017,7 @@ export type ReplaceChange = {
 export type ReplaceOutcome = {
 	/**  Objects rewritten (or that would be, on a dry run). */
 	replaced: number,
-	/**  Matching text objects left alone because their text holds fields. */
+	/**  Matching objects left alone: fields, and text that holds fields or cannot be edited. */
 	skipped_locked: number,
 	changes: ReplaceChange[],
 	/**  Whether anything was saved. */

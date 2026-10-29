@@ -48,7 +48,7 @@ pub struct ReplaceChange {
 pub struct ReplaceOutcome {
     /// Objects rewritten (or that would be, on a dry run).
     pub replaced: u32,
-    /// Matching text objects left alone because their text holds fields.
+    /// Matching objects left alone: fields, and text that holds fields or cannot be edited.
     pub skipped_locked: u32,
     pub changes: Vec<ReplaceChange>,
     /// Whether anything was saved.
@@ -118,33 +118,73 @@ fn change_of(ir: &Ir, subreport: Option<&str>, op: &EditOp) -> Option<ReplaceCha
     })
 }
 
+/// Said when the report no longer has the number of changes the person reviewed.
+pub const CHANGED_SINCE_REVIEW: &str =
+    "The report changed since you reviewed this replace, so nothing was replaced. Review it again.";
+
+/// An op that sets an object's text to the text it already has.
+fn is_no_change(ir: &Ir, op: &EditOp) -> bool {
+    change_of(ir, None, op).is_some_and(|c| c.before == c.after)
+}
+
 /// Replace `find` with `replace` in every plain text object of the open
 /// report and its subreports. With `dry_run` (or nothing to change) it only
 /// lists; otherwise the changes are saved over the file like any edit.
 pub fn replace(find: &str, replace: &str, match_case: bool, dry_run: bool) -> Result<ReplaceOutcome, String> {
+    replace_expecting(find, replace, match_case, dry_run, None)
+}
+
+/// `replace`, but an applied replace first checks that it would change
+/// `expected` objects (the count a dry run showed). If the report changed
+/// meanwhile and the count differs, nothing is applied.
+pub fn replace_expecting(
+    find: &str,
+    replace: &str,
+    match_case: bool,
+    dry_run: bool,
+    expected: Option<u32>,
+) -> Result<ReplaceOutcome, String> {
     if find.is_empty() {
         return Err(GIVE_TEXT.to_string());
     }
     let mut slot = state();
     let open = slot.as_mut().ok_or(NOTHING_OPEN)?;
-    let (ops, replaced, skipped) = rpt_core::find::plan_find_replace(&open.rpt, find, replace, !match_case)?;
+    let (planned, planned_count, skipped) = rpt_core::find::plan_find_replace(&open.rpt, find, replace, !match_case)?;
 
+    // Drop what would set text to the text it has: saving that is a rewrite for nothing.
     let main = main_ir(&open.rpt);
+    let mut ops = Vec::new();
+    let mut replaced = planned_count;
     let mut changes = Vec::new();
-    for op in &ops {
+    for op in planned {
         match op {
-            EditOp::InSubreport { subreport, ops } => {
-                if let Ok(ir) = rpt_core::subedit::subreport_ir(&open.rpt, subreport) {
-                    changes.extend(ops.iter().filter_map(|op| change_of(&ir, Some(subreport), op)));
+            EditOp::InSubreport { subreport, ops: inner } => {
+                let ir = rpt_core::subedit::subreport_ir(&open.rpt, &subreport).ok();
+                let total = inner.len();
+                let kept: Vec<EditOp> =
+                    inner.into_iter().filter(|o| !ir.as_ref().is_some_and(|ir| is_no_change(ir, o))).collect();
+                replaced = replaced.saturating_sub(total - kept.len());
+                if let Some(ir) = &ir {
+                    changes.extend(kept.iter().filter_map(|o| change_of(ir, Some(&subreport), o)));
+                }
+                if !kept.is_empty() {
+                    ops.push(EditOp::InSubreport { subreport, ops: kept });
                 }
             }
-            op => changes.extend(change_of(&main, None, op)),
+            op if is_no_change(&main, &op) => replaced = replaced.saturating_sub(1),
+            op => {
+                changes.extend(change_of(&main, None, &op));
+                ops.push(op);
+            }
         }
     }
     let count = |n: usize| u32::try_from(n).unwrap_or(u32::MAX);
     let mut outcome = ReplaceOutcome { replaced: count(replaced), skipped_locked: count(skipped), changes, applied: false };
     if dry_run || ops.is_empty() {
         return Ok(outcome);
+    }
+    if expected.is_some_and(|e| e != outcome.replaced) {
+        return Err(CHANGED_SINCE_REVIEW.to_string());
     }
     apply_ops(open, &ops)?;
     outcome.applied = true;
