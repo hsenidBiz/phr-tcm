@@ -1472,7 +1472,13 @@ table {
   position: absolute;
   top: 0;
   transform-origin: top center;
-  animation: halloween-sway 3.2s ease-in-out infinite alternate;
+  animation: halloween-sway 6.4s ease-in-out infinite;
+  animation-delay: var(--sway-delay, 0s);
+}
+/* The whack always plays from its start, whatever the sway's delay. */
+.halloween-pumpkin.is-whack {
+  animation: halloween-whack 1.2s ease-out;
+  animation-delay: 0s;
 }
 .halloween-string {
   width: 1px;
@@ -1497,10 +1503,18 @@ table {
   fill: var(--color-warning);
   animation: halloween-flicker 2.4s ease-in-out infinite;
 }
+.halloween-pumpkin.is-whack .halloween-glow {
+  animation: halloween-flare 1s ease-out;
+}
+/* A bat flies by a transform transition that the component drives; the
+   inner face flips it to look where it is going. */
 .halloween-bat {
   position: fixed;
   left: 0;
-  animation: halloween-fly 16s linear infinite;
+  top: 0;
+  pointer-events: none;
+  transition-property: transform;
+  transition-timing-function: linear;
 }
 .halloween-bat svg {
   display: block;
@@ -1508,37 +1522,112 @@ table {
   animation: halloween-flap 0.25s ease-in-out infinite alternate;
 }
 .halloween-web {
-  position: fixed;
-  right: 0;
+  position: absolute;
+  left: 0;
   bottom: 0;
-  transform: scaleX(-1);
+  z-index: 10;
+  pointer-events: none;
   fill: none;
   stroke: var(--color-muted);
   opacity: 0.45;
 }
+.halloween-bug-body {
+  fill: var(--color-text);
+  stroke: none;
+}
+.halloween-bug-wrap {
+  fill: var(--color-faint);
+  stroke: var(--color-muted);
+}
+.halloween-bug-leg {
+  stroke: var(--color-muted);
+}
+.halloween-fly-wing {
+  fill: var(--color-faint);
+  fill-opacity: 0.7;
+  stroke: none;
+  animation: halloween-twitch 7s ease-in-out infinite;
+}
+/* The thread is drawn at its full drop and scaled from the top; the body
+   is translated by the same amount on the same timeline (see the shared
+   rule below), so it stays at the thread's end with no layout work. */
 .halloween-spider {
   position: absolute;
-  left: 12%;
   top: 0;
-  animation: halloween-drop 20s ease-in-out infinite;
+  width: 16px;
+}
+.halloween-spider-thread,
+.halloween-spider-body {
+  position: absolute;
+  top: 0;
+  animation: 20s ease-in-out infinite;
+  animation-duration: inherit;
+  animation-delay: inherit;
 }
 .halloween-spider-thread {
+  left: 7px;
   width: 1px;
-  height: 14px;
-  margin: 0 auto;
+  height: var(--drop);
   background: var(--color-muted);
+  transform-origin: top;
+  transform: scaleY(calc(14 / var(--drop-n)));
+  animation-name: halloween-drop;
+}
+.halloween-spider-body {
+  left: 0;
+  transform: translateY(14px);
+  animation-name: halloween-drop-body;
 }
 .halloween-spider svg {
   opacity: 0.8;
   fill: var(--color-text);
   stroke: var(--color-text);
 }
+.halloween-spider.is-scurry .halloween-spider-thread,
+.halloween-spider.is-scurry .halloween-spider-body {
+  animation-duration: 7s;
+  animation-timing-function: linear;
+  animation-delay: 0s;
+  animation-iteration-count: 1;
+}
+.halloween-spider.is-scurry .halloween-spider-thread {
+  animation-name: halloween-up;
+}
+.halloween-spider.is-scurry .halloween-spider-body {
+  animation-name: halloween-up-body;
+}
+/* Sway and whack both start and end at rest (0deg), so the hand-off
+   between them is smooth. */
 @keyframes halloween-sway {
-  from {
+  0%,
+  100% {
+    transform: rotate(0);
+  }
+  25% {
+    transform: rotate(6deg);
+  }
+  75% {
     transform: rotate(-6deg);
   }
-  to {
-    transform: rotate(6deg);
+}
+@keyframes halloween-whack {
+  0% {
+    transform: rotate(0);
+  }
+  15% {
+    transform: rotate(25deg);
+  }
+  35% {
+    transform: rotate(-19deg);
+  }
+  55% {
+    transform: rotate(12deg);
+  }
+  75% {
+    transform: rotate(-6deg);
+  }
+  100% {
+    transform: rotate(0);
   }
 }
 @keyframes halloween-flicker {
@@ -1553,15 +1642,15 @@ table {
     opacity: 0.95;
   }
 }
-/* A bat is across the window for the first third of its cycle, then waits
-   off screen. */
-@keyframes halloween-fly {
-  from {
-    transform: translate(-60px, 0);
+@keyframes halloween-flare {
+  0%,
+  60% {
+    opacity: 1;
+    filter: brightness(1.9) drop-shadow(0 0 3px var(--color-warning));
   }
-  35%,
-  to {
-    transform: translate(calc(100vw + 60px), 24px);
+  100% {
+    opacity: 1;
+    filter: none;
   }
 }
 @keyframes halloween-flap {
@@ -1572,22 +1661,85 @@ table {
     transform: scaleY(0.4);
   }
 }
+@keyframes halloween-twitch {
+  0%,
+  90%,
+  100% {
+    opacity: 1;
+  }
+  93% {
+    opacity: 0.25;
+  }
+  96% {
+    opacity: 0.9;
+  }
+}
+/* The thread lengthens (scaleY) and the body rides at its end (translateY);
+   the two sets of keyframes share their stops. */
 @keyframes halloween-drop {
   0%,
   70%,
   100% {
-    transform: translateY(0);
+    transform: scaleY(calc(14 / var(--drop-n)));
   }
   80%,
   90% {
-    transform: translateY(60px);
+    transform: scaleY(1);
+  }
+}
+@keyframes halloween-drop-body {
+  0%,
+  70%,
+  100% {
+    transform: translateY(14px);
+  }
+  80%,
+  90% {
+    transform: translateY(var(--drop));
+  }
+}
+/* Up the thread fast, wait, then back down to rest. */
+@keyframes halloween-up {
+  0% {
+    transform: scaleY(calc(var(--from-n) / var(--drop-n)));
+  }
+  6%,
+  94% {
+    transform: scaleY(calc(2 / var(--drop-n)));
+  }
+  100% {
+    transform: scaleY(calc(14 / var(--drop-n)));
+  }
+}
+@keyframes halloween-up-body {
+  0% {
+    transform: translateY(var(--from));
+  }
+  6%,
+  94% {
+    transform: translateY(2px);
+  }
+  100% {
+    transform: translateY(14px);
   }
 }
 @media (prefers-reduced-motion: reduce) {
   .halloween-pumpkin,
-  .halloween-glow,
-  .halloween-bat svg,
-  .halloween-spider {
+  .halloween-pumpkin.is-whack,
+  .halloween-spider,
+  .halloween-spider-thread,
+  .halloween-spider-body,
+  .halloween-spider.is-scurry .halloween-spider-thread,
+  .halloween-spider.is-scurry .halloween-spider-body,
+  .halloween-fly-wing,
+  .halloween-bat svg {
+    animation: none;
+  }
+  .halloween-pumpkin.is-whack .halloween-glow {
+    animation: none;
+    filter: brightness(1.9);
+  }
+  .halloween-glow {
     animation: none;
   }
   .halloween-bat {
