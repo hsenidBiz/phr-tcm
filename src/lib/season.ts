@@ -8,6 +8,7 @@
 export const SEASON_KEY = "tcm-v2-season-halloween-2026";
 const THEME_KEY = "tcm-v2-theme-id";
 const ACCENT_KEY = "tcm-v2-accent";
+const CAPTURE_KEY = "tcm-v2-dev-capture";
 const WEEK = 7 * 24 * 60 * 60 * 1000;
 
 export type SeasonRecord = {
@@ -46,6 +47,8 @@ function restore(key: string, value: string | null) {
 
 export function runSeason(now: number = Date.now()): void {
   try {
+    // A docs screenshot run (dev/capture.ts) keeps its pinned themes.
+    if (localStorage.getItem(CAPTURE_KEY) !== null) return;
     const rec = readRecord();
     if (!rec) {
       // Launches on or after 1 November (local time) never switch.

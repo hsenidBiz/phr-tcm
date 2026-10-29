@@ -100,6 +100,7 @@ import { hideSplash } from "./lib/splash";
 import { loadPrefs, savePrefs } from "./lib/prefs";
 import { initTheme } from "./lib/theme";
 import { isCaptureMode } from "./dev/capture";
+import HalloweenDecor from "./components/HalloweenDecor";
 // Every screen and the command palette load on demand: on a slow machine the
 // whole startup bundle is parsed before anything is drawn, and most of it is
 // screens nobody has opened yet. The tour waits for its anchors, so a screen
@@ -1432,6 +1433,7 @@ export default function App() {
               }}
             />
           )}
+          {signedIn && <HalloweenDecor />}
           {/* Inert for the whole tour, EXCEPT at a stop the user is meant
               to act on: there the ringed control has to answer a click,
               and inert is inherited, so nothing inside it could. The

@@ -95,3 +95,11 @@ test("T1.h: a broken record never switches anyone", () => {
   initTheme(OCT29);
   expect(getThemeChoice()).toBe("light");
 });
+
+test("T1.i: a docs screenshot run keeps its pinned theme", () => {
+  localStorage.setItem("tcm-v2-dev-capture", "1");
+  localStorage.setItem("tcm-v2-theme-id", "light");
+  initTheme(OCT29);
+  expect(getThemeChoice()).toBe("light");
+  expect(localStorage.getItem(SEASON_KEY)).toBeNull();
+});

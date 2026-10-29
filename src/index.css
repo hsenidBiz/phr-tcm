@@ -1454,6 +1454,146 @@ table {
   fill: none;
 }
 
+/* Halloween decorations (components/HalloweenDecor.tsx). z-index 10 sits
+   above page content and under everything that opens over it: the PBI
+   picker (30), dropdowns and the action dock (40), modals and the drawer
+   (50), toasts (70) and the tour overlay (100). */
+.halloween-decor {
+  position: relative;
+  height: 0;
+  overflow: visible;
+  pointer-events: none;
+  z-index: 10;
+}
+.halloween-decor * {
+  pointer-events: none;
+}
+.halloween-pumpkin {
+  position: absolute;
+  top: 0;
+  transform-origin: top center;
+  animation: halloween-sway 3.2s ease-in-out infinite alternate;
+}
+.halloween-string {
+  width: 1px;
+  margin: 0 auto;
+  background: var(--color-border-strong);
+}
+.halloween-pumpkin svg,
+.halloween-spider svg {
+  display: block;
+}
+.halloween-stem {
+  fill: var(--color-success);
+}
+.halloween-body {
+  fill: var(--color-accent);
+}
+.halloween-rib {
+  fill: none;
+  stroke: var(--color-accent-hover);
+}
+.halloween-glow {
+  fill: var(--color-warning);
+  animation: halloween-flicker 2.4s ease-in-out infinite;
+}
+.halloween-bat {
+  position: fixed;
+  left: 0;
+  animation: halloween-fly 16s linear infinite;
+}
+.halloween-bat svg {
+  display: block;
+  fill: var(--color-border-strong);
+  animation: halloween-flap 0.25s ease-in-out infinite alternate;
+}
+.halloween-web {
+  position: fixed;
+  left: 0;
+  bottom: 0;
+  fill: none;
+  stroke: var(--color-border-strong);
+  opacity: 0.6;
+}
+.halloween-spider {
+  position: absolute;
+  left: 12%;
+  top: 0;
+  animation: halloween-drop 20s ease-in-out infinite;
+}
+.halloween-spider-thread {
+  width: 1px;
+  height: 14px;
+  margin: 0 auto;
+  background: var(--color-muted);
+}
+.halloween-spider svg {
+  opacity: 0.8;
+  fill: var(--color-text);
+  stroke: var(--color-text);
+}
+@keyframes halloween-sway {
+  from {
+    transform: rotate(-6deg);
+  }
+  to {
+    transform: rotate(6deg);
+  }
+}
+@keyframes halloween-flicker {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  45% {
+    opacity: 0.65;
+  }
+  60% {
+    opacity: 0.95;
+  }
+}
+/* A bat is across the window for the first third of its cycle, then waits
+   off screen. */
+@keyframes halloween-fly {
+  from {
+    transform: translate(-60px, 0);
+  }
+  35%,
+  to {
+    transform: translate(calc(100vw + 60px), 24px);
+  }
+}
+@keyframes halloween-flap {
+  from {
+    transform: scaleY(1);
+  }
+  to {
+    transform: scaleY(0.4);
+  }
+}
+@keyframes halloween-drop {
+  0%,
+  70%,
+  100% {
+    transform: translateY(0);
+  }
+  80%,
+  90% {
+    transform: translateY(60px);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .halloween-pumpkin,
+  .halloween-glow,
+  .halloween-bat svg,
+  .halloween-spider {
+    animation: none;
+  }
+  .halloween-bat {
+    display: none;
+  }
+}
+
 /* ── Motion ─────────────────────────────────────────────────────────────
    Transitions adapted from transitions.dev's free set (MIT, the
    `transitions-dev` package): menu dropdown, modal and toggle. (The
