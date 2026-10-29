@@ -27,6 +27,13 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.4.2-beta.5",
+    date: "2026-10-29",
+    items: [
+      "Halloween: bats now fly from place to place, spiders let out their thread as they drop, and there are three of them. Click a pumpkin or a spider on an empty part of the page to see what it does. The cobweb has moved to the bottom left and has a few bugs stuck in it.",
+    ],
+  },
+  {
     version: "2.4.2-beta.4",
     date: "2026-10-29",
     items: [
