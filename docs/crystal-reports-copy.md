@@ -19,6 +19,8 @@ it is not a fork, and nothing in it is ours to change.
 
 `crystal-reports/` is byte-for-byte: `.gitattributes` marks `crystal-reports/** -text`, so git never converts its line endings (the 2026-10-16 copy was stored with LF; the 2026-10-22 refresh stores the source's own bytes, which is why that commit touches every CRLF file).
 
+After a copy, touch the copied `.rs` and `Cargo.toml` files (set their modified time to now). robocopy keeps the source's older file times, and cargo then keeps building the previous copy's crates, which shows up as missing items from the new source.
+
 `crystal-reports/target/` is in `.gitignore` in case anything ever builds there.
 Nothing should: build from `src-tauri`.
 
