@@ -40,3 +40,23 @@ test("T2.c: the component names no colour of its own", () => {
   expect(src).not.toMatch(/#[0-9a-fA-F]{3,8}\b/);
   expect(src).not.toContain("rgb(");
 });
+
+test("T2.d: the scenery stays small and visible: short strings, muted bats, the web bottom right", () => {
+  root.setAttribute("data-theme", "halloween");
+  const { container } = render(<HalloweenDecor />);
+  const strings = [...container.querySelectorAll<HTMLElement>(".halloween-string")].map((e) => e.style.height);
+  expect(strings).toEqual(["6px", "16px", "10px", "20px"]);
+  expect(container.querySelector(".halloween-pumpkin svg")?.getAttribute("width")).toBe("32");
+  expect(container.querySelector(".halloween-bat svg")?.getAttribute("width")).toBe("26");
+  const rule = (sel: string) => {
+    const at = css.lastIndexOf(`\n${sel} {`);
+    return at < 0 ? "" : css.slice(at, css.indexOf("}", at));
+  };
+  expect(rule(".halloween-bat svg")).toContain("fill: var(--color-muted)");
+  const web = rule(".halloween-web");
+  expect(web).toContain("right: 0");
+  expect(web).not.toContain("left: 0");
+  expect(web).toContain("stroke: var(--color-muted)");
+  expect(web).toContain("opacity: 0.45");
+  expect(rule(".halloween-spider svg")).toContain("fill: var(--color-text)");
+});

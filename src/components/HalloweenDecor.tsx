@@ -2,22 +2,22 @@ import { useEffect, useState } from "react";
 import { isCaptureMode } from "../dev/capture";
 
 /** The Halloween theme's scenery: pumpkins hanging under the PBI bar, bats
- * crossing the window, a cobweb in the corner and a spider on a thread. All
+ * crossing the window, a cobweb in the bottom-right corner and a spider on a thread. All
  * colours come from the theme through the .halloween-* classes in index.css,
  * so it follows the palette. It is pure decoration: aria-hidden, never takes
  * a click, and takes no height. Rendered only while the Halloween theme is on. */
 
 const PUMPKINS = [
-  { right: "48%", string: 36, delay: "-0.9s", grin: "smile" },
-  { right: "40%", string: 20, delay: "-2.2s", grin: "teeth" },
-  { right: "31%", string: 44, delay: "-1.6s", grin: "smile" },
-  { right: "22%", string: 28, delay: "-0.4s", grin: "teeth" },
+  { right: "48%", string: 6, delay: "-0.9s", grin: "smile" },
+  { right: "40%", string: 16, delay: "-2.2s", grin: "teeth" },
+  { right: "31%", string: 10, delay: "-1.6s", grin: "smile" },
+  { right: "22%", string: 20, delay: "-0.4s", grin: "teeth" },
 ] as const;
 
 const BATS = [
-  { top: 56, width: 22, duration: "16s", delay: "-3s" },
-  { top: 110, width: 18, duration: "21s", delay: "-10s" },
-  { top: 84, width: 20, duration: "14s", delay: "-7s" },
+  { top: 56, width: 26, duration: "16s", delay: "-3s" },
+  { top: 110, width: 22, duration: "21s", delay: "-10s" },
+  { top: 84, width: 24, duration: "14s", delay: "-7s" },
 ] as const;
 
 function themeIsHalloween(): boolean {
@@ -43,7 +43,7 @@ export default function HalloweenDecor() {
       {PUMPKINS.map((p) => (
         <div key={p.right} className="halloween-pumpkin" style={{ right: p.right, animationDelay: p.delay }}>
           <div className="halloween-string" style={{ height: p.string }} />
-          <svg width="28" height="24" viewBox="0 0 28 24">
+          <svg width="32" height="27" viewBox="0 0 28 24">
             <rect className="halloween-stem" x="12.5" y="0" width="3" height="5" rx="1" />
             <ellipse className="halloween-body" cx="14" cy="14" rx="13" ry="10" />
             <path className="halloween-rib" d="M9 5 Q6 14 9 23 M19 5 Q22 14 19 23" />
@@ -75,7 +75,7 @@ export default function HalloweenDecor() {
         </div>
       ))}
 
-      <svg className="halloween-web" width="90" height="90" viewBox="0 0 80 80">
+      <svg className="halloween-web" width="100" height="100" viewBox="0 0 80 80">
         <path d="M0 0 L80 80 M0 20 L60 80 M0 45 L35 80 M0 80 L0 0 M0 80 L80 80" />
         <path d="M0 62 Q10 66 18 80 M0 42 Q22 48 38 80 M0 22 Q34 30 58 80" />
       </svg>

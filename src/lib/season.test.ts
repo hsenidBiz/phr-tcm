@@ -1,4 +1,4 @@
-import { afterEach, expect, test } from "vitest";
+import { afterEach, expect, test, vi } from "vitest";
 import { SEASON_KEY } from "./season";
 import { getAccent, getThemeChoice, initTheme, setAccent, setThemeChoice } from "./theme";
 
@@ -7,6 +7,8 @@ const DAY = 86_400_000;
 const root = document.documentElement;
 
 afterEach(() => {
+  vi.restoreAllMocks();
+  vi.unstubAllEnvs();
   localStorage.clear();
   root.classList.remove("dark");
   root.removeAttribute("data-theme");
@@ -46,17 +48,53 @@ test("T1.c: the week ends with the person's own look back", () => {
   expect(getThemeChoice()).toBe("ocean");
 });
 
-test.each([
-  ["a theme pick", () => setThemeChoice("midnight"), "midnight", "default"],
-  ["re-picking Halloween", () => setThemeChoice("halloween"), "halloween", "default"],
-  ["an accent pick", () => setAccent("rose"), "halloween", "rose"],
-])("T1.d: %s during the week is never undone", (_n, pick, theme, accent) => {
+test("T1.d: an accent pick ends only the accent restore: the theme still goes back", () => {
   ocean();
   initTheme(OCT29);
-  pick();
+  setAccent("rose");
+  initTheme(OCT29 + 7 * DAY);
+  expect(getThemeChoice()).toBe("ocean");
+  expect(getAccent()).toBe("rose");
+});
+
+test("T1.d2: leaving Halloween early puts the accent back at once", () => {
+  ocean();
+  initTheme(OCT29);
+  setThemeChoice("ocean");
+  expect(getAccent()).toBe("blue");
+  expect(root.getAttribute("data-accent")).toBe("blue");
   initTheme(OCT29 + 8 * DAY);
-  expect(getThemeChoice()).toBe(theme);
-  expect(getAccent()).toBe(accent);
+  expect(getThemeChoice()).toBe("ocean");
+  expect(getAccent()).toBe("blue");
+});
+
+test("T1.d3: someone who never chose an accent gets violet back on leaving", () => {
+  initTheme(OCT29);
+  setThemeChoice("slate");
+  expect(localStorage.getItem("tcm-v2-accent")).toBeNull();
+  expect(getAccent()).toBe("violet");
+  expect(getThemeChoice()).toBe("slate");
+});
+
+test("T1.d4: choosing Halloween on purpose keeps the whole look for good", () => {
+  ocean();
+  initTheme(OCT29);
+  setThemeChoice("halloween");
+  initTheme(OCT29 + 8 * DAY);
+  expect(getThemeChoice()).toBe("halloween");
+  expect(getAccent()).toBe("default");
+});
+
+test("T1.d5: a record of the first shape still restores both halves", () => {
+  localStorage.setItem("tcm-v2-theme-id", "halloween");
+  localStorage.setItem("tcm-v2-accent", "default");
+  localStorage.setItem(
+    SEASON_KEY,
+    JSON.stringify({ switchedAt: OCT29, prevTheme: "ocean", prevAccent: "blue", state: "active" }),
+  );
+  initTheme(OCT29 + 7 * DAY);
+  expect(getThemeChoice()).toBe("ocean");
+  expect(getAccent()).toBe("blue");
 });
 
 test("T1.e: someone who never picked anything lands back on Light and violet", () => {
@@ -97,9 +135,36 @@ test("T1.h: a broken record never switches anyone", () => {
 });
 
 test("T1.i: a docs screenshot run keeps its pinned theme", () => {
-  localStorage.setItem("tcm-v2-dev-capture", "1");
+  vi.stubEnv("VITE_DOCS_CAPTURE", "1");
+  localStorage.setItem("tcm-v2-dev-capture", "on");
   localStorage.setItem("tcm-v2-theme-id", "light");
   initTheme(OCT29);
   expect(getThemeChoice()).toBe("light");
   expect(localStorage.getItem(SEASON_KEY)).toBeNull();
+});
+
+test("T1.j: nothing is switched unless the record is saved", () => {
+  ocean();
+  const real = Storage.prototype.setItem;
+  vi.spyOn(Storage.prototype, "setItem").mockImplementation(function (this: Storage, k: string, v: string) {
+    if (k === SEASON_KEY) throw new Error("quota");
+    real.call(this, k, v);
+  });
+  initTheme(OCT29);
+  expect(getThemeChoice()).toBe("ocean");
+  expect(getAccent()).toBe("blue");
+});
+
+test("T1.k: at day 7 only what is still the week's look goes back", () => {
+  ocean();
+  initTheme(OCT29);
+  localStorage.setItem("tcm-v2-theme-id", "midnight");
+  localStorage.setItem("tcm-v2-accent", "rose");
+  initTheme(OCT29 + 7 * DAY);
+  expect(getThemeChoice()).toBe("midnight");
+  expect(getAccent()).toBe("rose");
+  expect(JSON.parse(localStorage.getItem(SEASON_KEY) ?? "{}")).toMatchObject({
+    themeState: "done",
+    accentState: "done",
+  });
 });

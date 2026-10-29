@@ -5,6 +5,8 @@
  * a setting.
  */
 
+import { SEASON_KEY } from "./season";
+
 const PREFIX = "tcm-v2-";
 
 /** Every tcm-v2-* key, for the export command. */
@@ -22,18 +24,20 @@ export function collectLocalStorage(): { [key: string]: string } {
  * backup doesn't have are removed too - an import means "make this machine
  * look like that one", not a merge of both machines' leftovers. Keys
  * outside the prefix are ignored, so a hand-edited backup can't plant
- * anything else in storage. Returns how many keys were applied.
+ * anything else in storage. The Halloween season record is this machine's
+ * own and never imported or removed: an import must not switch anyone back
+ * onto the theme. Returns how many keys were applied.
  */
 export function applyLocalStorage(entries: { [key: string]: string }): number {
   const stale: string[] = [];
   for (let i = 0; i < localStorage.length; i++) {
     const k = localStorage.key(i);
-    if (k && k.startsWith(PREFIX) && !(k in entries)) stale.push(k);
+    if (k && k.startsWith(PREFIX) && k !== SEASON_KEY && !(k in entries)) stale.push(k);
   }
   for (const k of stale) localStorage.removeItem(k);
   let applied = 0;
   for (const [k, v] of Object.entries(entries)) {
-    if (!k.startsWith(PREFIX)) continue;
+    if (!k.startsWith(PREFIX) || k === SEASON_KEY) continue;
     localStorage.setItem(k, v);
     applied++;
   }

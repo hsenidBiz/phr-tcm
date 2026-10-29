@@ -5,7 +5,7 @@
  * accent presets still compose on top (data-accent wins over the theme's
  * default accent because its CSS comes later). */
 
-import { cancelSeasonRestore, runSeason } from "./season";
+import { runSeason, seasonAccentPicked, seasonThemePicked } from "./season";
 
 export type ThemeId = "light" | "slate" | "midnight" | "graphite" | "ocean" | "oled" | "halloween";
 /** What the user picked - "system" follows the OS light/dark preference. */
@@ -75,13 +75,14 @@ export function setThemeChoice(choice: ThemeChoice) {
   // Stored explicitly - including "system" - so a deliberate pick is never
   // indistinguishable from nobody having chosen anything (getThemeChoice's
   // unset default is "light", not "system").
-  cancelSeasonRestore(); // a pick during the Halloween week is never undone
+  seasonThemePicked(choice); // a pick during the Halloween week is never undone
   localStorage.setItem(ID_KEY, choice);
   if (choice !== "system" && THEMES.find((x) => x.id === choice)?.dark) {
     localStorage.setItem(DARK_PREF_KEY, choice);
   }
   localStorage.removeItem(LEGACY_KEY);
   applyThemeChoice(choice);
+  applyAccent(getAccent()); // leaving Halloween early puts the accent back
 }
 
 /* Legacy light/dark helpers - the sun/moon toggle and the Toaster only
@@ -119,7 +120,7 @@ export function setAccent(accent: Accent) {
   // Stored explicitly, including "default" - so picking "the theme's own
   // colour" is remembered as a real choice rather than read back later as
   // "nothing chosen" (which now means violet, not "default").
-  cancelSeasonRestore();
+  seasonAccentPicked();
   localStorage.setItem(ACCENT_KEY, accent);
   applyAccent(accent);
 }

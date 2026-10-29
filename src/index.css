@@ -1504,16 +1504,17 @@ table {
 }
 .halloween-bat svg {
   display: block;
-  fill: var(--color-border-strong);
+  fill: var(--color-muted);
   animation: halloween-flap 0.25s ease-in-out infinite alternate;
 }
 .halloween-web {
   position: fixed;
-  left: 0;
+  right: 0;
   bottom: 0;
+  transform: scaleX(-1);
   fill: none;
-  stroke: var(--color-border-strong);
-  opacity: 0.6;
+  stroke: var(--color-muted);
+  opacity: 0.45;
 }
 .halloween-spider {
   position: absolute;
