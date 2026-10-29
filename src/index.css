@@ -1474,6 +1474,9 @@ table {
   transform-origin: top center;
   animation: halloween-sway 3.2s ease-in-out infinite alternate;
 }
+.halloween-pumpkin.is-whack {
+  animation: halloween-whack 1.2s ease-out;
+}
 .halloween-string {
   width: 1px;
   margin: 0 auto;
@@ -1482,6 +1485,11 @@ table {
 .halloween-pumpkin svg,
 .halloween-spider svg {
   display: block;
+}
+/* The only parts of the scenery that take a click. */
+.halloween-pumpkin svg {
+  pointer-events: auto;
+  cursor: pointer;
 }
 .halloween-stem {
   fill: var(--color-success);
@@ -1497,10 +1505,18 @@ table {
   fill: var(--color-warning);
   animation: halloween-flicker 2.4s ease-in-out infinite;
 }
+.halloween-pumpkin.is-whack .halloween-glow {
+  animation: halloween-flare 1s ease-out;
+}
+/* A bat flies by a transform transition that the component drives; the
+   inner face flips it to look where it is going. */
 .halloween-bat {
   position: fixed;
   left: 0;
-  animation: halloween-fly 16s linear infinite;
+  top: 0;
+  pointer-events: none;
+  transition-property: transform;
+  transition-timing-function: linear;
 }
 .halloween-bat svg {
   display: block;
@@ -1508,30 +1524,60 @@ table {
   animation: halloween-flap 0.25s ease-in-out infinite alternate;
 }
 .halloween-web {
-  position: fixed;
-  right: 0;
+  position: absolute;
+  left: 0;
   bottom: 0;
-  transform: scaleX(-1);
+  z-index: 10;
+  pointer-events: none;
   fill: none;
   stroke: var(--color-muted);
   opacity: 0.45;
 }
+.halloween-bug-body {
+  fill: var(--color-text);
+  stroke: none;
+}
+.halloween-bug-wrap {
+  fill: var(--color-faint);
+  stroke: var(--color-muted);
+}
+.halloween-bug-leg {
+  stroke: var(--color-muted);
+}
+.halloween-fly-wing {
+  fill: var(--color-faint);
+  fill-opacity: 0.7;
+  stroke: none;
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: halloween-twitch 7s ease-in-out infinite;
+}
+/* The body hangs at the thread's end: it is the thread's next sibling, so
+   the thread lengthening is all the motion there is. */
 .halloween-spider {
   position: absolute;
-  left: 12%;
   top: 0;
-  animation: halloween-drop 20s ease-in-out infinite;
 }
 .halloween-spider-thread {
   width: 1px;
   height: 14px;
   margin: 0 auto;
   background: var(--color-muted);
+  animation: halloween-drop 20s ease-in-out infinite;
+  animation-duration: inherit;
+  animation-delay: inherit;
+}
+.halloween-spider-body {
+  pointer-events: auto;
+  cursor: pointer;
 }
 .halloween-spider svg {
   opacity: 0.8;
   fill: var(--color-text);
   stroke: var(--color-text);
+}
+.halloween-spider.is-scurry .halloween-spider-thread {
+  animation: halloween-up 7s linear;
 }
 @keyframes halloween-sway {
   from {
@@ -1539,6 +1585,26 @@ table {
   }
   to {
     transform: rotate(6deg);
+  }
+}
+@keyframes halloween-whack {
+  0% {
+    transform: rotate(0);
+  }
+  15% {
+    transform: rotate(25deg);
+  }
+  35% {
+    transform: rotate(-19deg);
+  }
+  55% {
+    transform: rotate(12deg);
+  }
+  75% {
+    transform: rotate(-6deg);
+  }
+  100% {
+    transform: rotate(0);
   }
 }
 @keyframes halloween-flicker {
@@ -1553,15 +1619,15 @@ table {
     opacity: 0.95;
   }
 }
-/* A bat is across the window for the first third of its cycle, then waits
-   off screen. */
-@keyframes halloween-fly {
-  from {
-    transform: translate(-60px, 0);
+@keyframes halloween-flare {
+  0%,
+  60% {
+    opacity: 1;
+    filter: brightness(1.9) drop-shadow(0 0 3px var(--color-warning));
   }
-  35%,
-  to {
-    transform: translate(calc(100vw + 60px), 24px);
+  100% {
+    opacity: 1;
+    filter: none;
   }
 }
 @keyframes halloween-flap {
@@ -1572,22 +1638,60 @@ table {
     transform: scaleY(0.4);
   }
 }
+@keyframes halloween-twitch {
+  0%,
+  90%,
+  100% {
+    transform: rotate(0);
+  }
+  93% {
+    transform: rotate(-16deg);
+  }
+  96% {
+    transform: rotate(10deg);
+  }
+}
+/* The thread is the only thing that moves: it lengthens, and the body
+   rides at its end. */
 @keyframes halloween-drop {
   0%,
   70%,
   100% {
-    transform: translateY(0);
+    height: 14px;
   }
   80%,
   90% {
-    transform: translateY(60px);
+    height: var(--drop);
+  }
+}
+/* Up the thread fast, wait, then back down to rest. */
+@keyframes halloween-up {
+  0% {
+    height: var(--from);
+  }
+  6%,
+  94% {
+    height: 2px;
+  }
+  100% {
+    height: 14px;
   }
 }
 @media (prefers-reduced-motion: reduce) {
   .halloween-pumpkin,
-  .halloween-glow,
-  .halloween-bat svg,
-  .halloween-spider {
+  .halloween-pumpkin.is-whack,
+  .halloween-spider,
+  .halloween-spider-thread,
+  .halloween-spider.is-scurry .halloween-spider-thread,
+  .halloween-fly-wing,
+  .halloween-bat svg {
+    animation: none;
+  }
+  .halloween-pumpkin.is-whack .halloween-glow {
+    animation: none;
+    filter: brightness(1.9);
+  }
+  .halloween-glow {
     animation: none;
   }
   .halloween-bat {
