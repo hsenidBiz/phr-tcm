@@ -76,6 +76,29 @@ pub fn open_in_designer_with(on: bool, opener: impl FnOnce(&str) -> Result<(), S
     })
 }
 
+/// Open the report the person picked, through the same `crystal::open` the
+/// assistant's open_report uses, so both see one current report. A refusal
+/// is one sentence naming the file, never its path; the raw sentence goes
+/// to the log.
+pub fn open_file_with(on: bool, path: &str) -> Result<(), String> {
+    offered(on)?;
+    crystal::open(path).map(|_| ()).map_err(|e| {
+        crate::applog::info(format!("Crystal Reports: a picked report could not be opened: {e}"));
+        e.replace(path, &file_name(path))
+    })
+}
+
+fn file_name(path: &str) -> String {
+    Path::new(path).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| path.to_string())
+}
+
+/// Open a report the person picked; it becomes the open report.
+#[tauri::command(async)]
+#[specta::specta]
+pub fn crystal_open_file(path: String) -> Result<(), String> {
+    open_file_with(modules::on(Module::CrystalReports), &path)
+}
+
 /// The report TCM has open and how it last drew; `None` when none is open.
 #[tauri::command(async)]
 #[specta::specta]

@@ -179,6 +179,8 @@ export const commands = {
 	crystalPreviewPdf: () => typedError<string | null, string>(__TAURI_INVOKE("crystal_preview_pdf")),
 	/**  Open the report's file in the program Windows has for .rpt files. */
 	crystalOpenInDesigner: () => typedError<null, string>(__TAURI_INVOKE("crystal_open_in_designer")),
+	/**  Open a report the person picked; it becomes the open report. */
+	crystalOpenFile: (path: string) => typedError<null, string>(__TAURI_INVOKE("crystal_open_file", { path })),
 	/**
 	 *  Open the activity folder - the full DB (and, later, API) statement
 	 *  trail `activity_log` writes, kept apart from the app log's own daily

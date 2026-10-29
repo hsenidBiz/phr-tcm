@@ -16,6 +16,9 @@ import { act, fireEvent, render, screen, waitFor, within } from "@testing-librar
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import CrystalReports from "./index";
 
+const pick = vi.hoisted(() => vi.fn());
+vi.mock("@tauri-apps/plugin-dialog", () => ({ open: pick, save: vi.fn() }));
+
 /** A stand-in for pdf.js: every document it opens, and every page it draws. */
 const pdfjs = vi.hoisted(() => {
   type Viewport = { width: number; height: number; scale: number };
@@ -153,17 +156,18 @@ function current(over: Record<string, unknown> = {}, missing = false) {
   };
 }
 
-type Answers = { current?: unknown; pdf?: unknown; open?: () => void };
+type Answers = { current?: unknown; pdf?: unknown; open?: () => void; openFile?: (path: string) => void };
 
 /** Mocks the three commands; `answers` is read on every call, so a test can change what they say. */
 function mockCrystal(answers: Answers) {
   const calls: string[] = [];
   mockIPC(
-    (cmd) => {
+    (cmd, args) => {
       calls.push(cmd);
       if (cmd === "crystal_current") return answers.current ?? null;
       if (cmd === "crystal_preview_pdf") return answers.pdf ?? null;
       if (cmd === "crystal_open_in_designer") return answers.open?.() ?? null;
+      if (cmd === "crystal_open_file") return answers.openFile?.((args as { path: string }).path) ?? null;
       return undefined;
     },
     { shouldMockEvents: true },
@@ -205,7 +209,7 @@ test("the_screen_says_when_there_is_nothing_to_show", async () => {
   mockCrystal({ current: null, pdf: null });
   render(<CrystalReports />);
 
-  expect(await screen.findByText("No report open. Ask your AI assistant to open one.")).toBeInTheDocument();
+  expect(await screen.findByText("No report open. Open a report, or ask your AI assistant to open one.")).toBeInTheDocument();
   expect(screen.queryByRole("region", { name: "Pages" })).not.toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Open in Crystal Reports" })).not.toBeInTheDocument();
 });
@@ -630,4 +634,60 @@ test("a_refusal_to_read_the_report_is_shown_in_a_sentence", async () => {
 
   expect(await screen.findByRole("alert")).toHaveTextContent("Crystal Reports is switched off in Modules");
   expect(screen.queryByRole("region", { name: "Pages" })).not.toBeInTheDocument();
+});
+
+test("the_empty_screen_offers_to_open_a_report", async () => {
+  const answers: Answers = { current: null, pdf: null };
+  const opened: string[] = [];
+  answers.openFile = (path) => {
+    opened.push(path);
+    answers.current = current();
+    answers.pdf = PDF;
+  };
+  mockCrystal(answers);
+  pick.mockResolvedValue("C:\r\B.rpt");
+  render(<CrystalReports />);
+
+  fireEvent.click(await screen.findByRole("button", { name: "Open report" }));
+  expect(await screen.findByText("PMSV10_GoalAlignCascade.rpt")).toBeInTheDocument();
+  expect(opened).toEqual(["C:\r\B.rpt"]);
+  expect(pick).toHaveBeenCalledWith(
+    expect.objectContaining({ multiple: false, filters: [{ name: "Reports", extensions: ["rpt"] }] }),
+  );
+});
+
+test("a_cancelled_pick_opens_nothing", async () => {
+  const calls = mockCrystal({ current: null, pdf: null });
+  pick.mockResolvedValue(null);
+  render(<CrystalReports />);
+
+  fireEvent.click(await screen.findByRole("button", { name: "Open report" }));
+  await waitFor(() => expect(pick).toHaveBeenCalled());
+  expect(calls).not.toContain("crystal_open_file");
+});
+
+test("a_refused_open_is_shown_in_a_sentence", async () => {
+  mockCrystal({
+    current: null,
+    pdf: null,
+    openFile: () => {
+      throw "B.txt is not a .rpt file. The Crystal Reports tools work on .rpt files only.";
+    },
+  });
+  pick.mockResolvedValue("C:\r\B.txt");
+  render(<CrystalReports />);
+
+  fireEvent.click(await screen.findByRole("button", { name: "Open report" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent("B.txt is not a .rpt file.");
+});
+
+test("an_open_report_can_be_swapped_from_its_header", async () => {
+  const opened: string[] = [];
+  mockCrystal({ current: current(), pdf: PDF, openFile: (p) => void opened.push(p) });
+  pick.mockResolvedValue("C:\r\C.rpt");
+  render(<CrystalReports />);
+
+  await screen.findByText("PMSV10_GoalAlignCascade.rpt");
+  fireEvent.click(within(header()).getByRole("button", { name: "Open report" }));
+  await waitFor(() => expect(opened).toEqual(["C:\r\C.rpt"]));
 });

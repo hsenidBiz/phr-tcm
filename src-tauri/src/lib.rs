@@ -160,6 +160,7 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             crystal::crystal_current,
             crystal::crystal_preview_pdf,
             crystal::crystal_open_in_designer,
+            crystal::crystal_open_file,
             misc::open_activity_log_dir,
             misc::apply_update,
             misc::watch_assigned_work,
