@@ -676,7 +676,8 @@
       <li>Live data runs <code>EXEC [&lt;whole name&gt;]</code>, so a procedure stored with a schema or database in front (<code>dbo.MyProc</code>) is not found on the server. The six samples use plain names.</li>
       <li>Subreport data is never fetched live; only the main report's procedure runs. If a future version passes the live scope to subreports, tell me before I copy it in: TCM's safety check only covers the main report's procedure today.</li>
       <li>A report's saved parameter values are never bound: an unsupplied parameter is sent as NULL, though the comment in <code>rpt-db-mssql/src/lib.rs</code> says saved values "are consulted first". TCM refuses a live preview when a required parameter is not passed.</li>
-      <li>No compare function in the library; TCM carries a copy of the one in <code>rpt-cli</code>.</li>
+      <li>The library now has its own compare; TCM still uses its own copy of the one in <code>rpt-cli</code>.</li>
+      <li>PDF/A export, thumbnails and editing inside subreports: not offered yet (decided 29 October 2026). Find and replace is the one thing that changes subreport text.</li>
       <li>You plan a raw viewer so the preview no longer goes through a PDF (2026-10-17). When it exists, tell me and TCM's page view switches to it.</li>
       <li>Placeholders for fields with no data (for example "[Employee Name]") would need a render option on your side.</li>
       <li>The comment in <code>rpt-core/src/preview.rs</code> (around line 143) says subreports share the live scope; they do not today.</li>
@@ -705,6 +706,9 @@
       <li>Open in the report designer opens the saved file, and an edited file loads in the designer.</li>
       <li>The page view (2.2.3-beta.5): a real report's pages draw, Fit width / 100% / zoom work, the page area fills the screen and scrolls, and a long report stays responsive (pages are drawn only near the view). In the app's developer tools, a pdf.worker thread should be running with no "fake worker" warning.</li>
       <li>pdf.js runs without WebAssembly (the app's security settings block it): a report with ICC colour profiles or JPEG 2000 / JBIG2 images would draw with fallback colours or miss those images. Your renderer does not seem to write those.</li>
+      <li>Open report from the file picker, in the real window: the picked file opens, and a cancelled picker changes nothing.</li>
+      <li>The parameters panel: fill values for the main sample, and the preview draws with them; a wrong name or a value that does not fit is refused with the parameter named.</li>
+      <li>Find and replace, in the real window: Find lists the matches, Replace all shows the count and asks first, and the saved file shows the change (including subreport text, and text holding fields left alone).</li>
       <li>Which XML form works: <code>(T.c).value(...)</code> or <code>c.value(...)</code>.</li>
       <li>Whether sqlcmd reads <code>RESET</code>/<code>ED</code>/<code>EXIT</code>/<code>QUIT</code> at the start of a line inside a string (predates this work).</li>
     </ul>

@@ -279,12 +279,23 @@ fn the_guide_names_every_tool_and_the_units() {
         "preview_report_live",
         "find_in_report",
         "replace_in_report",
+        "get_report_parameters",
+        "dry_run",
+        "skipped_locked",
+        "params",
         "get_guide",
     ] {
         assert!(guide.contains(tool), "the guide names {tool}");
     }
     for term in ["twips", "1440", "#RRGGBB", "git"] {
         assert!(guide.contains(term), "the guide mentions {term}");
+    }
+    let lower = guide.to_lowercase();
+    for gone in ["undo", "redo"] {
+        assert!(!lower.contains(gone), "the guide does not mention {gone}");
+    }
+    for op in ["set_section_visibility", "add_summary", "set_parameter", "remove_sort", "add_table"] {
+        assert!(guide.contains(op), "the guide lists {op}");
     }
 }
 
