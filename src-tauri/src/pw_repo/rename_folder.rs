@@ -912,7 +912,11 @@ pub fn rename(
                 }
             }
         }
-        if mapping::save_at(&path, &map).is_err() {
+        let saved = match maps_root {
+            Some(root) => mapping::save_at(root, &path, &map),
+            None => Err(String::new()),
+        };
+        if saved.is_err() {
             crate::applog::warn("pw-repo: export settings could not be saved after a rename");
             failed.push(file_name(&path));
         }

@@ -253,7 +253,7 @@ fn cleared_on_disk(root: &Path, case_id: i32) -> Option<ClearedDefect> {
 /// the mark on disk; this one is for setting up a store by hand.
 pub fn save_script(root: &Path, script: &CaseScript) -> Result<(), String> {
     let dir = scripts_dir(root);
-    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    super::roots::create_dir_all(root, &dir).map_err(|e| e.to_string())?;
     let json = serde_json::to_string_pretty(script).map_err(|e| e.to_string())?;
     super::roots::write_bytes(root, &dir.join(format!("case-{}.json", script.case_id)), json.as_bytes())?;
     scripts_changed(root, &[script.case_id]);
@@ -779,9 +779,14 @@ fn write_scripts_held(
         }
     }
 
-    // Pass 3: stage then commit.
-    for (path, json) in &entries {
-        super::roots::write_file(root, path, json).map_err(switched_or_io)?;
+    // Pass 3: stage then commit. ONE guard across the whole bundle, so a
+    // switch waits for it (or refuses it before the first file): the bundle
+    // lands wholly in the environment it was made for, or not at all.
+    {
+        let held = super::roots::guard(root).map_err(switched_or_io)?;
+        for (path, json) in &entries {
+            super::roots::write_file_held(&held, path, json).map_err(SaveScriptsError::Io)?;
+        }
     }
     let ids: Vec<i32> = scripts.iter().map(|s| s.case_id).collect();
     scripts_changed(root, &ids);
@@ -977,7 +982,7 @@ pub fn load_scripts(root: &Path, case_ids: &[i32]) -> Vec<ScriptLookup> {
 
 pub fn save_run(root: &Path, run: &LocalRun) -> Result<(), String> {
     let dir = runs_dir(root);
-    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    super::roots::create_dir_all(root, &dir).map_err(|e| e.to_string())?;
     let json = serde_json::to_string_pretty(run).map_err(|e| e.to_string())?;
     // Atomic, so a run that was linked into place at the update is replaced
     // rather than rewritten through the link, and a crash never half-writes it.
@@ -1537,7 +1542,7 @@ pub fn delete_script(root: &Path, case_id: i32, now_ms: u64) -> Result<String, S
         return Err(no_script(case_id));
     }
     let aside = deleted_dir(root);
-    std::fs::create_dir_all(&aside).map_err(|e| format!("the script could not be kept aside: {e}"))?;
+    super::roots::create_dir_all(root, &aside).map_err(|e| format!("the script could not be kept aside: {e}"))?;
     // Two deletes of one case in the same millisecond still keep both.
     let mut stamp = now_ms;
     let to = loop {
@@ -1874,9 +1879,11 @@ pub fn clear_order(root: &Path, pbi_id: i32) -> Result<(), String> {
     let path = order_path(root, pbi_id);
     // Under the order lock, so a clear cannot land between an append's read
     // and its write and then be written back over.
-    with_order_locked(|| match std::fs::remove_file(&path) {
+    with_order_locked(|| match super::roots::remove_file(root, &path) {
         Ok(()) => Ok(()),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        // Not a disk failure: nothing to look up in the log.
+        Err(e) if e.to_string() == super::roots::ENVIRONMENT_SWITCHED => Err(e.to_string()),
         Err(e) => {
             crate::applog::warn(format!("auto-run: the order for PBI {pbi_id} could not be removed from {}: {e}", path.display()));
             Err(ORDER_NOT_CLEARED.to_string())

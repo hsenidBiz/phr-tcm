@@ -716,7 +716,7 @@ pub fn write_export(root: &Path, taken: TakenExport) -> (u16, String) {
     let path = capture_file(root, &stem);
     let replaced = path.exists();
     if let Some(dir) = path.parent() {
-        if let Err(e) = std::fs::create_dir_all(dir) {
+        if let Err(e) = crate::autorun::roots::create_dir_all(root, dir) {
             crate::applog::warn(format!("Auto Run: the captures folder could not be made: {e}"));
             return (500, "the captures folder could not be made - see Settings, Logs".to_string());
         }

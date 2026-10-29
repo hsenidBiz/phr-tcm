@@ -92,7 +92,7 @@ pub fn save(root: &Path, org: &str, project: &str, f: &Fixture) -> Result<(), Ve
         return Err(naming);
     }
     let dir = fixtures_dir(root, org, project);
-    std::fs::create_dir_all(&dir).map_err(|e| vec![e.to_string()])?;
+    crate::autorun::roots::create_dir_all(root, &dir).map_err(|e| vec![e.to_string()])?;
     let json = serde_json::to_string_pretty(f).map_err(|e| vec![e.to_string()])?;
     crate::autorun::roots::write_file(root, &fixture_path(root, org, project, &f.id), &json).map_err(|e| vec![e])
 }
@@ -159,7 +159,7 @@ pub fn append_run(root: &Path, org: &str, project: &str, id: &str, r: FixtureRun
     let mut runs = load_runs(root, org, project, id)?;
     runs.insert(0, r);
     runs.truncate(MAX_RUNS);
-    std::fs::create_dir_all(fixtures_dir(root, org, project)).map_err(|e| e.to_string())?;
+    crate::autorun::roots::create_dir_all(root, fixtures_dir(root, org, project)).map_err(|e| e.to_string())?;
     let json = serde_json::to_string_pretty(&runs).map_err(|e| e.to_string())?;
     crate::autorun::roots::write_file(root, &runs_path(root, org, project, id), &json)
 }
@@ -179,7 +179,7 @@ pub fn remove(root: &Path, org: &str, project: &str, id: &str) -> Result<(), Str
         return Err(invalid_id(id));
     }
     for path in [fixture_path(root, org, project, id), runs_path(root, org, project, id)] {
-        match std::fs::remove_file(&path) {
+        match crate::autorun::roots::remove_file(root, &path) {
             Ok(()) => {}
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
             Err(e) => return Err(e.to_string()),

@@ -71,7 +71,7 @@ pub fn load_summary(root: &Path, org: &str, project: &str) -> Result<Option<Mapp
 pub fn save_summary(root: &Path, org: &str, project: &str, summary: &MappingSummary) -> Result<(), String> {
     let path = summary_path(root, org, project);
     if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+        crate::autorun::roots::create_dir_all(root, dir).map_err(|e| e.to_string())?;
     }
     let text = serde_json::to_string_pretty(summary).map_err(|e| e.to_string())?;
     crate::autorun::roots::write_file(root, &path, &text)?;

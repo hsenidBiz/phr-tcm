@@ -12461,9 +12461,12 @@ pub async fn save_autorun_scripts_carrying(
     // it); that read, not the later one at Gate 1, is the version the
     // bundle is built from, so it is the one the write checks against.
     let reads = crate::autorun::store::ScriptReads::new();
-    let load = |id: i32| match autorun_root() {
-        Ok(root) => reads.load(&root, id),
-        Err((_, why)) => Err(why),
+    // Resolved once for the whole save: a switch partway through then
+    // answers with the switch sentence at the write, not a changed script.
+    let resolved_root = autorun_root();
+    let load = |id: i32| match &resolved_root {
+        Ok(root) => reads.load(root, id),
+        Err((_, why)) => Err(why.clone()),
     };
     let SaveRequest { scripts, edits, dry_run } = match parse_save_request(body, &load) {
         Ok(r) => r,
@@ -12504,7 +12507,7 @@ pub async fn save_autorun_scripts_carrying(
             ),
         );
     }
-    let root = match autorun_root() {
+    let root = match resolved_root {
         // `set_root` runs exactly once, during app setup, and only when
         // `app_data_dir()` resolves - so a missing root is not something
         // this process will ever recover from on its own. Refuse rather

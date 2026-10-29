@@ -264,15 +264,49 @@ pub fn guard(root: &Path) -> Result<std::sync::RwLockReadGuard<'static, ()>, Str
 }
 
 /// Whether a change announced for `changed` concerns what the person is
-/// looking at: the active environment's root, or the shared root beside it.
-/// A change to another environment's folder (a copy, an edit with a root
-/// from before a switch) is not on screen.
+/// looking at: anything under the active environment's root, or under the
+/// shared root but not inside another environment's folder (`envs/`). A
+/// change to another environment's folder (a copy, an edit with a root from
+/// before a switch) is not on screen. Judged by position, not equality: the
+/// announcers pass nested folders (`<shared>/test-files/<slug>`).
 pub fn is_on_screen(changed: &Path) -> bool {
     match crate::autorun::store::configured_root() {
-        Some(active) => active == changed || shared_of(&active) == changed,
+        Some(active) => {
+            if changed.starts_with(&active) {
+                return true;
+            }
+            let shared = shared_of(&active);
+            changed.starts_with(&shared) && !changed.starts_with(shared.join(ENVS_DIR))
+        }
         // No environment is chosen yet: nothing is on screen to be wrong.
         None => true,
     }
+}
+
+/// The refusal as an I/O error, for the helpers that stand in for `std::fs`
+/// calls: its text is exactly [`ENVIRONMENT_SWITCHED`].
+fn refused(sentence: String) -> std::io::Error {
+    std::io::Error::other(sentence)
+}
+
+/// `std::fs::create_dir_all(dir)` for a folder under `root`, refused (and
+/// nothing made) when `root` stopped being the active environment.
+pub fn create_dir_all(root: &Path, dir: impl AsRef<Path>) -> std::io::Result<()> {
+    let _held = guard(root).map_err(refused)?;
+    std::fs::create_dir_all(dir)
+}
+
+/// `std::fs::remove_file(path)` for a file under `root`, refused when `root`
+/// stopped being the active environment.
+pub fn remove_file(root: &Path, path: &Path) -> std::io::Result<()> {
+    let _held = guard(root).map_err(refused)?;
+    std::fs::remove_file(path)
+}
+
+/// [`write_file`] for a caller that already holds [`guard`] for `root`
+/// (a bundle of files that must land as one): the guard is the proof.
+pub fn write_file_held(_held: &std::sync::RwLockReadGuard<'static, ()>, path: &Path, text: &str) -> Result<(), String> {
+    crate::ai_tools::atomic_write(path, text)
 }
 
 /// Writes `text` to `path` inside `root` (atomically), refused when `root`

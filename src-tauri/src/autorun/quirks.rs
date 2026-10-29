@@ -323,7 +323,7 @@ fn write_quirks(root: &Path, org: &str, project: &str, quirks: &[Quirk]) -> Resu
         return Err("pick an organization and a project first".to_string());
     }
     let path = quirks_path(root, org, project);
-    std::fs::create_dir_all(path.parent().expect("projects folder")).map_err(|e| e.to_string())?;
+    crate::autorun::roots::create_dir_all(root, path.parent().expect("projects folder")).map_err(|e| e.to_string())?;
     let json = serde_json::to_string_pretty(&list).map_err(|e| e.to_string())?;
     crate::autorun::roots::write_file(root, &path, &json)?;
     Ok(())

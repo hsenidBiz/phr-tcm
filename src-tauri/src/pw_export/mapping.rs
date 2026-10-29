@@ -150,17 +150,17 @@ pub fn load_at(p: &Path) -> Result<ExportMap, String> {
 }
 
 pub fn save(root: &Path, org: &str, project: &str, map: &ExportMap) -> Result<(), String> {
-    let p = path(root, org, project);
-    let body = prepare(&p, map)?;
-    crate::autorun::roots::write_file(root, &p, &body)
+    save_at(root, &path(root, org, project), map)
 }
 
-/// Writes the export file at `p`, replacing it whole. `p` is a record found
-/// beside the Playwright clone (a rename there moves what it names), not a
-/// file under an environment's root.
-pub fn save_at(p: &Path, map: &ExportMap) -> Result<(), String> {
+/// Writes the export file at `p`, replacing it whole. `p` is one of the
+/// records under `root` (the Playwright folder rename rewrites them), so it
+/// is guarded like `save`: refused once `root` stopped being active.
+pub fn save_at(root: &Path, p: &Path, map: &ExportMap) -> Result<(), String> {
+    // Refused before the folder is made.
+    crate::autorun::roots::guard(root).map(drop)?;
     let body = prepare(p, map)?;
-    crate::ai_tools::atomic_write(p, &body) // outside the Auto Run root
+    crate::autorun::roots::write_file(root, p, &body)
 }
 
 /// Makes the folder for `p` and serialises `map`.

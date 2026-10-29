@@ -189,7 +189,7 @@ pub fn update<T>(
     let out = f(&mut list)?;
     prune(&mut list, super::sessions::now_ms());
     let p = path(root, org, project);
-    std::fs::create_dir_all(p.parent().expect("projects folder")).map_err(|e| e.to_string())?;
+    crate::autorun::roots::create_dir_all(root, p.parent().expect("projects folder")).map_err(|e| e.to_string())?;
     let json = serde_json::to_string_pretty(&list).map_err(|e| e.to_string())?;
     crate::autorun::roots::write_file(root, &p, &json)?;
     let mut touched: Vec<i32> = before

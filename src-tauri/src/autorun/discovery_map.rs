@@ -594,7 +594,7 @@ fn update(root: &Path, org: &str, project: &str, change: impl FnOnce(&mut Discov
     }
     let path = map_path(root, org, project);
     if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+        crate::autorun::roots::create_dir_all(root, dir).map_err(|e| e.to_string())?;
     }
     let text = serde_json::to_string_pretty(&map).map_err(|e| e.to_string())?;
     crate::autorun::roots::write_file(root, &path, &text)?;

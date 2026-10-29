@@ -68,7 +68,7 @@ pub fn dir(root: &Path) -> PathBuf {
 /// Let go of the replay kept for case `case_id`, if any: its script was
 /// cleared. Best effort; a file that will not go is logged by case only.
 pub fn forget(root: &Path, case_id: i32) {
-    match std::fs::remove_file(file(root, case_id)) {
+    match crate::autorun::roots::remove_file(root, &file(root, case_id)) {
         Ok(()) => {}
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
         Err(e) => crate::applog::warn(format!(
@@ -120,7 +120,7 @@ pub fn note(root: &Path, case_id: i32, title: &str, to_step: i32, end: &ReplayEn
     // Written beside its place and renamed into it, as the other stores
     // write: a reader never meets half a file.
     let path = file(root, case_id);
-    let written = std::fs::create_dir_all(dir(root))
+    let written = crate::autorun::roots::create_dir_all(root, dir(root))
         .map_err(|e| e.to_string())
         .and_then(|()| serde_json::to_string_pretty(&record).map_err(|e| e.to_string()))
         .and_then(|json| crate::autorun::roots::write_file(root, &path, &json));
