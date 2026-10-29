@@ -135,3 +135,144 @@ pub fn env_roots(shared: &Path) -> Vec<PathBuf> {
     roots.sort();
     roots
 }
+
+/// What the one-time copy did.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MigrationReport {
+    pub environments: usize,
+    pub items: usize,
+}
+
+/// The one sentence start-up logs after the copy. Names no path.
+pub fn migration_log_line(r: &MigrationReport) -> String {
+    format!("Auto Run: per-environment data set up for {} environment(s), {} item(s) copied", r.environments, r.items)
+}
+
+const STAGING_PREFIX: &str = ".envs-staging-";
+
+/// Copies `from` (a file or a folder) to `to`. `link` hard-links each file
+/// and falls back to a copy when the file system will not link. Symbolic
+/// links and other odd entries are skipped. `skip` is asked about each file
+/// with its path relative to the whole Auto Run root (`rel`), so it can tell
+/// the export record from other project files.
+fn copy_tree(from: &Path, to: &Path, rel: &Path, link: bool, skip: &dyn Fn(&Path) -> bool) -> Result<(), String> {
+    let meta = std::fs::symlink_metadata(from).map_err(|e| e.to_string())?;
+    if meta.is_dir() {
+        std::fs::create_dir_all(to).map_err(|e| e.to_string())?;
+        for entry in std::fs::read_dir(from).map_err(|e| e.to_string())?.flatten() {
+            let name = entry.file_name();
+            copy_tree(&entry.path(), &to.join(&name), &rel.join(&name), link, skip)?;
+        }
+    } else if meta.is_file() && !skip(rel) {
+        if link && std::fs::hard_link(from, to).is_ok() {
+            return Ok(());
+        }
+        std::fs::copy(from, to).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+/// Copies the flat root's per-environment items into `envs_dir/<id>/` for
+/// each id, and returns how many top-level items were copied. `Every`
+/// items are real copies into every id; `ActiveOnly` items (history) go to
+/// `active` only (the first id when `active` is `None` or not listed) and
+/// are hard-linked file by file where the file system allows, so a large
+/// `shots/` is not written out again. The export record goes to the active
+/// environment only. `flat` is never changed.
+pub fn fan_out(flat: &Path, envs_dir: &Path, ids: &[String], active: Option<&str>) -> Result<usize, String> {
+    if let Some(bad) = ids.iter().find(|i| !valid_folder_id(i)) {
+        return Err(format!("\"{bad}\" is not an environment id"));
+    }
+    let target = active
+        .filter(|a| ids.iter().any(|i| i == a))
+        .or_else(|| ids.first().map(String::as_str))
+        .map(str::to_string);
+    for id in ids {
+        std::fs::create_dir_all(envs_dir.join(id)).map_err(|e| e.to_string())?;
+    }
+    let mut copied = 0;
+    for (name, how) in PER_ENV_ITEMS {
+        let from = flat.join(name);
+        if std::fs::symlink_metadata(&from).is_err() {
+            continue;
+        }
+        match how {
+            CopyTo::Every => {
+                for id in ids {
+                    let keep_export = target.as_deref() == Some(id.as_str());
+                    let skip = move |rel: &Path| !keep_export && is_export_record(rel);
+                    copy_tree(&from, &envs_dir.join(id).join(name), Path::new(name), false, &skip)?;
+                }
+            }
+            CopyTo::ActiveOnly => {
+                if let Some(id) = &target {
+                    copy_tree(&from, &envs_dir.join(id).join(name), Path::new(name), true, &|_| false)?;
+                }
+            }
+        }
+        copied += 1;
+    }
+    Ok(copied)
+}
+
+/// Gives each environment its own copy of the flat Auto Run data, once.
+/// `Ok(None)` when `envs/` already exists. The copy is built in a staging
+/// folder and renamed into place, so `envs/` never exists half-built; on
+/// any error the staging folder goes and the caller keeps the flat layout
+/// for the session. The originals stay as a backup.
+pub fn migrate_once(shared: &Path) -> Result<Option<MigrationReport>, String> {
+    let envs = shared.join(ENVS_DIR);
+    if envs.exists() {
+        return Ok(None);
+    }
+    if let Ok(entries) = std::fs::read_dir(shared) {
+        for entry in entries.flatten() {
+            if entry.file_name().to_str().is_some_and(|n| n.starts_with(STAGING_PREFIX)) {
+                if let Err(e) = std::fs::remove_dir_all(entry.path()) {
+                    crate::applog::warn(format!("Auto Run: a leftover half-built copy could not be removed: {e}"));
+                }
+            }
+        }
+    }
+    if !PER_ENV_ITEMS.iter().any(|(name, _)| std::fs::symlink_metadata(shared.join(name)).is_ok()) {
+        std::fs::create_dir_all(&envs).map_err(|e| e.to_string())?;
+        return Ok(Some(MigrationReport { environments: 0, items: 0 }));
+    }
+    let (ids, active) = match crate::environments::read_ids(shared)? {
+        Some(found) => found,
+        None => (vec![SEED_ID.to_string()], SEED_ID.to_string()),
+    };
+    let staging = shared.join(format!("{STAGING_PREFIX}{}", crate::cache::now_ms()));
+    let built = fan_out(shared, &staging, &ids, Some(&active))
+        .and_then(|items| std::fs::rename(&staging, &envs).map(|_| items).map_err(|e| e.to_string()));
+    match built {
+        Ok(items) => Ok(Some(MigrationReport { environments: ids.len(), items })),
+        Err(e) => {
+            let _ = std::fs::remove_dir_all(&staging);
+            Err(e)
+        }
+    }
+}
+
+/// Hands the seed to the first environment made after the update: renames
+/// `envs/_seed` to `envs/<env_id>`. Does nothing (false) when there is no
+/// seed or the target already holds anything.
+pub fn seed_into(shared: &Path, env_id: &str) -> Result<bool, String> {
+    if !crate::environments::valid_id(env_id) {
+        return Err(format!("\"{env_id}\" is not an environment id"));
+    }
+    let seed = env_root(shared, SEED_ID);
+    if !seed.is_dir() {
+        return Ok(false);
+    }
+    let target = env_root(shared, env_id);
+    if target.exists() {
+        // An empty folder (made by a selection) gives way; one with
+        // anything in it is left alone.
+        if std::fs::remove_dir(&target).is_err() {
+            return Ok(false);
+        }
+    }
+    std::fs::rename(&seed, &target).map_err(|e| e.to_string())?;
+    Ok(true)
+}

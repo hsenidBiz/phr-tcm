@@ -630,6 +630,20 @@ pub fn run() {
                 // reads it from here, so a script an assistant saves lands
                 // where the Auto Run screen actually looks.
                 let shared = dir.join("autorun");
+                // Each environment's own folder is built once, before the
+                // layout is chosen. When it cannot be built the flat folder
+                // stays in charge for this session and the copy is tried
+                // again at the next start.
+                match autorun::roots::migrate_once(&shared) {
+                    Ok(Some(r)) => applog::info(autorun::roots::migration_log_line(&r)),
+                    Ok(None) => {}
+                    Err(e) => {
+                        applog::warn(
+                            "Auto Run: the per-environment copy did not finish and will be tried again at the next start",
+                        );
+                        applog::debug(format!("Auto Run: the per-environment copy failed: {e}"));
+                    }
+                }
                 let per_env = autorun::roots::is_per_env_layout(&shared);
                 if per_env {
                     autorun::store::set_shared_root(shared.clone());

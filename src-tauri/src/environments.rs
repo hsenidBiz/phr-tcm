@@ -221,6 +221,31 @@ fn write(root: &Path, file: &EnvFile) -> Result<(), String> {
     crate::ai_tools::atomic_write(&file_path(root), &json)
 }
 
+/// The environment ids and the active id, or `None` while there is no file.
+/// Never makes one. An unreadable file is an error, left as it is.
+pub fn read_ids(root: &Path) -> Result<Option<(Vec<String>, String)>, String> {
+    let _held = lock();
+    Ok(read(root)?.map(|f| (f.environments.into_iter().map(|e| e.id).collect(), f.active)))
+}
+
+/// Hands `envs/_seed` (what the update left for the first environment) to
+/// `id`, when there is one. Run before the file that names `id` is written,
+/// so a failure saves nothing and is tried again.
+fn take_seed(root: &Path, id: &str) -> Result<(), String> {
+    let shared = crate::autorun::roots::shared_of(root);
+    match crate::autorun::roots::seed_into(&shared, id) {
+        Ok(true) => {
+            crate::applog::info("Environments: the first environment took over the data the update copied");
+            Ok(())
+        }
+        Ok(false) => Ok(()),
+        Err(e) => {
+            crate::applog::debug(format!("Environments: the update's data could not be handed over: {e}"));
+            Err("the data copied at the update could not be handed to the new environment - try again".to_string())
+        }
+    }
+}
+
 /// The file, made on first use. A file that exists but cannot be read is an
 /// error and is left exactly as it is - never replaced with a fresh Default.
 fn load_or_init_locked(root: &Path, current_db: Option<&str>) -> Result<EnvFile, String> {
@@ -256,6 +281,7 @@ fn load_or_init_locked(root: &Path, current_db: Option<&str>) -> Result<EnvFile,
         }],
         auto_approve_adopted: false,
     };
+    take_seed(root, &file.active)?;
     write(root, &file)?;
     crate::applog::info("Environments: made Default from this machine's settings");
     // Only now - the copy is written and the file that points at it is
@@ -391,6 +417,7 @@ pub fn save_env_with(
         env.id = new_id(&env.name, &file.environments);
         // A new environment never arrives with writes asked about less.
         env.db_auto_approve = false;
+        take_seed(root, &env.id)?;
         file.environments.push(env.clone());
     } else {
         let slot = file
