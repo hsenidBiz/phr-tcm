@@ -27,6 +27,13 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.4.2-beta.4",
+    date: "2026-10-29",
+    items: [
+      "Happy Halloween! A new Halloween theme in orange and black, with pumpkins hanging under the PBI bar, bats, a spider and a cobweb. Updating switches you to it for a week, then your own theme and accent come back. Pick another theme in Settings to change it sooner, or pick Halloween to keep it.",
+    ],
+  },
+  {
     version: "2.4.2-beta.3",
     date: "2026-10-29",
     items: [
