@@ -179,6 +179,16 @@ export const commands = {
 	crystalPreviewPdf: () => typedError<string | null, string>(__TAURI_INVOKE("crystal_preview_pdf")),
 	/**  Open the report's file in the program Windows has for .rpt files. */
 	crystalOpenInDesigner: () => typedError<null, string>(__TAURI_INVOKE("crystal_open_in_designer")),
+	/**  Open a report the person picked; it becomes the open report. */
+	crystalOpenFile: (path: string) => typedError<null, string>(__TAURI_INVOKE("crystal_open_file", { path })),
+	/**  The open report's parameters. */
+	crystalParameters: () => typedError<ReportParameter[], string>(__TAURI_INVOKE("crystal_parameters")),
+	/**  Draw the open report with the parameter values typed on the screen. */
+	crystalDraw: (values: ParameterValue[]) => typedError<null, string>(__TAURI_INVOKE("crystal_draw", { values })),
+	/**  Find text and field references in the open report and its subreports. */
+	crystalFind: (text: string, matchCase: boolean) => typedError<FindHit[], string>(__TAURI_INVOKE("crystal_find", { text, matchCase })),
+	/**  Replace text in the open report; `dry_run` lists the changes and saves nothing. */
+	crystalReplace: (find: string, replace: string, matchCase: boolean, dryRun: boolean, expected: number | null) => typedError<ReplaceOutcome, string>(__TAURI_INVOKE("crystal_replace", { find, replace, matchCase, dryRun, expected })),
 	/**
 	 *  Open the activity folder - the full DB (and, later, API) statement
 	 *  trail `activity_log` writes, kept apart from the app log's own daily
@@ -4245,6 +4255,22 @@ export type FiledBug = {
 	screenshots_total: number,
 };
 
+/**  One object that matched. */
+export type FindHit = {
+	/**  The subreport it is in; `None` for the main report. */
+	subreport: string | null,
+	object_id: string,
+	name: string,
+	kind: string,
+	section: string,
+	/**  "text" or "field". */
+	matched: string,
+	/**  The text's display, or the field's reference. */
+	text: string,
+	/**  Whether a replace can change it: a text object with no fields in it. */
+	replaceable: boolean,
+};
+
 export type Fixture = {
 	id: string,
 	name: string,
@@ -4992,6 +5018,18 @@ export type Param_Serialize = {
 	 *  (usually `[]` or `""`). Only an optional param has one.
 	 */
 	default?: unknown | null,
+};
+
+/**  One pick-list or saved value of a parameter. */
+export type ParameterChoice = {
+	value: string,
+	description: string | null,
+};
+
+/**  One value the person typed for a parameter of the open report. */
+export type ParameterValue = {
+	name: string,
+	value: string,
 };
 
 /**
@@ -5966,6 +6004,26 @@ export type RepairNote = {
 	at: string,
 };
 
+/**  One change a replace makes (or, on a dry run, would make). */
+export type ReplaceChange = {
+	subreport: string | null,
+	object_id: string,
+	name: string,
+	before: string,
+	after: string,
+};
+
+/**  What a replace did. */
+export type ReplaceOutcome = {
+	/**  Objects rewritten (or that would be, on a dry run). */
+	replaced: number,
+	/**  Matching objects left alone: fields, and text that holds fields or cannot be edited. */
+	skipped_locked: number,
+	changes: ReplaceChange[],
+	/**  Whether anything was saved. */
+	applied: boolean,
+};
+
 /**
  *  A replay's end with the sentence that says it, as the person's command
  *  answers: the pane shows `sentence` as it is, and `tabs` beside the
@@ -6240,6 +6298,23 @@ export type ReportPalette = {
 	warning: string,
 	/**  Drives `color-scheme`, so form controls and scrollbars follow too. */
 	dark: boolean,
+};
+
+/**  One parameter of the open report, shaped for a prompt. */
+export type ReportParameter = {
+	name: string,
+	/**  Number, String, Currency, Boolean, Date, Time or DateTime. */
+	value_kind: string,
+	prompt_text: string | null,
+	/**  The prompt may be left out. */
+	optional_prompt: boolean,
+	allow_multiple_values: boolean,
+	/**  An empty value is allowed. */
+	allow_null_value: boolean,
+	/**  The report's authored pick list. */
+	choices: ParameterChoice[],
+	/**  The value the report was saved with, if any. */
+	saved: ParameterChoice[],
 };
 
 /**  One archived run's headline numbers. */

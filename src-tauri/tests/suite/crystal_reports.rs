@@ -277,12 +277,25 @@ fn the_guide_names_every_tool_and_the_units() {
         "`create`",
         "preview_report",
         "preview_report_live",
+        "find_in_report",
+        "replace_in_report",
+        "get_report_parameters",
+        "dry_run",
+        "skipped_locked",
+        "params",
         "get_guide",
     ] {
         assert!(guide.contains(tool), "the guide names {tool}");
     }
     for term in ["twips", "1440", "#RRGGBB", "git"] {
         assert!(guide.contains(term), "the guide mentions {term}");
+    }
+    let lower = guide.to_lowercase();
+    for gone in ["undo", "redo"] {
+        assert!(!lower.contains(gone), "the guide does not mention {gone}");
+    }
+    for op in ["set_section_visibility", "add_summary", "set_parameter", "remove_sort", "add_table"] {
+        assert!(guide.contains(op), "the guide lists {op}");
     }
 }
 
@@ -771,4 +784,17 @@ mod the_screen {
         assert_eq!(said.unwrap_err(), NO_PROGRAM);
         crystal::close();
     }
+}
+
+#[test]
+fn an_in_subreport_op_is_refused_and_nothing_is_saved() {
+    let _lock = serial::crystal();
+    let dir = tempfile::tempdir().unwrap();
+    let path = copy_sample(dir.path(), SAMPLE);
+    let before = std::fs::read(&path).unwrap();
+    crystal::open(&path).unwrap();
+    let why = crystal::edit(Some(json!([{ "op": "in_subreport", "subreport": "x", "ops": [] }])), None).unwrap_err();
+    assert_eq!(why, crystal::SUBREPORT_EDIT_REFUSED);
+    assert_eq!(std::fs::read(&path).unwrap(), before);
+    crystal::close();
 }

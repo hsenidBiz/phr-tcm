@@ -148,6 +148,9 @@ impl<'a> Formatter<'a> {
         // Set by the `Field` arm below when the field prints one currency symbol per page; the plan
         // carries it so the emit path can record a fixup without resolving the value again.
         let mut currency = None;
+        // Crystal's HTML text interpretation (TextFormat::HTMLText): the field's
+        // resolved value is markup, rendered (breaks/entities/styles) not printed.
+        let mut html = false;
         // `reading_order` (Text/FieldHeading only) sets the paragraph's base direction; `paragraphs`
         // carries per-paragraph indentation for a text object (fields/headings have none).
         let (raw, font, color, kind, reading_order, paragraphs): (
@@ -169,6 +172,11 @@ impl<'a> Formatter<'a> {
                         &self.diagnostics,
                     );
                     currency = mark;
+                    html = f
+                        .format
+                        .as_ref()
+                        .map(|ff| matches!(ff.string.text_format, rpt_model::TextFormat::HTMLText))
+                        .unwrap_or(false);
                     text
                 },
                 font_of(&f.font_color.font),
@@ -249,7 +257,17 @@ impl<'a> Formatter<'a> {
             obj.bounds.width.0
         };
         let mut lines: Vec<LayoutLine> = Vec::new();
-        for (i, seg) in raw.split('\n').enumerate() {
+        // Paragraph sources: HTML interpretation (TextFormat::HTMLText) yields styled lines
+        // directly — the interpretation owns the font, stored paragraph fonts do not apply;
+        // plain text splits on '
+        let html_styled: Option<Vec<crate::html::HtmlLine>> =
+            if html { Some(crate::html::interpret_lines(&raw, &font)) } else { None };
+        for (i, (seg, para_font_override)) in html_styled
+            .map(|hs| hs.into_iter().map(|l| (l.text, Some(l.font))).collect::<Vec<_>>())
+            .unwrap_or_else(|| raw.split('\n').map(|s| (s.to_string(), None)).collect())
+            .into_iter()
+            .enumerate()
+        {
             let para = paragraphs.and_then(|ps| ps.get(i));
             let indent = para.map(|p| p.indent).unwrap_or_default();
             let (left, right, first) = (
@@ -259,8 +277,9 @@ impl<'a> Formatter<'a> {
             );
             // The paragraph's own font (a run override, else the object font) drives its wrap width,
             // line pitch, and ascent.
-            let para_font = para
-                .and_then(paragraph_font)
+            let para_font = para_font_override
+                .clone()
+                .or_else(|| para.and_then(paragraph_font))
                 .unwrap_or_else(|| font.clone());
             let line_height = Twips(line_pitch(
                 indent.line_spacing,
@@ -283,9 +302,9 @@ impl<'a> Formatter<'a> {
             let wrapped: Vec<String> = if obj.format.can_grow && allow_grow {
                 // The first-line indent narrows where the first line breaks, not just where it sits:
                 // the first line wraps at `avail - first`, the rest at the paragraph's full `avail`.
-                wrap_first_line_indent(wrap_layout, seg, avail as f64, first as f64, &para_font)
+                wrap_first_line_indent(wrap_layout, &seg, avail as f64, first as f64, &para_font)
             } else {
-                vec![seg.to_string()]
+                vec![seg.clone()]
             };
             let last_line = wrapped.len().saturating_sub(1);
             for (j, text) in wrapped.into_iter().enumerate() {

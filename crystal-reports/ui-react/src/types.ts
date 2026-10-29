@@ -268,8 +268,24 @@ export type EditOp =
     }
   | { op: "add_group"; field_ref: string; direction?: string }
   | { op: "add_sort"; field_ref: string; direction: string }
+  | { op: "in_subreport"; subreport: string; ops: EditOp[] }
   | { op: "set_formula"; formula: string; source: string }
   | { op: "set_record_selection"; source: string }
+  | { op: "set_section_visibility"; section: SecSel; source: string }
+  | { op: "set_text_rotation"; object: ObjSel; degrees: number }
+  | { op: "set_vertical_alignment"; object: ObjSel; alignment: string }
+  | { op: "set_keep_object_together"; object: ObjSel; keep: boolean }
+  | { op: "set_word_wrap"; object: ObjSel; wrap: boolean }
+  | { op: "set_max_lines"; object: ObjSel; lines: number }
+  | { op: "set_text_interpretation"; object: ObjSel; format: string }
+  | { op: "set_indents"; object: ObjSel; first?: number | null; left?: number | null; right?: number | null }
+  | { op: "set_reading_order"; object: ObjSel; order: string }
+  | { op: "set_boolean_format"; object: ObjSel; output: string }
+  | { op: "set_section_flags"; section: SecSel; keep_together?: boolean | null; reset_page_number_after?: boolean | null; print_at_bottom_of_page?: boolean | null; underlay_section?: boolean | null }
+  | { op: "set_group_selection"; source: string }
+  | { op: "add_summary"; name: string; summarize: string; operation: string }
+  | { op: "set_parameter"; name: string; prompt_text?: string | null; optional?: boolean | null }
+  | { op: "remove_sort"; field_ref: string }
   | { op: "add_running_total"; name: string; summarize: string; operation: string; evaluate_field?: string; reset_field?: string }
   | {
       op: "add_subreport";
@@ -410,6 +426,72 @@ export interface PreviewOutput {
   page_count: number;
   /** Pipeline fidelity warnings (unsupported object kinds, formula failures); empty = clean. */
   diagnostics: string[];
+}
+
+/** The result of a find & replace. */
+export interface FindReplaceResult {
+  replaced: number;
+  skipped_locked: number;
+}
+
+/** One selectable/editable box on a rendered page (printable-relative twips). */
+export interface HitBox {
+  section: string;
+  object?: string | null;
+  kind: string;
+  instance?: number | null;
+  x: number;
+  y: number;
+  w: number;
+  /** The object's TRUE rendered height (can-grow/wrap included). */
+  h: number;
+  text?: string | null;
+}
+
+/** One rendered page's selectable surface. */
+export interface PageHits {
+  number: number;
+  width_twips: number;
+  height_twips: number;
+  origin_x: number;
+  origin_y: number;
+  objects: HitBox[];
+}
+
+/** preview_hits()'s result: every page's selectable surface. */
+export interface HitsOutput {
+  pages: PageHits[];
+}
+
+/** One declared report parameter, for a prompt form. */
+export interface ParameterInfo {
+  name: string;
+  value_kind: string;
+  prompt_text?: string | null;
+  optional_prompt: boolean;
+  allow_multiple_values: boolean;
+  allow_null_value: boolean;
+  has_current_value: boolean;
+  default_values: ParameterValueInfo[];
+  current_values: ParameterValueInfo[];
+}
+
+/** One pick-list value. */
+export interface ParameterValueInfo {
+  value: string;
+  description?: string | null;
+}
+
+/** "Export PDF" options: title, PDF/A conformance, language, locale, tagging. */
+export interface PdfExportOptions {
+  title?: string;
+  /** 1b/2b/3b, or 1a/2a/3a/ua with `lang` (ua also needs `title`). */
+  pdfa?: string;
+  /** RFC 3066 language tag — required by level-A and PDF/UA. */
+  lang?: string;
+  /** Render locale (en/de/fr/es/it roots; default en-US). */
+  locale?: string;
+  tagged?: boolean;
 }
 
 /** A live-database preview request: your app's ADO/OLE DB connection string, verbatim. */

@@ -6526,6 +6526,7 @@ dependencies = [
  "reqwest",
  "rpt-core",
  "rpt-db-mssql",
+ "rpt-render",
  "rustfft",
  "semver",
  "serde",

@@ -696,3 +696,54 @@ fn group_footers_fall_back_to_reverse_when_names_do_not_pair() {
     assert_eq!(ordered[0][0].name, "yFooter");
     assert_eq!(ordered[1][0].name, "xFooter");
 }
+
+#[test]
+fn html_text_interpretation_renders_markup() {
+    // A field whose string format is HTMLText renders its value as markup: document wrappers
+    // invisible, <br> a line break, entities decoded, the style at a line's first character
+    // applied to that line (the corpus's authored spacer pattern).
+    use crate::tests::{area, build_dataset, db_field_object, section};
+    use rpt_data::SavedDataSource;
+    use rpt_model::{FieldFormat, StringFieldFormat, TextFormat};
+
+    let mut o = db_field_object("Html", "t.markup", 0);
+    if let rpt_model::ReportObjectKind::Field(f) = &mut o.kind {
+        let mut ff = FieldFormat::default();
+        ff.string = StringFieldFormat { text_format: TextFormat::HTMLText, ..Default::default() };
+        f.format = Some(ff);
+    }
+    let mut report = Report::default();
+    report.print_options.content_width = Twips(12240);
+    report.report_definition.areas = vec![area(AreaSectionKind::Detail, vec![section(
+        AreaSectionKind::Detail,
+        "Details",
+        600,
+        vec![o],
+    )])];
+    let html = concat!(
+        "<html><head><meta charset=\"utf-8\"></head><body>",
+        "Stage &amp; One",
+        "<br><span style='font-size:5.5pt'>&nbsp;</span>",
+        "</body></html>",
+    );
+    let saved = saved_data(
+        &[("t.markup", FieldValueType::String)],
+        &[&[html]],
+    );
+    let ds = build_dataset(&SavedDataSource::new(&saved), &report.data_definition);
+    let formulas = rpt_data::compile_formulas(&report.data_definition);
+    let doc = layout(&report, &ds, &formulas);
+
+    let mut lines: Vec<(String, f32)> = Vec::new();
+    for op in doc.pages.iter().flat_map(|p| &p.ops) {
+        if let DrawOp::Text(t) = op {
+            lines.push((t.text.clone(), t.font.size_pt));
+        }
+    }
+    let nbsp = char::from_u32(0xA0).unwrap();
+    assert_eq!(
+        lines,
+        vec![("Stage & One".to_string(), 10.0), (nbsp.to_string(), 5.5)],
+        "markup interpreted, not printed"
+    );
+}

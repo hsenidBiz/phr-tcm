@@ -30,6 +30,7 @@ fn run() -> i32 {
         Some("check") => cmd_check(&args[1..]),
         Some("new") => cmd_new(&args[1..]),
         Some("apply") => cmd_apply(&args[1..]),
+        Some("apply-all") => cmd_apply_all(&args[1..]),
         Some("edit") => cmd_edit(&args[1..]),
         Some("diff") => cmd_diff(&args[1..]),
         Some("roundtrip") => cmd_roundtrip(&args[1..]),
@@ -41,6 +42,7 @@ fn run() -> i32 {
                  USAGE:\n\
                  \x20 rpt-tools ir <in.rpt> [out.json]\n\
                  \x20 rpt-tools edit <in.rpt> <ops.json> <out.rpt>\n\
+                 \x20 rpt-tools apply-all <dir> <plan.json>\n\
                  \x20 rpt-tools apply <in.rpt> <plan.json> <out.rpt>\n\
                  \x20 rpt-tools diff <a.rpt> <b.rpt>\n\
                  \x20 rpt-tools roundtrip <in.rpt>\n\
@@ -243,6 +245,51 @@ fn cmd_check(args: &[String]) -> i32 {
         if errors == 0 { "PASS" } else { "FAIL" }
     );
     if errors == 0 { 0 } else { 1 }
+}
+
+/// Apply one plan to every .rpt under a directory (recursively), backing each modified
+/// file up to <file>.bak beside it. Per-file failures do not stop the run.
+fn cmd_apply_all(args: &[String]) -> i32 {
+    if args.len() != 2 {
+        eprintln!("usage: rpt-tools apply-all <dir> <plan.json>");
+        return 2;
+    }
+    let (dir, plan_path) = (&args[0], &args[1]);
+    let plan = match std::fs::read_to_string(plan_path) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("error: cannot read `{plan_path}`: {e}");
+            return 1;
+        }
+    };
+    let summary = match rpt_core::batch::apply_plan_all(std::path::Path::new(dir), &plan) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("error: {e}");
+            return 1;
+        }
+    };
+    for f in &summary.files {
+        let label = f.path.to_string_lossy();
+        match &f.outcome {
+            rpt_core::batch::BatchOutcome::Applied(n) => eprintln!("  applied   {label} ({n} ops; .bak saved)"),
+            rpt_core::batch::BatchOutcome::Unchanged => eprintln!("  unchanged {label}"),
+            rpt_core::batch::BatchOutcome::Skipped => eprintln!("  skipped   {label}"),
+            rpt_core::batch::BatchOutcome::Failed(e) => eprintln!("  FAILED    {label}: {e}"),
+        }
+    }
+    let unchanged = summary
+        .files
+        .iter()
+        .filter(|f| matches!(f.outcome, rpt_core::batch::BatchOutcome::Unchanged))
+        .count();
+    println!(
+        "apply-all: {} applied, {unchanged} unchanged, {} failed, {} total",
+        summary.applied(),
+        summary.failed(),
+        summary.files.len()
+    );
+    if summary.failed() > 0 { 1 } else { 0 }
 }
 
 /// Apply a VibeyReports LayoutPlan JSON (camelCase, action names as in VibeyReports.Contracts).

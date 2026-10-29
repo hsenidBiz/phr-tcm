@@ -192,7 +192,6 @@ pub fn add_group(rpt: &Rpt, field_ref: &str, direction: Option<&str>) -> Result<
     let mut current = rpt
         .write_contents_logical(&new_logical)
         .map_err(|e| format!("write after group def insert: {e}"))?;
-
     // 2. Clone the innermost group's layout footprint: its Group Header area bracket and its
     //    Group Footer area bracket (each an Area record through its AreaEnd child), re-masked
     //    and re-named for the new group. The innermost group's header is the last group-header
@@ -207,12 +206,18 @@ pub fn add_group(rpt: &Rpt, field_ref: &str, direction: Option<&str>) -> Result<
         .filter(|a| matches!(a.kind, model::AreaSectionKind::GroupHeader))
         .next_back()
         .and_then(|a| located.areas.iter().find(|l| l.name == a.name));
+    // The model lists areas in CANONICAL order: headers outermost->innermost, footers
+    // INNERMOST->outermost. The innermost header is therefore the LAST GroupHeader
+    // (next_back) but the innermost footer is the FIRST GroupFooter (next) — picking
+    // next_back for a footer grabs the OUTERMOST one, and cloning it split the outer
+    // pair's `[footer 0x8b][group def 0xe5]` adjacency (the IndPerfOverview/World Sales
+    // corruption: the donor areas fell out of the model and the stream desynced).
     let group_footer = report2
         .report_definition
         .areas
         .iter()
         .filter(|a| matches!(a.kind, model::AreaSectionKind::GroupFooter))
-        .next_back()
+        .next()
         .and_then(|a| located.areas.iter().find(|l| l.name == a.name));
     let (gh, gf) = (group_header, group_footer);
     let gh_run = gh.and_then(|a| a.run.clone()).ok_or("group header area run not located")?;
@@ -252,7 +257,6 @@ pub fn add_group(rpt: &Rpt, field_ref: &str, direction: Option<&str>) -> Result<
     current = opened
         .write_contents_logical(&with_both)
         .map_err(|e| format!("write after group layout insert: {e}"))?;
-
     // 3. Rebind the new group definition (now the LAST 0xe5): condition field + ordinal + direction.
     let reopened = crate::open_bytes(&current)?;
     let nth = count_tag(&reopened, T_GROUP).saturating_sub(1);
@@ -266,7 +270,6 @@ pub fn add_group(rpt: &Rpt, field_ref: &str, direction: Option<&str>) -> Result<
     if let Some(d) = dir {
         current = patch_on_field(&current, RecordTag(T_GROUP), nth, "direction", FieldEdit::Int(d))?;
     }
-
     // 3b. Group identity: the clone still carries the DONOR's `Group #(N-1) Name` /
     // `@Group #(N-1) Order` fields and its order-formula handle — re-number them to the new
     // group and mint the new group's `Group #N Order` formula wrapper. Without this, a report

@@ -13,6 +13,16 @@ wrapper per function; that is what your app registers.
 | `apply_plan(planJson)` | apply a VibeyReports LayoutPlan JSON (camelCase action names) to the open report; returns the refreshed IR |
 | `save_report(path?)` | write current bytes (default: overwrite the opened file) |
 | `save_as_bytes()` | the `.rpt` bytes (for Tauri's save-dialog flow) |
+| `preview_thumbnail()` | page-1-only one-page PDF of the open report — the list-view thumbnail |
+| `open_report_bytes(bytes)` | open a report held in memory (e.g. straight from `new_report`) — create-then-edit without temp files |
+| `undo_report()` / `redo_report()` | step back / re-apply the last accepted edit batch; returns the refreshed IR |
+| `find_replace(find, replace, caseInsensitive?)` | replace every matching literal text across the main report AND all subreports (one undoable batch; locked multi-run texts skipped and counted) |
+| `preview_hits()` | rendered pages as selectable hit boxes (object/section/kind + true twips rectangles) — the overlay for click-to-select / drag-to-edit on the preview |
+| `hit_test(page, x, y)` | the topmost hit box at a printable-relative point (server-side click lookup) |
+| `diff_reports(a, b)` | JSON-path diff lines over the two reports' decoded models — the changes panel |
+| `get_subreport_ir(name)` | the named embedded subreport's OWN IR (its objects/areas) — the object scope for edits with a `subreport` field |
+| `get_parameters()` | the open report's declared parameters (name, kind, prompt text, pick lists) — the prompt form for previews |
+| `export_pdf(opts)` | "Export PDF": the preview render with `{ title, pdfa: "1b\|2b\|3b", tagged }` |
 | `preview_report()` | render the open report (unsaved edits included) to a PDF preview — `{ pdf: number[], pageCount, diagnostics: string[] }`; saved data drives the rows when the report carries it, otherwise static bands render |
 | `preview_report_live(db)` | same render with LIVE SQL Server data — `db = { connectionString, params: [[name, value]…] }`; the connection string is your app's own ADO/OLE DB form, parsed once and never logged; stored-procedure tables execute fresh, so the preview reflects the database now |
 
@@ -44,6 +54,17 @@ tauri::Builder::default()
         tauri_commands::glue::apply_plan,
         tauri_commands::glue::save_report,
         tauri_commands::glue::save_as_bytes,
+        tauri_commands::glue::preview_thumbnail,
+        tauri_commands::glue::open_report_bytes,
+        tauri_commands::glue::undo_report,
+        tauri_commands::glue::redo_report,
+        tauri_commands::glue::find_replace,
+        tauri_commands::glue::preview_hits,
+        tauri_commands::glue::hit_test,
+        tauri_commands::glue::diff_reports,
+        tauri_commands::glue::get_subreport_ir,
+        tauri_commands::glue::get_parameters,
+        tauri_commands::glue::export_pdf,
         tauri_commands::glue::preview_report,
         tauri_commands::glue::preview_report_live,
     ])

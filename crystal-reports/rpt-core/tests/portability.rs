@@ -708,12 +708,15 @@ fn create_report_options_and_edit_loop() {
     assert_eq!(si.title.as_deref(), Some("Created from scratch"));
     assert_eq!(si.author.as_deref(), Some("rpt-core"));
 
-    // Orientation without a DEVMODE record: clean refusal (documented — the blank carries none).
-    let err = rpt_core::blank::create_report(&rpt_core::blank::NewReportOptions {
+    // Orientation on the DEVMODE-less blank: synthesized (validation-log §27), reads back.
+    let landscape = rpt_core::blank::create_report(&rpt_core::blank::NewReportOptions {
         orientation: Some("landscape".to_string()),
+        paper_size: Some(9),
         ..Default::default()
-    }).expect_err("orientation refused without DEVMODE");
-    assert!(err.contains("DEVMODE"), "got: {err}");
+    }).expect("orientation synthesized on the blank");
+    let lr = open_bytes(&landscape).expect("landscape blank opens");
+    use rpt_reader::model::PaperOrientation;
+    assert_eq!(lr.report().print_options.paper_orientation, PaperOrientation::Landscape);
 
     // THE LOOP Vibey could not run: create → edit → save, all offline.
     let plan = r#"{"planVersion":1,"operations":[

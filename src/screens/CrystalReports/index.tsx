@@ -10,13 +10,16 @@
 // bytes - no blob: URL and no frame (see ./PageView).
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { open as pickFile } from "@tauri-apps/plugin-dialog";
 import { commands, events, type CurrentReport } from "../../bindings";
 import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
-import { IconOpenInBrowser } from "../../lib/actionIcons";
+import { IconBrowse, IconOpenInBrowser } from "../../lib/actionIcons";
 import { cn } from "../../lib/cn";
 import { unwrapStr } from "../../lib/ipc";
 import { PageView } from "./PageView";
+import { FindReplace } from "./FindReplace";
+import { ParametersPanel } from "./ParametersPanel";
 import { PreviewNotes } from "./PreviewNotes";
 
 /** What the screen is showing. `null` until the first read comes back. */
@@ -33,7 +36,7 @@ type View =
       drawError: string | null;
     };
 
-const NOTHING_OPEN = "No report open. Ask your AI assistant to open one.";
+const NOTHING_OPEN = "No report open. Open a report, or ask your AI assistant to open one.";
 const FILE_GONE = "The report file is no longer there.";
 const NOT_DRAWN = "The preview could not be drawn.";
 
@@ -57,6 +60,7 @@ const pagesLabel = (n: number) => (n === 1 ? "1 page" : `${n} pages`);
 export default function CrystalReports() {
   const [view, setView] = useState<View | null>(null);
   const [opening, setOpening] = useState(false);
+  const [picking, setPicking] = useState(false);
   const [openError, setOpenError] = useState<string | null>(null);
   // Which read is the newest, so a slow read that comes back after a newer
   // one cannot put an old PDF back.
@@ -110,6 +114,30 @@ export default function CrystalReports() {
     }
   };
 
+  // The person picks a report; it becomes the open report for the assistant
+  // too. Cancelling the picker does nothing.
+  const openReport = async () => {
+    setPicking(true);
+    setOpenError(null);
+    try {
+      const picked = await pickFile({ multiple: false, filters: [{ name: "Reports", extensions: ["rpt"] }] });
+      if (typeof picked !== "string") return;
+      await unwrapStr(commands.crystalOpenFile(picked));
+      await load();
+    } catch (e) {
+      setOpenError(message(e));
+    } finally {
+      setPicking(false);
+    }
+  };
+
+  const openButton = (
+    <Button size="sm" variant="outline" disabled={picking} onClick={() => void openReport()}>
+      <IconBrowse aria-hidden />
+      Open report
+    </Button>
+  );
+
   if (!view) return <p className="text-sm text-muted">Loading the report…</p>;
   if (view.kind === "error") {
     return (
@@ -118,7 +146,19 @@ export default function CrystalReports() {
       </p>
     );
   }
-  if (view.kind === "empty") return <p className="text-sm text-muted">{NOTHING_OPEN}</p>;
+  if (view.kind === "empty") {
+    return (
+      <div className="flex flex-col items-start gap-2">
+        <p className="text-sm text-muted">{NOTHING_OPEN}</p>
+        {openButton}
+        {openError && (
+          <p role="alert" className="max-w-md text-xs text-danger">
+            {openError}
+          </p>
+        )}
+      </div>
+    );
+  }
 
   const { preview, missing } = view.report;
   const { name, folder } = splitPath(preview.path);
@@ -148,20 +188,25 @@ export default function CrystalReports() {
           </div>
           {folder && <div className="truncate text-xs text-muted">{folder}</div>}
         </div>
-        {!missing && (
-          <div className="flex flex-col items-end gap-1">
-            <Button size="sm" variant="outline" disabled={opening} onClick={() => void openInDesigner()}>
-              <IconOpenInBrowser aria-hidden />
-              Open in Crystal Reports
-            </Button>
-            {openError && (
-              <p role="alert" className="max-w-md text-right text-xs text-danger">
-                {openError}
-              </p>
+        <div className="flex flex-col items-end gap-1">
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            {openButton}
+            {!missing && (
+              <Button size="sm" variant="outline" disabled={opening} onClick={() => void openInDesigner()}>
+                <IconOpenInBrowser aria-hidden />
+                Open in Crystal Reports
+              </Button>
             )}
           </div>
-        )}
+          {openError && (
+            <p role="alert" className="max-w-md text-right text-xs text-danger">
+              {openError}
+            </p>
+          )}
+        </div>
       </header>
+      {!missing && <ParametersPanel key={preview.path} path={preview.path} stamp={preview} onPreviewed={() => void load()} />}
+      {!missing && <FindReplace key={`find:${preview.path}`} onChanged={() => void load()} />}
       {missing && <p className="text-sm text-danger">{FILE_GONE}</p>}
       {!missing && !drawn && <p className="text-sm text-text">{NOT_DRAWN}</p>}
       {!missing && <PreviewNotes lines={notes} live={preview.live} otherOpenAtFirst={!drawn} />}

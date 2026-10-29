@@ -138,6 +138,44 @@ pub enum EditOp {
         #[serde(default)] evaluate_field: Option<String>,
         #[serde(default)] reset_field: Option<String>,
     },
+    /// `setSectionVisibility` — replace a section's conditional Section_Visibility formula.
+    SetSectionVisibility { section: SecSel, source: String },
+    /// `setTextRotation` - 0/90/180/270 quarter-turn of the object's text.
+    SetTextRotation { object: ObjSel, degrees: i16 },
+    /// `setVerticalAlignment` - top/center/bottom within the object box.
+    SetVerticalAlignment { object: ObjSel, alignment: String },
+    /// `setKeepObjectTogether` - keep the whole object on one page.
+    SetKeepObjectTogether { object: ObjSel, keep: bool },
+    /// `setWordWrap` - wrap the field's text within its box.
+    SetWordWrap { object: ObjSel, wrap: bool },
+    /// `setMaxLines` - cap displayed lines (0 = unlimited).
+    SetMaxLines { object: ObjSel, lines: u16 },
+    /// `setTextInterpretation` - plain/html/rtf (the stored TextFormat flag).
+    SetTextInterpretation { object: ObjSel, format: String },
+    /// `setIndents` - first-line/left/right indents in twips (string fields).
+    SetIndents { object: ObjSel, first: Option<i64>, left: Option<i64>, right: Option<i64> },
+    /// `setReadingOrder` - ltr/rtl.
+    SetReadingOrder { object: ObjSel, order: String },
+    /// `setBooleanFormat` - true_false / one_zero / t_f.
+    SetBooleanFormat { object: ObjSel, output: String },
+    /// `setSectionFlags` - the four boolean section format flags, each optional.
+    SetSectionFlags {
+        section: SecSel,
+        keep_together: Option<bool>,
+        reset_page_number_after: Option<bool>,
+        print_at_bottom_of_page: Option<bool>,
+        underlay_section: Option<bool>,
+    },
+    /// `setGroupSelection` - replace the group-selection formula's source.
+    SetGroupSelection { source: String },
+    /// `addSummary` — synthesize a grand-total summary field definition.
+    AddSummary { name: String, summarize: String, operation: String },
+    /// `setParameter` — edit a declared parameter's prompt text / optional flag.
+    SetParameter { name: String, prompt_text: Option<String>, optional: Option<bool> },
+    /// `removeSort` — remove the sort on a field.
+    RemoveSort { field_ref: String },
+    /// Apply a batch of ops INSIDE an embedded subreport (its own objects/IR scope).
+    InSubreport { subreport: String, ops: Vec<EditOp> },
     /// `setFormula` — replace a named formula's source text (refs re-derived from the source).
     SetFormula { formula: String, source: String },
     /// `setRecordSelection` — replace the record-selection formula's source text.
@@ -458,12 +496,14 @@ fn apply_one(rpt: &Rpt, op: &EditOp, outcome: &mut ApplyOutcome) -> Result<Vec<u
                 "landscape" => 2,
                 other => return Err(format!("orientation must be portrait or landscape, not `{other}`")),
             };
-            let addr = page_devmode_addr(rpt)?;
-            patch_page_level(&rpt.reencode().map_err(|e| format!("reencode failed: {e}"))?, addr, "orientation", FieldEdit::Int(value))
+            let bytes = crate::pagesetup::ensure_page_devmode(rpt)?;
+            let addr = page_devmode_addr(&crate::open_bytes(&bytes)?)?;
+            patch_page_level(&bytes, addr, "orientation", FieldEdit::Int(value))
         }
         EditOp::SetPaperSize { paper } => {
-            let addr = page_devmode_addr(rpt)?;
-            patch_page_level(&rpt.reencode().map_err(|e| format!("reencode failed: {e}"))?, addr, "paper_size", FieldEdit::Int(i64::from(*paper)))
+            let bytes = crate::pagesetup::ensure_page_devmode(rpt)?;
+            let addr = page_devmode_addr(&crate::open_bytes(&bytes)?)?;
+            patch_page_level(&bytes, addr, "paper_size", FieldEdit::Int(i64::from(*paper)))
         }
 
         // --- Vibey field-patch ops ---
@@ -693,6 +733,115 @@ fn apply_one(rpt: &Rpt, op: &EditOp, outcome: &mut ApplyOutcome) -> Result<Vec<u
             )
         }
         EditOp::SetRecordSelection { source } => crate::formula::set_record_selection(rpt, source),
+        EditOp::SetSectionVisibility { section, source } => {
+            crate::conditions::set_section_visibility(rpt, section, source)
+        }
+        EditOp::SetTextRotation { object, degrees } => {
+            if !matches!(degrees, 0 | 90 | 180 | 270) {
+                return Err(format!("text rotation must be 0/90/180/270, not `{degrees}`"));
+            }
+            let (_l, obj) = resolve(rpt, object)?;
+            let addr = obj.format().ok_or("this object has no format record")?;
+            patch(rpt, addr, "rotation", FieldEdit::Int(i64::from(*degrees)))
+        }
+        EditOp::SetVerticalAlignment { object, alignment } => {
+            let v = match alignment.to_ascii_lowercase().as_str() {
+                "top" => 6,   // the shared Alignment ordinals (6 top, 7 centre, 8 bottom)
+                "center" | "centre" | "middle" => 7,
+                "bottom" => 8,
+                other => return Err(format!("alignment must be top/center/bottom, not `{other}`")),
+            };
+            let (_l, obj) = resolve(rpt, object)?;
+            let addr = obj.format().ok_or("this object has no format record")?;
+            patch(rpt, addr, "vertical_alignment", FieldEdit::Int(v))
+        }
+        EditOp::SetKeepObjectTogether { object, keep } => {
+            let (_l, obj) = resolve(rpt, object)?;
+            let addr = obj.format().ok_or("this object has no format record")?;
+            patch(rpt, addr, "keep_object_together", FieldEdit::Int(*keep as i64))
+        }
+        EditOp::SetWordWrap { object, wrap } => {
+            let (_l, obj) = resolve(rpt, object)?;
+            let addr = obj.string_format().ok_or("this object has no string-format record (non-string field?)")?;
+            patch(rpt, addr, "word_wrap", FieldEdit::Int(*wrap as i64))
+        }
+        EditOp::SetMaxLines { object, lines } => {
+            let (_l, obj) = resolve(rpt, object)?;
+            let addr = obj.string_format().ok_or("this object has no string-format record (non-string field?)")?;
+            patch(rpt, addr, "max_lines", FieldEdit::Int(i64::from(*lines)))
+        }
+        EditOp::SetTextInterpretation { object, format } => {
+            let v = match format.to_ascii_lowercase().as_str() {
+                "plain" | "text" => 0,
+                "html" => 2,
+                "rtf" => 1,
+                other => return Err(format!("interpretation must be plain/html/rtf, not `{other}`")),
+            };
+            let (_l, obj) = resolve(rpt, object)?;
+            let addr = obj.string_format().ok_or("this object has no string-format record (non-string field?)")?;
+            patch(rpt, addr, "text_interpretation", FieldEdit::Int(v))
+        }
+        EditOp::SetIndents { object, first, left, right } => {
+            if first.is_none() && left.is_none() && right.is_none() {
+                return Err("set_indents with nothing to change".to_string());
+            }
+            let (_l, obj) = resolve(rpt, object)?;
+            let addr = obj.string_format().ok_or("this object has no string-format record (non-string field?)")?;
+            let mut current = rpt.reencode().map_err(|e| format!("reencode failed: {e}"))?;
+            if let Some(v) = first { current = patch_on(&current, addr, "first_line_indent", FieldEdit::Int(*v))?; }
+            if let Some(v) = left { current = patch_on(&current, addr, "left_indent", FieldEdit::Int(*v))?; }
+            if let Some(v) = right { current = patch_on(&current, addr, "right_indent", FieldEdit::Int(*v))?; }
+            Ok(current)
+        }
+        EditOp::SetReadingOrder { object, order } => {
+            let v = match order.to_ascii_lowercase().as_str() {
+                "ltr" | "left_to_right" => 0,
+                "rtl" | "right_to_left" => 1,
+                other => return Err(format!("reading order must be ltr/rtl, not `{other}`")),
+            };
+            let (_l, obj) = resolve(rpt, object)?;
+            let addr = obj.string_format().ok_or("this object has no string-format record (non-string field?)")?;
+            patch(rpt, addr, "reading_order", FieldEdit::Int(v))
+        }
+        EditOp::SetBooleanFormat { object, output } => {
+            let v = match output.to_ascii_lowercase().as_str() {
+                "true_false" | "truefalse" => 0,
+                "one_zero" => 1,
+                "t_f" | "tf" => 2,
+                other => return Err(format!("boolean output must be true_false/one_zero/t_f, not `{other}`")),
+            };
+            let (_l, obj) = resolve(rpt, object)?;
+            let addr = obj.boolean_format().ok_or("this object has no boolean-format record (non-boolean field?)")?;
+            patch(rpt, addr, "output_type", FieldEdit::Int(v))
+        }
+        EditOp::SetSectionFlags { section, keep_together, reset_page_number_after, print_at_bottom_of_page, underlay_section } => {
+            if keep_together.is_none() && reset_page_number_after.is_none() && print_at_bottom_of_page.is_none() && underlay_section.is_none() {
+                return Err("set_section_flags with nothing to change".to_string());
+            }
+            let located = crate::locate::locate(rpt);
+            let sec = crate::edit::find_section_by_names(&located, section)?;
+            let addr = *sec.section_format.as_ref().ok_or("the section has no own format record")?;
+            let mut current = rpt.reencode().map_err(|e| format!("reencode failed: {e}"))?;
+            if let Some(v) = keep_together { current = patch_on(&current, addr, "keep_together", FieldEdit::Int(*v as i64))?; }
+            if let Some(v) = reset_page_number_after { current = patch_on(&current, addr, "reset_page_number_after", FieldEdit::Int(*v as i64))?; }
+            if let Some(v) = print_at_bottom_of_page { current = patch_on(&current, addr, "print_at_bottom_of_page", FieldEdit::Int(*v as i64))?; }
+            if let Some(v) = underlay_section { current = patch_on(&current, addr, "underlay_section", FieldEdit::Int(*v as i64))?; }
+            Ok(current)
+        }
+        EditOp::SetGroupSelection { source } => crate::formula::set_group_selection(rpt, source),
+        EditOp::AddSummary { name, summarize, operation } => {
+            crate::running_total::add_summary(rpt, name, summarize, operation, None)
+        }
+        EditOp::SetParameter { name, prompt_text, optional } => {
+            if prompt_text.is_none() && optional.is_none() {
+                return Err("set_parameter with nothing to change".to_string());
+            }
+            crate::conditions::set_parameter(rpt, name, prompt_text.as_deref(), *optional)
+        }
+        EditOp::RemoveSort { field_ref } => crate::conditions::remove_sort(rpt, field_ref),
+        EditOp::InSubreport { subreport, ops } => {
+            crate::subedit::apply_in_subreport(rpt, subreport, ops).map_err(|e| e.to_string())
+        }
         EditOp::AddSubreport { section, name, report_path, left, top, width, height } => {
             crate::subreport::add_subreport(rpt, section, name, report_path, *left, *top, *width, *height)
         }
@@ -856,6 +1005,8 @@ impl Resolved {
     fn border(&self) -> Option<RecAddr> { self.obj.border }
     fn text_format(&self) -> Option<RecAddr> { self.obj.text_format }
     fn common_format(&self) -> Option<RecAddr> { self.obj.common_format }
+    fn string_format(&self) -> Option<RecAddr> { self.obj.string_format }
+    fn boolean_format(&self) -> Option<RecAddr> { self.obj.boolean_format }
     fn numeric_formats(&self) -> Vec<RecAddr> { self.obj.numeric_formats.clone() }
     fn text_rec(&self) -> Option<RecAddr> { self.obj.text }
     fn text_editable(&self) -> bool { self.obj.embedded_fields == 0 && self.obj.text_runs <= 1 }
