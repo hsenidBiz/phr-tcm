@@ -157,7 +157,15 @@ export default function DateField({
           style={place ?? { top: 0, left: 0, visibility: "hidden" }}
         >
           <Calendar selected={date} onSelect={(d) => settle(d ? toIso(d) : "")} />
-          <div className="flex justify-end border-t border-border px-3 py-1.5 text-xs">
+          {/* One row for both: the calendar's own Today row is hidden. */}
+          <div className="flex items-center justify-between border-t border-border px-3 py-1.5 text-xs">
+            <button
+              type="button"
+              className="font-semibold text-accent transition-colors hover:text-accent-hover"
+              onClick={() => settle(toIso(new Date()))}
+            >
+              Today
+            </button>
             <button type="button" className="text-muted hover:text-danger" onClick={() => settle("")}>
               Clear
             </button>

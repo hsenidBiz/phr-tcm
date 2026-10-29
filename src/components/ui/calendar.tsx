@@ -3,8 +3,9 @@ import { Calendar as XiodCalendar } from "xiod-ui/calendar";
 /**
  * The date grid DateField opens: XiodUI's calendar, weeks starting on
  * Monday, coloured by the app's tokens through src/xiod-theme.css. Single
- * dates only - that is all an Azure DevOps date field holds. Its own footer
- * carries "Today". It lays itself flat (no card of its own) because the
+ * dates only - that is all an Azure DevOps date field holds. Its own
+ * footer ("Today") is hidden: DateField draws one footer row with Today and
+ * Clear together. It lays itself flat (no card of its own) because the
  * panel it sits in is the card.
  */
 export default function Calendar({
@@ -22,6 +23,7 @@ export default function Calendar({
       weekStartsOn={1}
       showOutsideDays
       className="border-none bg-transparent shadow-none before:shadow-none!"
+      classNames={{ footer: "hidden" }}
     />
   );
 }
