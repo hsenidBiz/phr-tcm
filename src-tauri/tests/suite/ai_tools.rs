@@ -624,7 +624,9 @@ fn each_tool_belongs_to_its_module() {
             "check_report",
             "preview_report",
             "preview_report_live",
-            "get_report_parameters"
+            "get_report_parameters",
+            "find_in_report",
+            "replace_in_report"
         ]
     );
     for t in AUTORUN_TOOLS {

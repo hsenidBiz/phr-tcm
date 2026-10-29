@@ -185,6 +185,10 @@ export const commands = {
 	crystalParameters: () => typedError<ReportParameter[], string>(__TAURI_INVOKE("crystal_parameters")),
 	/**  Draw the open report with the parameter values typed on the screen. */
 	crystalDraw: (values: ParameterValue[]) => typedError<null, string>(__TAURI_INVOKE("crystal_draw", { values })),
+	/**  Find text and field references in the open report and its subreports. */
+	crystalFind: (text: string, matchCase: boolean) => typedError<FindHit[], string>(__TAURI_INVOKE("crystal_find", { text, matchCase })),
+	/**  Replace text in the open report; `dry_run` lists the changes and saves nothing. */
+	crystalReplace: (find: string, replace: string, matchCase: boolean, dryRun: boolean) => typedError<ReplaceOutcome, string>(__TAURI_INVOKE("crystal_replace", { find, replace, matchCase, dryRun })),
 	/**
 	 *  Open the activity folder - the full DB (and, later, API) statement
 	 *  trail `activity_log` writes, kept apart from the app log's own daily
@@ -4251,6 +4255,22 @@ export type FiledBug = {
 	screenshots_total: number,
 };
 
+/**  One object that matched. */
+export type FindHit = {
+	/**  The subreport it is in; `None` for the main report. */
+	subreport: string | null,
+	object_id: string,
+	name: string,
+	kind: string,
+	section: string,
+	/**  "text" or "field". */
+	matched: string,
+	/**  The text's display, or the field's reference. */
+	text: string,
+	/**  Whether a replace can change it: a text object with no fields in it. */
+	replaceable: boolean,
+};
+
 export type Fixture = {
 	id: string,
 	name: string,
@@ -5982,6 +6002,26 @@ export type RenameDone = {
 export type RepairNote = {
 	reason: string,
 	at: string,
+};
+
+/**  One change a replace makes (or, on a dry run, would make). */
+export type ReplaceChange = {
+	subreport: string | null,
+	object_id: string,
+	name: string,
+	before: string,
+	after: string,
+};
+
+/**  What a replace did. */
+export type ReplaceOutcome = {
+	/**  Objects rewritten (or that would be, on a dry run). */
+	replaced: number,
+	/**  Matching text objects left alone because their text holds fields. */
+	skipped_locked: number,
+	changes: ReplaceChange[],
+	/**  Whether anything was saved. */
+	applied: boolean,
 };
 
 /**

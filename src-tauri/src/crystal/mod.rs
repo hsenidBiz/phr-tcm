@@ -13,6 +13,7 @@
 //! `live`'s, and is kept here exactly like a render from the saved data.
 
 mod compare;
+mod find;
 mod guide;
 mod live;
 mod params;
@@ -27,6 +28,7 @@ use rpt_core::plan::LayoutPlan;
 use rpt_core::rpt_reader::Rpt;
 use serde_json::Value;
 
+pub use find::{find, replace, FindHit, ReplaceChange, ReplaceOutcome};
 pub use params::{parameters, preview_saved_with, ParameterChoice, ReportParameter, NO_SAVED_DATA};
 
 /// The open report, if any.
@@ -269,7 +271,14 @@ pub fn edit(ops: Option<Value>, plan: Option<Value>) -> Result<Value, String> {
 
     let mut slot = state();
     let open = slot.as_mut().ok_or(NOTHING_OPEN)?;
-    let bytes = match apply_edits_on(&open.rpt, &ops, &mut ApplyOutcome::default()) {
+    apply_ops(open, &ops)
+}
+
+/// Apply `ops` to `open` and save them over its file: the one path every
+/// accepted change takes (`edit`, `replace`). Answers with the new IR. A
+/// batch the bundle refuses saves nothing and the file is read again.
+fn apply_ops(open: &mut Open, ops: &[EditOp]) -> Result<Value, String> {
+    let bytes = match apply_edits_on(&open.rpt, ops, &mut ApplyOutcome::default()) {
         Ok(bytes) => bytes,
         Err(refusal) => {
             // The batch's bytes are dropped, so the open report never held any of

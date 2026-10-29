@@ -12,7 +12,7 @@ use std::path::Path;
 
 use base64::Engine;
 
-use crate::crystal::{self, PreviewInfo, ReportParameter};
+use crate::crystal::{self, FindHit, PreviewInfo, ReplaceOutcome, ReportParameter};
 use crate::modules::{self, Module};
 
 /// Said when the open report's file has been moved or deleted since.
@@ -114,6 +114,29 @@ pub fn draw_with(on: bool, values: Vec<ParameterValue>) -> Result<(), String> {
     crystal::preview_saved_with(params).map(|_| ())
 }
 
+/// Every object of the open report and its subreports that holds `text`.
+pub fn find_with(on: bool, text: &str, match_case: bool) -> Result<Vec<FindHit>, String> {
+    offered(on)?;
+    crystal::find(text, match_case)
+}
+
+/// Replace text in the open report. With `dry_run` it only lists what would
+/// change; otherwise the changes are saved over the file like any edit. A
+/// refusal names the file, never its path.
+pub fn replace_with(
+    on: bool,
+    find: &str,
+    replace: &str,
+    match_case: bool,
+    dry_run: bool,
+) -> Result<ReplaceOutcome, String> {
+    offered(on)?;
+    crystal::replace(find, replace, match_case, dry_run).map_err(|e| match crystal::current_path() {
+        Some(path) => e.replace(&path, &file_name(&path)),
+        None => e,
+    })
+}
+
 fn file_name(path: &str) -> String {
     Path::new(path).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| path.to_string())
 }
@@ -123,6 +146,25 @@ fn file_name(path: &str) -> String {
 #[specta::specta]
 pub fn crystal_open_file(path: String) -> Result<(), String> {
     open_file_with(modules::on(Module::CrystalReports), &path)
+}
+
+/// Find text and field references in the open report and its subreports.
+#[tauri::command(async)]
+#[specta::specta]
+pub fn crystal_find(text: String, match_case: bool) -> Result<Vec<FindHit>, String> {
+    find_with(modules::on(Module::CrystalReports), &text, match_case)
+}
+
+/// Replace text in the open report; `dry_run` lists the changes and saves nothing.
+#[tauri::command(async)]
+#[specta::specta]
+pub fn crystal_replace(
+    find: String,
+    replace: String,
+    match_case: bool,
+    dry_run: bool,
+) -> Result<ReplaceOutcome, String> {
+    replace_with(modules::on(Module::CrystalReports), &find, &replace, match_case, dry_run)
 }
 
 /// The open report's parameters.

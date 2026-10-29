@@ -277,6 +277,8 @@ fn the_guide_names_every_tool_and_the_units() {
         "`create`",
         "preview_report",
         "preview_report_live",
+        "find_in_report",
+        "replace_in_report",
         "get_guide",
     ] {
         assert!(guide.contains(tool), "the guide names {tool}");

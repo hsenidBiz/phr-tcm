@@ -727,3 +727,9 @@ test("the_parameters_panel_starts_empty_for_another_report", async () => {
   await within(header()).findByText("Other.rpt");
   expect(await screen.findByRole("textbox", { name: "@cycle" })).toHaveValue("");
 });
+
+test("an_open_report_has_a_find_and_replace_box", async () => {
+  mockCrystal({ current: current(), pdf: PDF });
+  render(<CrystalReports />);
+  expect(await screen.findByRole("region", { name: "Find and replace" })).toBeInTheDocument();
+});

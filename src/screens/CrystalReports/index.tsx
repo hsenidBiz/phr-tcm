@@ -18,6 +18,7 @@ import { IconBrowse, IconOpenInBrowser } from "../../lib/actionIcons";
 import { cn } from "../../lib/cn";
 import { unwrapStr } from "../../lib/ipc";
 import { PageView } from "./PageView";
+import { FindReplace } from "./FindReplace";
 import { ParametersPanel } from "./ParametersPanel";
 import { PreviewNotes } from "./PreviewNotes";
 
@@ -205,6 +206,7 @@ export default function CrystalReports() {
         </div>
       </header>
       {!missing && <ParametersPanel key={preview.path} path={preview.path} onPreviewed={() => void load()} />}
+      {!missing && <FindReplace key={`find:${preview.path}`} onChanged={() => void load()} />}
       {missing && <p className="text-sm text-danger">{FILE_GONE}</p>}
       {!missing && !drawn && <p className="text-sm text-text">{NOT_DRAWN}</p>}
       {!missing && <PreviewNotes lines={notes} live={preview.live} otherOpenAtFirst={!drawn} />}

@@ -20,6 +20,8 @@ TCM holds one open report at a time. Opening another replaces it. Every tool bel
 4. `preview_report` to render the report again. It answers with the page count and the renderer's notes, never the PDF itself; the Crystal Reports screen shows the pages.
 5. `check_report` before you call the work done. It runs the bundle's offline load checks and lists errors (Crystal Reports would refuse or garble the file) and warnings (suspect, but usually tolerated).
 
+`find_in_report` finds text, and field references such as `{Command.name}`, across the report and its subreports. `replace_in_report` rewrites plain text across them: run it with `dry_run: true` first to list every change (naming the subreport), then without. Text that holds fields is skipped and counted, and fields are never replaced.
+
 `compare_reports` takes two `.rpt` paths and lists every difference between them, one `path: before -> after` line each. `open_report` with `create` (true, or `{ title, author, comments }`) creates a blank report at a path - never over a file that is already there - and opens it. `get_guide` with topic `reports` answers with this guide.
 
 ## Ids
@@ -72,7 +74,7 @@ A batch is all or nothing. When the bundle refuses one operation, nothing in tha
 Say "that is not supported yet" for these instead of trying; the bundle refuses them itself and TCM passes its message on.
 
 - Text objects with embedded fields are read-only: `set_text` on one is refused, because rewriting it would drop the fields. The IR marks the ones it can rewrite with `"editable": true`.
-- The insides of subreports: what a subreport shows cannot be edited from the report that holds it.
+- The insides of subreports: what a subreport shows cannot be edited from the report that holds it, except plain text, which `replace_in_report` does reach.
 - Paper size or orientation on a report saved without a printer.
 - Password-protected reports, and reports older than Crystal Reports XI.
 

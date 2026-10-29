@@ -4553,7 +4553,7 @@ mod crystal_routes {
     const SAMPLES: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../crystal-reports/Sample Report");
     const SAMPLE: &str = "PMSV10_GoalAlignCascade.rpt";
 
-    const PATHS: [&str; 9] = [
+    const PATHS: [&str; 11] = [
         "/crystal-open",
         "/crystal-read",
         "/crystal-change",
@@ -4563,6 +4563,8 @@ mod crystal_routes {
         "/crystal-preview",
         "/crystal-preview-live",
         "/crystal-parameters",
+        "/crystal-find",
+        "/crystal-replace",
     ];
 
     /// A copy of the sample inside `dir`, as a path string.
@@ -4678,6 +4680,71 @@ mod crystal_routes {
         let (status, why) = post("/crystal-preview", json!({ "params": { "perfomance_cycle": "1" } })).await;
         assert_eq!(status, 400, "{why}");
         assert!(why.contains("perfomance_cycle"), "{why}");
+        v2_lib::crystal::close();
+    }
+
+    #[tokio::test]
+    async fn the_replace_route_keeps_spaces_and_accepts_an_empty_replacement() {
+        let _on = crate::serial::crystal_on();
+        let _lock = crate::serial::crystal();
+        let dir = tempfile::tempdir().unwrap();
+        let path = copy_sample(dir.path());
+        let ir = json_of(&post("/crystal-open", json!({ "path": path })).await);
+        // A plain text with a space inside it: the span from that space on.
+        let (text, span) = ir["objects"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|o| o["text"]["editable"] == true)
+            .filter_map(|o| o["text"]["display"].as_str())
+            .find_map(|t| t.find(' ').filter(|i| *i > 0 && i + 1 < t.len()).map(|i| (t.to_string(), t[i..].to_string())))
+            .expect("a plain text with a space in it");
+        let before = std::fs::read(&path).unwrap();
+
+        let dry = json_of(&post("/crystal-replace", json!({ "find": span, "replace": "", "dry_run": true })).await);
+        assert_eq!(dry["applied"], false, "{dry}");
+        let change = dry["changes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|c| c["before"] == text.as_str())
+            .unwrap_or_else(|| panic!("the text is among the changes: {dry}"));
+        assert_eq!(change["after"], text.replace(&span, "").as_str(), "{dry}");
+        assert_eq!(std::fs::read(&path).unwrap(), before);
+
+        let (status, why) = post("/crystal-replace", json!({ "find": "x" })).await;
+        assert_eq!(status, 400);
+        assert_eq!(why, "this call needs a \"replace\" (it may be empty, to remove the text).");
+
+        let hits = json_of(&post("/crystal-find", json!({ "text": text })).await);
+        assert!(!hits.as_array().unwrap().is_empty(), "{hits}");
+        let (status, why) = post("/crystal-find", json!({ "text": "" })).await;
+        assert_eq!((status, why.as_str()), (400, "Give the text to find."));
+        v2_lib::crystal::close();
+    }
+
+    #[tokio::test]
+    async fn an_applied_replace_through_the_route_is_saved() {
+        let _on = crate::serial::crystal_on();
+        let _lock = crate::serial::crystal();
+        let dir = tempfile::tempdir().unwrap();
+        let path = copy_sample(dir.path());
+        let ir = json_of(&post("/crystal-open", json!({ "path": path })).await);
+        let text = ir["objects"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|o| o["text"]["editable"] == true)
+            .filter_map(|o| o["text"]["display"].as_str())
+            .find(|t| t.trim().len() >= 3)
+            .unwrap()
+            .to_string();
+        let done = json_of(&post("/crystal-replace", json!({ "find": text, "replace": "Changed over HTTP", "match_case": true })).await);
+        assert_eq!(done["applied"], true, "{done}");
+        let bytes = std::fs::read(&path).unwrap();
+        assert!(rpt_core::open_bytes(&bytes).is_ok());
+        let read = json_of(&post("/crystal-read", json!({})).await);
+        assert!(read.to_string().contains("Changed over HTTP"));
         v2_lib::crystal::close();
     }
 

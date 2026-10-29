@@ -323,6 +323,16 @@ export const MCP_TOOLS: McpToolInfo[] = [
     label: "Report parameters",
     summary: "List the open report's parameters, their kinds and pick lists.",
   },
+  {
+    name: "find_in_report",
+    label: "Find in the report",
+    summary: "Find text and field references across the open report and its subreports.",
+  },
+  {
+    name: "replace_in_report",
+    label: "Replace in the report",
+    summary: "Replace text across the open report, with a dry run that shows each change first.",
+  },
   { name: "validate_cases", label: "Check a draft", summary: "Check a draft with the app's real importer." },
   { name: "get_tags", label: "Project tags", summary: "Tag names this project already uses." },
   { name: "optimize_cases", label: "Build the run sheet", summary: "Reorganise a draft into a tester-ready run sheet." },
@@ -422,6 +432,8 @@ export const CRYSTAL_TOOLS = [
   "preview_report",
   "preview_report_live",
   "get_report_parameters",
+  "find_in_report",
+  "replace_in_report",
 ] as const;
 
 /** The module a tool belongs to; null for a tool that is part of Core.

@@ -1321,6 +1321,24 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool, unlocked: bool, all_projec
             "inputSchema": schema(serde_json::json!({}), &[]),
         },
         {
+            "name": "find_in_report",
+            "description": "Find text across the open report and its subreports: every text object whose text contains it, and every field whose reference (like {Command.name} or {?param}) contains it. Each hit has its object id, name, section, subreport (none for the main report), what matched and whether replace_in_report can change it (text holding fields cannot be rewritten). Case is ignored unless match_case is true.",
+            "inputSchema": schema(serde_json::json!({
+                "text": { "type": "string", "description": "The text to look for. Spaces count." },
+                "match_case": { "type": "boolean", "description": "Default false: upper and lower case letters match each other." },
+            }), &["text"]),
+        },
+        {
+            "name": "replace_in_report",
+            "description": "Replace text in every text object of the open report and its subreports that contains `find`. Run it with dry_run: true first: that lists each change (before and after, naming the subreport) and changes nothing. Without dry_run the changes are saved over the file at once, like edit_report, and cannot be taken back inside TCM. Text holding fields is skipped and counted in skipped_locked, never rewritten; fields are never replaced. Ids may change: read_report before the next edit.",
+            "inputSchema": schema(serde_json::json!({
+                "find": { "type": "string", "description": "The text to replace. Spaces count." },
+                "replace": { "type": "string", "description": "What to put in its place. May be empty, to remove the text." },
+                "match_case": { "type": "boolean", "description": "Default false: upper and lower case letters match each other." },
+                "dry_run": { "type": "boolean", "description": "List the changes and save nothing." },
+            }), &["find", "replace"]),
+        },
+        {
             "name": "optimize_cases",
             "description": "Reorganise a draft into a run sheet a tester can work straight through: navigation spelled out as explicit steps, expected results reduced to the outcome, and cases ordered so the tester changes environment as few times as possible. Run with dry_run: true FIRST and read expected_rewritten - every expected result this would shorten, before and after. Every case comes back stamped with BOTH spec_order and tester_order: keep those fields as returned. Call it once on your finished draft instead of hand-tuning it. For large drafts pass `path` with `in_place: true` - NEVER shard a draft to fit it inline: tester_order is one sequence across the whole set. Only .md files and Azure DevOps wiki links stay in `specs`: any other entry is dropped and named in import_warnings. Each option, and when to turn reorder or trim_expected off: get_guide (topic writing), Workflow step 3.",
             "inputSchema": schema(serde_json::json!({
@@ -2756,6 +2774,8 @@ fn tools_call_outcome(params: &serde_json::Value, call: BridgeCall) -> (serde_js
         "preview_report" => call("POST", "/crystal-preview", &args.to_string()),
         "preview_report_live" => call("POST", "/crystal-preview-live", &args.to_string()),
         "get_report_parameters" => call("POST", "/crystal-parameters", &args.to_string()),
+        "find_in_report" => call("POST", "/crystal-find", &args.to_string()),
+        "replace_in_report" => call("POST", "/crystal-replace", &args.to_string()),
         "optimize_cases" => {
             let entry = args["entry"].as_str().unwrap_or("");
             let mut params: Vec<String> = vec![];

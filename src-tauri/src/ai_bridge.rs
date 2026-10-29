@@ -874,6 +874,8 @@ pub async fn route_as(
         ("POST", "/crystal-new") => crystal_new(body).await,
         ("POST", "/crystal-preview") => crystal_preview(body).await,
         ("POST", "/crystal-parameters") => crystal_parameters().await,
+        ("POST", "/crystal-find") => crystal_find(body).await,
+        ("POST", "/crystal-replace") => crystal_replace(body).await,
         // Runs the report's stored procedure on the chosen database, so it
         // is gated like a database write besides (`crystal_preview_live`).
         ("POST", "/crystal-preview-live") => {
@@ -11855,6 +11857,43 @@ async fn crystal_preview(body: &str) -> (u16, String) {
 async fn crystal_parameters() -> (u16, String) {
     let done = crystal_blocking(crate::crystal::parameters).await;
     crystal_answer(done.and_then(|list| serde_json::to_value(list).map_err(|e| (500, e.to_string()))))
+}
+
+/// Find text across the open report and its subreports. The text keeps its
+/// spaces: unlike the other routes' arguments it is not trimmed.
+async fn crystal_find(body: &str) -> (u16, String) {
+    let args = match crystal_args(body) {
+        Ok(args) => args,
+        Err(refused) => return refused,
+    };
+    let Some(text) = args.get("text").and_then(|v| v.as_str()).map(str::to_string) else {
+        return (400, "this call needs a \"text\".".to_string());
+    };
+    let match_case = args.get("match_case").and_then(|v| v.as_bool()).unwrap_or(false);
+    let done = crystal_blocking(move || crate::crystal::find(&text, match_case)).await;
+    crystal_answer(done.and_then(|hits| serde_json::to_value(hits).map_err(|e| (500, e.to_string()))))
+}
+
+/// Replace text across the open report and its subreports; `dry_run` lists
+/// the changes and saves nothing. `find` and `replace` keep their spaces and
+/// `replace` may be empty (it removes the text).
+async fn crystal_replace(body: &str) -> (u16, String) {
+    let args = match crystal_args(body) {
+        Ok(args) => args,
+        Err(refused) => return refused,
+    };
+    let Some(find) = args.get("find").and_then(|v| v.as_str()).map(str::to_string) else {
+        return (400, "this call needs a \"find\".".to_string());
+    };
+    let Some(replace) = args.get("replace").and_then(|v| v.as_str()).map(str::to_string) else {
+        return (400, "this call needs a \"replace\" (it may be empty, to remove the text).".to_string());
+    };
+    let match_case = args.get("match_case").and_then(|v| v.as_bool()).unwrap_or(false);
+    let dry_run = args.get("dry_run").and_then(|v| v.as_bool()).unwrap_or(false);
+    let done = crystal_blocking(move || crate::crystal::replace(&find, &replace, match_case, dry_run)).await;
+    // A refused replace re-read the file, and an applied one changed it.
+    crystal_changed().await;
+    crystal_answer(done.and_then(|out| serde_json::to_value(out).map_err(|e| (500, e.to_string()))))
 }
 
 /// The two doors of a live preview that need no connection to check:
