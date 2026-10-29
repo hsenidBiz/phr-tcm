@@ -27,6 +27,13 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.4.3-beta.4",
+    date: "2026-10-29",
+    items: [
+      "On Auto Run's Setup panel, a row's buttons stay at the right edge when they wrap onto a second line.",
+    ],
+  },
+  {
     version: "2.4.3-beta.3",
     date: "2026-10-29",
     items: [
