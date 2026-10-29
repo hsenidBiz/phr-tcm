@@ -459,30 +459,45 @@ pub fn when_db_unused<T>(
 /// Remove an environment and its local files: accounts, saved sessions and
 /// proposals. Refused for the last one and the active one.
 pub fn remove_env(root: &Path, id: &str) -> Result<EnvFile, String> {
-    let _held = lock();
-    let mut file = load_or_init_locked(root, None)?;
-    if !file.environments.iter().any(|e| e.id == id) {
-        return Err("that environment is not there any more".to_string());
-    }
-    if file.environments.len() == 1 {
-        return Err("the last environment cannot be removed".to_string());
-    }
-    if file.active == id {
-        return Err("the active environment cannot be removed - switch to another one first".to_string());
-    }
-    file.environments.retain(|e| e.id != id);
-    write(root, &file)?;
-    // `id` matched an entry that passed `check_structure`, so it is a
-    // well-formed id and these paths stay inside the root.
-    let gone = |r: std::io::Result<()>| match r {
-        Err(e) if e.kind() != std::io::ErrorKind::NotFound => {
-            crate::applog::warn(format!("Environments: a removed environment's file stayed behind: {e}"))
+    let (file, name) = {
+        let _held = lock();
+        let mut file = load_or_init_locked(root, None)?;
+        let Some(name) = file.environments.iter().find(|e| e.id == id).map(|e| e.name.clone()) else {
+            return Err("that environment is not there any more".to_string());
+        };
+        if file.environments.len() == 1 {
+            return Err("the last environment cannot be removed".to_string());
         }
-        _ => {}
+        if file.active == id {
+            return Err(crate::autorun::roots::REMOVE_ACTIVE.to_string());
+        }
+        // Busy or the export environment: refused before anything changes.
+        if let Some(why) = crate::autorun::roots::removal_refusal(&crate::autorun::roots::shared_of(root), id) {
+            return Err(why.to_string());
+        }
+        file.environments.retain(|e| e.id != id);
+        write(root, &file)?;
+        // `id` matched an entry that passed `check_structure`, so it is a
+        // well-formed id and these paths stay inside the root.
+        let gone = |r: std::io::Result<()>| match r {
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound => {
+                crate::applog::warn(format!("Environments: a removed environment's file stayed behind: {e}"))
+            }
+            _ => {}
+        };
+        gone(std::fs::remove_file(accounts_path_for(root, id)));
+        gone(std::fs::remove_dir_all(sessions_dir_for(root, id)));
+        gone(std::fs::remove_file(proposals_path_for(root, id)));
+        (file, name)
     };
-    gone(std::fs::remove_file(accounts_path_for(root, id)));
-    gone(std::fs::remove_dir_all(sessions_dir_for(root, id)));
-    gone(std::fs::remove_file(proposals_path_for(root, id)));
+    // The Auto Run folder waits in the removed area for 30 days. This runs
+    // after the environments lock is released (the move takes the switch
+    // lock), and a failure is logged, not fatal: the environment is gone
+    // from the list already.
+    let shared = crate::autorun::roots::shared_of(root);
+    if let Err(e) = crate::autorun::roots::retire(&shared, id, &name, "removed", crate::autorun::sessions::now_ms()) {
+        crate::applog::warn(format!("Environments: a removed environment's Auto Run folder stayed in place: {e}"));
+    }
     Ok(file)
 }
 

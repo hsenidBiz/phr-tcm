@@ -251,6 +251,9 @@ pub fn allow_writes_to(root: &Path) -> AllowedTarget {
 /// the length of the write.
 pub fn guard(root: &Path) -> Result<std::sync::RwLockReadGuard<'static, ()>, String> {
     let held = switch_lock().read().unwrap_or_else(|e| e.into_inner());
+    if in_removed_area(root) {
+        return Err(REMOVED_READ_ONLY.to_string());
+    }
     if env_id_of(root).is_none() {
         return Ok(held);
     }
@@ -276,11 +279,196 @@ pub fn is_on_screen(changed: &Path) -> bool {
                 return true;
             }
             let shared = shared_of(&active);
-            changed.starts_with(&shared) && !changed.starts_with(shared.join(ENVS_DIR))
+            changed.starts_with(&shared)
+                && !changed.starts_with(shared.join(ENVS_DIR))
+                && !changed.starts_with(shared.join(REMOVED_DIR))
         }
         // No environment is chosen yet: nothing is on screen to be wrong.
         None => true,
     }
+}
+
+// ---- the removed area -------------------------------------------------
+
+/// Said when a write is aimed at the folder of a removed environment.
+pub const REMOVED_READ_ONLY: &str =
+    "a removed environment's folder is only kept to be copied from - nothing is saved into it";
+
+/// Whether `root` is a folder under `removed-envs/`.
+fn in_removed_area(root: &Path) -> bool {
+    root.ancestors().skip(1).any(|a| a.file_name().is_some_and(|n| n == REMOVED_DIR))
+}
+
+/// How long a removed environment's folder is kept.
+pub const REMOVED_KEPT_DAYS: u64 = 30;
+/// The record inside a retired folder.
+const REMOVED_RECORD: &str = "removed.json";
+
+/// Said when the environment to be removed is the active one.
+pub const REMOVE_ACTIVE: &str = "the active environment cannot be removed - switch to another one first";
+/// Said when something is writing into the environment's folder right now.
+pub const REMOVE_BUSY: &str = "that environment's Auto Run data is being used right now - try again in a moment";
+/// Said when the environment is the Playwright export environment.
+pub const REMOVE_EXPORT_ENVIRONMENT: &str =
+    "that is the Playwright export environment - name another one for the export before removing it";
+
+/// A removed environment's folder, as the webview lists it.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, specta::Type)]
+pub struct RemovedFolder {
+    /// The folder name, `<env-id>-<ms>`.
+    pub key: String,
+    pub env_id: String,
+    pub name: String,
+    pub removed_at_ms: u64,
+    /// `"removed"`, `"replaced"` or `"replaced by an import"`.
+    pub reason: String,
+}
+
+/// What `removed.json` holds.
+#[derive(serde::Serialize, serde::Deserialize)]
+struct RemovedRecord {
+    env_id: String,
+    name: String,
+    removed_at_ms: u64,
+    reason: String,
+}
+
+/// Whether `id` is the environment the Playwright export writes to.
+///
+/// HOOK FOR TASK 7: the export environment does not exist yet, so no
+/// environment is it. Task 7 makes this read the named export environment,
+/// and [`removal_refusal`] then refuses to remove it.
+pub fn is_export_environment(_shared: &Path, _id: &str) -> bool {
+    false
+}
+
+/// The sentence that says why environment `id` cannot be removed now (it is
+/// active, something is writing into its folder, or it is the export
+/// environment), or `None`.
+pub fn removal_refusal(shared: &Path, id: &str) -> Option<&'static str> {
+    if !valid_folder_id(id) || id == SEED_ID {
+        return None;
+    }
+    let folder = env_root(shared, id);
+    if crate::autorun::store::configured_root().as_deref() == Some(folder.as_path()) {
+        return Some(REMOVE_ACTIVE);
+    }
+    if ALLOWED.lock().unwrap_or_else(|e| e.into_inner()).iter().any(|p| *p == folder) {
+        return Some(REMOVE_BUSY);
+    }
+    if is_export_environment(shared, id) {
+        return Some(REMOVE_EXPORT_ENVIRONMENT);
+    }
+    None
+}
+
+/// The environment id and the millisecond stamp of a retired folder's name.
+fn parse_key(key: &str) -> Option<(String, u64)> {
+    let (id, ms) = key.rsplit_once('-')?;
+    if !crate::environments::valid_id(id) {
+        return None;
+    }
+    Some((id.to_string(), ms.parse().ok()?))
+}
+
+/// Moves `envs/<id>` to `removed-envs/<id>-<now_ms>` and records who it
+/// was. `Ok(None)` when there was no folder. Refused (and nothing moved)
+/// while that environment is active, busy or the export environment: the
+/// move waits for the writes in flight (the switch lock) and, once it has
+/// started, a write aimed at the old folder is refused because that folder
+/// is no longer the active one.
+pub fn retire(shared: &Path, env_id: &str, name: &str, reason: &str, now_ms: u64) -> Result<Option<String>, String> {
+    if !valid_folder_id(env_id) || env_id == SEED_ID {
+        return Err(format!("\"{env_id}\" is not an environment id"));
+    }
+    let from = env_root(shared, env_id);
+    match std::fs::symlink_metadata(&from) {
+        Ok(_) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(e.to_string()),
+    }
+    let _switching = switch_lock().write().unwrap_or_else(|e| e.into_inner());
+    if let Some(why) = removal_refusal(shared, env_id) {
+        return Err(why.to_string());
+    }
+    let key = format!("{env_id}-{now_ms}");
+    let area = shared.join(REMOVED_DIR);
+    let to = area.join(&key);
+    if std::fs::symlink_metadata(&to).is_ok() {
+        return Err("a folder for that removal is already there".to_string());
+    }
+    std::fs::create_dir_all(&area).map_err(|e| e.to_string())?;
+    let record = RemovedRecord {
+        env_id: env_id.to_string(),
+        name: name.to_string(),
+        removed_at_ms: now_ms,
+        reason: reason.to_string(),
+    };
+    let text = serde_json::to_string_pretty(&record).map_err(|e| e.to_string())?;
+    let record_path = from.join(REMOVED_RECORD);
+    crate::ai_tools::atomic_write(&record_path, &text)?;
+    if let Err(e) = std::fs::rename(&from, &to) {
+        let _ = std::fs::remove_file(&record_path);
+        return Err(e.to_string());
+    }
+    Ok(Some(key))
+}
+
+/// The retired folders still within 30 days that have a readable record,
+/// newest first.
+pub fn removed_folders(shared: &Path, now_ms: u64) -> Vec<RemovedFolder> {
+    let kept = REMOVED_KEPT_DAYS * crate::autorun::store::DAY_MS;
+    let Ok(entries) = std::fs::read_dir(shared.join(REMOVED_DIR)) else { return vec![] };
+    let mut out: Vec<RemovedFolder> = entries
+        .flatten()
+        .filter(|e| e.file_type().is_ok_and(|t| t.is_dir()))
+        .filter_map(|e| {
+            let key = e.file_name().to_str()?.to_string();
+            let (env_id, ms) = parse_key(&key)?;
+            if now_ms.saturating_sub(ms) > kept {
+                return None;
+            }
+            let text = std::fs::read_to_string(e.path().join(REMOVED_RECORD)).ok()?;
+            let rec: RemovedRecord = serde_json::from_str(&text).ok()?;
+            if rec.env_id != env_id {
+                return None;
+            }
+            Some(RemovedFolder { key, env_id, name: rec.name, removed_at_ms: ms, reason: rec.reason })
+        })
+        .collect();
+    out.sort_by(|a, b| b.removed_at_ms.cmp(&a.removed_at_ms).then_with(|| a.key.cmp(&b.key)));
+    out
+}
+
+/// The folder of a retired environment, only for a key [`removed_folders`]
+/// would list now. A key never becomes a path otherwise. The folder is for
+/// reading and copying from; [`guard`] refuses every write into it.
+pub fn removed_root(shared: &Path, key: &str, now_ms: u64) -> Option<PathBuf> {
+    removed_folders(shared, now_ms).iter().find(|f| f.key == key)?;
+    Some(shared.join(REMOVED_DIR).join(key))
+}
+
+/// Deletes the retired folders older than 30 days and returns how many.
+/// A folder whose name is not `<env id>-<ms>` is left alone.
+pub fn purge_removed(shared: &Path, now_ms: u64) -> usize {
+    let kept = REMOVED_KEPT_DAYS * crate::autorun::store::DAY_MS;
+    let Ok(entries) = std::fs::read_dir(shared.join(REMOVED_DIR)) else { return 0 };
+    let mut purged = 0;
+    for e in entries.flatten() {
+        if !e.file_type().is_ok_and(|t| t.is_dir()) {
+            continue;
+        }
+        let Some((_, ms)) = e.file_name().to_str().and_then(parse_key) else { continue };
+        if now_ms.saturating_sub(ms) > kept {
+            match std::fs::remove_dir_all(e.path()) {
+                Ok(()) => purged += 1,
+                Err(err) => {
+                    crate::applog::warn(format!("Auto Run: a removed environment's folder stayed behind: {err}"))
+                }
+            }
+        }
+    }
+    purged
 }
 
 /// The refusal as an I/O error, for the helpers that stand in for `std::fs`
