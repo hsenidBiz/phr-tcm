@@ -54,6 +54,14 @@ function ago(iso: string): string {
   return d.toLocaleDateString();
 }
 
+/** Fira Sans draws a 1 about 0.8px left of its own box (its flag reaches
+ * left) and a 7 about 0.3px, measured against the badge's 16px circle; the
+ * other digits sit within 0.1px. Nudged right so the count looks centred. */
+const BADGE_NUDGE: Record<number, string> = {
+  1: "relative left-[0.75px]",
+  7: "relative left-[0.3px]",
+};
+
 export default function NotificationBell({
   org,
   onOpen,
@@ -116,7 +124,7 @@ export default function NotificationBell({
             aria-hidden
             className="absolute -right-0.5 -top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-danger px-1 text-[10px] font-semibold leading-none text-on-status"
           >
-            <span className="label-trim">{unread > 9 ? "9+" : unread}</span>
+            <span className={cn("label-trim", BADGE_NUDGE[unread])}>{unread > 9 ? "9+" : unread}</span>
           </span>
         )}
       </button>

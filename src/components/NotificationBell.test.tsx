@@ -40,6 +40,23 @@ test("the badge shows the unread count and opening the panel clears it", () => {
   expect(screen.getByRole("button", { name: "Notifications" })).not.toHaveTextContent("2");
 });
 
+/// Fira Sans draws a 1 (and a little a 7) left of its own box, because of
+/// its flag, so the badge nudges those right to sit in the circle's middle.
+test("the badge's 1 is nudged right to sit centred, a 2 is not", () => {
+  raise("acme", [{ id: "assigned:501", kind: "assigned", title: "Task #501 assigned to you", body: "x" }]);
+  const { unmount } = render(<NotificationBell org="acme" />);
+  const one = screen.getByRole("button", { name: "Notifications, 1 unread" }).querySelector(".label-trim")!;
+  expect(one).toHaveTextContent("1");
+  expect(one).toHaveClass("relative", "left-[0.75px]");
+  unmount();
+
+  resetForTests();
+  seed();
+  render(<NotificationBell org="acme" />);
+  const two = screen.getByRole("button", { name: "Notifications, 2 unread" }).querySelector(".label-trim")!;
+  expect(two.className).not.toMatch(/left-\[/);
+});
+
 /// The panel opens the way the app's other dropdowns do - growing from the
 /// bell's corner - and reduced motion switches it off with them (index.css).
 test("the panel opens with the dropdown motion, from the bell's right-hand corner", () => {
