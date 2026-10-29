@@ -9,6 +9,9 @@ import { commands } from "../bindings";
 import { hydrateModules } from "./modules";
 
 let unlocked = false;
+/** Whether Rust has answered yet. Until it has, "off" only means "not asked":
+ * what the flag holds back must neither be switched on nor taken away. */
+let known = false;
 /** Bumped by every save, so a read that started before it cannot put the
  * old value back when it answers late. */
 let generation = 0;
@@ -19,7 +22,13 @@ function notify(): void {
 }
 
 function publish(next: boolean): void {
-  if (next === unlocked) return;
+  const learned = !known;
+  known = true;
+  if (next === unlocked) {
+    // The first answer is news even when it agrees with the default.
+    if (learned) notify();
+    return;
+  }
   unlocked = next;
   notify();
   // What is offered follows the switch (Rust answers the modules with it).
@@ -37,8 +46,14 @@ export function extrasUnlockedSnapshot(): boolean {
   return unlocked;
 }
 
+/** True once Rust has told us the flag (or it was just saved). */
+export function extrasKnown(): boolean {
+  return known;
+}
+
 /** Ask Rust for the flag. Outside the app (a test without IPC, a browser
- * preview) the answer is simply "as it was" - off, from a fresh start. */
+ * preview), or when the call fails, there is no answer: the flag stays
+ * "not known" - off, but never taken as a closed gate. */
 export async function hydrateExtras(): Promise<void> {
   const started = generation;
   try {
@@ -67,11 +82,13 @@ export function useExtrasUnlocked(): boolean {
  * asking again. */
 export function setExtrasForTest(next: boolean): void {
   unlocked = next;
+  known = true;
   notify();
 }
 
 /** Tests only: back to locked, without telling anyone. */
 export function resetExtrasStore(): void {
   unlocked = false;
+  known = false;
   generation = 0;
 }

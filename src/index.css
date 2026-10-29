@@ -260,6 +260,24 @@
   --color-warning: #fbbf24;
   --color-info: #60a5fa;
 }
+:root[data-theme="christmas"] {
+  --color-bg: #08120d;
+  --color-surface: #0f1c15;
+  --color-surface-2: #16261d;
+  --color-border: #24382c;
+  --color-border-strong: #36503f;
+  --color-text: #f3f7f2;
+  --color-muted: #a9bdb0;
+  --color-faint: #728a7b;
+  --color-accent: #f5737c;
+  --color-accent-hover: #f98a92;
+  --color-accent-soft: rgb(245 115 124 / 0.16);
+  --color-on-accent: #08120d;
+  --color-danger: #fb923c;
+  --color-success: #4ade80;
+  --color-warning: #fbbf24;
+  --color-info: #60a5fa;
+}
 :root[data-theme="ocean"] {
   --color-bg: #071a1f;
   --color-surface: #0d262e;
@@ -1743,6 +1761,219 @@ table {
     animation: none;
   }
   .halloween-bat {
+    display: none;
+  }
+}
+
+/* Christmas decorations (components/ChristmasDecor.tsx). Same z-index 10 as
+   the Halloween ones: above page content, under everything that opens over
+   it. Every keyframe moves transform or opacity only. */
+.christmas-decor {
+  position: relative;
+  height: 0;
+  overflow: visible;
+  pointer-events: none;
+  z-index: 10;
+}
+.christmas-decor * {
+  pointer-events: none;
+}
+.christmas-lights {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 14px;
+}
+.christmas-lights svg {
+  display: block;
+  fill: none;
+  stroke: var(--color-border-strong);
+  stroke-width: 1px;
+}
+.christmas-tone-0 {
+  color: var(--color-accent);
+}
+.christmas-tone-1 {
+  color: var(--color-warning);
+}
+.christmas-tone-2 {
+  color: var(--color-success);
+}
+.christmas-tone-3 {
+  color: var(--color-info);
+}
+.christmas-bulb {
+  position: absolute;
+  width: 5px;
+  height: 8px;
+  margin-left: -2.5px;
+  border-radius: 50% 50% 45% 45%;
+  background: currentColor;
+  box-shadow: 0 0 5px currentColor;
+}
+/* The bulbs twinkle in three shared groups, not one animation each. */
+.christmas-twinkle {
+  position: absolute;
+  inset: 0;
+  animation: christmas-twinkle 4.9s ease-in-out infinite;
+}
+.christmas-twinkle-1 {
+  animation-delay: -1.6s;
+}
+.christmas-twinkle-2 {
+  animation-delay: -3.3s;
+}
+.christmas-bauble {
+  position: absolute;
+  top: 6px;
+  transform-origin: top center;
+  animation: christmas-sway 6.8s ease-in-out infinite;
+  animation-delay: var(--sway-delay, 0s);
+}
+.christmas-string {
+  width: 1px;
+  margin: 0 auto;
+  background: var(--color-border-strong);
+}
+.christmas-ball {
+  transform: perspective(240px) rotateY(0deg);
+}
+.christmas-bauble.is-spin .christmas-ball {
+  animation: christmas-spin 1.2s ease-in-out;
+}
+.christmas-bauble svg {
+  display: block;
+}
+.christmas-cap {
+  fill: var(--color-muted);
+}
+.christmas-body {
+  fill: currentColor;
+}
+.christmas-shine {
+  fill: none;
+  stroke: var(--color-text);
+  stroke-opacity: 0.55;
+  stroke-linecap: round;
+}
+/* The sleigh is parked off the left edge and carried across by a transform
+   transition the component starts. */
+.christmas-sleigh {
+  position: fixed;
+  left: 0;
+  top: 10px;
+  pointer-events: none;
+  /* Off the left edge from the first paint; the component parks it the same. */
+  transform: translateX(-90px);
+  transition-property: transform;
+  transition-timing-function: linear;
+}
+.christmas-sleigh svg {
+  display: block;
+  fill: var(--color-muted);
+  opacity: 0.8;
+}
+.christmas-line {
+  fill: none;
+  stroke: var(--color-muted);
+  stroke-linecap: round;
+}
+/* Snow: a clipped layer over the content column; each flake falls by
+   transform alone. */
+.christmas-snow {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  z-index: 10;
+}
+.christmas-flake {
+  position: absolute;
+  top: 0;
+  border-radius: 50%;
+  background: var(--color-text);
+  animation: christmas-fall 12s linear infinite;
+}
+.christmas-snowman {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  z-index: 10;
+  pointer-events: none;
+}
+.christmas-drift {
+  fill: var(--color-text);
+  fill-opacity: 0.35;
+}
+.christmas-snow-body {
+  fill: var(--color-text);
+  fill-opacity: 0.9;
+}
+.christmas-arm {
+  fill: none;
+  stroke: var(--color-muted);
+  stroke-width: 1.5px;
+  stroke-linecap: round;
+}
+.christmas-scarf {
+  fill: var(--color-accent);
+}
+.christmas-coal {
+  fill: var(--color-bg);
+}
+.christmas-nose {
+  fill: var(--color-warning);
+}
+@keyframes christmas-twinkle {
+  0%,
+  30%,
+  100% {
+    opacity: 1;
+  }
+  12% {
+    opacity: 0.3;
+  }
+}
+@keyframes christmas-sway {
+  0%,
+  100% {
+    transform: rotate(0);
+  }
+  25% {
+    transform: rotate(5deg);
+  }
+  75% {
+    transform: rotate(-5deg);
+  }
+}
+@keyframes christmas-spin {
+  from {
+    transform: perspective(240px) rotateY(0deg);
+  }
+  to {
+    transform: perspective(240px) rotateY(720deg);
+  }
+}
+@keyframes christmas-fall {
+  from {
+    transform: translate3d(0, -4vh, 0);
+  }
+  to {
+    transform: translate3d(var(--drift, 0px), 105vh, 0);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .christmas-twinkle,
+  .christmas-bauble,
+  .christmas-bauble.is-spin .christmas-ball,
+  .christmas-flake {
+    animation: none;
+  }
+  .christmas-sleigh {
+    display: none;
+  }
+  .christmas-snow {
     display: none;
   }
 }

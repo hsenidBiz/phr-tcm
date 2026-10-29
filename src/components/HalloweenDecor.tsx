@@ -1,5 +1,5 @@
-import { createContext, useContext, useEffect, useRef, useState } from "react";
-import { isCaptureMode } from "../dev/capture";
+import { useEffect, useRef, useState } from "react";
+import { HitContext, useBriefState, useDecorPresses, useHit, useReducedMotion, useThemeIs } from "./decorShared";
 
 /** The Halloween theme's scenery: pumpkins hanging under the PBI bar, bats
  * flying from point to point, spiders on threads, and (HalloweenWeb) a
@@ -31,87 +31,12 @@ const BATS = [{ width: 26 }, { width: 22 }, { width: 24 }] as const;
 const WHACK_MS = 1200;
 const SCURRY_MS = 7000;
 const EDGE = 40;
-const HIT_PAD = 4;
-const INTERACTIVE =
-  'button, a, input, select, textarea, label, summary, [role="button"], [role="link"], [role="menuitem"], [role="option"], [role="tab"], [role="checkbox"], [role="switch"], [role="combobox"], [contenteditable=""], [contenteditable="true"], [tabindex]:not([tabindex="-1"])';
-
-/** A decoration's clickable body and what it does when pressed. */
-type Hit = { el: Element; react: () => void };
-type Register = (hit: Hit) => () => void;
-const HitContext = createContext<Register>(() => () => {});
-
-/** Registers a body with the decor's document listener; `react` may change
- * every render. */
-function useHit(body: React.RefObject<Element | null>, react: () => void) {
-  const register = useContext(HitContext);
-  const latest = useRef(react);
-  latest.current = react;
-  useEffect(() => {
-    const el = body.current;
-    return el ? register({ el, react: () => latest.current() }) : undefined;
-  }, [register, body]);
-}
 
 type Random = () => number;
 
-function themeIsHalloween(): boolean {
-  return document.documentElement.getAttribute("data-theme") === "halloween";
-}
-
-const REDUCE = "(prefers-reduced-motion: reduce)";
-
-function prefersReducedMotion(): boolean {
-  return typeof window.matchMedia === "function" && window.matchMedia(REDUCE).matches;
-}
-
-/** The reduced-motion setting, live. */
-function useReducedMotion(): boolean {
-  const [reduced, setReduced] = useState(prefersReducedMotion);
-  useEffect(() => {
-    if (typeof window.matchMedia !== "function") return;
-    const mq = window.matchMedia(REDUCE);
-    if (typeof mq?.addEventListener !== "function") return;
-    const sync = () => setReduced(mq.matches);
-    mq.addEventListener("change", sync);
-    sync();
-    return () => mq.removeEventListener("change", sync);
-  }, []);
-  return reduced;
-}
-
 /** True while the Halloween theme is on (and this is not a docs capture). */
 function useHalloween(): boolean {
-  const [on, setOn] = useState(themeIsHalloween);
-
-  useEffect(() => {
-    const sync = () => setOn(themeIsHalloween());
-    sync();
-    const observer = new MutationObserver(sync);
-    observer.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
-    return () => observer.disconnect();
-  }, []);
-
-  // The docs screenshots keep the app as a normal install shows it.
-  return on && !isCaptureMode();
-}
-
-/** True for `ms` after start(); a new start restarts it, unmounting cancels.
- * `live` reads true at once, for guards that run before a re-render. */
-function useBriefState(ms: number): [boolean, () => void, React.RefObject<boolean>] {
-  const [active, setActive] = useState(false);
-  const live = useRef(false);
-  const timer = useRef<ReturnType<typeof setTimeout>>(undefined);
-  useEffect(() => () => clearTimeout(timer.current), []);
-  const start = () => {
-    clearTimeout(timer.current);
-    live.current = true;
-    setActive(true);
-    timer.current = setTimeout(() => {
-      live.current = false;
-      setActive(false);
-    }, ms);
-  };
-  return [active, start, live];
+  return useThemeIs("halloween");
 }
 
 function Pumpkin({ right, string, delay, grin }: (typeof PUMPKINS)[number]) {
@@ -267,39 +192,12 @@ function Bat({ width, random }: { width: number; random: Random }) {
 
 export default function HalloweenDecor({ random = Math.random }: { random?: Random }) {
   const on = useHalloween();
-  const hits = useRef(new Set<Hit>());
-  const register = useRef<Register>((hit) => {
-    hits.current.add(hit);
-    return () => void hits.current.delete(hit);
-  });
-
-  // The decor takes no click, so a press on the page under a pumpkin or
-  // spider is what sets it off, unless the press landed on a control.
-  useEffect(() => {
-    if (!on) return;
-    const onDown = (e: PointerEvent) => {
-      const target = e.target;
-      if (e.button !== 0 || !(target instanceof Element) || target.closest(INTERACTIVE)) return;
-      for (const { el, react } of hits.current) {
-        const r = el.getBoundingClientRect();
-        if (
-          e.clientX >= r.left - HIT_PAD &&
-          e.clientX <= r.right + HIT_PAD &&
-          e.clientY >= r.top - HIT_PAD &&
-          e.clientY <= r.bottom + HIT_PAD
-        ) {
-          react();
-        }
-      }
-    };
-    document.addEventListener("pointerdown", onDown, { capture: true, passive: true });
-    return () => document.removeEventListener("pointerdown", onDown, { capture: true });
-  }, [on]);
+  const register = useDecorPresses(on);
 
   if (!on) return null;
 
   return (
-    <HitContext.Provider value={register.current}>
+    <HitContext.Provider value={register}>
     <div className="halloween-decor" aria-hidden="true">
       {PUMPKINS.map((p) => (
         <Pumpkin key={p.right} {...p} />

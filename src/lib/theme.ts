@@ -5,9 +5,11 @@
  * accent presets still compose on top (data-accent wins over the theme's
  * default accent because its CSS comes later). */
 
+import { isCaptureMode } from "../dev/capture";
+import { extrasKnown, extrasUnlockedSnapshot, hydrateExtras, subscribeExtras } from "./extras";
 import { runSeason, seasonAccentPicked, seasonThemePicked } from "./season";
 
-export type ThemeId = "light" | "slate" | "midnight" | "graphite" | "ocean" | "oled" | "halloween";
+export type ThemeId = "light" | "slate" | "midnight" | "graphite" | "ocean" | "oled" | "halloween" | "christmas";
 /** What the user picked - "system" follows the OS light/dark preference. */
 export type ThemeChoice = ThemeId | "system";
 
@@ -15,6 +17,8 @@ export const THEMES: {
   id: ThemeId;
   label: string;
   dark: boolean;
+  /** Held back: not offered, and not worn, until the gate is open. */
+  gated?: boolean;
   /** Swatch colors for the Settings preview cards. */
   preview: { bg: string; surface: string; accent: string };
 }[] = [
@@ -25,15 +29,27 @@ export const THEMES: {
   { id: "ocean", label: "Ocean", dark: true, preview: { bg: "#071a1f", surface: "#0d262e", accent: "#22d3ee" } },
   { id: "oled", label: "Onyx", dark: true, preview: { bg: "#000000", surface: "#0b0b0d", accent: "#22c55e" } },
   { id: "halloween", label: "Halloween", dark: true, preview: { bg: "#0b0709", surface: "#17100f", accent: "#f97316" } },
+  { id: "christmas", label: "Christmas", dark: true, gated: true, preview: { bg: "#08120d", surface: "#16261d", accent: "#e23d4b" } },
 ];
+
+/** The themes the Settings picker offers. */
+export function visibleThemes(gateOpen: boolean) {
+  return THEMES.filter((t) => !t.gated || (gateOpen && !isCaptureMode()));
+}
 
 const ID_KEY = "tcm-v2-theme-id";
 const LEGACY_KEY = "tcm-v2-theme"; // pre-theme-system: "light" | "dark"
 const DARK_PREF_KEY = "tcm-v2-theme-dark"; // last dark theme, for the sun/moon toggle
 
+const gateClosed = () => extrasKnown() && !extrasUnlockedSnapshot();
+
 export function getThemeChoice(): ThemeChoice {
   const t = localStorage.getItem(ID_KEY);
-  if (THEMES.some((x) => x.id === t)) return t as ThemeId;
+  const known = THEMES.find((x) => x.id === t);
+  // A held-back theme that is stored reads as Light once the gate is known
+  // to be closed; the stored value stays. Until Rust has answered it is
+  // shown as stored, so a start does not flash Light first.
+  if (known) return known.gated && gateClosed() ? "light" : known.id;
   // "system" is stored explicitly (see setThemeChoice) so it stays distinct
   // from nobody having chosen anything yet.
   if (t === "system") return "system";
@@ -52,7 +68,7 @@ export function getThemeChoice(): ThemeChoice {
 export function darkPref(): ThemeId {
   const t = localStorage.getItem(DARK_PREF_KEY);
   const theme = THEMES.find((x) => x.id === t);
-  return theme?.dark ? theme.id : "graphite";
+  return theme?.dark && !(theme.gated && gateClosed()) ? theme.id : "graphite";
 }
 
 export function resolveThemeId(choice: ThemeChoice = getThemeChoice()): ThemeId {
@@ -133,7 +149,16 @@ function applyAccent(accent: Accent) {
 /** Call on startup, and hourly (a window left open past the Halloween week
  * still gets its restore). `now` is a seam for tests. */
 export function initTheme(now: number = Date.now()) {
-  runSeason(now);
+  runSeason(now, { gateOpen: extrasUnlockedSnapshot(), gateKnown: extrasKnown() });
   applyThemeChoice(getThemeChoice());
   applyAccent(getAccent());
+}
+
+/** The runner window's start: App is not there to ask Rust for the extras
+ * flag, so this does. If Rust cannot be reached the flag stays "not known",
+ * and a held-back season is never restored from here. */
+export function initRunnerTheme() {
+  initTheme();
+  subscribeExtras(() => initTheme());
+  void hydrateExtras();
 }

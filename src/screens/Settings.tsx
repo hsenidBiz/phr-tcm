@@ -40,7 +40,7 @@ import { cn } from "../lib/cn";
 import { LOG_KIND_CLASS, levelOf, tokenizeLog } from "../lib/logSyntax";
 import {
   ACCENTS,
-  THEMES,
+  visibleThemes,
   getAccent,
   getThemeChoice,
   setAccent,
@@ -703,7 +703,7 @@ export default function Settings({
       <SettingsCard title="Appearance" data-tour="theme" data-settings-card="appearance">
         <SettingRow name="Theme" description="Changes the entire UI palette.">
           <div className="flex flex-wrap gap-2">
-            {THEMES.map((t) => (
+            {visibleThemes(extrasUnlocked).map((t) => (
               <button
                 key={t.id}
                 aria-label={`Theme ${t.label}`}

@@ -77,7 +77,7 @@ import ContextBar from "./components/ContextBar";
 import { seedCombinedRecents } from "./components/PbiPicker";
 import { effectiveProject, saveAllProjects, takeAllProjectsNotice, useAllProjects } from "./lib/projectScope";
 import Sidebar, { WORK_ITEMS, shortcutOrder, type Section, type WorkSection } from "./components/Sidebar";
-import { hydrateExtras } from "./lib/extras";
+import { hydrateExtras, subscribeExtras } from "./lib/extras";
 import {
   hydrateModules,
   realModulesSnapshot,
@@ -101,6 +101,7 @@ import { loadPrefs, savePrefs } from "./lib/prefs";
 import { initTheme } from "./lib/theme";
 import { isCaptureMode } from "./dev/capture";
 import HalloweenDecor, { HalloweenWeb } from "./components/HalloweenDecor";
+import ChristmasDecor, { ChristmasCorner } from "./components/ChristmasDecor";
 // Every screen and the command palette load on demand: on a slow machine the
 // whole startup bundle is parsed before anything is drawn, and most of it is
 // screens nobody has opened yet. The tour waits for its anchors, so a screen
@@ -429,6 +430,9 @@ export default function App() {
     const id = setInterval(() => initTheme(), 60 * 60 * 1000);
     return () => clearInterval(id);
   }, []);
+  // The extras flag arrives from Rust a moment after launch, and can change
+  // later: a held-back season follows it.
+  useEffect(() => subscribeExtras(() => initTheme()), []);
   // Push the saved ADO pacing into the Rust limiter before anything fetches.
   useEffect(() => applyRateLevel(), []);
 
@@ -1435,6 +1439,8 @@ export default function App() {
           )}
           {signedIn && <HalloweenDecor />}
           {signedIn && <HalloweenWeb />}
+          {signedIn && <ChristmasDecor />}
+          {signedIn && <ChristmasCorner />}
           {/* Inert for the whole tour, EXCEPT at a stop the user is meant
               to act on: there the ringed control has to answer a click,
               and inert is inherited, so nothing inside it could. The

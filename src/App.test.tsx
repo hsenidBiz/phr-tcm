@@ -51,6 +51,13 @@ configure({ asyncUtilTimeout: 5_000 });
 // install on its first launch; every test but its own starts after it.
 beforeEach(() => {
   localStorage.setItem("tcm-v2-all-projects-notice", "1");
+  // The seasonal switch reads the real clock (initTheme), so a run in a
+  // season's dates would restyle the page. Both seasons' records are pinned
+  // as done instead of freezing the date (fake timers upset this file's
+  // async waits): a done record means nothing switches, whatever the date.
+  const done = JSON.stringify({ switchedAt: 0, prevTheme: null, prevAccent: null, themeState: "done", accentState: "done" });
+  localStorage.setItem("tcm-v2-season-halloween-2026", done);
+  localStorage.setItem(`tcm-v2-season-christmas-${new Date().getFullYear()}`, done);
 });
 
 afterEach(() => {

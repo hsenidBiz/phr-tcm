@@ -50,6 +50,7 @@ const DARK_THEMES: Record<string, string> = {
   OLED: ':root[data-theme="oled"]',
   Ocean: ':root[data-theme="ocean"]',
   Halloween: ':root[data-theme="halloween"]',
+  Christmas: ':root[data-theme="christmas"]',
 };
 
 const violet = () => rule(css, '.dark[data-accent="violet"]');
@@ -89,6 +90,52 @@ describe("dark violet", () => {
     for (const token of ["--color-danger", "--color-success", "--color-warning", "--color-muted"]) {
       expect(contrast(dark[token], ink), token).toBeGreaterThanOrEqual(4.5);
     }
+  });
+});
+
+// The seasonal themes' own accent is what links and `text-accent` words show
+// on them, so it has to read as words on every surface, and as the soft
+// tint's text too. (Other themes are covered by their own palettes.)
+describe("a seasonal theme's own accent", () => {
+  const mix = (fg: string, bg: string, a: number) =>
+    "#" +
+    hex(fg)
+      .map((c, i) => Math.round(c * a + hex(bg)[i] * (1 - a)).toString(16).padStart(2, "0"))
+      .join("");
+  const SEASONAL = { Halloween: DARK_THEMES.Halloween, Christmas: DARK_THEMES.Christmas };
+
+  test.each(Object.entries(SEASONAL))("on %s, its words clear 4.5:1 on bg, surface, surface-2 and the soft tint", (_n, selector) => {
+    const t = rule(css, selector);
+    const words = t["--color-accent-text"] ?? t["--color-accent"];
+    const soft = /rgb\((\d+) (\d+) (\d+) \/ ([\d.]+)\)/.exec(t["--color-accent-soft"]);
+    expect(soft, "accent-soft is an rgb() with alpha").not.toBeNull();
+    const tint = (surface: string) =>
+      mix("#" + [1, 2, 3].map((i) => Number(soft![i]).toString(16).padStart(2, "0")).join(""), surface, Number(soft![4]));
+    for (const surface of [t["--color-bg"], t["--color-surface"], t["--color-surface-2"]]) {
+      expect(contrast(words, surface), `words on ${surface}`).toBeGreaterThanOrEqual(4.5);
+    }
+    for (const surface of [t["--color-surface"]]) {
+      expect(contrast(words, tint(surface)), "words on the soft tint").toBeGreaterThanOrEqual(4.5);
+    }
+    expect(contrast(t["--color-on-accent"], t["--color-accent"]), "ink on the fill").toBeGreaterThanOrEqual(4.5);
+    expect(contrast(t["--color-on-accent"], t["--color-accent-hover"]), "ink on hover").toBeGreaterThanOrEqual(4.5);
+  });
+
+  test("on Christmas, danger reads as words and is a different hue from the accent", () => {
+    const t = rule(css, DARK_THEMES.Christmas);
+    for (const surface of [t["--color-bg"], t["--color-surface"], t["--color-surface-2"]]) {
+      expect(contrast(t["--color-danger"], surface), `danger on ${surface}`).toBeGreaterThanOrEqual(4.5);
+    }
+    const hue = (h: string) => {
+      const [r, g, b] = hex(h).map((c) => c / 255);
+      const mx = Math.max(r, g, b);
+      const d = mx - Math.min(r, g, b);
+      if (d === 0) return 0;
+      const x = mx === r ? ((g - b) / d) % 6 : mx === g ? (b - r) / d + 2 : (r - g) / d + 4;
+      return (x * 60 + 360) % 360;
+    };
+    const gap = Math.abs(hue(t["--color-danger"]) - hue(t["--color-accent"]));
+    expect(Math.min(gap, 360 - gap)).toBeGreaterThanOrEqual(15);
   });
 });
 

@@ -3,7 +3,7 @@ import ReactDOM from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import App from "./App";
 import { TooltipLayer } from "./components/ui/tooltip";
-import { initTheme } from "./lib/theme";
+import { initRunnerTheme, initTheme } from "./lib/theme";
 import { initUiClickLog, logUi } from "./lib/uiLog";
 import { initExternalLinks } from "./lib/externalLinks";
 import "./index.css";
@@ -17,7 +17,8 @@ import { hideSplash } from "./lib/splash";
 const queryClient = new QueryClient({
   defaultOptions: { queries: { refetchOnWindowFocus: false } },
 });
-initTheme();
+if (window.location.hash === "#runner") initRunnerTheme();
+else initTheme();
 initUiClickLog();
 initExternalLinks();
 

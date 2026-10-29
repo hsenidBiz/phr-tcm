@@ -29,6 +29,9 @@ const positions = positionsJson as Positions;
  *  and any word that a finished feature is still in development. */
 const FORBIDDEN = [
   /konami/i,
+  // A gated seasonal theme: remove these two when it opens to everyone.
+  /christmas/i,
+  /xmas/i,
   /\bunlock/i,
   /\bextras\b/i,
   /dev panel/i,
