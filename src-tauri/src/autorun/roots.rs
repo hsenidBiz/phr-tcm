@@ -148,26 +148,58 @@ pub fn migration_log_line(r: &MigrationReport) -> String {
     format!("Auto Run: per-environment data set up for {} environment(s), {} item(s) copied", r.environments, r.items)
 }
 
+/// Said when an Auto Run item is a link or shortcut: the update will not
+/// follow it, and will not pretend it copied it.
+pub const ITEM_IS_A_LINK: &str = "an Auto Run folder or file is a link or shortcut, which the update does not follow";
+
+/// Only these hold files that are written once and never changed in place
+/// (a screenshot has a time-stamped name; a download is finished before it
+/// is renamed), so only these are hard-linked. Everything else is copied: a
+/// file rewritten in place would otherwise change the flat original too.
+const LINKED_ITEMS: [&str; 2] = ["shots", "downloads"];
+
 const STAGING_PREFIX: &str = ".envs-staging-";
 
+/// Whether an error string is safe to log: it names no path.
+pub fn path_free(message: &str) -> bool {
+    !message.contains(['\\', '/'])
+}
+
+/// `Ok(true)` when `path` exists. Only "not found" is absence: any other
+/// error (a permission problem, a broken link) must stop the update rather
+/// than read as "nothing there".
+fn exists(path: &Path) -> Result<bool, String> {
+    match std::fs::symlink_metadata(path) {
+        Ok(_) => Ok(true),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
 /// Copies `from` (a file or a folder) to `to`. `link` hard-links each file
-/// and falls back to a copy when the file system will not link. Symbolic
-/// links and other odd entries are skipped. `skip` is asked about each file
-/// with its path relative to the whole Auto Run root (`rel`), so it can tell
-/// the export record from other project files.
+/// and falls back to a copy when the file system will not link. A link, a
+/// junction or any entry that cannot be read fails the copy. `skip` is
+/// asked about each file with its path relative to the whole Auto Run root
+/// (`rel`), so it can tell the export record from other project files.
 fn copy_tree(from: &Path, to: &Path, rel: &Path, link: bool, skip: &dyn Fn(&Path) -> bool) -> Result<(), String> {
     let meta = std::fs::symlink_metadata(from).map_err(|e| e.to_string())?;
     if meta.is_dir() {
         std::fs::create_dir_all(to).map_err(|e| e.to_string())?;
-        for entry in std::fs::read_dir(from).map_err(|e| e.to_string())?.flatten() {
+        for entry in std::fs::read_dir(from).map_err(|e| e.to_string())? {
+            let entry = entry.map_err(|e| e.to_string())?;
             let name = entry.file_name();
             copy_tree(&entry.path(), &to.join(&name), &rel.join(&name), link, skip)?;
         }
-    } else if meta.is_file() && !skip(rel) {
+    } else if meta.is_file() {
+        if skip(rel) {
+            return Ok(());
+        }
         if link && std::fs::hard_link(from, to).is_ok() {
             return Ok(());
         }
         std::fs::copy(from, to).map_err(|e| e.to_string())?;
+    } else {
+        return Err(ITEM_IS_A_LINK.to_string());
     }
     Ok(())
 }
@@ -175,10 +207,11 @@ fn copy_tree(from: &Path, to: &Path, rel: &Path, link: bool, skip: &dyn Fn(&Path
 /// Copies the flat root's per-environment items into `envs_dir/<id>/` for
 /// each id, and returns how many top-level items were copied. `Every`
 /// items are real copies into every id; `ActiveOnly` items (history) go to
-/// `active` only (the first id when `active` is `None` or not listed) and
-/// are hard-linked file by file where the file system allows, so a large
-/// `shots/` is not written out again. The export record goes to the active
-/// environment only. `flat` is never changed.
+/// `active` only (the first id when `active` is `None` or not listed). Of
+/// those only the write-once ones (`LINKED_ITEMS`) are hard-linked, so a
+/// large `shots/` is not written out again. The export record goes to the
+/// active environment only. `flat` is never changed. Anything unreadable,
+/// and any link, fails the copy.
 pub fn fan_out(flat: &Path, envs_dir: &Path, ids: &[String], active: Option<&str>) -> Result<usize, String> {
     if let Some(bad) = ids.iter().find(|i| !valid_folder_id(i)) {
         return Err(format!("\"{bad}\" is not an environment id"));
@@ -193,7 +226,7 @@ pub fn fan_out(flat: &Path, envs_dir: &Path, ids: &[String], active: Option<&str
     let mut copied = 0;
     for (name, how) in PER_ENV_ITEMS {
         let from = flat.join(name);
-        if std::fs::symlink_metadata(&from).is_err() {
+        if !exists(&from)? {
             continue;
         }
         match how {
@@ -203,16 +236,26 @@ pub fn fan_out(flat: &Path, envs_dir: &Path, ids: &[String], active: Option<&str
                     let skip = move |rel: &Path| !keep_export && is_export_record(rel);
                     copy_tree(&from, &envs_dir.join(id).join(name), Path::new(name), false, &skip)?;
                 }
+                copied += 1;
             }
             CopyTo::ActiveOnly => {
                 if let Some(id) = &target {
-                    copy_tree(&from, &envs_dir.join(id).join(name), Path::new(name), true, &|_| false)?;
+                    let link = LINKED_ITEMS.contains(&name);
+                    copy_tree(&from, &envs_dir.join(id).join(name), Path::new(name), link, &|_| false)?;
+                    copied += 1;
                 }
             }
         }
-        copied += 1;
     }
     Ok(copied)
+}
+
+/// The file operations `migrate_with` does, passed in so a test can make
+/// one of them fail.
+pub struct MigrationOps<'a> {
+    pub fan_out: &'a dyn Fn(&Path, &Path, &[String], Option<&str>) -> Result<usize, String>,
+    pub rename: &'a mut dyn FnMut(&Path, &Path) -> std::io::Result<()>,
+    pub sleep: &'a mut dyn FnMut(std::time::Duration),
 }
 
 /// Gives each environment its own copy of the flat Auto Run data, once.
@@ -221,8 +264,19 @@ pub fn fan_out(flat: &Path, envs_dir: &Path, ids: &[String], active: Option<&str
 /// any error the staging folder goes and the caller keeps the flat layout
 /// for the session. The originals stay as a backup.
 pub fn migrate_once(shared: &Path) -> Result<Option<MigrationReport>, String> {
+    migrate_with(
+        shared,
+        MigrationOps { fan_out: &fan_out, rename: &mut |a, b| std::fs::rename(a, b), sleep: &mut std::thread::sleep },
+    )
+}
+
+/// `migrate_once` with its file operations passed in.
+pub fn migrate_with(shared: &Path, ops: MigrationOps) -> Result<Option<MigrationReport>, String> {
     let envs = shared.join(ENVS_DIR);
-    if envs.exists() {
+    if exists(&envs)? {
+        if !envs.is_dir() {
+            return Err("the per-environment folder name is taken by a file".to_string());
+        }
         return Ok(None);
     }
     if let Ok(entries) = std::fs::read_dir(shared) {
@@ -234,7 +288,11 @@ pub fn migrate_once(shared: &Path) -> Result<Option<MigrationReport>, String> {
             }
         }
     }
-    if !PER_ENV_ITEMS.iter().any(|(name, _)| std::fs::symlink_metadata(shared.join(name)).is_ok()) {
+    let mut any = false;
+    for (name, _) in PER_ENV_ITEMS {
+        any |= exists(&shared.join(name))?;
+    }
+    if !any {
         std::fs::create_dir_all(&envs).map_err(|e| e.to_string())?;
         return Ok(Some(MigrationReport { environments: 0, items: 0 }));
     }
@@ -243,8 +301,8 @@ pub fn migrate_once(shared: &Path) -> Result<Option<MigrationReport>, String> {
         None => (vec![SEED_ID.to_string()], SEED_ID.to_string()),
     };
     let staging = shared.join(format!("{STAGING_PREFIX}{}", crate::cache::now_ms()));
-    let built = fan_out(shared, &staging, &ids, Some(&active))
-        .and_then(|items| std::fs::rename(&staging, &envs).map(|_| items).map_err(|e| e.to_string()));
+    let built = (ops.fan_out)(shared, &staging, &ids, Some(&active))
+        .and_then(|items| crate::ai_tools::rename_retrying(&staging, &envs, ops.rename, ops.sleep).map(|_| items));
     match built {
         Ok(items) => Ok(Some(MigrationReport { environments: ids.len(), items })),
         Err(e) => {
@@ -254,10 +312,56 @@ pub fn migrate_once(shared: &Path) -> Result<Option<MigrationReport>, String> {
     }
 }
 
+/// What start-up found, and which layout is in charge.
+#[derive(Debug, Default)]
+pub struct StartUp {
+    /// The per-environment layout is in charge (`envs/` exists).
+    pub per_env: bool,
+    pub report: Option<MigrationReport>,
+    /// The copy failed; the sentence names no path (it is left out when it would).
+    pub failed: Option<String>,
+    /// A development build left the copy alone.
+    pub skipped: bool,
+}
+
+/// Whether this build may run the one-time copy. A development build
+/// shares the installed app's data folder, so it copies only when asked
+/// (`TCM_MIGRATE_ENVS=1`); a release build always does.
+pub fn migration_allowed(debug_build: bool, flag: Option<&str>) -> bool {
+    !debug_build || flag == Some("1")
+}
+
+/// The copy (when `allowed`), then the layout choice: per-environment when
+/// `envs/` exists, flat when it does not (a failed or skipped copy).
+pub fn start_up(shared: &Path, allowed: bool) -> StartUp {
+    let mut out = StartUp::default();
+    if allowed {
+        match migrate_once(shared) {
+            Ok(r) => out.report = r,
+            Err(e) => out.failed = Some(if path_free(&e) { e } else { String::new() }),
+        }
+    } else {
+        out.skipped = true;
+    }
+    out.per_env = is_per_env_layout(shared);
+    out
+}
+
 /// Hands the seed to the first environment made after the update: renames
-/// `envs/_seed` to `envs/<env_id>`. Does nothing (false) when there is no
-/// seed or the target already holds anything.
+/// `envs/_seed` to `envs/<env_id>`. False when there is no seed. An
+/// existing EMPTY target gives way; one holding anything is an error, so
+/// the seed stays for a later try.
 pub fn seed_into(shared: &Path, env_id: &str) -> Result<bool, String> {
+    seed_into_with(shared, env_id, &mut |a, b| std::fs::rename(a, b), &mut std::thread::sleep)
+}
+
+/// `seed_into` with the rename and the wait passed in.
+pub fn seed_into_with(
+    shared: &Path,
+    env_id: &str,
+    rename: &mut dyn FnMut(&Path, &Path) -> std::io::Result<()>,
+    sleep: &mut dyn FnMut(std::time::Duration),
+) -> Result<bool, String> {
     if !crate::environments::valid_id(env_id) {
         return Err(format!("\"{env_id}\" is not an environment id"));
     }
@@ -267,12 +371,8 @@ pub fn seed_into(shared: &Path, env_id: &str) -> Result<bool, String> {
     }
     let target = env_root(shared, env_id);
     if target.exists() {
-        // An empty folder (made by a selection) gives way; one with
-        // anything in it is left alone.
-        if std::fs::remove_dir(&target).is_err() {
-            return Ok(false);
-        }
+        std::fs::remove_dir(&target).map_err(|_| "the new environment's folder already holds data".to_string())?;
     }
-    std::fs::rename(&seed, &target).map_err(|e| e.to_string())?;
+    crate::ai_tools::rename_retrying(&seed, &target, rename, sleep)?;
     Ok(true)
 }

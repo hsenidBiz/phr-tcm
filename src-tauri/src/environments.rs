@@ -229,20 +229,18 @@ pub fn read_ids(root: &Path) -> Result<Option<(Vec<String>, String)>, String> {
 }
 
 /// Hands `envs/_seed` (what the update left for the first environment) to
-/// `id`, when there is one. Run before the file that names `id` is written,
-/// so a failure saves nothing and is tried again.
-fn take_seed(root: &Path, id: &str) -> Result<(), String> {
+/// `id`, when there is one. Run AFTER the file that names `id` is saved, so
+/// a failed save never strands the data under an id nobody has. A failed
+/// handover is logged (no path) and the data stays in `_seed` for the next
+/// environment made; it never fails the caller.
+fn take_seed(root: &Path, id: &str) {
     let shared = crate::autorun::roots::shared_of(root);
     match crate::autorun::roots::seed_into(&shared, id) {
-        Ok(true) => {
-            crate::applog::info("Environments: the first environment took over the data the update copied");
-            Ok(())
-        }
-        Ok(false) => Ok(()),
-        Err(e) => {
-            crate::applog::debug(format!("Environments: the update's data could not be handed over: {e}"));
-            Err("the data copied at the update could not be handed to the new environment - try again".to_string())
-        }
+        Ok(true) => crate::applog::info("Environments: the first environment took over the data the update copied"),
+        Ok(false) => {}
+        Err(e) => crate::applog::warn(format!(
+            "Environments: the data the update copied could not be handed to the new environment yet: {e}"
+        )),
     }
 }
 
@@ -281,8 +279,8 @@ fn load_or_init_locked(root: &Path, current_db: Option<&str>) -> Result<EnvFile,
         }],
         auto_approve_adopted: false,
     };
-    take_seed(root, &file.active)?;
     write(root, &file)?;
+    take_seed(root, &file.active);
     crate::applog::info("Environments: made Default from this machine's settings");
     // Only now - the copy is written and the file that points at it is
     // saved - are the old single list and its sessions dead weight. The
@@ -413,12 +411,13 @@ pub fn save_env_with(
     let known_db_ids = known_db_ids();
     let mut file = load_or_init_locked(root, None)?;
     let mut env = tidy(env);
+    let mut is_new = false;
     if env.id.is_empty() {
         env.id = new_id(&env.name, &file.environments);
         // A new environment never arrives with writes asked about less.
         env.db_auto_approve = false;
-        take_seed(root, &env.id)?;
         file.environments.push(env.clone());
+        is_new = true;
     } else {
         let slot = file
             .environments
@@ -434,6 +433,9 @@ pub fn save_env_with(
     known.extend(file.environments.iter().filter(|e| e.id != env.id).map(|e| e.db_id.clone()));
     validate(&file, &known)?;
     write(root, &file)?;
+    if is_new {
+        take_seed(root, &env.id);
+    }
     Ok(file)
 }
 

@@ -633,18 +633,29 @@ pub fn run() {
                 // Each environment's own folder is built once, before the
                 // layout is chosen. When it cannot be built the flat folder
                 // stays in charge for this session and the copy is tried
-                // again at the next start.
-                match autorun::roots::migrate_once(&shared) {
-                    Ok(Some(r)) => applog::info(autorun::roots::migration_log_line(&r)),
-                    Ok(None) => {}
-                    Err(e) => {
-                        applog::warn(
-                            "Auto Run: the per-environment copy did not finish and will be tried again at the next start",
-                        );
-                        applog::debug(format!("Auto Run: the per-environment copy failed: {e}"));
-                    }
+                // again at the next start. A development build shares the
+                // installed app's data, so it copies only when asked.
+                let started = autorun::roots::start_up(
+                    &shared,
+                    autorun::roots::migration_allowed(
+                        cfg!(debug_assertions),
+                        std::env::var("TCM_MIGRATE_ENVS").ok().as_deref(),
+                    ),
+                );
+                if started.skipped {
+                    applog::info("Auto Run: the per-environment copy is skipped in a development build");
                 }
-                let per_env = autorun::roots::is_per_env_layout(&shared);
+                if let Some(r) = &started.report {
+                    applog::info(autorun::roots::migration_log_line(r));
+                }
+                if let Some(why) = &started.failed {
+                    // `why` is empty when the reason would have named a path.
+                    applog::warn(format!(
+                        "Auto Run: the per-environment copy did not finish and will be tried again at the next start{}",
+                        if why.is_empty() { String::new() } else { format!(" ({why})") }
+                    ));
+                }
+                let per_env = started.per_env;
                 if per_env {
                     autorun::store::set_shared_root(shared.clone());
                 } else {

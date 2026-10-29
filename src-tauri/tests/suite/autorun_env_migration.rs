@@ -2,7 +2,10 @@
 //! environment, and the seed a first environment made afterwards takes.
 
 use std::path::{Path, PathBuf};
-use v2_lib::autorun::roots::{self, MigrationReport};
+use std::cell::RefCell;
+use v2_lib::autorun::roots::{self, MigrationOps, MigrationReport};
+use v2_lib::autorun::store;
+use v2_lib::autorun::LocalRun;
 use v2_lib::environments::{self, Environment};
 
 const A: &str = "env-0000000a";
@@ -167,19 +170,282 @@ fn a_second_new_environment_starts_empty() {
 }
 
 #[test]
-fn seed_into_leaves_a_seed_alone_when_the_target_has_data() {
-    let t = tempfile::tempdir().unwrap();
-    put(t.path(), "envs/_seed/scripts/a.json", "S");
-    put(t.path(), &format!("envs/{A}/scripts/b.json"), "B");
-    assert!(!roots::seed_into(t.path(), A).unwrap());
-    assert!(at(t.path(), "_seed", "scripts/a.json").is_file());
-    assert!(at(t.path(), A, "scripts/b.json").is_file());
-}
-
-#[test]
 fn migration_log_line_names_no_path() {
     let line = roots::migration_log_line(&MigrationReport { environments: 2, items: 5 });
     assert!(line.contains("2 environment(s)") && line.contains("5 item(s)"), "{line}");
     assert!(!line.contains(':') || line.starts_with("Auto Run:"), "{line}");
     assert!(!line.contains('\\') &&!line.contains('/'), "{line}");
+}
+
+fn no_sleep(_: std::time::Duration) {}
+
+#[test]
+fn seed_into_refuses_a_target_holding_data_and_keeps_the_seed() {
+    let t = tempfile::tempdir().unwrap();
+    put(t.path(), "envs/_seed/scripts/a.json", "S");
+    put(t.path(), &format!("envs/{A}/scripts/b.json"), "B");
+    assert!(roots::seed_into(t.path(), A).is_err());
+    assert!(at(t.path(), "_seed", "scripts/a.json").is_file());
+    assert!(at(t.path(), A, "scripts/b.json").is_file());
+}
+
+#[test]
+fn seed_into_replaces_an_empty_target_folder() {
+    let t = tempfile::tempdir().unwrap();
+    put(t.path(), "envs/_seed/scripts/a.json", "S");
+    std::fs::create_dir_all(at(t.path(), A, "")).unwrap();
+    assert!(roots::seed_into(t.path(), A).unwrap());
+    assert!(at(t.path(), A, "scripts/a.json").is_file());
+    assert!(!at(t.path(), "_seed", "").exists());
+}
+
+#[test]
+fn a_busy_seed_rename_is_retried_then_succeeds() {
+    let t = tempfile::tempdir().unwrap();
+    put(t.path(), "envs/_seed/scripts/a.json", "S");
+    let tries = RefCell::new(0);
+    let r = roots::seed_into_with(
+        t.path(),
+        A,
+        &mut |a, b| {
+            *tries.borrow_mut() += 1;
+            if *tries.borrow() < 3 {
+                Err(std::io::Error::from_raw_os_error(32))
+            } else {
+                std::fs::rename(a, b)
+            }
+        },
+        &mut no_sleep,
+    );
+    assert!(r.unwrap());
+    assert_eq!(*tries.borrow(), 3);
+    assert!(at(t.path(), A, "scripts/a.json").is_file());
+}
+
+#[test]
+fn a_failed_seed_rename_loses_nothing_and_never_fails_the_list() {
+    let t = tempfile::tempdir().unwrap();
+    put(t.path(), "envs/_seed/scripts/a.json", "S");
+    // Another process holding a file inside the seed makes the folder
+    // rename fail on Windows; elsewhere a rename never fails this way.
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        let _held = std::fs::OpenOptions::new()
+            .read(true)
+            .share_mode(0)
+            .open(at(t.path(), "_seed", "scripts/a.json"))
+            .unwrap();
+        let file = environments::load_or_init(t.path(), None).expect("the list failed because of the seed");
+        assert_eq!(file.environments.len(), 1);
+        assert!(at(t.path(), "_seed", "scripts/a.json").is_file());
+        assert!(!at(t.path(), &file.active, "scripts/a.json").exists());
+    }
+}
+
+#[test]
+fn a_new_environment_that_fails_to_save_leaves_the_seed() {
+    let t = tempfile::tempdir().unwrap();
+    environments::load_or_init(t.path(), None).unwrap();
+    put(t.path(), "envs/_seed/scripts/a.json", "S");
+    // Default is called "Default": the same name again is refused.
+    let r = environments::save_env(t.path(), env_named("", "Default"), &["dev-read".to_string()]);
+    assert!(r.is_err());
+    assert!(at(t.path(), "_seed", "scripts/a.json").is_file());
+}
+
+fn assert_flat_and_no_envs(t: &Path) {
+    assert!(!t.join("envs").exists(), "a half-built envs/ was left");
+    assert!(std::fs::read_dir(t)
+        .unwrap()
+        .flatten()
+        .all(|e| !e.file_name().to_string_lossy().starts_with(".envs-staging-")));
+}
+
+#[test]
+fn a_failure_during_the_copy_leaves_no_envs_and_no_staging() {
+    let t = tempfile::tempdir().unwrap();
+    two_envs(t.path());
+    put(t.path(), "scripts/case-1.json", "S");
+    // A symbolic link-free way to fail mid-copy: the copy seam errors after
+    // it has written part of the staging folder.
+    let r = roots::migrate_with(
+        t.path(),
+        MigrationOps {
+            fan_out: &|flat, staging, ids, active| {
+                roots::fan_out(flat, staging, ids, active)?;
+                Err("disk full".to_string())
+            },
+            rename: &mut |a, b| std::fs::rename(a, b),
+            sleep: &mut no_sleep,
+        },
+    );
+    assert!(r.is_err());
+    assert_flat_and_no_envs(t.path());
+    assert!(t.path().join("scripts/case-1.json").is_file());
+}
+
+#[test]
+fn a_failure_during_the_rename_leaves_no_envs_and_no_staging() {
+    let t = tempfile::tempdir().unwrap();
+    two_envs(t.path());
+    put(t.path(), "scripts/case-1.json", "S");
+    let r = roots::migrate_with(
+        t.path(),
+        MigrationOps {
+            fan_out: &roots::fan_out,
+            rename: &mut |_, _| Err(std::io::Error::from(std::io::ErrorKind::NotFound)),
+            sleep: &mut no_sleep,
+        },
+    );
+    assert!(r.is_err());
+    assert_flat_and_no_envs(t.path());
+    // And the next try, with nothing in the way, succeeds.
+    assert!(roots::migrate_once(t.path()).unwrap().is_some());
+}
+
+#[test]
+fn a_busy_migration_rename_is_retried() {
+    let t = tempfile::tempdir().unwrap();
+    two_envs(t.path());
+    put(t.path(), "scripts/case-1.json", "S");
+    let tries = RefCell::new(0);
+    let r = roots::migrate_with(
+        t.path(),
+        MigrationOps {
+            fan_out: &roots::fan_out,
+            rename: &mut |a, b| {
+                *tries.borrow_mut() += 1;
+                if *tries.borrow() < 3 {
+                    Err(std::io::Error::from_raw_os_error(5))
+                } else {
+                    std::fs::rename(a, b)
+                }
+            },
+            sleep: &mut no_sleep,
+        },
+    );
+    assert!(r.unwrap().is_some());
+    assert_eq!(*tries.borrow(), 3);
+}
+
+#[test]
+fn an_item_that_cannot_be_listed_fails_the_migration() {
+    let t = tempfile::tempdir().unwrap();
+    two_envs(t.path());
+    put(t.path(), "scripts/case-1.json", "S");
+    // A folder held open without sharing cannot be listed on Windows; the
+    // copy must stop rather than skip it.
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        let _held = std::fs::OpenOptions::new()
+            .read(true)
+            .share_mode(0)
+            .open(t.path().join("scripts/case-1.json"))
+            .unwrap();
+        let r = roots::migrate_once(t.path());
+        assert!(r.is_err(), "an unreadable file was skipped: {r:?}");
+        assert_flat_and_no_envs(t.path());
+    }
+}
+
+#[test]
+fn a_link_in_place_of_an_item_fails_the_migration() {
+    let t = tempfile::tempdir().unwrap();
+    two_envs(t.path());
+    let real = t.path().join("elsewhere");
+    std::fs::create_dir_all(&real).unwrap();
+    put(&real, "case-1.json", "S");
+    #[cfg(windows)]
+    let made = std::os::windows::fs::symlink_dir(&real, t.path().join("scripts"));
+    #[cfg(unix)]
+    let made = std::os::unix::fs::symlink(&real, t.path().join("scripts"));
+    if made.is_err() {
+        eprintln!("skipped: this account may not create symbolic links here");
+        return;
+    }
+    let r = roots::migrate_once(t.path());
+    assert_eq!(r.unwrap_err(), roots::ITEM_IS_A_LINK);
+    assert_flat_and_no_envs(t.path());
+}
+
+fn a_run(id: &str) -> LocalRun {
+    LocalRun {
+        id: id.to_string(),
+        pbi_id: 1,
+        started_at: "1".to_string(),
+        cases: vec![],
+        mode: String::new(),
+        published: None,
+        environment: None,
+        resets: vec![],
+        network_pauses: vec![],
+    }
+}
+
+#[test]
+fn saving_a_migrated_run_leaves_the_flat_original_unchanged() {
+    let t = tempfile::tempdir().unwrap();
+    two_envs(t.path());
+    store::save_run(t.path(), &a_run("run-1")).unwrap();
+    let flat = std::fs::read(t.path().join("runs/run-1.json")).unwrap();
+    roots::migrate_once(t.path()).unwrap().unwrap();
+    let env = roots::env_root(t.path(), A);
+    let mut changed = a_run("run-1");
+    changed.mode = "published-later".to_string();
+    store::save_run(&env, &changed).unwrap();
+    assert_eq!(std::fs::read(t.path().join("runs/run-1.json")).unwrap(), flat);
+    assert!(store::load_run(&env, "run-1").unwrap().unwrap().mode == "published-later");
+}
+
+#[test]
+fn runs_are_copied_but_shots_are_linked() {
+    let t = tempfile::tempdir().unwrap();
+    two_envs(t.path());
+    put(t.path(), "runs/run-1.json", "R");
+    put(t.path(), "shots/a.jpg", "P");
+    roots::migrate_once(t.path()).unwrap().unwrap();
+    // A write through the original shows through a link and not through a copy.
+    for rel in ["runs/run-1.json", "shots/a.jpg"] {
+        let mut f = std::fs::OpenOptions::new().append(true).open(t.path().join(rel)).unwrap();
+        std::io::Write::write_all(&mut f, b"+").unwrap();
+    }
+    assert_eq!(std::fs::read_to_string(at(t.path(), A, "runs/run-1.json")).unwrap(), "R");
+    assert_eq!(std::fs::read_to_string(at(t.path(), A, "shots/a.jpg")).unwrap(), "P+");
+}
+
+#[test]
+fn a_development_build_migrates_only_when_asked() {
+    assert!(roots::migration_allowed(false, None));
+    assert!(roots::migration_allowed(true, Some("1")));
+    assert!(!roots::migration_allowed(true, None));
+    assert!(!roots::migration_allowed(true, Some("0")));
+    assert!(roots::migration_allowed(false, Some("0")));
+}
+
+#[test]
+fn start_up_skips_the_copy_in_a_development_build_but_uses_an_existing_envs() {
+    let t = tempfile::tempdir().unwrap();
+    two_envs(t.path());
+    put(t.path(), "scripts/case-1.json", "S");
+    let s = roots::start_up(t.path(), false);
+    assert!(s.skipped && !s.per_env && s.report.is_none());
+    assert!(!t.path().join("envs").exists());
+    std::fs::create_dir_all(t.path().join("envs")).unwrap();
+    assert!(roots::start_up(t.path(), false).per_env);
+}
+
+#[test]
+fn start_up_falls_back_to_the_flat_folder_when_the_copy_fails() {
+    let t = tempfile::tempdir().unwrap();
+    put(t.path(), "scripts/case-1.json", "S");
+    put(t.path(), "environments.json", "{ not json");
+    let s = roots::start_up(t.path(), true);
+    assert!(!s.per_env && s.report.is_none());
+    let said = s.failed.expect("the failure was not reported");
+    assert!(roots::path_free(&said), "{said}");
+    two_envs(t.path());
+    let s = roots::start_up(t.path(), true);
+    assert!(s.per_env && s.report.is_some() && s.failed.is_none());
 }

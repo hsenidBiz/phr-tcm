@@ -1722,6 +1722,29 @@ fn held_by_another_process(e: &std::io::Error) -> bool {
     e.kind() == std::io::ErrorKind::PermissionDenied || matches!(e.raw_os_error(), Some(32) | Some(5))
 }
 
+/// `rename(from, to)` retried after each of `RENAME_RETRY_WAITS_MS` while
+/// another process (antivirus, the indexer) holds something in the way.
+/// Any other failure, or the last retry's, is returned as a sentence naming
+/// no path.
+pub fn rename_retrying(
+    from: &std::path::Path,
+    to: &std::path::Path,
+    rename: &mut dyn FnMut(&std::path::Path, &std::path::Path) -> std::io::Result<()>,
+    sleep: &mut dyn FnMut(std::time::Duration),
+) -> Result<(), String> {
+    let mut result = rename(from, to);
+    for wait in RENAME_RETRY_WAITS_MS {
+        match &result {
+            Err(e) if held_by_another_process(e) => {
+                sleep(std::time::Duration::from_millis(wait));
+                result = rename(from, to);
+            }
+            _ => break,
+        }
+    }
+    result.map_err(|e| format!("a folder could not be moved into place: {e}"))
+}
+
 /// `atomic_write` with the file operations and the wait passed in - the
 /// seam tests/suite/ai_tools.rs drives. A rename that fails because another
 /// process holds the file is retried after each of `RENAME_RETRY_WAITS_MS`;
