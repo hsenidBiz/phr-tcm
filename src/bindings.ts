@@ -1321,6 +1321,7 @@ export const commands = {
 	 *  are written on a blocking thread, with no bridge lock held.
 	 */
 	setBridgeContext: (organization: string, project: string, moduleRef: string | null, preconditionsRef: string | null, disabledTools: string[], workingDir: string | null, dbId: string | null, switches: BridgeSwitches) => __TAURI_INVOKE<void>("set_bridge_context", { organization, project, moduleRef, preconditionsRef, disabledTools, workingDir, dbId, switches }),
+	clearBridgePbi: () => __TAURI_INVOKE<void>("clear_bridge_pbi"),
 	detectAiTools: (workingDir: string | null) => __TAURI_INVOKE<DetectedTool[]>("detect_ai_tools", { workingDir }),
 	/**
 	 *  `disabled_tools` is the AI Bridge tab's current on/off set: registering

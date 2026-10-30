@@ -1632,6 +1632,92 @@ test("the selected PBI is pushed to the bridge and cleared when the person clear
   );
 });
 
+/// A PBI belongs to its org: switching org must take it off the bridge at
+/// once, even while no project is chosen yet (nothing else is pushed then).
+test("an org switch clears the PBI on the bridge before any project is chosen", async () => {
+  const cleared: number[] = [];
+  localStorage.setItem(
+    "tcm-v2-prefs",
+    JSON.stringify({
+      org: "acme",
+      project: "Web",
+      section: "manual",
+      pbi: { id: 42, title: "Login flow", work_item_type: "Product Backlog Item", project: "Web" },
+      workMode: false,
+    }),
+  );
+  localStorage.setItem("tcm-v2-tour-done", "yes");
+  mockIPC((cmd) => {
+    if (cmd === "modules_get") return EVERY_MODULE;
+    if (cmd === "resume_session") return { signed_in: true, account: "a@b.com" };
+    if (cmd === "check_update") return null;
+    if (cmd === "list_orgs") return [{ name: "acme", url: "" }, { name: "beta", url: "" }];
+    if (cmd === "list_test_case_fields") return [];
+    if (cmd === "plugin:event|listen") return 1;
+    if (cmd === "list_projects") return [{ id: "p1", name: "Web" }, { id: "p2", name: "Api" }];
+    if (cmd === "clear_bridge_pbi") {
+      cleared.push(Date.now());
+      return null;
+    }
+    if (cmd === "bridge_status") return { port: 1, mcp_exe: "x" };
+  });
+  renderApp();
+  await screen.findByText("a@b.com");
+  const before = cleared.length;
+  fireEvent.click(await screen.findByRole("combobox", { name: "Organization" }));
+  fireEvent.click(await screen.findByRole("option", { name: "beta" }));
+  await vi.waitFor(() => expect(cleared.length).toBeGreaterThan(before));
+});
+
+test("a project switch pushes the PBI as cleared", async () => {
+  const pushes: Array<Record<string, unknown>> = [];
+  saveAllProjects(false);
+  localStorage.setItem(
+    "tcm-v2-prefs",
+    JSON.stringify({
+      org: "acme",
+      project: "Web",
+      section: "manual",
+      pbi: { id: 42, title: "Login flow", work_item_type: "Product Backlog Item", project: "Web" },
+      workMode: false,
+    }),
+  );
+  localStorage.setItem("tcm-v2-tour-done", "yes");
+  signedInMocks((cmd, args) => {
+    if (cmd === "list_projects") return [{ id: "p1", name: "Web" }, { id: "p2", name: "Api" }];
+    if (cmd === "set_bridge_context") {
+      pushes.push(args as Record<string, unknown>);
+      return null;
+    }
+    if (cmd === "bridge_status") return { port: 1, mcp_exe: "x" };
+  });
+  renderApp();
+  await screen.findByText("a@b.com");
+  await vi.waitFor(() =>
+    expect(pushes[pushes.length - 1]).toMatchObject({ switches: expect.objectContaining({ pbi: { id: 42, title: "Login flow", project: "Web" } }) }),
+  );
+  fireEvent.click(await screen.findByRole("combobox", { name: "Project" }));
+  fireEvent.click(await screen.findByRole("option", { name: "Api" }));
+  await vi.waitFor(() =>
+    expect(pushes[pushes.length - 1]).toMatchObject({ project: "Api", switches: expect.objectContaining({ pbi: null }) }),
+  );
+});
+
+test("signed out, the bridge's PBI is cleared", async () => {
+  const cleared: number[] = [];
+  mockIPC((cmd) => {
+    if (cmd === "resume_session") return { signed_in: false, account: null };
+    if (cmd === "check_update") return null;
+    if (cmd === "clear_bridge_pbi") {
+      cleared.push(1);
+      return null;
+    }
+  });
+  renderApp();
+  await screen.findByRole("button", { name: /sign in with microsoft/i });
+  await vi.waitFor(() => expect(cleared.length).toBeGreaterThan(0));
+});
+
 /// A connection string saved before databases had ids moves into Rust at
 /// start, BEFORE the bridge is told anything - so the first push already
 /// names the database it became, and the string leaves the webview.

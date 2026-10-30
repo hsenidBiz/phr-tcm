@@ -222,6 +222,20 @@ pub struct BridgeSwitches {
     pub pbi: Option<crate::ai_bridge::CurrentPbi>,
 }
 
+/// Take the selected PBI off the bridge's context: the webview calls it when
+/// the org changes or the person signs out, when nothing else is pushed.
+pub fn clear_current_pbi(slot: &std::sync::Mutex<BridgeContext>) {
+    slot.lock().unwrap_or_else(|e| e.into_inner()).current_pbi = None;
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn clear_bridge_pbi(app: tauri::AppHandle) {
+    if let Some(shared) = running_bridge(&app) {
+        clear_current_pbi(&shared.ctx);
+    }
+}
+
 /// The running bridge, if it has started.
 pub fn running_bridge(app: &tauri::AppHandle) -> Option<SharedBridge> {
     use tauri::Manager;

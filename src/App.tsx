@@ -949,6 +949,12 @@ export default function App() {
   const bridgePbiId = pbi?.id ?? null;
   const bridgePbiTitle = pbi?.title ?? "";
   const bridgePbiProject = pbi?.project || project;
+  // Nothing is pushed without an org and a project, so the PBI of the org
+  // just left (or of a signed-out session) would stay on the bridge: take it
+  // off at once.
+  useEffect(() => {
+    if (!signedIn || !org || !bridgeProject) void commands.clearBridgePbi().catch(() => {});
+  }, [signedIn, org, bridgeProject]);
   const pushBridgeContextRef = useRef<() => void>(() => {});
   const bridgeContextTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {

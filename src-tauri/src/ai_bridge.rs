@@ -176,6 +176,7 @@ impl std::fmt::Debug for BridgeContext {
             .field("api_writes", &self.api_writes)
             .field("network_tools", &self.network_tools)
             .field("all_projects", &self.all_projects)
+            .field("current_pbi", &self.current_pbi.as_ref().map(|p| p.id))
             .field("db_no_ask", &self.db_no_ask)
             .field("gate", &self.gate)
             .finish()
@@ -13681,12 +13682,14 @@ async fn begin_writing(
                 },
                 "note": "Put these to the developer in chat - one at a time, and let them \
                          paste or drop file paths. Do NOT answer them yourself, and do not \
-                         start writing. If you have not yet, call `get_current_pbi` first: \
-                         when the developer named no PBI and TCM has one selected, say \
+                         start writing. If the job is for a PBI and you are the assistant the \
+                         person talks to, call `get_current_pbi` first: when the developer \
+                         named no PBI and TCM has one selected, say \
                          \"PBI <id>, <title>, is selected in TCM - is that the one?\" and wait \
                          for their yes; when they named a different one, ask which to use; \
-                         when TCM has none, find it with `search_pbis`. When they have answered, \
-                         call this tool again with \
+                         when TCM has none, find it with `search_pbis` or ask for the id. A \
+                         subagent never asks: it uses the PBI id it was given. When they have \
+                         answered, call this tool again with \
                          their answers to get the plan.",
             })
             .to_string(),
@@ -14875,11 +14878,14 @@ async fn guide(ctx: &BridgeContext, client: &crate::ado::AdoClient) -> String {
         is allowed when nothing here matches.\n\n{tag_lines}\n\n\
         {transform_ops}\n\
         ## Workflow\n\
-        0. Call `get_current_pbi` for the PBI selected in TCM. The developer\n\
-        named one that is TCM's: use it, no search. A different one: ask which.\n\
-        None named and TCM has one: say\n\
-        \"PBI <id>, <title>, is selected in TCM - is that the one?\" and wait\n\
-        for their yes. TCM has none: `search_pbis`.\n\
+        0. The assistant the person talks to settles the PBI, if the job is for\n\
+        one: call `get_current_pbi`. The developer named one that is TCM's: use\n\
+        it, no search. A different one: ask which. None named and TCM has one:\n\
+        say \"PBI <id>, <title>, is selected in TCM - is that the one?\" and wait\n\
+        for their yes. TCM has none: `search_pbis`, or ask for the id; a job for\n\
+        a specification alone needs no PBI. Pass the settled PBI id to every\n\
+        slice subagent: a subagent never asks about the PBI, it uses the one it\n\
+        was given.\n\
         Then call `begin_test_case_writing` and put its questions to the\n\
         developer. What the file is called (it lives in the repository's\n\
         .test-cases folder), which specs are authoritative and what is out of\n\

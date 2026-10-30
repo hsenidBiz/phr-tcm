@@ -85,13 +85,56 @@ fn the_tool_is_listed_and_calls_the_bridge_read_only() {
 
 #[test]
 fn the_starting_commands_check_tcms_pbi_and_wait_for_the_persons_yes() {
-    for stem in ["gen-tests", "discover", "explore", "begin-test-case-writing"] {
+    for stem in ["gen-tests", "discover", "begin-test-case-writing"] {
         let text = COMMANDS.iter().find(|c| c.stem == stem).unwrap().body.join("\n");
         assert!(text.contains("get_current_pbi"), "{stem}: {text}");
         assert!(text.contains(CONFIRM), "{stem} names the selected PBI and asks: {text}");
         assert!(text.contains("wait for") && text.contains("yes"), "{stem} waits for the yes: {text}");
         assert!(text.contains("search_pbis"), "{stem} still finds a PBI when TCM has none: {text}");
+        assert!(!text.contains("as before"), "{stem} names the concrete step: {text}");
     }
+}
+
+fn body_of(stem: &str) -> String {
+    COMMANDS.iter().find(|c| c.stem == stem).unwrap().body.join("
+")
+}
+
+#[test]
+fn explore_never_asks_about_a_pbi() {
+    let text = body_of("explore");
+    assert!(!text.contains("get_current_pbi") && !text.contains("PBI"), "{text}");
+}
+
+#[test]
+fn discover_lets_a_named_case_settle_it() {
+    let text = body_of("discover");
+    assert!(text.contains("case id named") && text.contains("ask nothing"), "{text}");
+    assert!(text.contains("neither a case nor a PBI"), "{text}");
+}
+
+#[test]
+fn setup_offers_tcms_pbi_first_and_gen_tests_has_one_rule() {
+    let setup = body_of("setup");
+    assert!(setup.contains("get_current_pbi") && setup.contains(CONFIRM), "{setup}");
+    assert!(!body_of("gen-tests").contains("Ask for the"), "one rule for a missing PBI");
+}
+
+#[test]
+fn only_the_coordinator_asks_and_subagents_use_the_pbi_they_were_given() {
+    let begin = body_of("begin-test-case-writing");
+    assert!(begin.contains("slice subagent") && begin.contains("never asks"), "{begin}");
+    assert!(begin.contains("specification alone"), "a job with no PBI is not forced to search: {begin}");
+    let guide = v2_lib::autorun::guide::autorun_guide();
+    assert!(guide.contains("a subagent never asks about the PBI"), "{guide}");
+}
+
+#[test]
+fn clearing_takes_the_pbi_off_the_context_and_debug_shows_it() {
+    let slot = Mutex::new(BridgeContext { current_pbi: Some(pbi()), ..BridgeContext::default() });
+    assert!(format!("{:?}", slot.lock().unwrap()).contains("4321"));
+    v2_lib::commands::ai_bridge::clear_current_pbi(&slot);
+    assert_eq!(slot.lock().unwrap().current_pbi, None);
 }
 
 #[test]
