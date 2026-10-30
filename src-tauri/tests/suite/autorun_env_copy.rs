@@ -997,4 +997,26 @@ mod one_case {
         assert_eq!(plan(&b, &a, CaseWay::Push).unwrap_err(), v2_lib::autorun::env_copy::CASE_COPY_SWITCHED);
         assert_eq!(plan(&a, &b, CaseWay::Pull).unwrap_err(), NO_SCRIPT_TO_COPY);
     }
+
+    #[test]
+    fn a_component_neither_environment_has_is_named_in_both_directions() {
+        let _lock = crate::serial::autorun();
+        let p = pair();
+        store::save_script(&p.a, &script(7, None, uses("Ghost"))).unwrap();
+        components::put(&p.a, ORG, PROJECT, comp("Real", "d", json!([{ "kind": "use_component", "component": "Deeper ghost", "inputs": {} }]))).unwrap();
+        let mut s = script(8, None, uses("Real"));
+        s.case_id = 8;
+        store::save_script(&p.a, &s).unwrap();
+        let plan = plan_case_copy(&p.a, &p.b, &p.b_id, ORG, PROJECT, 7).unwrap();
+        assert_eq!(plan.missing_components, vec!["Ghost".to_string()]);
+        let plan = copy_case(&p.a, &p.b, &p.b_id, ORG, PROJECT, 8, false).unwrap();
+        assert_eq!(plan.components_added, vec!["Real".to_string()]);
+        assert_eq!(plan.missing_components, vec!["Deeper ghost".to_string()], "still copied");
+        assert!(store::load_script(&p.b, 8).unwrap().is_some());
+        // The other way: a script in B whose component is in neither.
+        let a_id = roots::env_id_of(&p.a).unwrap();
+        store::save_script(&p.b, &script(9, None, uses("Ghost two"))).unwrap();
+        let back = plan_case_copy(&p.b, &p.a, &a_id, ORG, PROJECT, 9).unwrap();
+        assert_eq!(back.missing_components, vec!["Ghost two".to_string()]);
+    }
 }

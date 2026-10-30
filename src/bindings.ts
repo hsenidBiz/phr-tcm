@@ -3034,6 +3034,12 @@ export type CaseCopyPlan = {
 	/**  Components the target has in a different version; its version is used. */
 	components_kept: string[],
 	/**
+	 *  Components the script (or a component it uses) names that NEITHER
+	 *  environment has. The copy still goes ahead; the case fails to run
+	 *  until the component is added.
+	 */
+	missing_components: string[],
+	/**
 	 *  Areas the case visits (its own, a `return_to_area`, those of its
 	 *  components) that the target lacks, brought across with their variants.
 	 */

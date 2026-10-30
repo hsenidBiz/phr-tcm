@@ -602,6 +602,10 @@ pub struct CaseCopyPlan {
     pub components_added: Vec<String>,
     /// Components the target has in a different version; its version is used.
     pub components_kept: Vec<String>,
+    /// Components the script (or a component it uses) names that NEITHER
+    /// environment has. The copy still goes ahead; the case fails to run
+    /// until the component is added.
+    pub missing_components: Vec<String>,
     /// Areas the case visits (its own, a `return_to_area`, those of its
     /// components) that the target lacks, brought across with their variants.
     pub areas_added: Vec<String>,
@@ -717,6 +721,7 @@ fn gather_case(
     let mut seen: Vec<String> = Vec::new();
     let mut added: Vec<components::Component> = Vec::new();
     let mut kept: Vec<String> = Vec::new();
+    let mut missing_components: Vec<String> = Vec::new();
     while let Some(name) = todo.pop() {
         let k = nav::module_key(&name);
         if seen.contains(&k) {
@@ -737,7 +742,10 @@ fn gather_case(
                 t
             }
             (None, Some(t)) => t,
-            (None, None) => continue,
+            (None, None) => {
+                missing_components.push(name.clone());
+                continue;
+            }
         };
         let mut inner = Refs::default();
         collect_refs(&walk.actions, &mut inner);
@@ -804,6 +812,7 @@ fn gather_case(
         target_has_script: target_script.is_some(),
         components_added: added.iter().map(|c| c.name.clone()).collect(),
         components_kept: kept,
+        missing_components,
         areas_added,
         areas_kept,
         uses_default_area,
