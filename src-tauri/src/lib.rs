@@ -370,8 +370,8 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             pw_export::pw_export_preview,
             pw_export::pw_export_save_map,
             pw_export::pw_export_write,
-pw_export::pw_export_env,
-pw_export::pw_set_export_env,
+            pw_export::pw_export_env,
+            pw_export::pw_set_export_env,
             pw_repo::pw_repo_structure,
             pw_repo::pw_repo_specs_status,
             pw_repo::pw_repo_create_folder,
@@ -700,6 +700,10 @@ pub fn run() {
                         applog::info(format!(
                             "Auto Run: {moved} removed environment folder(s) moved to the removed area"
                         ));
+                    }
+                    let swept = autorun::roots::sweep_export_staging(&shared);
+                    if swept > 0 {
+                        applog::info(format!("Auto Run: {swept} unfinished Playwright export record copy(ies) discarded"));
                     }
                     let gone = autorun::roots::purge_removed(&shared, now);
                     if gone > 0 {

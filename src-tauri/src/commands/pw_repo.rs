@@ -129,6 +129,8 @@ pub fn pw_repo_rename_folder(
     // The placements to move are the export environment's, whichever
     // environment is active: its folder is let through the write guard for
     // as long as the rename runs.
+    // No export-environment change or Save map interleaves with the rename.
+    let _records = crate::pw_export::mapping::records_lock().lock().unwrap_or_else(|e| e.into_inner());
     let maps = super::pw_export::export_env_root(&app);
     let _allowed = maps.as_deref().map(crate::autorun::roots::allow_writes_to);
     let sync = super::pw_export::sync_dir(&app).ok();

@@ -41,7 +41,7 @@ pub struct PwExportEnv {
 
 fn export_env_view(active: &std::path::Path) -> Result<PwExportEnv, String> {
     let env = crate::environments::export_env(active)?;
-    let is_active = crate::environments::active_id(active)? == env.id;
+    let is_active = crate::environments::read_active(active)?.is_some_and(|a| a.id == env.id);
     Ok(PwExportEnv { id: env.id, name: env.name, is_active })
 }
 
@@ -108,6 +108,7 @@ pub fn pw_export_save_map(
     for (id, placement) in &map.cases {
         placement.validate().map_err(|e| format!("Case {id}: {e}"))?;
     }
+    let _records = mapping::records_lock().lock().unwrap_or_else(|e| e.into_inner());
     let root = export_root(&app)?;
     mapping::save(&root, &organization, &project, &map)
 }

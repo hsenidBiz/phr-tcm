@@ -114,6 +114,15 @@ impl Placement {
     }
 }
 
+/// Held across anything that reads then writes the export records as a
+/// whole: Save map, a folder rename's placements, and a change of the export
+/// environment (which moves them). Lock order: this, then the switch lock,
+/// then the environments lock. Never taken by `save`/`save_at` themselves.
+pub fn records_lock() -> &'static std::sync::Mutex<()> {
+    static L: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    &L
+}
+
 pub fn path(root: &Path, org: &str, project: &str) -> PathBuf {
     root.join("projects").join(format!("{}.pwexport.json", project_slug(org, project)))
 }

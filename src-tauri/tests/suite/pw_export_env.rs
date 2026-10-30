@@ -253,3 +253,136 @@ fn the_removal_check_reads_the_export_name_without_the_environments_lock() {
     assert!(!roots::is_export_environment(t.path(), "env-00000000"));
     assert_eq!(roots::removal_refusal(t.path(), &b), Some(roots::REMOVE_EXPORT_ENVIRONMENT));
 }
+
+// ---- fix round 1 -----------------------------------------------------------
+
+const MA: &str = "env-0000000a";
+const MB: &str = "env-0000000b";
+
+/// A flat root (records and scripts at the top) whose environments file lists
+/// A (active) and B, with `export` named as the export environment.
+fn flat_with_export(t: &Path, export: Option<&str>) {
+    let mut a = env_named("One");
+    a.id = MA.into();
+    let mut b = env_named("Two");
+    b.id = MB.into();
+    let file = EnvFile {
+        active: MA.into(),
+        environments: vec![a, b],
+        auto_approve_adopted: false,
+        playwright_export: export.map(str::to_string),
+    };
+    put(t, "environments.json", &serde_json::to_string(&file).unwrap());
+    put(t, "scripts/case-1.json", "{}");
+    put(t, "projects/p.pwexport.json", "{\"rec\":1}");
+}
+
+#[test]
+fn the_update_puts_the_export_records_in_the_named_export_environment() {
+    let _lock = crate::serial::autorun();
+    let t = tempfile::tempdir().unwrap();
+    flat_with_export(t.path(), Some(MB));
+    roots::migrate_once(t.path()).unwrap().unwrap();
+    assert!(roots::env_root(t.path(), MB).join("projects/p.pwexport.json").is_file());
+    assert!(!roots::env_root(t.path(), MA).join("projects/p.pwexport.json").exists());
+    assert!(roots::env_root(t.path(), MA).join("scripts/case-1.json").is_file(), "everything else goes to both");
+}
+
+#[test]
+fn the_update_falls_back_to_the_active_environment_when_the_name_is_unusable() {
+    let _lock = crate::serial::autorun();
+    for export in [None, Some("env-deadbeef")] {
+        let t = tempfile::tempdir().unwrap();
+        flat_with_export(t.path(), export);
+        roots::migrate_once(t.path()).unwrap().unwrap();
+        assert!(roots::env_root(t.path(), MA).join("projects/p.pwexport.json").is_file(), "{export:?}");
+        assert!(!roots::env_root(t.path(), MB).join("projects/p.pwexport.json").exists(), "{export:?}");
+    }
+}
+
+#[test]
+fn in_the_flat_layout_naming_the_export_environment_only_records_the_name() {
+    let _lock = crate::serial::autorun();
+    let t = tempfile::tempdir().unwrap();
+    flat_with_export(t.path(), Some(MA));
+    let file = environments::set_export_env(t.path(), MB).unwrap();
+    assert_eq!(file.playwright_export.as_deref(), Some(MB));
+    assert!(!t.path().join("envs").exists(), "nothing under envs/ is made");
+    assert!(t.path().join("projects/p.pwexport.json").is_file(), "the one folder keeps its record");
+}
+
+#[test]
+fn a_read_never_makes_the_first_environment() {
+    let t = tempfile::tempdir().unwrap();
+    assert!(environments::export_env(t.path()).is_err());
+    assert!(!t.path().join("environments.json").exists());
+}
+
+#[test]
+fn a_leftover_record_the_old_environment_does_not_have_is_set_aside() {
+    let _lock = crate::serial::autorun();
+    let t = tempfile::tempdir().unwrap();
+    let (a, b) = two_envs(t.path());
+    let (ra, rb) = (roots::env_root(t.path(), &a), roots::env_root(t.path(), &b));
+    put(&ra, "projects/p.pwexport.json", "new");
+    put(&rb, "projects/gone.pwexport.json", "stale placements");
+    environments::set_export_env(t.path(), &b).unwrap();
+    assert_eq!(std::fs::read_to_string(rb.join("projects/p.pwexport.json")).unwrap(), "new");
+    assert!(!rb.join("projects/gone.pwexport.json").exists(), "it is not current");
+    assert_eq!(std::fs::read_to_string(rb.join("projects/gone.pwexport.json.stale")).unwrap(), "stale placements");
+    assert!(mapping::files(&rb).iter().all(|p| !p.to_string_lossy().contains("gone")));
+}
+
+#[test]
+fn staging_files_are_swept_and_never_copied_to_another_environment() {
+    let _lock = crate::serial::autorun();
+    let t = tempfile::tempdir().unwrap();
+    let (a, b) = two_envs(t.path());
+    let (ra, rb) = (roots::env_root(t.path(), &a), roots::env_root(t.path(), &b));
+    put(&ra, "projects/p.pwexport.json.moving", "half");
+    put(&ra, "projects/q.pwexport.json.stale", "old");
+    put(&ra, "scripts/case-1.json", "{}");
+    assert!(roots::is_export_record(Path::new("projects/p.pwexport.json.moving")));
+    assert!(roots::is_export_record(Path::new("projects/q.pwexport.json.stale")));
+    assert_eq!(roots::sweep_export_staging(t.path()), 1);
+    assert!(!ra.join("projects/p.pwexport.json.moving").exists());
+    assert!(ra.join("projects/q.pwexport.json.stale").exists(), "a set-aside record is kept");
+    // A copy into the other environment leaves both families behind.
+    put(&ra, "projects/r.pwexport.json.moving", "half");
+    v2_lib::autorun::env_copy::copy_environment(t.path(), &ra, &b, "Two", true, 1_000).unwrap();
+    assert!(rb.join("scripts/case-1.json").is_file());
+    assert!(!rb.join("projects/r.pwexport.json.moving").exists());
+    assert!(!rb.join("projects/q.pwexport.json.stale").exists());
+}
+
+#[test]
+fn naming_the_export_environment_waits_for_a_records_write_in_flight() {
+    let _lock = crate::serial::autorun();
+    let t = tempfile::tempdir().unwrap();
+    let (_a, b) = two_envs(t.path());
+    let held = mapping::records_lock().lock().unwrap_or_else(|e| e.into_inner());
+    let (root, id) = (t.path().to_path_buf(), b.clone());
+    let done = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let flag = done.clone();
+    let worker = std::thread::spawn(move || {
+        environments::set_export_env(&root, &id).unwrap();
+        flag.store(true, std::sync::atomic::Ordering::SeqCst);
+    });
+    std::thread::sleep(std::time::Duration::from_millis(300));
+    assert!(!done.load(std::sync::atomic::Ordering::SeqCst), "it waits while a records write holds the lock");
+    drop(held);
+    worker.join().unwrap();
+    assert!(done.load(std::sync::atomic::Ordering::SeqCst));
+}
+
+#[test]
+fn every_script_carrying_command_starts_from_the_export_root() {
+    let read = |p: &str| std::fs::read_to_string(format!("{}/src/{p}", env!("CARGO_MANIFEST_DIR"))).unwrap();
+    let repo = read("commands/pw_repo.rs");
+    assert_eq!(repo.matches("autorun::root(").count(), 0, "pw_repo.rs reads the active root only through export_root");
+    assert_eq!(repo.matches("pw_export::export_root(&app)?").count(), 4, "states, handoff, add_new, update");
+    let export = read("commands/pw_export.rs");
+    assert_eq!(export.matches("export_root(&app)?").count(), 3, "preview, save_map, write");
+    // The only other readers of the active root are the export-environment views.
+    assert_eq!(export.matches("autorun::root(").count(), 4, "export_root, export_env_root, pw_export_env, pw_set_export_env");
+}

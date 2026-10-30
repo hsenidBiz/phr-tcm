@@ -82,11 +82,7 @@ fn has_password(store: &dyn SecretStore, id: &str) -> bool {
 
 fn view(store: &dyn SecretStore, file: EnvFile) -> EnvListView {
     EnvListView {
-        playwright_export: file
-            .playwright_export
-            .clone()
-            .filter(|id| file.environments.iter().any(|e| e.id == *id))
-            .unwrap_or_else(|| file.active.clone()),
+        playwright_export: crate::environments::export_id(&file).to_string(),
         active: file.active,
         environments: file
             .environments

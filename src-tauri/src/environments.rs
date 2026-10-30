@@ -405,6 +405,8 @@ pub fn not_export_env(name: &str) -> String {
     format!("Export and Sync run only in {name}, the Playwright export environment - switch to {name} on the AI Bridge tab first")
 }
 
+/// Said when no environment exists yet to be the export environment.
+pub const NO_ENVIRONMENTS: &str = "no environment has been set up yet";
 /// Said when the environment to be named export environment is not listed.
 pub const EXPORT_ENV_UNKNOWN: &str = "that environment is not there any more";
 /// Said when the export records could not be moved to the new export
@@ -414,6 +416,12 @@ pub const EXPORT_ENV_NOT_MOVED: &str = "the Playwright export settings could not
 /// The id the file names as the export environment, when it is listed.
 fn export_id_of(file: &EnvFile) -> Option<&str> {
     file.playwright_export.as_deref().filter(|id| file.environments.iter().any(|e| e.id == *id))
+}
+
+/// The export environment's id: the one the file names when it is listed,
+/// else the active one.
+pub fn export_id(file: &EnvFile) -> &str {
+    export_id_of(file).unwrap_or(&file.active)
 }
 
 /// The id of the export environment as the file names it right now, read
@@ -440,7 +448,9 @@ fn adopt_locked(root: &Path, file: &mut EnvFile) -> Result<bool, String> {
 /// environment that is gone, becomes the active one, saved.
 pub fn export_env(root: &Path) -> Result<Environment, String> {
     let _held = lock();
-    let mut file = load_or_init_locked(root, None)?;
+    // Never makes the first environment: only `env_list` does (it knows the
+    // database the Company database card chose).
+    let mut file = read(root)?.ok_or_else(|| NO_ENVIRONMENTS.to_string())?;
     adopt_locked(root, &mut file)?;
     let id = export_id_of(&file).unwrap_or(&file.active).to_string();
     file.environments.into_iter().find(|e| e.id == id).ok_or_else(|| EXPORT_ENV_UNKNOWN.to_string())
@@ -490,6 +500,8 @@ pub fn check_export_env(root: &Path) -> Result<(), String> {
 pub fn set_export_env(root: &Path, id: &str) -> Result<EnvFile, String> {
     use crate::autorun::roots;
     let shared = roots::shared_of(root);
+    // First: never interleaves with Save map or a folder rename's placements.
+    let _records = crate::pw_export::mapping::records_lock().lock().unwrap_or_else(|e| e.into_inner());
     let _switching = roots::switch_lock().write().unwrap_or_else(|e| e.into_inner());
     let _held = lock();
     let mut file = load_or_init_locked(root, None)?;
@@ -510,6 +522,17 @@ pub fn set_export_env(root: &Path, id: &str) -> Result<EnvFile, String> {
                 crate::applog::warn(format!("Environments: an old Playwright export record stayed behind: {e}"));
             }
         }
+        // A record the new folder held for a project the old one did not is
+        // from an earlier stint: set aside, so it never becomes current.
+        for p in &moved.leftovers {
+            let mut stale = p.clone().into_os_string();
+            stale.push(".stale");
+            let stale = PathBuf::from(stale);
+            let _ = std::fs::remove_file(&stale);
+            if let Err(e) = std::fs::rename(p, &stale) {
+                crate::applog::warn(format!("Environments: an old Playwright export record could not be set aside: {e}"));
+            }
+        }
         crate::applog::info(format!(
             "Environments: the Playwright export environment changed ({} record(s) moved, {} replaced)",
             moved.old.len(),
@@ -525,10 +548,13 @@ pub fn set_export_env(root: &Path, id: &str) -> Result<EnvFile, String> {
 struct MovedRecords {
     /// The records in the old folder, to remove once the file names the new one.
     old: Vec<PathBuf>,
+    /// The new folder's own records for projects the old one has none of.
+    leftovers: Vec<PathBuf>,
     replaced: usize,
 }
 
-const STAGING_SUFFIX: &str = ".moving";
+/// Short on purpose: the switch lock is held while a rename waits.
+const EXPORT_MOVE_WAITS_MS: [u64; 3] = [50, 100, 200];
 
 /// Copies each record to `to` (staging names first, then renamed into
 /// place). Nothing in `from` is touched. On failure the staging copies are
@@ -536,10 +562,19 @@ const STAGING_SUFFIX: &str = ".moving";
 fn move_export_records(from: &Path, to: &Path) -> Result<MovedRecords, String> {
     let records = crate::pw_export::mapping::files(from);
     if records.is_empty() {
-        return Ok(MovedRecords { old: vec![], replaced: 0 });
+        let leftovers = crate::pw_export::mapping::files(to);
+        return Ok(MovedRecords { old: vec![], leftovers, replaced: 0 });
     }
     let dir = to.join("projects");
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    // Staging copies a cut-short move left: copies only, safe to discard.
+    if let Ok(entries) = std::fs::read_dir(&dir) {
+        for e in entries.flatten() {
+            if e.file_name().to_string_lossy().ends_with(crate::autorun::roots::EXPORT_MOVING) {
+                let _ = std::fs::remove_file(e.path());
+            }
+        }
+    }
     let mut staged: Vec<(PathBuf, PathBuf)> = Vec::new();
     let cleanup = |staged: &[(PathBuf, PathBuf)]| {
         for (tmp, _) in staged {
@@ -549,7 +584,7 @@ fn move_export_records(from: &Path, to: &Path) -> Result<MovedRecords, String> {
     for rec in &records {
         let Some(name) = rec.file_name() else { continue };
         let dest = dir.join(name);
-        let tmp = dir.join(format!("{}{STAGING_SUFFIX}", name.to_string_lossy()));
+        let tmp = dir.join(format!("{}.moving", name.to_string_lossy()));
         if let Err(e) = std::fs::copy(rec, &tmp) {
             cleanup(&staged);
             let _ = std::fs::remove_file(&tmp);
@@ -567,7 +602,7 @@ fn move_export_records(from: &Path, to: &Path) -> Result<MovedRecords, String> {
             dest,
             &mut |a, b| std::fs::rename(a, b),
             &mut |d| std::thread::sleep(d),
-            &crate::autorun::roots::MIGRATION_RENAME_WAITS_MS,
+            &EXPORT_MOVE_WAITS_MS,
         );
         if let Err(e) = r {
             // Those already in place are copies of records the old folder
@@ -576,7 +611,12 @@ fn move_export_records(from: &Path, to: &Path) -> Result<MovedRecords, String> {
             return Err(e);
         }
     }
-    Ok(MovedRecords { old: records, replaced })
+    let moved_names: Vec<_> = records.iter().filter_map(|r| r.file_name().map(|n| n.to_os_string())).collect();
+    let leftovers = crate::pw_export::mapping::files(to)
+        .into_iter()
+        .filter(|p| p.file_name().is_some_and(|n| !moved_names.iter().any(|m| m == n)))
+        .collect();
+    Ok(MovedRecords { old: records, leftovers, replaced })
 }
 
 fn tidy(mut env: Environment) -> Environment {
@@ -691,6 +731,11 @@ pub fn remove_env(root: &Path, id: &str) -> Result<EnvFile, String> {
         }
         if file.active == id {
             return Err(crate::autorun::roots::REMOVE_ACTIVE.to_string());
+        }
+        // Checked again here, from the list already held: naming it the
+        // export environment may have landed after the check above.
+        if export_id_of(&file) == Some(id) {
+            return Err(REMOVE_EXPORT_ENV.to_string());
         }
         file.environments.retain(|e| e.id != id);
         write(root, &file)?;

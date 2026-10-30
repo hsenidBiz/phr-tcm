@@ -68,7 +68,38 @@ pub fn is_export_record(rel: &Path) -> bool {
     let name = parts.next().and_then(|c| c.as_os_str().to_str());
     first == Some("projects")
         && parts.next().is_none()
-        && name.is_some_and(|n| n.ends_with(".pwexport.json"))
+        && name.is_some_and(|n| {
+            n.ends_with(".pwexport.json") || n.ends_with(EXPORT_MOVING) || n.ends_with(EXPORT_STALE)
+        })
+}
+
+/// A record being moved to a new export environment (a staging copy).
+pub const EXPORT_MOVING: &str = ".pwexport.json.moving";
+/// A record set aside because it was left in a folder by an earlier stint
+/// as the export environment, for a project the current one does not have.
+pub const EXPORT_STALE: &str = ".pwexport.json.stale";
+
+/// Removes the staging copies (`*.pwexport.json.moving`) a move to a new
+/// export environment left behind, in every environment folder. A staging
+/// copy is only ever a copy of a record that still exists in the old folder
+/// until the move is complete, so discarding it loses nothing. Answers how
+/// many went.
+pub fn sweep_export_staging(shared: &Path) -> usize {
+    let mut gone = 0;
+    for root in env_roots(shared) {
+        let Ok(entries) = std::fs::read_dir(root.join("projects")) else { continue };
+        for e in entries.flatten() {
+            if e.file_name().to_string_lossy().ends_with(EXPORT_MOVING) && std::fs::remove_file(e.path()).is_ok() {
+                gone += 1;
+            }
+        }
+    }
+    gone
+}
+
+/// A live record (`*.pwexport.json`), not a staging or set-aside copy.
+fn is_live_record(rel: &Path) -> bool {
+    rel.file_name().is_some_and(|n| n.to_string_lossy().ends_with(".pwexport.json"))
 }
 
 /// A folder name under `envs/`: an environment id, or the seed.
@@ -634,6 +665,11 @@ pub fn fan_out(flat: &Path, envs_dir: &Path, ids: &[String], active: Option<&str
         .filter(|a| ids.iter().any(|i| i == a))
         .or_else(|| ids.first().map(String::as_str))
         .map(str::to_string);
+    // The export records go to the environment already named as the export
+    // environment (when listed), else to the active one.
+    let export_target = crate::environments::export_id_unlocked(flat)
+        .filter(|e| ids.iter().any(|i| i == e))
+        .or_else(|| target.clone());
     for id in ids {
         std::fs::create_dir_all(envs_dir.join(id)).map_err(|e| e.to_string())?;
     }
@@ -646,8 +682,8 @@ pub fn fan_out(flat: &Path, envs_dir: &Path, ids: &[String], active: Option<&str
         match how {
             CopyTo::Every => {
                 for id in ids {
-                    let keep_export = target.as_deref() == Some(id.as_str());
-                    let skip = move |rel: &Path| !keep_export && is_export_record(rel);
+                    let keep_export = export_target.as_deref() == Some(id.as_str());
+                    let skip = move |rel: &Path| is_export_record(rel) && (!keep_export || !is_live_record(rel));
                     copy_tree(&from, &envs_dir.join(id).join(name), Path::new(name), false, &skip)?;
                 }
                 copied += 1;
