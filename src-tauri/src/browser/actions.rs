@@ -2418,6 +2418,13 @@ async fn run<D: Driver>(d: &mut D, action: &Action, timing: &Timing, policy: &Po
             if let Err(e) = point_and_pause(d, &ready, timing).await {
                 return failed_by(e);
             }
+            // A control named like a save opens the no-save window before
+            // the click: whatever it sends in the next seconds is stopped.
+            if let Some(words) = d.guard_words() {
+                if super::save_guard::click_saves(selector, &words) {
+                    d.open_save_click_window();
+                }
+            }
             match input::click(d, &ready).await {
                 Ok(()) => ActionOutcome::passed(format!("clicked {}{}", selector.describe(), written_note(&ready))),
                 Err(b) => blocked(b),

@@ -655,6 +655,8 @@ pub struct Cdp<T: Transport = WsTransport> {
     /// The run's guard words while it guards saves: a tab the page opens is
     /// guarded with them before it runs.
     armed: Option<Vec<String>>,
+    /// The save-click window for requests no tab owns (`armed`'s path).
+    armed_click_until: Option<Instant>,
     /// The run's `hold_saves`, for a tab opened during a sign-in. True only
     /// once the hold has taken effect (`hold_marker`).
     hold: bool,
@@ -766,6 +768,9 @@ struct SaveGuard {
     hold: bool,
     /// The first save stopped and not yet reported, as the case's sentence.
     blocked: Option<String>,
+    /// Until when any writing request is stopped: a save-named control was
+    /// just clicked (`save_guard::SAVE_CLICK_WINDOW_MS`).
+    click_until: Option<Instant>,
 }
 
 /// Can a page at this address be driven as the application's? Never one of
@@ -895,6 +900,7 @@ impl<T: Transport> Cdp<T> {
             page: super::viewport::current(),
             deadline: None,
             armed: None,
+            armed_click_until: None,
             hold: false,
             hold_pending: false,
             hold_tabs: HashSet::new(),
@@ -1225,7 +1231,7 @@ impl<T: Transport> Cdp<T> {
         }
         if let Some(t) = self.tabs.iter_mut().find(|t| t.session_id == session) {
             let blocked = t.guard.as_mut().and_then(|g| g.blocked.take());
-            t.guard = Some(SaveGuard { patterns: patterns.to_vec(), hold: false, blocked });
+            t.guard = Some(SaveGuard { patterns: patterns.to_vec(), hold: false, blocked, click_until: None });
         }
         Ok(())
     }
@@ -1274,6 +1280,24 @@ impl<T: Transport> Cdp<T> {
     /// lift that did not finish is asked again.
     pub fn is_guarding_saves(&self) -> bool {
         self.armed.is_some() || self.tabs.iter().any(|t| t.guard.is_some())
+    }
+
+    /// The run's own save words while it guards saves (`guard_saves`).
+    pub fn guard_words(&self) -> Option<Vec<String>> {
+        self.armed.clone()
+    }
+
+    /// A save-named control was just clicked: for `SAVE_CLICK_WINDOW_MS`
+    /// every writing request is stopped, whatever its path. The sign-in's
+    /// hold still wins. Nothing happens on a connection that guards nothing.
+    pub fn open_save_click_window(&mut self) {
+        let until = Instant::now() + Duration::from_millis(super::save_guard::SAVE_CLICK_WINDOW_MS);
+        if self.armed.is_some() {
+            self.armed_click_until = Some(until);
+        }
+        for g in self.tabs.iter_mut().filter_map(|t| t.guard.as_mut()) {
+            g.click_until = Some(until);
+        }
     }
 
     /// Something must keep reading this connection between calls: a
@@ -1572,7 +1596,14 @@ impl<T: Transport> Cdp<T> {
             Some(i) => {
                 let tab = &self.tabs[i];
                 let verdict = match tab.guard.as_ref() {
-                    Some(g) if super::save_guard::is_save(method, url, &g.patterns) => {
+                    Some(g)
+                        if super::save_guard::verdict(
+                            method,
+                            url,
+                            &g.patterns,
+                            !g.hold && g.click_until.is_some_and(|u| Instant::now() < u),
+                        ) =>
+                    {
                         if g.hold { tab.late_save(params) } else { Some(true) }
                     }
                     _ => Some(false),
@@ -1597,7 +1628,15 @@ impl<T: Transport> Cdp<T> {
                 stop
             }
             None => match &self.armed {
-                Some(p) if !self.hold && super::save_guard::is_save(method, url, p) => {
+                Some(p)
+                    if !self.hold
+                        && super::save_guard::verdict(
+                            method,
+                            url,
+                            p,
+                            self.armed_click_until.is_some_and(|u| Instant::now() < u),
+                        ) =>
+                {
                     if self.blocked_elsewhere.is_none() {
                         self.blocked_elsewhere = Some(super::save_guard::blocked(method, url));
                     }
@@ -1757,7 +1796,7 @@ impl<T: Transport> Cdp<T> {
         }
         let armed = self.armed.clone();
         if let Some(words) = &armed {
-            tab.guard = Some(SaveGuard { patterns: words.clone(), hold: self.hold, blocked: None });
+            tab.guard = Some(SaveGuard { patterns: words.clone(), hold: self.hold, blocked: None, click_until: None });
             tab.held = waiting;
         }
         self.tabs.push(tab);
@@ -2992,6 +3031,12 @@ pub trait Driver {
     }
     /// See `Cdp::hold_saves`. Nothing to hold without a guard.
     fn hold_saves(&mut self, _hold: bool) {}
+    /// See `Cdp::guard_words`. `None` when this driver guards nothing.
+    fn guard_words(&self) -> Option<Vec<String>> {
+        None
+    }
+    /// See `Cdp::open_save_click_window`. Nothing to open without a guard.
+    fn open_save_click_window(&mut self) {}
     /// See `Cdp::take_save_blocked`. A driver with no guard stopped nothing.
     fn take_save_blocked(&mut self) -> Option<String> {
         None
@@ -3221,6 +3266,12 @@ impl<T: Transport> Driver for Cdp<T> {
     }
     fn hold_saves(&mut self, hold: bool) {
         Cdp::hold_saves(self, hold)
+    }
+    fn guard_words(&self) -> Option<Vec<String>> {
+        Cdp::guard_words(self)
+    }
+    fn open_save_click_window(&mut self) {
+        Cdp::open_save_click_window(self)
     }
     fn take_save_blocked(&mut self) -> Option<String> {
         Cdp::take_save_blocked(self)

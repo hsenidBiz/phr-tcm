@@ -1134,6 +1134,12 @@ save words, which a person adds on the
 Auto Run Setup tab. Every other request goes through
 unchanged. The sign-in is not checked: it is the app's own.
 
+A click on a control named like a save (Save, Save & Continue, Continue, Submit,
+Add...) also stops every POST, PUT, PATCH or DELETE the page sends in the next
+5 seconds, whatever its address path (a wizard step posts to one address with
+no save word in it). A write that did go through is named in the answer's
+`let_through` (method and path only).
+
 How long the guard lasts depends on what set it. A discovery started with
 `no_save`, or for a case marked `no_save`, keeps its saves stopped until it
 ends. `no_save: true` on one discovery action or batch lasts for that call

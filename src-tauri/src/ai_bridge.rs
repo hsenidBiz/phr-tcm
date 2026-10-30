@@ -6141,6 +6141,13 @@ async fn discover_action_heard<B: DiscoveryBrowser>(
     if reports_blocks {
         answer["no_save"] = serde_json::json!(true);
         answer["blocked_writes"] = serde_json::json!(blocked_writes);
+        let posted: Vec<(String, String)> = writes
+            .iter()
+            .filter_map(|w| Some((w["method"].as_str()?.to_string(), w["path"].as_str()?.to_string())))
+            .collect();
+        if let Some(line) = crate::browser::save_guard::let_through_line(&posted) {
+            answer["let_through"] = serde_json::json!(line);
+        }
     }
     if component.is_some() {
         answer["steps"] = serde_json::json!(steps);

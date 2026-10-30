@@ -21,9 +21,10 @@ use v2_lib::autorun::{CaseRecord, CaseScript, StepRecord};
 use v2_lib::browser::actions::ActionOutcome;
 use v2_lib::browser::cdp::{Cdp, CdpError, Transport};
 use v2_lib::browser::save_guard::{
-    adds, blocked, check_words, fetch_enable_all_params, fetch_enable_params, is_blocked, is_save, path_of, setup_failed,
+    adds, blocked, check_words, click_saves, fetch_enable_all_params, let_through_line, verdict, fetch_enable_params, is_blocked, is_save, path_of, setup_failed,
     SAVE_WORDS, TYPED_REFUSED, UNPAUSED_TYPES, WORD_SAVES,
 };
+use v2_lib::browser::locator::{LocatorStep, Target};
 use v2_lib::browser::timing::Timing;
 use v2_lib::commands::autorun::guard_for_case;
 
@@ -1467,4 +1468,110 @@ async fn a_save_sent_after_the_last_action_fails_it_while_the_picture_is_still_t
     let two = rec.steps.iter().find(|s| s.step_number == 2).expect("step 2 was not recorded");
     assert!(two.outcomes.iter().all(|o| o.detail.starts_with("not run:")), "{rec:?}");
     assert_eq!(rec.proposed, "Failed", "{rec:?}");
+}
+
+// ------------------------------------------------- the save-click window
+
+fn named(name: &str) -> Target {
+    Target::One(LocatorStep { name: Some(name.to_string()), role: Some("button".to_string()), ..Default::default() })
+}
+fn texted(text: &str) -> Target {
+    Target::One(LocatorStep { text: Some(text.to_string()), ..Default::default() })
+}
+fn styled(css: &str) -> Target {
+    Target::One(LocatorStep { css: Some(css.to_string()), ..Default::default() })
+}
+
+#[test]
+fn click_saves_on_save_and_continue_button() {
+    assert!(click_saves(&named("Save & Continue"), &[]));
+    assert!(click_saves(&texted("Submit"), &[]));
+    assert!(click_saves(&named("Continue"), &[]));
+}
+
+#[test]
+fn click_saves_on_css_id() {
+    assert!(click_saves(&styled("#btnSaveContinue"), &[]));
+    assert!(click_saves(&styled(".btn-add-row"), &[]));
+}
+
+#[test]
+fn click_saves_false_for_search_next_and_address() {
+    for t in [named("Search"), named("Next"), named("Address book"), styled("#padding")] {
+        assert!(!click_saves(&t, &[]), "{t:?}");
+    }
+}
+
+#[test]
+fn click_saves_project_word() {
+    assert!(click_saves(&named("Finish"), &words(&["finish"])));
+    assert!(!click_saves(&named("Finish"), &[]));
+}
+
+#[test]
+fn verdict_blocks_any_write_in_save_click_window() {
+    assert!(verdict("POST", "https://x/hr/PMSV10/wizard", &[], true));
+    assert!(!verdict("POST", "https://x/hr/PMSV10/wizard", &[], false));
+}
+
+#[test]
+fn verdict_lets_reads_through_in_the_window() {
+    assert!(!verdict("GET", "https://x/hr/PMSV10/wizard", &[], true));
+    assert!(!verdict("HEAD", "https://x/hr/PMSV10/wizard", &[], true));
+}
+
+#[test]
+fn let_through_line_names_method_and_path_only() {
+    let line = let_through_line(&[("POST".to_string(), "/hr/PMSV10/wizard".to_string())]).unwrap();
+    assert!(line.contains("POST /hr/PMSV10/wizard"), "{line}");
+    assert!(!line.contains("http") && !line.contains('?'), "{line}");
+    assert_eq!(let_through_line(&[]), None);
+}
+
+#[tokio::test]
+async fn wizard_post_after_save_click_is_stopped() {
+    let mut cdp = guarded(&[]).await;
+    // No window: a wizard post has no save word and goes through.
+    cdp.transport_mut().incoming.extend([
+        paused("r0", "POST", "https://hr.example/hr/PMSV10/wizard?x=1"),
+        r#"{"id":3,"result":{}}"#.to_string(),
+    ]);
+    cdp.call("Runtime.evaluate", json!({})).await.unwrap();
+    assert_eq!(answer_to(&cdp, "r0").unwrap()["method"], "Fetch.continueRequest");
+    assert_eq!(cdp.take_save_blocked(), None);
+
+    cdp.open_save_click_window();
+    // r0's answer took id 4, so this call is 5. A read goes through, the
+    // write is failed.
+    cdp.transport_mut().incoming.extend([
+        paused("r1", "POST", "https://hr.example/hr/PMSV10/wizard?x=1"),
+        paused("r2", "GET", "https://hr.example/hr/PMSV10/wizard"),
+        r#"{"id":5,"result":{}}"#.to_string(),
+    ]);
+    cdp.call("Runtime.evaluate", json!({})).await.unwrap();
+    assert_eq!(answer_to(&cdp, "r1").unwrap()["method"], "Fetch.failRequest");
+    assert_eq!(answer_to(&cdp, "r2").unwrap()["method"], "Fetch.continueRequest");
+    assert_eq!(
+        cdp.take_save_blocked().as_deref(),
+        Some("this script must not save, but the page tried to send POST /hr/PMSV10/wizard - it was stopped before it reached the server")
+    );
+}
+
+#[tokio::test]
+async fn sign_in_posts_are_never_stopped() {
+    let mut cdp = guarded(&[]).await;
+    cdp.transport_mut().incoming.push_back(navigated("L-signin", "https://hr.example/login"));
+    read_waiting(&mut cdp).await;
+    cdp.hold_saves(true);
+    cdp.transport_mut().incoming.push_back(r#"{"id":3,"result":{}}"#.to_string());
+    cdp.call("Runtime.evaluate", json!({})).await.unwrap();
+    cdp.open_save_click_window();
+    cdp.transport_mut().incoming.extend([
+        sent_by("n1", "L-signin", "https://hr.example/Account/Login"),
+        paused_from("r1", "https://hr.example/Account/Login", "XHR", "n1"),
+        r#"{"id":4,"result":{}}"#.to_string(),
+    ]);
+    cdp.call("Runtime.evaluate", json!({})).await.unwrap();
+    assert_eq!(answer_to(&cdp, "r1").unwrap()["method"], "Fetch.continueRequest");
+    assert_eq!(cdp.take_save_blocked(), None);
 }

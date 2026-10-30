@@ -24,6 +24,16 @@ pub const SAVE_WORDS: [&str; 7] = ["save", "update", "delete", "submit", "approv
 /// `GetCreatedLeaves` read or a `/recreate` preview.
 pub const WORD_SAVES: [&str; 3] = ["add", "create", "insert"];
 
+/// A control named with one of these is a save-click as well (besides
+/// `SAVE_WORDS`, which covers "Save & Continue"): "Continue" alone submits a
+/// wizard step.
+pub const CLICK_WORDS: [&str; 1] = ["continue"];
+
+/// How long after a click on a save-named control any writing request is
+/// stopped, whatever its path (a wizard's `POST /hr/PMSV10/wizard` has no
+/// save word in it).
+pub const SAVE_CLICK_WINDOW_MS: u64 = 5_000;
+
 /// The methods that can write. Every other method (GET, HEAD, OPTIONS)
 /// always goes through.
 pub const SAVE_METHODS: [&str; 4] = ["POST", "PUT", "PATCH", "DELETE"];
@@ -164,6 +174,54 @@ fn word_at(c: &[char], i: usize, word: &str) -> bool {
             next.is_ascii_digit() || matches!(next, '-' | '_' | '.') || (next.is_ascii_uppercase() && !all_caps)
         }
     }
+}
+
+/// Is this click on a control named like a save? Any link of the target
+/// whose accessible name, text or css (id and class tokens) holds a
+/// `SAVE_WORDS` or `CLICK_WORDS` word or one of the project's words as a
+/// phrase, or a `WORD_SAVES` word as a word of its own.
+pub fn click_saves(target: &crate::browser::locator::Target, patterns: &[String]) -> bool {
+    use crate::browser::locator::Target;
+    let mut phrases: Vec<&str> = Vec::new();
+    match target {
+        Target::Legacy(s) => phrases.push(s.as_str()),
+        Target::One(s) => phrases.extend([s.name.as_deref(), s.text.as_deref(), s.css.as_deref()].into_iter().flatten()),
+        Target::Chain(c) => {
+            for s in c {
+                phrases.extend([s.name.as_deref(), s.text.as_deref(), s.css.as_deref()].into_iter().flatten());
+            }
+        }
+    }
+    phrases.into_iter().any(|text| {
+        let lower = text.to_lowercase();
+        // Words as path-like segments for `adds`: anything that is not a
+        // name character separates.
+        let segmented: String =
+            text.chars().map(|c| if c.is_alphanumeric() || matches!(c, '-' | '_' | '.') { c } else { '/' }).collect();
+        adds(&segmented)
+            || SAVE_WORDS.iter().chain(CLICK_WORDS.iter()).any(|w| lower.contains(w))
+            || patterns.iter().map(|p| p.trim().to_lowercase()).any(|p| !p.is_empty() && lower.contains(&p))
+    })
+}
+
+/// Does the guard stop this request: a save by its path (`is_save`), or any
+/// writing request while the window after a save-named click is open.
+pub fn verdict(method: &str, url: &str, patterns: &[String], save_click_open: bool) -> bool {
+    is_save(method, url, patterns)
+        || (save_click_open && SAVE_METHODS.contains(&method.trim().to_ascii_uppercase().as_str()))
+}
+
+/// What a no-save answer says about writes that got past the guard: method
+/// and path only.
+pub fn let_through_line(posted: &[(String, String)]) -> Option<String> {
+    if posted.is_empty() {
+        return None;
+    }
+    let list: Vec<String> = posted.iter().map(|(m, p)| format!("{} {}", m.trim().to_ascii_uppercase(), p)).collect();
+    Some(format!(
+        "went through the no-save guard (no save word in the path): {} - if one of them saves, a person adds a save word on the Auto Run Setup tab",
+        list.join(", ")
+    ))
 }
 
 /// The case's failure when the page tried to save: the method and the path,
