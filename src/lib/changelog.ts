@@ -27,6 +27,14 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.4.3-beta.7",
+    date: "2026-10-30",
+    items: [
+      "An assistant's hold on its cases now ends when it finishes or is released, including when you release it on the Auto Run screen.",
+      "A save the app refuses now fails a replay the same way it fails a discovery, unless the step (or the first action of the next one) checks the error message. A busy site or an expired session is no longer reported as the app refusing.",
+    ],
+  },
+  {
     version: "2.4.3-beta.6",
     date: "2026-10-30",
     items: [
