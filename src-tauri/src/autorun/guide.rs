@@ -2529,6 +2529,13 @@ the answer says so; start a new one to explore again.
   is only for a broken one (frozen, wrong account, session gone, "the
   browser did not answer"), and `reset_autorun_browser` gives a clean page
   with the sign-in kept.
+- Replaying the same case again needs no reset: a replay keeps its sign-in
+  even when the application's own pages re-issue the session cookie as the
+  steps run, so the next replay goes straight to its area. (A script that
+  signs in itself is the exception: that replay's sign-in is not taken for
+  the same one.) A sign-in that stops names where the browser ended (its
+  path and, when it is another portal than the sign-in's, which); a slow
+  site is reloaded once before that, never with the password typed again.
 - Replaying the same case to a later step carries on from where your last
   replay of it stood, when that browser is yours and nothing (a step, a
   try, a discovery action or another replay) has used it since; the

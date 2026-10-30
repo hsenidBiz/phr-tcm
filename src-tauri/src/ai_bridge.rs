@@ -5894,45 +5894,6 @@ pub async fn discover_action_in<B: DiscoveryBrowser>(
     answer
 }
 
-/// Whether a discovery call's actions could have changed who is signed in:
-/// a `sign_in`, a fill of a password-type input (or of the recipe's own
-/// password field), or a navigation to the recipe's sign-in address. Says
-/// which, in a few words.
-pub fn call_touches_sign_in(
-    actions: &[crate::browser::actions::Action],
-    recipe: &crate::autorun::recipe::SignInRecipe,
-) -> Option<&'static str> {
-    use crate::browser::actions::Action;
-    let text = |t: &crate::browser::locator::Target| serde_json::to_string(t).unwrap_or_default().to_lowercase();
-    let recipe_password: Vec<String> = recipe
-        .steps
-        .iter()
-        .filter_map(|st| match st {
-            crate::autorun::recipe::RecipeStep::Do(Action::Fill { selector, value }) if value.to_lowercase().contains("password") => {
-                Some(text(selector))
-            }
-            _ => None,
-        })
-        .collect();
-    let start = crate::autorun::discovery_map::path_only(&recipe.start_url);
-    for a in actions {
-        match a {
-            Action::SignIn { .. } => return Some("signed in"),
-            Action::Fill { selector, .. } => {
-                let t = text(selector);
-                if t.contains("password") || recipe_password.contains(&t) {
-                    return Some("filled a password field");
-                }
-            }
-            Action::Navigate { url } if crate::autorun::discovery_map::path_only(url) == start => {
-                return Some("went to the sign-in address");
-            }
-            _ => {}
-        }
-    }
-    None
-}
-
 /// Whether the browser in `slot` is signed in as its session's account and
 /// still holds that sign-in's cookies as they were printed
 /// (`replay_to::sign_in_stands`): looked at before a discovery call.
@@ -5973,7 +5934,7 @@ async fn retake_print_after_call<B: DiscoveryBrowser>(
     let Ok(recipe) = crate::autorun::recipe::load_effective_recipe(root, organization, project) else { return };
     // The page cannot say who is signed in, so a call that could have swapped
     // the login is never taken as the same sign-in.
-    if let Some(why) = call_touches_sign_in(actions, &recipe) {
+    if let Some(why) = crate::autorun::replay_to::touches_sign_in(actions, &recipe) {
         crate::applog::info(format!("Auto Run: a discovery call {why}, so the sign-in's cookies were not printed again"));
         return;
     }

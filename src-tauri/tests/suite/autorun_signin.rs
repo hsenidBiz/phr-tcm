@@ -396,3 +396,127 @@ async fn a_browser_that_does_not_answer_is_not_signed_in_already() {
     let mut d = ScriptedDriver::new(|_, _| Err(CdpError::Closed));
     assert!(!already_signed_in(&mut d, &recipe(), Some("admin"), "admin", &quick()).await);
 }
+
+// ------------------------------------------- a cold site, and where it ended
+
+use v2_lib::autorun::signin::{landing_words, COLD_SITE_RETRY, MARKER_NEVER_APPEARED};
+use v2_lib::browser::cdp::Event;
+
+const LOGIN_URL: &str = "https://hr.example.internal/hr/security/login";
+
+fn recipe_at_login() -> v2_lib::autorun::recipe::SignInRecipe {
+    let mut v = serde_json::to_value(recipe()).unwrap();
+    v["start_url"] = json!(LOGIN_URL);
+    serde_json::from_value(v).unwrap()
+}
+
+/// `stateful_app` whose page is at `href`, and whose `#go` click does not
+/// show the marker (a cold site still loading): the marker shows only once
+/// `Page.reload` has been called, or never when `never`.
+fn cold_app(href: &'static str, never: bool) -> (ScriptedDriver, common::StatefulApp) {
+    let (d, state) = stateful_app(false, None);
+    let (signed_in, typed) = (state.signed_in.clone(), state.typed_password.clone());
+    let mut d = d.answering_first(move |method, params| match method {
+        "Runtime.evaluate" if params["expression"] == "location.href" => Some(Ok(json!({ "result": { "value": href } }))),
+        "Input.dispatchMouseEvent" if typed.load(Ordering::SeqCst) => Some(Ok(json!({}))),
+        "Page.reload" => {
+            if !never {
+                signed_in.store(true, Ordering::SeqCst);
+            }
+            None
+        }
+        _ => None,
+    });
+    d.on_every_call_events.push((
+        "Page.reload".into(),
+        Event { method: "Page.lifecycleEvent".into(), params: json!({ "frameId": "F", "loaderId": "L2", "name": "load" }) },
+    ));
+    (d, state)
+}
+
+fn typed_count(d: &ScriptedDriver) -> usize {
+    d.calls_to("Input.insertText").iter().filter(|c| c["text"] == PASSWORD).count()
+}
+
+#[tokio::test]
+async fn cold_site_marker_retried_once_after_reload() {
+    let _log = crate::serial::log_tail();
+    let dir = tempfile::tempdir().unwrap();
+    let (mut d, state) = cold_app(LOGIN_URL, false);
+    let out = sign_in(&mut d, dir.path(), &recipe_at_login(), &account(), &quick()).await;
+    assert!(out.ok, "{}", out.detail);
+    assert_eq!(d.calls_to("Page.reload").len(), 1, "{:?}", d.methods());
+    assert!(
+        v2_lib::applog::recent(6000).iter().any(|l| l.message.contains(COLD_SITE_RETRY)),
+        "the retry was not logged"
+    );
+    assert!(state.typed_password.load(Ordering::SeqCst));
+    assert_eq!(typed_count(&d), 1, "the password was typed again");
+    no_password_anywhere(&out);
+}
+
+#[tokio::test]
+async fn retry_reloads_and_never_types_again() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut d, _state) = cold_app(LOGIN_URL, true);
+    let out = sign_in(&mut d, dir.path(), &recipe_at_login(), &account(), &quick()).await;
+    assert!(!out.ok);
+    assert_eq!(d.calls_to("Page.reload").len(), 1, "{:?}", d.methods());
+    assert_eq!(typed_count(&d), 1);
+    assert!(out.detail.starts_with(MARKER_NEVER_APPEARED), "{}", out.detail);
+    assert!(out.detail.contains("the browser ended on /hr/security/login"), "{}", out.detail);
+    assert_eq!(out.landed.as_deref(), Some("/hr/security/login"));
+    assert!(!out.detail.contains("hr.example.internal"), "{}", out.detail);
+    no_password_anywhere(&out);
+}
+
+#[tokio::test]
+async fn refused_session_is_not_retried() {
+    let dir = tempfile::tempdir().unwrap();
+    let (d, _state) = cold_app(LOGIN_URL, false);
+    let mut d = d.answering_first(|method, params| {
+        (method == "Runtime.evaluate" && params["expression"] == SESSION_REFUSED_JS)
+            .then(|| Ok(json!({ "result": { "value": "tampered" } })))
+    });
+    let out = sign_in(&mut d, dir.path(), &recipe_at_login(), &account(), &quick()).await;
+    assert!(!out.ok);
+    assert!(d.calls_to("Page.reload").is_empty(), "{:?}", d.methods());
+    assert_eq!(out.detail, v2_lib::autorun::signin::session_refused_again("admin"));
+}
+
+#[tokio::test]
+async fn harness_failure_is_not_retried() {
+    let dir = tempfile::tempdir().unwrap();
+    let (d, _state) = cold_app(LOGIN_URL, false);
+    let mut d = d.answering_first(|method, params| {
+        (method == "Runtime.callFunctionOn" && params["arguments"][0]["value"] == "#marker").then(|| Err(CdpError::Closed))
+    });
+    let out = sign_in(&mut d, dir.path(), &recipe_at_login(), &account(), &quick()).await;
+    assert!(!out.ok && out.harness, "{}", out.detail);
+    assert!(d.calls_to("Page.reload").is_empty(), "{:?}", d.methods());
+}
+
+#[test]
+fn landing_words_names_path_only() {
+    let words = landing_words("https://x.test/sshr/home?t=1", "https://x.test/hr/security/login");
+    assert_eq!(words, "the browser ended on /sshr/home - another portal than the sign-in's (/sshr, not /hr)");
+    assert!(!words.contains("x.test") && !words.contains("t=1"), "{words}");
+    let same = landing_words("https://x.test/hr/home?t=1", "https://x.test/hr/security/login");
+    assert_eq!(same, "the browser ended on /hr/home");
+}
+
+#[tokio::test]
+async fn signed_in_in_another_portal_says_so() {
+    let dir = tempfile::tempdir().unwrap();
+    let href = "https://hr.example.internal/sshr/home?t=1";
+    let (d, state) = stateful_app(false, None);
+    let mut d = d.answering_first(move |method, params| {
+        (method == "Runtime.evaluate" && params["expression"] == "location.href").then(|| Ok(json!({ "result": { "value": href } })))
+    });
+    let out = sign_in(&mut d, dir.path(), &recipe_at_login(), &account(), &quick()).await;
+    assert!(out.ok, "{}", out.detail);
+    assert!(state.typed_password.load(Ordering::SeqCst));
+    assert_eq!(out.landed.as_deref(), Some("/sshr/home"));
+    assert!(out.detail.ends_with(&landing_words(href, LOGIN_URL)), "{}", out.detail);
+    assert!(!out.detail.contains("t=1"));
+}

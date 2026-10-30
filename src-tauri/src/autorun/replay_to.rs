@@ -18,7 +18,7 @@ use super::replay::Browsers;
 use super::setup::{self, NoBrowsers};
 use super::{replay, signin, store, CaseScript};
 use crate::api_templates::gate::StageDb;
-use crate::browser::actions::ActionOutcome;
+use crate::browser::actions::{Action, ActionOutcome};
 use crate::browser::cdp::{CdpError, Driver};
 use crate::browser::timing::Timing;
 use std::path::Path;
@@ -859,10 +859,16 @@ pub async fn replay_to_traced<D: Driver, P: StageDb, B: Browsers>(
     }
 
     // Steps 1 to N-1, in the script's order.
-    if let Some(stopped) =
+    let ended =
         run_steps(d, root, organization, project, &script, &route, 1, n, account, lease, timing, replay, &mut progress, tabs, guarding_other, marks, false)
-            .await
-    {
+            .await;
+    // Wherever the steps ended, the page they ran on may have re-issued the
+    // sign-in's cookies: print them again, so a replay of the same case next
+    // keeps the sign-in (a browser that is gone has nothing to print).
+    if !matches!(ended, Some(ReplayEnd::BrowserGone { .. })) {
+        retake_after_steps(d, root, organization, project, &script, n, account, lease, timing).await;
+    }
+    if let Some(stopped) = ended {
         return stopped;
     }
     ReplayEnd::Ready { case_id: id, step: n, notice: checked.notice, whole: whole_case(&script, n), cleanup: cleanup_ran(&script, n) }
@@ -987,6 +993,84 @@ pub async fn retake_sign_in<D: Driver>(
             lease.forget_sign_in();
             Err(NotSignedIn::NoCookiesAfterHome)
         }
+    }
+}
+
+/// Whether a list of actions (a discovery call's, or a replay's steps) could have changed who is signed in:
+/// a `sign_in`, a fill of a password-type input (or of the recipe's own
+/// password field), or a navigation to the recipe's sign-in address. Says
+/// which, in a few words.
+pub fn touches_sign_in(
+    actions: &[crate::browser::actions::Action],
+    recipe: &crate::autorun::recipe::SignInRecipe,
+) -> Option<String> {
+    use crate::browser::actions::Action;
+    let text = |t: &crate::browser::locator::Target| serde_json::to_string(t).unwrap_or_default().to_lowercase();
+    let recipe_password: Vec<String> = recipe
+        .steps
+        .iter()
+        .filter_map(|st| match st {
+            crate::autorun::recipe::RecipeStep::Do(Action::Fill { selector, value }) if value.to_lowercase().contains("password") => {
+                Some(text(selector))
+            }
+            _ => None,
+        })
+        .collect();
+    let start = crate::autorun::discovery_map::path_only(&recipe.start_url);
+    for a in actions {
+        match a {
+            Action::SignIn { .. } => return Some("signed in".to_string()),
+            Action::Fill { selector, .. } => {
+                let t = text(selector);
+                if t.contains("password") || recipe_password.contains(&t) {
+                    return Some("filled a password field".to_string());
+                }
+            }
+            Action::Navigate { url } if crate::autorun::discovery_map::path_only(url) == start => {
+                return Some("went to the sign-in address".to_string());
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// Backlog 44b: a replay's own steps may make the app re-issue the sign-in's
+/// session cookie as its pages load, which the print taken at sign-in then
+/// calls changed: the next replay of the case would sign in again. Once the
+/// steps have ended - stopped before a step, or the whole case - the print
+/// is taken again, when the browser is still signed in as the case's account
+/// (`already_signed_in_why`) and nothing the steps ran could have swapped
+/// the login (`touches_sign_in`: a script that signs in itself is not taken
+/// for the same sign-in).
+#[allow(clippy::too_many_arguments)]
+async fn retake_after_steps<D: Driver>(
+    d: &mut D,
+    root: &Path,
+    organization: &str,
+    project: &str,
+    script: &CaseScript,
+    n: i32,
+    account: &Option<String>,
+    lease: &mut Held,
+    timing: &Timing,
+) {
+    let Some(key) = script.account.as_deref().filter(|k| account.as_deref() == Some(*k)) else { return };
+    let Ok(recipe) = super::recipe::load_effective_recipe(root, organization, project) else { return };
+    // Every step the replay could have run: those before `n`, and `n` itself
+    // (a replay stopped at a step may have run part of it), and the clean-up.
+    let ran: Vec<Action> = script
+        .in_run_order()
+        .filter(|s| s.step_number <= n || s.cleanup)
+        .flat_map(|s| s.actions.iter().cloned())
+        .collect();
+    if let Some(why) = touches_sign_in(&ran, &recipe) {
+        crate::applog::info(format!("{}: the steps {why}, so the sign-in's cookies were not taken again", who(script.case_id)));
+        return;
+    }
+    let shown = signin::already_signed_in_why(d, &recipe, Some(key), key, timing, timing.expect_ms.min(signin::SIGNED_IN_LOOK_MS)).await;
+    if shown.is_ok() {
+        let _ = retake_sign_in(d, &recipe.origins(), lease, "the replay's steps").await;
     }
 }
 

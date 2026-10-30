@@ -42,6 +42,12 @@ pub struct SignInOutcome {
     #[serde(skip)]
     #[specta(skip)]
     pub appeared: Vec<String>,
+    /// The path the page was on when the sign-in ended (`save_guard::path_of`:
+    /// never the host or the query), when the browser said. Process-internal
+    /// like `harness`: the words that matter are in `detail`.
+    #[serde(skip)]
+    #[specta(skip)]
+    pub landed: Option<String>,
 }
 
 pub fn redact(text: &str, account: &Account) -> String {
@@ -67,6 +73,7 @@ struct Run<'a> {
     account: Option<&'a Account>,
     steps: Vec<ActionOutcome>,
     appeared: Vec<String>,
+    landed: Option<String>,
 }
 
 impl Run<'_> {
@@ -90,6 +97,7 @@ impl Run<'_> {
             steps: self.steps,
             harness,
             appeared: self.appeared,
+            landed: self.landed,
         }
     }
 }
@@ -276,6 +284,59 @@ pub const AFTER_SIGN_IN_STOPPED: &str = ", but after_sign_in step ";
 /// How `sign_in`'s words begin when the steps ran and the marker never
 /// showed.
 pub const MARKER_NEVER_APPEARED: &str = "the recipe ran, but ";
+/// Logged when the signed-in marker did not show after the sign-in's steps
+/// and the page was reloaded once before giving up: a site that is slow to
+/// come up.
+pub const COLD_SITE_RETRY: &str = "the signed-in marker did not show; reloaded once (a slow site)";
+
+/// The first path segment, with its slash: `/hr` of `/hr/security/login`.
+/// Empty for `/`.
+fn portal_of(path: &str) -> String {
+    match path.trim_start_matches('/').split('/').next() {
+        Some(seg) if !seg.is_empty() => format!("/{seg}"),
+        _ => String::new(),
+    }
+}
+
+/// Where the browser ended, in words: the path only (never the host or the
+/// query), and when it is another portal than the sign-in's own, which.
+pub fn landing_words(current_url: &str, start_url: &str) -> String {
+    use crate::browser::save_guard::path_of;
+    let (here, start) = (path_of(current_url), path_of(start_url));
+    let mut words = format!("the browser ended on {here}");
+    let (a, b) = (portal_of(&here), portal_of(&start));
+    if !a.is_empty() && !b.is_empty() && a != b {
+        words.push_str(&format!(" - another portal than the sign-in's ({a}, not {b})"));
+    }
+    words
+}
+
+/// The address the page is on now, if the browser says.
+async fn page_address<D: Driver>(d: &mut D) -> Option<String> {
+    let v = crate::browser::page::eval_value(d, "location.href").await.ok()?;
+    v.as_str().filter(|s| !s.is_empty()).map(str::to_string)
+}
+
+impl Run<'_> {
+    /// Notes where the page is (its path) and says it in words: `None` when
+    /// the browser did not say.
+    async fn land<D: Driver>(&mut self, d: &mut D, start_url: &str) -> Option<String> {
+        let href = page_address(d).await?;
+        self.landed = Some(crate::browser::save_guard::path_of(&href));
+        Some(landing_words(&href, start_url))
+    }
+}
+
+/// A success is worded with where the browser ended only when that is
+/// another portal than the sign-in's: the sign-in worked, but a script may
+/// be about to look in the wrong place.
+fn with_other_portal(said: String, words: Option<String>) -> String {
+    match words {
+        Some(w) if w.contains(" - another portal") => format!("{said} - {w}"),
+        _ => said,
+    }
+}
+
 
 /// Sign in, trying the account's saved session first.
 pub async fn sign_in<D: Driver>(
@@ -400,7 +461,7 @@ async fn sign_in_held<D: Driver>(
     // The application's site, which a supervised browser's capture keeps
     // requests to - never the identity provider's.
     d.set_capture_site(Some(&recipe.start_url));
-    let mut run = Run { account: Some(account), steps: vec![], appeared: vec![] };
+    let mut run = Run { account: Some(account), steps: vec![], appeared: vec![], landed: None };
     let go = Action::Navigate { url: recipe.start_url.clone() };
     let who = if account.label.trim().is_empty() { account.key.clone() } else { account.label.clone() };
 
@@ -457,7 +518,8 @@ async fn sign_in_held<D: Driver>(
                             harness_failure,
                         );
                     }
-                    return run.done(true, format!("signed in as {who} from a saved session"), true, false);
+                    let words = run.land(d, &recipe.start_url).await;
+                    return run.done(true, with_other_portal(format!("signed in as {who} from a saved session"), words), true, false);
                 }
                 // The BROWSER, not the saved session, may be what just
                 // failed (the navigate or the marker check stopped
@@ -506,7 +568,32 @@ async fn sign_in_held<D: Driver>(
         return run.done(false, format!("sign-in stopped at step {n}: {why}"), false, harness_failure);
     }
 
-    let marker = expect(d, &recipe.signed_in, Check::Visible, timing.nav_ms, timing.poll_ms).await;
+    let mut marker = expect(d, &recipe.signed_in, Check::Visible, timing.nav_ms, timing.poll_ms).await;
+    let mut reloaded = false;
+    if !marker.ok && !marker.harness && session_refused(d).await.is_none() {
+        // A site still coming up is slow to show its home: the page is
+        // reloaded ONCE and the marker waited for again. Never the form
+        // again - the password was typed once and stays typed once, so a
+        // wrong password cannot be tried twice - and never for a refused
+        // session or a browser that stopped answering (both excluded above).
+        crate::applog::info(format!("Auto Run: {COLD_SITE_RETRY}"));
+        reloaded = true;
+        let again = execute_in(d, &Action::Reload, timing, &policy).await;
+        let why = again.detail.clone();
+        if again.harness {
+            run.keep(again);
+            return run.done(
+                false,
+                format!("{MARKER_NEVER_APPEARED}{} never appeared, and reloading the page stopped: {why}", recipe.signed_in.describe()),
+                false,
+                true,
+            );
+        }
+        // A reload that did not finish in time is not the end: the marker is
+        // still waited for, and the failure below names where the page is.
+        run.keep(again);
+        marker = expect(d, &recipe.signed_in, Check::Visible, timing.nav_ms, timing.poll_ms).await;
+    }
     if !marker.ok && !marker.harness && session_refused(d).await.is_some() {
         // Refused again, with a session made just now: not the password.
         forget_session(root, &account.key);
@@ -518,17 +605,22 @@ async fn sign_in_held<D: Driver>(
     }
     if !marker.ok {
         let harness_failure = marker.harness;
-        return run.done(
-            false,
-            format!(
-                "{MARKER_NEVER_APPEARED}{} never appeared - check the username and password for \"{}\", and the recipe's signed_in locator",
-                recipe.signed_in.describe(),
-                account.key
-            ),
-            false,
-            harness_failure,
+        let mut said = format!(
+            "{MARKER_NEVER_APPEARED}{} never appeared - check the username and password for \"{}\", and the recipe's signed_in locator",
+            recipe.signed_in.describe(),
+            account.key
         );
+        if reloaded {
+            said.push_str(" (the page was reloaded once first)");
+        }
+        if !harness_failure {
+            if let Some(w) = run.land(d, &recipe.start_url).await {
+                said = format!("{said} - {w}");
+            }
+        }
+        return run.done(false, said, false, harness_failure);
     }
+    let landing = run.land(d, &recipe.start_url).await;
 
     // A fresh login: PeoplesHR's "another active session" modal can come a
     // moment after the shell does, so the longer window.
@@ -566,7 +658,7 @@ async fn sign_in_held<D: Driver>(
             harness_failure,
         );
     }
-    run.done(true, format!("signed in as {who}"), false, false)
+    run.done(true, with_other_portal(format!("signed in as {who}"), landing), false, false)
 }
 
 /// The recipe's `after_sign_in` again, on a page that is already signed
@@ -585,7 +677,7 @@ pub async fn run_after_sign_in<D: Driver>(
     timing: &Timing,
     policy: &Policy,
 ) -> Result<(), (usize, String, bool)> {
-    let mut run = Run { account: None, steps: vec![], appeared: vec![] };
+    let mut run = Run { account: None, steps: vec![], appeared: vec![], landed: None };
     let prompts = Prompts::Together { window_ms: HOME_PROMPT_WINDOW_MS };
     run_steps(d, &mut run, steps, prompts, timing, policy).await
 }
