@@ -142,8 +142,10 @@ pub fn spawn_agent_sweeper() {
                 // An agent past its grace holds no browser any more; an
                 // extra one is released (each wait is bounded).
                 crate::commands::autorun_slots::on_sweep(&swept).await;
-                // An extra browser whose assistant made no call for 30
-                // minutes is released too, gone or not (never the main one).
+                // A browser whose assistant made no call for 10 minutes (a
+                // named subagent) or 30 is released too, gone or not; the main
+                // one only when a named subagent holds it and an assistant
+                // opened it.
                 crate::commands::autorun_slots::release_idle(crate::autorun::sessions::now_ms()).await;
             }
         });

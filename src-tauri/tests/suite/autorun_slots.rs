@@ -1392,7 +1392,7 @@ mod card {
         assert_eq!(slot_for(&caller(ID_B), Need::Act), Err((409, NO_BROWSER_OF_YOURS.to_string())));
         let lines = logged();
         let after = &lines[lines.rfind(mark).expect("the mark is in the log tail")..];
-        assert!(after.contains("Auto Run: released Assistant 2's browser (30 minutes without a call)"), "{after}");
+        assert!(after.contains("Auto Run: released Assistant 2's browser (no call for 30 minutes or more)"), "{after}");
         assert!(!after.contains(ID_B) && !after.contains("4242"), "{after}");
         assert!(!IDLE_RELEASED.contains('\u{2013}') && !IDLE_RELEASED.contains('\u{2014}'));
         fresh();
@@ -2295,7 +2295,7 @@ mod holds {
         assert_eq!(claims::holder(135521, T0 + 1), Some(c.clone()), "another agent's claim is kept");
         let lines = v2_lib::applog::recent(2000).into_iter().map(|l| l.message).collect::<Vec<_>>().join("\n");
         let after = &lines[lines.rfind(mark).unwrap()..];
-        assert!(after.contains("released Assistant 1's browser (10 minutes without a call)"), "{after}");
+        assert!(after.contains("released Assistant 1's browser (no call for 10 minutes or more)"), "{after}");
         assert!(!after.contains(ID_B) && !after.contains("4242"), "{after}");
         fresh();
     }
@@ -2346,5 +2346,159 @@ mod holds {
         assert!(note.contains("Assistant 1 (dw-levels) has the extra 1 browser, cases 200 100, no call for 5 min"), "{note}");
         assert_eq!(v2_lib::commands::autorun_slots::holds_note(&[]), "");
         fresh();
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Final fixes for the holds: any call keeps a named assistant's holds, a case
+// hold lasts while its browser works, and the release re-checks.
+// ---------------------------------------------------------------------------
+
+mod holds_kept {
+    use crate::serial;
+    use v2_lib::ai_bridge::{note_call_for_tool, BatchGoing};
+    use v2_lib::autorun::agents::{self, AgentHeaders, AgentKey, Caller};
+    use v2_lib::autorun::claims;
+    use v2_lib::autorun::replay_to::OneReplay;
+    use v2_lib::autorun::slots::SlotNo;
+    use v2_lib::commands::autorun::BROWSER_BUSY;
+    use v2_lib::commands::autorun_slots::{
+        bind, bound, clear, holds_note, idle_slots_with, release_slot, LiveHold, ReleaseWhy,
+    };
+
+    const ID_B: &str = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+    const ID_C: &str = "cccccccccccccccccccccccccccccccc";
+    const T0: u64 = 10_000_000;
+    const MIN: u64 = 60_000;
+
+    fn headers(id: &str, name: Option<&str>) -> AgentHeaders {
+        AgentHeaders {
+            id: Some(id.to_string()),
+            pid: Some(4242),
+            client: Some("claude-code".to_string()),
+            name: name.map(str::to_string),
+        }
+    }
+
+    fn register(id: &str, name: Option<&str>, now: u64) -> AgentKey {
+        let h = headers(id, name);
+        agents::note_call(&h.caller(), &h, now);
+        AgentKey { id: id.to_string(), name: name.map(str::to_string) }
+    }
+
+    fn fresh() {
+        agents::clear();
+        claims::clear();
+        clear();
+    }
+
+    fn idle_at(now: u64) -> Vec<SlotNo> {
+        idle_slots_with(now, &|| false).into_iter().map(|j| j.slot).collect()
+    }
+
+    /// A named subagent that makes only lookups (tools that cannot carry its
+    /// name, so they arrive as the proxy's own unnamed calls) for eleven
+    /// minutes keeps its browser and its claims.
+    #[test]
+    fn named_agent_making_only_lookup_calls_keeps_browser_and_claims() {
+        let _g = serial::agents();
+        let _a = serial::autorun();
+        fresh();
+        let named = register(ID_B, Some("dw-levels"), T0);
+        let proxy = register(ID_B, None, T0);
+        bind(SlotNo(1), &named);
+        claims::claim(&named, 135520, T0).unwrap();
+        for tool in ["db_query", "get_test_cases"] {
+            for minute in [4, 8, 11] {
+                let h = headers(ID_B, None);
+                note_call_for_tool(&Caller::Agent(proxy.clone()), &h, Some(tool), T0 + minute * MIN);
+            }
+        }
+        assert_eq!(idle_at(T0 + 11 * MIN), vec![], "the lookups kept the browser");
+        assert_eq!(claims::holder(135520, T0 + 11 * MIN), Some(named.clone()));
+        // Ten quiet minutes after the last lookup it is idle again.
+        assert_eq!(idle_at(T0 + 21 * MIN), vec![SlotNo(1)]);
+        fresh();
+    }
+
+    /// An unnamed Auto Run call can carry a name, so it is not taken for a
+    /// subagent's; another proxy's calls count for nobody here.
+    #[test]
+    fn an_auto_run_call_or_another_proxy_keeps_nothing() {
+        let _g = serial::agents();
+        let _a = serial::autorun();
+        fresh();
+        let named = register(ID_B, Some("dw-levels"), T0);
+        let proxy = register(ID_B, None, T0);
+        let other = register(ID_C, None, T0);
+        bind(SlotNo(1), &named);
+        note_call_for_tool(&Caller::Agent(proxy), &headers(ID_B, None), Some("get_autorun_page"), T0 + 11 * MIN);
+        note_call_for_tool(&Caller::Agent(other), &headers(ID_C, None), Some("db_query"), T0 + 11 * MIN);
+        assert_eq!(idle_at(T0 + 11 * MIN), vec![SlotNo(1)]);
+        fresh();
+    }
+
+    /// A named agent's claims never lapse while a browser of its own is in
+    /// use: a replay, a batch or a held session lock.
+    #[test]
+    fn a_named_agents_claims_last_while_its_browser_works() {
+        let _g = serial::agents();
+        let _a = serial::autorun();
+        fresh();
+        let b = register(ID_B, Some("dw-levels"), T0);
+        bind(SlotNo(1), &b);
+        claims::claim(&b, 7, T0).unwrap();
+        let late = T0 + 15 * MIN;
+        {
+            let _replay = OneReplay::claim_for_assistant_in(SlotNo(1)).expect("slot 1 is free");
+            assert_eq!(claims::holder(7, late), Some(b.clone()), "a replay is going");
+        }
+        {
+            let _batch = BatchGoing::begin(SlotNo(1));
+            assert_eq!(claims::holder(7, late), Some(b.clone()), "a batch is going");
+        }
+        {
+            let held = v2_lib::commands::autorun::try_hold_slot(SlotNo(1)).expect("slot 1 is free");
+            assert_eq!(claims::holder(7, late), Some(b.clone()), "a call holds the browser");
+            drop(held);
+        }
+        assert_eq!(claims::holder(7, late), None, "nothing is going: the claim ran out");
+        fresh();
+    }
+
+    /// The release keeps a claim made by a call after the one it judged on.
+    #[test]
+    fn release_before_keeps_a_claim_made_after_the_judged_call() {
+        let _g = serial::agents();
+        fresh();
+        let b = register(ID_B, Some("dw-levels"), T0);
+        claims::claim(&b, 1, T0).unwrap();
+        claims::claim(&b, 2, T0 + 5).unwrap();
+        claims::release_before(&b, Some(T0));
+        assert_eq!(claims::holder(1, T0 + 6), None);
+        assert_eq!(claims::holder(2, T0 + 6), Some(b.clone()));
+        claims::release_before(&b, None);
+        assert_eq!(claims::holder(2, T0 + 6), None);
+        fresh();
+    }
+
+    /// An idle release of the main browser applies the same rule as the
+    /// sweep: only for a named subagent.
+    #[tokio::test]
+    async fn an_idle_release_of_main_needs_a_named_holder() {
+        let _g = serial::agents();
+        let _a = serial::autorun();
+        fresh();
+        let c = register(ID_C, None, T0);
+        bind(SlotNo::MAIN, &c);
+        assert_eq!(release_slot(SlotNo::MAIN, ReleaseWhy::Idle).await, Err(BROWSER_BUSY.to_string()));
+        assert_eq!(bound(SlotNo::MAIN), Some(c));
+        fresh();
+    }
+
+    #[test]
+    fn a_hold_quiet_under_a_minute_says_so() {
+        let hold = LiveHold { agent: "Assistant 1".into(), browser: "main".into(), account: None, cases: vec![], quiet_for_s: 20 };
+        assert!(holds_note(&[hold]).ends_with("no call for <1 min"));
     }
 }

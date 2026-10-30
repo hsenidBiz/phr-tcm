@@ -185,3 +185,19 @@ fn a_component_hides_neither_note() {
     assert_eq!(positional(&s, Some(&file), None).len(), 1);
     assert_eq!(positional_delete_notes_for_actions(&file.components[0].actions).len(), 1);
 }
+
+/// A wizard that creates with Finish is a save for the delete note as it is
+/// for the no-save guard: one list of words.
+#[test]
+fn a_finish_click_counts_as_making_something() {
+    let s = script(serde_json::json!([
+        { "step_number": 8, "actions": [
+            { "kind": "fill", "selector": { "role": "textbox", "name": "Name" }, "value": "AUTOTEST Scale" },
+            { "kind": "click", "selector": { "role": "button", "name": "Finish" } },
+            { "kind": "expect_text", "selector": ".toast", "value": "Done" },
+            { "kind": "click", "selector": { "role": "button", "name": "Delete" } }
+        ]}
+    ]));
+    let notes = after_check(&s, None, None);
+    assert_eq!(notes.len(), 1, "{notes:?}");
+}

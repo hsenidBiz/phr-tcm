@@ -349,3 +349,15 @@ pub fn sweep(now_ms: u64, alive: &dyn Fn(u32) -> bool) -> Sweep {
 pub fn clear() {
     registry().clear();
 }
+
+/// A call that cannot name its subagent (a tool with no `agent` property)
+/// arrived from the proxy `id`: it counts as a call of every named subagent
+/// of that proxy that is not gone, so a subagent busy with lookups keeps
+/// its browser and cases.
+pub fn touch_named_of(id: &str, now_ms: u64) {
+    for e in registry().iter_mut() {
+        if e.info.key.id == id && e.info.key.name.is_some() && e.info.gone_since_ms.is_none() {
+            e.info.last_ms = e.info.last_ms.max(now_ms);
+        }
+    }
+}

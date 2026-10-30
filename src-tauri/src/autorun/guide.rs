@@ -2067,9 +2067,11 @@ alone always uses the main one, as before.
 - An unattended run cannot start while any assistant's browser is open.
 - When your session ends, a browser of your own is released; the main one is
   left open for the person. A browser and the case holds of a subagent with a
-  name are let go after 10 minutes without a call from it (the main browser
-  too, when an assistant opened it; one the person opened never), any other
-  assistant's own browser after 30. `reset_autorun_browser` ends its answer
+  name are let go after 10 minutes without a call from it, and the main
+  browser is released then only when an assistant opened it (one the person
+  opened never is); any other assistant's own browser is let go after 30.
+  A call of any tool of yours counts, and a case hold stays while its browser
+  is replaying or working. `reset_autorun_browser` ends its answer
   with who holds which browser, account and cases now.
 - Subagents: give each subagent you start a name of its own (for example
   writer-1, writer-2) and tell it to pass it as `agent` on every Auto Run and

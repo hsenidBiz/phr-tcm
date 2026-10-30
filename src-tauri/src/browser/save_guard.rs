@@ -191,7 +191,6 @@ fn word_at(c: &[char], i: usize, word: &str) -> bool {
 /// `SAVE_WORDS` or `CLICK_WORDS` word or one of the project's words as a
 /// phrase, or a `WORD_SAVES` word as a word of its own.
 pub fn click_saves(target: &crate::browser::locator::Target, patterns: &[String]) -> bool {
-    use crate::browser::locator::Target;
     selector_words(target).into_iter().any(|text| words_save(text, patterns))
 }
 

@@ -101,6 +101,7 @@ fn makes_something(a: &Action) -> bool {
         && click_words(a).iter().any(|w| {
             crate::browser::save_guard::SAVE_WORDS.contains(&w.as_str())
                 || crate::browser::save_guard::WORD_SAVES.contains(&w.as_str())
+                || crate::browser::save_guard::CLICK_WORDS.contains(&w.as_str())
                 || w == "new"
         })
 }

@@ -1380,15 +1380,41 @@ pub async fn compacted<F: std::future::Future<Output = (u16, String)>>(
     answer
 }
 
+/// `agents::note_call`, and when the call is the proxy's own (no subagent
+/// name) for a tool that has no `agent` property to carry one, it also counts
+/// as a call of the proxy's named subagents (`agents::touch_named_of`): only
+/// the Auto Run and API template tools can name their caller, and a subagent
+/// busy with lookups must not lose its browser and cases for it.
+pub fn note_call_for_tool(
+    caller: &crate::autorun::agents::Caller,
+    headers: &crate::autorun::agents::AgentHeaders,
+    tool: Option<&str>,
+    now_ms: u64,
+) -> Option<String> {
+    use crate::ai_tools::{API_TEMPLATE_TOOLS, AUTORUN_TOOLS};
+    let label = crate::autorun::agents::note_call(caller, headers, now_ms);
+    if let (crate::autorun::agents::Caller::Agent(key), Some(tool)) = (caller, tool) {
+        if key.name.is_none() && !AUTORUN_TOOLS.contains(&tool) && !API_TEMPLATE_TOOLS.contains(&tool) {
+            crate::autorun::agents::touch_named_of(&key.id, now_ms);
+        }
+    }
+    label
+}
+
 /// A reset's or a release's answer, ending with the other assistants' live
 /// holds (`autorun_slots::live_holds_except`) so the coordinator sees who has
 /// which browser, account and cases and for how long it has been quiet. With
 /// none held it is the answer unchanged.
-fn with_other_holds(answer: (u16, String), holder: Option<&AgentKey>) -> (u16, String) {
+pub fn with_other_holds(answer: (u16, String), holder: Option<&AgentKey>) -> (u16, String) {
     let holds = crate::commands::autorun_slots::live_holds_except(crate::autorun::sessions::now_ms(), holder);
     let note = crate::commands::autorun_slots::holds_note(&holds);
     if note.is_empty() {
         return answer;
+    }
+    // A JSON object answer gets a `holds` field; any other, the text.
+    if let Ok(serde_json::Value::Object(mut map)) = serde_json::from_str::<serde_json::Value>(&answer.1) {
+        map.insert("holds".to_string(), serde_json::json!(holds));
+        return (answer.0, serde_json::Value::Object(map).to_string());
     }
     (answer.0, format!("{}\n\n{note}", answer.1))
 }
@@ -15969,7 +15995,7 @@ pub async fn start_listener(
                     // Who is calling is known only after the token check: a
                     // request without the token registers nobody.
                     let caller = agent.caller();
-                    let label = crate::autorun::agents::note_call(&caller, &agent, crate::autorun::sessions::now_ms());
+                    let label = note_call_for_tool(&caller, &agent, tool.as_deref(), crate::autorun::sessions::now_ms());
                     let (status, payload) =
                         route_timed(&caller, &ctx, client.as_ref(), &method, &target, &body, &state.version).await;
                     if let Some(line) = tool_call_line_for(tool.as_deref(), label.as_deref(), &target, status, &payload) {

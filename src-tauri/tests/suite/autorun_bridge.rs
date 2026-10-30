@@ -5204,3 +5204,29 @@ async fn reset_answer_lists_live_holds() {
     claims::clear();
     slots::clear();
 }
+
+/// A JSON answer gets the holds as a field and stays JSON; a plain answer
+/// gets the text.
+#[test]
+fn holds_join_a_json_answer_as_a_field_and_a_plain_one_as_text() {
+    use v2_lib::autorun::agents::{self, AgentHeaders};
+    use v2_lib::autorun::slots::SlotNo;
+    use v2_lib::commands::autorun_slots as slots;
+    const ID_B: &str = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+    let _g = crate::serial::agents();
+    let _a = crate::serial::autorun();
+    agents::clear();
+    slots::clear();
+    let now = v2_lib::autorun::sessions::now_ms();
+    let h = AgentHeaders { id: Some(ID_B.into()), pid: Some(4242), client: None, name: Some("dw-levels".into()) };
+    agents::note_call(&h.caller(), &h, now);
+    slots::bind(SlotNo(1), &h.caller().key().unwrap().clone());
+    let (_, json) = v2_lib::ai_bridge::with_other_holds((200, r#"{"detail":"ended"}"#.to_string()), None);
+    let v: serde_json::Value = serde_json::from_str(&json).expect("still JSON");
+    assert_eq!(v["detail"], "ended");
+    assert_eq!(v["holds"][0]["browser"], "extra 1");
+    let (_, text) = v2_lib::ai_bridge::with_other_holds((200, "Released it.".to_string()), None);
+    assert!(text.starts_with("Released it.\n\nBrowsers held now:"), "{text}");
+    agents::clear();
+    slots::clear();
+}

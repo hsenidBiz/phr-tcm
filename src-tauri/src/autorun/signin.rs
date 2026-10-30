@@ -605,7 +605,7 @@ async fn sign_in_held<D: Driver>(
             // answering (both excluded above).
             crate::applog::info(format!("Auto Run: {COLD_SITE_RETRY}"));
             retried = true;
-            let again = execute_in(d, &go, timing, &policy).await;
+            let again = execute_in(d, &go, timing, &policy.as_runner()).await;
             let why = again.detail.clone();
             if again.harness {
                 run.keep(again);
