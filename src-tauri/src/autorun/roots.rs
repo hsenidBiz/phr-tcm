@@ -542,23 +542,44 @@ pub fn removed_root(shared: &Path, key: &str, now_ms: u64) -> Option<PathBuf> {
     Some(shared.join(REMOVED_DIR).join(key))
 }
 
-/// Deletes the retired folders older than 30 days and returns how many.
-/// A folder whose name is not `<env id>-<ms>` is left alone.
+/// A seed an import replaced waits beside the environments under this name
+/// plus the stamp, and is purged with the removed folders.
+pub const SEED_ASIDE_PREFIX: &str = ".seed-replaced-";
+
+/// Deletes the retired folders older than 30 days, and the replaced seeds
+/// the same age, and returns how many. A folder whose name is not
+/// `<env id>-<ms>` is left alone.
 pub fn purge_removed(shared: &Path, now_ms: u64) -> usize {
     let kept = REMOVED_KEPT_DAYS * crate::autorun::store::DAY_MS;
-    let Ok(entries) = std::fs::read_dir(shared.join(REMOVED_DIR)) else { return 0 };
     let mut purged = 0;
-    for e in entries.flatten() {
-        if !e.file_type().is_ok_and(|t| t.is_dir()) {
-            continue;
-        }
-        let Some((_, ms)) = e.file_name().to_str().and_then(parse_key) else { continue };
+    let mut purge = |path: PathBuf, ms: u64| {
         if now_ms.saturating_sub(ms) > kept {
-            match std::fs::remove_dir_all(e.path()) {
+            match std::fs::remove_dir_all(&path) {
                 Ok(()) => purged += 1,
                 Err(err) => {
                     crate::applog::warn(format!("Auto Run: a removed environment's folder stayed behind: {err}"))
                 }
+            }
+        }
+    };
+    if let Ok(entries) = std::fs::read_dir(shared.join(REMOVED_DIR)) {
+        for e in entries.flatten() {
+            if !e.file_type().is_ok_and(|t| t.is_dir()) {
+                continue;
+            }
+            if let Some((_, ms)) = e.file_name().to_str().and_then(parse_key) {
+                purge(e.path(), ms);
+            }
+        }
+    }
+    if let Ok(entries) = std::fs::read_dir(shared.join(ENVS_DIR)) {
+        for e in entries.flatten() {
+            if !e.file_type().is_ok_and(|t| t.is_dir()) {
+                continue;
+            }
+            let ms = e.file_name().to_str().and_then(|n| n.strip_prefix(SEED_ASIDE_PREFIX)).and_then(|m| m.parse::<u64>().ok());
+            if let Some(ms) = ms {
+                purge(e.path(), ms);
             }
         }
     }

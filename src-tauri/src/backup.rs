@@ -342,9 +342,10 @@ pub fn restore_files(data_dir: &Path, files: &[BackupFile]) -> Result<u32, Strin
 /// [`restore_files`] for a caller that already holds the switch lock for
 /// writing (`held` is the proof; the Playwright records lock is taken
 /// before it). On a machine with per-environment folders, a backup from
-/// before the update fans out into every environment as the update does,
-/// and each environment folder it replaces waits in the removed area; a
-/// backup from after it restores each folder's files as they are. On a
+/// before the update builds a folder per environment from its flat files, and
+/// one from after it brings its folders; each is swapped in whole, the live
+/// folder keeping its history and export records and waiting in the removed
+/// area as the rest (see `autorun::backup_import`). On a
 /// machine without them a backup's `envs/` is built in a staging folder
 /// first, and a pre-update backup's files land flat for the next start's
 /// copy.
@@ -358,10 +359,26 @@ pub fn restore_files_held(
     let autorun = data_dir.join("autorun");
     let now = crate::cache::now_ms();
     let per_env_machine = roots::is_per_env_layout(&autorun);
-    let import_staging = (per_env_machine && is_pre_update(files)).then(|| backup_import::staging_dir(&autorun, now));
-    let flat_stage = import_staging.as_deref().map(backup_import::flat_dir);
-    let envs_stage = (!per_env_machine && files.iter().any(|f| safe_relative_path(&f.path) && is_envs_entry(&f.path)))
-        .then(|| autorun.join(format!(".envs-staging-{now}")));
+    let pre_update = per_env_machine && is_pre_update(files);
+    // The environment folders a post-update backup brings, by id.
+    let mut brought: Vec<String> = files
+        .iter()
+        .filter(|f| safe_relative_path(&f.path) && is_envs_entry(&f.path))
+        .map(|f| raw_segments(&f.path)[2].to_string())
+        .collect();
+    brought.sort();
+    brought.dedup();
+    let whole = per_env_machine && !pre_update && !brought.is_empty();
+    let import_staging = (pre_update || whole).then(|| backup_import::staging_dir(&autorun, now));
+    let flat_stage = import_staging.as_deref().filter(|_| pre_update).map(backup_import::flat_dir);
+    // Where `autorun/envs/<id>/...` entries are written: built whole in the
+    // import's staging folder, or (no layout yet) in a folder renamed to
+    // `envs/` once complete.
+    let envs_stage = if whole {
+        import_staging.as_deref().map(backup_import::built_dir)
+    } else {
+        (!per_env_machine && !brought.is_empty()).then(|| autorun.join(format!(".envs-staging-{now}")))
+    };
     let mut restored = 0u32;
     // A backup from before environments: the machine-wide list, and no
     // environments file to say whose it is. Kept until the loop is done.
@@ -434,26 +451,31 @@ pub fn restore_files_held(
             let _ = std::fs::remove_dir_all(staging);
             backup_import::IMPORT_FAILED.to_string()
         };
-        let (ids, active) = crate::environments::read_ids(&autorun)
-            .map_err(&failed)?
-            .unwrap_or_else(|| (vec![roots::SEED_ID.to_string()], roots::SEED_ID.to_string()));
-        // The restored list names the export environment; the update's copy
-        // reads it from beside the files it copies.
-        let _ = std::fs::copy(crate::environments::file_path(&autorun), backup_import::flat_dir(staging).join("environments.json"));
+        // A pre-update backup replaces every environment of the restored
+        // list (the seed when there is none); a post-update one, the folders
+        // it brought.
+        let ids = if pre_update {
+            crate::environments::read_ids(&autorun)
+                .map_err(&failed)?
+                .map(|(ids, _)| ids)
+                .unwrap_or_else(|| vec![roots::SEED_ID.to_string()])
+        } else {
+            brought.clone()
+        };
         let names = |id: &str| crate::environments::listed_name(&autorun, id).unwrap_or_default();
         backup_import::replace_environments(
             held,
             &autorun,
             staging,
             &ids,
-            &active,
+            pre_update,
             &names,
             now,
             &mut |a, b| std::fs::rename(a, b),
             &roots::MIGRATION_RENAME_WAITS_MS,
         )?;
     }
-    if let Some(staging) = &envs_stage {
+    if let (Some(staging), false) = (&envs_stage, whole) {
         let _ = held;
         let put = if staging.is_dir() {
             crate::ai_tools::rename_retrying_waits(

@@ -579,6 +579,7 @@ fn a_backup_leaves_out_the_legacy_originals() {
 fn a_pre_update_backup_fills_every_environment() {
     let dst = updated_machine("pre-update");
     let a = dst.join("autorun");
+    put(&a, &format!("envs/{ENV_A}/shots/s1.png"), "shot");
     let files = vec![
         entry("autorun/environments.json", &env_json(ENV_A, None)),
         entry("autorun/scripts/case-5.json", "from-backup"),
@@ -591,8 +592,11 @@ fn a_pre_update_backup_fills_every_environment() {
     for id in [ENV_A, ENV_B] {
         assert_eq!(read(&a, &format!("envs/{id}/scripts/case-5.json")).as_deref(), Some("from-backup"), "{id}");
     }
-    assert_eq!(read(&a, &format!("envs/{ENV_A}/runs/run-1.json")).as_deref(), Some("backup-run"));
-    assert!(read(&a, &format!("envs/{ENV_B}/runs/run-1.json")).is_none(), "history goes to the active environment only");
+    // Each environment KEEPS its own history; the backup's is not applied.
+    assert_eq!(read(&a, &format!("envs/{ENV_A}/runs/run-9.json")).as_deref(), Some("machine-run"));
+    assert_eq!(read(&a, &format!("envs/{ENV_A}/shots/s1.png")).as_deref(), Some("shot"));
+    assert!(read(&a, &format!("envs/{ENV_A}/runs/run-1.json")).is_none());
+    assert!(read(&a, &format!("envs/{ENV_B}/runs/run-1.json")).is_none());
     // What the machine had is not in the new folders, and nothing is at the flat path.
     assert!(read(&a, &format!("envs/{ENV_A}/scripts/case-1.json")).is_none());
     assert!(!a.join("scripts").exists() && !a.join("runs").exists(), "nothing lands at the flat path");
@@ -610,7 +614,7 @@ fn a_pre_update_backup_fills_every_environment() {
     );
     let old_a = removed.iter().find(|r| r.env_id == ENV_A).unwrap();
     assert_eq!(read(&a, &format!("removed-envs/{}/scripts/case-1.json", old_a.key)).as_deref(), Some("machine-a"));
-    assert_eq!(read(&a, &format!("removed-envs/{}/runs/run-9.json", old_a.key)).as_deref(), Some("machine-run"));
+    assert!(read(&a, &format!("removed-envs/{}/runs/run-9.json", old_a.key)).is_none(), "history stayed in the live folder");
     assert!(no_staging_left(&a, ".import-"));
     let _ = std::fs::remove_dir_all(&dst);
 }
@@ -619,14 +623,15 @@ fn a_pre_update_backup_fills_every_environment() {
 fn a_pre_update_backups_export_record_goes_to_the_export_environment() {
     let dst = updated_machine("pre-update-export");
     let a = dst.join("autorun");
+    put(&a, &format!("envs/{ENV_B}/projects/p.pwexport.json"), "live-record");
     let files = vec![
         entry("autorun/environments.json", &env_json(ENV_A, Some(ENV_B))),
         entry("autorun/projects/p.pwexport.json", "{}"),
         entry("autorun/projects/p.json", "recipe"),
     ];
     restore_files(&dst, &files).unwrap();
-    assert!(read(&a, &format!("envs/{ENV_B}/projects/p.pwexport.json")).is_some());
-    assert!(read(&a, &format!("envs/{ENV_A}/projects/p.pwexport.json")).is_none());
+    assert_eq!(read(&a, &format!("envs/{ENV_B}/projects/p.pwexport.json")).as_deref(), Some("live-record"), "the live record is kept");
+    assert!(read(&a, &format!("envs/{ENV_A}/projects/p.pwexport.json")).is_none(), "the backup's record is not applied");
     for id in [ENV_A, ENV_B] {
         assert!(read(&a, &format!("envs/{id}/projects/p.json")).is_some());
     }
@@ -634,20 +639,36 @@ fn a_pre_update_backups_export_record_goes_to_the_export_environment() {
 }
 
 #[test]
-fn a_post_update_backup_restores_the_folders_as_they_are() {
+fn a_post_update_backup_replaces_each_folder_whole_and_keeps_history() {
     let dst = updated_machine("post-update");
     let a = dst.join("autorun");
+    put(&a, &format!("envs/{ENV_A}/scripts/extra.json"), "machine-extra");
+    put(&a, &format!("envs/{ENV_A}/shots/s1.png"), "shot");
     let files = vec![
         entry("autorun/environments.json", &env_json(ENV_A, None)),
         entry(&format!("autorun/envs/{ENV_A}/scripts/case-1.json"), "from-backup"),
         entry(&format!("autorun/envs/{ENV_B}/scripts/case-7.json"), "b7"),
+        entry(&format!("autorun/envs/{ENV_B}/runs/run-3.json"), "backup-run-b"),
     ];
     assert!(!v2_lib::backup::is_pre_update(&files));
     restore_files(&dst, &files).unwrap();
     assert_eq!(read(&a, &format!("envs/{ENV_A}/scripts/case-1.json")).as_deref(), Some("from-backup"));
+    assert!(read(&a, &format!("envs/{ENV_A}/scripts/extra.json")).is_none(), "the folder is replaced, not merged");
+    // A's history and screenshots, which the backup lacks, stay.
+    assert_eq!(read(&a, &format!("envs/{ENV_A}/runs/run-9.json")).as_deref(), Some("machine-run"));
+    assert_eq!(read(&a, &format!("envs/{ENV_A}/shots/s1.png")).as_deref(), Some("shot"));
+    // B's backup carries history, so the backup's wins there.
     assert_eq!(read(&a, &format!("envs/{ENV_B}/scripts/case-7.json")).as_deref(), Some("b7"));
-    assert_eq!(read(&a, &format!("envs/{ENV_B}/scripts/case-2.json")).as_deref(), Some("machine-b"));
-    assert!(!a.join("removed-envs").exists(), "nothing was set aside");
+    assert_eq!(read(&a, &format!("envs/{ENV_B}/runs/run-3.json")).as_deref(), Some("backup-run-b"));
+    assert!(read(&a, &format!("envs/{ENV_B}/scripts/case-2.json")).is_none());
+    let removed = v2_lib::autorun::roots::removed_folders(&a, v2_lib::cache::now_ms());
+    assert_eq!(removed.len(), 2);
+    assert!(removed.iter().all(|r| r.reason == "replaced by an import"));
+    let old_a = removed.iter().find(|r| r.env_id == ENV_A).unwrap();
+    assert_eq!(read(&a, &format!("removed-envs/{}/scripts/extra.json", old_a.key)).as_deref(), Some("machine-extra"));
+    let old_b = removed.iter().find(|r| r.env_id == ENV_B).unwrap();
+    assert_eq!(read(&a, &format!("removed-envs/{}/scripts/case-2.json", old_b.key)).as_deref(), Some("machine-b"));
+    assert!(no_staging_left(&a, ".import-"));
     let _ = std::fs::remove_dir_all(&dst);
 }
 
@@ -732,7 +753,7 @@ fn an_import_that_stops_part_way_is_finished_at_the_next_start() {
     };
     {
         let held = roots::switch_lock().write().unwrap();
-        let err = backup_import::replace_environments(&held, &a, &staging, &ids, ENV_A, &names, 4242, &mut fail_b, &[])
+        let err = backup_import::replace_environments(&held, &a, &staging, &ids, true, &names, 4242, &mut fail_b, &[])
             .unwrap_err();
         assert_eq!(err, backup_import::IMPORT_UNFINISHED);
     }
@@ -809,4 +830,39 @@ fn the_app_follows_the_imported_active_environment() {
     store::set_shared_root(dst.join("elsewhere"));
     let _ = std::fs::remove_dir_all(&dst);
     let _ = std::fs::remove_dir_all(&empty);
+}
+
+/// An import cut short after the history was carried is finished at the next
+/// start without losing it, and the carry is not done twice.
+#[test]
+fn recovery_carries_the_history_the_built_folder_lacks() {
+    use v2_lib::autorun::backup_import;
+    let dst = updated_machine("recover-carry");
+    let a = dst.join("autorun");
+    let staging = backup_import::staging_dir(&a, 99);
+    put(&staging, &format!("built/{ENV_A}/scripts/new.json"), "new");
+    put(&staging, ".importing.json", &format!(r#"{{"ids":["{ENV_A}"],"step":"built"}}"#));
+    assert_eq!(backup_import::recover(&a), 1);
+    assert_eq!(read(&a, &format!("envs/{ENV_A}/scripts/new.json")).as_deref(), Some("new"));
+    assert_eq!(read(&a, &format!("envs/{ENV_A}/runs/run-9.json")).as_deref(), Some("machine-run"));
+    assert!(read(&a, &format!("envs/{ENV_A}/scripts/case-1.json")).is_none());
+    assert_eq!(read(&a, &format!("envs/{ENV_B}/scripts/case-2.json")).as_deref(), Some("machine-b"), "B was not in the import");
+    let _ = std::fs::remove_dir_all(&dst);
+}
+
+#[test]
+fn a_replaced_seed_is_purged_after_thirty_days() {
+    use v2_lib::autorun::roots;
+    let dst = tmpdir("seed-purge");
+    let a = dst.join("autorun");
+    let day = v2_lib::autorun::store::DAY_MS;
+    let now = 100 * day;
+    put(&a, &format!("envs/.seed-replaced-{}/scripts/s.json", now - 31 * day), "old");
+    put(&a, &format!("envs/.seed-replaced-{}/scripts/s.json", now - 2 * day), "new");
+    put(&a, &format!("envs/{ENV_A}/scripts/keep.json"), "live");
+    assert_eq!(roots::purge_removed(&a, now), 1);
+    assert!(!a.join(format!("envs/.seed-replaced-{}", now - 31 * day)).exists());
+    assert!(a.join(format!("envs/.seed-replaced-{}", now - 2 * day)).exists());
+    assert!(read(&a, &format!("envs/{ENV_A}/scripts/keep.json")).is_some());
+    let _ = std::fs::remove_dir_all(&dst);
 }

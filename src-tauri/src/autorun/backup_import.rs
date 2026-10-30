@@ -1,7 +1,12 @@
-//! Importing a backup made before the per-environment layout onto a machine
-//! that already has it. The backup's flat Auto Run files fan out into every
-//! environment, as the update does; each environment folder they replace is
-//! kept in the removed area, never deleted.
+//! Importing a backup onto a machine that already has the per-environment
+//! layout. A backup from before it has its flat Auto Run files built into one
+//! folder per environment (the app-describing items only); a backup from
+//! after it brings a folder per environment. Either way each environment
+//! folder is replaced whole: the live folder keeps its run history, its
+//! screenshots and its Playwright export records (what the backup lacks of
+//! them is moved into the new folder, as a copy between environments does),
+//! the rest waits in the removed area, never deleted, and the new folder is
+//! renamed in.
 //!
 //! Atomic per environment: the new folders are built whole in a staging
 //! folder (`<shared>/.import-<ms>/built/<id>`), a note is written, and only
@@ -10,8 +15,8 @@
 //! ([`recover`]); one without a note holds only copies of the backup's files
 //! and is removed.
 
-use super::env_copy::{log_failure, remove_empty_tree, rename_with, Rename};
-use super::roots::{self, ENVS_DIR, SEED_ID};
+use super::env_copy::{kept_in_place, log_failure, remove_empty_tree, rename_with, Rename};
+use super::roots::{self, CopyTo, ENVS_DIR, PER_ENV_ITEMS, SEED_ID};
 use std::path::{Path, PathBuf};
 
 /// A staging folder's name starts with this.
@@ -33,6 +38,11 @@ pub const IMPORT_UNFINISHED: &str =
 struct Marker {
     ids: Vec<String>,
     step: String,
+}
+
+/// Where a backup's whole environment folders are staged.
+pub fn built_dir(staging: &Path) -> PathBuf {
+    staging.join(BUILT)
 }
 
 /// `<shared>/.import-<ms>`.
@@ -78,10 +88,24 @@ fn swap_in(
             continue;
         }
         let to = roots::env_root(shared, id);
+        // The live folder's history and export records join the new folder
+        // unless the backup brought its own. Moves, never deletes; run again
+        // after a stop it moves only what is still there.
+        if roots::exists(&to)? {
+            for m in kept_in_place(&to, &from) {
+                if std::fs::symlink_metadata(&m.to).is_ok() {
+                    continue;
+                }
+                if let Some(parent) = m.to.parent() {
+                    std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+                }
+                rename_with(&m.from, &m.to, &mut *rename, waits_ms)?;
+            }
+        }
         if roots::exists(&to)? && !remove_empty_tree(&to) {
             if id == SEED_ID {
                 // The seed has no removed-area key, so it waits beside itself.
-                let aside = envs_dir.join(format!(".seed-replaced-{now_ms}"));
+                let aside = envs_dir.join(format!("{}{now_ms}", roots::SEED_ASIDE_PREFIX));
                 rename_with(&to, &aside, &mut *rename, waits_ms)?;
             } else {
                 roots::retire_held(held, shared, id, &name_of(names, id), REPLACED_BY_IMPORT, now_ms, waits_ms)?;
@@ -93,19 +117,43 @@ fn swap_in(
     Ok(())
 }
 
-/// Builds the backup's per-environment files (already written under
-/// `flat_dir(staging)`) into one folder per environment in `ids`, then swaps
-/// them in. `active` receives the history, as the update gives it. `held` is
-/// the proof that the switch lock is held for writing. Nothing live changes
-/// until every folder is built and the note is written. Answers how many
-/// environments were put in place.
+/// Builds the per-environment folders from the backup's flat files (under
+/// `flat_dir(staging)`): the app-describing items, every environment alike,
+/// never the history or the export records.
+fn build_from_flat(staging: &Path, ids: &[String]) -> Result<usize, String> {
+    let flat = flat_dir(staging);
+    let built = staging.join(BUILT);
+    let mut items = 0;
+    for id in ids {
+        std::fs::create_dir_all(built.join(id)).map_err(|e| e.to_string())?;
+    }
+    for (name, how) in PER_ENV_ITEMS {
+        if how != CopyTo::Every || !roots::exists(&flat.join(name))? {
+            continue;
+        }
+        items += 1;
+        for id in ids {
+            roots::copy_tree(&flat.join(name), &built.join(id).join(name), Path::new(name), false, &|rel| {
+                roots::is_export_record(rel)
+            })?;
+        }
+    }
+    Ok(items)
+}
+
+/// Puts the staged folders in place of the live ones for `ids`. With
+/// `from_flat` the folders are first built from the backup's flat files;
+/// without it they were staged whole (`built/<id>`) as the backup brought
+/// them. `held` is the proof that the switch lock is held for writing.
+/// Nothing live changes until every folder is ready and the note is written.
+/// Answers how many environments were put in place.
 #[allow(clippy::too_many_arguments)]
 pub fn replace_environments(
     held: &std::sync::RwLockWriteGuard<'static, ()>,
     shared: &Path,
     staging: &Path,
     ids: &[String],
-    active: &str,
+    from_flat: bool,
     names: &dyn Fn(&str) -> String,
     now_ms: u64,
     rename: Rename,
@@ -115,18 +163,27 @@ pub fn replace_environments(
         let _ = std::fs::remove_dir_all(staging);
         return Err(roots::REMOVE_BUSY.to_string());
     }
-    let built = staging.join(BUILT);
-    let made = std::fs::create_dir_all(&built).map_err(|e| e.to_string()).and_then(|_| {
-        roots::fan_out(&flat_dir(staging), &built, ids, Some(active))?;
+    let made = (|| {
+        if from_flat && build_from_flat(staging, ids)? == 0 {
+            // Nothing in the backup describes an app: nothing to replace.
+            return Ok(false);
+        }
         let note = Marker { ids: ids.to_vec(), step: STEP_BUILT.to_string() };
         let text = serde_json::to_string(&note).map_err(|e| e.to_string())?;
-        crate::ai_tools::atomic_write(&staging.join(MARKER), &text)
-    });
-    if let Err(e) = made {
-        log_failure("an import could not build the environments' data", &e);
-        // Nothing live was touched: only copies of the backup's files are here.
-        let _ = std::fs::remove_dir_all(staging);
-        return Err(IMPORT_FAILED.to_string());
+        crate::ai_tools::atomic_write(&staging.join(MARKER), &text).map(|_| true)
+    })();
+    match made {
+        Ok(true) => {}
+        Ok(false) => {
+            let _ = std::fs::remove_dir_all(staging);
+            return Ok(0);
+        }
+        Err(e) => {
+            log_failure("an import could not build the environments' data", &e);
+            // Nothing live was touched: only copies of the backup's files are here.
+            let _ = std::fs::remove_dir_all(staging);
+            return Err(IMPORT_FAILED.to_string());
+        }
     }
     match swap_in(held, shared, staging, ids, names, now_ms, rename, waits_ms) {
         Ok(()) => {

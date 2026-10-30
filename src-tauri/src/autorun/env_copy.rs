@@ -144,9 +144,9 @@ pub(crate) fn log_failure(what: &str, error: &str) {
 }
 
 /// One item moved out of the target into the staging folder.
-struct Moved {
-    from: PathBuf,
-    to: PathBuf,
+pub(crate) struct Moved {
+    pub(crate) from: PathBuf,
+    pub(crate) to: PathBuf,
 }
 
 pub(crate) type Rename<'a> = &'a mut dyn FnMut(&Path, &Path) -> std::io::Result<()>;
@@ -181,7 +181,7 @@ fn put_back(moved: &[Moved], rename: Rename, waits_ms: &[u64]) -> bool {
 
 /// The target's history items and export records, as `(from, to)` pairs
 /// into `staging`.
-fn kept_in_place(target: &Path, staging: &Path) -> Vec<Moved> {
+pub(crate) fn kept_in_place(target: &Path, staging: &Path) -> Vec<Moved> {
     let mut out = Vec::new();
     for (name, how) in PER_ENV_ITEMS {
         if how == CopyTo::ActiveOnly && std::fs::symlink_metadata(target.join(name)).is_ok() {
