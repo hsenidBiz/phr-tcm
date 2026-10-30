@@ -2531,11 +2531,17 @@ the answer says so; start a new one to explore again.
   with the sign-in kept.
 - Replaying the same case again needs no reset: a replay keeps its sign-in
   even when the application's own pages re-issue the session cookie as the
-  steps run, so the next replay goes straight to its area. (A script that
-  signs in itself is the exception: that replay's sign-in is not taken for
-  the same one.) A sign-in that stops names where the browser ended (its
-  path and, when it is another portal than the sign-in's, which); a slow
-  site is reloaded once before that, never with the password typed again.
+  steps run, so the next replay goes straight to its area. It is kept only
+  when it is provably the same account: a replay whose steps could have
+  changed the login (a sign_in, a login field filled - also inside a
+  when_visible or repeat_while_visible - the sign-in address opened, the
+  site's side switched), or after which the identity cookie is not the one
+  the sign-in left, signs in again on the next replay. A sign-in that
+  stops names where the browser ended (its path and the page's title). A
+  slow site gets one more try only when the login form is gone from the
+  page: the sign-in address is opened once more, the page is never
+  reloaded and the form never sent twice; with the form still showing
+  (wrong password, locked account, reset page) nothing is tried again.
 - Replaying the same case to a later step carries on from where your last
   replay of it stood, when that browser is yours and nothing (a step, a
   try, a discovery action or another replay) has used it since; the

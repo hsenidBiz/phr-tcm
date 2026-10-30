@@ -1004,45 +1004,87 @@ pub fn touches_sign_in(
     actions: &[crate::browser::actions::Action],
     recipe: &crate::autorun::recipe::SignInRecipe,
 ) -> Option<String> {
+    use crate::autorun::recipe::RecipeStep;
     use crate::browser::actions::Action;
     let text = |t: &crate::browser::locator::Target| serde_json::to_string(t).unwrap_or_default().to_lowercase();
-    let recipe_password: Vec<String> = recipe
-        .steps
-        .iter()
-        .filter_map(|st| match st {
-            crate::autorun::recipe::RecipeStep::Do(Action::Fill { selector, value }) if value.to_lowercase().contains("password") => {
-                Some(text(selector))
-            }
-            _ => None,
-        })
-        .collect();
-    let start = crate::autorun::discovery_map::path_only(&recipe.start_url);
-    for a in actions {
-        match a {
-            Action::SignIn { .. } => return Some("signed in".to_string()),
-            Action::Fill { selector, .. } => {
-                let t = text(selector);
-                if t.contains("password") || recipe_password.contains(&t) {
-                    return Some("filled a password field".to_string());
+    // The fields the recipe itself fills (its prompts' too): a script that
+    // fills the same field logs in, whatever the field is called.
+    let mut recipe_fields: Vec<String> = vec![];
+    for st in &recipe.steps {
+        match st {
+            RecipeStep::Do(Action::Fill { selector, .. }) => recipe_fields.push(text(selector)),
+            RecipeStep::WhenVisible(w) => {
+                for a in &w.then {
+                    if let Action::Fill { selector, .. } = a {
+                        recipe_fields.push(text(selector));
+                    }
                 }
-            }
-            Action::Navigate { url } if crate::autorun::discovery_map::path_only(url) == start => {
-                return Some("went to the sign-in address".to_string());
             }
             _ => {}
         }
     }
-    None
+    let start = crate::autorun::discovery_map::path_only(&recipe.start_url);
+    fn address_touches(url: &str, start: &str) -> Option<&'static str> {
+        let path = crate::autorun::discovery_map::path_only(url);
+        if path == start {
+            Some("went to the sign-in address")
+        } else if path.to_lowercase().contains("/home/switch") {
+            Some("switched the side of the site")
+        } else {
+            None
+        }
+    }
+    fn walk(
+        actions: &[Action],
+        start: &str,
+        fields: &[String],
+        text: &dyn Fn(&crate::browser::locator::Target) -> String,
+    ) -> Option<String> {
+        for a in actions {
+            match a {
+                Action::SignIn { .. } => return Some("signed in".to_string()),
+                Action::Fill { selector, value } => {
+                    let t = text(selector);
+                    let v = value.to_lowercase();
+                    if t.contains("password")
+                        || t.contains("pwd")
+                        || v.contains("{{password}}")
+                        || v.contains("{{username}}")
+                        || fields.contains(&t)
+                    {
+                        return Some("filled a login field".to_string());
+                    }
+                }
+                Action::Navigate { url } | Action::OpenTab { url, .. } => {
+                    if let Some(why) = address_touches(url, start) {
+                        return Some(why.to_string());
+                    }
+                }
+                Action::WhenVisible { then, .. } | Action::RepeatWhileVisible { then, .. } => {
+                    if let Some(why) = walk(then, start, fields, text) {
+                        return Some(why);
+                    }
+                }
+                _ => {}
+            }
+        }
+        None
+    }
+    walk(actions, &start, &recipe_fields, &text)
 }
 
 /// Backlog 44b: a replay's own steps may make the app re-issue the sign-in's
 /// session cookie as its pages load, which the print taken at sign-in then
 /// calls changed: the next replay of the case would sign in again. Once the
 /// steps have ended - stopped before a step, or the whole case - the print
-/// is taken again, when the browser is still signed in as the case's account
-/// (`already_signed_in_why`) and nothing the steps ran could have swapped
-/// the login (`touches_sign_in`: a script that signs in itself is not taken
-/// for the same sign-in).
+/// is taken again, but only when the sign-in is provably the same one:
+/// the lease is still held, the steps (components expanded, `when_visible`
+/// and `repeat_while_visible` looked into) could not have changed the login
+/// (`touches_sign_in`), the identity cookie the print holds (`ehrm85`, which
+/// carries the user the server checks the sign-in against) has the value it
+/// had, and the page still shows it is signed in. Otherwise the old print
+/// stays, so the next replay judges the browser by it - and signs in again
+/// if it changed. What was decided is logged, with no path and no value.
 #[allow(clippy::too_many_arguments)]
 async fn retake_after_steps<D: Driver>(
     d: &mut D,
@@ -1056,23 +1098,47 @@ async fn retake_after_steps<D: Driver>(
     timing: &Timing,
 ) {
     let Some(key) = script.account.as_deref().filter(|k| account.as_deref() == Some(*k)) else { return };
+    let said = |why: &str| crate::applog::info(format!("{}: the sign-in's cookies were not taken again: {why}", who(script.case_id)));
+    if !lease.holds(root, key) {
+        return;
+    }
     let Ok(recipe) = super::recipe::load_effective_recipe(root, organization, project) else { return };
     // Every step the replay could have run: those before `n`, and `n` itself
     // (a replay stopped at a step may have run part of it), and the clean-up.
-    let ran: Vec<Action> = script
+    let written: Vec<Action> = script
         .in_run_order()
         .filter(|s| s.step_number <= n || s.cleanup)
         .flat_map(|s| s.actions.iter().cloned())
         .collect();
+    let ran = match super::components::load_components(root, organization, project)
+        .and_then(|file| super::components::expand_actions(&file, &written).map(|(a, _)| a))
+    {
+        Ok(a) => a,
+        Err(_) => return said("the steps' components could not be read"),
+    };
     if let Some(why) = touches_sign_in(&ran, &recipe) {
-        crate::applog::info(format!("{}: the steps {why}, so the sign-in's cookies were not taken again", who(script.case_id)));
-        return;
+        return said(&format!("the steps {why}"));
     }
-    let shown = signin::already_signed_in_why(d, &recipe, Some(key), key, timing, timing.expect_ms.min(signin::SIGNED_IN_LOOK_MS)).await;
+    let origins = recipe.origins();
+    let Some(print) = lease.sign_in_print() else { return };
+    if !print.holds_cookie(IDENTITY_COOKIE) {
+        return said("the sign-in left no identity cookie to compare");
+    }
+    let Some(changed) = crate::browser::session::changed_cookies(d, &origins, print, lease.ignored_in_print()).await else {
+        return said("the browser did not answer while its cookies were read");
+    };
+    if changed.iter().any(|c| c.to_ascii_lowercase().starts_with(&format!("{IDENTITY_COOKIE} "))) {
+        return said("the identity cookie is not the one the sign-in left");
+    }
+    let shown = signin::already_signed_in_why(d, &recipe, account.as_deref(), key, timing, timing.expect_ms.min(signin::SIGNED_IN_LOOK_MS)).await;
     if shown.is_ok() {
-        let _ = retake_sign_in(d, &recipe.origins(), lease, "the replay's steps").await;
+        let _ = retake_sign_in(d, &origins, lease, "the replay's steps").await;
     }
 }
+
+/// The cookie that carries the user the server checks the sign-in against
+/// (PeoplesHR's), compared before a replay's print is taken again.
+const IDENTITY_COOKIE: &str = "ehrm85";
 
 /// `retake_sign_in` for the cookies of `root`'s project recipe (read again;
 /// one that cannot be read forgets the sign-in).

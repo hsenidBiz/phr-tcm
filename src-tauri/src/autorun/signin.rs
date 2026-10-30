@@ -284,29 +284,28 @@ pub const AFTER_SIGN_IN_STOPPED: &str = ", but after_sign_in step ";
 /// How `sign_in`'s words begin when the steps ran and the marker never
 /// showed.
 pub const MARKER_NEVER_APPEARED: &str = "the recipe ran, but ";
-/// Logged when the signed-in marker did not show after the sign-in's steps
-/// and the page was reloaded once before giving up: a site that is slow to
-/// come up.
-pub const COLD_SITE_RETRY: &str = "the signed-in marker did not show; reloaded once (a slow site)";
+/// Logged when the signed-in marker did not show after the sign-in's steps,
+/// the login form is gone from the page (the site took it and moved on) and
+/// the sign-in's address was opened once more: a site that is slow to come
+/// up. The form is never sent again, and the page is never reloaded - a
+/// reload of the page a form was posted to posts it again.
+pub const COLD_SITE_RETRY: &str =
+    "the signed-in marker did not show and the login form is gone; opened the sign-in address once more (a slow site)";
 
-/// The first path segment, with its slash: `/hr` of `/hr/security/login`.
-/// Empty for `/`.
-fn portal_of(path: &str) -> String {
-    match path.trim_start_matches('/').split('/').next() {
-        Some(seg) if !seg.is_empty() => format!("/{seg}"),
-        _ => String::new(),
-    }
-}
+/// The longest page title `landing_words` says.
+const TITLE_MAX: usize = 80;
 
-/// Where the browser ended, in words: the path only (never the host or the
-/// query), and when it is another portal than the sign-in's own, which.
-pub fn landing_words(current_url: &str, start_url: &str) -> String {
-    use crate::browser::save_guard::path_of;
-    let (here, start) = (path_of(current_url), path_of(start_url));
-    let mut words = format!("the browser ended on {here}");
-    let (a, b) = (portal_of(&here), portal_of(&start));
-    if !a.is_empty() && !b.is_empty() && a != b {
-        words.push_str(&format!(" - another portal than the sign-in's ({a}, not {b})"));
+/// Where the browser ended, in words: the path only (never the host, the
+/// query or a session token in the path: `save_guard::path_of`), and the
+/// page's title when it has one, trimmed to `TITLE_MAX` characters - on
+/// PeoplesHR both sides of the site share their paths, so the title is what
+/// tells a home from the other.
+pub fn landing_words(current_url: &str, title: Option<&str>) -> String {
+    let mut words = format!("the browser ended on {}", crate::browser::save_guard::path_of(current_url));
+    let title = title.map(|t| t.split_whitespace().collect::<Vec<_>>().join(" ")).unwrap_or_default();
+    if !title.is_empty() {
+        let cut: String = title.chars().take(TITLE_MAX).collect();
+        words.push_str(&format!(" (page title: {cut})"));
     }
     words
 }
@@ -318,23 +317,44 @@ async fn page_address<D: Driver>(d: &mut D) -> Option<String> {
 }
 
 impl Run<'_> {
-    /// Notes where the page is (its path) and says it in words: `None` when
-    /// the browser did not say.
-    async fn land<D: Driver>(&mut self, d: &mut D, start_url: &str) -> Option<String> {
+    /// Notes where the page is (its path) and, with `title`, says it in
+    /// words; `None` when the browser did not say.
+    async fn land<D: Driver>(&mut self, d: &mut D, title: bool) -> Option<String> {
         let href = page_address(d).await?;
         self.landed = Some(crate::browser::save_guard::path_of(&href));
-        Some(landing_words(&href, start_url))
+        let name = if title {
+            crate::browser::page::eval_value(d, "document.title").await.ok().and_then(|v| v.as_str().map(str::to_string))
+        } else {
+            None
+        };
+        Some(landing_words(&href, name.as_deref()))
     }
 }
 
-/// A success is worded with where the browser ended only when that is
-/// another portal than the sign-in's: the sign-in worked, but a script may
-/// be about to look in the wrong place.
-fn with_other_portal(said: String, words: Option<String>) -> String {
-    match words {
-        Some(w) if w.contains(" - another portal") => format!("{said} - {w}"),
-        _ => said,
+/// Does the page still show the sign-in's form - any field the recipe fills
+/// (its prompts' too)? Then the site did not take the form and move on: a
+/// wrong password, a locked account and a reset page all look like this, and
+/// none of them is slowness.
+async fn login_form_showing<D: Driver>(d: &mut D, steps: &[RecipeStep], timing: &Timing) -> bool {
+    let mut fields: Vec<&Target> = vec![];
+    for s in steps {
+        let actions: Vec<&Action> = match s {
+            RecipeStep::Do(a) => vec![a],
+            RecipeStep::WhenVisible(w) => w.then.iter().collect(),
+        };
+        for a in actions {
+            if let Action::Fill { selector, .. } = a {
+                fields.push(selector);
+            }
+        }
     }
+    for f in fields {
+        let look = timing.expect_ms.min(SIGNED_IN_LOOK_MS);
+        if expect(d, f, Check::Visible, look, timing.poll_ms).await.ok {
+            return true;
+        }
+    }
+    false
 }
 
 
@@ -518,8 +538,8 @@ async fn sign_in_held<D: Driver>(
                             harness_failure,
                         );
                     }
-                    let words = run.land(d, &recipe.start_url).await;
-                    return run.done(true, with_other_portal(format!("signed in as {who} from a saved session"), words), true, false);
+                    run.land(d, false).await;
+                    return run.done(true, format!("signed in as {who} from a saved session"), true, false);
                 }
                 // The BROWSER, not the saved session, may be what just
                 // failed (the navigate or the marker check stopped
@@ -569,30 +589,42 @@ async fn sign_in_held<D: Driver>(
     }
 
     let mut marker = expect(d, &recipe.signed_in, Check::Visible, timing.nav_ms, timing.poll_ms).await;
-    let mut reloaded = false;
+    let mut retried = false;
+    let mut form_still_there = false;
     if !marker.ok && !marker.harness && session_refused(d).await.is_none() {
-        // A site still coming up is slow to show its home: the page is
-        // reloaded ONCE and the marker waited for again. Never the form
-        // again - the password was typed once and stays typed once, so a
-        // wrong password cannot be tried twice - and never for a refused
-        // session or a browser that stopped answering (both excluded above).
-        crate::applog::info(format!("Auto Run: {COLD_SITE_RETRY}"));
-        reloaded = true;
-        let again = execute_in(d, &Action::Reload, timing, &policy).await;
-        let why = again.detail.clone();
-        if again.harness {
+        if login_form_showing(d, &recipe.steps, timing).await {
+            // The form is still on screen: a wrong password, a locked
+            // account or a reset page, not a slow site. Nothing is tried
+            // again - another go is another failed attempt on the account.
+            form_still_there = true;
+        } else {
+            // The site took the form and moved on, but its home is slow: the
+            // sign-in's address is opened ONCE more (a plain GET - never a
+            // reload, which posts a form again) and the marker waited for.
+            // Never for a refused session or a browser that stopped
+            // answering (both excluded above).
+            crate::applog::info(format!("Auto Run: {COLD_SITE_RETRY}"));
+            retried = true;
+            let again = execute_in(d, &go, timing, &policy).await;
+            let why = again.detail.clone();
+            if again.harness {
+                run.keep(again);
+                return run.done(
+                    false,
+                    format!(
+                        "{MARKER_NEVER_APPEARED}{} never appeared, and opening the sign-in address again stopped: {why}",
+                        recipe.signed_in.describe()
+                    ),
+                    false,
+                    true,
+                );
+            }
+            // An address that did not finish loading in time is not the
+            // end: the marker is still waited for, and the failure below
+            // names where the page is.
             run.keep(again);
-            return run.done(
-                false,
-                format!("{MARKER_NEVER_APPEARED}{} never appeared, and reloading the page stopped: {why}", recipe.signed_in.describe()),
-                false,
-                true,
-            );
+            marker = expect(d, &recipe.signed_in, Check::Visible, timing.nav_ms, timing.poll_ms).await;
         }
-        // A reload that did not finish in time is not the end: the marker is
-        // still waited for, and the failure below names where the page is.
-        run.keep(again);
-        marker = expect(d, &recipe.signed_in, Check::Visible, timing.nav_ms, timing.poll_ms).await;
     }
     if !marker.ok && !marker.harness && session_refused(d).await.is_some() {
         // Refused again, with a session made just now: not the password.
@@ -610,17 +642,20 @@ async fn sign_in_held<D: Driver>(
             recipe.signed_in.describe(),
             account.key
         );
-        if reloaded {
-            said.push_str(" (the page was reloaded once first)");
+        if form_still_there {
+            said.push_str(" (the login form is still on the page, so it was not tried again)");
+        }
+        if retried {
+            said.push_str(" (the sign-in address was opened once more first)");
         }
         if !harness_failure {
-            if let Some(w) = run.land(d, &recipe.start_url).await {
+            if let Some(w) = run.land(d, true).await {
                 said = format!("{said} - {w}");
             }
         }
         return run.done(false, said, false, harness_failure);
     }
-    let landing = run.land(d, &recipe.start_url).await;
+    run.land(d, false).await;
 
     // A fresh login: PeoplesHR's "another active session" modal can come a
     // moment after the shell does, so the longer window.
@@ -658,7 +693,7 @@ async fn sign_in_held<D: Driver>(
             harness_failure,
         );
     }
-    run.done(true, with_other_portal(format!("signed in as {who}"), landing), false, false)
+    run.done(true, format!("signed in as {who}"), false, false)
 }
 
 /// The recipe's `after_sign_in` again, on a page that is already signed

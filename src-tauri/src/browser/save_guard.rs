@@ -44,9 +44,10 @@ pub const SETUP_FAILED: &str = "the no-save guard could not be set up: ";
 pub const MAX_WORDS: usize = 50;
 pub const MAX_WORD_LEN: usize = 60;
 
-/// The path of an address: no scheme, host, query or fragment. `/` when
-/// nothing follows the host.
-pub fn path_of(url: &str) -> String {
+/// The path of an address as the matching sees it: no scheme, host, query or
+/// fragment. `/` when nothing follows the host. Words in it are matched as
+/// written (`is_save`).
+fn raw_path_of(url: &str) -> String {
     let no_fragment = url.split('#').next().unwrap_or("");
     let no_query = no_fragment.split('?').next().unwrap_or("");
     let rest = match no_query.find("://") {
@@ -59,6 +60,42 @@ pub fn path_of(url: &str) -> String {
     }
 }
 
+/// Does a path segment look like a token (a session id, a code, a ticket)?
+/// 20 or more characters of base64url or hex that hold a digit (a long
+/// word is a name, not a token), or 16 or more with no vowel at all.
+fn looks_like_token(seg: &str) -> bool {
+    let n = seg.chars().count();
+    let url_safe = seg.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_');
+    (n >= 20 && url_safe && seg.chars().any(|c| c.is_ascii_digit()))
+        || (n >= 16 && !seg.chars().any(|c| "aeiouAEIOU".contains(c)))
+}
+
+/// ASP.NET's cookieless session segment: `(S(...))`, `(F(...))`, `(A(...))`
+/// (the session id, the forms ticket, the anonymous id).
+fn is_cookieless(seg: &str) -> bool {
+    let b = seg.as_bytes();
+    b.len() > 4 && b[0] == b'(' && matches!(b[1], b'S' | b's' | b'F' | b'f' | b'A' | b'a') && b[2] == b'(' && seg.ends_with("))")
+}
+
+/// The path of an address, to be said to a person or written to the log: no
+/// scheme, host, query or fragment, and nothing in it that could be a
+/// session - no `;parameter` (`;jsessionid=...`), no ASP.NET cookieless
+/// segment, and a token-like segment shown as `…`. `/` when nothing follows
+/// the host.
+pub fn path_of(url: &str) -> String {
+    let raw = raw_path_of(url);
+    let kept: Vec<String> = raw
+        .split('/')
+        .skip(1)
+        .filter(|seg| !is_cookieless(seg))
+        .map(|seg| {
+            let seg = seg.split(';').next().unwrap_or("");
+            if looks_like_token(seg) { "…".to_string() } else { seg.to_string() }
+        })
+        .collect();
+    format!("/{}", kept.join("/"))
+}
+
 /// Is this request a save? `patterns` are the project's own words, matched
 /// like the built-in ones: case-insensitive substrings of the path.
 pub fn is_save(method: &str, url: &str, patterns: &[String]) -> bool {
@@ -66,7 +103,7 @@ pub fn is_save(method: &str, url: &str, patterns: &[String]) -> bool {
     if !SAVE_METHODS.contains(&method.as_str()) {
         return false;
     }
-    let path = path_of(url);
+    let path = raw_path_of(url);
     if adds(&path) {
         return true;
     }
