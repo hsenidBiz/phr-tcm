@@ -946,6 +946,15 @@ export default function App() {
   // edits becomes one push once typing pauses; the pending push is flushed
   // on unmount rather than dropped, so App never silently skips the last
   // edit.
+  const bridgePbiId = pbi?.id ?? null;
+  const bridgePbiTitle = pbi?.title ?? "";
+  const bridgePbiProject = pbi?.project || project;
+  // Nothing is pushed without an org and a project, so the PBI of the org
+  // just left (or of a signed-out session) would stay on the bridge: take it
+  // off at once.
+  useEffect(() => {
+    if (!signedIn || !org || !bridgeProject) void commands.clearBridgePbi().catch(() => {});
+  }, [signedIn, org, bridgeProject]);
   const pushBridgeContextRef = useRef<() => void>(() => {});
   const bridgeContextTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
@@ -963,7 +972,15 @@ export default function App() {
             disabledTools,
             workingDir || null,
             dbId || null,
-            { dbWrites: dbWrites && devLogin, apiWrites, networkTools, envId, allProjects },
+            {
+              dbWrites: dbWrites && devLogin,
+              apiWrites,
+              networkTools,
+              envId,
+              allProjects,
+              // The PBI in the top bar, for the assistants' get_current_pbi.
+              pbi: bridgePbiId == null ? null : { id: bridgePbiId, title: bridgePbiTitle, project: bridgePbiProject },
+            },
           ),
         )
         .catch(() => {});
@@ -993,6 +1010,9 @@ export default function App() {
     apiWrites,
     networkTools,
     envId,
+    bridgePbiId,
+    bridgePbiTitle,
+    bridgePbiProject,
     tourOpen,
     dbMigrated,
   ]);

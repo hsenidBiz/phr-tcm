@@ -12,7 +12,7 @@ use std::path::Path;
 
 use base64::Engine;
 
-use crate::crystal::{self, PreviewInfo};
+use crate::crystal::{self, FindHit, PreviewInfo, ReplaceOutcome, ReportParameter};
 use crate::modules::{self, Module};
 
 /// Said when the open report's file has been moved or deleted since.
@@ -33,6 +33,11 @@ pub struct CurrentReport {
     /// Whether the file is gone from disk, so the screen says so instead of
     /// showing a preview of something that no longer exists.
     pub missing: bool,
+}
+
+/// The assistant-only "open_report" hint becomes the screen's own sentence.
+fn for_screen(e: String) -> String {
+    e.replace(crystal::NOTHING_OPEN, NOTHING_OPEN)
 }
 
 fn offered(on: bool) -> Result<(), String> {
@@ -74,6 +79,115 @@ pub fn open_in_designer_with(on: bool, opener: impl FnOnce(&str) -> Result<(), S
         crate::applog::warn(format!("Crystal Reports: the report could not be opened in its program: {e}"));
         NO_PROGRAM.to_string()
     })
+}
+
+/// Open the report the person picked, through the same `crystal::open` the
+/// assistant's open_report uses, so both see one current report. A refusal
+/// is one sentence naming the file, never its path; the raw sentence goes
+/// to the log.
+pub fn open_file_with(on: bool, path: &str) -> Result<(), String> {
+    offered(on)?;
+    crystal::open(path).map(|_| ()).map_err(|e| {
+        crate::applog::info(format!("Crystal Reports: a picked report could not be opened: {e}"));
+        e.replace(path, &file_name(path))
+    })
+}
+
+/// One value the person typed for a parameter of the open report.
+#[derive(Debug, Clone, serde::Deserialize, specta::Type)]
+pub struct ParameterValue {
+    pub name: String,
+    pub value: String,
+}
+
+/// The open report's parameters, for the panel.
+pub fn parameters_with(on: bool) -> Result<Vec<ReportParameter>, String> {
+    offered(on)?;
+    crystal::parameters().map_err(for_screen)
+}
+
+/// Draw the open report again with the values typed. A blank value is no
+/// value. They are used for this drawing only and are never saved. The
+/// refusal sentences name the file and the parameter, never a path.
+pub fn draw_with(on: bool, values: Vec<ParameterValue>) -> Result<(), String> {
+    offered(on)?;
+    let params = values
+        .into_iter()
+        .filter(|v| !v.value.trim().is_empty())
+        .map(|v| (v.name, v.value.trim().to_string()))
+        .collect();
+    crystal::preview_saved_with(params).map(|_| ()).map_err(for_screen)
+}
+
+/// Every object of the open report and its subreports that holds `text`.
+pub fn find_with(on: bool, text: &str, match_case: bool) -> Result<Vec<FindHit>, String> {
+    offered(on)?;
+    crystal::find(text, match_case).map_err(for_screen)
+}
+
+/// Replace text in the open report. With `dry_run` it only lists what would
+/// change; otherwise the changes are saved over the file like any edit. A
+/// refusal names the file, never its path.
+pub fn replace_with(
+    on: bool,
+    find: &str,
+    replace: &str,
+    match_case: bool,
+    dry_run: bool,
+    expected: Option<u32>,
+) -> Result<ReplaceOutcome, String> {
+    offered(on)?;
+    crystal::replace_expecting(find, replace, match_case, dry_run, expected)
+        .map_err(|e| match crystal::current_path() {
+            Some(path) => e.replace(&path, &file_name(&path)),
+            None => e,
+        })
+        .map_err(for_screen)
+}
+
+fn file_name(path: &str) -> String {
+    Path::new(path).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| path.to_string())
+}
+
+/// Open a report the person picked; it becomes the open report.
+#[tauri::command(async)]
+#[specta::specta]
+pub fn crystal_open_file(path: String) -> Result<(), String> {
+    open_file_with(modules::on(Module::CrystalReports), &path)
+}
+
+/// Find text and field references in the open report and its subreports.
+#[tauri::command(async)]
+#[specta::specta]
+pub fn crystal_find(text: String, match_case: bool) -> Result<Vec<FindHit>, String> {
+    find_with(modules::on(Module::CrystalReports), &text, match_case)
+}
+
+/// Replace text in the open report; `dry_run` lists the changes and saves nothing.
+#[tauri::command(async)]
+#[specta::specta]
+pub fn crystal_replace(
+    find: String,
+    replace: String,
+    match_case: bool,
+    dry_run: bool,
+    expected: Option<u32>,
+) -> Result<ReplaceOutcome, String> {
+    replace_with(modules::on(Module::CrystalReports), &find, &replace, match_case, dry_run, expected)
+}
+
+/// The open report's parameters.
+#[tauri::command(async)]
+#[specta::specta]
+pub fn crystal_parameters() -> Result<Vec<ReportParameter>, String> {
+    parameters_with(modules::on(Module::CrystalReports))
+}
+
+/// Draw the open report with the parameter values typed on the screen.
+#[tauri::command(async)]
+#[specta::specta]
+pub fn crystal_draw(values: Vec<ParameterValue>) -> Result<(), String> {
+    draw_with(modules::on(Module::CrystalReports), values)
 }
 
 /// The report TCM has open and how it last drew; `None` when none is open.

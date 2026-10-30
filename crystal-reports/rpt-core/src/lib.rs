@@ -26,20 +26,28 @@
 //! Everything fallible returns [`std::result::Result`] with a message suitable for showing a user;
 //! the underlying `rpt_reader::Error` chain is preserved in the `source` where one exists.
 
+pub mod batch;
 pub mod blank;
+pub mod conditions;
+pub mod find;
 pub mod formula;
+pub mod diff;
 pub mod edit;
 pub mod framing;
 pub mod guides;
+pub mod hits;
 pub mod grouping;
 pub mod ir;
 pub mod locate;
 pub mod picture;
 pub mod plan;
+pub mod pagesetup;
+pub mod parameters;
 pub mod preview;
 pub mod running_total;
 pub mod sections;
 pub mod structure;
+pub mod subedit;
 pub mod subreport;
 pub mod validate;
 pub mod tables;
@@ -47,7 +55,8 @@ pub mod tables;
 pub use edit::{apply_edits, EditOp, ObjSel, SecSel};
 pub use ir::{build_ir, AreaIr, BoundsIr, ColorIr, FieldIr, FontIr, Ir, ObjectIr, SectionIr, TextIr, IR_FORMAT};
 pub use locate::{Located, LocatedArea, LocatedObject, LocatedSection, RecAddr};
-pub use preview::{coerce_params, preview, preview_live, preview_live_report, preview_report, LiveDb, PreviewOutput};
+pub use parameters::{report_parameters, ParameterInfo, ParameterValueInfo};
+pub use preview::{coerce_params, preview, preview_live, preview_live_report, preview_report, preview_report_with, thumbnail, thumbnail_report, LiveDb, PdfExportOptions, PreviewOutput};
 
 /// The vendored reader crate, re-exported so consumers never depend on `vendor/` paths directly.
 pub use rpt_reader;

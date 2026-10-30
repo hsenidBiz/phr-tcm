@@ -623,7 +623,10 @@ fn each_tool_belongs_to_its_module() {
             "compare_reports",
             "check_report",
             "preview_report",
-            "preview_report_live"
+            "preview_report_live",
+            "get_report_parameters",
+            "find_in_report",
+            "replace_in_report"
         ]
     );
     for t in AUTORUN_TOOLS {
@@ -703,6 +706,7 @@ fn the_effective_disabled_set_follows_the_modules_and_protects_the_core() {
         [
             "begin_test_case_writing",
             "get_guide",
+            "get_current_pbi",
             "get_test_cases",
             "check_spec_coverage",
             "transform_cases",

@@ -547,18 +547,18 @@ test("signing in starts the AI bridge and pushes org/project context", async () 
   );
   // No environment known in this test: the push says so, and Rust then
   // keeps every write off whatever the switches say.
-  expect(pushes[pushes.length - 1].switches).toEqual({ dbWrites: false, apiWrites: true, networkTools: false, envId: "", allProjects: true });
+  expect(pushes[pushes.length - 1].switches).toEqual({ dbWrites: false, apiWrites: true, networkTools: false, envId: "", allProjects: true, pbi: null });
 
   // The Network tools switch reaches the push as true too: dropping it from
   // the effect or the switches object would leave every assertion above
   // green and the tools off for good.
   act(() => saveNetworkTools(true));
   await vi.waitFor(() =>
-    expect(pushes[pushes.length - 1].switches).toEqual({ dbWrites: false, apiWrites: true, networkTools: true, envId: "", allProjects: true }),
+    expect(pushes[pushes.length - 1].switches).toEqual({ dbWrites: false, apiWrites: true, networkTools: true, envId: "", allProjects: true, pbi: null }),
   );
   act(() => saveNetworkTools(false));
   await vi.waitFor(() =>
-    expect(pushes[pushes.length - 1].switches).toEqual({ dbWrites: false, apiWrites: true, networkTools: false, envId: "", allProjects: true }),
+    expect(pushes[pushes.length - 1].switches).toEqual({ dbWrites: false, apiWrites: true, networkTools: false, envId: "", allProjects: true, pbi: null }),
   );
 });
 
@@ -594,14 +594,14 @@ test("the bridge context carries the active environment's switches and names it"
   renderApp();
   await screen.findByText("a@b.com");
   await vi.waitFor(() =>
-    expect(pushes[pushes.length - 1]?.switches).toEqual({ dbWrites: false, apiWrites: true, networkTools: false, envId: A.id, allProjects: true }),
+    expect(pushes[pushes.length - 1]?.switches).toEqual({ dbWrites: false, apiWrites: true, networkTools: false, envId: A.id, allProjects: true, pbi: null }),
   );
 
   // At once, not after the pause a burst of edits waits for (400ms): Rust
   // holds every write off from the switch until this push arrives.
   act(() => setActiveEnvId(B.id));
   await vi.waitFor(
-    () => expect(pushes[pushes.length - 1].switches).toEqual({ dbWrites: false, apiWrites: false, networkTools: false, envId: B.id, allProjects: true }),
+    () => expect(pushes[pushes.length - 1].switches).toEqual({ dbWrites: false, apiWrites: false, networkTools: false, envId: B.id, allProjects: true, pbi: null }),
     { timeout: 300 },
   );
 });
@@ -1594,6 +1594,128 @@ test("database choices are debounced into one bridge-context push carrying the i
   } finally {
     vi.useRealTimers();
   }
+});
+
+/// The assistants start from the PBI the person picked in the top bar
+/// (`get_current_pbi`), so the bridge is told it - and told when it goes.
+test("the selected PBI is pushed to the bridge and cleared when the person clears it", async () => {
+  const pushes: Array<Record<string, unknown>> = [];
+  localStorage.setItem(
+    "tcm-v2-prefs",
+    JSON.stringify({
+      org: "acme",
+      project: "Web",
+      section: "manual",
+      pbi: { id: 42, title: "Login flow", work_item_type: "Product Backlog Item", project: "Web" },
+      workMode: false,
+    }),
+  );
+  localStorage.setItem("tcm-v2-tour-done", "yes");
+  signedInMocks((cmd, args) => {
+    if (cmd === "list_projects") return [{ id: "p1", name: "Web" }];
+    if (cmd === "set_bridge_context") {
+      pushes.push(args as Record<string, unknown>);
+      return null;
+    }
+    if (cmd === "bridge_status") return { port: 1, mcp_exe: "x" };
+  });
+  renderApp();
+  await screen.findByText("a@b.com");
+  await vi.waitFor(() => expect(pushes.length).toBeGreaterThan(0));
+  expect(pushes[pushes.length - 1]).toMatchObject({
+    switches: expect.objectContaining({ pbi: { id: 42, title: "Login flow", project: "Web" } }),
+  });
+
+  fireEvent.click(await screen.findByLabelText("Clear PBI"));
+  await vi.waitFor(() =>
+    expect(pushes[pushes.length - 1]).toMatchObject({ switches: expect.objectContaining({ pbi: null }) }),
+  );
+});
+
+/// A PBI belongs to its org: switching org must take it off the bridge at
+/// once, even while no project is chosen yet (nothing else is pushed then).
+test("an org switch clears the PBI on the bridge before any project is chosen", async () => {
+  const cleared: number[] = [];
+  localStorage.setItem(
+    "tcm-v2-prefs",
+    JSON.stringify({
+      org: "acme",
+      project: "Web",
+      section: "manual",
+      pbi: { id: 42, title: "Login flow", work_item_type: "Product Backlog Item", project: "Web" },
+      workMode: false,
+    }),
+  );
+  localStorage.setItem("tcm-v2-tour-done", "yes");
+  mockIPC((cmd) => {
+    if (cmd === "modules_get") return EVERY_MODULE;
+    if (cmd === "resume_session") return { signed_in: true, account: "a@b.com" };
+    if (cmd === "check_update") return null;
+    if (cmd === "list_orgs") return [{ name: "acme", url: "" }, { name: "beta", url: "" }];
+    if (cmd === "list_test_case_fields") return [];
+    if (cmd === "plugin:event|listen") return 1;
+    if (cmd === "list_projects") return [{ id: "p1", name: "Web" }, { id: "p2", name: "Api" }];
+    if (cmd === "clear_bridge_pbi") {
+      cleared.push(Date.now());
+      return null;
+    }
+    if (cmd === "bridge_status") return { port: 1, mcp_exe: "x" };
+  });
+  renderApp();
+  await screen.findByText("a@b.com");
+  const before = cleared.length;
+  fireEvent.click(await screen.findByRole("combobox", { name: "Organization" }));
+  fireEvent.click(await screen.findByRole("option", { name: "beta" }));
+  await vi.waitFor(() => expect(cleared.length).toBeGreaterThan(before));
+});
+
+test("a project switch pushes the PBI as cleared", async () => {
+  const pushes: Array<Record<string, unknown>> = [];
+  saveAllProjects(false);
+  localStorage.setItem(
+    "tcm-v2-prefs",
+    JSON.stringify({
+      org: "acme",
+      project: "Web",
+      section: "manual",
+      pbi: { id: 42, title: "Login flow", work_item_type: "Product Backlog Item", project: "Web" },
+      workMode: false,
+    }),
+  );
+  localStorage.setItem("tcm-v2-tour-done", "yes");
+  signedInMocks((cmd, args) => {
+    if (cmd === "list_projects") return [{ id: "p1", name: "Web" }, { id: "p2", name: "Api" }];
+    if (cmd === "set_bridge_context") {
+      pushes.push(args as Record<string, unknown>);
+      return null;
+    }
+    if (cmd === "bridge_status") return { port: 1, mcp_exe: "x" };
+  });
+  renderApp();
+  await screen.findByText("a@b.com");
+  await vi.waitFor(() =>
+    expect(pushes[pushes.length - 1]).toMatchObject({ switches: expect.objectContaining({ pbi: { id: 42, title: "Login flow", project: "Web" } }) }),
+  );
+  fireEvent.click(await screen.findByRole("combobox", { name: "Project" }));
+  fireEvent.click(await screen.findByRole("option", { name: "Api" }));
+  await vi.waitFor(() =>
+    expect(pushes[pushes.length - 1]).toMatchObject({ project: "Api", switches: expect.objectContaining({ pbi: null }) }),
+  );
+});
+
+test("signed out, the bridge's PBI is cleared", async () => {
+  const cleared: number[] = [];
+  mockIPC((cmd) => {
+    if (cmd === "resume_session") return { signed_in: false, account: null };
+    if (cmd === "check_update") return null;
+    if (cmd === "clear_bridge_pbi") {
+      cleared.push(1);
+      return null;
+    }
+  });
+  renderApp();
+  await screen.findByRole("button", { name: /sign in with microsoft/i });
+  await vi.waitFor(() => expect(cleared.length).toBeGreaterThan(0));
 });
 
 /// A connection string saved before databases had ids moves into Rust at

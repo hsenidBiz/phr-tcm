@@ -247,14 +247,15 @@ function SetupRow({
       className="space-y-1 border-t border-border/60 pt-3 first-of-type:border-t-0 first-of-type:pt-0"
     >
       {/* The label never gives up its width to the buttons: when they do not fit beside it, they
-          wrap onto the next line instead of covering it. */}
+          wrap onto the next line instead of covering it - and keep to the right edge there
+          (ml-auto), in line with every other row's buttons. */}
       <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
         <span className="mr-auto flex shrink-0 items-center gap-1.5 text-xs font-medium text-muted">
           <StatusDot status={status} />
           {label}
           {SPOKEN[status] && <span className="sr-only">{SPOKEN[status]}</span>}
         </span>
-        <span className="flex max-w-full flex-wrap justify-end gap-2">{children}</span>
+        <span className="ml-auto flex max-w-full flex-wrap justify-end gap-2">{children}</span>
       </div>
       <div className="break-words text-sm text-text">{state}</div>
     </div>

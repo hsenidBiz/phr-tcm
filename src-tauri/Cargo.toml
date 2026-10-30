@@ -4,7 +4,7 @@ name = "v2"
 # test in tests/bindings.rs fails the gate when the two drift. Only
 # tauri.conf.json drives the app's real version; this one is what the
 # compiler prints and what cargo metadata reports.
-version = "2.4.3-beta.2"
+version = "2.4.3-beta.5"
 description = "Bulk-create and edit Azure DevOps Test Cases"
 authors = ["Avin Alwis"]
 edition = "2021"
@@ -100,6 +100,8 @@ pdf-extract = "0.12.1"
 # see docs/crystal-reports-copy.md).
 rpt-core = { path = "../crystal-reports/rpt-core" }
 rpt-db-mssql = { path = "../crystal-reports/rpt-db-mssql" }
+# The saved-data render with parameter values, which rpt-core does not expose.
+rpt-render = { path = "../crystal-reports/vendor/rpt-render" }
 
 # One window only. Desktop-only because the mechanism it uses (a named
 # object the first process owns) has no meaning on mobile - see run().

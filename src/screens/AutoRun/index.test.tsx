@@ -683,6 +683,17 @@ test("release_auto_run_browser_says_why_it_was_refused", async () => {
   expect(await screen.findByRole("alert")).toHaveTextContent("an unattended run is going - wait for it, or stop it first");
 });
 
+// A row's buttons stay at the right edge even when they wrap under the
+// label (Discovery has three), in line with every other row's buttons.
+test("setup_row_buttons_keep_to_the_right_when_they_wrap", async () => {
+  mockList([caseRow(1, "Login - valid credentials")], [1], []);
+  renderScreen();
+  await screen.findByText("Login - valid credentials");
+  openSetup();
+  const view = await within(row("Discovery")).findByRole("button", { name: "View discovery" });
+  expect(view.parentElement).toHaveClass("ml-auto", "justify-end");
+});
+
 test("end_discovery_is_not_offered_while_no_discovery_is_going", async () => {
   mockList([caseRow(1, "Login - valid credentials")], [1], [], (cmd) =>
     cmd === "auto_run_discovery_active" ? false : null,

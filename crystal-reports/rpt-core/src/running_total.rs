@@ -197,3 +197,124 @@ pub fn running_total_value_type(report: &model::Report, summarize: &str) -> Fiel
     let _ = (report, summarize);
     FieldValueType::Number
 }
+
+/// `addSummary` — synthesize a summary field definition (`0x007e[0x0071]`), the sibling
+/// our running-total builder already knows how to shape. A grand total (no group), or a
+/// group subtotal when `group_field` names the group's condition field.
+///
+/// # Errors
+///
+/// An unknown operation name; the summarized field not in the report's pool; the group
+/// field not resolvable; or a writer failure. Verified by model read-back.
+pub fn add_summary(
+    rpt: &Rpt,
+    name: &str,
+    summarize: &str,
+    operation: &str,
+    group_field: Option<&str>,
+) -> Result<Vec<u8>, String> {
+    let report = rpt.report();
+    let (op_pool, op_index) = crate::grouping::field_handle(report, summarize)?;
+    let display = crate::grouping::field_display(report, summarize);
+    let op = operation_code(operation)?;
+
+    // The 0x7e record: the same shape the running total nests.
+    let vt = match field_handle_value_type(report, summarize) {
+        FieldValueType::Currency => FieldValueType::Number, // summaries widen like totals
+        other => other,
+    };
+    let (summary, _) = build_summary_record(name, &display, op_pool, op_index, op, vt);
+
+    // Group subtotals carry the group's condition-field ordinal in a second record —
+    // v1 grand totals only (the group variant needs the 0x29-wrapped group form, a
+    // separate synthesis).
+    if group_field.is_some() {
+        return Err("group subtotals are not yet synthesized (grand totals only in v1)".to_string());
+    }
+
+    let stream = rpt.stream(&StreamId::Contents).ok_or("no Contents stream")?;
+    let logical = stream.logical_bytes();
+    let tree = stream.record_tree();
+    let at = tree
+        .iter()
+        .rev()
+        .find(|n| matches!(n.rtype, 0x0073 | 0x0080 | 0x007e | 0x0079))
+        .map(|n| n.content_end)
+        .ok_or("no field definitions to anchor the summary beside")?;
+    let new_logical = framing::splice(&logical, &tree, at..at, &summary)
+        .map_err(|e| format!("splice summary: {e}"))?;
+    let out = rpt
+        .write_contents_logical(&new_logical)
+        .map_err(|e| format!("write summary: {e}"))?;
+
+    let reopened = crate::open_bytes(&out)?;
+    // A summary carries no stored NAME (the decoder identifies it by its operation + field
+    // + scope), so the read-back checks the summarized-field binding.
+    let found = reopened
+        .report()
+        .data_definition
+        .field_definitions
+        .iter()
+        .any(|f| matches!(&f.kind, model::FieldKindData::Summary(s) if s.summarized_field.eq_ignore_ascii_case(&display)));
+    if !found {
+        return Err("the minted summary does not read back in the model".to_string());
+    }
+    Ok(out)
+}
+
+fn field_handle_value_type(report: &model::Report, field_ref: &str) -> FieldValueType {
+    let debraced = field_ref.trim().trim_start_matches('{').trim_end_matches('}');
+    let bare = debraced.rsplit('.').next().unwrap_or(debraced);
+    report
+        .data_definition
+        .field_definitions
+        .iter()
+        .find(|f| {
+            matches!(f.kind, model::FieldKindData::Database(_))
+                && f.name.rsplit('.').next().unwrap_or(&f.name).eq_ignore_ascii_case(bare)
+        })
+        .map(|f| f.value_type)
+        .unwrap_or(FieldValueType::Number)
+}
+
+fn build_summary_record(
+    name: &str,
+    display: &str,
+    op_pool: u32,
+    op_index: u16,
+    op: u16,
+    vt: FieldValueType,
+) -> (Vec<u8>, ()) {
+    let vt_code = match vt {
+        FieldValueType::Number => 6u16,
+        FieldValueType::Currency => 6,
+        FieldValueType::Boolean => 8,
+        FieldValueType::Date => 9,
+        FieldValueType::Time => 10,
+        FieldValueType::String => 11,
+        FieldValueType::DateTime => 15,
+        _ => 6,
+    };
+    let mut nv = Vec::new();
+    nv.extend(framing::build_string(name));
+    nv.extend(framing::build_narrowing(vt_code));
+    nv.extend_from_slice(&0u16.to_be_bytes());
+    nv.extend(framing::build_string(""));
+    nv.extend_from_slice(&0u32.to_be_bytes());
+    let named = framing::build_record(0x0071, 0x0700, &nv);
+
+    let mut body = named;
+    body.extend(framing::build_narrowing(op));
+    body.extend(framing::build_narrowing(0));
+    body.extend_from_slice(&0u16.to_be_bytes());
+    body.extend(framing::build_string(display));
+    body.extend(framing::build_narrowing(u16::try_from(op_pool).unwrap_or(0)));
+    body.extend_from_slice(&op_index.to_be_bytes());
+    body.extend(framing::build_string(""));
+    body.extend(framing::build_narrowing(0));
+    body.extend_from_slice(&0xFFFFu16.to_be_bytes());
+    body.extend_from_slice(&0i16.to_be_bytes());
+    body.extend(framing::build_narrowing(0));
+    body.extend(framing::build_narrowing(0));
+    (framing::build_record(0x007e, 0x0700, &body), ())
+}

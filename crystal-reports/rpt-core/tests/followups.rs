@@ -237,3 +237,59 @@ fn summary_operation_check_clean_on_fixtures() {
         );
     }
 }
+
+/// Regression (the area-clone corruption, validation-log §26): `addGroup` must clone the
+/// INNERMOST group footer. The model lists footers innermost-first, so the old `next_back()`
+/// picked the outermost — the clone split the outer pair's `[footer 0x8b][group def 0xe5]`
+/// adjacency, the donor areas fell out of the model, and the stream desynced. Both
+/// previously-corrupting fixtures (World Sales Report: charts in the group header;
+/// IndPerfOverview: the subreport placeholder) must PASS 0/0 with clean round-trips.
+#[test]
+fn add_group_on_chart_and_subreport_bearing_group_headers() {
+    for (fixture_name, field, want_groups) in [
+        ("World Sales Report.rpt", "{Customer.City}", 5),
+        ("PMSV10_IndPerfOverview.rpt", "{sheet.stage_score_display}", 3),
+    ] {
+        let plan = format!(
+            r#"{{"planVersion":1,"operations":[{{"action":"addGroup","fieldRef":"{field}","direction":"ascending"}}]}}"#
+        );
+        let (out, _) = apply_plan_json(&fixture(fixture_name), &plan)
+            .unwrap_or_else(|e| panic!("{fixture_name}: {e}"));
+        assert_clean(&out, &format!("addGroup {fixture_name}"));
+        let rpt = open_bytes(&out).unwrap();
+        assert_eq!(
+            rpt.report().data_definition.groups.len(),
+            want_groups,
+            "{fixture_name}: group count"
+        );
+    }
+}
+
+/// Orientation / paper size on a report with NO stored page DEVMODE (the blank, the PMSV10
+/// family): the ops synthesize a minimal `0x0007` first (validation-log §27), so what used to
+/// be a refusal now reads back as the requested orientation/paper — and the model derives
+/// A4-landscape content dimensions for it.
+#[test]
+fn orientation_and_paper_synthesize_a_devmode() {
+    let blank = rpt_core::blank::create_report(&rpt_core::blank::NewReportOptions::default()).expect("blank");
+    let out = apply_edits(
+        &{
+            let mut p = std::env::temp_dir();
+            p.push("rpt_followup_blank.rpt");
+            std::fs::write(&p, &blank).unwrap();
+            p.to_string_lossy().to_string()
+        },
+        &[
+            EditOp::SetOrientation { orientation: "landscape".to_string() },
+            EditOp::SetPaperSize { paper: 9 }, // A4
+        ],
+    )
+    .expect("apply");
+    let rpt = open_bytes(&out).unwrap();
+    let po = &rpt.report().print_options;
+    use rpt_reader::model::PaperOrientation;
+    assert_eq!(po.paper_orientation, PaperOrientation::Landscape);
+    assert_eq!(format!("{:?}", po.paper_size), "PaperA4");
+    assert!(po.content_width.0 > po.content_height.0, "landscape content dims");
+    assert_clean(&out, "orientation+paper");
+}

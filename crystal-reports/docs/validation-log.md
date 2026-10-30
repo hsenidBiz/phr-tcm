@@ -442,3 +442,269 @@ only; the wall-clock `preview()` path is asserted structurally beside it.
 
 Gates: rpt-layout 334 green; rpt-core preview battery 6/6 (the no-data test now pins the
 notice + the filtered noise + group-band suppression); full workspace gate re-run.
+
+
+## 25. HTML text interpretation — 2026-10-22
+
+**Symptom** (reported from the TCM preview): rendered pages printed literal markup —
+`<html><head><meta charset="utf-8">…` and `<span style='font-size:5.5pt'>&nbsp;</span>` as
+visible text. Root cause: the PMSV10 reports' `pad_*` formulas deliberately EMIT HTML (they
+escape user text, convert line breaks to `<br>`, and append a small-font spacer span), and
+the fields displaying them carry the stored `TextFormat::HTMLText` string format — but the
+renderer ignored the flag and printed the value verbatim.
+
+**Fix** (VENDORED.md #12): a Crystal-parity HTML interpretation in the vendored layout
+engine, gated on the stored flag only — plain-text fields are byte-identical to before.
+Subset: document wrappers invisible (with `<head>` content skipped entirely), `<br>`/`<p>`
+line breaks, entities (`&amp; &lt; &gt; &quot; &apos; &nbsp; &#NN; &#xHH;`), `<b>/<strong>`,
+`<i>/<em>`, `<u>`, `<s>/<strike>/<del>`, `<span style='font-size:Xpt|Xpx'>`, `<font
+size=1-7 face=…>`; unknown tags dropped with their text kept; a bare `<` without a `>` in
+512 bytes stays literal (formulas may print math). The line font is the style active at the
+line's FIRST character (the layout line model is one-font-per-line; the corpus authors put
+a `<br>` before every style change, which renders exactly).
+
+**Tests:** 6 unit tests in `html.rs` (the corpus's exact authored wrapper shape, entities,
+breaks+bold, paragraphs+unknown tags, bare `<`, font tag) + an end-to-end layout test
+(`html_text_interpretation_renders_markup`: a saved-data HTML field renders "Stage & One" at
+10pt and the spacer at 5.5pt, no markup visible). rpt-layout 341 green; full workspace gate
+re-run — the PDF/dataset baselines are untouched (no baseline fixture uses HTMLText).
+
+
+## 26. The `addGroup` area-clone corruption — root-caused and fixed — 2026-10-22
+
+**The bug (documented as pre-existing in §23):** `addGroup` on a report whose group areas
+carry charts (World Sales Report) or subreport placeholders (IndPerfOverview family)
+produced a file the validator rejects (`stream_parsed` desync, `group_structure` counts).
+Reported from the TCM app's report tools.
+
+**Root cause — a one-line selection bug, not the splice.** The model lists areas in
+CANONICAL order: headers outermost→innermost, footers INNERMOST→outermost. `add_group`
+picked "the innermost group footer" with `.next_back()` — correct for headers (outer→inner
+order), but for footers that selects the OUTERMOST one. The clone then landed at the outer
+footer's end, splitting the outer pair's `[footer 0x8b][group def 0xe5]` adjacency; the
+donor areas fell out of the model (DetailFooter1 disappeared, group headers dropped), and
+the subsequent rebind over the mis-parsed tree desynced the stream. Diagnosis path: bisected
+the three splices with step-gated builds, byte-diffed the logical streams against the
+original (first divergence at the OUTER footer's end, not the inner one), then read the
+model's area ordering. Fix: the footer selection takes `.next()` (first = innermost), with
+the ordering documented at the site. GoalAlignCascade never fired the bug because its
+single group made outer == inner.
+
+**Verification:** World Sales Report (5 groups), IndPerfOverview (3), GoalAlignCascade (2)
+all PASS 0/0 with clean round-trips; regression test added (followups:
+`add_group_on_chart_and_subreport_bearing_group_headers`); full workspace gate + relocation
+gate green.
+
+## 27. Orientation / paper-size synthesis + the thumbnail command — 2026-10-22
+
+**`setOrientation` / `setPaperSize` no longer refuse DEVMODE-less reports.** Both ops now
+synthesize a minimal `0x0007` page DEVMODE first (`pagesetup.rs`): `dm_fields` selecting
+only orientation | paper size (the two fixed slots; optional members omitted — `form_name`'s
+engine spelling is only attested for Letter), spliced where a printer-attached save puts it
+(after `0x0005 ReportDocumentFlags`, falling back to ahead of `0x0066` PageSetup — the
+placement observed in the corpus donor), then the existing verified patch path runs on it.
+The blank and the whole PMSV10 family become orientation/paper-editable; the model derives
+oriented content dimensions (A4-landscape blank reads back 16118×11186). Regression test in
+followups (`orientation_and_paper_synthesize_a_devmode`); renders after the change use the
+new geometry.
+
+**`preview_thumbnail`** (backlog item 3, v1): a list-view thumbnail — page 1 only, as a
+one-page PDF (`rpt_core::thumbnail[_report]` + Tauri `preview_thumbnail` + TS
+`previewThumbnail()`), a fraction of the full document's size (58 KB vs 199 KB for WSR).
+The stored-in-file DIB variant (SummaryInformation `PID_THUMBNAIL`) remains a follow-up: it
+needs a raster backend this bundle does not carry (upstream removed theirs); a one-page PDF
+serves the same UI surface through the same display path as the full preview.
+
+**The live-wire verification (backlog item 2) remains blocked:** `sgdev01db02.cloud` and
+`sgqa01db01.cloud` still fail DNS from this machine (corporate network required).
+
+**Folder consolidation (backlog item 5):** the original `Desktop\CrystalReports\Out`
+was archived by rename (`Out (archived 2026-10-22 …)`); this handoff folder is the single
+canonical source from here on.
+
+
+## 28. Editor-integration polish batch — 2026-10-22
+
+Five small integration features, one pass (the BACKLOG "Candidates" A/C/D/H/E):
+
+- **A. Parameter-prompt surface** — `get_parameters` through the whole stack: the open
+  report's declared main-report parameters (name, kind as `Number`/`String`/… — the kinds
+  `coerce_params` parses —, prompt text, multi/null/optional flags, pick lists and saved
+  current values), extracted in `rpt-core/parameters.rs`. Subreport `Pm-` parameters are
+  deliberately excluded (bound by links, never prompted). The missing half of the
+  live-preview UX: TCM can render the prompt form the moment item 2's network unblocks.
+  Note: declaration order is the MODEL's (orphan 0x7a) order, which differs from the proc's
+  parameter order (measured: business_unit before emp_number_list) — the prompt form
+  should render in this order and key by NAME, not position.
+- **C. Undo/redo in `EditorState`** — byte snapshots before every accepted mutation
+  (50-step cap), `undo_report`/`redo_report` returning the refreshed IR; a new mutation
+  clears redo; opening anything resets both stacks. Snapshots use the report's current
+  bytes (or a re-encode for a pristine file-open).
+- **D. Open-from-bytes** — `open_report_bytes`: the create-then-edit flow without temp
+  files (pairs with `new_report`); no save path until one is passed to `save_report`.
+- **H. Atomic saves** — `save_report` writes a sibling `.tmp` then renames over the target
+  (Windows replace-semantics rename); a crash mid-save can never truncate a user's report,
+  and no temp file survives a failed save.
+- **E. PDF export options** — `export_pdf` / `preview_report_with(&PdfExportOptions)`:
+  document title (metadata), PDF/A level-b conformance (1b/2b/3b), optional structure-tree
+  tagging, over the same saved-data render. The level-A conformance levels and PDF/UA also
+  require a document language and are refused with that explanation (deliberate scope).
+  Default options are byte-identical to the plain preview (pinned by test).
+
+Tests: `rpt-core/tests/parameters.rs` (2), export-options block in `tests/preview.rs`, and
+four state-level tests in `tauri-commands` (open-bytes→edit→undo→redo including the
+redo-clears-on-mutation and stack-bottom rules, history reset on open, parameter extraction
+over the fixture, atomic-save leaves no temp). Gates re-run.
+
+
+## 29. Subreport internals editing — 2026-10-22
+
+**The last big editing boundary closed.** A subreport's `Subdocument N/Contents` stream IS a
+complete report (its own root, areas, objects, formulas, saved data), stored raw in the
+container — so instead of parallel machinery for walking and patching subdocuments, an edit
+inside a subreport LIFTS the subdocument into a standalone mini-`.rpt` (a minimal compound
+file whose root `Contents` stream carries the subdocument's raw bytes; the container-creation
+recipe was already proven upstream), where the ENTIRE existing op vocabulary applies
+unchanged — locate, IR, verified field patches, donor-clone adds, setFormula with its
+source-derived refs, validation — and then writes the edited stream back through the
+verified `write_stream_logical` seam, re-reading the parent's subreport model as the
+read-back gate.
+
+Surface (`subedit.rs`):
+- `subreport_ir(name)` / Tauri `get_subreport_ir` — the sub's own IR; object ids are scoped
+  to the subreport (they resolve through the same lift).
+- `EditOp::InSubreport { subreport, ops }` — a batch inside one subreport, main-scope batch
+  semantics (ordered, refusal aborts, earlier ops stand). Nested subreports are refused
+  (none exist in this workspace's files).
+- The plan vocabulary routes ANY action into a subreport with one extra key —
+  `{"action":"addText","subreport":"StageWise",…}` — lowered to the wrapper.
+
+What came free because of the lift: structural adds inside subreports (addText used the
+sub's OWN donor objects — no seed machinery needed), setFormula inside subreports (StageWise
+carries 7 formulas), sections, grouping — the whole vocabulary. Undo/redo also free (the
+byte history works on whole file bytes).
+
+Tests (`rpt-core/tests/subedit.rs`, 5): sub IR locates StageWise's 30 objects with zero
+warnings; setText inside (parent model + validator + round-trip); plan-vocabulary addText
+inside (object present in the sub's IR); setFormula inside (formula text reads back through
+the parent's model); nesting + unknown-name refusals. Gates re-run.
+
+
+## 30. Round-2 candidate batch — 2026-10-22
+
+All five candidates from the round-2 list, one pass:
+
+- **I. Section visibility-formula editing** — the probe found ALL SIX subreports of
+  IndDetailedEval carry a `Section_Visibility` formula (not two as first thought). Wire
+  pinned against those engine-authored donors: each section is followed by top-level
+  `0x00ff SectionFormatWrapper` records whose `visibility_formula` slot is a FieldRef
+  (`@Section_Visibility`, kind 1, index = the GLOBAL 0x76 ordinal in pre-order — the same
+  index space the reader's condition resolver uses). `setSectionVisibility` (EditOp + plan
+  action + TS) resolves the section's wrapper, then rewrites the indexed formula body with
+  the setFormula rebuild machinery, generalized to an ordinal matcher. Setting a section
+  that carries no such formula refuses with the clear message (creation from nothing is a
+  separate donor splice; no file here needs it). Works in subreports through the
+  `subreport` plan key (the lift carries the slots).
+- **J. The accessibility tier** — `lang` (RFC 3066) on `PdfExportOptions` unlocks PDF/A
+  1a/2a/3a; `ua` additionally requires `title`. Both requirements refuse with the
+  explanation when missing.
+- **K. Render locale** — `locale` on the export options (`Locale::lookup`: built-in
+  en/de/fr/es/it roots, `_`/`-` tolerant, language-root fallback); unknown tags refused
+  naming them. The option threads through `RenderOptions` for both preview paths.
+- **L. "What changed"** — `rpt-core/diff.rs` (`diff_bytes`/`diff_reports`): a JSON-path
+  diff over the decoded models, `$.path: old -> new` lines; the Tauri `diff_reports`
+  command + TS `diffReports`. Pinned: one `setFont` edit diffs exactly the two mirrored
+  font slots (object + run level) and nothing else; identical models and re-encoded models
+  diff clean.
+- **M. Walkthrough example** — `tauri-commands/examples/walkthrough.rs`: the full loop
+  (create → open-from-bytes → parameters → edit → undo → redo → export → thumbnail →
+  atomic save) as runnable code, `cargo run -p tauri-commands --example walkthrough`.
+
+Tests: subedit battery grew to 7 (visibility round-trip through the parent model + refusal;
+RatingCmp's own formula verified untouched); the preview battery's accessibility/locale
+block; the diff test. Gates re-run.
+
+
+## 31. Round-3 batch — edit-through-the-renderer, find & replace, batch apply — 2026-10-22
+
+- **N. The render-geometry bridge** (`rpt-core/hits.rs`). The layout engine already
+  attributes every draw-op (`ObjectRef`: section + object name + kind + per-placement
+  instance id — the vendored docs call it "the key for hit-testing"); `preview_hits`
+  projects that into one hit box per object instance per page (instance grouping unions a
+  wrapped value's lines and its border/fill into the object's TRUE on-page rectangle —
+  can-grow heights included, unlike the stored design bounds). `hit_test` resolves a
+  printable-relative point; `boxes_of_object` coalesces an object's boxes across pages for
+  selection highlighting. Tauri `preview_hits`/`hit_test` + TS types. **Subreport
+  attribution confirmed by code** (`translate_op` shifts geometry and remaps instance ids
+  ONLY — child ops keep their own section/object names on the parent page), so a click
+  inside a rendered subreport routes through `resolve_scope` → `EditOp::InSubreport`:
+  visual editing reaches subreport internals. Front-end note: the native iframe PDF viewer
+  does not expose click coordinates — display via pdf.js on a canvas (or scaled overlay
+  boxes); the geometry is pure twips, so any mapping works.
+- **O. Find & replace** (`rpt-core/find.rs`): every literal text in the main report AND
+  every subreport, one atomic batch (undo = one step); multi-run locked texts are skipped
+  and counted, never mangled; case-insensitive option (ASCII 1:1 lowercase mapping).
+  Tauri `find_replace` plans through the state layer so the result participates in undo.
+  First run found 3 objects carrying the StageWise heading family — the counts are real.
+- **P. Batch apply** (`rpt-core/batch.rs` + `rpt-tools apply-all <dir> <plan.json>`): one
+  plan against every .rpt under a directory; per-file isolation (a failure never stops the
+  run); `<file>.bak` beside every rewritten file; byte-identical results are left
+  untouched (no rewrite, no backup). Smoke-run green.
+- **Q.** True rendered heights ride on N's hit boxes (documented at the type).
+
+Tests (`tests/round3.rs`, 5): hits projection over the 37-page WSR (named boxes, chart
+coalescing, hit/miss, cross-page boxes), scope routing (FtConf→main, ComBox→StageWise),
+find & replace reaching subreports through the parent model (+ case-insensitive, refusal,
+no-hit), batch apply with backups + contained failure + true no-op. Gates re-run.
+
+
+## 32. Tier-A property batch — 2026-10-22
+
+**Eleven format-leaf ops, one pass** — every wire slot was already decoded; the work was
+capture + verified patches:
+
+- **Object format (`0x00fc`)**: `setTextRotation` (0/90/180/270), `setVerticalAlignment`
+  (top/center/bottom — wire codes are the SHARED ALIGNMENT ordinals 6/7/8, not 0/1/2: found
+  by reading the model decoder's mapping, the first draft wrote 1 and read back Top),
+  `setKeepTogether`.
+- **String format (`0x00fa`)**: `setWordWrap`, `setMaxLines` (0 = unlimited),
+  `setTextInterpretation` (plain/html/rtf — html is what the corpus's `pad_*` fields carry),
+  `setIndents` (first-line/left/right, twips), `setReadingOrder` (ltr/rtl — the leaf is
+  optional; a record without it refuses cleanly). Locate now captures `0xfa`/`0xee` per
+  object (`string_format`/`boolean_format`), mirroring the numeric-format captures.
+- **Boolean format (`0xee`)**: `setBooleanFormat` (true_false/one_zero/t_f).
+- **Section flags (`0x00fe`)**: one `setSectionFlags` op carrying the four optional booleans
+  (keepTogether, resetPageNumber, printAtBottom, underlay).
+- **`setGroupSelection`**: the formula-kind-2 twin of setRecordSelection (World Sales
+  Report carries one; the test rewrites it and reads back through the model).
+
+All exposed on the plan vocabulary + TS union. `tests/tier_a.rs` (3 tests: object-format
+cluster with model read-back + rotation refusal, string-format cluster, section flags +
+group selection) — every case validator-PASS + clean round-trip. Wire facts pinned by test,
+per the standing lesson.
+
+**Deferred from A** (each needs its own wire pass, documented): date/time format value
+edits (the `0x00f4` order/separator pair + the `0xf2`/`0xf6` leaves — multi-leaf records),
+paper source/duplex (DEVMODE members beyond the two fixed slots our synthesis writes),
+picture crop (undecoded), `removeSort`/`removeGuideline` (structural, not leaf patches).
+
+
+## 33. Tier-B batch — 2026-10-22
+
+Three structural completions (removeGroup and table-links/RTF remain deferred):
+
+- **`addSummary`** — grand-total summary field synthesis (`0x7e[0x71]`, the shape the
+  running-total builder already knew). MODEL NOTE: a summary carries no stored NAME (the
+  decoder identifies it by operation + field + scope) — the read-back checks the
+  summarized-field binding, not the name. Group subtotals refuse in v1 (the group-scope
+  form is a separate synthesis — the `group_index` recovery the decoder does has no
+  write-side mirror yet).
+- **`setParameter`** — prompt-text patches on the `0x7a` record (matched by its `0x71`
+  child's name). The `optional_prompt` leaf is a trailing optional field most records do
+  not carry — patching it refuses cleanly when absent (measured on the PMSV10 fixture's
+  own records); the prompt text always works.
+- **`removeSort`** — splice out the `0x29` matching a field's display name; the test pins
+  the add→remove round-trip returning the model's sort count to the original.
+
+All on the plan vocabulary (`addSummary`, `setParameter`, `removeSort`) + TS. Tests:
+`tests/tier_b.rs` 3/3 (model read-back + validator + round-trip each).

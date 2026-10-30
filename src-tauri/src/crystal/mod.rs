@@ -13,10 +13,12 @@
 //! `live`'s, and is kept here exactly like a render from the saved data.
 
 mod compare;
+mod find;
 mod guide;
 mod live;
+mod params;
 
-pub use live::{check_live_params, live_target, live_target_of, preview_live, preview_live_with};
+pub use live::{check_live_params, check_typed_value, live_target, live_target_of, preview_live, preview_live_with};
 
 use std::path::Path;
 use std::sync::{Mutex, MutexGuard};
@@ -25,6 +27,9 @@ use rpt_core::edit::{apply_edits_on, ApplyOutcome, EditOp};
 use rpt_core::plan::LayoutPlan;
 use rpt_core::rpt_reader::Rpt;
 use serde_json::Value;
+
+pub use find::{find, replace, replace_expecting, FindHit, ReplaceChange, ReplaceOutcome};
+pub use params::{parameters, preview_saved_with, ParameterChoice, ReportParameter, NO_SAVED_DATA};
 
 /// The open report, if any.
 static OPEN: Mutex<Option<Open>> = Mutex::new(None);
@@ -66,7 +71,7 @@ pub struct ReadFilter {
     pub object: Option<String>,
 }
 
-const NOTHING_OPEN: &str = "No report is open. Open one with open_report first.";
+pub(crate) const NOTHING_OPEN: &str = "No report is open. Open one with open_report first.";
 
 fn state() -> MutexGuard<'static, Option<Open>> {
     // A panic mid-call leaves the slot as it was before that call wrote it,
@@ -239,6 +244,9 @@ fn narrow(ir: &Value, filter: &ReadFilter, name: &str) -> Result<Value, String> 
 /// exactly one of the two - and save it over the file. Answers with the
 /// new IR. A batch the bundle refuses saves nothing: the report is read
 /// again from disk and the answer is the refusal.
+/// The sentence for an `in_subreport` op, which is not offered yet.
+pub const SUBREPORT_EDIT_REFUSED: &str = "Editing inside a subreport is not offered yet. Nothing was saved.";
+
 pub fn edit(ops: Option<Value>, plan: Option<Value>) -> Result<Value, String> {
     let ops: Vec<EditOp> = match (ops, plan) {
         (Some(ops), None) => {
@@ -254,13 +262,23 @@ pub fn edit(ops: Option<Value>, plan: Option<Value>) -> Result<Value, String> {
             return Err("Give the changes as ops (native edit ops) or as a plan (a layout plan).".to_string())
         }
     };
+    if ops.iter().any(|op| matches!(op, EditOp::InSubreport { .. })) {
+        return Err(SUBREPORT_EDIT_REFUSED.to_string());
+    }
     if ops.is_empty() {
         return Err("The batch is empty: there is nothing to change.".to_string());
     }
 
     let mut slot = state();
     let open = slot.as_mut().ok_or(NOTHING_OPEN)?;
-    let bytes = match apply_edits_on(&open.rpt, &ops, &mut ApplyOutcome::default()) {
+    apply_ops(open, &ops)
+}
+
+/// Apply `ops` to `open` and save them over its file: the one path every
+/// accepted change takes (`edit`, `replace`). Answers with the new IR. A
+/// batch the bundle refuses saves nothing and the file is read again.
+fn apply_ops(open: &mut Open, ops: &[EditOp]) -> Result<Value, String> {
+    let bytes = match apply_edits_on(&open.rpt, ops, &mut ApplyOutcome::default()) {
         Ok(bytes) => bytes,
         Err(refusal) => {
             // The batch's bytes are dropped, so the open report never held any of
@@ -361,8 +379,7 @@ pub fn compare(a: &str, b: &str) -> Result<Vec<String>, String> {
 /// Render the open report from the data saved in it, and keep the PDF for
 /// the screen.
 pub fn preview_saved() -> Result<PreviewInfo, String> {
-    let mut slot = state();
-    render(slot.as_mut().ok_or(NOTHING_OPEN)?)
+    preview_saved_with(Vec::new())
 }
 
 /// The open report's last render and its PDF (empty when that render

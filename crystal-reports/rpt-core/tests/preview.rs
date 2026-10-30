@@ -15,7 +15,6 @@ use rpt_core::edit::{apply_edits, EditOp, ObjSel};
 use rpt_core::preview::preview;
 use rpt_core::PreviewOutput;
 use rpt_test_support::pdf;
-use sha2::{Digest, Sha256};
 
 fn fixture(name: &str) -> String {
     format!("{}/tests/fixtures/{}", env!("CARGO_MANIFEST_DIR"), name)
@@ -164,4 +163,104 @@ fn world_sales_preview_pdf_sha256_pinned_at_fixed_asof() {
     // The wall-clock preview() path must agree structurally.
     let out = preview(&bytes).expect("render");
     assert_eq!(out.page_count, 37);
+}
+
+/// The thumbnail: exactly one page, structurally valid, far smaller than the full document.
+#[test]
+fn thumbnail_is_one_page() {
+    let out = rpt_core::thumbnail(&read_fixture("World Sales Report.rpt")).expect("thumbnail");
+    assert_valid_pdf("thumbnail", &out);
+    assert_eq!(out.page_count, 1, "a thumbnail is page 1 only");
+    let full = preview(&read_fixture("World Sales Report.rpt")).expect("full");
+    assert!(
+        out.pdf.len() < full.pdf.len() / 3,
+        "one page should be well under the 37-page document ({} vs {})",
+        out.pdf.len(),
+        full.pdf.len()
+    );
+}
+
+/// Export options: default options render byte-identically to the plain preview (stability
+/// for callers that only vary the title later); a title changes the bytes without touching
+/// the pages; a b-level PDF/A renders a valid PDF; the a-levels are refused with the
+/// language explanation.
+#[test]
+fn pdf_export_options() {
+    use rpt_core::preview::{preview_report_with, PdfExportOptions};
+
+    let bytes = read_fixture("PMSV10_GoalAlignCascade.rpt");
+    let rpt = rpt_core::open_bytes(&bytes).unwrap();
+
+    let plain = preview_report_with(&rpt, &PdfExportOptions::default()).expect("default export");
+    let as_preview = preview(&bytes).expect("preview");
+    assert_eq!(plain.pdf, as_preview.pdf, "default options == plain preview");
+
+    let titled =
+        preview_report_with(&rpt, &PdfExportOptions { title: Some("Perf Review".into()), ..Default::default() })
+            .expect("title");
+    assert_ne!(titled.pdf, plain.pdf, "the title is written into the metadata");
+    assert_eq!(titled.page_count, plain.page_count, "pages untouched");
+
+    let archival = preview_report_with(
+        &rpt,
+        &PdfExportOptions { pdfa: Some("1b".into()), ..Default::default() },
+    )
+    .expect("pdfa 1b");
+    assert_valid_pdf("pdfa-1b", &archival);
+    assert_eq!(archival.page_count, plain.page_count);
+
+    let err = preview_report_with(&rpt, &PdfExportOptions { pdfa: Some("2a".into()), ..Default::default() })
+        .unwrap_err();
+    assert!(err.contains("language"), "`{err}` explains the a-level gap");
+    let err = preview_report_with(&rpt, &PdfExportOptions { pdfa: Some("9z".into()), ..Default::default() })
+        .unwrap_err();
+    assert!(err.contains("9z"), "`{err}` names the unknown level");
+}
+
+/// The accessibility tier: level-A conformance needs `lang` (refused without it, valid
+/// with it); PDF/UA needs `lang` AND `title`; the locale option renders (built-in roots,
+/// unknown refused).
+#[test]
+fn pdf_export_accessibility_tier_and_locale() {
+    use rpt_core::preview::{preview_report_with, PdfExportOptions};
+
+    let bytes = read_fixture("PMSV10_GoalAlignCascade.rpt");
+    let rpt = rpt_core::open_bytes(&bytes).unwrap();
+
+    let e = preview_report_with(&rpt, &PdfExportOptions { pdfa: Some("2a".into()), ..Default::default() })
+        .unwrap_err();
+    assert!(e.contains("language"), "`{e}`");
+    let e = preview_report_with(
+        &rpt,
+        &PdfExportOptions { pdfa: Some("ua".into()), lang: Some("en".into()), ..Default::default() },
+    )
+    .unwrap_err();
+    assert!(e.contains("title"), "`{e}`");
+
+    let a2 = preview_report_with(
+        &rpt,
+        &PdfExportOptions { pdfa: Some("2a".into()), lang: Some("en-US".into()), ..Default::default() },
+    )
+    .expect("2a with lang");
+    assert_valid_pdf("pdfa-2a", &a2);
+    assert_eq!(a2.page_count, 1);
+    let ua = preview_report_with(
+        &rpt,
+        &PdfExportOptions {
+            pdfa: Some("ua".into()),
+            lang: Some("en".into()),
+            title: Some("UA export".into()),
+            ..Default::default()
+        },
+    )
+    .expect("ua with lang+title");
+    assert_valid_pdf("pdf-ua", &ua);
+
+    // Locale: a built-in root renders; an unknown tag is refused naming it.
+    let gb = preview_report_with(&rpt, &PdfExportOptions { locale: Some("en-GB".into()), ..Default::default() })
+        .expect("en-GB renders");
+    assert_eq!(gb.page_count, 1);
+    let e = preview_report_with(&rpt, &PdfExportOptions { locale: Some("xx-XX".into()), ..Default::default() })
+        .unwrap_err();
+    assert!(e.contains("xx-XX"), "`{e}`");
 }

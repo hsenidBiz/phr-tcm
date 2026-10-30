@@ -237,6 +237,104 @@ fn shown(name: &str) -> &str {
 /// here and NULL for the rest, never a saved one. Each refusal names the
 /// parameters.
 pub fn check_live_params(report: &Report, params: &[(String, String)]) -> Result<(), String> {
+    check_param_names(report, params)?;
+    let key = rpt_db_mssql::param_key;
+    let fields: Vec<_> = report.data_definition.parameter_fields().collect();
+    let missing: Vec<&str> = fields
+        .iter()
+        .filter(|(_, p)| p.report_name.is_none() && !p.optional_prompt && !p.allow_null_value)
+        .map(|(f, _)| shown(&f.name))
+        .filter(|n| !params.iter().any(|(given, _)| key(given) == key(n)))
+        .collect();
+    if !missing.is_empty() {
+        return Err(format!("the report needs a value for {}: give it in params", missing.join(", ")));
+    }
+    Ok(())
+}
+
+/// Whether `text` is a real calendar date, written YYYY-MM-DD.
+fn real_date(text: &str) -> bool {
+    let mut it = text.split('-');
+    let (Some(y), Some(m), Some(d), None) = (it.next(), it.next(), it.next(), it.next()) else { return false };
+    let (Ok(y), Ok(m), Ok(d)) = (y.parse::<i32>(), m.parse::<u32>(), d.parse::<u32>()) else { return false };
+    if !(1..=9999).contains(&y) || !(1..=12).contains(&m) {
+        return false;
+    }
+    let leap = y % 4 == 0 && (y % 100 != 0 || y % 400 == 0);
+    let days = match m {
+        2 if leap => 29,
+        2 => 28,
+        4 | 6 | 9 | 11 => 30,
+        _ => 31,
+    };
+    (1..=days).contains(&d)
+}
+
+/// Whether `text` is a real time, HH:MM or HH:MM:SS.
+fn real_time(text: &str) -> bool {
+    let parts: Vec<&str> = text.split(':').collect();
+    if !(2..=3).contains(&parts.len()) {
+        return false;
+    }
+    let max = [24u32, 60, 60];
+    parts.iter().zip(max).all(|(p, max)| p.parse::<u32>().is_ok_and(|n| n < max))
+}
+
+/// The vendored library accepts "NaN", "inf" and "2024-13-45" as values; the
+/// guide promises a value that does not fit its kind is refused, so TCM
+/// checks the range itself. `Ok` for kinds the library checks well enough.
+/// The error is a clause that names the value, for the caller to wrap.
+pub fn check_typed_value(
+    kind: rpt_core::rpt_reader::model::ParameterValueKind,
+    text: &str,
+) -> Result<(), String> {
+    use rpt_core::rpt_reader::model::ParameterValueKind as K;
+    let split = |t: &str| -> (String, String) {
+        t.split_once('T').or_else(|| t.split_once(' ')).map(|(d, h)| (d.to_string(), h.to_string())).unwrap_or_default()
+    };
+    match kind {
+        K::NumberParameter | K::CurrencyParameter => match text.parse::<f64>() {
+            Ok(n) if !n.is_finite() => Err(format!("`{text}` is not a number a report can use")),
+            _ => Ok(()),
+        },
+        K::DateParameter if !real_date(text) => Err(format!("`{text}` is not a real date (use YYYY-MM-DD)")),
+        K::TimeParameter if !real_time(text) => Err(format!("`{text}` is not a real time (use HH:MM:SS)")),
+        K::DateTimeParameter => {
+            let (date, time) = split(text);
+            if !real_date(&date) {
+                Err(format!("`{text}` is not a real date and time (use YYYY-MM-DDTHH:MM:SS)"))
+            } else if !real_time(&time) {
+                Err(format!("`{text}` is not a real date and time (use YYYY-MM-DDTHH:MM:SS)"))
+            } else {
+                Ok(())
+            }
+        }
+        _ => Ok(()),
+    }
+}
+
+/// `check_typed_value` for each value given to `report`, naming the parameter.
+/// Names the report does not declare are left to `check_param_names`.
+pub fn check_param_values(report: &Report, params: &[(String, String)]) -> Result<(), String> {
+    let key = rpt_db_mssql::param_key;
+    for (name, text) in params {
+        let kind = report
+            .data_definition
+            .parameter_fields()
+            .find(|(f, _)| key(&f.name) == key(name))
+            .map(|(_, p)| p.value_kind);
+        if let Some(kind) = kind {
+            check_typed_value(kind, text).map_err(|why| format!("parameter {name}: {why}"))?;
+        }
+    }
+    Ok(())
+}
+
+/// Every name in `params` must be one of the report's parameters (matched
+/// like the bundle matches them: in any case, with or without the `@`).
+/// The coercion alone lets an unknown name through as text, which would
+/// quietly draw without it.
+pub fn check_param_names(report: &Report, params: &[(String, String)]) -> Result<(), String> {
     let key = rpt_db_mssql::param_key;
     let fields: Vec<_> = report.data_definition.parameter_fields().collect();
     // The procedure's own parameters are names the bundle binds too.
@@ -256,16 +354,7 @@ pub fn check_live_params(report: &Report, params: &[(String, String)]) -> Result
         let has = if known.is_empty() { "none".to_string() } else { known.join(", ") };
         return Err(format!("this report has no parameter named {} (its parameters: {has})", unknown.join(", ")));
     }
-    let missing: Vec<&str> = fields
-        .iter()
-        .filter(|(_, p)| p.report_name.is_none() && !p.optional_prompt && !p.allow_null_value)
-        .map(|(f, _)| shown(&f.name))
-        .filter(|n| !params.iter().any(|(given, _)| key(given) == key(n)))
-        .collect();
-    if !missing.is_empty() {
-        return Err(format!("the report needs a value for {}: give it in params", missing.join(", ")));
-    }
-    Ok(())
+    check_param_values(report, params)
 }
 
 /// Render the open report from its stored procedure, run on `conn`, and

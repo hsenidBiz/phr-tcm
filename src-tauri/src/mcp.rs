@@ -544,7 +544,7 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool, unlocked: bool, all_projec
     let all = serde_json::json!({ "tools": [
         {
             "name": "begin_test_case_writing",
-            "description": "START HERE for any test-case writing job, before reading specs or drafting anything. Call it with only `feature` first: it returns the questions to put to the developer in chat (what the file is called, which spec documents are authoritative, whether to check a PBI for duplicates, tags/module/status, what is out of scope) plus this org's real Module values. Ask them those questions - do not answer them yourself - then call this tool again with their answers. It checks the paths and values actually exist, and returns a plan file for them to approve. Do not write a single test case until it returns status \"ready\" and the developer has agreed to the plan.",
+            "description": "START HERE for any test-case writing job, before reading specs or drafting anything. Call it with only `feature` first: it returns the questions to put to the developer in chat (what the file is called, which spec documents are authoritative, whether to check a PBI for duplicates, tags/module/status, what is out of scope) plus this org's real Module values. Ask them those questions - do not answer them yourself - then call this tool again with their answers. It checks the paths and values actually exist, and returns a plan file for them to approve. If the job is for a PBI and you are the assistant the person talks to, call `get_current_pbi` before it (a subagent never asks: it uses the PBI id it was given): if the developer named no PBI and TCM has one selected, say \"PBI <id>, <title>, is selected in TCM - is that the one?\" and wait for their yes; if they named a different one, ask which to use; if TCM has none, find it with `search_pbis` or ask for the id. Do not write a single test case until it returns status \"ready\" and the developer has agreed to the plan.",
             "inputSchema": schema(serde_json::json!({
                 "feature": { "type": "string", "description": "What you are writing cases for - the plan's title" },
                 "output_path": { "type": "string", "description": "File name for the finished JSON, in the repository's .test-cases folder; a path outside it is refused" },
@@ -563,6 +563,11 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool, unlocked: bool, all_projec
             }), &[]),
         },
         guide_tool(&disabled),
+        {
+            "name": "get_current_pbi",
+            "description": "The PBI the person has selected in Test Case Manager's top bar: its id, title and project, or a plain sentence saying none is selected. Read only; it never changes the selection. Call it before searching for a PBI. If the person named a PBI, compare it with this one; if they named none and TCM has one, name it to them (\"PBI <id>, <title>, is selected in TCM - is that the one?\") and wait for their yes before you go on.",
+            "inputSchema": schema(serde_json::json!({}), &[]),
+        },
         {
             "name": "get_test_cases",
             "description": "Test cases in the exact import JSON shape. Pass `pbi_id` for the cases a PBI is tested by, `case_ids` to read specific cases by their own ids without knowing their PBI, or both to narrow a PBI's cases to those ids (any id the PBI is not tested by is listed in `not_on_pbi`). Use them to copy the house style, to check what is already covered before writing more, or to read a case someone named by its id.",
@@ -1303,8 +1308,10 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool, unlocked: bool, all_projec
         },
         {
             "name": "preview_report",
-            "description": "Draw the open report to a PDF from the data saved in it, and say how many pages that is and what the renderer noted (an object it does not draw, a formula that failed). The person sees the same PDF on the Crystal Reports screen. A page count of 0 means the drawing failed; the notes say why.",
-            "inputSchema": schema(serde_json::json!({}), &[]),
+            "description": "Draw the open report to a PDF from the data saved in it, and say how many pages that is and what the renderer noted (an object it does not draw, a formula that failed). The person sees the same PDF on the Crystal Reports screen. A page count of 0 means the drawing failed; the notes say why. Give values in `params` (names from get_report_parameters) to draw what depends on them; they are used for this drawing only and never saved. A name the report does not have, or a value that does not fit its kind, is refused before drawing.",
+            "inputSchema": schema(serde_json::json!({
+                "params": { "type": "object", "description": "The report's parameters, name to value, e.g. { \"performance_cycle_id\": \"42\" }. Dates as YYYY-MM-DD, times as HH:MM:SS, true/false for yes-or-no parameters." },
+            }), &[]),
         },
         {
             "name": "preview_report_live",
@@ -1312,6 +1319,29 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool, unlocked: bool, all_projec
             "inputSchema": schema(serde_json::json!({
                 "params": { "type": "object", "description": "The report's parameters, name to value, e.g. { \"performance_cycle_id\": \"42\" }. Dates as YYYY-MM-DD, times as HH:MM:SS, true/false for yes-or-no parameters." },
             }), &[]),
+        },
+        {
+            "name": "get_report_parameters",
+            "description": "List the open report's parameters: name, kind (Number, String, Currency, Boolean, Date, Time, DateTime), prompt text, whether it may be left out or empty, its pick list and any value saved in the report. Pass values by these names to preview_report or preview_report_live in `params`.",
+            "inputSchema": schema(serde_json::json!({}), &[]),
+        },
+        {
+            "name": "find_in_report",
+            "description": "Find text across the open report and its subreports: every text object whose text contains it, and every field whose reference (like {Command.name} or {?param}) contains it. Each hit has its object id, name, section, subreport (none for the main report), what matched and whether replace_in_report can change it (text holding fields cannot be rewritten). Case is ignored unless match_case is true.",
+            "inputSchema": schema(serde_json::json!({
+                "text": { "type": "string", "description": "The text to look for. Spaces count." },
+                "match_case": { "type": "boolean", "description": "Default false: upper and lower case letters match each other." },
+            }), &["text"]),
+        },
+        {
+            "name": "replace_in_report",
+            "description": "Replace text in every text object of the open report and its subreports that contains `find`. Run it with dry_run: true first: that lists each change (before and after, naming the subreport) and changes nothing. Without dry_run the changes are saved over the file at once, like edit_report, and cannot be taken back inside TCM. Matches that cannot be replaced (fields, and text that holds fields or cannot be edited) are skipped and counted in skipped_locked, never rewritten. Ids may change: read_report before the next edit.",
+            "inputSchema": schema(serde_json::json!({
+                "find": { "type": "string", "description": "The text to replace. Spaces count." },
+                "replace": { "type": "string", "description": "What to put in its place. May be empty, to remove the text." },
+                "match_case": { "type": "boolean", "description": "Default false: upper and lower case letters match each other." },
+                "dry_run": { "type": "boolean", "description": "List the changes and save nothing." },
+            }), &["find", "replace"]),
         },
         {
             "name": "optimize_cases",
@@ -2388,6 +2418,7 @@ fn tools_call_outcome(params: &serde_json::Value, call: BridgeCall) -> (serde_js
         "get_guide" if args["topic"].as_str().map(str::trim) == Some("autorun") && says(&args["role"]) => {
             role_guide(args, call)
         }
+        "get_current_pbi" => call("GET", "/current-pbi", ""),
         "get_guide" => match args["topic"].as_str().map(str::trim).unwrap_or_default() {
             "writing" => call("GET", "/guide", ""),
             "autorun" => autorun_guide_call(args, call),
@@ -2748,6 +2779,9 @@ fn tools_call_outcome(params: &serde_json::Value, call: BridgeCall) -> (serde_js
         "check_report" => call("POST", "/crystal-check", &args.to_string()),
         "preview_report" => call("POST", "/crystal-preview", &args.to_string()),
         "preview_report_live" => call("POST", "/crystal-preview-live", &args.to_string()),
+        "get_report_parameters" => call("POST", "/crystal-parameters", &args.to_string()),
+        "find_in_report" => call("POST", "/crystal-find", &args.to_string()),
+        "replace_in_report" => call("POST", "/crystal-replace", &args.to_string()),
         "optimize_cases" => {
             let entry = args["entry"].as_str().unwrap_or("");
             let mut params: Vec<String> = vec![];

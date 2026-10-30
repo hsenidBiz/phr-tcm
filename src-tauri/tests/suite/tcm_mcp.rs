@@ -104,6 +104,7 @@ fn tools_list_names_every_tool() {
         vec![
             "begin_test_case_writing",
             "get_guide",
+            "get_current_pbi",
             "get_test_cases",
             "search_test_suites",
             "get_suite_test_cases",
@@ -165,6 +166,9 @@ fn tools_list_names_every_tool() {
             "check_report",
             "preview_report",
             "preview_report_live",
+            "get_report_parameters",
+            "find_in_report",
+            "replace_in_report",
             "optimize_cases",
             "transform_cases",
             "validate_cases",
@@ -553,9 +557,9 @@ fn an_unreachable_bridge_disables_nothing() {
     let resp = v2_lib::mcp::handle_message(req, "1.0.0", &call).unwrap();
     let v: serde_json::Value = serde_json::from_str(&resp).unwrap();
     let names: Vec<&str> = v["result"]["tools"].as_array().unwrap().iter().map(|t| t["name"].as_str().unwrap()).collect();
-    // 53 tools in all; an unreachable bridge cannot say which modules are
-    // on, so the 38 module tools are not offered - and nothing else goes.
-    assert_eq!(names.len(), 53 - 38, "an unreachable bridge must not disable a Core tool: {names:?}");
+    // 56 tools in all; an unreachable bridge cannot say which modules are
+    // on, so the 40 module tools are not offered - and nothing else goes.
+    assert_eq!(names.len(), 56 - 40, "an unreachable bridge must not disable a Core tool: {names:?}");
     assert!(names.iter().all(|n| module_of_tool(n).is_none()), "{names:?}");
 }
 
@@ -2792,7 +2796,7 @@ fn the_network_tools_are_off_until_the_app_says_yes() {
             assert!(v["result"]["content"][0]["text"].as_str().unwrap().contains("Network tools switch"), "{tool}: {v}");
         }
         assert!(names.contains(&"get_autorun_page") && names.contains(&"get_autorun_network_wait"), "{names:?}");
-        assert_eq!(names.len(), 64, "{names:?}");
+        assert_eq!(names.len(), 68, "{names:?}");
     }
     // The proxy's own fallback when the app does not answer names no switch.
     let saved = v2_lib::mcp::tools_reply_or_saved(Err("down".into()), Some((Module::ALL.into_iter().collect(), true)));
@@ -2942,6 +2946,10 @@ fn the_crystal_tools_reach_their_routes() {
         ("compare_reports", serde_json::json!({ "a": "a.rpt", "b": "b.rpt" }), "POST", "/crystal-compare"),
         ("check_report", serde_json::json!({}), "POST", "/crystal-check"),
         ("preview_report", serde_json::json!({}), "POST", "/crystal-preview"),
+        ("preview_report", serde_json::json!({ "params": { "a": "1" } }), "POST", "/crystal-preview"),
+        ("get_report_parameters", serde_json::json!({}), "POST", "/crystal-parameters"),
+        ("find_in_report", serde_json::json!({ "text": "a" }), "POST", "/crystal-find"),
+        ("replace_in_report", serde_json::json!({ "find": "a", "replace": "", "dry_run": true }), "POST", "/crystal-replace"),
         (
             "preview_report_live",
             serde_json::json!({ "params": { "performance_cycle_id": "42" } }),
@@ -2966,6 +2974,26 @@ fn the_crystal_tools_reach_their_routes() {
         } else {
             assert_eq!(last.2, "", "{tool}");
         }
+    }
+}
+
+/// The find and replace tools list what they need, say what they do, and
+/// keep the dry run in the description; no description has an em dash.
+#[test]
+fn the_find_and_replace_tools_are_described() {
+    let stub = |_m: &str, _p: &str, _b: &str| -> Result<(u16, String), String> {
+        Ok((200, r#"{"modules":["crystal_reports"],"network_tools":true}"#.to_string()))
+    };
+    let resp = handle_message(r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#, "1.0.0", &stub).unwrap();
+    let v: serde_json::Value = serde_json::from_str(&resp).unwrap();
+    let tools = v["result"]["tools"].as_array().unwrap();
+    let find = tools.iter().find(|t| t["name"] == "find_in_report").expect("listed");
+    assert_eq!(find["inputSchema"]["required"], serde_json::json!(["text"]));
+    let replace = tools.iter().find(|t| t["name"] == "replace_in_report").expect("listed");
+    assert_eq!(replace["inputSchema"]["required"], serde_json::json!(["find", "replace"]));
+    assert!(replace["description"].as_str().unwrap().contains("dry_run"));
+    for t in [find, replace] {
+        assert!(!t["description"].as_str().unwrap().contains('\u{2014}'), "{t}");
     }
 }
 

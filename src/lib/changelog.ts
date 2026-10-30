@@ -27,6 +27,27 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.4.3-beta.5",
+    date: "2026-10-30",
+    items: [
+      "When you start a writing or Auto Run job with an AI assistant, it first checks the PBI selected in TCM: if you named one, it compares them and asks only if they differ; if you named none, it asks you to confirm TCM's before continuing, instead of searching Azure DevOps.",
+    ],
+  },
+  {
+    version: "2.4.3-beta.4",
+    date: "2026-10-29",
+    items: [
+      "On Auto Run's Setup panel, a row's buttons stay at the right edge when they wrap onto a second line.",
+    ],
+  },
+  {
+    version: "2.4.3-beta.3",
+    date: "2026-10-29",
+    items: [
+      "Smaller fixes and improvements.",
+    ],
+  },
+  {
     version: "2.4.3-beta.2",
     date: "2026-10-29",
     items: [

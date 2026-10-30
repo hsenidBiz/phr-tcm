@@ -112,7 +112,7 @@ pub fn add_subreport(
 /* ---------------- helpers ---------------- */
 
 /// The subdocument storage index of the named subreport, located from the placeholder objects.
-fn subdoc_index_of(rpt: &Rpt, subreport_name: &str) -> Option<u32> {
+pub(crate) fn subdoc_index_of(rpt: &Rpt, subreport_name: &str) -> Option<u32> {
     let report = rpt.report();
     let obj_name = report
         .report_definition

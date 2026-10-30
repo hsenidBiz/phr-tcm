@@ -17,6 +17,15 @@ static INTAKE_SINK: std::sync::OnceLock<IntakeSink> = std::sync::OnceLock::new()
 /// short enough not to drown the guide.
 const GUIDE_TAG_LIMIT: usize = 60;
 
+/// The PBI selected in Test Case Manager's top bar, as the assistants see it
+/// (`get_current_pbi`). Pushed with the bridge context; only ever read here.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, serde::Deserialize, specta::Type)]
+pub struct CurrentPbi {
+    pub id: i32,
+    pub title: String,
+    pub project: String,
+}
+
 #[derive(Clone, Default, Serialize)]
 pub struct BridgeContext {
     pub org: String,
@@ -70,6 +79,9 @@ pub struct BridgeContext {
     /// Whose context this is and whether its writes are held off - Rust's
     /// alone, kept across every push (`commands::ai_bridge::push_context_with`).
     pub gate: SwitchGate,
+    /// The PBI selected in the top bar, or None when none is. The webview's
+    /// to say; the assistants only read it (`get_current_pbi`).
+    pub current_pbi: Option<CurrentPbi>,
 }
 
 /// The part of the context only Rust sets: which environment the context's
@@ -164,6 +176,7 @@ impl std::fmt::Debug for BridgeContext {
             .field("api_writes", &self.api_writes)
             .field("network_tools", &self.network_tools)
             .field("all_projects", &self.all_projects)
+            .field("current_pbi", &self.current_pbi.as_ref().map(|p| p.id))
             .field("db_no_ask", &self.db_no_ask)
             .field("gate", &self.gate)
             .finish()
@@ -395,6 +408,15 @@ pub fn call_time_line(method: &str, target: &str, status: u16, ms: u128) -> Stri
     format!("Bridge call: {method} {path} answered {status} in {ms} ms")
 }
 
+/// What `get_current_pbi` answers: the PBI as JSON, or a plain sentence when
+/// the person has none selected in TCM.
+fn current_pbi_answer(ctx: &BridgeContext) -> String {
+    match &ctx.current_pbi {
+        Some(p) => serde_json::json!({ "id": p.id, "title": p.title, "project": p.project }).to_string(),
+        None => "No PBI is selected in TCM.".to_string(),
+    }
+}
+
 /// `route` for one caller: what the listener's `route_timed` calls, with the caller read from
 /// the request's `x-tcm-agent*` headers. `route` is this for the default
 /// caller (an older proxy, a test, the person).
@@ -470,6 +492,9 @@ pub async fn route_as(
             }
             (200, "{}".to_string())
         }
+        // The PBI selected in TCM: read only, and in no module, so it
+        // answers whichever modules are on.
+        ("GET", "/current-pbi") => (200, current_pbi_answer(ctx)),
         ("POST", "/optimize") => optimize_json(body, target, ctx),
         ("POST", "/transform") => transform_json(body, ctx),
         ("POST", "/validate") => (200, validate_json(body, target, ctx, client).await),
@@ -872,7 +897,10 @@ pub async fn route_as(
         ("POST", "/crystal-compare") => crystal_compare(body).await,
         ("POST", "/crystal-check") => crystal_check(body).await,
         ("POST", "/crystal-new") => crystal_new(body).await,
-        ("POST", "/crystal-preview") => crystal_preview().await,
+        ("POST", "/crystal-preview") => crystal_preview(body).await,
+        ("POST", "/crystal-parameters") => crystal_parameters().await,
+        ("POST", "/crystal-find") => crystal_find(body).await,
+        ("POST", "/crystal-replace") => crystal_replace(body).await,
         // Runs the report's stored procedure on the chosen database, so it
         // is gated like a database write besides (`crystal_preview_live`).
         ("POST", "/crystal-preview-live") => {
@@ -11839,11 +11867,58 @@ async fn crystal_new(body: &str) -> (u16, String) {
     crystal_answer(done)
 }
 
-async fn crystal_preview() -> (u16, String) {
-    let done = crystal_blocking(crate::crystal::preview_saved).await;
+async fn crystal_preview(body: &str) -> (u16, String) {
+    let params = match crystal_args(body).and_then(|args| crystal_params(&args)) {
+        Ok(params) => params,
+        Err(refused) => return refused,
+    };
+    let done = crystal_blocking(move || crate::crystal::preview_saved_with(params)).await;
     // A render that failed is kept as the preview too, so the screen shows why.
     crystal_changed().await;
     crystal_answer(done.and_then(|info| serde_json::to_value(info).map_err(|e| (500, e.to_string()))))
+}
+
+/// The open report's parameters, in the order it declares them.
+async fn crystal_parameters() -> (u16, String) {
+    let done = crystal_blocking(crate::crystal::parameters).await;
+    crystal_answer(done.and_then(|list| serde_json::to_value(list).map_err(|e| (500, e.to_string()))))
+}
+
+/// Find text across the open report and its subreports. The text keeps its
+/// spaces: unlike the other routes' arguments it is not trimmed.
+async fn crystal_find(body: &str) -> (u16, String) {
+    let args = match crystal_args(body) {
+        Ok(args) => args,
+        Err(refused) => return refused,
+    };
+    let Some(text) = args.get("text").and_then(|v| v.as_str()).map(str::to_string) else {
+        return (400, "this call needs a \"text\".".to_string());
+    };
+    let match_case = args.get("match_case").and_then(|v| v.as_bool()).unwrap_or(false);
+    let done = crystal_blocking(move || crate::crystal::find(&text, match_case)).await;
+    crystal_answer(done.and_then(|hits| serde_json::to_value(hits).map_err(|e| (500, e.to_string()))))
+}
+
+/// Replace text across the open report and its subreports; `dry_run` lists
+/// the changes and saves nothing. `find` and `replace` keep their spaces and
+/// `replace` may be empty (it removes the text).
+async fn crystal_replace(body: &str) -> (u16, String) {
+    let args = match crystal_args(body) {
+        Ok(args) => args,
+        Err(refused) => return refused,
+    };
+    let Some(find) = args.get("find").and_then(|v| v.as_str()).map(str::to_string) else {
+        return (400, "this call needs a \"find\".".to_string());
+    };
+    let Some(replace) = args.get("replace").and_then(|v| v.as_str()).map(str::to_string) else {
+        return (400, "this call needs a \"replace\" (it may be empty, to remove the text).".to_string());
+    };
+    let match_case = args.get("match_case").and_then(|v| v.as_bool()).unwrap_or(false);
+    let dry_run = args.get("dry_run").and_then(|v| v.as_bool()).unwrap_or(false);
+    let done = crystal_blocking(move || crate::crystal::replace(&find, &replace, match_case, dry_run)).await;
+    // A refused replace re-read the file, and an applied one changed it.
+    crystal_changed().await;
+    crystal_answer(done.and_then(|out| serde_json::to_value(out).map_err(|e| (500, e.to_string()))))
 }
 
 /// The two doors of a live preview that need no connection to check:
@@ -13613,7 +13688,14 @@ async fn begin_writing(
                 },
                 "note": "Put these to the developer in chat - one at a time, and let them \
                          paste or drop file paths. Do NOT answer them yourself, and do not \
-                         start writing. When they have answered, call this tool again with \
+                         start writing. If the job is for a PBI and you are the assistant the \
+                         person talks to, call `get_current_pbi` first: when the developer \
+                         named no PBI and TCM has one selected, say \
+                         \"PBI <id>, <title>, is selected in TCM - is that the one?\" and wait \
+                         for their yes; when they named a different one, ask which to use; \
+                         when TCM has none, find it with `search_pbis` or ask for the id. A \
+                         subagent never asks: it uses the PBI id it was given. When they have \
+                         answered, call this tool again with \
                          their answers to get the plan.",
             })
             .to_string(),
@@ -14802,7 +14884,15 @@ async fn guide(ctx: &BridgeContext, client: &crate::ado::AdoClient) -> String {
         is allowed when nothing here matches.\n\n{tag_lines}\n\n\
         {transform_ops}\n\
         ## Workflow\n\
-        0. Call `begin_test_case_writing` FIRST and put its questions to the\n\
+        0. The assistant the person talks to settles the PBI, if the job is for\n\
+        one: call `get_current_pbi`. The developer named one that is TCM's: use\n\
+        it, no search. A different one: ask which. None named and TCM has one:\n\
+        say \"PBI <id>, <title>, is selected in TCM - is that the one?\" and wait\n\
+        for their yes. TCM has none: `search_pbis`, or ask for the id; a job for\n\
+        a specification alone needs no PBI. Pass the settled PBI id to every\n\
+        slice subagent: a subagent never asks about the PBI, it uses the one it\n\
+        was given.\n\
+        Then call `begin_test_case_writing` and put its questions to the\n\
         developer. What the file is called (it lives in the repository's\n\
         .test-cases folder), which specs are authoritative and what is out of\n\
         scope are theirs to decide, not yours to assume.\n\

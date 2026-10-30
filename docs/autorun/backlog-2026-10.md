@@ -898,6 +898,33 @@ made when the case needs it, save it as a fixture, list it; held back only when 
 made. Not code: the cycle-selection race (record it as a quirk on a live run). Not reproduced
 offline: 144580's trailing-space `exact` failure (every name path already folds whitespace).
 
+## The browser's own password prompts (agreed 2026-10-29)
+
+44. **Chrome's Password Manager covers the page after a sign-in.** On the Philippines dev site
+    (Default environment, PBI 133443 run) the Auto Run browser showed Chrome's "Change your
+    password - The password that you just used was found in a data breach. Google Password
+    Manager recommends changing your password now." over the home page after the recorded sign-in
+    typed a simple test password (Abc@123-style passwords are all in the breach list). Avin
+    dismissed it by hand. It is browser UI, not the page: no locator reaches it, so no script
+    action, `when_visible` guard or sign-in recipe step can dismiss it, and it will come back on
+    every sign-in with a weak test password - the passwords item 40 resets to included. The
+    "Save password?" bubble is the same family.
+    - **Prevent it at launch** (`src-tauri/src/browser/launch.rs`, the throwaway profile):
+      before the browser starts, write `<profile>/Default/Preferences` with
+      `"credentials_enable_service": false` and `"profile": { "password_manager_enabled": false,
+      "password_manager_leak_detection": false }` (saving, the save bubble and the breach check
+      off); add `--disable-features=PasswordLeakDetection` to `launch_args` as a second guard.
+      Chromium honours only ONE `--disable-features`, so any later feature joins that switch.
+      Check Edge on a live run: its Password Monitor reads the same preferences, but confirm it.
+    - A profile kept between runs (the sign-in is reused) must get the preferences too, not only a
+      new one: merge them into an existing Preferences file without dropping its other keys.
+    - Tests: `launch_args` carries the switch exactly once; the profile writer creates the
+      preferences on an empty profile and merges them into an existing file, keeping its keys.
+    - Also from the same run (dw-landing, 2026-10-29): replaying the same case twice in a row
+      needed `reset_autorun_browser` between the replays, and the second replay signed in again
+      (see item 42's `reset_autorun_browser` note). A second replay of the same case should start
+      clean without a reset call.
+
 ## Smaller
 
 - `save_autorun_script` through MCP drops `edits`, so repairs had to go through

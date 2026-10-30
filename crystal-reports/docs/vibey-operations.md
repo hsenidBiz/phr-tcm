@@ -299,3 +299,11 @@ preview to draw fresh rows" — with the empty-row unknown-name formula errors f
 The UI can key its empty-state screen on that notice's prefix. (Layout change documented as
 VENDORED.md #11; the WSR golden pin was re-based onto a fixed render clock the same day —
 see validation-log §24.)
+
+
+## HTML text interpretation (2026-10-22)
+
+Fields whose string format is `HTMLText` (stored `0x00fa` byte 15) now render their value
+as markup — the PMSV10 `pad_*` formulas' deliberate HTML (wrappers, `<br>`, entities, the
+small-font spacer span) renders as styled text instead of printing the tags literally
+(VENDORED.md #12; see validation-log §25 for the subset and the line-font rule).

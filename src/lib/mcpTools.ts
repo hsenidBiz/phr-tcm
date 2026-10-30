@@ -31,6 +31,7 @@ export const MCP_TOOLS: McpToolInfo[] = [
     summary: "Asks you how the set should be written, before anything is.",
   },
   { name: "get_guide", label: "Guides", summary: "The live guide for the job at hand: format rules and your org's allowed Module values for writing cases." },
+  { name: "get_current_pbi", label: "Selected PBI", summary: "The PBI selected in TCM, so the assistant does not have to search for it." },
   { name: "get_test_cases", label: "Cases by PBI or id", summary: "The cases on a PBI, or specific cases by their ids - style, and what is covered." },
   { name: "search_test_suites", label: "Find a test suite", summary: "The plans and suites, by plan name, suite name or PBI id." },
   { name: "get_suite_test_cases", label: "Cases in a test suite", summary: "The cases in one suite, in the suite's own order." },
@@ -318,6 +319,21 @@ export const MCP_TOOLS: McpToolInfo[] = [
     summary:
       "Draw the open report from fresh rows: run its stored procedure on the chosen database. Needs writes switched on and the Dev login.",
   },
+  {
+    name: "get_report_parameters",
+    label: "Report parameters",
+    summary: "List the open report's parameters, their kinds and pick lists.",
+  },
+  {
+    name: "find_in_report",
+    label: "Find in the report",
+    summary: "Find text and field references across the open report and its subreports.",
+  },
+  {
+    name: "replace_in_report",
+    label: "Replace in the report",
+    summary: "Replace text across the open report, with a dry run that shows each change first.",
+  },
   { name: "validate_cases", label: "Check a draft", summary: "Check a draft with the app's real importer." },
   { name: "get_tags", label: "Project tags", summary: "Tag names this project already uses." },
   { name: "optimize_cases", label: "Build the run sheet", summary: "Reorganise a draft into a tester-ready run sheet." },
@@ -332,7 +348,7 @@ export const MCP_TOOLS: McpToolInfo[] = [
 ];
 
 /** Mirrors ai_tools.rs - the Rust side is the one that enforces both. */
-export const CORE_TOOLS = ["begin_test_case_writing", "get_guide", "get_test_cases", "check_spec_coverage", "transform_cases",
+export const CORE_TOOLS = ["begin_test_case_writing", "get_guide", "get_current_pbi", "get_test_cases", "check_spec_coverage", "transform_cases",
   // Finishing a draft is part of writing one: a set that cannot be
   // checked, ordered into a run sheet, or merged back from its slices
   // is a set nobody can ship.
@@ -416,6 +432,9 @@ export const CRYSTAL_TOOLS = [
   "check_report",
   "preview_report",
   "preview_report_live",
+  "get_report_parameters",
+  "find_in_report",
+  "replace_in_report",
 ] as const;
 
 /** The module a tool belongs to; null for a tool that is part of Core.

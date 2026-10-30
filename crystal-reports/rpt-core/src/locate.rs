@@ -56,6 +56,8 @@ const T_SECTION_COND_FORMAT: u16 = 0x00ff;
 const T_SECTION_CODE: u16 = 0x009d;
 const T_AREA_SECTION_FORMAT: u16 = 0x00fe;
 const T_COMMON_FIELD_FORMAT: u16 = 0x00f0;
+const T_STRING_FIELD_FORMAT: u16 = 0x00fa;
+const T_BOOLEAN_FIELD_FORMAT: u16 = 0x00ee;
 const T_NUMERIC_FIELD_FORMAT: u16 = 0x00f8;
 
 /// Does this record type open a report object? Mirrors the model walk's opener set.
@@ -147,6 +149,10 @@ pub struct LocatedObject {
     pub common_format: Option<RecAddr>,
     /// `0xf8` — numeric field formats (currency slot, then number slot).
     pub numeric_formats: Vec<RecAddr>,
+    /// `0xfa` — string field format (word wrap, max lines, interpretation, indents).
+    pub string_format: Option<RecAddr>,
+    /// `0xee` — boolean field format (output type).
+    pub boolean_format: Option<RecAddr>,
     /// Literal text runs (`0xc2`) in this object. 1 = simple single-run text.
     pub text_runs: usize,
     /// Embedded field references (`0xc4`) inside the text.
@@ -478,6 +484,20 @@ impl Walker<'_> {
                 if let Some(obj) = self.obj_mut() {
                     if obj.border.is_none() {
                         obj.border = Some(addr);
+                    }
+                }
+            }
+            T_STRING_FIELD_FORMAT => {
+                if let Some(obj) = self.obj_mut() {
+                    if obj.string_format.is_none() {
+                        obj.string_format = Some(addr);
+                    }
+                }
+            }
+            T_BOOLEAN_FIELD_FORMAT => {
+                if let Some(obj) = self.obj_mut() {
+                    if obj.boolean_format.is_none() {
+                        obj.boolean_format = Some(addr);
                     }
                 }
             }

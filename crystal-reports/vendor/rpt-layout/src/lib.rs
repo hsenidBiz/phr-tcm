@@ -32,6 +32,7 @@ mod currency;
 pub mod diagnostics;
 mod emf;
 mod format;
+mod html;
 mod paginate;
 mod place;
 mod resolve;

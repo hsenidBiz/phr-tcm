@@ -81,6 +81,16 @@ the render-stack vendoring itself):
     upstream test pinning the skeleton behavior was rewritten to pin the parity behavior
     (`empty_dataset_prints_no_group_bands`).
 
+12. `rpt-layout` (new `src/html.rs` + `src/paginate.rs`): Crystal's **HTML text
+    interpretation** (`StringFieldFormat.TextFormat == HTMLText`, stored `0x00fa` byte 15).
+    A field marked HTML renders its resolved value as markup instead of literal text —
+    document wrappers (`<html>/<head>/<meta>/<body>`) invisible, `<br>`/`<p>` line breaks,
+    entities decoded, `<b>/<i>/<u>/<s>`, `<span style='font-size:…'>` and `<font
+    size=/face=>` styles applied at the line's first character (the line model carries one
+    font per line, matching the corpus's authored `<br>`-before-style-change pattern).
+    Unknown tags are dropped, their text kept. Upstream ignored the stored flag entirely and
+    printed the markup literally.
+
 The MPL-2.0 requires these files to remain under MPL-2.0 with their notices when they are
 further distributed — keep this directory intact when copying into your application, including
 this list of local changes.
