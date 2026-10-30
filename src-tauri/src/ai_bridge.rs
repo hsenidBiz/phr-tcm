@@ -17,6 +17,15 @@ static INTAKE_SINK: std::sync::OnceLock<IntakeSink> = std::sync::OnceLock::new()
 /// short enough not to drown the guide.
 const GUIDE_TAG_LIMIT: usize = 60;
 
+/// The PBI selected in Test Case Manager's top bar, as the assistants see it
+/// (`get_current_pbi`). Pushed with the bridge context; only ever read here.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, serde::Deserialize, specta::Type)]
+pub struct CurrentPbi {
+    pub id: i32,
+    pub title: String,
+    pub project: String,
+}
+
 #[derive(Clone, Default, Serialize)]
 pub struct BridgeContext {
     pub org: String,
@@ -70,6 +79,9 @@ pub struct BridgeContext {
     /// Whose context this is and whether its writes are held off - Rust's
     /// alone, kept across every push (`commands::ai_bridge::push_context_with`).
     pub gate: SwitchGate,
+    /// The PBI selected in the top bar, or None when none is. The webview's
+    /// to say; the assistants only read it (`get_current_pbi`).
+    pub current_pbi: Option<CurrentPbi>,
 }
 
 /// The part of the context only Rust sets: which environment the context's
@@ -395,6 +407,15 @@ pub fn call_time_line(method: &str, target: &str, status: u16, ms: u128) -> Stri
     format!("Bridge call: {method} {path} answered {status} in {ms} ms")
 }
 
+/// What `get_current_pbi` answers: the PBI as JSON, or a plain sentence when
+/// the person has none selected in TCM.
+fn current_pbi_answer(ctx: &BridgeContext) -> String {
+    match &ctx.current_pbi {
+        Some(p) => serde_json::json!({ "id": p.id, "title": p.title, "project": p.project }).to_string(),
+        None => "No PBI is selected in TCM.".to_string(),
+    }
+}
+
 /// `route` for one caller: what the listener's `route_timed` calls, with the caller read from
 /// the request's `x-tcm-agent*` headers. `route` is this for the default
 /// caller (an older proxy, a test, the person).
@@ -470,6 +491,9 @@ pub async fn route_as(
             }
             (200, "{}".to_string())
         }
+        // The PBI selected in TCM: read only, and in no module, so it
+        // answers whichever modules are on.
+        ("GET", "/current-pbi") => (200, current_pbi_answer(ctx)),
         ("POST", "/optimize") => optimize_json(body, target, ctx),
         ("POST", "/transform") => transform_json(body, ctx),
         ("POST", "/validate") => (200, validate_json(body, target, ctx, client).await),
@@ -13657,7 +13681,12 @@ async fn begin_writing(
                 },
                 "note": "Put these to the developer in chat - one at a time, and let them \
                          paste or drop file paths. Do NOT answer them yourself, and do not \
-                         start writing. When they have answered, call this tool again with \
+                         start writing. If you have not yet, call `get_current_pbi` first: \
+                         when the developer named no PBI and TCM has one selected, say \
+                         \"PBI <id>, <title>, is selected in TCM - is that the one?\" and wait \
+                         for their yes; when they named a different one, ask which to use; \
+                         when TCM has none, find it with `search_pbis`. When they have answered, \
+                         call this tool again with \
                          their answers to get the plan.",
             })
             .to_string(),
@@ -14846,7 +14875,12 @@ async fn guide(ctx: &BridgeContext, client: &crate::ado::AdoClient) -> String {
         is allowed when nothing here matches.\n\n{tag_lines}\n\n\
         {transform_ops}\n\
         ## Workflow\n\
-        0. Call `begin_test_case_writing` FIRST and put its questions to the\n\
+        0. Call `get_current_pbi` for the PBI selected in TCM. The developer\n\
+        named one that is TCM's: use it, no search. A different one: ask which.\n\
+        None named and TCM has one: say\n\
+        \"PBI <id>, <title>, is selected in TCM - is that the one?\" and wait\n\
+        for their yes. TCM has none: `search_pbis`.\n\
+        Then call `begin_test_case_writing` and put its questions to the\n\
         developer. What the file is called (it lives in the repository's\n\
         .test-cases folder), which specs are authoritative and what is out of\n\
         scope are theirs to decide, not yours to assume.\n\

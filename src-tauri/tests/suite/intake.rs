@@ -469,6 +469,7 @@ fn ctx() -> BridgeContext {
         all_projects: false,
         db_no_ask: false,
         gate: Default::default(),
+        current_pbi: None,
     }
 }
 

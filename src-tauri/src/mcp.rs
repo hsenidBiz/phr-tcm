@@ -544,7 +544,7 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool, unlocked: bool, all_projec
     let all = serde_json::json!({ "tools": [
         {
             "name": "begin_test_case_writing",
-            "description": "START HERE for any test-case writing job, before reading specs or drafting anything. Call it with only `feature` first: it returns the questions to put to the developer in chat (what the file is called, which spec documents are authoritative, whether to check a PBI for duplicates, tags/module/status, what is out of scope) plus this org's real Module values. Ask them those questions - do not answer them yourself - then call this tool again with their answers. It checks the paths and values actually exist, and returns a plan file for them to approve. Do not write a single test case until it returns status \"ready\" and the developer has agreed to the plan.",
+            "description": "START HERE for any test-case writing job, before reading specs or drafting anything. Call it with only `feature` first: it returns the questions to put to the developer in chat (what the file is called, which spec documents are authoritative, whether to check a PBI for duplicates, tags/module/status, what is out of scope) plus this org's real Module values. Ask them those questions - do not answer them yourself - then call this tool again with their answers. It checks the paths and values actually exist, and returns a plan file for them to approve. Before it, call `get_current_pbi`: if the developer named no PBI and TCM has one selected, say \"PBI <id>, <title>, is selected in TCM - is that the one?\" and wait for their yes; if they named a different one, ask which to use; if TCM has none, find it with `search_pbis`. Do not write a single test case until it returns status \"ready\" and the developer has agreed to the plan.",
             "inputSchema": schema(serde_json::json!({
                 "feature": { "type": "string", "description": "What you are writing cases for - the plan's title" },
                 "output_path": { "type": "string", "description": "File name for the finished JSON, in the repository's .test-cases folder; a path outside it is refused" },
@@ -563,6 +563,11 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool, unlocked: bool, all_projec
             }), &[]),
         },
         guide_tool(&disabled),
+        {
+            "name": "get_current_pbi",
+            "description": "The PBI the person has selected in Test Case Manager's top bar: its id, title and project, or a plain sentence saying none is selected. Read only; it never changes the selection. Call it before searching for a PBI. If the person named a PBI, compare it with this one; if they named none and TCM has one, name it to them (\"PBI <id>, <title>, is selected in TCM - is that the one?\") and wait for their yes before you go on.",
+            "inputSchema": schema(serde_json::json!({}), &[]),
+        },
         {
             "name": "get_test_cases",
             "description": "Test cases in the exact import JSON shape. Pass `pbi_id` for the cases a PBI is tested by, `case_ids` to read specific cases by their own ids without knowing their PBI, or both to narrow a PBI's cases to those ids (any id the PBI is not tested by is listed in `not_on_pbi`). Use them to copy the house style, to check what is already covered before writing more, or to read a case someone named by its id.",
@@ -2413,6 +2418,7 @@ fn tools_call_outcome(params: &serde_json::Value, call: BridgeCall) -> (serde_js
         "get_guide" if args["topic"].as_str().map(str::trim) == Some("autorun") && says(&args["role"]) => {
             role_guide(args, call)
         }
+        "get_current_pbi" => call("GET", "/current-pbi", ""),
         "get_guide" => match args["topic"].as_str().map(str::trim).unwrap_or_default() {
             "writing" => call("GET", "/guide", ""),
             "autorun" => autorun_guide_call(args, call),

@@ -131,6 +131,9 @@ pub const CORE_TOOLS: &[&str] = &[
     // One guide tool for every job. A topic whose module is off is refused
     // by topic (`mcp::guide_refusal`), so the tool itself is always there.
     "get_guide",
+    // Where the starting commands begin: which PBI TCM has selected. A
+    // read of the app's own state, so no module owns it.
+    "get_current_pbi",
     "get_test_cases",
     "check_spec_coverage",
     "transform_cases",
@@ -315,6 +318,12 @@ pub const COMMANDS: &[CommandSpec] = &[
         body: &[
             "Start a test-case writing job for: $ARGUMENTS",
             "",
+            "Before anything else, call `get_current_pbi` for the PBI selected in TCM, and settle which PBI this is:",
+            "- The person named a PBI and it is TCM's: continue, and do not search Azure DevOps for it.",
+            "- The person named one that is not TCM's: ask which of the two to use.",
+            "- The person named none and TCM has one: say \"PBI <id>, <title>, is selected in TCM - is that the one?\" and wait for their yes before you continue.",
+            "- TCM has none: find the PBI as before, with `search_pbis`.",
+            "",
             "Call `begin_test_case_writing` FIRST and put its questions to the developer -",
             "what the file is called (it goes in the repository's .test-cases folder),",
             "which specs are authoritative, what is out of scope. Those are theirs to",
@@ -445,6 +454,12 @@ pub const COMMANDS: &[CommandSpec] = &[
         hint: "[case id, and the account to sign in as]",
         body: &[
             "Write an Auto Run script from the live app for: $ARGUMENTS",
+            "",
+            "Before anything else, call `get_current_pbi` for the PBI selected in TCM, and settle which PBI this is:",
+            "- The person named a PBI and it is TCM's: continue, and do not search Azure DevOps for it.",
+            "- The person named one that is not TCM's: ask which of the two to use.",
+            "- The person named none and TCM has one: say \"PBI <id>, <title>, is selected in TCM - is that the one?\" and wait for their yes before you continue.",
+            "- TCM has none: find the PBI as before, with `search_pbis`.",
             "",
             "Call `get_guide` with topic autorun and `quick` true first and follow it. Call it again",
             "with `section` (or `full` true for the full guide) when something the quick rules do not cover",
@@ -667,6 +682,12 @@ pub const COMMANDS: &[CommandSpec] = &[
         body: &[
             "Script a batch of a PBI's test cases: $ARGUMENTS",
             "",
+            "Before anything else, call `get_current_pbi` for the PBI selected in TCM, and settle which PBI this is:",
+            "- The person named a PBI and it is TCM's: continue, and do not search Azure DevOps for it.",
+            "- The person named one that is not TCM's: ask which of the two to use.",
+            "- The person named none and TCM has one: say \"PBI <id>, <title>, is selected in TCM - is that the one?\" and wait for their yes before you continue.",
+            "- TCM has none: find the PBI as before, with `search_pbis`.",
+            "",
             "The arguments are the PBI id, then, each optional, how many cases to script (10 when not given),",
             "an area or a title prefix to keep to, and case ids to script instead of choosing. Ask for the",
             "PBI id when there is none.",
@@ -758,6 +779,12 @@ pub const COMMANDS: &[CommandSpec] = &[
         hint: "[the task, or undo <session> / remove <session>]",
         body: &[
             "Do this task in the live app, with no test case: $ARGUMENTS",
+            "",
+            "Before anything else, call `get_current_pbi` for the PBI selected in TCM, and settle which PBI this is:",
+            "- The person named a PBI and it is TCM's: continue, and do not search Azure DevOps for it.",
+            "- The person named one that is not TCM's: ask which of the two to use.",
+            "- The person named none and TCM has one: say \"PBI <id>, <title>, is selected in TCM - is that the one?\" and wait for their yes before you continue.",
+            "- TCM has none: find the PBI as before, with `search_pbis`.",
             "",
             "Call `get_guide` with topic autorun and `quick` true first and follow it. Call it again",
             "with `section` (or `full` true for the full guide) when something the quick rules do not cover",

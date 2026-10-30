@@ -1028,6 +1028,14 @@ printing) is checked with `expect_tab_closed`:
 `open_tab`, `switch_tab` and `close_tab` cannot appear inside a
 `when_visible`, and no tab action can appear in a sign-in recipe.
 
+## Which PBI
+
+Call `get_current_pbi` first: it gives the PBI selected in TCM (id, title, project) or says none is.
+If the person named a PBI and it is TCM's, continue without searching Azure DevOps; if it differs,
+ask which one to use. If they named none and TCM has one, say
+"PBI <id>, <title>, is selected in TCM - is that the one?" and wait for their yes before you continue.
+If TCM has none, find it with `search_pbis`. You cannot change TCM's selection.
+
 ## Who the case runs as
 
 Never put a username or a password in a script. Logins belong to the

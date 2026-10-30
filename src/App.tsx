@@ -946,6 +946,9 @@ export default function App() {
   // edits becomes one push once typing pauses; the pending push is flushed
   // on unmount rather than dropped, so App never silently skips the last
   // edit.
+  const bridgePbiId = pbi?.id ?? null;
+  const bridgePbiTitle = pbi?.title ?? "";
+  const bridgePbiProject = pbi?.project || project;
   const pushBridgeContextRef = useRef<() => void>(() => {});
   const bridgeContextTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
@@ -963,7 +966,15 @@ export default function App() {
             disabledTools,
             workingDir || null,
             dbId || null,
-            { dbWrites: dbWrites && devLogin, apiWrites, networkTools, envId, allProjects },
+            {
+              dbWrites: dbWrites && devLogin,
+              apiWrites,
+              networkTools,
+              envId,
+              allProjects,
+              // The PBI in the top bar, for the assistants' get_current_pbi.
+              pbi: bridgePbiId == null ? null : { id: bridgePbiId, title: bridgePbiTitle, project: bridgePbiProject },
+            },
           ),
         )
         .catch(() => {});
@@ -993,6 +1004,9 @@ export default function App() {
     apiWrites,
     networkTools,
     envId,
+    bridgePbiId,
+    bridgePbiTitle,
+    bridgePbiProject,
     tourOpen,
     dbMigrated,
   ]);
