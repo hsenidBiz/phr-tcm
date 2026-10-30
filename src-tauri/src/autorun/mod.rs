@@ -52,6 +52,7 @@ pub mod publish;
 pub mod pw_rules;
 pub mod quirks;
 pub mod recipe;
+pub mod env_copy;
 pub mod roots;
 pub mod recorder;
 pub mod refusals;

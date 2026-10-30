@@ -345,6 +345,11 @@ pub fn is_export_environment(_shared: &Path, _id: &str) -> bool {
     false
 }
 
+/// Whether a copy or an export is writing into `root` right now.
+pub(crate) fn is_held_for_writes(root: &Path) -> bool {
+    ALLOWED.lock().unwrap_or_else(|e| e.into_inner()).iter().any(|p| p == root)
+}
+
 /// The sentence that says why environment `id` cannot be removed now (it is
 /// active, something is writing into its folder, or it is the export
 /// environment), or `None`.
@@ -392,9 +397,32 @@ pub fn retire(shared: &Path, env_id: &str, name: &str, reason: &str, now_ms: u64
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(e) => return Err(e.to_string()),
     }
-    let _switching = switch_lock().write().unwrap_or_else(|e| e.into_inner());
+    let switching = switch_lock().write().unwrap_or_else(|e| e.into_inner());
     if let Some(why) = removal_refusal(shared, env_id) {
         return Err(why.to_string());
+    }
+    retire_held(&switching, shared, env_id, name, reason, now_ms, &[50, 100, 200])
+}
+
+/// [`retire`] for a caller that already holds the switch lock for writing
+/// (`held` is the proof) and has decided the folder may go: it does not
+/// look at whether the environment is active, so a copy can set aside what
+/// it replaces. `waits_ms` are the pauses between tries of a rename another
+/// process holds.
+pub(crate) fn retire_held(
+    _held: &std::sync::RwLockWriteGuard<'static, ()>,
+    shared: &Path,
+    env_id: &str,
+    name: &str,
+    reason: &str,
+    now_ms: u64,
+    waits_ms: &[u64],
+) -> Result<Option<String>, String> {
+    let from = env_root(shared, env_id);
+    match std::fs::symlink_metadata(&from) {
+        Ok(_) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(e.to_string()),
     }
     let key = format!("{env_id}-{now_ms}");
     let area = shared.join(REMOVED_DIR);
@@ -419,7 +447,7 @@ pub fn retire(shared: &Path, env_id: &str, name: &str, reason: &str, now_ms: u64
         &to,
         &mut |a, b| std::fs::rename(a, b),
         &mut |d| std::thread::sleep(d),
-        &[50, 100, 200],
+        waits_ms,
     ) {
         let _ = std::fs::remove_file(&record_path);
         return Err(e);
@@ -554,7 +582,7 @@ pub fn path_free(message: &str) -> bool {
 /// `Ok(true)` when `path` exists. Only "not found" is absence: any other
 /// error (a permission problem, a broken link) must stop the update rather
 /// than read as "nothing there".
-fn exists(path: &Path) -> Result<bool, String> {
+pub(crate) fn exists(path: &Path) -> Result<bool, String> {
     match std::fs::symlink_metadata(path) {
         Ok(_) => Ok(true),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
@@ -567,7 +595,7 @@ fn exists(path: &Path) -> Result<bool, String> {
 /// junction or any entry that cannot be read fails the copy. `skip` is
 /// asked about each file with its path relative to the whole Auto Run root
 /// (`rel`), so it can tell the export record from other project files.
-fn copy_tree(from: &Path, to: &Path, rel: &Path, link: bool, skip: &dyn Fn(&Path) -> bool) -> Result<(), String> {
+pub(crate) fn copy_tree(from: &Path, to: &Path, rel: &Path, link: bool, skip: &dyn Fn(&Path) -> bool) -> Result<(), String> {
     let meta = std::fs::symlink_metadata(from).map_err(|e| e.to_string())?;
     if meta.is_dir() {
         std::fs::create_dir_all(to).map_err(|e| e.to_string())?;

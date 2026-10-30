@@ -20,6 +20,7 @@ pub mod bugs;
 pub mod cases;
 pub mod crystal;
 pub mod discovery;
+pub mod env_copy;
 pub mod environments;
 pub mod guide;
 pub mod misc;

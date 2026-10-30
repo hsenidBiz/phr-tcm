@@ -82,7 +82,7 @@ pub use state::SubmitCancel;
 pub fn specta_builder() -> Builder<tauri::Wry> {
     use commands::{
         ai_bridge, ai_tools, api_templates, app_settings, auth, autorun, autorun_publish, autorun_record,
-        autorun_divergence, autorun_record_signin, autorun_replay, autorun_setup, autorun_slots, board, bugs, cases, crystal, discovery, environments, guide, misc, modules, prs, pw_export, pw_repo, pw_rules, queue, run_order, runs,
+        autorun_divergence, autorun_record_signin, autorun_replay, autorun_setup, autorun_slots, board, bugs, cases, crystal, discovery, env_copy, environments, guide, misc, modules, prs, pw_export, pw_repo, pw_rules, queue, run_order, runs,
         test_files, testplan, workspace, writing_style,
     };
     Builder::<tauri::Wry>::new()
@@ -213,6 +213,8 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             environments::env_save,
             environments::env_remove,
             environments::env_set_active,
+            env_copy::env_copy_choices,
+            env_copy::env_copy_autorun,
             environments::env_set_default_password,
             environments::env_clear_default_password,
             environments::env_proposals,

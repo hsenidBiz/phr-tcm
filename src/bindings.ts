@@ -408,6 +408,13 @@ export const commands = {
 	envSave: (env: EnvInput) => typedError<EnvListView, string>(__TAURI_INVOKE("env_save", { env })),
 	envRemove: (id: string) => typedError<EnvListView, string>(__TAURI_INVOKE("env_remove", { id })),
 	envSetActive: (id: string, workingDir: string | null) => typedError<EnvSwitched, string>(__TAURI_INVOKE("env_set_active", { id, workingDir })),
+	/**  Where the environment can copy from. */
+	envCopyChoices: (targetId: string) => typedError<CopyChoices, string>(__TAURI_INVOKE("env_copy_choices", { targetId })),
+	/**
+	 *  Copy a source's Auto Run data into the environment. A target that already
+	 *  holds data needs `replace`; what it held is kept for 30 days.
+	 */
+	envCopyAutorun: (targetId: string, sourceKey: string, replace: boolean) => typedError<CopyDone, string>(__TAURI_INVOKE("env_copy_autorun", { targetId, sourceKey, replace })),
 	envSetDefaultPassword: (id: string, password: string) => typedError<null, string>(__TAURI_INVOKE("env_set_default_password", { id, password })),
 	envClearDefaultPassword: (id: string) => typedError<null, string>(__TAURI_INVOKE("env_clear_default_password", { id })),
 	/**  The assistant's proposed accounts for the active environment. */
@@ -3712,6 +3719,32 @@ export type CopiedIn = {
 	 *  now lives under `.test-cases/.history`.
 	 */
 	displaced: string | null,
+};
+
+/**  What the copy dialog needs to know about a target. */
+export type CopyChoices = {
+	/**  The target has no Auto Run data a copy would replace. */
+	target_empty: boolean,
+	/**  Every other environment, then the removed folders still kept. */
+	sources: CopySource[],
+};
+
+/**  What a finished copy did. */
+export type CopyDone = {
+	/**  Top-level items brought in. */
+	items: number,
+	/**  What the copy replaced was kept in the removed area. */
+	kept_aside: boolean,
+};
+
+/**  Somewhere to copy from. */
+export type CopySource = {
+	/**  An environment id, or `removed:<folder key>`. */
+	key: string,
+	name: string,
+	removed: boolean,
+	/**  Whole days a removed folder is still kept; `None` for an environment. */
+	days_left: number | null,
 };
 
 export type CreatedItem = {
