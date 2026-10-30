@@ -977,6 +977,13 @@ three writers at once on emma, aiden and grace.
     hold should expire after a period with no calls from its agent, and `reset_autorun_browser`
     should list the live holds so the coordinator can see them.
 
+    Seen again in the next round: after dw-goals2 finished, two proof runs on its cases were
+    refused "case N is being worked on by Assistant 3" even after the person released Assistant 3
+    on the Auto Run screen, and `reset_autorun_browser` with `release` under the writer's name
+    said it had no browser. The claim (`autorun/claims.rs`) only ended when its 20 minutes ran
+    out. A finished agent's claims should end with it (`claims::end_for` when it ends discovery
+    and releases), and the person's release should end the claims of the assistant released.
+
 52. **A hung orphan browser blocks every new sign-in.** An Auto Run Chrome left from an earlier
     run (profile `tcm-autorun-<port>`, CDP port not answering) made new sign-ins fail "did not
     answer Page.navigate" until it was killed by hand. At launch, an Auto Run browser whose CDP
@@ -989,6 +996,12 @@ three writers at once on emma, aiden and grace.
     "Unable to load menus", or Self Service). Writers burned runs finding out. Item 40's "Check
     sign-in" should also walk to a chosen area and show, per account, "reaches <area>" or where
     it stopped.
+
+54. **A refused upload fails discovery but not the replay.** dw-comps3's import cases (135285-
+    135287) upload a malformed or oversized .xlsx; the server answers 422. In discovery the
+    action showed "the app refused", but the full replay passed the same step. The two paths
+    should judge a 4xx answer the same way, and a case that expects a refusal should check the
+    page's message for it (the import-error toast lasts about 5 s, so in the same step).
 
 ## Smaller
 
