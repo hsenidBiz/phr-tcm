@@ -1124,7 +1124,10 @@ impl ActionOutcome {
         ActionOutcome { ok: true, detail: detail.into(), ..Default::default() }
     }
     pub fn failed(detail: impl Into<String>) -> Self {
-        ActionOutcome { ok: false, detail: detail.into(), ..Default::default() }
+        // The one place a failure's words are made, so every reader of it
+        // (a try, a replay, a stored run failure) gets the same hint.
+        let detail: String = detail.into();
+        ActionOutcome { ok: false, detail: super::input::with_offscreen_hint(&detail), ..Default::default() }
     }
 }
 

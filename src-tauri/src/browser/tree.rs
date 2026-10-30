@@ -252,6 +252,72 @@ pub struct Orphan {
     /// The profile folder's NAME, never its path.
     pub profile: String,
     pub port: Option<u16>,
+    /// How long its main process has run; `None` when Windows would not say.
+    pub age_ms: Option<u64>,
+    /// The app instance that launched it, from the marker in its profile;
+    /// `None` for a browser an older version started.
+    pub owner: Option<Owner>,
+}
+
+/// Which running app a browser belongs to: its process id and the time that
+/// process started (so a reused process id is not mistaken for the owner).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct Owner {
+    pub pid: u32,
+    pub started_ms: u64,
+}
+
+/// The file in a profile folder that names its owner.
+pub const OWNER_MARKER: &str = "tcm-owner.json";
+
+/// A browser younger than this is never ended: one that is still starting
+/// does not answer yet (the app allows it 15 s), and a slow machine takes
+/// longer than that.
+pub const ORPHAN_MIN_AGE_MS: u64 = 90_000;
+
+pub fn owner_marker_text(owner: &Owner) -> String {
+    serde_json::to_string(owner).unwrap_or_default()
+}
+
+pub fn parse_owner_marker(text: &str) -> Option<Owner> {
+    serde_json::from_str(text).ok()
+}
+
+/// This running app as an owner. Off Windows the start time is not known
+/// and is 0.
+pub fn this_owner() -> Owner {
+    let pid = std::process::id();
+    Owner { pid, started_ms: process_start_ms(pid).unwrap_or(0) }
+}
+
+/// When the process with this id started, in ms since the Unix epoch.
+/// `None` when it does not exist, cannot be opened, or off Windows.
+pub fn process_start_ms(pid: u32) -> Option<u64> {
+    #[cfg(windows)]
+    {
+        job::start_ms_of(pid)
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = pid;
+        None
+    }
+}
+
+/// May this leftover browser be ended? Only when it has run for at least
+/// `ORPHAN_MIN_AGE_MS` AND no OTHER running app owns it: its marker names a
+/// process that still runs with the recorded start time (`start_of` says
+/// when a process started) and is not this app. No marker, or an owner that
+/// is gone (or whose id another program now uses), leaves age alone to
+/// decide. Whether it is hung is judged separately.
+pub fn may_end(o: &Orphan, this_pid: u32, start_of: &dyn Fn(u32) -> Option<u64>) -> bool {
+    if !o.age_ms.is_some_and(|age| age >= ORPHAN_MIN_AGE_MS) {
+        return false;
+    }
+    match o.owner {
+        Some(owner) if owner.pid != this_pid && start_of(owner.pid) == Some(owner.started_ms) => false,
+        _ => true,
+    }
 }
 
 /// If this command line is the main process of an Auto Run browser (no
@@ -279,6 +345,13 @@ pub fn orphan_of(command_line: &str, temp: &Path) -> Option<(String, Option<u16>
     Some((name.to_string(), port))
 }
 
+#[cfg(windows)]
+fn unix_now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX))
+}
+
 /// Every Auto Run browser running now that no live tree of this app holds.
 /// Windows only; empty elsewhere. Reads command lines through the same
 /// query-only access `Tree` uses and ends nothing.
@@ -289,9 +362,16 @@ pub fn find_orphans(temp: &Path) -> Vec<Orphan> {
         job::browser_pids()
             .into_iter()
             .filter_map(|pid| match job::inspect(pid) {
-                job::Inspected::Seen { command_line: Some(cl), .. } => {
+                job::Inspected::Seen { process, command_line: Some(cl), .. } => {
                     let (profile, port) = orphan_of(&cl, temp)?;
-                    (!held.contains(&profile)).then_some(Orphan { pid, profile, port })
+                    if held.contains(&profile) {
+                        return None;
+                    }
+                    let age_ms = process.start_ms().and_then(|s| unix_now_ms().checked_sub(s));
+                    let owner = std::fs::read_to_string(temp.join(&profile).join(OWNER_MARKER))
+                        .ok()
+                        .and_then(|t| parse_owner_marker(&t));
+                    Some(Orphan { pid, profile, port, age_ms, owner })
                 }
                 _ => None,
             })
@@ -660,6 +740,22 @@ pub(crate) mod job {
             (!h.is_null()).then_some(Process(h))
         }
 
+        /// When the process started, in ms since the Unix epoch.
+        pub fn start_ms(&self) -> Option<u64> {
+            use windows_sys::Win32::Foundation::FILETIME;
+            use windows_sys::Win32::System::Threading::GetProcessTimes;
+            let (mut created, mut exit, mut kernel, mut user) =
+                (FILETIME::default(), FILETIME::default(), FILETIME::default(), FILETIME::default());
+            // SAFETY: a valid process handle; the out values live for the call.
+            let ok = unsafe { GetProcessTimes(self.0, &mut created, &mut exit, &mut kernel, &mut user) };
+            if ok == 0 {
+                return None;
+            }
+            let ticks = (u64::from(created.dwHighDateTime) << 32) | u64::from(created.dwLowDateTime);
+            // 100 ns ticks since 1601; the Unix epoch is 11_644_473_600 s on.
+            (ticks / 10_000).checked_sub(11_644_473_600_000)
+        }
+
         fn ended(&self) -> bool {
             let mut code = 0u32;
             // SAFETY: a valid process handle; `code` lives for the call.
@@ -683,6 +779,11 @@ pub(crate) mod job {
             Some(p) => !p.ended(),
             None => std::io::Error::last_os_error().raw_os_error() == Some(ERROR_ACCESS_DENIED as i32),
         }
+    }
+
+    /// When the process with this id started (see `Process::start_ms`).
+    pub fn start_ms_of(pid: u32) -> Option<u64> {
+        Process::open(PROCESS_QUERY_LIMITED_INFORMATION, pid).filter(|p| !p.ended()).and_then(|p| p.start_ms())
     }
 
     /// The process ids of every Chrome and Edge running now, whoever's they

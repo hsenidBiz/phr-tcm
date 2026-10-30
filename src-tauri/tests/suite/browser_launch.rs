@@ -256,7 +256,7 @@ fn the_page_area_is_1280_by_720_at_scale_one() {
 use v2_lib::browser::launch::{
     close_hung, password_prefs, prefs_failure_is_logged_only, write_password_prefs, PASSWORD_FEATURES_OFF,
 };
-use v2_lib::browser::tree::Orphan;
+use v2_lib::browser::tree::{Orphan, Owner};
 
 fn disable_features(args: &[String]) -> Vec<&String> {
     args.iter().filter(|a| a.starts_with("--disable-features=")).collect()
@@ -335,34 +335,127 @@ fn launch_goes_on_when_prefs_cannot_be_written() {
 }
 
 fn orphan(pid: u32, port: Option<u16>) -> Orphan {
-    Orphan { pid, profile: format!("tcm-autorun-{}", port.unwrap_or(0)), port }
+    Orphan { pid, profile: format!("tcm-autorun-{}", port.unwrap_or(0)), port, age_ms: Some(600_000), owner: None }
 }
 
 #[test]
 fn close_hung_ends_only_silent_ones() {
-    let orphans = vec![orphan(1, Some(1)), orphan(2, Some(2)), Orphan { pid: 3, profile: "tcm-autorun-3".into(), port: None }];
+    let orphans = vec![
+        orphan(1, Some(1)),
+        orphan(2, Some(2)),
+        Orphan { pid: 3, profile: "tcm-autorun-3".into(), port: None, age_ms: Some(600_000), owner: None },
+    ];
     let mut ended = Vec::new();
-    let closed = close_hung(orphans, &|port| port == 2, &mut |o: &Orphan| {
+    let hung = close_hung(orphans, &|port| port == 2, &mut |o: &Orphan| {
         ended.push(o.profile.clone());
         true
     });
     assert_eq!(ended, vec!["tcm-autorun-1".to_string()]);
-    assert_eq!(closed, vec!["tcm-autorun-1".to_string()]);
+    assert_eq!(hung.closed, vec!["tcm-autorun-1".to_string()]);
+    assert!(hung.stuck.is_empty());
 }
 
 #[test]
 fn close_hung_keeps_an_answering_orphan() {
     let mut ended = 0;
-    let closed = close_hung(vec![orphan(2, Some(2))], &|_| true, &mut |_: &Orphan| {
+    let hung = close_hung(vec![orphan(2, Some(2))], &|_| true, &mut |_: &Orphan| {
         ended += 1;
         true
     });
     assert_eq!(ended, 0);
-    assert!(closed.is_empty());
+    assert!(hung.closed.is_empty() && hung.stuck.is_empty());
 }
 
 #[test]
-fn close_hung_does_not_report_one_that_would_not_end() {
-    let closed = close_hung(vec![orphan(1, Some(1))], &|_| false, &mut |_: &Orphan| false);
-    assert!(closed.is_empty());
+fn close_hung_names_one_that_would_not_end() {
+    let hung = close_hung(vec![orphan(1, Some(1))], &|_| false, &mut |_: &Orphan| false);
+    assert!(hung.closed.is_empty());
+    assert_eq!(hung.stuck, vec!["tcm-autorun-1".to_string()]);
+}
+
+#[test]
+fn an_unendable_orphan_is_remembered_and_not_tried_again() {
+    use v2_lib::browser::launch::{forget_unendable, remember_unendable, still_to_try};
+    let name = "tcm-autorun-unendable-test-1";
+    let mut o = orphan(1, Some(1));
+    o.profile = name.to_string();
+    assert_eq!(still_to_try(vec![o.clone()]).len(), 1);
+    remember_unendable(name);
+    assert!(still_to_try(vec![o.clone()]).is_empty());
+    forget_unendable(name);
+    assert_eq!(still_to_try(vec![o]).len(), 1);
+}
+
+fn gone(_: u32) -> Option<u64> {
+    None
+}
+
+#[test]
+fn a_young_browser_is_never_ended() {
+    use v2_lib::browser::tree::may_end;
+    let mut o = orphan(1, Some(1));
+    o.age_ms = Some(89_999);
+    assert!(!may_end(&o, 10, &gone));
+    o.age_ms = None;
+    assert!(!may_end(&o, 10, &gone));
+    o.age_ms = Some(90_000);
+    assert!(may_end(&o, 10, &gone));
+}
+
+#[test]
+fn a_browser_owned_by_another_running_app_is_left() {
+    use v2_lib::browser::tree::may_end;
+    let mut o = orphan(1, Some(1));
+    o.owner = Some(Owner { pid: 500, started_ms: 1234 });
+    assert!(!may_end(&o, 10, &|pid| (pid == 500).then_some(1234)));
+}
+
+#[test]
+fn a_browser_whose_owner_is_gone_or_reused_is_ended() {
+    use v2_lib::browser::tree::may_end;
+    let mut o = orphan(1, Some(1));
+    o.owner = Some(Owner { pid: 500, started_ms: 1234 });
+    assert!(may_end(&o, 10, &gone));
+    // The pid runs again, but it is another program that started later.
+    assert!(may_end(&o, 10, &|_| Some(9999)));
+}
+
+#[test]
+fn a_browser_with_no_marker_is_judged_on_age_alone() {
+    use v2_lib::browser::tree::may_end;
+    assert!(may_end(&orphan(1, Some(1)), 10, &gone));
+}
+
+#[test]
+fn a_leftover_of_this_very_app_is_ended() {
+    use v2_lib::browser::tree::may_end;
+    let mut o = orphan(1, Some(1));
+    o.owner = Some(Owner { pid: 10, started_ms: 77 });
+    assert!(may_end(&o, 10, &|pid| (pid == 10).then_some(77)));
+}
+
+#[test]
+fn the_owner_marker_round_trips_and_garbage_is_nothing() {
+    use v2_lib::browser::tree::{owner_marker_text, parse_owner_marker};
+    let owner = Owner { pid: 42, started_ms: 1_700_000_000_000 };
+    assert_eq!(parse_owner_marker(&owner_marker_text(&owner)), Some(owner));
+    assert_eq!(parse_owner_marker("not json"), None);
+    assert_eq!(parse_owner_marker("{}"), None);
+}
+
+#[test]
+fn launch_writes_an_owner_marker_into_the_profile() {
+    use v2_lib::browser::launch::write_owner_marker;
+    let dir = tempfile::tempdir().unwrap();
+    write_owner_marker(dir.path()).unwrap();
+    let text = std::fs::read_to_string(dir.path().join("tcm-owner.json")).unwrap();
+    let owner = v2_lib::browser::tree::parse_owner_marker(&text).unwrap();
+    assert_eq!(owner.pid, std::process::id());
+}
+
+#[test]
+fn the_liveness_probe_is_the_apps_own_rule() {
+    use v2_lib::browser::launch::{ANSWER_TRIES, ANSWER_WITHIN};
+    assert_eq!(ANSWER_TRIES, 2);
+    assert_eq!(ANSWER_WITHIN, std::time::Duration::from_secs(3));
 }

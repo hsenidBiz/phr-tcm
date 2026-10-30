@@ -6035,3 +6035,14 @@ fn offscreen_failure_suggests_reset_once() {
     assert_eq!(with_offscreen_hint(&hinted), hinted);
     assert_eq!(with_offscreen_hint("button X is not found"), "button X is not found");
 }
+
+#[test]
+fn every_failed_outcome_for_an_offscreen_target_carries_the_reset_hint() {
+    use v2_lib::browser::actions::ActionOutcome;
+    use v2_lib::browser::input::OFFSCREEN_RESET_HINT;
+    let o = ActionOutcome::failed("button X is outside the visible part of the page");
+    assert!(o.detail.ends_with(OFFSCREEN_RESET_HINT));
+    assert_eq!(ActionOutcome::failed(o.detail.clone()).detail, o.detail);
+    assert_eq!(ActionOutcome::failed("not found").detail, "not found");
+    assert_eq!(ActionOutcome::passed("is outside the visible part of the page").detail, "is outside the visible part of the page");
+}

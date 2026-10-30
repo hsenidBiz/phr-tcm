@@ -3,7 +3,7 @@
 use super::tree::{self, Ends, Tree};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 /// Which browser the run is watched in. Both are Chromium, so both speak
 /// the same DevTools Protocol and take the same switches - the only thing
@@ -196,46 +196,113 @@ pub fn args_with(port: u16, profile_dir: &Path, extra: &[&str]) -> Vec<String> {
     args
 }
 
+/// How long one liveness probe of a browser's DevTools port waits, and how
+/// many times it is asked before the browser is called silent: a slow,
+/// busy machine is not a dead browser. The one rule, shared by the run's
+/// own liveness check (`commands::autorun_replay`) and the sweep below.
+pub const ANSWER_WITHIN: std::time::Duration = std::time::Duration::from_secs(3);
+pub const ANSWER_TRIES: u32 = 2;
+
+/// What `close_hung` did: the profile folder names it closed, and those it
+/// tried to end and could not.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct Hung {
+    pub closed: Vec<String>,
+    pub stuck: Vec<String>,
+}
+
 /// Close each browser left from an earlier run whose DevTools port does
 /// not answer (hung: it holds its profile and a sign-in nobody can use).
 /// One that answers, or whose port is not known, is left alone: it may be
-/// another slot's. `end` closes one and says whether it is gone. Returns
-/// the profile folder names closed.
+/// another slot's. `end` closes one and says whether it is gone.
 pub fn close_hung(
     orphans: Vec<tree::Orphan>,
     answers: &dyn Fn(u16) -> bool,
     end: &mut dyn FnMut(&tree::Orphan) -> bool,
-) -> Vec<String> {
-    let mut closed = Vec::new();
+) -> Hung {
+    let mut hung = Hung::default();
     for o in orphans {
         let Some(port) = o.port else { continue };
         if answers(port) {
             continue;
         }
         if end(&o) {
-            closed.push(o.profile.clone());
+            hung.closed.push(o.profile.clone());
+        } else {
+            hung.stuck.push(o.profile.clone());
         }
     }
-    closed
+    hung
 }
 
-/// Does a browser's DevTools port answer `/json/version` within 1.5 s?
-/// A plain blocking request: `launch_with` is not async.
+static UNENDABLE: Mutex<Vec<String>> = Mutex::new(Vec::new());
+
+/// Remember a leftover that would not end, so later launches in this
+/// session do not spend seconds on it again.
+pub fn remember_unendable(profile: &str) {
+    let mut list = UNENDABLE.lock().unwrap_or_else(|e| e.into_inner());
+    if !list.iter().any(|p| p == profile) {
+        list.push(profile.to_string());
+    }
+}
+
+pub fn forget_unendable(profile: &str) {
+    UNENDABLE.lock().unwrap_or_else(|e| e.into_inner()).retain(|p| p != profile);
+}
+
+/// The orphans not yet found impossible to end.
+pub fn still_to_try(orphans: Vec<tree::Orphan>) -> Vec<tree::Orphan> {
+    let list = UNENDABLE.lock().unwrap_or_else(|e| e.into_inner());
+    orphans.into_iter().filter(|o| !list.contains(&o.profile)).collect()
+}
+
+/// Name this app instance as the owner of a profile, so another instance
+/// that finds the browser leaves it alone (`tree::may_end`).
+pub fn write_owner_marker(profile_dir: &Path) -> std::io::Result<()> {
+    std::fs::write(profile_dir.join(tree::OWNER_MARKER), tree::owner_marker_text(&tree::this_owner()))
+}
+
+/// Does a browser's DevTools port answer `/json/version`? `ANSWER_TRIES`
+/// probes of `ANSWER_WITHIN` each (connect and read). A plain blocking
+/// request: the sweep runs in `launch_with`, which is not async.
 pub fn devtools_answers(port: u16) -> bool {
+    (0..ANSWER_TRIES).any(|_| probe_once(port))
+}
+
+fn probe_once(port: u16) -> bool {
     use std::io::{Read, Write};
     use std::net::{SocketAddr, TcpStream};
-    use std::time::Duration;
-    let limit = Duration::from_millis(1500);
     let addr = SocketAddr::from(([127, 0, 0, 1], port));
-    let Ok(mut stream) = TcpStream::connect_timeout(&addr, limit) else { return false };
-    let _ = stream.set_read_timeout(Some(limit));
-    let _ = stream.set_write_timeout(Some(limit));
+    let Ok(mut stream) = TcpStream::connect_timeout(&addr, ANSWER_WITHIN) else { return false };
+    let _ = stream.set_read_timeout(Some(ANSWER_WITHIN));
+    let _ = stream.set_write_timeout(Some(ANSWER_WITHIN));
     let request = format!("GET /json/version HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n");
     if stream.write_all(request.as_bytes()).is_err() {
         return false;
     }
     let mut head = [0u8; 12];
     stream.read_exact(&mut head).is_ok() && head.starts_with(b"HTTP/1.")
+}
+
+/// Close the hung leftovers, logging each by profile folder name only.
+fn sweep_hung_orphans() {
+    let this = std::process::id();
+    let found = tree::find_orphans(&long_temp_dir());
+    let eligible: Vec<tree::Orphan> =
+        still_to_try(found).into_iter().filter(|o| tree::may_end(o, this, &tree::process_start_ms)).collect();
+    if eligible.is_empty() {
+        return;
+    }
+    let hung = close_hung(eligible, &devtools_answers, &mut tree::end_orphan);
+    for name in &hung.closed {
+        crate::applog::warn(format!("Auto Run closed a browser left from an earlier run that did not answer (profile {name})"));
+    }
+    for name in &hung.stuck {
+        remember_unendable(name);
+        crate::applog::warn(format!(
+            "Auto Run found a browser left from an earlier run that did not answer and could not end it (profile {name}); it is left alone for the rest of this session"
+        ));
+    }
 }
 
 /// Extra switches for an unattended run nobody is watching: headless, in a
@@ -498,12 +565,11 @@ pub fn launch_with(which: Browser, extra_args: &[&str]) -> Result<LaunchedBrowse
     // profile and any sign-in; close it before a new one starts. Only Auto
     // Run's own (`tcm-autorun-<port>` under the temp folder), never one this
     // app holds, never the person's.
-    for name in close_hung(tree::find_orphans(&long_temp_dir()), &devtools_answers, &mut tree::end_orphan) {
-        crate::applog::warn(format!(
-            "Auto Run closed a browser left from an earlier run that did not answer (profile {name})"
-        ));
-    }
+    tree::blocking(sweep_hung_orphans);
     let (port, profile_dir) = fresh_profile()?;
+    if let Err(e) = write_owner_marker(&profile_dir) {
+        crate::applog::warn(format!("Auto Run could not mark a browser profile as its own: {:?}", e.kind()));
+    }
     if let Err(e) = write_password_prefs(&profile_dir) {
         crate::applog::warn(prefs_failure_is_logged_only(&e));
     }
