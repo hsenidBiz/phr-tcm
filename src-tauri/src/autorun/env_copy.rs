@@ -556,3 +556,269 @@ pub fn recover(shared: &Path) -> usize {
     }
     settled
 }
+
+// ---- copying one case ------------------------------------------------------
+
+/// Said when the target already has a script for the case and the person has
+/// not yet agreed to replace it.
+pub const CASE_COPY_NEEDS_CONFIRM: &str = "that environment already has a script for this case - confirm to replace it";
+/// Said when the case has no script in the source.
+pub const NO_SCRIPT_TO_COPY: &str = "this case has no script to copy";
+/// Said when the target is the environment the person is in.
+pub const COPY_TO_ACTIVE: &str = "that is the environment you are in - pick another one";
+/// Said when the target is not an environment folder this copy may write to.
+pub const CASE_COPY_BAD_TARGET: &str = "that environment cannot be copied to";
+
+/// What copying one case would do, or did. Names only: nothing here holds a
+/// path, a password or a script body.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, specta::Type)]
+pub struct CaseCopyPlan {
+    /// The target already has a script for the case (copying replaces it).
+    pub target_has_script: bool,
+    /// Components the target lacks, brought across.
+    pub components_added: Vec<String>,
+    /// Components the target has in a different version; its version is used.
+    pub components_kept: Vec<String>,
+    /// The case's area, when the target lacks it and it is brought across.
+    pub area_added: Option<String>,
+    /// The case's area, when the target has it in a different version.
+    pub area_kept: Option<String>,
+    /// The case names no area: it goes where its Module goes, nothing to copy.
+    pub uses_default_area: bool,
+    /// The target had no sign-in recipe and the source has one: it is brought across.
+    pub recipe_added: bool,
+    /// The script's account key, when the target has no account of that key.
+    pub missing_account: Option<String>,
+    /// Fixture and flow ids the script names that the target lacks. Not copied.
+    pub missing_api: Vec<String>,
+}
+
+/// What a case copy would write, besides the script itself.
+struct CaseGather {
+    script: crate::autorun::CaseScript,
+    target_script: Option<crate::autorun::CaseScript>,
+    components: Vec<super::components::Component>,
+    area: Option<super::nav::ModulePath>,
+    recipe: Option<super::recipe::SignInRecipe>,
+    plan: CaseCopyPlan,
+}
+
+/// Every component name `actions` use, a `when_visible` body's included, at
+/// any depth.
+fn used_components(actions: &[crate::browser::actions::Action], out: &mut Vec<String>) {
+    use crate::browser::actions::Action;
+    for a in actions {
+        match a {
+            Action::UseComponent { component, .. } => out.push(component.trim().to_string()),
+            Action::WhenVisible { then, .. } | Action::RepeatWhileVisible { then, .. } => used_components(then, out),
+            _ => {}
+        }
+    }
+}
+
+fn same<T: serde::Serialize>(a: &T, b: &T) -> bool {
+    match (serde_json::to_value(a), serde_json::to_value(b)) {
+        (Ok(a), Ok(b)) => a == b,
+        _ => false,
+    }
+}
+
+/// Reads both sides and decides; writes nothing.
+fn gather_case(
+    source: &Path,
+    target: &Path,
+    target_env_id: &str,
+    org: &str,
+    project: &str,
+    case_id: i32,
+) -> Result<CaseGather, String> {
+    use super::{accounts, components, nav, recipe, store};
+    if !environments::valid_id(target_env_id) || roots::env_id_of(target).as_deref() != Some(target_env_id) {
+        return Err(CASE_COPY_BAD_TARGET.to_string());
+    }
+    if roots::env_id_of(source).is_some() && roots::env_id_of(source) == roots::env_id_of(target) {
+        return Err(COPY_ONTO_ITSELF.to_string());
+    }
+    // A script that cannot be read is logged; the sentence names no path.
+    let load = |root: &Path| {
+        store::load_script(root, case_id).map_err(|e| {
+            crate::applog::warn(format!("Auto Run: a script to copy could not be read: {e}"));
+            COPY_FAILED.to_string()
+        })
+    };
+    let script = load(source)?.ok_or_else(|| NO_SCRIPT_TO_COPY.to_string())?;
+    let target_script = load(target)?;
+
+    // Components: the ones the script uses, then the ones those use.
+    let src_c = components::load_components(source, org, project)?;
+    let tgt_c = components::load_components(target, org, project)?;
+    let mut todo: Vec<String> = Vec::new();
+    for s in &script.steps {
+        used_components(&s.actions, &mut todo);
+    }
+    todo.reverse();
+    let mut seen: Vec<String> = Vec::new();
+    let mut added: Vec<components::Component> = Vec::new();
+    let mut kept: Vec<String> = Vec::new();
+    while let Some(name) = todo.pop() {
+        let k = nav::module_key(&name);
+        if seen.contains(&k) {
+            continue;
+        }
+        seen.push(k);
+        let walk = match (components::find(&src_c, &name), components::find(&tgt_c, &name)) {
+            (Some(s), None) => {
+                added.push(s.clone());
+                s
+            }
+            (Some(s), Some(t)) => {
+                if !same(s, t) {
+                    kept.push(t.name.clone());
+                }
+                // The target's version is the one that runs, so its own
+                // uses are the ones that must exist.
+                t
+            }
+            (None, Some(t)) => t,
+            (None, None) => continue,
+        };
+        let mut inner = Vec::new();
+        used_components(&walk.actions, &mut inner);
+        inner.reverse();
+        todo.extend(inner);
+    }
+
+    // The area.
+    let mut area = None;
+    let mut area_added = None;
+    let mut area_kept = None;
+    let mut uses_default_area = false;
+    match script.area.as_deref().map(str::trim).filter(|a| !a.is_empty()) {
+        None => uses_default_area = true,
+        Some(name) => {
+            let src_n = nav::load_nav(source, org, project)?;
+            let tgt_n = nav::load_nav(target, org, project)?;
+            if let Some(s) = nav::find_area(&src_n, name) {
+                match nav::find_area(&tgt_n, name) {
+                    None => {
+                        area_added = Some(s.name().to_string());
+                        area = Some(s.clone());
+                    }
+                    Some(t) if !same(s, t) => area_kept = Some(t.name().to_string()),
+                    Some(_) => {}
+                }
+            }
+        }
+    }
+
+    // The sign-in recipe.
+    let mut recipe_out = None;
+    if recipe::load_recipe(target, org, project)?.is_none() {
+        if let Some(r) = recipe::load_recipe(source, org, project)? {
+            r.validate()?;
+            recipe_out = Some(r);
+        }
+    }
+
+    // The account key, and the API data that is named but not copied.
+    let missing_account = script
+        .account
+        .as_deref()
+        .map(str::trim)
+        .filter(|k| !k.is_empty())
+        .filter(|k| !accounts::load_accounts_for(target, target_env_id).is_ok_and(|a| a.iter().any(|x| x.key == *k)))
+        .map(str::to_string);
+    let mut missing_api: Vec<String> = Vec::new();
+    let mut note = |id: &str, absent: bool| {
+        if absent && !id.trim().is_empty() && !missing_api.iter().any(|m| m == id) {
+            missing_api.push(id.to_string());
+        }
+    };
+    if let Some(s) = &script.setup {
+        let there = crate::api_templates::fixture_store::load(target, org, project, &s.fixture).is_ok_and(|f| f.is_some());
+        note(&s.fixture, !there);
+    }
+    for p in &script.preconditions {
+        let there = crate::api_templates::flow_store::load(target, org, project, &p.flow).is_ok_and(|f| f.is_some());
+        note(&p.flow, !there);
+    }
+
+    let plan = CaseCopyPlan {
+        target_has_script: target_script.is_some(),
+        components_added: added.iter().map(|c| c.name.clone()).collect(),
+        components_kept: kept,
+        area_added,
+        area_kept,
+        uses_default_area,
+        recipe_added: recipe_out.is_some(),
+        missing_account,
+        missing_api,
+    };
+    Ok(CaseGather { script, target_script, components: added, area, recipe: recipe_out, plan })
+}
+
+/// What copying case `case_id`'s script from `source` into `target` would
+/// bring and keep. Writes nothing.
+pub fn plan_case_copy(
+    source: &Path,
+    target: &Path,
+    target_env_id: &str,
+    org: &str,
+    project: &str,
+    case_id: i32,
+) -> Result<CaseCopyPlan, String> {
+    gather_case(source, target, target_env_id, org, project, case_id).map(|g| g.plan)
+}
+
+/// Copies case `case_id` into `target` (an environment root other than the
+/// active one): what its script needs and the target lacks first - components,
+/// area, recipe - then the script, last, so a failure never leaves a script
+/// whose area or component is missing. Nothing the target already has is
+/// overwritten except the script, and only with `replace`; the script it
+/// replaces is first kept aside like a deleted one, and put back if the new
+/// one cannot be written. The suspected-defect marks do not travel.
+pub fn copy_case(
+    source: &Path,
+    target: &Path,
+    target_env_id: &str,
+    org: &str,
+    project: &str,
+    case_id: i32,
+    replace: bool,
+) -> Result<CaseCopyPlan, String> {
+    use super::{components, nav, recipe, store};
+    let g = gather_case(source, target, target_env_id, org, project, case_id)?;
+    if g.plan.target_has_script && !replace {
+        return Err(CASE_COPY_NEEDS_CONFIRM.to_string());
+    }
+    let failed = |what: &str, e: String| {
+        crate::applog::warn(format!("Auto Run: copying case {case_id} to another environment stopped at its {what}: {e}"));
+        COPY_FAILED.to_string()
+    };
+    // Writes into a root that is not the active one are let through the
+    // guard only while this is held.
+    let _allowed = roots::allow_writes_to(target);
+    for c in g.components {
+        components::put(target, org, project, c).map_err(|e| failed("components", e))?;
+    }
+    if let Some(a) = g.area {
+        nav::put_path_if(target, org, project, a, nav::AreaExpect::Any).map_err(|e| failed("area", e))?;
+    }
+    if let Some(r) = &g.recipe {
+        recipe::save_recipe(target, org, project, r).map_err(|e| failed("sign-in recipe", e))?;
+    }
+    if g.target_script.is_some() {
+        store::delete_script(target, case_id, super::sessions::now_ms()).map_err(|e| failed("old script", e))?;
+    }
+    let mut script = g.script;
+    script.suspected_defect = None;
+    script.cleared_defect = None;
+    if let Err(e) = store::save_script(target, &script) {
+        if let Some(old) = &g.target_script {
+            let _ = store::save_script(target, old);
+        }
+        return Err(failed("script", e));
+    }
+    crate::applog::info(format!("Auto Run: copied case {case_id} to another environment"));
+    Ok(g.plan)
+}

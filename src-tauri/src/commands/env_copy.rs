@@ -90,3 +90,89 @@ pub async fn env_copy_autorun(
     }
     Ok(done)
 }
+
+/// What copying one case would do, and the pieces both case commands share:
+/// the source (the active environment's root) and the target's root.
+/// `opening` is held for reading by the caller, so no switch lands between
+/// the two reads: a switch writes it.
+fn case_roots(shared: &Path, target_id: &str) -> Result<(PathBuf, PathBuf), String> {
+    let envs = envs(shared)?;
+    if !envs.environments.iter().any(|e| e.id == target_id) || !environments::valid_id(target_id) {
+        return Err(env_copy::COPY_UNKNOWN_TARGET.to_string());
+    }
+    let source = crate::autorun::store::resolve_root()?;
+    let target = crate::autorun::roots::env_root(shared, target_id);
+    if source == target {
+        return Err(env_copy::COPY_TO_ACTIVE.to_string());
+    }
+    Ok((source, target))
+}
+
+/// What copying a case into `target_id` would bring and keep; writes nothing.
+pub async fn case_plan_with(
+    shared: &Path,
+    org: &str,
+    project: &str,
+    case_id: i32,
+    target_id: &str,
+) -> Result<env_copy::CaseCopyPlan, String> {
+    let _no_switch = super::autorun_slots::opening().read().await;
+    let (source, target) = case_roots(shared, target_id)?;
+    let (org, project, id) = (org.to_string(), project.to_string(), target_id.to_string());
+    tauri::async_runtime::spawn_blocking(move || env_copy::plan_case_copy(&source, &target, &id, &org, &project, case_id))
+        .await
+        .map_err(|_| env_copy::COPY_FAILED.to_string())?
+}
+
+/// Copies a case into `target_id`; `replace` agrees to replace a script the
+/// target already has for it.
+pub async fn case_copy_with(
+    shared: &Path,
+    org: &str,
+    project: &str,
+    case_id: i32,
+    target_id: &str,
+    replace: bool,
+) -> Result<env_copy::CaseCopyPlan, String> {
+    // Holding `opening` for reading keeps a switch (which writes it) from
+    // changing which environment is the source while the copy runs. It is
+    // taken before anything else, as a switch takes it first.
+    let _no_switch = super::autorun_slots::opening().read().await;
+    let (source, target) = case_roots(shared, target_id)?;
+    let (org, project, id) = (org.to_string(), project.to_string(), target_id.to_string());
+    tauri::async_runtime::spawn_blocking(move || {
+        env_copy::copy_case(&source, &target, &id, &org, &project, case_id, replace)
+    })
+    .await
+    .map_err(|_| env_copy::COPY_FAILED.to_string())?
+}
+
+/// What copying a case into another environment would bring (components,
+/// area, sign-in recipe), what the target keeps its own version of, and what
+/// the person has to add there. Writes nothing.
+#[tauri::command]
+#[specta::specta]
+pub async fn auto_run_copy_case_plan(
+    _app: tauri::AppHandle,
+    organization: String,
+    project: String,
+    case_id: i32,
+    target_id: String,
+) -> Result<env_copy::CaseCopyPlan, String> {
+    case_plan_with(&shared()?, &organization, &project, case_id, &target_id).await
+}
+
+/// Copy a case's script, with what it needs, into another environment.
+/// `replace` agrees to replace a script the target already has for the case.
+#[tauri::command]
+#[specta::specta]
+pub async fn auto_run_copy_case(
+    _app: tauri::AppHandle,
+    organization: String,
+    project: String,
+    case_id: i32,
+    target_id: String,
+    replace: bool,
+) -> Result<env_copy::CaseCopyPlan, String> {
+    case_copy_with(&shared()?, &organization, &project, case_id, &target_id, replace).await
+}

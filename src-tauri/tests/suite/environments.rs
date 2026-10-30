@@ -905,7 +905,8 @@ fn only_the_helper_reads_the_recipe_address() {
     let mut files = vec![];
     walk(&src, &mut files);
     assert!(files.len() > 20, "the scan found the source tree");
-    let allowed = ["autorun/recipe.rs", "commands/autorun.rs", "commands/autorun_record_signin.rs"];
+    // env_copy moves the saved file between environments; it never signs in.
+    let allowed = ["autorun/recipe.rs", "autorun/env_copy.rs", "commands/autorun.rs", "commands/autorun_record_signin.rs"];
     let mut bad = vec![];
     for f in files {
         let rel = f.strip_prefix(&src).unwrap().to_string_lossy().replace('\\', "/");

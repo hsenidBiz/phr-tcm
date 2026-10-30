@@ -585,3 +585,234 @@ fn start_up_settles_a_cut_short_copy_before_the_seed_is_handed_over() {
     assert_eq!(read(&ra, "scripts/case-1.json").as_deref(), Some("NEW"), "the copy, not the seed");
     assert_eq!(read(&ra, "runs/run-1.json").as_deref(), Some("H-run"));
 }
+
+// ---- copying one case ------------------------------------------------------
+
+mod one_case {
+    use super::*;
+    use serde_json::{json, Value};
+    use v2_lib::autorun::env_copy::{
+        copy_case, plan_case_copy, CASE_COPY_NEEDS_CONFIRM, NO_SCRIPT_TO_COPY,
+    };
+    use v2_lib::autorun::nav::{self, ModulePath, NavFile};
+    use v2_lib::autorun::{accounts, components, recipe, store, CaseScript};
+
+    const ORG: &str = "org";
+    const PROJECT: &str = "proj";
+
+    fn script(case_id: i32, area: Option<&str>, steps: Value) -> CaseScript {
+        serde_json::from_value(json!({
+            "case_id": case_id, "title": "Apply for leave", "account": "admin",
+            "area": area, "steps": steps,
+            "suspected_defect": { "step_number": 1, "note": "n", "marked_at": "1" },
+        }))
+        .unwrap()
+    }
+
+    fn uses(name: &str) -> Value {
+        json!([{ "step_number": 1, "actions": [{ "kind": "use_component", "component": name, "inputs": {} }] }])
+    }
+
+    fn comp(name: &str, desc: &str, actions: Value) -> components::Component {
+        serde_json::from_value(json!({ "name": name, "description": desc, "inputs": [], "actions": actions })).unwrap()
+    }
+
+    fn area(name: &str, arrived: &str) -> ModulePath {
+        serde_json::from_value(json!({
+            "module": "Leave", "area": name,
+            "clicks": [{ "role": "link", "name": name, "exact": true }],
+            "arrived": arrived, "recorded": "2026-10-05T10:00:00Z"
+        }))
+        .unwrap()
+    }
+
+    fn recipe_json() -> recipe::SignInRecipe {
+        serde_json::from_value(json!({
+            "start_url": "https://hr.example.internal/",
+            "steps": [{ "kind": "click", "selector": { "css": "#login" } }],
+            "after_sign_in": [],
+            "signed_in": { "css": "#home" }
+        }))
+        .unwrap()
+    }
+
+    /// Roots of the source (A) and the target (B), with writes into both let
+    /// through (neither is the active store root in a test).
+    struct Pair {
+        t: tempfile::TempDir,
+        a: std::path::PathBuf,
+        b: std::path::PathBuf,
+        b_id: String,
+        _allow: (roots::AllowedTarget, roots::AllowedTarget),
+    }
+
+    fn pair() -> Pair {
+        let t = tempfile::tempdir().unwrap();
+        let (a_id, b_id, _c) = three_envs(t.path());
+        let (a, b) = (roots::env_root(t.path(), &a_id), roots::env_root(t.path(), &b_id));
+        std::fs::create_dir_all(&a).unwrap();
+        std::fs::create_dir_all(&b).unwrap();
+        let allow = (roots::allow_writes_to(&a), roots::allow_writes_to(&b));
+        Pair { t, a, b, b_id, _allow: allow }
+    }
+
+    fn nav_of(areas: Vec<ModulePath>) -> NavFile {
+        NavFile { direct_urls: false, modules: areas, save_words: vec![], protected: vec![] }
+    }
+
+    #[test]
+    fn copying_a_case_brings_its_components_area_and_recipe() {
+        let _lock = crate::serial::autorun();
+        let p = pair();
+        store::save_script(&p.a, &script(7, Some("Leave"), uses("Login form"))).unwrap();
+        components::put(&p.a, ORG, PROJECT, comp("Login form", "d", json!([{ "kind": "check_text", "value": "ok" }]))).unwrap();
+        nav::save_nav(&p.a, ORG, PROJECT, &nav_of(vec![area("Leave", "/hr/leave")])).unwrap();
+        recipe::save_recipe(&p.a, ORG, PROJECT, &recipe_json()).unwrap();
+
+        let plan = plan_case_copy(&p.a, &p.b, &p.b_id, ORG, PROJECT, 7).unwrap();
+        assert_eq!(plan.components_added, vec!["Login form".to_string()]);
+        assert_eq!(plan.area_added.as_deref(), Some("Leave"));
+        assert!(plan.recipe_added && !plan.target_has_script && !plan.uses_default_area);
+        assert!(store::load_script(&p.b, 7).unwrap().is_none(), "the plan writes nothing");
+        assert!(components::load_components(&p.b, ORG, PROJECT).unwrap().components.is_empty());
+
+        let done = copy_case(&p.a, &p.b, &p.b_id, ORG, PROJECT, 7, false).unwrap();
+        assert_eq!(done, plan);
+        let copied = store::load_script(&p.b, 7).unwrap().expect("the script");
+        assert!(copied.suspected_defect.is_none() && copied.cleared_defect.is_none());
+        assert_eq!(copied.title, "Apply for leave");
+        assert!(components::find(&components::load_components(&p.b, ORG, PROJECT).unwrap(), "Login form").is_some());
+        assert!(nav::find_area(&nav::load_nav(&p.b, ORG, PROJECT).unwrap(), "Leave").is_some());
+        assert!(recipe::load_recipe(&p.b, ORG, PROJECT).unwrap().is_some());
+        assert!(store::load_script(&p.a, 7).unwrap().unwrap().suspected_defect.is_some(), "the source keeps its mark");
+    }
+
+    #[test]
+    fn copying_a_case_never_overwrites_the_targets_component_or_area() {
+        let _lock = crate::serial::autorun();
+        let p = pair();
+        store::save_script(&p.a, &script(7, Some("Leave"), uses("Login form"))).unwrap();
+        components::put(&p.a, ORG, PROJECT, comp("Login form", "source", json!([{ "kind": "check_text", "value": "a" }]))).unwrap();
+        components::put(&p.b, ORG, PROJECT, comp("Login form", "target", json!([{ "kind": "check_text", "value": "b" }]))).unwrap();
+        nav::save_nav(&p.a, ORG, PROJECT, &nav_of(vec![area("Leave", "/hr/leave")])).unwrap();
+        nav::save_nav(&p.b, ORG, PROJECT, &nav_of(vec![area("Leave", "/other/leave")])).unwrap();
+        recipe::save_recipe(&p.a, ORG, PROJECT, &recipe_json()).unwrap();
+        let mut other = recipe_json();
+        other.start_url = "https://other.example.internal/".into();
+        recipe::save_recipe(&p.b, ORG, PROJECT, &other).unwrap();
+        let before = (
+            std::fs::read(components::components_path(&p.b, ORG, PROJECT)).unwrap(),
+            std::fs::read(nav::nav_path(&p.b, ORG, PROJECT)).unwrap(),
+        );
+
+        let plan = copy_case(&p.a, &p.b, &p.b_id, ORG, PROJECT, 7, false).unwrap();
+        assert_eq!(plan.components_kept, vec!["Login form".to_string()]);
+        assert!(plan.components_added.is_empty() && plan.area_added.is_none() && !plan.recipe_added);
+        assert_eq!(plan.area_kept.as_deref(), Some("Leave"));
+        assert_eq!(std::fs::read(components::components_path(&p.b, ORG, PROJECT)).unwrap(), before.0);
+        assert_eq!(std::fs::read(nav::nav_path(&p.b, ORG, PROJECT)).unwrap(), before.1);
+        assert_eq!(recipe::load_recipe(&p.b, ORG, PROJECT).unwrap().unwrap().start_url, "https://other.example.internal/");
+        assert!(store::load_script(&p.b, 7).unwrap().is_some());
+    }
+
+    #[test]
+    fn nested_components_are_brought_too() {
+        let _lock = crate::serial::autorun();
+        let p = pair();
+        store::save_script(&p.a, &script(7, None, uses("Outer"))).unwrap();
+        components::put(&p.a, ORG, PROJECT, comp("Outer", "d", json!([
+            { "kind": "when_visible", "selector": { "css": "#x" }, "then": [{ "kind": "use_component", "component": "Inner", "inputs": {} }] }
+        ]))).unwrap();
+        components::put(&p.a, ORG, PROJECT, comp("Inner", "d", json!([{ "kind": "check_text", "value": "ok" }]))).unwrap();
+        components::put(&p.a, ORG, PROJECT, comp("Unrelated", "d", json!([{ "kind": "check_text", "value": "ok" }]))).unwrap();
+        let plan = copy_case(&p.a, &p.b, &p.b_id, ORG, PROJECT, 7, false).unwrap();
+        let mut added = plan.components_added.clone();
+        added.sort();
+        assert_eq!(added, vec!["Inner".to_string(), "Outer".to_string()]);
+        assert!(plan.uses_default_area);
+        let there = components::load_components(&p.b, ORG, PROJECT).unwrap();
+        assert!(components::find(&there, "Inner").is_some() && components::find(&there, "Unrelated").is_none());
+    }
+
+    #[test]
+    fn a_case_already_scripted_in_the_target_asks_first() {
+        let _lock = crate::serial::autorun();
+        let p = pair();
+        store::save_script(&p.a, &script(7, Some("Leave"), uses("Login form"))).unwrap();
+        components::put(&p.a, ORG, PROJECT, comp("Login form", "d", json!([{ "kind": "check_text", "value": "ok" }]))).unwrap();
+        let mut old = script(7, None, uses("Old"));
+        old.title = "Targets own".into();
+        store::save_script(&p.b, &old).unwrap();
+
+        assert!(plan_case_copy(&p.a, &p.b, &p.b_id, ORG, PROJECT, 7).unwrap().target_has_script);
+        let err = copy_case(&p.a, &p.b, &p.b_id, ORG, PROJECT, 7, false).unwrap_err();
+        assert_eq!(err, CASE_COPY_NEEDS_CONFIRM);
+        assert_eq!(store::load_script(&p.b, 7).unwrap().unwrap().title, "Targets own");
+        assert!(components::load_components(&p.b, ORG, PROJECT).unwrap().components.is_empty(), "nothing written");
+
+        copy_case(&p.a, &p.b, &p.b_id, ORG, PROJECT, 7, true).unwrap();
+        assert_eq!(store::load_script(&p.b, 7).unwrap().unwrap().title, "Apply for leave");
+        let kept: Vec<_> = std::fs::read_dir(p.b.join("deleted-scripts")).unwrap().flatten().collect();
+        assert_eq!(kept.len(), 1, "the replaced script is kept aside");
+    }
+
+    #[test]
+    fn a_missing_account_and_missing_api_data_are_named_not_blocking() {
+        let _lock = crate::serial::autorun();
+        let p = pair();
+        let mut s = script(7, None, uses("X"));
+        s.setup = serde_json::from_value(json!({ "fixture": "fx-1" })).unwrap();
+        s.preconditions = serde_json::from_value(json!([
+            { "flow": "flow-2", "stage": "s", "value": null },
+            { "flow": "flow-2", "stage": "t", "value": null }
+        ]))
+        .unwrap();
+        store::save_script(&p.a, &s).unwrap();
+        let plan = copy_case(&p.a, &p.b, &p.b_id, ORG, PROJECT, 7, false).unwrap();
+        assert_eq!(plan.missing_account.as_deref(), Some("admin"));
+        assert_eq!(plan.missing_api, vec!["fx-1".to_string(), "flow-2".to_string()]);
+        assert!(store::load_script(&p.b, 7).unwrap().is_some());
+
+        // With the account there, it is not named.
+        let acct: accounts::Account = serde_json::from_value(
+            json!({ "key": "admin", "label": "Admin", "username": "u", "password": "p" }),
+        )
+        .unwrap();
+        accounts::save_accounts_for(&p.b, &p.b_id, &[acct]).unwrap();
+        let plan = plan_case_copy(&p.a, &p.b, &p.b_id, ORG, PROJECT, 7).unwrap();
+        assert!(plan.missing_account.is_none());
+    }
+
+    #[test]
+    fn a_case_with_no_script_is_refused() {
+        let _lock = crate::serial::autorun();
+        let p = pair();
+        assert_eq!(plan_case_copy(&p.a, &p.b, &p.b_id, ORG, PROJECT, 7).unwrap_err(), NO_SCRIPT_TO_COPY);
+        assert_eq!(copy_case(&p.a, &p.b, &p.b_id, ORG, PROJECT, 7, true).unwrap_err(), NO_SCRIPT_TO_COPY);
+    }
+
+    #[test]
+    fn a_failure_before_the_script_leaves_no_script_in_the_target() {
+        let _lock = crate::serial::autorun();
+        let p = pair();
+        store::save_script(&p.a, &script(7, Some("Leave"), uses("Login form"))).unwrap();
+        components::put(&p.a, ORG, PROJECT, comp("Login form", "d", json!([{ "kind": "check_text", "value": "ok" }]))).unwrap();
+        // The target's components file is a folder: reading it fails, so
+        // nothing at all is written.
+        std::fs::create_dir_all(components::components_path(&p.b, ORG, PROJECT)).unwrap();
+        let err = copy_case(&p.a, &p.b, &p.b_id, ORG, PROJECT, 7, false).unwrap_err();
+        assert!(!err.contains(p.b.to_string_lossy().as_ref()), "{err}");
+        assert!(store::load_script(&p.b, 7).unwrap().is_none());
+    }
+
+    #[test]
+    fn a_target_that_is_not_an_environment_folder_is_refused() {
+        let _lock = crate::serial::autorun();
+        let p = pair();
+        store::save_script(&p.a, &script(7, None, uses("X"))).unwrap();
+        let elsewhere = p.t.path().join("not-an-env");
+        std::fs::create_dir_all(&elsewhere).unwrap();
+        assert!(copy_case(&p.a, &elsewhere, &p.b_id, ORG, PROJECT, 7, true).is_err());
+        assert!(copy_case(&p.a, &p.a, &p.b_id, ORG, PROJECT, 7, true).is_err());
+    }
+}

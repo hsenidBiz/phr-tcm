@@ -415,6 +415,17 @@ export const commands = {
 	 *  holds data needs `replace`; what it held is kept for 30 days.
 	 */
 	envCopyAutorun: (targetId: string, sourceKey: string, replace: boolean) => typedError<CopyDone, string>(__TAURI_INVOKE("env_copy_autorun", { targetId, sourceKey, replace })),
+	/**
+	 *  What copying a case into another environment would bring (components,
+	 *  area, sign-in recipe), what the target keeps its own version of, and what
+	 *  the person has to add there. Writes nothing.
+	 */
+	autoRunCopyCasePlan: (organization: string, project: string, caseId: number, targetId: string) => typedError<CaseCopyPlan, string>(__TAURI_INVOKE("auto_run_copy_case_plan", { organization, project, caseId, targetId })),
+	/**
+	 *  Copy a case's script, with what it needs, into another environment.
+	 *  `replace` agrees to replace a script the target already has for the case.
+	 */
+	autoRunCopyCase: (organization: string, project: string, caseId: number, targetId: string, replace: boolean) => typedError<CaseCopyPlan, string>(__TAURI_INVOKE("auto_run_copy_case", { organization, project, caseId, targetId, replace })),
 	envSetDefaultPassword: (id: string, password: string) => typedError<null, string>(__TAURI_INVOKE("env_set_default_password", { id, password })),
 	envClearDefaultPassword: (id: string) => typedError<null, string>(__TAURI_INVOKE("env_clear_default_password", { id })),
 	/**  The assistant's proposed accounts for the active environment. */
@@ -2998,6 +3009,31 @@ export type BuildStage = {
 	started: string,
 	finished: string,
 	jobs: BuildJob[],
+};
+
+/**
+ *  What copying one case would do, or did. Names only: nothing here holds a
+ *  path, a password or a script body.
+ */
+export type CaseCopyPlan = {
+	/**  The target already has a script for the case (copying replaces it). */
+	target_has_script: boolean,
+	/**  Components the target lacks, brought across. */
+	components_added: string[],
+	/**  Components the target has in a different version; its version is used. */
+	components_kept: string[],
+	/**  The case's area, when the target lacks it and it is brought across. */
+	area_added: string | null,
+	/**  The case's area, when the target has it in a different version. */
+	area_kept: string | null,
+	/**  The case names no area: it goes where its Module goes, nothing to copy. */
+	uses_default_area: boolean,
+	/**  The target had no sign-in recipe and the source has one: it is brought across. */
+	recipe_added: boolean,
+	/**  The script's account key, when the target has no account of that key. */
+	missing_account: string | null,
+	/**  Fixture and flow ids the script names that the target lacks. Not copied. */
+	missing_api: string[],
 };
 
 export type CaseFinding = CaseFinding_Serialize | CaseFinding_Deserialize;
