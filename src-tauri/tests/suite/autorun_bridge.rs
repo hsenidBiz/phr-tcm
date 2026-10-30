@@ -4729,6 +4729,8 @@ async fn save_answer_notes_a_positional_delete() {
         "steps": [
             { "step_number": 1, "actions": [{ "kind": "navigate", "url": "https://app.example/ratings" }] },
             { "step_number": 2, "actions": [
+                { "kind": "fill", "selector": { "role": "textbox", "name": "Name" }, "value": "AUTOTEST Scale" },
+                { "kind": "click", "selector": { "role": "button", "name": "Save" } },
                 { "kind": "expect_contains_text", "selector": ".toast", "value": "Saved" },
                 { "kind": "click", "selector": { "role": "button", "name": "Delete", "nth": 2 } }
             ]}
@@ -4737,7 +4739,7 @@ async fn save_answer_notes_a_positional_delete() {
     see_scripts(dir.path(), &body.to_string());
     let (status, out) = route(&ctx(), Some(&client), "POST", "/autorun-script", &body.to_string(), "1.0.0").await;
     assert_eq!(status, 200, "{out}");
-    assert!(out.contains("case 7: note: step 2 deletes after a check"), "{out}");
+    assert!(out.contains("case 7: note: step 2 deletes what the case made after a check"), "{out}");
     assert!(out.contains("case 7: note: step 2: the delete picks by position (nth 2)"), "{out}");
     assert!(load_script(dir.path(), 7).unwrap().is_some());
 }

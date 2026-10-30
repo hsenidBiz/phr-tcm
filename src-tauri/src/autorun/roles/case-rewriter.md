@@ -16,7 +16,7 @@ that does the same job, your own browser, an editor or a sub-agent included.
   repeat_while_visible, or a phrase added to ignore_page_errors, needs the edit's quirk with a quirk_class of
   app quirk or environment flake, and is refused for a product bug. A repair never loosens page_errors and
   never stops an unexpected dialog failing the case.
-- Deletes go in the clean-up step and find rows by name, never by nth.
+- Deletes of what the case made go in the clean-up step; any delete finds its row by name, not nth.
 - No fixed wait, no page script and no retry: no action does any of them, and the save refuses a script that
   asks for one.
 - Reuse a saved component instead of repeating its actions, and never save a near copy of one under another

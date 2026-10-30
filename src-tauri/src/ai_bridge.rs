@@ -9166,7 +9166,7 @@ pub async fn save_component_in<B: DiscoveryBrowser>(
     let first = held(slot);
     let saved = save(&first, draft.clone());
     let Err(refused) = &saved else {
-        return component_answer(saved);
+        return with_delete_notes(component_answer(saved), &draft);
     };
     // Refused by the check of its own locators, for nothing but locators
     // never seen: what that check alone says, recomputed here.
@@ -9192,6 +9192,22 @@ pub async fn save_component_in<B: DiscoveryBrowser>(
     }
     let again = save(&held(slot), draft.clone());
     after_recording(&recorded, component_answer(again))
+}
+
+/// A component save's answer with `notes` added when its actions delete by
+/// position (a warning, never a refusal).
+fn with_delete_notes(answer: (u16, String), draft: &crate::autorun::components::Component) -> (u16, String) {
+    let notes = crate::autorun::script_notes::positional_delete_notes_for_actions(&draft.actions);
+    if answer.0 != 200 || notes.is_empty() {
+        return answer;
+    }
+    match serde_json::from_str::<serde_json::Value>(&answer.1) {
+        Ok(mut v) if v.is_object() => {
+            v["notes"] = serde_json::json!(notes);
+            (answer.0, v.to_string())
+        }
+        _ => answer,
+    }
 }
 
 /// A component save's answer: the saved name, version and changes as
@@ -13004,13 +13020,20 @@ pub async fn save_autorun_scripts_carrying(
                 let Some(script) = prepared.iter().find(|s| s.case_id == *case_id) else { continue };
                 let sentences = crate::autorun::seen_check::loose_name_notes(&map, &components, script, only.as_deref())
                     .into_iter()
-                    .chain(crate::autorun::preconditions::undeclared_record_note(script, only.as_deref(), &test_prefix, &save_words))
-                    .chain(crate::autorun::script_notes::delete_after_check_notes(script, only.as_deref()))
-                    .chain(crate::autorun::script_notes::positional_delete_notes(script, only.as_deref()));
+                    .chain(crate::autorun::preconditions::undeclared_record_note(script, only.as_deref(), &test_prefix, &save_words));
                 notes.extend(sentences.map(|n| format!("case {case_id}: note: {n}")));
             }
             // The value check's notes count toward the same cap.
             notes.extend(value_notes.iter().cloned());
+            // The delete notes are style warnings: after the case-value
+            // notes, so the cap drops them first.
+            for (case_id, only) in &seen_scope {
+                let Some(script) = prepared.iter().find(|s| s.case_id == *case_id) else { continue };
+                let sentences = crate::autorun::script_notes::delete_after_check_notes(script, Some(&components), only.as_deref())
+                    .into_iter()
+                    .chain(crate::autorun::script_notes::positional_delete_notes(script, Some(&components), only.as_deref()));
+                notes.extend(sentences.map(|n| format!("case {case_id}: note: {n}")));
+            }
             if notes.len() > MAX_SAVE_NOTES {
                 let more = notes.len() - MAX_SAVE_NOTES;
                 notes.truncate(MAX_SAVE_NOTES);
