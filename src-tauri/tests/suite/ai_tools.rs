@@ -706,6 +706,7 @@ fn the_effective_disabled_set_follows_the_modules_and_protects_the_core() {
         [
             "begin_test_case_writing",
             "get_guide",
+            "get_current_pbi",
             "get_test_cases",
             "check_spec_coverage",
             "transform_cases",

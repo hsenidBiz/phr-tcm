@@ -104,6 +104,7 @@ fn tools_list_names_every_tool() {
         vec![
             "begin_test_case_writing",
             "get_guide",
+            "get_current_pbi",
             "get_test_cases",
             "search_test_suites",
             "get_suite_test_cases",
@@ -556,9 +557,9 @@ fn an_unreachable_bridge_disables_nothing() {
     let resp = v2_lib::mcp::handle_message(req, "1.0.0", &call).unwrap();
     let v: serde_json::Value = serde_json::from_str(&resp).unwrap();
     let names: Vec<&str> = v["result"]["tools"].as_array().unwrap().iter().map(|t| t["name"].as_str().unwrap()).collect();
-    // 55 tools in all; an unreachable bridge cannot say which modules are
+    // 56 tools in all; an unreachable bridge cannot say which modules are
     // on, so the 40 module tools are not offered - and nothing else goes.
-    assert_eq!(names.len(), 55 - 40, "an unreachable bridge must not disable a Core tool: {names:?}");
+    assert_eq!(names.len(), 56 - 40, "an unreachable bridge must not disable a Core tool: {names:?}");
     assert!(names.iter().all(|n| module_of_tool(n).is_none()), "{names:?}");
 }
 
@@ -2795,7 +2796,7 @@ fn the_network_tools_are_off_until_the_app_says_yes() {
             assert!(v["result"]["content"][0]["text"].as_str().unwrap().contains("Network tools switch"), "{tool}: {v}");
         }
         assert!(names.contains(&"get_autorun_page") && names.contains(&"get_autorun_network_wait"), "{names:?}");
-        assert_eq!(names.len(), 67, "{names:?}");
+        assert_eq!(names.len(), 68, "{names:?}");
     }
     // The proxy's own fallback when the app does not answer names no switch.
     let saved = v2_lib::mcp::tools_reply_or_saved(Err("down".into()), Some((Module::ALL.into_iter().collect(), true)));

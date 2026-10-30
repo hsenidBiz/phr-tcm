@@ -214,6 +214,26 @@ pub struct BridgeSwitches {
     /// `BridgeContext::all_projects`). Not a write switch.
     #[serde(default)]
     pub all_projects: bool,
+    /// The PBI selected in the top bar, or none (see
+    /// `BridgeContext::current_pbi`). Not a switch: it rides here so
+    /// `set_bridge_context` stays inside the ten arguments a specta command
+    /// may take.
+    #[serde(default)]
+    pub pbi: Option<crate::ai_bridge::CurrentPbi>,
+}
+
+/// Take the selected PBI off the bridge's context: the webview calls it when
+/// the org changes or the person signs out, when nothing else is pushed.
+pub fn clear_current_pbi(slot: &std::sync::Mutex<BridgeContext>) {
+    slot.lock().unwrap_or_else(|e| e.into_inner()).current_pbi = None;
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn clear_bridge_pbi(app: tauri::AppHandle) {
+    if let Some(shared) = running_bridge(&app) {
+        clear_current_pbi(&shared.ctx);
+    }
 }
 
 /// The running bridge, if it has started.
@@ -399,6 +419,7 @@ fn push_context(
             api_writes: switches.api_writes,
             network_tools: switches.network_tools,
             all_projects: switches.all_projects,
+            current_pbi: switches.pbi.clone(),
             // Set from the active environment, never from the webview.
             db_no_ask: false,
             gate: Default::default(),

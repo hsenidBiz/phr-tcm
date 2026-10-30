@@ -1321,6 +1321,7 @@ export const commands = {
 	 *  are written on a blocking thread, with no bridge lock held.
 	 */
 	setBridgeContext: (organization: string, project: string, moduleRef: string | null, preconditionsRef: string | null, disabledTools: string[], workingDir: string | null, dbId: string | null, switches: BridgeSwitches) => __TAURI_INVOKE<void>("set_bridge_context", { organization, project, moduleRef, preconditionsRef, disabledTools, workingDir, dbId, switches }),
+	clearBridgePbi: () => __TAURI_INVOKE<void>("clear_bridge_pbi"),
 	detectAiTools: (workingDir: string | null) => __TAURI_INVOKE<DetectedTool[]>("detect_ai_tools", { workingDir }),
 	/**
 	 *  `disabled_tools` is the AI Bridge tab's current on/off set: registering
@@ -2923,6 +2924,13 @@ export type BridgeSwitches = {
 	 *  `BridgeContext::all_projects`). Not a write switch.
 	 */
 	allProjects?: boolean,
+	/**
+	 *  The PBI selected in the top bar, or none (see
+	 *  `BridgeContext::current_pbi`). Not a switch: it rides here so
+	 *  `set_bridge_context` stays inside the ten arguments a specta command
+	 *  may take.
+	 */
+	pbi?: CurrentPbi | null,
 };
 
 /**  How the browser runs. */
@@ -3718,6 +3726,16 @@ export type Creates = {
  */
 export type CrystalReportChanged = {
 	path: string | null,
+};
+
+/**
+ *  The PBI selected in Test Case Manager's top bar, as the assistants see it
+ *  (`get_current_pbi`). Pushed with the bridge context; only ever read here.
+ */
+export type CurrentPbi = {
+	id: number,
+	title: string,
+	project: string,
 };
 
 /**  The report TCM has open, as the screen shows it. */
