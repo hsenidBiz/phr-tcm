@@ -3,7 +3,8 @@
 
 use std::path::Path;
 use v2_lib::autorun::env_copy::{
-    copy_choices, copy_environment, is_empty_env, source_root, COPY_NEEDS_CONFIRM, COPY_ONTO_ITSELF,
+    copy_choices, copy_environment, copy_environment_with, is_empty_env, recover, source_root, COPY_FAILED,
+    COPY_NEEDS_CONFIRM, COPY_NOTHING_TO_COPY, COPY_ONTO_ITSELF, COPY_SOURCE_MISSING,
 };
 use v2_lib::autorun::roots::{self, REMOVED_DIR};
 use v2_lib::commands::environments::SWITCH_TEMPLATE_RUNNING;
@@ -262,6 +263,237 @@ fn the_command_is_refused_while_a_template_runs() {
     let err = tauri::async_runtime::block_on(v2_lib::commands::env_copy::copy_with(t.path(), &b, &a, false)).unwrap_err();
     assert_eq!(err, SWITCH_TEMPLATE_RUNNING);
     drop(claim);
+    let (done, active) =
+        tauri::async_runtime::block_on(v2_lib::commands::env_copy::copy_with(t.path(), &b, &a, false)).unwrap();
+    assert_eq!((done.items, active), (3, false));
     let again = tauri::async_runtime::block_on(v2_lib::commands::env_copy::copy_with(t.path(), &b, &b, true));
     assert_eq!(again.unwrap_err(), COPY_ONTO_ITSELF);
+}
+
+// ---- fix round 1: nothing is deleted that could not be put back -------------
+
+fn staging_of(t: &Path) -> Vec<std::path::PathBuf> {
+    std::fs::read_dir(t.join("envs"))
+        .unwrap()
+        .flatten()
+        .filter(|e| e.file_name().to_string_lossy().starts_with(".copying-"))
+        .map(|e| e.path())
+        .collect()
+}
+
+/// B holds a script, run history and an export record that is the ONLY file
+/// in its `projects/` folder; the set-aside of B is forced to fail.
+fn blocked_replace(t: &Path, a: &str, b: &str) {
+    fill_source(t, a);
+    let rb = roots::env_root(t, b);
+    put(&rb, "scripts/case-9.json", "B-script");
+    put(&rb, "runs/run-1.json", "B-run");
+    put(&rb, "projects/p.pwexport.json", "B-export");
+    std::fs::create_dir_all(t.join(REMOVED_DIR).join(format!("{b}-{NOW}"))).unwrap();
+}
+
+#[test]
+fn an_export_record_alone_in_projects_survives_a_failed_set_aside() {
+    let _lock = crate::serial::autorun();
+    let t = tempfile::tempdir().unwrap();
+    let (a, b, _c) = three_envs(t.path());
+    blocked_replace(t.path(), &a, &b);
+    let rb = roots::env_root(t.path(), &b);
+    let err = copy_environment(t.path(), &roots::env_root(t.path(), &a), &b, "B", true, NOW).unwrap_err();
+    assert_eq!(err, COPY_FAILED);
+    assert_eq!(read(&rb, "projects/p.pwexport.json").as_deref(), Some("B-export"));
+    assert_eq!(read(&rb, "runs/run-1.json").as_deref(), Some("B-run"));
+    assert_eq!(read(&rb, "scripts/case-9.json").as_deref(), Some("B-script"));
+    assert!(staging_of(t.path()).is_empty());
+}
+
+#[test]
+fn staging_is_kept_when_an_item_cannot_be_put_back_and_the_next_start_puts_it_back() {
+    let _lock = crate::serial::autorun();
+    let t = tempfile::tempdir().unwrap();
+    let (a, b, _c) = three_envs(t.path());
+    blocked_replace(t.path(), &a, &b);
+    let rb = roots::env_root(t.path(), &b);
+    // Every move out of staging is held (as an antivirus scan does).
+    let mut held = |from: &Path, to: &Path| -> std::io::Result<()> {
+        if from.to_string_lossy().contains(".copying-") && to.starts_with(&rb) {
+            return Err(std::io::Error::from(std::io::ErrorKind::PermissionDenied));
+        }
+        std::fs::rename(from, to)
+    };
+    let err =
+        copy_environment_with(t.path(), &roots::env_root(t.path(), &a), &b, "B", true, NOW, &mut held, &[]).unwrap_err();
+    assert_eq!(err, COPY_FAILED);
+    let staging = staging_of(t.path());
+    assert_eq!(staging.len(), 1, "staging is kept");
+    assert_eq!(read(&staging[0], "runs/run-1.json").as_deref(), Some("B-run"));
+    assert_eq!(read(&staging[0], "projects/p.pwexport.json").as_deref(), Some("B-export"));
+    // The next start gives the environment its history back and deletes nothing.
+    assert_eq!(recover(t.path()), 1);
+    assert_eq!(read(&rb, "runs/run-1.json").as_deref(), Some("B-run"));
+    assert_eq!(read(&rb, "projects/p.pwexport.json").as_deref(), Some("B-export"));
+    assert_eq!(read(&rb, "scripts/case-9.json").as_deref(), Some("B-script"));
+    assert_eq!(staging_of(t.path()).len(), 1, "staging is left aside, not deleted");
+}
+
+#[test]
+fn a_failed_placement_with_nothing_set_aside_keeps_history_and_export_record() {
+    let _lock = crate::serial::autorun();
+    let t = tempfile::tempdir().unwrap();
+    let (a, b, _c) = three_envs(t.path());
+    fill_source(t.path(), &a);
+    let rb = roots::env_root(t.path(), &b);
+    put(&rb, "runs/run-1.json", "B-run");
+    put(&rb, "projects/p.pwexport.json", "B-export");
+    let mut deny = |from: &Path, to: &Path| -> std::io::Result<()> {
+        if from.file_name().is_some_and(|n| n.to_string_lossy().starts_with(".copying-")) {
+            return Err(std::io::Error::from(std::io::ErrorKind::PermissionDenied));
+        }
+        std::fs::rename(from, to)
+    };
+    let err =
+        copy_environment_with(t.path(), &roots::env_root(t.path(), &a), &b, "B", false, NOW, &mut deny, &[]).unwrap_err();
+    assert_eq!(err, COPY_FAILED);
+    assert_eq!(read(&rb, "runs/run-1.json").as_deref(), Some("B-run"));
+    assert_eq!(read(&rb, "projects/p.pwexport.json").as_deref(), Some("B-export"));
+    assert!(staging_of(t.path()).is_empty());
+}
+
+#[test]
+fn a_copy_cut_short_between_set_aside_and_placement_is_finished_at_the_next_start() {
+    let _lock = crate::serial::autorun();
+    let t = tempfile::tempdir().unwrap();
+    let (a, b, _c) = three_envs(t.path());
+    fill_source(t.path(), &a);
+    let rb = roots::env_root(t.path(), &b);
+    put(&rb, "scripts/case-9.json", "B-script");
+    put(&rb, "runs/run-1.json", "B-run");
+    put(&rb, "projects/p.pwexport.json", "B-export");
+    // Nothing can be renamed into B any more: placement fails and so does the restore.
+    let mut deny = |from: &Path, to: &Path| -> std::io::Result<()> {
+        if to == rb {
+            return Err(std::io::Error::from(std::io::ErrorKind::PermissionDenied));
+        }
+        std::fs::rename(from, to)
+    };
+    let err =
+        copy_environment_with(t.path(), &roots::env_root(t.path(), &a), &b, "B", true, NOW, &mut deny, &[]).unwrap_err();
+    assert_eq!(err, COPY_FAILED);
+    assert!(!rb.exists(), "the target is missing, as after a crash");
+    assert_eq!(staging_of(t.path()).len(), 1);
+    assert_eq!(recover(t.path()), 1);
+    assert_eq!(read(&rb, "scripts/case-1.json").as_deref(), Some("A-script"), "the copy the person asked for");
+    assert_eq!(read(&rb, "runs/run-1.json").as_deref(), Some("B-run"));
+    assert_eq!(read(&rb, "projects/p.pwexport.json").as_deref(), Some("B-export"));
+    assert!(read(&rb, ".copying.json").is_none(), "the note is gone");
+    assert!(staging_of(t.path()).is_empty());
+    assert_eq!(roots::removed_folders(t.path(), NOW).len(), 1, "the replaced data is still kept");
+}
+
+/// A staging folder as a crash leaves it.
+fn leftover(t: &Path, target: &str, note: Option<&str>) -> std::path::PathBuf {
+    let staging = t.join("envs").join(format!(".copying-{target}-{NOW}"));
+    put(&staging, "scripts/case-1.json", "NEW");
+    put(&staging, "runs/run-1.json", "H-run");
+    put(&staging, "projects/p.pwexport.json", "H-export");
+    if let Some(step) = note {
+        put(&staging, ".copying.json", &format!("{{\"target\":\"{target}\",\"source\":\"x\",\"step\":\"{step}\"}}"));
+    }
+    staging
+}
+
+#[test]
+fn recover_leaves_a_folder_with_no_note() {
+    let _lock = crate::serial::autorun();
+    let t = tempfile::tempdir().unwrap();
+    let (_a, b, _c) = three_envs(t.path());
+    let staging = leftover(t.path(), &b, None);
+    assert_eq!(recover(t.path()), 0);
+    assert!(staging.join("runs/run-1.json").exists());
+    assert!(!roots::env_root(t.path(), &b).exists());
+}
+
+#[test]
+fn recover_finishes_a_copy_when_the_target_is_missing_or_holds_no_file() {
+    let _lock = crate::serial::autorun();
+    for empty_folders in [false, true] {
+        let t = tempfile::tempdir().unwrap();
+        let (_a, b, _c) = three_envs(t.path());
+        leftover(t.path(), &b, Some("kept"));
+        let rb = roots::env_root(t.path(), &b);
+        if empty_folders {
+            std::fs::create_dir_all(rb.join("scripts")).unwrap();
+        }
+        assert_eq!(recover(t.path()), 1);
+        assert_eq!(read(&rb, "scripts/case-1.json").as_deref(), Some("NEW"));
+        assert_eq!(read(&rb, "runs/run-1.json").as_deref(), Some("H-run"));
+        assert_eq!(read(&rb, "projects/p.pwexport.json").as_deref(), Some("H-export"));
+        assert!(staging_of(t.path()).is_empty());
+    }
+}
+
+#[test]
+fn recover_puts_history_back_only_where_the_target_has_none_and_deletes_nothing() {
+    let _lock = crate::serial::autorun();
+    for step in ["kept", "abandoned"] {
+        let t = tempfile::tempdir().unwrap();
+        let (_a, b, _c) = three_envs(t.path());
+        let staging = leftover(t.path(), &b, Some(step));
+        let rb = roots::env_root(t.path(), &b);
+        put(&rb, "scripts/case-9.json", "OLD");
+        put(&rb, "runs/run-2.json", "own-run");
+        assert_eq!(recover(t.path()), 1);
+        assert_eq!(read(&rb, "scripts/case-9.json").as_deref(), Some("OLD"), "the target is not touched");
+        assert_eq!(read(&rb, "runs/run-2.json").as_deref(), Some("own-run"), "its own history wins");
+        assert!(read(&rb, "runs/run-1.json").is_none());
+        assert_eq!(read(&rb, "projects/p.pwexport.json").as_deref(), Some("H-export"));
+        assert_eq!(read(&staging, "runs/run-1.json").as_deref(), Some("H-run"), "what stayed is kept");
+        assert_eq!(read(&staging, "scripts/case-1.json").as_deref(), Some("NEW"));
+    }
+}
+
+#[test]
+fn abandoned_with_a_missing_target_gets_its_history_back() {
+    let _lock = crate::serial::autorun();
+    let t = tempfile::tempdir().unwrap();
+    let (_a, b, _c) = three_envs(t.path());
+    leftover(t.path(), &b, Some("abandoned"));
+    assert_eq!(recover(t.path()), 1);
+    let rb = roots::env_root(t.path(), &b);
+    assert_eq!(read(&rb, "runs/run-1.json").as_deref(), Some("H-run"));
+    assert!(read(&rb, "scripts/case-1.json").is_none(), "an abandoned copy is not applied");
+    assert_eq!(staging_of(t.path()).len(), 1);
+}
+
+#[test]
+fn staging_folders_are_never_listed_as_environments_or_retired() {
+    let _lock = crate::serial::autorun();
+    let t = tempfile::tempdir().unwrap();
+    let (_a, b, _c) = three_envs(t.path());
+    let staging = leftover(t.path(), &b, Some("kept"));
+    assert!(roots::env_roots(t.path()).iter().all(|r| !r.to_string_lossy().contains(".copying-")));
+    assert_eq!(roots::retire_unlisted(t.path(), NOW), 0);
+    assert!(staging.exists());
+}
+
+#[test]
+fn a_missing_or_empty_source_is_refused_and_the_target_keeps_its_data() {
+    let _lock = crate::serial::autorun();
+    let t = tempfile::tempdir().unwrap();
+    let (a, b, c) = three_envs(t.path());
+    let rb = roots::env_root(t.path(), &b);
+    put(&rb, "scripts/case-9.json", "B-script");
+    // C never had a folder.
+    assert_eq!(
+        copy_environment(t.path(), &roots::env_root(t.path(), &c), &b, "B", true, NOW).unwrap_err(),
+        COPY_SOURCE_MISSING
+    );
+    // A has a folder with history only.
+    put(&roots::env_root(t.path(), &a), "runs/run-1.json", "A-run");
+    assert_eq!(
+        copy_environment(t.path(), &roots::env_root(t.path(), &a), &b, "B", true, NOW).unwrap_err(),
+        COPY_NOTHING_TO_COPY
+    );
+    assert_eq!(read(&rb, "scripts/case-9.json").as_deref(), Some("B-script"));
+    assert!(roots::removed_folders(t.path(), NOW).is_empty());
 }

@@ -1802,7 +1802,12 @@ pub fn save_order(root: &Path, pbi_id: i32, case_ids: &[i32]) -> Result<(), Stri
         ORDER_NOT_SAVED.to_string()
     };
     if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir).map_err(|e| not_saved(e.to_string()))?;
+        // Under the guard: a folder made for a root that stopped being the
+        // active one (or while a copy has the environment) is refused.
+        match super::roots::create_dir_all(root, dir) {
+            Err(e) if e.to_string() == super::roots::ENVIRONMENT_SWITCHED => return Err(e.to_string()),
+            other => other.map_err(|e| not_saved(e.to_string()))?,
+        }
     }
     let json = serde_json::to_string_pretty(&SavedOrder { case_ids: ids }).map_err(|e| not_saved(e.to_string()))?;
     match super::roots::write_file(root, &path, &json) {

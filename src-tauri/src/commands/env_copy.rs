@@ -59,7 +59,11 @@ pub async fn copy_with(
     })
     .await
     .map_err(|_| env_copy::COPY_FAILED.to_string())??;
-    Ok((done, envs.active == target_id))
+    // Read after the copy, not before the guards: a switch may have landed
+    // while this waited.
+    let active = crate::autorun::store::selected_root().as_deref()
+        == Some(crate::autorun::roots::env_root(shared, target_id).as_path());
+    Ok((done, active))
 }
 
 /// Where the environment can copy from.

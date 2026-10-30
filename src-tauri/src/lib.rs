@@ -679,6 +679,12 @@ pub fn run() {
                 // Scripts deleted more than 30 days ago go for good, in
                 // every environment's folder.
                 if per_env {
+                    // Before anything can choose an environment folder: a copy
+                    // cut short is finished or its history put back first.
+                    let settled = autorun::env_copy::recover(&shared);
+                    if settled > 0 {
+                        applog::info(format!("Auto Run: {settled} unfinished copy(ies) settled"));
+                    }
                     let now = autorun::sessions::now_ms();
                     let moved = autorun::roots::retire_unlisted(&shared, now);
                     if moved > 0 {
