@@ -12,6 +12,61 @@ fn ensure_offered() -> Result<(), String> {
     crate::pw_repo::ensure_offered(crate::modules::on(crate::modules::Module::Playwright))
 }
 
+/// The root of the active environment, refused unless it is the Playwright
+/// export environment: what Export, Sync and Finish in the repo all start
+/// from. One sentence names the export environment.
+pub(crate) fn export_root(app: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {
+    let root = super::autorun::root(app)?;
+    crate::environments::check_export_env(&root)?;
+    Ok(root)
+}
+
+/// The export environment's own folder, whichever environment is active:
+/// where the export records live. `None` when the environments cannot be
+/// read (the rename then moves the repo's folder and no placements).
+pub(crate) fn export_env_root(app: &tauri::AppHandle) -> Option<std::path::PathBuf> {
+    let active = super::autorun::root(app).ok()?;
+    let export = crate::environments::export_env(&active).ok()?;
+    Some(crate::autorun::roots::env_root_beside(&active, &export.id))
+}
+
+/// The Playwright export environment, as the Playwright tab shows it.
+#[derive(Debug, Clone, serde::Serialize, specta::Type)]
+pub struct PwExportEnv {
+    pub id: String,
+    pub name: String,
+    /// The export environment is the active one: Export and Sync are open.
+    pub is_active: bool,
+}
+
+fn export_env_view(active: &std::path::Path) -> Result<PwExportEnv, String> {
+    let env = crate::environments::export_env(active)?;
+    let is_active = crate::environments::active_id(active)? == env.id;
+    Ok(PwExportEnv { id: env.id, name: env.name, is_active })
+}
+
+/// Which environment Export and Sync run in.
+#[tauri::command(async)]
+#[specta::specta]
+pub fn pw_export_env(app: tauri::AppHandle) -> Result<PwExportEnv, String> {
+    let _t = crate::pw_repo::timed("pw_export_env");
+    ensure_offered()?;
+    export_env_view(&super::autorun::root(&app)?)
+}
+
+/// Names the environment Export and Sync run in, moving the export records
+/// (area placements and account choices) from the old one's folder to the
+/// new one's. The only place the export environment changes.
+#[tauri::command(async)]
+#[specta::specta]
+pub fn pw_set_export_env(app: tauri::AppHandle, id: String) -> Result<PwExportEnv, String> {
+    let _t = crate::pw_repo::timed("pw_set_export_env");
+    ensure_offered()?;
+    let root = super::autorun::root(&app)?;
+    crate::environments::set_export_env(&root, &id)?;
+    export_env_view(&root)
+}
+
 fn clone_path() -> String {
     crate::app_settings::current().playwright_clone
 }
@@ -29,7 +84,7 @@ pub fn pw_export_preview(
 ) -> Result<Preview, String> {
     let _t = crate::pw_repo::timed("pw_export_preview");
     ensure_offered()?;
-    let root = super::autorun::root(&app)?;
+    let root = export_root(&app)?;
     let dir = sync_dir(&app)?;
     let modules: BTreeMap<i32, String> = modules.into_iter().collect();
     export::preview_recorded(&root, &dir, &organization, &project, &case_ids, &clone_path(), &modules)
@@ -53,7 +108,7 @@ pub fn pw_export_save_map(
     for (id, placement) in &map.cases {
         placement.validate().map_err(|e| format!("Case {id}: {e}"))?;
     }
-    let root = super::autorun::root(&app)?;
+    let root = export_root(&app)?;
     mapping::save(&root, &organization, &project, &map)
 }
 
@@ -139,10 +194,10 @@ pub async fn pw_export_write(
 ) -> Result<ExportResult, String> {
     let _t = crate::pw_repo::timed("pw_export_write");
     ensure_offered()?;
+    let root = export_root(&app)?;
     if case_ids.is_empty() {
         return Ok(nothing_written());
     }
-    let root = super::autorun::root(&app)?;
     let modules: BTreeMap<i32, String> = modules.into_iter().collect();
     // Refuse an unexportable selection before any request is made.
     export::ensure_exportable(&root, &organization, &project, &case_ids, &clone_path(), &modules, &replace)?;

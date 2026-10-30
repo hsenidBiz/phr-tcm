@@ -25,7 +25,7 @@ const env = (id: string, name: string) => ({
 const A = env("env-0000000a", "Default");
 const B = env("env-0000000b", "QA");
 const C = env("env-0000000c", "Staging");
-const view = (active: string, ...environments: ReturnType<typeof env>[]) => ({ active, environments });
+const view = (active: string, ...environments: ReturnType<typeof env>[]) => ({ active, playwright_export: active, environments });
 
 /** What an older version kept: one value for the whole app. */
 function legacy() {
@@ -90,7 +90,7 @@ test("an environment made after the migration starts with the fresh-install tool
 
 test("a list with no active environment migrates nothing", () => {
   legacy();
-  noteEnvironments({ active: "", environments: [] });
+  noteEnvironments({ active: "", playwright_export: "", environments: [] });
   expect(localStorage.getItem("tcm-v2-db-writes")).toBe("1");
   expect(activeEnvIdSnapshot()).toBe("");
 });

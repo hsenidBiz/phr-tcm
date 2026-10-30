@@ -82,7 +82,7 @@ export function toInput(env: EnvView): EnvInput {
   };
 }
 
-const EMPTY: EnvListView = { active: "", environments: [] };
+const EMPTY: EnvListView = { active: "", playwright_export: "", environments: [] };
 
 /** The repository whose AI tools' settings Rust brings in line with the
  * active environment - the same rule the Run changes without asking switch

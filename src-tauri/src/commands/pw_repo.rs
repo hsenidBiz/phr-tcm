@@ -100,7 +100,7 @@ pub fn pw_repo_rename_folder_check(
     let _t = crate::pw_repo::timed("pw_repo_rename_folder_check");
     let clone = chosen(&clone)?;
     crate::pw_export::clone::open(&clone)?;
-    let maps = super::autorun::root(&app).ok();
+    let maps = super::pw_export::export_env_root(&app);
     let sync = super::pw_export::sync_dir(&app).ok();
     crate::pw_repo::rename_folder::check(&clone, maps.as_deref(), sync.as_deref(), &from, &to)
 }
@@ -126,7 +126,11 @@ pub fn pw_repo_rename_folder(
     // run cannot start in the middle of it; it is freed on every path out.
     let _slot = process::hold("Renaming a folder")
         .map_err(|_| "A Playwright command is running. Wait for it to finish, then rename the folder.".to_string())?;
-    let maps = super::autorun::root(&app).ok();
+    // The placements to move are the export environment's, whichever
+    // environment is active: its folder is let through the write guard for
+    // as long as the rename runs.
+    let maps = super::pw_export::export_env_root(&app);
+    let _allowed = maps.as_deref().map(crate::autorun::roots::allow_writes_to);
     let sync = super::pw_export::sync_dir(&app).ok();
     let done = crate::pw_repo::rename_folder::rename(&clone, maps.as_deref(), sync.as_deref(), &from, &to, confirmed)?;
     // Folder names only: the clone's own path stays out of the log.
@@ -303,7 +307,7 @@ pub async fn pw_users_change(app: tauri::AppHandle, clone: String, change: Accou
 #[specta::specta]
 pub async fn pw_sync_states(app: tauri::AppHandle, clone: String, org: String, project: String) -> Result<Vec<SyncRow>, String> {
     let _t = crate::pw_repo::timed("pw_sync_states");
-    let root = super::autorun::root(&app)?;
+    let root = super::pw_export::export_root(&app)?;
     let dir = super::pw_export::sync_dir(&app)?;
     let configured = crate::app_settings::current().playwright_clone;
     blocking(clone, false, move |_, _| sync::states(&dir, &root, &configured, &org, &project)).await
@@ -325,7 +329,7 @@ pub async fn pw_handoff(
 ) -> Result<Vec<handoff::HandoffCard>, String> {
     let _t = crate::pw_repo::timed("pw_handoff");
     let dir = super::pw_export::sync_dir(&app)?;
-    let autorun = super::autorun::root(&app)?;
+    let autorun = super::pw_export::export_root(&app)?;
     let configured = crate::app_settings::current().playwright_clone;
     let written = super::pw_export::written(&configured);
     blocking(clone, false, move |root, _| {
@@ -385,7 +389,7 @@ pub async fn pw_sync_add_new(
     preconditions_ref: Option<String>,
 ) -> Result<ExportResult, String> {
     let _t = crate::pw_repo::timed("pw_sync_add_new");
-    let root = super::autorun::root(&app)?;
+    let root = super::pw_export::export_root(&app)?;
     let dir = super::pw_export::sync_dir(&app)?;
     let configured = crate::app_settings::current().playwright_clone;
     let (o, p) = (org.clone(), project.clone());
@@ -470,10 +474,10 @@ async fn update(
     preconditions_ref: Option<String>,
 ) -> Result<ExportResult, String> {
     chosen(&clone)?;
+    let root = super::pw_export::export_root(&app)?;
     if cases.is_empty() {
         return Ok(super::pw_export::nothing_written());
     }
-    let root = super::autorun::root(&app)?;
     let dir = super::pw_export::sync_dir(&app)?;
     let configured = crate::app_settings::current().playwright_clone;
     let record = sync::load(&sync::record_path(&dir, &configured, &org, &project))?;

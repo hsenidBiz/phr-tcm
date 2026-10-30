@@ -1488,6 +1488,14 @@ export const commands = {
 	 *  Auto Run order goes into each test-case file's order notes.
 	 */
 	pwExportWrite: (organization: string, project: string, caseIds: number[], modules: ([number, string])[], replace: number[], moduleRef: string | null, preconditionsRef: string | null, pbiId: number | null) => typedError<ExportResult, string>(__TAURI_INVOKE("pw_export_write", { organization, project, caseIds, modules, replace, moduleRef, preconditionsRef, pbiId })),
+	/**  Which environment Export and Sync run in. */
+	pwExportEnv: () => typedError<PwExportEnv, string>(__TAURI_INVOKE("pw_export_env")),
+	/**
+	 *  Names the environment Export and Sync run in, moving the export records
+	 *  (area placements and account choices) from the old one's folder to the
+	 *  new one's. The only place the export environment changes.
+	 */
+	pwSetExportEnv: (id: string) => typedError<PwExportEnv, string>(__TAURI_INVOKE("pw_set_export_env", { id })),
 	/**  What the clone at `clone` holds, and the health line. Read only. */
 	pwRepoStructure: (clone: string) => typedError<RepoStructure, string>(__TAURI_INVOKE("pw_repo_structure", { clone })),
 	/**
@@ -4235,6 +4243,11 @@ export type EnvInput = {
 
 export type EnvListView = {
 	active: string,
+	/**
+	 *  The Playwright export environment's id (the active one while none is
+	 *  named). Changed only by `pw_set_export_env`.
+	 */
+	playwright_export: string,
 	environments: EnvView[],
 };
 
@@ -5816,6 +5829,14 @@ export type PullRequest = {
 export type PwDone = {
 	run: number,
 	code: number | null,
+};
+
+/**  The Playwright export environment, as the Playwright tab shows it. */
+export type PwExportEnv = {
+	id: string,
+	name: string,
+	/**  The export environment is the active one: Export and Sync are open. */
+	is_active: boolean,
 };
 
 /**

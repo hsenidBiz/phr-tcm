@@ -309,8 +309,7 @@ pub const REMOVE_ACTIVE: &str = "the active environment cannot be removed - swit
 /// Said when something is writing into the environment's folder right now.
 pub const REMOVE_BUSY: &str = "that environment's Auto Run data is being used right now - try again in a moment";
 /// Said when the environment is the Playwright export environment.
-pub const REMOVE_EXPORT_ENVIRONMENT: &str =
-    "that is the Playwright export environment - name another one for the export before removing it";
+pub const REMOVE_EXPORT_ENVIRONMENT: &str = crate::environments::REMOVE_EXPORT_ENV;
 
 /// A removed environment's folder, as the webview lists it.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, specta::Type)]
@@ -333,16 +332,17 @@ struct RemovedRecord {
     reason: String,
 }
 
-/// Whether `id` is the environment the Playwright export writes to.
+/// Whether `id` is the environment the Playwright export writes from, as
+/// `environments.json` names it. An unset or unlisted name is nobody (the
+/// active environment adopts it at the next start, and the active one
+/// cannot be removed anyway).
 ///
-/// HOOK FOR TASK 7: the export environment does not exist yet, so no
-/// environment is it. Task 7 makes this read the named export environment,
-/// and [`removal_refusal`] then refuses to remove it. It must NOT take the
-/// environments lock or resolve/select a root: `remove_env` calls the
-/// refusal before taking that lock, but `retire` calls it under the switch
-/// lock, and the lock order is switch, then environments.
-pub fn is_export_environment(_shared: &Path, _id: &str) -> bool {
-    false
+/// It must NOT take the environments lock or resolve/select a root:
+/// `remove_env` calls the refusal before taking that lock, but `retire`
+/// calls it under the switch lock, and the lock order is switch, then
+/// environments.
+pub fn is_export_environment(shared: &Path, id: &str) -> bool {
+    crate::environments::export_id_unlocked(shared).as_deref() == Some(id)
 }
 
 /// Whether a copy or an export is writing into `root` right now.

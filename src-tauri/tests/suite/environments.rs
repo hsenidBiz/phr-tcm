@@ -31,7 +31,7 @@ fn env(id: &str, name: &str, start_url: &str) -> Environment {
 }
 
 fn file(envs: Vec<Environment>) -> EnvFile {
-    EnvFile { active: envs[0].id.clone(), environments: envs, auto_approve_adopted: false }
+    EnvFile { active: envs[0].id.clone(), environments: envs, auto_approve_adopted: false, playwright_export: None }
 }
 
 fn input(name: &str) -> EnvInput {

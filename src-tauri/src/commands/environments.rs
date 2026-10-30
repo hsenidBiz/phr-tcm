@@ -32,6 +32,9 @@ pub struct EnvView {
 #[derive(Debug, Clone, serde::Serialize, specta::Type)]
 pub struct EnvListView {
     pub active: String,
+    /// The Playwright export environment's id (the active one while none is
+    /// named). Changed only by `pw_set_export_env`.
+    pub playwright_export: String,
     pub environments: Vec<EnvView>,
 }
 
@@ -79,6 +82,11 @@ fn has_password(store: &dyn SecretStore, id: &str) -> bool {
 
 fn view(store: &dyn SecretStore, file: EnvFile) -> EnvListView {
     EnvListView {
+        playwright_export: file
+            .playwright_export
+            .clone()
+            .filter(|id| file.environments.iter().any(|e| e.id == *id))
+            .unwrap_or_else(|| file.active.clone()),
         active: file.active,
         environments: file
             .environments

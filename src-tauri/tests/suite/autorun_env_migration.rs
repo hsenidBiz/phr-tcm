@@ -36,6 +36,7 @@ fn two_envs(shared: &Path) {
         active: A.into(),
         environments: vec![env_named(A, "One"), env_named(B, "Two")],
         auto_approve_adopted: false,
+        playwright_export: None,
     };
     put(shared, "environments.json", &serde_json::to_string(&file).unwrap());
 }

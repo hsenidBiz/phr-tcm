@@ -370,6 +370,8 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             pw_export::pw_export_preview,
             pw_export::pw_export_save_map,
             pw_export::pw_export_write,
+pw_export::pw_export_env,
+pw_export::pw_set_export_env,
             pw_repo::pw_repo_structure,
             pw_repo::pw_repo_specs_status,
             pw_repo::pw_repo_create_folder,
@@ -682,6 +684,12 @@ pub fn run() {
                     autorun::store::set_shared_root(shared.clone());
                 } else {
                     autorun::store::set_root(shared.clone());
+                }
+                // The environment the update copied the Playwright export
+                // records to is the export environment: the active one, named
+                // once. Makes no file of its own.
+                if let Err(e) = crate::environments::adopt_export_env(&shared) {
+                    applog::warn(format!("Environments: the Playwright export environment was not set: {e}"));
                 }
                 // Scripts deleted more than 30 days ago go for good, in
                 // every environment's folder.
