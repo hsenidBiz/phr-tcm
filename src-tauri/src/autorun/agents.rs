@@ -32,6 +32,11 @@ pub const GONE_GRACE_MS: u64 = 60 * 1000;
 /// first and says why.
 pub const QUIET_AFTER_MS: u64 = 3_600_000;
 
+/// A named subagent's browser and case holds are let go once it has made no
+/// call for this long (`commands::autorun_slots::idle_after`,
+/// `claims::claim`). Any other assistant keeps the longer holds.
+pub const NAMED_HOLD_MS: u64 = 10 * 60 * 1000;
+
 /// How often the app asks whether each agent's process still runs.
 pub const SWEEP_EVERY: std::time::Duration = std::time::Duration::from_secs(30);
 

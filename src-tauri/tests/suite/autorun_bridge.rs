@@ -5165,3 +5165,42 @@ async fn a_within_matching_several_lists_the_first_and_says_how_many() {
     assert_eq!(first_of_many(&mut page(3), Some(&picked)).await, (Some(picked.clone()), None));
     assert_eq!(first_of_many(&mut page(3), None).await, (None, None));
 }
+
+/// A reset lists the other assistants' live holds: who has which browser and
+/// cases, never an id or a pid.
+#[tokio::test(flavor = "multi_thread")]
+async fn reset_answer_lists_live_holds() {
+    use v2_lib::autorun::agents::{self, AgentHeaders, AgentKey, Caller};
+    use v2_lib::autorun::claims;
+    use v2_lib::autorun::slots::SlotNo;
+    use v2_lib::commands::autorun_slots as slots;
+    const ID_A: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    const ID_B: &str = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+    let _g = crate::serial::agents();
+    let _a = crate::serial::autorun();
+    let _h = crate::serial::held_browsers();
+    agents::clear();
+    claims::clear();
+    slots::clear();
+    let now = v2_lib::autorun::sessions::now_ms();
+    let register = |id: &str, name: Option<&str>| {
+        let h = AgentHeaders { id: Some(id.into()), pid: Some(4242), client: Some("claude-code".into()), name: name.map(str::to_string) };
+        agents::note_call(&h.caller(), &h, now);
+        AgentKey { id: id.into(), name: name.map(str::to_string) }
+    };
+    let a = register(ID_A, None);
+    let b = register(ID_B, Some("dw-levels"));
+    slots::bind(SlotNo::MAIN, &a);
+    slots::bind(SlotNo(1), &b);
+    claims::claim(&b, 135520, now).unwrap();
+    let ctx = v2_lib::ai_bridge::BridgeContext { org: "acme".into(), project: "Web".into(), ..Default::default() };
+    let (status, said) = v2_lib::ai_bridge::route_as(&Caller::Agent(a.clone()), &ctx, None, "POST", "/autorun-reset", "{}", "1.0.0").await;
+    assert_eq!(status, 404, "{said}");
+    assert!(said.contains("Browsers held now:"), "{said}");
+    assert!(said.contains("Assistant 2 (dw-levels) has the extra 1 browser, cases 135520"), "{said}");
+    assert!(!said.contains("Assistant 1 "), "the caller's own browser is not listed: {said}");
+    assert!(!said.contains(ID_B) && !said.contains("4242"), "{said}");
+    agents::clear();
+    claims::clear();
+    slots::clear();
+}

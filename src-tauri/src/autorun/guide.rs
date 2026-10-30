@@ -2065,8 +2065,12 @@ alone always uses the main one, as before.
 - The map, the areas, the components and the quirks are shared: read an area
   again just before you repair it.
 - An unattended run cannot start while any assistant's browser is open.
-- When your session ends, or after 30 minutes without a call, a browser of
-  your own is released; the main one is left open for the person.
+- When your session ends, a browser of your own is released; the main one is
+  left open for the person. A browser and the case holds of a subagent with a
+  name are let go after 10 minutes without a call from it (the main browser
+  too, when an assistant opened it; one the person opened never), any other
+  assistant's own browser after 30. `reset_autorun_browser` ends its answer
+  with who holds which browser, account and cases now.
 - Subagents: give each subagent you start a name of its own (for example
   writer-1, writer-2) and tell it to pass it as `agent` on every Auto Run and
   API template call; each name gets its own browser. A subagent without a name

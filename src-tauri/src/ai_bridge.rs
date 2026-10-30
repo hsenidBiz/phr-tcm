@@ -744,14 +744,14 @@ pub async fn route_as(
         // is gone. Never a process outside the app's own jobs.
         ("POST", "/autorun-release") => {
             crate::autorun::page_compact::forget(slot);
-            crate::commands::autorun::release_for_assistant(slot).await
+            with_other_holds(crate::commands::autorun::release_for_assistant(slot).await, holder)
         }
         // Reset: a clean page in the assistant's own browser - other tabs
         // closed, dialogs and its guard cleared, back home - keeping the
         // sign-in. Never the person's browser, never while a replay runs.
         ("POST", "/autorun-reset") => {
             crate::autorun::page_compact::forget(slot);
-            crate::commands::autorun::reset_for_assistant(slot, &ctx.org, &ctx.project).await
+            with_other_holds(crate::commands::autorun::reset_for_assistant(slot, &ctx.org, &ctx.project).await, holder)
         }
         ("POST", "/autorun-discover-area") => autorun_discover_area(ctx, body, slot).await,
         ("POST", "/autorun-replay") => {
@@ -1378,6 +1378,19 @@ pub async fn compacted<F: std::future::Future<Output = (u16, String)>>(
         }
     }
     answer
+}
+
+/// A reset's or a release's answer, ending with the other assistants' live
+/// holds (`autorun_slots::live_holds_except`) so the coordinator sees who has
+/// which browser, account and cases and for how long it has been quiet. With
+/// none held it is the answer unchanged.
+fn with_other_holds(answer: (u16, String), holder: Option<&AgentKey>) -> (u16, String) {
+    let holds = crate::commands::autorun_slots::live_holds_except(crate::autorun::sessions::now_ms(), holder);
+    let note = crate::commands::autorun_slots::holds_note(&holds);
+    if note.is_empty() {
+        return answer;
+    }
+    (answer.0, format!("{}\n\n{note}", answer.1))
 }
 
 /// `answer` with its `page` dump left out when the call's body sent

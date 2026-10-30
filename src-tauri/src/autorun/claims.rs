@@ -42,8 +42,18 @@ pub fn case_claimed(case_id: i32, label: &str) -> String {
     format!("case {case_id} is being worked on by {label} - pick another case, or ask the person to release {label} on the Auto Run screen")
 }
 
+/// A claim has run out `CLAIM_TIMEOUT_MS` after its holder last claimed the
+/// case. A named subagent's runs out sooner: once it was claimed, and the
+/// holder made a call, no later than `agents::NAMED_HOLD_MS` ago (a holder
+/// the registry has forgotten counts as having made none).
 fn expired(claim: &Claim, now_ms: u64) -> bool {
-    now_ms.saturating_sub(claim.at_ms) >= CLAIM_TIMEOUT_MS
+    let age = now_ms.saturating_sub(claim.at_ms);
+    if age >= CLAIM_TIMEOUT_MS {
+        return true;
+    }
+    claim.holder.name.is_some()
+        && age >= agents::NAMED_HOLD_MS
+        && agents::info(&claim.holder).map_or(true, |i| now_ms.saturating_sub(i.last_ms) >= agents::NAMED_HOLD_MS)
 }
 
 /// `key` works on `case_id` from now: claimed, or renewed when it already
@@ -75,7 +85,23 @@ pub fn holder(case_id: i32, now_ms: u64) -> Option<AgentKey> {
 
 /// `key` works on nothing: every claim it holds ends.
 pub fn end_for(key: &AgentKey) {
-    claims().retain(|c| c.holder != *key);
+    release_of(key);
+}
+
+/// `end_for`, answering how many claims ended.
+pub fn release_of(key: &AgentKey) -> usize {
+    let mut all = claims();
+    let before = all.len();
+    all.retain(|c| c.holder != *key);
+    before - all.len()
+}
+
+/// The cases `key` holds at `now_ms`, the one it claimed first first.
+pub fn cases_of(key: &AgentKey, now_ms: u64) -> Vec<i32> {
+    let mut mine: Vec<(u64, i32)> =
+        claims().iter().filter(|c| c.holder == *key && !expired(c, now_ms)).map(|c| (c.at_ms, c.case_id)).collect();
+    mine.sort();
+    mine.into_iter().map(|(_, id)| id).collect()
 }
 
 /// Every claim (tests).
