@@ -811,7 +811,7 @@ pub fn start_up(shared: &Path, allowed: bool) -> StartUp {
         // First of all: before the seed handover, and before the caller
         // sets the shared root, so nothing can choose a folder a cut-short
         // copy still owes data.
-        out.settled_copies = super::env_copy::recover(shared);
+        out.settled_copies = super::backup_import::recover(shared) + super::env_copy::recover(shared);
         retry_seed(shared);
     }
     out

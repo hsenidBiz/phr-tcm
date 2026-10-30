@@ -135,7 +135,7 @@ pub fn source_root(shared: &Path, envs: &EnvFile, key: &str, now_ms: u64) -> Res
 
 /// Logs a failure that must not reach the person's screen: only text that
 /// names no path.
-fn log_failure(what: &str, error: &str) {
+pub(crate) fn log_failure(what: &str, error: &str) {
     if roots::path_free(error) {
         crate::applog::warn(format!("Environments: {what}: {error}"));
     } else {
@@ -149,13 +149,13 @@ struct Moved {
     to: PathBuf,
 }
 
-type Rename<'a> = &'a mut dyn FnMut(&Path, &Path) -> std::io::Result<()>;
+pub(crate) type Rename<'a> = &'a mut dyn FnMut(&Path, &Path) -> std::io::Result<()>;
 
-fn rename_with(from: &Path, to: &Path, rename: Rename, waits_ms: &[u64]) -> Result<(), String> {
+pub(crate) fn rename_with(from: &Path, to: &Path, rename: Rename, waits_ms: &[u64]) -> Result<(), String> {
     crate::ai_tools::rename_retrying_waits(from, to, rename, &mut |d| std::thread::sleep(d), waits_ms)
 }
 
-fn rename_waiting(from: &Path, to: &Path) -> Result<(), String> {
+pub(crate) fn rename_waiting(from: &Path, to: &Path) -> Result<(), String> {
     rename_with(from, to, &mut |a, b| std::fs::rename(a, b), &roots::MIGRATION_RENAME_WAITS_MS)
 }
 
@@ -207,7 +207,7 @@ fn tree_has_file(dir: &Path) -> bool {
 
 /// Removes `dir` when no file lies anywhere under it, and only then:
 /// a tree that holds a file is left exactly as it is. Says whether it went.
-fn remove_empty_tree(dir: &Path) -> bool {
+pub(crate) fn remove_empty_tree(dir: &Path) -> bool {
     fn sweep(dir: &Path) -> bool {
         let Ok(entries) = std::fs::read_dir(dir) else { return false };
         let mut ok = true;

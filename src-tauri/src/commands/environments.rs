@@ -286,6 +286,26 @@ pub fn refuse_switch(supervised_open: bool) -> Result<(), String> {
     Ok(())
 }
 
+/// Brings the app in line with an `environments.json` an import replaced:
+/// the active environment's folder is selected again from disk (never made
+/// from nothing), and the bridge is moved to it as a switch moves it. Answers
+/// the active id and whether the bridge's writes are now held (the caller
+/// ends the hold with `HeldWrites` once the locks are let go); `None` when
+/// there is no environment yet. The caller holds the switch lock for writing.
+pub fn settle_after_import(
+    shared: &Path,
+    store: &dyn SecretStore,
+    bridge: Option<&Mutex<BridgeContext>>,
+) -> Result<Option<(String, bool)>, String> {
+    let Some(env) = environments::read_active(shared)? else { return Ok(None) };
+    crate::autorun::store::reselect_from_disk()?;
+    if bridge.is_none() {
+        return Ok(Some((env.id, false)));
+    }
+    let file = move_bridge_to(shared, store, &env.id, bridge)?;
+    Ok(Some((file.active, true)))
+}
+
 pub async fn set_active_with(root: &Path, store: &dyn SecretStore, id: &str) -> Result<EnvListView, String> {
     Ok(switch_with(root, store, id, None, || {}).await?.0)
 }

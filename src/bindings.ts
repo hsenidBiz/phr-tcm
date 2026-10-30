@@ -230,8 +230,20 @@ export const commands = {
 	 *  Read a backup file, restore its disk half, and hand the localStorage
 	 *  half back to the frontend to apply (only the webview can write it).
 	 *  The frontend reloads afterwards so every screen re-reads its state.
+	 * 
+	 *  Refused while anything records, runs or holds a browser, as a switch is
+	 *  (an import changes the very folders those work in). The Playwright
+	 *  records lock then the switch lock are held for the whole restore, and
+	 *  the active environment is selected again from disk, and the bridge moved
+	 *  to it, before they are let go.
 	 */
 	importAppBackup: (path: string) => typedError<BackupImportResult, string>(__TAURI_INVOKE("import_app_backup", { path })),
+	/**
+	 *  What importing a backup file would do, for the confirmation: whether it
+	 *  is from before each environment had its own Auto Run data, and which
+	 *  environments' data it would then replace. Writes nothing.
+	 */
+	previewAppBackup: (path: string) => typedError<BackupPreview, string>(__TAURI_INVOKE("preview_app_backup", { path })),
 	/**
 	 *  Take the Boards fallback route once, by hand, and say what it
 	 *  answered. Development builds only.
@@ -2856,6 +2868,25 @@ export type BackupImportResult = {
 	files_restored: number,
 	exported_at: string,
 	app_version: string,
+};
+
+/**  What importing a backup would do, for the confirmation. */
+export type BackupPreview = {
+	exported_at: string,
+	app_version: string,
+	/**
+	 *  The backup is from before each environment had its own Auto Run
+	 *  data: importing it replaces every environment's data (`replaces`),
+	 *  and each replaced folder is kept for 30 days.
+	 */
+	pre_update: boolean,
+	/**
+	 *  The environments whose Auto Run data the import replaces, by name:
+	 *  the backup's own list when it has one, else this machine's. Empty
+	 *  when `pre_update` does not hold, or this machine has no per-environment
+	 *  folders (the next start does the update's copy).
+	 */
+	replaces: string[],
 };
 
 /**  Where a check's value comes from when the case does not hold it word for word. */

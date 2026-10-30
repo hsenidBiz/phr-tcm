@@ -42,22 +42,59 @@ const MAX_FILE_BYTES: u64 = 10 * 1024 * 1024;
 /// run in front of the person, up to 200 images of it.
 pub const EXCLUDED: [&str; 2] = ["autorun/sessions", "autorun/shots"];
 
-/// `rel` normalised to forward slashes, so an entry written as
-/// `autorun/sessions\admin.json` (Windows splits a path on both
-/// separators, so it still passes the component check in
-/// `safe_relative_path`) is still caught. The comparison is ASCII
-/// case-insensitive too - Windows' file system is, so `AUTORUN/Sessions`
-/// and `autorun/sessions` are the same folder on disk whatever an entry's
-/// path happens to spell it as. `.get()` rather than slicing avoids a
-/// panic if `x.len()` does not land on a char boundary of `rel`.
+/// The path's segments, split on either separator (Windows splits a path on
+/// both, so an entry written as `autorun/sessions\admin.json` is still the
+/// sessions folder), with empty and `.` segments and trailing dots and spaces
+/// (which Windows drops) removed. Case is kept.
+fn raw_segments(rel: &str) -> Vec<&str> {
+    rel.split(['/', '\\'])
+        .map(|s| s.trim_end_matches(['.', ' ']))
+        .filter(|s| !s.is_empty())
+        .collect()
+}
+
+/// `rel` is one of the folders a backup never carries, whatever letter case
+/// it is spelt in (Windows' file system is case-insensitive, so
+/// `AUTORUN/Sessions` and `autorun/sessions` are the same folder):
+/// - `EXCLUDED`;
+/// - the removed-environments area, and the staging folders an update, a
+///   copy and an import leave (`.envs-staging-*`, `envs/.copying-*`,
+///   `.import-*`);
+/// - every environment's screenshots (`envs/<id>/shots`), as the flat
+///   layout's were.
 fn excluded(rel: &str) -> bool {
-    let rel = rel.replace('\\', "/");
-    EXCLUDED.iter().any(|x| {
-        rel.eq_ignore_ascii_case(x)
-            || rel
-                .get(..x.len())
-                .is_some_and(|prefix| prefix.eq_ignore_ascii_case(x) && rel.as_bytes().get(x.len()) == Some(&b'/'))
-    })
+    let seg: Vec<String> = raw_segments(rel).iter().map(|s| s.to_ascii_lowercase()).collect();
+    if EXCLUDED.iter().any(|x| {
+        let parts: Vec<&str> = x.split('/').collect();
+        seg.len() >= parts.len() && seg.iter().zip(&parts).all(|(a, b)| a == b)
+    }) {
+        return true;
+    }
+    if seg.first().map(String::as_str) != Some("autorun") {
+        return false;
+    }
+    match seg.get(1).map(String::as_str) {
+        Some("removed-envs") => true,
+        Some(n) if n.starts_with(".envs-staging-") || n.starts_with(".import-") => true,
+        Some("envs") => {
+            seg.get(2).is_some_and(|n| n.starts_with(".copying-")) || seg.get(3).map(String::as_str) == Some("shots")
+        }
+        _ => false,
+    }
+}
+
+/// `autorun/<a per-environment item>/...` (or the item itself): a file the
+/// flat layout kept at the top of the Auto Run folder. Its second segment.
+fn is_flat_original(rel: &str) -> bool {
+    let seg = raw_segments(rel);
+    seg.first().is_some_and(|s| s.eq_ignore_ascii_case("autorun"))
+        && seg.get(1).is_some_and(|n| crate::autorun::roots::PER_ENV_ITEMS.iter().any(|(item, _)| n.eq_ignore_ascii_case(item)))
+}
+
+/// `autorun/envs/...`.
+fn is_envs_entry(rel: &str) -> bool {
+    let seg = raw_segments(rel);
+    seg.first().is_some_and(|s| s.eq_ignore_ascii_case("autorun")) && seg.get(1).is_some_and(|s| s.eq_ignore_ascii_case("envs"))
 }
 
 #[derive(serde::Serialize, serde::Deserialize, specta::Type, Clone, Debug)]
@@ -102,30 +139,36 @@ pub const FORMAT: u32 = 1;
 
 /// Walk the allowlisted roots under `data_dir`. Returns kept files as
 /// `(relative_path, bytes)` plus the relative paths skipped for size.
+///
+/// Once the per-environment folders are in use (`autorun/envs` exists), the
+/// flat originals the update left at the top of the Auto Run folder are not
+/// read by anything and are left out: each environment's own copy is what
+/// the backup carries.
 pub fn collect_files(data_dir: &Path) -> (Vec<(String, Vec<u8>)>, Vec<String>) {
     let mut kept = vec![];
     let mut skipped = vec![];
+    let per_env = crate::autorun::roots::is_per_env_layout(&data_dir.join("autorun"));
     for root in ROOTS {
-        walk(data_dir, &data_dir.join(root), &mut kept, &mut skipped);
+        walk(data_dir, &data_dir.join(root), per_env, &mut kept, &mut skipped);
     }
     kept.sort_by(|a, b| a.0.cmp(&b.0));
     skipped.sort();
     (kept, skipped)
 }
 
-fn walk(base: &Path, p: &Path, kept: &mut Vec<(String, Vec<u8>)>, skipped: &mut Vec<String>) {
+fn walk(base: &Path, p: &Path, per_env: bool, kept: &mut Vec<(String, Vec<u8>)>, skipped: &mut Vec<String>) {
     let Ok(meta) = std::fs::metadata(p) else { return };
     let rel = match p.strip_prefix(base) {
         Ok(r) => r.to_string_lossy().replace('\\', "/"),
         Err(_) => return,
     };
-    if excluded(&rel) {
+    if excluded(&rel) || (per_env && is_flat_original(&rel)) {
         return;
     }
     if meta.is_dir() {
         let Ok(entries) = std::fs::read_dir(p) else { return };
         for e in entries.flatten() {
-            walk(base, &e.path(), kept, skipped);
+            walk(base, &e.path(), per_env, kept, skipped);
         }
         return;
     }
@@ -153,6 +196,15 @@ pub fn safe_relative_path(rel: &str) -> bool {
     }
     if excluded(rel) {
         return false;
+    }
+    // An environment's folder is `autorun/envs/<id>/<something>`: the id is a
+    // real environment id (or the seed), so a name from a backup never
+    // becomes a folder of its own.
+    if is_envs_entry(rel) {
+        let seg = raw_segments(rel);
+        if seg.len() < 4 || !crate::autorun::roots::valid_folder_id(seg[2]) {
+            return false;
+        }
     }
     ROOTS
         .iter()
@@ -207,10 +259,109 @@ pub fn read_doc(path: &Path) -> Result<BackupDoc, String> {
     Ok(doc)
 }
 
-/// Restore the disk half of a backup. Unsafe paths are refused one by one
-/// (the rest still land); returns how many files were written.
+/// Is this backup from before the per-environment layout? No entry under
+/// `autorun/envs/`, and at least one under a per-environment item at the top
+/// of the Auto Run folder (`autorun/scripts/...`, `autorun/projects/...`).
+/// Only entries an import would accept count.
+pub fn is_pre_update(files: &[BackupFile]) -> bool {
+    let mut flat = false;
+    for f in files.iter().filter(|f| safe_relative_path(&f.path)) {
+        if is_envs_entry(&f.path) {
+            return false;
+        }
+        flat |= is_flat_original(&f.path) && raw_segments(&f.path).len() >= 3;
+    }
+    flat
+}
+
+/// What importing a backup would do, for the confirmation.
+#[derive(serde::Serialize, specta::Type, Clone, Debug)]
+pub struct BackupPreview {
+    pub exported_at: String,
+    pub app_version: String,
+    /// The backup is from before each environment had its own Auto Run
+    /// data: importing it replaces every environment's data (`replaces`),
+    /// and each replaced folder is kept for 30 days.
+    pub pre_update: bool,
+    /// The environments whose Auto Run data the import replaces, by name:
+    /// the backup's own list when it has one, else this machine's. Empty
+    /// when `pre_update` does not hold, or this machine has no per-environment
+    /// folders (the next start does the update's copy).
+    pub replaces: Vec<String>,
+}
+
+/// What importing `doc` onto `data_dir`'s machine would do. Writes nothing.
+pub fn preview(data_dir: &Path, doc: &BackupDoc) -> BackupPreview {
+    let autorun = data_dir.join("autorun");
+    let pre_update = is_pre_update(&doc.files);
+    let mut replaces = vec![];
+    if pre_update && crate::autorun::roots::is_per_env_layout(&autorun) {
+        let from_backup = doc
+            .files
+            .iter()
+            .find(|f| raw_segments(&f.path).iter().map(|s| s.to_ascii_lowercase()).eq(["autorun", "environments.json"]))
+            .and_then(|f| base64::engine::general_purpose::STANDARD.decode(&f.b64).ok())
+            .and_then(|bytes| serde_json::from_slice::<crate::environments::EnvFile>(&bytes).ok())
+            .map(|file| file.environments.into_iter().map(|e| e.name).collect::<Vec<_>>());
+        replaces = from_backup.unwrap_or_else(|| {
+            crate::environments::listed_names(&autorun)
+                .map(|all| all.into_iter().map(|(_, name)| name).collect())
+                .unwrap_or_default()
+        });
+    }
+    BackupPreview { exported_at: doc.exported_at.clone(), app_version: doc.app_version.clone(), pre_update, replaces }
+}
+
+/// Where a restored entry is written, and whether that is a staging folder.
+/// A backup from before the update (`flat`: the import's staging folder)
+/// keeps its per-environment files out of the live folders until they are
+/// built into one folder per environment; `envs` is a staging folder for
+/// `autorun/envs` on a machine that does not have one yet, so `envs/` never
+/// appears half-built.
+fn destination(data_dir: &Path, rel: &str, flat: Option<&Path>, envs: Option<&Path>) -> (PathBuf, bool) {
+    let seg = raw_segments(rel);
+    if let (Some(flat), true) = (flat, is_flat_original(rel)) {
+        return (seg[1..].iter().fold(flat.to_path_buf(), |p, s| p.join(s)), true);
+    }
+    if let (Some(envs), true) = (envs, is_envs_entry(rel)) {
+        return (seg[2..].iter().fold(envs.to_path_buf(), |p, s| p.join(s)), true);
+    }
+    (data_dir.join(rel), false)
+}
+
+/// Restore the disk half of a backup, holding the locks a switch holds (the
+/// Playwright records, then the switch lock) so nothing writes an environment
+/// meanwhile. Unsafe paths are refused one by one (the rest still land);
+/// returns how many files were written. See [`restore_files_held`].
 pub fn restore_files(data_dir: &Path, files: &[BackupFile]) -> Result<u32, String> {
+    let _records = crate::pw_export::mapping::records_lock().lock().unwrap_or_else(|e| e.into_inner());
+    let held = crate::autorun::roots::switch_lock().write().unwrap_or_else(|e| e.into_inner());
+    restore_files_held(&held, data_dir, files)
+}
+
+/// [`restore_files`] for a caller that already holds the switch lock for
+/// writing (`held` is the proof; the Playwright records lock is taken
+/// before it). On a machine with per-environment folders, a backup from
+/// before the update fans out into every environment as the update does,
+/// and each environment folder it replaces waits in the removed area; a
+/// backup from after it restores each folder's files as they are. On a
+/// machine without them a backup's `envs/` is built in a staging folder
+/// first, and a pre-update backup's files land flat for the next start's
+/// copy.
+pub fn restore_files_held(
+    held: &std::sync::RwLockWriteGuard<'static, ()>,
+    data_dir: &Path,
+    files: &[BackupFile],
+) -> Result<u32, String> {
+    use crate::autorun::{backup_import, roots};
     let b64 = base64::engine::general_purpose::STANDARD;
+    let autorun = data_dir.join("autorun");
+    let now = crate::cache::now_ms();
+    let per_env_machine = roots::is_per_env_layout(&autorun);
+    let import_staging = (per_env_machine && is_pre_update(files)).then(|| backup_import::staging_dir(&autorun, now));
+    let flat_stage = import_staging.as_deref().map(backup_import::flat_dir);
+    let envs_stage = (!per_env_machine && files.iter().any(|f| safe_relative_path(&f.path) && is_envs_entry(&f.path)))
+        .then(|| autorun.join(format!(".envs-staging-{now}")));
     let mut restored = 0u32;
     // A backup from before environments: the machine-wide list, and no
     // environments file to say whose it is. Kept until the loop is done.
@@ -224,9 +375,14 @@ pub fn restore_files(data_dir: &Path, files: &[BackupFile]) -> Result<u32, Strin
         let bytes = b64
             .decode(&f.b64)
             .map_err(|_| format!("corrupt backup: {} is not valid base64", f.path))?;
-        let target = data_dir.join(&f.path);
+        let (target, staged) = destination(data_dir, &f.path, flat_stage.as_deref(), envs_stage.as_deref());
         if let Some(parent) = target.parent() {
             std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+        }
+        if staged {
+            std::fs::write(&target, bytes).map_err(|e| format!("could not restore {}: {e}", f.path))?;
+            restored += 1;
+            continue;
         }
         let norm = f.path.replace('\\', "/").to_ascii_lowercase();
         if norm == "autorun/accounts.json" {
@@ -271,6 +427,50 @@ pub fn restore_files(data_dir: &Path, files: &[BackupFile]) -> Result<u32, Strin
     }
     if let Some(list) = legacy_accounts {
         restore_legacy_accounts(&data_dir.join("autorun"), &list, has_environments)?;
+    }
+    if let Some(staging) = &import_staging {
+        let failed = |why: String| {
+            crate::applog::warn(format!("Backup import: the environments' data could not be put in place: {why}"));
+            let _ = std::fs::remove_dir_all(staging);
+            backup_import::IMPORT_FAILED.to_string()
+        };
+        let (ids, active) = crate::environments::read_ids(&autorun)
+            .map_err(&failed)?
+            .unwrap_or_else(|| (vec![roots::SEED_ID.to_string()], roots::SEED_ID.to_string()));
+        // The restored list names the export environment; the update's copy
+        // reads it from beside the files it copies.
+        let _ = std::fs::copy(crate::environments::file_path(&autorun), backup_import::flat_dir(staging).join("environments.json"));
+        let names = |id: &str| crate::environments::listed_name(&autorun, id).unwrap_or_default();
+        backup_import::replace_environments(
+            held,
+            &autorun,
+            staging,
+            &ids,
+            &active,
+            &names,
+            now,
+            &mut |a, b| std::fs::rename(a, b),
+            &roots::MIGRATION_RENAME_WAITS_MS,
+        )?;
+    }
+    if let Some(staging) = &envs_stage {
+        let _ = held;
+        let put = if staging.is_dir() {
+            crate::ai_tools::rename_retrying_waits(
+                staging,
+                &autorun.join(roots::ENVS_DIR),
+                &mut |a, b| std::fs::rename(a, b),
+                &mut std::thread::sleep,
+                &roots::MIGRATION_RENAME_WAITS_MS,
+            )
+        } else {
+            Ok(())
+        };
+        if let Err(e) = put {
+            crate::applog::warn(format!("Backup import: the environments' folders could not be put in place: {e}"));
+            let _ = std::fs::remove_dir_all(staging);
+            return Err(backup_import::IMPORT_FAILED.to_string());
+        }
     }
     Ok(restored)
 }

@@ -693,6 +693,20 @@ pub fn when_db_unused<T>(
     }
 }
 
+/// Every listed environment as `(id, name)`, or `None` when the file is not
+/// there or cannot be read. Takes the environments lock.
+pub fn listed_names(root: &Path) -> Option<Vec<(String, String)>> {
+    let _held = lock();
+    read(root).ok().flatten().map(|f| f.environments.into_iter().map(|e| (e.id, e.name)).collect())
+}
+
+/// The name of the listed environment `id`, or `None`. Takes the
+/// environments lock.
+pub fn listed_name(root: &Path, id: &str) -> Option<String> {
+    let _held = lock();
+    read(root).ok().flatten()?.environments.into_iter().find(|e| e.id == id).map(|e| e.name)
+}
+
 /// The ids in `environments.json`, or `None` when the file is not there or
 /// cannot be read. Takes the environments lock.
 pub fn listed_ids(root: &Path) -> Option<Vec<String>> {
