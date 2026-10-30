@@ -253,7 +253,10 @@ fn the_page_area_is_1280_by_720_at_scale_one() {
 
 // ---- password prompts off (backlog 44) ----
 
-use v2_lib::browser::launch::{password_prefs, prefs_failure_is_logged_only, write_password_prefs, PASSWORD_FEATURES_OFF};
+use v2_lib::browser::launch::{
+    close_hung, password_prefs, prefs_failure_is_logged_only, write_password_prefs, PASSWORD_FEATURES_OFF,
+};
+use v2_lib::browser::tree::Orphan;
 
 fn disable_features(args: &[String]) -> Vec<&String> {
     args.iter().filter(|a| a.starts_with("--disable-features=")).collect()
@@ -329,4 +332,37 @@ fn launch_goes_on_when_prefs_cannot_be_written() {
     let line = prefs_failure_is_logged_only(&e);
     assert!(line.contains("password prompts"));
     assert!(!line.contains(&dir.path().to_string_lossy().to_string()));
+}
+
+fn orphan(pid: u32, port: Option<u16>) -> Orphan {
+    Orphan { pid, profile: format!("tcm-autorun-{}", port.unwrap_or(0)), port }
+}
+
+#[test]
+fn close_hung_ends_only_silent_ones() {
+    let orphans = vec![orphan(1, Some(1)), orphan(2, Some(2)), Orphan { pid: 3, profile: "tcm-autorun-3".into(), port: None }];
+    let mut ended = Vec::new();
+    let closed = close_hung(orphans, &|port| port == 2, &mut |o: &Orphan| {
+        ended.push(o.profile.clone());
+        true
+    });
+    assert_eq!(ended, vec!["tcm-autorun-1".to_string()]);
+    assert_eq!(closed, vec!["tcm-autorun-1".to_string()]);
+}
+
+#[test]
+fn close_hung_keeps_an_answering_orphan() {
+    let mut ended = 0;
+    let closed = close_hung(vec![orphan(2, Some(2))], &|_| true, &mut |_: &Orphan| {
+        ended += 1;
+        true
+    });
+    assert_eq!(ended, 0);
+    assert!(closed.is_empty());
+}
+
+#[test]
+fn close_hung_does_not_report_one_that_would_not_end() {
+    let closed = close_hung(vec![orphan(1, Some(1))], &|_| false, &mut |_: &Orphan| false);
+    assert!(closed.is_empty());
 }

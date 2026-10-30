@@ -1285,6 +1285,7 @@ async fn run_steps_marked<D: Driver>(
             if let Some(other) = guarding_other.filter(|_| crate::browser::save_guard::is_blocked(&why)) {
                 why = guarding_other_case(other);
             }
+            let why = crate::browser::input::with_offscreen_hint(&why);
             return Some(ReplayEnd::StoppedAt { phase: ReplayPhase::Step, step: k, why, outcomes });
         }
         // The clean-up is no step of the case: nothing is carried on from

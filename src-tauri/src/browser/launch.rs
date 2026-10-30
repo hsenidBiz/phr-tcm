@@ -196,6 +196,48 @@ pub fn args_with(port: u16, profile_dir: &Path, extra: &[&str]) -> Vec<String> {
     args
 }
 
+/// Close each browser left from an earlier run whose DevTools port does
+/// not answer (hung: it holds its profile and a sign-in nobody can use).
+/// One that answers, or whose port is not known, is left alone: it may be
+/// another slot's. `end` closes one and says whether it is gone. Returns
+/// the profile folder names closed.
+pub fn close_hung(
+    orphans: Vec<tree::Orphan>,
+    answers: &dyn Fn(u16) -> bool,
+    end: &mut dyn FnMut(&tree::Orphan) -> bool,
+) -> Vec<String> {
+    let mut closed = Vec::new();
+    for o in orphans {
+        let Some(port) = o.port else { continue };
+        if answers(port) {
+            continue;
+        }
+        if end(&o) {
+            closed.push(o.profile.clone());
+        }
+    }
+    closed
+}
+
+/// Does a browser's DevTools port answer `/json/version` within 1.5 s?
+/// A plain blocking request: `launch_with` is not async.
+pub fn devtools_answers(port: u16) -> bool {
+    use std::io::{Read, Write};
+    use std::net::{SocketAddr, TcpStream};
+    use std::time::Duration;
+    let limit = Duration::from_millis(1500);
+    let addr = SocketAddr::from(([127, 0, 0, 1], port));
+    let Ok(mut stream) = TcpStream::connect_timeout(&addr, limit) else { return false };
+    let _ = stream.set_read_timeout(Some(limit));
+    let _ = stream.set_write_timeout(Some(limit));
+    let request = format!("GET /json/version HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n");
+    if stream.write_all(request.as_bytes()).is_err() {
+        return false;
+    }
+    let mut head = [0u8; 12];
+    stream.read_exact(&mut head).is_ok() && head.starts_with(b"HTTP/1.")
+}
+
 /// Extra switches for an unattended run nobody is watching: headless, in a
 /// window the size every browser the app drives starts with
 /// (`viewport::window_size_arg`), rather than whatever default a headless
@@ -376,7 +418,7 @@ fn fresh_profile() -> Result<(u16, PathBuf), String> {
 /// (`C:\Users\ADMINI~1\...`) would give the browser a profile path its
 /// processes might hand on in the long form, and a process of the browser
 /// would then not be told for its own (`tree::carries_profile`).
-fn long_temp_dir() -> PathBuf {
+pub(crate) fn long_temp_dir() -> PathBuf {
     let temp = std::env::temp_dir();
     #[cfg(windows)]
     {
@@ -427,6 +469,8 @@ pub fn launch_in_at(which: Browser, position: Option<(i32, i32)>) -> Result<Laun
     }
 }
 
+static LAUNCHING: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 /// The same, with extra switches. A supervised run passes none but a
 /// window position (`launch_in_at`): the
 /// window is always visible. An unattended run passes `background_args`
@@ -446,6 +490,19 @@ pub fn launch_with(which: Browser, extra_args: &[&str]) -> Result<LaunchedBrowse
         )
     })?;
 
+    // Held until the new browser is registered: another slot's browser
+    // that is starting has no tree yet and does not answer yet, and must
+    // not be taken for a hung one.
+    let _starting = LAUNCHING.lock().unwrap_or_else(|e| e.into_inner());
+    // A browser an earlier run left that no longer answers would keep its
+    // profile and any sign-in; close it before a new one starts. Only Auto
+    // Run's own (`tcm-autorun-<port>` under the temp folder), never one this
+    // app holds, never the person's.
+    for name in close_hung(tree::find_orphans(&long_temp_dir()), &devtools_answers, &mut tree::end_orphan) {
+        crate::applog::warn(format!(
+            "Auto Run closed a browser left from an earlier run that did not answer (profile {name})"
+        ));
+    }
     let (port, profile_dir) = fresh_profile()?;
     if let Err(e) = write_password_prefs(&profile_dir) {
         crate::applog::warn(prefs_failure_is_logged_only(&e));

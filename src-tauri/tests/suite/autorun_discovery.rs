@@ -6025,3 +6025,13 @@ async fn a_start_closes_the_projects_banner_before_it_answers() {
     }
     assert_eq!(mouse_releases(true).await, mouse_releases(false).await + 1);
 }
+
+#[test]
+fn offscreen_failure_suggests_reset_once() {
+    use v2_lib::browser::input::{with_offscreen_hint, OFFSCREEN_RESET_HINT};
+    let detail = "button X is outside the visible part of the page";
+    let hinted = with_offscreen_hint(detail);
+    assert!(hinted.ends_with(OFFSCREEN_RESET_HINT));
+    assert_eq!(with_offscreen_hint(&hinted), hinted);
+    assert_eq!(with_offscreen_hint("button X is not found"), "button X is not found");
+}

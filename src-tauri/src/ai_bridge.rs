@@ -6115,6 +6115,9 @@ async fn discover_action_heard<B: DiscoveryBrowser>(
             Err(refused) => return refused,
         };
         heard.ran(at, &ran.outcome, one);
+        if !ran.outcome.ok {
+            ran.outcome.detail = crate::browser::input::with_offscreen_hint(&ran.outcome.detail);
+        }
         // A component that fails on its first action says where the
         // browser is: most often it stands on another screen.
         if component.is_some() && i == 0 && !ran.outcome.ok {

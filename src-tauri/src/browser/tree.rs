@@ -243,6 +243,112 @@ pub fn sweep_leftover_profiles(temp: &Path) -> Vec<String> {
     removed
 }
 
+/// A browser left running from an earlier run: Auto Run's own profile
+/// (`tcm-autorun-<digits>` under the temp folder), the browser process
+/// that owns it and the DevTools port it was started with.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Orphan {
+    pub pid: u32,
+    /// The profile folder's NAME, never its path.
+    pub profile: String,
+    pub port: Option<u16>,
+}
+
+/// If this command line is the main process of an Auto Run browser (no
+/// `--type=` switch, so not a renderer, gpu or crashpad child) whose
+/// `--user-data-dir` is a `tcm-autorun-<digits>` folder directly inside
+/// `temp`: that folder's name and the `--remote-debugging-port`. Anything
+/// else - the person's own Chrome or Edge, a profile elsewhere, the test
+/// suite's own folders - is `None`.
+pub fn orphan_of(command_line: &str, temp: &Path) -> Option<(String, Option<u16>)> {
+    if !switch_values(command_line, "--type=").is_empty() {
+        return None;
+    }
+    let temp = normalise(&temp.to_string_lossy());
+    if temp.is_empty() {
+        return None;
+    }
+    let dirs = switch_values(command_line, "--user-data-dir=");
+    let dir = dirs.first()?;
+    let whole = normalise(dir);
+    let (parent, name) = whole.rsplit_once('\\')?;
+    if parent != temp || !is_profile_name(name) {
+        return None;
+    }
+    let port = switch_values(command_line, "--remote-debugging-port=").first().and_then(|p| p.parse::<u16>().ok());
+    Some((name.to_string(), port))
+}
+
+/// Every Auto Run browser running now that no live tree of this app holds.
+/// Windows only; empty elsewhere. Reads command lines through the same
+/// query-only access `Tree` uses and ends nothing.
+pub fn find_orphans(temp: &Path) -> Vec<Orphan> {
+    #[cfg(windows)]
+    {
+        let held: Vec<String> = held_profiles().iter().map(|h| folder_name(h).to_lowercase()).collect();
+        job::browser_pids()
+            .into_iter()
+            .filter_map(|pid| match job::inspect(pid) {
+                job::Inspected::Seen { command_line: Some(cl), .. } => {
+                    let (profile, port) = orphan_of(&cl, temp)?;
+                    (!held.contains(&profile)).then_some(Orphan { pid, profile, port })
+                }
+                _ => None,
+            })
+            .collect()
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = temp;
+        Vec::new()
+    }
+}
+
+/// End every process of the orphan's browser (those whose command line
+/// names its profile, as `Tree` tells its own), wait up to `END_WITHIN`
+/// for none to be left, then try to remove the profile. Refuses a profile
+/// a live tree of this app holds. True when no process is left.
+pub fn end_orphan(o: &Orphan) -> bool {
+    #[cfg(windows)]
+    {
+        if !is_profile_name(&o.profile) || held_profiles().iter().any(|h| folder_name(h).eq_ignore_ascii_case(&o.profile)) {
+            return false;
+        }
+        let profile = super::launch::long_temp_dir().join(&o.profile);
+        let ours = |ended: bool| -> usize {
+            let mut left = 0;
+            for pid in job::browser_pids() {
+                if let job::Inspected::Seen { process, command_line: Some(cl), .. } = job::inspect(pid) {
+                    if carries_profile(&cl, &profile) {
+                        left += 1;
+                        if ended {
+                            job::terminate(&process);
+                        }
+                    }
+                }
+            }
+            left
+        };
+        let began = Instant::now();
+        loop {
+            if ours(true) == 0 {
+                break;
+            }
+            if began.elapsed() >= END_WITHIN {
+                return false;
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        let _ = remove_profile(&profile);
+        true
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = o;
+        false
+    }
+}
+
 /// Remove a closed browser's profile folder. Windows can release a
 /// process's file handles a moment after the process is gone, so a
 /// "being used by another process" (os error 32) is tried again a few
@@ -577,6 +683,43 @@ pub(crate) mod job {
             Some(p) => !p.ended(),
             None => std::io::Error::last_os_error().raw_os_error() == Some(ERROR_ACCESS_DENIED as i32),
         }
+    }
+
+    /// The process ids of every Chrome and Edge running now, whoever's they
+    /// are: the caller tells Auto Run's own apart by command line.
+    pub fn browser_pids() -> Vec<u32> {
+        use windows_sys::Win32::System::Diagnostics::ToolHelp::{
+            Process32FirstW, Process32NextW, PROCESSENTRY32W, TH32CS_SNAPPROCESS,
+        };
+        // SAFETY: the snapshot handle is checked, and closed below.
+        let snapshot = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) };
+        if snapshot.is_null() || snapshot == INVALID_HANDLE_VALUE {
+            return Vec::new();
+        }
+        // SAFETY: an all-zero PROCESSENTRY32W is a valid initial value.
+        let mut entry: PROCESSENTRY32W = unsafe { std::mem::zeroed() };
+        entry.dwSize = std::mem::size_of::<PROCESSENTRY32W>() as u32;
+        let mut out = Vec::new();
+        // SAFETY: `entry` is sized as the API asks, and lives for each call.
+        let mut more = unsafe { Process32FirstW(snapshot, &mut entry) } != 0;
+        while more {
+            let len = entry.szExeFile.iter().position(|&c| c == 0).unwrap_or(entry.szExeFile.len());
+            let exe = String::from_utf16_lossy(&entry.szExeFile[..len]).to_ascii_lowercase();
+            if exe == "chrome.exe" || exe == "msedge.exe" {
+                out.push(entry.th32ProcessID);
+            }
+            // SAFETY: as above.
+            more = unsafe { Process32NextW(snapshot, &mut entry) } != 0;
+        }
+        // SAFETY: opened above, closed once.
+        unsafe { CloseHandle(snapshot) };
+        out
+    }
+
+    /// End one process through a handle opened with the right to.
+    pub fn terminate(p: &Process) {
+        // SAFETY: a valid process handle.
+        unsafe { TerminateProcess(p.0, 1) };
     }
 
     /// What looking at a process in the job found.
