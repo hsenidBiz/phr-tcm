@@ -225,6 +225,30 @@ fn read(root: &Path) -> Result<Option<EnvFile>, String> {
     Ok(Some(file))
 }
 
+/// An `environments.json` as the app reads it (a byte-order mark allowed),
+/// checked the same way: for a file that did not come from this machine.
+pub fn parse_file(bytes: &[u8]) -> Result<EnvFile, String> {
+    let text = std::str::from_utf8(bytes).map_err(|_| "the environments file is not readable".to_string())?;
+    let text = text.strip_prefix('\u{feff}').unwrap_or(text);
+    let file: EnvFile =
+        serde_json::from_str(text).map_err(|e| format!("the environments file is not readable: {e}"))?;
+    check_structure(&file).map_err(|e| format!("the environments file is not readable: {e}"))?;
+    Ok(file)
+}
+
+/// The text of `file` as `write` saves it.
+pub fn file_text(file: &EnvFile) -> Result<String, String> {
+    serde_json::to_string_pretty(file).map_err(|e| e.to_string())
+}
+
+/// Copies the Playwright export records of environment folder `from` into
+/// `to` (staging names first, then renamed into place), leaving `from` as it
+/// is. Answers how many were copied. The caller holds the records lock and
+/// the switch lock.
+pub fn copy_export_records(from: &Path, to: &Path) -> Result<usize, String> {
+    move_export_records(from, to).map(|m| m.old.len())
+}
+
 fn write(root: &Path, file: &EnvFile) -> Result<(), String> {
     std::fs::create_dir_all(crate::autorun::roots::shared_of(root)).map_err(|e| e.to_string())?;
     let json = serde_json::to_string_pretty(file).map_err(|e| e.to_string())?;

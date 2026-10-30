@@ -2874,17 +2874,17 @@ export type BackupImportResult = {
 export type BackupPreview = {
 	exported_at: string,
 	app_version: string,
-	/**
-	 *  The backup is from before each environment had its own Auto Run
-	 *  data: importing it replaces every environment's data (`replaces`),
-	 *  and each replaced folder is kept for 30 days.
-	 */
+	/**  The backup is from before each environment had its own Auto Run data. */
 	pre_update: boolean,
+	/**  The backup brings a folder per environment. */
+	post_update: boolean,
 	/**
 	 *  The environments whose Auto Run data the import replaces, by name:
-	 *  the backup's own list when it has one, else this machine's. Empty
-	 *  when `pre_update` does not hold, or this machine has no per-environment
-	 *  folders (the next start does the update's copy).
+	 *  exactly the ones the import will replace. Each replaced folder keeps
+	 *  its run history, screenshots and Playwright records, and the rest
+	 *  waits 30 days. Empty when nothing is replaced (a backup of history
+	 *  alone, or a machine without per-environment folders, where the next
+	 *  start does the update's copy).
 	 */
 	replaces: string[],
 };

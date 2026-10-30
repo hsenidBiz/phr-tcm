@@ -439,7 +439,7 @@ pub async fn preview_app_backup(app: tauri::AppHandle, path: String) -> Result<c
     let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
     tauri::async_runtime::spawn_blocking(move || {
         let doc = crate::backup::read_doc(std::path::Path::new(&path))?;
-        Ok(crate::backup::preview(&data_dir, &doc))
+        crate::backup::preview(&data_dir, &doc)
     })
     .await
     .map_err(|e| format!("the backup could not be read: {e}"))?
