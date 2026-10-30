@@ -656,7 +656,10 @@ pub async fn route_as(
             Some(going) => with_overrides_seen(going, None, slot),
             None => {
                 crate::autorun::page_compact::forget(slot);
-                crate::commands::autorun::end_discovery(EndedBy::Assistant, slot).await
+                let answer = crate::commands::autorun::end_discovery(EndedBy::Assistant, slot).await;
+                // Done with its discovery: the cases it held are free.
+                end_claims_of(holder, answer.0);
+                answer
             }
         },
         // An explore session's change list, recorded and read back. Files
@@ -744,7 +747,10 @@ pub async fn route_as(
         // is gone. Never a process outside the app's own jobs.
         ("POST", "/autorun-release") => {
             crate::autorun::page_compact::forget(slot);
-            with_other_holds(crate::commands::autorun::release_for_assistant(slot).await, holder)
+            let answer = crate::commands::autorun::release_for_assistant(slot).await;
+            // Released: the cases it held are free, as the person's release frees them.
+            end_claims_of(holder, answer.0);
+            with_other_holds(answer, holder)
         }
         // Reset: a clean page in the assistant's own browser - other tabs
         // closed, dialogs and its guard cleared, back home - keeping the
@@ -1417,6 +1423,14 @@ pub fn with_other_holds(answer: (u16, String), holder: Option<&AgentKey>) -> (u1
         return (answer.0, serde_json::Value::Object(map).to_string());
     }
     (answer.0, format!("{}\n\n{note}", answer.1))
+}
+
+/// The assistant `holder` is done: every case it claimed is free again, when
+/// its call (`status`) was answered, not refused. The default caller holds none.
+fn end_claims_of(holder: Option<&AgentKey>, status: u16) {
+    if let (Some(key), true) = (holder, status < 300) {
+        crate::autorun::claims::end_for(key);
+    }
 }
 
 /// `answer` with its `page` dump left out when the call's body sent
