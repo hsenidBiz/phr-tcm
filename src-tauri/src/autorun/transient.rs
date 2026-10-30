@@ -10,7 +10,9 @@
 //!   "Failed to fetch";
 //! - the sign-in page would not load, `net::ERR_*` (the case's own
 //!   sign-in or a `sign_in` action);
-//! - the browser stopped answering (a harness failure).
+//! - the browser stopped answering (a harness failure);
+//! - a save the site answered 408 or 429 (`refusals::SITE_BUSY`): too slow
+//!   or too many, not a refusal of the input.
 //!
 //! Decided by where the failure sits - which action of which step wrote
 //! it - and never by its words alone: a page's dialog or a `check_text`
@@ -74,6 +76,7 @@ pub fn is_transient_with(case: &CaseRecord, script: Option<&CaseScript>, compone
     // The case's own sign-in is the runner's, not the script's: no action
     // of the script wrote it, so it is read on its own.
     let transient = first.harness
+        || first.detail.starts_with(crate::autorun::refusals::SITE_BUSY)
         || (n == SIGN_IN_STEP && page_would_not_load(&first.detail))
         || {
             let ran = script

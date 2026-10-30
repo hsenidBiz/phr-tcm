@@ -475,15 +475,14 @@ pub struct InRun<'a> {
     /// Told each action as it begins and ends, for whoever asks how far
     /// the step has got (a replay's "still running" answer).
     pub progress: Option<&'a StepProgress>,
-    /// A request the application refuses fails the action that sent it: a
-    /// try's, where the assistant is finding out what the page does. A
-    /// replay or a run only reports it - a saved case may provoke the
-    /// refusal on purpose and check its message.
-    pub refusals_fail: bool,
     /// The case's last action that changed the page, carried from one step
     /// to the next (`Noted`), so a step that fails can name what the page
     /// answered the step before. `None` keeps it within the step.
     pub noted: Option<&'a mut Noted>,
+    /// The first action of the case's next step, when a replay knows it: a
+    /// refused save whose message the next step opens by checking is
+    /// expected (`refusals::fails_the_action`).
+    pub next_step_first: Option<&'a Action>,
 }
 
 /// The case's last action that changed the page, and what the page has
@@ -962,7 +961,7 @@ fn answered_line(o: &ActionOutcome) -> Option<String> {
 /// `answered_line` of what was said and refused.
 fn line_of(said: &[PageMessage], refused: &[RefusedRequest]) -> Option<String> {
     let said = (!said.is_empty()).then(|| page_showed_note(said));
-    match (refused.first().map(app_refused_line), said) {
+    match (refusals::lead(refused).map(app_refused_line), said) {
         (Some(refused), Some(said)) => Some(format!("{refused}; {said}")),
         (refused, said) => refused.or(said),
     }
@@ -1467,7 +1466,17 @@ async fn run_expanded<D: Driver>(
                 outcome.page_path = Some(after.path.clone().unwrap_or_default());
                 // A try fails on it, like a target that is not there. What a
                 // dialog nobody expected left on its words stays.
-                if run.refusals_fail && outcome.ok && !outcome.refused.is_empty() {
+                // The session expired (419, 440): signed in fresh, as for a
+                // session the page shows tampered with.
+                let expired = outcome.ok
+                    && blocked.is_none()
+                    && outcome.refused.iter().any(|r| refusals::answer_of(r.status) == refusals::Answer::Expired);
+                if let (true, Some(key)) = (expired, account.clone()) {
+                    outcome = after_session_refused(d, &here, &key, signin::SessionRefusal::Expired, step.step_number, timing, account, lease).await;
+                    blocked = Some(AFTER_SESSION_REFUSED);
+                    refused_here = true;
+                }
+                if outcome.ok && refusals::fails_the_action(&outcome.refused, &step.actions[index + 1..], run.next_step_first) {
                     let dialog = dialog_note(&outcome.detail).to_string();
                     outcome.ok = false;
                     outcome.detail = format!("{}{dialog}", answered_line(&outcome).unwrap_or_default());

@@ -1678,3 +1678,22 @@ async fn enter_opens_the_window_on_a_guard() {
     execute_in(&mut d, &a, &quick(), &Policy::open()).await;
     assert_eq!(d.save_windows, 1);
 }
+
+/// A POST that reads (a list, a lookup, a log) is not a refusal's write; one
+/// with a save word of its own is a save whatever else it says.
+#[test]
+fn a_post_to_a_read_shaped_path_looks_like_a_read() {
+    use v2_lib::browser::save_guard::looks_like_read;
+    for path in [
+        "/api/GetList", "/hr/lookup/employees", "/x/Search?q=1", "/api/AutoComplete", "/api/Suggest", "/api/log", "/api/Track",
+        "/api/telemetry", "/ping", "/api/heartbeat", "/hr/AutoSave", "/api/FilterEmployees", "/api/LoadGrid", "/api/QueryRows",
+        "/api/employee_find", "/api/Logs",
+    ] {
+        assert!(looks_like_read("POST", path), "{path}");
+    }
+    for path in ["/api/SaveSearch", "/api/eval-rules", "/hr/login", "/hr/catalog/update", "/api/Submit", "/api/Budget", "/api/CreateList"] {
+        assert!(!looks_like_read("POST", path), "{path}");
+    }
+    // Only a writing method can be a write in disguise.
+    assert!(!looks_like_read("GET", "/api/GetList"));
+}

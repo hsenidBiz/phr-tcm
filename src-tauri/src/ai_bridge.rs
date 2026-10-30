@@ -656,7 +656,10 @@ pub async fn route_as(
             Some(going) => with_overrides_seen(going, None, slot),
             None => {
                 crate::autorun::page_compact::forget(slot);
-                crate::commands::autorun::end_discovery(EndedBy::Assistant, slot).await
+                let answer = crate::commands::autorun::end_discovery(EndedBy::Assistant, slot).await;
+                // Done with its discovery: the cases it held are free.
+                end_claims_of(holder, answer.0);
+                answer
             }
         },
         // An explore session's change list, recorded and read back. Files
@@ -744,7 +747,14 @@ pub async fn route_as(
         // is gone. Never a process outside the app's own jobs.
         ("POST", "/autorun-release") => {
             crate::autorun::page_compact::forget(slot);
-            with_other_holds(crate::commands::autorun::release_for_assistant(slot).await, holder)
+            let answer = crate::commands::autorun::release_for_assistant(slot).await;
+            // Released, the browser let go (a person's browser left open
+            // included): the cases it held are free, as the person's release
+            // frees them.
+            let unbound = answer.0 < 300
+                || (answer.0 == 409 && answer.1 == crate::commands::autorun::PERSONS_BROWSER_OPEN);
+            end_claims_of(holder, if unbound { 200 } else { answer.0 });
+            with_other_holds(answer, holder)
         }
         // Reset: a clean page in the assistant's own browser - other tabs
         // closed, dialogs and its guard cleared, back home - keeping the
@@ -1417,6 +1427,14 @@ pub fn with_other_holds(answer: (u16, String), holder: Option<&AgentKey>) -> (u1
         return (answer.0, serde_json::Value::Object(map).to_string());
     }
     (answer.0, format!("{}\n\n{note}", answer.1))
+}
+
+/// The assistant `holder` is done: every case it claimed is free again, when
+/// its call (`status`) was answered, not refused. The default caller holds none.
+fn end_claims_of(holder: Option<&AgentKey>, status: u16) {
+    if let (Some(key), true) = (holder, status < 300) {
+        crate::autorun::claims::end_for(key);
+    }
 }
 
 /// `answer` with its `page` dump left out when the call's body sent
@@ -10390,7 +10408,7 @@ async fn try_action<D: crate::browser::cdp::Driver>(
     // the reason now, not from a wait that times out later.
     // A discovery's `noted` carries its last action that changed the page
     // to the next action, as a run's steps carry it.
-    let mut run = InRun { areas: Some(&areas), saves_only_counted, refusals_fail: true, noted, ..Default::default() };
+    let mut run = InRun { areas: Some(&areas), saves_only_counted, noted, ..Default::default() };
     // An action that never answers is a failed action, so everything that
     // follows (what its writes and finds filed) still runs. It is given its
     // own wait and a margin, and no more than the call has left.

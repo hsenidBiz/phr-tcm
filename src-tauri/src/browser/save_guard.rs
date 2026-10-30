@@ -35,6 +35,16 @@ pub const CLICK_WORDS: [&str; 17] = [
     "reject", "remove", "next", "ok", "yes", "okay",
 ];
 
+/// Words that make a writing request a read in disguise: many sites POST
+/// their lists, lookups and telemetry. Matched as whole words of the path
+/// (a trailing "s" allowed), never as substrings: "login" and "catalog" hold
+/// "log" and are not reads. A path that also has a save word of its own
+/// (`SAVE_WORDS`, `WORD_SAVES`) as a word is a save all the same.
+pub const READ_WORDS: [&str; 18] = [
+    "search", "list", "lookup", "find", "get", "load", "query", "autocomplete", "suggest", "filter", "log", "track",
+    "telemetry", "ping", "heartbeat", "autosave", "fetch", "read",
+];
+
 /// The window is read late by up to this much: a request is judged when its
 /// pause is read, which can be a moment after the browser sent it.
 pub const SAVE_CLICK_SLACK_MS: u64 = 750;
@@ -374,4 +384,35 @@ pub fn check_words(words: &[String]) -> Result<Vec<String>, String> {
         return Err(format!("a project can have at most {MAX_WORDS} save words of its own"));
     }
     Ok(kept)
+}
+
+/// Does a request with this method and address (a query left out, a host
+/// too) read rather than save: a writing method whose path names a
+/// `READ_WORDS` word and no save word of its own? Judged by the path's
+/// words (camelCase humps and separators split them): `POST /api/GetList`
+/// and `/lookup/search` read; `/SaveSearch` saves.
+pub fn looks_like_read(method: &str, url: &str) -> bool {
+    if !SAVE_METHODS.contains(&method.trim().to_ascii_uppercase().as_str()) {
+        return false;
+    }
+    let path = raw_path_of(url);
+    // A long word is unambiguous written run together ("AutoComplete" would
+    // split into "auto" and "complete", "AutoSave" into one holding "save").
+    let lower = path.to_ascii_lowercase();
+    if READ_WORDS.iter().any(|w| w.len() >= 8 && lower.contains(w)) {
+        return true;
+    }
+    let mut spaced = String::new();
+    let mut prev_lower = false;
+    for c in path.chars() {
+        if c.is_ascii_uppercase() && prev_lower {
+            spaced.push(' ');
+        }
+        prev_lower = c.is_ascii_lowercase() || c.is_ascii_digit();
+        spaced.push(if c.is_alphanumeric() { c.to_ascii_lowercase() } else { ' ' });
+    }
+    let is = |t: &str, w: &str| t == w || t.strip_suffix('s') == Some(w);
+    let words: Vec<&str> = spaced.split_whitespace().collect();
+    let saves = words.iter().any(|t| SAVE_WORDS.iter().chain(WORD_SAVES.iter()).any(|w| is(t, w)));
+    !saves && words.iter().any(|t| READ_WORDS.iter().any(|w| is(t, w)))
 }

@@ -1244,16 +1244,25 @@ fn click_is_refused(d: &mut ScriptedDriver) {
     }
 }
 
-/// One step, run as a try (`refusals_fail`) or as a run.
+/// One step, run.
 async fn run_said(
     d: &mut ScriptedDriver,
     actions: serde_json::Value,
-    refusals_fail: bool,
 ) -> Vec<v2_lib::browser::actions::ActionOutcome> {
+    run_said_before(d, actions, None).await
+}
+
+/// One step, run, with `next` the first action of the case's next step.
+async fn run_said_before(
+    d: &mut ScriptedDriver,
+    actions: serde_json::Value,
+    next: Option<serde_json::Value>,
+) -> Vec<v2_lib::browser::actions::ActionOutcome> {
+    let next: Option<v2_lib::browser::actions::Action> = next.map(|n| serde_json::from_value(n).unwrap());
     use v2_lib::autorun::runner::{run_step_in_run, AreaRoute, InRun, NEEDS_SCRIPT_AREA};
     let dir = tempfile::tempdir().unwrap();
     let (mut acc, mut lease) = (None, v2_lib::autorun::lease::Held::supervised());
-    let mut run = InRun { refusals_fail, ..Default::default() };
+    let mut run = InRun { next_step_first: next.as_ref(), ..Default::default() };
     run_step_in_run(
         d,
         dir.path(),
@@ -1279,7 +1288,7 @@ fn said(text: &str) -> v2_lib::browser::page_messages::PageMessage {
 async fn a_try_fails_on_a_refused_request() {
     let mut d = said_page(vec![vec![]], false);
     click_is_refused(&mut d);
-    let out = run_said(&mut d, json!([{ "kind": "click", "selector": { "css": "#save" } }]), true).await;
+    let out = run_said(&mut d, json!([{ "kind": "click", "selector": { "css": "#save" } }])).await;
     assert!(!out[0].ok, "{:?}", out[0]);
     assert!(out[0].detail.starts_with(r#"the app refused: "One or more validation errors occurred.""#), "{}", out[0].detail);
     assert!(out[0].detail.ends_with("trace id 00-4bf9-00)"), "{}", out[0].detail);
@@ -1291,13 +1300,48 @@ async fn a_try_fails_on_a_refused_request() {
 async fn a_try_that_is_refused_also_says_what_the_page_showed() {
     let mut d = said_page(vec![vec![], vec!["Weightage must total 100."]], false);
     click_is_refused(&mut d);
-    let out = run_said(&mut d, json!([{ "kind": "click", "selector": { "css": "#save" } }]), true).await;
+    let out = run_said(&mut d, json!([{ "kind": "click", "selector": { "css": "#save" } }])).await;
     assert!(!out[0].ok, "{:?}", out[0]);
     assert!(
         out[0].detail.ends_with(r#"trace id 00-4bf9-00); the page showed: "Weightage must total 100.""#),
         "{}",
         out[0].detail
     );
+}
+
+/// A write the application refuses fails its action in a run as it does in a
+/// try (`refusals::fails_the_action`), unless a later action of the step
+/// checks the page: that step expects the refusal.
+#[tokio::test]
+async fn a_run_and_a_try_judge_a_refused_write_alike() {
+    let click = json!([{ "kind": "click", "selector": { "css": "#save" } }]);
+    // A single action, as a discovery tries it, and the same action ending a step.
+    let mut d = said_page(vec![vec![]], false);
+    click_is_refused(&mut d);
+    let tried = run_said(&mut d, click.clone()).await;
+    assert!(!tried[0].ok, "{:?}", tried[0]);
+    let mut d = said_page(vec![vec![]], false);
+    click_is_refused(&mut d);
+    let ran = run_said(&mut d, json!([click[0].clone(), { "kind": "wait_for", "selector": { "css": "#x" }, "timeout_ms": 100 }])).await;
+    assert!(!ran[0].ok, "{:?}", ran[0]);
+    assert_eq!(tried[0].detail, ran[0].detail);
+    // A later check of the page expects it.
+    let mut d = said_page(vec![vec![]], false);
+    click_is_refused(&mut d);
+    let expected = run_said(&mut d, json!([click[0].clone(), { "kind": "expect_visible", "selector": { "css": "#weightage-error" } }])).await;
+    assert!(expected[0].ok, "{:?}", expected[0]);
+}
+
+/// A refusal that is not a write's (a page's own background read) only reports.
+#[tokio::test]
+async fn a_refused_read_does_not_fail_the_action() {
+    let mut d = said_page(vec![vec![]], false);
+    for e in page_request("r1", "GET", "https://hr.example/api/lookup", "XHR", 422) {
+        d.on_call_events.push((CLICKED.to_string(), e));
+    }
+    let out = run_said(&mut d, json!([{ "kind": "click", "selector": { "css": "#save" } }])).await;
+    assert!(out[0].ok, "{:?}", out[0]);
+    assert_eq!(out[0].refused.len(), 1);
 }
 
 #[tokio::test]
@@ -1310,7 +1354,6 @@ async fn a_run_reports_but_does_not_fail_on_a_refusal() {
             { "kind": "click", "selector": { "css": "#save" } },
             { "kind": "expect_visible", "selector": { "css": "#weightage-error" } }
         ]),
-        false,
     )
     .await;
     assert!(out.iter().all(|o| o.ok), "{out:?}");
@@ -1328,12 +1371,13 @@ async fn a_run_step_that_fails_after_a_refusal_names_it() {
         &mut d,
         json!([
             { "kind": "click", "selector": { "css": "#save" } },
+            { "kind": "expect_response", "url_contains": "eval-rules", "status": 400 },
             { "kind": "wait_for", "selector": { "css": "#goals" }, "timeout_ms": 100 }
         ]),
-        false,
     )
     .await;
-    assert!(out[0].ok, "{:?}", out[0]);
+    assert!(out[0].ok && out[1].ok, "{:?}", out);
+    let out = vec![out[0].clone(), out[2].clone()];
     assert!(!out[1].ok, "{:?}", out[1]);
     assert!(out[1].detail.contains(" - after click"), "{}", out[1].detail);
     assert!(out[1].detail.contains("the app refused: "), "{}", out[1].detail);
@@ -1350,7 +1394,6 @@ async fn a_run_step_that_fails_after_a_message_names_it_and_keeps_its_class() {
             { "kind": "click", "selector": { "css": "#save" } },
             { "kind": "wait_for", "selector": { "css": "#goals" }, "timeout_ms": 100 }
         ]),
-        false,
     )
     .await;
     assert!(!out[1].ok, "{:?}", out[1]);
@@ -1366,7 +1409,7 @@ async fn a_run_step_that_fails_after_a_message_names_it_and_keeps_its_class() {
 #[tokio::test]
 async fn a_message_after_a_click_is_reported_not_failed() {
     let mut d = said_page(vec![vec![], vec!["Saved."]], false);
-    let out = run_said(&mut d, json!([{ "kind": "click", "selector": { "css": "#save" } }]), true).await;
+    let out = run_said(&mut d, json!([{ "kind": "click", "selector": { "css": "#save" } }])).await;
     assert!(out[0].ok, "{:?}", out[0]);
     assert_eq!(out[0].page_said, vec![said("Saved.")]);
     assert!(out[0].refused.is_empty());
@@ -1381,7 +1424,6 @@ async fn a_late_message_goes_to_the_action_that_caused_it() {
             { "kind": "click", "selector": { "css": "#save" } },
             { "kind": "click", "selector": { "css": "#next" } }
         ]),
-        false,
     )
     .await;
     assert!(out.iter().all(|o| o.ok), "{out:?}");
@@ -1405,7 +1447,7 @@ async fn the_runs_own_api_request_is_not_a_refusal() {
         d.on_call_events.push(("Runtime.callFunctionOn".to_string(), e));
     }
     let out =
-        run_said(&mut d, json!([{ "kind": "api_request", "path": "/api/cycles/42", "expect": { "status": 400 } }]), true)
+        run_said(&mut d, json!([{ "kind": "api_request", "path": "/api/cycles/42", "expect": { "status": 400 } }]))
             .await;
     assert!(out[0].ok, "{:?}", out[0]);
     assert!(out.iter().all(|o| o.refused.is_empty()), "{out:?}");
@@ -1458,14 +1500,18 @@ fn fake_clock(d: &mut ScriptedDriver) -> std::sync::Arc<std::sync::atomic::Atomi
 async fn a_refusal_answered_after_the_click_is_reported_and_fails_a_try() {
     let mut d = said_page(vec![vec![]], false);
     click_is_refused_after(&mut d, 150);
-    let out = run_said(&mut d, json!([{ "kind": "click", "selector": { "css": "#save" } }]), true).await;
+    let out = run_said(&mut d, json!([{ "kind": "click", "selector": { "css": "#save" } }])).await;
     assert!(!out[0].ok, "{:?}", out[0]);
     assert!(out[0].detail.starts_with("the app refused: "), "{}", out[0].detail);
     assert_eq!(out[0].refused.len(), 1);
-    // A run reports it.
+    // A step that goes on to check the page expects it, and reports it.
     let mut d = said_page(vec![vec![]], false);
     click_is_refused_after(&mut d, 150);
-    let out = run_said(&mut d, json!([{ "kind": "click", "selector": { "css": "#save" } }]), false).await;
+    let out = run_said(
+        &mut d,
+        json!([{ "kind": "click", "selector": { "css": "#save" } }, { "kind": "expect_visible", "selector": { "css": "#weightage-error" } }]),
+    )
+    .await;
     assert!(out[0].ok, "{:?}", out[0]);
     assert_eq!(out[0].refused.len(), 1, "{out:?}");
 }
@@ -1475,12 +1521,12 @@ async fn a_request_that_never_answers_is_waited_for_three_seconds_and_fails_noth
     let click = json!([{ "kind": "click", "selector": { "css": "#save" } }]);
     let mut d = said_page(vec![vec![]], false);
     let quiet = fake_clock(&mut d);
-    run_said(&mut d, click.clone(), true).await;
+    run_said(&mut d, click.clone()).await;
     let mut d = said_page(vec![vec![]], false);
     let waiting = fake_clock(&mut d);
     let sent = page_request("r1", "POST", "https://hr.example/api/eval-rules", "XHR", 400).remove(0);
     d.on_call_events.push((CLICKED.to_string(), sent));
-    let out = run_said(&mut d, click, true).await;
+    let out = run_said(&mut d, click).await;
     assert!(out[0].ok, "{:?}", out[0]);
     assert!(out[0].refused.is_empty());
     let extra = waiting.load(Ordering::SeqCst) - quiet.load(Ordering::SeqCst);
@@ -1492,13 +1538,13 @@ async fn a_request_answered_with_the_click_costs_no_wait() {
     let click = json!([{ "kind": "click", "selector": { "css": "#save" } }]);
     let mut d = said_page(vec![vec![]], false);
     let quiet = fake_clock(&mut d);
-    run_said(&mut d, click.clone(), false).await;
+    run_said(&mut d, click.clone()).await;
     let mut d = said_page(vec![vec![]], false);
     let answered = fake_clock(&mut d);
     for e in page_request("r1", "POST", "https://hr.example/api/eval-rules", "XHR", 200) {
         d.on_call_events.push((CLICKED.to_string(), e));
     }
-    run_said(&mut d, click, false).await;
+    run_said(&mut d, click).await;
     assert_eq!(answered.load(Ordering::SeqCst), quiet.load(Ordering::SeqCst));
 }
 
@@ -1585,7 +1631,6 @@ async fn a_wait_that_fails_names_what_the_click_before_it_caused_late() {
             { "kind": "click", "selector": { "css": "#save" } },
             { "kind": "wait_for", "selector": { "css": "#goals" }, "timeout_ms": 100 }
         ]),
-        false,
     )
     .await;
     assert!(out[0].ok, "{:?}", out[0]);
@@ -1606,7 +1651,7 @@ async fn twenty_clicks_never_push_out_the_steps_own_mark() {
     let mut actions: Vec<serde_json::Value> =
         (0..20).map(|i| json!({ "kind": "click", "selector": { "css": format!("#b{i}") } })).collect();
     actions.push(json!({ "kind": "expect_response", "url_contains": "/api/list", "timeout_ms": 100 }));
-    let out = run_said(&mut d, serde_json::Value::Array(actions), false).await;
+    let out = run_said(&mut d, serde_json::Value::Array(actions)).await;
     assert!(out[..20].iter().all(|o| o.ok), "{out:?}");
     assert!(!out[20].ok, "an earlier step's request was taken for this one's: {:?}", out[20]);
 }
@@ -1621,7 +1666,7 @@ async fn a_new_page_is_not_what_a_navigation_said() {
             params: json!({ "frameId": "F", "loaderId": "L", "name": "load" }),
         },
     ));
-    let out = run_said(&mut d, json!([{ "kind": "navigate", "url": "https://hr.example/home" }]), false).await;
+    let out = run_said(&mut d, json!([{ "kind": "navigate", "url": "https://hr.example/home" }])).await;
     assert!(out[0].ok, "{:?}", out[0]);
     assert!(out[0].page_said.is_empty(), "{:?}", out[0]);
 }
@@ -1631,7 +1676,7 @@ async fn a_try_that_is_refused_keeps_the_dialog_it_met() {
     let mut d = said_page(vec![vec![]], false);
     click_is_refused(&mut d);
     d.dialogs_on_call.push((CLICKED.to_string(), "confirm".to_string(), "Leave?".to_string()));
-    let out = run_said(&mut d, json!([{ "kind": "click", "selector": { "css": "#save" } }]), true).await;
+    let out = run_said(&mut d, json!([{ "kind": "click", "selector": { "css": "#save" } }])).await;
     assert!(!out[0].ok, "{:?}", out[0]);
     assert!(out[0].detail.starts_with("the app refused: "), "{}", out[0].detail);
     assert!(out[0].detail.ends_with(r#" (a confirm dialog was accepted: "Leave?")"#), "{}", out[0].detail);
@@ -1708,10 +1753,11 @@ async fn a_failed_step_with_no_area_is_not_remembered() {
     noted.in_case(None);
     let steps = json!([
         { "kind": "click", "selector": { "css": "#save" } },
+        { "kind": "expect_response", "url_contains": "eval-rules", "status": 400 },
         { "kind": "wait_for", "selector": { "css": "#goals" }, "timeout_ms": 100 }
     ]);
     let out = run_noted(&mut d, steps.clone(), &mut noted, 0).await;
-    assert!(out[0].ok && !out[0].refused.is_empty() && !out[1].ok, "{out:?}");
+    assert!(out[0].ok && !out[0].refused.is_empty() && !out[2].ok, "{out:?}");
     remember_failed_step(dir.path(), "Acme", "Web", &tab_step(steps), &out, &[], noted.area(), 7);
     assert!(!v2_lib::autorun::discovery_map::map_path(dir.path(), "Acme", "Web").exists());
 }
@@ -1886,7 +1932,10 @@ async fn a_run_remembers_the_refusal_its_failure_names_from_the_step_before() {
         "title": "case 7",
         "area": "Eval Rules",
         "steps": [
-            { "step_number": 3, "actions": [{ "kind": "click", "selector": { "css": "#save" } }] },
+            { "step_number": 3, "actions": [
+                { "kind": "click", "selector": { "css": "#save" } },
+                { "kind": "expect_response", "url_contains": "eval-rules", "status": 400 }
+            ] },
             { "step_number": 4, "actions": [{ "kind": "wait_for", "selector": { "css": "#goals" }, "timeout_ms": 100 }] }
         ]
     }))
@@ -1902,4 +1951,83 @@ async fn a_run_remembers_the_refusal_its_failure_names_from_the_step_before() {
     assert_eq!(rules.len(), 1, "{rules:?}");
     assert_eq!(rules[0].message, "One or more validation errors occurred.");
     assert_eq!((rules[0].source, rules[0].case_id), (RuleSource::Run, Some(7)));
+}
+
+
+fn post_answered(d: &mut ScriptedDriver, id: &str, method: &str, url: &str, status: u16) {
+    for e in page_request(id, method, url, "XHR", status) {
+        d.on_call_events.push((CLICKED.to_string(), e));
+    }
+}
+
+fn click_save() -> serde_json::Value {
+    json!([{ "kind": "click", "selector": { "css": "#save" } }])
+}
+
+/// The first action of the next step excuses the refusal when it reads the
+/// message; the form's own heading does not.
+#[tokio::test]
+async fn only_a_message_check_excuses_a_refused_save() {
+    let message = json!({ "kind": "expect_visible", "selector": { "css": "#weightage-error" } });
+    let toast = json!({ "kind": "expect_contains_text", "selector": { "role": "alert" }, "value": "invalid" });
+    let heading = json!({ "kind": "expect_visible", "selector": { "role": "heading", "name": "Edit rule" } });
+    let heading_css = json!({ "kind": "expect_visible", "selector": { "css": "h2.title" } });
+    let count = json!({ "kind": "expect_count", "selector": { "css": "li" }, "equals": 1 });
+    for (later, excused) in [(&message, true), (&toast, true), (&heading, false), (&heading_css, false), (&count, false)] {
+        // In the same step.
+        let mut d = said_page(vec![vec![]], false);
+        click_is_refused(&mut d);
+        let mut actions = click_save().as_array().unwrap().clone();
+        actions.push(later.clone());
+        let out = run_said(&mut d, json!(actions)).await;
+        assert_eq!(out[0].ok, excused, "same step {later}: {:?}", out[0]);
+        // First in the next step.
+        let mut d = said_page(vec![vec![]], false);
+        click_is_refused(&mut d);
+        let out = run_said_before(&mut d, click_save(), Some(later.clone())).await;
+        assert_eq!(out[0].ok, excused, "next step {later}: {:?}", out[0]);
+    }
+}
+
+/// A POST that reads is no refusal; a refused write is kept past three refused reads.
+#[tokio::test]
+async fn a_refused_read_shaped_post_is_nothing_and_writes_are_kept_first() {
+    let mut d = said_page(vec![vec![]], false);
+    post_answered(&mut d, "r1", "POST", "https://hr.example/api/GetList", 400);
+    let out = run_said(&mut d, click_save()).await;
+    assert!(out[0].ok && out[0].refused.is_empty(), "{:?}", out[0]);
+
+    let mut d = said_page(vec![vec![]], false);
+    for i in 0..3 {
+        post_answered(&mut d, &format!("g{i}"), "GET", &format!("https://hr.example/api/lookup{i}"), 422);
+    }
+    post_answered(&mut d, "w", "POST", "https://hr.example/api/eval-rules", 400);
+    let out = run_said(&mut d, click_save()).await;
+    assert!(!out[0].ok, "{:?}", out[0]);
+    assert_eq!(out[0].refused.len(), 3);
+    assert!(out[0].detail.contains("POST /api/eval-rules"), "the line names the write: {}", out[0].detail);
+}
+
+/// 408 and 429 on a save fail it as the site being busy, whatever follows;
+/// 419 and 440 are not the app refusing the input.
+#[tokio::test]
+async fn a_busy_or_expired_answer_is_not_a_refusal() {
+    use v2_lib::autorun::refusals::{answer_of, Answer, SITE_BUSY};
+    assert_eq!((answer_of(400), answer_of(422), answer_of(409)), (Answer::Refused, Answer::Refused, Answer::Refused));
+    assert_eq!((answer_of(408), answer_of(429)), (Answer::Busy, Answer::Busy));
+    assert_eq!((answer_of(419), answer_of(440)), (Answer::Expired, Answer::Expired));
+    for status in [408, 429] {
+        let mut d = said_page(vec![vec![]], false);
+        post_answered(&mut d, "r1", "POST", "https://hr.example/api/eval-rules", status);
+        let message = json!({ "kind": "expect_visible", "selector": { "css": "#weightage-error" } });
+        let out = run_said(&mut d, json!([click_save()[0].clone(), message])).await;
+        assert!(!out[0].ok && out[0].detail.starts_with(SITE_BUSY), "{status}: {:?}", out[0]);
+        assert!(!out[0].detail.contains("the app refused"), "{}", out[0].detail);
+    }
+    for status in [419, 440] {
+        let mut d = said_page(vec![vec![]], false);
+        post_answered(&mut d, "r1", "POST", "https://hr.example/api/eval-rules", status);
+        let out = run_said(&mut d, click_save()).await;
+        assert!(!out[0].detail.contains("the app refused"), "{status}: {}", out[0].detail);
+    }
 }

@@ -1359,6 +1359,7 @@ async fn run_steps_marked<D: Driver>(
     replay.note_cleanup(script.cleanup_step().map(|s| s.step_number));
     // The case's steps, then its clean-up: a replay past the clean-up runs
     // it last, and only once every step before it passed.
+    let order: Vec<&super::StepScript> = script.in_run_order().collect();
     for (at, step) in script.in_run_order().filter(|s| in_range(s.step_number)).enumerate() {
         let k = step.step_number;
         if stopped() {
@@ -1378,6 +1379,12 @@ async fn run_steps_marked<D: Driver>(
             ignore_page_errors: script.ignore_page_errors.clone(),
             progress: Some(&replay.actions),
             noted: Some(&mut noted),
+            next_step_first: order
+                .iter()
+                .position(|s| s.step_number == k)
+                .and_then(|i| order.get(i + 1))
+                .filter(|n| !n.cleanup)
+                .and_then(|n| n.actions.first()),
             ..Default::default()
         };
         let ran = runner::run_step_in_run(

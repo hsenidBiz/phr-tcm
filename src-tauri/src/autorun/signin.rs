@@ -125,6 +125,8 @@ pub enum SessionRefusal {
     /// request before reading it, as it does for a session it no longer
     /// knows.
     EmptyBadRequest,
+    /// A save was answered 419 or 440: the session had expired.
+    Expired,
 }
 
 impl SessionRefusal {
@@ -133,6 +135,7 @@ impl SessionRefusal {
         match self {
             SessionRefusal::Tampered => "the session was tampered with",
             SessionRefusal::EmptyBadRequest => "an empty Bad Request",
+            SessionRefusal::Expired => "the session had expired",
         }
     }
 }

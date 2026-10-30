@@ -4,9 +4,11 @@
 //! another assistant that asks for the same case is told at once who holds it
 //! and is not made to wait. A claim lasts `CLAIM_TIMEOUT_MS` (a named subagent's
 //! `agents::NAMED_HOLD_MS`, while it is quiet and its browser idle) from the last
-//! time its holder claimed the case, and ends sooner with the holder's browser
-//! being released by the person, or its session being past its grace
-//! (`commands::autorun_slots::release_slot`, `on_sweep`). A holder that is no
+//! time its holder claimed the case, and ends sooner when the holder ends its
+//! discovery or releases its browser (`ai_bridge::end_claims_of`: the same
+//! key, so unnamed subagents of one session share their claims), when the
+//! person releases its browser (`commands::autorun_slots::release_slot`), or
+//! when its session is past its grace (`on_sweep`). A holder that is no
 //! longer live (`agents::is_live`) refuses nobody.
 //!
 //! Case ids are unique in the organization and Auto Run works in the home
