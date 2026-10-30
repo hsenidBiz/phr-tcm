@@ -378,6 +378,11 @@ assume what the case made was removed. Its failure, a failed
 never fails the case. Its locators must have been seen like any step's,
 and every other run rule (Must not save included) applies to it.
 
+Put every delete of what the case made in the clean-up step, never after a
+check in a case step: a failing check stops the step, the delete never
+runs, and the record stays, so the next run fails on it. The save notes a
+delete that comes after a check.
+
 Every `expect_` action, and `check_url`, looks again until it holds, for up to 10 seconds
 (add `"timeout_ms"` to change that), and a failure says what it actually
 saw. Prefer them to `check_text`, which looks once and cannot tell you
@@ -1551,6 +1556,10 @@ is CALLED:
 combobox, searchbox, dialog, heading, row, cell...) and `name` is the
 accessible name: a button's words, a field's label. Both come from the browser's own
 accessibility tree, so they match what a screen reader would announce.
+
+Before deleting, find the row by its own name, never by `nth` on a list
+others share: another record can sit at that position. The save notes a
+delete that picks by `nth`.
 
 `name` and `text` match loosely - contains, ignoring case and extra
 spaces. Add `"exact": true` when a near miss exists ("Save" and "Save as

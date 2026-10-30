@@ -4715,6 +4715,33 @@ async fn a_save_notes_a_loose_record_name_and_an_undeclared_record_without_refus
     assert_eq!((status, out.as_str()), (200, "saved 1 script(s): case 7 (unchanged)"));
 }
 
+/// A script that deletes by position after a check saves, and the answer
+/// notes both problems.
+#[tokio::test]
+async fn save_answer_notes_a_positional_delete() {
+    let dir = TempDir::new();
+    let _root = crate::serial::autorun();
+    set_root(dir.path().to_path_buf());
+    let (_server, client) = client_with_cases(&[(7, "Remove a method", &["", "A toast says Saved"])]).await;
+    let body = serde_json::json!([{
+        "case_id": 7,
+        "title": "Remove a method",
+        "steps": [
+            { "step_number": 1, "actions": [{ "kind": "navigate", "url": "https://app.example/ratings" }] },
+            { "step_number": 2, "actions": [
+                { "kind": "expect_contains_text", "selector": ".toast", "value": "Saved" },
+                { "kind": "click", "selector": { "role": "button", "name": "Delete", "nth": 2 } }
+            ]}
+        ]
+    }]);
+    see_scripts(dir.path(), &body.to_string());
+    let (status, out) = route(&ctx(), Some(&client), "POST", "/autorun-script", &body.to_string(), "1.0.0").await;
+    assert_eq!(status, 200, "{out}");
+    assert!(out.contains("case 7: note: step 2 deletes after a check"), "{out}");
+    assert!(out.contains("case 7: note: step 2: the delete picks by position (nth 2)"), "{out}");
+    assert!(load_script(dir.path(), 7).unwrap().is_some());
+}
+
 /// `scripts` without its absence checks, to be seen present.
 fn without_absence(scripts: &serde_json::Value) -> serde_json::Value {
     let mut v = scripts.clone();

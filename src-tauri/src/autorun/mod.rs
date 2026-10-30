@@ -48,6 +48,7 @@ pub mod plan;
 pub mod loading;
 pub mod popups;
 pub mod preconditions;
+pub mod script_notes;
 pub mod publish;
 pub mod pw_rules;
 pub mod quirks;

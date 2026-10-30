@@ -13004,7 +13004,9 @@ pub async fn save_autorun_scripts_carrying(
                 let Some(script) = prepared.iter().find(|s| s.case_id == *case_id) else { continue };
                 let sentences = crate::autorun::seen_check::loose_name_notes(&map, &components, script, only.as_deref())
                     .into_iter()
-                    .chain(crate::autorun::preconditions::undeclared_record_note(script, only.as_deref(), &test_prefix, &save_words));
+                    .chain(crate::autorun::preconditions::undeclared_record_note(script, only.as_deref(), &test_prefix, &save_words))
+                    .chain(crate::autorun::script_notes::delete_after_check_notes(script, only.as_deref()))
+                    .chain(crate::autorun::script_notes::positional_delete_notes(script, only.as_deref()));
                 notes.extend(sentences.map(|n| format!("case {case_id}: note: {n}")));
             }
             // The value check's notes count toward the same cap.
