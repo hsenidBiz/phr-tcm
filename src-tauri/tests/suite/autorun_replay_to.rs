@@ -2630,15 +2630,15 @@ async fn a_discovery_that_sees_the_session_cookie_reissued_still_resets_with_its
 /// sign-in's cookies as the same sign-in; any other call may.
 #[test]
 fn a_call_that_could_swap_the_login_is_not_taken_as_the_same_sign_in() {
-    use v2_lib::ai_bridge::call_touches_sign_in;
+    use v2_lib::autorun::replay_to::touches_sign_in as call_touches_sign_in;
     use v2_lib::browser::actions::Action;
     let recipe = menu_recipe();
     let target = |v: Value| serde_json::from_value(v).unwrap();
-    assert_eq!(call_touches_sign_in(&[Action::SignIn { account: "other".into() }], &recipe), Some("signed in"));
+    assert_eq!(call_touches_sign_in(&[Action::SignIn { account: "other".into() }], &recipe), Some("signed in".to_string()));
     let fill = Action::Fill { selector: target(json!({ "css": "input[type=password]" })), value: "x".into() };
-    assert_eq!(call_touches_sign_in(&[fill], &recipe), Some("filled a password field"));
+    assert_eq!(call_touches_sign_in(&[fill], &recipe), Some("filled a login field".to_string()));
     let go = Action::Navigate { url: recipe.start_url.clone() };
-    assert_eq!(call_touches_sign_in(&[go], &recipe), Some("went to the sign-in address"));
+    assert_eq!(call_touches_sign_in(&[go], &recipe), Some("went to the sign-in address".to_string()));
     let plain = [
         Action::Click { selector: "#s1".into() },
         Action::Fill { selector: target(json!({ "css": "#search" })), value: "x".into() },
@@ -3625,4 +3625,164 @@ async fn a_save_once_seen_stays_seen_at_every_later_checkpoint() {
     let (_, marks) = whole_replay(&mut d, dir.path(), &a, &mut account, &mut held, &mut guarded).await;
     let wrote: Vec<bool> = marks.checkpoints.iter().map(|c| c.wrote).collect();
     assert_eq!(wrote, vec![false, true, true, true], "{wrote:?}");
+}
+
+/// Backlog 44b: the page the steps ran on re-issues the sign-in's session
+/// cookie once the click `after` has been made. Armed by the click's log line.
+fn reissuing_after(d: ScriptedDriver, app: &common::MenuApp, jar: &Jar, after: &'static str) -> ScriptedDriver {
+    let (j, seen) = (jar.clone(), app.log.clone());
+    d.answering_first(move |method, _| {
+        if method == "Input.dispatchMouseEvent" && seen.lock().unwrap().iter().any(|l| l == after) {
+            j.set(".ASPXAUTH", "auth-admin-2");
+        }
+        None
+    })
+}
+
+/// Backlog 44b: a replay's own steps may make the app re-issue the sign-in's
+/// cookie. The print is taken again once they end, so replaying the same
+/// case a second time keeps the sign-in.
+#[tokio::test]
+async fn second_replay_of_same_case_keeps_the_sign_in() {
+    use v2_lib::autorun::replay_to::signed_in_already_line;
+    let _l = crate::serial::account_leases();
+    let _log = crate::serial::log_tail();
+    let dir = tempfile::tempdir().unwrap();
+    project(dir.path(), &script(three_steps()));
+    let (d, app, jar) = jar_app();
+    let mut d = reissuing_after(d, &app, &jar, "click #s1");
+    let (mut account, mut held) = (None, Held::supervised());
+    // Replay 1: the whole case (a step past the last), signing in itself.
+    let (first, _) = replay_kept(&mut d, dir.path(), 4, &mut account, &mut held).await;
+    assert!(matches!(first, ReplayEnd::Ready { .. }), "{first:?} {:?}", log(&app));
+    assert!(jar.now.lock().unwrap().iter().any(|(n, v)| n == ".ASPXAUTH" && v == "auth-admin-2"), "the cookie was not re-issued");
+    d.calls.clear();
+    app.log.lock().unwrap().clear();
+    let (end, reused) = replay_kept(&mut d, dir.path(), 4, &mut account, &mut held).await;
+    assert!(matches!(end, ReplayEnd::Ready { .. }), "{end:?} {:?}", log(&app));
+    assert_eq!(sign_ins(&d), 0, "the second replay signed in again: {:?}", log(&app));
+    assert_eq!(reused.went.as_deref(), Some("Leave"));
+    assert_eq!(reused.said(None).as_deref(), Some(signed_in_already_line("Leave").as_str()));
+}
+
+/// A replay that stopped before a step keeps the sign-in too.
+#[tokio::test]
+async fn a_replay_stopped_before_a_step_keeps_the_sign_in_for_the_next() {
+    let _l = crate::serial::account_leases();
+    let _log = crate::serial::log_tail();
+    let dir = tempfile::tempdir().unwrap();
+    project(dir.path(), &script(three_steps()));
+    let (d, app, jar) = jar_app();
+    let mut d = reissuing_after(d, &app, &jar, "click #s1");
+    let (mut account, mut held) = (None, Held::supervised());
+    let (first, _) = replay_kept(&mut d, dir.path(), 3, &mut account, &mut held).await;
+    assert!(matches!(first, ReplayEnd::Ready { .. }), "{first:?} {:?}", log(&app));
+    d.calls.clear();
+    let (end, reused) = replay_kept(&mut d, dir.path(), 3, &mut account, &mut held).await;
+    assert!(matches!(end, ReplayEnd::Ready { .. }), "{end:?}");
+    assert_eq!((sign_ins(&d), reused.went.as_deref()), (0, Some("Leave")), "{:?}", log(&app));
+}
+
+/// A script that signs in itself is not taken as the same sign-in: the print
+/// is not retaken after its steps, so the next replay signs in as before.
+#[tokio::test]
+async fn replay_that_signs_in_itself_is_not_reprinted() {
+    let _l = crate::serial::account_leases();
+    let _log = crate::serial::log_tail();
+    let dir = tempfile::tempdir().unwrap();
+    project(
+        dir.path(),
+        &script(json!([
+            { "step_number": 1, "actions": [{ "kind": "sign_in", "account": "admin" }] },
+            { "step_number": 2, "actions": [click("#s2")] },
+            { "step_number": 3, "actions": [click("#s3")] }
+        ])),
+    );
+    let (d, app, jar) = jar_app();
+    let mut d = reissuing_after(d, &app, &jar, "click #s2");
+    let (mut account, mut held) = (None, Held::supervised());
+    let (first, _) = replay_kept(&mut d, dir.path(), 4, &mut account, &mut held).await;
+    assert!(matches!(first, ReplayEnd::Ready { .. }), "{first:?} {:?}", log(&app));
+    assert!(jar.now.lock().unwrap().iter().any(|(n, v)| n == ".ASPXAUTH" && v == "auth-admin-2"), "the cookie was not re-issued");
+    d.calls.clear();
+    app.log.lock().unwrap().clear();
+    let (end, reused) = replay_kept(&mut d, dir.path(), 4, &mut account, &mut held).await;
+    assert!(matches!(end, ReplayEnd::Ready { .. }), "{end:?} {:?}", log(&app));
+    assert_eq!(reused.went, None, "the replay reused a sign-in the script made itself");
+    assert!(sign_ins(&d) >= 1, "{:?}", log(&app));
+}
+
+/// A login swapped inside a `when_visible` (another account logging in when
+/// the session looks expired) is not the case's account any more: the print
+/// is not retaken, so the next replay signs in again.
+#[tokio::test]
+async fn a_login_inside_a_when_visible_is_not_reprinted() {
+    let _l = crate::serial::account_leases();
+    let _log = crate::serial::log_tail();
+    let dir = tempfile::tempdir().unwrap();
+    project(
+        dir.path(),
+        &script(json!([
+            { "step_number": 1, "actions": [click("#s1")] },
+            { "step_number": 2, "actions": [{ "kind": "when_visible", "selector": { "css": "#s2" }, "within_ms": 50,
+                "then": [ { "kind": "fill", "selector": { "css": "#txtUserName" }, "value": "{{username}}" } ] }] },
+            { "step_number": 3, "actions": [click("#s3")] }
+        ])),
+    );
+    let (d, app, jar) = jar_app();
+    let mut d = reissuing_after(d, &app, &jar, "click #s1");
+    let (mut account, mut held) = (None, Held::supervised());
+    let (first, _) = replay_kept(&mut d, dir.path(), 4, &mut account, &mut held).await;
+    assert!(matches!(first, ReplayEnd::Ready { .. }), "{first:?} {:?}", log(&app));
+    d.calls.clear();
+    app.log.lock().unwrap().clear();
+    let (end, reused) = replay_kept(&mut d, dir.path(), 4, &mut account, &mut held).await;
+    assert!(matches!(end, ReplayEnd::Ready { .. }), "{end:?} {:?}", log(&app));
+    assert_eq!(reused.went, None, "the replay kept a sign-in a step may have swapped");
+    assert!(sign_ins(&d) >= 1, "{:?}", log(&app));
+}
+
+/// The cookie that names the user changed along with the session ticket:
+/// whoever is signed in is not the one the sign-in left, so the old print
+/// stays and the next replay signs in again.
+#[tokio::test]
+async fn a_changed_identity_cookie_is_not_reprinted() {
+    let _l = crate::serial::account_leases();
+    let _log = crate::serial::log_tail();
+    let dir = tempfile::tempdir().unwrap();
+    project(dir.path(), &script(three_steps()));
+    let (d, app, jar) = jar_app();
+    let (j, seen) = (jar.clone(), app.log.clone());
+    let mut d = d.answering_first(move |method, _| {
+        if method == "Input.dispatchMouseEvent" && seen.lock().unwrap().iter().any(|l| l == "click #s1") {
+            j.set(".ASPXAUTH", "auth-other-1");
+            j.set("ehrm85", "other");
+        }
+        None
+    });
+    let (mut account, mut held) = (None, Held::supervised());
+    let (first, _) = replay_kept(&mut d, dir.path(), 4, &mut account, &mut held).await;
+    assert!(matches!(first, ReplayEnd::Ready { .. }), "{first:?} {:?}", log(&app));
+    d.calls.clear();
+    app.log.lock().unwrap().clear();
+    let (end, reused) = replay_kept(&mut d, dir.path(), 4, &mut account, &mut held).await;
+    assert!(matches!(end, ReplayEnd::Ready { .. }), "{end:?} {:?}", log(&app));
+    assert_eq!(reused.went, None, "the replay kept a sign-in whose user changed");
+    assert!(sign_ins(&d) >= 1, "{:?}", log(&app));
+}
+
+/// What could swap a login, wherever it hides.
+#[test]
+fn touches_sign_in_looks_inside_and_at_other_ways_in() {
+    use v2_lib::autorun::replay_to::touches_sign_in;
+    use v2_lib::browser::actions::Action;
+    let recipe = menu_recipe();
+    let fill = |css: &str, value: &str| Action::Fill { selector: serde_json::from_value(json!({ "css": css })).unwrap(), value: value.into() };
+    let inside = Action::WhenVisible { selector: serde_json::from_value(json!({ "css": "#x" })).unwrap(), within_ms: None, then: vec![fill("#txtPwd", "{{password}}")] };
+    assert!(touches_sign_in(&[inside], &recipe).is_some());
+    let looped = Action::RepeatWhileVisible { selector: serde_json::from_value(json!({ "css": "#x" })).unwrap(), max: Some(2), except: vec![], then: vec![fill("#a", "{{username}}")] };
+    assert!(touches_sign_in(&[looped], &recipe).is_some());
+    assert!(touches_sign_in(&[Action::OpenTab { name: "t".into(), url: recipe.start_url.clone() }], &recipe).is_some());
+    assert!(touches_sign_in(&[Action::Navigate { url: "https://hr.example.internal/hr/home/switch?mode=sshr".into() }], &recipe).is_some());
+    assert!(touches_sign_in(&[fill("#search", "leave")], &recipe).is_none());
 }

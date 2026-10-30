@@ -358,6 +358,21 @@ pub const NOT_FOUND: &str = "not found";
 pub const NOT_VISIBLE: &str = "is not visible";
 /// Drawn, but outside the window even after scrolling it into view.
 pub const OFFSCREEN: &str = "is outside the visible part of the page";
+/// Said after a failure that ends in `OFFSCREEN`: a page that never comes
+/// into view is most often a browser left in a bad state, and a reset gives
+/// a clean page without signing in again.
+pub const OFFSCREEN_RESET_HINT: &str =
+    " If it stays outside the visible part once the page settles, reset_autorun_browser gives a clean page with the sign-in kept.";
+
+/// `detail` with `OFFSCREEN_RESET_HINT` after it, once, when it says the
+/// target is outside the visible part. Anything else is unchanged.
+pub fn with_offscreen_hint(detail: &str) -> String {
+    if detail.contains(OFFSCREEN) && !detail.contains(OFFSCREEN_RESET_HINT) {
+        format!("{detail}{OFFSCREEN_RESET_HINT}")
+    } else {
+        detail.to_string()
+    }
+}
 /// The element (or its fieldset) is disabled.
 pub const DISABLED: &str = "is disabled";
 /// A fill aimed at something that takes no typing.

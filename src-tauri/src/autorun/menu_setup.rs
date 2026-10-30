@@ -34,7 +34,7 @@ const RELOAD_SENTINEL_KEPT_JS: &str = "window.__tcmMenuSetup === true";
 const RELOAD_WAIT_MS: u64 = 5_000;
 
 async fn click(d: &mut impl Driver, target: &Target, timing: &Timing) -> ActionOutcome {
-    execute_in(d, &Action::Click { selector: target.clone() }, timing, &Policy::open()).await
+    execute_in(d, &Action::Click { selector: target.clone() }, timing, &Policy::open().as_runner()).await
 }
 
 /// Click each of `open`, in order.

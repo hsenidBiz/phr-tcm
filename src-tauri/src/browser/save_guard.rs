@@ -24,6 +24,26 @@ pub const SAVE_WORDS: [&str; 7] = ["save", "update", "delete", "submit", "approv
 /// `GetCreatedLeaves` read or a `/recreate` preview.
 pub const WORD_SAVES: [&str; 3] = ["add", "create", "insert"];
 
+/// A control named with one of these WORDS is a save-click as well (besides
+/// `SAVE_WORDS` as substrings, which covers "Save & Continue"): they name
+/// the button that commits a wizard step, a row or a confirm dialog. Matched
+/// as whole words (a trailing "s" allowed), so "Facebook" is not "ok".
+/// "Next" is here on the owner's ruling: a wizard whose Next posts its step
+/// saves too. "Search" is not.
+pub const CLICK_WORDS: [&str; 17] = [
+    "continue", "finish", "done", "complete", "apply", "confirm", "proceed", "post", "send", "generate", "process",
+    "reject", "remove", "next", "ok", "yes", "okay",
+];
+
+/// The window is read late by up to this much: a request is judged when its
+/// pause is read, which can be a moment after the browser sent it.
+pub const SAVE_CLICK_SLACK_MS: u64 = 750;
+
+/// How long after a click on a save-named control any writing request is
+/// stopped, whatever its path (a wizard's `POST /hr/PMSV10/wizard` has no
+/// save word in it).
+pub const SAVE_CLICK_WINDOW_MS: u64 = 5_000;
+
 /// The methods that can write. Every other method (GET, HEAD, OPTIONS)
 /// always goes through.
 pub const SAVE_METHODS: [&str; 4] = ["POST", "PUT", "PATCH", "DELETE"];
@@ -44,9 +64,10 @@ pub const SETUP_FAILED: &str = "the no-save guard could not be set up: ";
 pub const MAX_WORDS: usize = 50;
 pub const MAX_WORD_LEN: usize = 60;
 
-/// The path of an address: no scheme, host, query or fragment. `/` when
-/// nothing follows the host.
-pub fn path_of(url: &str) -> String {
+/// The path of an address as the matching sees it: no scheme, host, query or
+/// fragment. `/` when nothing follows the host. Words in it are matched as
+/// written (`is_save`).
+fn raw_path_of(url: &str) -> String {
     let no_fragment = url.split('#').next().unwrap_or("");
     let no_query = no_fragment.split('?').next().unwrap_or("");
     let rest = match no_query.find("://") {
@@ -59,6 +80,42 @@ pub fn path_of(url: &str) -> String {
     }
 }
 
+/// Does a path segment look like a token (a session id, a code, a ticket)?
+/// 20 or more characters of base64url or hex that hold a digit (a long
+/// word is a name, not a token), or 16 or more with no vowel at all.
+fn looks_like_token(seg: &str) -> bool {
+    let n = seg.chars().count();
+    let url_safe = seg.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_');
+    (n >= 20 && url_safe && seg.chars().any(|c| c.is_ascii_digit()))
+        || (n >= 16 && !seg.chars().any(|c| "aeiouAEIOU".contains(c)))
+}
+
+/// ASP.NET's cookieless session segment: `(S(...))`, `(F(...))`, `(A(...))`
+/// (the session id, the forms ticket, the anonymous id).
+fn is_cookieless(seg: &str) -> bool {
+    let b = seg.as_bytes();
+    b.len() > 4 && b[0] == b'(' && matches!(b[1], b'S' | b's' | b'F' | b'f' | b'A' | b'a') && b[2] == b'(' && seg.ends_with("))")
+}
+
+/// The path of an address, to be said to a person or written to the log: no
+/// scheme, host, query or fragment, and nothing in it that could be a
+/// session - no `;parameter` (`;jsessionid=...`), no ASP.NET cookieless
+/// segment, and a token-like segment shown as `…`. `/` when nothing follows
+/// the host.
+pub fn path_of(url: &str) -> String {
+    let raw = raw_path_of(url);
+    let kept: Vec<String> = raw
+        .split('/')
+        .skip(1)
+        .filter(|seg| !is_cookieless(seg))
+        .map(|seg| {
+            let seg = seg.split(';').next().unwrap_or("");
+            if looks_like_token(seg) { "…".to_string() } else { seg.to_string() }
+        })
+        .collect();
+    format!("/{}", kept.join("/"))
+}
+
 /// Is this request a save? `patterns` are the project's own words, matched
 /// like the built-in ones: case-insensitive substrings of the path.
 pub fn is_save(method: &str, url: &str, patterns: &[String]) -> bool {
@@ -66,7 +123,7 @@ pub fn is_save(method: &str, url: &str, patterns: &[String]) -> bool {
     if !SAVE_METHODS.contains(&method.as_str()) {
         return false;
     }
-    let path = path_of(url);
+    let path = raw_path_of(url);
     if adds(&path) {
         return true;
     }
@@ -127,6 +184,87 @@ fn word_at(c: &[char], i: usize, word: &str) -> bool {
             next.is_ascii_digit() || matches!(next, '-' | '_' | '.') || (next.is_ascii_uppercase() && !all_caps)
         }
     }
+}
+
+/// Is this click on a control named like a save? Any link of the target
+/// whose accessible name, text or css (id and class tokens) holds a
+/// `SAVE_WORDS` or `CLICK_WORDS` word or one of the project's words as a
+/// phrase, or a `WORD_SAVES` word as a word of its own.
+pub fn click_saves(target: &crate::browser::locator::Target, patterns: &[String]) -> bool {
+    selector_words(target).into_iter().any(|text| words_save(text, patterns))
+}
+
+/// The same judgement on the words of the element a click landed on: its
+/// accessible name, text, `value`, `aria-label` and `title` (its nearest
+/// button's or link's too). Never its id or class: too noisy.
+pub fn element_saves(texts: &[String], patterns: &[String]) -> bool {
+    texts.iter().any(|t| words_save(t, patterns))
+}
+
+/// Does pressing this key submit a form (Enter, Space)?
+pub fn key_submits(key: &str) -> bool {
+    let last = key.rsplit('+').next().unwrap_or("").trim().to_lowercase();
+    let last = if key.trim() == "+" { String::new() } else { last };
+    matches!(last.as_str(), "enter" | "numpadenter" | "return" | "space" | "spacebar" | "") && !key.trim().is_empty()
+}
+
+fn selector_words(target: &crate::browser::locator::Target) -> Vec<&str> {
+    use crate::browser::locator::Target;
+    let mut phrases: Vec<&str> = Vec::new();
+    match target {
+        Target::Legacy(s) => phrases.push(s.as_str()),
+        Target::One(s) => phrases.extend([s.name.as_deref(), s.text.as_deref(), s.css.as_deref()].into_iter().flatten()),
+        Target::Chain(c) => {
+            for s in c {
+                phrases.extend([s.name.as_deref(), s.text.as_deref(), s.css.as_deref()].into_iter().flatten());
+            }
+        }
+    }
+    phrases
+}
+
+fn words_save(text: &str, patterns: &[String]) -> bool {
+    {
+        let lower = text.to_lowercase();
+        // Words as path-like segments for `adds`: anything that is not a
+        // name character separates.
+        let segmented: String =
+            text.chars().map(|c| if c.is_alphanumeric() || matches!(c, '-' | '_' | '.') { c } else { '/' }).collect();
+        // camelCase humps and separators split words: "btnFinish" is btn, finish.
+        let mut spaced = String::new();
+        let mut prev_lower = false;
+        for c in text.chars() {
+            if c.is_ascii_uppercase() && prev_lower {
+                spaced.push(' ');
+            }
+            prev_lower = c.is_ascii_lowercase() || c.is_ascii_digit();
+            spaced.push(if c.is_alphanumeric() { c.to_ascii_lowercase() } else { ' ' });
+        }
+        adds(&segmented)
+            || SAVE_WORDS.iter().any(|w| lower.contains(w))
+            || spaced.split_whitespace().any(|t| CLICK_WORDS.iter().any(|w| t == *w || t.strip_suffix('s') == Some(*w)))
+            || patterns.iter().map(|p| p.trim().to_lowercase()).any(|p| !p.is_empty() && lower.contains(&p))
+    }
+}
+
+/// Does the guard stop this request: a save by its path (`is_save`), or any
+/// writing request while the window after a save-named click is open.
+pub fn verdict(method: &str, url: &str, patterns: &[String], save_click_open: bool) -> bool {
+    is_save(method, url, patterns)
+        || (save_click_open && SAVE_METHODS.contains(&method.trim().to_ascii_uppercase().as_str()))
+}
+
+/// What a no-save answer says about writes that got past the guard: method
+/// and path only.
+pub fn let_through_line(posted: &[(String, String)]) -> Option<String> {
+    if posted.is_empty() {
+        return None;
+    }
+    let list: Vec<String> = posted.iter().map(|(m, p)| format!("{} {}", m.trim().to_ascii_uppercase(), p)).collect();
+    Some(format!(
+        "went through the no-save guard (no save word in the path): {} - if one of them saves, a person adds a save word on the Auto Run Setup tab",
+        list.join(", ")
+    ))
 }
 
 /// The case's failure when the page tried to save: the method and the path,

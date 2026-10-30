@@ -1422,12 +1422,13 @@ async fn click_path<D: Driver>(
                 }
             }
         }
-        let mut out = execute_in(d, &Action::Click { selector: click.clone() }, timing, &policy).await;
+        let own = policy.as_runner();
+        let mut out = execute_in(d, &Action::Click { selector: click.clone() }, timing, &own).await;
         // Something drawn over the target (a toast, a loading veil) goes
         // within a moment: wait for it, bounded by the nav wait, and click
         // once more. A cover that stays fails as it always did.
         if !out.ok && !out.harness && out.detail.contains(crate::browser::input::COVERED_BY) && cover_goes(d, &click, timing).await {
-            out = execute_in(d, &Action::Click { selector: click.clone() }, timing, &policy).await;
+            out = execute_in(d, &Action::Click { selector: click.clone() }, timing, &own).await;
         }
         if !out.ok {
             let mut reason = out.detail;

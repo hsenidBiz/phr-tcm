@@ -2,7 +2,8 @@
 //!
 //! An assistant that discovers, tries, replays or saves for a case claims it;
 //! another assistant that asks for the same case is told at once who holds it
-//! and is not made to wait. A claim lasts `CLAIM_TIMEOUT_MS` from the last
+//! and is not made to wait. A claim lasts `CLAIM_TIMEOUT_MS` (a named subagent's
+//! `agents::NAMED_HOLD_MS`, while it is quiet and its browser idle) from the last
 //! time its holder claimed the case, and ends sooner with the holder's browser
 //! being released by the person, or its session being past its grace
 //! (`commands::autorun_slots::release_slot`, `on_sweep`). A holder that is no
@@ -42,8 +43,20 @@ pub fn case_claimed(case_id: i32, label: &str) -> String {
     format!("case {case_id} is being worked on by {label} - pick another case, or ask the person to release {label} on the Auto Run screen")
 }
 
+/// A claim has run out `CLAIM_TIMEOUT_MS` after its holder last claimed the
+/// case. A named subagent's runs out sooner: `agents::NAMED_HOLD_MS` after
+/// it was made, once the holder has made no call for that long either (a
+/// holder the registry has forgotten counts as having made none), and never
+/// while a browser of the holder's is in use (`autorun_slots::agent_busy`).
 fn expired(claim: &Claim, now_ms: u64) -> bool {
-    now_ms.saturating_sub(claim.at_ms) >= CLAIM_TIMEOUT_MS
+    let age = now_ms.saturating_sub(claim.at_ms);
+    if age >= CLAIM_TIMEOUT_MS {
+        return true;
+    }
+    claim.holder.name.is_some()
+        && age >= agents::NAMED_HOLD_MS
+        && !crate::commands::autorun_slots::agent_busy(&claim.holder)
+        && agents::info(&claim.holder).map_or(true, |i| now_ms.saturating_sub(i.last_ms) >= agents::NAMED_HOLD_MS)
 }
 
 /// `key` works on `case_id` from now: claimed, or renewed when it already
@@ -75,7 +88,29 @@ pub fn holder(case_id: i32, now_ms: u64) -> Option<AgentKey> {
 
 /// `key` works on nothing: every claim it holds ends.
 pub fn end_for(key: &AgentKey) {
-    claims().retain(|c| c.holder != *key);
+    release_of(key);
+}
+
+/// The claims `key` made at or before `last_ms` end (all of them when `None`:
+/// the registry had forgotten it); one made by a call after that stays.
+pub fn release_before(key: &AgentKey, last_ms: Option<u64>) {
+    claims().retain(|c| c.holder != *key || last_ms.is_some_and(|last| c.at_ms > last));
+}
+
+/// `end_for`, answering how many claims ended.
+pub fn release_of(key: &AgentKey) -> usize {
+    let mut all = claims();
+    let before = all.len();
+    all.retain(|c| c.holder != *key);
+    before - all.len()
+}
+
+/// The cases `key` holds at `now_ms`, the one it claimed first first.
+pub fn cases_of(key: &AgentKey, now_ms: u64) -> Vec<i32> {
+    let mut mine: Vec<(u64, i32)> =
+        claims().iter().filter(|c| c.holder == *key && !expired(c, now_ms)).map(|c| (c.at_ms, c.case_id)).collect();
+    mine.sort();
+    mine.into_iter().map(|(_, id)| id).collect()
 }
 
 /// Every claim (tests).

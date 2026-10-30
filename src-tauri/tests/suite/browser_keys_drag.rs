@@ -548,7 +548,13 @@ async fn nowhere_to_drop_when_the_drop_point_is_off_the_page() {
     };
     let mut d = page.driver();
     let out = execute_with(&mut d, &drag_action(None), &quick()).await;
-    assert_eq!(sentence_of(&out), "there was nowhere to drop at #b: is outside the visible part of the page");
+    assert_eq!(
+        sentence_of(&out),
+        format!(
+            "there was nowhere to drop at #b: is outside the visible part of the page{}",
+            v2_lib::browser::input::OFFSCREEN_RESET_HINT
+        )
+    );
 }
 
 #[tokio::test]

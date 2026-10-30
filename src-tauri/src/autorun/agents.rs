@@ -32,6 +32,11 @@ pub const GONE_GRACE_MS: u64 = 60 * 1000;
 /// first and says why.
 pub const QUIET_AFTER_MS: u64 = 3_600_000;
 
+/// A named subagent's browser and case holds are let go once it has made no
+/// call for this long (`commands::autorun_slots::idle_after`,
+/// `claims::claim`). Any other assistant keeps the longer holds.
+pub const NAMED_HOLD_MS: u64 = 10 * 60 * 1000;
+
 /// How often the app asks whether each agent's process still runs.
 pub const SWEEP_EVERY: std::time::Duration = std::time::Duration::from_secs(30);
 
@@ -343,4 +348,16 @@ pub fn sweep(now_ms: u64, alive: &dyn Fn(u32) -> bool) -> Sweep {
 /// Every entry (tests).
 pub fn clear() {
     registry().clear();
+}
+
+/// A call that cannot name its subagent (a tool with no `agent` property)
+/// arrived from the proxy `id`: it counts as a call of every named subagent
+/// of that proxy that is not gone, so a subagent busy with lookups keeps
+/// its browser and cases.
+pub fn touch_named_of(id: &str, now_ms: u64) {
+    for e in registry().iter_mut() {
+        if e.info.key.id == id && e.info.key.name.is_some() && e.info.gone_since_ms.is_none() {
+            e.info.last_ms = e.info.last_ms.max(now_ms);
+        }
+    }
 }

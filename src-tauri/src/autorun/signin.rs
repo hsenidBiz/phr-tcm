@@ -42,6 +42,12 @@ pub struct SignInOutcome {
     #[serde(skip)]
     #[specta(skip)]
     pub appeared: Vec<String>,
+    /// The path the page was on when the sign-in ended (`save_guard::path_of`:
+    /// never the host or the query), when the browser said. Process-internal
+    /// like `harness`: the words that matter are in `detail`.
+    #[serde(skip)]
+    #[specta(skip)]
+    pub landed: Option<String>,
 }
 
 pub fn redact(text: &str, account: &Account) -> String {
@@ -67,6 +73,7 @@ struct Run<'a> {
     account: Option<&'a Account>,
     steps: Vec<ActionOutcome>,
     appeared: Vec<String>,
+    landed: Option<String>,
 }
 
 impl Run<'_> {
@@ -90,6 +97,7 @@ impl Run<'_> {
             steps: self.steps,
             harness,
             appeared: self.appeared,
+            landed: self.landed,
         }
     }
 }
@@ -276,6 +284,79 @@ pub const AFTER_SIGN_IN_STOPPED: &str = ", but after_sign_in step ";
 /// How `sign_in`'s words begin when the steps ran and the marker never
 /// showed.
 pub const MARKER_NEVER_APPEARED: &str = "the recipe ran, but ";
+/// Logged when the signed-in marker did not show after the sign-in's steps,
+/// the login form is gone from the page (the site took it and moved on) and
+/// the sign-in's address was opened once more: a site that is slow to come
+/// up. The form is never sent again, and the page is never reloaded - a
+/// reload of the page a form was posted to posts it again.
+pub const COLD_SITE_RETRY: &str =
+    "the signed-in marker did not show and the login form is gone; opened the sign-in address once more (a slow site)";
+
+/// The longest page title `landing_words` says.
+const TITLE_MAX: usize = 80;
+
+/// Where the browser ended, in words: the path only (never the host, the
+/// query or a session token in the path: `save_guard::path_of`), and the
+/// page's title when it has one, trimmed to `TITLE_MAX` characters - on
+/// PeoplesHR both sides of the site share their paths, so the title is what
+/// tells a home from the other.
+pub fn landing_words(current_url: &str, title: Option<&str>) -> String {
+    let mut words = format!("the browser ended on {}", crate::browser::save_guard::path_of(current_url));
+    let title = title.map(|t| t.split_whitespace().collect::<Vec<_>>().join(" ")).unwrap_or_default();
+    if !title.is_empty() {
+        let cut: String = title.chars().take(TITLE_MAX).collect();
+        words.push_str(&format!(" (page title: {cut})"));
+    }
+    words
+}
+
+/// The address the page is on now, if the browser says.
+async fn page_address<D: Driver>(d: &mut D) -> Option<String> {
+    let v = crate::browser::page::eval_value(d, "location.href").await.ok()?;
+    v.as_str().filter(|s| !s.is_empty()).map(str::to_string)
+}
+
+impl Run<'_> {
+    /// Notes where the page is (its path) and, with `title`, says it in
+    /// words; `None` when the browser did not say.
+    async fn land<D: Driver>(&mut self, d: &mut D, title: bool) -> Option<String> {
+        let href = page_address(d).await?;
+        self.landed = Some(crate::browser::save_guard::path_of(&href));
+        let name = if title {
+            crate::browser::page::eval_value(d, "document.title").await.ok().and_then(|v| v.as_str().map(str::to_string))
+        } else {
+            None
+        };
+        Some(landing_words(&href, name.as_deref()))
+    }
+}
+
+/// Does the page still show the sign-in's form - any field the recipe fills
+/// (its prompts' too)? Then the site did not take the form and move on: a
+/// wrong password, a locked account and a reset page all look like this, and
+/// none of them is slowness.
+async fn login_form_showing<D: Driver>(d: &mut D, steps: &[RecipeStep], timing: &Timing) -> bool {
+    let mut fields: Vec<&Target> = vec![];
+    for s in steps {
+        let actions: Vec<&Action> = match s {
+            RecipeStep::Do(a) => vec![a],
+            RecipeStep::WhenVisible(w) => w.then.iter().collect(),
+        };
+        for a in actions {
+            if let Action::Fill { selector, .. } = a {
+                fields.push(selector);
+            }
+        }
+    }
+    for f in fields {
+        let look = timing.expect_ms.min(SIGNED_IN_LOOK_MS);
+        if expect(d, f, Check::Visible, look, timing.poll_ms).await.ok {
+            return true;
+        }
+    }
+    false
+}
+
 
 /// Sign in, trying the account's saved session first.
 pub async fn sign_in<D: Driver>(
@@ -379,7 +460,7 @@ async fn sign_in_with<D: Driver>(
 /// the page the case was on is gone, with whatever it sent on the way out -
 /// is a no-save case's guard held.
 async fn open_start<D: Driver>(d: &mut D, go: &Action, timing: &Timing, policy: &Policy) -> ActionOutcome {
-    let arrived = execute_in(d, go, timing, policy).await;
+    let arrived = execute_in(d, go, timing, &policy.as_runner()).await;
     if arrived.ok {
         d.hold_saves(true);
     }
@@ -400,7 +481,7 @@ async fn sign_in_held<D: Driver>(
     // The application's site, which a supervised browser's capture keeps
     // requests to - never the identity provider's.
     d.set_capture_site(Some(&recipe.start_url));
-    let mut run = Run { account: Some(account), steps: vec![], appeared: vec![] };
+    let mut run = Run { account: Some(account), steps: vec![], appeared: vec![], landed: None };
     let go = Action::Navigate { url: recipe.start_url.clone() };
     let who = if account.label.trim().is_empty() { account.key.clone() } else { account.label.clone() };
 
@@ -457,6 +538,7 @@ async fn sign_in_held<D: Driver>(
                             harness_failure,
                         );
                     }
+                    run.land(d, false).await;
                     return run.done(true, format!("signed in as {who} from a saved session"), true, false);
                 }
                 // The BROWSER, not the saved session, may be what just
@@ -506,7 +588,44 @@ async fn sign_in_held<D: Driver>(
         return run.done(false, format!("sign-in stopped at step {n}: {why}"), false, harness_failure);
     }
 
-    let marker = expect(d, &recipe.signed_in, Check::Visible, timing.nav_ms, timing.poll_ms).await;
+    let mut marker = expect(d, &recipe.signed_in, Check::Visible, timing.nav_ms, timing.poll_ms).await;
+    let mut retried = false;
+    let mut form_still_there = false;
+    if !marker.ok && !marker.harness && session_refused(d).await.is_none() {
+        if login_form_showing(d, &recipe.steps, timing).await {
+            // The form is still on screen: a wrong password, a locked
+            // account or a reset page, not a slow site. Nothing is tried
+            // again - another go is another failed attempt on the account.
+            form_still_there = true;
+        } else {
+            // The site took the form and moved on, but its home is slow: the
+            // sign-in's address is opened ONCE more (a plain GET - never a
+            // reload, which posts a form again) and the marker waited for.
+            // Never for a refused session or a browser that stopped
+            // answering (both excluded above).
+            crate::applog::info(format!("Auto Run: {COLD_SITE_RETRY}"));
+            retried = true;
+            let again = execute_in(d, &go, timing, &policy.as_runner()).await;
+            let why = again.detail.clone();
+            if again.harness {
+                run.keep(again);
+                return run.done(
+                    false,
+                    format!(
+                        "{MARKER_NEVER_APPEARED}{} never appeared, and opening the sign-in address again stopped: {why}",
+                        recipe.signed_in.describe()
+                    ),
+                    false,
+                    true,
+                );
+            }
+            // An address that did not finish loading in time is not the
+            // end: the marker is still waited for, and the failure below
+            // names where the page is.
+            run.keep(again);
+            marker = expect(d, &recipe.signed_in, Check::Visible, timing.nav_ms, timing.poll_ms).await;
+        }
+    }
     if !marker.ok && !marker.harness && session_refused(d).await.is_some() {
         // Refused again, with a session made just now: not the password.
         forget_session(root, &account.key);
@@ -518,17 +637,25 @@ async fn sign_in_held<D: Driver>(
     }
     if !marker.ok {
         let harness_failure = marker.harness;
-        return run.done(
-            false,
-            format!(
-                "{MARKER_NEVER_APPEARED}{} never appeared - check the username and password for \"{}\", and the recipe's signed_in locator",
-                recipe.signed_in.describe(),
-                account.key
-            ),
-            false,
-            harness_failure,
+        let mut said = format!(
+            "{MARKER_NEVER_APPEARED}{} never appeared - check the username and password for \"{}\", and the recipe's signed_in locator",
+            recipe.signed_in.describe(),
+            account.key
         );
+        if form_still_there {
+            said.push_str(" (the login form is still on the page, so it was not tried again)");
+        }
+        if retried {
+            said.push_str(" (the sign-in address was opened once more first)");
+        }
+        if !harness_failure {
+            if let Some(w) = run.land(d, true).await {
+                said = format!("{said} - {w}");
+            }
+        }
+        return run.done(false, said, false, harness_failure);
     }
+    run.land(d, false).await;
 
     // A fresh login: PeoplesHR's "another active session" modal can come a
     // moment after the shell does, so the longer window.
@@ -585,7 +712,7 @@ pub async fn run_after_sign_in<D: Driver>(
     timing: &Timing,
     policy: &Policy,
 ) -> Result<(), (usize, String, bool)> {
-    let mut run = Run { account: None, steps: vec![], appeared: vec![] };
+    let mut run = Run { account: None, steps: vec![], appeared: vec![], landed: None };
     let prompts = Prompts::Together { window_ms: HOME_PROMPT_WINDOW_MS };
     run_steps(d, &mut run, steps, prompts, timing, policy).await
 }
@@ -709,7 +836,7 @@ async fn run_action<D: Driver>(
     timing: &Timing,
     policy: &Policy,
 ) -> Result<(), (usize, String, bool)> {
-    if run.keep(execute_in(d, action, timing, policy).await) {
+    if run.keep(execute_in(d, action, timing, &policy.as_runner()).await) {
         return Ok(());
     }
     let last = run.steps.last();
@@ -815,7 +942,7 @@ async fn attempt_prompt<D: Driver>(
 ) -> Result<bool, (usize, String, bool)> {
     let short = attempt_timing(timing);
     while let Some(action) = w.then.get(state.done) {
-        let out = execute_in(d, action, &short, policy).await;
+        let out = execute_in(d, action, &short, &policy.as_runner()).await;
         if in_the_way(&out) || (!out.ok && out.harness) {
             state.blocked = Some(out);
             return Ok(false);

@@ -143,3 +143,38 @@ fn a_folder_left_aside_by_an_earlier_sweep_is_removed() {
     assert_eq!(removed, vec!["tcm-autorun-55".to_string(), "tcm-autorun-55.sweep".to_string()]);
     assert!(temp.path().join("tcm-autorun-bridge-1.sweep").is_dir(), "only a profile's own leftover");
 }
+
+// ---- a hung browser left from an earlier run (backlog 52) ----
+
+#[test]
+fn orphan_of_reads_profile_and_port() {
+    let cl = r"chrome.exe --remote-debugging-port=51234 --user-data-dir=C:\T\tcm-autorun-51234 about:blank";
+    assert_eq!(tree::orphan_of(cl, Path::new(r"C:\T")), Some(("tcm-autorun-51234".to_string(), Some(51234))));
+}
+
+#[test]
+fn orphan_of_handles_quoted_dir() {
+    let cl = r#""C:\Program Files\x\msedge.exe" --user-data-dir="C:\T\tcm-autorun-7" about:blank"#;
+    assert_eq!(tree::orphan_of(cl, Path::new(r"C:\T")), Some(("tcm-autorun-7".to_string(), None)));
+}
+
+#[test]
+fn orphan_of_ignores_child_processes() {
+    let cl = r"chrome.exe --type=renderer --remote-debugging-port=51234 --user-data-dir=C:\T\tcm-autorun-51234";
+    assert_eq!(tree::orphan_of(cl, Path::new(r"C:\T")), None);
+}
+
+#[test]
+fn orphan_of_ignores_other_profiles() {
+    let temp = Path::new(r"C:\T");
+    for cl in [
+        r"chrome.exe --user-data-dir=C:\Other\tcm-autorun-5",
+        r"chrome.exe --user-data-dir=C:\T\tcm-autorun-x1",
+        r"chrome.exe --user-data-dir=C:\T\tcm-autorun-bridge-3",
+        r"chrome.exe --user-data-dir=C:\Users\Admin\AppData\Local\Google\Chrome\User Data",
+        r"chrome.exe",
+        r"chrome.exe --user-data-dir=C:\T\sub\tcm-autorun-5",
+    ] {
+        assert_eq!(tree::orphan_of(cl, temp), None, "{cl}");
+    }
+}

@@ -3,7 +3,7 @@
 use super::tree::{self, Ends, Tree};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 /// Which browser the run is watched in. Both are Chromium, so both speak
 /// the same DevTools Protocol and take the same switches - the only thing
@@ -111,10 +111,64 @@ pub fn launch_args(port: u16, profile_dir: &Path) -> Vec<String> {
         "--disable-backgrounding-occluded-windows".to_string(),
         "--disable-renderer-backgrounding".to_string(),
         "--disable-sync".to_string(),
+        format!("--disable-features={PASSWORD_FEATURES_OFF}"),
         "--force-device-scale-factor=1".to_string(),
         super::viewport::window_size_arg(),
         "about:blank".to_string(),
     ]
+}
+
+/// The browser features switched off in every Auto Run browser, as the
+/// value of the ONE `--disable-features` switch Chromium honours (a second
+/// switch replaces the first, so any other feature is folded in by
+/// `args_with`). Chrome's breach check ("Change your password") opens a
+/// bubble over the page after a sign-in with a weak password.
+pub const PASSWORD_FEATURES_OFF: &str = "PasswordLeakDetection";
+
+const PASSWORD_PREFS_TOP: [&str; 1] = ["credentials_enable_service"];
+const PASSWORD_PREFS_PROFILE: [&str; 2] = ["password_manager_enabled", "password_manager_leak_detection"];
+
+/// The profile's `Preferences` with the browser's password saving and
+/// breach warning off ("Save password?" and "Change your password" are
+/// bubbles over the page under test). `existing` is the file's text when
+/// there is one: every other key it holds is kept; text that is not a JSON
+/// object is replaced.
+pub fn password_prefs(existing: Option<&str>) -> serde_json::Value {
+    use serde_json::{json, Value};
+    let mut prefs = match existing.and_then(|t| serde_json::from_str::<Value>(t).ok()) {
+        Some(v @ Value::Object(_)) => v,
+        _ => json!({}),
+    };
+    let root = prefs.as_object_mut().expect("an object");
+    for key in PASSWORD_PREFS_TOP {
+        root.insert(key.to_string(), json!(false));
+    }
+    if !root.get("profile").is_some_and(Value::is_object) {
+        root.insert("profile".to_string(), json!({}));
+    }
+    let profile = root.get_mut("profile").and_then(Value::as_object_mut).expect("an object");
+    for key in PASSWORD_PREFS_PROFILE {
+        profile.insert(key.to_string(), json!(false));
+    }
+    prefs
+}
+
+/// Write `<profile_dir>/Default/Preferences` from `password_prefs`, keeping
+/// what a profile that is reused already has in it.
+pub fn write_password_prefs(profile_dir: &Path) -> std::io::Result<()> {
+    let default = profile_dir.join("Default");
+    std::fs::create_dir_all(&default)?;
+    let file = default.join("Preferences");
+    let existing = std::fs::read_to_string(&file).ok();
+    let text = serde_json::to_string(&password_prefs(existing.as_deref())).map_err(std::io::Error::other)?;
+    std::fs::write(&file, text)
+}
+
+/// The line logged when the prefs could not be written - the launch goes
+/// on (the prompts are a nuisance, a refused launch stops every run). Names
+/// the kind of failure, never a path.
+pub fn prefs_failure_is_logged_only(e: &std::io::Error) -> String {
+    format!("Auto Run could not switch off the browser's password prompts: {:?}", e.kind())
 }
 
 /// `launch_args` plus extra switches, kept in front of the start page
@@ -122,9 +176,133 @@ pub fn launch_args(port: u16, profile_dir: &Path) -> Vec<String> {
 pub fn args_with(port: u16, profile_dir: &Path, extra: &[&str]) -> Vec<String> {
     let mut args = launch_args(port, profile_dir);
     let start_page = args.pop();
-    args.extend(extra.iter().map(|s| s.to_string()));
+    // Chromium honours only one `--disable-features`: an extra one is
+    // folded into ours, not added beside it.
+    const SWITCH: &str = "--disable-features=";
+    for extra_switch in extra {
+        match extra_switch.strip_prefix(SWITCH) {
+            Some(more) => {
+                if let Some(ours) = args.iter_mut().find(|a| a.starts_with(SWITCH)) {
+                    ours.push(',');
+                    ours.push_str(more);
+                } else {
+                    args.push(extra_switch.to_string());
+                }
+            }
+            None => args.push(extra_switch.to_string()),
+        }
+    }
     args.extend(start_page);
     args
+}
+
+/// How long one liveness probe of a browser's DevTools port waits, and how
+/// many times it is asked before the browser is called silent: a slow,
+/// busy machine is not a dead browser. The one rule, shared by the run's
+/// own liveness check (`commands::autorun_replay`) and the sweep below.
+pub const ANSWER_WITHIN: std::time::Duration = std::time::Duration::from_secs(3);
+pub const ANSWER_TRIES: u32 = 2;
+
+/// What `close_hung` did: the profile folder names it closed, and those it
+/// tried to end and could not.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct Hung {
+    pub closed: Vec<String>,
+    pub stuck: Vec<String>,
+}
+
+/// Close each browser left from an earlier run whose DevTools port does
+/// not answer (hung: it holds its profile and a sign-in nobody can use).
+/// One that answers, or whose port is not known, is left alone: it may be
+/// another slot's. `end` closes one and says whether it is gone.
+pub fn close_hung(
+    orphans: Vec<tree::Orphan>,
+    answers: &dyn Fn(u16) -> bool,
+    end: &mut dyn FnMut(&tree::Orphan) -> bool,
+) -> Hung {
+    let mut hung = Hung::default();
+    for o in orphans {
+        let Some(port) = o.port else { continue };
+        if answers(port) {
+            continue;
+        }
+        if end(&o) {
+            hung.closed.push(o.profile.clone());
+        } else {
+            hung.stuck.push(o.profile.clone());
+        }
+    }
+    hung
+}
+
+static UNENDABLE: Mutex<Vec<String>> = Mutex::new(Vec::new());
+
+/// Remember a leftover that would not end, so later launches in this
+/// session do not spend seconds on it again.
+pub fn remember_unendable(profile: &str) {
+    let mut list = UNENDABLE.lock().unwrap_or_else(|e| e.into_inner());
+    if !list.iter().any(|p| p == profile) {
+        list.push(profile.to_string());
+    }
+}
+
+pub fn forget_unendable(profile: &str) {
+    UNENDABLE.lock().unwrap_or_else(|e| e.into_inner()).retain(|p| p != profile);
+}
+
+/// The orphans not yet found impossible to end.
+pub fn still_to_try(orphans: Vec<tree::Orphan>) -> Vec<tree::Orphan> {
+    let list = UNENDABLE.lock().unwrap_or_else(|e| e.into_inner());
+    orphans.into_iter().filter(|o| !list.contains(&o.profile)).collect()
+}
+
+/// Name this app instance as the owner of a profile, so another instance
+/// that finds the browser leaves it alone (`tree::may_end`).
+pub fn write_owner_marker(profile_dir: &Path) -> std::io::Result<()> {
+    std::fs::write(profile_dir.join(tree::OWNER_MARKER), tree::owner_marker_text(&tree::this_owner()))
+}
+
+/// Does a browser's DevTools port answer `/json/version`? `ANSWER_TRIES`
+/// probes of `ANSWER_WITHIN` each (connect and read). A plain blocking
+/// request: the sweep runs in `launch_with`, which is not async.
+pub fn devtools_answers(port: u16) -> bool {
+    (0..ANSWER_TRIES).any(|_| probe_once(port))
+}
+
+fn probe_once(port: u16) -> bool {
+    use std::io::{Read, Write};
+    use std::net::{SocketAddr, TcpStream};
+    let addr = SocketAddr::from(([127, 0, 0, 1], port));
+    let Ok(mut stream) = TcpStream::connect_timeout(&addr, ANSWER_WITHIN) else { return false };
+    let _ = stream.set_read_timeout(Some(ANSWER_WITHIN));
+    let _ = stream.set_write_timeout(Some(ANSWER_WITHIN));
+    let request = format!("GET /json/version HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n");
+    if stream.write_all(request.as_bytes()).is_err() {
+        return false;
+    }
+    let mut head = [0u8; 12];
+    stream.read_exact(&mut head).is_ok() && head.starts_with(b"HTTP/1.")
+}
+
+/// Close the hung leftovers, logging each by profile folder name only.
+fn sweep_hung_orphans() {
+    let this = std::process::id();
+    let found = tree::find_orphans(&long_temp_dir());
+    let eligible: Vec<tree::Orphan> =
+        still_to_try(found).into_iter().filter(|o| tree::may_end(o, this, &tree::process_start_ms)).collect();
+    if eligible.is_empty() {
+        return;
+    }
+    let hung = close_hung(eligible, &devtools_answers, &mut tree::end_orphan);
+    for name in &hung.closed {
+        crate::applog::warn(format!("Auto Run closed a browser left from an earlier run that did not answer (profile {name})"));
+    }
+    for name in &hung.stuck {
+        remember_unendable(name);
+        crate::applog::warn(format!(
+            "Auto Run found a browser left from an earlier run that did not answer and could not end it (profile {name}); it is left alone for the rest of this session"
+        ));
+    }
 }
 
 /// Extra switches for an unattended run nobody is watching: headless, in a
@@ -307,7 +485,7 @@ fn fresh_profile() -> Result<(u16, PathBuf), String> {
 /// (`C:\Users\ADMINI~1\...`) would give the browser a profile path its
 /// processes might hand on in the long form, and a process of the browser
 /// would then not be told for its own (`tree::carries_profile`).
-fn long_temp_dir() -> PathBuf {
+pub(crate) fn long_temp_dir() -> PathBuf {
     let temp = std::env::temp_dir();
     #[cfg(windows)]
     {
@@ -358,6 +536,8 @@ pub fn launch_in_at(which: Browser, position: Option<(i32, i32)>) -> Result<Laun
     }
 }
 
+static LAUNCHING: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 /// The same, with extra switches. A supervised run passes none but a
 /// window position (`launch_in_at`): the
 /// window is always visible. An unattended run passes `background_args`
@@ -377,7 +557,22 @@ pub fn launch_with(which: Browser, extra_args: &[&str]) -> Result<LaunchedBrowse
         )
     })?;
 
+    // Held until the new browser is registered: another slot's browser
+    // that is starting has no tree yet and does not answer yet, and must
+    // not be taken for a hung one.
+    let _starting = LAUNCHING.lock().unwrap_or_else(|e| e.into_inner());
+    // A browser an earlier run left that no longer answers would keep its
+    // profile and any sign-in; close it before a new one starts. Only Auto
+    // Run's own (`tcm-autorun-<port>` under the temp folder), never one this
+    // app holds, never the person's.
+    tree::blocking(sweep_hung_orphans);
     let (port, profile_dir) = fresh_profile()?;
+    if let Err(e) = write_owner_marker(&profile_dir) {
+        crate::applog::warn(format!("Auto Run could not mark a browser profile as its own: {:?}", e.kind()));
+    }
+    if let Err(e) = write_password_prefs(&profile_dir) {
+        crate::applog::warn(prefs_failure_is_logged_only(&e));
+    }
     let tree = match Tree::new(profile_dir.clone()) {
         Ok(t) => t,
         Err(e) => {

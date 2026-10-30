@@ -91,6 +91,13 @@ impl std::fmt::Debug for CookiePrint {
     }
 }
 
+impl CookiePrint {
+    /// Does the print hold a cookie named `name` (any case)? Names only.
+    pub fn holds_cookie(&self, name: &str) -> bool {
+        self.keys.iter().any(|k| k.0.eq_ignore_ascii_case(name))
+    }
+}
+
 fn cookie_key(c: &Value) -> (String, String, String) {
     let s = |k: &str| c[k].as_str().unwrap_or("").to_string();
     (s("name"), s("domain").to_ascii_lowercase(), s("path"))
