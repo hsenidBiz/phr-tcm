@@ -671,7 +671,7 @@ mod one_case {
 
         let plan = plan_case_copy(&p.a, &p.b, &p.b_id, ORG, PROJECT, 7).unwrap();
         assert_eq!(plan.components_added, vec!["Login form".to_string()]);
-        assert_eq!(plan.area_added.as_deref(), Some("Leave"));
+        assert_eq!(plan.areas_added, vec!["Leave".to_string()]);
         assert!(plan.recipe_added && !plan.target_has_script && !plan.uses_default_area);
         assert!(store::load_script(&p.b, 7).unwrap().is_none(), "the plan writes nothing");
         assert!(components::load_components(&p.b, ORG, PROJECT).unwrap().components.is_empty());
@@ -707,8 +707,8 @@ mod one_case {
 
         let plan = copy_case(&p.a, &p.b, &p.b_id, ORG, PROJECT, 7, false).unwrap();
         assert_eq!(plan.components_kept, vec!["Login form".to_string()]);
-        assert!(plan.components_added.is_empty() && plan.area_added.is_none() && !plan.recipe_added);
-        assert_eq!(plan.area_kept.as_deref(), Some("Leave"));
+        assert!(plan.components_added.is_empty() && plan.areas_added.is_empty() && !plan.recipe_added);
+        assert_eq!(plan.areas_kept, vec!["Leave".to_string()]);
         assert_eq!(std::fs::read(components::components_path(&p.b, ORG, PROJECT)).unwrap(), before.0);
         assert_eq!(std::fs::read(nav::nav_path(&p.b, ORG, PROJECT)).unwrap(), before.1);
         assert_eq!(recipe::load_recipe(&p.b, ORG, PROJECT).unwrap().unwrap().start_url, "https://other.example.internal/");
@@ -769,7 +769,7 @@ mod one_case {
         .unwrap();
         store::save_script(&p.a, &s).unwrap();
         let plan = copy_case(&p.a, &p.b, &p.b_id, ORG, PROJECT, 7, false).unwrap();
-        assert_eq!(plan.missing_account.as_deref(), Some("admin"));
+        assert_eq!(plan.missing_accounts, vec!["admin".to_string()]);
         assert_eq!(plan.missing_api, vec!["fx-1".to_string(), "flow-2".to_string()]);
         assert!(store::load_script(&p.b, 7).unwrap().is_some());
 
@@ -780,7 +780,7 @@ mod one_case {
         .unwrap();
         accounts::save_accounts_for(&p.b, &p.b_id, &[acct]).unwrap();
         let plan = plan_case_copy(&p.a, &p.b, &p.b_id, ORG, PROJECT, 7).unwrap();
-        assert!(plan.missing_account.is_none());
+        assert!(plan.missing_accounts.is_empty());
     }
 
     #[test]
@@ -814,5 +814,187 @@ mod one_case {
         std::fs::create_dir_all(&elsewhere).unwrap();
         assert!(copy_case(&p.a, &elsewhere, &p.b_id, ORG, PROJECT, 7, true).is_err());
         assert!(copy_case(&p.a, &p.a, &p.b_id, ORG, PROJECT, 7, true).is_err());
+    }
+
+    // ---- fix round 1 -------------------------------------------------------
+
+    #[test]
+    fn the_flat_layout_is_refused_and_never_gets_an_envs_folder() {
+        let _lock = crate::serial::autorun();
+        let t = tempfile::tempdir().unwrap();
+        let (_a, b, _c) = three_envs(t.path());
+        // The flat layout: the root is the shared folder itself, and a
+        // script sits in it. Environment folders do not exist yet.
+        let flat = tempfile::tempdir().unwrap();
+        put(flat.path(), "scripts/case-7.json", &serde_json::to_string(&script(7, None, uses("X"))).unwrap());
+        let target = roots::env_root(flat.path(), &b);
+        let err = plan_case_copy(flat.path(), &target, &b, ORG, PROJECT, 7).unwrap_err();
+        assert_eq!(err, v2_lib::autorun::env_copy::CASE_COPY_NEEDS_LAYOUT);
+        assert!(copy_case(flat.path(), &target, &b, ORG, PROJECT, 7, true).is_err());
+        assert!(!flat.path().join("envs").exists(), "nothing started the new layout");
+        // And the other way: the flat folder as the target.
+        let p = pair();
+        store::save_script(&p.a, &script(7, None, uses("X"))).unwrap();
+        assert!(copy_case(&p.a, flat.path(), &b, ORG, PROJECT, 7, true).is_err());
+    }
+
+    #[test]
+    fn the_seed_and_a_removed_folder_are_not_environments_to_copy_between() {
+        let _lock = crate::serial::autorun();
+        let p = pair();
+        store::save_script(&p.a, &script(7, None, uses("X"))).unwrap();
+        let seed = roots::env_root(p.t.path(), roots::SEED_ID);
+        std::fs::create_dir_all(&seed).unwrap();
+        assert!(plan_case_copy(&p.a, &seed, roots::SEED_ID, ORG, PROJECT, 7).is_err());
+        let removed = p.t.path().join(REMOVED_DIR).join("gone-123");
+        std::fs::create_dir_all(&removed).unwrap();
+        assert!(plan_case_copy(&p.a, &removed, "gone", ORG, PROJECT, 7).is_err());
+        assert!(plan_case_copy(&removed, &p.b, &p.b_id, ORG, PROJECT, 7).is_err());
+    }
+
+    #[test]
+    fn a_case_is_pulled_into_the_active_environment_under_the_normal_guard() {
+        let _lock = crate::serial::autorun();
+        let t = tempfile::tempdir().unwrap();
+        let (a_id, b_id, _c) = three_envs(t.path());
+        let (a, b) = (roots::env_root(t.path(), &a_id), roots::env_root(t.path(), &b_id));
+        std::fs::create_dir_all(&b).unwrap();
+        v2_lib::autorun::store::set_shared_root(t.path().to_path_buf());
+        let active = v2_lib::autorun::store::select_environment(&a_id).unwrap();
+        assert_eq!(active, a);
+        {
+            let _allow = roots::allow_writes_to(&b);
+            store::save_script(&b, &script(7, Some("Leave"), uses("Login form"))).unwrap();
+            components::put(&b, ORG, PROJECT, comp("Login form", "d", json!([{ "kind": "check_text", "value": "ok" }]))).unwrap();
+            nav::save_nav(&b, ORG, PROJECT, &nav_of(vec![area("Leave", "/hr/leave")])).unwrap();
+        }
+        // Pull: the source is B, the target is the active A; no allowance is held.
+        let plan = plan_case_copy(&b, &a, &a_id, ORG, PROJECT, 7).unwrap();
+        assert_eq!(plan.components_added, vec!["Login form".to_string()]);
+        assert!(store::load_script(&a, 7).unwrap().is_none());
+        copy_case(&b, &a, &a_id, ORG, PROJECT, 7, false).unwrap();
+        assert!(store::load_script(&a, 7).unwrap().is_some());
+        assert!(nav::find_area(&nav::load_nav(&a, ORG, PROJECT).unwrap(), "Leave").is_some());
+        // The script the active environment now has asks before it is replaced.
+        assert_eq!(
+            copy_case(&b, &a, &a_id, ORG, PROJECT, 7, false).unwrap_err(),
+            CASE_COPY_NEEDS_CONFIRM
+        );
+        // A replay of the case refuses the replace before anything is written.
+        let _replay = store::replaying(7);
+        let before = std::fs::read(a.join("scripts/case-7.json")).unwrap();
+        let err = copy_case(&b, &a, &a_id, ORG, PROJECT, 7, true).unwrap_err();
+        assert!(err.contains("case 7") && err.contains("replay"), "{err}");
+        assert_eq!(std::fs::read(a.join("scripts/case-7.json")).unwrap(), before);
+        assert!(!a.join("deleted-scripts").exists());
+    }
+
+    #[test]
+    fn a_replayed_case_refuses_a_push_replace_before_any_write() {
+        let _lock = crate::serial::autorun();
+        let p = pair();
+        store::save_script(&p.a, &script(7, Some("Leave"), uses("Login form"))).unwrap();
+        components::put(&p.a, ORG, PROJECT, comp("Login form", "d", json!([{ "kind": "check_text", "value": "ok" }]))).unwrap();
+        store::save_script(&p.b, &script(7, None, uses("Old"))).unwrap();
+        let _replay = store::replaying(7);
+        let err = copy_case(&p.a, &p.b, &p.b_id, ORG, PROJECT, 7, true).unwrap_err();
+        assert!(err.contains("case 7") && err.contains("replay"), "{err}");
+        assert!(components::load_components(&p.b, ORG, PROJECT).unwrap().components.is_empty(), "nothing written first");
+    }
+
+    #[test]
+    fn every_area_and_account_a_script_and_its_components_visit_is_brought_or_named() {
+        let _lock = crate::serial::autorun();
+        let p = pair();
+        let steps = json!([
+            { "step_number": 1, "actions": [
+                { "kind": "return_to_area", "area": "Payroll" },
+                { "kind": "sign_in", "account": "approver" },
+                { "kind": "use_component", "component": "Outer", "inputs": {} }
+            ] }
+        ]);
+        store::save_script(&p.a, &script(7, Some("Leave"), steps)).unwrap();
+        components::put(&p.a, ORG, PROJECT, comp("Outer", "d", json!([
+            { "kind": "return_to_area", "area": "Reports" },
+            { "kind": "sign_in", "account": "auditor" }
+        ]))).unwrap();
+        nav::save_nav(&p.a, ORG, PROJECT, &nav_of(vec![
+            area("Leave", "/hr/leave"), area("Payroll", "/hr/pay"), area("Reports", "/hr/rep"), area("Other", "/hr/o"),
+        ])).unwrap();
+        // The target already has Leave, but a different one.
+        nav::save_nav(&p.b, ORG, PROJECT, &nav_of(vec![area("Leave", "/else")])).unwrap();
+        let acct = |k: &str| -> accounts::Account {
+            serde_json::from_value(json!({ "key": k, "label": k, "username": "u", "password": "p" })).unwrap()
+        };
+        accounts::save_accounts_for(&p.b, &p.b_id, &[acct("approver")]).unwrap();
+
+        let plan = plan_case_copy(&p.a, &p.b, &p.b_id, ORG, PROJECT, 7).unwrap();
+        let mut added = plan.areas_added.clone();
+        added.sort();
+        assert_eq!(added, vec!["Payroll".to_string(), "Reports".to_string()]);
+        assert_eq!(plan.areas_kept, vec!["Leave".to_string()]);
+        let mut missing = plan.missing_accounts.clone();
+        missing.sort();
+        assert_eq!(missing, vec!["admin".to_string(), "auditor".to_string()], "approver exists there");
+        copy_case(&p.a, &p.b, &p.b_id, ORG, PROJECT, 7, false).unwrap();
+        let there = nav::load_nav(&p.b, ORG, PROJECT).unwrap();
+        assert!(nav::find_area(&there, "Payroll").is_some() && nav::find_area(&there, "Reports").is_some());
+        assert!(nav::find_area(&there, "Other").is_none(), "only what the case visits");
+    }
+
+    #[test]
+    fn a_copied_recipe_says_which_site_address_it_brings() {
+        let _lock = crate::serial::autorun();
+        let p = pair();
+        store::save_script(&p.a, &script(7, None, uses("X"))).unwrap();
+        recipe::save_recipe(&p.a, ORG, PROJECT, &recipe_json()).unwrap();
+        let plan = plan_case_copy(&p.a, &p.b, &p.b_id, ORG, PROJECT, 7).unwrap();
+        assert!(plan.recipe_added);
+        assert_eq!(plan.recipe_address.as_deref(), Some("https://hr.example.internal/"));
+    }
+
+    #[test]
+    fn a_component_or_area_that_appears_before_the_write_is_not_overwritten() {
+        let _lock = crate::serial::autorun();
+        let p = pair();
+        components::put(&p.b, ORG, PROJECT, comp("Login form", "target", json!([{ "kind": "check_text", "value": "b" }]))).unwrap();
+        let saved = components::put_if_absent(
+            &p.b, ORG, PROJECT, comp("login form", "source", json!([{ "kind": "check_text", "value": "a" }])),
+        )
+        .unwrap();
+        assert!(!saved);
+        let file = components::load_components(&p.b, ORG, PROJECT).unwrap();
+        assert_eq!(components::find(&file, "Login form").unwrap().description, "target");
+    }
+
+    #[test]
+    fn the_case_commands_refuse_flat_a_stale_screen_and_the_wrong_direction() {
+        use v2_lib::commands::env_copy::{case_copy_with, case_plan_with, CaseWay};
+        let _lock = crate::serial::autorun();
+        let t = tempfile::tempdir().unwrap();
+        let (a, b, _c) = three_envs(t.path());
+        // Flat layout: refused, and no envs folder is made beside it.
+        let flat = tempfile::tempdir().unwrap();
+        environments::load_or_init(flat.path(), Some("dev-read")).unwrap();
+        let flat_envs = environments::load_or_init(flat.path(), None).unwrap();
+        let some_id = flat_envs.environments[0].id.clone();
+        let _ = std::fs::remove_dir_all(flat.path().join("envs"));
+        v2_lib::autorun::store::set_root(flat.path().to_path_buf());
+        let err = tauri::async_runtime::block_on(case_copy_with(
+            flat.path(), ORG, PROJECT, 7, &some_id, &b, CaseWay::Push, true,
+        ))
+        .unwrap_err();
+        assert_eq!(err, v2_lib::autorun::env_copy::CASE_COPY_NEEDS_LAYOUT);
+        assert!(!flat.path().join("envs").exists());
+
+        v2_lib::autorun::store::set_shared_root(t.path().to_path_buf());
+        v2_lib::autorun::store::select_environment(&a).unwrap();
+        let plan = |active: &str, other: &str, way| {
+            tauri::async_runtime::block_on(case_plan_with(t.path(), ORG, PROJECT, 7, active, other, way))
+        };
+        assert_eq!(plan(&a, &a, CaseWay::Push).unwrap_err(), v2_lib::autorun::env_copy::COPY_TO_ACTIVE);
+        assert_eq!(plan(&a, &a, CaseWay::Pull).unwrap_err(), v2_lib::autorun::env_copy::COPY_FROM_ACTIVE);
+        assert_eq!(plan(&b, &a, CaseWay::Push).unwrap_err(), v2_lib::autorun::env_copy::CASE_COPY_SWITCHED);
+        assert_eq!(plan(&a, &b, CaseWay::Pull).unwrap_err(), NO_SCRIPT_TO_COPY);
     }
 }

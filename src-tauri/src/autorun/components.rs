@@ -196,6 +196,18 @@ pub fn put(root: &Path, org: &str, project: &str, c: Component) -> Result<(), St
     update(root, org, project, |f| put_in(f, c))
 }
 
+/// Saves `c` only if no component of that name is there when the file is
+/// written; answers whether it was saved.
+pub fn put_if_absent(root: &Path, org: &str, project: &str, c: Component) -> Result<bool, String> {
+    update_with(root, org, project, |f| {
+        if find(f, &c.name).is_some() {
+            return Ok(false);
+        }
+        put_in(f, c);
+        Ok(true)
+    })
+}
+
 pub fn remove(root: &Path, org: &str, project: &str, name: &str) -> Result<(), String> {
     update(root, org, project, |f| {
         let k = key(name);

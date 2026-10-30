@@ -558,16 +558,39 @@ pub fn recover(shared: &Path) -> usize {
 }
 
 // ---- copying one case ------------------------------------------------------
+//
+// A case copies in either direction between two real environments: pushed
+// from the active one into another (the target is not the active root, so
+// its writes go through `allow_writes_to`), or pulled from another into the
+// active one (an ordinary write under the guard).
 
 /// Said when the target already has a script for the case and the person has
 /// not yet agreed to replace it.
 pub const CASE_COPY_NEEDS_CONFIRM: &str = "that environment already has a script for this case - confirm to replace it";
 /// Said when the case has no script in the source.
 pub const NO_SCRIPT_TO_COPY: &str = "this case has no script to copy";
-/// Said when the target is the environment the person is in.
-pub const COPY_TO_ACTIVE: &str = "that is the environment you are in - pick another one";
+/// Said when a push is aimed at the environment the person is in.
+pub const COPY_TO_ACTIVE: &str =
+    "that is the environment you are in - to bring a case in, use Copy from environment on the case instead";
+/// Said when a pull names the environment the person is in as its source.
+pub const COPY_FROM_ACTIVE: &str = "that is the environment you are in - pick another one to copy from";
 /// Said when the target is not an environment folder this copy may write to.
 pub const CASE_COPY_BAD_TARGET: &str = "that environment cannot be copied to";
+/// Said when the source is not an environment folder this copy may read from.
+pub const CASE_COPY_BAD_SOURCE: &str = "that environment cannot be copied from";
+/// Said when the app is not using the per-environment folders (a copy would
+/// start them early and hide the existing scripts at the next update).
+pub const CASE_COPY_NEEDS_LAYOUT: &str =
+    "copying a case between environments is not available in this session - restart the app and try again";
+/// Said when the environment on screen is no longer the one the copy was
+/// asked from.
+pub const CASE_COPY_SWITCHED: &str =
+    "the environment was switched - nothing was copied; look at the case again in the environment now active";
+
+/// Said when the case is being replayed or run while a copy would write it.
+pub fn case_copy_replaying(case_id: i32) -> String {
+    format!("case {case_id} is being replayed right now - wait for the replay to end, or stop it, then copy this case")
+}
 
 /// What copying one case would do, or did. Names only: nothing here holds a
 /// path, a password or a script body.
@@ -579,16 +602,21 @@ pub struct CaseCopyPlan {
     pub components_added: Vec<String>,
     /// Components the target has in a different version; its version is used.
     pub components_kept: Vec<String>,
-    /// The case's area, when the target lacks it and it is brought across.
-    pub area_added: Option<String>,
-    /// The case's area, when the target has it in a different version.
-    pub area_kept: Option<String>,
+    /// Areas the case visits (its own, a `return_to_area`, those of its
+    /// components) that the target lacks, brought across with their variants.
+    pub areas_added: Vec<String>,
+    /// Areas the target has in a different version; its version is used.
+    pub areas_kept: Vec<String>,
     /// The case names no area: it goes where its Module goes, nothing to copy.
     pub uses_default_area: bool,
     /// The target had no sign-in recipe and the source has one: it is brought across.
     pub recipe_added: bool,
-    /// The script's account key, when the target has no account of that key.
-    pub missing_account: Option<String>,
+    /// The site address the brought recipe carries, when it names one: runs
+    /// in a target with no address of its own then sign in at the source's site.
+    pub recipe_address: Option<String>,
+    /// Account keys the script signs in as (its own and each `sign_in`, in
+    /// its components too) that the target has no account for.
+    pub missing_accounts: Vec<String>,
     /// Fixture and flow ids the script names that the target lacks. Not copied.
     pub missing_api: Vec<String>,
 }
@@ -598,20 +626,30 @@ struct CaseGather {
     script: crate::autorun::CaseScript,
     target_script: Option<crate::autorun::CaseScript>,
     components: Vec<super::components::Component>,
-    area: Option<super::nav::ModulePath>,
-    recipe: Option<super::recipe::SignInRecipe>,
+    areas: Vec<super::nav::ModulePath>,
     plan: CaseCopyPlan,
 }
 
-/// Every component name `actions` use, a `when_visible` body's included, at
-/// any depth.
-fn used_components(actions: &[crate::browser::actions::Action], out: &mut Vec<String>) {
+/// What the actions of a script or component refer to.
+#[derive(Default)]
+struct Refs {
+    components: Vec<String>,
+    areas: Vec<String>,
+    accounts: Vec<String>,
+}
+
+/// Everything `actions` refer to, a `when_visible` body's included, at any depth.
+fn collect_refs(actions: &[crate::browser::actions::Action], out: &mut Refs) {
     use crate::browser::actions::Action;
     for a in actions {
         match a {
-            Action::UseComponent { component, .. } => out.push(component.trim().to_string()),
-            Action::WhenVisible { then, .. } | Action::RepeatWhileVisible { then, .. } => used_components(then, out),
+            Action::UseComponent { component, .. } => out.components.push(component.trim().to_string()),
+            Action::SignIn { account } => out.accounts.push(account.trim().to_string()),
+            Action::WhenVisible { then, .. } | Action::RepeatWhileVisible { then, .. } => collect_refs(then, out),
             _ => {}
+        }
+        if let Some(area) = a.area_named() {
+            out.areas.push(area.to_string());
         }
     }
 }
@@ -621,6 +659,12 @@ fn same<T: serde::Serialize>(a: &T, b: &T) -> bool {
         (Ok(a), Ok(b)) => a == b,
         _ => false,
     }
+}
+
+/// An environment folder a case may be copied from or to: `envs/<id>` for a
+/// real environment, never the seed, a removed folder or the flat layout.
+fn real_env_root(root: &Path) -> Option<String> {
+    roots::env_id_of(root).filter(|id| environments::valid_id(id) && id != roots::SEED_ID)
 }
 
 /// Reads both sides and decides; writes nothing.
@@ -633,10 +677,15 @@ fn gather_case(
     case_id: i32,
 ) -> Result<CaseGather, String> {
     use super::{accounts, components, nav, recipe, store};
-    if !environments::valid_id(target_env_id) || roots::env_id_of(target).as_deref() != Some(target_env_id) {
+    // Both ends must be real environment folders: in the flat layout a copy
+    // would make `envs/` and the next start would skip the one-time update.
+    let (Some(source_id), Some(target_id)) = (real_env_root(source), real_env_root(target)) else {
+        return Err(CASE_COPY_NEEDS_LAYOUT.to_string());
+    };
+    if target_id != target_env_id {
         return Err(CASE_COPY_BAD_TARGET.to_string());
     }
-    if roots::env_id_of(source).is_some() && roots::env_id_of(source) == roots::env_id_of(target) {
+    if source_id == target_id {
         return Err(COPY_ONTO_ITSELF.to_string());
     }
     // A script that cannot be read is logged; the sentence names no path.
@@ -649,13 +698,21 @@ fn gather_case(
     let script = load(source)?.ok_or_else(|| NO_SCRIPT_TO_COPY.to_string())?;
     let target_script = load(target)?;
 
-    // Components: the ones the script uses, then the ones those use.
+    // What the script refers to, and then what the components it uses refer to.
     let src_c = components::load_components(source, org, project)?;
     let tgt_c = components::load_components(target, org, project)?;
-    let mut todo: Vec<String> = Vec::new();
-    for s in &script.steps {
-        used_components(&s.actions, &mut todo);
+    let mut refs = Refs::default();
+    if let Some(a) = script.area.as_deref().map(str::trim).filter(|a| !a.is_empty()) {
+        refs.areas.push(a.to_string());
     }
+    if let Some(a) = script.account.as_deref().map(str::trim).filter(|a| !a.is_empty()) {
+        refs.accounts.push(a.to_string());
+    }
+    for s in &script.steps {
+        collect_refs(&s.actions, &mut refs);
+    }
+    let uses_default_area = script.area.as_deref().map(str::trim).unwrap_or("").is_empty();
+    let mut todo: Vec<String> = std::mem::take(&mut refs.components);
     todo.reverse();
     let mut seen: Vec<String> = Vec::new();
     let mut added: Vec<components::Component> = Vec::new();
@@ -682,52 +739,52 @@ fn gather_case(
             (None, Some(t)) => t,
             (None, None) => continue,
         };
-        let mut inner = Vec::new();
-        used_components(&walk.actions, &mut inner);
-        inner.reverse();
-        todo.extend(inner);
+        let mut inner = Refs::default();
+        collect_refs(&walk.actions, &mut inner);
+        refs.areas.append(&mut inner.areas);
+        refs.accounts.append(&mut inner.accounts);
+        inner.components.reverse();
+        todo.extend(inner.components);
     }
 
-    // The area.
-    let mut area = None;
-    let mut area_added = None;
-    let mut area_kept = None;
-    let mut uses_default_area = false;
-    match script.area.as_deref().map(str::trim).filter(|a| !a.is_empty()) {
-        None => uses_default_area = true,
-        Some(name) => {
-            let src_n = nav::load_nav(source, org, project)?;
-            let tgt_n = nav::load_nav(target, org, project)?;
+    // The areas.
+    let (mut areas, mut areas_added, mut areas_kept) = (Vec::new(), Vec::new(), Vec::new());
+    if !refs.areas.is_empty() {
+        let src_n = nav::load_nav(source, org, project)?;
+        let tgt_n = nav::load_nav(target, org, project)?;
+        let mut done: Vec<String> = Vec::new();
+        for name in &refs.areas {
+            let k = nav::module_key(name);
+            if done.contains(&k) {
+                continue;
+            }
+            done.push(k);
             if let Some(s) = nav::find_area(&src_n, name) {
                 match nav::find_area(&tgt_n, name) {
                     None => {
-                        area_added = Some(s.name().to_string());
-                        area = Some(s.clone());
+                        areas_added.push(s.name().to_string());
+                        areas.push(s.clone());
                     }
-                    Some(t) if !same(s, t) => area_kept = Some(t.name().to_string()),
+                    Some(t) if !same(s, t) => areas_kept.push(t.name().to_string()),
                     Some(_) => {}
                 }
             }
         }
     }
 
-    // The sign-in recipe.
-    let mut recipe_out = None;
-    if recipe::load_recipe(target, org, project)?.is_none() {
-        if let Some(r) = recipe::load_recipe(source, org, project)? {
-            r.validate()?;
-            recipe_out = Some(r);
+    // The sign-in recipe: the saved file, as it is.
+    let brought = recipe::saved_recipe_to_bring(source, target, org, project)?;
+    let recipe_added = brought.is_some();
+    let recipe_address = brought.filter(|a| !a.trim().is_empty());
+
+    // The account keys, and the API data that is named but not copied.
+    let have = accounts::load_accounts_for(target, target_env_id).unwrap_or_default();
+    let mut missing_accounts: Vec<String> = Vec::new();
+    for key in &refs.accounts {
+        if !key.is_empty() && !have.iter().any(|x| x.key == *key) && !missing_accounts.contains(key) {
+            missing_accounts.push(key.clone());
         }
     }
-
-    // The account key, and the API data that is named but not copied.
-    let missing_account = script
-        .account
-        .as_deref()
-        .map(str::trim)
-        .filter(|k| !k.is_empty())
-        .filter(|k| !accounts::load_accounts_for(target, target_env_id).is_ok_and(|a| a.iter().any(|x| x.key == *k)))
-        .map(str::to_string);
     let mut missing_api: Vec<String> = Vec::new();
     let mut note = |id: &str, absent: bool| {
         if absent && !id.trim().is_empty() && !missing_api.iter().any(|m| m == id) {
@@ -747,14 +804,15 @@ fn gather_case(
         target_has_script: target_script.is_some(),
         components_added: added.iter().map(|c| c.name.clone()).collect(),
         components_kept: kept,
-        area_added,
-        area_kept,
+        areas_added,
+        areas_kept,
         uses_default_area,
-        recipe_added: recipe_out.is_some(),
-        missing_account,
+        recipe_added,
+        recipe_address,
+        missing_accounts,
         missing_api,
     };
-    Ok(CaseGather { script, target_script, components: added, area, recipe: recipe_out, plan })
+    Ok(CaseGather { script, target_script, components: added, areas, plan })
 }
 
 /// What copying case `case_id`'s script from `source` into `target` would
@@ -770,9 +828,9 @@ pub fn plan_case_copy(
     gather_case(source, target, target_env_id, org, project, case_id).map(|g| g.plan)
 }
 
-/// Copies case `case_id` into `target` (an environment root other than the
-/// active one): what its script needs and the target lacks first - components,
-/// area, recipe - then the script, last, so a failure never leaves a script
+/// Copies case `case_id` from `source` into `target`, two real environment
+/// folders: what its script needs and the target lacks first - components,
+/// areas, recipe - then the script, last, so a failure never leaves a script
 /// whose area or component is missing. Nothing the target already has is
 /// overwritten except the script, and only with `replace`; the script it
 /// replaces is first kept aside like a deleted one, and put back if the new
@@ -791,21 +849,40 @@ pub fn copy_case(
     if g.plan.target_has_script && !replace {
         return Err(CASE_COPY_NEEDS_CONFIRM.to_string());
     }
+    let into_active = crate::autorun::store::configured_root().as_deref() == Some(target);
+    // Refused before anything is written: a replay reads the case's script.
+    if (g.plan.target_has_script || into_active) && store::is_replaying(case_id) {
+        return Err(case_copy_replaying(case_id));
+    }
     let failed = |what: &str, e: String| {
         crate::applog::warn(format!("Auto Run: copying case {case_id} to another environment stopped at its {what}: {e}"));
         COPY_FAILED.to_string()
     };
-    // Writes into a root that is not the active one are let through the
-    // guard only while this is held.
-    let _allowed = roots::allow_writes_to(target);
+    // A push writes into a root that is not the active one: the guard lets
+    // it through only while this is held. A pull is an ordinary write.
+    let _allowed = (!into_active).then(|| roots::allow_writes_to(target));
+    let mut plan = g.plan;
     for c in g.components {
-        components::put(target, org, project, c).map_err(|e| failed("components", e))?;
+        let name = c.name.clone();
+        // Only if still absent at the write: a name that appeared meanwhile is kept.
+        if !components::put_if_absent(target, org, project, c).map_err(|e| failed("components", e))? {
+            plan.components_added.retain(|n| *n != name);
+            plan.components_kept.push(name);
+        }
     }
-    if let Some(a) = g.area {
-        nav::put_path_if(target, org, project, a, nav::AreaExpect::Any).map_err(|e| failed("area", e))?;
+    for a in g.areas {
+        let name = a.name().to_string();
+        match nav::put_path_if(target, org, project, a, nav::AreaExpect::New) {
+            Ok(_) => {}
+            Err(e) if e == nav::area_taken_meanwhile(&name) => {
+                plan.areas_added.retain(|n| *n != name);
+                plan.areas_kept.push(name);
+            }
+            Err(e) => return Err(failed("area", e)),
+        }
     }
-    if let Some(r) = &g.recipe {
-        recipe::save_recipe(target, org, project, r).map_err(|e| failed("sign-in recipe", e))?;
+    if plan.recipe_added {
+        recipe::copy_saved_recipe_if_absent(source, target, org, project).map_err(|e| failed("sign-in recipe", e))?;
     }
     if g.target_script.is_some() {
         store::delete_script(target, case_id, super::sessions::now_ms()).map_err(|e| failed("old script", e))?;
@@ -820,5 +897,5 @@ pub fn copy_case(
         return Err(failed("script", e));
     }
     crate::applog::info(format!("Auto Run: copied case {case_id} to another environment"));
-    Ok(g.plan)
+    Ok(plan)
 }

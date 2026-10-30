@@ -91,65 +91,99 @@ pub async fn env_copy_autorun(
     Ok(done)
 }
 
-/// What copying one case would do, and the pieces both case commands share:
-/// the source (the active environment's root) and the target's root.
-/// `opening` is held for reading by the caller, so no switch lands between
-/// the two reads: a switch writes it.
-fn case_roots(shared: &Path, target_id: &str) -> Result<(PathBuf, PathBuf), String> {
-    let envs = envs(shared)?;
-    if !envs.environments.iter().any(|e| e.id == target_id) || !environments::valid_id(target_id) {
-        return Err(env_copy::COPY_UNKNOWN_TARGET.to_string());
-    }
-    let source = crate::autorun::store::resolve_root()?;
-    let target = crate::autorun::roots::env_root(shared, target_id);
-    if source == target {
-        return Err(env_copy::COPY_TO_ACTIVE.to_string());
-    }
-    Ok((source, target))
+/// Which way a case moves, between the environment on screen (`active_id`)
+/// and `other_id`.
+#[derive(Clone, Copy)]
+pub enum CaseWay {
+    /// From the active environment into `other_id`.
+    Push,
+    /// From `other_id` into the active environment.
+    Pull,
 }
 
-/// What copying a case into `target_id` would bring and keep; writes nothing.
+/// The source and target roots of a case copy, pinned: read once, after the
+/// caller holds `opening` for reading (a switch writes it), and used for the
+/// whole copy. Refused when the environment on screen is no longer active,
+/// when `other_id` is not a listed environment, and when the per-environment
+/// folders are not in use (a copy would start them early).
+fn case_roots(shared: &Path, active_id: &str, other_id: &str, way: CaseWay) -> Result<(PathBuf, PathBuf), String> {
+    use env_copy::{CASE_COPY_NEEDS_LAYOUT, CASE_COPY_SWITCHED, COPY_FROM_ACTIVE, COPY_TO_ACTIVE};
+    let envs = envs(shared)?;
+    let listed = |id: &str| environments::valid_id(id) && envs.environments.iter().any(|e| e.id == id);
+    let active = crate::autorun::store::resolve_root()?;
+    if crate::autorun::roots::env_id_of(&active).is_none() {
+        return Err(CASE_COPY_NEEDS_LAYOUT.to_string());
+    }
+    if !listed(other_id) {
+        return Err(env_copy::COPY_UNKNOWN_TARGET.to_string());
+    }
+    if active != crate::autorun::roots::env_root(shared, active_id) || !listed(active_id) {
+        return Err(CASE_COPY_SWITCHED.to_string());
+    }
+    if other_id == active_id {
+        return Err(match way {
+            CaseWay::Push => COPY_TO_ACTIVE,
+            CaseWay::Pull => COPY_FROM_ACTIVE,
+        }
+        .to_string());
+    }
+    let other = crate::autorun::roots::env_root(shared, other_id);
+    Ok(match way {
+        CaseWay::Push => (active, other),
+        CaseWay::Pull => (other, active),
+    })
+}
+
+/// What copying a case between the active environment and `other_id` would
+/// bring and keep; writes nothing.
 pub async fn case_plan_with(
     shared: &Path,
     org: &str,
     project: &str,
     case_id: i32,
-    target_id: &str,
+    active_id: &str,
+    other_id: &str,
+    way: CaseWay,
 ) -> Result<env_copy::CaseCopyPlan, String> {
     let _no_switch = super::autorun_slots::opening().read().await;
-    let (source, target) = case_roots(shared, target_id)?;
-    let (org, project, id) = (org.to_string(), project.to_string(), target_id.to_string());
-    tauri::async_runtime::spawn_blocking(move || env_copy::plan_case_copy(&source, &target, &id, &org, &project, case_id))
+    let (source, target) = case_roots(shared, active_id, other_id, way)?;
+    let target_id = crate::autorun::roots::env_id_of(&target).unwrap_or_default();
+    let (org, project) = (org.to_string(), project.to_string());
+    tauri::async_runtime::spawn_blocking(move || env_copy::plan_case_copy(&source, &target, &target_id, &org, &project, case_id))
         .await
         .map_err(|_| env_copy::COPY_FAILED.to_string())?
 }
 
-/// Copies a case into `target_id`; `replace` agrees to replace a script the
-/// target already has for it.
+/// Copies a case between the active environment and `other_id`; `replace`
+/// agrees to replace a script the target already has for it.
 pub async fn case_copy_with(
     shared: &Path,
     org: &str,
     project: &str,
     case_id: i32,
-    target_id: &str,
+    active_id: &str,
+    other_id: &str,
+    way: CaseWay,
     replace: bool,
 ) -> Result<env_copy::CaseCopyPlan, String> {
     // Holding `opening` for reading keeps a switch (which writes it) from
-    // changing which environment is the source while the copy runs. It is
-    // taken before anything else, as a switch takes it first.
+    // changing which environment is active while the copy runs; it is taken
+    // before the roots are read, which are then used throughout.
     let _no_switch = super::autorun_slots::opening().read().await;
-    let (source, target) = case_roots(shared, target_id)?;
-    let (org, project, id) = (org.to_string(), project.to_string(), target_id.to_string());
+    let (source, target) = case_roots(shared, active_id, other_id, way)?;
+    let target_id = crate::autorun::roots::env_id_of(&target).unwrap_or_default();
+    let (org, project) = (org.to_string(), project.to_string());
     tauri::async_runtime::spawn_blocking(move || {
-        env_copy::copy_case(&source, &target, &id, &org, &project, case_id, replace)
+        env_copy::copy_case(&source, &target, &target_id, &org, &project, case_id, replace)
     })
     .await
     .map_err(|_| env_copy::COPY_FAILED.to_string())?
 }
 
-/// What copying a case into another environment would bring (components,
-/// area, sign-in recipe), what the target keeps its own version of, and what
-/// the person has to add there. Writes nothing.
+/// Push: what copying a case from the environment on screen (`active_id`)
+/// into `target_id` would bring (components, areas, sign-in recipe), what
+/// the target keeps its own version of, and what the person has to add
+/// there. Writes nothing.
 #[tauri::command]
 #[specta::specta]
 pub async fn auto_run_copy_case_plan(
@@ -157,12 +191,13 @@ pub async fn auto_run_copy_case_plan(
     organization: String,
     project: String,
     case_id: i32,
+    active_id: String,
     target_id: String,
 ) -> Result<env_copy::CaseCopyPlan, String> {
-    case_plan_with(&shared()?, &organization, &project, case_id, &target_id).await
+    case_plan_with(&shared()?, &organization, &project, case_id, &active_id, &target_id, CaseWay::Push).await
 }
 
-/// Copy a case's script, with what it needs, into another environment.
+/// Push: copy a case's script, with what it needs, into another environment.
 /// `replace` agrees to replace a script the target already has for the case.
 #[tauri::command]
 #[specta::specta]
@@ -171,8 +206,40 @@ pub async fn auto_run_copy_case(
     organization: String,
     project: String,
     case_id: i32,
+    active_id: String,
     target_id: String,
     replace: bool,
 ) -> Result<env_copy::CaseCopyPlan, String> {
-    case_copy_with(&shared()?, &organization, &project, case_id, &target_id, replace).await
+    case_copy_with(&shared()?, &organization, &project, case_id, &active_id, &target_id, CaseWay::Push, replace).await
+}
+
+/// Pull ("Copy from environment..."): the same dry run, for a case coming
+/// from `source_id` into the environment on screen (`active_id`).
+#[tauri::command]
+#[specta::specta]
+pub async fn auto_run_copy_case_from_plan(
+    _app: tauri::AppHandle,
+    organization: String,
+    project: String,
+    case_id: i32,
+    active_id: String,
+    source_id: String,
+) -> Result<env_copy::CaseCopyPlan, String> {
+    case_plan_with(&shared()?, &organization, &project, case_id, &active_id, &source_id, CaseWay::Pull).await
+}
+
+/// Pull: copy a case from another environment into the one on screen.
+/// `replace` agrees to replace the script it already has for the case.
+#[tauri::command]
+#[specta::specta]
+pub async fn auto_run_copy_case_from(
+    _app: tauri::AppHandle,
+    organization: String,
+    project: String,
+    case_id: i32,
+    active_id: String,
+    source_id: String,
+    replace: bool,
+) -> Result<env_copy::CaseCopyPlan, String> {
+    case_copy_with(&shared()?, &organization, &project, case_id, &active_id, &source_id, CaseWay::Pull, replace).await
 }

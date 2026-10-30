@@ -217,6 +217,8 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             env_copy::env_copy_autorun,
             env_copy::auto_run_copy_case_plan,
             env_copy::auto_run_copy_case,
+            env_copy::auto_run_copy_case_from_plan,
+            env_copy::auto_run_copy_case_from,
             environments::env_set_default_password,
             environments::env_clear_default_password,
             environments::env_proposals,

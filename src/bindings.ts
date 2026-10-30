@@ -416,16 +416,27 @@ export const commands = {
 	 */
 	envCopyAutorun: (targetId: string, sourceKey: string, replace: boolean) => typedError<CopyDone, string>(__TAURI_INVOKE("env_copy_autorun", { targetId, sourceKey, replace })),
 	/**
-	 *  What copying a case into another environment would bring (components,
-	 *  area, sign-in recipe), what the target keeps its own version of, and what
-	 *  the person has to add there. Writes nothing.
+	 *  Push: what copying a case from the environment on screen (`active_id`)
+	 *  into `target_id` would bring (components, areas, sign-in recipe), what
+	 *  the target keeps its own version of, and what the person has to add
+	 *  there. Writes nothing.
 	 */
-	autoRunCopyCasePlan: (organization: string, project: string, caseId: number, targetId: string) => typedError<CaseCopyPlan, string>(__TAURI_INVOKE("auto_run_copy_case_plan", { organization, project, caseId, targetId })),
+	autoRunCopyCasePlan: (organization: string, project: string, caseId: number, activeId: string, targetId: string) => typedError<CaseCopyPlan, string>(__TAURI_INVOKE("auto_run_copy_case_plan", { organization, project, caseId, activeId, targetId })),
 	/**
-	 *  Copy a case's script, with what it needs, into another environment.
+	 *  Push: copy a case's script, with what it needs, into another environment.
 	 *  `replace` agrees to replace a script the target already has for the case.
 	 */
-	autoRunCopyCase: (organization: string, project: string, caseId: number, targetId: string, replace: boolean) => typedError<CaseCopyPlan, string>(__TAURI_INVOKE("auto_run_copy_case", { organization, project, caseId, targetId, replace })),
+	autoRunCopyCase: (organization: string, project: string, caseId: number, activeId: string, targetId: string, replace: boolean) => typedError<CaseCopyPlan, string>(__TAURI_INVOKE("auto_run_copy_case", { organization, project, caseId, activeId, targetId, replace })),
+	/**
+	 *  Pull ("Copy from environment..."): the same dry run, for a case coming
+	 *  from `source_id` into the environment on screen (`active_id`).
+	 */
+	autoRunCopyCaseFromPlan: (organization: string, project: string, caseId: number, activeId: string, sourceId: string) => typedError<CaseCopyPlan, string>(__TAURI_INVOKE("auto_run_copy_case_from_plan", { organization, project, caseId, activeId, sourceId })),
+	/**
+	 *  Pull: copy a case from another environment into the one on screen.
+	 *  `replace` agrees to replace the script it already has for the case.
+	 */
+	autoRunCopyCaseFrom: (organization: string, project: string, caseId: number, activeId: string, sourceId: string, replace: boolean) => typedError<CaseCopyPlan, string>(__TAURI_INVOKE("auto_run_copy_case_from", { organization, project, caseId, activeId, sourceId, replace })),
 	envSetDefaultPassword: (id: string, password: string) => typedError<null, string>(__TAURI_INVOKE("env_set_default_password", { id, password })),
 	envClearDefaultPassword: (id: string) => typedError<null, string>(__TAURI_INVOKE("env_clear_default_password", { id })),
 	/**  The assistant's proposed accounts for the active environment. */
@@ -3022,16 +3033,27 @@ export type CaseCopyPlan = {
 	components_added: string[],
 	/**  Components the target has in a different version; its version is used. */
 	components_kept: string[],
-	/**  The case's area, when the target lacks it and it is brought across. */
-	area_added: string | null,
-	/**  The case's area, when the target has it in a different version. */
-	area_kept: string | null,
+	/**
+	 *  Areas the case visits (its own, a `return_to_area`, those of its
+	 *  components) that the target lacks, brought across with their variants.
+	 */
+	areas_added: string[],
+	/**  Areas the target has in a different version; its version is used. */
+	areas_kept: string[],
 	/**  The case names no area: it goes where its Module goes, nothing to copy. */
 	uses_default_area: boolean,
 	/**  The target had no sign-in recipe and the source has one: it is brought across. */
 	recipe_added: boolean,
-	/**  The script's account key, when the target has no account of that key. */
-	missing_account: string | null,
+	/**
+	 *  The site address the brought recipe carries, when it names one: runs
+	 *  in a target with no address of its own then sign in at the source's site.
+	 */
+	recipe_address: string | null,
+	/**
+	 *  Account keys the script signs in as (its own and each `sign_in`, in
+	 *  its components too) that the target has no account for.
+	 */
+	missing_accounts: string[],
 	/**  Fixture and flow ids the script names that the target lacks. Not copied. */
 	missing_api: string[],
 };
