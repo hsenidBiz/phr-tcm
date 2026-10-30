@@ -258,7 +258,8 @@ pub fn slot_if_any(caller: &Caller) -> Option<SlotNo> {
 /// the app may keep a second copy of it (the same rule as `IMPORTING` in
 /// `commands/autorun.rs`). One `static` mutex, never held across an await.
 /// An agent is bound to at most one slot.
-static BINDINGS: Mutex<Table> = Mutex::new(Table { bound: [const { None }; SLOT_COUNT], held: [const { None }; SLOT_COUNT] });
+static BINDINGS: Mutex<Table> =
+    Mutex::new(Table { bound: [const { None }; SLOT_COUNT], held: [const { None }; SLOT_COUNT], last: [const { None }; SLOT_COUNT] });
 
 struct Table {
     /// Who each slot's browser is in use by.
@@ -266,6 +267,10 @@ struct Table {
     /// The assistant whose open is replacing the browser in a slot right now
     /// (`hold_binding`): that slot's unbind leaves its binding alone.
     held: [Option<AgentKey>; SLOT_COUNT],
+    /// The assistant each slot's browser was last let go from, and when: the
+    /// person's Release of a slot nobody holds any more still ends the claims
+    /// that assistant made before it let go (`last_unbound`).
+    last: [Option<(AgentKey, u64)>; SLOT_COUNT],
 }
 
 fn bindings() -> std::sync::MutexGuard<'static, Table> {
@@ -329,7 +334,9 @@ fn unbind_noting_if(n: SlotNo, idle_of: Option<&AgentKey>, still: &dyn Fn() -> b
     }
     let kept = t.held[n.index()].is_some() && t.held[n.index()] == t.bound[n.index()];
     if !kept {
-        t.bound[n.index()] = None;
+        if let Some(was) = t.bound[n.index()].take() {
+            t.last[n.index()] = Some((was, crate::autorun::sessions::now_ms()));
+        }
         if let Some(key) = idle_of {
             let mut notices = idle_notices();
             if !notices.contains(key) {
@@ -363,11 +370,27 @@ impl Drop for BindingHold {
 
 /// `key` holds no browser.
 pub fn unbind_agent(key: &AgentKey) {
-    for held in bindings().bound.iter_mut() {
-        if held.as_ref() == Some(key) {
-            *held = None;
+    let mut t = bindings();
+    for i in 0..SLOT_COUNT {
+        if t.bound[i].as_ref() == Some(key) {
+            t.bound[i] = None;
+            t.last[i] = Some((key.clone(), crate::autorun::sessions::now_ms()));
         }
     }
+}
+
+/// The assistant slot `n`'s browser was last let go from, and when, if it
+/// is bound to no slot now: what the person's Release of a slot nobody
+/// holds ends the claims of (`claims::release_before`). Taken: it ends them
+/// once.
+pub fn take_last_unbound(n: SlotNo) -> Option<(AgentKey, u64)> {
+    let mut t = bindings();
+    let (key, ms) = t.last[n.index()].clone()?;
+    if t.bound.iter().any(|b| b.as_ref() == Some(&key)) {
+        return None;
+    }
+    t.last[n.index()] = None;
+    Some((key, ms))
 }
 
 /// Every binding and every remembered reading of a slot (tests).
@@ -375,6 +398,7 @@ pub fn clear() {
     let mut t = bindings();
     t.bound = [const { None }; SLOT_COUNT];
     t.held = [const { None }; SLOT_COUNT];
+    t.last = [const { None }; SLOT_COUNT];
     drop(t);
     release_retries().clear();
     idle_notices().clear();
@@ -928,10 +952,16 @@ pub async fn release_slot_within(n: SlotNo, why: ReleaseWhy, wait: std::time::Du
     drop(slot);
     unbind(n);
     // The person let this assistant's browser go: the cases it was working on
-    // are free for another assistant. (The assistant's own release of its
-    // browser ends nothing: it may release between two cases of one job.)
-    if let Some(key) = held {
-        crate::autorun::claims::end_for(&key);
+    // are free for another assistant. Of a slot nobody holds any more (the
+    // assistant let it go itself), the claims that last holder made before it
+    // did, unless it holds another browser now.
+    match held {
+        Some(key) => crate::autorun::claims::end_for(&key),
+        None => {
+            if let Some((key, unbound_ms)) = take_last_unbound(n) {
+                crate::autorun::claims::release_before(&key, Some(unbound_ms));
+            }
+        }
     }
     let by = match why {
         ReleaseWhy::Person => "the person released it",

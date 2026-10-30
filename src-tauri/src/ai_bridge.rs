@@ -748,8 +748,12 @@ pub async fn route_as(
         ("POST", "/autorun-release") => {
             crate::autorun::page_compact::forget(slot);
             let answer = crate::commands::autorun::release_for_assistant(slot).await;
-            // Released: the cases it held are free, as the person's release frees them.
-            end_claims_of(holder, answer.0);
+            // Released, the browser let go (a person's browser left open
+            // included): the cases it held are free, as the person's release
+            // frees them.
+            let unbound = answer.0 < 300
+                || (answer.0 == 409 && answer.1 == crate::commands::autorun::PERSONS_BROWSER_OPEN);
+            end_claims_of(holder, if unbound { 200 } else { answer.0 });
             with_other_holds(answer, holder)
         }
         // Reset: a clean page in the assistant's own browser - other tabs

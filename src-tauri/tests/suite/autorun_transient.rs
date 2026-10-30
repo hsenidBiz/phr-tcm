@@ -289,3 +289,16 @@ fn a_network_error_inside_a_component_is_retried_like_any_other() {
     // action to read it by, so no second go.
     assert_eq!(is_transient_with(&case, Some(&sc), &ComponentFile::default()), None);
 }
+
+/// A save the site answered 408 or 429 is too slow or too many: worth a go.
+#[test]
+fn a_save_the_site_was_busy_for_is_transient_and_a_refusal_is_not() {
+    use v2_lib::autorun::refusals::SITE_BUSY;
+    let click = json!({ "kind": "click", "selector": { "css": "#save" } });
+    let busy = format!("{SITE_BUSY}\"429 Too Many Requests\" (POST /api/eval-rules, 429)");
+    let case = failed_at_2("Failed", ActionOutcome::failed(busy.clone()));
+    assert_eq!(is_transient(&case, Some(&script(click.clone()))), Some(format!("step 2: {busy}")));
+    let refused = "the app refused: \"Name is required\" (POST /api/eval-rules, 422)";
+    let case = failed_at_2("Failed", ActionOutcome::failed(refused));
+    assert_eq!(is_transient(&case, Some(&script(click))), None);
+}

@@ -1249,10 +1249,20 @@ async fn run_said(
     d: &mut ScriptedDriver,
     actions: serde_json::Value,
 ) -> Vec<v2_lib::browser::actions::ActionOutcome> {
+    run_said_before(d, actions, None).await
+}
+
+/// One step, run, with `next` the first action of the case's next step.
+async fn run_said_before(
+    d: &mut ScriptedDriver,
+    actions: serde_json::Value,
+    next: Option<serde_json::Value>,
+) -> Vec<v2_lib::browser::actions::ActionOutcome> {
+    let next: Option<v2_lib::browser::actions::Action> = next.map(|n| serde_json::from_value(n).unwrap());
     use v2_lib::autorun::runner::{run_step_in_run, AreaRoute, InRun, NEEDS_SCRIPT_AREA};
     let dir = tempfile::tempdir().unwrap();
     let (mut acc, mut lease) = (None, v2_lib::autorun::lease::Held::supervised());
-    let mut run = InRun::default();
+    let mut run = InRun { next_step_first: next.as_ref(), ..Default::default() };
     run_step_in_run(
         d,
         dir.path(),
@@ -1318,7 +1328,7 @@ async fn a_run_and_a_try_judge_a_refused_write_alike() {
     // A later check of the page expects it.
     let mut d = said_page(vec![vec![]], false);
     click_is_refused(&mut d);
-    let expected = run_said(&mut d, json!([click[0].clone(), { "kind": "expect_visible", "selector": { "css": "#err" } }])).await;
+    let expected = run_said(&mut d, json!([click[0].clone(), { "kind": "expect_visible", "selector": { "css": "#weightage-error" } }])).await;
     assert!(expected[0].ok, "{:?}", expected[0]);
 }
 
@@ -1361,7 +1371,7 @@ async fn a_run_step_that_fails_after_a_refusal_names_it() {
         &mut d,
         json!([
             { "kind": "click", "selector": { "css": "#save" } },
-            { "kind": "expect_hidden", "selector": { "css": "#goals" } },
+            { "kind": "expect_response", "url_contains": "eval-rules", "status": 400 },
             { "kind": "wait_for", "selector": { "css": "#goals" }, "timeout_ms": 100 }
         ]),
     )
@@ -1743,7 +1753,7 @@ async fn a_failed_step_with_no_area_is_not_remembered() {
     noted.in_case(None);
     let steps = json!([
         { "kind": "click", "selector": { "css": "#save" } },
-        { "kind": "expect_hidden", "selector": { "css": "#goals" } },
+        { "kind": "expect_response", "url_contains": "eval-rules", "status": 400 },
         { "kind": "wait_for", "selector": { "css": "#goals" }, "timeout_ms": 100 }
     ]);
     let out = run_noted(&mut d, steps.clone(), &mut noted, 0).await;
@@ -1924,7 +1934,7 @@ async fn a_run_remembers_the_refusal_its_failure_names_from_the_step_before() {
         "steps": [
             { "step_number": 3, "actions": [
                 { "kind": "click", "selector": { "css": "#save" } },
-                { "kind": "expect_hidden", "selector": { "css": "#goals" } }
+                { "kind": "expect_response", "url_contains": "eval-rules", "status": 400 }
             ] },
             { "step_number": 4, "actions": [{ "kind": "wait_for", "selector": { "css": "#goals" }, "timeout_ms": 100 }] }
         ]
@@ -1941,4 +1951,83 @@ async fn a_run_remembers_the_refusal_its_failure_names_from_the_step_before() {
     assert_eq!(rules.len(), 1, "{rules:?}");
     assert_eq!(rules[0].message, "One or more validation errors occurred.");
     assert_eq!((rules[0].source, rules[0].case_id), (RuleSource::Run, Some(7)));
+}
+
+
+fn post_answered(d: &mut ScriptedDriver, id: &str, method: &str, url: &str, status: u16) {
+    for e in page_request(id, method, url, "XHR", status) {
+        d.on_call_events.push((CLICKED.to_string(), e));
+    }
+}
+
+fn click_save() -> serde_json::Value {
+    json!([{ "kind": "click", "selector": { "css": "#save" } }])
+}
+
+/// The first action of the next step excuses the refusal when it reads the
+/// message; the form's own heading does not.
+#[tokio::test]
+async fn only_a_message_check_excuses_a_refused_save() {
+    let message = json!({ "kind": "expect_visible", "selector": { "css": "#weightage-error" } });
+    let toast = json!({ "kind": "expect_contains_text", "selector": { "role": "alert" }, "value": "invalid" });
+    let heading = json!({ "kind": "expect_visible", "selector": { "role": "heading", "name": "Edit rule" } });
+    let heading_css = json!({ "kind": "expect_visible", "selector": { "css": "h2.title" } });
+    let count = json!({ "kind": "expect_count", "selector": { "css": "li" }, "equals": 1 });
+    for (later, excused) in [(&message, true), (&toast, true), (&heading, false), (&heading_css, false), (&count, false)] {
+        // In the same step.
+        let mut d = said_page(vec![vec![]], false);
+        click_is_refused(&mut d);
+        let mut actions = click_save().as_array().unwrap().clone();
+        actions.push(later.clone());
+        let out = run_said(&mut d, json!(actions)).await;
+        assert_eq!(out[0].ok, excused, "same step {later}: {:?}", out[0]);
+        // First in the next step.
+        let mut d = said_page(vec![vec![]], false);
+        click_is_refused(&mut d);
+        let out = run_said_before(&mut d, click_save(), Some(later.clone())).await;
+        assert_eq!(out[0].ok, excused, "next step {later}: {:?}", out[0]);
+    }
+}
+
+/// A POST that reads is no refusal; a refused write is kept past three refused reads.
+#[tokio::test]
+async fn a_refused_read_shaped_post_is_nothing_and_writes_are_kept_first() {
+    let mut d = said_page(vec![vec![]], false);
+    post_answered(&mut d, "r1", "POST", "https://hr.example/api/GetList", 400);
+    let out = run_said(&mut d, click_save()).await;
+    assert!(out[0].ok && out[0].refused.is_empty(), "{:?}", out[0]);
+
+    let mut d = said_page(vec![vec![]], false);
+    for i in 0..3 {
+        post_answered(&mut d, &format!("g{i}"), "GET", &format!("https://hr.example/api/lookup{i}"), 422);
+    }
+    post_answered(&mut d, "w", "POST", "https://hr.example/api/eval-rules", 400);
+    let out = run_said(&mut d, click_save()).await;
+    assert!(!out[0].ok, "{:?}", out[0]);
+    assert_eq!(out[0].refused.len(), 3);
+    assert!(out[0].detail.contains("POST /api/eval-rules"), "the line names the write: {}", out[0].detail);
+}
+
+/// 408 and 429 on a save fail it as the site being busy, whatever follows;
+/// 419 and 440 are not the app refusing the input.
+#[tokio::test]
+async fn a_busy_or_expired_answer_is_not_a_refusal() {
+    use v2_lib::autorun::refusals::{answer_of, Answer, SITE_BUSY};
+    assert_eq!((answer_of(400), answer_of(422), answer_of(409)), (Answer::Refused, Answer::Refused, Answer::Refused));
+    assert_eq!((answer_of(408), answer_of(429)), (Answer::Busy, Answer::Busy));
+    assert_eq!((answer_of(419), answer_of(440)), (Answer::Expired, Answer::Expired));
+    for status in [408, 429] {
+        let mut d = said_page(vec![vec![]], false);
+        post_answered(&mut d, "r1", "POST", "https://hr.example/api/eval-rules", status);
+        let message = json!({ "kind": "expect_visible", "selector": { "css": "#weightage-error" } });
+        let out = run_said(&mut d, json!([click_save()[0].clone(), message])).await;
+        assert!(!out[0].ok && out[0].detail.starts_with(SITE_BUSY), "{status}: {:?}", out[0]);
+        assert!(!out[0].detail.contains("the app refused"), "{}", out[0].detail);
+    }
+    for status in [419, 440] {
+        let mut d = said_page(vec![vec![]], false);
+        post_answered(&mut d, "r1", "POST", "https://hr.example/api/eval-rules", status);
+        let out = run_said(&mut d, click_save()).await;
+        assert!(!out[0].detail.contains("the app refused"), "{status}: {}", out[0].detail);
+    }
 }

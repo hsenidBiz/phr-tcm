@@ -422,3 +422,62 @@ fn a_refusal_names_the_label_only() {
     assert!(!said.contains(ID_A) && !said.contains(ID_B) && !said.contains("4242"), "{said}");
     fresh();
 }
+
+/// The assistant let its browser go itself (or the person's browser was left
+/// open by its release, a 409); the person's Release of that slot afterwards
+/// still ends the claims it made before it let go, and no other's.
+#[tokio::test]
+async fn the_persons_release_of_a_slot_the_assistant_let_go_ends_its_earlier_claims() {
+    let _g = serial::agents();
+    let _a = serial::autorun();
+    fresh();
+    let base = v2_lib::autorun::sessions::now_ms().saturating_sub(10_000);
+    register(ID_A);
+    register(ID_B);
+    slots::bind(SlotNo(1), &key(ID_A));
+    claims::claim(&key(ID_A), 4521, base).unwrap();
+    claims::claim(&key(ID_B), 4523, base).unwrap();
+    // The assistant lets the browser go; the slot is unbound, the claim stays.
+    slots::unbind(SlotNo(1));
+    assert_eq!(slots::bound(SlotNo(1)), None);
+    assert_eq!(claims::holder(4521, base), Some(key(ID_A)));
+    // A claim made after it let go (a later call) survives the release.
+    let later = v2_lib::autorun::sessions::now_ms() + 60_000;
+    claims::claim(&key(ID_A), 4522, later).unwrap();
+    release_slot(SlotNo(1), ReleaseWhy::Person).await.unwrap();
+    assert_eq!(claims::holder(4521, base), None);
+    assert_eq!(claims::holder(4522, later), Some(key(ID_A)), "made after it let go");
+    assert_eq!(claims::holder(4523, base), Some(key(ID_B)));
+    // Once only: another release of the same slot ends nothing more.
+    claims::claim(&key(ID_A), 4524, base).unwrap();
+    release_slot(SlotNo(1), ReleaseWhy::Person).await.unwrap();
+    assert_eq!(claims::holder(4524, base), Some(key(ID_A)));
+    fresh();
+}
+
+/// An assistant that holds another browser now keeps its claims when the
+/// person releases the slot it left.
+#[tokio::test]
+async fn the_persons_release_of_a_slot_leaves_the_claims_of_an_assistant_bound_elsewhere() {
+    let _g = serial::agents();
+    let _a = serial::autorun();
+    fresh();
+    register(ID_A);
+    slots::bind(SlotNo(1), &key(ID_A));
+    claims::claim(&key(ID_A), 4521, T0).unwrap();
+    slots::unbind(SlotNo(1));
+    slots::bind(SlotNo(2), &key(ID_A));
+    release_slot(SlotNo(1), ReleaseWhy::Person).await.unwrap();
+    assert_eq!(claims::holder(4521, T0), Some(key(ID_A)));
+    fresh();
+}
+
+/// The assistant's release ends its claims whenever its slot was unbound,
+/// including the answer that leaves the person's browser open (409).
+#[test]
+fn the_bridge_ends_claims_on_a_release_that_left_a_persons_browser_open() {
+    let bridge = include_str!("../../src/ai_bridge.rs").replace("\r\n", "\n");
+    let at = bridge.find("release_for_assistant(slot).await").unwrap();
+    let arm = &bridge[at..at + 700];
+    assert!(arm.contains("PERSONS_BROWSER_OPEN") && arm.contains("end_claims_of"), "{arm}");
+}

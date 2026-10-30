@@ -1897,9 +1897,14 @@ it as "the app refused: ...". Neither is TCM's verdict: `page_said` and
 - A success message ("Saved.") is nothing to act on.
 - A refusal the case expects is part of the case: check it in the next
   batch with `expect_visible` on its words, so the script proves it. In a
-  saved script put that check in the SAME step, after the action: a step
-  whose upload or save is refused fails unless a later action of that step
-  checks the page, and an error toast lasts only about 5 seconds.
+  saved script put that check in the SAME step, after the action (the first
+  action of the next step also counts): a step whose upload or save is
+  refused fails unless a later action reads the message
+  (`expect_visible`/`expect_text`/`expect_contains_text` on the message, or
+  `check_text`) or is an `expect_response` for a 4xx; a check of the form's
+  own heading does not. An error toast lasts only about 5 seconds. A save
+  answered 408 or 429 fails as "the site was busy" and is retried, never
+  expected.
 - A refusal the case does not expect means the test case or its
   preconditions look wrong (a value it never fills in, a setting not in
   the state it assumes). Report it to the user with the message, and do

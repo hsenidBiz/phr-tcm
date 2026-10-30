@@ -545,7 +545,8 @@ async fn run_case_in<D: Driver>(
     // Where the clean-up's record is in `steps`, once it is there: taken
     // out once every picture and download is on it.
     let mut cleanup_at: Option<usize> = None;
-    for step in script.in_run_order() {
+    let order: Vec<&StepScript> = script.in_run_order().collect();
+    for (at, step) in order.iter().copied().enumerate() {
         if step.cleanup {
             cleanup_at = Some(steps.len());
         } else if skip.is_none() && cancel.load(Ordering::SeqCst) {
@@ -577,6 +578,7 @@ async fn run_case_in<D: Driver>(
             ignore_page_errors: script.ignore_page_errors.clone(),
             picture: pictures.last_mut().map(|(_, p)| p),
             noted: Some(&mut noted),
+            next_step_first: order.get(at + 1).filter(|n| !n.cleanup).and_then(|n| n.actions.first()),
             ..Default::default()
         };
         let outcomes = match runner::run_step_in_run(
