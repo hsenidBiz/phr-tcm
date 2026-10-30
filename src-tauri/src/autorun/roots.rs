@@ -741,6 +741,8 @@ pub struct StartUp {
     pub skipped: bool,
     /// How many starts in a row the copy has now failed (0 when it did not).
     pub failed_starts: u32,
+    /// Unfinished environment copies `env_copy::recover` settled.
+    pub settled_copies: usize,
 }
 
 /// Whether this build may run the one-time copy. A development build
@@ -770,6 +772,10 @@ pub fn start_up(shared: &Path, allowed: bool) -> StartUp {
     }
     out.per_env = is_per_env_layout(shared);
     if out.per_env {
+        // First of all: before the seed handover, and before the caller
+        // sets the shared root, so nothing can choose a folder a cut-short
+        // copy still owes data.
+        out.settled_copies = super::env_copy::recover(shared);
         retry_seed(shared);
     }
     out

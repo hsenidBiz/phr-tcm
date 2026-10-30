@@ -743,9 +743,10 @@ fn write_scripts_held(
 ) -> Result<(), SaveScriptsError> {
     // Refused before anything is made, so a save from before a switch leaves
     // no folder behind either. Each write below is checked again.
-    super::roots::guard(root).map(drop).map_err(switched_or_io)?;
     let dir = scripts_dir(root);
-    std::fs::create_dir_all(&dir).map_err(|e| SaveScriptsError::Io(e.to_string()))?;
+    // The folder is made under the guard too, so a save cannot recreate an
+    // environment folder a copy has just set aside.
+    super::roots::create_dir_all(root, &dir).map_err(|e| switched_or_io(e.to_string()))?;
 
     // One moment for the whole bundle: it lands as one unit.
     let saved_at = crate::applog::iso_stamp();

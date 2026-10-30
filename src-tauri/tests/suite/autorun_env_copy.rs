@@ -403,17 +403,6 @@ fn leftover(t: &Path, target: &str, note: Option<&str>) -> std::path::PathBuf {
 }
 
 #[test]
-fn recover_leaves_a_folder_with_no_note() {
-    let _lock = crate::serial::autorun();
-    let t = tempfile::tempdir().unwrap();
-    let (_a, b, _c) = three_envs(t.path());
-    let staging = leftover(t.path(), &b, None);
-    assert_eq!(recover(t.path()), 0);
-    assert!(staging.join("runs/run-1.json").exists());
-    assert!(!roots::env_root(t.path(), &b).exists());
-}
-
-#[test]
 fn recover_finishes_a_copy_when_the_target_is_missing_or_holds_no_file() {
     let _lock = crate::serial::autorun();
     for empty_folders in [false, true] {
@@ -496,4 +485,103 @@ fn a_missing_or_empty_source_is_refused_and_the_target_keeps_its_data() {
     );
     assert_eq!(read(&rb, "scripts/case-9.json").as_deref(), Some("B-script"));
     assert!(roots::removed_folders(t.path(), NOW).is_empty());
+}
+
+// ---- fix round 2 -------------------------------------------------------------
+
+#[test]
+fn a_copy_cut_short_in_step_two_has_no_note_and_the_next_start_restores_the_history() {
+    let _lock = crate::serial::autorun();
+    let t = tempfile::tempdir().unwrap();
+    let (_a, b, _c) = three_envs(t.path());
+    // As a kill during the moves leaves it: some history in staging, no note.
+    let staging = leftover(t.path(), &b, None);
+    let rb = roots::env_root(t.path(), &b);
+    put(&rb, "scripts/case-9.json", "OLD");
+    put(&rb, "runs/run-2.json", "own-run");
+    assert_eq!(recover(t.path()), 1);
+    assert_eq!(read(&rb, "projects/p.pwexport.json").as_deref(), Some("H-export"));
+    assert_eq!(read(&rb, "runs/run-2.json").as_deref(), Some("own-run"), "never overwritten");
+    assert_eq!(read(&rb, "scripts/case-9.json").as_deref(), Some("OLD"));
+    assert!(staging.exists(), "the folder is left aside");
+    assert!(read(&staging, "scripts/case-1.json").is_some());
+    // And a target that is missing altogether gets its history too.
+    let t2 = tempfile::tempdir().unwrap();
+    let (_a2, b2, _c2) = three_envs(t2.path());
+    leftover(t2.path(), &b2, None);
+    assert_eq!(recover(t2.path()), 1);
+    let rb2 = roots::env_root(t2.path(), &b2);
+    assert_eq!(read(&rb2, "runs/run-1.json").as_deref(), Some("H-run"));
+    assert!(read(&rb2, "scripts/case-1.json").is_none(), "an unnoted copy is never applied");
+}
+
+#[test]
+fn a_note_that_cannot_be_written_stops_the_copy_and_loses_nothing() {
+    let _lock = crate::serial::autorun();
+    let t = tempfile::tempdir().unwrap();
+    let (a, b, _c) = three_envs(t.path());
+    fill_source(t.path(), &a);
+    let rb = roots::env_root(t.path(), &b);
+    put(&rb, "scripts/case-9.json", "B-script");
+    put(&rb, "runs/run-1.json", "B-run");
+    put(&rb, "projects/p.pwexport.json", "B-export");
+    let no_note = |_: &Path, _: &str, _: &Path, step: &str| -> Result<(), String> {
+        if step == "kept" {
+            Err("the disk is full".to_string())
+        } else {
+            Ok(())
+        }
+    };
+    let err = v2_lib::autorun::env_copy::copy_environment_full(
+        t.path(),
+        &roots::env_root(t.path(), &a),
+        &b,
+        "B",
+        true,
+        NOW,
+        &mut |x, y| std::fs::rename(x, y),
+        &[],
+        &no_note,
+    )
+    .unwrap_err();
+    assert_eq!(err, COPY_FAILED);
+    assert_eq!(read(&rb, "scripts/case-9.json").as_deref(), Some("B-script"), "not set aside");
+    assert_eq!(read(&rb, "runs/run-1.json").as_deref(), Some("B-run"));
+    assert_eq!(read(&rb, "projects/p.pwexport.json").as_deref(), Some("B-export"));
+    assert!(roots::removed_folders(t.path(), NOW).is_empty());
+    assert!(staging_of(t.path()).is_empty());
+}
+
+#[test]
+fn only_the_newest_copy_for_a_target_is_finished() {
+    let _lock = crate::serial::autorun();
+    let t = tempfile::tempdir().unwrap();
+    let (_a, b, _c) = three_envs(t.path());
+    let old = t.path().join("envs").join(format!(".copying-{b}-{}", NOW - 5));
+    put(&old, "scripts/case-1.json", "OLD-COPY");
+    put(&old, "runs/run-1.json", "old-run");
+    put(&old, ".copying.json", &format!("{{\"target\":\"{b}\",\"source\":\"x\",\"step\":\"kept\"}}"));
+    let new = leftover(t.path(), &b, Some("kept"));
+    assert!(new.exists());
+    recover(t.path());
+    let rb = roots::env_root(t.path(), &b);
+    assert_eq!(read(&rb, "scripts/case-1.json").as_deref(), Some("NEW"), "the newest copy wins");
+    assert_eq!(read(&rb, "runs/run-1.json").as_deref(), Some("H-run"));
+    assert!(old.exists(), "the older one is left aside");
+}
+
+#[test]
+fn start_up_settles_a_cut_short_copy_before_the_seed_is_handed_over() {
+    let _lock = crate::serial::autorun();
+    let t = tempfile::tempdir().unwrap();
+    let (a, _b, _c) = three_envs(t.path());
+    // `a` is the first environment, the one a pending seed would fill.
+    std::fs::create_dir_all(t.path().join("envs")).unwrap();
+    put(&roots::env_root(t.path(), roots::SEED_ID), "scripts/case-1.json", "SEED");
+    leftover(t.path(), &a, Some("kept"));
+    let started = roots::start_up(t.path(), false);
+    assert_eq!(started.settled_copies, 1);
+    let ra = roots::env_root(t.path(), &a);
+    assert_eq!(read(&ra, "scripts/case-1.json").as_deref(), Some("NEW"), "the copy, not the seed");
+    assert_eq!(read(&ra, "runs/run-1.json").as_deref(), Some("H-run"));
 }

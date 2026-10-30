@@ -237,7 +237,7 @@ struct Marker {
     step: String,
 }
 
-fn write_marker(staging: &Path, target_id: &str, source: &Path, step: &str) {
+fn write_marker(staging: &Path, target_id: &str, source: &Path, step: &str) -> Result<(), String> {
     let marker = Marker {
         target: target_id.to_string(),
         source: source.file_name().and_then(|n| n.to_str()).unwrap_or("").to_string(),
@@ -246,10 +246,14 @@ fn write_marker(staging: &Path, target_id: &str, source: &Path, step: &str) {
     let written = serde_json::to_string(&marker)
         .map_err(|e| e.to_string())
         .and_then(|text| crate::ai_tools::atomic_write(&staging.join(MARKER), &text));
-    if let Err(e) = written {
-        log_failure("a copy could not note how far it got", &e);
+    if let Err(e) = &written {
+        log_failure("a copy could not note how far it got", e);
     }
+    written
 }
+
+/// Writes the note into a staging folder: (staging, target id, source, step).
+type NoteWriter<'a> = &'a dyn Fn(&Path, &str, &Path, &str) -> Result<(), String>;
 
 /// A failed copy's staging folder goes only when everything in it that is
 /// not a copy went back; otherwise it stays, marked, for the next start.
@@ -257,7 +261,8 @@ fn clear_staging(staging: &Path, target_id: &str, source: &Path, all_back: bool)
     if all_back {
         let _ = std::fs::remove_dir_all(staging);
     } else {
-        write_marker(staging, target_id, source, STEP_ABANDONED);
+        // Without a note the next start treats the folder the same way.
+        let _ = write_marker(staging, target_id, source, STEP_ABANDONED);
         crate::applog::warn(
             "Environments: a copy that did not finish left the history of an environment aside; it is put back at the next start",
         );
@@ -302,6 +307,22 @@ pub fn copy_environment_with(
     now_ms: u64,
     rename: Rename,
     waits_ms: &[u64],
+) -> Result<CopyDone, String> {
+    copy_environment_full(shared, source, target_id, target_name, replace, now_ms, rename, waits_ms, &write_marker)
+}
+
+/// `copy_environment_with`, and the writer of the notes passed in too.
+#[allow(clippy::too_many_arguments)]
+pub fn copy_environment_full(
+    shared: &Path,
+    source: &Path,
+    target_id: &str,
+    target_name: &str,
+    replace: bool,
+    now_ms: u64,
+    rename: Rename,
+    waits_ms: &[u64],
+    note: NoteWriter,
 ) -> Result<CopyDone, String> {
     if !environments::valid_id(target_id) {
         return Err(COPY_UNKNOWN_TARGET.to_string());
@@ -372,7 +393,13 @@ pub fn copy_environment_with(
             }
         }
     }
-    write_marker(&staging, target_id, source, STEP_KEPT);
+    // The note is what lets a start finish this copy; without it the copy
+    // does not go on (the history goes back like after a step 2 failure).
+    if note(&staging, target_id, source, STEP_KEPT).is_err() {
+        let back = put_back(&done_moves, &mut *rename, waits_ms);
+        clear_staging(&staging, target_id, source, back);
+        return Err(COPY_FAILED.to_string());
+    }
 
     // Step 3: what is left of the target waits in the removed area. A target
     // with nothing but empty folders left has nothing worth keeping.
@@ -431,10 +458,7 @@ fn staging_target(name: &str) -> Option<String> {
 /// Moves the history and export records found in `staging` back into
 /// `target` where the target has none of its own. Says whether every one
 /// that was there is now in the target.
-fn restore_kept(staging: &Path, target: &Path) -> bool {
-    if std::fs::create_dir_all(target).is_err() {
-        return false;
-    }
+fn restore_kept(staging: &Path, target: &Path) -> (bool, usize) {
     let mut items: Vec<(PathBuf, PathBuf)> = Vec::new();
     for (name, how) in PER_ENV_ITEMS {
         if how == CopyTo::ActiveOnly && std::fs::symlink_metadata(staging.join(name)).is_ok() {
@@ -449,6 +473,7 @@ fn restore_kept(staging: &Path, target: &Path) -> bool {
         }
     }
     let mut all = true;
+    let mut moved_count = 0;
     for (from, to) in items {
         if std::fs::symlink_metadata(&to).is_ok() {
             continue;
@@ -459,12 +484,15 @@ fn restore_kept(staging: &Path, target: &Path) -> bool {
             }
             rename_waiting(&from, &to)
         })();
-        if let Err(e) = moved {
-            all = false;
-            log_failure("an environment's history could not be put back", &e);
+        match moved {
+            Ok(()) => moved_count += 1,
+            Err(e) => {
+                all = false;
+                log_failure("an environment's history could not be put back", &e);
+            }
         }
     }
-    all
+    (all, moved_count)
 }
 
 /// Settles every copy a crash or a failed restore left half-way
@@ -478,23 +506,34 @@ fn restore_kept(staging: &Path, target: &Path) -> bool {
 /// Nothing is ever deleted. Returns how many folders it settled.
 pub fn recover(shared: &Path) -> usize {
     let Ok(entries) = std::fs::read_dir(shared.join(roots::ENVS_DIR)) else { return 0 };
-    let mut settled = 0;
+    // (target, stamp, folder), newest first within a target: only the newest
+    // copy for a target may be finished; the others only give history back.
+    let mut found: Vec<(String, u64, PathBuf)> = Vec::new();
     for entry in entries.flatten() {
-        let Some(target_id) = entry.file_name().to_str().and_then(staging_target) else { continue };
-        if !entry.file_type().is_ok_and(|t| t.is_dir()) {
-            continue;
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else { continue };
+        let Some(target_id) = staging_target(name) else { continue };
+        let Some(ms) = name.rsplit_once('-').and_then(|(_, ms)| ms.parse::<u64>().ok()) else { continue };
+        if entry.file_type().is_ok_and(|t| t.is_dir()) {
+            found.push((target_id, ms, entry.path()));
         }
-        let staging = entry.path();
-        let target = roots::env_root(shared, &target_id);
-        let marker: Option<Marker> =
-            std::fs::read_to_string(staging.join(MARKER)).ok().and_then(|t| serde_json::from_str(&t).ok());
-        let Some(marker) = marker.filter(|m| m.target == target_id) else {
-            crate::applog::warn("Environments: an unfinished copy has no note and was left as it is");
-            continue;
-        };
-        let vacant = std::fs::symlink_metadata(&target).is_err() || remove_empty_tree(&target);
-        if marker.step == STEP_KEPT && vacant {
-            match rename_waiting(&staging, &target) {
+    }
+    found.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| b.1.cmp(&a.1)).then_with(|| a.2.cmp(&b.2)));
+    let mut settled = 0;
+    let mut previous: Option<&str> = None;
+    for (target_id, _, staging) in &found {
+        let newest = previous != Some(target_id.as_str());
+        previous = Some(target_id.as_str());
+        let target = roots::env_root(shared, target_id);
+        let marker: Option<Marker> = std::fs::read_to_string(staging.join(MARKER))
+            .ok()
+            .and_then(|t| serde_json::from_str(&t).ok())
+            .filter(|m: &Marker| m.target == *target_id);
+        // No readable note is the same as an abandoned copy: whatever of the
+        // target's history is in there is the target's, and goes back.
+        let kept = marker.as_ref().is_some_and(|m| m.step == STEP_KEPT);
+        if kept && newest && (std::fs::symlink_metadata(&target).is_err() || remove_empty_tree(&target)) {
+            match rename_waiting(staging, &target) {
                 Ok(()) => {
                     let _ = std::fs::remove_file(target.join(MARKER));
                     crate::applog::info("Environments: a copy that was cut short was finished");
@@ -502,12 +541,16 @@ pub fn recover(shared: &Path) -> usize {
                 }
                 Err(e) => log_failure("a copy that was cut short could not be finished", &e),
             }
-        } else if restore_kept(&staging, &target) {
+            continue;
+        }
+        let (all, moved) = restore_kept(staging, &target);
+        if moved > 0 {
             crate::applog::warn(
                 "Environments: a copy that did not finish was set aside; its environment has its history back",
             );
             settled += 1;
-        } else {
+        }
+        if !all {
             crate::applog::warn("Environments: a copy that did not finish could not give an environment its history back");
         }
     }
