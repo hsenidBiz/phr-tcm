@@ -475,11 +475,6 @@ pub struct InRun<'a> {
     /// Told each action as it begins and ends, for whoever asks how far
     /// the step has got (a replay's "still running" answer).
     pub progress: Option<&'a StepProgress>,
-    /// A request the application refuses fails the action that sent it: a
-    /// try's, where the assistant is finding out what the page does. A
-    /// replay or a run only reports it - a saved case may provoke the
-    /// refusal on purpose and check its message.
-    pub refusals_fail: bool,
     /// The case's last action that changed the page, carried from one step
     /// to the next (`Noted`), so a step that fails can name what the page
     /// answered the step before. `None` keeps it within the step.
@@ -1467,7 +1462,7 @@ async fn run_expanded<D: Driver>(
                 outcome.page_path = Some(after.path.clone().unwrap_or_default());
                 // A try fails on it, like a target that is not there. What a
                 // dialog nobody expected left on its words stays.
-                if run.refusals_fail && outcome.ok && !outcome.refused.is_empty() {
+                if outcome.ok && refusals::fails_the_action(&outcome.refused, &step.actions[index + 1..]) {
                     let dialog = dialog_note(&outcome.detail).to_string();
                     outcome.ok = false;
                     outcome.detail = format!("{}{dialog}", answered_line(&outcome).unwrap_or_default());

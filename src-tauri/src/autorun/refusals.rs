@@ -266,6 +266,18 @@ pub fn trace_id_of(body: &str) -> Option<String> {
     serde_json::from_str::<Value>(text).ok().and_then(|v| trace_of(&redact(&v)))
 }
 
+/// Whether the requests the application refused fail the action that sent
+/// them: the one verdict a discovery try and a replay or run share. A write
+/// (POST, PUT, PATCH, DELETE) refused with a 4xx answer fails its action,
+/// unless a later action of the same step checks the page (`later`: the
+/// actions after it): a step that checks the page's message expects the
+/// refusal, and the check proves it. A refused read, which a page makes on
+/// its own, only reports.
+pub fn fails_the_action(refused: &[RefusedRequest], later: &[crate::browser::actions::Action]) -> bool {
+    let write = |r: &RefusedRequest| matches!(r.method.to_ascii_uppercase().as_str(), "POST" | "PUT" | "PATCH" | "DELETE");
+    refused.iter().any(write) && !later.iter().any(|a| a.is_check())
+}
+
 /// The line a failed step or a discovery answer carries for one refusal.
 pub fn app_refused_line(r: &RefusedRequest) -> String {
     let trace = r.trace_id.as_deref().map(|t| format!(", trace id {t}")).unwrap_or_default();

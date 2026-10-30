@@ -10404,7 +10404,7 @@ async fn try_action<D: crate::browser::cdp::Driver>(
     // the reason now, not from a wait that times out later.
     // A discovery's `noted` carries its last action that changed the page
     // to the next action, as a run's steps carry it.
-    let mut run = InRun { areas: Some(&areas), saves_only_counted, refusals_fail: true, noted, ..Default::default() };
+    let mut run = InRun { areas: Some(&areas), saves_only_counted, noted, ..Default::default() };
     // An action that never answers is a failed action, so everything that
     // follows (what its writes and finds filed) still runs. It is given its
     // own wait and a margin, and no more than the call has left.
