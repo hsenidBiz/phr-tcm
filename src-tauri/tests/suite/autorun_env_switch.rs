@@ -157,7 +157,7 @@ fn a_switch_waits_for_a_bundle_and_the_bundle_lands_whole_or_not_at_all() {
 fn a_bundle_is_written_under_one_guard() {
     // The pass that writes the files must hold ONE guard for all of them: a
     // switch between two files would land half a bundle in the old environment.
-    let text = std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("src/autorun/store.rs")).unwrap();
+    let text = std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("src/autorun/store.rs")).unwrap().replace("\r\n", "\n");
     let start = text.find("fn write_scripts_held(").unwrap();
     let body = &text[start..];
     let body = &body[..body.find("
