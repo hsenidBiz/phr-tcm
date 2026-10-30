@@ -11,7 +11,7 @@ use v2_lib::ado::AdoClient;
 use v2_lib::ai_bridge::{module_guard_for, route, BridgeContext};
 use crate::common;
 use std::sync::atomic::AtomicBool;
-use v2_lib::autorun::defects::{append_cleared, check_mark, passed};
+use v2_lib::autorun::defects::{append_cleared, check_mark, checks_changed, kept_line, passed};
 use v2_lib::autorun::failures::describe_failures;
 use v2_lib::autorun::publish::comment_for;
 use v2_lib::autorun::replay::{propose, run_selection, Browsers};
@@ -581,9 +581,11 @@ async fn a_repair_of_the_marked_step_removes_the_mark_and_of_another_keeps_it() 
         Some(mark(3, "saving answers Error 500"))
     );
 
+    let mut with_new_check = case_7_with(&[(2, "#edit-button"), (3, "#save-button")]);
+    with_new_check[0]["steps"][2]["actions"][1]["selector"] = serde_json::json!("#toast-text");
     let marked = serde_json::json!({
-        "scripts": case_7_with(&[(2, "#edit-button"), (3, "#save-button")]),
-        "edits": [{ "case_id": 7, "steps": [3], "why": "the save button has a new id" }],
+        "scripts": with_new_check,
+        "edits": [{ "case_id": 7, "steps": [3], "why": "the toast moved" }],
     })
     .to_string();
     see_scripts(dir.path(), &marked);
@@ -593,6 +595,76 @@ async fn a_repair_of_the_marked_step_removes_the_mark_and_of_another_keeps_it() 
     let saved = load_script(dir.path(), 7).unwrap().unwrap();
     assert_eq!(saved.suspected_defect, None);
     assert_eq!(saved.repairs, 2, "two repairs, the mark's removal no extra one");
+}
+
+/// A repair of the marked step that leaves its checks as they were keeps
+/// the mark, and the answer says so.
+#[tokio::test]
+async fn repair_of_a_locator_keeps_the_mark() {
+    let dir = TempDir::new();
+    let _root = crate::serial::autorun();
+    set_root(dir.path().to_path_buf());
+    let (_server, client) = client_with_case_7().await;
+    let first = case_7_with(&[]).to_string();
+    see_scripts(dir.path(), &first);
+    let (status, out) = route(&ctx(), Some(&client), "POST", "/autorun-script", &first, "1.0.0").await;
+    assert_eq!(status, 200, "{out}");
+    set_suspected_defect(dir.path(), 7, Some(mark(3, "saving answers Error 500"))).unwrap();
+
+    let body = serde_json::json!({
+        "scripts": case_7_with(&[(3, "#save-button")]),
+        "edits": [{ "case_id": 7, "steps": [3], "why": "the save button has a new id" }],
+    })
+    .to_string();
+    see_scripts(dir.path(), &body);
+    let (status, out) = route(&ctx(), Some(&client), "POST", "/autorun-script", &body, "1.0.0").await;
+    assert_eq!(status, 200, "{out}");
+    assert!(out.contains(&kept_line(7, 3)), "{out}");
+    assert!(!out.contains("cleared"), "{out}");
+    assert_eq!(
+        load_script(dir.path(), 7).unwrap().unwrap().suspected_defect,
+        Some(mark(3, "saving answers Error 500"))
+    );
+}
+
+fn step_of(actions: serde_json::Value) -> v2_lib::autorun::StepScript {
+    serde_json::from_value(serde_json::json!({ "step_number": 3, "actions": actions })).unwrap()
+}
+
+#[test]
+fn checks_changed_false_when_only_a_click_locator_changes() {
+    let old = step_of(serde_json::json!([
+        { "kind": "click", "selector": "#save" },
+        { "kind": "expect_contains_text", "selector": "#toast", "value": "Saved" }
+    ]));
+    let new = step_of(serde_json::json!([
+        { "kind": "click", "selector": "#save-button" },
+        { "kind": "expect_contains_text", "selector": "#toast", "value": "Saved" }
+    ]));
+    assert!(!checks_changed(&old, &new));
+}
+
+#[test]
+fn checks_changed_true_when_a_check_value_changes() {
+    let old = step_of(serde_json::json!([
+        { "kind": "click", "selector": "#save" },
+        { "kind": "expect_contains_text", "selector": "#toast", "value": "Saved" }
+    ]));
+    let new = step_of(serde_json::json!([
+        { "kind": "click", "selector": "#save" },
+        { "kind": "expect_contains_text", "selector": "#toast", "value": "Done" }
+    ]));
+    assert!(checks_changed(&old, &new));
+}
+
+#[test]
+fn checks_changed_true_when_a_check_is_removed() {
+    let old = step_of(serde_json::json!([
+        { "kind": "click", "selector": "#save" },
+        { "kind": "expect_contains_text", "selector": "#toast", "value": "Saved" }
+    ]));
+    let new = step_of(serde_json::json!([{ "kind": "click", "selector": "#save" }]));
+    assert!(checks_changed(&old, &new));
 }
 
 // ------------------------------------------------------------- in runs

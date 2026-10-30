@@ -9,7 +9,7 @@
 
 use std::path::Path;
 
-use super::{failures, quirks, store, CaseRecord, CaseScript, LocalRun, StepRecord, SuspectedDefect};
+use super::{failures, quirks, store, CaseRecord, CaseScript, LocalRun, StepRecord, StepScript, SuspectedDefect};
 
 /// The longest note a mark keeps, in characters.
 pub const MAX_NOTE: usize = 300;
@@ -80,6 +80,27 @@ pub fn check_mark(
 /// sentence: `Suspected application defect at step 3: <note>`.
 pub fn label(mark: &SuspectedDefect) -> String {
     format!("Suspected application defect at step {}: {}", mark.step_number, mark.note)
+}
+
+/// Whether a repair changed what `old` checks: the ordered checks of the
+/// step (every action that judges the page, also inside a `when_visible`),
+/// compared with their targets and values.
+pub fn checks_changed(old: &StepScript, new: &StepScript) -> bool {
+    fn checks(step: &StepScript) -> Vec<serde_json::Value> {
+        step.actions
+            .iter()
+            .flat_map(|a| a.each())
+            .filter(|a| a.is_check())
+            .filter_map(|a| serde_json::to_value(a).ok())
+            .collect()
+    }
+    checks(old) != checks(new)
+}
+
+/// What a save says when a repair of the marked step left its checks as
+/// they were, so the mark stays.
+pub fn kept_line(case_id: i32, step: i32) -> String {
+    format!("case {case_id}: suspected defect at step {step} kept - the repair left that step's checks as they were")
 }
 
 /// What an unattended case's reason gains when its pass cleared the mark.

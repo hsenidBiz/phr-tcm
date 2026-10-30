@@ -12594,6 +12594,8 @@ pub async fn save_autorun_scripts_carrying(
     // on: the assistant has decided that step was the script's fault after
     // all, so the mark goes once the save has landed.
     let mut repaired_marks: Vec<(i32, i32)> = Vec::new();
+    // Marks a repair left alone because the step's checks did not change.
+    let mut kept_marks: Vec<String> = Vec::new();
     // Which steps of each script the seen check reads, by case: `None`
     // for a new script (all of them), its declared steps for a repair. An
     // unchanged resave is not listed: it was checked when it was saved.
@@ -12756,7 +12758,19 @@ pub async fn save_autorun_scripts_carrying(
                         precondition_lines.push(format!("case {}: {line}", script.case_id));
                     }
                     if let Some(d) = old.suspected_defect.as_ref().filter(|d| e.steps.contains(&d.step_number)) {
-                        repaired_marks.push((script.case_id, d.step_number));
+                        // Only a repair of the step's checks takes the mark:
+                        // a moved locator is no decision that the step was
+                        // wrong. A step missing on either side is changed.
+                        let at = |s: &crate::autorun::CaseScript| s.steps.iter().find(|x| x.step_number == d.step_number).cloned();
+                        let changed = match (at(&old), at(&script)) {
+                            (Some(before), Some(after)) => crate::autorun::defects::checks_changed(&before, &after),
+                            _ => true,
+                        };
+                        if changed {
+                            repaired_marks.push((script.case_id, d.step_number));
+                        } else {
+                            kept_marks.push(crate::autorun::defects::kept_line(script.case_id, d.step_number));
+                        }
                     }
                     // Read now, while the script on disk is still the
                     // one that ran: its targets classify the failure.
@@ -13100,6 +13114,7 @@ pub async fn save_autorun_scripts_carrying(
     report.extend(given_up_lines);
     report.extend(value_listed);
     report.extend(notes);
+    report.extend(kept_marks);
     for (case_id, step) in &repaired_marks {
         match crate::autorun::store::clear_suspected_defect_at(&root, *case_id, *step) {
             Ok(true) => {

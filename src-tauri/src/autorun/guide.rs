@@ -2779,7 +2779,8 @@ plain sentence about what you saw, and leave the script alone.
   defect and carry your note, so the person reviewing sees it as one. The
   case still fails; it is only labelled.
 - A recorded pass of that step clears the mark, and so does a repair that
-  changes that step.
+  changes that step's checks; a repair that leaves its checks as they were
+  (a moved locator) keeps it, and the save says so.
 - A mark you set is cleared with `clear_autorun_suspected_defect { case_id, said }` only when the person says so in this chat (after a fix elsewhere made the step pass, say): `said` quotes their words, as for a ruling.
 - The mark is refused unless that step failed in the case's newest run,
   and refused when the failure is one of the `STOP:` lines. A replay that
