@@ -36,20 +36,41 @@ pub const IMPORT_PENDING: &str =
     "an earlier import has not finished - restart the app to finish it first, then import again";
 /// Said when the import stopped part-way and will be finished at the next start.
 pub const IMPORT_UNFINISHED: &str =
-    "the import did not finish and will be completed when the app next starts - see Settings > Logs";
+    "the import did not finish - restart the app now and it will be completed; until then do not save changes in Auto Run (see Settings > Logs)";
 
 #[derive(serde::Serialize, serde::Deserialize)]
 struct Marker {
     ids: Vec<String>,
     step: String,
+    /// The text of the `environments.json` the import brings: written by a
+    /// start that finishes the import before it swaps, so a crash between the
+    /// note and the list never replays the folders under the old list.
+    #[serde(default)]
+    list: Option<String>,
 }
 
-/// Whether an earlier import's staging folder is still in the shared root.
+/// Whether an earlier import is unfinished: a staging folder with a note
+/// that can be read. One whose note cannot be read is left alone (never
+/// deleted), said once in the log, and does not hold up a new import: a
+/// restart would not change it.
 pub fn pending(shared: &Path) -> bool {
-    std::fs::read_dir(shared).is_ok_and(|entries| {
-        entries.flatten().any(|e| {
-            e.file_name().to_str().and_then(|n| n.strip_prefix(IMPORT_PREFIX)).is_some_and(|m| m.parse::<u64>().is_ok())
-        })
+    static SAID: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    let Ok(entries) = std::fs::read_dir(shared) else { return false };
+    entries.flatten().any(|e| {
+        let staging = e.file_name().to_str().and_then(|n| n.strip_prefix(IMPORT_PREFIX)).is_some_and(|m| m.parse::<u64>().is_ok());
+        if !staging {
+            return false;
+        }
+        match std::fs::read_to_string(e.path().join(MARKER)) {
+            Ok(_) => true,
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => false,
+            Err(_) => {
+                if !SAID.swap(true, std::sync::atomic::Ordering::Relaxed) {
+                    crate::applog::warn("Backup import: an unfinished import has a note that could not be read and was left as it is");
+                }
+                false
+            }
+        }
     })
 }
 
@@ -175,7 +196,7 @@ fn build_from_flat(staging: &Path, ids: &[String]) -> Result<usize, String> {
 /// when nothing in the backup describes an app (the staging folder is
 /// cleared, nothing is replaced). A failure clears the staging folder: it
 /// holds only copies of the backup's files until the swap starts.
-pub fn prepare(staging: &Path, ids: &[String], from_flat: bool) -> Result<bool, String> {
+pub fn prepare(staging: &Path, ids: &[String], from_flat: bool, list: Option<&str>) -> Result<bool, String> {
     let made = (|| {
         if let Some(bad) = ids.iter().find(|i| !roots::valid_folder_id(i)) {
             return Err(format!("\"{bad}\" is not an environment id"));
@@ -183,7 +204,7 @@ pub fn prepare(staging: &Path, ids: &[String], from_flat: bool) -> Result<bool, 
         if from_flat && build_from_flat(staging, ids)? == 0 {
             return Ok(false);
         }
-        let note = Marker { ids: ids.to_vec(), step: STEP_BUILT.to_string() };
+        let note = Marker { ids: ids.to_vec(), step: STEP_BUILT.to_string(), list: list.map(str::to_string) };
         let text = serde_json::to_string(&note).map_err(|e| e.to_string())?;
         crate::ai_tools::atomic_write(&staging.join(MARKER), &text).map(|_| true)
     })();
@@ -253,7 +274,7 @@ pub fn replace_environments(
         let _ = std::fs::remove_dir_all(staging);
         return Err(roots::REMOVE_BUSY.to_string());
     }
-    if !prepare(staging, ids, from_flat)? {
+    if !prepare(staging, ids, from_flat, None)? {
         return Ok(0);
     }
     commit(held, shared, staging, ids, names, now_ms, rename, waits_ms)
@@ -302,6 +323,14 @@ pub fn recover(shared: &Path) -> usize {
             }
         };
         let held = roots::switch_lock().write().unwrap_or_else(|e| e.into_inner());
+        // The list the import brings goes in first, so the folders are never
+        // swapped in under the list that came before.
+        if let Some(list) = &note.list {
+            if let Err(e) = crate::ai_tools::atomic_write(&crate::environments::file_path(shared), list) {
+                log_failure("an import that was cut short could not write its list of environments", &e);
+                continue;
+            }
+        }
         let names = |id: &str| crate::environments::listed_name(shared, id).unwrap_or_default();
         let done = swap_in(
             &held,

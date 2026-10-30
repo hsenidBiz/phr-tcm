@@ -1076,3 +1076,87 @@ fn the_preview_agrees_with_the_import() {
     assert!(read(&dst.join("autorun"), &format!("envs/{ENV_A}/scripts/c.json")).is_some());
     let _ = std::fs::remove_dir_all(&dst);
 }
+
+#[test]
+fn device_name_variants_are_refused() {
+    for bad in [
+        "autorun/test-files/con .txt",
+        "autorun/test-files/NUL  .log",
+        "autorun/test-files/COM\u{b9}",
+        "autorun/test-files/com\u{b2}.txt",
+        "autorun/test-files/LPT\u{b3}",
+        "autorun/test-files/CONIN$",
+        "autorun/test-files/conout$.txt",
+        "autorun/test-files/Clock$",
+    ] {
+        assert!(!safe_relative_path(bad), "{bad:?} must be refused");
+    }
+    assert!(safe_relative_path("autorun/test-files/company.txt"));
+    assert!(safe_relative_path("autorun/test-files/price$.txt"));
+}
+
+#[test]
+fn the_note_carries_the_list_and_recovery_writes_it_first() {
+    use v2_lib::autorun::backup_import;
+    let dst = updated_machine("note-list");
+    let a = dst.join("autorun");
+    let staging = backup_import::staging_dir(&a, 55);
+    put(&staging, &format!("built/{ENV_A}/scripts/new.json"), "new");
+    let list = one_env_json(ENV_A, "Renamed");
+    let note = serde_json::json!({ "ids": [ENV_A], "step": "built", "list": list }).to_string();
+    put(&staging, ".importing.json", &note);
+    assert_eq!(backup_import::recover(&a), 1);
+    let now = v2_lib::environments::listed_names(&a).unwrap();
+    assert_eq!(now, vec![(ENV_A.to_string(), "Renamed".to_string())], "the old list was replaced before the swap");
+    assert_eq!(read(&a, &format!("envs/{ENV_A}/scripts/new.json")).as_deref(), Some("new"));
+    let _ = std::fs::remove_dir_all(&dst);
+}
+
+#[test]
+fn an_unreadable_note_does_not_block_a_new_import() {
+    use v2_lib::autorun::backup_import;
+    let dst = updated_machine("unreadable-note");
+    let a = dst.join("autorun");
+    let staging = backup_import::staging_dir(&a, 5);
+    std::fs::create_dir_all(staging.join(".importing.json")).unwrap();
+    put(&staging, &format!("built/{ENV_A}/runs/carried.json"), "history");
+    assert!(!backup_import::pending(&a));
+    restore_files(&dst, &[entry("cache.json", "{}")]).unwrap();
+    assert!(dst.join("cache.json").exists());
+    assert_eq!(read(&staging, &format!("built/{ENV_A}/runs/carried.json")).as_deref(), Some("history"), "never deleted");
+    let _ = std::fs::remove_dir_all(&dst);
+}
+
+#[test]
+fn the_list_comes_only_from_an_entry_the_import_accepts() {
+    let dst = updated_machine("list-unsafe-entry");
+    let mut doc = build_doc("2.0.0", "2026-10-01", BTreeMap::new(), vec![]);
+    doc.files = vec![
+        entry("autorun/environments.json.", &one_env_json("env-00000077", "Crafted")),
+        entry("autorun/scripts/c.json", "x"),
+    ];
+    assert_eq!(v2_lib::backup::preview(&dst, &doc).unwrap().replaces, ["Alpha", "Beta"], "the machine's list, not the crafted one");
+    let _ = std::fs::remove_dir_all(&dst);
+}
+
+#[test]
+fn shared_files_are_written_through_a_rename_and_leave_no_temp_file() {
+    let dst = updated_machine("atomic-shared");
+    let a = dst.join("autorun");
+    restore_files(&dst, &[entry("autorun/environments.json", &env_json(ENV_B, None)), entry("autorun/accounts/env-0000000a.json", "[]")]).unwrap();
+    assert_eq!(v2_lib::environments::active_id(&a).unwrap(), ENV_B);
+    fn leftovers(p: &std::path::Path, out: &mut Vec<String>) {
+        for e in std::fs::read_dir(p).unwrap().flatten() {
+            if e.path().is_dir() {
+                leftovers(&e.path(), out);
+            } else if e.file_name().to_string_lossy().ends_with(".import-tmp") {
+                out.push(e.path().to_string_lossy().to_string());
+            }
+        }
+    }
+    let mut tmp = vec![];
+    leftovers(&dst, &mut tmp);
+    assert!(tmp.is_empty(), "{tmp:?}");
+    assert!(v2_lib::autorun::backup_import::IMPORT_UNFINISHED.contains("restart the app now"));
+    let _ = std::fs::remove_dir_all(&dst);
+}

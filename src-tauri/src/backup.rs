@@ -191,11 +191,18 @@ fn plain_name(seg: &str) -> bool {
     if seg.is_empty() || seg.contains(':') || seg.ends_with(['.', ' ']) {
         return false;
     }
-    let stem = seg.split('.').next().unwrap_or("").to_ascii_lowercase();
+    // `con .txt` is the console too: spaces before the extension do not count.
+    let stem = seg.split('.').next().unwrap_or("").trim_end_matches(' ').to_lowercase();
     let numbered = |prefix: &str| {
-        stem.strip_prefix(prefix).is_some_and(|n| n.len() == 1 && n.as_bytes()[0].is_ascii_digit() && n != "0")
+        stem.strip_prefix(prefix).is_some_and(|n| {
+            let mut c = n.chars();
+            matches!((c.next(), c.next()), (Some('1'..='9' | '\u{b9}' | '\u{b2}' | '\u{b3}'), None))
+        })
     };
-    if ["con", "prn", "aux", "nul"].contains(&stem.as_str()) || numbered("com") || numbered("lpt") {
+    if ["con", "prn", "aux", "nul", "conin$", "conout$", "clock$"].contains(&stem.as_str())
+        || numbered("com")
+        || numbered("lpt")
+    {
         return false;
     }
     !seg.as_bytes().windows(2).any(|w| w[0] == b'~' && w[1].is_ascii_digit())
@@ -326,6 +333,7 @@ fn plan(autorun: &Path, files: &[BackupFile]) -> Result<Plan, String> {
     use crate::autorun::roots;
     let list_entry = files
         .iter()
+        .filter(|f| safe_relative_path(&f.path))
         .find(|f| raw_segments(&f.path).iter().map(|s| s.to_ascii_lowercase()).eq(["autorun", "environments.json"]));
     let list = match list_entry {
         Some(f) => {
@@ -425,6 +433,27 @@ fn destination(data_dir: &Path, rel: &str, flat: Option<&Path>, envs: Option<&Pa
     (data_dir.join(rel), false)
 }
 
+/// Writes `bytes` to `path` through a sibling file and a rename (a held
+/// rename retried), so a failure never leaves a half-written file under the
+/// real name.
+fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), String> {
+    let mut tmp = path.as_os_str().to_owned();
+    tmp.push(".import-tmp");
+    let tmp = PathBuf::from(tmp);
+    std::fs::write(&tmp, bytes).map_err(|e| e.to_string())?;
+    let done = crate::ai_tools::rename_retrying_waits(
+        &tmp,
+        path,
+        &mut |a, b| std::fs::rename(a, b),
+        &mut std::thread::sleep,
+        &crate::ai_tools::RENAME_RETRY_WAITS_MS,
+    );
+    if done.is_err() {
+        let _ = std::fs::remove_file(&tmp);
+    }
+    done
+}
+
 /// Restore the disk half of a backup, holding the locks a switch holds (the
 /// Playwright records, then the switch lock) so nothing writes an environment
 /// meanwhile. Unsafe paths are refused one by one (the rest still land);
@@ -446,7 +475,10 @@ pub fn restore_files(data_dir: &Path, files: &[BackupFile]) -> Result<u32, Strin
 /// environment folders swapped in, each whole (see `autorun::backup_import`).
 /// On a machine without per-environment folders a backup's `envs/` is built
 /// in a staging folder and renamed in, and a pre-update backup's files land
-/// flat for the next start's copy.
+/// flat for the next start's copy. Each file is written atomically, but a
+/// failure writing a shared file after the new folders are ready is not
+/// all-or-nothing: the files already written stay (the import is then given
+/// up, nothing live having moved).
 pub fn restore_files_held(
     held: &std::sync::RwLockWriteGuard<'static, ()>,
     data_dir: &Path,
@@ -524,18 +556,6 @@ pub fn restore_files_held(
         }
         staged_applied += u32::from(!plan.pre_update || is_app_item(&f.path));
     }
-    let replacing = match &import_staging {
-        Some(st) => match backup_import::prepare(st, &ids, plan.pre_update) {
-            Ok(replacing) => replacing,
-            Err(e) => {
-                clean();
-                return Err(e);
-            }
-        },
-        None => false,
-    };
-
-    // ---- Phase 3: write the shared files, then swap the folders in ----
     // The list the app will read: the Playwright export environment stays
     // where its records are when it is still listed, else the backup's own
     // choice, else the active environment (the records go with it).
@@ -554,6 +574,18 @@ pub fn restore_files_held(
         out.playwright_export = Some(chosen);
         list_text = crate::environments::file_text(&out).ok();
     }
+    let replacing = match &import_staging {
+        Some(st) => match backup_import::prepare(st, &ids, plan.pre_update, list_text.as_deref()) {
+            Ok(replacing) => replacing,
+            Err(e) => {
+                clean();
+                return Err(e);
+            }
+        },
+        None => false,
+    };
+
+    // ---- Phase 3: write the shared files, then swap the folders in ----
     let shared_phase = (|| -> Result<(), String> {
         // A backup from before environments: the machine-wide list, and no
         // environments file to say whose it is. Kept until the loop is done.
@@ -573,7 +605,7 @@ pub fn restore_files_held(
             if norm == "autorun/environments.json" {
                 has_environments = true;
                 let text = list_text.as_ref().map_or_else(|| bytes.clone(), |t| t.clone().into_bytes());
-                std::fs::write(target, text).map_err(|e| format!("could not restore {}: {e}", f.path))?;
+                write_atomic(target, &text).map_err(|e| format!("could not restore {}: {e}", f.path))?;
                 restored += 1;
                 continue;
             }
@@ -590,7 +622,7 @@ pub fn restore_files_held(
                 }
                 continue;
             }
-            std::fs::write(target, bytes).map_err(|e| format!("could not restore {}: {e}", f.path))?;
+            write_atomic(target, bytes).map_err(|e| format!("could not restore {}: {e}", f.path))?;
             restored += 1;
             // The old single list, or any one environment's list
             // (`autorun/accounts/<env id>.json`).
