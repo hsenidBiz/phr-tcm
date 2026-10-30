@@ -468,6 +468,10 @@ end. `expire_session` cannot appear in a sign-in recipe or inside a
 its account does in the case: sign in again (`sign_in`) before acting as
 it once more.
 
+**Password prompts.** The Auto Run browser starts with the browser's own
+password saving and breach warnings off, so no "Save password?" or "Change
+your password" bubble covers the page after a sign-in.
+
 **The keyboard.** `press_key` presses one key on whatever has the focus -
 Tab and Shift+Tab move it, Enter and Space activate, Escape closes - and
 says where the focus went. `expect_focused` checks the focus is on an

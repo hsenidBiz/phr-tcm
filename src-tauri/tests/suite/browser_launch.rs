@@ -250,3 +250,83 @@ fn the_page_area_is_1280_by_720_at_scale_one() {
         serde_json::json!({ "width": 1280, "height": 720, "deviceScaleFactor": 1.0, "mobile": false })
     );
 }
+
+// ---- password prompts off (backlog 44) ----
+
+use v2_lib::browser::launch::{password_prefs, prefs_failure_is_logged_only, write_password_prefs, PASSWORD_FEATURES_OFF};
+
+fn disable_features(args: &[String]) -> Vec<&String> {
+    args.iter().filter(|a| a.starts_with("--disable-features=")).collect()
+}
+
+#[test]
+fn launch_args_disable_password_leak_detection_once() {
+    let args = launch_args(9222, Path::new(r"C:\tmp\p"));
+    let found = disable_features(&args);
+    assert_eq!(found.len(), 1);
+    assert!(found[0].contains("PasswordLeakDetection"));
+    assert_eq!(PASSWORD_FEATURES_OFF, "PasswordLeakDetection");
+    assert_eq!(args.last().map(String::as_str), Some("about:blank"));
+}
+
+#[test]
+fn args_with_folds_extra_disable_features_into_one_switch() {
+    let args = args_with(9222, Path::new(r"C:\tmp\p"), &["--disable-features=Foo"]);
+    let found = disable_features(&args);
+    assert_eq!(found, vec![&"--disable-features=PasswordLeakDetection,Foo".to_string()]);
+    assert_eq!(args.last().map(String::as_str), Some("about:blank"));
+}
+
+fn three_off(v: &serde_json::Value) {
+    assert_eq!(v["credentials_enable_service"], false);
+    assert_eq!(v["profile"]["password_manager_enabled"], false);
+    assert_eq!(v["profile"]["password_manager_leak_detection"], false);
+}
+
+#[test]
+fn password_prefs_on_empty_profile() {
+    three_off(&password_prefs(None));
+}
+
+#[test]
+fn password_prefs_merge_keeps_existing_keys() {
+    let v = password_prefs(Some(
+        r#"{"other":1,"profile":{"name":"x","password_manager_enabled":true},"credentials_enable_service":true}"#,
+    ));
+    assert_eq!(v["other"], 1);
+    assert_eq!(v["profile"]["name"], "x");
+    three_off(&v);
+}
+
+#[test]
+fn password_prefs_replace_unreadable_file() {
+    three_off(&password_prefs(Some("not json")));
+    three_off(&password_prefs(Some("[1,2]")));
+    three_off(&password_prefs(Some(r#"{"profile":5}"#)));
+}
+
+#[test]
+fn write_password_prefs_creates_default_preferences() {
+    let dir = tempfile::tempdir().unwrap();
+    write_password_prefs(dir.path()).unwrap();
+    let file = dir.path().join("Default").join("Preferences");
+    let v: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
+    three_off(&v);
+    let mut kept = v.clone();
+    kept["signed_in_marker"] = serde_json::json!("keep");
+    std::fs::write(&file, kept.to_string()).unwrap();
+    write_password_prefs(dir.path()).unwrap();
+    let again: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
+    assert_eq!(again["signed_in_marker"], "keep");
+    three_off(&again);
+}
+
+#[test]
+fn launch_goes_on_when_prefs_cannot_be_written() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("Default"), "a file where the folder should be").unwrap();
+    let e = write_password_prefs(dir.path()).unwrap_err();
+    let line = prefs_failure_is_logged_only(&e);
+    assert!(line.contains("password prompts"));
+    assert!(!line.contains(&dir.path().to_string_lossy().to_string()));
+}

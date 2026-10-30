@@ -111,10 +111,64 @@ pub fn launch_args(port: u16, profile_dir: &Path) -> Vec<String> {
         "--disable-backgrounding-occluded-windows".to_string(),
         "--disable-renderer-backgrounding".to_string(),
         "--disable-sync".to_string(),
+        format!("--disable-features={PASSWORD_FEATURES_OFF}"),
         "--force-device-scale-factor=1".to_string(),
         super::viewport::window_size_arg(),
         "about:blank".to_string(),
     ]
+}
+
+/// The browser features switched off in every Auto Run browser, as the
+/// value of the ONE `--disable-features` switch Chromium honours (a second
+/// switch replaces the first, so any other feature is folded in by
+/// `args_with`). Chrome's breach check ("Change your password") opens a
+/// bubble over the page after a sign-in with a weak password.
+pub const PASSWORD_FEATURES_OFF: &str = "PasswordLeakDetection";
+
+const PASSWORD_PREFS_TOP: [&str; 1] = ["credentials_enable_service"];
+const PASSWORD_PREFS_PROFILE: [&str; 2] = ["password_manager_enabled", "password_manager_leak_detection"];
+
+/// The profile's `Preferences` with the browser's password saving and
+/// breach warning off ("Save password?" and "Change your password" are
+/// bubbles over the page under test). `existing` is the file's text when
+/// there is one: every other key it holds is kept; text that is not a JSON
+/// object is replaced.
+pub fn password_prefs(existing: Option<&str>) -> serde_json::Value {
+    use serde_json::{json, Value};
+    let mut prefs = match existing.and_then(|t| serde_json::from_str::<Value>(t).ok()) {
+        Some(v @ Value::Object(_)) => v,
+        _ => json!({}),
+    };
+    let root = prefs.as_object_mut().expect("an object");
+    for key in PASSWORD_PREFS_TOP {
+        root.insert(key.to_string(), json!(false));
+    }
+    if !root.get("profile").is_some_and(Value::is_object) {
+        root.insert("profile".to_string(), json!({}));
+    }
+    let profile = root.get_mut("profile").and_then(Value::as_object_mut).expect("an object");
+    for key in PASSWORD_PREFS_PROFILE {
+        profile.insert(key.to_string(), json!(false));
+    }
+    prefs
+}
+
+/// Write `<profile_dir>/Default/Preferences` from `password_prefs`, keeping
+/// what a profile that is reused already has in it.
+pub fn write_password_prefs(profile_dir: &Path) -> std::io::Result<()> {
+    let default = profile_dir.join("Default");
+    std::fs::create_dir_all(&default)?;
+    let file = default.join("Preferences");
+    let existing = std::fs::read_to_string(&file).ok();
+    let text = serde_json::to_string(&password_prefs(existing.as_deref())).map_err(std::io::Error::other)?;
+    std::fs::write(&file, text)
+}
+
+/// The line logged when the prefs could not be written - the launch goes
+/// on (the prompts are a nuisance, a refused launch stops every run). Names
+/// the kind of failure, never a path.
+pub fn prefs_failure_is_logged_only(e: &std::io::Error) -> String {
+    format!("Auto Run could not switch off the browser's password prompts: {:?}", e.kind())
 }
 
 /// `launch_args` plus extra switches, kept in front of the start page
@@ -122,7 +176,22 @@ pub fn launch_args(port: u16, profile_dir: &Path) -> Vec<String> {
 pub fn args_with(port: u16, profile_dir: &Path, extra: &[&str]) -> Vec<String> {
     let mut args = launch_args(port, profile_dir);
     let start_page = args.pop();
-    args.extend(extra.iter().map(|s| s.to_string()));
+    // Chromium honours only one `--disable-features`: an extra one is
+    // folded into ours, not added beside it.
+    const SWITCH: &str = "--disable-features=";
+    for extra_switch in extra {
+        match extra_switch.strip_prefix(SWITCH) {
+            Some(more) => {
+                if let Some(ours) = args.iter_mut().find(|a| a.starts_with(SWITCH)) {
+                    ours.push(',');
+                    ours.push_str(more);
+                } else {
+                    args.push(extra_switch.to_string());
+                }
+            }
+            None => args.push(extra_switch.to_string()),
+        }
+    }
     args.extend(start_page);
     args
 }
@@ -378,6 +447,9 @@ pub fn launch_with(which: Browser, extra_args: &[&str]) -> Result<LaunchedBrowse
     })?;
 
     let (port, profile_dir) = fresh_profile()?;
+    if let Err(e) = write_password_prefs(&profile_dir) {
+        crate::applog::warn(prefs_failure_is_logged_only(&e));
+    }
     let tree = match Tree::new(profile_dir.clone()) {
         Ok(t) => t,
         Err(e) => {
