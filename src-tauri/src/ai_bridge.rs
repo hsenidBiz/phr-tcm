@@ -10128,7 +10128,22 @@ async fn try_in_area<D: crate::browser::cdp::Driver>(
     files_finds: bool,
     action: &crate::browser::actions::Action,
 ) -> (u16, String) {
+    let guarded = d.is_guarding_saves();
+    let mark = if guarded { Some(crate::browser::cdp::Driver::net_mark(d)) } else { None };
     let tried = try_action(d, account, lease, root, organization, project, case_id, discovery_area, false, files_finds, action, None).await;
+    // The writes a guarded try sent that the guard let through, by method and path.
+    let let_through: Vec<(String, String)> = match mark {
+        Some(mark) => {
+            let sent = crate::browser::cdp::Driver::net_since(d, mark);
+            crate::browser::cdp::Driver::net_unmark(d, mark);
+            sent.iter()
+                .filter(|s| crate::browser::save_guard::SAVE_METHODS.contains(&s.method.as_str()))
+                .filter(|s| !crate::browser::save_guard::stopped_by_guard(s))
+                .map(|s| (s.method.clone(), crate::browser::save_guard::path_of(&s.path_query)))
+                .collect()
+        }
+        None => Vec::new(),
+    };
     let (outcome, steps, answered) = match tried {
         Ok(tried) => (tried.outcome, tried.steps, tried.answered),
         Err(refused) => return refused,
@@ -10150,6 +10165,9 @@ async fn try_in_area<D: crate::browser::cdp::Driver>(
         }
         let said = if detail.is_empty() { what.clone() } else { format!("{what}: {}", one_short_line(detail)) };
         text.push_str(&format!("\n{}. {}: {said}", i + 1, if o.ok { "ok" } else { "failed" }));
+    }
+    if let Some(line) = crate::browser::save_guard::let_through_line(&let_through) {
+        text.push_str(&format!("\nlet_through: {line}"));
     }
     (200, text)
 }

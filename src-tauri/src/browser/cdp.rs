@@ -1131,6 +1131,7 @@ impl<T: Transport> Cdp<T> {
     /// popup it just opened before that popup's guard is on.
     pub async fn guard_saves(&mut self, patterns: &[String]) -> Result<(), CdpError> {
         let before = (self.armed.replace(patterns.to_vec()), self.hold);
+        self.close_save_click_window();
         self.hold = false;
         self.hold_pending = false;
         self.hold_tabs.clear();
@@ -1245,6 +1246,7 @@ impl<T: Transport> Cdp<T> {
     /// tab is asked, and the first refusal is reported after.
     pub async fn stop_guarding_saves(&mut self) -> Result<(), CdpError> {
         self.armed = None;
+        self.close_save_click_window();
         let mut held = Vec::new();
         for t in self.tabs.iter_mut().filter(|t| t.held) {
             t.held = false;
@@ -1282,6 +1284,14 @@ impl<T: Transport> Cdp<T> {
         self.armed.is_some() || self.tabs.iter().any(|t| t.guard.is_some())
     }
 
+    /// The window is closed: a click that failed, a hold, a guard lift.
+    pub fn close_save_click_window(&mut self) {
+        self.armed_click_until = None;
+        for g in self.tabs.iter_mut().filter_map(|t| t.guard.as_mut()) {
+            g.click_until = None;
+        }
+    }
+
     /// The run's own save words while it guards saves (`guard_saves`).
     pub fn guard_words(&self) -> Option<Vec<String>> {
         self.armed.clone()
@@ -1291,7 +1301,12 @@ impl<T: Transport> Cdp<T> {
     /// every writing request is stopped, whatever its path. The sign-in's
     /// hold still wins. Nothing happens on a connection that guards nothing.
     pub fn open_save_click_window(&mut self) {
-        let until = Instant::now() + Duration::from_millis(super::save_guard::SAVE_CLICK_WINDOW_MS);
+        // A sign-in's or a menu preference's own click is never the script's.
+        if self.hold || self.hold_pending {
+            return;
+        }
+        let until = Instant::now()
+            + Duration::from_millis(super::save_guard::SAVE_CLICK_WINDOW_MS + super::save_guard::SAVE_CLICK_SLACK_MS);
         if self.armed.is_some() {
             self.armed_click_until = Some(until);
         }
@@ -1329,6 +1344,8 @@ impl<T: Transport> Cdp<T> {
     /// (`Tab::late_save`). A save whose document is not known yet waits,
     /// paused, at most `PARK_LIMIT`, even in the middle of a command.
     pub fn hold_saves(&mut self, hold: bool) {
+        // A window opened before or during a hold never outlives it.
+        self.close_save_click_window();
         if hold {
             if !self.hold && !self.hold_pending {
                 self.hold_pending = true;
@@ -1796,7 +1813,7 @@ impl<T: Transport> Cdp<T> {
         }
         let armed = self.armed.clone();
         if let Some(words) = &armed {
-            tab.guard = Some(SaveGuard { patterns: words.clone(), hold: self.hold, blocked: None, click_until: None });
+            tab.guard = Some(SaveGuard { patterns: words.clone(), hold: self.hold, blocked: None, click_until: self.armed_click_until });
             tab.held = waiting;
         }
         self.tabs.push(tab);
@@ -3037,6 +3054,8 @@ pub trait Driver {
     }
     /// See `Cdp::open_save_click_window`. Nothing to open without a guard.
     fn open_save_click_window(&mut self) {}
+    /// See `Cdp::close_save_click_window`.
+    fn close_save_click_window(&mut self) {}
     /// See `Cdp::take_save_blocked`. A driver with no guard stopped nothing.
     fn take_save_blocked(&mut self) -> Option<String> {
         None
@@ -3272,6 +3291,9 @@ impl<T: Transport> Driver for Cdp<T> {
     }
     fn open_save_click_window(&mut self) {
         Cdp::open_save_click_window(self)
+    }
+    fn close_save_click_window(&mut self) {
+        Cdp::close_save_click_window(self)
     }
     fn take_save_blocked(&mut self) -> Option<String> {
         Cdp::take_save_blocked(self)

@@ -1225,14 +1225,22 @@ pub(crate) fn failed_by(e: CdpError) -> ActionOutcome {
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct Policy {
     pub allowed_origins: Option<Vec<String>>,
+    /// The runner's own action (a sign-in, a menu walk, a popup close, menu
+    /// preferences), not the script's: its clicks never open the no-save
+    /// window.
+    pub runner_own: bool,
 }
 
 impl Policy {
     pub fn open() -> Self {
-        Policy { allowed_origins: None }
+        Policy { allowed_origins: None, runner_own: false }
+    }
+    /// This policy for the runner's own actions.
+    pub fn as_runner(&self) -> Policy {
+        Policy { runner_own: true, ..self.clone() }
     }
     pub fn only(origins: Vec<String>) -> Self {
-        Policy { allowed_origins: Some(origins.into_iter().map(|o| o.to_ascii_lowercase()).collect()) }
+        Policy { allowed_origins: Some(origins.into_iter().map(|o| o.to_ascii_lowercase()).collect()), runner_own: false }
     }
     pub fn allows(&self, url: &str) -> bool {
         match &self.allowed_origins {
@@ -2420,14 +2428,16 @@ async fn run<D: Driver>(d: &mut D, action: &Action, timing: &Timing, policy: &Po
             }
             // A control named like a save opens the no-save window before
             // the click: whatever it sends in the next seconds is stopped.
-            if let Some(words) = d.guard_words() {
-                if super::save_guard::click_saves(selector, &words) {
-                    d.open_save_click_window();
-                }
-            }
+            // Judged by the selector's words and by the element it found.
+            let opened = if policy.runner_own { false } else { open_window_for_click(d, selector, &ready).await };
             match input::click(d, &ready).await {
                 Ok(()) => ActionOutcome::passed(format!("clicked {}{}", selector.describe(), written_note(&ready))),
-                Err(b) => blocked(b),
+                Err(b) => {
+                    if opened {
+                        d.close_save_click_window();
+                    }
+                    blocked(b)
+                }
             }
         }
         Action::Fill { selector, value } => {
@@ -2564,7 +2574,14 @@ async fn run<D: Driver>(d: &mut D, action: &Action, timing: &Timing, policy: &Po
         Action::UseComponent { .. } => ActionOutcome::failed("components are expanded before they run"),
         Action::Reload => reload(d, timing).await,
         Action::ExpireSession => expire_session(d).await,
-        Action::PressKey { key, times } => press_key(d, key, times.unwrap_or(1), timing).await,
+        Action::PressKey { key, times } => {
+            // Enter or Space can submit a form or press a focused Finish:
+            // the window opens for it, as for a click on a save.
+            if !policy.runner_own && super::save_guard::key_submits(key) && d.guard_words().is_some() {
+                d.open_save_click_window();
+            }
+            press_key(d, key, times.unwrap_or(1), timing).await
+        }
         Action::ExpectRow { table, cells, exact, timeout_ms } => {
             let check = table::TableCheck::Row { cells: &cells.0, exact: *exact };
             table::expect_table(d, table, check, wait(timeout_ms, timing), timing.poll_ms).await
@@ -2775,6 +2792,25 @@ pub(crate) async fn focus_now<D: Driver>(d: &mut D) -> String {
 /// to the page as a keyboard sends it, so its default does what a person's
 /// would - Tab moves the focus, Enter submits, Space presses a button. Says
 /// where the focus went after.
+/// Open the save-click window when this click is on a control named like a
+/// save: by the selector's words, else by what the found element says of
+/// itself. True when it opened.
+async fn open_window_for_click<D: Driver>(d: &mut D, selector: &Target, ready: &input::Ready) -> bool {
+    let Some(words) = d.guard_words() else { return false };
+    let mut opens = super::save_guard::click_saves(selector, &words);
+    if !opens {
+        const ELEMENT_WORDS_JS: &str = "function(){const out=[];const c=this.closest?this.closest('button,a,[role=button],input[type=submit],input[type=button]'):null;for(const n of [this,c]){if(!n)continue;out.push(String(n.innerText||n.textContent||'').slice(0,200),String(n.value||'').slice(0,200),String((n.getAttribute&&n.getAttribute('aria-label'))||'').slice(0,200),String(n.title||'').slice(0,200));}return out;}";
+        if let Ok(v) = page::call_value(d, &ready.handle, ELEMENT_WORDS_JS, &[]).await {
+            let texts: Vec<String> = v.as_array().into_iter().flatten().filter_map(|t| t.as_str().map(str::to_string)).collect();
+            opens = super::save_guard::element_saves(&texts, &words);
+        }
+    }
+    if opens {
+        d.open_save_click_window();
+    }
+    opens
+}
+
 async fn press_key<D: Driver>(d: &mut D, key: &str, times: u8, timing: &Timing) -> ActionOutcome {
     let combo = match keys::parse(key) {
         Ok(c) => c,

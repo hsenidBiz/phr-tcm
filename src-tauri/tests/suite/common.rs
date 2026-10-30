@@ -81,6 +81,9 @@ pub struct ScriptedDriver {
     pub hold: bool,
     /// Every `hold_saves` this driver was asked, in order.
     pub holds: Vec<bool>,
+    /// How many times the save-click window was opened, and closed.
+    pub save_windows: u32,
+    pub save_windows_closed: u32,
     /// What `take_saves_stopped` hands over: (method, path).
     pub saves_stopped: Vec<(String, String)>,
     /// Every folder `enable_downloads` was handed, in order.
@@ -241,6 +244,8 @@ impl ScriptedDriver {
             saves_on_call: vec![],
             saves_when: vec![],
             honour_hold: false,
+            save_windows: 0,
+            save_windows_closed: 0,
             hold: false,
             holds: vec![],
             saves_stopped: vec![],
@@ -610,6 +615,16 @@ impl Driver for ScriptedDriver {
 
     /// Guarding since the last `Fetch.enable` that no `Fetch.disable`
     /// followed.
+    fn guard_words(&self) -> Option<Vec<String>> {
+        if self.is_guarding_saves() { Some(Vec::new()) } else { None }
+    }
+    fn open_save_click_window(&mut self) {
+        self.save_windows += 1;
+    }
+    fn close_save_click_window(&mut self) {
+        self.save_windows_closed += 1;
+    }
+
     fn is_guarding_saves(&self) -> bool {
         self.calls.iter().rev().find(|(m, _)| m == "Fetch.enable" || m == "Fetch.disable").is_some_and(|(m, _)| m == "Fetch.enable")
     }

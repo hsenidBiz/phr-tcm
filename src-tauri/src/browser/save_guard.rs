@@ -24,10 +24,20 @@ pub const SAVE_WORDS: [&str; 7] = ["save", "update", "delete", "submit", "approv
 /// `GetCreatedLeaves` read or a `/recreate` preview.
 pub const WORD_SAVES: [&str; 3] = ["add", "create", "insert"];
 
-/// A control named with one of these is a save-click as well (besides
-/// `SAVE_WORDS`, which covers "Save & Continue"): "Continue" alone submits a
-/// wizard step.
-pub const CLICK_WORDS: [&str; 1] = ["continue"];
+/// A control named with one of these WORDS is a save-click as well (besides
+/// `SAVE_WORDS` as substrings, which covers "Save & Continue"): they name
+/// the button that commits a wizard step, a row or a confirm dialog. Matched
+/// as whole words (a trailing "s" allowed), so "Facebook" is not "ok".
+/// "Next" is here on the owner's ruling: a wizard whose Next posts its step
+/// saves too. "Search" is not.
+pub const CLICK_WORDS: [&str; 17] = [
+    "continue", "finish", "done", "complete", "apply", "confirm", "proceed", "post", "send", "generate", "process",
+    "reject", "remove", "next", "ok", "yes", "okay",
+];
+
+/// The window is read late by up to this much: a request is judged when its
+/// pause is read, which can be a moment after the browser sent it.
+pub const SAVE_CLICK_SLACK_MS: u64 = 750;
 
 /// How long after a click on a save-named control any writing request is
 /// stopped, whatever its path (a wizard's `POST /hr/PMSV10/wizard` has no
@@ -182,6 +192,25 @@ fn word_at(c: &[char], i: usize, word: &str) -> bool {
 /// phrase, or a `WORD_SAVES` word as a word of its own.
 pub fn click_saves(target: &crate::browser::locator::Target, patterns: &[String]) -> bool {
     use crate::browser::locator::Target;
+    selector_words(target).into_iter().any(|text| words_save(text, patterns))
+}
+
+/// The same judgement on the words of the element a click landed on: its
+/// accessible name, text, `value`, `aria-label` and `title` (its nearest
+/// button's or link's too). Never its id or class: too noisy.
+pub fn element_saves(texts: &[String], patterns: &[String]) -> bool {
+    texts.iter().any(|t| words_save(t, patterns))
+}
+
+/// Does pressing this key submit a form (Enter, Space)?
+pub fn key_submits(key: &str) -> bool {
+    let last = key.rsplit('+').next().unwrap_or("").trim().to_lowercase();
+    let last = if key.trim() == "+" { String::new() } else { last };
+    matches!(last.as_str(), "enter" | "numpadenter" | "return" | "space" | "spacebar" | "") && !key.trim().is_empty()
+}
+
+fn selector_words(target: &crate::browser::locator::Target) -> Vec<&str> {
+    use crate::browser::locator::Target;
     let mut phrases: Vec<&str> = Vec::new();
     match target {
         Target::Legacy(s) => phrases.push(s.as_str()),
@@ -192,16 +221,31 @@ pub fn click_saves(target: &crate::browser::locator::Target, patterns: &[String]
             }
         }
     }
-    phrases.into_iter().any(|text| {
+    phrases
+}
+
+fn words_save(text: &str, patterns: &[String]) -> bool {
+    {
         let lower = text.to_lowercase();
         // Words as path-like segments for `adds`: anything that is not a
         // name character separates.
         let segmented: String =
             text.chars().map(|c| if c.is_alphanumeric() || matches!(c, '-' | '_' | '.') { c } else { '/' }).collect();
+        // camelCase humps and separators split words: "btnFinish" is btn, finish.
+        let mut spaced = String::new();
+        let mut prev_lower = false;
+        for c in text.chars() {
+            if c.is_ascii_uppercase() && prev_lower {
+                spaced.push(' ');
+            }
+            prev_lower = c.is_ascii_lowercase() || c.is_ascii_digit();
+            spaced.push(if c.is_alphanumeric() { c.to_ascii_lowercase() } else { ' ' });
+        }
         adds(&segmented)
-            || SAVE_WORDS.iter().chain(CLICK_WORDS.iter()).any(|w| lower.contains(w))
+            || SAVE_WORDS.iter().any(|w| lower.contains(w))
+            || spaced.split_whitespace().any(|t| CLICK_WORDS.iter().any(|w| t == *w || t.strip_suffix('s') == Some(*w)))
             || patterns.iter().map(|p| p.trim().to_lowercase()).any(|p| !p.is_empty() && lower.contains(&p))
-    })
+    }
 }
 
 /// Does the guard stop this request: a save by its path (`is_save`), or any

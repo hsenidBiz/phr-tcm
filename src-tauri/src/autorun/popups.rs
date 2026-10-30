@@ -71,7 +71,7 @@ pub async fn close_shown<D: Driver>(
         }
         let name = p.name.trim();
         let short = Timing { action_ms: timing.action_ms.min(CLOSE_MS), ..timing.clone() };
-        let out = execute_in(d, &Action::Click { selector: p.close.clone() }, &short, policy).await;
+        let out = execute_in(d, &Action::Click { selector: p.close.clone() }, &short, &policy.as_runner()).await;
         if out.ok {
             crate::applog::info(format!("Auto Run: closed the {name} before {}", action.kind()));
             notes.push(closed(name));
@@ -113,7 +113,7 @@ pub async fn close_shown_within<D: Driver>(d: &mut D, recipe: &SignInRecipe, wit
                 continue;
             }
             let name = p.name.trim();
-            let out = execute_in(d, &Action::Click { selector: p.close.clone() }, &short, &policy).await;
+            let out = execute_in(d, &Action::Click { selector: p.close.clone() }, &short, &policy.as_runner()).await;
             // Tried once either way: a close that did not work is not retried.
             done[i] = true;
             if out.ok {

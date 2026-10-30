@@ -460,7 +460,7 @@ async fn sign_in_with<D: Driver>(
 /// the page the case was on is gone, with whatever it sent on the way out -
 /// is a no-save case's guard held.
 async fn open_start<D: Driver>(d: &mut D, go: &Action, timing: &Timing, policy: &Policy) -> ActionOutcome {
-    let arrived = execute_in(d, go, timing, policy).await;
+    let arrived = execute_in(d, go, timing, &policy.as_runner()).await;
     if arrived.ok {
         d.hold_saves(true);
     }
@@ -836,7 +836,7 @@ async fn run_action<D: Driver>(
     timing: &Timing,
     policy: &Policy,
 ) -> Result<(), (usize, String, bool)> {
-    if run.keep(execute_in(d, action, timing, policy).await) {
+    if run.keep(execute_in(d, action, timing, &policy.as_runner()).await) {
         return Ok(());
     }
     let last = run.steps.last();
@@ -942,7 +942,7 @@ async fn attempt_prompt<D: Driver>(
 ) -> Result<bool, (usize, String, bool)> {
     let short = attempt_timing(timing);
     while let Some(action) = w.then.get(state.done) {
-        let out = execute_in(d, action, &short, policy).await;
+        let out = execute_in(d, action, &short, &policy.as_runner()).await;
         if in_the_way(&out) || (!out.ok && out.harness) {
             state.blocked = Some(out);
             return Ok(false);

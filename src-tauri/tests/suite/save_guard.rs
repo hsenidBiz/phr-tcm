@@ -21,7 +21,7 @@ use v2_lib::autorun::{CaseRecord, CaseScript, StepRecord};
 use v2_lib::browser::actions::ActionOutcome;
 use v2_lib::browser::cdp::{Cdp, CdpError, Transport};
 use v2_lib::browser::save_guard::{
-    adds, blocked, check_words, click_saves, fetch_enable_all_params, let_through_line, verdict, fetch_enable_params, is_blocked, is_save, path_of, setup_failed,
+    adds, blocked, check_words, click_saves, element_saves, fetch_enable_all_params, key_submits, let_through_line, verdict, fetch_enable_params, is_blocked, is_save, path_of, setup_failed,
     SAVE_WORDS, TYPED_REFUSED, UNPAUSED_TYPES, WORD_SAVES,
 };
 use v2_lib::browser::locator::{LocatorStep, Target};
@@ -1497,15 +1497,46 @@ fn click_saves_on_css_id() {
 
 #[test]
 fn click_saves_false_for_search_next_and_address() {
-    for t in [named("Search"), named("Next"), named("Address book"), styled("#padding")] {
+    for t in [named("Search"), named("Address book"), styled("#padding")] {
         assert!(!click_saves(&t, &[]), "{t:?}");
     }
 }
 
 #[test]
 fn click_saves_project_word() {
-    assert!(click_saves(&named("Finish"), &words(&["finish"])));
-    assert!(!click_saves(&named("Finish"), &[]));
+    assert!(click_saves(&named("Archive"), &words(&["archive"])));
+    assert!(!click_saves(&named("Archive"), &[]));
+}
+
+#[test]
+fn click_saves_on_every_committing_button() {
+    for n in [
+        "Save", "Submit", "Continue", "Save & Continue", "Finish", "Done", "Complete", "Apply", "Confirm", "Approve",
+        "Reject", "Publish", "Update", "Create", "Add", "Delete", "Remove", "Send", "Next", "OK", "Yes",
+    ] {
+        assert!(click_saves(&named(n), &[]), "{n}");
+    }
+    for n in ["Search", "Cancel", "Facebook", "Book a room", "Back"] {
+        assert!(!click_saves(&named(n), &[]), "{n}");
+    }
+}
+
+#[test]
+fn element_saves_reads_what_the_clicked_element_says() {
+    let t = |a: &[&str]| a.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+    assert!(element_saves(&t(&["", "", "Finish", ""]), &[]));
+    assert!(element_saves(&t(&["Save"]), &[]));
+    assert!(!element_saves(&t(&["Search", "", "Look up", ""]), &[]));
+}
+
+#[test]
+fn enter_and_space_submit() {
+    for k in ["Enter", "Shift+Enter", "Space", "NumpadEnter", "Control+Enter"] {
+        assert!(key_submits(k), "{k}");
+    }
+    for k in ["Tab", "Escape", "ArrowDown", "a", ""] {
+        assert!(!key_submits(k), "{k}");
+    }
 }
 
 #[test]
@@ -1574,4 +1605,76 @@ async fn sign_in_posts_are_never_stopped() {
     cdp.call("Runtime.evaluate", json!({})).await.unwrap();
     assert_eq!(answer_to(&cdp, "r1").unwrap()["method"], "Fetch.continueRequest");
     assert_eq!(cdp.take_save_blocked(), None);
+}
+
+#[tokio::test]
+async fn a_window_never_outlives_a_hold() {
+    let mut cdp = guarded(&[]).await;
+    cdp.transport_mut().incoming.push_back(navigated("L-signin", "https://hr.example/login"));
+    read_waiting(&mut cdp).await;
+    cdp.open_save_click_window();
+    cdp.hold_saves(true);
+    cdp.transport_mut().incoming.push_back(r#"{"id":3,"result":{}}"#.to_string());
+    cdp.call("Runtime.evaluate", json!({})).await.unwrap();
+    // Asked for during the hold: no window.
+    cdp.open_save_click_window();
+    cdp.hold_saves(false);
+    cdp.transport_mut().incoming.extend([
+        paused("r1", "POST", "https://hr.example/Home/Load"),
+        r#"{"id":4,"result":{}}"#.to_string(),
+    ]);
+    cdp.call("Runtime.evaluate", json!({})).await.unwrap();
+    assert_eq!(answer_to(&cdp, "r1").unwrap()["method"], "Fetch.continueRequest");
+    assert_eq!(cdp.take_save_blocked(), None);
+}
+
+#[tokio::test]
+async fn a_closed_window_lets_writes_through_again() {
+    let mut cdp = guarded(&[]).await;
+    cdp.open_save_click_window();
+    cdp.close_save_click_window();
+    cdp.transport_mut().incoming.extend([
+        paused("r1", "POST", "https://hr.example/hr/PMSV10/wizard"),
+        r#"{"id":3,"result":{}}"#.to_string(),
+    ]);
+    cdp.call("Runtime.evaluate", json!({})).await.unwrap();
+    assert_eq!(answer_to(&cdp, "r1").unwrap()["method"], "Fetch.continueRequest");
+}
+
+fn click_action(selector: &str) -> v2_lib::browser::actions::Action {
+    serde_json::from_value(json!({ "kind": "click", "selector": selector })).unwrap()
+}
+
+/// A click on a save-named control on a guarded driver opens the window;
+/// on an unguarded driver, on a search control, or as the runner's own
+/// action, it does not.
+#[tokio::test]
+async fn a_click_opens_the_window_only_for_a_save_named_control_on_a_guard() {
+    use v2_lib::browser::actions::{execute_in, Policy};
+    use v2_lib::browser::cdp::Driver as _;
+    let timing = quick();
+    for (guard, selector, runner, windows) in
+        [(true, "#save", false, 1), (true, "#search", false, 0), (false, "#save", false, 0), (true, "#save", true, 0)]
+    {
+        let page = common::FakePage::default();
+        let mut d = common::ScriptedDriver::new(move |method, params| page.answer(method, params));
+        if guard {
+            d.call("Fetch.enable", json!({})).await.unwrap();
+        }
+        let policy = if runner { Policy::open().as_runner() } else { Policy::open() };
+        execute_in(&mut d, &click_action(selector), &timing, &policy).await;
+        assert_eq!(d.save_windows, windows, "guard {guard} {selector} runner {runner}");
+    }
+}
+
+#[tokio::test]
+async fn enter_opens_the_window_on_a_guard() {
+    use v2_lib::browser::actions::{execute_in, Policy};
+    use v2_lib::browser::cdp::Driver as _;
+    let page = common::FakePage::default();
+    let mut d = common::ScriptedDriver::new(move |method, params| page.answer(method, params));
+    d.call("Fetch.enable", json!({})).await.unwrap();
+    let a: v2_lib::browser::actions::Action = serde_json::from_value(json!({ "kind": "press_key", "key": "Enter" })).unwrap();
+    execute_in(&mut d, &a, &quick(), &Policy::open()).await;
+    assert_eq!(d.save_windows, 1);
 }
