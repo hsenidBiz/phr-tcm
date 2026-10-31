@@ -359,6 +359,61 @@ fn the_next_start_only_renames_the_kept_copy() {
         .all(|e| !e.file_name().to_string_lossy().ends_with(".complete")));
 }
 
+fn fail_rename_once(t: &Path) {
+    let first = roots::migrate_with(
+        t,
+        MigrationOps {
+            fan_out: &roots::fan_out,
+            rename: &mut |_, _| Err(std::io::Error::from_raw_os_error(5)),
+            sleep: &mut no_sleep,
+        },
+    );
+    assert!(first.is_err());
+}
+
+fn counted_retry(t: &Path) -> i32 {
+    let copies = RefCell::new(0);
+    roots::migrate_with(
+        t,
+        MigrationOps {
+            fan_out: &|f, s, i, a| {
+                *copies.borrow_mut() += 1;
+                roots::fan_out(f, s, i, a)
+            },
+            rename: &mut |a, b| std::fs::rename(a, b),
+            sleep: &mut no_sleep,
+        },
+    )
+    .unwrap()
+    .unwrap();
+    let n = *copies.borrow();
+    n
+}
+
+#[test]
+fn a_kept_copy_is_rebuilt_when_the_flat_folder_was_used_meanwhile() {
+    let t = tempfile::tempdir().unwrap();
+    two_envs(t.path());
+    put(t.path(), "scripts/case-1.json", "S");
+    fail_rename_once(t.path());
+    std::thread::sleep(std::time::Duration::from_millis(50));
+    put(t.path(), "scripts/case-1.json", "EDITED");
+    assert!(counted_retry(t.path()) > 0, "the stale copy was reused");
+    assert_eq!(std::fs::read_to_string(at(t.path(), B, "scripts/case-1.json")).unwrap(), "EDITED");
+    assert!(stagings(t.path()).is_empty());
+}
+
+#[test]
+fn a_kept_copy_nothing_changed_since_is_only_renamed() {
+    let t = tempfile::tempdir().unwrap();
+    two_envs(t.path());
+    put(t.path(), "scripts/case-1.json", "S");
+    std::thread::sleep(std::time::Duration::from_millis(50));
+    fail_rename_once(t.path());
+    assert_eq!(counted_retry(t.path()), 0);
+    assert_eq!(std::fs::read_to_string(at(t.path(), A, "scripts/case-1.json")).unwrap(), "S");
+}
+
 #[test]
 fn a_staging_without_its_mark_is_rebuilt() {
     let t = tempfile::tempdir().unwrap();

@@ -762,7 +762,18 @@ pub fn migrate_with(shared: &Path, ops: MigrationOps) -> Result<Option<Migration
     // A copy that was built whole and failed only at the final rename is
     // kept (see below): the next start retries just that rename. Every other
     // staging folder is half-built and goes.
-    let finished = sweep_stagings(shared);
+    let mut finished = sweep_stagings(shared);
+    if let Some((staging, _)) = &finished {
+        // The app ran on the flat folder since the copy was made: the copy
+        // is stale, so it is made again.
+        let made = std::fs::metadata(complete_marker(staging)).and_then(|m| m.modified()).ok();
+        if made.is_none_or(|made| newest_flat_change(shared).is_some_and(|n| n > made)) {
+            crate::applog::info("Auto Run: a kept per-environment copy is rebuilt because the app was used before it could be put in place");
+            let _ = std::fs::remove_dir_all(staging);
+            let _ = std::fs::remove_file(complete_marker(staging));
+            finished = None;
+        }
+    }
     if let Some((staging, report)) = finished {
         crate::ai_tools::rename_retrying_waits(&staging, &envs, ops.rename, ops.sleep, &MIGRATION_RENAME_WAITS_MS)?;
         let _ = std::fs::remove_file(complete_marker(&staging));
@@ -806,6 +817,31 @@ pub fn migrate_with(shared: &Path, ops: MigrationOps) -> Result<Option<Migration
             Err(e)
         }
     }
+}
+
+/// The newest modified time of anything inside the flat originals of the
+/// per-environment items (the folders' own times included).
+fn newest_flat_change(shared: &Path) -> Option<std::time::SystemTime> {
+    fn walk(p: &Path, newest: &mut Option<std::time::SystemTime>) {
+        let Ok(meta) = std::fs::symlink_metadata(p) else { return };
+        if let Ok(t) = meta.modified() {
+            if newest.is_none_or(|n| t > n) {
+                *newest = Some(t);
+            }
+        }
+        if meta.is_dir() {
+            if let Ok(entries) = std::fs::read_dir(p) {
+                for e in entries.flatten() {
+                    walk(&e.path(), newest);
+                }
+            }
+        }
+    }
+    let mut newest = None;
+    for (name, _) in PER_ENV_ITEMS {
+        walk(&shared.join(name), &mut newest);
+    }
+    newest
 }
 
 /// The small file beside a staging folder that says the copy in it is whole.
