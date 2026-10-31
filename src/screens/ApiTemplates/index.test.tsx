@@ -1166,3 +1166,19 @@ test("a delete template saved before Clean up names no kind, and its row says so
   expect(within(screen.getByRole("listitem", { name: "Remove a cycle" })).queryByText("needs a kind")).toBeNull();
   expect(within(screen.getByRole("listitem", { name: "Create a goal" })).queryByText("needs a kind")).toBeNull();
 });
+
+test("names the environment whose templates are on screen", async () => {
+  mockOverview(OVERVIEW, (cmd) =>
+    cmd === "env_list"
+      ? {
+          active: "env-00000002",
+          playwright_export: "env-00000002",
+          environments: [
+            { id: "env-00000002", name: "Staging", start_url: "", allowed_origins: [], db_id: "db", test_environment: false, has_default_password: false },
+          ],
+        }
+      : undefined,
+  );
+  renderScreen();
+  expect(await screen.findByRole("note", { name: "Environment" })).toHaveTextContent("Templates for Staging");
+});

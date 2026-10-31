@@ -5,6 +5,7 @@
 // the JSON itself - the full detail, and what Save writes - and Back to
 // readable view returns once the JSON parses.
 
+import { useCloseOnEnvironmentChange } from "../../hooks/useCloseOnEnvironmentChange";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { toast } from "../../lib/toast";
@@ -62,6 +63,8 @@ export default function ScriptEditor({
   project: string;
   onClose: () => void;
 }) {
+  // What it holds is this environment's: it never outlives a switch.
+  useCloseOnEnvironmentChange(onClose);
   const queryClient = useQueryClient();
 
   const existing = useQuery({

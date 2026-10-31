@@ -28,14 +28,17 @@ const ROWS: SyncRow[] = [
 
 type Call = { cmd: string; args: Record<string, unknown> };
 
-function mount(opts: { update?: (args: Record<string, unknown>) => ExportResult | Promise<never>; rows?: SyncRow[] } = {}) {
+function mount(opts: { statesError?: string; update?: (args: Record<string, unknown>) => ExportResult | Promise<never>; rows?: SyncRow[] } = {}) {
   const calls: Call[] = [];
   let rows = opts.rows ?? ROWS;
   mockIPC(
     (cmd, raw) => {
       const args = (raw ?? {}) as Record<string, unknown>;
       calls.push({ cmd, args });
-      if (cmd === "pw_sync_states") return rows;
+      if (cmd === "pw_sync_states") {
+        if (opts.statesError) throw opts.statesError;
+        return rows;
+      }
       if (cmd === "list_test_case_fields") return [];
       if (cmd === "pw_handoff") {
         const ids = args.cases as number[];
@@ -249,4 +252,23 @@ test("an Add new that writes and skips nothing says there is nothing new", async
   await waitFor(() => expect(addNews(m.calls)).toHaveLength(1));
   expect(await screen.findByText("Nothing new to add")).toBeTruthy();
   expect(screen.queryByLabelText("Updated")).toBeNull();
+});
+
+test("shows the export-environment refusal in place of the lists", async () => {
+  const sentence =
+    "Export and Sync run only in Automation, the Playwright export environment - switch to Automation on the AI Bridge tab first";
+  mount({ statesError: sentence });
+  const reason = await screen.findByRole("note", { name: "Why Sync is closed" });
+  expect(reason).toHaveTextContent(sentence);
+  // A reason, not a failure: no retry, no lists, no write buttons.
+  expect(screen.queryByRole("button", { name: "Refresh" })).toBeNull();
+  expect(screen.queryByRole("button", { name: /^Update out of date/ })).toBeNull();
+  expect(screen.queryByRole("table")).toBeNull();
+  expect(document.querySelector(".text-danger")).toBeNull();
+});
+
+test("any other failure to read the states is still shown as one", async () => {
+  mount({ statesError: "The clone could not be read." });
+  const msg = await screen.findByText("The clone could not be read.");
+  expect(msg.className).toContain("text-danger");
 });

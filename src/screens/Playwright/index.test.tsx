@@ -74,9 +74,18 @@ const HEALTHY: RepoStructure = {
   health: [],
 };
 
+const envRow = (id: string, name: string) => ({
+  id, name, start_url: "", allowed_origins: [], db_id: "db", test_environment: false, has_default_password: false,
+});
+const ENV_VIEW = {
+  active: "env-0000000a",
+  playwright_export: "env-0000000b",
+  environments: [envRow("env-0000000a", "Developer"), envRow("env-0000000b", "Automation")],
+};
+
 type Call = { cmd: string; args: Record<string, unknown> };
 
-function mount(clone: string, structure: RepoStructure | (() => RepoStructure) = HEALTHY, opts: { listFails?: boolean } = {}) {
+function mount(clone: string, structure: RepoStructure | (() => RepoStructure) = HEALTHY, opts: { listFails?: boolean; exportEnv?: { id: string; name: string; is_active: boolean } | "none" } = {}) {
   const calls: Call[] = [];
   let saved = clone;
   mockIPC((cmd, args) => {
@@ -91,6 +100,16 @@ function mount(clone: string, structure: RepoStructure | (() => RepoStructure) =
     if (cmd === "pw_list") {
       if (opts.listFails) throw "Playwright did not finish listing the tests.";
       return { tests: [], projects: [], last_report: null, load_errors: [] };
+    }
+    if (cmd === "env_list") return ENV_VIEW;
+    if (cmd === "pw_export_env") {
+      if (opts.exportEnv === "none") throw "no environment has been set up yet";
+      return opts.exportEnv ?? null;
+    }
+    if (cmd === "pw_set_export_env") {
+      const id = (args as { id: string }).id;
+      const e = ENV_VIEW.environments.find((x) => x.id === id)!;
+      return { id, name: e.name, is_active: id === ENV_VIEW.active };
     }
     if (cmd === "pw_reports" || cmd === "pw_users_list" || cmd === "pw_sync_states") return [];
     return null;
@@ -488,4 +507,31 @@ test("a clone with no features lists the hint and a right-click on it makes the 
   fireEvent.keyDown(box, { key: "Enter" });
   await waitFor(() => expect(calls.some((c) => c.cmd === "pw_repo_create_folder")).toBe(true));
   expect(calls.find((c) => c.cmd === "pw_repo_create_folder")!.args).toEqual({ clone: "C:/repo", path: "sl" });
+});
+
+test("shows the export environment and asks before changing it", async () => {
+  const calls = mount("C:/repo", HEALTHY, { exportEnv: { id: "env-0000000b", name: "Automation", is_active: false } });
+  await screen.findByText("All good");
+  expect(await screen.findByText("Exports from Automation")).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("combobox", { name: "Change export environment" }));
+  fireEvent.click(await screen.findByRole("option", { name: "Developer" }));
+  const ask = await screen.findByRole("dialog");
+  expect(ask).toHaveTextContent(
+    "Make Developer the Playwright export environment? The next Sync compares Developer's scripts with the repo, so cases that differ show as out of date. Nothing is written to the repo until you sync.",
+  );
+  // Cancelling changes nothing.
+  fireEvent.click(within(ask).getByRole("button", { name: "Cancel" }));
+  expect(calls.some((c) => c.cmd === "pw_set_export_env")).toBe(false);
+  fireEvent.click(screen.getByRole("combobox", { name: "Change export environment" }));
+  fireEvent.click(await screen.findByRole("option", { name: "Developer" }));
+  fireEvent.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Make export environment" }));
+  await waitFor(() => expect(calls.find((c) => c.cmd === "pw_set_export_env")?.args).toEqual({ id: "env-0000000a" }));
+  expect(await screen.findByText("Exports from Developer")).toBeInTheDocument();
+});
+
+test("with no environments yet the export line is a calm note, not a failure", async () => {
+  mount("C:/repo", HEALTHY, { exportEnv: "none" });
+  await screen.findByText("All good");
+  expect(await screen.findByText(/No environment yet/)).toBeInTheDocument();
+  expect(document.querySelector(".text-danger")).toBeNull();
 });

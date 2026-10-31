@@ -9,6 +9,7 @@
 // Nothing here reaches Azure DevOps: areas and the switch live on this
 // machine, beside the project's sign-in recipe.
 
+import { useCloseOnEnvironmentChange } from "../../hooks/useCloseOnEnvironmentChange";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { commands, events } from "../../bindings";
@@ -64,6 +65,8 @@ export default function AreasDialog({
   caseModules: string[];
   onClose: () => void;
 }) {
+  // What it holds is this environment's: it never outlives a switch.
+  useCloseOnEnvironmentChange(onClose);
   const qc = useQueryClient();
   const navKey = ["autorun-nav", org, project];
   const nav = useQuery({

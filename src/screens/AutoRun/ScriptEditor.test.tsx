@@ -2,8 +2,9 @@
 
 import { clearMocks, mockIPC } from "@tauri-apps/api/mocks";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
+import { setActiveEnvId } from "../../lib/activeEnv";
 import ScriptEditor from "./ScriptEditor";
 
 vi.mock("../../lib/toast", () => ({ toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn(), info: vi.fn() } }));
@@ -945,4 +946,27 @@ test("refuses to save when the existing script fails to load", async () => {
   fireEvent.click(saveButton);
   expect(saved).toBe(0);
   expect(await screen.findByText(/could not load the existing script/i)).toBeInTheDocument();
+});
+
+test("script_editor_closes_when_the_environment_changes", async () => {
+  setActiveEnvId("env-0000000a");
+  const calls: string[] = [];
+  mockIPC((cmd) => {
+    calls.push(cmd);
+    if (cmd === "auto_run_load_script") return { case_id: 7, title: "t", steps: ONE_STEP };
+    if (cmd === "auto_run_list_accounts") return ACCOUNTS;
+    if (cmd === "auto_run_load_nav") return { direct_urls: true, modules: AREAS };
+    return null;
+  });
+  const onClose = vi.fn();
+  render(
+    <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+      <ScriptEditor caseId={7} title="t" steps={[]} org="acme" project="Web" onClose={onClose} />
+    </QueryClientProvider>,
+  );
+  await screen.findByRole("button", { name: "Save script" });
+  act(() => setActiveEnvId("env-0000000b"));
+  expect(onClose).toHaveBeenCalledTimes(1);
+  expect(calls).not.toContain("auto_run_save_script");
+  localStorage.clear();
 });

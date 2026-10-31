@@ -2,6 +2,7 @@
 // script editor: the format has to be proven by hand before anything
 // friendlier is built on it.
 
+import { useCloseOnEnvironmentChange } from "../../hooks/useCloseOnEnvironmentChange";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { toast } from "../../lib/toast";
@@ -39,6 +40,8 @@ const PLACEHOLDER = `{
 }`;
 
 export default function RecipeEditor({ org, project, onClose }: { org: string; project: string; onClose: () => void }) {
+  // What it holds is this environment's: it never outlives a switch.
+  useCloseOnEnvironmentChange(onClose);
   const qc = useQueryClient();
   const existing = useQuery({
     queryKey: ["autorun-recipe", org, project],

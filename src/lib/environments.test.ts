@@ -4,7 +4,9 @@
 import { clearMocks, mockIPC } from "@tauri-apps/api/mocks";
 import { afterEach, expect, test } from "vitest";
 import { activeEnvIdSnapshot, setActiveEnvId } from "./activeEnv";
-import { loadEnvironments, switchEnvironment } from "./environments";
+import { QueryClient } from "@tanstack/react-query";
+import { FIXTURES_KEY } from "../screens/ApiTemplates/FixturesTab";
+import { forgetEnvironmentData, isEnvironmentScopedKey, loadEnvironments, switchEnvironment } from "./environments";
 
 afterEach(() => {
   clearMocks();
@@ -127,4 +129,35 @@ test("a refused switch leaves the switches' environment where it was", async () 
   setActiveEnvId(DEFAULT.id);
   await expect(switchEnvironment("env-00000002")).rejects.toThrow("cannot be switched");
   expect(activeEnvIdSnapshot()).toBe(DEFAULT.id);
+});
+
+test("treats Auto Run, API template and Playwright export queries as per-environment", () => {
+  for (const k of [
+    ["autorun-script", 5],
+    ["autorun-nav", "o", "p"],
+    ["autorun-runs"],
+    ["autorun-accounts"],
+    [FIXTURES_KEY],
+    ["api-templates"],
+    ["env-proposals"],
+    ["pw-sync", "c", "o", "p"],
+    ["pw-export", "o"],
+    ["pw-export-env"],
+  ])
+    expect(isEnvironmentScopedKey(k), JSON.stringify(k)).toBe(true);
+  for (const k of [["test-files", "o", "p"], ["db-databases"], ["environments"], ["autorun-agents"], ["autorun-discovery-active"], [], [5]])
+    expect(isEnvironmentScopedKey(k), JSON.stringify(k)).toBe(false);
+});
+
+test("forgetting the environment's data resets every per-environment query and leaves the rest", async () => {
+  const qc = new QueryClient();
+  qc.setQueryData(["autorun-script", 5], { steps: [] });
+  qc.setQueryData(["pw-sync", "c", "o", "p"], []);
+  qc.setQueryData(["environments"], { active: "a" });
+  qc.setQueryData(["test-files", "o", "p"], []);
+  await forgetEnvironmentData(qc);
+  expect(qc.getQueryData(["autorun-script", 5])).toBeUndefined();
+  expect(qc.getQueryData(["pw-sync", "c", "o", "p"])).toBeUndefined();
+  expect(qc.getQueryData(["environments"])).toEqual({ active: "a" });
+  expect(qc.getQueryData(["test-files", "o", "p"])).toEqual([]);
 });

@@ -53,6 +53,11 @@ function watchWhileAway() {
     });
 }
 
+/** How Rust's refusal to export or sync outside the export environment
+ * begins (`environments::not_export_env`). It is the reason Sync is closed,
+ * not something that failed. */
+const EXPORT_REFUSAL = "Export and Sync run only in ";
+
 /** A UTC stamp as a local date and time; anything unreadable as it is. */
 function localTime(iso: string): string {
   const d = new Date(iso);
@@ -203,6 +208,24 @@ export default function Sync({
     });
 
   const th = "px-3 py-2 text-left text-xs font-medium text-muted";
+
+  const refusal = states.isError && states.error.message.startsWith(EXPORT_REFUSAL) ? states.error.message : "";
+  if (refusal) {
+    return (
+      <section className="space-y-3" aria-label="Sync">
+        <div
+          role="note"
+          aria-label="Why Sync is closed"
+          className="rounded-lg border border-dashed border-border bg-surface px-4 py-6 text-center"
+        >
+          <p className="text-sm text-text">{refusal}</p>
+          <Hint className="mt-1">
+            Use the export environment line above to change which environment exports; that change is made only here.
+          </Hint>
+        </div>
+      </section>
+    );
+  }
 
   return (
     <section className="space-y-3" aria-label="Sync">
