@@ -470,7 +470,10 @@ fn with_no_saved_recipe_the_built_in_signs_in_at_the_environment_address() {
 fn with_no_saved_recipe_and_no_address_the_sign_in_is_refused() {
     use v2_lib::autorun::recipe::{load_effective_recipe, NO_SITE_ADDRESS};
     let dir = tempfile::tempdir().unwrap();
-    assert_eq!(NO_SITE_ADDRESS, "set the site address first - Auto Run, Setup, Site address");
+    assert_eq!(
+        NO_SITE_ADDRESS,
+        "set the site address first - Auto Run, Setup, Site address - or copy this environment's Auto Run data from another one in Edit environments on the AI Bridge tab"
+    );
     assert_eq!(load_effective_recipe(dir.path(), "Acme", "Web").unwrap_err(), NO_SITE_ADDRESS);
     let refused = v2_lib::autorun::signin::prepare(dir.path(), "Acme", "Web", "hr.sup").unwrap_err();
     assert_eq!(refused, NO_SITE_ADDRESS, "the sign-in says the same, before any account is looked up");

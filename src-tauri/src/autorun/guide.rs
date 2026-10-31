@@ -1084,6 +1084,8 @@ database tools read. This guide names the one that is active
 now (the section called "The active environment"). Accounts belong to an
 environment, so a key that exists in one may not exist in another.
 
+Each environment has its own Auto Run scripts, areas, components, quirks, discovery map, saved setups and API templates, fixtures and flows, because each can run a different version of the app. Everything you read and save belongs to the active environment only: a script you save now is the active environment's, and no other environment sees it. If the environment is switched while you are working, a save you started is refused; read again and carry on in the environment now active. When the active environment lacks a script, an area or a component that another environment has, do not rewrite it from memory: ask the person to copy it in the app (Edit environments, Copy Auto Run data…, for everything; Copy to environment… or Copy from environment… on the case's script, for one case), then read it here and change only what differs. You cannot copy between environments yourself.
+
 - `get_accounts` lists the active environment's accounts: key, label and
   username. It includes passwords only when the person has marked the
   environment as a test environment; otherwise it says so. Never copy a
@@ -2857,7 +2859,7 @@ pub fn active_environment_section(
         "It is not marked as a test environment, so `get_accounts` leaves passwords out."
     };
     format!(
-        "## The active environment\n\nThe active environment is \"{}\".{address}{db} {passwords}\n",
+        "## The active environment\n\nThe active environment is \"{}\".{address}{db} {passwords} Its scripts, areas, components and API templates are its own.\n",
         env.name
     )
 }
