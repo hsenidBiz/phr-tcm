@@ -1099,7 +1099,8 @@ fn slow_start_wait_none_for_other_failures() {
 
 /// `stateful_app` whose first `failing` `Page.navigate` calls time out.
 fn cold_first_page(failing: usize, probe_fails: bool) -> (ScriptedDriver, common::StatefulApp) {
-    let (d, state) = stateful_app(false, None);
+    let (mut d, state) = stateful_app(false, None);
+    d.idle_clock = Some(Default::default());
     let navs = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let d = d.answering_first(move |method, params| match method {
         "Page.navigate" if navs.fetch_add(1, Ordering::SeqCst) < failing => {
@@ -1151,4 +1152,48 @@ async fn a_browser_that_stops_answering_is_still_the_browsers_fault() {
     assert!(out.harness, "{}", out.detail);
     assert!(!out.detail.contains(SITE_SLOW_TO_START), "{}", out.detail);
     assert_eq!(d.calls_to("Page.navigate").len(), 1);
+}
+
+#[tokio::test]
+async fn a_stop_during_the_first_page_wait_ends_the_sign_in_at_once() {
+    use v2_lib::autorun::signin::{sign_in_in_stoppable, SIGN_IN_STOPPED};
+    let dir = tempfile::tempdir().unwrap();
+    let (mut d, _state) = stateful_app(false, None);
+    d.idle_clock = Some(Default::default());
+    let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let flag = cancel.clone();
+    let mut d = d.answering_first(move |method, _| match method {
+        "Page.navigate" => {
+            // The Stop lands while the first load is failing.
+            flag.store(true, Ordering::SeqCst);
+            Some(Err(CdpError::Timeout { what: "Page.navigate".into(), ms: 30_000 }))
+        }
+        _ => None,
+    });
+    let out = sign_in_in_stoppable(&mut d, dir.path(), &recipe_at_login(), &account(), &quick(), "this browser", &cancel).await;
+    assert!(!out.ok);
+    assert!(!out.harness, "{}", out.detail);
+    assert!(out.detail.contains(SIGN_IN_STOPPED), "{}", out.detail);
+    assert_eq!(d.calls_to("Page.navigate").len(), 1, "{:?}", d.methods());
+    assert!(d.calls_to("Input.insertText").is_empty());
+}
+
+#[tokio::test]
+async fn a_restored_session_whose_page_fails_fast_is_dropped_not_kept() {
+    use v2_lib::autorun::signin::SITE_SLOW_TO_START;
+    let dir = tempfile::tempdir().unwrap();
+    let saved = SavedSession { saved_at_ms: now_ms(), cookies: vec![json!({ "name": "sid", "value": "abc", "domain": "hr.example.internal", "path": "/", "session": true })], local_storage: vec![] };
+    save_session(dir.path(), "admin", &saved).unwrap();
+    let (mut d, _state) = stateful_app(false, None);
+    d.idle_clock = Some(Default::default());
+    let mut d = d.answering_first(|method, _| match method {
+        "Page.navigate" => Some(Ok(json!({ "errorText": "net::ERR_TOO_MANY_REDIRECTS" }))),
+        _ => None,
+    });
+    let out = v2_lib::autorun::signin::sign_in_in(&mut d, dir.path(), &recipe_at_login(), &account(), &quick(), "this browser").await;
+    assert!(!out.ok);
+    // Not retried on the saved path (one try), then the fresh sign-in's own four.
+    assert_eq!(d.calls_to("Page.navigate").len(), 5, "{:?}", d.methods());
+    assert!(!session_path(dir.path(), "admin").unwrap().exists(), "the session was kept");
+    assert!(out.detail.contains(SITE_SLOW_TO_START), "{}", out.detail);
 }

@@ -306,6 +306,11 @@ const BROWSER_ANSWER_MS: u64 = 2_000;
 const NAVIGATE_TIMEOUT: &str = "did not answer Page.navigate";
 /// Chrome's prefix for a request that failed at the network level.
 const NET_ERR: &str = "net::ERR_";
+/// How often the wait for a slow site looks for a Stop.
+const STOP_SLICE: Duration = Duration::from_millis(50);
+/// What the sign-in says when a Stop ended it while the first page was
+/// waited for.
+pub const SIGN_IN_STOPPED: &str = "the run was stopped while the sign-in page was being waited for";
 
 /// The wait before the next try of the sign-in's first page, or `None` when
 /// it is not to be tried again: the browser stopped answering, the failure
@@ -696,7 +701,7 @@ async fn expired_at_reset_page<D: Driver>(
     drop(run);
     let renewed = Account { password: new.to_string(), ..account.clone() };
     // Once: the sign-in that follows cannot reset again.
-    let out = Box::pin(sign_in_core(d, root, recipe, &renewed, timing, false, browser, false)).await;
+    let out = Box::pin(sign_in_core(d, root, recipe, &renewed, timing, false, browser, false, None)).await;
     confirm_pending(root, &env_id, account, new, out)
 }
 
@@ -753,7 +758,7 @@ async fn try_pending<D: Driver>(
         return None;
     }
     let renewed = Account { password: pending.clone(), ..account.clone() };
-    let mut out = Box::pin(sign_in_core(d, root, recipe, &renewed, timing, false, browser, false)).await;
+    let mut out = Box::pin(sign_in_core(d, root, recipe, &renewed, timing, false, browser, false, None)).await;
     if out.ok || out.harness {
         return Some(confirm_pending(root, &env_id, account, &pending, out));
     }
@@ -842,7 +847,22 @@ pub async fn sign_in_in<D: Driver>(
     timing: &Timing,
     browser: &str,
 ) -> SignInOutcome {
-    sign_in_with(d, root, recipe, account, timing, true, browser).await
+    sign_in_with(d, root, recipe, account, timing, true, browser, None).await
+}
+
+/// `sign_in_in` that ends at once, with `SIGN_IN_STOPPED`, when `cancel` is
+/// set while it waits for a slow site's first page (nothing on the page has
+/// been touched then).
+pub async fn sign_in_in_stoppable<D: Driver>(
+    d: &mut D,
+    root: &Path,
+    recipe: &SignInRecipe,
+    account: &Account,
+    timing: &Timing,
+    browser: &str,
+    cancel: &std::sync::atomic::AtomicBool,
+) -> SignInOutcome {
+    sign_in_with(d, root, recipe, account, timing, true, browser, Some(cancel)).await
 }
 
 /// The supervised browser's sign-in as `account_key`: its account lease
@@ -890,7 +910,7 @@ pub async fn sign_in_fresh<D: Driver>(
     account: &Account,
     timing: &Timing,
 ) -> SignInOutcome {
-    sign_in_with(d, root, recipe, account, timing, false, UNNAMED_BROWSER).await
+    sign_in_with(d, root, recipe, account, timing, false, UNNAMED_BROWSER, None).await
 }
 
 /// A no-save case's guard is held from the moment the sign-in has arrived
@@ -907,11 +927,12 @@ async fn sign_in_with<D: Driver>(
     timing: &Timing,
     try_saved_session: bool,
     browser: &str,
+    cancel: Option<&std::sync::atomic::AtomicBool>,
 ) -> SignInOutcome {
     // What the page met while the run signed in is the run's doing, not a
     // step's: let go of it once the sign-in is over.
     let errors_before = d.page_error_book().map(|b| b.len());
-    let out = sign_in_held(d, root, recipe, account, timing, try_saved_session, browser).await;
+    let out = sign_in_held(d, root, recipe, account, timing, try_saved_session, browser, cancel).await;
     if let (Some(n), Some(book)) = (errors_before, d.page_error_book()) {
         book.drop_after(n);
     }
@@ -929,7 +950,15 @@ async fn sign_in_with<D: Driver>(
 /// inside `FIRST_PAGE_BUDGET_MS`) - nothing is filled, typed or clicked
 /// here, so the form is never sent twice. If it never opens, the failure is
 /// the site's (`SITE_SLOW_TO_START`), not the browser's.
-async fn open_start<D: Driver>(d: &mut D, go: &Action, timing: &Timing, policy: &Policy) -> ActionOutcome {
+async fn open_start<D: Driver>(
+    d: &mut D,
+    go: &Action,
+    timing: &Timing,
+    policy: &Policy,
+    cancel: Option<&std::sync::atomic::AtomicBool>,
+    retry_net_errors: bool,
+) -> ActionOutcome {
+    let stopped = || cancel.is_some_and(|c| c.load(std::sync::atomic::Ordering::SeqCst));
     let started = Instant::now();
     let mut tries: u32 = 0;
     loop {
@@ -939,7 +968,10 @@ async fn open_start<D: Driver>(d: &mut D, go: &Action, timing: &Timing, policy: 
             d.hold_saves(true);
             return arrived;
         }
-        if !arrived.detail.contains(NAVIGATE_TIMEOUT) && !arrived.detail.contains(NET_ERR) {
+        if stopped() {
+            return ActionOutcome::failed(SIGN_IN_STOPPED);
+        }
+        if !arrived.detail.contains(NAVIGATE_TIMEOUT) && !(retry_net_errors && arrived.detail.contains(NET_ERR)) {
             return arrived;
         }
         let answers = d
@@ -954,7 +986,15 @@ async fn open_start<D: Driver>(d: &mut D, go: &Action, timing: &Timing, policy: 
                     tries + 1,
                     wait / 1000
                 ));
-                d.idle(Duration::from_millis(wait)).await;
+                let mut left = Duration::from_millis(wait);
+                while !stopped() && !left.is_zero() {
+                    let slice = STOP_SLICE.min(left);
+                    d.idle(slice).await;
+                    left -= slice;
+                }
+                if stopped() {
+                    return ActionOutcome::failed(SIGN_IN_STOPPED);
+                }
             }
             None if !answers => return arrived,
             None => {
@@ -977,11 +1017,12 @@ async fn sign_in_held<D: Driver>(
     timing: &Timing,
     try_saved_session: bool,
     browser: &str,
+    cancel: Option<&std::sync::atomic::AtomicBool>,
 ) -> SignInOutcome {
     if let Some(done) = try_pending_boxed(d, root, recipe, account, timing, browser).await {
         return done;
     }
-    sign_in_core(d, root, recipe, account, timing, try_saved_session, browser, true).await
+    sign_in_core(d, root, recipe, account, timing, try_saved_session, browser, true, cancel).await
 }
 
 /// `sign_in_held`; `may_reset` is whether an expired password may be reset
@@ -996,6 +1037,7 @@ async fn sign_in_core<D: Driver>(
     try_saved_session: bool,
     browser: &str,
     may_reset: bool,
+    cancel: Option<&std::sync::atomic::AtomicBool>,
 ) -> SignInOutcome {
     let origins = recipe.origins();
     let policy = Policy::only(origins.clone());
@@ -1018,10 +1060,10 @@ async fn sign_in_core<D: Driver>(
     if let Some(saved) = saved {
         match session::restore(d, &saved).await {
             Ok(ids) => {
-                let arrived = open_start(d, &go, timing, &policy).await;
+                let arrived = open_start(d, &go, timing, &policy, cancel, false).await;
                 // A site that never woke says nothing about the saved
                 // session: it is kept, and the sign-in stops there.
-                if is_site_slow(&arrived.detail) {
+                if is_site_slow(&arrived.detail) || arrived.detail == SIGN_IN_STOPPED {
                     let why = arrived.detail.clone();
                     let _ = session::clear(d, &origins).await;
                     run.keep(arrived);
@@ -1105,7 +1147,7 @@ async fn sign_in_core<D: Driver>(
         }
     }
 
-    if !run.keep(open_start(d, &go, timing, &policy).await) {
+    if !run.keep(open_start(d, &go, timing, &policy, cancel, true).await) {
         let last = run.steps.last();
         let why = last.map(|s| s.detail.clone()).unwrap_or_default();
         let harness_failure = last.is_some_and(|s| s.harness);
