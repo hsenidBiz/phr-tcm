@@ -970,3 +970,47 @@ test("script_editor_closes_when_the_environment_changes", async () => {
   expect(calls).not.toContain("auto_run_save_script");
   localStorage.clear();
 });
+
+function mountWithEnvironments(count: number, script: unknown) {
+  setActiveEnvId("env-00000001");
+  const env = (n: number) => ({
+    id: `env-0000000${n}`, name: `Env ${n}`, start_url: "", allowed_origins: [], db_id: "d",
+    test_environment: false, test_prefix: "AUTOTEST", has_default_password: false, db_auto_approve: false,
+  });
+  mockIPC((cmd) => {
+    if (cmd === "env_list")
+      return { active: "env-00000001", environments: Array.from({ length: count }, (_, i) => env(i + 1)) };
+    if (cmd === "auto_run_load_script") return script;
+    if (cmd === "auto_run_list_accounts") return ACCOUNTS;
+    if (cmd === "auto_run_load_nav") return { direct_urls: true, modules: AREAS };
+    return null;
+  });
+  render(
+    <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+      <ScriptEditor caseId={7} title="t" steps={[]} org="acme" project="Web" onClose={vi.fn()} />
+    </QueryClientProvider>,
+  );
+}
+
+test("offers Copy to environment only with two or more environments", async () => {
+  mountWithEnvironments(1, { case_id: 7, title: "t", steps: ONE_STEP });
+  await screen.findByRole("button", { name: "Save script" });
+  await waitFor(() => expect(screen.getByRole("combobox", { name: "Runs as" })).toBeInTheDocument());
+  expect(screen.queryByRole("button", { name: "Copy to environment…" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Copy from environment…" })).not.toBeInTheDocument();
+  localStorage.clear();
+});
+
+test("with two environments and a saved script, Copy to environment opens the copy dialog", async () => {
+  mountWithEnvironments(2, { case_id: 7, title: "t", steps: ONE_STEP });
+  fireEvent.click(await screen.findByRole("button", { name: "Copy to environment…" }));
+  expect(await screen.findByRole("combobox", { name: "Copy to" })).toBeInTheDocument();
+  localStorage.clear();
+});
+
+test("Copy to environment needs a saved script; Copy from environment does not", async () => {
+  mountWithEnvironments(2, null);
+  expect(await screen.findByRole("button", { name: "Copy from environment…" })).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Copy to environment…" })).not.toBeInTheDocument();
+  localStorage.clear();
+});

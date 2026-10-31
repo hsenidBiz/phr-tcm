@@ -59,6 +59,10 @@ export {
   FolderPlus as IconNewSuite,
   // Copying selected cases into another suite: a folder with an arrow in.
   FolderInput as IconCopyToSuite,
+  // Copying one case's script into another environment: a folder with an
+  // arrow out. Bringing one in from another environment: an arrow in.
+  FolderOutput as IconCopyToEnvironment,
+  FolderInput as IconCopyFromEnvironment,
 
   // Undoing and stopping
   Undo2 as IconUndo,

@@ -1183,7 +1183,7 @@ test("import asks for confirmation, applies the backup's keys, and reloads", asy
   expect(await screen.findByRole("dialog")).toBeInTheDocument();
   expect(localStorage.getItem("tcm-v2-theme")).toBeNull();
 
-  fireEvent.click(screen.getByRole("button", { name: "Import and reload" }));
+  await confirmImport();
   await waitFor(() => expect(reload).toHaveBeenCalled());
   expect(localStorage.getItem("tcm-v2-theme")).toBe("dark");
   // Replace semantics: a key the backup doesn't carry is removed.
@@ -1191,6 +1191,112 @@ test("import asks for confirmation, applies the backup's keys, and reloads", asy
 
   Object.defineProperty(window, "location", { configurable: true, value: original });
   localStorage.clear();
+});
+
+/** Confirms the import once the preview has been read: the button waits for
+ * it, so the confirmation is never given blind. */
+async function confirmImport() {
+  const button = await screen.findByRole("button", { name: "Import and reload" });
+  await waitFor(() => expect(button).toBeEnabled());
+  fireEvent.click(button);
+}
+
+/** The import tests: Rust's answers for the preview, the import and the
+ * calls that follow it, recorded in order. */
+function mountImport(opts: {
+  preview?: unknown;
+  previewThrows?: string;
+  importThrows?: string;
+}) {
+  const calls: string[] = [];
+  mockIPC((cmd) => {
+    calls.push(cmd);
+    if (cmd === "plugin:dialog|open") return "C:/tmp/tcm-backup.json";
+    if (cmd === "preview_app_backup") {
+      if (opts.previewThrows) throw opts.previewThrows;
+      return opts.preview;
+    }
+    if (cmd === "import_app_backup") {
+      if (opts.importThrows) throw opts.importThrows;
+      return { local_storage: {}, files_restored: 2, exported_at: "", app_version: "2.4.0" };
+    }
+    if (cmd === "auto_run_release_browser") return "Released";
+    if (cmd === "env_list") return { active: "env-00000001", environments: [{ id: "env-00000001", name: "Default", start_url: "", allowed_origins: [], db_id: "d", test_environment: false, test_prefix: "AUTOTEST", has_default_password: false, db_auto_approve: false }] };
+    if (cmd === "env_set_active") return { view: { active: "env-00000001", environments: [] }, allow: [] };
+    return undefined;
+  });
+  const original = window.location;
+  const reload = vi.fn();
+  Object.defineProperty(window, "location", { configurable: true, value: { ...original, reload } });
+  renderSettings(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+  return { calls, reload, restore: () => Object.defineProperty(window, "location", { configurable: true, value: original }) };
+}
+
+test("the import confirmation says it replaces Auto Run data in every environment", async () => {
+  const { calls, restore } = mountImport({
+    preview: { exported_at: "", app_version: "2.3.0", pre_update: true, post_update: false, replaces: ["Default", "QA"] },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Import from file" }));
+  const dialog = await screen.findByRole("dialog");
+  expect(await within(dialog).findByText(/Importing replaces this computer's Auto Run data in every environment with the backup's\./)).toBeInTheDocument();
+  expect(within(dialog).getByText(/Default, QA/)).toBeInTheDocument();
+  expect(within(dialog).getByText(/kept in the removed area for 30 days/)).toBeInTheDocument();
+  // The preview came first, and nothing was imported by looking.
+  expect(calls).toContain("preview_app_backup");
+  expect(calls).not.toContain("import_app_backup");
+  restore();
+});
+
+test("a backup that replaces no environment says so instead of naming any", async () => {
+  const { restore } = mountImport({
+    preview: { exported_at: "", app_version: "2.4.0", pre_update: false, post_update: true, replaces: [] },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Import from file" }));
+  const dialog = await screen.findByRole("dialog");
+  expect(await within(dialog).findByText(/replaces no environment's Auto Run data/)).toBeInTheDocument();
+  restore();
+});
+
+test("a successful import closes the Auto Run browsers and brings the AI tools' settings in line before reloading", async () => {
+  const { calls, reload, restore } = mountImport({
+    preview: { exported_at: "", app_version: "2.4.0", pre_update: false, post_update: true, replaces: ["Default"] },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Import from file" }));
+  await confirmImport();
+  await waitFor(() => expect(reload).toHaveBeenCalled());
+  const at = (c: string) => calls.indexOf(c);
+  expect(at("auto_run_release_browser")).toBeGreaterThan(at("import_app_backup"));
+  expect(at("env_set_active")).toBeGreaterThan(at("auto_run_release_browser"));
+  restore();
+});
+
+test("an import still running from before asks for a restart instead of toasting", async () => {
+  const { reload, restore } = mountImport({
+    preview: { exported_at: "", app_version: "2.4.0", pre_update: false, post_update: true, replaces: [] },
+    importThrows: "an earlier import has not finished - restart the app to finish it first, then import again",
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Import from file" }));
+  await confirmImport();
+  const dialog = await screen.findByRole("dialog", { name: "Restart the app" });
+  expect(within(dialog).getByText(/earlier import has not finished - restart the app to finish it first/)).toBeInTheDocument();
+  expect(toast.error).not.toHaveBeenCalled();
+  expect(reload).not.toHaveBeenCalled();
+  restore();
+});
+
+test("an import that stopped part-way says to restart now and not to save Auto Run changes", async () => {
+  const { restore } = mountImport({
+    preview: { exported_at: "", app_version: "2.4.0", pre_update: false, post_update: true, replaces: [] },
+    importThrows:
+      "the import did not finish - restart the app now and it will be completed; until then do not save changes in Auto Run (see Settings > Logs)",
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Import from file" }));
+  await confirmImport();
+  const dialog = await screen.findByRole("dialog", { name: "Restart the app" });
+  expect(within(dialog).getByText(/import did not finish - restart the app now and it will be completed/)).toBeInTheDocument();
+  expect(within(dialog).getByText(/do not save changes in Auto Run/)).toBeInTheDocument();
+  expect(toast.error).not.toHaveBeenCalled();
+  restore();
 });
 
 test("cancelling the import confirmation touches nothing", async () => {

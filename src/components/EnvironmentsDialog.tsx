@@ -9,9 +9,10 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { commands, type EnvInput, type EnvListView, type EnvView } from "../bindings";
-import { IconAdd, IconCancel, IconClear, IconConfirm, IconEdit, IconRemove } from "../lib/actionIcons";
+import { IconAdd, IconCancel, IconClear, IconConfirm, IconCopy, IconEdit, IconRemove } from "../lib/actionIcons";
 import { saveSelectedDb } from "../lib/dbServer";
 import { envKeys, useEnvironments } from "../lib/environments";
+import CopyAutoRunDialog from "./CopyAutoRunDialog";
 import { Button } from "./ui/button";
 import Combobox from "./ui/combobox";
 import { Input, Textarea } from "./ui/input";
@@ -91,6 +92,7 @@ export default function EnvironmentsDialog({ onClose }: { onClose: () => void })
   });
   const [form, setForm] = useState<Form | null>(null);
   const [removing, setRemoving] = useState<string | null>(null);
+  const [copyInto, setCopyInto] = useState<EnvView | null>(null);
   const [password, setPassword] = useState("");
   const [problem, setProblem] = useState("");
   const [busy, setBusy] = useState(false);
@@ -230,6 +232,15 @@ export default function EnvironmentsDialog({ onClose }: { onClose: () => void })
                 </Button>
                 <Button
                   size="sm"
+                  variant="outline"
+                  aria-label={`Copy Auto Run data into ${env.name}`}
+                  onClick={() => setCopyInto(env)}
+                >
+                  <IconCopy aria-hidden />
+                  Copy Auto Run data…
+                </Button>
+                <Button
+                  size="sm"
                   variant="ghost"
                   aria-label={`Remove ${env.name}`}
                   onClick={() => {
@@ -243,7 +254,9 @@ export default function EnvironmentsDialog({ onClose }: { onClose: () => void })
               {removing === env.id && (
                 <div className="flex flex-wrap items-center gap-2 border-t border-border/60 pt-2">
                   <span className="min-w-0 flex-1 text-xs text-text">
-                    Remove {env.name}? Its accounts and saved sign-ins are deleted from this machine.
+                    Remove {env.name}? Its accounts and saved sign-ins go now. Its Auto Run scripts, areas and
+                    templates are kept for 30 days and can be copied into another environment from Copy Auto Run
+                    data…
                   </span>
                   <Button size="sm" variant="ghost" onClick={() => setRemoving(null)}>
                     <IconCancel aria-hidden />
@@ -412,6 +425,7 @@ export default function EnvironmentsDialog({ onClose }: { onClose: () => void })
           Close
         </Button>
       </div>
+      {copyInto && <CopyAutoRunDialog target={copyInto} onClose={() => setCopyInto(null)} />}
     </Modal>
   );
 }

@@ -10,6 +10,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { toast } from "../../lib/toast";
 import { commands, type Action, type Precondition, type StepScript } from "../../bindings";
+import { useEnvironments } from "../../lib/environments";
 import { loadScript } from "../../lib/scriptBatch";
 import { Button } from "../../components/ui/button";
 import { Checkbox } from "../../components/ui/checkbox";
@@ -20,12 +21,23 @@ import { MODAL_LARGE } from "./modalWidths";
 import SharedStepLabel from "../../components/SharedStepLabel";
 import CaseText from "../../components/CaseText";
 import { unwrapStr } from "../../lib/ipc";
-import { IconAdd, IconBack, IconCancel, IconConfirm, IconEdit, IconRemove, IconUndo } from "../../lib/actionIcons";
+import {
+  IconAdd,
+  IconBack,
+  IconCancel,
+  IconConfirm,
+  IconCopyFromEnvironment,
+  IconCopyToEnvironment,
+  IconEdit,
+  IconRemove,
+  IconUndo,
+} from "../../lib/actionIcons";
 import { cn } from "../../lib/cn";
 import { caseTextLine } from "../../lib/markdown";
 import { sameAreaName } from "../../lib/areaName";
 import { floorOf } from "./floor";
 import { uncheckedText } from "./unchecked";
+import CopyCaseDialog from "./CopyCaseDialog";
 import SetupSection from "./SetupSection";
 import { canPutBack, preconditionText, putBackPreconditions, repairText } from "./preconditionRepairs";
 import { describeAction, sentenceText, UNREADABLE, type Sentence } from "./describeAction";
@@ -66,6 +78,10 @@ export default function ScriptEditor({
   // What it holds is this environment's: it never outlives a switch.
   useCloseOnEnvironmentChange(onClose);
   const queryClient = useQueryClient();
+  // Copying to or from another environment needs one to copy with.
+  const environments = useEnvironments();
+  const hasOthers = (environments.data?.environments.length ?? 0) >= 2;
+  const [copying, setCopying] = useState<"to" | "from" | null>(null);
 
   const existing = useQuery({
     queryKey: ["autorun-script", caseId],
@@ -465,7 +481,21 @@ export default function ScriptEditor({
       )}
       {problem && <p className="text-xs text-danger">{problem}</p>}
 
-      <div className="flex justify-end gap-2">
+      <div className="flex flex-wrap justify-end gap-2">
+        {hasOthers && (
+          <div className="mr-auto flex flex-wrap gap-2">
+            {existing.data && (
+              <Button variant="outline" size="sm" onClick={() => setCopying("to")}>
+                <IconCopyToEnvironment aria-hidden />
+                Copy to environment…
+              </Button>
+            )}
+            <Button variant="outline" size="sm" onClick={() => setCopying("from")}>
+              <IconCopyFromEnvironment aria-hidden />
+              Copy from environment…
+            </Button>
+          </div>
+        )}
         <Button variant="ghost" size="sm" onClick={onClose}>
           <IconCancel aria-hidden />
           Cancel
@@ -475,6 +505,15 @@ export default function ScriptEditor({
           Save script
         </Button>
       </div>
+      {copying && (
+        <CopyCaseDialog
+          caseId={caseId}
+          org={org}
+          project={project}
+          direction={copying}
+          onClose={() => setCopying(null)}
+        />
+      )}
     </Modal>
   );
 }
