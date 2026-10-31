@@ -21,9 +21,10 @@ use v2_lib::autorun::{CaseRecord, CaseScript, StepRecord};
 use v2_lib::browser::actions::ActionOutcome;
 use v2_lib::browser::cdp::{Cdp, CdpError, Transport};
 use v2_lib::browser::save_guard::{
-    adds, blocked, check_words, fetch_enable_all_params, fetch_enable_params, is_blocked, is_save, path_of, setup_failed,
+    adds, blocked, check_words, click_saves, element_saves, fetch_enable_all_params, key_submits, let_through_line, verdict, fetch_enable_params, is_blocked, is_save, path_of, setup_failed,
     SAVE_WORDS, TYPED_REFUSED, UNPAUSED_TYPES, WORD_SAVES,
 };
+use v2_lib::browser::locator::{LocatorStep, Target};
 use v2_lib::browser::timing::Timing;
 use v2_lib::commands::autorun::guard_for_case;
 
@@ -1467,4 +1468,232 @@ async fn a_save_sent_after_the_last_action_fails_it_while_the_picture_is_still_t
     let two = rec.steps.iter().find(|s| s.step_number == 2).expect("step 2 was not recorded");
     assert!(two.outcomes.iter().all(|o| o.detail.starts_with("not run:")), "{rec:?}");
     assert_eq!(rec.proposed, "Failed", "{rec:?}");
+}
+
+// ------------------------------------------------- the save-click window
+
+fn named(name: &str) -> Target {
+    Target::One(LocatorStep { name: Some(name.to_string()), role: Some("button".to_string()), ..Default::default() })
+}
+fn texted(text: &str) -> Target {
+    Target::One(LocatorStep { text: Some(text.to_string()), ..Default::default() })
+}
+fn styled(css: &str) -> Target {
+    Target::One(LocatorStep { css: Some(css.to_string()), ..Default::default() })
+}
+
+#[test]
+fn click_saves_on_save_and_continue_button() {
+    assert!(click_saves(&named("Save & Continue"), &[]));
+    assert!(click_saves(&texted("Submit"), &[]));
+    assert!(click_saves(&named("Continue"), &[]));
+}
+
+#[test]
+fn click_saves_on_css_id() {
+    assert!(click_saves(&styled("#btnSaveContinue"), &[]));
+    assert!(click_saves(&styled(".btn-add-row"), &[]));
+}
+
+#[test]
+fn click_saves_false_for_search_next_and_address() {
+    for t in [named("Search"), named("Address book"), styled("#padding")] {
+        assert!(!click_saves(&t, &[]), "{t:?}");
+    }
+}
+
+#[test]
+fn click_saves_project_word() {
+    assert!(click_saves(&named("Archive"), &words(&["archive"])));
+    assert!(!click_saves(&named("Archive"), &[]));
+}
+
+#[test]
+fn click_saves_on_every_committing_button() {
+    for n in [
+        "Save", "Submit", "Continue", "Save & Continue", "Finish", "Done", "Complete", "Apply", "Confirm", "Approve",
+        "Reject", "Publish", "Update", "Create", "Add", "Delete", "Remove", "Send", "Next", "OK", "Yes",
+    ] {
+        assert!(click_saves(&named(n), &[]), "{n}");
+    }
+    for n in ["Search", "Cancel", "Facebook", "Book a room", "Back"] {
+        assert!(!click_saves(&named(n), &[]), "{n}");
+    }
+}
+
+#[test]
+fn element_saves_reads_what_the_clicked_element_says() {
+    let t = |a: &[&str]| a.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+    assert!(element_saves(&t(&["", "", "Finish", ""]), &[]));
+    assert!(element_saves(&t(&["Save"]), &[]));
+    assert!(!element_saves(&t(&["Search", "", "Look up", ""]), &[]));
+}
+
+#[test]
+fn enter_and_space_submit() {
+    for k in ["Enter", "Shift+Enter", "Space", "NumpadEnter", "Control+Enter"] {
+        assert!(key_submits(k), "{k}");
+    }
+    for k in ["Tab", "Escape", "ArrowDown", "a", ""] {
+        assert!(!key_submits(k), "{k}");
+    }
+}
+
+#[test]
+fn verdict_blocks_any_write_in_save_click_window() {
+    assert!(verdict("POST", "https://x/hr/PMSV10/wizard", &[], true));
+    assert!(!verdict("POST", "https://x/hr/PMSV10/wizard", &[], false));
+}
+
+#[test]
+fn verdict_lets_reads_through_in_the_window() {
+    assert!(!verdict("GET", "https://x/hr/PMSV10/wizard", &[], true));
+    assert!(!verdict("HEAD", "https://x/hr/PMSV10/wizard", &[], true));
+}
+
+#[test]
+fn let_through_line_names_method_and_path_only() {
+    let line = let_through_line(&[("POST".to_string(), "/hr/PMSV10/wizard".to_string())]).unwrap();
+    assert!(line.contains("POST /hr/PMSV10/wizard"), "{line}");
+    assert!(!line.contains("http") && !line.contains('?'), "{line}");
+    assert_eq!(let_through_line(&[]), None);
+}
+
+#[tokio::test]
+async fn wizard_post_after_save_click_is_stopped() {
+    let mut cdp = guarded(&[]).await;
+    // No window: a wizard post has no save word and goes through.
+    cdp.transport_mut().incoming.extend([
+        paused("r0", "POST", "https://hr.example/hr/PMSV10/wizard?x=1"),
+        r#"{"id":3,"result":{}}"#.to_string(),
+    ]);
+    cdp.call("Runtime.evaluate", json!({})).await.unwrap();
+    assert_eq!(answer_to(&cdp, "r0").unwrap()["method"], "Fetch.continueRequest");
+    assert_eq!(cdp.take_save_blocked(), None);
+
+    cdp.open_save_click_window();
+    // r0's answer took id 4, so this call is 5. A read goes through, the
+    // write is failed.
+    cdp.transport_mut().incoming.extend([
+        paused("r1", "POST", "https://hr.example/hr/PMSV10/wizard?x=1"),
+        paused("r2", "GET", "https://hr.example/hr/PMSV10/wizard"),
+        r#"{"id":5,"result":{}}"#.to_string(),
+    ]);
+    cdp.call("Runtime.evaluate", json!({})).await.unwrap();
+    assert_eq!(answer_to(&cdp, "r1").unwrap()["method"], "Fetch.failRequest");
+    assert_eq!(answer_to(&cdp, "r2").unwrap()["method"], "Fetch.continueRequest");
+    assert_eq!(
+        cdp.take_save_blocked().as_deref(),
+        Some("this script must not save, but the page tried to send POST /hr/PMSV10/wizard - it was stopped before it reached the server")
+    );
+}
+
+#[tokio::test]
+async fn sign_in_posts_are_never_stopped() {
+    let mut cdp = guarded(&[]).await;
+    cdp.transport_mut().incoming.push_back(navigated("L-signin", "https://hr.example/login"));
+    read_waiting(&mut cdp).await;
+    cdp.hold_saves(true);
+    cdp.transport_mut().incoming.push_back(r#"{"id":3,"result":{}}"#.to_string());
+    cdp.call("Runtime.evaluate", json!({})).await.unwrap();
+    cdp.open_save_click_window();
+    cdp.transport_mut().incoming.extend([
+        sent_by("n1", "L-signin", "https://hr.example/Account/Login"),
+        paused_from("r1", "https://hr.example/Account/Login", "XHR", "n1"),
+        r#"{"id":4,"result":{}}"#.to_string(),
+    ]);
+    cdp.call("Runtime.evaluate", json!({})).await.unwrap();
+    assert_eq!(answer_to(&cdp, "r1").unwrap()["method"], "Fetch.continueRequest");
+    assert_eq!(cdp.take_save_blocked(), None);
+}
+
+#[tokio::test]
+async fn a_window_never_outlives_a_hold() {
+    let mut cdp = guarded(&[]).await;
+    cdp.transport_mut().incoming.push_back(navigated("L-signin", "https://hr.example/login"));
+    read_waiting(&mut cdp).await;
+    cdp.open_save_click_window();
+    cdp.hold_saves(true);
+    cdp.transport_mut().incoming.push_back(r#"{"id":3,"result":{}}"#.to_string());
+    cdp.call("Runtime.evaluate", json!({})).await.unwrap();
+    // Asked for during the hold: no window.
+    cdp.open_save_click_window();
+    cdp.hold_saves(false);
+    cdp.transport_mut().incoming.extend([
+        paused("r1", "POST", "https://hr.example/Home/Load"),
+        r#"{"id":4,"result":{}}"#.to_string(),
+    ]);
+    cdp.call("Runtime.evaluate", json!({})).await.unwrap();
+    assert_eq!(answer_to(&cdp, "r1").unwrap()["method"], "Fetch.continueRequest");
+    assert_eq!(cdp.take_save_blocked(), None);
+}
+
+#[tokio::test]
+async fn a_closed_window_lets_writes_through_again() {
+    let mut cdp = guarded(&[]).await;
+    cdp.open_save_click_window();
+    cdp.close_save_click_window();
+    cdp.transport_mut().incoming.extend([
+        paused("r1", "POST", "https://hr.example/hr/PMSV10/wizard"),
+        r#"{"id":3,"result":{}}"#.to_string(),
+    ]);
+    cdp.call("Runtime.evaluate", json!({})).await.unwrap();
+    assert_eq!(answer_to(&cdp, "r1").unwrap()["method"], "Fetch.continueRequest");
+}
+
+fn click_action(selector: &str) -> v2_lib::browser::actions::Action {
+    serde_json::from_value(json!({ "kind": "click", "selector": selector })).unwrap()
+}
+
+/// A click on a save-named control on a guarded driver opens the window;
+/// on an unguarded driver, on a search control, or as the runner's own
+/// action, it does not.
+#[tokio::test]
+async fn a_click_opens_the_window_only_for_a_save_named_control_on_a_guard() {
+    use v2_lib::browser::actions::{execute_in, Policy};
+    use v2_lib::browser::cdp::Driver as _;
+    let timing = quick();
+    for (guard, selector, runner, windows) in
+        [(true, "#save", false, 1), (true, "#search", false, 0), (false, "#save", false, 0), (true, "#save", true, 0)]
+    {
+        let page = common::FakePage::default();
+        let mut d = common::ScriptedDriver::new(move |method, params| page.answer(method, params));
+        if guard {
+            d.call("Fetch.enable", json!({})).await.unwrap();
+        }
+        let policy = if runner { Policy::open().as_runner() } else { Policy::open() };
+        execute_in(&mut d, &click_action(selector), &timing, &policy).await;
+        assert_eq!(d.save_windows, windows, "guard {guard} {selector} runner {runner}");
+    }
+}
+
+#[tokio::test]
+async fn enter_opens_the_window_on_a_guard() {
+    use v2_lib::browser::actions::{execute_in, Policy};
+    use v2_lib::browser::cdp::Driver as _;
+    let page = common::FakePage::default();
+    let mut d = common::ScriptedDriver::new(move |method, params| page.answer(method, params));
+    d.call("Fetch.enable", json!({})).await.unwrap();
+    let a: v2_lib::browser::actions::Action = serde_json::from_value(json!({ "kind": "press_key", "key": "Enter" })).unwrap();
+    execute_in(&mut d, &a, &quick(), &Policy::open()).await;
+    assert_eq!(d.save_windows, 1);
+}
+
+/// A POST that reads (a list, a lookup, a log) is not a refusal's write; one
+/// with a save word of its own is a save whatever else it says.
+#[test]
+fn a_post_to_a_read_shaped_path_looks_like_a_read() {
+    use v2_lib::browser::save_guard::looks_like_read;
+    for path in [
+        "/api/GetList", "/hr/lookup/employees", "/x/Search?q=1", "/api/AutoComplete", "/api/Suggest", "/api/log", "/api/Track",
+        "/api/telemetry", "/ping", "/api/heartbeat", "/hr/AutoSave", "/api/FilterEmployees", "/api/LoadGrid", "/api/QueryRows",
+        "/api/employee_find", "/api/Logs",
+    ] {
+        assert!(looks_like_read("POST", path), "{path}");
+    }
+    for path in ["/api/SaveSearch", "/api/eval-rules", "/hr/login", "/hr/catalog/update", "/api/Submit", "/api/Budget", "/api/CreateList"] {
+        assert!(!looks_like_read("POST", path), "{path}");
+    }
+    // Only a writing method can be a write in disguise.
+    assert!(!looks_like_read("GET", "/api/GetList"));
 }

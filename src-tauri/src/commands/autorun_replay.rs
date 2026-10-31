@@ -100,13 +100,12 @@ pub(crate) async fn open_real(which: Browser, visible: bool) -> Result<(Cdp, Lau
     Err(NEVER_ANSWERED.to_string())
 }
 
-/// How long a liveness check waits for DevTools to answer.
-const ANSWER_WITHIN: Duration = Duration::from_secs(3);
+use crate::browser::launch::{ANSWER_TRIES, ANSWER_WITHIN};
 
 /// Does the browser's DevTools port answer, within `ANSWER_WITHIN`? Asked
 /// once more before saying no: a slow, busy machine is not a dead browser.
 async fn devtools_answers(port: u16) -> bool {
-    for _ in 0..2 {
+    for _ in 0..ANSWER_TRIES {
         if matches!(tokio::time::timeout(ANSWER_WITHIN, Cdp::answers(port)).await, Ok(Ok(()))) {
             return true;
         }

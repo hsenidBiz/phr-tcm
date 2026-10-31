@@ -243,6 +243,192 @@ pub fn sweep_leftover_profiles(temp: &Path) -> Vec<String> {
     removed
 }
 
+/// A browser left running from an earlier run: Auto Run's own profile
+/// (`tcm-autorun-<digits>` under the temp folder), the browser process
+/// that owns it and the DevTools port it was started with.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Orphan {
+    pub pid: u32,
+    /// The profile folder's NAME, never its path.
+    pub profile: String,
+    pub port: Option<u16>,
+    /// How long its main process has run; `None` when Windows would not say.
+    pub age_ms: Option<u64>,
+    /// The app instance that launched it, from the marker in its profile;
+    /// `None` for a browser an older version started.
+    pub owner: Option<Owner>,
+}
+
+/// Which running app a browser belongs to: its process id and the time that
+/// process started (so a reused process id is not mistaken for the owner).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct Owner {
+    pub pid: u32,
+    pub started_ms: u64,
+}
+
+/// The file in a profile folder that names its owner.
+pub const OWNER_MARKER: &str = "tcm-owner.json";
+
+/// A browser younger than this is never ended: one that is still starting
+/// does not answer yet (the app allows it 15 s), and a slow machine takes
+/// longer than that.
+pub const ORPHAN_MIN_AGE_MS: u64 = 90_000;
+
+pub fn owner_marker_text(owner: &Owner) -> String {
+    serde_json::to_string(owner).unwrap_or_default()
+}
+
+pub fn parse_owner_marker(text: &str) -> Option<Owner> {
+    serde_json::from_str(text).ok()
+}
+
+/// This running app as an owner. Off Windows the start time is not known
+/// and is 0.
+pub fn this_owner() -> Owner {
+    let pid = std::process::id();
+    Owner { pid, started_ms: process_start_ms(pid).unwrap_or(0) }
+}
+
+/// When the process with this id started, in ms since the Unix epoch.
+/// `None` when it does not exist, cannot be opened, or off Windows.
+pub fn process_start_ms(pid: u32) -> Option<u64> {
+    #[cfg(windows)]
+    {
+        job::start_ms_of(pid)
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = pid;
+        None
+    }
+}
+
+/// May this leftover browser be ended? Only when it has run for at least
+/// `ORPHAN_MIN_AGE_MS` AND no OTHER running app owns it: its marker names a
+/// process that still runs with the recorded start time (`start_of` says
+/// when a process started) and is not this app. No marker, or an owner that
+/// is gone (or whose id another program now uses), leaves age alone to
+/// decide. Whether it is hung is judged separately.
+pub fn may_end(o: &Orphan, this_pid: u32, start_of: &dyn Fn(u32) -> Option<u64>) -> bool {
+    if !o.age_ms.is_some_and(|age| age >= ORPHAN_MIN_AGE_MS) {
+        return false;
+    }
+    match o.owner {
+        Some(owner) if owner.pid != this_pid && start_of(owner.pid) == Some(owner.started_ms) => false,
+        _ => true,
+    }
+}
+
+/// If this command line is the main process of an Auto Run browser (no
+/// `--type=` switch, so not a renderer, gpu or crashpad child) whose
+/// `--user-data-dir` is a `tcm-autorun-<digits>` folder directly inside
+/// `temp`: that folder's name and the `--remote-debugging-port`. Anything
+/// else - the person's own Chrome or Edge, a profile elsewhere, the test
+/// suite's own folders - is `None`.
+pub fn orphan_of(command_line: &str, temp: &Path) -> Option<(String, Option<u16>)> {
+    if !switch_values(command_line, "--type=").is_empty() {
+        return None;
+    }
+    let temp = normalise(&temp.to_string_lossy());
+    if temp.is_empty() {
+        return None;
+    }
+    let dirs = switch_values(command_line, "--user-data-dir=");
+    let dir = dirs.first()?;
+    let whole = normalise(dir);
+    let (parent, name) = whole.rsplit_once('\\')?;
+    if parent != temp || !is_profile_name(name) {
+        return None;
+    }
+    let port = switch_values(command_line, "--remote-debugging-port=").first().and_then(|p| p.parse::<u16>().ok());
+    Some((name.to_string(), port))
+}
+
+#[cfg(windows)]
+fn unix_now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX))
+}
+
+/// Every Auto Run browser running now that no live tree of this app holds.
+/// Windows only; empty elsewhere. Reads command lines through the same
+/// query-only access `Tree` uses and ends nothing.
+pub fn find_orphans(temp: &Path) -> Vec<Orphan> {
+    #[cfg(windows)]
+    {
+        let held: Vec<String> = held_profiles().iter().map(|h| folder_name(h).to_lowercase()).collect();
+        job::browser_pids()
+            .into_iter()
+            .filter_map(|pid| match job::inspect(pid) {
+                job::Inspected::Seen { process, command_line: Some(cl), .. } => {
+                    let (profile, port) = orphan_of(&cl, temp)?;
+                    if held.contains(&profile) {
+                        return None;
+                    }
+                    let age_ms = process.start_ms().and_then(|s| unix_now_ms().checked_sub(s));
+                    let owner = std::fs::read_to_string(temp.join(&profile).join(OWNER_MARKER))
+                        .ok()
+                        .and_then(|t| parse_owner_marker(&t));
+                    Some(Orphan { pid, profile, port, age_ms, owner })
+                }
+                _ => None,
+            })
+            .collect()
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = temp;
+        Vec::new()
+    }
+}
+
+/// End every process of the orphan's browser (those whose command line
+/// names its profile, as `Tree` tells its own), wait up to `END_WITHIN`
+/// for none to be left, then try to remove the profile. Refuses a profile
+/// a live tree of this app holds. True when no process is left.
+pub fn end_orphan(o: &Orphan) -> bool {
+    #[cfg(windows)]
+    {
+        if !is_profile_name(&o.profile) || held_profiles().iter().any(|h| folder_name(h).eq_ignore_ascii_case(&o.profile)) {
+            return false;
+        }
+        let profile = super::launch::long_temp_dir().join(&o.profile);
+        let ours = |ended: bool| -> usize {
+            let mut left = 0;
+            for pid in job::browser_pids() {
+                if let job::Inspected::Seen { process, command_line: Some(cl), .. } = job::inspect(pid) {
+                    if carries_profile(&cl, &profile) {
+                        left += 1;
+                        if ended {
+                            job::terminate(&process);
+                        }
+                    }
+                }
+            }
+            left
+        };
+        let began = Instant::now();
+        loop {
+            if ours(true) == 0 {
+                break;
+            }
+            if began.elapsed() >= END_WITHIN {
+                return false;
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        let _ = remove_profile(&profile);
+        true
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = o;
+        false
+    }
+}
+
 /// Remove a closed browser's profile folder. Windows can release a
 /// process's file handles a moment after the process is gone, so a
 /// "being used by another process" (os error 32) is tried again a few
@@ -554,6 +740,22 @@ pub(crate) mod job {
             (!h.is_null()).then_some(Process(h))
         }
 
+        /// When the process started, in ms since the Unix epoch.
+        pub fn start_ms(&self) -> Option<u64> {
+            use windows_sys::Win32::Foundation::FILETIME;
+            use windows_sys::Win32::System::Threading::GetProcessTimes;
+            let (mut created, mut exit, mut kernel, mut user) =
+                (FILETIME::default(), FILETIME::default(), FILETIME::default(), FILETIME::default());
+            // SAFETY: a valid process handle; the out values live for the call.
+            let ok = unsafe { GetProcessTimes(self.0, &mut created, &mut exit, &mut kernel, &mut user) };
+            if ok == 0 {
+                return None;
+            }
+            let ticks = (u64::from(created.dwHighDateTime) << 32) | u64::from(created.dwLowDateTime);
+            // 100 ns ticks since 1601; the Unix epoch is 11_644_473_600 s on.
+            (ticks / 10_000).checked_sub(11_644_473_600_000)
+        }
+
         fn ended(&self) -> bool {
             let mut code = 0u32;
             // SAFETY: a valid process handle; `code` lives for the call.
@@ -577,6 +779,48 @@ pub(crate) mod job {
             Some(p) => !p.ended(),
             None => std::io::Error::last_os_error().raw_os_error() == Some(ERROR_ACCESS_DENIED as i32),
         }
+    }
+
+    /// When the process with this id started (see `Process::start_ms`).
+    pub fn start_ms_of(pid: u32) -> Option<u64> {
+        Process::open(PROCESS_QUERY_LIMITED_INFORMATION, pid).filter(|p| !p.ended()).and_then(|p| p.start_ms())
+    }
+
+    /// The process ids of every Chrome and Edge running now, whoever's they
+    /// are: the caller tells Auto Run's own apart by command line.
+    pub fn browser_pids() -> Vec<u32> {
+        use windows_sys::Win32::System::Diagnostics::ToolHelp::{
+            Process32FirstW, Process32NextW, PROCESSENTRY32W, TH32CS_SNAPPROCESS,
+        };
+        // SAFETY: the snapshot handle is checked, and closed below.
+        let snapshot = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) };
+        if snapshot.is_null() || snapshot == INVALID_HANDLE_VALUE {
+            return Vec::new();
+        }
+        // SAFETY: an all-zero PROCESSENTRY32W is a valid initial value.
+        let mut entry: PROCESSENTRY32W = unsafe { std::mem::zeroed() };
+        entry.dwSize = std::mem::size_of::<PROCESSENTRY32W>() as u32;
+        let mut out = Vec::new();
+        // SAFETY: `entry` is sized as the API asks, and lives for each call.
+        let mut more = unsafe { Process32FirstW(snapshot, &mut entry) } != 0;
+        while more {
+            let len = entry.szExeFile.iter().position(|&c| c == 0).unwrap_or(entry.szExeFile.len());
+            let exe = String::from_utf16_lossy(&entry.szExeFile[..len]).to_ascii_lowercase();
+            if exe == "chrome.exe" || exe == "msedge.exe" {
+                out.push(entry.th32ProcessID);
+            }
+            // SAFETY: as above.
+            more = unsafe { Process32NextW(snapshot, &mut entry) } != 0;
+        }
+        // SAFETY: opened above, closed once.
+        unsafe { CloseHandle(snapshot) };
+        out
+    }
+
+    /// End one process through a handle opened with the right to.
+    pub fn terminate(p: &Process) {
+        // SAFETY: a valid process handle.
+        unsafe { TerminateProcess(p.0, 1) };
     }
 
     /// What looking at a process in the job found.

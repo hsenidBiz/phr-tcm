@@ -281,10 +281,34 @@ async fn the_persons_release_ends_the_claims_of_the_assistant_whose_browser_it_w
     fresh();
 }
 
-/// The controller's ruling: an assistant's own release of its browser does
-/// not end its claims; only the person's release and a session that ended do.
+/// Ending discovery and the assistant's `release` reset end that assistant's
+/// claims (a finished agent's cases are free), and no one else's; a call the
+/// app refused ends nothing.
+#[tokio::test]
+async fn ending_discovery_and_releasing_end_the_callers_claims() {
+    let _g = serial::agents();
+    let _a = serial::autorun();
+    for path in ["/autorun-discover-end", "/autorun-release"] {
+        fresh();
+        register(ID_A);
+        register(ID_B);
+        claims::claim(&key(ID_A), 4521, T0).unwrap();
+        claims::claim(&key(ID_A), 4522, T0).unwrap();
+        claims::claim(&key(ID_B), 4523, T0).unwrap();
+        let (status, said) = route_as(&caller(ID_A), &ctx(), None, "POST", path, "{}", "1.0.0").await;
+        assert_eq!(status, 200, "{path}: {said}");
+        assert_eq!(claims::holder(4521, T0), None, "{path}");
+        assert_eq!(claims::holder(4522, T0), None, "{path}");
+        assert_eq!(claims::holder(4523, T0), Some(key(ID_B)), "{path}: another assistant's claim stays");
+    }
+    fresh();
+}
+
+/// An assistant's own release of its browser ends its claims at the bridge
+/// (`end_claims_of`), not inside `release_for_assistant`; the person's release
+/// and a session that ended do too.
 #[test]
-fn an_assistants_own_release_does_not_end_its_claims() {
+fn an_assistants_release_ends_its_claims_at_the_bridge_not_in_the_slot_release() {
     let autorun = include_str!("../../src/commands/autorun.rs").replace("\r\n", "\n");
     let own = &autorun[autorun.find("pub async fn release_for_assistant(").unwrap()..];
     let own = &own[..own.find("\n}\n").unwrap()];
@@ -397,4 +421,63 @@ fn a_refusal_names_the_label_only() {
     let said = claims::claim(&key(ID_B), 7, T0).unwrap_err();
     assert!(!said.contains(ID_A) && !said.contains(ID_B) && !said.contains("4242"), "{said}");
     fresh();
+}
+
+/// The assistant let its browser go itself (or the person's browser was left
+/// open by its release, a 409); the person's Release of that slot afterwards
+/// still ends the claims it made before it let go, and no other's.
+#[tokio::test]
+async fn the_persons_release_of_a_slot_the_assistant_let_go_ends_its_earlier_claims() {
+    let _g = serial::agents();
+    let _a = serial::autorun();
+    fresh();
+    let base = v2_lib::autorun::sessions::now_ms().saturating_sub(10_000);
+    register(ID_A);
+    register(ID_B);
+    slots::bind(SlotNo(1), &key(ID_A));
+    claims::claim(&key(ID_A), 4521, base).unwrap();
+    claims::claim(&key(ID_B), 4523, base).unwrap();
+    // The assistant lets the browser go; the slot is unbound, the claim stays.
+    slots::unbind(SlotNo(1));
+    assert_eq!(slots::bound(SlotNo(1)), None);
+    assert_eq!(claims::holder(4521, base), Some(key(ID_A)));
+    // A claim made after it let go (a later call) survives the release.
+    let later = v2_lib::autorun::sessions::now_ms() + 60_000;
+    claims::claim(&key(ID_A), 4522, later).unwrap();
+    release_slot(SlotNo(1), ReleaseWhy::Person).await.unwrap();
+    assert_eq!(claims::holder(4521, base), None);
+    assert_eq!(claims::holder(4522, later), Some(key(ID_A)), "made after it let go");
+    assert_eq!(claims::holder(4523, base), Some(key(ID_B)));
+    // Once only: another release of the same slot ends nothing more.
+    claims::claim(&key(ID_A), 4524, base).unwrap();
+    release_slot(SlotNo(1), ReleaseWhy::Person).await.unwrap();
+    assert_eq!(claims::holder(4524, base), Some(key(ID_A)));
+    fresh();
+}
+
+/// An assistant that holds another browser now keeps its claims when the
+/// person releases the slot it left.
+#[tokio::test]
+async fn the_persons_release_of_a_slot_leaves_the_claims_of_an_assistant_bound_elsewhere() {
+    let _g = serial::agents();
+    let _a = serial::autorun();
+    fresh();
+    register(ID_A);
+    slots::bind(SlotNo(1), &key(ID_A));
+    claims::claim(&key(ID_A), 4521, T0).unwrap();
+    slots::unbind(SlotNo(1));
+    slots::bind(SlotNo(2), &key(ID_A));
+    release_slot(SlotNo(1), ReleaseWhy::Person).await.unwrap();
+    assert_eq!(claims::holder(4521, T0), Some(key(ID_A)));
+    fresh();
+}
+
+/// The assistant's release ends its claims whenever its slot was unbound,
+/// including the answer that leaves the person's browser open (409).
+#[test]
+fn the_bridge_ends_claims_on_a_release_that_left_a_persons_browser_open() {
+    let bridge = include_str!("../../src/ai_bridge.rs").replace("\r\n", "\n");
+    let at = bridge.find("release_for_assistant(slot).await").unwrap();
+    let arm = &bridge[at..at + 700];
+    assert!(arm.contains("PERSONS_BROWSER_OPEN") && arm.contains("end_claims_of"), "{arm}");
 }

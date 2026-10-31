@@ -79,7 +79,10 @@ impl Driver for App {
             let href = {
                 let mut s = self.script.lock().unwrap();
                 let navigated = s.navigated.clone();
-                s.hrefs.pop_front().unwrap_or(navigated)
+                // The scripted addresses are what the run reads on the token
+                // page; the sign-in's own read of where it landed (it makes
+                // one, on the start page) is not one of them.
+                if navigated == "https://hr.example.internal/" { navigated } else { s.hrefs.pop_front().unwrap_or(navigated) }
             };
             return Ok(json!({ "result": { "type": "string", "value": href } }));
         }

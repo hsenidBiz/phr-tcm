@@ -656,7 +656,10 @@ pub async fn route_as(
             Some(going) => with_overrides_seen(going, None, slot),
             None => {
                 crate::autorun::page_compact::forget(slot);
-                crate::commands::autorun::end_discovery(EndedBy::Assistant, slot).await
+                let answer = crate::commands::autorun::end_discovery(EndedBy::Assistant, slot).await;
+                // Done with its discovery: the cases it held are free.
+                end_claims_of(holder, answer.0);
+                answer
             }
         },
         // An explore session's change list, recorded and read back. Files
@@ -744,14 +747,21 @@ pub async fn route_as(
         // is gone. Never a process outside the app's own jobs.
         ("POST", "/autorun-release") => {
             crate::autorun::page_compact::forget(slot);
-            crate::commands::autorun::release_for_assistant(slot).await
+            let answer = crate::commands::autorun::release_for_assistant(slot).await;
+            // Released, the browser let go (a person's browser left open
+            // included): the cases it held are free, as the person's release
+            // frees them.
+            let unbound = answer.0 < 300
+                || (answer.0 == 409 && answer.1 == crate::commands::autorun::PERSONS_BROWSER_OPEN);
+            end_claims_of(holder, if unbound { 200 } else { answer.0 });
+            with_other_holds(answer, holder)
         }
         // Reset: a clean page in the assistant's own browser - other tabs
         // closed, dialogs and its guard cleared, back home - keeping the
         // sign-in. Never the person's browser, never while a replay runs.
         ("POST", "/autorun-reset") => {
             crate::autorun::page_compact::forget(slot);
-            crate::commands::autorun::reset_for_assistant(slot, &ctx.org, &ctx.project).await
+            with_other_holds(crate::commands::autorun::reset_for_assistant(slot, &ctx.org, &ctx.project).await, holder)
         }
         ("POST", "/autorun-discover-area") => autorun_discover_area(ctx, body, slot).await,
         ("POST", "/autorun-replay") => {
@@ -1378,6 +1388,53 @@ pub async fn compacted<F: std::future::Future<Output = (u16, String)>>(
         }
     }
     answer
+}
+
+/// `agents::note_call`, and when the call is the proxy's own (no subagent
+/// name) for a tool that has no `agent` property to carry one, it also counts
+/// as a call of the proxy's named subagents (`agents::touch_named_of`): only
+/// the Auto Run and API template tools can name their caller, and a subagent
+/// busy with lookups must not lose its browser and cases for it.
+pub fn note_call_for_tool(
+    caller: &crate::autorun::agents::Caller,
+    headers: &crate::autorun::agents::AgentHeaders,
+    tool: Option<&str>,
+    now_ms: u64,
+) -> Option<String> {
+    use crate::ai_tools::{API_TEMPLATE_TOOLS, AUTORUN_TOOLS};
+    let label = crate::autorun::agents::note_call(caller, headers, now_ms);
+    if let (crate::autorun::agents::Caller::Agent(key), Some(tool)) = (caller, tool) {
+        if key.name.is_none() && !AUTORUN_TOOLS.contains(&tool) && !API_TEMPLATE_TOOLS.contains(&tool) {
+            crate::autorun::agents::touch_named_of(&key.id, now_ms);
+        }
+    }
+    label
+}
+
+/// A reset's or a release's answer, ending with the other assistants' live
+/// holds (`autorun_slots::live_holds_except`) so the coordinator sees who has
+/// which browser, account and cases and for how long it has been quiet. With
+/// none held it is the answer unchanged.
+pub fn with_other_holds(answer: (u16, String), holder: Option<&AgentKey>) -> (u16, String) {
+    let holds = crate::commands::autorun_slots::live_holds_except(crate::autorun::sessions::now_ms(), holder);
+    let note = crate::commands::autorun_slots::holds_note(&holds);
+    if note.is_empty() {
+        return answer;
+    }
+    // A JSON object answer gets a `holds` field; any other, the text.
+    if let Ok(serde_json::Value::Object(mut map)) = serde_json::from_str::<serde_json::Value>(&answer.1) {
+        map.insert("holds".to_string(), serde_json::json!(holds));
+        return (answer.0, serde_json::Value::Object(map).to_string());
+    }
+    (answer.0, format!("{}\n\n{note}", answer.1))
+}
+
+/// The assistant `holder` is done: every case it claimed is free again, when
+/// its call (`status`) was answered, not refused. The default caller holds none.
+fn end_claims_of(holder: Option<&AgentKey>, status: u16) {
+    if let (Some(key), true) = (holder, status < 300) {
+        crate::autorun::claims::end_for(key);
+    }
 }
 
 /// `answer` with its `page` dump left out when the call's body sent
@@ -5894,45 +5951,6 @@ pub async fn discover_action_in<B: DiscoveryBrowser>(
     answer
 }
 
-/// Whether a discovery call's actions could have changed who is signed in:
-/// a `sign_in`, a fill of a password-type input (or of the recipe's own
-/// password field), or a navigation to the recipe's sign-in address. Says
-/// which, in a few words.
-pub fn call_touches_sign_in(
-    actions: &[crate::browser::actions::Action],
-    recipe: &crate::autorun::recipe::SignInRecipe,
-) -> Option<&'static str> {
-    use crate::browser::actions::Action;
-    let text = |t: &crate::browser::locator::Target| serde_json::to_string(t).unwrap_or_default().to_lowercase();
-    let recipe_password: Vec<String> = recipe
-        .steps
-        .iter()
-        .filter_map(|st| match st {
-            crate::autorun::recipe::RecipeStep::Do(Action::Fill { selector, value }) if value.to_lowercase().contains("password") => {
-                Some(text(selector))
-            }
-            _ => None,
-        })
-        .collect();
-    let start = crate::autorun::discovery_map::path_only(&recipe.start_url);
-    for a in actions {
-        match a {
-            Action::SignIn { .. } => return Some("signed in"),
-            Action::Fill { selector, .. } => {
-                let t = text(selector);
-                if t.contains("password") || recipe_password.contains(&t) {
-                    return Some("filled a password field");
-                }
-            }
-            Action::Navigate { url } if crate::autorun::discovery_map::path_only(url) == start => {
-                return Some("went to the sign-in address");
-            }
-            _ => {}
-        }
-    }
-    None
-}
-
 /// Whether the browser in `slot` is signed in as its session's account and
 /// still holds that sign-in's cookies as they were printed
 /// (`replay_to::sign_in_stands`): looked at before a discovery call.
@@ -5973,7 +5991,7 @@ async fn retake_print_after_call<B: DiscoveryBrowser>(
     let Ok(recipe) = crate::autorun::recipe::load_effective_recipe(root, organization, project) else { return };
     // The page cannot say who is signed in, so a call that could have swapped
     // the login is never taken as the same sign-in.
-    if let Some(why) = call_touches_sign_in(actions, &recipe) {
+    if let Some(why) = crate::autorun::replay_to::touches_sign_in(actions, &recipe) {
         crate::applog::info(format!("Auto Run: a discovery call {why}, so the sign-in's cookies were not printed again"));
         return;
     }
@@ -6115,6 +6133,9 @@ async fn discover_action_heard<B: DiscoveryBrowser>(
             Err(refused) => return refused,
         };
         heard.ran(at, &ran.outcome, one);
+        if !ran.outcome.ok {
+            ran.outcome.detail = crate::browser::input::with_offscreen_hint(&ran.outcome.detail);
+        }
         // A component that fails on its first action says where the
         // browser is: most often it stands on another screen.
         if component.is_some() && i == 0 && !ran.outcome.ok {
@@ -6177,6 +6198,13 @@ async fn discover_action_heard<B: DiscoveryBrowser>(
     if reports_blocks {
         answer["no_save"] = serde_json::json!(true);
         answer["blocked_writes"] = serde_json::json!(blocked_writes);
+        let posted: Vec<(String, String)> = writes
+            .iter()
+            .filter_map(|w| Some((w["method"].as_str()?.to_string(), w["path"].as_str()?.to_string())))
+            .collect();
+        if let Some(line) = crate::browser::save_guard::let_through_line(&posted) {
+            answer["let_through"] = serde_json::json!(line);
+        }
     }
     if component.is_some() {
         answer["steps"] = serde_json::json!(steps);
@@ -9195,7 +9223,7 @@ pub async fn save_component_in<B: DiscoveryBrowser>(
     let first = held(slot);
     let saved = save(&first, draft.clone());
     let Err(refused) = &saved else {
-        return component_answer(saved);
+        return with_delete_notes(component_answer(saved), &draft);
     };
     // Refused by the check of its own locators, for nothing but locators
     // never seen: what that check alone says, recomputed here.
@@ -9221,6 +9249,22 @@ pub async fn save_component_in<B: DiscoveryBrowser>(
     }
     let again = save(&held(slot), draft.clone());
     after_recording(&recorded, component_answer(again))
+}
+
+/// A component save's answer with `notes` added when its actions delete by
+/// position (a warning, never a refusal).
+fn with_delete_notes(answer: (u16, String), draft: &crate::autorun::components::Component) -> (u16, String) {
+    let notes = crate::autorun::script_notes::positional_delete_notes_for_actions(&draft.actions);
+    if answer.0 != 200 || notes.is_empty() {
+        return answer;
+    }
+    match serde_json::from_str::<serde_json::Value>(&answer.1) {
+        Ok(mut v) if v.is_object() => {
+            v["notes"] = serde_json::json!(notes);
+            (answer.0, v.to_string())
+        }
+        _ => answer,
+    }
 }
 
 /// A component save's answer: the saved name, version and changes as
@@ -10157,7 +10201,22 @@ async fn try_in_area<D: crate::browser::cdp::Driver>(
     files_finds: bool,
     action: &crate::browser::actions::Action,
 ) -> (u16, String) {
+    let guarded = d.is_guarding_saves();
+    let mark = if guarded { Some(crate::browser::cdp::Driver::net_mark(d)) } else { None };
     let tried = try_action(d, account, lease, root, organization, project, case_id, discovery_area, false, files_finds, action, None).await;
+    // The writes a guarded try sent that the guard let through, by method and path.
+    let let_through: Vec<(String, String)> = match mark {
+        Some(mark) => {
+            let sent = crate::browser::cdp::Driver::net_since(d, mark);
+            crate::browser::cdp::Driver::net_unmark(d, mark);
+            sent.iter()
+                .filter(|s| crate::browser::save_guard::SAVE_METHODS.contains(&s.method.as_str()))
+                .filter(|s| !crate::browser::save_guard::stopped_by_guard(s))
+                .map(|s| (s.method.clone(), crate::browser::save_guard::path_of(&s.path_query)))
+                .collect()
+        }
+        None => Vec::new(),
+    };
     let (outcome, steps, answered) = match tried {
         Ok(tried) => (tried.outcome, tried.steps, tried.answered),
         Err(refused) => return refused,
@@ -10179,6 +10238,9 @@ async fn try_in_area<D: crate::browser::cdp::Driver>(
         }
         let said = if detail.is_empty() { what.clone() } else { format!("{what}: {}", one_short_line(detail)) };
         text.push_str(&format!("\n{}. {}: {said}", i + 1, if o.ok { "ok" } else { "failed" }));
+    }
+    if let Some(line) = crate::browser::save_guard::let_through_line(&let_through) {
+        text.push_str(&format!("\nlet_through: {line}"));
     }
     (200, text)
 }
@@ -10346,7 +10408,7 @@ async fn try_action<D: crate::browser::cdp::Driver>(
     // the reason now, not from a wait that times out later.
     // A discovery's `noted` carries its last action that changed the page
     // to the next action, as a run's steps carry it.
-    let mut run = InRun { areas: Some(&areas), saves_only_counted, refusals_fail: true, noted, ..Default::default() };
+    let mut run = InRun { areas: Some(&areas), saves_only_counted, noted, ..Default::default() };
     // An action that never answers is a failed action, so everything that
     // follows (what its writes and finds filed) still runs. It is given its
     // own wait and a margin, and no more than the call has left.
@@ -12608,6 +12670,8 @@ pub async fn save_autorun_scripts_carrying(
     // on: the assistant has decided that step was the script's fault after
     // all, so the mark goes once the save has landed.
     let mut repaired_marks: Vec<(i32, i32)> = Vec::new();
+    // Marks a repair left alone because the step's checks did not change.
+    let mut kept_marks: Vec<String> = Vec::new();
     // Which steps of each script the seen check reads, by case: `None`
     // for a new script (all of them), its declared steps for a repair. An
     // unchanged resave is not listed: it was checked when it was saved.
@@ -12770,7 +12834,19 @@ pub async fn save_autorun_scripts_carrying(
                         precondition_lines.push(format!("case {}: {line}", script.case_id));
                     }
                     if let Some(d) = old.suspected_defect.as_ref().filter(|d| e.steps.contains(&d.step_number)) {
-                        repaired_marks.push((script.case_id, d.step_number));
+                        // Only a repair of the step's checks takes the mark:
+                        // a moved locator is no decision that the step was
+                        // wrong. A step missing on either side is changed.
+                        let at = |s: &crate::autorun::CaseScript| s.steps.iter().find(|x| x.step_number == d.step_number).cloned();
+                        let changed = match (at(&old), at(&script)) {
+                            (Some(before), Some(after)) => crate::autorun::defects::checks_changed(&before, &after),
+                            _ => true,
+                        };
+                        if changed {
+                            repaired_marks.push((script.case_id, d.step_number));
+                        } else {
+                            kept_marks.push(crate::autorun::defects::kept_line(script.case_id, d.step_number));
+                        }
                     }
                     // Read now, while the script on disk is still the
                     // one that ran: its targets classify the failure.
@@ -13009,6 +13085,15 @@ pub async fn save_autorun_scripts_carrying(
             }
             // The value check's notes count toward the same cap.
             notes.extend(value_notes.iter().cloned());
+            // The delete notes are style warnings: after the case-value
+            // notes, so the cap drops them first.
+            for (case_id, only) in &seen_scope {
+                let Some(script) = prepared.iter().find(|s| s.case_id == *case_id) else { continue };
+                let sentences = crate::autorun::script_notes::delete_after_check_notes(script, Some(&components), only.as_deref())
+                    .into_iter()
+                    .chain(crate::autorun::script_notes::positional_delete_notes(script, Some(&components), only.as_deref()));
+                notes.extend(sentences.map(|n| format!("case {case_id}: note: {n}")));
+            }
             if notes.len() > MAX_SAVE_NOTES {
                 let more = notes.len() - MAX_SAVE_NOTES;
                 notes.truncate(MAX_SAVE_NOTES);
@@ -13117,6 +13202,7 @@ pub async fn save_autorun_scripts_carrying(
     report.extend(given_up_lines);
     report.extend(value_listed);
     report.extend(notes);
+    report.extend(kept_marks);
     for (case_id, step) in &repaired_marks {
         match crate::autorun::store::clear_suspected_defect_at(&root, *case_id, *step) {
             Ok(true) => {
@@ -15933,7 +16019,7 @@ pub async fn start_listener(
                     // Who is calling is known only after the token check: a
                     // request without the token registers nobody.
                     let caller = agent.caller();
-                    let label = crate::autorun::agents::note_call(&caller, &agent, crate::autorun::sessions::now_ms());
+                    let label = note_call_for_tool(&caller, &agent, tool.as_deref(), crate::autorun::sessions::now_ms());
                     let (status, payload) =
                         route_timed(&caller, &ctx, client.as_ref(), &method, &target, &body, &state.version).await;
                     if let Some(line) = tool_call_line_for(tool.as_deref(), label.as_deref(), &target, status, &payload) {

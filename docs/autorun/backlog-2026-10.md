@@ -925,6 +925,84 @@ offline: 144580's trailing-space `exact` failure (every name path already folds 
       (see item 42's `reset_autorun_browser` note). A second replay of the same case should start
       clean without a reset call.
 
+## The Definition Wizard waves (agreed 2026-10-30)
+
+From PBI 133443 (PMS Definition Wizard) on the Philippines dev site (Default environment), wave 1,
+three writers at once on emma, aiden and grace.
+
+45. **A `no_save` discovery still lets saves through.** dw-goals started its discovery with
+    `no_save` and pressed Save & Continue on steps 1-3: each one posted `POST /hr/PMSV10/wizard`
+    and the server saved it. Here it re-saved unchanged data; on another step it would save a real
+    change from a run that promised to change nothing. `no_save` should block (or fail on) a
+    request that matches a save handler, the same check item 2 asks for in scripts, and say which
+    request it stopped.
+
+46. **Saving an edit clears a step's suspected-defect mark.** dw-fix-rating changed only a
+    locator in step 8 of 135239 (`save_autorun_script` with `edits`); the save dropped the
+    suspected-defect mark on that step (divergence d61), and the writer had to mark it again with
+    the same note. An edit that leaves the step's failing check untouched should keep the mark, or
+    the save should say it cleared it.
+
+47. **A clean-up that runs after a failing check leaves its record behind.** 135239 adds "Marks
+    Range Scale" in step 8 and deletes it at the end of the same step, after the percent-sign
+    check that fails on purpose (d61). Every run leaves the record, and the next run is refused
+    with "already exists" - one known defect turns into a second, misleading failure. Scripts need
+    clean-up steps that run even when an earlier step failed (a `finally`/`cleanup` block), and
+    the guide should tell writers to put deletes there.
+
+48. **Positional locators in clean-ups on shared lists.** dw-rating2's clean-ups in 135252 and
+    135239 deleted "Delete" nth 2 (the third rating method). With one more method listed first,
+    the delete would have removed "AUTOTEST Performance Rating Scale", which every other script
+    relies on. A rewriter moved them to the row found by the method's own name. The save should
+    warn when a delete (or any click followed by a confirm dialog) uses `nth`, and the writer's
+    rules should say "find the row by its own name before deleting".
+
+49. **Kept data is not declared.** The rating-method, proficiency and competency scripts rely on
+    data earlier writers left in place (the two AUTOTEST rating methods, Performance-based as the
+    active scale, the Core/Leadership competency tree, and soon a step-4 profile). Nothing in the
+    scripts names it, so after a data clear-down they fail halfway instead of reporting Blocked.
+    The writer should record each kept record as a precondition (item 3) or a fixture the run
+    can make, at the time it makes it.
+
+50. **Sign-in on a cold site.** With three sign-ins at once on a site that had been idle, two
+    failed "never saw #sidebar-toggle-menu" after 30 s while the server already showed them as
+    signed in (`HS_SM_ACTIVE_LOGIN`); a retry minutes later worked. ethan's sign-in "worked" but
+    landed in Self Service (`sshr`), not `ehrm`. The sign-in should retry once on a timeout, and
+    its failure should say where the browser ended up (URL path, portal) so a wrong-portal
+    account is told apart from a slow site.
+
+51. **Holds outlive their agent.** When an agent is cut off (API ECONNRESET, a stopped task), its
+    browser and its case hold stay until someone calls `reset_autorun_browser` with `release`
+    under that agent's exact name; dw-levels kept emma and case 135520 held after an outage. A
+    hold should expire after a period with no calls from its agent, and `reset_autorun_browser`
+    should list the live holds so the coordinator can see them.
+
+    Seen again in the next round: after dw-goals2 finished, two proof runs on its cases were
+    refused "case N is being worked on by Assistant 3" even after the person released Assistant 3
+    on the Auto Run screen, and `reset_autorun_browser` with `release` under the writer's name
+    said it had no browser. The claim (`autorun/claims.rs`) only ended when its 20 minutes ran
+    out. A finished agent's claims should end with it (`claims::end_for` when it ends discovery
+    and releases), and the person's release should end the claims of the assistant released.
+
+52. **A hung orphan browser blocks every new sign-in.** An Auto Run Chrome left from an earlier
+    run (profile `tcm-autorun-<port>`, CDP port not answering) made new sign-ins fail "did not
+    answer Page.navigate" until it was killed by hand. At launch, an Auto Run browser whose CDP
+    port does not answer should be closed, with the log naming it. Related: dw-comps2's browser
+    once stuck on "outside the visible part of the page" until a release and a fresh replay; the
+    failure should suggest the reset.
+
+53. **Which logins reach an area.** On this site four of seven HR-admin logins signed in but could
+    not reach Talent > Performance & Evaluation > Definition Wizard (menu shows only Home,
+    "Unable to load menus", or Self Service). Writers burned runs finding out. Item 40's "Check
+    sign-in" should also walk to a chosen area and show, per account, "reaches <area>" or where
+    it stopped.
+
+54. **A refused upload fails discovery but not the replay.** dw-comps3's import cases (135285-
+    135287) upload a malformed or oversized .xlsx; the server answers 422. In discovery the
+    action showed "the app refused", but the full replay passed the same step. The two paths
+    should judge a 4xx answer the same way, and a case that expects a refusal should check the
+    page's message for it (the import-error toast lasts about 5 s, so in the same step).
+
 ## Smaller
 
 - `save_autorun_script` through MCP drops `edits`, so repairs had to go through

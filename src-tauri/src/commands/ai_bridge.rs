@@ -118,7 +118,7 @@ pub async fn bridge_status(app: tauri::AppHandle) -> Result<BridgeStatus, String
 /// call per agent. Each agent found gone is logged by label only, and one
 /// past its grace gives up the browser it was bound to (an extra one is
 /// released, the main one only unbound), and then an extra browser whose
-/// assistant made no call for 30 minutes is released (`release_idle`).
+/// assistant made no call for 30 minutes (10 for a named subagent) is released (`release_idle`).
 /// Started once, where the bridge starts; a second call does nothing.
 pub fn spawn_agent_sweeper() {
     static STARTED: std::sync::Once = std::sync::Once::new();
@@ -142,8 +142,10 @@ pub fn spawn_agent_sweeper() {
                 // An agent past its grace holds no browser any more; an
                 // extra one is released (each wait is bounded).
                 crate::commands::autorun_slots::on_sweep(&swept).await;
-                // An extra browser whose assistant made no call for 30
-                // minutes is released too, gone or not (never the main one).
+                // A browser whose assistant made no call for 10 minutes (a
+                // named subagent) or 30 is released too, gone or not; the main
+                // one only when a named subagent holds it and an assistant
+                // opened it.
                 crate::commands::autorun_slots::release_idle(crate::autorun::sessions::now_ms()).await;
             }
         });

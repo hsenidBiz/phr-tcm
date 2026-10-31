@@ -250,3 +250,212 @@ fn the_page_area_is_1280_by_720_at_scale_one() {
         serde_json::json!({ "width": 1280, "height": 720, "deviceScaleFactor": 1.0, "mobile": false })
     );
 }
+
+// ---- password prompts off (backlog 44) ----
+
+use v2_lib::browser::launch::{
+    close_hung, password_prefs, prefs_failure_is_logged_only, write_password_prefs, PASSWORD_FEATURES_OFF,
+};
+use v2_lib::browser::tree::{Orphan, Owner};
+
+fn disable_features(args: &[String]) -> Vec<&String> {
+    args.iter().filter(|a| a.starts_with("--disable-features=")).collect()
+}
+
+#[test]
+fn launch_args_disable_password_leak_detection_once() {
+    let args = launch_args(9222, Path::new(r"C:\tmp\p"));
+    let found = disable_features(&args);
+    assert_eq!(found.len(), 1);
+    assert!(found[0].contains("PasswordLeakDetection"));
+    assert_eq!(PASSWORD_FEATURES_OFF, "PasswordLeakDetection");
+    assert_eq!(args.last().map(String::as_str), Some("about:blank"));
+}
+
+#[test]
+fn args_with_folds_extra_disable_features_into_one_switch() {
+    let args = args_with(9222, Path::new(r"C:\tmp\p"), &["--disable-features=Foo"]);
+    let found = disable_features(&args);
+    assert_eq!(found, vec![&"--disable-features=PasswordLeakDetection,Foo".to_string()]);
+    assert_eq!(args.last().map(String::as_str), Some("about:blank"));
+}
+
+fn three_off(v: &serde_json::Value) {
+    assert_eq!(v["credentials_enable_service"], false);
+    assert_eq!(v["profile"]["password_manager_enabled"], false);
+    assert_eq!(v["profile"]["password_manager_leak_detection"], false);
+}
+
+#[test]
+fn password_prefs_on_empty_profile() {
+    three_off(&password_prefs(None));
+}
+
+#[test]
+fn password_prefs_merge_keeps_existing_keys() {
+    let v = password_prefs(Some(
+        r#"{"other":1,"profile":{"name":"x","password_manager_enabled":true},"credentials_enable_service":true}"#,
+    ));
+    assert_eq!(v["other"], 1);
+    assert_eq!(v["profile"]["name"], "x");
+    three_off(&v);
+}
+
+#[test]
+fn password_prefs_replace_unreadable_file() {
+    three_off(&password_prefs(Some("not json")));
+    three_off(&password_prefs(Some("[1,2]")));
+    three_off(&password_prefs(Some(r#"{"profile":5}"#)));
+}
+
+#[test]
+fn write_password_prefs_creates_default_preferences() {
+    let dir = tempfile::tempdir().unwrap();
+    write_password_prefs(dir.path()).unwrap();
+    let file = dir.path().join("Default").join("Preferences");
+    let v: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
+    three_off(&v);
+    let mut kept = v.clone();
+    kept["signed_in_marker"] = serde_json::json!("keep");
+    std::fs::write(&file, kept.to_string()).unwrap();
+    write_password_prefs(dir.path()).unwrap();
+    let again: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
+    assert_eq!(again["signed_in_marker"], "keep");
+    three_off(&again);
+}
+
+#[test]
+fn launch_goes_on_when_prefs_cannot_be_written() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("Default"), "a file where the folder should be").unwrap();
+    let e = write_password_prefs(dir.path()).unwrap_err();
+    let line = prefs_failure_is_logged_only(&e);
+    assert!(line.contains("password prompts"));
+    assert!(!line.contains(&dir.path().to_string_lossy().to_string()));
+}
+
+fn orphan(pid: u32, port: Option<u16>) -> Orphan {
+    Orphan { pid, profile: format!("tcm-autorun-{}", port.unwrap_or(0)), port, age_ms: Some(600_000), owner: None }
+}
+
+#[test]
+fn close_hung_ends_only_silent_ones() {
+    let orphans = vec![
+        orphan(1, Some(1)),
+        orphan(2, Some(2)),
+        Orphan { pid: 3, profile: "tcm-autorun-3".into(), port: None, age_ms: Some(600_000), owner: None },
+    ];
+    let mut ended = Vec::new();
+    let hung = close_hung(orphans, &|port| port == 2, &mut |o: &Orphan| {
+        ended.push(o.profile.clone());
+        true
+    });
+    assert_eq!(ended, vec!["tcm-autorun-1".to_string()]);
+    assert_eq!(hung.closed, vec!["tcm-autorun-1".to_string()]);
+    assert!(hung.stuck.is_empty());
+}
+
+#[test]
+fn close_hung_keeps_an_answering_orphan() {
+    let mut ended = 0;
+    let hung = close_hung(vec![orphan(2, Some(2))], &|_| true, &mut |_: &Orphan| {
+        ended += 1;
+        true
+    });
+    assert_eq!(ended, 0);
+    assert!(hung.closed.is_empty() && hung.stuck.is_empty());
+}
+
+#[test]
+fn close_hung_names_one_that_would_not_end() {
+    let hung = close_hung(vec![orphan(1, Some(1))], &|_| false, &mut |_: &Orphan| false);
+    assert!(hung.closed.is_empty());
+    assert_eq!(hung.stuck, vec!["tcm-autorun-1".to_string()]);
+}
+
+#[test]
+fn an_unendable_orphan_is_remembered_and_not_tried_again() {
+    use v2_lib::browser::launch::{forget_unendable, remember_unendable, still_to_try};
+    let name = "tcm-autorun-unendable-test-1";
+    let mut o = orphan(1, Some(1));
+    o.profile = name.to_string();
+    assert_eq!(still_to_try(vec![o.clone()]).len(), 1);
+    remember_unendable(name);
+    assert!(still_to_try(vec![o.clone()]).is_empty());
+    forget_unendable(name);
+    assert_eq!(still_to_try(vec![o]).len(), 1);
+}
+
+fn gone(_: u32) -> Option<u64> {
+    None
+}
+
+#[test]
+fn a_young_browser_is_never_ended() {
+    use v2_lib::browser::tree::may_end;
+    let mut o = orphan(1, Some(1));
+    o.age_ms = Some(89_999);
+    assert!(!may_end(&o, 10, &gone));
+    o.age_ms = None;
+    assert!(!may_end(&o, 10, &gone));
+    o.age_ms = Some(90_000);
+    assert!(may_end(&o, 10, &gone));
+}
+
+#[test]
+fn a_browser_owned_by_another_running_app_is_left() {
+    use v2_lib::browser::tree::may_end;
+    let mut o = orphan(1, Some(1));
+    o.owner = Some(Owner { pid: 500, started_ms: 1234 });
+    assert!(!may_end(&o, 10, &|pid| (pid == 500).then_some(1234)));
+}
+
+#[test]
+fn a_browser_whose_owner_is_gone_or_reused_is_ended() {
+    use v2_lib::browser::tree::may_end;
+    let mut o = orphan(1, Some(1));
+    o.owner = Some(Owner { pid: 500, started_ms: 1234 });
+    assert!(may_end(&o, 10, &gone));
+    // The pid runs again, but it is another program that started later.
+    assert!(may_end(&o, 10, &|_| Some(9999)));
+}
+
+#[test]
+fn a_browser_with_no_marker_is_judged_on_age_alone() {
+    use v2_lib::browser::tree::may_end;
+    assert!(may_end(&orphan(1, Some(1)), 10, &gone));
+}
+
+#[test]
+fn a_leftover_of_this_very_app_is_ended() {
+    use v2_lib::browser::tree::may_end;
+    let mut o = orphan(1, Some(1));
+    o.owner = Some(Owner { pid: 10, started_ms: 77 });
+    assert!(may_end(&o, 10, &|pid| (pid == 10).then_some(77)));
+}
+
+#[test]
+fn the_owner_marker_round_trips_and_garbage_is_nothing() {
+    use v2_lib::browser::tree::{owner_marker_text, parse_owner_marker};
+    let owner = Owner { pid: 42, started_ms: 1_700_000_000_000 };
+    assert_eq!(parse_owner_marker(&owner_marker_text(&owner)), Some(owner));
+    assert_eq!(parse_owner_marker("not json"), None);
+    assert_eq!(parse_owner_marker("{}"), None);
+}
+
+#[test]
+fn launch_writes_an_owner_marker_into_the_profile() {
+    use v2_lib::browser::launch::write_owner_marker;
+    let dir = tempfile::tempdir().unwrap();
+    write_owner_marker(dir.path()).unwrap();
+    let text = std::fs::read_to_string(dir.path().join("tcm-owner.json")).unwrap();
+    let owner = v2_lib::browser::tree::parse_owner_marker(&text).unwrap();
+    assert_eq!(owner.pid, std::process::id());
+}
+
+#[test]
+fn the_liveness_probe_is_the_apps_own_rule() {
+    use v2_lib::browser::launch::{ANSWER_TRIES, ANSWER_WITHIN};
+    assert_eq!(ANSWER_TRIES, 2);
+    assert_eq!(ANSWER_WITHIN, std::time::Duration::from_secs(3));
+}

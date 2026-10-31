@@ -27,6 +27,27 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.4.3-beta.7",
+    date: "2026-10-30",
+    items: [
+      "An assistant's hold on its cases now ends when it finishes or is released, including when you release it on the Auto Run screen.",
+      "A save the app refuses now fails a replay the same way it fails a discovery, unless the step (or the first action of the next one) checks the error message. A busy site or an expired session is no longer reported as the app refusing.",
+    ],
+  },
+  {
+    version: "2.4.3-beta.6",
+    date: "2026-10-30",
+    items: [
+      "Auto Run's browser no longer shows Chrome's password save prompt or its data-breach warning after signing in.",
+      "A stuck Auto Run browser left from an earlier run is closed when a new one starts. A browser another copy of the app is using is never touched.",
+      "On a site that has been idle, signing in tries once more, and a failed sign-in says which page the browser ended on. Replaying the same case twice no longer signs in again.",
+      "A discovery that promised not to save now stops what a Save, Finish, Next, Delete or similar button sends, and says which request it stopped.",
+      "Repairing a step's locator keeps its suspected-defect mark.",
+      "Saving a script now warns when it deletes what the case made outside the clean-up step, or picks the row to delete by its position.",
+      "An assistant that makes no calls for 10 minutes has its Auto Run browser and cases let go (never a browser you opened yourself), and resetting a browser lists who holds which.",
+    ],
+  },
+  {
     version: "2.4.3-beta.5",
     date: "2026-10-30",
     items: [

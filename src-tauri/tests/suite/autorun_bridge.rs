@@ -4715,6 +4715,35 @@ async fn a_save_notes_a_loose_record_name_and_an_undeclared_record_without_refus
     assert_eq!((status, out.as_str()), (200, "saved 1 script(s): case 7 (unchanged)"));
 }
 
+/// A script that deletes by position after a check saves, and the answer
+/// notes both problems.
+#[tokio::test]
+async fn save_answer_notes_a_positional_delete() {
+    let dir = TempDir::new();
+    let _root = crate::serial::autorun();
+    set_root(dir.path().to_path_buf());
+    let (_server, client) = client_with_cases(&[(7, "Remove a method", &["", "A toast says Saved"])]).await;
+    let body = serde_json::json!([{
+        "case_id": 7,
+        "title": "Remove a method",
+        "steps": [
+            { "step_number": 1, "actions": [{ "kind": "navigate", "url": "https://app.example/ratings" }] },
+            { "step_number": 2, "actions": [
+                { "kind": "fill", "selector": { "role": "textbox", "name": "Name" }, "value": "AUTOTEST Scale" },
+                { "kind": "click", "selector": { "role": "button", "name": "Save" } },
+                { "kind": "expect_contains_text", "selector": ".toast", "value": "Saved" },
+                { "kind": "click", "selector": { "role": "button", "name": "Delete", "nth": 2 } }
+            ]}
+        ]
+    }]);
+    see_scripts(dir.path(), &body.to_string());
+    let (status, out) = route(&ctx(), Some(&client), "POST", "/autorun-script", &body.to_string(), "1.0.0").await;
+    assert_eq!(status, 200, "{out}");
+    assert!(out.contains("case 7: note: step 2 deletes what the case made after a check"), "{out}");
+    assert!(out.contains("case 7: note: step 2: the delete picks by position (nth 2)"), "{out}");
+    assert!(load_script(dir.path(), 7).unwrap().is_some());
+}
+
 /// `scripts` without its absence checks, to be seen present.
 fn without_absence(scripts: &serde_json::Value) -> serde_json::Value {
     let mut v = scripts.clone();
@@ -5135,4 +5164,69 @@ async fn a_within_matching_several_lists_the_first_and_says_how_many() {
     let picked = Target::One(LocatorStep { nth: Some(2), ..step });
     assert_eq!(first_of_many(&mut page(3), Some(&picked)).await, (Some(picked.clone()), None));
     assert_eq!(first_of_many(&mut page(3), None).await, (None, None));
+}
+
+/// A reset lists the other assistants' live holds: who has which browser and
+/// cases, never an id or a pid.
+#[tokio::test(flavor = "multi_thread")]
+async fn reset_answer_lists_live_holds() {
+    use v2_lib::autorun::agents::{self, AgentHeaders, AgentKey, Caller};
+    use v2_lib::autorun::claims;
+    use v2_lib::autorun::slots::SlotNo;
+    use v2_lib::commands::autorun_slots as slots;
+    const ID_A: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    const ID_B: &str = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+    let _g = crate::serial::agents();
+    let _a = crate::serial::autorun();
+    let _h = crate::serial::held_browsers();
+    agents::clear();
+    claims::clear();
+    slots::clear();
+    let now = v2_lib::autorun::sessions::now_ms();
+    let register = |id: &str, name: Option<&str>| {
+        let h = AgentHeaders { id: Some(id.into()), pid: Some(4242), client: Some("claude-code".into()), name: name.map(str::to_string) };
+        agents::note_call(&h.caller(), &h, now);
+        AgentKey { id: id.into(), name: name.map(str::to_string) }
+    };
+    let a = register(ID_A, None);
+    let b = register(ID_B, Some("dw-levels"));
+    slots::bind(SlotNo::MAIN, &a);
+    slots::bind(SlotNo(1), &b);
+    claims::claim(&b, 135520, now).unwrap();
+    let ctx = v2_lib::ai_bridge::BridgeContext { org: "acme".into(), project: "Web".into(), ..Default::default() };
+    let (status, said) = v2_lib::ai_bridge::route_as(&Caller::Agent(a.clone()), &ctx, None, "POST", "/autorun-reset", "{}", "1.0.0").await;
+    assert_eq!(status, 404, "{said}");
+    assert!(said.contains("Browsers held now:"), "{said}");
+    assert!(said.contains("Assistant 2 (dw-levels) has the extra 1 browser, cases 135520"), "{said}");
+    assert!(!said.contains("Assistant 1 "), "the caller's own browser is not listed: {said}");
+    assert!(!said.contains(ID_B) && !said.contains("4242"), "{said}");
+    agents::clear();
+    claims::clear();
+    slots::clear();
+}
+
+/// A JSON answer gets the holds as a field and stays JSON; a plain answer
+/// gets the text.
+#[test]
+fn holds_join_a_json_answer_as_a_field_and_a_plain_one_as_text() {
+    use v2_lib::autorun::agents::{self, AgentHeaders};
+    use v2_lib::autorun::slots::SlotNo;
+    use v2_lib::commands::autorun_slots as slots;
+    const ID_B: &str = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+    let _g = crate::serial::agents();
+    let _a = crate::serial::autorun();
+    agents::clear();
+    slots::clear();
+    let now = v2_lib::autorun::sessions::now_ms();
+    let h = AgentHeaders { id: Some(ID_B.into()), pid: Some(4242), client: None, name: Some("dw-levels".into()) };
+    agents::note_call(&h.caller(), &h, now);
+    slots::bind(SlotNo(1), &h.caller().key().unwrap().clone());
+    let (_, json) = v2_lib::ai_bridge::with_other_holds((200, r#"{"detail":"ended"}"#.to_string()), None);
+    let v: serde_json::Value = serde_json::from_str(&json).expect("still JSON");
+    assert_eq!(v["detail"], "ended");
+    assert_eq!(v["holds"][0]["browser"], "extra 1");
+    let (_, text) = v2_lib::ai_bridge::with_other_holds((200, "Released it.".to_string()), None);
+    assert!(text.starts_with("Released it.\n\nBrowsers held now:"), "{text}");
+    agents::clear();
+    slots::clear();
 }

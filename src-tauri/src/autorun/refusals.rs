@@ -22,6 +22,36 @@ use std::time::Duration;
 /// What the line a person reads starts with.
 pub const APP_REFUSED: &str = "the app refused: ";
 
+/// How a sentence about a request the site was too busy for starts: a 408 or
+/// a 429 is the site timing out or limiting the caller, not it refusing the
+/// input. A transient failure (`transient::is_transient_with`).
+pub const SITE_BUSY: &str = "the site was busy or timed out: ";
+
+/// What an answer in 400-499 means for the input sent.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Answer {
+    /// The application turned the input down.
+    Refused,
+    /// 408, 429: too slow or too many, to be tried again.
+    Busy,
+    /// 419, 440: the session expired; signing in fresh is the repair.
+    Expired,
+}
+
+/// What `status` (400-499) says.
+pub fn answer_of(status: u16) -> Answer {
+    match status {
+        408 | 429 => Answer::Busy,
+        419 | 440 => Answer::Expired,
+        _ => Answer::Refused,
+    }
+}
+
+/// Whether the request is one that writes (POST, PUT, PATCH, DELETE).
+fn writes(r: &RefusedRequest) -> bool {
+    crate::browser::save_guard::SAVE_METHODS.contains(&r.method.trim().to_ascii_uppercase().as_str())
+}
+
 /// How many refusals one action reports: the first few say what is wrong,
 /// and a page that fires a dozen would bury them.
 const MAX_REFUSED: usize = 3;
@@ -64,7 +94,12 @@ const FINISH_WAIT: Duration = Duration::from_millis(250);
 /// other than the three that mean something else (401 signed out, 403 not
 /// allowed, 404 not there - the page and its menus handle those themselves).
 fn refusal_shaped(e: &NetEntry, own: &[String]) -> bool {
-    asked_by_the_page(e, own) && matches!(e.status, Some(400..=499)) && !matches!(e.status, Some(401 | 403 | 404))
+    asked_by_the_page(e, own)
+        && matches!(e.status, Some(400..=499))
+        && !matches!(e.status, Some(401 | 403 | 404))
+        // A POST that reads (a list, a lookup, a log) answering 4xx is the
+        // page's own business, not a refusal of anything it saved.
+        && !crate::browser::save_guard::looks_like_read(&e.method, &e.path_query)
 }
 
 /// The page's own XHR or fetch to its own site (and not redirected off
@@ -230,7 +265,13 @@ pub async fn refused_with_ids<D: Driver>(d: &mut D, mark: u64, own: &[String]) -
         d.idle(FINISH_WAIT).await;
         seen = d.net_since_held(mark).unwrap_or_default();
     }
-    let refused: Vec<NetEntry> = seen.into_iter().filter(|e| counts(e, own)).take(MAX_REFUSED).collect();
+    // The writes first: the three kept are the ones that can fail the action.
+    let (mut refused, reads): (Vec<NetEntry>, Vec<NetEntry>) = seen
+        .into_iter()
+        .filter(|e| counts(e, own))
+        .partition(|e| crate::browser::save_guard::SAVE_METHODS.contains(&e.method.trim().to_ascii_uppercase().as_str()));
+    refused.extend(reads);
+    refused.truncate(MAX_REFUSED);
     let mut out = Vec::with_capacity(refused.len());
     for e in refused {
         let status = e.status.unwrap_or_default();
@@ -241,7 +282,7 @@ pub async fn refused_with_ids<D: Driver>(d: &mut D, mark: u64, own: &[String]) -
             _ => None,
         };
         let (said, trace_id) = body_message_and_trace(text);
-        let from_body = said.is_some();
+        let from_body = said.is_some() && answer_of(status) == Answer::Refused;
         let message = said.unwrap_or_else(|| status_line(status));
         out.push((
             e.id.clone(),
@@ -266,8 +307,94 @@ pub fn trace_id_of(body: &str) -> Option<String> {
     serde_json::from_str::<Value>(text).ok().and_then(|v| trace_of(&redact(&v)))
 }
 
+/// Whether the requests the application refused fail the action that sent
+/// them: the one verdict a discovery try and a replay or run share. A write
+/// (POST, PUT, PATCH, DELETE) refused with a 4xx answer fails its action,
+/// unless a later action of the same step, or the first of the next step
+/// (`next_step_first`), reads the message or the refusal itself
+/// (`names_a_refusal`): a step that checks the message expects the refusal,
+/// and the check proves it. A write the site was too busy for (408, 429)
+/// fails whatever follows. A refused read, which a page makes on its own,
+/// only reports.
+pub fn fails_the_action(
+    refused: &[RefusedRequest],
+    later: &[crate::browser::actions::Action],
+    next_step_first: Option<&crate::browser::actions::Action>,
+) -> bool {
+    // A write the site was too busy for is never a refusal the case expects.
+    if refused.iter().any(|r| writes(r) && answer_of(r.status) == Answer::Busy) {
+        return true;
+    }
+    let refusal = refused.iter().any(|r| writes(r) && answer_of(r.status) == Answer::Refused);
+    refusal && !later.iter().chain(next_step_first).any(names_a_refusal)
+}
+
 /// The line a failed step or a discovery answer carries for one refusal.
 pub fn app_refused_line(r: &RefusedRequest) -> String {
     let trace = r.trace_id.as_deref().map(|t| format!(", trace id {t}")).unwrap_or_default();
-    format!("{APP_REFUSED}\"{}\" ({} {}, {}{trace})", r.message, r.method, r.path, r.status)
+    let start = match answer_of(r.status) {
+        Answer::Refused => APP_REFUSED,
+        Answer::Busy => SITE_BUSY,
+        Answer::Expired => "the session had expired: ",
+    };
+    format!("{start}\"{}\" ({} {}, {}{trace})", r.message, r.method, r.path, r.status)
+}
+
+/// The refusal a line names: the first write's, else the first.
+pub fn lead(refused: &[RefusedRequest]) -> Option<&RefusedRequest> {
+    refused.iter().find(|r| writes(r)).or_else(|| refused.first())
+}
+
+/// Whether `a` reads the message a refusal leaves on the page, or the
+/// refusal itself: `check_text`, an `expect_visible` / `expect_text` /
+/// `expect_contains_text` on an element that can carry a message (not a
+/// heading, and one named by its text, a message role or an
+/// alert / error / toast / validation / invalid / warning class), or an
+/// `expect_response` for a 4xx answer.
+pub fn names_a_refusal(a: &crate::browser::actions::Action) -> bool {
+    use crate::browser::actions::Action;
+    match a {
+        Action::CheckText { .. } => true,
+        Action::ExpectResponse { status, .. } => (400..=499).contains(status),
+        Action::ExpectVisible { selector, .. }
+        | Action::ExpectText { selector, .. }
+        | Action::ExpectContainsText { selector, .. } => is_message_target(selector),
+        _ => false,
+    }
+}
+
+fn is_message_target(t: &crate::browser::locator::Target) -> bool {
+    use crate::browser::locator::Target;
+    let step = match t {
+        Target::One(s) => s,
+        Target::Chain(c) => match c.last() {
+            Some(s) => s,
+            None => return false,
+        },
+        Target::Legacy(css) => return css_is_message(css),
+    };
+    let role = step.role.as_deref().unwrap_or("").to_ascii_lowercase();
+    if role == "heading" || step.css.as_deref().is_some_and(is_heading_css) {
+        return false;
+    }
+    if matches!(role.as_str(), "alert" | "status" | "alertdialog") || step.css.as_deref().is_some_and(css_is_message) {
+        return true;
+    }
+    // Words of its own and no role of a control: the message's text.
+    step.text.as_deref().is_some_and(|t| !t.trim().is_empty())
+        || (step.name.as_deref().is_some_and(|n| !n.trim().is_empty()) && role.is_empty())
+}
+
+fn is_heading_css(css: &str) -> bool {
+    let c = css.trim().to_ascii_lowercase();
+    ["h1", "h2", "h3", "h4", "h5", "h6"].iter().any(|h| {
+        c.strip_prefix(h).is_some_and(|rest| rest.is_empty() || !rest.starts_with(|ch: char| ch.is_ascii_alphanumeric()))
+    })
+}
+
+fn css_is_message(css: &str) -> bool {
+    let c = css.to_ascii_lowercase();
+    ["alert", "error", "toast", "message", "validation", "invalid", "warning", "danger", "snack", "notif", "feedback"]
+        .iter()
+        .any(|w| c.contains(w))
 }

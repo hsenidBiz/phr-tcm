@@ -378,6 +378,11 @@ assume what the case made was removed. Its failure, a failed
 never fails the case. Its locators must have been seen like any step's,
 and every other run rule (Must not save included) applies to it.
 
+Put every delete of what the case made in the clean-up step, never after a
+check in a case step: a failing check stops the step, the delete never
+runs, and the record stays, so the next run fails on it. The save notes a
+delete that comes after a check.
+
 Every `expect_` action, and `check_url`, looks again until it holds, for up to 10 seconds
 (add `"timeout_ms"` to change that), and a failure says what it actually
 saw. Prefer them to `check_text`, which looks once and cannot tell you
@@ -467,6 +472,10 @@ end. `expire_session` cannot appear in a sign-in recipe or inside a
 `when_visible`. A case that ends the session should be the last thing
 its account does in the case: sign in again (`sign_in`) before acting as
 it once more.
+
+**Password prompts.** The Auto Run browser starts with the browser's own
+password saving and breach warnings off, so no "Save password?" or "Change
+your password" bubble covers the page after a sign-in.
 
 **The keyboard.** `press_key` presses one key on whatever has the focus -
 Tab and Shift+Tab move it, Enter and Space activate, Escape closes - and
@@ -1130,6 +1139,12 @@ save words, which a person adds on the
 Auto Run Setup tab. Every other request goes through
 unchanged. The sign-in is not checked: it is the app's own.
 
+A click on a control named like a save (Save, Save & Continue, Continue, Finish, Next, OK, Yes, Confirm, Remove, Submit,
+Add...) also stops every POST, PUT, PATCH or DELETE the page sends in the next
+5 seconds, whatever its address path (a wizard step posts to one address with
+no save word in it). A write that did go through is named in the answer's
+`let_through` (method and path only).
+
 How long the guard lasts depends on what set it. A discovery started with
 `no_save`, or for a case marked `no_save`, keeps its saves stopped until it
 ends. `no_save: true` on one discovery action or batch lasts for that call
@@ -1542,6 +1557,10 @@ combobox, searchbox, dialog, heading, row, cell...) and `name` is the
 accessible name: a button's words, a field's label. Both come from the browser's own
 accessibility tree, so they match what a screen reader would announce.
 
+Before deleting, find the row by its own name, never by `nth` on a list
+others share: another record can sit at that position. The save notes a
+delete that picks by `nth`.
+
 `name` and `text` match loosely - contains, ignoring case and extra
 spaces. Add `"exact": true` when a near miss exists ("Save" and "Save as
 new"). Use `exact: true` when a name is part of another, such as
@@ -1877,7 +1896,15 @@ it as "the app refused: ...". Neither is TCM's verdict: `page_said` and
 
 - A success message ("Saved.") is nothing to act on.
 - A refusal the case expects is part of the case: check it in the next
-  batch with `expect_visible` on its words, so the script proves it.
+  batch with `expect_visible` on its words, so the script proves it. In a
+  saved script put that check in the SAME step, after the action (the first
+  action of the next step also counts): a step whose upload or save is
+  refused fails unless a later action reads the message
+  (`expect_visible`/`expect_text`/`expect_contains_text` on the message, or
+  `check_text`) or is an `expect_response` for a 4xx; a check of the form's
+  own heading does not. An error toast lasts only about 5 seconds. A save
+  answered 408 or 429 fails as "the site was busy" and is retried, never
+  expected.
 - A refusal the case does not expect means the test case or its
   preconditions look wrong (a value it never fills in, a setting not in
   the state it assumes). Report it to the user with the message, and do
@@ -2046,8 +2073,14 @@ alone always uses the main one, as before.
 - The map, the areas, the components and the quirks are shared: read an area
   again just before you repair it.
 - An unattended run cannot start while any assistant's browser is open.
-- When your session ends, or after 30 minutes without a call, a browser of
-  your own is released; the main one is left open for the person.
+- When your session ends, a browser of your own is released; the main one is
+  left open for the person. A browser and the case holds of a subagent with a
+  name are let go after 10 minutes without a call from it, and the main
+  browser is released then only when an assistant opened it (one the person
+  opened never is); any other assistant's own browser is let go after 30.
+  A call of any tool of yours counts, and a case hold stays while its browser
+  is replaying or working. `reset_autorun_browser` ends its answer
+  with who holds which browser, account and cases now.
 - Subagents: give each subagent you start a name of its own (for example
   writer-1, writer-2) and tell it to pass it as `agent` on every Auto Run and
   API template call; each name gets its own browser. A subagent without a name
@@ -2525,6 +2558,19 @@ the answer says so; start a new one to explore again.
   is only for a broken one (frozen, wrong account, session gone, "the
   browser did not answer"), and `reset_autorun_browser` gives a clean page
   with the sign-in kept.
+- Replaying the same case again needs no reset: a replay keeps its sign-in
+  even when the application's own pages re-issue the session cookie as the
+  steps run, so the next replay goes straight to its area. It is kept only
+  when it is provably the same account: a replay whose steps could have
+  changed the login (a sign_in, a login field filled - also inside a
+  when_visible or repeat_while_visible - the sign-in address opened, the
+  site's side switched), or after which the identity cookie is not the one
+  the sign-in left, signs in again on the next replay. A sign-in that
+  stops names where the browser ended (its path and the page's title). A
+  slow site gets one more try only when the login form is gone from the
+  page: the sign-in address is opened once more, the page is never
+  reloaded and the form never sent twice; with the form still showing
+  (wrong password, locked account, reset page) nothing is tried again.
 - Replaying the same case to a later step carries on from where your last
   replay of it stood, when that browser is yours and nothing (a step, a
   try, a discovery action or another replay) has used it since; the
@@ -2756,7 +2802,8 @@ plain sentence about what you saw, and leave the script alone.
   defect and carry your note, so the person reviewing sees it as one. The
   case still fails; it is only labelled.
 - A recorded pass of that step clears the mark, and so does a repair that
-  changes that step.
+  changes that step's checks; a repair that leaves its checks as they were
+  (a moved locator) keeps it, and the save says so.
 - A mark you set is cleared with `clear_autorun_suspected_defect { case_id, said }` only when the person says so in this chat (after a fix elsewhere made the step pass, say): `said` quotes their words, as for a ruling.
 - The mark is refused unless that step failed in the case's newest run,
   and refused when the failure is one of the `STOP:` lines. A replay that
