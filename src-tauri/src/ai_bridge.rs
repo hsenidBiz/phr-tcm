@@ -463,7 +463,10 @@ pub async fn route_as(
     let slot = match need {
         Some(need) => match crate::commands::autorun_slots::slot_for(caller, need) {
             Ok(slot) => slot,
-            Err(refused) => return refused,
+            Err(refused) => {
+                release_failed_start(newly_claimed, caller, path, refused.0);
+                return refused;
+            }
         },
         None => SlotNo::MAIN,
     };
@@ -976,12 +979,7 @@ pub async fn route_as(
     };
     // A lease refusal in the answer of a route that signs in says whose
     // browser holds the account, once, here, whichever arm answered.
-    // A hold this discovery start made ends with it: no work began.
-    if let (Some(case), crate::autorun::agents::Caller::Agent(key), "/autorun-discover-start") = (newly_claimed, caller, path) {
-        if answer.0 != 200 && crate::autorun::claims::release_case(key, case) {
-            crate::applog::info(format!("Auto Run: case {case}'s hold ended - its discovery did not start"));
-        }
-    }
+    release_failed_start(newly_claimed, caller, path, answer.0);
     name_the_holder(answer, caller, method, path)
 }
 
@@ -11934,6 +11932,16 @@ pub fn claim_for(caller: &crate::autorun::agents::Caller, case_id: i32) -> Resul
                 Some(held_by) => Err((409, claims::case_claimed(case_id, &held_by.label, claims::held_for(case_id, now)))),
                 None => Ok(None),
             }
+        }
+    }
+}
+
+/// A hold a discovery start made ends with that start when it is answered
+/// with anything but 200: no work began. A hold the agent had before stays.
+fn release_failed_start(newly_claimed: Option<i32>, caller: &crate::autorun::agents::Caller, path: &str, status: u16) {
+    if let (Some(case), crate::autorun::agents::Caller::Agent(key), "/autorun-discover-start") = (newly_claimed, caller, path) {
+        if status != 200 && crate::autorun::claims::release_case(key, case) {
+            crate::applog::info(format!("Auto Run: case {case}'s hold ended - its discovery did not start"));
         }
     }
 }

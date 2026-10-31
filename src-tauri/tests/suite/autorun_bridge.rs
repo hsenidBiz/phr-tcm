@@ -5335,6 +5335,8 @@ async fn a_failed_discovery_start_lets_go_of_the_case_it_claimed() {
     let (status, out) = start_as(START_A, 135421).await;
     assert!(status >= 400 && !out.contains("being worked on"), "{status} {out}");
     assert_eq!(claims::holder(135421, v2_lib::autorun::sessions::now_ms()), None, "A's failed start ended its hold ({a:?})");
+    let lines: Vec<String> = v2_lib::applog::recent(500).into_iter().map(|l| l.message).collect();
+    assert!(lines.iter().any(|m| m == "Auto Run: case 135421's hold ended - its discovery did not start"), "{lines:?}");
     let (_, out) = start_as(START_B, 135421).await;
     assert!(!out.contains("is being worked on by"), "{out}");
     agents::clear();
@@ -5361,4 +5363,29 @@ async fn a_failed_start_keeps_a_hold_made_earlier() {
     assert!(out.contains("is being worked on by Assistant 1"), "{out}");
     agents::clear();
     claims::clear();
+}
+
+#[tokio::test]
+async fn a_start_refused_for_want_of_a_browser_lets_go_of_its_case() {
+    use v2_lib::autorun::{agents, claims, slots::SlotNo};
+    let _a = crate::serial::agents();
+    let _l = crate::serial::log_tail();
+    let _r = crate::serial::autorun();
+    let dir = TempDir::new();
+    set_root(dir.path().to_path_buf());
+    agents::clear();
+    claims::clear();
+    v2_lib::commands::autorun_slots::clear();
+    register_agent(START_A);
+    for (n, id) in [(0, "2123456789abcdef0123456789abcdef"), (1, "3123456789abcdef0123456789abcdef"), (2, "4123456789abcdef0123456789abcdef")] {
+        let other = register_agent(id);
+        v2_lib::commands::autorun_slots::bind(SlotNo(n), &other);
+    }
+    let (status, out) = start_as(START_A, 135421).await;
+    assert_eq!(status, 409, "{out}");
+    assert!(out.contains("browsers are open already"), "{out}");
+    assert_eq!(claims::holder(135421, v2_lib::autorun::sessions::now_ms()), None);
+    agents::clear();
+    claims::clear();
+    v2_lib::commands::autorun_slots::clear();
 }
