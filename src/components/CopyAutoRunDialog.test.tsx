@@ -102,3 +102,35 @@ test("says so when there is nothing to copy from", async () => {
   expect(await screen.findByText("There is no other environment to copy from yet.")).toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Copy" })).not.toBeInTheDocument();
 });
+
+test("after a needs-confirm refusal the dialog asks, and Replace is the only way to send replace=true", async () => {
+  let empty = true;
+  const calls: Record<string, unknown>[] = [];
+  mockIPC((cmd, args) => {
+    if (cmd === "env_copy_choices") return { target_empty: empty, sources: SOURCES };
+    if (cmd === "env_copy_autorun") {
+      calls.push(args as Record<string, unknown>);
+      if (!(args as { replace: boolean }).replace) throw "this environment already has Auto Run data - confirm to replace it";
+      return { items: 1, kept_aside: true };
+    }
+    return null;
+  });
+  render(
+    <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+      <CopyAutoRunDialog target={QA} onClose={vi.fn()} />
+    </QueryClientProvider>,
+  );
+  const copy = await screen.findByRole("button", { name: "Copy" });
+  empty = false; // data arrived after the dialog opened
+  fireEvent.click(copy);
+  expect(await screen.findByRole("button", { name: "Replace" })).toBeInTheDocument();
+  expect(calls).toHaveLength(1);
+  expect(calls[0].replace).toBe(false);
+  expect(toast.error).not.toHaveBeenCalled();
+});
+
+test("the replace sentence is announced politely", async () => {
+  mount({ target_empty: false, sources: SOURCES });
+  const sentence = await screen.findByText(/This replaces QA's/);
+  expect(sentence.closest("[aria-live]")).toHaveAttribute("aria-live", "polite");
+});

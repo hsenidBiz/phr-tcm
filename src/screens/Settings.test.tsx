@@ -1232,14 +1232,15 @@ function mountImport(opts: {
   return { calls, reload, restore: () => Object.defineProperty(window, "location", { configurable: true, value: original }) };
 }
 
-test("the import confirmation says it replaces Auto Run data in every environment", async () => {
+test("the import confirmation names the environments it replaces and the removed area", async () => {
   const { calls, restore } = mountImport({
     preview: { exported_at: "", app_version: "2.3.0", pre_update: true, post_update: false, replaces: ["Default", "QA"] },
   });
   fireEvent.click(screen.getByRole("button", { name: "Import from file" }));
   const dialog = await screen.findByRole("dialog");
-  expect(await within(dialog).findByText(/Importing replaces this computer's Auto Run data in every environment with the backup's\./)).toBeInTheDocument();
-  expect(within(dialog).getByText(/Default, QA/)).toBeInTheDocument();
+  expect(await within(dialog).findByText(/Default, QA/)).toBeInTheDocument();
+  // The preview speaks for itself: the general sentence is only for when there is none.
+  expect(within(dialog).queryByText(/in every environment with the backup's/)).not.toBeInTheDocument();
   expect(within(dialog).getByText(/kept in the removed area for 30 days/)).toBeInTheDocument();
   // The preview came first, and nothing was imported by looking.
   expect(calls).toContain("preview_app_backup");
@@ -1898,4 +1899,14 @@ describe("the all-projects switch and the home project", () => {
       "Pick a project",
     );
   });
+});
+
+test("with no preview to read, the import confirmation says it replaces Auto Run data in every environment", async () => {
+  const { restore } = mountImport({ preview: undefined });
+  fireEvent.click(screen.getByRole("button", { name: "Import from file" }));
+  const dialog = await screen.findByRole("dialog");
+  expect(
+    await within(dialog).findByText(/Importing replaces this computer's Auto Run data in every environment with the backup's\./),
+  ).toBeInTheDocument();
+  restore();
 });

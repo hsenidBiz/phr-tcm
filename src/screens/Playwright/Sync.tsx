@@ -126,6 +126,9 @@ export default function Sync({
     // Kept until something says it changed: a write here, a script changed
     // (even while Sync was not open, `syncMounted`), Read again or Refresh.
     staleTime: Infinity,
+    // A refusal for the wrong environment is an answer, not something to
+    // retry for seconds; Refresh reads again.
+    retry: false,
   });
   const [ticked, setTicked] = useState<Set<number>>(new Set());
   const [busy, setBusy] = useState(false);

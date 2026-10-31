@@ -546,9 +546,11 @@ export default function Settings({
               the backup&apos;s copy, then reloads the app. Anything you
               changed here since the backup was made will be overwritten.
             </p>
-            <p className="text-sm text-muted">
-              Importing replaces this computer&apos;s Auto Run data in every environment with the backup&apos;s.
-            </p>
+            {!preview.data && !preview.isError && (
+              <p className="text-sm text-muted">
+                Importing replaces this computer&apos;s Auto Run data in every environment with the backup&apos;s.
+              </p>
+            )}
             {preview.isError && (
               <p role="alert" className="text-sm text-danger">
                 {sentence(preview.error.message)}

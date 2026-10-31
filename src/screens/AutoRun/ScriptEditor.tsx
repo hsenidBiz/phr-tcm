@@ -58,14 +58,15 @@ const PLACEHOLDER = `[
  * label line it replaced, so nothing under the script moves down. */
 const HEADER_BUTTON = "-my-0.5 py-0.5";
 
-export default function ScriptEditor({
-  caseId,
-  title,
-  steps,
-  org,
-  project,
-  onClose,
-}: {
+/** A pull replaces the script on disk, and every field of the editor that
+ * was touched would keep showing what was typed before it: the body is
+ * mounted afresh after one, so it shows what was pulled. */
+export default function ScriptEditor(props: ScriptEditorProps) {
+  const [pulls, setPulls] = useState(0);
+  return <ScriptEditorBody key={pulls} {...props} onPulled={() => setPulls((n) => n + 1)} />;
+}
+
+type ScriptEditorProps = {
   caseId: number;
   title: string;
   steps: { action: string; expected: string; shared?: number | null }[];
@@ -74,7 +75,17 @@ export default function ScriptEditor({
   org: string;
   project: string;
   onClose: () => void;
-}) {
+};
+
+function ScriptEditorBody({
+  caseId,
+  title,
+  steps,
+  org,
+  project,
+  onClose,
+  onPulled,
+}: ScriptEditorProps & { onPulled: () => void }) {
   // What it holds is this environment's: it never outlives a switch.
   useCloseOnEnvironmentChange(onClose);
   const queryClient = useQueryClient();
@@ -187,6 +198,20 @@ export default function ScriptEditor({
   // failed to load) would write an empty `steps: []` over whatever is
   // already there - silent data loss. Block it rather than let an empty
   // textarea pass for "this case genuinely has no script".
+  // Anything the person has changed and not saved: a pull would put another
+  // script under it, and Save would then overwrite what was pulled.
+  const unsaved =
+    text !== null ||
+    picked !== null ||
+    pickedArea !== null ||
+    pickedNoSave !== null ||
+    pickedChanges !== null ||
+    pickedNeeds !== null ||
+    pickedState !== null ||
+    removedPre.length > 0 ||
+    putBack.length > 0;
+  const UNSAVED_REASON = "Save or discard your changes first";
+
   const blockedReason = existing.isLoading
     ? "Still loading the existing script - wait for it before saving."
     : existing.isError
@@ -490,7 +515,13 @@ export default function ScriptEditor({
                 Copy to environment…
               </Button>
             )}
-            <Button variant="outline" size="sm" onClick={() => setCopying("from")}>
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={unsaved}
+              title={unsaved ? UNSAVED_REASON : undefined}
+              onClick={() => setCopying("from")}
+            >
               <IconCopyFromEnvironment aria-hidden />
               Copy from environment…
             </Button>
@@ -511,6 +542,10 @@ export default function ScriptEditor({
           org={org}
           project={project}
           direction={copying}
+          blockedReason={unsaved && copying === "from" ? UNSAVED_REASON : undefined}
+          onCopied={() => {
+            if (copying === "from") onPulled();
+          }}
           onClose={() => setCopying(null)}
         />
       )}

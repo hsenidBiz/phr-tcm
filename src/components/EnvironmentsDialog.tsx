@@ -9,7 +9,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { commands, type EnvInput, type EnvListView, type EnvView } from "../bindings";
-import { IconAdd, IconCancel, IconClear, IconConfirm, IconCopy, IconEdit, IconRemove } from "../lib/actionIcons";
+import { IconAdd, IconCancel, IconClear, IconConfirm, IconCopyFromEnvironment, IconEdit, IconRemove } from "../lib/actionIcons";
 import { saveSelectedDb } from "../lib/dbServer";
 import { envKeys, useEnvironments } from "../lib/environments";
 import CopyAutoRunDialog from "./CopyAutoRunDialog";
@@ -236,7 +236,7 @@ export default function EnvironmentsDialog({ onClose }: { onClose: () => void })
                   aria-label={`Copy Auto Run data into ${env.name}`}
                   onClick={() => setCopyInto(env)}
                 >
-                  <IconCopy aria-hidden />
+                  <IconCopyFromEnvironment aria-hidden />
                   Copy Auto Run data…
                 </Button>
                 <Button

@@ -126,7 +126,7 @@ test("a refusal while copying shows inline and keeps the dialog open", async () 
   });
   await pick("Copy to", "QA");
   fireEvent.click(await screen.findByRole("button", { name: "Copy" }));
-  expect(await screen.findByRole("alert")).toHaveTextContent("the environment was switched");
+  expect(await screen.findByRole("alert")).toHaveTextContent("The environment changed while this dialog was open");
   expect(onClose).not.toHaveBeenCalled();
 });
 
@@ -142,4 +142,67 @@ test("copying from another environment uses the pull commands and names the acti
   expect(calls.find((c) => c.cmd === "auto_run_copy_case_from")!.args).toEqual({
     organization: "acme", project: "Web", caseId: 7, activeId: DEFAULT.id, sourceId: QA.id, replace: true,
   });
+});
+
+test("a plan result is announced politely", async () => {
+  mount({ missing_accounts: ["hr.admin"] });
+  await pick("Copy to", "QA");
+  const line = await screen.findByText("Add the account hr.admin in QA's Accounts before running.");
+  expect(line.closest("[aria-live]")).toHaveAttribute("aria-live", "polite");
+});
+
+test("after a needs-confirm refusal the dialog asks to replace instead of repeating the refusal", async () => {
+  let has = false;
+  const { calls } = mount({}, "to", {
+    auto_run_copy_case_plan: () => ({ ...EMPTY_PLAN, target_has_script: has }),
+    auto_run_copy_case: (a) => {
+      if (!a.replace) throw "that environment already has a script for this case - confirm to replace it";
+      return EMPTY_PLAN;
+    },
+  });
+  await pick("Copy to", "QA");
+  const copy = await screen.findByRole("button", { name: "Copy" });
+  has = true;
+  fireEvent.click(copy);
+  fireEvent.click(await screen.findByRole("button", { name: "Replace QA's script" }));
+  await waitFor(() => expect(calls.filter((c) => c.cmd === "auto_run_copy_case")).toHaveLength(2));
+  expect(calls.filter((c) => c.cmd === "auto_run_copy_case")[1].args.replace).toBe(true);
+});
+
+test("a copy refused because the environment changed is put in screen wording", async () => {
+  mount({}, "to", {
+    auto_run_copy_case: () => {
+      throw "the environment was switched - nothing was copied; look at the case again in the environment now active";
+    },
+  });
+  await pick("Copy to", "QA");
+  fireEvent.click(await screen.findByRole("button", { name: "Copy" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "The environment changed while this dialog was open - open it again.",
+  );
+});
+
+test("a copy refused because Auto Run is busy says so in copy wording", async () => {
+  mount({}, "to", {
+    auto_run_copy_case: () => {
+      throw "the environment cannot be switched while something is being recorded or run in Auto Run - finish or cancel it first";
+    },
+  });
+  await pick("Copy to", "QA");
+  fireEvent.click(await screen.findByRole("button", { name: "Copy" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Nothing can be copied while something is open or running in Auto Run - finish or close it first.",
+  );
+});
+
+test("a blocked dialog says why and offers no copy", async () => {
+  setActiveEnvId(DEFAULT.id);
+  mockIPC((cmd) => (cmd === "env_list" ? { active: DEFAULT.id, environments: [DEFAULT, QA] } : null));
+  render(
+    <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+      <CopyCaseDialog caseId={7} org="acme" project="Web" direction="from" blockedReason="Save or discard your changes first" onClose={vi.fn()} />
+    </QueryClientProvider>,
+  );
+  expect(await screen.findByRole("alert")).toHaveTextContent("Save or discard your changes first");
+  expect(screen.queryByRole("combobox", { name: "Copy from" })).not.toBeInTheDocument();
 });

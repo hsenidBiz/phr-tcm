@@ -7,13 +7,14 @@
 // replaced by the button that says so.
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useId, useState } from "react";
 import { commands, type CaseCopyPlan } from "../../bindings";
 import { Button } from "../../components/ui/button";
 import { Modal } from "../../components/ui/modal";
 import { Select } from "../../components/ui/select";
 import { useCloseOnEnvironmentChange } from "../../hooks/useCloseOnEnvironmentChange";
 import { IconCancel, IconCopy } from "../../lib/actionIcons";
+import { copyRefusalText, isNeedsConfirm } from "../../lib/copyRefusal";
 import { isEnvironmentScopedKey, useEnvironments } from "../../lib/environments";
 import { toast } from "../../lib/toast";
 
@@ -67,6 +68,8 @@ export default function CopyCaseDialog({
   org,
   project,
   direction = "to",
+  blockedReason,
+  onCopied,
   onClose,
 }: {
   caseId: number;
@@ -74,11 +77,16 @@ export default function CopyCaseDialog({
   project: string;
   /** "to": from the environment on screen into another. "from": the other way. */
   direction?: "to" | "from";
+  /** Why nothing can be copied right now (the editor has unsaved edits). */
+  blockedReason?: string;
+  /** Called once a copy has landed, before the dialog closes. */
+  onCopied?: () => void;
   onClose: () => void;
 }) {
   // The question names the environments as they were: it never outlives a switch.
   useCloseOnEnvironmentChange(onClose);
   const qc = useQueryClient();
+  const titleId = useId();
   const envs = useEnvironments();
   const active = envs.data?.active ?? "";
   const activeEnv = envs.data?.environments.find((e) => e.id === active);
@@ -117,17 +125,20 @@ export default function CopyCaseDialog({
           ? await commands.autoRunCopyCase(org, project, caseId, active, pickedId, replace)
           : await commands.autoRunCopyCaseFrom(org, project, caseId, active, pickedId, replace);
       if (r.status === "error") {
-        setProblem(r.error);
+        // The destination gained a script since the plan: ask, don't repeat.
+        if (isNeedsConfirm(r.error)) await plan.refetch();
+        else setProblem(copyRefusalText(r.error));
         return;
       }
       if (direction === "from") {
         // The script now on disk is the active environment's: read again.
         await qc.invalidateQueries({ predicate: (q) => isEnvironmentScopedKey(q.queryKey) });
       }
+      onCopied?.();
       toast.success(`Copied case #${caseId} into ${dest}`);
       onClose();
     } catch (e) {
-      setProblem(message(e));
+      setProblem(copyRefusalText(message(e)));
     } finally {
       setBusy(false);
     }
@@ -140,43 +151,53 @@ export default function CopyCaseDialog({
       : `Copy case #${caseId} from another environment`;
 
   return (
-    <Modal onClose={onClose} labelledBy="copy-case-title" className="flex w-full max-w-md flex-col gap-3 p-5">
-      <h2 id="copy-case-title" className="text-sm font-semibold text-text">
+    <Modal onClose={onClose} labelledBy={titleId} className="flex w-full max-w-md flex-col gap-3 p-5">
+      <h2 id={titleId} className="text-sm font-semibold text-text">
         {title}
       </h2>
-      <label className="block space-y-1">
-        <span className="text-xs font-medium text-muted">{label}</span>
-        <Select
-          aria-label={label}
-          className="w-full"
-          value={pickedId}
-          onChange={(e) => {
-            setProblem("");
-            setPickedId(e.target.value);
-          }}
-        >
-          <option value="">Choose an environment…</option>
-          {others.map((e) => (
-            <option key={e.id} value={e.id}>
-              {e.name}
-            </option>
-          ))}
-        </Select>
-      </label>
-      {other && plan.isPending && <p className="text-xs text-muted">Checking what the copy needs…</p>}
-      {other && plan.isError && (
+      {blockedReason ? (
         <p role="alert" className="text-xs text-danger">
-          {plan.error.message}
+          {blockedReason}
         </p>
-      )}
-      {other && plan.data && dest && (
+      ) : (
         <>
-          <Lines plan={plan.data} dest={dest} />
-          {plan.data.target_has_script && (
-            <p className="text-xs font-medium text-text">
-              {`${dest} already has a script for this case. Copying replaces it.`}
-            </p>
-          )}
+          <label className="block space-y-1">
+            <span className="text-xs font-medium text-muted">{label}</span>
+            <Select
+              aria-label={label}
+              className="w-full"
+              value={pickedId}
+              onChange={(e) => {
+                setProblem("");
+                setPickedId(e.target.value);
+              }}
+            >
+              <option value="">Choose an environment…</option>
+              {others.map((e) => (
+                <option key={e.id} value={e.id}>
+                  {e.name}
+                </option>
+              ))}
+            </Select>
+          </label>
+          <div aria-live="polite" className="space-y-3">
+            {other && plan.isPending && <p className="text-xs text-muted">Checking what the copy needs…</p>}
+            {other && plan.isError && (
+              <p role="alert" className="text-xs text-danger">
+                {copyRefusalText(plan.error.message)}
+              </p>
+            )}
+            {other && plan.data && dest && (
+              <>
+                <Lines plan={plan.data} dest={dest} />
+                {plan.data.target_has_script && (
+                  <p className="text-xs font-medium text-text">
+                    {`${dest} already has a script for this case. Copying replaces it.`}
+                  </p>
+                )}
+              </>
+            )}
+          </div>
         </>
       )}
       {problem && (
@@ -189,7 +210,7 @@ export default function CopyCaseDialog({
           <IconCancel aria-hidden />
           Cancel
         </Button>
-        {other && plan.data && dest && (
+        {!blockedReason && other && plan.data && dest && (
           <Button size="sm" disabled={busy} onClick={copy}>
             <IconCopy aria-hidden />
             {plan.data.target_has_script ? `Replace ${dest}'s script` : "Copy"}

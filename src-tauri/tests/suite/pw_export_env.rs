@@ -386,3 +386,22 @@ fn every_script_carrying_command_starts_from_the_export_root() {
     // The only other readers of the active root are the export-environment views.
     assert_eq!(export.matches("autorun::root(").count(), 4, "export_root, export_env_root, pw_export_env, pw_set_export_env");
 }
+
+/// The webview tells a refusal from a failure by how its sentence BEGINS
+/// (src/screens/Playwright/Sync.tsx, src/screens/Settings.tsx,
+/// src/lib/copyRefusal.ts). Rewording one of these without changing the
+/// matching text there would turn a calm reason into a red failure.
+#[test]
+fn the_sentences_the_webview_matches_by_their_beginning_still_begin_so() {
+    use v2_lib::autorun::{backup_import, env_copy};
+    use v2_lib::commands::environments as ce;
+    assert!(environments::not_export_env("X").starts_with("Export and Sync run only in "));
+    assert!(backup_import::IMPORT_PENDING.starts_with("an earlier import has not finished"));
+    assert!(backup_import::IMPORT_UNFINISHED.starts_with("the import did not finish"));
+    assert!(env_copy::CASE_COPY_SWITCHED.starts_with("the environment was switched"));
+    assert!(env_copy::COPY_NEEDS_CONFIRM.contains("confirm to replace it"));
+    assert!(env_copy::CASE_COPY_NEEDS_CONFIRM.contains("confirm to replace it"));
+    for s in [ce::SWITCH_BUSY, ce::SWITCH_TEMPLATE_RUNNING, ce::SWITCH_SUPERVISED_OPEN, ce::SWITCH_BROWSER_SIGNED_IN] {
+        assert!(s.starts_with("the environment cannot be switched"), "{s}");
+    }
+}

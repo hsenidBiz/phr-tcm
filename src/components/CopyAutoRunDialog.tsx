@@ -5,10 +5,11 @@
 // kept for 30 days and offered here as a source.
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useId, useState } from "react";
 import { commands, type EnvView } from "../bindings";
 import { useCloseOnEnvironmentChange } from "../hooks/useCloseOnEnvironmentChange";
 import { IconCancel, IconCopy } from "../lib/actionIcons";
+import { copyRefusalText, isNeedsConfirm } from "../lib/copyRefusal";
 import { forgetEnvironmentData } from "../lib/environments";
 import { unwrapStr } from "../lib/ipc";
 import { toast } from "../lib/toast";
@@ -33,6 +34,7 @@ export default function CopyAutoRunDialog({ target, onClose }: { target: EnvView
     gcTime: 0,
   });
   const qc = useQueryClient();
+  const titleId = useId();
   const [picked, setPicked] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -46,7 +48,9 @@ export default function CopyAutoRunDialog({ target, onClose }: { target: EnvView
     try {
       const r = await commands.envCopyAutorun(target.id, source.key, replaces);
       if (r.status === "error") {
-        toast.error(r.error);
+        // The target gained data since this opened: ask, don't repeat.
+        if (isNeedsConfirm(r.error)) await choices.refetch();
+        else toast.error(copyRefusalText(r.error));
         return;
       }
       // Into the environment on screen, every screen reads it again.
@@ -54,7 +58,7 @@ export default function CopyAutoRunDialog({ target, onClose }: { target: EnvView
       toast.success(`Copied Auto Run data into ${target.name}`);
       onClose();
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : String(e));
+      toast.error(copyRefusalText(e instanceof Error ? e.message : String(e)));
     } finally {
       setBusy(false);
     }
@@ -63,10 +67,10 @@ export default function CopyAutoRunDialog({ target, onClose }: { target: EnvView
   return (
     <Modal
       onClose={onClose}
-      labelledBy="copy-autorun-title"
+      labelledBy={titleId}
       className="flex w-full max-w-md flex-col gap-3 p-5"
     >
-      <h2 id="copy-autorun-title" className="text-sm font-semibold text-text">
+      <h2 id={titleId} className="text-sm font-semibold text-text">
         Copy Auto Run data into {target.name}
       </h2>
       {choices.isPending && <p className="text-xs text-muted">Looking for somewhere to copy from…</p>}
@@ -98,11 +102,13 @@ export default function CopyAutoRunDialog({ target, onClose }: { target: EnvView
           <p className="text-xs text-muted">
             Scripts, areas, components, quirks, API templates and the sign-in recording come across.
           </p>
-          {replaces && (
-            <p className="text-xs text-text">
-              {`This replaces ${target.name}'s scripts, areas, components, quirks and API templates with ${source.name}'s. ${target.name}'s current ones are kept for 30 days and can be copied back from this list.`}
-            </p>
-          )}
+          <div aria-live="polite">
+            {replaces && (
+              <p className="text-xs text-text">
+                {`This replaces ${target.name}'s scripts, areas, components, quirks and API templates with ${source.name}'s. ${target.name}'s current ones are kept for 30 days and can be copied back from this list.`}
+              </p>
+            )}
+          </div>
         </>
       )}
       <div className="flex justify-end gap-2">
