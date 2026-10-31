@@ -100,7 +100,7 @@ pub fn check_saved(root: &Path, org: &str, project: &str, scripts: &[CaseScript]
 /// What the assistant's save adds, after "names {records} (from step {n})",
 /// when a script relies on a record it declares no precondition for. A note,
 /// never a refusal.
-pub const UNDECLARED_RECORD: &str = "but declares no precondition: on an environment without that record the case fails as a wrong result instead of being Blocked before step 1 - declare each record it relies on in \"preconditions\" (see \"Preconditions\" in the guide).";
+pub const UNDECLARED_RECORD: &str = "but declares no precondition: on an environment without that record the case fails as a wrong result instead of being Blocked before step 1 - declare each record it relies on in \"preconditions\", or in \"needs_records\" with a saved setup that finds it (see \"Preconditions\" in the guide).";
 
 /// The most records the note names before saying how many more.
 const RECORDS_SHOWN: usize = 3;
@@ -159,7 +159,7 @@ pub fn undeclared_record_note(
     save_words: &[String],
 ) -> Option<String> {
     use crate::browser::locator::fold_name;
-    if !script.preconditions.is_empty() || script.setup.is_some() {
+    if !script.preconditions.is_empty() || !script.needs_records.is_empty() || script.setup.is_some() {
         return None;
     }
     let prefix = fold_name(test_prefix);
@@ -392,11 +392,11 @@ pub async fn check_script<D: StageDb>(
     db: impl FnOnce() -> PreconditionDb<D>,
 ) -> Result<PreconditionCheck, String> {
     let Some(script) = super::store::load_script(root, case_id)? else { return Ok(PreconditionCheck::go()) };
-    if script.preconditions.is_empty() {
+    if script.preconditions.is_empty() && script.needs_records.is_empty() {
         return Ok(PreconditionCheck::go());
     }
     let db = db();
-    Ok(check_case(&db, root, org, project, &script.preconditions).await)
+    Ok(super::needs_records::check_script_case(&db, root, org, project, &script).await)
 }
 
 /// The active environment's database, as the place preconditions are

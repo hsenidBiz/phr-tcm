@@ -658,6 +658,15 @@ export const commands = {
 	 */
 	precondition_repairs?: PreconditionRepair_Serialize[],
 	/**
+	 *  Kept records the case relies on and did not make, each one named by a
+	 *  saved setup whose database find rule looks for it. The run asks
+	 *  every one before it signs in (`needs_records`) and blocks the case,
+	 *  naming what is missing, when one is not there. Every save validates
+	 *  them. Written only when there are any, so an older script reads
+	 *  exactly as it always did.
+	 */
+	needs_records?: NeededRecord[],
+	/**
 	 *  The draft this case makes for itself before it signs in: a fixture
 	 *  the run performs on every run of the case. Its outputs reach
 	 *  the steps as `{{setup.<output>}}` (`setup`). A repair can never
@@ -3368,6 +3377,15 @@ export type CaseScript_Deserialize = {
 	 */
 	precondition_repairs?: PreconditionRepair_Deserialize[],
 	/**
+	 *  Kept records the case relies on and did not make, each one named by a
+	 *  saved setup whose database find rule looks for it. The run asks
+	 *  every one before it signs in (`needs_records`) and blocks the case,
+	 *  naming what is missing, when one is not there. Every save validates
+	 *  them. Written only when there are any, so an older script reads
+	 *  exactly as it always did.
+	 */
+	needs_records?: NeededRecord[],
+	/**
 	 *  The draft this case makes for itself before it signs in: a fixture
 	 *  the run performs on every run of the case. Its outputs reach
 	 *  the steps as `{{setup.<output>}}` (`setup`). A repair can never
@@ -3522,6 +3540,15 @@ export type CaseScript_Serialize = {
 	 *  when there are any.
 	 */
 	precondition_repairs?: PreconditionRepair_Serialize[],
+	/**
+	 *  Kept records the case relies on and did not make, each one named by a
+	 *  saved setup whose database find rule looks for it. The run asks
+	 *  every one before it signs in (`needs_records`) and blocks the case,
+	 *  naming what is missing, when one is not there. Every save validates
+	 *  them. Written only when there are any, so an older script reads
+	 *  exactly as it always did.
+	 */
+	needs_records?: NeededRecord[],
 	/**
 	 *  The draft this case makes for itself before it signs in: a fixture
 	 *  the run performs on every run of the case. Its outputs reach
@@ -5060,6 +5087,16 @@ export type NavView = {
 	built_in_save_words: string[],
 	/**  The protected baseline (Setup, Protected records). */
 	protected: ProtectedRecord[],
+};
+
+/**
+ *  One kept record a case relies on: the saved `setup` whose database find
+ *  rule looks for it, and `why`, what the case needs it for (said in the
+ *  Blocked sentence when it is not there).
+ */
+export type NeededRecord = {
+	setup: string,
+	why: string,
 };
 
 /**

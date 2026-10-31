@@ -96,6 +96,7 @@ mod autorun_menu_setup;
 mod autorun_one_browser;
 mod autorun_overrides;
 mod autorun_nav;
+mod autorun_needs_records;
 mod autorun_network;
 mod autorun_network_pause;
 mod autorun_page_errors;

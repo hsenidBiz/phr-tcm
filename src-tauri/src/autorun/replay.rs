@@ -1245,7 +1245,7 @@ pub async fn run_cases_planned<B: Browsers, P: StageDb, G: ResetGate>(
                         Err(why) => Err(why),
                         Ok(path) => {
                             let checked =
-                                preconditions::check_case(precondition_db, root, organization, project, &script.preconditions)
+                                super::needs_records::check_script_case(precondition_db, root, organization, project, &script)
                                     .await;
                             notice = checked.notice;
                             match checked.blocked {

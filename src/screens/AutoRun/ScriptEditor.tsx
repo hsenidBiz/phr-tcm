@@ -267,6 +267,8 @@ function ScriptEditorBody({
       ...(existing.data?.fail_on_unexpected_dialog ? { fail_on_unexpected_dialog: true } : {}),
       ...(existing.data?.page_errors ? { page_errors: existing.data.page_errors } : {}),
       ...(existing.data?.ignore_page_errors?.length ? { ignore_page_errors: existing.data.ignore_page_errors } : {}),
+      // Kept records the case needs are the assistant's to declare; the editor carries them through.
+      ...(existing.data?.needs_records?.length ? { needs_records: existing.data.needs_records } : {}),
     });
     if (r.status === "error") {
       toast.error(`Could not save the script: ${r.error}`);

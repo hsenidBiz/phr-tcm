@@ -560,6 +560,27 @@ test("a script's marks are kept when it is saved untouched", async () => {
   );
 });
 
+test("the editor keeps needs_records when saving", async () => {
+  const saved: unknown[] = [];
+  const needs = [{ setup: "Rating scale", why: "the AUTOTEST rating scale" }];
+  mountWith({ case_id: 7, title: "t", steps: ONE_STEP, needs_records: needs }, ACCOUNTS, saved);
+  const save = await screen.findByRole("button", { name: "Save script" });
+  await waitFor(() => expect(save).not.toBeDisabled());
+  fireEvent.click(save);
+  await waitFor(() => expect(saved).toHaveLength(1));
+  expect(saved[0]).toEqual(expect.objectContaining({ needs_records: needs }));
+});
+
+test("a script with no needed records is saved without the key", async () => {
+  const saved: unknown[] = [];
+  mountWith({ case_id: 7, title: "t", steps: ONE_STEP }, ACCOUNTS, saved);
+  const save = await screen.findByRole("button", { name: "Save script" });
+  await waitFor(() => expect(save).not.toBeDisabled());
+  fireEvent.click(save);
+  await waitFor(() => expect(saved).toHaveLength(1));
+  expect(saved[0]).not.toHaveProperty("needs_records");
+});
+
 // ---- Settings: what the case needs set, each at one value ----
 
 test("settings show as chips, a setting is added with its value, and Save sends them", async () => {

@@ -1255,6 +1255,23 @@ sentence per problem, counting preconditions from 1:
 A save also notes a script that names a test record and declares no
 precondition, in a `case N: note: ...` line. It never refuses the save.
 
+**Kept records.** A record the case relies on that earlier work left in place
+(a rating scale, a competency tree) and the case does not make is declared in
+`needs_records`, each entry a saved setup whose database find rule looks for it:
+
+    "needs_records": [ { "setup": "Rating scale", "why": "the AUTOTEST rating scale" } ]
+
+Before the case signs in, the run asks each setup's find rule on the active
+environment's database (read only). A record that is not there makes the case
+Blocked, not failed halfway:
+
+    Blocked: the case needs the AUTOTEST rating scale (setup "Rating scale"), which is not there - run_setup Rating scale builds it
+
+While the Database Access module is off nothing is asked and the case goes on,
+saying `needs_records not checked: database read access is off`. A save refuses
+a setup that is not saved, or has no database find rule; a script that relies on
+a record and declares neither this nor a precondition only gets a note.
+
 A repair keeps every precondition the script has, and may add new ones.
 Send each existing precondition back exactly as it is: a repair that
 leaves one out or changes it is refused, unless the case's `edits` entry
@@ -1523,7 +1540,7 @@ is part of a longer one:
 save sees such a name also inside a longer seen one, it adds a note.
 
 **Records the script relies on.** A case that opens a record someone made by
-hand (a cycle, a leave type) lists it in `preconditions`, so a run without it
+hand (a cycle, a leave type) lists it in `preconditions`, or in `needs_records` when a saved setup finds it, so a run without it
 is Blocked before step 1 instead of failing halfway (see "Preconditions").
 A record the script makes itself (it types the name and clicks a save button in an earlier step) needs none, and the save adds a note when it finds a test record named with no precondition.
 

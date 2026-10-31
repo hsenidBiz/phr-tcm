@@ -65,6 +65,7 @@ fn script() -> CaseScript {
         no_save: false,
         preconditions: vec![],
         precondition_repairs: vec![],
+        needs_records: vec![],
         setup: None,
         changes: vec![],
         needs_unchanged: vec![],
@@ -221,6 +222,7 @@ fn one_step_script(case_id: i32, title: &str) -> CaseScript {
         no_save: false,
         preconditions: vec![],
         precondition_repairs: vec![],
+        needs_records: vec![],
         setup: None,
         changes: vec![],
         needs_unchanged: vec![],
@@ -274,7 +276,7 @@ fn a_duplicate_case_id_within_one_bundle_is_rejected() {
 #[test]
 fn a_script_with_no_steps_is_rejected() {
     let dir = TempDir::new();
-    let bundle = vec![CaseScript { case_id: 9, title: "Empty".to_string(), account: None, area: None, steps: vec![], repairs: 0, last_repair: None, suspected_defect: None, no_save: false, preconditions: vec![], precondition_repairs: vec![], setup: None, changes: vec![], needs_unchanged: vec![], needs_state: Default::default(), saved_at: None, fail_on_unexpected_dialog: false, page_errors: None, ignore_page_errors: vec![], organization: None, project: None, checked: false, checks: 0, given_up: Vec::new(), cleared_defect: None }];
+    let bundle = vec![CaseScript { case_id: 9, title: "Empty".to_string(), account: None, area: None, steps: vec![], repairs: 0, last_repair: None, suspected_defect: None, no_save: false, preconditions: vec![], precondition_repairs: vec![], needs_records: vec![], setup: None, changes: vec![], needs_unchanged: vec![], needs_state: Default::default(), saved_at: None, fail_on_unexpected_dialog: false, page_errors: None, ignore_page_errors: vec![], organization: None, project: None, checked: false, checks: 0, given_up: Vec::new(), cleared_defect: None }];
     let err = save_scripts_atomically(dir.path(), &bundle).expect_err("empty steps were accepted");
     assert!(matches!(err, SaveScriptsError::Invalid(_)));
 }
@@ -301,6 +303,7 @@ fn a_duplicate_step_number_within_one_script_is_rejected() {
         no_save: false,
         preconditions: vec![],
         precondition_repairs: vec![],
+        needs_records: vec![],
         setup: None,
         changes: vec![],
         needs_unchanged: vec![],
@@ -336,6 +339,7 @@ fn a_step_with_no_actions_is_still_accepted() {
         no_save: false,
         preconditions: vec![],
         precondition_repairs: vec![],
+        needs_records: vec![],
         setup: None,
         changes: vec![],
         needs_unchanged: vec![],
