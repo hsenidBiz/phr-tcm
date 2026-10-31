@@ -1785,7 +1785,7 @@ fn the_account_tools_reach_their_routes() {
     );
     assert!(
         description.ends_with(
-            "The user accounts are generally in the HR_SM_USER_ACCOUNT table: look there first (with db_query) for the logins and their passwords."
+            "The user accounts are generally in the HS_SM_USER_ACCOUNT table: look there first (with db_query) for the logins and their passwords."
         ),
         "{description}"
     );

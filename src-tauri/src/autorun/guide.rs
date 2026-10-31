@@ -1099,7 +1099,7 @@ Each environment has its own Auto Run scripts, areas, components, quirks, discov
   never write to the database to create or change a user.
 - On a test environment, look up each login's password in the same query
   that finds the login, and propose it with the account.
-- The user accounts are generally in the HR_SM_USER_ACCOUNT table: look
+- The user accounts are generally in the HS_SM_USER_ACCOUNT table: look
   there first (with `db_query`) for the logins and their passwords.
 - Every account's password can be different, so take each account's
   password from the same lookup and put it in the proposal, but
@@ -1124,31 +1124,41 @@ Each environment has its own Auto Run scripts, areas, components, quirks, discov
   not checked, and the database guard must accept it as a read.
   - Password expiry query: `{users}` is its only placeholder, written by the
     app as quoted names, and it answers `user_id`, `reset_due` and optionally
-    `prompt_change`. The date is worked out from
-    the user account table's `USRACC_PWD_ACTIVATE_DATE` plus the `Password_Valid_Days`
-    row of `HS_PR_PARAMETERS` (read that one row only: the table also holds
-    plain-text secrets, so never read it whole): one SELECT over the user
-    account table named above, with `USRACC_USER_ID AS user_id`,
-    `DATEADD(day, CONVERT(int, p.PAR_VALUE), USRACC_PWD_ACTIVATE_DATE) AS reset_due`
-    and `USRACC_PROMPT_CHANGE_PW AS prompt_change`, joined to the parameters
-    table row `p.PAR_NAME = 'Password_Valid_Days'`, and ending
-    `AND USRACC_USER_ID IN ({users})`.
-  - Active session query: `{user}` is its only placeholder (the login in lower
-    case, quoted by the app), and it answers `since` and `logged_to`. Read the
-    flag, not the log-off column (old rows have flag 0 and no log-off time):
-    `SELECT ACTLOG_DATETIME AS since, ACTLOG_LOGGED_TO AS logged_to FROM PeoplesHR.HS_SM_ACTIVE_LOGIN WHERE ACTLOG_USER_ID = {user} AND ACTLOG_ACT_FLG = 1`
+    `prompt_change`. The date is worked out from `USRACC_PWD_ACTIVATE_DATE` of
+    `HS_SM_USER_ACCOUNT` plus the `Password_Valid_Days` row of
+    `HS_PR_PARAMETERS`, and only when the `Password_valid_Days_Enabale` row
+    is 1 (a login with no row is simply not marked). Read those two rows only:
+    the table also holds plain-text secrets, so never read it whole, and use
+    `TRY_CONVERT` so a value that is not a number cannot raise an error that
+    quotes one:
+    `SELECT USRACC_USER_ID AS user_id, DATEADD(day, TRY_CONVERT(int, p.PAR_VALUE), USRACC_PWD_ACTIVATE_DATE) AS reset_due, USRACC_PROMPT_CHANGE_PW AS prompt_change FROM PeoplesHR.HS_SM_USER_ACCOUNT, PeoplesHR.HS_PR_PARAMETERS p WHERE p.PAR_NAME = 'Password_Valid_Days' AND EXISTS (SELECT 1 FROM PeoplesHR.HS_PR_PARAMETERS e WHERE e.PAR_NAME = 'Password_valid_Days_Enabale' AND e.PAR_VALUE = '1') AND USRACC_USER_ID IN ({users})`
+  - Active session query: `{users}` (one call for all the logins; it answers
+    `user_id`, `since` and `logged_to`) or `{user}` (one login at a time, in
+    lower case; it answers `since` and `logged_to`), written by the app as
+    quoted names. Read the flag, not the log-off column (old rows have flag 0
+    and no log-off time):
+    `SELECT ACTLOG_USER_ID AS user_id, ACTLOG_DATETIME AS since, ACTLOG_LOGGED_TO AS logged_to FROM PeoplesHR.HS_SM_ACTIVE_LOGIN WHERE ACTLOG_USER_ID IN ({users}) AND ACTLOG_ACT_FLG = 1`
+    A query that takes one login is asked for at most 25 logins of a proposal,
+    within 30 seconds; the rest are said not checked.
   - What each answer means: `propose_accounts` marks every proposed login
     `expired` (past its date, or the site forces a change), `due soon` (under
-    7 days) or `signed in elsewhere`, and lists the unmarked ones first, so
-    prefer them; a mark never carries a password. `start_autorun_discovery`
-    is refused for an account someone else is signed in as (this app's own
-    open Auto Run browser does not count): pick another account or tell the
-    person. An account near its date only warns. A sign-in that lands on the
-    site's password reset page fails as "password expired", not as a missing
+    7 days) or `signed in elsewhere`, lists the unmarked ones first, so prefer
+    them, and the person sees the marks beside the proposal; a mark never
+    carries a password. `start_autorun_discovery` is refused for an account
+    someone else is signed in as. A session this app made itself does not
+    count: an open Auto Run browser holds it, or the app signed in as that
+    account within the saved-session window (8 hours) and still keeps that
+    session. The refusal names the account, the date and time, and the way
+    out: sign that session out on the site, wait for it to end, or clear the
+    environment's active-session query. An account near its date only warns.
+    A sign-in that lands on the site's password reset page (the built-in
+    recipe's `/security/PasswordReset` with `#txtOldPassword`, which a recipe
+    recorded earlier uses too) fails as "password expired", not as a missing
     signed-in marker or a wrong password: that is the account's, not the
     script's, and no repair helps - use another account or ask the person to
     reset the password. A database that is off or does not answer never
-    blocks a sign-in; the check is skipped and said once.
+    blocks a sign-in; the check is skipped and said once. A query that is
+    wrong is said as that ("could not run"), not as a database that is down.
 - A password comes from the database, from the person or from the
   environment's default password, so never invent a password, and never
   copy a password into a script or a template. If a case needs an account

@@ -359,7 +359,16 @@ impl Run<'_> {
 /// recipe's words and the field only that page has is showing. False when
 /// the recipe names no such page.
 async fn on_reset_page<D: Driver>(d: &mut D, recipe: &SignInRecipe, timing: &Timing) -> bool {
-    let Some(page) = &recipe.password_reset else { return false };
+    // A recipe recorded before the setting existed names no reset page: the
+    // built-in one applies. It needs the path AND the field, so a site that
+    // is not PeoplesHR cannot match it by accident.
+    let page = match &recipe.password_reset {
+        Some(page) => page.clone(),
+        None => match super::recipe::builtin_recipe().password_reset {
+            Some(page) => page,
+            None => return false,
+        },
+    };
     let Some(href) = page_address(d).await else { return false };
     let path = crate::browser::save_guard::path_of(&href).to_lowercase();
     if !path.contains(&page.path_contains.trim().to_lowercase()) {

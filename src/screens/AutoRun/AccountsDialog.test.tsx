@@ -87,7 +87,7 @@ test("each field carries a visible label for when the row stacks, and keeps its 
 
 // ---- Proposed by the assistant -------------------------------------------
 
-type Proposal = { key: string; label: string; username: string; role?: string | null; has_password?: boolean; no_password?: string | null };
+type Proposal = { key: string; label: string; username: string; role?: string | null; has_password?: boolean; no_password?: string | null; marks?: string[] };
 type Saved = { key: string; label: string; username: string; password: string };
 
 const PROPOSED: Proposal[] = [
@@ -126,7 +126,7 @@ function mountWithProposals(opts: {
         ],
       };
     }
-    if (cmd === "env_proposals") return state.proposals;
+    if (cmd === "env_proposals") return state.proposals?.map((p) => ({ marks: [], ...p }));
     if (cmd === "env_dismiss_proposals") {
       state.proposals = [];
       return null;
@@ -181,7 +181,7 @@ test("the proposals are read afresh each time the dialog opens", async () => {
   const state = { proposals: [PROPOSED[0]] };
   mockIPC((cmd) => {
     if (cmd === "auto_run_list_accounts") return [];
-    if (cmd === "env_proposals") return state.proposals;
+    if (cmd === "env_proposals") return state.proposals?.map((p) => ({ marks: [], ...p }));
     return null;
   });
   const open = () =>
@@ -387,14 +387,17 @@ test("Set password then Use database password clears what was typed and closes t
 test("the reason the assistant gave for having no password shows beside the account, and no password does", async () => {
   mountWithProposals({
     proposals: [
-      { key: "hr.admin", label: "HR Admin", username: "kim", has_password: true, no_password: null },
-      { key: "hr.sup", label: "Supervisor", username: "lee", has_password: false, no_password: "the database holds only a hash" },
+      { key: "hr.admin", label: "HR Admin", username: "kim", has_password: true, no_password: null, marks: [] },
+      { key: "hr.sup", label: "Supervisor", username: "lee", has_password: false, no_password: "the database holds only a hash", marks: ["expired"] },
     ],
     hasDefault: false,
   });
   await screen.findByRole("heading", { name: "Proposed by the assistant (2)" });
   const row = screen.getByText("hr.sup").closest("li")!;
   expect(within(row).getByText("No password from the assistant: the database holds only a hash")).toBeInTheDocument();
+  // What the site's queries said of a login shows beside it; an unmarked one has no such line.
+  expect(within(row).getByText("Checked against the site: expired")).toBeInTheDocument();
+  expect(within(screen.getByText("hr.admin").closest("li")!).queryByText(/Checked against the site/)).not.toBeInTheDocument();
   // The account with a password has no reason line, and nothing reveals a password.
   const other = screen.getByText("hr.admin").closest("li")!;
   expect(within(other).queryByText(/No password from the assistant/)).not.toBeInTheDocument();

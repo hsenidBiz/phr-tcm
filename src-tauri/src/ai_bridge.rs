@@ -8783,14 +8783,14 @@ async fn autorun_discover_start(
         Err(refused) => return refused,
     };
     // No account, no recipe: said before a browser opens for nothing.
-    let username = match crate::autorun::signin::prepare(&root, &ctx.org, &ctx.project, &account) {
-        Ok((_, acct)) => acct.username,
+    let (username, session_minutes) = match crate::autorun::signin::prepare(&root, &ctx.org, &ctx.project, &account) {
+        Ok((recipe, acct)) => (acct.username, recipe.session_minutes),
         Err(why) => return (409, why),
     };
     // Someone already signed in as the account is logged out by this
     // sign-in: refused before a browser opens. An expired or nearly expired
     // password only warns. A database that is off never blocks.
-    let gate = sign_in_gate(ctx, &root, &account, &username).await;
+    let gate = sign_in_gate(ctx, &root, &account, &username, session_minutes).await;
     if let Some(refused) = gate.refused {
         return (409, refused);
     }
@@ -8833,6 +8833,7 @@ async fn sign_in_gate(
     root: &std::path::Path,
     key: &str,
     username: &str,
+    session_minutes: u32,
 ) -> crate::autorun::active_login::Gate {
     use crate::autorun::active_login::{discovery_gate, Gate, StageRows, NOT_CHECKED_NOTE};
     let Ok(env) = crate::environments::active(root) else { return Gate::default() };
@@ -8842,7 +8843,13 @@ async fn sign_in_gate(
     let Ok(db) = stage_db(ctx) else {
         return Gate { refused: None, warnings: vec![NOT_CHECKED_NOTE.to_string()] };
     };
-    let ours = crate::autorun::lease::holder_of(&env.id, key).is_some();
+    let ours = crate::autorun::active_login::session_is_ours(
+        root,
+        &env.id,
+        key,
+        session_minutes,
+        crate::autorun::sessions::now_ms(),
+    );
     discovery_gate(
         &StageRows(&db),
         &env.password_expiry_query,
@@ -11443,6 +11450,7 @@ async fn accounts_propose(ctx: &BridgeContext, body: &str) -> (u16, String) {
                 role,
                 password: p.password,
                 no_password,
+                marks: vec![],
             }
         })
         .collect();
@@ -11478,8 +11486,12 @@ async fn accounts_propose(ctx: &BridgeContext, body: &str) -> (u16, String) {
     // Which logins can sign in at all: expired ones and ones someone is
     // signed in as are marked, and the usable ones come first. A mark never
     // carries a password.
-    let marks = propose_marks(ctx, &env, &proposals).await;
+    let marks = propose_marks(ctx, &root, &env, &proposals).await;
     if let Some(m) = &marks {
+        // Kept with the proposal, for the person ticking logins in the app.
+        for p in &mut proposals {
+            p.marks = m.marks_of(&p.key);
+        }
         let order = m.usable_first(&proposals.iter().map(|p| p.key.clone()).collect::<Vec<_>>());
         proposals.sort_by_key(|p| order.iter().position(|k| *k == p.key).unwrap_or(usize::MAX));
     }
@@ -11522,6 +11534,7 @@ async fn accounts_propose(ctx: &BridgeContext, body: &str) -> (u16, String) {
 /// marks nothing and says so once.
 async fn propose_marks(
     ctx: &BridgeContext,
+    root: &std::path::Path,
     env: &crate::environments::Environment,
     proposals: &[crate::environments::StoredProposal],
 ) -> Option<crate::autorun::active_login::Marks> {
@@ -11534,7 +11547,15 @@ async fn propose_marks(
     };
     let logins: Vec<(String, String)> = proposals.iter().map(|p| (p.key.clone(), p.username.clone())).collect();
     let env_id = env.id.clone();
-    let ours = move |key: &str| crate::autorun::lease::holder_of(&env_id, key).is_some();
+    let minutes = crate::autorun::recipe::load_effective_recipe_if_any(root, &ctx.org, &ctx.project)
+        .ok()
+        .flatten()
+        .map_or(480, |r| r.session_minutes);
+    let root = root.to_path_buf();
+    // This app's own earlier sign-ins are not someone else's.
+    let ours = move |key: &str| {
+        crate::autorun::active_login::session_is_ours(&root, &env_id, key, minutes, crate::autorun::sessions::now_ms())
+    };
     Some(
         mark_logins(
             &StageRows(&db),

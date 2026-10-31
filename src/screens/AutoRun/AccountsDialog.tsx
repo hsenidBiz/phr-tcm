@@ -412,6 +412,9 @@ export default function AccountsDialog({ onClose }: { onClose: () => void }) {
                         {p.no_password && (
                           <p className="pl-6 text-xs text-muted">No password from the assistant: {p.no_password}</p>
                         )}
+                        {p.marks.length > 0 && (
+                          <p className="pl-6 text-xs text-warning">Checked against the site: {p.marks.join(", ")}</p>
+                        )}
                         {fieldOpen && (
                           <div className="flex items-center gap-2 pl-6">
                             <Input

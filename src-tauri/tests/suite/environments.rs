@@ -1099,6 +1099,7 @@ mod accounts_for_the_assistant {
                 role: None,
                 password: pw.map(str::to_string),
                 no_password: None,
+                marks: vec![],
             })
             .collect();
         save_proposals(root, &active_id(root).unwrap(), &list).unwrap();
@@ -1196,6 +1197,7 @@ mod accounts_for_the_assistant {
                 role: Some("Supervisor".into()),
                 has_password: false,
                 no_password: None,
+                marks: vec![],
             }]
         );
         assert!(proposals_path_for(root, &env_id).is_file(), "stored under the environment's id");

@@ -161,11 +161,41 @@ pub fn check_query(sql: &str) -> Result<(), String> {
 
 /// The query as it will run for `users`.
 pub fn query_with_users(sql: &str, users: &[String]) -> Result<String, String> {
+    users_list_with(sql, users, WHAT)
+}
+
+/// `sql` with `{users}` written as the quoted list of `users`; `what` names
+/// the setting in the sentences. Shared with the active session query's
+/// list form.
+pub(crate) fn users_list_with(sql: &str, users: &[String], what: &str) -> Result<String, String> {
     if users.is_empty() {
         return Err(NO_LOGINS.to_string());
     }
     let list = users.iter().map(|u| quoted_literal(u)).collect::<Vec<_>>().join(", ");
-    read_only_with(sql, USERS, &list, WHAT)
+    read_only_with(sql, USERS, &list, what)
+}
+
+/// Why a check could not be made. Neither blocks anything: the check is
+/// skipped and said once.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CheckFailed {
+    /// The database is off, or did not answer (a connection, a login or a
+    /// time-out).
+    DidNotAnswer,
+    /// The database answered, but the setting's query did not run or its
+    /// answer was not what the check reads: a mistake in the setting. The
+    /// short reason names no SQL and no object.
+    QueryFailed(String),
+}
+
+/// What a database's error means: it was not reached
+/// (`gate::unreachable`), or the query itself failed.
+pub(crate) fn run_failed(said: &str) -> CheckFailed {
+    if crate::api_templates::gate::unreachable(said) {
+        CheckFailed::DidNotAnswer
+    } else {
+        CheckFailed::QueryFailed("the database refused it".to_string())
+    }
 }
 
 /// A sqlcmd answer as its header and rows (cells trimmed). Reads what
@@ -226,25 +256,25 @@ pub fn parse_rows(text: &str) -> Result<Vec<ExpiryRow>, String> {
 }
 
 /// Asks the expiry query about `users` and judges each, in the order given.
-/// `Err` is a sentence saying the check could not be made (the database did
-/// not answer, or its answer could not be read): the caller skips the check
-/// and says so once, and never blocks on it.
+/// `Err` says why the check could not be made (`CheckFailed`): the caller
+/// skips the check and says so once, and never blocks on it.
 pub async fn check_users<S: RowSource>(
     rows: &S,
     sql: &str,
     users: &[String],
     today: &str,
-) -> Result<Vec<(String, Expiry)>, String> {
-    let asked = query_with_users(sql, users)?;
+) -> Result<Vec<(String, Expiry)>, CheckFailed> {
+    let asked = query_with_users(sql, users).map_err(CheckFailed::QueryFailed)?;
     let answer = match rows.select(&asked).await {
         Ok(a) => a,
         Err(said) => {
             crate::applog::warn(format!("Auto Run: the password expiry query did not run: {said}"));
-            return Err("the database did not answer".to_string());
+            return Err(run_failed(&said));
         }
     };
-    let found = parse_rows(&answer).inspect_err(|why| {
+    let found = parse_rows(&answer).map_err(|why| {
         crate::applog::warn(format!("Auto Run: the password expiry query's answer was not read: {why}"));
+        CheckFailed::QueryFailed(why)
     })?;
     Ok(users
         .iter()

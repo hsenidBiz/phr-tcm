@@ -831,6 +831,10 @@ pub struct ProposedAccount {
     /// database holds only a hash"), when it said. Not a secret: the person
     /// sees it beside the account.
     pub no_password: Option<String>,
+    /// What the environment's expiry and active session queries said of this
+    /// login when it was proposed: `expired`, `due soon`, `signed in
+    /// elsewhere`. Never a secret.
+    pub marks: Vec<String>,
 }
 
 /// A proposed account as it is kept in the proposals file. `password` is
@@ -851,6 +855,8 @@ pub struct StoredProposal {
     pub password: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub no_password: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub marks: Vec<String>,
 }
 
 /// Hand-written so a password cannot reach a log line through `{:?}`.
@@ -876,6 +882,7 @@ impl StoredProposal {
             role: self.role.clone(),
             has_password: self.password.is_some(),
             no_password: self.no_password.clone(),
+            marks: self.marks.clone(),
         }
     }
 }

@@ -5806,6 +5806,12 @@ export type ProposedAccount = {
 	 *  sees it beside the account.
 	 */
 	no_password: string | null,
+	/**
+	 *  What the environment's expiry and active session queries said of this
+	 *  login when it was proposed: `expired`, `due soon`, `signed in
+	 *  elsewhere`. Never a secret.
+	 */
+	marks: string[],
 };
 
 /**

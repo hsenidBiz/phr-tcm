@@ -417,7 +417,18 @@ fn recipe_at_login() -> v2_lib::autorun::recipe::SignInRecipe {
 /// never when `never`. A `Page.reload` would post the form again: the tests
 /// assert there is none.
 fn cold_app(href: &'static str, title: &'static str, form_stays: bool, never: bool) -> (ScriptedDriver, common::StatefulApp) {
-    let (d, state) = stateful_app(false, None);
+    cold_app_without(href, title, form_stays, never, None)
+}
+
+/// `cold_app` whose page has no element matching the css `missing`.
+fn cold_app_without(
+    href: &'static str,
+    title: &'static str,
+    form_stays: bool,
+    never: bool,
+    missing: Option<&'static str>,
+) -> (ScriptedDriver, common::StatefulApp) {
+    let (d, state) = stateful_app(false, missing);
     let (signed_in, typed) = (state.signed_in.clone(), state.typed_password.clone());
     let submitted = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     let last = std::sync::Arc::new(std::sync::Mutex::new(String::new()));
@@ -622,12 +633,37 @@ async fn reset_page_after_a_wait_step_fails_as_password_expired_not_a_stopped_st
 }
 
 #[tokio::test]
+async fn a_recipe_recorded_without_the_reset_entry_still_sees_the_reset_page() {
+    let dir = tempfile::tempdir().unwrap();
+    assert!(recipe_at_login().password_reset.is_none());
+    let (mut d, _state) = cold_app(RESET_URL, "Reset Password", false, true);
+    let out = sign_in(&mut d, dir.path(), &recipe_at_login(), &account(), &quick()).await;
+    assert!(out.detail.starts_with(PASSWORD_EXPIRED), "{}", out.detail);
+    assert_eq!(typed_count(&d), 1);
+    // And when its own wait step is what stops.
+    let mut v = serde_json::to_value(recipe_at_login()).unwrap();
+    v["steps"].as_array_mut().unwrap().push(json!({ "kind": "wait_for", "selector": { "css": "#marker" }, "timeout_ms": 100 }));
+    let waiting: v2_lib::autorun::recipe::SignInRecipe = serde_json::from_value(v).unwrap();
+    let (mut d, _state) = cold_app(RESET_URL, "Reset Password", false, true);
+    let out = sign_in(&mut d, dir.path(), &waiting, &account(), &quick()).await;
+    assert!(out.detail.starts_with(PASSWORD_EXPIRED), "{}", out.detail);
+}
+
+#[tokio::test]
+async fn the_reset_path_without_the_reset_field_is_not_password_expired() {
+    let dir = tempfile::tempdir().unwrap();
+    // The path matches, the field is not there: no misfire, with the recipe's
+    // own entry or the built-in fallback.
+    for recipe in [reset_recipe(false), recipe_at_login()] {
+        let (mut d, _state) = cold_app_without(RESET_URL, "Something else", true, true, Some("#txtOldPassword"));
+        let out = sign_in(&mut d, dir.path(), &recipe, &account(), &quick()).await;
+        assert!(!is_password_expired(&out.detail), "{}", out.detail);
+    }
+}
+
+#[tokio::test]
 async fn another_page_without_the_reset_field_is_not_password_expired() {
     let dir = tempfile::tempdir().unwrap();
-    // The reset page's path, but the recipe has no reset page: as before.
-    let (mut d, _state) = cold_app(RESET_URL, "Reset Password", true, true);
-    let out = sign_in(&mut d, dir.path(), &recipe_at_login(), &account(), &quick()).await;
-    assert!(!is_password_expired(&out.detail), "{}", out.detail);
     // The recipe knows the reset page and the browser is on the login page.
     let (mut d, _state) = cold_app(LOGIN_URL, "Sign in", true, false);
     let out = sign_in(&mut d, dir.path(), &reset_recipe(false), &account(), &quick()).await;
