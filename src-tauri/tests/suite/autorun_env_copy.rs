@@ -1087,7 +1087,7 @@ mod import_scripts {
     use super::*;
     use serde_json::json;
     use v2_lib::autorun::env_copy::{
-        import_scripts, plan_import_scripts, ImportScriptsPlan, IMPORT_NO_SCRIPTS,
+        import_scripts, import_scripts_with, plan_import_scripts, ImportScriptsPlan, IMPORT_NO_SCRIPTS,
     };
     use v2_lib::autorun::{store, CaseScript};
 
@@ -1210,5 +1210,49 @@ mod import_scripts {
         assert_eq!(err, IMPORT_NO_SCRIPTS);
         assert!(!err.contains("\\") && !err.contains("/"));
         assert_eq!(import_scripts(s.from.path(), &s.target, true).unwrap_err(), IMPORT_NO_SCRIPTS);
+    }
+
+    #[test]
+    fn import_leaves_out_a_script_the_app_would_refuse() {
+        let _lock = crate::serial::autorun();
+        let s = setup();
+        write_script(s.from.path(), &script(1, "Fine"));
+        let mut empty = script(2, "No steps");
+        empty.steps.clear();
+        write_script(s.from.path(), &empty);
+        let plan = plan_import_scripts(s.from.path(), &s.target).unwrap();
+        assert_eq!(plan, ImportScriptsPlan { new: vec![1], same: vec![], differ: vec![], unreadable: 1 });
+        import_scripts(s.from.path(), &s.target, false).unwrap();
+        assert!(store::load_script(&s.target, 2).unwrap().is_none());
+        assert!(store::load_script(&s.target, 1).unwrap().is_some());
+    }
+
+    #[test]
+    fn import_never_overwrites_a_case_that_gained_a_script_after_the_plan() {
+        let _lock = crate::serial::autorun();
+        let s = setup();
+        write_script(s.from.path(), &script(1, "From folder"));
+        write_script(s.from.path(), &script(2, "Also new"));
+        let err = import_scripts_with(s.from.path(), &s.target, false, &|| {
+            store::save_script(&s.target, &script(1, "Saved meanwhile")).unwrap();
+        })
+        .unwrap_err();
+        assert!(err.contains("case 1") && !err.contains('/'), "{err}");
+        assert_eq!(store::load_script(&s.target, 1).unwrap().unwrap().title, "Saved meanwhile");
+        assert!(store::load_script(&s.target, 2).unwrap().is_none(), "all or nothing");
+    }
+
+    #[test]
+    fn replace_refuses_a_script_that_changed_after_the_plan() {
+        let _lock = crate::serial::autorun();
+        let s = setup();
+        write_script(s.from.path(), &script(3, "From folder"));
+        store::save_script(&s.target, &script(3, "Here")).unwrap();
+        let err = import_scripts_with(s.from.path(), &s.target, true, &|| {
+            store::save_script(&s.target, &script(3, "Edited meanwhile")).unwrap();
+        })
+        .unwrap_err();
+        assert!(err.contains("case 3"), "{err}");
+        assert_eq!(store::load_script(&s.target, 3).unwrap().unwrap().title, "Edited meanwhile");
     }
 }

@@ -997,13 +997,18 @@ pub struct ImportScriptsPlan {
 struct ImportGather {
     plan: ImportScriptsPlan,
     new: Vec<crate::autorun::CaseScript>,
-    differ: Vec<crate::autorun::CaseScript>,
+    /// Each with the version of the script here when it was read, so a
+    /// replace can tell it changed meanwhile.
+    differ: Vec<(crate::autorun::CaseScript, Option<String>)>,
 }
 
-/// A script without the assistant's marks, which never travel.
+/// A script without the assistant's marks, which never travel, and without
+/// its save time, which every save restamps: so a script imported before
+/// compares as the same, not as different.
 fn without_marks(mut s: crate::autorun::CaseScript) -> crate::autorun::CaseScript {
     s.suspected_defect = None;
     s.cleared_defect = None;
+    s.saved_at = None;
     s
 }
 
@@ -1028,6 +1033,8 @@ fn gather_import(from: &Path, target: &Path) -> Result<ImportGather, String> {
                 .ok()
                 .and_then(|s| serde_json::from_str::<crate::autorun::CaseScript>(&s).ok())
                 .filter(|s| name == format!("case-{}.json", s.case_id) && !seen.contains(&s.case_id))
+                // The same checks every other way a script arrives goes through.
+                .filter(|s| store::check_scripts(std::slice::from_ref(s)).is_ok())
         } else {
             None
         };
@@ -1046,8 +1053,9 @@ fn gather_import(from: &Path, target: &Path) -> Result<ImportGather, String> {
             // A script here that cannot be read counts as different: a
             // replace keeps it aside rather than losing it.
             _ => {
+                let version = store::load_script(target, script.case_id).ok().flatten().as_ref().map(store::script_version);
                 plan.differ.push(script.case_id);
-                differ.push(script);
+                differ.push((script, version));
             }
         }
     }
@@ -1071,8 +1079,21 @@ pub fn plan_import_scripts(from: &Path, target: &Path) -> Result<ImportScriptsPl
 /// deleted script and put back if the new one cannot be written. Refused
 /// before anything is written when a case to replace is being replayed.
 pub fn import_scripts(from: &Path, target: &Path, replace: bool) -> Result<ImportScriptsPlan, String> {
+    import_scripts_with(from, target, replace, &|| {})
+}
+
+/// [`import_scripts`], calling `between` after the folder and the target have
+/// been read and before anything is written: the moment another save can slip
+/// in, which a test makes happen.
+pub fn import_scripts_with(
+    from: &Path,
+    target: &Path,
+    replace: bool,
+    between: &dyn Fn(),
+) -> Result<ImportScriptsPlan, String> {
     use super::store;
     let g = gather_import(from, target)?;
+    between();
     if replace {
         if let Some(id) = g.plan.differ.iter().find(|id| store::is_replaying(**id)) {
             return Err(case_copy_replaying(*id));
@@ -1082,19 +1103,28 @@ pub fn import_scripts(from: &Path, target: &Path, replace: bool) -> Result<Impor
         crate::applog::warn(format!("Auto Run: importing scripts stopped at {what}: {e}"));
         IMPORT_FAILED.to_string()
     };
-    for s in &g.new {
-        store::save_script(target, s).map_err(|e| failed("a new script", e))?;
-    }
+    // A case that gained a script since the plan is refused, never overwritten
+    // (`Changed` names the case and no path); the whole new set lands or none.
+    let saved = |what: &str, e: store::SaveScriptsError| match e {
+        store::SaveScriptsError::Changed { .. } => e.to_string(),
+        other => failed(what, other.to_string()),
+    };
+    let fresh: Vec<_> = g.new.iter().map(|s| (s.case_id, None)).collect();
+    store::save_scripts_checked(target, &g.new, &fresh).map_err(|e| saved("the new scripts", e))?;
     let mut replaced = 0;
     if replace {
-        for s in &g.differ {
+        for (s, version) in &g.differ {
             let old = store::load_script(target, s.case_id).ok().flatten();
+            if old.as_ref().map(store::script_version) != *version {
+                return Err(store::SaveScriptsError::Changed { case_id: s.case_id, saved_at: old.and_then(|o| o.saved_at) }.to_string());
+            }
             store::delete_script(target, s.case_id, super::sessions::now_ms()).map_err(|e| failed("an old script", e))?;
-            if let Err(e) = store::save_script(target, s) {
-                if let Some(old) = &old {
-                    let _ = store::save_script(target, old);
+            let one = std::slice::from_ref(s);
+            if let Err(e) = store::save_scripts_checked(target, one, &[(s.case_id, None)]) {
+                if let (Some(old), store::SaveScriptsError::Io(_) | store::SaveScriptsError::Invalid(_)) = (&old, &e) {
+                    let _ = store::save_scripts_checked(target, std::slice::from_ref(old), &[(s.case_id, None)]);
                 }
-                return Err(failed("a replaced script", e));
+                return Err(saved("a replaced script", e));
             }
             replaced += 1;
         }
