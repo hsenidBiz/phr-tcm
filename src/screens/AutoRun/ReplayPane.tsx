@@ -208,6 +208,25 @@ function RunWindow({ run }: { run: BackgroundRun }) {
    * silently: the run just uses each script's own account. */
   const runAccount = accounts.some((a) => a.key === picked) ? picked : "";
 
+  /** The accounts this run would sign in as whose password is expired or
+   * due within a week, one line each (the environment's expiry query). */
+  const [expiring, setExpiring] = useState<string[]>([]);
+  useEffect(() => {
+    if (!settingUp) return;
+    let live = true;
+    commands
+      .autoRunExpiringAccounts(runAccount || null, dbReadAccessOn())
+      .then((r) => {
+        if (live) setExpiring(r.status === "ok" ? (r.data ?? []) : []);
+      })
+      .catch(() => {
+        if (live) setExpiring([]);
+      });
+    return () => {
+      live = false;
+    };
+  }, [settingUp, runAccount]);
+
   /** Rows the person opened (true) or closed (false) by hand. Cleared for a
    * case when it starts and again when it finishes, so the automatic
    * behaviour takes over at both. */
@@ -330,6 +349,14 @@ function RunWindow({ run }: { run: BackgroundRun }) {
           <p className="text-xs text-faint">
             An account picked here signs in every case, over the account a script names.
           </p>
+          {expiring.length > 0 && (
+            <div role="status" className="space-y-0.5 text-xs text-warning">
+              <p>A password is expired or due within a week:</p>
+              {expiring.map((line) => (
+                <p key={line}>{line}</p>
+              ))}
+            </div>
+          )}
           <label className="flex items-center gap-2 text-xs text-muted">
             Browser
             <Select

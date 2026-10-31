@@ -955,3 +955,29 @@ test("Escape on the setup still cancels it", async () => {
 test("statusOf names a case's clean-up as such, not as a step", () => {
   expect(statusOf({ phase: "cleanup", step_number: 4, steps: 3, proposed: "" })).toBe("Clean-up");
 });
+
+test("the run window warns of accounts whose password is expired or due within a week", async () => {
+  const asked: unknown[] = [];
+  mockIPC(
+    (cmd, args) => {
+      if (cmd === "auto_run_expiring_accounts") {
+        asked.push(args);
+        return ["admin: password expired 2026-10-01", "sup: password due 2026-11-02, 3 days"];
+      }
+      return null;
+    },
+    { shouldMockEvents: true },
+  );
+  renderPane([{ id: 1, title: "A" }]);
+  expect(await screen.findByText("admin: password expired 2026-10-01")).toBeInTheDocument();
+  expect(screen.getByText("sup: password due 2026-11-02, 3 days")).toBeInTheDocument();
+  expect(screen.getByRole("status")).toHaveTextContent("expired or due within a week");
+  expect(asked[0]).toMatchObject({ accountKey: null });
+});
+
+test("the run window says nothing when no password is near its end", async () => {
+  mockIPC(() => null, { shouldMockEvents: true });
+  renderPane([{ id: 1, title: "A" }]);
+  await screen.findByRole("button", { name: "Start" });
+  expect(screen.queryByText(/expired or due within a week/)).not.toBeInTheDocument();
+});

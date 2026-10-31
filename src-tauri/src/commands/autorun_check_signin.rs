@@ -4,9 +4,12 @@
 //!
 //! A check opens a browser of its own for each account (never the person's
 //! Auto Run browser), so it holds the same claim an unattended run does
-//! while it goes: no run, replay or second check starts beside it, and
-//! `auto_run_open_browser` waits. It is refused while an unattended run, a
-//! replay or a discovery is using the Auto Run browser.
+//! while it goes: a run, a second check, a discovery or a replay to a step
+//! that starts is refused, and so is `auto_run_open_browser`, each with the
+//! sentence "a sign-in check is running (<account>) - wait for it or cancel
+//! it". It is refused itself while an unattended run, a replay or a
+//! discovery is using the Auto Run browser. Cancel ends it between
+//! accounts and closes the browser of the one it is on.
 
 use crate::autorun::active_login::session_is_ours;
 use crate::autorun::replay::Browsers;
@@ -16,20 +19,33 @@ use crate::autorun::slots::SlotNo;
 use std::collections::BTreeMap;
 use std::path::Path;
 
-/// Why a check cannot begin now, or `None`: an unattended run, a replay to a
-/// step or a discovery has the Auto Run browser.
+/// Why a check cannot begin now, or `None`: another check, an unattended
+/// run, a replay to a step or a discovery has the Auto Run browser.
 pub fn refusal() -> Option<String> {
-    let busy = crate::commands::autorun_replay::replay_is_running()
-        || SlotNo::all().into_iter().any(|n| {
-            crate::autorun::replay_to::state(n).is_running() || crate::commands::autorun::discovery_active_in(n)
-        });
+    if let Some(going) = crate::autorun::sign_in_check::running_sentence() {
+        return Some(going);
+    }
+    let busy = crate::commands::autorun_replay::replay_is_running() || others_busy();
     busy.then(|| BROWSER_IN_USE.to_string())
+}
+
+/// A replay to a step or a discovery has a browser.
+fn others_busy() -> bool {
+    SlotNo::all().into_iter().any(|n| {
+        crate::autorun::replay_to::state(n).is_running() || crate::commands::autorun::discovery_active_in(n)
+    })
 }
 
 /// Checks `keys` one at a time (`sign_in_check::check_accounts`), the
 /// environment's two queries (`queries`: password expiry, active session)
-/// asked first through `rows` when there is one. `Err` is the sentence for a
-/// check that could not begin at all.
+/// asked first for each through `rows` (`None`: reading the database is off
+/// or it is not set up - an account the active session query cannot be
+/// asked about is then not signed in). `Err` is the sentence for a check
+/// that could not begin at all.
+///
+/// The claim comes first and the other users of the browser are looked at
+/// under it, so nothing starts between the look and the claim. Cancelled by
+/// `sign_in_check::cancel`.
 #[allow(clippy::too_many_arguments)]
 pub async fn check_with<B: Browsers, S: RowSource>(
     browsers: &mut B,
@@ -41,27 +57,27 @@ pub async fn check_with<B: Browsers, S: RowSource>(
     keys: &[String],
     area: Option<&str>,
 ) -> Result<Vec<SignInCheck>, String> {
-    if let Some(busy) = refusal() {
-        return Err(busy);
-    }
     // Held until the last browser is closed.
     let Some(_claim) = crate::commands::autorun_replay::OneAtATime::claim() else {
-        return Err(BROWSER_IN_USE.to_string());
+        return Err(refusal().unwrap_or_else(|| BROWSER_IN_USE.to_string()));
     };
+    if others_busy() {
+        return Err(BROWSER_IN_USE.to_string());
+    }
+    let Some(first) = keys.first() else { return Ok(vec![]) };
+    let _going = crate::autorun::sign_in_check::begin(first);
+    let env_id = crate::environments::active_id(root)?;
+    let minutes = crate::autorun::recipe::load_effective_recipe_if_any(root, org, project)
+        .ok()
+        .flatten()
+        .map_or(480, |r| r.session_minutes);
+    let accounts = crate::autorun::accounts::load_accounts(root)?;
+    let today = crate::autorun::password_expiry::today();
     let mut pre: BTreeMap<String, Precheck> = BTreeMap::new();
-    if let (Some(rows), false) = (rows, queries.0.trim().is_empty() && queries.1.trim().is_empty()) {
-        let env_id = crate::environments::active_id(root)?;
-        let minutes = crate::autorun::recipe::load_effective_recipe_if_any(root, org, project)
-            .ok()
-            .flatten()
-            .map_or(480, |r| r.session_minutes);
-        let accounts = crate::autorun::accounts::load_accounts(root)?;
-        let today = crate::autorun::password_expiry::today();
-        for key in keys {
-            let Some(account) = accounts.iter().find(|a| &a.key == key) else { continue };
-            let ours = session_is_ours(root, &env_id, key, minutes, crate::autorun::sessions::now_ms());
-            pre.insert(key.clone(), precheck(rows, queries.0, queries.1, key, &account.username, ours, &today).await);
-        }
+    for key in keys {
+        let Some(account) = accounts.iter().find(|a| &a.key == key) else { continue };
+        let ours = session_is_ours(root, &env_id, key, minutes, crate::autorun::sessions::now_ms());
+        pre.insert(key.clone(), precheck(rows, queries.0, queries.1, key, &account.username, ours, &today).await);
     }
     Ok(check_accounts(browsers, root, org, project, keys, area, &pre, &crate::browser::timing::Timing::supervised()).await)
 }
@@ -133,4 +149,45 @@ pub fn auto_run_sign_in_checks(app: tauri::AppHandle) -> Result<BTreeMap<String,
     let root = super::autorun::root(&app)?;
     let env_id = crate::environments::active_id(&root)?;
     Ok(crate::autorun::sign_in_check::load_marks(&root, &env_id))
+}
+
+/// End the sign-in check going, if any (the dialog's Cancel).
+#[tauri::command]
+#[specta::specta]
+pub fn auto_run_cancel_check_sign_in() {
+    crate::autorun::sign_in_check::cancel();
+}
+
+/// The saved accounts (`account_key` names one; none means all) whose
+/// password is expired, forced to change or due within a week, one line
+/// each, for the run window's warning. Empty when the environment has no
+/// expiry query, reading the database is off or it does not answer.
+#[tauri::command]
+#[specta::specta]
+pub async fn auto_run_expiring_accounts(
+    app: tauri::AppHandle,
+    account_key: Option<String>,
+    db_read_access: bool,
+) -> Result<Vec<String>, String> {
+    use tauri::Manager;
+    let root = super::autorun::root(&app)?;
+    let env = crate::environments::active(&root)?;
+    if env.password_expiry_query.trim().is_empty() || !crate::autorun::preconditions::read_access(db_read_access) {
+        return Ok(vec![]);
+    }
+    let secrets = std::sync::Arc::clone(&app.state::<crate::db::DbSecrets>().0);
+    let Ok(db) = crate::autorun::preconditions::environment_db(&root, Some(secrets.as_ref())) else {
+        return Ok(vec![]);
+    };
+    let mut accounts = crate::autorun::accounts::load_accounts(&root)?;
+    if let Some(key) = account_key.filter(|k| !k.trim().is_empty()) {
+        accounts.retain(|a| a.key == key);
+    }
+    Ok(crate::autorun::sign_in_check::expiring(
+        &crate::autorun::active_login::StageRows(&db),
+        &env.password_expiry_query,
+        &accounts,
+        &crate::autorun::password_expiry::today(),
+    )
+    .await)
 }

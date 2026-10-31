@@ -599,7 +599,7 @@ test("the area picker sends the area, and none sends the sign-in alone", async (
     area: null,
   });
 
-  fireEvent.click(screen.getByRole("combobox", { name: "Area to reach" }));
+  fireEvent.click(screen.getByRole("combobox", { name: "Walk to" }));
   fireEvent.click(await screen.findByRole("option", { name: "Definition Wizard" }));
   await waitFor(() => expect(screen.getByRole("button", { name: "Check sign-in (1)" })).toBeEnabled());
   fireEvent.click(screen.getByRole("button", { name: "Check sign-in (1)" }));
@@ -654,4 +654,47 @@ test("Check sign-in is disabled while a run is going", async () => {
   } finally {
     checkFixture.taken = false;
   }
+});
+
+test("the first refusal ends the loop: the accounts after it are not asked", async () => {
+  const seen = mountForCheck(() => {
+    throw new Error("a sign-in check is running (sup) - wait for it or cancel it");
+  });
+  await screen.findByRole("checkbox", { name: "Check admin" });
+  fireEvent.click(screen.getByRole("checkbox", { name: "Check admin" }));
+  fireEvent.click(screen.getByRole("checkbox", { name: "Check sup" }));
+  fireEvent.click(screen.getByRole("button", { name: "Check sign-in (2)" }));
+  expect(await screen.findByText(/sign-in check is running/)).toBeInTheDocument();
+  await waitFor(() => expect(screen.getByRole("button", { name: "Check sign-in (2)" })).toBeEnabled());
+  expect(seen.filter((s) => s.cmd === "auto_run_check_sign_in")).toHaveLength(1);
+});
+
+test("Cancel check stops the loop after the account going and tells the app", async () => {
+  let release: (v: unknown) => void = () => {};
+  const gate = new Promise((r) => (release = r));
+  const seen = mountForCheck((key) => (key === "admin" ? gate.then(() => checked("admin", "signed in")) : checked(key, "signed in")));
+  await screen.findByRole("checkbox", { name: "Check admin" });
+  fireEvent.click(screen.getByRole("checkbox", { name: "Check admin" }));
+  fireEvent.click(screen.getByRole("checkbox", { name: "Check sup" }));
+  fireEvent.click(screen.getByRole("button", { name: "Check sign-in (2)" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Cancel check" }));
+  await waitFor(() => expect(seen.some((s) => s.cmd === "auto_run_cancel_check_sign_in")).toBe(true));
+  // The accounts are fixed while checking.
+  expect(screen.getByRole("checkbox", { name: "Check sup" })).toHaveAttribute("aria-disabled", "true");
+  release(null);
+  await waitFor(() => expect(screen.getByRole("button", { name: "Check sign-in (2)" })).toBeEnabled());
+  expect(seen.filter((s) => s.cmd === "auto_run_check_sign_in")).toHaveLength(1);
+});
+
+test("the results are announced politely", async () => {
+  mountForCheck((key) => checked(key, "signed in"));
+  const box = await screen.findByRole("checkbox", { name: "Check admin" });
+  expect(box.closest("ul")).toHaveAttribute("aria-live", "polite");
+});
+
+test("a last check over a week old is shown as stale", async () => {
+  mountForCheck(() => checked("admin", "signed in"), {
+    admin: { checked_ms: Date.now() - 10 * 24 * 3600 * 1000, signed_in: true, reached: true, area: "Leave", outcome: "reaches Leave" },
+  });
+  expect(await screen.findByText(/\(stale\)/)).toBeInTheDocument();
 });

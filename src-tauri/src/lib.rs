@@ -300,6 +300,8 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             autorun_record::auto_run_try_module_path,
             autorun_check_signin::auto_run_check_sign_in,
             autorun_check_signin::auto_run_sign_in_checks,
+            autorun_check_signin::auto_run_cancel_check_sign_in,
+            autorun_check_signin::auto_run_expiring_accounts,
             autorun_record_signin::auto_run_record_sign_in_start,
             autorun_record_signin::auto_run_record_sign_in_pick,
             autorun_record_signin::auto_run_record_sign_in_stop,

@@ -760,6 +760,8 @@ pub async fn route_as(
         // closed, dialogs and its guard cleared, back home - keeping the
         // sign-in. Never the person's browser, never while a replay runs.
         ("POST", "/autorun-reset") => {
+            // A reset from any caller ends a sign-in check going.
+            crate::autorun::sign_in_check::cancel();
             crate::autorun::page_compact::forget(slot);
             with_other_holds(crate::commands::autorun::reset_for_assistant(slot, &ctx.org, &ctx.project).await, holder)
         }
@@ -2808,7 +2810,7 @@ const NO_SUPERVISED_BROWSER: &str =
 /// kinds of session are never open at once.
 fn unattended_run_is_using_the_browser() -> Option<(u16, String)> {
     if crate::commands::autorun_replay::replay_is_running() {
-        Some((409, "an unattended run is going - wait for it".to_string()))
+        Some((409, crate::autorun::sign_in_check::going_sentence("an unattended run is going - wait for it")))
     } else {
         None
     }
@@ -11502,13 +11504,16 @@ async fn accounts_propose(ctx: &BridgeContext, body: &str) -> (u16, String) {
     // Within the same marks, the logins an earlier Check sign-in found
     // reaching their area come first, the never-checked next.
     let checked = crate::autorun::sign_in_check::load_marks(&root, &env.id);
+    let wanted_area = serde_json::from_str::<serde_json::Value>(body)
+        .ok()
+        .and_then(|v| v.get("area").and_then(|a| a.as_str().map(str::to_string)))
+        .map(|a| a.trim().to_string())
+        .filter(|a| !a.is_empty());
+    let now = crate::autorun::sessions::now_ms();
     if !checked.is_empty() {
-        let problem = |p: &StoredProposal| match p.marks.as_slice() {
-            [] => 0u8,
-            marks if marks.iter().any(|m| m == crate::autorun::password_expiry::EXPIRED_MARK) => 2,
-            _ => 1,
-        };
-        proposals.sort_by_key(|p| (problem(p), crate::autorun::sign_in_check::check_rank(&checked, &p.key)));
+        proposals.sort_by_key(|p| {
+            crate::autorun::sign_in_check::proposal_rank(&p.marks, &checked, &p.key, wanted_area.as_deref(), now)
+        });
     }
     if let Err(why) = save_proposals(&root, &env.id, &proposals) {
         return (400, why);
@@ -11542,21 +11547,20 @@ async fn accounts_propose(ctx: &BridgeContext, body: &str) -> (u16, String) {
     }
     let earlier: Vec<String> = proposals
         .iter()
-        .filter_map(|p| checked.get(&p.key).map(|m| format!("{} ({})", p.key, crate::autorun::sign_in_check::mark_phrase(m))))
+        .filter_map(|p| checked.get(&p.key).map(|m| format!("{} ({})", p.key, crate::autorun::sign_in_check::mark_phrase(m, now))))
         .collect();
     if !earlier.is_empty() {
         said.push_str(&format!(
-            " Checked earlier with check_autorun_sign_in: {}. The ones that reach their area are listed first.",
+            " Checked earlier with check_autorun_sign_in: {}. The ones that reached the area asked for (`area`) are listed first; a check for another area, or over a week old, does not rank.",
             earlier.join("; ")
         ));
     }
     (200, said)
 }
 
-/// What `POST /autorun-check-sign-in` reads: `accounts` (account keys;
-/// every saved account when absent) and `area` (an area name; the sign-in
-/// alone when absent).
-const CHECK_SIGN_IN_SHAPE: &str = "{ \"accounts\": [<an account key>, ...], optional - every saved account when left out, \"area\": <an area name>, optional }";
+/// What `POST /autorun-check-sign-in` reads: `accounts` (account keys, one
+/// to three) and `area` (an area name; the sign-in alone when absent).
+const CHECK_SIGN_IN_SHAPE: &str = "{ \"accounts\": [<an account key>, at most 3], \"area\": <an area name>, optional }";
 
 #[derive(serde::Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -11589,12 +11593,28 @@ pub async fn check_sign_in_in<B: crate::autorun::replay::Browsers, S: crate::aut
         Ok(a) => a,
         Err(e) => return (500, e),
     };
-    let keys: Vec<String> = match asked.accounts {
-        None => saved.iter().map(|a| a.key.clone()).collect(),
-        Some(named) => named.iter().map(|k| k.trim().to_string()).filter(|k| !k.is_empty()).collect(),
+    let Some(named_keys) = asked.accounts else {
+        return (
+            400,
+            format!(
+                "check_autorun_sign_in needs `accounts`, the keys of the accounts to check (at most {} per call; get_accounts lists them). Expected {CHECK_SIGN_IN_SHAPE}.",
+                crate::autorun::sign_in_check::MOST_ACCOUNTS
+            ),
+        );
     };
+    let keys: Vec<String> = named_keys.iter().map(|k| k.trim().to_string()).filter(|k| !k.is_empty()).collect();
     if keys.is_empty() {
-        return (409, "there are no accounts saved on this machine - add them in Auto Run, Accounts".to_string());
+        return (400, format!("`accounts` names no account. Expected {CHECK_SIGN_IN_SHAPE}."));
+    }
+    if keys.len() > crate::autorun::sign_in_check::MOST_ACCOUNTS {
+        return (
+            400,
+            format!(
+                "{} accounts in one call is too many - at most {} at a time, as each sign-in takes as long as one does. Split them across calls.",
+                keys.len(),
+                crate::autorun::sign_in_check::MOST_ACCOUNTS
+            ),
+        );
     }
     let strangers: Vec<&str> = keys.iter().filter(|k| !saved.iter().any(|a| &a.key == *k)).map(String::as_str).collect();
     if !strangers.is_empty() {

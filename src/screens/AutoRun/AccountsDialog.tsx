@@ -53,6 +53,9 @@ function mergeAdded(local: Account[], saved: Account[], keys: string[]): Account
   return out;
 }
 
+/** A last check older than this is shown as stale and does not rank. */
+const STALE_MS = 7 * 24 * 3600 * 1000;
+
 /** What Check sign-in says for one account while and after it is checked. */
 type CheckLine = { text: string; failed: boolean; busy: boolean };
 
@@ -102,6 +105,8 @@ export default function AccountsDialog({
   const [checkArea, setCheckArea] = useState("");
   const [checkLines, setCheckLines] = useState<Record<string, CheckLine>>({});
   const [checking, setChecking] = useState(false);
+  const [cancelled, setCancelled] = useState(false);
+  const cancelAsked = useRef(false);
   const [rows, setRows] = useState<Account[] | null>(null);
   const [show, setShow] = useState(false);
   const [problem, setProblem] = useState("");
@@ -266,15 +271,26 @@ export default function AccountsDialog({
   const areaNames = Array.from(new Set((navView.data?.modules ?? []).map((m) => m.area)));
   const checkCount = savedAccounts.filter((a) => checkPicked.has(a.key)).length;
 
+  /** Ends the check going: it stops after the account it is on. */
+  const cancelCheck = async () => {
+    cancelAsked.current = true;
+    setCancelled(true);
+    await commands.autoRunCancelCheckSignIn().catch(() => {});
+  };
+
   /** Checks the ticked accounts in order, each in a browser of its own. */
   const checkSignIn = async () => {
     const keys = savedAccounts.filter((a) => checkPicked.has(a.key)).map((a) => a.key);
     if (keys.length === 0) return;
     setChecking(true);
+    setCancelled(false);
+    cancelAsked.current = false;
     setCheckLines({});
     for (const key of keys) {
+      if (cancelAsked.current) break;
       setCheckLines((cur) => ({ ...cur, [key]: { text: "Checking...", failed: false, busy: true } }));
       let line: CheckLine;
+      let refused = false;
       try {
         const done = await unwrapStr(
           commands.autoRunCheckSignIn(org, project, key, checkArea || null, dbReadAccessOn()),
@@ -286,8 +302,12 @@ export default function AccountsDialog({
         };
       } catch (e) {
         line = { text: e instanceof Error ? e.message : String(e), failed: true, busy: false };
+        refused = true;
       }
       setCheckLines((cur) => ({ ...cur, [key]: line }));
+      // The first refusal is the answer for all that follow: they would
+      // only say it again.
+      if (refused) break;
     }
     setChecking(false);
     await qc.invalidateQueries({ queryKey: ["autorun-sign-in-checks"] });
@@ -399,7 +419,7 @@ export default function AccountsDialog({
             <label className="flex items-center gap-2 text-xs text-muted">
               Walk to
               <Select
-                aria-label="Area to reach"
+                aria-label="Walk to"
                 className="w-64"
                 value={checkArea}
                 disabled={!projectReady || checking}
@@ -413,7 +433,7 @@ export default function AccountsDialog({
                 ))}
               </Select>
             </label>
-            <ul className="space-y-1">
+            <ul className="space-y-1" role="status" aria-live="polite">
               {savedAccounts.map((a) => {
                 const line = checkLines[a.key];
                 const mark = lastChecks.data?.[a.key];
@@ -431,6 +451,7 @@ export default function AccountsDialog({
                           })
                         }
                         ariaLabel={`Check ${a.key}`}
+                        disabled={checking}
                       />
                       {a.label.trim() ? `${a.label} (${a.key})` : a.key}
                     </label>
@@ -440,7 +461,8 @@ export default function AccountsDialog({
                       </p>
                     ) : mark ? (
                       <p className="ml-6 text-muted">
-                        Last checked{mark.checked_ms === null ? "" : ` ${new Date(mark.checked_ms).toLocaleString()}`}: {mark.outcome}
+                        Last checked {new Date(mark.checked_ms ?? 0).toLocaleString()}
+                        {Date.now() - (mark.checked_ms ?? 0) > STALE_MS ? " (stale)" : ""}: {mark.outcome}
                       </p>
                     ) : null}
                   </li>
@@ -464,6 +486,12 @@ export default function AccountsDialog({
                 <IconSignIn aria-hidden />
                 {checking ? "Checking" : `Check sign-in (${checkCount})`}
               </Button>
+              {checking && (
+                <Button size="sm" variant="ghost" disabled={cancelled} onClick={cancelCheck}>
+                  <IconCancel aria-hidden />
+                  Cancel check
+                </Button>
+              )}
             </div>
           </section>
         )}

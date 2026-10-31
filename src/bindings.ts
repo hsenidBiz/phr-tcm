@@ -1129,6 +1129,15 @@ export const commands = {
 	 *  whether it reached its area, and the words.
 	 */
 	autoRunSignInChecks: () => typedError<{ [key in string]: Mark }, string>(__TAURI_INVOKE("auto_run_sign_in_checks")),
+	/**  End the sign-in check going, if any (the dialog's Cancel). */
+	autoRunCancelCheckSignIn: () => __TAURI_INVOKE<void>("auto_run_cancel_check_sign_in"),
+	/**
+	 *  The saved accounts (`account_key` names one; none means all) whose
+	 *  password is expired, forced to change or due within a week, one line
+	 *  each, for the run window's warning. Empty when the environment has no
+	 *  expiry query, reading the database is off or it does not answer.
+	 */
+	autoRunExpiringAccounts: (accountKey: string | null, dbReadAccess: boolean) => typedError<string[], string>(__TAURI_INVOKE("auto_run_expiring_accounts", { accountKey, dbReadAccess })),
 	/**
 	 *  Open a visible browser with nobody signed in, go to `start_url`, and
 	 *  listen. Each step arrives as a `RecordingEvent`.
@@ -4980,9 +4989,11 @@ export type Mark = {
 	 *  64-bit integer across IPC.
 	 */
 	checked_ms: number | null,
-	/**  Signed in, and arrived at the area when one was asked for. */
+	/**  The sign-in worked. */
+	signed_in?: boolean,
+	/**  An area was asked for and the walk arrived: only then. */
 	reached: boolean,
-	/**  The area asked for, when one was. */
+	/**  The area the check was for; none for a sign-in alone. */
 	area: string | null,
 	/**  The check's summary line. */
 	outcome: string,
@@ -7047,10 +7058,13 @@ export type SignInCheck = {
 	 */
 	stopped: string | null,
 	/**
-	 *  What the expiry query said about the password, when it was asked and
-	 *  knew ("password due 2026-11-02, 3 days").
+	 *  What the expiry query said about the password's due date, when it
+	 *  was asked and knew ("password due 2026-11-02, 3 days"). Words, never
+	 *  a password.
 	 */
-	password: string | null,
+	password_due: string | null,
+	/**  What could not be checked, said beside the result. */
+	note: string | null,
 	/**  Only when an area was asked for and the sign-in arrived. */
 	area: AreaReach | null,
 };

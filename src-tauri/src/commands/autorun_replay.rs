@@ -301,7 +301,7 @@ pub async fn auto_run_replay(
 ) -> Result<LocalRun, String> {
     let db_read_access = crate::autorun::preconditions::read_access(db_read_access);
     let _claim = OneAtATime::claim().ok_or_else(|| {
-        "an unattended run is already going - wait for it, or stop it first".to_string()
+        crate::autorun::sign_in_check::going_sentence("an unattended run is already going - wait for it, or stop it first")
     })?;
     if let Some(busy) = super::autorun::open_session_refusal_any().await {
         return Err(busy);
