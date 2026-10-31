@@ -1080,3 +1080,135 @@ mod one_case {
         assert_eq!(back.missing_components, vec!["Ghost two".to_string()]);
     }
 }
+
+// ---- importing scripts from a folder ---------------------------------------
+
+mod import_scripts {
+    use super::*;
+    use serde_json::json;
+    use v2_lib::autorun::env_copy::{
+        import_scripts, plan_import_scripts, ImportScriptsPlan, IMPORT_NO_SCRIPTS,
+    };
+    use v2_lib::autorun::{store, CaseScript};
+
+    fn script(case_id: i32, title: &str) -> CaseScript {
+        serde_json::from_value(json!({
+            "case_id": case_id, "title": title, "account": "admin",
+            "steps": [{ "step_number": 1, "actions": [{ "kind": "check_text", "value": "ok" }] }],
+        }))
+        .unwrap()
+    }
+
+    fn write(dir: &Path, name: &str, text: &str) {
+        std::fs::create_dir_all(dir).unwrap();
+        std::fs::write(dir.join(name), text).unwrap();
+    }
+
+    fn write_script(dir: &Path, s: &CaseScript) {
+        write(dir, &format!("case-{}.json", s.case_id), &serde_json::to_string_pretty(s).unwrap());
+    }
+
+    /// A folder of scripts, and a target environment folder that may be written.
+    struct Setup {
+        from: tempfile::TempDir,
+        target: std::path::PathBuf,
+        _t: tempfile::TempDir,
+        _allow: roots::AllowedTarget,
+    }
+
+    fn setup() -> Setup {
+        let t = tempfile::tempdir().unwrap();
+        let (a_id, _b, _c) = three_envs(t.path());
+        let target = roots::env_root(t.path(), &a_id);
+        std::fs::create_dir_all(&target).unwrap();
+        let allow = roots::allow_writes_to(&target);
+        Setup { from: tempfile::tempdir().unwrap(), target, _t: t, _allow: allow }
+    }
+
+    #[test]
+    fn import_plan_sorts_new_same_and_differ() {
+        let _lock = crate::serial::autorun();
+        let s = setup();
+        write_script(s.from.path(), &script(3, "From folder"));
+        write_script(s.from.path(), &script(1, "New one"));
+        write_script(s.from.path(), &script(2, "Same"));
+        write(s.from.path(), "notes.txt", "hello");
+        write(s.from.path(), "case-x.json", "{}");
+        write(s.from.path(), "case-4.json", &serde_json::to_string(&script(5, "Wrong id")).unwrap());
+        store::save_script(&s.target, &script(2, "Same")).unwrap();
+        store::save_script(&s.target, &script(3, "Here")).unwrap();
+        let plan = plan_import_scripts(s.from.path(), &s.target).unwrap();
+        assert_eq!(plan, ImportScriptsPlan { new: vec![1], same: vec![2], differ: vec![3], unreadable: 2 });
+    }
+
+    #[test]
+    fn import_reads_a_scripts_child_folder() {
+        let _lock = crate::serial::autorun();
+        let s = setup();
+        write_script(&s.from.path().join("scripts"), &script(1, "New one"));
+        let plan = plan_import_scripts(s.from.path(), &s.target).unwrap();
+        assert_eq!(plan.new, vec![1]);
+    }
+
+    #[test]
+    fn import_skips_a_case_with_a_different_script_unless_replace() {
+        let _lock = crate::serial::autorun();
+        let s = setup();
+        write_script(s.from.path(), &script(1, "New one"));
+        write_script(s.from.path(), &script(3, "From folder"));
+        store::save_script(&s.target, &script(3, "Here")).unwrap();
+        let before = std::fs::read(s.target.join("scripts/case-3.json")).unwrap();
+        import_scripts(s.from.path(), &s.target, false).unwrap();
+        assert_eq!(std::fs::read(s.target.join("scripts/case-3.json")).unwrap(), before);
+        assert_eq!(store::load_script(&s.target, 1).unwrap().unwrap().title, "New one");
+        assert!(!s.target.join("deleted-scripts").exists());
+
+        import_scripts(s.from.path(), &s.target, true).unwrap();
+        assert_eq!(store::load_script(&s.target, 3).unwrap().unwrap().title, "From folder");
+        let kept: Vec<String> = std::fs::read_dir(s.target.join("deleted-scripts"))
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(kept.len(), 1, "{kept:?}");
+        assert!(kept[0].starts_with("case-3-deleted-"));
+    }
+
+    #[test]
+    fn import_refuses_to_replace_a_case_being_replayed() {
+        let _lock = crate::serial::autorun();
+        let s = setup();
+        write_script(s.from.path(), &script(1, "New one"));
+        write_script(s.from.path(), &script(3, "From folder"));
+        store::save_script(&s.target, &script(3, "Here")).unwrap();
+        let _replay = store::replaying(3);
+        let err = import_scripts(s.from.path(), &s.target, true).unwrap_err();
+        assert_eq!(err, v2_lib::autorun::env_copy::case_copy_replaying(3));
+        assert!(store::load_script(&s.target, 1).unwrap().is_none(), "nothing was added");
+        assert_eq!(store::load_script(&s.target, 3).unwrap().unwrap().title, "Here");
+    }
+
+    #[test]
+    fn import_drops_suspected_defect_marks() {
+        let _lock = crate::serial::autorun();
+        let s = setup();
+        let mut marked = script(1, "Marked");
+        marked.suspected_defect = serde_json::from_value(json!({ "step_number": 1, "note": "n", "marked_at": "1" })).unwrap();
+        assert!(marked.suspected_defect.is_some());
+        write_script(s.from.path(), &marked);
+        import_scripts(s.from.path(), &s.target, false).unwrap();
+        let saved = store::load_script(&s.target, 1).unwrap().unwrap();
+        assert!(saved.suspected_defect.is_none() && saved.cleared_defect.is_none());
+    }
+
+    #[test]
+    fn import_of_an_empty_folder_says_so() {
+        let _lock = crate::serial::autorun();
+        let s = setup();
+        write(s.from.path(), "notes.txt", "hello");
+        let err = plan_import_scripts(s.from.path(), &s.target).unwrap_err();
+        assert_eq!(err, IMPORT_NO_SCRIPTS);
+        assert!(!err.contains("\\") && !err.contains("/"));
+        assert_eq!(import_scripts(s.from.path(), &s.target, true).unwrap_err(), IMPORT_NO_SCRIPTS);
+    }
+}

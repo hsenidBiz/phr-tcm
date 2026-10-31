@@ -966,3 +966,143 @@ pub fn copy_case(
     crate::applog::info(format!("Auto Run: copied case {case_id} to another environment"));
     Ok(plan)
 }
+
+// ---- importing scripts from a folder ---------------------------------------
+//
+// A folder the person picked (a copy of another machine's `scripts` folder,
+// or the folder holding it) is read into the active environment. The folder
+// is only read; the scripts are written through the active root's guard
+// like any save. A case that already has a different script here is left
+// unless the person agreed to replace it.
+
+/// Said when the folder holds no Auto Run script files.
+pub const IMPORT_NO_SCRIPTS: &str = "that folder holds no Auto Run scripts (files named case-<number>.json)";
+/// Said when the import stopped part-way.
+pub const IMPORT_FAILED: &str = "the import did not finish - see Settings > Logs";
+
+/// What importing a folder's scripts would do, or did. Case ids only.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, specta::Type)]
+pub struct ImportScriptsPlan {
+    /// Cases the environment has no script for: added.
+    pub new: Vec<i32>,
+    /// Cases whose script here is the same as the folder's: nothing to do.
+    pub same: Vec<i32>,
+    /// Cases whose script here differs: left, or replaced when agreed.
+    pub differ: Vec<i32>,
+    /// `case-*.json` files that are not a script for the case they are named
+    /// for (not readable, a link, or a name and case id that disagree).
+    pub unreadable: u32,
+}
+
+struct ImportGather {
+    plan: ImportScriptsPlan,
+    new: Vec<crate::autorun::CaseScript>,
+    differ: Vec<crate::autorun::CaseScript>,
+}
+
+/// A script without the assistant's marks, which never travel.
+fn without_marks(mut s: crate::autorun::CaseScript) -> crate::autorun::CaseScript {
+    s.suspected_defect = None;
+    s.cleared_defect = None;
+    s
+}
+
+fn gather_import(from: &Path, target: &Path) -> Result<ImportGather, String> {
+    use super::store;
+    let dir = if from.join("scripts").is_dir() { from.join("scripts") } else { from.to_path_buf() };
+    let entries = std::fs::read_dir(&dir).map_err(|e| {
+        crate::applog::warn(format!("Auto Run: a folder of scripts to import could not be read: {e}"));
+        IMPORT_NO_SCRIPTS.to_string()
+    })?;
+    let mut plan = ImportScriptsPlan { new: vec![], same: vec![], differ: vec![], unreadable: 0 };
+    let (mut new, mut differ) = (Vec::new(), Vec::new());
+    let mut seen: Vec<i32> = Vec::new();
+    for entry in entries.flatten() {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if !(name.starts_with("case-") && name.ends_with(".json")) {
+            continue;
+        }
+        let is_file = std::fs::symlink_metadata(entry.path()).map(|m| m.is_file()).unwrap_or(false);
+        let script = if is_file {
+            std::fs::read_to_string(entry.path())
+                .ok()
+                .and_then(|s| serde_json::from_str::<crate::autorun::CaseScript>(&s).ok())
+                .filter(|s| name == format!("case-{}.json", s.case_id) && !seen.contains(&s.case_id))
+        } else {
+            None
+        };
+        let Some(script) = script else {
+            plan.unreadable += 1;
+            continue;
+        };
+        seen.push(script.case_id);
+        let script = without_marks(script);
+        match store::load_script(target, script.case_id) {
+            Ok(None) => {
+                plan.new.push(script.case_id);
+                new.push(script);
+            }
+            Ok(Some(have)) if same(&without_marks(have.clone()), &script) => plan.same.push(script.case_id),
+            // A script here that cannot be read counts as different: a
+            // replace keeps it aside rather than losing it.
+            _ => {
+                plan.differ.push(script.case_id);
+                differ.push(script);
+            }
+        }
+    }
+    plan.new.sort_unstable();
+    plan.same.sort_unstable();
+    plan.differ.sort_unstable();
+    if plan.new.is_empty() && plan.same.is_empty() && plan.differ.is_empty() && plan.unreadable == 0 {
+        return Err(IMPORT_NO_SCRIPTS.to_string());
+    }
+    Ok(ImportGather { plan, new, differ })
+}
+
+/// What importing the scripts in `from` into `target` would add, skip and
+/// leave. Writes nothing.
+pub fn plan_import_scripts(from: &Path, target: &Path) -> Result<ImportScriptsPlan, String> {
+    gather_import(from, target).map(|g| g.plan)
+}
+
+/// Saves every new script from `from` into `target` (the active root); with
+/// `replace`, also every different one, the old one first kept aside like a
+/// deleted script and put back if the new one cannot be written. Refused
+/// before anything is written when a case to replace is being replayed.
+pub fn import_scripts(from: &Path, target: &Path, replace: bool) -> Result<ImportScriptsPlan, String> {
+    use super::store;
+    let g = gather_import(from, target)?;
+    if replace {
+        if let Some(id) = g.plan.differ.iter().find(|id| store::is_replaying(**id)) {
+            return Err(case_copy_replaying(*id));
+        }
+    }
+    let failed = |what: &str, e: String| {
+        crate::applog::warn(format!("Auto Run: importing scripts stopped at {what}: {e}"));
+        IMPORT_FAILED.to_string()
+    };
+    for s in &g.new {
+        store::save_script(target, s).map_err(|e| failed("a new script", e))?;
+    }
+    let mut replaced = 0;
+    if replace {
+        for s in &g.differ {
+            let old = store::load_script(target, s.case_id).ok().flatten();
+            store::delete_script(target, s.case_id, super::sessions::now_ms()).map_err(|e| failed("an old script", e))?;
+            if let Err(e) = store::save_script(target, s) {
+                if let Some(old) = &old {
+                    let _ = store::save_script(target, old);
+                }
+                return Err(failed("a replaced script", e));
+            }
+            replaced += 1;
+        }
+    }
+    crate::applog::info(format!(
+        "Auto Run: imported {} new scripts, replaced {replaced}, {} left as they were",
+        g.new.len(),
+        if replace { 0 } else { g.differ.len() }
+    ));
+    Ok(g.plan)
+}

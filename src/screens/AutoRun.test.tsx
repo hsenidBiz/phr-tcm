@@ -635,6 +635,7 @@ test("no path through this screen - load, selection, a supervised run or an unat
     "test_files_list", // read-only, local: the Setup card's Test files count
     "env_list", // read-only, local: the header's environment name and its address
     "db_databases", // read-only, local: the environments list checks its databases against these
+    "auto_run_migration_note", // local: reads and clears the one-time notice the per-environment update left in the app's data folder; never ADO
     "get_app_settings", // read-only, local: the run dialog's Pause before each action box
     "pw_rules_status", // read-only, local: whether a Playwright repo is set, for the Playwright-is-needed dialog (also refreshes the assistant's local agent files); never ADO
     "plugin:event|listen", // Tauri's own event subscription - ReplayPane's progress feed
@@ -1738,8 +1739,9 @@ test("the expanded Setup panel names the environment in a row of its own", async
   const env = within(setupPanel()).getByRole("group", { name: "Environment" });
   expect(await within(env).findByText("QA HR: hrdb on sql01")).toBeInTheDocument();
   expect(within(env).getByText("QA")).toBeInTheDocument();
-  // Chosen on AI Bridge: nothing to press here.
-  expect(within(env).queryByRole("button")).not.toBeInTheDocument();
+  // Chosen on AI Bridge: the only button here brings scripts in.
+  const buttons = within(env).getAllByRole("button");
+  expect(buttons.map((b) => b.getAttribute("aria-label"))).toEqual(["Import scripts into this environment"]);
 });
 
 test("the search is in the Test cases tab's toolbar and not in the Setup panel; going to Past runs empties it", async () => {

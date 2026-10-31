@@ -449,6 +449,17 @@ export const commands = {
 	 *  `replace` agrees to replace the script it already has for the case.
 	 */
 	autoRunCopyCaseFrom: (organization: string, project: string, caseId: number, activeId: string, sourceId: string, replace: boolean) => typedError<CaseCopyPlan, string>(__TAURI_INVOKE("auto_run_copy_case_from", { organization, project, caseId, activeId, sourceId, replace })),
+	/**
+	 *  What importing the scripts in the person's picked folder would add, skip
+	 *  and leave. The folder is only read; nothing is written.
+	 */
+	autoRunImportFolderPlan: (folder: string) => typedError<ImportScriptsPlan, string>(__TAURI_INVOKE("auto_run_import_folder_plan", { folder })),
+	/**
+	 *  Brings the scripts in the picked folder into the active environment.
+	 *  `replace` also replaces a case's different script, the old one kept as a
+	 *  deleted script.
+	 */
+	autoRunImportFolder: (folder: string, replace: boolean) => typedError<ImportScriptsPlan, string>(__TAURI_INVOKE("auto_run_import_folder", { folder, replace })),
 	envSetDefaultPassword: (id: string, password: string) => typedError<null, string>(__TAURI_INVOKE("env_set_default_password", { id, password })),
 	envClearDefaultPassword: (id: string) => typedError<null, string>(__TAURI_INVOKE("env_clear_default_password", { id })),
 	envSetResetExpiredPasswords: (id: string, on: boolean) => typedError<EnvListView, string>(__TAURI_INVOKE("env_set_reset_expired_passwords", { id, on })),
@@ -4733,6 +4744,21 @@ export type ImportResult_Serialize = {
 	warnings: string[],
 	/**  The file's `specs` list, verbatim - resolved when a page is written. */
 	specs: string[],
+};
+
+/**  What importing a folder's scripts would do, or did. Case ids only. */
+export type ImportScriptsPlan = {
+	/**  Cases the environment has no script for: added. */
+	new: number[],
+	/**  Cases whose script here is the same as the folder's: nothing to do. */
+	same: number[],
+	/**  Cases whose script here differs: left, or replaced when agreed. */
+	differ: number[],
+	/**
+	 *  `case-*.json` files that are not a script for the case they are named
+	 *  for (not readable, a link, or a name and case id that disagree).
+	 */
+	unreadable: number,
 };
 
 /**

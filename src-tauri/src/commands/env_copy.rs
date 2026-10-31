@@ -243,3 +243,46 @@ pub async fn auto_run_copy_case_from(
 ) -> Result<env_copy::CaseCopyPlan, String> {
     case_copy_with(&shared()?, &organization, &project, case_id, &active_id, &source_id, CaseWay::Pull, replace).await
 }
+
+/// The active root, when the app is using the per-environment folders.
+fn import_target() -> Result<PathBuf, String> {
+    let active = crate::autorun::store::configured_root().ok_or_else(|| env_copy::CASE_COPY_NEEDS_LAYOUT.to_string())?;
+    if crate::autorun::roots::env_id_of(&active).is_none() {
+        return Err(env_copy::CASE_COPY_NEEDS_LAYOUT.to_string());
+    }
+    Ok(active)
+}
+
+/// What importing the scripts in the person's picked folder would add, skip
+/// and leave. The folder is only read; nothing is written.
+#[tauri::command]
+#[specta::specta]
+pub async fn auto_run_import_folder_plan(
+    _app: tauri::AppHandle,
+    folder: String,
+) -> Result<env_copy::ImportScriptsPlan, String> {
+    let _no_switch = super::autorun_slots::opening().read().await;
+    let target = import_target()?;
+    tauri::async_runtime::spawn_blocking(move || env_copy::plan_import_scripts(Path::new(&folder), &target))
+        .await
+        .map_err(|_| env_copy::IMPORT_FAILED.to_string())?
+}
+
+/// Brings the scripts in the picked folder into the active environment.
+/// `replace` also replaces a case's different script, the old one kept as a
+/// deleted script.
+#[tauri::command]
+#[specta::specta]
+pub async fn auto_run_import_folder(
+    _app: tauri::AppHandle,
+    folder: String,
+    replace: bool,
+) -> Result<env_copy::ImportScriptsPlan, String> {
+    // Held for reading so a switch cannot change the active environment
+    // while the scripts are being written.
+    let _no_switch = super::autorun_slots::opening().read().await;
+    let target = import_target()?;
+    tauri::async_runtime::spawn_blocking(move || env_copy::import_scripts(Path::new(&folder), &target, replace))
+        .await
+        .map_err(|_| env_copy::IMPORT_FAILED.to_string())?
+}
