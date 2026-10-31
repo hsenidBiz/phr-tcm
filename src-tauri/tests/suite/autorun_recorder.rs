@@ -92,11 +92,13 @@ fn page_with(held: Vec<bool>, href: &'static str) -> ScriptedDriver {
 
 #[test]
 fn the_clicked_elements_own_role_and_name_make_the_locator() {
+    let _leases = crate::serial::account_leases();
     assert_eq!(locator_from_ax(&[node("link", "Apply   Leave"), node("navigation", "")]), Some(exact_role("link", "Apply Leave")));
 }
 
 #[test]
 fn the_nearest_ancestor_with_a_preferred_role_wins_over_the_words_inside_it() {
+    let _leases = crate::serial::account_leases();
     let chain = [node("StaticText", "Apply Leave"), node("generic", ""), node("link", "Apply Leave"), node("listitem", ""), node("navigation", "")];
     assert_eq!(locator_from_ax(&chain), Some(exact_role("link", "Apply Leave")));
     let chain = [node("generic", ""), node("menuitem", "Leave"), node("menu", "")];
@@ -107,17 +109,20 @@ fn the_nearest_ancestor_with_a_preferred_role_wins_over_the_words_inside_it() {
 
 #[test]
 fn a_named_role_that_is_not_preferred_is_used_when_nothing_better_is_near() {
+    let _leases = crate::serial::account_leases();
     assert_eq!(locator_from_ax(&[node("StaticText", "Leave"), node("heading", "Leave"), node("main", "")]), Some(exact_role("heading", "Leave")));
 }
 
 #[test]
 fn the_climb_stops_at_a_container_and_finds_nothing_beyond_it() {
+    let _leases = crate::serial::account_leases();
     assert_eq!(locator_from_ax(&[node("generic", ""), node("navigation", "Main"), node("link", "Home")]), None);
     assert_eq!(locator_from_ax(&[]), None);
 }
 
 #[test]
 fn hints_give_a_role_from_aria_label_or_else_the_visible_words() {
+    let _leases = crate::serial::account_leases();
     assert_eq!(locator_from_hints(&hints("menuitem", " Leave ", "L")), Some(exact_role("menuitem", "Leave")));
     assert_eq!(locator_from_hints(&hints("", "", "  Apply \n Leave ")), Some(exact_text("Apply Leave")));
     assert_eq!(locator_from_hints(&hints("", "", "")), None);
@@ -126,6 +131,7 @@ fn hints_give_a_role_from_aria_label_or_else_the_visible_words() {
 
 #[test]
 fn wrappers_the_accessibility_tree_ignores_do_not_use_up_the_climb() {
+    let _leases = crate::serial::account_leases();
     let mut chain: Vec<AxLink> = (0..6).map(|_| AxLink { role: "none".into(), name: String::new(), ignored: true }).collect();
     chain.push(node("link", "Leave"));
     assert_eq!(locator_from_ax(&chain), Some(exact_role("link", "Leave")));
@@ -133,12 +139,14 @@ fn wrappers_the_accessibility_tree_ignores_do_not_use_up_the_climb() {
 
 #[test]
 fn a_role_attribute_is_read_the_way_the_browser_reads_it() {
+    let _leases = crate::serial::account_leases();
     assert_eq!(locator_from_hints(&hints("menuitem button", "Leave", "")), Some(exact_role("menuitem", "Leave")), "the first token");
     assert_eq!(locator_from_hints(&hints("none", "Leave", "Leave")), Some(exact_text("Leave")), "no role at all");
 }
 
 #[test]
 fn ax_chain_walks_up_by_parent_id_or_else_by_child_ids() {
+    let _leases = crate::serial::account_leases();
     let chain = ax_chain(&leave_tree(), 42);
     assert_eq!(chain.iter().map(|n| n.role.as_str()).collect::<Vec<_>>(), vec!["StaticText", "link", "navigation", "RootWebArea"]);
     let no_parent_ids = json!({ "nodes": [
@@ -151,6 +159,7 @@ fn ax_chain_walks_up_by_parent_id_or_else_by_child_ids() {
 
 #[tokio::test]
 async fn arming_adds_the_binding_and_the_listener_to_every_document() {
+    let _leases = crate::serial::account_leases();
     let mut d = ScriptedDriver::new(|_, _| Ok(json!({ "result": {} })));
     arm(&mut d).await.unwrap();
     assert_eq!(d.methods(), vec!["Runtime.enable", "Runtime.addBinding", "Page.addScriptToEvaluateOnNewDocument", "Runtime.evaluate"]);
@@ -163,6 +172,7 @@ async fn arming_adds_the_binding_and_the_listener_to_every_document() {
 /// locator words only, and never changes what a click does.
 #[test]
 fn the_listener_only_listens_and_never_reads_what_was_typed() {
+    let _leases = crate::serial::account_leases();
     for never in ["preventDefault", "stopPropagation", "stopImmediatePropagation", ".value"] {
         assert!(!LISTENER_JS.contains(never), "the listener must not use {never}");
     }
@@ -171,6 +181,7 @@ fn the_listener_only_listens_and_never_reads_what_was_typed() {
 
 #[tokio::test]
 async fn a_reported_click_is_read_back_and_another_binding_is_ignored() {
+    let _leases = crate::serial::account_leases();
     let mut d = ScriptedDriver::new(|_, _| Ok(json!({})));
     d.events.push_back(Event { method: "Runtime.bindingCalled".into(), params: json!({ "name": "other", "payload": "{}" }) });
     d.events.push_back(clicked(3, "Leave"));
@@ -182,6 +193,7 @@ async fn a_reported_click_is_read_back_and_another_binding_is_ignored() {
 
 #[tokio::test]
 async fn locate_asks_the_accessibility_tree_about_the_clicked_element() {
+    let _leases = crate::serial::account_leases();
     let mut d = page_with(vec![true], "https://hr.example.internal/hr/leave");
     let click = ClickPayload { doc: "d1".into(), i: 0, hints: hints("", "", "something else") };
     assert_eq!(locate(&mut d, &click).await, Ok(exact_role("link", "Leave")));
@@ -190,6 +202,7 @@ async fn locate_asks_the_accessibility_tree_about_the_clicked_element() {
 
 #[tokio::test]
 async fn locate_falls_back_to_the_hints_when_the_element_has_gone() {
+    let _leases = crate::serial::account_leases();
     let mut d = page_with(vec![false], "https://hr.example.internal/hr/leave");
     let click = ClickPayload { doc: "d1".into(), i: 0, hints: hints("", "", "Apply Leave") };
     assert_eq!(locate(&mut d, &click).await, Ok(exact_text("Apply Leave")));
@@ -200,6 +213,7 @@ async fn locate_falls_back_to_the_hints_when_the_element_has_gone() {
 
 #[tokio::test]
 async fn capture_keeps_every_reported_click_then_stops_where_the_page_is() {
+    let _leases = crate::serial::account_leases();
     let mut d = page_with(vec![true, false], "https://hr.example.internal/hr/leave/apply?tab=2#top");
     d.events.push_back(clicked(0, "Leave"));
     d.events.push_back(clicked(1, "Apply Leave"));
@@ -230,6 +244,7 @@ fn pms_recording(href: &str) -> Captured {
 /// a second area under the same module sits next to the first.
 #[test]
 fn a_recording_saves_an_area_with_its_module_and_a_second_area_keeps_the_first() {
+    let _leases = crate::serial::account_leases();
     let dir = tempfile::tempdir().unwrap();
     let cycle = finish(" PMS ", " Manage Cycle ", pms_recording("https://hr.example.internal/pms/cycle/manage"), "t").unwrap();
     assert_eq!((cycle.area.as_str(), cycle.module.as_str()), ("Manage Cycle", "PMS"));
@@ -243,6 +258,7 @@ fn a_recording_saves_an_area_with_its_module_and_a_second_area_keeps_the_first()
 
 #[test]
 fn the_area_is_named_after_its_module_unless_one_is_typed() {
+    let _leases = crate::serial::account_leases();
     assert_eq!(area_to_record(" PMS ", "  "), "PMS");
     assert_eq!(area_to_record("PMS", " Manage Cycle "), "Manage Cycle");
 }
@@ -251,6 +267,7 @@ fn the_area_is_named_after_its_module_unless_one_is_typed() {
 /// area that is not recorded says so in the spec's words.
 #[test]
 fn try_finds_an_area_by_name_and_names_one_that_is_not_recorded() {
+    let _leases = crate::serial::account_leases();
     let dir = tempfile::tempdir().unwrap();
     for (name, arrived) in [("Cycle Setup", "/pms/cycle/setup"), ("Manage Cycle", "/pms/cycle/manage")] {
         let mut p = finish("PMS", name, pms_recording(&format!("https://hr.example.internal{arrived}")), "t").unwrap();
@@ -273,6 +290,7 @@ fn try_finds_an_area_by_name_and_names_one_that_is_not_recorded() {
 /// same name under the same module is a Re-record.
 #[test]
 fn an_area_name_held_by_another_module_is_refused_before_recording() {
+    let _leases = crate::serial::account_leases();
     let dir = tempfile::tempdir().unwrap();
     let p = finish("PMS", "Manage Cycle", pms_recording("https://hr.example.internal/pms/cycle/manage"), "t").unwrap();
     let nav = put_path(dir.path(), "acme", "Web", p).unwrap();
@@ -287,6 +305,7 @@ fn an_area_name_held_by_another_module_is_refused_before_recording() {
 /// Review focus 1.
 #[tokio::test]
 async fn a_closed_recording_browser_ends_the_recording_and_saves_nothing() {
+    let _leases = crate::serial::account_leases();
     let mut d = page_with(vec![false], "https://hr.example.internal/hr/leave");
     d.closed_when_drained = true;
     d.events.push_back(clicked(0, "Leave"));
@@ -299,6 +318,7 @@ async fn a_closed_recording_browser_ends_the_recording_and_saves_nothing() {
 
 #[tokio::test]
 async fn cancel_ends_at_once_and_stop_with_no_clicks_saves_nothing() {
+    let _leases = crate::serial::account_leases();
     let mut d = page_with(vec![true], "https://hr.example.internal/hr/home/index");
     d.events.push_back(clicked(0, "Leave"));
     let captured = capture(&mut d, &AtomicBool::new(false), &AtomicBool::new(true), &mut |_| {}).await;
@@ -320,6 +340,7 @@ fn leave_path() -> ModulePath {
 
 #[tokio::test]
 async fn a_path_is_checked_by_signing_in_fresh_and_walking_it_to_where_it_ended() {
+    let _leases = crate::serial::account_leases();
     let dir = tempfile::tempdir().unwrap();
     let menu: &[(&str, &str, &str)] = &[("link", "Leave", "/hr/leave"), ("link", "Apply Leave", "/hr/leave/apply")];
     let (mut d, _app) = common::menu_app(menu, "/hr/welcome", 0);
@@ -337,6 +358,7 @@ async fn a_path_is_checked_by_signing_in_fresh_and_walking_it_to_where_it_ended(
 /// application's address, so they go to the log and not to the person.
 #[tokio::test]
 async fn a_sign_in_page_that_will_not_load_is_reported_without_its_address() {
+    let _leases = crate::serial::account_leases();
     let dir = tempfile::tempdir().unwrap();
     let mut d = ScriptedDriver::new(|method, _| {
         Ok(match method {
@@ -353,6 +375,7 @@ async fn a_sign_in_page_that_will_not_load_is_reported_without_its_address() {
 
 #[tokio::test]
 async fn a_browser_that_stops_answering_during_the_sign_in_is_told_apart() {
+    let _leases = crate::serial::account_leases();
     let dir = tempfile::tempdir().unwrap();
     let mut d = ScriptedDriver::new(|_, _| Err(CdpError::Closed));
     let err = check_path(&mut d, dir.path(), &common::menu_recipe(), &common::account(), &leave_path(), &common::quick(), &mut v2_lib::autorun::lease::Held::setup())
@@ -371,6 +394,7 @@ async fn a_recording_waits_for_a_run_and_a_run_waits_for_a_recording() {
     let _claims = crate::serial::autorun();
     // Reaches `held::close_all`, which closes every held template browser.
     let _held = crate::serial::held_browsers();
+    let _leases = crate::serial::account_leases();
     assert!(refuse_to_record_now().await.is_ok());
     let run = OneAtATime::claim().expect("nothing is running");
     assert_eq!(refuse_to_record_now().await.unwrap_err(), "an unattended run is going - wait for it, or stop it first");
@@ -621,6 +645,7 @@ impl Driver for HomeWillNotLoad {
 
 #[tokio::test]
 async fn a_recording_whose_home_page_will_not_load_says_it_could_not_start() {
+    let _leases = crate::serial::account_leases();
     let dir = tempfile::tempdir().unwrap();
     let (inner, _app) = common::menu_app(&[], "/hr/dashboard", 0);
     let mut d = HomeWillNotLoad { inner, navigations: 0 };
@@ -634,6 +659,7 @@ async fn a_recording_whose_home_page_will_not_load_says_it_could_not_start() {
 /// check does: a sign-in's own words can.
 #[tokio::test]
 async fn a_recording_whose_sign_in_fails_says_so_without_an_address() {
+    let _leases = crate::serial::account_leases();
     let dir = tempfile::tempdir().unwrap();
     let mut d = ScriptedDriver::new(|method, _| {
         Ok(match method {
@@ -672,6 +698,7 @@ fn scoped(css: &str, text: &str, nth: Option<i32>) -> Target {
 /// Words the page shows once need nothing more.
 #[test]
 fn words_shown_once_stay_as_they_are() {
+    let _leases = crate::serial::account_leases();
     let h = echoed("Leave", 1, vec![scope("phr-sidebar-menu-list", 1, Some(0))]);
     assert_eq!(narrow(exact_text("Leave"), &h), Ok(exact_text("Leave")));
 }
@@ -683,6 +710,7 @@ fn words_shown_once_stay_as_they_are() {
 /// inner group that would tie the path to one layout of it.
 #[test]
 fn words_shown_more_than_once_are_scoped_to_the_widest_id_that_holds_them_once() {
+    let _leases = crate::serial::account_leases();
     let h = echoed(
         "Performance Cycles",
         3,
@@ -699,6 +727,7 @@ fn words_shown_more_than_once_are_scoped_to_the_widest_id_that_holds_them_once()
 /// `nth` counts (page order, inside that one scope).
 #[test]
 fn twins_inside_the_same_id_are_told_apart_by_their_place_in_it() {
+    let _leases = crate::serial::account_leases();
     let h = echoed("Performance", 2, vec![scope("phr-sidebar-menu-list", 2, Some(1)), scope("phr-sidebar", 2, Some(1))]);
     assert_eq!(narrow(exact_text("Performance"), &h), Ok(scoped("#phr-sidebar-menu-list", "Performance", Some(1))));
 }
@@ -707,6 +736,7 @@ fn twins_inside_the_same_id_are_told_apart_by_their_place_in_it() {
 /// it is passed over even when it would have made the words unique.
 #[test]
 fn ids_that_look_generated_are_passed_over() {
+    let _leases = crate::serial::account_leases();
     let h = echoed("Leave", 2, vec![scope("row-4711", 1, Some(0)), scope("menu", 2, Some(0))]);
     assert_eq!(narrow(exact_text("Leave"), &h), Ok(scoped("#menu", "Leave", Some(0))));
     for bad in ["row-4711", "a1b2c3d4e5f6", "ember123", "1abc", "has space", "x.y", ""] {
@@ -721,6 +751,7 @@ fn ids_that_look_generated_are_passed_over() {
 /// fifteen seconds into the check.
 #[test]
 fn words_nothing_can_tell_apart_are_refused_at_the_click() {
+    let _leases = crate::serial::account_leases();
     let none = echoed("Leave", 2, vec![]);
     let err = narrow(exact_text("Leave"), &none).unwrap_err();
     assert!(err.contains("2 times"), "{err}");
@@ -732,6 +763,7 @@ fn words_nothing_can_tell_apart_are_refused_at_the_click() {
 /// counted words, not names, so its numbers say nothing about it.
 #[test]
 fn a_role_locator_is_not_narrowed_by_word_counts() {
+    let _leases = crate::serial::account_leases();
     let h = echoed("Leave", 3, vec![scope("menu", 1, Some(0))]);
     assert_eq!(narrow(exact_role("link", "Leave"), &h), Ok(exact_role("link", "Leave")));
 }
@@ -740,6 +772,7 @@ fn a_role_locator_is_not_narrowed_by_word_counts() {
 /// count: the words are kept exactly as they always were.
 #[test]
 fn a_click_reported_without_counts_reads_as_before() {
+    let _leases = crate::serial::account_leases();
     let got: ClickPayload = serde_json::from_value(json!({ "doc": "d", "i": 0, "tag": "a", "role": "", "label": "", "text": "Leave" })).unwrap();
     assert_eq!(got.hints.count, 0);
     assert!(got.hints.scopes.is_empty());
@@ -778,6 +811,7 @@ fn leave_from(start: Option<&str>) -> ModulePath {
 /// A path that knows its starting page clicks straight on from there.
 #[tokio::test]
 async fn right_after_signing_in_on_the_page_the_recording_began_the_path_clicks_without_a_reload() {
+    let _leases = crate::serial::account_leases();
     let dir = tempfile::tempdir().unwrap();
     let (mut d, app) = common::menu_app(&[("link", "Leave", "/hr/leave")], "/hr/home/index", 0);
     let path = leave_from(Some("/hr/home/index"));
@@ -793,6 +827,7 @@ async fn right_after_signing_in_on_the_page_the_recording_began_the_path_clicks_
 /// as it always has.
 #[tokio::test]
 async fn a_path_without_a_starting_page_still_goes_home_after_signing_in() {
+    let _leases = crate::serial::account_leases();
     let dir = tempfile::tempdir().unwrap();
     let (mut d, app) = common::menu_app(&[("link", "Leave", "/hr/leave")], "/hr/home/index", 0);
     let ok = check_path(&mut d, dir.path(), &login_start_recipe(), &common::account(), &leave_from(None), &common::quick(), &mut v2_lib::autorun::lease::Held::setup()).await;
@@ -805,6 +840,7 @@ async fn a_path_without_a_starting_page_still_goes_home_after_signing_in() {
 /// here home, after the sign-in landed on /hr/welcome.
 #[tokio::test]
 async fn getting_ready_to_record_says_which_page_the_recording_begins_on() {
+    let _leases = crate::serial::account_leases();
     let dir = tempfile::tempdir().unwrap();
     let (mut d, _app) = common::menu_app(&[], "/hr/welcome", 0);
     let start = prepare_to_record(&mut d, dir.path(), &common::menu_recipe(), &common::account(), &common::quick(), &mut v2_lib::autorun::lease::Held::setup()).await;
@@ -815,6 +851,7 @@ async fn getting_ready_to_record_says_which_page_the_recording_begins_on() {
 /// one that does not writes nothing for it.
 #[test]
 fn a_paths_starting_page_survives_the_file_and_is_left_out_when_unknown() {
+    let _leases = crate::serial::account_leases();
     let with = leave_from(Some("/hr/home/index"));
     let text = serde_json::to_string(&with).unwrap();
     assert!(text.contains("\"start\":\"/hr/home/index\""), "{text}");

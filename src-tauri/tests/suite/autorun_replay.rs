@@ -106,6 +106,7 @@ fn navigable_fake_page_driver() -> common::ScriptedDriver {
 
 #[tokio::test]
 async fn every_case_gets_its_own_browser_and_gives_it_back() {
+    let _leases = crate::serial::account_leases();
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
     store::save_script(root, &passing_script(1)).unwrap();
@@ -136,6 +137,7 @@ async fn every_case_gets_its_own_browser_and_gives_it_back() {
 /// claiming the run did not finish.
 #[tokio::test]
 async fn a_run_that_finished_but_could_not_be_saved_says_so() {
+    let _leases = crate::serial::account_leases();
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
     store::save_script(root, &passing_script(1)).unwrap();
@@ -153,6 +155,7 @@ async fn a_run_that_finished_but_could_not_be_saved_says_so() {
 
 #[tokio::test]
 async fn a_browser_that_will_not_open_blocks_that_case_and_the_run_goes_on() {
+    let _leases = crate::serial::account_leases();
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
     store::save_script(root, &passing_script(1)).unwrap();
@@ -179,6 +182,7 @@ async fn a_browser_that_will_not_open_blocks_that_case_and_the_run_goes_on() {
 
 #[tokio::test]
 async fn a_failed_step_stops_the_case_but_not_the_run() {
+    let _leases = crate::serial::account_leases();
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
     let case1 = script(
@@ -226,6 +230,7 @@ async fn a_failed_step_stops_the_case_but_not_the_run() {
 
 #[tokio::test]
 async fn a_failed_sign_in_runs_no_step_and_is_blocked() {
+    let _leases = crate::serial::account_leases();
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
     let case = script(
@@ -254,6 +259,7 @@ async fn a_failed_sign_in_runs_no_step_and_is_blocked() {
 
 #[tokio::test]
 async fn a_successful_sign_in_is_step_zero_and_the_account_is_recorded() {
+    let _leases = crate::serial::account_leases();
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
     save_recipe(root, "Acme", "Web", &common::recipe()).unwrap();
@@ -275,6 +281,7 @@ async fn a_successful_sign_in_is_step_zero_and_the_account_is_recorded() {
 
 #[tokio::test]
 async fn with_no_account_picked_a_script_signs_in_as_its_own() {
+    let _leases = crate::serial::account_leases();
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
     save_recipe(root, "Acme", "Web", &common::recipe()).unwrap();
@@ -293,6 +300,7 @@ async fn with_no_account_picked_a_script_signs_in_as_its_own() {
 
 #[tokio::test]
 async fn a_harness_failure_is_blocked_and_takes_no_picture() {
+    let _leases = crate::serial::account_leases();
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
     let case = script(
@@ -321,6 +329,7 @@ async fn a_harness_failure_is_blocked_and_takes_no_picture() {
 
 #[tokio::test]
 async fn every_executed_step_has_a_picture_and_a_skipped_one_has_none() {
+    let _leases = crate::serial::account_leases();
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
     let case = script(
@@ -351,6 +360,7 @@ async fn every_executed_step_has_a_picture_and_a_skipped_one_has_none() {
 
 #[tokio::test]
 async fn a_script_that_checks_nothing_proposes_nothing() {
+    let _leases = crate::serial::account_leases();
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
     let case = script(
@@ -378,6 +388,7 @@ async fn a_script_that_checks_nothing_proposes_nothing() {
 
 #[tokio::test]
 async fn the_run_is_on_disk_after_every_case() {
+    let _leases = crate::serial::account_leases();
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
     store::save_script(root, &passing_script(1)).unwrap();
@@ -403,6 +414,7 @@ async fn the_run_is_on_disk_after_every_case() {
 
 #[tokio::test]
 async fn a_save_that_fails_does_not_stop_the_run_and_is_reported_at_the_end() {
+    let _leases = crate::serial::account_leases();
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
     store::save_script(root, &passing_script(1)).unwrap();
@@ -436,6 +448,7 @@ async fn a_save_that_fails_does_not_stop_the_run_and_is_reported_at_the_end() {
 
 #[tokio::test]
 async fn stopping_leaves_out_what_never_started_and_marks_what_did() {
+    let _leases = crate::serial::account_leases();
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
     let case1 = script(
@@ -480,6 +493,7 @@ async fn stopping_leaves_out_what_never_started_and_marks_what_did() {
 /// cut short after touching the browser once.
 #[tokio::test]
 async fn stopping_before_a_cases_sign_in_leaves_it_untouched() {
+    let _leases = crate::serial::account_leases();
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
     save_recipe(root, "Acme", "Web", &common::recipe()).unwrap();
@@ -526,6 +540,7 @@ async fn stopping_before_a_cases_sign_in_leaves_it_untouched() {
 
 #[tokio::test]
 async fn a_case_with_no_script_is_recorded_as_such() {
+    let _leases = crate::serial::account_leases();
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
     let mut browsers =
@@ -555,6 +570,7 @@ async fn a_case_with_no_script_is_recorded_as_such() {
 
 #[tokio::test]
 async fn progress_tells_the_story_in_order() {
+    let _leases = crate::serial::account_leases();
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
     save_recipe(root, "Acme", "Web", &common::recipe()).unwrap();
@@ -602,6 +618,7 @@ async fn progress_tells_the_story_in_order() {
 
 #[test]
 fn propose_blames_the_browser_before_the_page() {
+    let _leases = crate::serial::account_leases();
     let case = script(
         1,
         None,
@@ -620,6 +637,7 @@ fn propose_blames_the_browser_before_the_page() {
 /// text gives the rerun line and never the area-repair one.
 #[test]
 fn a_go_to_that_died_with_the_browser_is_a_browser_stop_not_an_unreached_area() {
+    let _leases = crate::serial::account_leases();
     use v2_lib::autorun::failures::stop_reason;
     use v2_lib::autorun::nav::UNREACHED_PREFIX;
     use v2_lib::autorun::replay::MODULE_STEP;
@@ -681,6 +699,7 @@ fn browsers_of(drivers: Vec<common::ScriptedDriver>) -> FakeBrowsers {
 /// click whose next target can already be clicked, and still arrives.
 #[tokio::test]
 async fn a_flat_menu_walk_clicks_only_the_last_entry_and_arrives() {
+    let _leases = crate::serial::account_leases();
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
     menu_project(root);
@@ -701,6 +720,7 @@ async fn a_flat_menu_walk_clicks_only_the_last_entry_and_arrives() {
 
 #[tokio::test]
 async fn a_case_signs_in_goes_home_clicks_to_its_module_checks_it_arrived_then_runs_its_steps() {
+    let _leases = crate::serial::account_leases();
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
     menu_project(root);
@@ -735,6 +755,7 @@ async fn a_case_signs_in_goes_home_clicks_to_its_module_checks_it_arrived_then_r
 /// switch-on version above, with `direct_urls: false`.
 #[tokio::test]
 async fn a_case_with_addresses_switched_off_still_signs_in_goes_home_and_reaches_its_module() {
+    let _leases = crate::serial::account_leases();
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
     save_recipe(root, "Acme", "Web", &common::menu_recipe()).unwrap();
@@ -763,6 +784,7 @@ async fn a_case_with_addresses_switched_off_still_signs_in_goes_home_and_reaches
 
 #[tokio::test]
 async fn a_case_with_no_module_is_blocked_and_no_browser_opens() {
+    let _leases = crate::serial::account_leases();
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
     menu_project(root);
@@ -780,6 +802,7 @@ async fn a_case_with_no_module_is_blocked_and_no_browser_opens() {
 
 #[tokio::test]
 async fn a_module_with_no_recorded_path_is_blocked_and_named() {
+    let _leases = crate::serial::account_leases();
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
     menu_project(root);
@@ -821,6 +844,7 @@ fn in_area(area: &str) -> CaseScript {
 /// case whose Module has no area of its own name at all.
 #[tokio::test]
 async fn a_scripts_area_takes_the_case_there_whatever_its_module() {
+    let _leases = crate::serial::account_leases();
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
     two_leave_areas(root);
@@ -843,6 +867,7 @@ async fn a_scripts_area_takes_the_case_there_whatever_its_module() {
 
 #[tokio::test]
 async fn a_script_naming_an_unrecorded_area_is_blocked_and_no_browser_opens() {
+    let _leases = crate::serial::account_leases();
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
     two_leave_areas(root);
@@ -860,6 +885,7 @@ async fn a_script_naming_an_unrecorded_area_is_blocked_and_no_browser_opens() {
 
 #[tokio::test]
 async fn with_paths_a_case_no_account_applies_to_is_blocked() {
+    let _leases = crate::serial::account_leases();
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
     menu_project(root);
@@ -879,6 +905,7 @@ async fn with_paths_a_case_no_account_applies_to_is_blocked() {
 #[tokio::test]
 async fn a_failed_trip_logs_what_the_page_was_doing_and_says_where() {
     let _tail = crate::serial::log_tail();
+    let _leases = crate::serial::account_leases();
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
     menu_project(root);
@@ -937,6 +964,7 @@ async fn a_failed_trip_logs_what_the_page_was_doing_and_says_where() {
 #[tokio::test]
 async fn a_failed_trip_with_nothing_in_the_page_log_logs_nothing_and_keeps_its_sentence() {
     let _tail = crate::serial::log_tail();
+    let _leases = crate::serial::account_leases();
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
     menu_project(root);
@@ -954,6 +982,7 @@ async fn a_failed_trip_with_nothing_in_the_page_log_logs_nothing_and_keeps_its_s
 
 #[tokio::test]
 async fn a_path_click_that_finds_nothing_blocks_the_case_with_a_picture_and_runs_no_step() {
+    let _leases = crate::serial::account_leases();
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
     menu_project(root);
@@ -978,6 +1007,7 @@ async fn a_path_click_that_finds_nothing_blocks_the_case_with_a_picture_and_runs
 
 #[tokio::test]
 async fn a_path_that_ends_somewhere_else_fails_its_arrival_check() {
+    let _leases = crate::serial::account_leases();
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
     menu_project(root);
@@ -1002,6 +1032,7 @@ async fn a_path_that_ends_somewhere_else_fails_its_arrival_check() {
 #[tokio::test]
 async fn a_stalled_trip_reloads_the_start_page_and_the_second_go_reaches_the_module() {
     let _tail = crate::serial::log_tail();
+    let _leases = crate::serial::account_leases();
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
     menu_project(root);
@@ -1044,6 +1075,7 @@ async fn a_stalled_trip_reloads_the_start_page_and_the_second_go_reaches_the_mod
 /// failing give one Blocked line carrying the "tried twice" sentence.
 #[tokio::test]
 async fn a_trip_that_fails_twice_is_reported_once_after_one_reload() {
+    let _leases = crate::serial::account_leases();
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
     menu_project(root);
@@ -1081,6 +1113,7 @@ async fn a_trip_that_fails_twice_is_reported_once_after_one_reload() {
 /// A mid-script `sign_in`'s trip back gets the same second go.
 #[tokio::test]
 async fn a_mid_script_sign_ins_stalled_trip_back_goes_once_more() {
+    let _leases = crate::serial::account_leases();
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
     menu_project(root);
@@ -1119,6 +1152,7 @@ async fn first_go_silent(second: common::ScriptedDriver, retry: bool) -> (LocalR
 
 #[tokio::test]
 async fn a_transient_failure_runs_once_more_in_a_fresh_browser_and_passes_saying_why() {
+    let _leases = crate::serial::account_leases();
     let (run, browsers) = first_go_silent(common::FakePage::default().driver(), true).await;
     assert_eq!((browsers.opened, browsers.closed), (2, 2), "a fresh browser for the second go");
     assert_eq!(run.cases.len(), 1, "one record per case");
@@ -1135,6 +1169,7 @@ async fn a_transient_failure_runs_once_more_in_a_fresh_browser_and_passes_saying
 /// once, with both sentences.
 #[tokio::test]
 async fn a_case_that_fails_transiently_again_is_reported_once_with_both_sentences() {
+    let _leases = crate::serial::account_leases();
     let (run, browsers) = first_go_silent(harness_driver(), true).await;
     assert_eq!(browsers.opened, 2, "one retry, never two");
     assert_eq!(run.cases.len(), 1);
@@ -1148,6 +1183,7 @@ async fn a_case_that_fails_transiently_again_is_reported_once_with_both_sentence
 
 #[tokio::test]
 async fn a_retry_that_fails_otherwise_proposes_what_the_second_go_found() {
+    let _leases = crate::serial::account_leases();
     let (run, _) = first_go_silent(checking_driver(), true).await;
     let rec = &run.cases[0];
     let first = rec.retried.clone().unwrap();
@@ -1163,6 +1199,7 @@ async fn a_retry_that_fails_otherwise_proposes_what_the_second_go_found() {
 /// start - never "the browser did not open" in place of what really failed.
 #[tokio::test]
 async fn a_retry_whose_browser_never_opens_keeps_the_first_gos_record() {
+    let _leases = crate::serial::account_leases();
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
     store::save_script(root, &passing_script(1)).unwrap();
@@ -1207,6 +1244,7 @@ fn api_answering(status: u16) -> common::ScriptedDriver {
 /// go's 200 passes the case, labelled Retried.
 #[tokio::test]
 async fn an_api_check_that_answers_502_then_200_on_the_retry_passes_retried() {
+    let _leases = crate::serial::account_leases();
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
     let api = script(1, None, serde_json::json!([{ "step_number": 1, "actions": [
@@ -1231,6 +1269,7 @@ async fn an_api_check_that_answers_502_then_200_on_the_retry_passes_retried() {
 /// `api_request` writes for a dropped connection is the one retried.
 #[tokio::test]
 async fn an_api_check_whose_fetch_failed_is_retried() {
+    let _leases = crate::serial::account_leases();
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
     let api = script(1, None, serde_json::json!([{ "step_number": 1, "actions": [
@@ -1258,6 +1297,7 @@ async fn an_api_check_whose_fetch_failed_is_retried() {
 
 #[tokio::test]
 async fn an_assertion_that_fails_is_never_retried() {
+    let _leases = crate::serial::account_leases();
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
     store::save_script(root, &passing_script(1)).unwrap();
@@ -1274,6 +1314,7 @@ async fn an_assertion_that_fails_is_never_retried() {
 
 #[tokio::test]
 async fn with_the_option_off_nothing_is_retried() {
+    let _leases = crate::serial::account_leases();
     let (run, browsers) = first_go_silent(common::FakePage::default().driver(), false).await;
     assert_eq!(browsers.opened, 1);
     assert_eq!(run.cases[0].proposed, "Blocked");
@@ -1284,6 +1325,7 @@ async fn with_the_option_off_nothing_is_retried() {
 /// A stop asked for during the first go is a stop: no second go.
 #[tokio::test]
 async fn a_stopped_run_does_not_retry() {
+    let _leases = crate::serial::account_leases();
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
     store::save_script(root, &passing_script(1)).unwrap();
@@ -1304,6 +1346,7 @@ async fn a_stopped_run_does_not_retry() {
 /// Review focus 5.
 #[tokio::test]
 async fn an_address_that_changes_a_moment_after_the_last_click_still_counts() {
+    let _leases = crate::serial::account_leases();
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
     menu_project(root);
@@ -1318,6 +1361,7 @@ async fn an_address_that_changes_a_moment_after_the_last_click_still_counts() {
 
 #[tokio::test]
 async fn a_sign_in_in_the_middle_of_a_script_goes_back_to_the_module_before_the_next_action() {
+    let _leases = crate::serial::account_leases();
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
     menu_project(root);
@@ -1353,6 +1397,7 @@ async fn a_sign_in_in_the_middle_of_a_script_goes_back_to_the_module_before_the_
 
 #[tokio::test]
 async fn a_project_whose_file_has_no_paths_runs_exactly_as_before() {
+    let _leases = crate::serial::account_leases();
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
     save_nav(root, "Acme", "Web", &NavFile::default()).unwrap();
@@ -1370,6 +1415,7 @@ async fn a_project_whose_file_has_no_paths_runs_exactly_as_before() {
 /// Review focus 4.
 #[tokio::test]
 async fn an_unreadable_module_paths_file_stops_the_run_before_any_browser_opens() {
+    let _leases = crate::serial::account_leases();
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
     store::save_script(root, &passing_script(1)).unwrap();
@@ -1399,6 +1445,7 @@ fn checks_for(account: Option<&str>, value: &str) -> CaseScript {
 /// Review I1.
 #[tokio::test]
 async fn a_failed_check_whose_value_reads_like_an_unreached_module_is_failed_in_a_project_without_paths() {
+    let _leases = crate::serial::account_leases();
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
     store::save_script(root, &checks_for(None, LOOKALIKE)).unwrap();
@@ -1416,6 +1463,7 @@ async fn a_failed_check_whose_value_reads_like_an_unreached_module_is_failed_in_
 /// Review I1.
 #[tokio::test]
 async fn a_failed_check_whose_value_reads_like_an_unreached_module_is_failed_in_a_project_with_paths() {
+    let _leases = crate::serial::account_leases();
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
     menu_project(root);
@@ -1434,6 +1482,7 @@ async fn a_failed_check_whose_value_reads_like_an_unreached_module_is_failed_in_
 /// Review I1: an application's own alert that happens to use the sentence.
 #[tokio::test]
 async fn a_page_dialog_that_reads_like_an_unreached_module_leaves_the_failure_the_pages() {
+    let _leases = crate::serial::account_leases();
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
     store::save_script(root, &checks_for(None, "no")).unwrap();
@@ -1457,6 +1506,7 @@ async fn a_page_dialog_that_reads_like_an_unreached_module_leaves_the_failure_th
 /// runner's, and `execute_in` appends it to any outcome, including this one.
 #[test]
 fn a_failed_navigate_whose_appended_dialog_reads_like_an_unreached_module_is_failed() {
+    let _leases = crate::serial::account_leases();
     let sc = script(1, None, serde_json::json!([{ "step_number": 1, "actions": [{ "kind": "navigate", "url": "https://app.example/x" }] }]));
     let detail = format!(
         "https://app.example/x did not finish loading within 1ms (the page showed alert: {LOOKALIKE} and it was accepted)"
@@ -1472,6 +1522,7 @@ fn a_failed_navigate_whose_appended_dialog_reads_like_an_unreached_module_is_fai
 /// goes through `execute_in`).
 #[test]
 fn a_failed_navigate_whose_appended_dialog_is_the_address_sentence_itself_is_still_failed() {
+    let _leases = crate::serial::account_leases();
     let sc = script(1, None, serde_json::json!([{ "step_number": 1, "actions": [{ "kind": "navigate", "url": "https://app.example/x" }] }]));
     let detail = format!(
         "https://app.example/x did not finish loading within 1ms (the page showed alert: {} and it was accepted)",
@@ -1487,6 +1538,7 @@ fn a_failed_navigate_whose_appended_dialog_is_the_address_sentence_itself_is_sti
 /// already pinned for the unreached-module sentence.
 #[test]
 fn a_check_text_whose_value_is_the_address_sentence_itself_is_failed() {
+    let _leases = crate::serial::account_leases();
     let sc = script(1, None, serde_json::json!([{ "step_number": 1, "actions": [{ "kind": "check_text", "value": no_address(1) }] }]));
     let detail = format!("page does NOT contain {}", no_address(1));
     let steps = vec![StepRecord { step_number: 1, outcomes: vec![ActionOutcome::failed(detail.clone())], screenshot: None, downloads: vec![], tab: None, dialog: None, components: Vec::new(), duration_ms: None }];
@@ -1499,6 +1551,7 @@ fn a_check_text_whose_value_is_the_address_sentence_itself_is_failed() {
 /// the module) and Failed on any other action.
 #[test]
 fn only_a_sign_in_whose_trip_back_failed_is_blocked_by_those_words() {
+    let _leases = crate::serial::account_leases();
     let unreached = format!(
         "Could not reach module \"Leave\": click 2, link \"Apply Leave\" - no visible match.{AFTER_SIGN_IN}signed in as admin)"
     );
@@ -1533,6 +1586,7 @@ fn only_a_sign_in_whose_trip_back_failed_is_blocked_by_those_words() {
 /// Blocked with the page's words as the reason.
 #[test]
 fn a_failed_sign_in_whose_dialog_looks_like_a_failed_trip_back_is_not_blocked_by_it() {
+    let _leases = crate::serial::account_leases();
     let lookalike = format!("; then {UNREACHED_PREFIX}Leave\": click 1, link \"Leave\" - no visible match.");
     let detail = format!(
         "sign-in stopped at step 1: waited 1ms for the page (the page showed alert: x{lookalike} and it was accepted)"
@@ -1550,6 +1604,7 @@ fn a_failed_sign_in_whose_dialog_looks_like_a_failed_trip_back_is_not_blocked_by
 /// the step is not run, and the case is Blocked on the runner's sentence.
 #[tokio::test]
 async fn a_mid_script_sign_in_whose_trip_back_fails_blocks_the_case() {
+    let _leases = crate::serial::account_leases();
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
     menu_project(root);
@@ -1588,6 +1643,7 @@ fn lee() -> v2_lib::autorun::accounts::Account {
 
 #[tokio::test]
 async fn the_runs_account_signs_in_every_case_over_the_account_a_script_names() {
+    let _leases = crate::serial::account_leases();
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
     save_recipe(root, "Acme", "Web", &common::recipe()).unwrap();
@@ -1611,6 +1667,7 @@ async fn the_runs_account_signs_in_every_case_over_the_account_a_script_names() 
 
 #[tokio::test]
 async fn a_script_saved_before_addresses_were_switched_off_is_blocked_at_its_navigate() {
+    let _leases = crate::serial::account_leases();
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
     save_nav(root, "Acme", "Web", &NavFile { direct_urls: false, modules: vec![], save_words: vec![], protected: vec![] }).unwrap();
@@ -1637,6 +1694,7 @@ async fn a_script_saved_before_addresses_were_switched_off_is_blocked_at_its_nav
 /// - a case record already in the run (a resumed run) is not counted again.
 #[tokio::test]
 async fn a_run_counts_quirk_evidence_for_the_cases_it_ran_and_no_others() {
+    let _leases = crate::serial::account_leases();
     use v2_lib::autorun::quirks::{load_quirks, save_quirks, Quirk, QuirkSource};
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
@@ -1702,6 +1760,7 @@ fn save_cycle_flow(root: &Path) {
 #[tokio::test]
 async fn a_precondition_not_met_blocks_the_case_before_sign_in_and_the_run_goes_on() {
     let _g = crate::serial::activity_log();
+    let _leases = crate::serial::account_leases();
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
     save_cycle_flow(root);
@@ -1744,6 +1803,7 @@ async fn a_precondition_not_met_blocks_the_case_before_sign_in_and_the_run_goes_
 #[tokio::test]
 async fn every_precondition_done_lets_the_case_run() {
     let _g = crate::serial::activity_log();
+    let _leases = crate::serial::account_leases();
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
     save_cycle_flow(root);
@@ -1766,6 +1826,7 @@ async fn every_precondition_done_lets_the_case_run() {
 #[tokio::test]
 async fn with_reading_off_a_case_runs_unchecked_and_its_record_says_so() {
     let _g = crate::serial::activity_log();
+    let _leases = crate::serial::account_leases();
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
     save_cycle_flow(root);
@@ -1809,6 +1870,7 @@ async fn with_reading_off_a_case_runs_unchecked_and_its_record_says_so() {
 /// without runs as it always has.
 #[tokio::test]
 async fn without_a_database_only_a_case_with_preconditions_is_blocked() {
+    let _leases = crate::serial::account_leases();
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
     save_cycle_flow(root);
@@ -1830,6 +1892,7 @@ async fn without_a_database_only_a_case_with_preconditions_is_blocked() {
 /// its screenshots.
 #[tokio::test]
 async fn every_cases_browser_saves_its_downloads_in_the_runs_folder() {
+    let _leases = crate::serial::account_leases();
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
     store::save_script(root, &passing_script(1)).unwrap();
@@ -1867,6 +1930,7 @@ fn arriving() -> v2_lib::browser::downloads::DownloadEntry {
 /// wait at the next look, not after the whole settle.
 #[tokio::test]
 async fn a_stop_ends_the_wait_for_a_download_at_once() {
+    let _leases = crate::serial::account_leases();
     let mut d = common::FakePage::default().driver();
     d.downloads.push(arriving());
     let cancel = AtomicBool::new(false);
@@ -1882,6 +1946,7 @@ async fn a_stop_ends_the_wait_for_a_download_at_once() {
 /// Stopped before the settle, the browser closes without waiting at all.
 #[tokio::test]
 async fn a_stopped_case_does_not_wait_for_its_downloads() {
+    let _leases = crate::serial::account_leases();
     let mut d = common::FakePage::default().driver();
     d.downloads.push(arriving());
     let cancel = AtomicBool::new(true);
@@ -1894,6 +1959,7 @@ async fn a_stopped_case_does_not_wait_for_its_downloads() {
 /// settle, not one in the case and another before its browser closes.
 #[tokio::test]
 async fn a_stuck_download_costs_a_case_one_settle() {
+    let _leases = crate::serial::account_leases();
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
     store::save_script(root, &passing_script(1)).unwrap();
@@ -1935,6 +2001,7 @@ fn in_a_tab(case_id: i32, value: &str) -> CaseScript {
 /// closed before its browser is given back.
 #[tokio::test]
 async fn every_case_closes_its_tabs_whether_it_passed_or_failed() {
+    let _leases = crate::serial::account_leases();
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
     store::save_script(root, &in_a_tab(1, "yes")).unwrap();
@@ -1962,6 +2029,7 @@ async fn every_case_closes_its_tabs_whether_it_passed_or_failed() {
 /// switched on, still close every tab but `main` on the way out.
 #[tokio::test]
 async fn a_stopped_case_and_a_case_that_never_started_close_their_tabs_too() {
+    let _leases = crate::serial::account_leases();
     use v2_lib::autorun::replay::run_case;
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
@@ -1990,6 +2058,7 @@ async fn a_stopped_case_and_a_case_that_never_started_close_their_tabs_too() {
 /// its own tabs, and the second go follows its tab afresh.
 #[tokio::test]
 async fn a_retried_case_closes_the_tabs_of_each_go() {
+    let _leases = crate::serial::account_leases();
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
     store::save_script(root, &in_a_tab(1, "yes")).unwrap();
@@ -2016,6 +2085,7 @@ async fn a_retried_case_closes_the_tabs_of_each_go() {
 /// tabs, and the case after starts with none.
 #[tokio::test]
 async fn a_reset_pause_comes_after_the_case_before_closed_its_tabs() {
+    let _leases = crate::serial::account_leases();
     use v2_lib::autorun::plan::Pause;
     use v2_lib::autorun::replay::{run_cases_planned, ResetGate};
     struct Carry;
@@ -2066,6 +2136,7 @@ async fn a_reset_pause_comes_after_the_case_before_closed_its_tabs() {
 /// says nothing for a step in `main`.
 #[tokio::test]
 async fn a_step_that_ran_in_another_tab_says_so_on_its_record() {
+    let _leases = crate::serial::account_leases();
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
     let mut s = in_a_tab(1, "yes");
@@ -2090,6 +2161,7 @@ async fn a_step_that_ran_in_another_tab_says_so_on_its_record() {
 /// record.
 #[tokio::test]
 async fn a_file_saved_in_another_tab_is_on_the_step_that_ran_there() {
+    let _leases = crate::serial::account_leases();
     use v2_lib::browser::downloads::{DownloadEntry, DownloadState};
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
@@ -2122,6 +2194,7 @@ async fn a_file_saved_in_another_tab_is_on_the_step_that_ran_there() {
 /// as they were.
 #[test]
 fn a_run_file_and_a_script_from_before_tabs_round_trip_unchanged() {
+    let _leases = crate::serial::account_leases();
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
     let old = script(5, Some("hr.admin"), serde_json::json!([
@@ -2163,6 +2236,7 @@ fn a_run_file_and_a_script_from_before_tabs_round_trip_unchanged() {
 /// component.
 #[tokio::test]
 async fn an_unattended_run_records_the_components_each_step_used() {
+    let _leases = crate::serial::account_leases();
     use v2_lib::autorun::components::{put, ComponentUse};
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
@@ -2207,6 +2281,7 @@ async fn an_unattended_run_records_the_components_each_step_used() {
 /// addresses is the run's refusal, as it is in a script's own step.
 #[test]
 fn a_refusal_inside_a_component_is_blocked_not_failed() {
+    let _leases = crate::serial::account_leases();
     use v2_lib::autorun::components::ComponentFile;
     use v2_lib::autorun::replay::propose_with;
     let file: ComponentFile = serde_json::from_value(serde_json::json!({ "components": [{
@@ -2235,6 +2310,7 @@ fn a_refusal_inside_a_component_is_blocked_not_failed() {
 
 #[tokio::test]
 async fn a_case_record_carries_its_phase_timings() {
+    let _leases = crate::serial::account_leases();
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
     store::save_script(root, &passing_script(1)).unwrap();
@@ -2253,6 +2329,7 @@ async fn a_case_record_carries_its_phase_timings() {
 
 #[tokio::test]
 async fn a_signed_in_case_times_its_sign_in_inside_its_total() {
+    let _leases = crate::serial::account_leases();
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
     save_recipe(root, "Acme", "Web", &common::recipe()).unwrap();
@@ -2272,6 +2349,7 @@ async fn a_signed_in_case_times_its_sign_in_inside_its_total() {
 
 #[tokio::test]
 async fn steps_carry_their_duration() {
+    let _leases = crate::serial::account_leases();
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
     let two = script(1, None, serde_json::json!([
@@ -2313,6 +2391,7 @@ fn seed_old_shots(root: &Path, n: usize) {
 /// one past the budget until the run ends.
 #[test]
 fn saving_a_case_does_not_read_other_runs() {
+    let _leases = crate::serial::account_leases();
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
     for _ in 0..1003 {
@@ -2326,6 +2405,7 @@ fn saving_a_case_does_not_read_other_runs() {
 /// the run returns it is down to the budget with the run's own picture kept.
 #[tokio::test]
 async fn a_run_prunes_once_at_the_end() {
+    let _leases = crate::serial::account_leases();
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
     seed_old_shots(root, 1005);
@@ -2357,6 +2437,7 @@ async fn a_run_prunes_once_at_the_end() {
 /// references survives however old it is.
 #[tokio::test]
 async fn protected_shots_survive_the_end_of_run_prune() {
+    let _leases = crate::serial::account_leases();
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
     seed_old_shots(root, 1005);
@@ -2433,6 +2514,7 @@ fn shots_on_disk(root: &Path) -> usize {
 /// picture and reading it.
 #[tokio::test]
 async fn the_next_click_waits_for_the_outstanding_picture() {
+    let _leases = crate::serial::account_leases();
     let dir = tempfile::tempdir().unwrap();
     let mut d = deferring_page();
     let rec = run_one(&mut d, dir.path(), &clicks(&["#one", "#two"])).await;
@@ -2453,6 +2535,7 @@ async fn the_next_click_waits_for_the_outstanding_picture() {
 /// still being taken, and the click after it still waits.
 #[tokio::test]
 async fn a_check_runs_while_the_picture_is_taken() {
+    let _leases = crate::serial::account_leases();
     let dir = tempfile::tempdir().unwrap();
     let mut d = deferring_page();
     let case = script(
@@ -2483,6 +2566,7 @@ async fn a_check_runs_while_the_picture_is_taken() {
 /// made, and nothing is left asked for.
 #[tokio::test]
 async fn the_record_waits_for_every_picture() {
+    let _leases = crate::serial::account_leases();
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
     let mut d = deferring_page();
@@ -2502,6 +2586,7 @@ async fn the_record_waits_for_every_picture() {
 /// file is left behind.
 #[tokio::test]
 async fn a_dead_browser_with_a_picture_outstanding_saves_a_clean_record() {
+    let _leases = crate::serial::account_leases();
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
     store::save_script(root, &clicks(&["#one"])).unwrap();
@@ -2525,6 +2610,7 @@ async fn a_dead_browser_with_a_picture_outstanding_saves_a_clean_record() {
 /// steps still run.
 #[tokio::test]
 async fn a_failed_capture_leaves_no_picture() {
+    let _leases = crate::serial::account_leases();
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
     let page = common::FakePage::default();
@@ -2543,6 +2629,7 @@ async fn a_failed_capture_leaves_no_picture() {
 /// steps after a click never piles them up past what the browser keeps.
 #[tokio::test]
 async fn every_step_keeps_its_picture_through_seventeen_check_only_steps() {
+    let _leases = crate::serial::account_leases();
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
     let mut steps = vec![serde_json::json!({ "step_number": 1, "actions": [{ "kind": "click", "selector": { "css": "#one" } }] })];
@@ -2568,6 +2655,7 @@ const AFTER_AN_EARLIER_STEP: &str = "not run: an earlier step of this case faile
 /// step 1's: step 1 fails, and step 2 stops before it clicks.
 #[tokio::test]
 async fn a_save_read_as_the_picture_is_collected_fails_its_own_step_and_the_next_never_acts() {
+    let _leases = crate::serial::account_leases();
     let dir = tempfile::tempdir().unwrap();
     let mut d = deferring_page();
     d.block_on_collect = Some(LATE_SAVE.into());
@@ -2587,6 +2675,7 @@ async fn a_save_read_as_the_picture_is_collected_fails_its_own_step_and_the_next
 /// of the case, still fails the case.
 #[tokio::test]
 async fn a_save_read_as_the_last_picture_is_finished_fails_the_case() {
+    let _leases = crate::serial::account_leases();
     let dir = tempfile::tempdir().unwrap();
     let mut d = deferring_page();
     d.block_on_collect = Some(LATE_SAVE.into());
@@ -2601,6 +2690,7 @@ async fn a_save_read_as_the_last_picture_is_finished_fails_the_case() {
 /// step before is blamed, and the case goes no further.
 #[tokio::test]
 async fn a_save_taken_during_a_check_only_step_is_the_step_befores() {
+    let _leases = crate::serial::account_leases();
     let dir = tempfile::tempdir().unwrap();
     let mut d = deferring_page();
     d.block_when = Some((
@@ -2631,6 +2721,7 @@ async fn a_save_taken_during_a_check_only_step_is_the_step_befores() {
 /// recorded as one and the case fails rather than passing.
 #[tokio::test]
 async fn a_save_charged_to_a_step_with_no_actions_still_fails_the_case() {
+    let _leases = crate::serial::account_leases();
     let dir = tempfile::tempdir().unwrap();
     let mut d = deferring_page();
     d.block_when = Some((
@@ -2659,6 +2750,7 @@ async fn a_save_charged_to_a_step_with_no_actions_still_fails_the_case() {
 /// step is a manual one, is still that step's and fails the case.
 #[tokio::test]
 async fn a_save_read_after_a_last_manual_steps_picture_is_asked_for_fails_the_case() {
+    let _leases = crate::serial::account_leases();
     let dir = tempfile::tempdir().unwrap();
     let mut d = deferring_page();
     let mut asked = 0;
@@ -2690,6 +2782,7 @@ async fn a_save_read_after_a_last_manual_steps_picture_is_asked_for_fails_the_ca
 /// end of the case, still fails the case.
 #[tokio::test]
 async fn a_save_read_as_a_last_manual_steps_picture_is_finished_fails_the_case() {
+    let _leases = crate::serial::account_leases();
     let dir = tempfile::tempdir().unwrap();
     let mut d = deferring_page();
     d.block_on_collect = Some(LATE_SAVE.into());
@@ -2732,6 +2825,7 @@ async fn run_alone(root: &Path, case: &CaseScript) -> (LocalRun, FakeBrowsers) {
 
 #[tokio::test]
 async fn the_clean_up_runs_after_the_last_case_step_and_is_not_one_of_its_steps() {
+    let _leases = crate::serial::account_leases();
     let dir = tempfile::tempdir().unwrap();
     let (run, browsers) = run_alone(dir.path(), &with_cleanup(["yes", "yes", "yes"], "yes")).await;
     let rec = &run.cases[0];
@@ -2747,6 +2841,7 @@ async fn the_clean_up_runs_after_the_last_case_step_and_is_not_one_of_its_steps(
 
 #[tokio::test]
 async fn the_clean_up_runs_after_a_failed_step_and_the_steps_between_do_not() {
+    let _leases = crate::serial::account_leases();
     let dir = tempfile::tempdir().unwrap();
     let (run, browsers) = run_alone(dir.path(), &with_cleanup(["yes", "no", "yes"], "yes")).await;
     let rec = &run.cases[0];
@@ -2761,6 +2856,7 @@ async fn the_clean_up_runs_after_a_failed_step_and_the_steps_between_do_not() {
 
 #[tokio::test]
 async fn a_failed_clean_up_never_fails_a_passed_case_and_is_said_on_its_own_line() {
+    let _leases = crate::serial::account_leases();
     let dir = tempfile::tempdir().unwrap();
     let (run, _) = run_alone(dir.path(), &with_cleanup(["yes", "yes", "yes"], "no")).await;
     let rec = &run.cases[0];
@@ -2776,6 +2872,7 @@ async fn a_failed_clean_up_never_fails_a_passed_case_and_is_said_on_its_own_line
 /// passed case stays passed, the failure said on the clean-up's own line.
 #[tokio::test]
 async fn a_failed_expect_dialog_in_the_clean_up_fails_only_the_clean_up() {
+    let _leases = crate::serial::account_leases();
     let dir = tempfile::tempdir().unwrap();
     let mut case = with_cleanup(["yes", "yes", "yes"], "yes");
     case.steps[3].actions =
@@ -2792,6 +2889,7 @@ async fn a_failed_expect_dialog_in_the_clean_up_fails_only_the_clean_up() {
 
 #[tokio::test]
 async fn a_failed_clean_up_after_a_failed_step_leaves_the_failure_as_it_was() {
+    let _leases = crate::serial::account_leases();
     let dir = tempfile::tempdir().unwrap();
     let (run, _) = run_alone(dir.path(), &with_cleanup(["no", "yes", "yes"], "no")).await;
     let rec = &run.cases[0];
@@ -2802,6 +2900,7 @@ async fn a_failed_clean_up_after_a_failed_step_leaves_the_failure_as_it_was() {
 
 #[tokio::test]
 async fn a_stopped_run_does_not_run_the_clean_up() {
+    let _leases = crate::serial::account_leases();
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
     store::save_script(root, &with_cleanup(["yes", "yes", "yes"], "yes")).unwrap();
@@ -2825,6 +2924,7 @@ async fn a_stopped_run_does_not_run_the_clean_up() {
 
 #[tokio::test]
 async fn a_blocked_case_keeps_its_clean_up_apart_from_its_steps() {
+    let _leases = crate::serial::account_leases();
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
     menu_project(root);
@@ -2843,6 +2943,7 @@ async fn a_blocked_case_keeps_its_clean_up_apart_from_its_steps() {
 
 #[tokio::test]
 async fn progress_counts_the_cases_steps_and_names_the_clean_up_apart() {
+    let _leases = crate::serial::account_leases();
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
     store::save_script(root, &with_cleanup(["yes", "yes", "yes"], "yes")).unwrap();
@@ -2880,6 +2981,7 @@ fn store_divergence(root: &Path, case_id: i32, kind: v2_lib::autorun::divergence
 
 #[tokio::test]
 async fn a_case_that_needs_a_ruling_is_blocked_before_it_signs_in() {
+    let _leases = crate::serial::account_leases();
     use v2_lib::autorun::divergences::DivergenceKind;
     use v2_lib::autorun::replay::run_case;
     let dir = tempfile::tempdir().unwrap();
@@ -2906,6 +3008,7 @@ async fn a_case_that_needs_a_ruling_is_blocked_before_it_signs_in() {
 
 #[tokio::test]
 async fn an_app_divergence_lets_the_case_run() {
+    let _leases = crate::serial::account_leases();
     use v2_lib::autorun::divergences::DivergenceKind;
     use v2_lib::autorun::replay::run_case;
     let dir = tempfile::tempdir().unwrap();
@@ -2921,6 +3024,7 @@ async fn an_app_divergence_lets_the_case_run() {
 
 #[tokio::test]
 async fn a_ruled_divergence_no_longer_blocks_the_case() {
+    let _leases = crate::serial::account_leases();
     use v2_lib::autorun::divergences::{rule_in, update, DivergenceKind, Ruling};
     use v2_lib::autorun::replay::run_case;
     let dir = tempfile::tempdir().unwrap();
@@ -2937,6 +3041,7 @@ async fn a_ruled_divergence_no_longer_blocks_the_case() {
 
 #[tokio::test]
 async fn a_case_waiting_for_a_repair_is_blocked_with_that_sentence() {
+    let _leases = crate::serial::account_leases();
     use v2_lib::autorun::divergences::{rule_in, update, DivergenceKind, Ruling};
     use v2_lib::autorun::replay::run_case;
     let dir = tempfile::tempdir().unwrap();
@@ -2964,6 +3069,7 @@ fn stamped_checked(case_id: i32, value: &str, checked: bool) -> CaseScript {
 
 #[tokio::test]
 async fn an_unattended_run_that_fails_clears_checked() {
+    let _leases = crate::serial::account_leases();
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
     store::save_script(root, &stamped_checked(1, "no", true)).unwrap();
@@ -2982,6 +3088,7 @@ async fn an_unattended_run_that_fails_clears_checked() {
 
 #[tokio::test]
 async fn a_passing_run_sets_it() {
+    let _leases = crate::serial::account_leases();
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
     store::save_script(root, &stamped_checked(1, "yes", false)).unwrap();
@@ -3000,6 +3107,7 @@ async fn a_passing_run_sets_it() {
 #[tokio::test]
 async fn a_case_a_product_bug_quirk_names_carries_it_on_its_result() {
     let _g = crate::serial::activity_log();
+    let _leases = crate::serial::account_leases();
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
     store::save_script(root, &passing_script(1)).unwrap();

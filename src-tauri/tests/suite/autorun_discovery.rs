@@ -286,6 +286,7 @@ pub(crate) fn parsed(body: &str) -> Value {
 /// map under the discovery's area, without marking the area explored.
 #[tokio::test]
 async fn start_signs_in_and_returns_the_landing_page() {
+    let _leases = crate::serial::account_leases();
     let dir = root_with_recipe_and_account();
     let (mut browser, closed) = slot(signin_app(true), opened_for_discovery());
 
@@ -320,6 +321,7 @@ async fn start_signs_in_and_returns_the_landing_page() {
 /// it is driven here from where the fake browser can stand in.
 #[tokio::test]
 async fn a_start_asked_for_no_page_leaves_it_out() {
+    let _leases = crate::serial::account_leases();
     use v2_lib::ai_bridge::{without_page, PAGE_LEFT_OUT};
     let dir = root_with_recipe_and_account();
     let (mut browser, _) = slot(signin_app(true), opened_for_discovery());
@@ -344,6 +346,7 @@ async fn a_start_asked_for_no_page_leaves_it_out() {
 async fn start_is_refused_while_an_unattended_run_or_a_session_holds_the_browser() {
     let dir = root_with_recipe_and_account();
     let _g = crate::serial::autorun();
+    let _leases = crate::serial::account_leases();
     set_root(dir.path().to_path_buf());
     let body = json!({ "account": "admin" }).to_string();
 
@@ -381,6 +384,7 @@ async fn start_is_refused_while_an_unattended_run_or_a_session_holds_the_browser
 /// why, in the sign-in's own words.
 #[tokio::test]
 async fn a_failed_sign_in_closes_the_browser_and_says_why() {
+    let _leases = crate::serial::account_leases();
     let dir = root_with_recipe_and_account();
     let (mut browser, closed) = slot(signin_app(false), opened_for_discovery());
     let (status, out) = discover_start_in(&mut browser, dir.path(), ORG, PROJECT, "admin", None, &quick()).await;
@@ -404,6 +408,7 @@ async fn a_failed_sign_in_closes_the_browser_and_says_why() {
 /// the area's outcomes. Naming an area moves the discovery to it.
 #[tokio::test]
 async fn an_action_reports_writes_dialogs_and_the_new_path_and_logs_writes_in_the_map() {
+    let _leases = crate::serial::account_leases();
     let dir = root_with_recipe_and_account();
     let mut d = leave_page("Input.dispatchMouseEvent", "https://hr.example.internal/hr/leave/list?page=2");
     d.on_call_events.push(("Input.dispatchMouseEvent".into(), sent("1", "POST", "https://hr.example.internal/hr/leave/save?id=5")));
@@ -450,6 +455,7 @@ async fn an_action_reports_writes_dialogs_and_the_new_path_and_logs_writes_in_th
 /// what a dialog said back.
 #[tokio::test]
 async fn an_action_never_logs_a_query_string_or_a_typed_value() {
+    let _leases = crate::serial::account_leases();
     let dir = root_with_recipe_and_account();
     let typed = "Jane-Secret-42";
     let mut d = leave_page("Input.insertText", "https://hr.example.internal/hr/leave/new?draft=1");
@@ -480,6 +486,7 @@ async fn an_action_never_logs_a_query_string_or_a_typed_value() {
 async fn navigate_outside_the_allowed_sites_is_refused() {
     let dir = root_with_recipe_and_account();
     let _g = crate::serial::autorun();
+    let _leases = crate::serial::account_leases();
     set_root(dir.path().to_path_buf());
     for action in [
         json!({ "kind": "navigate", "url": "https://evil.example/steal" }),
@@ -505,6 +512,7 @@ async fn sign_in_and_file_urls_are_refused_as_actions() {
     // The refusals are compared word for word, and the route ends every
     // answer with what main's browser has changed for testing.
     let _g = crate::serial::autorun();
+    let _leases = crate::serial::account_leases();
     let body = json!({ "action": { "kind": "sign_in", "account": "admin" } }).to_string();
     let (status, out) = route(&ctx(), None, "POST", "/autorun-discover-action", &body, "1.0.0").await;
     assert_eq!(status, 400, "{out}");
@@ -527,6 +535,7 @@ async fn sign_in_and_file_urls_are_refused_as_actions() {
 /// next action to run in.
 #[tokio::test]
 async fn close_browser_ends_a_discovery_session() {
+    let _leases = crate::serial::account_leases();
     let dir = root_with_recipe_and_account();
     let (mut browser, closed) = slot(FakePage::default().driver(), exploring("Leave"));
     assert!(close_browser_in(&mut browser), "there was a browser to close");
@@ -544,6 +553,7 @@ async fn close_browser_ends_a_discovery_session() {
 /// own browser open - is fine and closes nothing.
 #[tokio::test]
 async fn end_is_idempotent() {
+    let _leases = crate::serial::account_leases();
     let (mut browser, closed) = slot(FakePage::default().driver(), exploring("Leave"));
     browser.as_mut().unwrap().account = Some("admin".into());
     let (status, said) = end_discovery_in(&mut browser).await;
@@ -581,6 +591,7 @@ async fn a_mapping_run_needs_a_module() {
     // The refusal is compared word for word, and the route ends every
     // answer with what main's browser has changed for testing.
     let _g = crate::serial::autorun();
+    let _leases = crate::serial::account_leases();
     for body in [
         json!({ "account": "admin", "mapping": true }),
         json!({ "account": "admin", "mapping": true, "modules": [] }),
@@ -608,6 +619,7 @@ async fn a_mapping_run_needs_a_module() {
 async fn a_save_the_page_sends_during_mapping_is_blocked_and_counted() {
     use v2_lib::browser::cdp::Driver;
     let _log = crate::serial::log_tail();
+    let _leases = crate::serial::account_leases();
     let dir = root_with_recipe_and_account();
 
     let (mut browser, closed) = slot(signin_app(true), mapping(opened_for_discovery(), &["Leave", " "]));
@@ -676,6 +688,7 @@ async fn a_save_the_page_sends_during_mapping_is_blocked_and_counted() {
 /// one) is counted, and never fails the next action: that click still runs.
 #[tokio::test]
 async fn a_save_stopped_between_actions_never_fails_the_next_one() {
+    let _leases = crate::serial::account_leases();
     use v2_lib::browser::cdp::Driver;
     let dir = root_with_recipe_and_account();
     let mut d = leave_page("Input.dispatchMouseEvent", "https://hr.example.internal/hr/leave/list?page=2");
@@ -709,6 +722,7 @@ async fn a_save_stopped_between_actions_never_fails_the_next_one() {
 /// start answers with the guard's own sentence and closes the browser.
 #[tokio::test]
 async fn a_mapping_run_whose_guard_cannot_go_on_closes_its_browser() {
+    let _leases = crate::serial::account_leases();
     let dir = root_with_recipe_and_account();
     let nav = v2_lib::autorun::nav::nav_path(dir.path(), ORG, PROJECT);
     std::fs::create_dir_all(nav.parent().unwrap()).unwrap();
@@ -748,6 +762,7 @@ fn for_case(state: Option<DiscoveryState>, id: i32) -> Option<DiscoveryState> {
 /// A guard lifted between two actions is back on before the next.
 #[tokio::test]
 async fn a_discovery_for_a_no_save_case_blocks_a_save_a_click_sends() {
+    let _leases = crate::serial::account_leases();
     use v2_lib::browser::cdp::Driver;
     let dir = root_with_recipe_and_account();
     save_case_77(dir.path(), true);
@@ -799,6 +814,7 @@ async fn a_discovery_for_a_no_save_case_blocks_a_save_a_click_sends() {
 /// never as a write (the batch line says "blocked", not "wrote").
 #[tokio::test]
 async fn a_save_the_guard_blocked_is_listed_as_blocked_not_written() {
+    let _leases = crate::serial::account_leases();
     let dir = root_with_recipe_and_account();
     save_case_77(dir.path(), true);
     let mut d = leave_page("Input.dispatchMouseEvent", "https://hr.example.internal/hr/leave/list");
@@ -847,6 +863,7 @@ async fn a_save_the_guard_blocked_is_listed_as_blocked_not_written() {
 /// the record and as a stop the guard counted - is listed once.
 #[tokio::test]
 async fn a_blocked_save_seen_both_ways_is_listed_once() {
+    let _leases = crate::serial::account_leases();
     let dir = root_with_recipe_and_account();
     save_case_77(dir.path(), true);
     let mut d = leave_page("Input.dispatchMouseEvent", "https://hr.example.internal/hr/leave/list");
@@ -883,6 +900,7 @@ async fn a_blocked_save_seen_both_ways_is_listed_once() {
 /// discovery's for as long as it lasts.
 #[tokio::test]
 async fn a_discovery_told_no_save_blocks_saves_and_stays_guarded() {
+    let _leases = crate::serial::account_leases();
     let dir = root_with_recipe_and_account();
     let mut d = leave_page("Input.dispatchMouseEvent", "https://hr.example.internal/hr/leave/list");
     d.saves_on_call.push((
@@ -916,6 +934,7 @@ async fn a_discovery_told_no_save_blocks_saves_and_stays_guarded() {
 /// whole batch, and is lifted when it ends.
 #[tokio::test]
 async fn a_no_save_action_guards_only_its_own_call() {
+    let _leases = crate::serial::account_leases();
     use v2_lib::ai_bridge::{discover_actions_in, discovery_for, mark_discovery_for};
     use v2_lib::browser::cdp::Driver;
     let dir = root_with_recipe_and_account();
@@ -988,6 +1007,7 @@ async fn a_no_save_action_guards_only_its_own_call() {
 /// after the discovery's last action is carried into the replay too.
 #[tokio::test]
 async fn a_case_marked_after_the_last_action_is_carried_into_the_replay() {
+    let _leases = crate::serial::account_leases();
     use v2_lib::ai_bridge::end_discovery_for_replay;
     let dir = root_with_recipe_and_account();
     save_case_77(dir.path(), false);
@@ -1027,6 +1047,7 @@ fn find_file(dir: &std::path::Path, name: &str) -> Option<std::path::PathBuf> {
 /// the guard still on.
 #[tokio::test]
 async fn a_calls_no_save_never_lifts_the_discoverys_guard() {
+    let _leases = crate::serial::account_leases();
     use v2_lib::ai_bridge::{discovery_for, mark_discovery_for};
     use v2_lib::browser::cdp::Driver;
     let dir = root_with_recipe_and_account();
@@ -1049,6 +1070,7 @@ async fn a_calls_no_save_never_lifts_the_discoverys_guard() {
 /// browser will not lift the call's guard as the call ends, so it stays.
 #[tokio::test]
 async fn a_calls_guard_is_tagged_with_the_calls_own_case() {
+    let _leases = crate::serial::account_leases();
     use v2_lib::ai_bridge::{discovery_for, mark_discovery_for};
     let dir = root_with_recipe_and_account();
     save_case_77(dir.path(), true);
@@ -1080,6 +1102,7 @@ async fn a_calls_guard_is_tagged_with_the_calls_own_case() {
 /// other guard - the person's, a call's - is not a discovery's to lift.
 #[tokio::test]
 async fn ending_a_discovery_lifts_its_guard() {
+    let _leases = crate::serial::account_leases();
     use v2_lib::ai_bridge::end_discovery_for_replay;
     use v2_lib::browser::cdp::Driver;
     let dir = root_with_recipe_and_account();
@@ -1148,6 +1171,7 @@ async fn ending_a_discovery_lifts_its_guard() {
 /// goes on, and the action keeps its own outcome.
 #[tokio::test]
 async fn an_ordinary_discovery_only_reports_a_create() {
+    let _leases = crate::serial::account_leases();
     let dir = root_with_recipe_and_account();
     save_case_77(dir.path(), false);
     let mut d = leave_page("Input.dispatchMouseEvent", "https://hr.example.internal/hr/leave/list");
@@ -1171,6 +1195,7 @@ async fn an_ordinary_discovery_only_reports_a_create() {
 /// next action: the script is read again each time.
 #[tokio::test]
 async fn a_no_save_mark_added_mid_discovery_counts_from_the_next_action() {
+    let _leases = crate::serial::account_leases();
     let dir = root_with_recipe_and_account();
     save_case_77(dir.path(), false);
     let d = leave_page("Input.dispatchMouseEvent", "https://hr.example.internal/hr/leave/list");
@@ -1190,6 +1215,7 @@ async fn a_no_save_mark_added_mid_discovery_counts_from_the_next_action() {
 /// sentence and never runs: such a discovery never acts unguarded.
 #[tokio::test]
 async fn a_no_save_discovery_whose_guard_cannot_go_on_runs_nothing() {
+    let _leases = crate::serial::account_leases();
     let dir = root_with_recipe_and_account();
     let nav = v2_lib::autorun::nav::nav_path(dir.path(), ORG, PROJECT);
     std::fs::create_dir_all(nav.parent().unwrap()).unwrap();
@@ -1208,6 +1234,7 @@ async fn a_no_save_discovery_whose_guard_cannot_go_on_runs_nothing() {
 /// sign-in has arrived and before the landing page is read, and says so.
 #[tokio::test]
 async fn a_discovery_started_for_a_no_save_case_is_guarded_after_the_sign_in() {
+    let _leases = crate::serial::account_leases();
     use v2_lib::browser::cdp::Driver;
     let dir = root_with_recipe_and_account();
     save_case_77(dir.path(), true);
@@ -1233,6 +1260,7 @@ async fn a_discovery_started_for_a_no_save_case_is_guarded_after_the_sign_in() {
 /// counts the blocks under the no-save guard, not a mapping run.
 #[tokio::test]
 async fn a_no_save_batch_names_each_blocked_save() {
+    let _leases = crate::serial::account_leases();
     let dir = root_with_recipe_and_account();
     let mut d = leave_page("Input.dispatchMouseEvent", "https://hr.example.internal/hr/leave/list");
     d.saves_on_call.push((
@@ -1257,6 +1285,7 @@ async fn a_no_save_batch_names_each_blocked_save() {
 /// with no script or an ordinary one is not, and a wrong value is refused.
 #[test]
 fn a_discovery_call_names_its_case_and_whether_it_must_not_save() {
+    let _leases = crate::serial::account_leases();
     use v2_lib::ai_bridge::discovery_for;
     let dir = TempDir::new();
     save_case_77(dir.path(), true);
@@ -1280,6 +1309,7 @@ fn a_discovery_call_names_its_case_and_whether_it_must_not_save() {
 /// touched, with the busy sentence.
 #[tokio::test]
 async fn a_step_is_refused_while_a_discovery_holds_the_browser() {
+    let _leases = crate::serial::account_leases();
     let (mut discovering, _) = slot(signin_app(true), mapping(exploring("Leave"), &["Leave"]));
     assert_eq!(refuse_while_discovering(&mut discovering), Err(busy_browser_sentence(true).to_string()));
     let (mut theirs, _) = slot(signin_app(true), None);
@@ -1295,6 +1325,7 @@ async fn a_step_is_refused_while_a_discovery_holds_the_browser() {
 /// page's saves go through, and the answer carries no `blocked`.
 #[tokio::test]
 async fn ordinary_discovery_still_allows_saves() {
+    let _leases = crate::serial::account_leases();
     use v2_lib::browser::cdp::Driver;
     let dir = root_with_recipe_and_account();
 
@@ -1335,6 +1366,7 @@ async fn ordinary_discovery_still_allows_saves() {
 /// as. Outside a discovery the same read stamps nothing.
 #[tokio::test]
 async fn a_discovery_page_read_stamps_explored_at_and_the_account_key() {
+    let _leases = crate::serial::account_leases();
     let dir = TempDir::new();
     let state = DiscoveryState {
         area: Some("Leave".into()),
@@ -1374,6 +1406,7 @@ async fn a_discovery_page_read_stamps_explored_at_and_the_account_key() {
 /// outcome line.
 #[tokio::test]
 async fn a_navigate_action_never_puts_a_host_or_query_in_the_map_or_its_outcome() {
+    let _leases = crate::serial::account_leases();
     let dir = root_with_recipe_and_account();
     let mut d = leave_page("Page.navigate", "https://hr.example.internal/x/y?token=abc");
     d.on_call_events.push(("Page.navigate".into(), sent("1", "POST", "https://hr.example.internal/x/track?token=abc")));
@@ -1508,6 +1541,7 @@ fn css(sel: &str) -> Target {
 /// the home page they start from - and the discovery moves to it.
 #[tokio::test]
 async fn an_area_whose_clicks_arrive_is_saved_and_becomes_current() {
+    let _leases = crate::serial::account_leases();
     let dir = root_with_recipe_and_account();
     let (mut browser, closed) = slot(menu_app(true, "/hr/leave/apply"), exploring("Leave"));
     browser.as_mut().unwrap().account = Some("admin".into());
@@ -1543,6 +1577,7 @@ async fn an_area_whose_clicks_arrive_is_saved_and_becomes_current() {
 /// path again is not added twice.
 #[tokio::test]
 async fn a_variant_menu_path_is_appended_to_the_area_and_not_twice() {
+    let _leases = crate::serial::account_leases();
     let dir = root_with_recipe_and_account();
     let (mut browser, _) = slot(menu_app(true, "/hr/leave/apply"), exploring("Leave"));
     browser.as_mut().unwrap().account = Some("admin".into());
@@ -1578,6 +1613,7 @@ async fn a_variant_menu_path_is_appended_to_the_area_and_not_twice() {
 /// A variant needs an existing area, and clicks that arrive.
 #[tokio::test]
 async fn a_variant_menu_path_needs_an_area_and_clicks_that_arrive() {
+    let _leases = crate::serial::account_leases();
     let dir = root_with_recipe_and_account();
     let (mut browser, _) = slot(menu_app(true, "/hr/leave/apply"), exploring("Leave"));
     browser.as_mut().unwrap().account = Some("admin".into());
@@ -1607,6 +1643,7 @@ async fn a_variant_menu_path_needs_an_area_and_clicks_that_arrive() {
 /// discovery's account, before the clicks are replayed.
 #[tokio::test]
 async fn an_area_is_checked_after_signing_in_again_when_the_session_is_gone() {
+    let _leases = crate::serial::account_leases();
     let dir = root_with_recipe_and_account();
     let (mut browser, _) = slot(menu_app(false, "/hr/leave/apply"), exploring("Leave"));
 
@@ -1622,6 +1659,7 @@ async fn an_area_is_checked_after_signing_in_again_when_the_session_is_gone() {
 /// the page showed - at most 40 lines of it - and nothing is saved.
 #[tokio::test]
 async fn an_area_whose_clicks_do_not_arrive_is_refused_with_what_the_page_showed() {
+    let _leases = crate::serial::account_leases();
     let dir = root_with_recipe_and_account();
     let (mut browser, _) = slot(menu_app(true, "/hr/leave/apply"), exploring("Leave"));
     browser.as_mut().unwrap().account = Some("admin".into());
@@ -1644,6 +1682,7 @@ async fn an_area_whose_clicks_do_not_arrive_is_refused_with_what_the_page_showed
 /// A name already taken is refused before the browser is touched.
 #[tokio::test]
 async fn an_existing_area_name_is_refused() {
+    let _leases = crate::serial::account_leases();
     let dir = root_with_recipe_and_account();
     let existing = ModulePath {
         area: "Leave Apply".into(),
@@ -1807,6 +1846,7 @@ fn link(name: &str) -> Target {
 /// one list that holds only it: a chain from that list's id to the click.
 #[tokio::test]
 async fn an_area_click_with_a_hidden_twin_is_saved_scoped_to_its_own_list() {
+    let _leases = crate::serial::account_leases();
     let dir = root_with_recipe_and_account();
     let (mut browser, _) = slot(objectives_app(true, true), exploring("Admin"));
     browser.as_mut().unwrap().account = Some("admin".into());
@@ -1832,6 +1872,7 @@ async fn an_area_click_with_a_hidden_twin_is_saved_scoped_to_its_own_list() {
 /// areas file is not written.
 #[tokio::test]
 async fn an_area_click_with_a_twin_and_no_scoping_id_is_refused() {
+    let _leases = crate::serial::account_leases();
     let dir = root_with_recipe_and_account();
     let (mut browser, _) = slot(objectives_app(true, false), exploring("Admin"));
     browser.as_mut().unwrap().account = Some("admin".into());
@@ -1851,6 +1892,7 @@ async fn an_area_click_with_a_twin_and_no_scoping_id_is_refused() {
 /// exact, so a longer name added later cannot make it match two.
 #[tokio::test]
 async fn a_unique_area_click_is_saved_exact() {
+    let _leases = crate::serial::account_leases();
     let dir = root_with_recipe_and_account();
     let (mut browser, _) = slot(objectives_app(false, false), exploring("Admin"));
     browser.as_mut().unwrap().account = Some("admin".into());
@@ -1904,6 +1946,7 @@ async fn save_objectives(
 /// chain it keeps still finds exactly the clicked link.
 #[tokio::test]
 async fn a_chain_click_with_a_twin_in_its_own_scope_is_scoped_inside_it() {
+    let _leases = crate::serial::account_leases();
     let own = chain(json!([{ "css": "#ehrm-modulemenus-8" }, { "role": "link", "name": "Strategic Objectives" }]));
     let cfg = Objectives { twin: true, scoping_id: true, ..Objectives::default() };
     let (dir, _, status, body) = save_objectives(cfg, own).await;
@@ -1918,6 +1961,7 @@ async fn a_chain_click_with_a_twin_in_its_own_scope_is_scoped_inside_it() {
 /// element that was clicked. Here the chain finds another link alone.
 #[tokio::test]
 async fn a_scoped_chain_that_finds_another_element_is_refused() {
+    let _leases = crate::serial::account_leases();
     let cfg = Objectives { twin: true, scoping_id: true, scoped_finds: 102, ..Objectives::default() };
     let (dir, _, status, out) = save_objectives(cfg, link("Strategic Objectives")).await;
     assert_eq!(status, 409, "{out}");
@@ -1929,6 +1973,7 @@ async fn a_scoped_chain_that_finds_another_element_is_refused() {
 /// the pin waits for the click to show, as the click itself does.
 #[tokio::test]
 async fn a_click_that_draws_late_is_still_pinned() {
+    let _leases = crate::serial::account_leases();
     let cfg = Objectives { twin: true, scoping_id: true, shows_after_ms: 150, ..Objectives::default() };
     let (_, _, status, body) = save_objectives(cfg, link("Strategic Objectives")).await;
     assert_eq!(status, 200, "{body}");
@@ -1940,6 +1985,7 @@ async fn a_click_that_draws_late_is_still_pinned() {
 /// checked.
 #[tokio::test]
 async fn a_click_the_pin_never_saw_is_saved_as_sent_with_a_note() {
+    let _leases = crate::serial::account_leases();
     let cfg = Objectives { twin: true, scoping_id: true, shows_after_ms: 600, ..Objectives::default() };
     let (dir, _, status, body) = save_objectives(cfg, link("Strategic Objectives")).await;
     assert_eq!(status, 200, "{body}");
@@ -1953,6 +1999,7 @@ async fn a_click_the_pin_never_saw_is_saved_as_sent_with_a_note() {
 /// as a page with no id.
 #[tokio::test]
 async fn a_browser_error_while_scoping_is_not_reported_as_a_page_with_no_id() {
+    let _leases = crate::serial::account_leases();
     let cfg = Objectives { twin: true, scoping_id: true, pin_call_fails: true, ..Objectives::default() };
     let (_, _, status, out) = save_objectives(cfg, link("Strategic Objectives")).await;
     assert_eq!(status, 409, "{out}");
@@ -1965,6 +2012,7 @@ async fn a_browser_error_while_scoping_is_not_reported_as_a_page_with_no_id() {
 /// read it there and not at home.
 #[tokio::test]
 async fn a_pin_refusal_is_reported_at_its_click() {
+    let _leases = crate::serial::account_leases();
     use v2_lib::autorun::nav::{go_to_module_pinning, Home, Route, Where};
     let dir = root_with_recipe_and_account();
     let mut d = objectives_app(true, false);
@@ -2010,6 +2058,7 @@ fn older_objectives(made_by: MadeBy, arrived: &str) -> ModulePath {
 /// run counts it unchanged (pinning would only add `exact`).
 #[tokio::test]
 async fn a_mapping_rerun_finds_an_older_area_unchanged_when_its_click_still_matches_one() {
+    let _leases = crate::serial::account_leases();
     let dir = root_with_recipe_and_account();
     let older = older_objectives(MadeBy::Mapping, "/hr/objectives");
     put_path(dir.path(), ORG, PROJECT, older.clone()).unwrap();
@@ -2032,6 +2081,7 @@ async fn a_mapping_rerun_finds_an_older_area_unchanged_when_its_click_still_matc
 /// click is saved and reported, and the run counts the area updated.
 #[tokio::test]
 async fn a_mapping_rerun_saves_an_older_areas_click_pinned_once_it_has_a_twin() {
+    let _leases = crate::serial::account_leases();
     let dir = root_with_recipe_and_account();
     let older = older_objectives(MadeBy::Mapping, "/hr/objectives");
     put_path(dir.path(), ORG, PROJECT, older.clone()).unwrap();
@@ -2054,6 +2104,7 @@ async fn a_mapping_rerun_saves_an_older_areas_click_pinned_once_it_has_a_twin() 
 /// arrival is wrong, and the pinned clicks differ from the saved ones.
 #[tokio::test]
 async fn a_repair_that_resends_the_old_clicks_is_judged_after_they_are_pinned() {
+    let _leases = crate::serial::account_leases();
     let dir = root_with_recipe_and_account();
     let older = older_objectives(MadeBy::Person, "/hr/elsewhere");
     put_path(dir.path(), ORG, PROJECT, older.clone()).unwrap();
@@ -2111,6 +2162,7 @@ fn discovery_on_leave_apply() -> Option<FakeBrowser> {
 /// says so, and that the person can put the old path back.
 #[tokio::test]
 async fn a_repair_replaces_a_path_that_no_longer_arrives_and_is_marked() {
+    let _leases = crate::serial::account_leases();
     let dir = root_with_recipe_and_account();
     put_path(dir.path(), ORG, PROJECT, persons_leave_apply(vec![css("#missing")])).unwrap();
     let mut browser = discovery_on_leave_apply();
@@ -2149,6 +2201,7 @@ async fn a_repair_replaces_a_path_that_no_longer_arrives_and_is_marked() {
 /// nothing to repair and nothing is written.
 #[tokio::test]
 async fn a_repair_is_refused_when_the_old_path_still_works() {
+    let _leases = crate::serial::account_leases();
     let dir = root_with_recipe_and_account();
     put_path(dir.path(), ORG, PROJECT, persons_leave_apply(vec![css("#leave"), css("#apply")])).unwrap();
     let before = file_state(dir.path());
@@ -2164,6 +2217,7 @@ async fn a_repair_is_refused_when_the_old_path_still_works() {
 /// A repair names an area the project has, under its own module.
 #[tokio::test]
 async fn a_repair_of_an_unknown_area_or_into_another_module_is_refused() {
+    let _leases = crate::serial::account_leases();
     let dir = root_with_recipe_and_account();
     put_path(dir.path(), ORG, PROJECT, persons_leave_apply(vec![css("#missing")])).unwrap();
     let before = file_state(dir.path());
@@ -2190,6 +2244,7 @@ async fn a_repair_of_an_unknown_area_or_into_another_module_is_refused() {
 /// they stopped, and the file is as it was.
 #[tokio::test]
 async fn a_repair_whose_new_clicks_do_not_arrive_writes_nothing() {
+    let _leases = crate::serial::account_leases();
     let dir = root_with_recipe_and_account();
     put_path(dir.path(), ORG, PROJECT, persons_leave_apply(vec![css("#missing")])).unwrap();
     let before = file_state(dir.path());
@@ -2216,6 +2271,7 @@ async fn a_repair_whose_new_clicks_do_not_arrive_writes_nothing() {
 /// and the run counts it as updated.
 #[tokio::test]
 async fn a_mapping_run_repair_keeps_the_maker_and_counts_an_update() {
+    let _leases = crate::serial::account_leases();
     let dir = root_with_recipe_and_account();
     put_path(dir.path(), ORG, PROJECT, persons_leave_apply(vec![css("#missing")])).unwrap();
     let mut browser = mapping_browser();
@@ -2240,6 +2296,7 @@ async fn a_mapping_run_repair_keeps_the_maker_and_counts_an_update() {
 async fn the_area_route_reads_a_repair() {
     let dir = root_with_recipe_and_account();
     let _g = crate::serial::autorun();
+    let _leases = crate::serial::account_leases();
     set_root(dir.path().to_path_buf());
     for bad in [
         json!({ "name": "Leave Apply", "module": "Leave", "clicks": [{ "css": "#leave" }], "repair": "moved" }),
@@ -2262,6 +2319,7 @@ async fn the_area_route_reads_a_repair() {
 async fn the_area_route_reads_a_variant() {
     let dir = root_with_recipe_and_account();
     let _g = crate::serial::autorun();
+    let _leases = crate::serial::account_leases();
     set_root(dir.path().to_path_buf());
     for bad in [
         json!({ "name": "Leave Apply", "module": "Leave", "clicks": [{ "css": "#leave" }], "variant": "yes" }),
@@ -2293,6 +2351,7 @@ async fn try_reason(dir: &TempDir, reason: &str) -> (u16, String, bool) {
 /// refusal comes before the browser is touched, and nothing is written.
 #[tokio::test]
 async fn a_repair_without_a_proper_reason_is_refused_and_writes_nothing() {
+    let _leases = crate::serial::account_leases();
     let dir = root_with_recipe_and_account();
     put_path(dir.path(), ORG, PROJECT, persons_leave_apply(vec![css("#missing")])).unwrap();
     let before = file_state(dir.path());
@@ -2315,6 +2374,7 @@ async fn a_repair_without_a_proper_reason_is_refused_and_writes_nothing() {
 /// kept and answered: an address keeps only its path, a token is hidden.
 #[tokio::test]
 async fn a_repairs_reason_is_scrubbed_before_it_is_kept() {
+    let _leases = crate::serial::account_leases();
     let dir = root_with_recipe_and_account();
     put_path(dir.path(), ORG, PROJECT, persons_leave_apply(vec![css("#missing")])).unwrap();
     let jwt = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJraW0ifQ.c2lnbmF0dXJlLXNpZ25hdHVyZQ";
@@ -2338,6 +2398,7 @@ async fn a_repairs_reason_is_scrubbed_before_it_is_kept() {
 /// not touched.
 #[tokio::test]
 async fn a_repair_with_the_saved_clicks_is_refused() {
+    let _leases = crate::serial::account_leases();
     let dir = root_with_recipe_and_account();
     put_path(dir.path(), ORG, PROJECT, persons_leave_apply(vec![css("#leave"), css("#missing")])).unwrap();
     let before = file_state(dir.path());
@@ -2362,6 +2423,7 @@ async fn a_repair_with_the_saved_clicks_is_refused() {
 /// and nothing is written: a dead browser proves nothing about the path.
 #[tokio::test]
 async fn a_browser_that_stops_answering_during_the_check_writes_nothing() {
+    let _leases = crate::serial::account_leases();
     let dir = root_with_recipe_and_account();
     put_path(dir.path(), ORG, PROJECT, persons_leave_apply(vec![css("#dead")])).unwrap();
     let before = file_state(dir.path());
@@ -2389,6 +2451,7 @@ async fn a_browser_that_stops_answering_during_the_check_writes_nothing() {
 /// an assistant's repair note: the note described the path it replaced.
 #[tokio::test]
 async fn a_mapping_update_clears_a_repair_note() {
+    let _leases = crate::serial::account_leases();
     let dir = root_with_recipe_and_account();
     let mut area = leave_apply(MadeBy::Mapping, vec![css("#apply")], "/hr/leave/apply");
     area.repaired_by_assistant = Some(v2_lib::autorun::nav::AssistantRepair {
@@ -2451,6 +2514,7 @@ fn file_state(root: &std::path::Path) -> (Vec<u8>, std::time::SystemTime) {
 /// as added. The file says so in words.
 #[tokio::test]
 async fn a_mapping_save_is_made_by_mapping() {
+    let _leases = crate::serial::account_leases();
     let dir = root_with_recipe_and_account();
     let mut browser = mapping_browser();
 
@@ -2472,6 +2536,7 @@ async fn a_mapping_save_is_made_by_mapping() {
 /// An ordinary discovery's save is the person's: they asked for it.
 #[tokio::test]
 async fn an_ordinary_discovery_save_is_made_by_a_person() {
+    let _leases = crate::serial::account_leases();
     let dir = root_with_recipe_and_account();
     let (mut browser, _) = slot(menu_app(true, "/hr/leave/apply"), exploring("Leave"));
     browser.as_mut().unwrap().account = Some("admin".into());
@@ -2488,6 +2553,7 @@ async fn an_ordinary_discovery_save_is_made_by_a_person() {
 /// them and counted as updated, with its old and new menu path in words.
 #[tokio::test]
 async fn a_mapping_area_whose_path_changed_is_updated() {
+    let _leases = crate::serial::account_leases();
     let dir = root_with_recipe_and_account();
     put_path(dir.path(), ORG, PROJECT, leave_apply(MadeBy::Mapping, vec![css("#apply")], "/hr/leave/apply")).unwrap();
     let mut browser = mapping_browser();
@@ -2522,6 +2588,7 @@ async fn a_mapping_area_whose_path_changed_is_updated() {
 /// unchanged, the file is not written and nothing is duplicated.
 #[tokio::test]
 async fn mapping_the_same_screen_twice_is_unchanged() {
+    let _leases = crate::serial::account_leases();
     let dir = root_with_recipe_and_account();
     let mut browser = mapping_browser();
     let clicks = vec![css("#leave"), css("#apply")];
@@ -2552,6 +2619,7 @@ async fn mapping_the_same_screen_twice_is_unchanged() {
 /// unchanged and left exactly as it is.
 #[tokio::test]
 async fn a_person_area_is_never_changed_by_mapping() {
+    let _leases = crate::serial::account_leases();
     let dir = root_with_recipe_and_account();
     let theirs = leave_apply(MadeBy::Person, vec![css("#apply")], "/hr/leave/apply");
     put_path(dir.path(), ORG, PROJECT, theirs.clone()).unwrap();
@@ -2582,6 +2650,7 @@ async fn a_person_area_is_never_changed_by_mapping() {
 /// other spacing, is that area, not a second one.
 #[tokio::test]
 async fn a_screen_named_like_an_existing_area_matches_it() {
+    let _leases = crate::serial::account_leases();
     let dir = root_with_recipe_and_account();
     let clicks = vec![css("#leave"), css("#apply")];
     put_path(dir.path(), ORG, PROJECT, leave_apply(MadeBy::Mapping, clicks.clone(), "/hr/leave/apply")).unwrap();
@@ -2606,6 +2675,7 @@ async fn a_screen_named_like_an_existing_area_matches_it() {
 /// next is refused before the browser is touched, and nothing is saved.
 #[tokio::test]
 async fn the_cap_refuses_the_151st_screen() {
+    let _leases = crate::serial::account_leases();
     let dir = root_with_recipe_and_account();
     let mut browser = mapping_browser();
     {
@@ -2630,6 +2700,7 @@ async fn the_cap_refuses_the_151st_screen() {
 /// number unchanged still saves one more.
 #[tokio::test]
 async fn the_cap_counts_only_saved_screens() {
+    let _leases = crate::serial::account_leases();
     let dir = root_with_recipe_and_account();
     let mut browser = mapping_browser();
     {
@@ -2648,6 +2719,7 @@ async fn the_cap_counts_only_saved_screens() {
 /// saves nothing, and is counted as unreached with the reason.
 #[tokio::test]
 async fn a_mapping_screen_that_is_not_reached_is_unreached() {
+    let _leases = crate::serial::account_leases();
     let dir = root_with_recipe_and_account();
     let mut browser = mapping_browser();
 
@@ -2668,6 +2740,7 @@ async fn a_mapping_screen_that_is_not_reached_is_unreached() {
 /// An update asked for in another case keeps the name as it was stored.
 #[tokio::test]
 async fn an_update_named_in_another_case_keeps_the_stored_name() {
+    let _leases = crate::serial::account_leases();
     let dir = root_with_recipe_and_account();
     put_path(dir.path(), ORG, PROJECT, leave_apply(MadeBy::Mapping, vec![css("#apply")], "/hr/leave/apply")).unwrap();
     let mut browser = mapping_browser();
@@ -2692,6 +2765,7 @@ async fn an_update_named_in_another_case_keeps_the_stored_name() {
 /// and counted on the run as soon as the save answers, not at the end.
 #[tokio::test]
 async fn a_save_stopped_on_an_area_saves_trip_is_counted_at_once() {
+    let _leases = crate::serial::account_leases();
     use v2_lib::browser::cdp::Driver;
     let dir = root_with_recipe_and_account();
     let mut browser = mapping_browser();
@@ -2845,6 +2919,7 @@ fn talent_run(d: ScriptedDriver) -> Option<FakeBrowser> {
 /// its entry.
 #[tokio::test]
 async fn an_area_check_starts_from_home_with_the_menu_open_once() {
+    let _leases = crate::serial::account_leases();
     let dir = root_with_after_sign_in(json!([ { "kind": "click", "selector": { "css": "#toggle" } } ]));
     let (d, app) = sidebar_app(false, "/talent/wizard", "/talent/wizard");
     let mut browser = talent_run(d);
@@ -2866,6 +2941,7 @@ async fn an_area_check_starts_from_home_with_the_menu_open_once() {
 /// loaded again to run it a second time. A plain toggle proves it ran once.
 #[tokio::test]
 async fn an_area_check_that_signs_in_again_opens_the_menu_once() {
+    let _leases = crate::serial::account_leases();
     let dir = root_with_after_sign_in(json!([ { "kind": "click", "selector": { "css": "#toggle" } } ]));
     let (d, app) = sidebar_app(false, "/talent/wizard", "/talent/wizard");
     app.signed.store(false, Ordering::SeqCst);
@@ -2892,6 +2968,7 @@ async fn an_area_check_that_signs_in_again_opens_the_menu_once() {
 /// left open by hand.
 #[tokio::test]
 async fn a_closed_menu_does_not_refuse_an_area_save() {
+    let _leases = crate::serial::account_leases();
     let dir = root_with_after_sign_in(open_a_closed_menu());
     let (d, app) = sidebar_app(false, "/hr/home/index", "/hr/home/index");
     let mut browser = talent_run(d);
@@ -2913,6 +2990,7 @@ async fn a_closed_menu_does_not_refuse_an_area_save() {
 /// under another name. The refused name is not listed as not reached.
 #[tokio::test]
 async fn an_unreached_screen_saved_later_under_another_name_leaves_the_summary() {
+    let _leases = crate::serial::account_leases();
     let dir = root_with_after_sign_in(open_a_closed_menu());
     let (d, app) = sidebar_app(false, "/talent/wizard", "/talent/wizard");
     let mut browser = talent_run(d);
@@ -2937,6 +3015,7 @@ async fn an_unreached_screen_saved_later_under_another_name_leaves_the_summary()
 /// another screen.
 #[tokio::test]
 async fn an_unreached_screen_stays_listed_when_another_screen_is_saved() {
+    let _leases = crate::serial::account_leases();
     let dir = root_with_after_sign_in(open_a_closed_menu());
     let (d, app) = sidebar_app(false, "/talent/review", "/talent/wizard");
     let mut browser = talent_run(d);
@@ -2963,6 +3042,7 @@ async fn an_unreached_screen_stays_listed_when_another_screen_is_saved() {
 /// nothing is known about stays listed.
 #[test]
 fn an_unreached_screen_with_no_address_matches_a_later_save_by_its_clicks() {
+    let _leases = crate::serial::account_leases();
     let mut run = MappingRun::new(&["Talent".to_string()]);
     run.record_unreached("Wizard".into(), "the home page did not load");
     run.locate_last(MappingScreen { arrived: None, menu: "Talent, then Wizard".into() });
@@ -2983,6 +3063,7 @@ fn an_unreached_screen_with_no_address_matches_a_later_save_by_its_clicks() {
 /// and then not reached stays listed: that is its last outcome.
 #[test]
 fn an_unreached_screen_saved_earlier_under_another_name_leaves_the_summary() {
+    let _leases = crate::serial::account_leases();
     let at = |path: &str| MappingScreen { arrived: Some(path.into()), menu: String::new() };
     let mut run = MappingRun::new(&["Talent".to_string()]);
     run.record_added("Definition Wizard".into());
@@ -3035,6 +3116,7 @@ fn stamp_explored(root: &std::path::Path, area: &str, at: u64) {
 /// saved before.
 #[tokio::test]
 async fn a_mapping_run_files_each_screens_elements_under_that_screen() {
+    let _leases = crate::serial::account_leases();
     let dir = root_with_recipe_and_account();
     let started =
         Some(DiscoveryState { account: Some("admin".into()), ..opened_for_discovery().unwrap() });
@@ -3096,6 +3178,7 @@ async fn a_mapping_run_files_each_screens_elements_under_that_screen() {
 /// reads next is filed under that area.
 #[tokio::test]
 async fn an_ordinary_discovery_files_its_next_reads_under_the_saved_area() {
+    let _leases = crate::serial::account_leases();
     let dir = root_with_recipe_and_account();
     let (mut browser, _) = slot(menu_app(true, "/hr/leave/apply"), exploring("Leave"));
     browser.as_mut().unwrap().account = Some("admin".into());
@@ -3143,6 +3226,7 @@ async fn saving_an_area_needs_a_discovery_session() {
     assert!(find_area(&load_nav(dir.path(), ORG, PROJECT).unwrap(), "Leave Apply").is_none());
 
     let _g = crate::serial::autorun();
+    let _leases = crate::serial::account_leases();
     set_root(dir.path().to_path_buf());
     let body = json!({ "name": "Leave Apply", "module": "Leave", "clicks": [{ "css": "#leave" }] }).to_string();
     let (status, out) = route(&ctx(), None, "POST", "/autorun-discover-area", &body, "1.0.0").await;
@@ -3164,6 +3248,7 @@ async fn saving_an_area_needs_a_discovery_session() {
 /// for its writes but is never stale: it is no area to explore.
 #[test]
 fn load_map_command_reports_stale_and_counts() {
+    let _leases = crate::serial::account_leases();
     use v2_lib::autorun::discovery_map::STALE_AFTER_MS;
     use v2_lib::commands::autorun::map_view;
     let dir = TempDir::new();
@@ -3249,6 +3334,7 @@ fn recorded(dir: &std::path::Path, name: &str) {
 /// failure since. What the discovery then sees in the area does.
 #[tokio::test]
 async fn starting_discovery_does_not_mark_an_area_explored() {
+    let _leases = crate::serial::account_leases();
     let dir = root_with_recipe_and_account();
     recorded(dir.path(), "Leave");
     v2_lib::autorun::discovery_map::mark_failed(dir.path(), ORG, PROJECT, "Leave").unwrap();
@@ -3288,6 +3374,7 @@ async fn starting_discovery_does_not_mark_an_area_explored() {
 /// browser, or none, is no reason to refuse.
 #[tokio::test]
 async fn a_replay_is_refused_while_discovery_holds_the_browser() {
+    let _leases = crate::serial::account_leases();
     use v2_lib::ai_bridge::refuse_while_discovering;
     let (mut discovering, closed) = slot(FakePage::default().driver(), exploring("Leave"));
     let why = refuse_while_discovering(&mut discovering).unwrap_err();
@@ -3314,6 +3401,7 @@ async fn a_replay_is_refused_while_discovery_holds_the_browser() {
 /// call `auto_run_open_browser`. It refuses with the same sentence.
 #[tokio::test]
 async fn open_browser_is_refused_while_discovery_holds_the_browser() {
+    let _leases = crate::serial::account_leases();
     let source = include_str!("../../src/commands/autorun.rs");
     let open = &source[source.find("pub async fn auto_run_open_browser").unwrap()..];
     let open = &open[..open.find("open_into(").unwrap()];
@@ -3328,6 +3416,7 @@ async fn open_browser_is_refused_while_discovery_holds_the_browser() {
 #[tokio::test]
 async fn the_end_discovery_command_ends_like_the_route() {
     let _g = crate::serial::autorun();
+    let _leases = crate::serial::account_leases();
     for _ in 0..2 {
         assert_eq!(v2_lib::commands::autorun::auto_run_end_discovery().await, Ok(()));
     }
@@ -3363,6 +3452,7 @@ fn draft(actions: Value) -> Component {
 /// the try that worked is fingerprinted on the discovery.
 #[tokio::test]
 async fn a_draft_component_can_be_tried_and_is_fingerprinted() {
+    let _leases = crate::serial::account_leases();
     let dir = root_with_recipe_and_account();
     let (mut browser, _) = slot(leave_page("Input.dispatchMouseEvent", "https://hr.example.internal/hr/leave/new?x=1"), exploring("Leave"));
     let c = pick_a_date();
@@ -3410,6 +3500,7 @@ async fn a_draft_component_can_be_tried_and_is_fingerprinted() {
 /// component that waits for it then passes the seen check.
 #[tokio::test]
 async fn a_tried_components_wait_for_and_expect_text_file_what_they_found() {
+    let _leases = crate::serial::account_leases();
     let dir = root_with_recipe_and_account();
     let (mut browser, _) = slot(leave_page("Input.dispatchMouseEvent", "https://hr.example.internal/hr/leave/new?x=1"), exploring("Leave"));
     let c = draft(json!([
@@ -3442,6 +3533,7 @@ async fn a_tried_components_wait_for_and_expect_text_file_what_they_found() {
 /// actions after it are not run and the try is not fingerprinted.
 #[tokio::test]
 async fn a_failed_try_is_not_fingerprinted() {
+    let _leases = crate::serial::account_leases();
     let dir = root_with_recipe_and_account();
     let (mut browser, _) = slot(leave_page("Input.dispatchMouseEvent", "https://hr.example.internal/hr/leave/new?x=1"), exploring("Leave"));
     let c = draft(json!([
@@ -3470,6 +3562,7 @@ async fn a_failed_try_is_not_fingerprinted() {
 /// stands on another screen than the one the component starts on.
 #[tokio::test]
 async fn a_component_failing_on_its_first_action_says_the_page() {
+    let _leases = crate::serial::account_leases();
     let dir = root_with_recipe_and_account();
     let (mut browser, _) = slot(leave_page("Input.dispatchMouseEvent", "https://hr.example.internal/hr/leave/new?x=1"), exploring("Leave"));
     let c = draft(json!([
@@ -3502,6 +3595,7 @@ async fn a_component_failing_on_its_first_action_says_the_page() {
 /// not saved is refused before the browser is touched.
 #[tokio::test]
 async fn trying_a_saved_component_expands_it() {
+    let _leases = crate::serial::account_leases();
     let dir = root_with_recipe_and_account();
     put(dir.path(), ORG, PROJECT, pick_a_date()).unwrap();
     let (mut browser, _) = slot(leave_page("Input.dispatchMouseEvent", "https://hr.example.internal/hr/leave/new?x=1"), exploring("Leave"));
@@ -3534,6 +3628,7 @@ async fn trying_a_saved_component_expands_it() {
 /// that is not a component, before the browser is touched.
 #[tokio::test]
 async fn the_route_takes_a_draft_only_for_a_use_component() {
+    let _leases = crate::serial::account_leases();
     let click = json!({ "kind": "click", "selector": "#a" });
     let body = json!({ "action": click, "draft": serde_json::to_value(pick_a_date()).unwrap() }).to_string();
     let (status, out) = route(&ctx(), None, "POST", "/autorun-discover-action", &body, "1.0.0").await;
@@ -3565,6 +3660,7 @@ fn mapping_browser_in(root: &std::path::Path) -> (Option<FakeBrowser>, Arc<Atomi
 #[tokio::test]
 async fn ending_a_mapping_run_saves_and_returns_its_summary() {
     let _log = crate::serial::log_tail();
+    let _leases = crate::serial::account_leases();
     let dir = root_with_recipe_and_account();
     let (mut browser, closed) = mapping_browser_in(dir.path());
     let started = the_run(&browser).started_at;
@@ -3644,6 +3740,7 @@ async fn ending_a_mapping_run_saves_and_returns_its_summary() {
 #[tokio::test]
 async fn a_mapping_run_closed_mid_way_keeps_its_summary() {
     let _log = crate::serial::log_tail();
+    let _leases = crate::serial::account_leases();
     let dir = root_with_recipe_and_account();
     let (mut browser, closed) = mapping_browser_in(dir.path());
     let clicks = vec![css("#leave"), css("#apply")];
@@ -3676,6 +3773,7 @@ async fn a_mapping_run_closed_mid_way_keeps_its_summary() {
 /// outcome, names compared as area names are.
 #[test]
 fn the_summary_keeps_each_screens_last_outcome() {
+    let _leases = crate::serial::account_leases();
     let mut run = MappingRun::new(&["Leave".to_string()]);
     run.record_added("Leave Apply".into());
     run.record_unchanged(" leave  APPLY".into());
@@ -3700,6 +3798,7 @@ fn the_summary_keeps_each_screens_last_outcome() {
 #[tokio::test]
 async fn the_summary_names_no_address() {
     let _log = crate::serial::log_tail();
+    let _leases = crate::serial::account_leases();
     let dir = root_with_recipe_and_account();
     let (mut browser, _) = mapping_browser_in(dir.path());
     let (status, _) =
@@ -3810,6 +3909,7 @@ fn tried_in(area: &str, c: &Component) -> Option<DiscoveryState> {
 /// area, and the save passes on its one retry. The answer says so first.
 #[tokio::test]
 async fn a_save_refused_in_discovery_records_a_locator_on_the_page_and_passes() {
+    let _leases = crate::serial::account_leases();
     let dir = TempDir::new();
     let c = next_page();
     let (mut browser, _) = slot(cycles_page(1, true), tried_in("Cycles", &c));
@@ -3870,6 +3970,7 @@ async fn a_save_refused_in_discovery_records_a_locator_on_the_page_and_passes() 
 /// says so. Found matching several but none of them visible, it is not.
 #[tokio::test]
 async fn record_on_page_records_a_many_match_with_its_count() {
+    let _leases = crate::serial::account_leases();
     let dir = TempDir::new();
     let (mut browser, _) = slot(cycles_page(2, true), exploring("Cycles"));
     let probed = record_refused_in(&mut browser, dir.path(), ORG, PROJECT, &[Target::from("#pager-2")]).await;
@@ -3899,6 +4000,7 @@ async fn record_on_page_records_a_many_match_with_its_count() {
 /// use a locator seen matching several.
 #[tokio::test]
 async fn a_component_expect_hidden_on_a_not_selector_seen_matching_two_saves() {
+    let _leases = crate::serial::account_leases();
     let dir = TempDir::new();
     let selector = ".cycle-row:not([data-cycle-id=\"10301\"]) button[title=\"Edit\"]";
     let c: Component = serde_json::from_value(json!({
@@ -3922,6 +4024,7 @@ async fn a_component_expect_hidden_on_a_not_selector_seen_matching_two_saves() {
 /// anything but unseen locators is never probed either.
 #[tokio::test]
 async fn a_save_refused_outside_discovery_records_nothing() {
+    let _leases = crate::serial::account_leases();
     let c = next_page();
 
     // The person's own browser: no discovery, so nothing was tried.
@@ -3968,6 +4071,7 @@ async fn a_save_refused_outside_discovery_records_nothing() {
 /// page.
 #[tokio::test]
 async fn a_refused_locator_with_a_placeholder_is_never_probed() {
+    let _leases = crate::serial::account_leases();
     let dir = TempDir::new();
     let (mut browser, _) = slot(untouched_page(), exploring("Cycles"));
     let held: Target = serde_json::from_value(json!({ "css": "div[data-cycle-id=\"{{setup.cycle_id}}\"]" })).unwrap();
@@ -3984,6 +4088,7 @@ async fn a_refused_locator_with_a_placeholder_is_never_probed() {
 /// checked as usual.
 #[tokio::test]
 async fn a_refused_script_save_on_another_area_records_nothing() {
+    let _leases = crate::serial::account_leases();
     use v2_lib::ai_bridge::record_refused_for_scripts_in;
     let pager = [Target::from("#pager-2")];
 
@@ -4009,6 +4114,7 @@ async fn a_refused_script_save_on_another_area_records_nothing() {
 async fn a_refused_locator_is_counted_in_the_log_never_written_out() {
     use v2_lib::browser::cdp::CdpError;
     let _log = crate::serial::log_tail();
+    let _leases = crate::serial::account_leases();
     let link: Target =
         serde_json::from_value(json!({ "css": "a[href=\"https://hr.example.internal/hr/cycles?secret=7\"]" })).unwrap();
     let ours = |lines: &[String]| -> Vec<String> {
@@ -4044,6 +4150,7 @@ async fn a_refused_locator_is_counted_in_the_log_never_written_out() {
 async fn a_replay_requested_during_a_discovery_ends_it_and_replays() {
     use v2_lib::ai_bridge::end_discovery_for_replay;
     let _log = crate::serial::log_tail();
+    let _leases = crate::serial::account_leases();
     let dir = root_with_recipe_and_account();
     v2_lib::autorun::discovery_map::record_outcome(dir.path(), ORG, PROJECT, "Leave", "click Apply: moved to /hr/leave")
         .unwrap();
@@ -4085,6 +4192,7 @@ async fn a_replay_requested_during_a_discovery_ends_it_and_replays() {
 async fn a_mapping_run_ended_by_a_replay_saves_its_summary() {
     use v2_lib::ai_bridge::end_discovery_for_replay;
     let _log = crate::serial::log_tail();
+    let _leases = crate::serial::account_leases();
     let dir = root_with_recipe_and_account();
     let (mut browser, closed) = mapping_browser_in(dir.path());
     let clicks = vec![css("#leave"), css("#apply")];
@@ -4105,6 +4213,7 @@ async fn a_mapping_run_ended_by_a_replay_saves_its_summary() {
 /// the browser.
 #[tokio::test]
 async fn the_person_open_browser_is_still_refused_while_discovering() {
+    let _leases = crate::serial::account_leases();
     let (mut discovering, closed) = slot(FakePage::default().driver(), exploring("Leave"));
     assert_eq!(refuse_while_discovering(&mut discovering), Err(busy_browser_sentence(true).to_string()));
     assert!(discovering.is_some() && !closed.load(Ordering::SeqCst));
@@ -4235,6 +4344,7 @@ fn exploring_anew(area: &str) -> Option<DiscoveryState> {
 /// is unchanged and names no host or query string.
 #[tokio::test]
 async fn a_page_read_in_discovery_records_its_lines() {
+    let _leases = crate::serial::account_leases();
     let dir = root_with_recipe_and_account();
     let (mut held, _) = slot(buttons_page(LEAVE_PAGE, &["Save", "Cancel"]), exploring("Leave"));
     let (status, text) =
@@ -4258,6 +4368,7 @@ async fn a_page_read_in_discovery_records_its_lines() {
 /// text alone.
 #[tokio::test]
 async fn a_page_read_outside_discovery_adds_no_answer_line_and_explores_nothing() {
+    let _leases = crate::serial::account_leases();
     let dir = root_with_recipe_and_account();
     let (mut held, _) = slot(buttons_page(LEAVE_PAGE, &["Save"]), None);
     let (status, text) =
@@ -4279,6 +4390,7 @@ async fn a_page_read_outside_discovery_adds_no_answer_line_and_explores_nothing(
 /// sightings stay.
 #[tokio::test]
 async fn a_limited_read_records_only_returned_lines() {
+    let _leases = crate::serial::account_leases();
     let dir = root_with_recipe_and_account();
     let (mut first, _) = slot(buttons_page(LEAVE_PAGE, &["Earlier", "Older"]), exploring("Leave"));
     page_read_in(first.as_mut().unwrap(), Some(dir.path()), ORG, PROJECT, None, DEFAULT_LIMIT).await;
@@ -4306,6 +4418,7 @@ async fn a_limited_read_records_only_returned_lines() {
 /// it returned and keeps what the area saw on the page before.
 #[tokio::test]
 async fn a_cut_action_read_records_only_returned_lines() {
+    let _leases = crate::serial::account_leases();
     let dir = root_with_recipe_and_account();
     let (mut first, _) = slot(buttons_page(LEAVE_PAGE, &["Earlier"]), exploring("Leave"));
     page_read_in(first.as_mut().unwrap(), Some(dir.path()), ORG, PROJECT, None, DEFAULT_LIMIT).await;
@@ -4331,6 +4444,7 @@ async fn a_cut_action_read_records_only_returned_lines() {
 /// saying how to name one.
 #[tokio::test]
 async fn a_read_with_no_area_says_so() {
+    let _leases = crate::serial::account_leases();
     let dir = root_with_recipe_and_account();
     let (mut held, _) = slot(buttons_page(LEAVE_PAGE, &["Save"]), opened_for_discovery());
     let (status, text) =
@@ -4345,6 +4459,7 @@ async fn a_read_with_no_area_says_so() {
 /// read or an action's read shows it, and a page read says so.
 #[tokio::test]
 async fn a_page_read_off_the_app_records_nothing() {
+    let _leases = crate::serial::account_leases();
     let dir = root_with_recipe_and_account();
     let (mut held, _) =
         slot(buttons_page("https://elsewhere.example/sso?ticket=abc", &["Continue"]), exploring("Leave"));
@@ -4368,6 +4483,7 @@ async fn a_page_read_off_the_app_records_nothing() {
 /// A whole read of the same page does all three.
 #[tokio::test]
 async fn a_cut_read_does_not_freshen_the_area() {
+    let _leases = crate::serial::account_leases();
     let dir = root_with_recipe_and_account();
     v2_lib::autorun::discovery_map::mark_failed(dir.path(), ORG, PROJECT, "Leave").unwrap();
     let (mut cut, _) = slot(buttons_page(LEAVE_PAGE, &["Save", "Cancel"]), exploring("Leave"));
@@ -4389,6 +4505,7 @@ async fn a_cut_read_does_not_freshen_the_area() {
 /// application's, and is recorded.
 #[tokio::test]
 async fn a_page_on_an_extra_allowed_origin_is_recorded() {
+    let _leases = crate::serial::account_leases();
     let dir = TempDir::new();
     let mut with_files = recipe();
     with_files.allowed_origins = vec!["https://files.example.internal".to_string()];
@@ -4406,6 +4523,7 @@ async fn a_page_on_an_extra_allowed_origin_is_recorded() {
 /// filed, and the area is not stamped.
 #[tokio::test]
 async fn a_blank_or_error_page_records_nothing_with_or_without_a_recipe() {
+    let _leases = crate::serial::account_leases();
     for with_recipe in [true, false] {
         for href in ["about:blank", "chrome-error://chromewebdata/"] {
             let dir = if with_recipe { root_with_recipe_and_account() } else { TempDir::new() };
@@ -4425,6 +4543,7 @@ async fn a_blank_or_error_page_records_nothing_with_or_without_a_recipe() {
 /// no area named yet it says how to name one, never "case 0".
 #[tokio::test]
 async fn a_bare_return_to_area_in_a_discovery_goes_to_its_own_area() {
+    let _leases = crate::serial::account_leases();
     let dir = root_with_recipe_and_account();
     put_path(dir.path(), ORG, PROJECT, leave_apply(MadeBy::Person, vec![css("#apply")], "/hr/leave/apply")).unwrap();
     let back = Action::ReturnToArea { area: None };
@@ -4450,6 +4569,7 @@ async fn a_bare_return_to_area_in_a_discovery_goes_to_its_own_area() {
 /// spelling, not the one the discovery was given.
 #[tokio::test]
 async fn the_answer_names_the_area_as_the_map_files_it() {
+    let _leases = crate::serial::account_leases();
     let dir = root_with_recipe_and_account();
     put_path(dir.path(), ORG, PROJECT, leave_apply(MadeBy::Person, vec![css("#leave")], "/hr/leave/apply")).unwrap();
     let (mut held, _) = slot(buttons_page(LEAVE_PAGE, &["Save"]), exploring("leave   apply"));
@@ -4484,6 +4604,7 @@ fn three_pages() -> Component {
 /// takes the whole list the same way.
 #[tokio::test]
 async fn record_on_page_runs_over_every_refused_locator() {
+    let _leases = crate::serial::account_leases();
     let c = three_pages();
     let refused = |i: usize| {
         format!("Action {i}: #pager-{i} was never seen on the live app; this click needs one seen matching exactly one element. Find it on the page first with probe_autorun_locator or discover_autorun_actions, then save again.")
@@ -4546,6 +4667,7 @@ async fn record_on_page_runs_over_every_refused_locator() {
 /// map, every file the same byte for byte. It is not a try either.
 #[tokio::test]
 async fn a_component_dry_run_writes_and_records_nothing() {
+    let _leases = crate::serial::account_leases();
     use v2_lib::ai_bridge::dry_run_component_in;
     use v2_lib::autorun::components::{components_path, TRY_IT_FIRST};
     let dir = TempDir::new();
@@ -4594,6 +4716,7 @@ async fn a_component_dry_run_writes_and_records_nothing() {
 async fn the_component_save_route_takes_a_dry_run() {
     let dir = TempDir::new();
     let _g = crate::serial::autorun();
+    let _leases = crate::serial::account_leases();
     set_root(dir.path().to_path_buf());
     let with = |dry_run: Value| {
         let mut body = serde_json::to_value(next_page()).unwrap();
@@ -4618,6 +4741,7 @@ async fn the_component_save_route_takes_a_dry_run() {
 /// stays empty, and the save's own refusal follows.
 #[tokio::test]
 async fn record_on_page_off_the_app_records_nothing() {
+    let _leases = crate::serial::account_leases();
     let dir = root_with_recipe_and_account();
     let c = next_page();
     let (mut browser, _) = slot(cycles_page_at("https://elsewhere.example/sso?ticket=abc", 1, true), tried_in("Cycles", &c));
@@ -4668,6 +4792,7 @@ fn framed_page(names: &[&str], cross_origin: bool) -> ScriptedDriver {
 /// on the page before, and does not stamp the area explored.
 #[tokio::test]
 async fn a_read_with_an_unreadable_frame_drops_nothing() {
+    let _leases = crate::serial::account_leases();
     let dir = root_with_recipe_and_account();
     let (mut first, _) = slot(buttons_page(LEAVE_PAGE, &["Earlier", "Older"]), exploring("Leave"));
     page_read_in(first.as_mut().unwrap(), Some(dir.path()), ORG, PROJECT, None, 1).await;
@@ -4698,6 +4823,7 @@ async fn a_read_with_an_unreadable_frame_drops_nothing() {
 /// frame's note line still printed.
 #[tokio::test]
 async fn a_page_whose_only_frame_is_from_another_site_is_explored() {
+    let _leases = crate::serial::account_leases();
     let dir = root_with_recipe_and_account();
     let (mut first, _) = slot(buttons_page(LEAVE_PAGE, &["Earlier", "Older"]), exploring("Leave"));
     page_read_in(first.as_mut().unwrap(), Some(dir.path()), ORG, PROJECT, None, 1).await;
@@ -4774,6 +4900,7 @@ fn batch_lines(text: &str) -> Vec<&str> {
 /// what it shows recorded as seen.
 #[tokio::test]
 async fn a_batch_asked_for_no_page_leaves_it_out() {
+    let _leases = crate::serial::account_leases();
     use v2_lib::ai_bridge::{discover_actions_paged, PAGE_LEFT_OUT};
     let dir = root_with_recipe_and_account();
     let (mut browser, _) = slot(stepping_page(), exploring("Leave"));
@@ -4805,6 +4932,7 @@ async fn a_batch_asked_for_no_page_leaves_it_out() {
 /// during a discovery does. No host or query string comes back.
 #[tokio::test]
 async fn a_batch_runs_in_order_and_answers_the_page_once() {
+    let _leases = crate::serial::account_leases();
     let dir = root_with_recipe_and_account();
     let (mut browser, _) = slot(stepping_page(), exploring("Leave"));
     let (status, text) =
@@ -4832,6 +4960,7 @@ async fn a_batch_runs_in_order_and_answers_the_page_once() {
 /// and the page is where the browser stopped.
 #[tokio::test]
 async fn a_batch_stops_on_the_first_failure() {
+    let _leases = crate::serial::account_leases();
     let dir = root_with_recipe_and_account();
     let (mut browser, _) = slot(stepping_page(), exploring("Leave"));
     let actions = [click("#a"), nowhere(), click("#b"), click("#c")];
@@ -4853,6 +4982,7 @@ async fn a_batch_stops_on_the_first_failure() {
 /// still run.
 #[tokio::test]
 async fn a_batch_can_carry_on_past_a_failure() {
+    let _leases = crate::serial::account_leases();
     let dir = root_with_recipe_and_account();
     let (mut browser, _) = slot(stepping_page(), exploring("Leave"));
     let actions = [click("#a"), nowhere(), click("#b")];
@@ -4873,6 +5003,7 @@ async fn a_batch_can_carry_on_past_a_failure() {
 #[tokio::test]
 async fn a_batch_of_more_than_twenty_is_refused() {
     let _g = crate::serial::autorun();
+    let _leases = crate::serial::account_leases();
     let one = json!({ "kind": "click", "selector": "#a" });
     let body = json!({ "actions": vec![one.clone(); 21] }).to_string();
     let (status, out) = route(&ctx(), None, "POST", "/autorun-discover-actions", &body, "1.0.0").await;
@@ -4892,6 +5023,7 @@ async fn a_batch_of_more_than_twenty_is_refused() {
 #[tokio::test]
 async fn an_empty_batch_is_refused() {
     let _g = crate::serial::autorun();
+    let _leases = crate::serial::account_leases();
     let body = json!({ "actions": [] }).to_string();
     let (status, out) = route(&ctx(), None, "POST", "/autorun-discover-actions", &body, "1.0.0").await;
     assert_eq!((status, out.as_str()), (400, BATCH_EMPTY));
@@ -4913,6 +5045,7 @@ async fn an_empty_batch_is_refused() {
 #[tokio::test]
 async fn a_batch_with_a_refused_action_runs_none() {
     let _g = crate::serial::autorun();
+    let _leases = crate::serial::account_leases();
     let body = json!({ "actions": [
         { "kind": "click", "selector": "#a" },
         { "kind": "sign_in", "account": "admin" }
@@ -4943,6 +5076,7 @@ async fn a_batch_with_a_refused_action_runs_none() {
 async fn a_batch_with_an_unsaved_component_runs_none() {
     let dir = root_with_recipe_and_account();
     let _g = crate::serial::autorun();
+    let _leases = crate::serial::account_leases();
     set_root(dir.path().to_path_buf());
     let click = json!({ "kind": "click", "selector": "#a" });
     let unsaved = serde_json::to_value(pick_a_date_use()).unwrap();
@@ -4973,6 +5107,7 @@ async fn a_batch_with_an_unsaved_component_runs_none() {
 /// Outside a discovery the batch is refused as a single action is.
 #[tokio::test]
 async fn a_batch_needs_a_discovery() {
+    let _leases = crate::serial::account_leases();
     let dir = root_with_recipe_and_account();
     let (mut browser, _) = slot(stepping_page(), None);
     let (status, out) =
@@ -5002,6 +5137,7 @@ async fn saving_mapping_browser() -> Option<FakeBrowser> {
 /// is the same, no action fails for it, and the answer says the total.
 #[tokio::test]
 async fn a_batch_blocks_saves_like_single_actions() {
+    let _leases = crate::serial::account_leases();
     let dir = root_with_recipe_and_account();
     let save = click("#save");
 
@@ -5032,6 +5168,7 @@ async fn a_batch_blocks_saves_like_single_actions() {
 /// does: a page only the first action saw is recorded, not just the last.
 #[tokio::test]
 async fn a_batch_records_what_each_action_read() {
+    let _leases = crate::serial::account_leases();
     let dir = root_with_recipe_and_account();
     let (mut browser, _) = slot(stepping_page(), exploring("Leave"));
     let (status, text) =
@@ -5053,6 +5190,7 @@ async fn a_batch_records_what_each_action_read() {
 /// defence should one reach it.
 #[tokio::test]
 async fn a_refused_action_in_a_batch_is_one_failed_line() {
+    let _leases = crate::serial::account_leases();
     let dir = root_with_recipe_and_account();
     let (mut browser, _) = slot(stepping_page(), exploring("Leave"));
     let actions = [pick_a_date_use(), click("#a")];
@@ -5079,6 +5217,7 @@ fn no_stop() -> AtomicBool {
 /// discovery was in.
 #[tokio::test]
 async fn a_batch_moves_to_its_area_before_its_first_action() {
+    let _leases = crate::serial::account_leases();
     let dir = root_with_recipe_and_account();
     let (mut browser, _) = slot(stepping_page(), exploring("Leave"));
     let (status, text) = discover_actions_in(
@@ -5127,6 +5266,7 @@ fn dying_page(gone: Arc<AtomicBool>) -> ScriptedDriver {
 /// sentence a single call would have answered.
 #[tokio::test]
 async fn a_browser_gone_mid_batch_keeps_the_lines_that_ran() {
+    let _leases = crate::serial::account_leases();
     let dir = root_with_recipe_and_account();
     let gone = Arc::new(AtomicBool::new(false));
     let (mut browser, closed) = slot(dying_page(gone.clone()), exploring("Leave"));
@@ -5148,6 +5288,7 @@ async fn a_browser_gone_mid_batch_keeps_the_lines_that_ran() {
 /// nothing more, and the stop is used up.
 #[tokio::test]
 async fn a_batch_gives_way_to_a_stop_before_its_next_action() {
+    let _leases = crate::serial::account_leases();
     let dir = root_with_recipe_and_account();
     let stop = Arc::new(AtomicBool::new(false));
     let pressed = stop.clone();
@@ -5178,6 +5319,7 @@ async fn a_batch_gives_way_to_a_stop_before_its_next_action() {
 /// it after the action under way rather than after all twenty.
 #[tokio::test(flavor = "multi_thread")]
 async fn end_discovery_is_not_stuck_behind_a_long_batch() {
+    let _leases = crate::serial::account_leases();
     let dir = root_with_recipe_and_account();
     let stop = Arc::new(AtomicBool::new(false));
     let started = Arc::new(AtomicBool::new(false));
@@ -5243,6 +5385,7 @@ async fn end_discovery_is_not_stuck_behind_a_long_batch() {
 /// component in the same batch runs as saved.
 #[tokio::test]
 async fn a_draft_leaves_another_component_to_run_as_saved() {
+    let _leases = crate::serial::account_leases();
     let dir = root_with_recipe_and_account();
     put(dir.path(), ORG, PROJECT, pick_a_date()).unwrap();
     let (mut browser, _) = slot(stepping_page(), exploring("Leave"));
@@ -5346,6 +5489,7 @@ fn expect_goals() -> Action {
 /// stops the batch.
 #[tokio::test]
 async fn a_success_toast_does_not_stop_a_batch() {
+    let _leases = crate::serial::account_leases();
     let dir = root_with_recipe_and_account();
     let saved = |clicks: usize, _| if clicks >= 1 { vec!["Saved."] } else { vec![] };
     let (mut browser, _) = slot(telling_page(saved, usize::MAX), exploring("Leave"));
@@ -5372,6 +5516,7 @@ async fn a_success_toast_does_not_stop_a_batch() {
 /// answer came after the click - and stops the batch.
 #[tokio::test]
 async fn a_refused_request_stops_the_batch() {
+    let _leases = crate::serial::account_leases();
     let dir = root_with_recipe_and_account();
     let mut d = telling_page(|_, _| vec![], usize::MAX);
     first_click_is_refused(&mut d);
@@ -5395,6 +5540,7 @@ async fn a_refused_request_stops_the_batch() {
 /// A single action's answer names each request the application refused.
 #[tokio::test]
 async fn a_refused_action_answers_what_the_app_refused() {
+    let _leases = crate::serial::account_leases();
     let dir = root_with_recipe_and_account();
     let mut d = telling_page(|_, _| vec![], usize::MAX);
     first_click_is_refused(&mut d);
@@ -5416,6 +5562,7 @@ async fn a_refused_action_answers_what_the_app_refused() {
 /// that message on its own line - the stop line does not say it again.
 #[tokio::test]
 async fn a_later_failure_points_back_to_the_message() {
+    let _leases = crate::serial::account_leases();
     let dir = root_with_recipe_and_account();
     let shows = |clicks: usize, _| if clicks >= 1 { vec![NO_COMPONENT] } else { vec![] };
     let (mut browser, _) = slot(telling_page(shows, 1), exploring("Leave"));
@@ -5435,6 +5582,7 @@ async fn a_later_failure_points_back_to_the_message() {
 /// between - the stop line points back to the action the page answered.
 #[tokio::test]
 async fn a_failure_after_a_quiet_action_points_back_on_the_stop_line() {
+    let _leases = crate::serial::account_leases();
     let dir = root_with_recipe_and_account();
     let shows = |clicks: usize, _| if clicks >= 1 { vec![NO_COMPONENT] } else { vec![] };
     let (mut browser, _) = slot(telling_page(shows, 2), exploring("Leave"));
@@ -5457,6 +5605,7 @@ async fn a_failure_after_a_quiet_action_points_back_on_the_stop_line() {
 /// the answer has no `page_said`, and no `app_refused` without a refusal.
 #[tokio::test]
 async fn an_action_with_nothing_new_has_no_page_said_key() {
+    let _leases = crate::serial::account_leases();
     let dir = root_with_recipe_and_account();
     let (mut browser, _) = slot(telling_page(|_, _| vec!["Welcome back"], usize::MAX), exploring("Leave"));
     let (status, body) = discover_action_in(&mut browser, dir.path(), ORG, PROJECT, &click("#a"), None, None).await;
@@ -5475,6 +5624,7 @@ async fn an_action_with_nothing_new_has_no_page_said_key() {
 /// action, found by the next action's first read.
 #[tokio::test]
 async fn a_message_shown_late_goes_to_the_action_before() {
+    let _leases = crate::serial::account_leases();
     let dir = root_with_recipe_and_account();
     let late = |clicks: usize, reads: usize| {
         if clicks >= 2 || (clicks == 1 && reads >= 1) {
@@ -5496,6 +5646,7 @@ async fn a_message_shown_late_goes_to_the_action_before() {
 /// the messages once more before it answers.
 #[tokio::test]
 async fn the_last_action_is_read_once_more_before_the_answer() {
+    let _leases = crate::serial::account_leases();
     let dir = root_with_recipe_and_account();
     let late = |clicks: usize, reads: usize| if clicks >= 1 && reads >= 1 { vec!["Name is required"] } else { vec![] };
     let (mut browser, _) = slot(telling_page(late, usize::MAX), exploring("Leave"));
@@ -5547,6 +5698,7 @@ fn refused_after_the_first_action(d: &mut ScriptedDriver) {
 /// action's line stays ok, with the refusal on it.
 #[tokio::test]
 async fn a_refusal_found_after_an_action_ended_stops_the_batch() {
+    let _leases = crate::serial::account_leases();
     let dir = root_with_recipe_and_account();
     let mut d = telling_page(|_, _| vec![], usize::MAX);
     refused_after_the_first_action(&mut d);
@@ -5582,6 +5734,7 @@ async fn a_refusal_found_after_an_action_ended_stops_the_batch() {
 /// pushed out - and one that was would read nothing, not the whole record.
 #[tokio::test]
 async fn an_old_refusal_never_stops_a_batch_after_many_actions() {
+    let _leases = crate::serial::account_leases();
     let dir = root_with_recipe_and_account();
     let mut d = telling_page(|_, _| vec![], usize::MAX).with_mark_ring();
     let url = "https://hr.example.internal/api/eval-rules";
@@ -5626,6 +5779,7 @@ async fn an_old_refusal_never_stops_a_batch_after_many_actions() {
 /// still on its line.
 #[tokio::test]
 async fn a_failed_action_says_what_the_page_showed_it() {
+    let _leases = crate::serial::account_leases();
     let dir = root_with_recipe_and_account();
     let late = |clicks: usize, reads: usize| if clicks >= 1 && reads >= 1 { vec!["Weightage must total 100."] } else { vec![] };
     let mut d = telling_page(late, usize::MAX);
@@ -5649,6 +5803,7 @@ use v2_lib::autorun::discovery_map::{rules_of, RuleSource};
 /// the action - never its trace id, status or address.
 #[tokio::test]
 async fn a_refused_request_in_discovery_is_remembered_without_its_trace_id() {
+    let _leases = crate::serial::account_leases();
     let dir = root_with_recipe_and_account();
     let mut d = telling_page(|_, _| vec![], usize::MAX);
     first_click_is_refused(&mut d);
@@ -5683,6 +5838,7 @@ async fn a_refused_request_in_discovery_is_remembered_without_its_trace_id() {
 /// not kept, whatever came after it.
 #[tokio::test]
 async fn a_success_toast_alone_is_never_remembered() {
+    let _leases = crate::serial::account_leases();
     let dir = root_with_recipe_and_account();
     let saved = |clicks: usize, _| if clicks >= 1 { vec!["Saved."] } else { vec![] };
     let (mut browser, _) = slot(telling_page(saved, usize::MAX), exploring("Leave"));
@@ -5697,6 +5853,7 @@ async fn a_success_toast_alone_is_never_remembered() {
 /// failure is the evidence it was a refusal.
 #[tokio::test]
 async fn a_message_followed_by_a_failure_is_remembered() {
+    let _leases = crate::serial::account_leases();
     let dir = root_with_recipe_and_account();
     let shows = |clicks: usize, _| if clicks >= 1 { vec![NO_COMPONENT] } else { vec![] };
     let (mut browser, _) = slot(telling_page(shows, 1), exploring("Leave"));
@@ -5715,6 +5872,7 @@ async fn a_message_followed_by_a_failure_is_remembered() {
 /// only the nearest page change before the failure is.
 #[tokio::test]
 async fn a_message_two_page_changes_before_a_failure_is_not_remembered() {
+    let _leases = crate::serial::account_leases();
     let dir = root_with_recipe_and_account();
     let saved = |clicks: usize, _| if clicks >= 1 { vec!["Saved."] } else { vec![] };
     let (mut browser, _) = slot(telling_page(saved, 2), exploring("Leave"));
@@ -5736,6 +5894,7 @@ use v2_lib::ai_bridge::record_validation_rule_in;
 /// either wins.
 #[tokio::test]
 async fn record_validation_rule_saves_into_the_discovery_area() {
+    let _leases = crate::serial::account_leases();
     let dir = TempDir::new();
     put_path(dir.path(), ORG, PROJECT, leave_apply(MadeBy::Person, vec![css("#apply")], "/hr/leave/new")).unwrap();
     let (mut browser, _) = slot(cycles_page(1, true), exploring("Cycles"));
@@ -5770,6 +5929,7 @@ async fn record_validation_rule_saves_into_the_discovery_area() {
 /// page named still takes the page the browser is on.
 #[tokio::test]
 async fn record_validation_rule_remove_ignores_the_browsers_page() {
+    let _leases = crate::serial::account_leases();
     let dir = TempDir::new();
     let (mut browser, _) = slot(cycles_page(1, true), exploring("Cycles"));
     for page in ["/hr/leave", "/hr/cycles/new"] {
@@ -5802,6 +5962,7 @@ async fn record_validation_rule_remove_ignores_the_browsers_page() {
 /// removal, or an add with its page, never asks the browser where it is.
 #[tokio::test]
 async fn record_validation_rule_reads_the_page_only_for_an_add_without_one() {
+    let _leases = crate::serial::account_leases();
     let dir = TempDir::new();
     let (mut browser, _) = slot(cycles_page(1, true), exploring("Cycles"));
     let reads = |b: &Option<FakeBrowser>| {
@@ -5824,6 +5985,7 @@ async fn record_validation_rule_reads_the_page_only_for_an_add_without_one() {
 /// reads is filed under the area.
 #[tokio::test]
 async fn a_start_naming_a_saved_area_walks_to_it() {
+    let _leases = crate::serial::account_leases();
     let dir = root_with_recipe_and_account();
     put_path(dir.path(), ORG, PROJECT, persons_leave_apply(vec![css("#leave"), css("#apply")])).unwrap();
     let (mut browser, closed) = slot(menu_app(false, "/"), opened_for_discovery());
@@ -5937,6 +6099,7 @@ fn menu_app_redirecting_late() -> ScriptedDriver {
 /// and `page` describe where it is, not where the last click first landed.
 #[tokio::test]
 async fn a_start_waits_for_the_page_to_settle_before_it_answers() {
+    let _leases = crate::serial::account_leases();
     let dir = root_with_recipe_and_account();
     put_path(dir.path(), ORG, PROJECT, persons_leave_apply(vec![css("#leave"), css("#apply")])).unwrap();
     let (mut browser, _) = slot(menu_app_redirecting_late(), opened_for_discovery());
@@ -5953,6 +6116,7 @@ async fn a_start_waits_for_the_page_to_settle_before_it_answers() {
 /// An area that is not saved starts at home, as before, and says so.
 #[tokio::test]
 async fn a_start_naming_an_unsaved_area_goes_home_and_says_so() {
+    let _leases = crate::serial::account_leases();
     let dir = root_with_recipe_and_account();
     let (mut browser, _) = slot(menu_app(false, "/"), opened_for_discovery());
 
@@ -5972,6 +6136,7 @@ async fn a_start_naming_an_unsaved_area_goes_home_and_says_so() {
 /// A start with no area names none of this in its answer.
 #[tokio::test]
 async fn a_start_with_no_area_says_nothing_of_one() {
+    let _leases = crate::serial::account_leases();
     let dir = root_with_recipe_and_account();
     let (mut browser, _) = slot(menu_app(false, "/"), opened_for_discovery());
     let (status, body) = discover_start_in(&mut browser, dir.path(), ORG, PROJECT, "admin", None, &quick()).await;
@@ -5984,6 +6149,7 @@ async fn a_start_with_no_area_says_nothing_of_one() {
 /// open where it stopped, with the reason in `area_walk`.
 #[tokio::test]
 async fn a_start_whose_walk_fails_stays_started_and_says_why() {
+    let _leases = crate::serial::account_leases();
     let dir = root_with_recipe_and_account();
     put_path(dir.path(), ORG, PROJECT, persons_leave_apply(vec![css("#leave"), css("#missing")])).unwrap();
     let (mut browser, closed) = slot(menu_app(false, "/"), opened_for_discovery());
@@ -6008,6 +6174,7 @@ async fn a_start_whose_walk_fails_stays_started_and_says_why() {
 /// pop-ups list.
 #[tokio::test]
 async fn a_start_closes_the_projects_banner_before_it_answers() {
+    let _leases = crate::serial::account_leases();
     async fn mouse_releases(with_banner: bool) -> usize {
         let dir = root_with_recipe_and_account();
         if with_banner {
@@ -6028,6 +6195,7 @@ async fn a_start_closes_the_projects_banner_before_it_answers() {
 
 #[test]
 fn offscreen_failure_suggests_reset_once() {
+    let _leases = crate::serial::account_leases();
     use v2_lib::browser::input::{with_offscreen_hint, OFFSCREEN_RESET_HINT};
     let detail = "button X is outside the visible part of the page";
     let hinted = with_offscreen_hint(detail);
@@ -6038,6 +6206,7 @@ fn offscreen_failure_suggests_reset_once() {
 
 #[test]
 fn every_failed_outcome_for_an_offscreen_target_carries_the_reset_hint() {
+    let _leases = crate::serial::account_leases();
     use v2_lib::browser::actions::ActionOutcome;
     use v2_lib::browser::input::OFFSCREEN_RESET_HINT;
     let o = ActionOutcome::failed("button X is outside the visible part of the page");
