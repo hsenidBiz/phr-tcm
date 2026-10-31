@@ -583,6 +583,7 @@ fn each_tool_belongs_to_its_module() {
             "set_autorun_order",
             "propose_accounts",
             "get_accounts",
+            "check_autorun_sign_in",
             "save_test_file",
             "get_autorun_network_wait",
             "search_autorun_requests",

@@ -23,9 +23,12 @@ import { Button } from "../../components/ui/button";
 import { Checkbox } from "../../components/ui/checkbox";
 import { Input } from "../../components/ui/input";
 import { SearchInput } from "../../components/ui/search-input";
+import { Select } from "../../components/ui/select";
 import { Modal } from "../../components/ui/modal";
 import { MODAL_LARGE } from "./modalWidths";
-import { IconAdd, IconCancel, IconClear, IconConfirm, IconRemove } from "../../lib/actionIcons";
+import { IconAdd, IconCancel, IconClear, IconConfirm, IconRemove, IconSignIn } from "../../lib/actionIcons";
+import { runIsGoing, useBackgroundRun } from "../../lib/backgroundRun";
+import { dbReadAccessOn } from "../../lib/mcpTools";
 import { activeEnvironment, envKeys, useEnvironments } from "../../lib/environments";
 import { unwrapStr } from "../../lib/ipc";
 
@@ -50,7 +53,18 @@ function mergeAdded(local: Account[], saved: Account[], keys: string[]): Account
   return out;
 }
 
-export default function AccountsDialog({ onClose }: { onClose: () => void }) {
+/** What Check sign-in says for one account while and after it is checked. */
+type CheckLine = { text: string; failed: boolean; busy: boolean };
+
+export default function AccountsDialog({
+  onClose,
+  org = "",
+  project = "",
+}: {
+  onClose: () => void;
+  org?: string;
+  project?: string;
+}) {
   const qc = useQueryClient();
   const existing = useQuery({
     queryKey: ["autorun-accounts"],
@@ -67,6 +81,27 @@ export default function AccountsDialog({ onClose }: { onClose: () => void }) {
     refetchOnMount: "always",
   });
   const hasDefaultPassword = activeEnvironment(useEnvironments().data)?.has_default_password ?? false;
+
+  // Check sign-in: the saved accounts ticked, the area to walk to, and the
+  // words for each. One account at a time, in order - never two sign-ins at
+  // once, which could trip the site.
+  const projectReady = Boolean(org && project);
+  const navView = useQuery({
+    queryKey: ["autorun-nav", org, project],
+    queryFn: async () => (await unwrapStr(commands.autoRunLoadNav(org, project))) ?? null,
+    retry: false,
+    enabled: projectReady,
+  });
+  const lastChecks = useQuery({
+    queryKey: ["autorun-sign-in-checks"],
+    queryFn: () => unwrapStr(commands.autoRunSignInChecks()),
+    retry: false,
+  });
+  const taken = runIsGoing(useBackgroundRun());
+  const [checkPicked, setCheckPicked] = useState<Set<string>>(new Set());
+  const [checkArea, setCheckArea] = useState("");
+  const [checkLines, setCheckLines] = useState<Record<string, CheckLine>>({});
+  const [checking, setChecking] = useState(false);
   const [rows, setRows] = useState<Account[] | null>(null);
   const [show, setShow] = useState(false);
   const [problem, setProblem] = useState("");
@@ -227,6 +262,37 @@ export default function AccountsDialog({ onClose }: { onClose: () => void }) {
     }
   };
 
+  const savedAccounts = existing.data ?? [];
+  const areaNames = Array.from(new Set((navView.data?.modules ?? []).map((m) => m.area)));
+  const checkCount = savedAccounts.filter((a) => checkPicked.has(a.key)).length;
+
+  /** Checks the ticked accounts in order, each in a browser of its own. */
+  const checkSignIn = async () => {
+    const keys = savedAccounts.filter((a) => checkPicked.has(a.key)).map((a) => a.key);
+    if (keys.length === 0) return;
+    setChecking(true);
+    setCheckLines({});
+    for (const key of keys) {
+      setCheckLines((cur) => ({ ...cur, [key]: { text: "Checking...", failed: false, busy: true } }));
+      let line: CheckLine;
+      try {
+        const done = await unwrapStr(
+          commands.autoRunCheckSignIn(org, project, key, checkArea || null, dbReadAccessOn()),
+        );
+        line = {
+          text: done.summary,
+          failed: !done.check.signed_in || done.check.area?.kind === "stopped",
+          busy: false,
+        };
+      } catch (e) {
+        line = { text: e instanceof Error ? e.message : String(e), failed: true, busy: false };
+      }
+      setCheckLines((cur) => ({ ...cur, [key]: line }));
+    }
+    setChecking(false);
+    await qc.invalidateQueries({ queryKey: ["autorun-sign-in-checks"] });
+  };
+
   const save = useMutation({
     mutationFn: () => unwrapStr(commands.autoRunSaveAccounts(rows ?? [])),
     onSuccess: (dropped) => {
@@ -323,6 +389,84 @@ export default function AccountsDialog({ onClose }: { onClose: () => void }) {
             </div>
           );
         })}
+        {savedAccounts.length > 0 && (
+          <section aria-label="Check sign-in" className="space-y-2 border-t border-border pt-3">
+            <h3 className="text-xs font-semibold text-text">Check sign-in</h3>
+            <p className="text-xs text-muted">
+              Signs each ticked account in once, in a browser of its own, one after another, and walks it to
+              the area if you pick one. It says which accounts reach it, or where each stopped.
+            </p>
+            <label className="flex items-center gap-2 text-xs text-muted">
+              Walk to
+              <Select
+                aria-label="Area to reach"
+                className="w-64"
+                value={checkArea}
+                disabled={!projectReady || checking}
+                onChange={(e) => setCheckArea(e.target.value)}
+              >
+                <option value="">Sign-in only</option>
+                {areaNames.map((name) => (
+                  <option key={name} value={name}>
+                    {name}
+                  </option>
+                ))}
+              </Select>
+            </label>
+            <ul className="space-y-1">
+              {savedAccounts.map((a) => {
+                const line = checkLines[a.key];
+                const mark = lastChecks.data?.[a.key];
+                return (
+                  <li key={a.key} className="text-xs">
+                    <label className="flex items-center gap-2 text-text">
+                      <Checkbox
+                        checked={checkPicked.has(a.key)}
+                        onCheckedChange={(on) =>
+                          setCheckPicked((cur) => {
+                            const next = new Set(cur);
+                            if (on) next.add(a.key);
+                            else next.delete(a.key);
+                            return next;
+                          })
+                        }
+                        ariaLabel={`Check ${a.key}`}
+                      />
+                      {a.label.trim() ? `${a.label} (${a.key})` : a.key}
+                    </label>
+                    {line ? (
+                      <p className={`ml-6 ${line.failed ? "text-danger" : line.busy ? "text-muted" : "text-success"}`}>
+                        {line.text}
+                      </p>
+                    ) : mark ? (
+                      <p className="ml-6 text-muted">
+                        Last checked{mark.checked_ms === null ? "" : ` ${new Date(mark.checked_ms).toLocaleString()}`}: {mark.outcome}
+                      </p>
+                    ) : null}
+                  </li>
+                );
+              })}
+            </ul>
+            <div className="flex items-center gap-2">
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={checkCount === 0 || checking || taken || !projectReady}
+                title={
+                  taken
+                    ? "A run or a discovery is using the Auto Run browser"
+                    : !projectReady
+                      ? "Pick a project first"
+                      : undefined
+                }
+                onClick={checkSignIn}
+              >
+                <IconSignIn aria-hidden />
+                {checking ? "Checking" : `Check sign-in (${checkCount})`}
+              </Button>
+            </div>
+          </section>
+        )}
         {proposals.length > 0 && (
           <section className="space-y-2 border-t border-border pt-3">
             <div className="flex flex-wrap items-center justify-between gap-2">

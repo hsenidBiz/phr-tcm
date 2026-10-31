@@ -806,6 +806,10 @@ pub async fn route_as(
         // (never passwords) for a person to add, and reads the ones there -
         // passwords included only in an environment marked as a test one.
         ("POST", "/accounts-propose") => accounts_propose(ctx, body).await,
+        // Check sign-in: each account signed in once, in a browser of its own,
+        // and walked as far as an area. Uses no slot: the person's Auto Run
+        // browser and the assistant's own are left alone.
+        ("POST", "/autorun-check-sign-in") => autorun_check_sign_in(ctx, body).await,
         // With the project's Test files beside them, by name and size: what
         // a case uploads.
         ("GET", "/accounts") => accounts_read(ctx, crate::commands::autorun_slots::slot_if_any(caller)),
@@ -11495,6 +11499,17 @@ async fn accounts_propose(ctx: &BridgeContext, body: &str) -> (u16, String) {
         let order = m.usable_first(&proposals.iter().map(|p| p.key.clone()).collect::<Vec<_>>());
         proposals.sort_by_key(|p| order.iter().position(|k| *k == p.key).unwrap_or(usize::MAX));
     }
+    // Within the same marks, the logins an earlier Check sign-in found
+    // reaching their area come first, the never-checked next.
+    let checked = crate::autorun::sign_in_check::load_marks(&root, &env.id);
+    if !checked.is_empty() {
+        let problem = |p: &StoredProposal| match p.marks.as_slice() {
+            [] => 0u8,
+            marks if marks.iter().any(|m| m == crate::autorun::password_expiry::EXPIRED_MARK) => 2,
+            _ => 1,
+        };
+        proposals.sort_by_key(|p| (problem(p), crate::autorun::sign_in_check::check_rank(&checked, &p.key)));
+    }
     if let Err(why) = save_proposals(&root, &env.id, &proposals) {
         return (400, why);
     }
@@ -11525,7 +11540,116 @@ async fn accounts_propose(ctx: &BridgeContext, body: &str) -> (u16, String) {
             said.push_str(&format!(" Note: {note}."));
         }
     }
+    let earlier: Vec<String> = proposals
+        .iter()
+        .filter_map(|p| checked.get(&p.key).map(|m| format!("{} ({})", p.key, crate::autorun::sign_in_check::mark_phrase(m))))
+        .collect();
+    if !earlier.is_empty() {
+        said.push_str(&format!(
+            " Checked earlier with check_autorun_sign_in: {}. The ones that reach their area are listed first.",
+            earlier.join("; ")
+        ));
+    }
     (200, said)
+}
+
+/// What `POST /autorun-check-sign-in` reads: `accounts` (account keys;
+/// every saved account when absent) and `area` (an area name; the sign-in
+/// alone when absent).
+const CHECK_SIGN_IN_SHAPE: &str = "{ \"accounts\": [<an account key>, ...], optional - every saved account when left out, \"area\": <an area name>, optional }";
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CheckSignInBody {
+    #[serde(default)]
+    accounts: Option<Vec<String>>,
+    #[serde(default)]
+    area: Option<String>,
+}
+
+/// `check_autorun_sign_in`, with the browsers, the database and the project
+/// given so a test can drive it: each named account (every saved one when
+/// none is) is signed in once, in a browser of its own, and walked to the
+/// area if one is named. Answers `{ checked: [{ account, summary, signed_in,
+/// landed, stopped, password, area }] }`. An account that is not saved is
+/// refused first, naming it, before any browser opens.
+pub async fn check_sign_in_in<B: crate::autorun::replay::Browsers, S: crate::autorun::setup_find::RowSource>(
+    browsers: &mut B,
+    rows: Option<&S>,
+    root: &std::path::Path,
+    organization: &str,
+    project: &str,
+    body: &str,
+) -> (u16, String) {
+    let asked: CheckSignInBody = match serde_json::from_str(if body.trim().is_empty() { "{}" } else { body }) {
+        Ok(a) => a,
+        Err(_) => return (400, format!("that is not what check_autorun_sign_in reads. Expected {CHECK_SIGN_IN_SHAPE}.")),
+    };
+    let saved = match crate::autorun::accounts::load_accounts(root) {
+        Ok(a) => a,
+        Err(e) => return (500, e),
+    };
+    let keys: Vec<String> = match asked.accounts {
+        None => saved.iter().map(|a| a.key.clone()).collect(),
+        Some(named) => named.iter().map(|k| k.trim().to_string()).filter(|k| !k.is_empty()).collect(),
+    };
+    if keys.is_empty() {
+        return (409, "there are no accounts saved on this machine - add them in Auto Run, Accounts".to_string());
+    }
+    let strangers: Vec<&str> = keys.iter().filter(|k| !saved.iter().any(|a| &a.key == *k)).map(String::as_str).collect();
+    if !strangers.is_empty() {
+        return (
+            400,
+            format!(
+                "no account named {} is saved on this machine - get_accounts lists the keys",
+                strangers.iter().map(|k| format!("\"{k}\"")).collect::<Vec<_>>().join(", ")
+            ),
+        );
+    }
+    let area = named(asked.area.as_deref());
+    let env = match crate::environments::active(root) {
+        Ok(e) => e,
+        Err(e) => return (500, e),
+    };
+    let queries = (env.password_expiry_query.as_str(), env.active_session_query.as_str());
+    let done = crate::commands::autorun_check_signin::check_with(
+        browsers, rows, queries, root, organization, project, &keys, area.as_deref(),
+    )
+    .await;
+    match done {
+        Err(why) => (409, why),
+        Ok(list) => {
+            let checked: Vec<serde_json::Value> = list
+                .iter()
+                .map(|c| {
+                    let mut v = serde_json::to_value(c).unwrap_or_default();
+                    v["summary"] = serde_json::json!(crate::autorun::sign_in_check::summary(c));
+                    v
+                })
+                .collect();
+            (200, serde_json::json!({ "checked": checked }).to_string())
+        }
+    }
+}
+
+/// `POST /autorun-check-sign-in` in the app: real browsers (headless, the
+/// one last chosen), and the environment's database when reading it is on.
+async fn autorun_check_sign_in(ctx: &BridgeContext, body: &str) -> (u16, String) {
+    let root = match autorun_root() {
+        Ok(r) => r,
+        Err(refused) => return refused,
+    };
+    // Said before anything is read or started.
+    if let Some(busy) = crate::commands::autorun_check_signin::refusal() {
+        return (409, busy);
+    }
+    let db = stage_db(ctx).ok();
+    let rows = db.as_ref().map(crate::autorun::active_login::StageRows);
+    let mut browsers = crate::commands::autorun_replay::RealBrowsers::new(
+        crate::browser::launch::Browser::from_name(&crate::autorun::store::last_browser(&root)),
+        false,
+    );
+    check_sign_in_in(&mut browsers, rows.as_ref(), &root, &ctx.org, &ctx.project, body).await
 }
 
 /// The marks of the logins an assistant proposes, from the environment's

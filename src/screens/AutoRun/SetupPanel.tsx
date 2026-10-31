@@ -954,7 +954,7 @@ export default function SetupPanel({
         )}
       </div>
 
-      {accountsOpen && <AccountsDialog onClose={() => setAccountsOpen(false)} />}
+      {accountsOpen && <AccountsDialog org={org} project={project} onClose={() => setAccountsOpen(false)} />}
       {recipeOpen && <RecipeEditor org={org} project={project} onClose={() => setRecipeOpen(false)} />}
       {recordOpen && <RecordSignInDialog org={org} project={project} onClose={() => setRecordOpen(false)} />}
       {testFilesOpen && <TestFilesDialog org={org} project={project} onClose={() => setTestFilesOpen(false)} />}

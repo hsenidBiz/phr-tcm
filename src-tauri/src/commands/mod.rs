@@ -8,6 +8,7 @@ pub mod api_templates;
 pub mod app_settings;
 pub mod auth;
 pub mod autorun;
+pub mod autorun_check_signin;
 pub mod autorun_divergence;
 pub mod autorun_publish;
 pub mod autorun_record;

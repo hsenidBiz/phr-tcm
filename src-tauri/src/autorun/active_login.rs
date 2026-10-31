@@ -194,7 +194,7 @@ pub async fn active_rows<S: RowSource>(rows: &S, sql: &str, user: &str) -> Resul
 
 /// What a skipped check says: the database is off or did not answer, or the
 /// setting's query is wrong. Names the setting, never SQL.
-fn failure_note(setting: &str, failed: &CheckFailed) -> String {
+pub fn failure_note(setting: &str, failed: &CheckFailed) -> String {
     match failed {
         CheckFailed::DidNotAnswer => NOT_CHECKED_NOTE.to_string(),
         CheckFailed::QueryFailed(why) => {

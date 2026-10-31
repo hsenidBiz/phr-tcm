@@ -1068,6 +1068,18 @@ changes. Do not write the login page's fields into a script at all: no
 or use the ones already present in the project's other scripts. A key is
 lowercase letters, digits, dot, underscore or hyphen.
 
+`check_autorun_sign_in` says which accounts can script a screen before any
+case is written for it. It signs each account in once, in a browser of its
+own (never yours, and never the person's), one at a time, and with `area`
+walks the area's menu path the way a run does. Per account it answers that
+the account reaches the area, or where it stopped (the page's path and
+title), or why the sign-in failed. An account whose password is expired
+(the environment's expiry query) or that someone else is signed in as is
+not signed in at all. It is refused while a run, a replay or a discovery
+has the Auto Run browser. Name only the accounts you need: each sign-in
+takes as long as one does. The result stays on the account, and
+`propose_accounts` lists the logins that reached theirs first.
+
 `navigate` is held to the site address and its allowed sites, whether
 the sign-in is the project's own recipe or the built-in one. Only with no
 site address and no saved recipe is it unrestricted. This covers an authored `navigate` only: a link the page follows, or a

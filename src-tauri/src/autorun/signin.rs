@@ -325,6 +325,22 @@ pub fn landing_words(current_url: &str, title: Option<&str>) -> String {
     words
 }
 
+/// Where a page stands, for a walk that stopped: `stopped at <path> (page
+/// title: <title>)`, the path with no host or query and the title trimmed
+/// as `landing_words` trims it.
+pub fn stopped_at_words(current_url: &str, title: Option<&str>) -> String {
+    let landing = landing_words(current_url, title);
+    format!("stopped at {}", landing.trim_start_matches("the browser ended on "))
+}
+
+/// Where the browser stands now, in `stopped_at_words`; `None` when it does
+/// not say.
+pub async fn where_it_stands<D: Driver>(d: &mut D) -> Option<String> {
+    let href = page_address(d).await?;
+    let title = crate::browser::page::eval_value(d, "document.title").await.ok().and_then(|v| v.as_str().map(str::to_string));
+    Some(stopped_at_words(&href, title.as_deref()))
+}
+
 /// The address the page is on now, if the browser says.
 async fn page_address<D: Driver>(d: &mut D) -> Option<String> {
     let v = crate::browser::page::eval_value(d, "location.href").await.ok()?;

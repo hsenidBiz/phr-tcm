@@ -8,6 +8,11 @@ import { afterEach, expect, test, vi } from "vitest";
 import AccountsDialog from "./AccountsDialog";
 
 vi.mock("../../lib/toast", () => ({ toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn(), info: vi.fn() } }));
+// Whether a run or a discovery has the Auto Run browser, as the tests say.
+vi.mock("../../lib/backgroundRun", async (original) => ({
+  ...(await original<typeof import("../../lib/backgroundRun")>()),
+  runIsGoing: () => checkFixture.taken,
+}));
 afterEach(() => { clearMocks(); vi.clearAllMocks(); });
 
 function mount(existing: unknown[], onSave: (accounts: unknown[]) => unknown = () => []) {
@@ -507,4 +512,146 @@ test("Add selected counts the picks", async () => {
   expect(screen.getByText("2 selected")).toBeInTheDocument();
   fireEvent.click(screen.getByRole("checkbox", { name: "Add hr.admin" }));
   expect(screen.getByRole("button", { name: "Add selected (1)" })).toBeEnabled();
+});
+
+// ---- Check sign-in -------------------------------------------------------
+
+const checkFixture = {
+  taken: false,
+};
+
+type Seen = { cmd: string; args: Record<string, unknown> };
+
+/** A project with two areas and two saved accounts. `answer` is what the
+ * app says for one account's check. */
+function mountForCheck(answer: (key: string) => unknown, marks: Record<string, unknown> = {}) {
+  const seen: Seen[] = [];
+  mockIPC((cmd, args) => {
+    seen.push({ cmd, args: (args ?? {}) as Record<string, unknown> });
+    if (cmd === "auto_run_list_accounts") {
+      return [
+        { key: "admin", label: "Administrator", username: "kim", password: "p1" },
+        { key: "sup", label: "", username: "lee", password: "p2" },
+      ];
+    }
+    if (cmd === "auto_run_load_nav") {
+      return {
+        direct_urls: false,
+        modules: [
+          { area: "Leave", module: "Leave", clicks: [], arrived: "/hr/leave", recorded: "x", repaired_by_assistant: null },
+          { area: "Definition Wizard", module: "Settings", clicks: [], arrived: "/hr/wizard", recorded: "x", repaired_by_assistant: null },
+        ],
+        save_words: [],
+        built_in_save_words: [],
+        protected: [],
+      };
+    }
+    if (cmd === "auto_run_sign_in_checks") return marks;
+    if (cmd === "auto_run_check_sign_in") return answer((args as { accountKey: string }).accountKey);
+    return null;
+  });
+  render(
+    <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+      <AccountsDialog org="acme" project="Web" onClose={vi.fn()} />
+    </QueryClientProvider>,
+  );
+  return seen;
+}
+
+function checked(key: string, summary: string, signedIn = true, stopped = false) {
+  return {
+    check: {
+      account: key,
+      signed_in: signedIn,
+      landed: "/hr/home/index",
+      stopped: null,
+      password: null,
+      area: stopped ? { kind: "stopped", area: "Definition Wizard", at: "x" } : { kind: "reached", area: "Definition Wizard" },
+    },
+    summary,
+  };
+}
+
+test("Check sign-in shows the summary under the account", async () => {
+  mountForCheck((key) =>
+    key === "admin"
+      ? checked("admin", "signed in, landed on /hr/home/index; reaches Definition Wizard")
+      : checked("sup", "signed in, landed on /hr/home/index; stopped on the way to Definition Wizard: click 2", true, true),
+  );
+  await screen.findByRole("checkbox", { name: "Check admin" });
+  fireEvent.click(screen.getByRole("checkbox", { name: "Check admin" }));
+  fireEvent.click(screen.getByRole("checkbox", { name: "Check sup" }));
+  fireEvent.click(screen.getByRole("button", { name: "Check sign-in (2)" }));
+  expect(await screen.findByText("signed in, landed on /hr/home/index; reaches Definition Wizard")).toBeInTheDocument();
+  expect(await screen.findByText(/stopped on the way to Definition Wizard: click 2/)).toBeInTheDocument();
+});
+
+test("the area picker sends the area, and none sends the sign-in alone", async () => {
+  const seen = mountForCheck((key) => checked(key, "signed in"));
+  await screen.findByRole("checkbox", { name: "Check admin" });
+  fireEvent.click(screen.getByRole("checkbox", { name: "Check admin" }));
+  fireEvent.click(screen.getByRole("button", { name: "Check sign-in (1)" }));
+  await waitFor(() => expect(seen.filter((s) => s.cmd === "auto_run_check_sign_in")).toHaveLength(1));
+  expect(seen.find((s) => s.cmd === "auto_run_check_sign_in")!.args).toMatchObject({
+    organization: "acme",
+    project: "Web",
+    accountKey: "admin",
+    area: null,
+  });
+
+  fireEvent.click(screen.getByRole("combobox", { name: "Area to reach" }));
+  fireEvent.click(await screen.findByRole("option", { name: "Definition Wizard" }));
+  await waitFor(() => expect(screen.getByRole("button", { name: "Check sign-in (1)" })).toBeEnabled());
+  fireEvent.click(screen.getByRole("button", { name: "Check sign-in (1)" }));
+  await waitFor(() => expect(seen.filter((s) => s.cmd === "auto_run_check_sign_in")).toHaveLength(2));
+  expect(seen.filter((s) => s.cmd === "auto_run_check_sign_in")[1].args.area).toBe("Definition Wizard");
+});
+
+test("accounts are checked one after another, never together", async () => {
+  let running = 0;
+  let most = 0;
+  mockIPC(() => null);
+  const seen = mountForCheck((key) => {
+    running += 1;
+    most = Math.max(most, running);
+    running -= 1;
+    return checked(key, "signed in");
+  });
+  await screen.findByRole("checkbox", { name: "Check admin" });
+  fireEvent.click(screen.getByRole("checkbox", { name: "Check admin" }));
+  fireEvent.click(screen.getByRole("checkbox", { name: "Check sup" }));
+  fireEvent.click(screen.getByRole("button", { name: "Check sign-in (2)" }));
+  await waitFor(() => expect(seen.filter((s) => s.cmd === "auto_run_check_sign_in")).toHaveLength(2));
+  const keys = seen.filter((s) => s.cmd === "auto_run_check_sign_in").map((s) => s.args.accountKey);
+  expect(keys).toEqual(["admin", "sup"]);
+  expect(most).toBe(1);
+});
+
+test("a refused check is said under its account", async () => {
+  mountForCheck(() => {
+    throw new Error("an unattended run, a replay or a discovery is using the Auto Run browser - wait for it, or stop it first");
+  });
+  await screen.findByRole("checkbox", { name: "Check admin" });
+  fireEvent.click(screen.getByRole("checkbox", { name: "Check admin" }));
+  fireEvent.click(screen.getByRole("button", { name: "Check sign-in (1)" }));
+  expect(await screen.findByText(/using the Auto Run browser/)).toBeInTheDocument();
+});
+
+test("the last check of an account is shown until it is checked again", async () => {
+  mountForCheck(() => checked("admin", "signed in"), {
+    admin: { checked_ms: 1761900000000, reached: true, area: "Leave", outcome: "signed in, landed on /hr/home/index; reaches Leave" },
+  });
+  expect(await screen.findByText(/Last checked .*reaches Leave/)).toBeInTheDocument();
+});
+
+test("Check sign-in is disabled while a run is going", async () => {
+  checkFixture.taken = true;
+  try {
+    mountForCheck((key) => checked(key, "signed in"));
+    await screen.findByRole("checkbox", { name: "Check admin" });
+    fireEvent.click(screen.getByRole("checkbox", { name: "Check admin" }));
+    expect(screen.getByRole("button", { name: "Check sign-in (1)" })).toBeDisabled();
+  } finally {
+    checkFixture.taken = false;
+  }
 });

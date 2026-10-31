@@ -61,6 +61,7 @@ mod autorun_slots;
 mod autorun_area_trip;
 mod autorun_batches;
 mod autorun_claims;
+mod autorun_check_signin;
 mod autorun_cleanup;
 mod autorun_env_copy;
 mod autorun_env_migration;

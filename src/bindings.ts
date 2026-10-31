@@ -1118,6 +1118,18 @@ export const commands = {
 	/**  The same check a recording must pass, on a saved area. */
 	autoRunTryModulePath: (organization: string, project: string, area: string, account: string, browserName: string) => typedError<ModuleTryResult, string>(__TAURI_INVOKE("auto_run_try_module_path", { organization, project, area, account, browserName })),
 	/**
+	 *  Check the sign-in of one saved account, and walk it to `area` (an area
+	 *  name, optional). The Accounts dialog calls this for each account it ticks,
+	 *  one after another. The account's password is typed once, in a browser of
+	 *  its own that is closed after, and is never in the answer.
+	 */
+	autoRunCheckSignIn: (organization: string, project: string, accountKey: string, area: string | null, dbReadAccess: boolean) => typedError<CheckedAccount, string>(__TAURI_INVOKE("auto_run_check_sign_in", { organization, project, accountKey, area, dbReadAccess })),
+	/**
+	 *  The last check of each account of the active environment, by key: when,
+	 *  whether it reached its area, and the words.
+	 */
+	autoRunSignInChecks: () => typedError<{ [key in string]: Mark }, string>(__TAURI_INVOKE("auto_run_sign_in_checks")),
+	/**
 	 *  Open a visible browser with nobody signed in, go to `start_url`, and
 	 *  listen. Each step arrives as a `RecordingEvent`.
 	 */
@@ -2690,6 +2702,16 @@ export type AppSettings = {
 	page_size?: PageSize,
 };
 
+/**  Whether the account's menu leads to the area that was asked for. */
+export type AreaReach = 
+/**  The walk arrived where the area was recorded to arrive. */
+{ kind: "reached"; area: string } | 
+/**
+ *  The walk stopped: `at` is the walk's own sentence and where the page
+ *  stood (its path and title).
+ */
+{ kind: "stopped"; area: string; at: string };
+
 /**  One area of the discovery map, as the Discovery card shows it. */
 export type AreaView = {
 	/**  `""` is the bucket for what belongs to no area. */
@@ -3672,6 +3694,13 @@ export type ChangeOutcome = {
 	 *  The change itself was written.
 	 */
 	list_error: string | null,
+};
+
+/**  One account's check and its words, as the dialog shows them. */
+export type CheckedAccount = {
+	check: SignInCheck,
+	/**  `sign_in_check::summary`. */
+	summary: string,
 };
 
 /**  One line of the preview. */
@@ -4938,6 +4967,25 @@ export type MappingSummary = {
 	unreached: UnreachedArea[],
 	/**  How many save requests the run's guard blocked. */
 	blocked_writes: number,
+};
+
+/**
+ *  What the last check of an account found, kept on this machine beside the
+ *  accounts so a later proposal can prefer the logins that reach an area.
+ *  Words only: no password, no host.
+ */
+export type Mark = {
+	/**
+	 *  Milliseconds since the epoch; a float because specta refuses a
+	 *  64-bit integer across IPC.
+	 */
+	checked_ms: number | null,
+	/**  Signed in, and arrived at the area when one was asked for. */
+	reached: boolean,
+	/**  The area asked for, when one was. */
+	area: string | null,
+	/**  The check's summary line. */
+	outcome: string,
 };
 
 export type MaterializedDraft = {
@@ -6984,6 +7032,27 @@ export type SharedQueue_Serialize = {
 	project: string,
 	cases: TestCase_Serialize[],
 	warnings: string[],
+};
+
+/**  One account's check. */
+export type SignInCheck = {
+	/**  The account's key, never its login. */
+	account: string,
+	signed_in: boolean,
+	/**  The path the browser stood on after the sign-in. */
+	landed: string | null,
+	/**
+	 *  Why there was no sign-in: a sentence, the password reset page and a
+	 *  stop before any attempt included.
+	 */
+	stopped: string | null,
+	/**
+	 *  What the expiry query said about the password, when it was asked and
+	 *  knew ("password due 2026-11-02, 3 days").
+	 */
+	password: string | null,
+	/**  Only when an area was asked for and the sign-in arrived. */
+	area: AreaReach | null,
 };
 
 export type SignInDraftView = {

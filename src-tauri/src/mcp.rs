@@ -959,6 +959,18 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool, unlocked: bool, all_projec
             "inputSchema": schema(serde_json::json!({}), &[]),
         },
         {
+            "name": "check_autorun_sign_in",
+            "description": "Sign each account in once and walk it to an area, to see which logins can script a screen before any case is written for it. Each account gets a browser of its own (headless, closed after; never the person's Auto Run browser, and never yours), one account at a time, signing in the normal way: the saved session first, the recipe's steps otherwise, the password typed at most once. With `area` (an area name from the guide's areas) it then walks the area's menu path the way a run does, the menu paths for other menu shapes included. The answer lists, per account, `summary`: \"signed in, landed on /hr/home/index; reaches <area>\", or where it stopped (\"stopped on the way to <area>: ...\" with the page's path and title), or \"sign-in failed: <reason>\", or \"stopped on the password reset page\". An account whose password the environment's expiry query says is expired, or that someone else is signed in as, is not signed in at all and is said so (\"sign-in not tried - ...\"). The result is kept on each account (when, and whether it reached the area), and propose_accounts then lists the logins that reached theirs first. `accounts` (account keys) defaults to every saved account; name only the ones you need, as each sign-in takes as long as one does. Refused while an unattended run, a replay or a discovery is using the Auto Run browser, and for an account something else holds. Never shows a password.",
+            "inputSchema": schema(serde_json::json!({
+                "accounts": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "description": "Optional: the account keys to check (get_accounts lists them). Every saved account when left out.",
+                },
+                "area": { "type": "string", "description": "Optional: an area name to walk to after the sign-in. The sign-in alone when left out." },
+            }), &[]),
+        },
+        {
             "name": "save_test_file",
             "description": "Save a file you made into this project's Test files, so an Auto Run `upload` action or an API template's `files` can send it by name. Only documents a test uploads are taken (the extensions are listed in the refusal); never save notes, scripts or reports here. malformed: true saves a deliberately broken file (a corrupt PDF for a test that the app rejects it); the extension rule still applies.",
             "inputSchema": schema(serde_json::json!({
@@ -2676,6 +2688,7 @@ fn tools_call_outcome(params: &serde_json::Value, call: BridgeCall) -> (serde_js
         "set_autorun_order" => call("POST", "/autorun-order", &args.to_string()),
         "propose_accounts" => call("POST", "/accounts-propose", &args.to_string()),
         "get_accounts" => call("GET", "/accounts", ""),
+        "check_autorun_sign_in" => call("POST", "/autorun-check-sign-in", &args.to_string()),
         "save_test_file" => call("POST", "/test-file-save", &args.to_string()),
         "list_api_templates"
             if args["kind"].as_str() == Some("fixtures")
