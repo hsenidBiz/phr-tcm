@@ -1983,6 +1983,11 @@ async fn repeat_while_visible<D: Driver>(
             }
             let (out, stop) = match step {
                 Action::ReturnToArea { .. } => return_to_area(d, step, area, areas, here.step, account, timing).await,
+                // The same helper a step uses: its target gets the page's load
+                // first, then one look, and a target that never shows passes.
+                // Boxed: the pass's own future stays small enough for a debug
+                // build's stack.
+                Action::WhenVisible { .. } => Box::pin(guarded_in_pass(d, here, step, area, areas, account, timing)).await,
                 _ => plain(d, here, step, timing).await,
             };
             said.push(out.detail.clone());
@@ -2023,6 +2028,27 @@ async fn repeat_while_visible<D: Driver>(
             }
         }
         repeat::unmark(d).await;
+    }
+}
+
+/// A `when_visible` in a loop's `then`, run as a step runs one: the page
+/// loads first, then the one look and its plain actions.
+async fn guarded_in_pass<D: Driver>(
+    d: &mut D,
+    here: &Here<'_>,
+    step: &Action,
+    area: &AreaRoute<'_>,
+    areas: Option<&NamedAreas>,
+    account: Option<&str>,
+    timing: &Timing,
+) -> (ActionOutcome, Option<&'static str>) {
+    match page_loaded(d, here, step, timing).await {
+        Err(failed) => failed,
+        Ok(notes) => {
+            let (mut out, stop) = when_visible(d, here, step, area, areas, account, timing).await;
+            popups::add_notes(&mut out, &notes);
+            (out, stop)
+        }
     }
 }
 

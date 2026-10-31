@@ -936,9 +936,12 @@ pub const REPEAT_MAX: u32 = 200;
 /// A `repeat_while_visible` inside another one's `then`.
 pub const NESTED_REPEAT: &str = "repeat_while_visible \"then\" cannot hold another repeat_while_visible";
 
+/// What a `repeat_while_visible`'s `then` may hold, as its refusals say it.
+pub const LOOP_THEN_ALLOWS: &str = "plain actions, when_visible (plain actions inside) and expect_hidden";
+
 /// Every rule a `repeat_while_visible` is held to, as written: `max` given
 /// and in range, a selector that can list its matches, protected texts that
-/// say something, and a `then` of plain actions that - when rows are
+/// say something, and a `then` of `LOOP_THEN_ALLOWS` that - when rows are
 /// protected - acts inside the row the pass works on and never on the
 /// loop's own selector across the whole page.
 fn check_repeat(selector: &Target, max: Option<u32>, except: &[String], then: &[Action], settle_ms: Option<u32>) -> Result<(), String> {
@@ -964,13 +967,17 @@ fn check_repeat(selector: &Target, max: Option<u32>, except: &[String], then: &[
         return Err("repeat_while_visible has nothing in \"then\" - say what to do on each pass".to_string());
     }
     for (i, a) in then.iter().enumerate() {
-        if matches!(a, Action::RepeatWhileVisible { .. }) {
+        let repeats_inside = match a {
+            Action::RepeatWhileVisible { .. } => true,
+            Action::WhenVisible { then, .. } => then.iter().any(|t| matches!(t, Action::RepeatWhileVisible { .. })),
+            _ => false,
+        };
+        if repeats_inside {
             return Err(NESTED_REPEAT.to_string());
         }
         if matches!(
             a,
-            Action::WhenVisible { .. }
-                | Action::SignIn { .. }
+            Action::SignIn { .. }
                 | Action::UseComponent { .. }
                 | Action::ExpireSession
                 | Action::OpenTab { .. }
@@ -982,9 +989,9 @@ fn check_repeat(selector: &Target, max: Option<u32>, except: &[String], then: &[
                 a.kind()
             ));
         }
-        if a.is_check() {
+        if a.is_check() && !matches!(a, Action::ExpectHidden { .. }) {
             return Err(format!(
-                "repeat_while_visible \"then\" cannot hold {} - a pass tidies up and checks nothing, so put the check after the loop",
+                "repeat_while_visible \"then\" cannot hold {} - a pass holds {LOOP_THEN_ALLOWS} and no other check, so put the check after the loop",
                 a.kind()
             ));
         }
@@ -1703,12 +1710,13 @@ impl Action {
             .unwrap_or_default()
     }
 
-    /// This action, then every action a `when_visible` guards - for a rule
-    /// that has to see an action wherever in a step it is written.
+    /// This action, then every action a `when_visible` or loop holds, to any
+    /// depth (a loop's `then` may hold a `when_visible`) - for a rule that
+    /// has to see an action wherever in a step it is written.
     pub fn each(&self) -> Vec<&Action> {
         match self {
             Action::WhenVisible { then, .. } | Action::RepeatWhileVisible { then, .. } => {
-                std::iter::once(self).chain(then.iter()).collect()
+                std::iter::once(self).chain(then.iter().flat_map(Action::each)).collect()
             }
             _ => vec![self],
         }

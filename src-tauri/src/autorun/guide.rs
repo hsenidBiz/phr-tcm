@@ -644,9 +644,11 @@ depends on. Never repeat a `when_visible` several times for this.
   for the row to go, up to `settle_ms` (default 5000, at most 30000) -
   raise it on a slow site. A pass that fails because its row has already
   gone ends quietly.
-- `then` holds plain actions only, as a `when_visible`'s does: no checks,
-  no `when_visible` or another loop, no `sign_in`, `use_component`, tab
-  action or `expire_session`. A `then` action that fails fails the step,
+- `then` holds plain actions, `when_visible` (to confirm a dialog only if
+  it shows; plain actions inside it) and `expect_hidden` (to wait for the
+  row to go). No other check, no other loop, no `sign_in`,
+  `use_component`, tab action or `expire_session`. A `then` action that
+  fails (an `expect_hidden` whose row stays included) fails the step,
   unless its row has already gone.
 - The step's outcome says how many passes ran and what it kept: "ran 3
   passes, none left; kept 2 protected (Customer Focus, Operational

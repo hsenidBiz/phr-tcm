@@ -82,6 +82,10 @@ struct Rows {
     /// A delete click takes the browser to another page: the mark goes with it.
     navigate_on_delete: bool,
     href: String,
+    /// From this delete click on (1 is the first; 0 never) the row goes at
+    /// once and no confirm is shown.
+    plain_from: usize,
+    deletes: usize,
 }
 
 type Shared = Arc<Mutex<Rows>>;
@@ -122,7 +126,7 @@ fn slow_groups(names: Vec<&'static str>, slow_ms: u64) -> (ScriptedDriver, Share
 fn page_with(names: Vec<&'static str>, blind: bool, on_page: Option<Vec<&str>>, slow_ms: u64, vanish_on_delete: bool) -> (ScriptedDriver, Shared) {
     let n = names.len();
     let clock: Arc<AtomicU64> = Default::default();
-    let rows = Arc::new(Mutex::new(Rows { names, alive: vec![true; n], marked: None, armed: None, clicks: vec![], blind, in_frame: false, read_fails: false, on_page: on_page.map(|v| v.into_iter().map(String::from).collect()), clock: clock.clone(), slow_ms, pending: vec![], vanish_on_delete, navigate_on_delete: false, href: "https://hr.example.internal/list".into() }));
+    let rows = Arc::new(Mutex::new(Rows { names, alive: vec![true; n], marked: None, armed: None, clicks: vec![], blind, in_frame: false, read_fails: false, on_page: on_page.map(|v| v.into_iter().map(String::from).collect()), clock: clock.clone(), slow_ms, pending: vec![], vanish_on_delete, navigate_on_delete: false, href: "https://hr.example.internal/list".into(), plain_from: 0, deletes: 0 }));
     let page = rows.clone();
     let mut d = ScriptedDriver::new(move |method, params| {
         let f = params["functionDeclaration"].as_str().unwrap_or("");
@@ -146,7 +150,7 @@ fn page_with(names: Vec<&'static str>, blind: bool, on_page: Option<Vec<&str>>, 
                     ("doc", s) if s == ROW_SCOPE => {
                         r.marked.filter(|i| r.alive[*i]).map(|i| format!("row-{i}")).into_iter().collect()
                     }
-                    ("doc", "#confirm") if r.vanish_on_delete => vec![],
+                    ("doc", "#confirm") if r.vanish_on_delete || (r.plain_from > 0 && r.deletes >= r.plain_from) => vec![],
                     ("doc", "#confirm") => vec!["confirm".to_string()],
                     (row, ".delete") if row.starts_with("row-") => {
                         index(row).filter(|i| r.alive[*i]).map(|i| format!("del-{i}")).into_iter().collect()
@@ -217,6 +221,7 @@ fn page_with(names: Vec<&'static str>, blind: bool, on_page: Option<Vec<&str>>, 
                 let seen = index(&on).is_none_or(|i| r.alive.get(i).copied().unwrap_or(true));
                 json!({ "result": { "value": seen } })
             }
+            "Runtime.callFunctionOn" if f == v2_lib::browser::input::SHOWN_JS => json!({ "result": { "value": true } }),
             "Runtime.callFunctionOn" if f == v2_lib::browser::input::HAS_FOCUS_JS => json!({ "result": { "value": true } }),
             "Runtime.callFunctionOn" => json!({ "result": { "value": "text" } }),
             "Input.dispatchMouseEvent" if params["type"] == "mouseReleased" => {
@@ -225,7 +230,10 @@ fn page_with(names: Vec<&'static str>, blind: bool, on_page: Option<Vec<&str>>, 
                     let i = (x - 100.0) as usize;
                     let said = format!("delete {}", r.names[i]);
                     r.clicks.push(said);
-                    if r.navigate_on_delete {
+                    r.deletes += 1;
+                    if r.plain_from > 0 && r.deletes >= r.plain_from {
+                        r.alive[i] = false;
+                    } else if r.navigate_on_delete {
                         r.href = "https://hr.example.internal/confirm".into();
                         r.marked = None;
                         r.armed = Some(i);
@@ -442,7 +450,7 @@ fn then_and_except_are_checked() {
     ]);
     assert_eq!(
         refusal(check),
-        "repeat_while_visible \"then\" cannot hold expect_visible - a pass tidies up and checks nothing, so put the check after the loop"
+        "repeat_while_visible \"then\" cannot hold expect_visible - a pass holds plain actions, when_visible (plain actions inside) and expect_hidden and no other check, so put the check after the loop"
     );
 }
 
@@ -556,6 +564,128 @@ fn the_export_writes_a_bounded_loop_with_the_same_except_rule() {
     // The check function refuses nothing it can write.
     let script: CaseScript = goals_script(json!([reset_goal_groups(20)]));
     assert_eq!(v2_lib::pw_export::translate::check(&script, &["https://app.example".to_string()]), Ok(()));
+}
+
+// ---- a pass that confirms only if shown, and waits for its row to go ----------
+
+const LOOP_ROW_DELETE: &str = "[ { \"css\": \"[data-autorun-row]\" }, { \"css\": \".delete\" } ]";
+
+fn loop_with(then: Value) -> Value {
+    json!({ "kind": "repeat_while_visible", "selector": { "css": ".delete" }, "max": 5, "then": then })
+}
+
+fn row_delete() -> Value {
+    json!({ "kind": "click", "selector": serde_json::from_str::<Value>(LOOP_ROW_DELETE).unwrap() })
+}
+
+#[test]
+fn then_may_hold_when_visible_and_expect_hidden() {
+    let a = loop_with(json!([
+        row_delete(),
+        { "kind": "when_visible", "selector": { "css": "#confirm" }, "then": [ { "kind": "click", "selector": { "css": "#confirm" } } ] },
+        { "kind": "expect_hidden", "selector": { "css": ROW_SCOPE }, "timeout_ms": 500 }
+    ]));
+    assert_eq!(action(a).validate(), Ok(()));
+}
+
+#[test]
+fn then_still_refuses_other_checks() {
+    let why = refusal(loop_with(json!([
+        row_delete(),
+        { "kind": "expect_text", "selector": { "css": "#x" }, "text": "a" }
+    ])));
+    assert!(why.contains("cannot hold expect_text"), "{why}");
+    assert!(why.contains(v2_lib::browser::actions::LOOP_THEN_ALLOWS), "{why}");
+}
+
+#[test]
+fn when_visible_in_a_loop_holds_no_loop() {
+    let inner = loop_with(json!([row_delete()]));
+    let why = refusal(loop_with(json!([
+        { "kind": "when_visible", "selector": { "css": "#confirm" }, "then": [ inner ] }
+    ])));
+    assert_eq!(why, v2_lib::browser::actions::NESTED_REPEAT);
+    // And a when_visible inside it holds no second one.
+    let why = refusal(loop_with(json!([
+        { "kind": "when_visible", "selector": { "css": "#confirm" }, "then": [
+            { "kind": "when_visible", "selector": { "css": "#x" }, "then": [ row_delete() ] } ] }
+    ])));
+    assert!(why.contains("cannot hold another when_visible"), "{why}");
+}
+
+#[tokio::test]
+async fn a_loop_confirms_only_when_the_dialog_shows() {
+    let (mut d, rows) = goal_groups(vec!["Old A", "Old B"]);
+    rows.lock().unwrap().plain_from = 2;
+    let a = action(loop_with(json!([
+        row_delete(),
+        { "kind": "when_visible", "selector": { "css": "#confirm" }, "within_ms": 200,
+          "then": [ { "kind": "click", "selector": { "css": "#confirm" } } ] }
+    ])));
+    let out = run(&mut d, vec![a]).await;
+    assert!(out[0].ok, "{:?}", out[0]);
+    assert!(left(&rows).is_empty(), "{:?}", left(&rows));
+    assert_eq!(clicks(&rows), vec!["delete Old A", "confirm", "delete Old B"], "one confirm, for the pass that showed one");
+    assert!(out[0].detail.contains("2 passes"), "{}", out[0].detail);
+}
+
+#[tokio::test]
+async fn expect_hidden_in_then_fails_the_pass_when_the_row_stays() {
+    let (mut d, rows) = goal_groups(vec!["Old A"]);
+    let a = action(loop_with(json!([
+        row_delete(),
+        { "kind": "expect_hidden", "selector": { "css": ROW_SCOPE }, "timeout_ms": 300 }
+    ])));
+    let out = run(&mut d, vec![a]).await;
+    assert!(!out[0].ok, "{:?}", out[0]);
+    assert!(out[0].detail.contains("pass 1"), "{}", out[0].detail);
+    assert!(out[0].detail.contains("still visible"), "{}", out[0].detail);
+    assert_eq!(left(&rows), vec!["Old A"]);
+}
+
+#[tokio::test]
+async fn expect_hidden_in_then_passes_when_the_row_goes() {
+    let (mut d, rows) = goal_groups(vec!["Old A"]);
+    let a = action(loop_with(json!([
+        row_delete(),
+        { "kind": "click", "selector": { "css": "#confirm" } },
+        { "kind": "expect_hidden", "selector": { "css": ROW_SCOPE }, "timeout_ms": 300 }
+    ])));
+    let out = run(&mut d, vec![a]).await;
+    assert!(out[0].ok, "{:?}", out[0]);
+    assert!(left(&rows).is_empty());
+}
+
+#[test]
+fn the_seen_check_reads_a_locator_inside_the_nested_when_visible() {
+    let s = goals_script(json!([loop_with(json!([
+        row_delete(),
+        { "kind": "when_visible", "selector": { "css": "#confirm" },
+          "then": [ { "kind": "click", "selector": { "css": "#ok" } } ] }
+    ]))]));
+    let none = ComponentFile::default();
+    let map = seen(&[(css(".delete"), 4), (css("#confirm"), 1), (css("#ok"), 1)]);
+    assert_eq!(check_seen(&map, &none, &s, &[], None), Ok(()));
+    // The nested click's locator, never seen, is refused.
+    let map = seen(&[(css(".delete"), 4), (css("#confirm"), 1)]);
+    let why = check_seen(&map, &none, &s, &[], None).unwrap_err();
+    assert!(why.contains("#ok"), "{why}");
+}
+
+#[test]
+fn the_export_indents_a_nested_when_visible_in_the_loop_body() {
+    let spec = export(json!([loop_with(json!([
+        row_delete(),
+        { "kind": "when_visible", "selector": { "css": "#confirm" },
+          "then": [ { "kind": "click", "selector": { "css": "#confirm" } } ] },
+        { "kind": "expect_hidden", "selector": { "css": ROW_SCOPE } }
+    ]))]))
+    .unwrap()
+    .replace("
+", "
+");
+    assert!(spec.contains("waitFor({ timeout:"), "{spec}");
+    assert!(spec.contains("toBeHidden") || spec.contains("toHaveCount(0"), "{spec}");
 }
 
 // ---- the guide ---------------------------------------------------------------
