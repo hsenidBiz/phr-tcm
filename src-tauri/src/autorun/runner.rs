@@ -1918,6 +1918,21 @@ async fn repeat_while_visible<D: Driver>(
             Err(e) if e.is_transient() => Vec::new(),
             Err(e) => return (crate::browser::actions::harness(e), None),
         };
+        // Before the FIRST pass only: rows that cannot be told apart
+        // delete nothing (`repeat::except_guard`).
+        if passes == 0 && !except.is_empty() && !found.is_empty() && found.iter().all(|m| m.kept.is_none()) {
+            match repeat::except_on_page(d, except).await {
+                Ok(on_page) => {
+                    if let Some(why) = repeat::except_guard(&found, except, &on_page) {
+                        return (ActionOutcome::failed(format!("{target}: {why}")), None);
+                    }
+                }
+                Err(e) if e.is_transient() => {
+                    return (ActionOutcome::failed(format!("{target}: the page did not answer when the loop checked that its rows can be told apart, so nothing was deleted")), None);
+                }
+                Err(e) => return (crate::browser::actions::harness(e), None),
+            }
+        }
         let mut kept: Vec<String> = Vec::new();
         for k in found.iter().filter_map(|m| m.kept.clone()) {
             if !kept.contains(&k) {

@@ -631,6 +631,11 @@ depends on. Never repeat a `when_visible` several times for this.
   `then` action may name the loop's own selector across the whole page:
   both are refused at save. A match that sits in no row then fails the
   action - point `selector` at something inside each row.
+- With `except`, the loop first checks that its rows can be told apart:
+  when the page shows an `except` text but no match's row reads one, it
+  stops before the first pass and says what the row rule found - point
+  `selector` inside each row. The save refuses a loop discovery stopped
+  that way.
 - `max` is required, 1 to 200: the hard cap. Unprotected matches still
   there after `max` passes fail the action, and the step stops:
   "still 3 rows after max 20 passes". Pick a `max` well above the leftovers you

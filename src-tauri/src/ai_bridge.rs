@@ -10569,6 +10569,31 @@ async fn try_action<D: crate::browser::cdp::Driver>(
     // assistant - and never a `fill`'s VALUE, which `describe_try` never
     // even looks at.
     crate::applog::info(describe_try(action, outcome.ok));
+    // A discovery try of a `repeat_while_visible` with `except` files whether
+    // its rows could be told apart, so the save can judge the same loop
+    // (`seen_check::loop_rows_review`). Only a try that went past the guard
+    // (it passed) or was stopped by it says anything.
+    if files_finds && !project.trim().is_empty() {
+        let guard_said = outcome.detail.contains(crate::browser::repeat::EXCEPT_GUARD_MARK);
+        for each in action.each() {
+            let crate::browser::actions::Action::RepeatWhileVisible { selector, except, .. } = each else { continue };
+            if except.is_empty() || !(outcome.ok || guard_said) {
+                continue;
+            }
+            let rows = crate::autorun::discovery_map::LoopRows {
+                selector: selector.clone(),
+                except: except.clone(),
+                refused: guard_said.then(|| outcome.detail.clone()),
+                at: crate::autorun::sessions::now_ms(),
+            };
+            let area = recording_area(root, discovery_area, Some(case_id));
+            if let Err(why) =
+                crate::autorun::discovery_map::record_loop_rows_in(root, organization, project, area.as_deref(), rows)
+            {
+                unrecorded(&why);
+            }
+        }
+    }
     // Only a try that worked: a locator that failed was never seen working.
     // (An explore session files no locator: `files_finds` is false.)
     if outcome.ok && files_finds {
@@ -13368,10 +13393,14 @@ pub async fn save_autorun_scripts_carrying(
                             only.as_deref(),
                             saved_scripts.iter().find(|s| s.case_id == *case_id),
                         );
-                        if !review.refusals.is_empty() {
-                            unproven.push((*case_id, review.refusals));
-                        }
                         from_case.extend(review.from_case.into_iter().map(|n| format!("case {case_id}: note: {n}")));
+                        let loops = crate::autorun::seen_check::loop_rows_review(&map, script, only.as_deref());
+                        let mut refused = review.refusals;
+                        refused.extend(loops.refusals);
+                        if !refused.is_empty() {
+                            unproven.push((*case_id, refused));
+                        }
+                        from_case.extend(loops.notes.into_iter().map(|n| format!("case {case_id}: note: {n}")));
                     }
                     SeenVerdict::Other(why) => return Err(SaveRefusal::Unseen(why)),
                     SeenVerdict::Unseen(lines) => unseen.push((*case_id, lines)),

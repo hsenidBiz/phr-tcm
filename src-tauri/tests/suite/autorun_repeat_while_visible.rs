@@ -22,7 +22,7 @@ use v2_lib::autorun::seen_check::check_seen;
 use v2_lib::autorun::{CaseScript, StepScript};
 use v2_lib::browser::actions::{execute_with, Action};
 use v2_lib::browser::locator::{LocatorStep, Target, CSS_JS, VISIBLE_JS};
-use v2_lib::browser::repeat::{KEPT_JS, MARK_JS, ROW_SCOPE, UNMARK_JS};
+use v2_lib::browser::repeat::{except_guard, Match, EXCEPT_ON_PAGE_JS, KEPT_JS, MARK_JS, ROW_SCOPE, UNMARK_JS};
 
 fn action(v: Value) -> Action {
     serde_json::from_value(v).expect("the test wrote an action that does not parse")
@@ -64,6 +64,10 @@ struct Rows {
     marked: Option<usize>,
     armed: Option<usize>,
     clicks: Vec<String>,
+    /// Rows that read nothing: no match is ever kept.
+    blind: bool,
+    /// What the page shows of the except texts, when it is not worked out.
+    on_page: Option<Vec<String>>,
 }
 
 type Shared = Arc<Mutex<Rows>>;
@@ -89,8 +93,12 @@ fn index(id: &str) -> Option<usize> {
 }
 
 fn goal_groups(names: Vec<&'static str>) -> (ScriptedDriver, Shared) {
+    goal_groups_with(names, false, None)
+}
+
+fn goal_groups_with(names: Vec<&'static str>, blind: bool, on_page: Option<Vec<&str>>) -> (ScriptedDriver, Shared) {
     let n = names.len();
-    let rows = Arc::new(Mutex::new(Rows { names, alive: vec![true; n], marked: None, armed: None, clicks: vec![] }));
+    let rows = Arc::new(Mutex::new(Rows { names, alive: vec![true; n], marked: None, armed: None, clicks: vec![], blind, on_page: on_page.map(|v| v.into_iter().map(String::from).collect()) }));
     let page = rows.clone();
     let d = ScriptedDriver::new(move |method, params| {
         let f = params["functionDeclaration"].as_str().unwrap_or("");
@@ -136,8 +144,23 @@ fn goal_groups(names: Vec<&'static str>) -> (ScriptedDriver, Shared) {
                     .map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_string)).collect())
                     .unwrap_or_default();
                 let name = index(&on).map(|i| r.names[i]).unwrap_or("");
-                let kept = except.iter().find(|e| e.trim().eq_ignore_ascii_case(name)).cloned();
-                json!({ "result": { "value": { "row": true, "kept": kept } } })
+                let kept = if r.blind { None } else { except.iter().find(|e| e.trim().eq_ignore_ascii_case(name)).cloned() };
+                json!({ "result": { "value": { "row": true, "kept": kept, "desc": "div[data-node-id] \"Delete\"" } } })
+            }
+            "Runtime.callFunctionOn" if f == EXCEPT_ON_PAGE_JS => {
+                let except: Vec<String> = params["arguments"][0]["value"]
+                    .as_array()
+                    .map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_string)).collect())
+                    .unwrap_or_default();
+                let shown: Vec<String> = match &r.on_page {
+                    Some(v) => v.clone(),
+                    None => except
+                        .iter()
+                        .filter(|e| (0..r.names.len()).any(|i| r.alive[i] && e.trim().eq_ignore_ascii_case(r.names[i])))
+                        .cloned()
+                        .collect(),
+                };
+                json!({ "result": { "value": shown } })
             }
             "Runtime.callFunctionOn" if f == MARK_JS => {
                 r.marked = index(&on);
@@ -491,7 +514,7 @@ fn the_guide_teaches_it_with_the_goal_group_example_and_its_safety_rules() {
     let section = g.split_once("## Resetting a list to a known state").expect("no section").1;
     let section = section.split("\n## ").next().unwrap();
     for term in ["Customer Focus", "Operational Excellence", "[data-autorun-row]", "max", "1 to 200",
-                 "still 3 rows after max 20 passes", "tr", "[role=row]", "data-*-id", "exactly one of the `except` texts"] {
+                 "still 3 rows after max 20 passes", "tr", "[role=row]", "data-*-id", "exactly one of the `except` texts", "can be told apart"] {
         assert!(section.contains(term), "the section never says {term:?}");
     }
     let at = section.find("{ \"kind\": \"repeat_while_visible\"").expect("no example");
@@ -512,4 +535,80 @@ fn the_guide_teaches_it_with_the_goal_group_example_and_its_safety_rules() {
     }
     let example = action(serde_json::from_str(&section[at..end]).expect("the example is not JSON"));
     assert_eq!(example.validate(), Ok(()));
+}
+
+// ---- rows that cannot be told apart delete nothing -----------------------------
+
+fn found(kept: &[Option<&str>], desc: Option<&str>) -> Vec<Match> {
+    kept.iter()
+        .map(|k| Match { handle: "h".to_string(), row: true, kept: k.map(String::from), row_desc: desc.map(String::from) })
+        .collect()
+}
+
+fn texts(v: &[&str]) -> Vec<String> {
+    v.iter().map(|s| s.to_string()).collect()
+}
+
+#[test]
+fn except_guard_refuses_when_no_row_reads_an_except_text_on_the_page() {
+    let m = found(&[None, None, None], Some("div[data-node-id] \"Delete\""));
+    let why = except_guard(&m, &texts(&["Core Competencies"]), &texts(&["Core Competencies"])).expect("refused");
+    assert!(why.contains("\"Core Competencies\""), "{why}");
+    assert!(why.contains("div[data-node-id]"), "{why}");
+    assert!(why.starts_with("3 matches found"), "{why}");
+}
+
+#[test]
+fn except_guard_lets_through() {
+    let ex = texts(&["Core Competencies"]);
+    let page = texts(&["Core Competencies"]);
+    let kept = found(&[None, Some("Core Competencies")], None);
+    assert_eq!(except_guard(&kept, &ex, &page), None, "one match kept");
+    let none = found(&[None], None);
+    assert_eq!(except_guard(&none, &ex, &[]), None, "the protected rows are not there");
+    assert_eq!(except_guard(&none, &[], &page), None, "no except");
+    assert_eq!(except_guard(&[], &ex, &page), None, "no matches");
+}
+
+#[test]
+fn except_guard_says_when_the_match_has_no_row() {
+    let m = vec![Match { handle: "h".to_string(), row: false, kept: None, row_desc: None }];
+    let why = except_guard(&m, &texts(&["A"]), &texts(&["A"])).unwrap();
+    assert!(why.starts_with("1 match found"), "{why}");
+    assert!(why.contains("is no row"), "{why}");
+}
+
+#[tokio::test]
+async fn a_loop_with_unreadable_rows_deletes_nothing() {
+    let (mut d, rows) = goal_groups_with(vec!["Old A", "Old B", "Old C"], true, Some(vec!["Leadership Competencies"]));
+    let a = action(json!({
+        "kind": "repeat_while_visible", "selector": { "css": ".delete" }, "max": 10, "except": ["Leadership Competencies"],
+        "then": [
+            { "kind": "click", "selector": [ { "css": ROW_SCOPE }, { "css": ".delete" } ] },
+            { "kind": "click", "selector": { "css": "#confirm" } }
+        ]
+    }));
+    let out = run(&mut d, vec![a]).await;
+    assert!(!out[0].ok, "{:?}", out[0]);
+    assert!(out[0].detail.contains("Leadership Competencies"), "{}", out[0].detail);
+    assert!(out[0].detail.contains("div[data-node-id]"), "{}", out[0].detail);
+    assert!(clicks(&rows).is_empty(), "nothing was clicked: {:?}", clicks(&rows));
+    assert_eq!(left(&rows).len(), 3);
+}
+
+#[tokio::test]
+async fn a_loop_whose_rows_read_their_names_still_runs() {
+    let (mut d, rows) = goal_groups(vec!["Customer Focus", "Old A", "Old B"]);
+    let out = run(&mut d, vec![action(reset_goal_groups(10))]).await;
+    assert!(out[0].ok, "{:?}", out[0]);
+    assert_eq!(left(&rows), vec!["Customer Focus"]);
+    assert_eq!(clicks(&rows), vec!["delete Old A", "confirm", "delete Old B", "confirm"]);
+}
+
+#[tokio::test]
+async fn a_loop_whose_protected_rows_are_not_on_the_page_still_runs() {
+    let (mut d, rows) = goal_groups(vec!["Old A", "Old B"]);
+    let out = run(&mut d, vec![action(reset_goal_groups(10))]).await;
+    assert!(out[0].ok, "{:?}", out[0]);
+    assert!(left(&rows).is_empty());
 }

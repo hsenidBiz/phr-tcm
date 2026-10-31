@@ -2887,3 +2887,69 @@ pub fn check_resolved_inputs_with(
 
 /// What a person can do about a run-time Blocked of a filled locator.
 const RUN_TIME_FIX: &str = "Explore that screen again with discovery, or check the value the setup or fixture gives.";
+
+// ---- a delete loop whose rows cannot be told apart ----
+//
+// Runs in the assistant's save, beside the absence check (see above): the
+// runtime guard (`browser::repeat::except_guard`) stops such a loop on every
+// path that can delete; this is what the save can tell from what discovery
+// recorded of the same loop (`discovery_map::LoopRows`).
+
+/// Said after `repeat_while_visible`, with the guard's sentence, of a loop
+/// the newest discovery try of which was stopped by the rows guard.
+pub const LOOP_ROWS_REFUSED: &str = "was refused in discovery because its rows cannot be told apart: ";
+
+/// Said, as a note, of a loop with `except` that discovery never tried.
+pub const LOOP_ROWS_UNTRIED: &str = "has except texts but was never tried in discovery, so the save could not check that each row holds its name - try it once before relying on it";
+
+/// What the save made of the loops with `except`: `refusals` ("step {n}:
+/// repeat_while_visible {LOOP_ROWS_REFUSED}{sentence}") and `notes` for the
+/// ones never tried ("step {n}: repeat_while_visible {LOOP_ROWS_UNTRIED}").
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct LoopRowsReview {
+    pub refusals: Vec<String>,
+    pub notes: Vec<String>,
+}
+
+/// Every `repeat_while_visible` with `except` in `script`'s checked steps
+/// (`only_steps`, else all), judged by the newest `LoopRows` any area of
+/// `map` holds for the same selector and the same `except` set (order-free,
+/// folded): refused when that verdict is a refusal, a note when there is no
+/// entry, nothing when the newest one went past the guard. A loop without
+/// `except` is not judged.
+pub fn loop_rows_review(map: &DiscoveryMap, script: &CaseScript, only_steps: Option<&[i32]>) -> LoopRowsReview {
+    let mut review = LoopRowsReview::default();
+    for step in script.steps.iter().filter(|s| only_steps.is_none_or(|only| only.contains(&s.step_number))) {
+        for action in step.actions.iter().flat_map(Action::each) {
+            let Action::RepeatWhileVisible { selector, except, .. } = action else { continue };
+            if except.is_empty() {
+                continue;
+            }
+            let key = super::discovery_map::except_key(except);
+            let newest = map
+                .areas
+                .iter()
+                .flat_map(|a| a.loop_rows.iter())
+                .filter(|r| r.selector == *selector && super::discovery_map::except_key(&r.except) == key)
+                .max_by_key(|r| r.at);
+            let n = step.step_number;
+            let line = match newest {
+                Some(r) => match &r.refused {
+                    Some(why) => {
+                        let line = format!("step {n}: repeat_while_visible {LOOP_ROWS_REFUSED}{why}");
+                        if !review.refusals.contains(&line) {
+                            review.refusals.push(line);
+                        }
+                        continue;
+                    }
+                    None => continue,
+                },
+                None => format!("step {n}: repeat_while_visible {LOOP_ROWS_UNTRIED}"),
+            };
+            if !review.notes.contains(&line) {
+                review.notes.push(line);
+            }
+        }
+    }
+    review
+}
