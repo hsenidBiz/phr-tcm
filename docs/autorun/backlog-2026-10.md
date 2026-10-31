@@ -1017,6 +1017,92 @@ three writers at once on emma, aiden and grace.
     should judge a 4xx answer the same way, and a case that expects a refusal should check the
     page's message for it (the import-error toast lasts about 5 s, so in the same step).
 
+## The Definition Wizard fix round and the per-environment update (agreed 2026-11-01)
+
+Found on PBI 133443 (TCM environment Default, Philippines dev site) by the fix-round rewriters
+dw-fix-comps, dw-fix-comps2, dw-fix-comps3 (emma, grace), dw-fix-lrg, dw-fix-lrg2, dw-fix-lrg3
+(aiden), and while moving scripts into the per-environment layout. Each item says how it happened.
+
+55. **The per-environment update put every environment's data under every environment.** On the
+    first start of the update, `autorun\scripts\case-*.json` (117 dev scripts, then the only live
+    scripts) was copied into `autorun\envs\<id>\scripts` for ALL six environments, so QA Automation
+    and four environments that never had scripts listed the dev scripts. Orders, fixtures, flows,
+    templates and projects were copied to all six too. Runs, replays, reports, shots, downloads and
+    explore went only to the active environment (Default), although each run file carries an
+    `environment` name: 70 of 82 runs said "QA Automation" and vanished from it, and the person
+    saw "the run results have been cleared". Fixed by hand: dev copies moved out of five
+    environments, the 582-script archive put under QA Automation, the 70 runs (with 6 reports, 64
+    download folders and 4,346 shots they name) moved by their `environment` field.
+    - The migration should put the old flat folders under the ACTIVE environment only, and say so
+      once ("117 scripts moved to Default; other environments start empty").
+    - Runs, and the reports, downloads and shots a run names, should go to the environment the run
+      file names; a run naming no known environment goes to the active one.
+    - Orders hold case ids: an order whose cases have no script in an environment should not be
+      copied there.
+    - An "Import scripts into this environment" for a folder (the archive case), refusing to
+      overwrite a case that already has a script there unless asked. 31 case ids had different
+      scripts on the two sites.
+    - The old flat folders stay after the move; the app should say whether it still reads them.
+
+56. **A case hold still outlived its agent after 2.4.3-beta.7.** dw-fix-comps3 (new agent) called
+    `start_autorun_discovery` with case 135421 and was refused "worked on by Assistant 4". No
+    Assistant 4 was running: the previous agents on 135421 (dw-fix-comps, dw-fix-comps2) had ended
+    and released their browsers. Starting the discovery without a case id worked, so the hold was
+    on the case, not the browser. Item 51's fix covers release and done; this hold may come from a
+    discovery that never got a browser (dw-fix-comps2 stopped after two failed first-page loads,
+    then ended with no discovery open, so it ran neither end nor release). A hold should also end
+    when its holder's discovery start fails, and the refusal should say since when it is held.
+
+57. **The first page of a cold site times out at 30 s.** After an idle night the sign-in page
+    (`/hr` -> 302 -> `/hr/security/login`) took over 60 s twice from curl, then 5 s, then 3 s. Every
+    Auto Run browser failed "did not answer Page.navigate within 30000ms" or "the sign-in page did
+    not open (net::ERR_ABORTED)", across three releases and four replays per agent, so two whole
+    rounds proved nothing. The person's own browser loaded (already signed in). Item 50 retries
+    once; a first navigation should wait longer (or retry with backoff up to ~2 min) and say "the
+    site is slow to start" rather than blame the browser.
+
+58. **A delete loop with `except` can protect nothing.** dw-fix-comps wrote
+    `repeat_while_visible` on the competency groups' Delete button with `except` naming Core
+    Competencies and Leadership Competencies. The button's row (by the guide's rule: nearest tr,
+    [role=row], li or data-*-id) did not contain the group name, so no row read as protected, and
+    the loop deleted all three groups of the shared tree in discovery. The agent re-applied both
+    templates; the tree came back with new ids. The save (and the discovery run) should refuse a
+    loop with `except` when, on the seen page, none of the matches' rows contains any `except`
+    text while those texts are on the page, and say which element the row resolved to.
+
+59. **A by-name delete loop double-sees the row on a slow site.** In 135412/135421 a
+    `repeat_while_visible` deleting the made row by name ran a second pass after the first delete:
+    the row was still in the DOM when the 5 s wait ended, the next pass clicked Delete again and
+    then found no confirm dialog, failing the step. So step 6's delete stayed `nth 2` behind a name
+    check. The wait for the row to go should follow the delete's own request (or allow a longer
+    `settle_ms`), and a pass whose `then` fails because the row is already gone should end the loop.
+
+60. **No locator picks a row by its text, and no action remembers a value.**
+    - Selectors have no "has text" filter, so a row or card holding a name is reached only by
+      `nth` (the Performance-based template card is `nth 1`; 135405/135412/135413/135421/135342 edit
+      or delete row 2 after a check that row 2 holds the made name). A `has_text` (or row-of-cell)
+      selector would make those deletes safe.
+    - Seven Competencies cases (135388, 135408, 135346, 135285, 135416, 135286, 135287) say "the
+      pills keep the counts from step 4". With no `remember_text` (like `remember_url`) the
+      before/after check cannot be written; the scripts check the baseline 2/4/7 as assumed values.
+
+61. **`repeat_while_visible` and the clean-up step are hard to shape.**
+    - Its `then` refuses `when_visible` and `expect_hidden`, so a loop cannot skip a row that is
+      already going, nor confirm a dialog only if it shows.
+    - Adding one step (a clean-up step for 135342) needs the whole script resent, with its 5,000-
+      character typed values; the rewriter gave up and 135342 has no clean-up. An edit that inserts
+      or appends one step would do.
+    - A clean-up step carries no checks, so moving a case's own delete there drops its expected
+      result; two rewriters dropped "row is gone" and "card reads Active" checks that way before
+      being told not to. The guide and the save should say: a delete the case asks for stays in its
+      step with its check; the clean-up holds a guarded fallback. The save could warn when an
+      action moved into the clean-up took a check with it.
+
+62. **`get_accounts` shows the assistant every password.** On a test environment the answer lists
+    each login's password in plain text, and a rewriter quoted that in its report. The assistant
+    never types a password (Auto Run signs in), so `get_accounts` should show only key, label,
+    username, role and whether a password is set; the password stays for `propose_accounts`.
+
 ## Smaller
 
 - `save_autorun_script` through MCP drops `edits`, so repairs had to go through
