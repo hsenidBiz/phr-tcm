@@ -79,6 +79,9 @@ struct Rows {
     pending: Vec<(usize, u64)>,
     /// A delete click removes its row at once and no confirm is ever shown.
     vanish_on_delete: bool,
+    /// A delete click takes the browser to another page: the mark goes with it.
+    navigate_on_delete: bool,
+    href: String,
 }
 
 type Shared = Arc<Mutex<Rows>>;
@@ -119,7 +122,7 @@ fn slow_groups(names: Vec<&'static str>, slow_ms: u64) -> (ScriptedDriver, Share
 fn page_with(names: Vec<&'static str>, blind: bool, on_page: Option<Vec<&str>>, slow_ms: u64, vanish_on_delete: bool) -> (ScriptedDriver, Shared) {
     let n = names.len();
     let clock: Arc<AtomicU64> = Default::default();
-    let rows = Arc::new(Mutex::new(Rows { names, alive: vec![true; n], marked: None, armed: None, clicks: vec![], blind, in_frame: false, read_fails: false, on_page: on_page.map(|v| v.into_iter().map(String::from).collect()), clock: clock.clone(), slow_ms, pending: vec![], vanish_on_delete }));
+    let rows = Arc::new(Mutex::new(Rows { names, alive: vec![true; n], marked: None, armed: None, clicks: vec![], blind, in_frame: false, read_fails: false, on_page: on_page.map(|v| v.into_iter().map(String::from).collect()), clock: clock.clone(), slow_ms, pending: vec![], vanish_on_delete, navigate_on_delete: false, href: "https://hr.example.internal/list".into() }));
     let page = rows.clone();
     let mut d = ScriptedDriver::new(move |method, params| {
         let f = params["functionDeclaration"].as_str().unwrap_or("");
@@ -133,6 +136,7 @@ fn page_with(names: Vec<&'static str>, blind: bool, on_page: Option<Vec<&str>>, 
         r.pending.retain(|(_, t)| *t > now);
         Ok(match method {
             "Runtime.evaluate" if params["expression"] == "document" => json!({ "result": { "objectId": "doc" } }),
+            "Runtime.evaluate" if params["expression"] == "location.href" => json!({ "result": { "value": r.href.clone() } }),
             "Runtime.evaluate" => json!({ "result": { "value": { "origin": "https://hr.example.internal", "entries": [] } } }),
             "Runtime.callFunctionOn" if f == CSS_JS => {
                 let sel = params["arguments"][0]["value"].as_str().unwrap_or("").to_string();
@@ -221,7 +225,11 @@ fn page_with(names: Vec<&'static str>, blind: bool, on_page: Option<Vec<&str>>, 
                     let i = (x - 100.0) as usize;
                     let said = format!("delete {}", r.names[i]);
                     r.clicks.push(said);
-                    if r.vanish_on_delete {
+                    if r.navigate_on_delete {
+                        r.href = "https://hr.example.internal/confirm".into();
+                        r.marked = None;
+                        r.armed = Some(i);
+                    } else if r.vanish_on_delete {
                         r.alive[i] = false;
                     } else {
                         r.armed = Some(i);
@@ -750,6 +758,25 @@ async fn a_pass_whose_row_went_while_it_worked_ends_the_loop() {
     assert!(out[0].detail.contains("the row had already gone"), "{}", out[0].detail);
     assert!(out[0].detail.contains("none left"), "{}", out[0].detail);
     assert!(left(&rows).is_empty(), "{:?}", left(&rows));
+    assert_eq!(clicks(&rows), vec!["delete Old A", "delete Old B"]);
+    assert!(out[0].detail.contains("2 passes"), "{}", out[0].detail);
+}
+
+#[tokio::test]
+async fn a_pass_that_navigates_away_and_then_fails_still_fails() {
+    let (mut d, rows) = goal_groups(vec!["Old A", "Old B"]);
+    rows.lock().unwrap().navigate_on_delete = true;
+    let a = action(json!({
+        "kind": "repeat_while_visible", "selector": { "css": ".delete" }, "max": 3,
+        "then": [
+            { "kind": "click", "selector": [ { "css": ROW_SCOPE }, { "css": ".delete" } ] },
+            { "kind": "click", "selector": { "css": "#broken" } }
+        ]
+    }));
+    let out = run(&mut d, vec![a]).await;
+    assert!(!out[0].ok, "{:?}", out[0]);
+    assert!(!out[0].detail.contains("already gone"), "{}", out[0].detail);
+    assert_eq!(left(&rows), vec!["Old A", "Old B"]);
 }
 
 #[tokio::test]

@@ -1959,8 +1959,9 @@ async fn repeat_while_visible<D: Driver>(
             let n = open.len();
             let rows = if n == 1 { "row" } else { "rows" };
             let kept_said = kept_said(&kept);
+            let noted = if notes.is_empty() { String::new() } else { format!("; {}", notes.join("; ")) };
             return (
-                ActionOutcome::failed(format!("{target}: still {n} {rows} after max {max} passes{kept_said}")),
+                ActionOutcome::failed(format!("{target}: still {n} {rows} after max {max} passes{kept_said}{noted}")),
                 None,
             );
         }
@@ -1970,6 +1971,9 @@ async fn repeat_while_visible<D: Driver>(
             Err(e) => return (crate::browser::actions::harness(e), None),
         };
         passes += 1;
+        // Where the page is as the pass begins: a mark that vanished
+        // because the page went elsewhere is not a row that was deleted.
+        let began_at = page_address(d).await;
         let mut said: Vec<String> = Vec::with_capacity(then.len());
         let mut quiet = false;
         for step in then {
@@ -1985,7 +1989,12 @@ async fn repeat_while_visible<D: Driver>(
             if !out.ok {
                 // A pass whose row has already gone did its work: what it
                 // still had to do was for a row that is no longer there.
-                let gone = marked && stop.is_none() && !out.harness && matches!(repeat::row_still_there(d).await, Ok(false));
+                let gone = marked
+                    && stop.is_none()
+                    && !out.harness
+                    && began_at.is_some()
+                    && page_address(d).await == began_at
+                    && matches!(repeat::row_still_there(d).await, Ok(false));
                 if pass_failure_ends_quietly(gone) {
                     notes.push(format!("pass {passes}: the row had already gone ({})", out.detail));
                     quiet = true;
@@ -2004,6 +2013,7 @@ async fn repeat_while_visible<D: Driver>(
         crate::browser::actions::settle(d, timing).await;
         if marked && !quiet {
             let began = Instant::now();
+            // Idle time is counted too, so a driver on a fake clock ends the wait.
             let mut waited: u64 = 0;
             while matches!(repeat::row_still_there(d).await, Ok(true))
                 && waited.max(began.elapsed().as_millis() as u64) < row_wait_ms
@@ -2014,6 +2024,13 @@ async fn repeat_while_visible<D: Driver>(
         }
         repeat::unmark(d).await;
     }
+}
+
+/// The page's address, or None when it will not say.
+async fn page_address<D: Driver>(d: &mut D) -> Option<String> {
+    crate::browser::page::release(d).await;
+    let v = crate::browser::page::eval_value(d, "location.href").await.ok()?;
+    Some(v.as_str().unwrap_or("").to_string())
 }
 
 /// Whether a failed `then` action ends its pass quietly: when the marked
