@@ -49,6 +49,18 @@ Classify each failure before you change anything: the locator, timing, the envir
 /// the more specific, more actionable ones.
 pub fn stop_reason(case: &CaseRecord) -> Option<String> {
     if let Some(step0) = case.steps.iter().find(|s| s.step_number == SIGN_IN_STEP) {
+        if step0.outcomes.last().is_some_and(|o| !o.ok && super::signin::is_reset_unconfirmed(&o.detail)) {
+            return Some(
+                "the account's password may have been reset by the app and not yet proved - check it in Accounts before anything else, and do not reset it on the site again"
+                    .to_string(),
+            );
+        }
+        if step0.outcomes.last().is_some_and(|o| !o.ok && super::signin::is_password_expired(&o.detail)) {
+            return Some(
+                "the account's password has expired - the site sent it to its password reset page; the account needs a password reset (or another account), not a script change"
+                    .to_string(),
+            );
+        }
         if step0.outcomes.last().is_some_and(|o| !o.ok) {
             return Some(
                 "the sign-in failed - fix the account or the recipe in the app, not the script"

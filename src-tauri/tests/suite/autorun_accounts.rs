@@ -139,3 +139,131 @@ fn the_account_for_a_run_is_a_real_key_on_this_machine_or_nothing() {
         "there is no account \"ghost\" on this machine - add it in Auto Run, Accounts"
     );
 }
+
+#[test]
+fn set_password_for_drops_saved_session() {
+    use v2_lib::autorun::accounts::set_password_for;
+    let dir = tempfile::tempdir().unwrap();
+    save_accounts(dir.path(), &[account("admin", "kim", "Old-Pw1"), account("emp", "lee", "Emp-Pw1")]).unwrap();
+    let env_id = v2_lib::environments::active_id(dir.path()).unwrap();
+    for key in ["admin", "emp"] {
+        let p = session_path(dir.path(), key).unwrap();
+        std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+        std::fs::write(&p, "{}").unwrap();
+    }
+    set_password_for(dir.path(), &env_id, "admin", "Abc@123").unwrap();
+    let all = load_accounts(dir.path()).unwrap();
+    assert_eq!(all.iter().find(|a| a.key == "admin").unwrap().password, "Abc@123");
+    assert_eq!(all.iter().find(|a| a.key == "emp").unwrap().password, "Emp-Pw1");
+    assert!(!session_path(dir.path(), "admin").unwrap().exists(), "the old login's session was kept");
+    assert!(session_path(dir.path(), "emp").unwrap().exists(), "another account lost its session");
+}
+
+#[test]
+fn set_password_for_an_unknown_account_changes_nothing() {
+    use v2_lib::autorun::accounts::set_password_for;
+    let dir = tempfile::tempdir().unwrap();
+    save_accounts(dir.path(), &[account("admin", "kim", "Old-Pw1")]).unwrap();
+    let env_id = v2_lib::environments::active_id(dir.path()).unwrap();
+    let err = set_password_for(dir.path(), &env_id, "ghost", "Abc@123").unwrap_err();
+    assert!(!err.contains("Abc@123") && !err.contains("Old-Pw1"), "{err}");
+    assert_eq!(load_accounts(dir.path()).unwrap()[0].password, "Old-Pw1");
+}
+
+#[test]
+fn parallel_writers_do_not_lose_each_others_passwords() {
+    use v2_lib::autorun::accounts::{commit_pending_password, set_pending_password};
+    let dir = tempfile::tempdir().unwrap();
+    let keys: Vec<String> = (0..12).map(|i| format!("acct{i}")).collect();
+    let all: Vec<Account> = keys.iter().map(|k| account(k, k, "Old-Pw1")).collect();
+    save_accounts(dir.path(), &all).unwrap();
+    let env_id = v2_lib::environments::active_id(dir.path()).unwrap();
+    let root = dir.path().to_path_buf();
+    let handles: Vec<_> = keys
+        .iter()
+        .cloned()
+        .map(|k| {
+            let (root, env_id) = (root.clone(), env_id.clone());
+            std::thread::spawn(move || {
+                for round in 0..5 {
+                    set_pending_password(&root, &env_id, &k, &format!("New-{k}-{round}")).unwrap();
+                }
+                commit_pending_password(&root, &env_id, &k, &format!("New-{k}-4")).unwrap();
+            })
+        })
+        .collect();
+    for h in handles {
+        h.join().unwrap();
+    }
+    let after = load_accounts(dir.path()).unwrap();
+    assert_eq!(after.len(), 12);
+    for k in &keys {
+        assert_eq!(after.iter().find(|a| &a.key == k).unwrap().password, format!("New-{k}-4"), "{k} lost its password");
+        assert!(v2_lib::autorun::accounts::pending_password_for(dir.path(), &env_id, k).is_none(), "{k} kept a pending one");
+    }
+}
+
+#[test]
+fn commit_pending_password_keeps_the_session_but_a_plain_change_drops_it() {
+    use v2_lib::autorun::accounts::{commit_pending_password, set_password_for, set_pending_password};
+    let dir = tempfile::tempdir().unwrap();
+    save_accounts(dir.path(), &[account("admin", "kim", "Old-Pw1")]).unwrap();
+    let env_id = v2_lib::environments::active_id(dir.path()).unwrap();
+    let p = session_path(dir.path(), "admin").unwrap();
+    std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+    std::fs::write(&p, "{}").unwrap();
+    set_pending_password(dir.path(), &env_id, "admin", "Abc@123").unwrap();
+    commit_pending_password(dir.path(), &env_id, "admin", "Abc@123").unwrap();
+    assert!(p.exists(), "the confirming sign-in's session was dropped");
+    assert_eq!(load_accounts(dir.path()).unwrap()[0].password, "Abc@123");
+    assert!(v2_lib::autorun::accounts::pending_password_for(dir.path(), &env_id, "admin").is_none());
+    set_password_for(dir.path(), &env_id, "admin", "Other-Pw2").unwrap();
+    assert!(!p.exists());
+}
+
+#[test]
+fn a_save_made_from_an_older_list_is_refused_and_a_person_change_lets_go_of_a_held_password() {
+    use v2_lib::autorun::accounts::{
+        accounts_version, save_accounts_checked, set_password_for, set_pending_password, ACCOUNTS_CHANGED,
+    };
+    let dir = tempfile::tempdir().unwrap();
+    save_accounts(dir.path(), &[account("admin", "kim", "Old-Pw1")]).unwrap();
+    let env_id = v2_lib::environments::active_id(dir.path()).unwrap();
+    let loaded = accounts_version(dir.path(), &env_id);
+    // Something else resets the password after the dialog loaded the list.
+    set_password_for(dir.path(), &env_id, "admin", "Abc@123").unwrap();
+    let err = save_accounts_checked(dir.path(), &env_id, &[account("admin", "kim", "Old-Pw1")], Some(&loaded)).unwrap_err();
+    assert_eq!(err, ACCOUNTS_CHANGED);
+    assert_eq!(load_accounts(dir.path()).unwrap()[0].password, "Abc@123");
+    // From the current version it goes through, and a changed password lets go of a held one.
+    set_pending_password(dir.path(), &env_id, "admin", "Test@1234").unwrap();
+    let now = accounts_version(dir.path(), &env_id);
+    save_accounts_checked(dir.path(), &env_id, &[account("admin", "kim", "Typed-Pw3")], Some(&now)).unwrap();
+    assert!(v2_lib::autorun::accounts::pending_password_for(dir.path(), &env_id, "admin").is_none());
+}
+
+#[test]
+fn merging_added_accounts_keeps_a_password_changed_meanwhile_and_races_lose_nothing() {
+    use v2_lib::autorun::accounts::{merge_accounts_for, set_password_for};
+    let dir = tempfile::tempdir().unwrap();
+    save_accounts(dir.path(), &[account("keep", "k", "Old-Pw1")]).unwrap();
+    let env_id = v2_lib::environments::active_id(dir.path()).unwrap();
+    // A reset lands after the caller looked at the list.
+    set_password_for(dir.path(), &env_id, "keep", "Abc@123").unwrap();
+    merge_accounts_for(dir.path(), &env_id, vec![account("new0", "n", "P0")]).unwrap();
+    let root = dir.path().to_path_buf();
+    let handles: Vec<_> = (1..9)
+        .map(|i| {
+            let (root, env_id) = (root.clone(), env_id.clone());
+            std::thread::spawn(move || {
+                merge_accounts_for(&root, &env_id, vec![account(&format!("new{i}"), "n", "P")]).unwrap();
+            })
+        })
+        .collect();
+    for h in handles {
+        h.join().unwrap();
+    }
+    let all = load_accounts(dir.path()).unwrap();
+    assert_eq!(all.len(), 10);
+    assert_eq!(all.iter().find(|a| a.key == "keep").unwrap().password, "Abc@123");
+}

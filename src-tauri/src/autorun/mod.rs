@@ -7,6 +7,7 @@
 //! a person has reviewed a run and presses Send.
 
 pub mod accounts;
+pub mod active_login;
 pub mod action_help;
 pub mod agents;
 pub mod api_checks;
@@ -36,12 +37,14 @@ pub mod mapping_summary;
 pub mod marks;
 pub mod menu_setup;
 pub mod nav;
+pub mod needs_records;
 pub mod proven;
 pub mod roles;
 pub mod network;
 pub mod one_browser;
 pub mod overrides;
 pub mod page_compact;
+pub mod password_expiry;
 pub mod page_errors;
 pub mod patterns;
 pub mod plan;
@@ -72,6 +75,7 @@ pub mod setup;
 pub mod setup_find;
 pub mod setup_run;
 pub mod setups;
+pub mod sign_in_check;
 pub mod signin;
 pub mod signin_recorder;
 pub mod slots;
@@ -293,6 +297,14 @@ pub struct CaseScript {
     /// when there are any.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub precondition_repairs: Vec<PreconditionRepair>,
+    /// Kept records the case relies on and did not make, each one named by a
+    /// saved setup whose database find rule looks for it. The run asks
+    /// every one before it signs in (`needs_records`) and blocks the case,
+    /// naming what is missing, when one is not there. Every save validates
+    /// them. Written only when there are any, so an older script reads
+    /// exactly as it always did.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub needs_records: Vec<NeededRecord>,
     /// The draft this case makes for itself before it signs in: a fixture
     /// the run performs on every run of the case. Its outputs reach
     /// the steps as `{{setup.<output>}}` (`setup`). A repair can never
@@ -405,6 +417,15 @@ pub struct Precondition {
     /// sentence when the precondition is not met.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub why: Option<String>,
+}
+
+/// One kept record a case relies on: the saved `setup` whose database find
+/// rule looks for it, and `why`, what the case needs it for (said in the
+/// Blocked sentence when it is not there).
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, specta::Type)]
+pub struct NeededRecord {
+    pub setup: String,
+    pub why: String,
 }
 
 /// What a repair's precondition edit does to one precondition.

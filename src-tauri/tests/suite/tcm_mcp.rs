@@ -95,7 +95,7 @@ fn tools_list_names_every_tool() {
         .collect();
     // This test binary is a development build (cargo test compiles with
     // debug assertions on), so with nothing disabled and the network tools'
-    // switch on the thirty-five dev-only tools (Auto Run's twenty-eight, then
+    // switch on the thirty-six dev-only tools (Auto Run's twenty-nine, then
     // the API templates row's seven) are listed like any other switchable
     // tool - between merge_case_files and db_lookup, where they sit in the
     // source.
@@ -134,6 +134,7 @@ fn tools_list_names_every_tool() {
             "set_autorun_order",
             "propose_accounts",
             "get_accounts",
+            "check_autorun_sign_in",
             "save_test_file",
             "get_autorun_network_wait",
             "search_autorun_requests",
@@ -843,7 +844,7 @@ fn autorun_tools_named_disabled_in_a_dev_build_are_absent_and_refused_the_ordina
         if path == "/tools" {
             return Ok((
                 200,
-                r#"{"disabled":["save_autorun_script","get_autorun_script","delete_autorun_script","get_autorun_network_wait","get_autorun_page","probe_autorun_locator","try_autorun_action","replay_autorun_to_step","start_autorun_discovery","discover_autorun_actions","save_autorun_area","end_autorun_discovery","reset_autorun_browser","save_autorun_component","get_autorun_failures","record_quirk","record_validation_rule","mark_autorun_suspected_defect","report_case_divergence","rule_case_divergence","clear_autorun_suspected_defect","set_autorun_order","search_autorun_requests","get_autorun_request","autorun_capture","autorun_har","set_autorun_headers","autorun_cookies","record_explore_change","get_explore_changes","get_kept_actions","save_setup","list_setups","run_setup"]}"#.into(),
+                r#"{"disabled":["save_autorun_script","get_autorun_script","delete_autorun_script","get_autorun_network_wait","get_autorun_page","probe_autorun_locator","try_autorun_action","replay_autorun_to_step","start_autorun_discovery","discover_autorun_actions","save_autorun_area","end_autorun_discovery","reset_autorun_browser","save_autorun_component","get_autorun_failures","record_quirk","record_validation_rule","mark_autorun_suspected_defect","report_case_divergence","rule_case_divergence","clear_autorun_suspected_defect","set_autorun_order","check_autorun_sign_in","search_autorun_requests","get_autorun_request","autorun_capture","autorun_har","set_autorun_headers","autorun_cookies","record_explore_change","get_explore_changes","get_kept_actions","save_setup","list_setups","run_setup"]}"#.into(),
             ));
         }
         Ok((200, "{}".into()))
@@ -1560,7 +1561,7 @@ fn with_auto_run_off_and_api_templates_on_the_quirk_tool_stays() {
         if path == "/tools" {
             return Ok((
                 200,
-                r#"{"disabled":["save_autorun_script","get_autorun_script","delete_autorun_script","get_autorun_network_wait","get_autorun_page","probe_autorun_locator","try_autorun_action","replay_autorun_to_step","start_autorun_discovery","discover_autorun_actions","save_autorun_area","end_autorun_discovery","reset_autorun_browser","save_autorun_component","get_autorun_failures","record_validation_rule","mark_autorun_suspected_defect","report_case_divergence","rule_case_divergence","clear_autorun_suspected_defect","set_autorun_order","search_autorun_requests","get_autorun_request","autorun_capture","autorun_har","set_autorun_headers","autorun_cookies","record_explore_change","get_explore_changes","get_kept_actions","save_setup","list_setups","run_setup"]}"#.into(),
+                r#"{"disabled":["save_autorun_script","get_autorun_script","delete_autorun_script","get_autorun_network_wait","get_autorun_page","probe_autorun_locator","try_autorun_action","replay_autorun_to_step","start_autorun_discovery","discover_autorun_actions","save_autorun_area","end_autorun_discovery","reset_autorun_browser","save_autorun_component","get_autorun_failures","record_validation_rule","mark_autorun_suspected_defect","report_case_divergence","rule_case_divergence","clear_autorun_suspected_defect","set_autorun_order","check_autorun_sign_in","search_autorun_requests","get_autorun_request","autorun_capture","autorun_har","set_autorun_headers","autorun_cookies","record_explore_change","get_explore_changes","get_kept_actions","save_setup","list_setups","run_setup"]}"#.into(),
             ));
         }
         Ok((200, "ok".into()))
@@ -1580,7 +1581,7 @@ fn with_auto_run_off_and_api_templates_on_the_quirk_tool_stays() {
 /// filled in.
 #[test]
 fn with_only_the_api_templates_row_on_a_quirk_without_from_is_the_api_assistants() {
-    const AUTORUN_ROW_OFF: &str = r#"{"disabled":["save_autorun_script","get_autorun_script","delete_autorun_script","get_autorun_network_wait","get_autorun_page","probe_autorun_locator","try_autorun_action","replay_autorun_to_step","start_autorun_discovery","discover_autorun_actions","save_autorun_area","end_autorun_discovery","reset_autorun_browser","save_autorun_component","get_autorun_failures","record_validation_rule","mark_autorun_suspected_defect","report_case_divergence","rule_case_divergence","clear_autorun_suspected_defect","set_autorun_order","propose_accounts","get_accounts","save_test_file","search_autorun_requests","get_autorun_request","autorun_capture","autorun_har","set_autorun_headers","autorun_cookies","record_explore_change","get_explore_changes","get_kept_actions","save_setup","list_setups","run_setup"]}"#;
+    const AUTORUN_ROW_OFF: &str = r#"{"disabled":["save_autorun_script","get_autorun_script","delete_autorun_script","get_autorun_network_wait","get_autorun_page","probe_autorun_locator","try_autorun_action","replay_autorun_to_step","start_autorun_discovery","discover_autorun_actions","save_autorun_area","end_autorun_discovery","reset_autorun_browser","save_autorun_component","get_autorun_failures","record_validation_rule","mark_autorun_suspected_defect","report_case_divergence","rule_case_divergence","clear_autorun_suspected_defect","set_autorun_order","propose_accounts","get_accounts","check_autorun_sign_in","save_test_file","search_autorun_requests","get_autorun_request","autorun_capture","autorun_har","set_autorun_headers","autorun_cookies","record_explore_change","get_explore_changes","get_kept_actions","save_setup","list_setups","run_setup"]}"#;
     let posted = |tools: &'static str, args: &str| -> (String, serde_json::Value) {
         let calls = std::cell::RefCell::new(vec![]);
         let call = |_m: &str, path: &str, body: &str| -> Result<(u16, String), String> {
@@ -1642,7 +1643,7 @@ fn the_guide_tool_offers_a_topic_only_while_its_row_is_on() {
 
     // Every module on, the Auto Run row switched off: no autorun topic, its
     // parts gone, the others there.
-    const ROW_OFF: &str = r#"{"disabled":["save_autorun_script","get_autorun_script","delete_autorun_script","get_autorun_page","probe_autorun_locator","try_autorun_action","replay_autorun_to_step","start_autorun_discovery","discover_autorun_actions","save_autorun_area","end_autorun_discovery","reset_autorun_browser","save_autorun_component","get_autorun_failures","record_validation_rule","mark_autorun_suspected_defect","report_case_divergence","rule_case_divergence","clear_autorun_suspected_defect","set_autorun_order","propose_accounts","get_accounts","save_test_file","get_autorun_network_wait","record_explore_change","get_explore_changes","get_kept_actions","save_setup","list_setups","run_setup"],"modules":["writing_style","auto_run","api_templates","crystal_reports","db_access","playwright"]}"#;
+    const ROW_OFF: &str = r#"{"disabled":["save_autorun_script","get_autorun_script","delete_autorun_script","get_autorun_page","probe_autorun_locator","try_autorun_action","replay_autorun_to_step","start_autorun_discovery","discover_autorun_actions","save_autorun_area","end_autorun_discovery","reset_autorun_browser","save_autorun_component","get_autorun_failures","record_validation_rule","mark_autorun_suspected_defect","report_case_divergence","rule_case_divergence","clear_autorun_suspected_defect","set_autorun_order","propose_accounts","get_accounts","check_autorun_sign_in","save_test_file","get_autorun_network_wait","record_explore_change","get_explore_changes","get_kept_actions","save_setup","list_setups","run_setup"],"modules":["writing_style","auto_run","api_templates","crystal_reports","db_access","playwright"]}"#;
     let g = guide_of(ROW_OFF);
     assert_eq!(g["inputSchema"]["properties"]["topic"]["enum"], serde_json::json!(["writing", "api_templates", "reports"]));
     assert!(g["inputSchema"]["properties"].get("quick").is_none(), "{g}");
@@ -1739,7 +1740,7 @@ fn the_account_tools_are_listed_only_with_the_auto_run_row_where_auto_run_is_off
         if path == "/tools" {
             return Ok((
                 200,
-                r#"{"disabled":["save_autorun_script","get_autorun_script","delete_autorun_script","get_autorun_network_wait","get_autorun_page","probe_autorun_locator","try_autorun_action","replay_autorun_to_step","start_autorun_discovery","discover_autorun_actions","save_autorun_area","end_autorun_discovery","reset_autorun_browser","save_autorun_component","get_autorun_failures","record_quirk","record_validation_rule","mark_autorun_suspected_defect","report_case_divergence","rule_case_divergence","clear_autorun_suspected_defect","set_autorun_order","propose_accounts","get_accounts","save_test_file","search_autorun_requests","get_autorun_request","autorun_capture","autorun_har","set_autorun_headers","autorun_cookies","record_explore_change","get_explore_changes","get_kept_actions","save_setup","list_setups","run_setup"]}"#.into(),
+                r#"{"disabled":["save_autorun_script","get_autorun_script","delete_autorun_script","get_autorun_network_wait","get_autorun_page","probe_autorun_locator","try_autorun_action","replay_autorun_to_step","start_autorun_discovery","discover_autorun_actions","save_autorun_area","end_autorun_discovery","reset_autorun_browser","save_autorun_component","get_autorun_failures","record_quirk","record_validation_rule","mark_autorun_suspected_defect","report_case_divergence","rule_case_divergence","clear_autorun_suspected_defect","set_autorun_order","propose_accounts","get_accounts","check_autorun_sign_in","save_test_file","search_autorun_requests","get_autorun_request","autorun_capture","autorun_har","set_autorun_headers","autorun_cookies","record_explore_change","get_explore_changes","get_kept_actions","save_setup","list_setups","run_setup"]}"#.into(),
             ));
         }
         Ok((200, "{}".into()))
@@ -1785,7 +1786,7 @@ fn the_account_tools_reach_their_routes() {
     );
     assert!(
         description.ends_with(
-            "The user accounts are generally in the HR_SM_USER_ACCOUNT table: look there first (with db_query) for the logins and their passwords."
+            "The user accounts are generally in the HS_SM_USER_ACCOUNT table: look there first (with db_query) for the logins and their passwords."
         ),
         "{description}"
     );
@@ -2796,7 +2797,7 @@ fn the_network_tools_are_off_until_the_app_says_yes() {
             assert!(v["result"]["content"][0]["text"].as_str().unwrap().contains("Network tools switch"), "{tool}: {v}");
         }
         assert!(names.contains(&"get_autorun_page") && names.contains(&"get_autorun_network_wait"), "{names:?}");
-        assert_eq!(names.len(), 68, "{names:?}");
+        assert_eq!(names.len(), 69, "{names:?}");
     }
     // The proxy's own fallback when the app does not answer names no switch.
     let saved = v2_lib::mcp::tools_reply_or_saved(Err("down".into()), Some((Module::ALL.into_iter().collect(), true)));

@@ -31,3 +31,4 @@ that does the same job, your own browser, an editor or a sub-agent included.
   never to make a run pass.
 - When your caller gave you a name, pass it as `agent` on every Auto Run and API template call.
 - If a change still fails after 3 tries, stop and report what fails, what you tried and your diagnosis.
+- A rewrite keeps every needs_records entry as saved (it may add more).

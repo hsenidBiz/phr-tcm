@@ -18,7 +18,7 @@ afterEach(() => {
 
 const QA = {
   id: "env-00000002", name: "QA", start_url: "", allowed_origins: [], db_id: "qa-read",
-  test_environment: false, test_prefix: "QATEST", has_default_password: false, db_auto_approve: false,
+  test_environment: false, test_prefix: "QATEST", has_default_password: false, db_auto_approve: false, password_expiry_query: "", active_session_query: "", reset_expired_passwords: false,
 };
 const SOURCES = [
   { key: "env-00000001", name: "Default", removed: false, days_left: null },

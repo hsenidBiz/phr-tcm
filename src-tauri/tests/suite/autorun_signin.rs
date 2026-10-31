@@ -417,7 +417,18 @@ fn recipe_at_login() -> v2_lib::autorun::recipe::SignInRecipe {
 /// never when `never`. A `Page.reload` would post the form again: the tests
 /// assert there is none.
 fn cold_app(href: &'static str, title: &'static str, form_stays: bool, never: bool) -> (ScriptedDriver, common::StatefulApp) {
-    let (d, state) = stateful_app(false, None);
+    cold_app_without(href, title, form_stays, never, None)
+}
+
+/// `cold_app` whose page has no element matching the css `missing`.
+fn cold_app_without(
+    href: &'static str,
+    title: &'static str,
+    form_stays: bool,
+    never: bool,
+    missing: Option<&'static str>,
+) -> (ScriptedDriver, common::StatefulApp) {
+    let (d, state) = stateful_app(false, missing);
     let (signed_in, typed) = (state.signed_in.clone(), state.typed_password.clone());
     let submitted = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     let last = std::sync::Arc::new(std::sync::Mutex::new(String::new()));
@@ -573,4 +584,486 @@ async fn a_success_notes_where_it_landed_without_changing_its_words() {
     assert!(out.ok && state.typed_password.load(Ordering::SeqCst), "{}", out.detail);
     assert_eq!(out.landed.as_deref(), Some("/hr/home/index"));
     assert_eq!(out.detail, "signed in as Administrator");
+}
+
+// ------------------------------------------------- the password reset page
+
+use v2_lib::autorun::signin::{is_password_expired, PASSWORD_EXPIRED};
+
+const RESET_URL: &str = "https://hr.example.internal/hr/security/PasswordReset";
+
+/// `recipe_at_login` that knows the site's reset page; with `wait`, a
+/// `wait_for` of the marker ends the steps (as the built-in recipe's does).
+fn reset_recipe(wait: bool) -> v2_lib::autorun::recipe::SignInRecipe {
+    let mut v = serde_json::to_value(recipe_at_login()).unwrap();
+    v["password_reset"] = json!({ "path_contains": "/security/PasswordReset", "field": { "css": "#txtOldPassword" } });
+    if wait {
+        v["steps"].as_array_mut().unwrap().push(json!({ "kind": "wait_for", "selector": { "css": "#marker" }, "timeout_ms": 100 }));
+    }
+    serde_json::from_value(v).unwrap()
+}
+
+#[tokio::test]
+async fn reset_page_fails_as_password_expired() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut d, _state) = cold_app(RESET_URL, "Reset Password", false, true);
+    let out = sign_in(&mut d, dir.path(), &reset_recipe(false), &account(), &quick()).await;
+    assert!(!out.ok);
+    assert!(out.detail.starts_with(PASSWORD_EXPIRED), "{}", out.detail);
+    assert!(is_password_expired(&out.detail));
+    assert!(out.detail.contains("/hr/security/PasswordReset"), "{}", out.detail);
+    assert!(out.detail.contains("(page title: Reset Password)"), "{}", out.detail);
+    assert!(!out.detail.contains("hr.example.internal") && !out.detail.contains(PASSWORD), "{}", out.detail);
+    assert_eq!(out.landed.as_deref(), Some("/hr/security/PasswordReset"));
+    // Not slowness: the address was not opened again, the password typed once.
+    assert_eq!(d.calls_to("Page.navigate").len(), 1, "{:?}", d.methods());
+    assert_eq!(typed_count(&d), 1);
+    no_password_anywhere(&out);
+}
+
+#[tokio::test]
+async fn reset_page_after_a_wait_step_fails_as_password_expired_not_a_stopped_step() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut d, _state) = cold_app(RESET_URL, "Reset Password", false, true);
+    let out = sign_in(&mut d, dir.path(), &reset_recipe(true), &account(), &quick()).await;
+    assert!(!out.ok);
+    assert!(out.detail.starts_with(PASSWORD_EXPIRED), "{}", out.detail);
+    assert!(!out.detail.contains("sign-in stopped at step"), "{}", out.detail);
+    assert_eq!(typed_count(&d), 1);
+}
+
+#[tokio::test]
+async fn a_recipe_recorded_without_the_reset_entry_still_sees_the_reset_page() {
+    let dir = tempfile::tempdir().unwrap();
+    assert!(recipe_at_login().password_reset.is_none());
+    let (mut d, _state) = cold_app(RESET_URL, "Reset Password", false, true);
+    let out = sign_in(&mut d, dir.path(), &recipe_at_login(), &account(), &quick()).await;
+    assert!(out.detail.starts_with(PASSWORD_EXPIRED), "{}", out.detail);
+    assert_eq!(typed_count(&d), 1);
+    // And when its own wait step is what stops.
+    let mut v = serde_json::to_value(recipe_at_login()).unwrap();
+    v["steps"].as_array_mut().unwrap().push(json!({ "kind": "wait_for", "selector": { "css": "#marker" }, "timeout_ms": 100 }));
+    let waiting: v2_lib::autorun::recipe::SignInRecipe = serde_json::from_value(v).unwrap();
+    let (mut d, _state) = cold_app(RESET_URL, "Reset Password", false, true);
+    let out = sign_in(&mut d, dir.path(), &waiting, &account(), &quick()).await;
+    assert!(out.detail.starts_with(PASSWORD_EXPIRED), "{}", out.detail);
+}
+
+#[tokio::test]
+async fn the_reset_path_without_the_reset_field_is_not_password_expired() {
+    let dir = tempfile::tempdir().unwrap();
+    // The path matches, the field is not there: no misfire, with the recipe's
+    // own entry or the built-in fallback.
+    for recipe in [reset_recipe(false), recipe_at_login()] {
+        let (mut d, _state) = cold_app_without(RESET_URL, "Something else", true, true, Some("#txtOldPassword"));
+        let out = sign_in(&mut d, dir.path(), &recipe, &account(), &quick()).await;
+        assert!(!is_password_expired(&out.detail), "{}", out.detail);
+    }
+}
+
+#[tokio::test]
+async fn another_page_without_the_reset_field_is_not_password_expired() {
+    let dir = tempfile::tempdir().unwrap();
+    // The recipe knows the reset page and the browser is on the login page.
+    let (mut d, _state) = cold_app(LOGIN_URL, "Sign in", true, false);
+    let out = sign_in(&mut d, dir.path(), &reset_recipe(false), &account(), &quick()).await;
+    assert!(out.detail.starts_with(MARKER_NEVER_APPEARED), "{}", out.detail);
+}
+
+#[test]
+fn the_built_in_recipe_knows_the_reset_page() {
+    let page = v2_lib::autorun::recipe::builtin_recipe().password_reset.expect("the built-in recipe names the reset page");
+    assert_eq!(page.path_contains, "/security/PasswordReset");
+    assert_eq!(serde_json::to_value(&page.field).unwrap(), json!({ "css": "#txtOldPassword" }));
+}
+
+// ------------------------------------------- resetting an expired password
+
+use std::sync::{Arc, Mutex};
+use v2_lib::autorun::accounts::{load_accounts, Account};
+use v2_lib::autorun::signin::{next_password, PASSWORD_RESET_FAILED, PASSWORD_RESET_MAYBE, RESET_PASSWORDS};
+
+const HOME_URL: &str = "https://hr.example.internal/hr/home/index";
+const KEY: &str = "automation51";
+
+#[test]
+fn next_password_skips_current_and_refused() {
+    assert_eq!(RESET_PASSWORDS, ["Abc@123", "Test@1234"]);
+    assert_eq!(next_password("old-one", &[]), Some("Abc@123"));
+    assert_eq!(next_password("Abc@123", &[]), Some("Test@1234"));
+    assert_eq!(next_password("Test@1234", &[]), Some("Abc@123"));
+    assert_eq!(next_password("old-one", &["Abc@123".to_string()]), Some("Test@1234"));
+    assert_eq!(next_password("Abc@123", &["Test@1234".to_string()]), None);
+    assert_eq!(next_password("old-one", &["Abc@123".to_string(), "Test@1234".to_string()]), None);
+}
+
+fn reset_account() -> Account {
+    Account { key: KEY.into(), label: "Automation 51".into(), username: "kim".into(), password: PASSWORD.into() }
+}
+
+/// A data folder whose active environment is (or is not) marked a test
+/// environment, with the reset switch on or off, holding `reset_account`.
+fn reset_root(test_environment: bool, switch: bool) -> tempfile::TempDir {
+    use v2_lib::environments::{load_or_init, save_env_with, set_reset_expired_passwords};
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let mut e = load_or_init(root, Some("dev-read")).unwrap().environments[0].clone();
+    e.test_environment = test_environment;
+    let id = e.id.clone();
+    save_env_with(root, e, || vec!["dev-read".to_string()]).unwrap();
+    if switch {
+        set_reset_expired_passwords(root, &id, true).unwrap();
+    }
+    save_accounts(root, &[reset_account()]).unwrap();
+    dir
+}
+
+struct ResetApp {
+    /// (the field's selector, what was typed into it), in order.
+    typed: Arc<Mutex<Vec<(String, String)>>>,
+    submits: Arc<std::sync::atomic::AtomicUsize>,
+    /// The password held for the account at each press of the submit button
+    /// (needs `Site::root`).
+    pending_at_submit: Arc<Mutex<Vec<Option<String>>>>,
+}
+
+/// How the fake site behaves besides what `reset_app` says.
+#[derive(Default, Clone)]
+struct Site {
+    new_works: bool,
+    start_accepted: bool,
+    /// After the reset the login form is gone from the page (a slow site,
+    /// not a wrong password).
+    form_gone: bool,
+    /// Pressing submit fails as if the browser died.
+    die_on_submit: bool,
+    /// Where to read the held password from at each submit.
+    root: Option<std::path::PathBuf>,
+}
+
+impl ResetApp {
+    fn typed_into(&self, selector: &str) -> Vec<String> {
+        self.typed.lock().unwrap().iter().filter(|(s, _)| s == selector).map(|(_, t)| t.clone()).collect()
+    }
+    fn count_of(&self, text: &str) -> usize {
+        self.typed.lock().unwrap().iter().filter(|(_, t)| t == text).count()
+    }
+}
+
+/// A site that sends the login to its reset page. Submitting the reset form
+/// is accepted when the new password and its confirmation agree and are one
+/// of `accepts`; then the page goes to the login page, and the next sign-in
+/// (with whatever was typed) reaches the marker.
+fn reset_app(accepts: &'static [&'static str]) -> (ScriptedDriver, ResetApp) {
+    reset_app_site(accepts, Site { new_works: true, ..Site::default() })
+}
+
+/// `reset_app`; with `new_works` false, no sign-in after the reset reaches the
+/// marker (the page left the reset page but the password is not the site's);
+/// with `start_accepted`, the reset was already done.
+fn reset_app_with(accepts: &'static [&'static str], new_works: bool, start_accepted: bool) -> (ScriptedDriver, ResetApp) {
+    reset_app_site(accepts, Site { new_works, start_accepted, form_gone: true, ..Site::default() })
+}
+
+fn reset_app_site(accepts: &'static [&'static str], site: Site) -> (ScriptedDriver, ResetApp) {
+    let new_works = site.new_works;
+    let start_accepted = site.start_accepted;
+    let (d, state) = stateful_app(false, None);
+    let (signed_in, typed_flag) = (state.signed_in.clone(), state.typed_password.clone());
+    let accepted = Arc::new(std::sync::atomic::AtomicBool::new(start_accepted));
+    let last = Arc::new(Mutex::new(String::new()));
+    let typed: Arc<Mutex<Vec<(String, String)>>> = Arc::default();
+    let submits = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let pending_at_submit: Arc<Mutex<Vec<Option<String>>>> = Arc::default();
+    let app = ResetApp { typed: typed.clone(), submits: submits.clone(), pending_at_submit: pending_at_submit.clone() };
+    let d = d.answering_first(move |method, params| {
+        let page_now = || {
+            if !accepted.load(Ordering::SeqCst) {
+                (RESET_URL, "Reset Password")
+            } else if signed_in.load(Ordering::SeqCst) {
+                (HOME_URL, "Home")
+            } else {
+                (LOGIN_URL, "Sign in")
+            }
+        };
+        match method {
+            "Runtime.evaluate" if params["expression"] == "location.href" => {
+                Some(Ok(json!({ "result": { "value": page_now().0 } })))
+            }
+            "Runtime.evaluate" if params["expression"] == "document.title" => {
+                Some(Ok(json!({ "result": { "value": page_now().1 } })))
+            }
+            "Runtime.callFunctionOn" if params["objectId"] == "doc" && params["arguments"][0]["value"].is_string() => {
+                *last.lock().unwrap() = params["arguments"][0]["value"].as_str().unwrap().to_string();
+                None
+            }
+            "Input.insertText" => {
+                let text = params["text"].as_str().unwrap_or("").to_string();
+                if text != "kim" {
+                    typed_flag.store(true, Ordering::SeqCst);
+                }
+                typed.lock().unwrap().push((last.lock().unwrap().clone(), text));
+                None
+            }
+            "Input.dispatchMouseEvent"
+                if params["type"] == "mouseReleased" && (!accepted.load(Ordering::SeqCst) || !new_works) =>
+            {
+                if last.lock().unwrap().as_str() == "#btnsubmit" {
+                    submits.fetch_add(1, Ordering::SeqCst);
+                    if let Some(root) = &site.root {
+                        let id = v2_lib::environments::active_id(root).unwrap();
+                        pending_at_submit.lock().unwrap().push(v2_lib::autorun::accounts::pending_password_for(root, &id, KEY));
+                    }
+                    if site.die_on_submit {
+                        return Some(Err(CdpError::Closed));
+                    }
+                    let into = |sel: &str| {
+                        typed.lock().unwrap().iter().rev().find(|(s, _)| s == sel).map(|(_, t)| t.clone()).unwrap_or_default()
+                    };
+                    let (new, confirm) = (into("#txtNewPassword"), into("#txtConfirmPassword"));
+                    if new == confirm && accepts.contains(&new.as_str()) {
+                        accepted.store(true, Ordering::SeqCst);
+                    }
+                }
+                Some(Ok(json!({})))
+            }
+            "Runtime.getProperties"
+                if accepted.load(Ordering::SeqCst)
+                    && site.form_gone
+                    && matches!(last.lock().unwrap().as_str(), "#user" | "#pass" | "#go") =>
+            {
+                Some(Ok(json!({ "result": [] })))
+            }
+            "Runtime.getProperties" if accepted.load(Ordering::SeqCst) && last.lock().unwrap().as_str() == "#txtOldPassword" => {
+                Some(Ok(json!({ "result": [] })))
+            }
+            _ => None,
+        }
+    });
+    (d, app)
+}
+
+fn account_file_password(root: &std::path::Path) -> String {
+    load_accounts(root).unwrap().into_iter().find(|a| a.key == KEY).unwrap().password
+}
+
+#[tokio::test]
+async fn reset_on_test_environment_saves_new_password_and_signs_in() {
+    let _log = crate::serial::log_tail();
+    let dir = reset_root(true, true);
+    let (mut d, app) = reset_app(&["Abc@123", "Test@1234"]);
+    let out = sign_in(&mut d, dir.path(), &recipe_at_login(), &reset_account(), &quick()).await;
+    assert!(out.ok, "{}", out.detail);
+    assert_eq!(out.detail, "signed in as Automation 51");
+    // The current password was the old one, the alternate the new and its confirmation.
+    assert_eq!(app.typed_into("#txtOldPassword"), [PASSWORD]);
+    assert_eq!(app.typed_into("#txtNewPassword"), ["Abc@123"]);
+    assert_eq!(app.typed_into("#txtConfirmPassword"), ["Abc@123"]);
+    assert_eq!(app.submits.load(Ordering::SeqCst), 1);
+    // The sign-in carried on with the new password; the account holds it.
+    assert_eq!(app.count_of(PASSWORD), 2, "the old password: the first sign-in and the form");
+    assert_eq!(app.count_of("Abc@123"), 3, "new, confirm and the sign-in again");
+    assert_eq!(account_file_password(dir.path()), "Abc@123");
+    assert!(pending_of(dir.path()).is_none(), "the pending password was kept after it was confirmed");
+    assert!(
+        v2_lib::autorun::accounts::session_path(dir.path(), KEY).unwrap().exists(),
+        "the session the confirming sign-in made was dropped with the password change"
+    );
+    let log = v2_lib::applog::recent(6000);
+    assert!(log.iter().any(|l| l.message.contains("the expired password of automation51 was reset")));
+    assert!(!log.iter().any(|l| l.message.contains("Abc@123") || l.message.contains(PASSWORD)));
+    assert!(!out.detail.contains("Abc@123"));
+}
+
+#[tokio::test]
+async fn the_alternate_is_used_when_the_current_password_is_the_first() {
+    let dir = reset_root(true, true);
+    let mut acct = reset_account();
+    acct.password = "Abc@123".into();
+    save_accounts(dir.path(), &[acct.clone()]).unwrap();
+    let (mut d, app) = reset_app(&["Abc@123", "Test@1234"]);
+    let out = sign_in(&mut d, dir.path(), &recipe_at_login(), &acct, &quick()).await;
+    assert!(out.ok, "{}", out.detail);
+    assert_eq!(app.typed_into("#txtNewPassword"), ["Test@1234"]);
+    assert_eq!(account_file_password(dir.path()), "Test@1234");
+}
+
+#[tokio::test]
+async fn no_reset_on_non_test_environment() {
+    let dir = reset_root(false, true);
+    let (mut d, app) = reset_app(&["Abc@123", "Test@1234"]);
+    let out = sign_in(&mut d, dir.path(), &recipe_at_login(), &reset_account(), &quick()).await;
+    assert!(!out.ok);
+    assert!(out.detail.starts_with(PASSWORD_EXPIRED), "{}", out.detail);
+    assert!(out.detail.contains("Reset expired passwords"), "{}", out.detail);
+    assert!(app.typed_into("#txtNewPassword").is_empty());
+    assert_eq!(account_file_password(dir.path()), PASSWORD);
+    no_password_anywhere(&out);
+}
+
+#[tokio::test]
+async fn no_reset_when_switch_off() {
+    let dir = reset_root(true, false);
+    let (mut d, app) = reset_app(&["Abc@123", "Test@1234"]);
+    let out = sign_in(&mut d, dir.path(), &recipe_at_login(), &reset_account(), &quick()).await;
+    assert!(!out.ok);
+    assert!(out.detail.starts_with(PASSWORD_EXPIRED), "{}", out.detail);
+    assert!(is_password_expired(&out.detail));
+    assert!(out.detail.contains("Reset expired passwords"), "{}", out.detail);
+    assert!(app.typed_into("#txtNewPassword").is_empty());
+    assert_eq!(app.submits.load(Ordering::SeqCst), 0);
+    assert_eq!(account_file_password(dir.path()), PASSWORD);
+}
+
+#[tokio::test]
+async fn a_refused_new_password_is_submitted_once_and_held_as_unconfirmed() {
+    let dir = reset_root(true, true);
+    let (mut d, app) = reset_app(&["Test@1234"]);
+    let out = sign_in(&mut d, dir.path(), &recipe_at_login(), &reset_account(), &quick()).await;
+    assert!(!out.ok);
+    // The page did not move on: that might be a refusal or a slow redirect.
+    assert!(out.detail.starts_with(PASSWORD_RESET_MAYBE), "{}", out.detail);
+    assert_eq!(app.typed_into("#txtNewPassword"), ["Abc@123"]);
+    assert_eq!(app.submits.load(Ordering::SeqCst), 1);
+    assert_eq!(account_file_password(dir.path()), PASSWORD);
+    assert_eq!(pending_of(dir.path()).as_deref(), Some("Abc@123"));
+}
+
+fn pending_of(root: &std::path::Path) -> Option<String> {
+    let id = v2_lib::environments::active_id(root).unwrap();
+    v2_lib::autorun::accounts::pending_password_for(root, &id, KEY)
+}
+
+#[tokio::test]
+async fn the_new_password_is_held_before_the_submit_is_pressed() {
+    let dir = reset_root(true, true);
+    let site = Site { new_works: true, root: Some(dir.path().to_path_buf()), ..Site::default() };
+    let (mut d, app) = reset_app_site(&["Abc@123"], site);
+    let out = sign_in(&mut d, dir.path(), &recipe_at_login(), &reset_account(), &quick()).await;
+    assert!(out.ok, "{}", out.detail);
+    assert_eq!(*app.pending_at_submit.lock().unwrap(), [Some("Abc@123".to_string())]);
+}
+
+#[tokio::test]
+async fn a_browser_that_stops_at_the_submit_still_leaves_the_new_password_held() {
+    let dir = reset_root(true, true);
+    let site = Site { new_works: true, die_on_submit: true, ..Site::default() };
+    let (mut d, app) = reset_app_site(&["Abc@123"], site);
+    let out = sign_in(&mut d, dir.path(), &recipe_at_login(), &reset_account(), &quick()).await;
+    assert!(!out.ok);
+    assert!(out.detail.starts_with(PASSWORD_RESET_MAYBE), "{}", out.detail);
+    assert_eq!(app.submits.load(Ordering::SeqCst), 1);
+    assert_eq!(pending_of(dir.path()).as_deref(), Some("Abc@123"));
+    assert_eq!(account_file_password(dir.path()), PASSWORD);
+}
+
+#[tokio::test]
+async fn a_fill_that_fails_before_the_submit_holds_nothing_and_sends_nothing() {
+    let dir = reset_root(true, true);
+    let (d, app) = reset_app(&["Abc@123"]);
+    let mut d = d.answering_first(|method, params| {
+        (method == "Input.insertText" && params["text"] == "Abc@123").then(|| Err(CdpError::Closed))
+    });
+    let out = sign_in(&mut d, dir.path(), &recipe_at_login(), &reset_account(), &quick()).await;
+    assert!(!out.ok);
+    assert_eq!(app.submits.load(Ordering::SeqCst), 0);
+    assert!(pending_of(dir.path()).is_none());
+}
+
+#[tokio::test]
+async fn a_slow_follow_up_sign_in_keeps_the_old_password_and_holds_the_new() {
+    let _log = crate::serial::log_tail();
+    let dir = reset_root(true, true);
+    let (mut d, app) = reset_app_with(&["Abc@123"], false, false);
+    let out = sign_in(&mut d, dir.path(), &recipe_at_login(), &reset_account(), &quick()).await;
+    assert!(!out.ok);
+    assert!(out.detail.starts_with(PASSWORD_RESET_MAYBE), "{}", out.detail);
+    assert!(out.detail.contains("check it in Accounts"), "{}", out.detail);
+    assert!(!is_password_expired(&out.detail));
+    assert!(v2_lib::autorun::signin::is_reset_unconfirmed(&out.detail));
+    assert_eq!(app.submits.load(Ordering::SeqCst), 1);
+    assert_eq!(account_file_password(dir.path()), PASSWORD, "the stored password was replaced on a path alone");
+    assert_eq!(pending_of(dir.path()).as_deref(), Some("Abc@123"));
+    assert!(!out.detail.contains("Abc@123") && !out.detail.contains(PASSWORD), "{}", out.detail);
+    let log = v2_lib::applog::recent(6000);
+    assert!(!log.iter().any(|l| l.message.contains("Abc@123")));
+}
+
+#[tokio::test]
+async fn a_wrong_password_from_the_site_after_the_reset_lets_the_new_one_go_and_is_not_retried() {
+    let dir = reset_root(true, true);
+    // The page left the reset page, but the login form is still showing.
+    let (mut d, app) = reset_app_site(&["Abc@123"], Site { new_works: false, ..Site::default() });
+    let out = sign_in(&mut d, dir.path(), &recipe_at_login(), &reset_account(), &quick()).await;
+    assert!(!out.ok);
+    assert!(out.detail.starts_with(PASSWORD_RESET_FAILED), "{}", out.detail);
+    assert!(pending_of(dir.path()).is_none());
+    assert_eq!(account_file_password(dir.path()), PASSWORD);
+    // The refusal is remembered: the next sign-in does not submit the form again.
+    let (mut d2, app2) = reset_app(&["Abc@123"]);
+    let again = sign_in(&mut d2, dir.path(), &recipe_at_login(), &reset_account(), &quick()).await;
+    assert!(!again.ok);
+    assert!(again.detail.starts_with(PASSWORD_RESET_FAILED), "{}", again.detail);
+    assert_eq!(app.submits.load(Ordering::SeqCst), 1);
+    assert_eq!(app2.submits.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn a_pending_password_the_site_calls_wrong_is_let_go_and_the_stored_one_is_not_typed() {
+    let dir = reset_root(true, true);
+    let id = v2_lib::environments::active_id(dir.path()).unwrap();
+    v2_lib::autorun::accounts::set_pending_password(dir.path(), &id, KEY, "Abc@123").unwrap();
+    // The login form stays: a wrong password.
+    let (mut d, app) = reset_app_site(&[], Site { start_accepted: true, ..Site::default() });
+    let out = sign_in(&mut d, dir.path(), &recipe_at_login(), &reset_account(), &quick()).await;
+    assert!(!out.ok);
+    assert!(out.detail.contains("has been let go"), "{}", out.detail);
+    assert!(pending_of(dir.path()).is_none());
+    assert_eq!(app.count_of(PASSWORD), 0, "the stored password was typed in the same attempt");
+    assert_eq!(app.count_of("Abc@123"), 1);
+    assert_eq!(account_file_password(dir.path()), PASSWORD);
+}
+
+#[tokio::test]
+async fn a_pending_password_that_fails_for_another_reason_is_kept_and_nothing_else_is_typed() {
+    let dir = reset_root(true, true);
+    let id = v2_lib::environments::active_id(dir.path()).unwrap();
+    v2_lib::autorun::accounts::set_pending_password(dir.path(), &id, KEY, "Abc@123").unwrap();
+    // A slow site: the marker never comes, and the form is gone.
+    let (mut d, app) = reset_app_site(&[], Site { start_accepted: true, form_gone: true, ..Site::default() });
+    let out = sign_in(&mut d, dir.path(), &recipe_at_login(), &reset_account(), &quick()).await;
+    assert!(!out.ok);
+    assert!(out.detail.starts_with(PASSWORD_RESET_MAYBE), "{}", out.detail);
+    assert_eq!(pending_of(dir.path()).as_deref(), Some("Abc@123"));
+    assert_eq!(app.count_of(PASSWORD), 0, "the stored password was typed in the same attempt");
+    assert_eq!(account_file_password(dir.path()), PASSWORD);
+}
+
+#[tokio::test]
+async fn a_reset_the_site_refuses_every_time_stops_and_leaves_the_password() {
+    let dir = reset_root(true, true);
+    let (mut d, app) = reset_app(&[]);
+    let out = sign_in(&mut d, dir.path(), &recipe_at_login(), &reset_account(), &quick()).await;
+    assert!(!out.ok);
+    assert!(out.detail.starts_with(PASSWORD_RESET_MAYBE), "{}", out.detail);
+    // One submit, then no more: it never loops.
+    assert_eq!(app.submits.load(Ordering::SeqCst), 1);
+    assert_eq!(account_file_password(dir.path()), PASSWORD);
+    assert!(!out.detail.contains("Abc@123") && !out.detail.contains("Test@1234"), "{}", out.detail);
+    no_password_anywhere(&out);
+}
+
+#[tokio::test]
+async fn a_pending_password_is_tried_first_and_committed_when_it_signs_in() {
+    let dir = reset_root(true, true);
+    let id = v2_lib::environments::active_id(dir.path()).unwrap();
+    v2_lib::autorun::accounts::set_pending_password(dir.path(), &id, KEY, "Abc@123").unwrap();
+    // The site already holds the new password; the old one is no longer good.
+    let (mut d, app) = reset_app_site(&["Abc@123"], Site { new_works: true, start_accepted: true, ..Site::default() });
+    let out = sign_in(&mut d, dir.path(), &recipe_at_login(), &reset_account(), &quick()).await;
+    assert!(out.ok, "{}", out.detail);
+    assert_eq!(app.count_of("Abc@123"), 1);
+    assert_eq!(app.count_of(PASSWORD), 0, "the stored password was typed first");
+    assert_eq!(account_file_password(dir.path()), "Abc@123");
+    assert!(pending_of(dir.path()).is_none());
 }

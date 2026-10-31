@@ -1139,6 +1139,8 @@ pub async fn run_cases_planned<B: Browsers, P: StageDb, G: ResetGate>(
     gate: &mut G,
     progress: &mut (dyn FnMut(ReplayProgress) + Send),
 ) -> Result<(), String> {
+    // What this run has learned about the database for needed records; gone with the run.
+    let needs_memory = super::needs_records::RunMemory::default();
     // Each error says for itself where the run got to, so the command can
     // pass it on as it is: this one stops the run before any case.
     let nav_file = nav::load_nav(root, organization, project).map_err(|e| format!("the run did not start: {e}"))?;
@@ -1245,7 +1247,7 @@ pub async fn run_cases_planned<B: Browsers, P: StageDb, G: ResetGate>(
                         Err(why) => Err(why),
                         Ok(path) => {
                             let checked =
-                                preconditions::check_case(precondition_db, root, organization, project, &script.preconditions)
+                                super::needs_records::check_script_case_in(precondition_db, root, organization, project, &script, &needs_memory)
                                     .await;
                             notice = checked.notice;
                             match checked.blocked {

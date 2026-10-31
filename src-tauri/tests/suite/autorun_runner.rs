@@ -41,6 +41,7 @@ fn a_sign_in_reads_as_one_action_outcome() {
         harness: false,
         appeared: vec![],
         landed: None,
+        wrong_password: false,
     };
     let a = as_action_outcome(&out);
     assert!(!a.ok && a.detail.contains("step 2") && a.screenshot.is_none());
@@ -56,6 +57,7 @@ fn a_sign_in_reads_as_one_action_outcome() {
         harness: true,
         appeared: vec![],
         landed: None,
+        wrong_password: false,
     };
     assert!(as_action_outcome(&harness_out).harness);
 }

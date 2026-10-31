@@ -946,6 +946,7 @@ fn script_with(action: Value) -> CaseScript {
         no_save: false,
         preconditions: vec![],
         precondition_repairs: vec![],
+        needs_records: vec![],
         setup: None,
         changes: vec![],
         needs_unchanged: vec![],

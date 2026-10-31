@@ -223,6 +223,11 @@ export const MCP_TOOLS: McpToolInfo[] = [
     summary: "The active environment's account keys and usernames - with passwords only in a test environment - and this project's Test files a case can upload.",
   },
   {
+    name: "check_autorun_sign_in",
+    label: "Check sign-in",
+    summary: "Sign each account in once, in a browser of its own, and walk it to an area: which logins reach it, or where each stopped.",
+  },
+  {
     name: "save_test_file",
     label: "Save a test file",
     summary: "Save a file the assistant made into this project's Test files, so a case or a template can upload it. Only documents a test uploads are taken.",
@@ -382,6 +387,7 @@ export const AUTORUN_TOOLS = [
   "set_autorun_order",
   "propose_accounts",
   "get_accounts",
+  "check_autorun_sign_in",
   "save_test_file",
   "get_autorun_network_wait",
   "search_autorun_requests",

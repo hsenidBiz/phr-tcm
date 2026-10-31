@@ -5,9 +5,14 @@ import { clearMocks, mockIPC } from "@tauri-apps/api/mocks";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
-import AccountsDialog from "./AccountsDialog";
+import AccountsDialog, { reseedRows } from "./AccountsDialog";
 
 vi.mock("../../lib/toast", () => ({ toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn(), info: vi.fn() } }));
+// Whether a run or a discovery has the Auto Run browser, as the tests say.
+vi.mock("../../lib/backgroundRun", async (original) => ({
+  ...(await original<typeof import("../../lib/backgroundRun")>()),
+  runIsGoing: () => checkFixture.taken,
+}));
 afterEach(() => { clearMocks(); vi.clearAllMocks(); });
 
 function mount(existing: unknown[], onSave: (accounts: unknown[]) => unknown = () => []) {
@@ -56,6 +61,7 @@ test("what the app refuses is shown and the dialog stays open", async () => {
     throw new Error('the account "admin" has no username');
   });
   await screen.findByDisplayValue("kim");
+  fireEvent.change(screen.getByLabelText("Name for account 1"), { target: { value: "Changed" } });
   fireEvent.click(screen.getByRole("button", { name: "Save accounts" }));
   expect(await screen.findByText(/has no username/)).toBeInTheDocument();
   expect(onClose).not.toHaveBeenCalled();
@@ -87,7 +93,7 @@ test("each field carries a visible label for when the row stacks, and keeps its 
 
 // ---- Proposed by the assistant -------------------------------------------
 
-type Proposal = { key: string; label: string; username: string; role?: string | null; has_password?: boolean; no_password?: string | null };
+type Proposal = { key: string; label: string; username: string; role?: string | null; has_password?: boolean; no_password?: string | null; marks?: string[] };
 type Saved = { key: string; label: string; username: string; password: string };
 
 const PROPOSED: Proposal[] = [
@@ -126,7 +132,7 @@ function mountWithProposals(opts: {
         ],
       };
     }
-    if (cmd === "env_proposals") return state.proposals;
+    if (cmd === "env_proposals") return state.proposals?.map((p) => ({ marks: [], ...p }));
     if (cmd === "env_dismiss_proposals") {
       state.proposals = [];
       return null;
@@ -181,7 +187,7 @@ test("the proposals are read afresh each time the dialog opens", async () => {
   const state = { proposals: [PROPOSED[0]] };
   mockIPC((cmd) => {
     if (cmd === "auto_run_list_accounts") return [];
-    if (cmd === "env_proposals") return state.proposals;
+    if (cmd === "env_proposals") return state.proposals?.map((p) => ({ marks: [], ...p }));
     return null;
   });
   const open = () =>
@@ -387,14 +393,17 @@ test("Set password then Use database password clears what was typed and closes t
 test("the reason the assistant gave for having no password shows beside the account, and no password does", async () => {
   mountWithProposals({
     proposals: [
-      { key: "hr.admin", label: "HR Admin", username: "kim", has_password: true, no_password: null },
-      { key: "hr.sup", label: "Supervisor", username: "lee", has_password: false, no_password: "the database holds only a hash" },
+      { key: "hr.admin", label: "HR Admin", username: "kim", has_password: true, no_password: null, marks: [] },
+      { key: "hr.sup", label: "Supervisor", username: "lee", has_password: false, no_password: "the database holds only a hash", marks: ["expired"] },
     ],
     hasDefault: false,
   });
   await screen.findByRole("heading", { name: "Proposed by the assistant (2)" });
   const row = screen.getByText("hr.sup").closest("li")!;
   expect(within(row).getByText("No password from the assistant: the database holds only a hash")).toBeInTheDocument();
+  // What the site's queries said of a login shows beside it; an unmarked one has no such line.
+  expect(within(row).getByText("Checked against the site: expired")).toBeInTheDocument();
+  expect(within(screen.getByText("hr.admin").closest("li")!).queryByText(/Checked against the site/)).not.toBeInTheDocument();
   // The account with a password has no reason line, and nothing reveals a password.
   const other = screen.getByText("hr.admin").closest("li")!;
   expect(within(other).queryByText(/No password from the assistant/)).not.toBeInTheDocument();
@@ -504,4 +513,238 @@ test("Add selected counts the picks", async () => {
   expect(screen.getByText("2 selected")).toBeInTheDocument();
   fireEvent.click(screen.getByRole("checkbox", { name: "Add hr.admin" }));
   expect(screen.getByRole("button", { name: "Add selected (1)" })).toBeEnabled();
+});
+
+// ---- Check sign-in -------------------------------------------------------
+
+const checkFixture = {
+  taken: false,
+};
+
+type Seen = { cmd: string; args: Record<string, unknown> };
+
+/** A project with two areas and two saved accounts. `answer` is what the
+ * app says for one account's check. */
+function mountForCheck(answer: (key: string) => unknown, marks: Record<string, unknown> = {}) {
+  const seen: Seen[] = [];
+  mockIPC((cmd, args) => {
+    seen.push({ cmd, args: (args ?? {}) as Record<string, unknown> });
+    if (cmd === "auto_run_list_accounts") {
+      return [
+        { key: "admin", label: "Administrator", username: "kim", password: "p1" },
+        { key: "sup", label: "", username: "lee", password: "p2" },
+      ];
+    }
+    if (cmd === "auto_run_load_nav") {
+      return {
+        direct_urls: false,
+        modules: [
+          { area: "Leave", module: "Leave", clicks: [], arrived: "/hr/leave", recorded: "x", repaired_by_assistant: null },
+          { area: "Definition Wizard", module: "Settings", clicks: [], arrived: "/hr/wizard", recorded: "x", repaired_by_assistant: null },
+        ],
+        save_words: [],
+        built_in_save_words: [],
+        protected: [],
+      };
+    }
+    if (cmd === "auto_run_sign_in_checks") return marks;
+    if (cmd === "auto_run_check_sign_in") return answer((args as { accountKey: string }).accountKey);
+    return null;
+  });
+  render(
+    <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+      <AccountsDialog org="acme" project="Web" onClose={vi.fn()} />
+    </QueryClientProvider>,
+  );
+  return seen;
+}
+
+function checked(key: string, summary: string, signedIn = true, stopped = false) {
+  return {
+    check: {
+      account: key,
+      signed_in: signedIn,
+      landed: "/hr/home/index",
+      stopped: null,
+      password: null,
+      area: stopped ? { kind: "stopped", area: "Definition Wizard", at: "x" } : { kind: "reached", area: "Definition Wizard" },
+    },
+    summary,
+  };
+}
+
+test("Check sign-in shows the summary under the account", async () => {
+  mountForCheck((key) =>
+    key === "admin"
+      ? checked("admin", "signed in, landed on /hr/home/index; reaches Definition Wizard")
+      : checked("sup", "signed in, landed on /hr/home/index; stopped on the way to Definition Wizard: click 2", true, true),
+  );
+  await screen.findByRole("checkbox", { name: "Check admin" });
+  fireEvent.click(screen.getByRole("checkbox", { name: "Check admin" }));
+  fireEvent.click(screen.getByRole("checkbox", { name: "Check sup" }));
+  fireEvent.click(screen.getByRole("button", { name: "Check sign-in (2)" }));
+  expect(await screen.findByText("signed in, landed on /hr/home/index; reaches Definition Wizard")).toBeInTheDocument();
+  expect(await screen.findByText(/stopped on the way to Definition Wizard: click 2/)).toBeInTheDocument();
+});
+
+test("the area picker sends the area, and none sends the sign-in alone", async () => {
+  const seen = mountForCheck((key) => checked(key, "signed in"));
+  await screen.findByRole("checkbox", { name: "Check admin" });
+  fireEvent.click(screen.getByRole("checkbox", { name: "Check admin" }));
+  fireEvent.click(screen.getByRole("button", { name: "Check sign-in (1)" }));
+  await waitFor(() => expect(seen.filter((s) => s.cmd === "auto_run_check_sign_in")).toHaveLength(1));
+  expect(seen.find((s) => s.cmd === "auto_run_check_sign_in")!.args).toMatchObject({
+    organization: "acme",
+    project: "Web",
+    accountKey: "admin",
+    area: null,
+  });
+
+  fireEvent.click(screen.getByRole("combobox", { name: "Walk to" }));
+  fireEvent.click(await screen.findByRole("option", { name: "Definition Wizard" }));
+  await waitFor(() => expect(screen.getByRole("button", { name: "Check sign-in (1)" })).toBeEnabled());
+  fireEvent.click(screen.getByRole("button", { name: "Check sign-in (1)" }));
+  await waitFor(() => expect(seen.filter((s) => s.cmd === "auto_run_check_sign_in")).toHaveLength(2));
+  expect(seen.filter((s) => s.cmd === "auto_run_check_sign_in")[1].args.area).toBe("Definition Wizard");
+});
+
+test("accounts are checked one after another, never together", async () => {
+  let running = 0;
+  let most = 0;
+  mockIPC(() => null);
+  const seen = mountForCheck((key) => {
+    running += 1;
+    most = Math.max(most, running);
+    running -= 1;
+    return checked(key, "signed in");
+  });
+  await screen.findByRole("checkbox", { name: "Check admin" });
+  fireEvent.click(screen.getByRole("checkbox", { name: "Check admin" }));
+  fireEvent.click(screen.getByRole("checkbox", { name: "Check sup" }));
+  fireEvent.click(screen.getByRole("button", { name: "Check sign-in (2)" }));
+  await waitFor(() => expect(seen.filter((s) => s.cmd === "auto_run_check_sign_in")).toHaveLength(2));
+  const keys = seen.filter((s) => s.cmd === "auto_run_check_sign_in").map((s) => s.args.accountKey);
+  expect(keys).toEqual(["admin", "sup"]);
+  expect(most).toBe(1);
+});
+
+test("a refused check is said under its account", async () => {
+  mountForCheck(() => {
+    throw new Error("an unattended run, a replay or a discovery is using the Auto Run browser - wait for it, or stop it first");
+  });
+  await screen.findByRole("checkbox", { name: "Check admin" });
+  fireEvent.click(screen.getByRole("checkbox", { name: "Check admin" }));
+  fireEvent.click(screen.getByRole("button", { name: "Check sign-in (1)" }));
+  expect(await screen.findByText(/using the Auto Run browser/)).toBeInTheDocument();
+});
+
+test("the last check of an account is shown until it is checked again", async () => {
+  mountForCheck(() => checked("admin", "signed in"), {
+    admin: { checked_ms: 1761900000000, reached: true, area: "Leave", outcome: "signed in, landed on /hr/home/index; reaches Leave" },
+  });
+  expect(await screen.findByText(/Last checked .*reaches Leave/)).toBeInTheDocument();
+});
+
+test("Check sign-in is disabled while a run is going", async () => {
+  checkFixture.taken = true;
+  try {
+    mountForCheck((key) => checked(key, "signed in"));
+    await screen.findByRole("checkbox", { name: "Check admin" });
+    fireEvent.click(screen.getByRole("checkbox", { name: "Check admin" }));
+    expect(screen.getByRole("button", { name: "Check sign-in (1)" })).toBeDisabled();
+  } finally {
+    checkFixture.taken = false;
+  }
+});
+
+test("the first refusal ends the loop: the accounts after it are not asked", async () => {
+  const seen = mountForCheck(() => {
+    throw new Error("a sign-in check is running (sup) - wait for it or cancel it");
+  });
+  await screen.findByRole("checkbox", { name: "Check admin" });
+  fireEvent.click(screen.getByRole("checkbox", { name: "Check admin" }));
+  fireEvent.click(screen.getByRole("checkbox", { name: "Check sup" }));
+  fireEvent.click(screen.getByRole("button", { name: "Check sign-in (2)" }));
+  expect(await screen.findByText(/sign-in check is running/)).toBeInTheDocument();
+  await waitFor(() => expect(screen.getByRole("button", { name: "Check sign-in (2)" })).toBeEnabled());
+  expect(seen.filter((s) => s.cmd === "auto_run_check_sign_in")).toHaveLength(1);
+});
+
+test("Cancel check stops the loop after the account going and tells the app", async () => {
+  let release: (v: unknown) => void = () => {};
+  const gate = new Promise((r) => (release = r));
+  const seen = mountForCheck((key) => (key === "admin" ? gate.then(() => checked("admin", "signed in")) : checked(key, "signed in")));
+  await screen.findByRole("checkbox", { name: "Check admin" });
+  fireEvent.click(screen.getByRole("checkbox", { name: "Check admin" }));
+  fireEvent.click(screen.getByRole("checkbox", { name: "Check sup" }));
+  fireEvent.click(screen.getByRole("button", { name: "Check sign-in (2)" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Cancel check" }));
+  await waitFor(() => expect(seen.some((s) => s.cmd === "auto_run_cancel_check_sign_in")).toBe(true));
+  // The accounts are fixed while checking.
+  expect(screen.getByRole("checkbox", { name: "Check sup" })).toHaveAttribute("aria-disabled", "true");
+  release(null);
+  await waitFor(() => expect(screen.getByRole("button", { name: "Check sign-in (2)" })).toBeEnabled());
+  expect(seen.filter((s) => s.cmd === "auto_run_check_sign_in")).toHaveLength(1);
+});
+
+test("the results are announced politely", async () => {
+  mountForCheck((key) => checked(key, "signed in"));
+  const box = await screen.findByRole("checkbox", { name: "Check admin" });
+  expect(box.closest("ul")).toHaveAttribute("aria-live", "polite");
+});
+
+test("a last check over a week old is shown as stale", async () => {
+  mountForCheck(() => checked("admin", "signed in"), {
+    admin: { checked_ms: Date.now() - 10 * 24 * 3600 * 1000, signed_in: true, reached: true, area: "Leave", outcome: "reaches Leave" },
+  });
+  expect(await screen.findByText(/\(stale\)/)).toBeInTheDocument();
+});
+
+test("Save is off until something is changed, and sends the version the list was read at", async () => {
+  const sent: Record<string, unknown>[] = [];
+  mockIPC((cmd, args) => {
+    if (cmd === "auto_run_accounts_version") return "12-345";
+    if (cmd === "auto_run_list_accounts") return [{ key: "admin", label: "A", username: "kim", password: "p" }];
+    if (cmd === "auto_run_save_accounts") {
+      sent.push(args as Record<string, unknown>);
+      return [];
+    }
+    return null;
+  });
+  render(
+    <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+      <AccountsDialog onClose={() => {}} />
+    </QueryClientProvider>,
+  );
+  await screen.findByDisplayValue("kim");
+  const save = screen.getByRole("button", { name: "Save accounts" });
+  expect(save).toBeDisabled();
+  fireEvent.change(screen.getByLabelText("Name for account 1"), { target: { value: "B" } });
+  expect(save).not.toBeDisabled();
+  fireEvent.click(save);
+  await waitFor(() => expect(sent).toHaveLength(1));
+  expect(sent[0].loadedVersion).toBe("12-345");
+});
+
+test("a list that changed under the dialog takes the saved password into untouched rows and untouched passwords", () => {
+  const base = [
+    { key: "a", label: "A", username: "u", password: "old" },
+    { key: "b", label: "B", username: "v", password: "pb" },
+  ];
+  const fresh = [
+    { key: "a", label: "A", username: "u", password: "Abc@123" },
+    { key: "b", label: "B", username: "v", password: "pb" },
+  ];
+  // Nothing touched: the saved list.
+  expect(reseedRows(base, base, fresh)).toEqual(fresh);
+  // A label edited: kept, but the password is the saved one.
+  const edited = [{ ...base[0], label: "Mine" }, base[1]];
+  expect(reseedRows(edited, base, fresh)[0]).toEqual({ ...fresh[0], label: "Mine" });
+  // A password the person typed stays theirs.
+  const typed = [{ ...base[0], password: "typed" }, base[1]];
+  expect(reseedRows(typed, base, fresh)[0].password).toBe("typed");
+  // A removed row stays removed; an added row stays.
+  expect(reseedRows([base[1]], base, fresh).map((r) => r.key)).toEqual(["b"]);
+  const added = { key: "c", label: "", username: "", password: "" };
+  expect(reseedRows([...base, added], base, fresh).map((r) => r.key)).toEqual(["a", "b", "c"]);
 });

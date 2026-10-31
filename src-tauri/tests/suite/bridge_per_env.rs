@@ -31,6 +31,9 @@ fn env(name: &str, db_id: &str) -> Environment {
         test_environment: false,
         test_prefix: "AUTOTEST".into(),
         db_auto_approve: false,
+        password_expiry_query: String::new(),
+        active_session_query: String::new(),
+        reset_expired_passwords: false,
     }
 }
 

@@ -1068,6 +1068,23 @@ changes. Do not write the login page's fields into a script at all: no
 or use the ones already present in the project's other scripts. A key is
 lowercase letters, digits, dot, underscore or hyphen.
 
+`check_autorun_sign_in` says which accounts can script a screen before any
+case is written for it. Name the accounts (`accounts`, at most 3 per call:
+split more across calls, as each sign-in takes as long as one does). It
+signs each in once, in a browser of its own (never yours, and never the
+person's), one at a time, and with `area` walks the area's menu path the
+way a run does. Per account it answers that the account reaches the area,
+or where it stopped (the page's path and title), or why the sign-in
+failed. An account whose password is expired (the environment's expiry
+query) or that someone else is signed in as is not signed in at all, and
+neither is one when the environment's active-session query cannot be asked
+(fix the query or turn on database read access). It is refused while a
+run, a replay or a discovery has the Auto Run browser, and while it goes a
+run, a replay or a discovery that starts is refused: reset_autorun_browser
+or the person's Cancel ends it. The result stays on the account for that
+area; `propose_accounts` with the same `area` lists the logins that
+reached it first (a check over 7 days old no longer ranks).
+
 `navigate` is held to the site address and its allowed sites, whether
 the sign-in is the project's own recipe or the built-in one. Only with no
 site address and no saved recipe is it unrestricted. This covers an authored `navigate` only: a link the page follows, or a
@@ -1099,7 +1116,7 @@ Each environment has its own Auto Run scripts, areas, components, quirks, discov
   never write to the database to create or change a user.
 - On a test environment, look up each login's password in the same query
   that finds the login, and propose it with the account.
-- The user accounts are generally in the HR_SM_USER_ACCOUNT table: look
+- The user accounts are generally in the HS_SM_USER_ACCOUNT table: look
   there first (with `db_query`) for the logins and their passwords.
 - Every account's password can be different, so take each account's
   password from the same lookup and put it in the proposal, but
@@ -1116,6 +1133,66 @@ Each environment has its own Auto Run scripts, areas, components, quirks, discov
   Accounts, ticks the ones they want and adds them, and can type another
   password over a proposed one. Each call replaces your previous proposal
   for the environment.
+- Expired passwords and other sign-ins. PeoplesHR sends a login whose
+  password is too old to a reset page instead of home, and signing in as a
+  login someone is already signed in as logs that session out. Two
+  per-environment settings (Edit environments, on the AI Bridge tab) let the
+  app see both before a sign-in; each is ONE read-only SELECT, empty means
+  not checked, and the database guard must accept it as a read.
+  - Password expiry query: `{users}` is its only placeholder, written by the
+    app as quoted names, and it answers `user_id`, `reset_due` and optionally
+    `prompt_change`. The date is worked out from `USRACC_PWD_ACTIVATE_DATE` of
+    `HS_SM_USER_ACCOUNT` plus the `Password_Valid_Days` row of
+    `HS_PR_PARAMETERS`, and only when the `Password_valid_Days_Enabale` row
+    is 1 (a login with no row is simply not marked). Read those two rows only:
+    the table also holds plain-text secrets, so never read it whole, and use
+    `TRY_CONVERT` so a value that is not a number cannot raise an error that
+    quotes one:
+    `SELECT USRACC_USER_ID AS user_id, DATEADD(day, TRY_CONVERT(int, p.PAR_VALUE), USRACC_PWD_ACTIVATE_DATE) AS reset_due, USRACC_PROMPT_CHANGE_PW AS prompt_change FROM PeoplesHR.HS_SM_USER_ACCOUNT, PeoplesHR.HS_PR_PARAMETERS p WHERE p.PAR_NAME = 'Password_Valid_Days' AND EXISTS (SELECT 1 FROM PeoplesHR.HS_PR_PARAMETERS e WHERE e.PAR_NAME = 'Password_valid_Days_Enabale' AND e.PAR_VALUE = '1') AND USRACC_USER_ID IN ({users})`
+  - Active session query: `{users}` (one call for all the logins; it answers
+    `user_id`, `since` and `logged_to`) or `{user}` (one login at a time, in
+    lower case; it answers `since` and `logged_to`), written by the app as
+    quoted names. Read the flag, not the log-off column (old rows have flag 0
+    and no log-off time):
+    `SELECT ACTLOG_USER_ID AS user_id, ACTLOG_DATETIME AS since, ACTLOG_LOGGED_TO AS logged_to FROM PeoplesHR.HS_SM_ACTIVE_LOGIN WHERE ACTLOG_USER_ID IN ({users}) AND ACTLOG_ACT_FLG = 1`
+    A query that takes one login is asked for at most 25 logins of a proposal,
+    within 30 seconds; the rest are said not checked.
+  - What each answer means: `propose_accounts` marks every proposed login
+    `expired` (past its date, or the site forces a change), `due soon` (under
+    7 days) or `signed in elsewhere`, lists the unmarked ones first, so prefer
+    them, and the person sees the marks beside the proposal; a mark never
+    carries a password. `start_autorun_discovery` is refused for an account
+    someone else is signed in as. A session this app made itself does not
+    count: an open Auto Run browser holds it, or the app signed in as that
+    account within the saved-session window (8 hours) and still keeps that
+    session. The refusal names the account, the date and time, and the way
+    out: sign that session out on the site, wait for it to end, or clear the
+    environment's active-session query. An account near its date only warns.
+    Have that query return the site's session id as a `session` column when
+    the site has one: the app's own sign-in is then told from a person's by
+    matching it with the cookies the app saved. Without it, a row that began
+    after the app's last sign-in is someone else's.
+    A sign-in that lands on the site's password reset page (the built-in
+    recipe's `/security/PasswordReset` with `#txtOldPassword`, which a recipe
+    recorded earlier uses too) fails as "password expired", not as a missing
+    signed-in marker or a wrong password: that is the account's, not the
+    script's, and no repair helps - use another account or ask the person to
+    reset the password. The app resets it itself only on an environment the
+    person marked as a test environment AND gave "Reset expired passwords"
+    (off unless they turn it on, in the Environments dialog): it then types
+    the current password and a simple new one, and holds the new one aside
+    BEFORE it sends the form. The stored password is replaced only after a
+    sign-in with the new one reaches the signed-in marker; then the app logs
+    that it reset it (never the password). One password is typed per
+    attempt: while one is held, the next sign-in types only that one. If the
+    site refuses it, the stop reads "password expired - the reset did not go
+    through" and the stored password is unchanged. If the page did not move
+    on or the sign-in with the new one did not finish, the stop reads
+    "password expired - the reset may have gone through": the site may now
+    expect the held password, so do not reset it on the site again - tell
+    the person to check Accounts. You never type or see either password. A database that is off or does not answer never
+    blocks a sign-in; the check is skipped and said once. A query that is
+    wrong is said as that ("could not run"), not as a database that is down.
 - A password comes from the database, from the person or from the
   environment's default password, so never invent a password, and never
   copy a password into a script or a template. If a case needs an account
@@ -1254,6 +1331,24 @@ sentence per problem, counting preconditions from 1:
 
 A save also notes a script that names a test record and declares no
 precondition, in a `case N: note: ...` line. It never refuses the save.
+
+**Kept records.** A record the case relies on that earlier work left in place
+(a rating scale, a competency tree) and the case does not make is declared in
+`needs_records`, each entry a saved setup whose database find rule looks for it:
+
+    "needs_records": [ { "setup": "Rating scale", "why": "the AUTOTEST rating scale" } ]
+
+Before the case signs in, the run asks each setup's find rule on the active
+environment's database (read only). A record that is not there makes the case
+Blocked, not failed halfway:
+
+    the case needs the AUTOTEST rating scale (setup "Rating scale"), which is not there - run_setup Rating scale builds it
+
+While the Database Access module is off nothing is asked and the case goes on,
+saying `records not checked: database read access is off`. A save refuses
+a setup that is not saved, or has no database find rule; a script that relies on
+a record and declares neither this nor a precondition only gets a note.
+A repair keeps every saved `needs_records` entry as it is (it may add new ones); a person changes or removes one in the app.
 
 A repair keeps every precondition the script has, and may add new ones.
 Send each existing precondition back exactly as it is: a repair that
@@ -1523,7 +1618,7 @@ is part of a longer one:
 save sees such a name also inside a longer seen one, it adds a note.
 
 **Records the script relies on.** A case that opens a record someone made by
-hand (a cycle, a leave type) lists it in `preconditions`, so a run without it
+hand (a cycle, a leave type) lists it in `preconditions`, or in `needs_records` when a saved setup finds it, so a run without it
 is Blocked before step 1 instead of failing halfway (see "Preconditions").
 A record the script makes itself (it types the name and clicks a save button in an earlier step) needs none, and the save adds a note when it finds a test record named with no precondition.
 

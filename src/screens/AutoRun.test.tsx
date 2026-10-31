@@ -623,6 +623,7 @@ test("no path through this screen - load, selection, a supervised run or an unat
     "auto_run_waiting_network", // read-only, local: whether an unattended run is waiting for the company network, to show its panel again
     "auto_run_replay", // local: drives the browser itself, writes nothing to ADO
     "auto_run_list_accounts", // read-only: the Sign in as choices in the unattended run dialog
+    "auto_run_expiring_accounts", // read-only: the expiry query for the run window's password warning, never ADO
     "auto_run_load_run", // read-only: the review dialog loading its own run
     "auto_run_load_recipe", // read-only, local: the Setup card and header's site address
     "auto_run_load_nav", // read-only, local: the Setup card's module path count

@@ -47,6 +47,22 @@ pub struct Environment {
     /// made from an older copy can never turn it back on.
     #[serde(default)]
     pub db_auto_approve: bool,
+    /// One SELECT that says when each login's password falls due (see
+    /// `autorun::password_expiry`). Empty means not checked.
+    #[serde(default)]
+    pub password_expiry_query: String,
+    /// One SELECT that says whether a login is signed in somewhere else
+    /// right now (see `autorun::active_login`). Empty means not checked.
+    #[serde(default)]
+    pub active_session_query: String,
+    /// "Reset expired passwords": on a test environment, a sign-in the site
+    /// sends to its password reset page has the app set a new simple
+    /// password and save it on the account (see `autorun::signin`). Off
+    /// unless turned on, and changed only by `set_reset_expired_passwords` -
+    /// a save keeps what the file holds, as `db_auto_approve` does. It does
+    /// nothing on an environment that is not marked a test environment.
+    #[serde(default)]
+    pub reset_expired_passwords: bool,
 }
 
 /// What a new environment, and one saved before prefixes existed, uses.
@@ -205,6 +221,10 @@ pub fn validate(file: &EnvFile, known_db_ids: &[String]) -> Result<(), String> {
             }
         }
         validate_test_prefix(&e.test_prefix)?;
+        crate::autorun::password_expiry::check_query(&e.password_expiry_query)
+            .map_err(|why| format!("the password expiry query of \"{name}\": {why}"))?;
+        crate::autorun::active_login::check_query(&e.active_session_query)
+            .map_err(|why| format!("the active session query of \"{name}\": {why}"))?;
         if !known_db_ids.iter().any(|k| *k == e.db_id) {
             return Err(format!("\"{name}\" uses a database that is not set up - pick one"));
         }
@@ -311,6 +331,9 @@ fn load_or_init_locked(root: &Path, current_db: Option<&str>) -> Result<EnvFile,
             test_environment: false,
             test_prefix: default_test_prefix(),
             db_auto_approve: false,
+            password_expiry_query: String::new(),
+            active_session_query: String::new(),
+            reset_expired_passwords: false,
         }],
         auto_approve_adopted: false,
         playwright_export: Some(first_id.clone()),
@@ -390,6 +413,21 @@ pub fn set_db_auto_approve(root: &Path, id: &str, on: bool) -> Result<EnvFile, S
         .find(|e| e.id == id)
         .ok_or_else(|| "that environment is not there any more".to_string())?;
     env.db_auto_approve = on;
+    write(root, &file)?;
+    Ok(file)
+}
+
+/// Switch "Reset expired passwords" on or off for one environment. Nothing
+/// else in the file changes.
+pub fn set_reset_expired_passwords(root: &Path, id: &str, on: bool) -> Result<EnvFile, String> {
+    let _held = lock();
+    let mut file = load_or_init_locked(root, None)?;
+    let env = file
+        .environments
+        .iter_mut()
+        .find(|e| e.id == id)
+        .ok_or_else(|| "that environment is not there any more".to_string())?;
+    env.reset_expired_passwords = on;
     write(root, &file)?;
     Ok(file)
 }
@@ -649,6 +687,8 @@ fn tidy(mut env: Environment) -> Environment {
     env.allowed_origins = env.allowed_origins.iter().map(|o| o.trim().to_string()).filter(|o| !o.is_empty()).collect();
     env.db_id = env.db_id.trim().to_string();
     env.test_prefix = env.test_prefix.trim().to_string();
+    env.password_expiry_query = env.password_expiry_query.trim().to_string();
+    env.active_session_query = env.active_session_query.trim().to_string();
     env
 }
 
@@ -676,6 +716,7 @@ pub fn save_env_with(
         env.id = new_id(&env.name, &file.environments);
         // A new environment never arrives with writes asked about less.
         env.db_auto_approve = false;
+        env.reset_expired_passwords = false;
         file.environments.push(env.clone());
     } else {
         let slot = file
@@ -686,6 +727,7 @@ pub fn save_env_with(
         // Kept from the file, read under this lock: only
         // `set_db_auto_approve` moves it.
         env.db_auto_approve = slot.db_auto_approve;
+        env.reset_expired_passwords = slot.reset_expired_passwords;
         *slot = env.clone();
     }
     let mut known = known_db_ids.to_vec();
@@ -788,6 +830,10 @@ pub fn remove_env(root: &Path, id: &str) -> Result<EnvFile, String> {
         gone(std::fs::remove_file(accounts_path_for(root, id)));
         gone(std::fs::remove_dir_all(sessions_dir_for(root, id)));
         gone(std::fs::remove_file(proposals_path_for(root, id)));
+        // A held password is a secret: deleted with the environment, not kept
+        // for the 30 days the folder waits. A check's marks go too.
+        crate::autorun::accounts::forget_pending_for(root, id);
+        crate::autorun::sign_in_check::forget_marks(root, id);
         (file, name)
     };
     // The Auto Run folder waits in the removed area for 30 days. This runs
@@ -815,6 +861,10 @@ pub struct ProposedAccount {
     /// database holds only a hash"), when it said. Not a secret: the person
     /// sees it beside the account.
     pub no_password: Option<String>,
+    /// What the environment's expiry and active session queries said of this
+    /// login when it was proposed: `expired`, `due soon`, `signed in
+    /// elsewhere`. Never a secret.
+    pub marks: Vec<String>,
 }
 
 /// A proposed account as it is kept in the proposals file. `password` is
@@ -835,6 +885,8 @@ pub struct StoredProposal {
     pub password: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub no_password: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub marks: Vec<String>,
 }
 
 /// Hand-written so a password cannot reach a log line through `{:?}`.
@@ -860,6 +912,7 @@ impl StoredProposal {
             role: self.role.clone(),
             has_password: self.password.is_some(),
             no_password: self.no_password.clone(),
+            marks: self.marks.clone(),
         }
     }
 }

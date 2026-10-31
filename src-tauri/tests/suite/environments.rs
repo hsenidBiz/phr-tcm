@@ -27,6 +27,9 @@ fn env(id: &str, name: &str, start_url: &str) -> Environment {
         test_environment: false,
         test_prefix: "AUTOTEST".into(),
         db_auto_approve: false,
+        password_expiry_query: String::new(),
+        active_session_query: String::new(),
+        reset_expired_passwords: false,
     }
 }
 
@@ -43,6 +46,8 @@ fn input(name: &str) -> EnvInput {
         db_id: "qa-read".into(),
         test_environment: false,
         test_prefix: None,
+        password_expiry_query: None,
+        active_session_query: None,
     }
 }
 
@@ -228,6 +233,57 @@ fn the_test_prefix_has_limits() {
         e.test_prefix = good.into();
         validate(&file(vec![e]), &known()).unwrap();
     }
+}
+
+#[test]
+fn old_environment_file_reads_with_empty_queries() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let old = r#"{"active":"env-00000001","environments":[{"id":"env-00000001","name":"Dev","start_url":"","allowed_origins":[],"db_id":"dev-read","test_environment":false,"test_prefix":"AUTOTEST"}]}"#;
+    std::fs::write(root.join("environments.json"), old).unwrap();
+    let f = load_or_init(root, None).unwrap();
+    assert_eq!(f.environments[0].password_expiry_query, "");
+    assert_eq!(f.environments[0].active_session_query, "");
+}
+
+#[test]
+fn save_refuses_a_query_that_writes() {
+    for (expiry, active) in [
+        ("DELETE FROM t WHERE u IN ({users})", ""),
+        ("", "UPDATE t SET a = 1 WHERE u = {user}"),
+        ("SELECT 1 FROM t WHERE u IN ({users}); SELECT 2", ""),
+        ("SELECT 1 FROM t", ""),
+        ("", "SELECT 1 FROM t WHERE u = '{user}'"),
+    ] {
+        let mut e = env("env-00000001", "Dev", "");
+        e.password_expiry_query = expiry.into();
+        e.active_session_query = active.into();
+        assert!(validate(&file(vec![e]), &known()).is_err(), "{expiry:?} {active:?}");
+    }
+    let mut e = env("env-00000001", "Dev", "");
+    e.password_expiry_query = "SELECT u AS user_id, d AS reset_due FROM t WHERE u IN ({users})".into();
+    e.active_session_query = "SELECT s AS since, l AS logged_to FROM a WHERE u = {user} AND f = 1".into();
+    validate(&file(vec![e]), &known()).unwrap();
+}
+
+#[tokio::test]
+async fn a_saved_query_is_kept_and_an_edit_without_one_keeps_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let store = MemoryStore::default();
+    list_view(root, &store, None).unwrap();
+    let sql = "SELECT u AS user_id, d AS reset_due FROM t WHERE u IN ({users})";
+    let view = save_with(root, &store, EnvInput { password_expiry_query: Some(sql.into()), ..input("QA") })
+        .await
+        .unwrap();
+    let qa = view.environments.iter().find(|e| e.name == "QA").unwrap().clone();
+    assert_eq!(qa.password_expiry_query, sql);
+    // An edit that leaves the field out keeps what is saved.
+    let view = save_with(root, &store, EnvInput { id: qa.id.clone(), ..input("QA") }).await.unwrap();
+    assert_eq!(view.environments.iter().find(|e| e.id == qa.id).unwrap().password_expiry_query, sql);
+    // A query that writes is refused, and nothing changes.
+    let bad = EnvInput { id: qa.id.clone(), active_session_query: Some("DELETE FROM t".into()), ..input("QA") };
+    assert!(save_with(root, &store, bad).await.is_err());
 }
 
 #[test]
@@ -588,6 +644,8 @@ fn edit(root: &Path, id: &str, start_url: &str, allowed: &[&str]) -> EnvInput {
         db_id: e.db_id,
         test_environment: e.test_environment,
         test_prefix: None,
+        password_expiry_query: None,
+        active_session_query: None,
     }
 }
 
@@ -1042,6 +1100,7 @@ mod accounts_for_the_assistant {
                 role: None,
                 password: pw.map(str::to_string),
                 no_password: None,
+                marks: vec![],
             })
             .collect();
         save_proposals(root, &active_id(root).unwrap(), &list).unwrap();
@@ -1062,6 +1121,24 @@ mod accounts_for_the_assistant {
     /// The proposals file's raw text, or empty when there is none.
     fn proposals_text(root: &Path) -> String {
         std::fs::read_to_string(proposals_path_for(root, &active_id(root).unwrap())).unwrap_or_default()
+    }
+
+    #[tokio::test]
+    async fn proposing_with_queries_set_and_no_database_marks_nothing_and_says_so_once() {
+        let _root = crate::serial::autorun();
+        let dir = bridge_root();
+        let root = dir.path();
+        let mut e = list(root).into_iter().next().unwrap();
+        e.password_expiry_query = "SELECT u AS user_id, d AS reset_due FROM t WHERE u IN ({users})".into();
+        e.active_session_query = "SELECT s AS since, l AS logged_to FROM a WHERE u = {user} AND f = 1".into();
+        save_env(root, e, &known()).unwrap();
+        let body = json!({ "accounts": [proposal("hr.sup", "sup1"), proposal("hr.adm", "adm1")] }).to_string();
+        let (status, out) = call("POST", "/accounts-propose", &body).await;
+        assert_eq!(status, 200, "{out}");
+        assert_eq!(out.matches("were not checked").count(), 1, "{out}");
+        assert!(!out.contains("Marked:"), "{out}");
+        // The proposal itself is kept as given.
+        assert!(proposals_text(root).contains("hr.sup"));
     }
 
     #[tokio::test]
@@ -1121,6 +1198,7 @@ mod accounts_for_the_assistant {
                 role: Some("Supervisor".into()),
                 has_password: false,
                 no_password: None,
+                marks: vec![],
             }]
         );
         assert!(proposals_path_for(root, &env_id).is_file(), "stored under the environment's id");
@@ -1664,6 +1742,8 @@ mod accounts_for_the_assistant {
             db_id: e.db_id,
             test_environment,
             test_prefix: None,
+            password_expiry_query: None,
+            active_session_query: None,
         }
     }
 
@@ -1707,4 +1787,58 @@ mod accounts_for_the_assistant {
         assert!(add_proposals_with(root, &store, vec![pick("hr.sup", "hr.sup-user", "")], vec![]).unwrap().is_empty());
         assert_eq!(load_accounts(root).unwrap()[0].password, "Default-Pw1");
     }
+}
+
+#[test]
+fn old_environment_reads_reset_switch_off() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let id = load_or_init(root, Some("dev-read")).unwrap().active;
+    let path = v2_lib::autorun::roots::shared_of(root).join("environments.json");
+    let mut v: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    v["environments"][0].as_object_mut().unwrap().remove("reset_expired_passwords");
+    std::fs::write(&path, v.to_string()).unwrap();
+    let e = active(root).unwrap();
+    assert_eq!(e.id, id);
+    assert!(!e.reset_expired_passwords);
+}
+
+#[test]
+fn the_reset_switch_moves_only_by_its_own_command() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let id = load_or_init(root, Some("dev-read")).unwrap().active;
+    assert!(!active(root).unwrap().reset_expired_passwords);
+    set_reset_expired_passwords(root, &id, true).unwrap();
+    assert!(active(root).unwrap().reset_expired_passwords);
+    // A save from a form (which cannot say) keeps what the file holds.
+    let mut e = active(root).unwrap();
+    e.reset_expired_passwords = false;
+    e.name = "Renamed".into();
+    save_env_with(root, e, known).unwrap();
+    assert!(active(root).unwrap().reset_expired_passwords);
+    // A new environment never arrives with it on.
+    let mut fresh = env("", "Another", "");
+    fresh.reset_expired_passwords = true;
+    let file = save_env_with(root, fresh, known).unwrap();
+    assert!(file.environments.iter().filter(|e| e.name == "Another").all(|e| !e.reset_expired_passwords));
+    set_reset_expired_passwords(root, &id, false).unwrap();
+    assert!(!active(root).unwrap().reset_expired_passwords);
+    assert!(set_reset_expired_passwords(root, "env-nothere", true).is_err());
+}
+
+#[test]
+fn removing_an_environment_deletes_its_held_passwords_and_check_marks() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let (_first, qa) = two_envs(root);
+    let pending = v2_lib::autorun::accounts::pending_path_for(root, &qa);
+    std::fs::create_dir_all(pending.parent().unwrap()).unwrap();
+    std::fs::write(&pending, r#"{"a":"Abc@123"}"#).unwrap();
+    let marks = v2_lib::autorun::roots::shared_of(root).join("sign_in_checks").join(format!("{qa}.json"));
+    std::fs::create_dir_all(marks.parent().unwrap()).unwrap();
+    std::fs::write(&marks, "{}").unwrap();
+    remove_env(root, &qa).unwrap();
+    assert!(!pending.exists(), "a held password outlived its environment");
+    assert!(!marks.exists());
 }

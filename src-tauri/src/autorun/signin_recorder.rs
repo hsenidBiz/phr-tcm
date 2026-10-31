@@ -705,6 +705,7 @@ impl Draft {
             after_sign_in: existing.map(|r| r.after_sign_in.clone()).unwrap_or_default(),
             menu_preferences: existing.and_then(|r| r.menu_preferences.clone()),
             modes: existing.map(|r| r.modes.clone()).unwrap_or_default(),
+            password_reset: existing.and_then(|r| r.password_reset.clone()),
             close_when_shown: existing.map(|r| r.close_when_shown.clone()).unwrap_or_default(),
             wait_while_shown: existing.map(|r| r.wait_while_shown.clone()).unwrap_or_default(),
             signed_in,

@@ -4609,8 +4609,11 @@ mod crystal_routes {
         }
     }
 
-    #[tokio::test]
-    async fn the_routes_open_read_edit_check_compare_and_preview_a_report() {
+    // On a thread with a bigger stack: this test polls the whole route table
+    // in a debug build and was within a few percent of a test thread's 2 MB.
+    #[test]
+    fn the_routes_open_read_edit_check_compare_and_preview_a_report() {
+        crate::common::on_big_stack(|| async {
         let _on = crate::serial::crystal_on();
         let _lock = crate::serial::crystal();
         let dir = tempfile::tempdir().unwrap();
@@ -4662,6 +4665,7 @@ mod crystal_routes {
         assert_eq!(status, 200);
         assert_eq!(guide, v2_lib::crystal::guide());
         v2_lib::crystal::close();
+            });
     }
 
     #[tokio::test]

@@ -441,6 +441,7 @@ fn a_draft_becomes_a_recipe_with_placeholders_fixed_text_and_the_default_setting
             after_sign_in: vec![],
             menu_preferences: None,
             modes: vec![],
+            password_reset: None,
             close_when_shown: vec![],
             wait_while_shown: vec![],
             signed_in: css("#marker"),

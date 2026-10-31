@@ -565,7 +565,7 @@ pub fn try_lock_with_retries<'a, T>(
 #[specta::specta]
 pub async fn auto_run_open_browser(app: tauri::AppHandle, browser_name: String) -> Result<(), String> {
     if crate::commands::autorun_replay::replay_is_running() {
-        return Err(UNATTENDED_GOING.to_string());
+        return Err(crate::autorun::sign_in_check::going_sentence(UNATTENDED_GOING));
     }
     // A discovery's browser is never replaced: heard before a replay is
     // stopped, and again under the lock. No replay goes beside a discovery
@@ -614,7 +614,7 @@ async fn open_if_none(app: &tauri::AppHandle, slot: &mut Option<Session>, n: Slo
         return Ok(());
     }
     if crate::commands::autorun_replay::replay_is_running() {
-        return Err(UNATTENDED_GOING.to_string());
+        return Err(crate::autorun::sign_in_check::going_sentence(UNATTENDED_GOING));
     }
     let which = Browser::from_name(&store::last_browser(&root(app)?));
     open_into(root(app), slot, n, which, by).await
@@ -629,7 +629,7 @@ pub const NO_DATA_DIRECTORY: &str = "the app could not set up its data directory
 /// here, not waited for.
 pub(crate) fn refuse_discovery_while_busy(n: SlotNo) -> Result<(), String> {
     if crate::commands::autorun_replay::replay_is_running() {
-        return Err(UNATTENDED_GOING.to_string());
+        return Err(crate::autorun::sign_in_check::going_sentence(UNATTENDED_GOING));
     }
     crate::commands::autorun_record::refuse_while_recording()?;
     if crate::autorun::replay_to::state(n).is_running() {
@@ -1476,7 +1476,18 @@ pub async fn auto_run_close_browser() -> Result<(), String> {
 /// browser between the checks and the end. A claim another holds refuses
 /// it with that run's sentence. The answer says what was released.
 pub async fn release_autorun_browsers() -> Result<String, String> {
-    let _unattended = crate::commands::autorun_replay::OneAtATime::claim().ok_or_else(|| UNATTENDED_GOING.to_string())?;
+    // A sign-in check going is ended first: it stops between accounts and
+    // closes the browser of the one it is on.
+    if crate::autorun::sign_in_check::running_account().is_some() {
+        crate::autorun::sign_in_check::cancel();
+        for _ in 0..150 {
+            if crate::autorun::sign_in_check::running_account().is_none() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        }
+    }
+    let _unattended = crate::commands::autorun_replay::OneAtATime::claim().ok_or_else(|| crate::autorun::sign_in_check::going_sentence(UNATTENDED_GOING))?;
     let _recorder = crate::commands::autorun_record::RecorderClaim::claim()
         .ok_or_else(|| crate::commands::autorun_record::RECORDING_BUSY.to_string())?;
     let _template = crate::api_templates::runner::claim().ok_or_else(|| TEMPLATE_RUN_GOING.to_string())?;
@@ -2393,6 +2404,11 @@ pub(crate) async fn replay_supervised(
         Ok(one) => one,
         Err(why) => return Ok((ReplayEnd::Refused(why), Vec::new(), DiscoveryEnded::default(), None, BEGINNING, Default::default(), overrides_now_in(n))),
     };
+    // Never beside a sign-in check, which signs accounts in in browsers of
+    // its own: a replay in a browser already open is refused too.
+    if let Some(going) = crate::autorun::sign_in_check::running_sentence() {
+        return Ok((ReplayEnd::Refused(going), Vec::new(), DiscoveryEnded::default(), None, BEGINNING, Default::default(), overrides_now_in(n)));
+    }
     let root = root(app)?;
     // Its script is not deleted while the replay goes: noted before the
     // check reads the script, so a delete is either done already (the
@@ -3079,6 +3095,7 @@ pub fn save_script_from_editor(
         no_save: false,
         preconditions: Vec::new(),
         precondition_repairs: Vec::new(),
+        needs_records: Vec::new(),
         setup: None,
         changes: Vec::new(),
         needs_unchanged: Vec::new(),
@@ -3103,6 +3120,7 @@ pub fn save_script_from_editor(
         steps: _,
         no_save: _,
         preconditions: _,
+        needs_records: _,
         changes: _,
         needs_unchanged: _,
         needs_state: _,
@@ -3739,15 +3757,32 @@ pub fn auto_run_list_accounts(
     crate::autorun::accounts::load_accounts(&root(&app)?)
 }
 
+/// What the active environment's accounts file looks like now: asked BEFORE
+/// the list is read, and sent back with the save, so a save of a list that
+/// something else changed in between (a reset by a sign-in check, a run) is
+/// refused rather than written over it. It carries no password.
+#[tauri::command(async)]
+#[specta::specta]
+pub fn auto_run_accounts_version(app: tauri::AppHandle) -> Result<String, String> {
+    let root = root(&app)?;
+    let env_id = crate::environments::active_id(&root)?;
+    Ok(crate::autorun::accounts::accounts_version(&root, &env_id))
+}
+
 /// Replace the accounts list. Returns the keys whose saved session was
-/// dropped, so the screen can say so.
+/// dropped, so the screen can say so. With `loaded_version` (from
+/// `auto_run_accounts_version`) a list that changed since is refused.
 #[tauri::command]
 #[specta::specta]
 pub fn auto_run_save_accounts(
     app: tauri::AppHandle,
     accounts: Vec<crate::autorun::accounts::Account>,
+    loaded_version: Option<String>,
 ) -> Result<Vec<String>, String> {
-    let dropped = crate::autorun::accounts::save_accounts(&root(&app)?, &accounts)?;
+    let root = root(&app)?;
+    let env_id = crate::environments::active_id(&root)?;
+    let dropped =
+        crate::autorun::accounts::save_accounts_checked(&root, &env_id, &accounts, loaded_version.as_deref())?;
     crate::applog::info(format!("Auto-run accounts saved ({} account(s))", accounts.len()));
     Ok(dropped)
 }
@@ -4041,7 +4076,7 @@ pub fn auto_run_forget_session(app: tauri::AppHandle, account_key: String) -> Re
 /// the message deserves.
 pub async fn refuse_while_a_run_is_going() -> Result<(), String> {
     if crate::commands::autorun_replay::replay_is_running() {
-        return Err("an unattended run is going - wait for it, or stop it first".to_string());
+        return Err(crate::autorun::sign_in_check::going_sentence("an unattended run is going - wait for it, or stop it first"));
     }
     if let Some(busy) = open_session_refusal_any().await {
         return Err(busy);

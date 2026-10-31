@@ -70,15 +70,22 @@ pub fn starts_with_prefix(name: &str, prefix: &str) -> bool {
 /// Whether a `{prefix}` sits inside a quoted literal. A doubled quote stays
 /// inside the literal.
 fn prefix_inside_quotes(sql: &str) -> bool {
+    placeholder_inside_quotes(sql, PREFIX)
+}
+
+/// Whether `placeholder` sits inside a quoted literal of `sql`. A doubled
+/// quote stays inside the literal. Shared by the other read-only queries
+/// that take a placeholder the app writes as a quoted value.
+pub(crate) fn placeholder_inside_quotes(sql: &str, placeholder: &str) -> bool {
     let mut inside = false;
     let mut rest = sql;
     while let Some(c) = rest.chars().next() {
         if !inside || c != '\'' {
-            if inside && rest.starts_with(PREFIX) {
+            if inside && rest.starts_with(placeholder) {
                 return true;
             }
-            if !inside && rest.starts_with(PREFIX) {
-                rest = &rest[PREFIX.len()..];
+            if !inside && rest.starts_with(placeholder) {
+                rest = &rest[placeholder.len()..];
                 continue;
             }
         }
@@ -90,7 +97,7 @@ fn prefix_inside_quotes(sql: &str) -> bool {
     false
 }
 
-fn starts_with_select(sql: &str) -> bool {
+pub(crate) fn starts_with_select(sql: &str) -> bool {
     let t = sql.trim_start();
     t.len() >= 6
         && t.is_char_boundary(6)
@@ -98,7 +105,7 @@ fn starts_with_select(sql: &str) -> bool {
         && t[6..].chars().next().map_or(true, |c| !(c.is_alphanumeric() || c == '_'))
 }
 
-fn quoted_literal(prefix: &str) -> String {
+pub(crate) fn quoted_literal(prefix: &str) -> String {
     format!("N'{}'", prefix.replace('\'', "''"))
 }
 
@@ -221,7 +228,13 @@ pub fn first_test_record(
     db: &DbFind,
     prefix: &str,
 ) -> Result<Option<FoundRecord>, String> {
-    if query::rows_affected(text).is_none() {
+    // An answer cut at the row cap opens with "rows: N (capped)" and has lost
+    // its footer: the rows it kept are still read, and a record among them
+    // is found.
+    let first_line = text.lines().next().map(str::trim).unwrap_or("");
+    let capped = first_line.starts_with("rows:") && first_line.ends_with("(capped)");
+    let text = if capped { text.split_once('\n').map_or("", |(_, rest)| rest) } else { text };
+    if !capped && query::rows_affected(text).is_none() {
         return Err("the find rule's answer carried no row count".to_string());
     }
     let mut lines = text.lines().skip_while(|l| l.trim().is_empty());
@@ -257,6 +270,9 @@ pub fn first_test_record(
         }
         let id = cells.get(id_at).map(|c| c.trim().to_string());
         return Ok(Some(FoundRecord { id, name: name.to_string() }));
+    }
+    if capped {
+        return Err("the find rule's answer was cut short before any test record - make its SELECT narrower".to_string());
     }
     Ok(None)
 }

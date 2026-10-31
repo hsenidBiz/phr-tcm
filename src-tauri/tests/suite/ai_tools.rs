@@ -583,6 +583,7 @@ fn each_tool_belongs_to_its_module() {
             "set_autorun_order",
             "propose_accounts",
             "get_accounts",
+            "check_autorun_sign_in",
             "save_test_file",
             "get_autorun_network_wait",
             "search_autorun_requests",
@@ -893,10 +894,10 @@ fn the_setup_command_is_an_auto_run_routine_offered_only_with_auto_run() {
         assert!(flat.contains(control), "the routine does not name {control:?}: {flat}");
     }
     assert!(flat.contains("Never use a hash"), "{flat}");
-    assert!(!flat.contains("HS_SM_USER_ACCOUNT"), "the table is HR_SM_USER_ACCOUNT: {flat}");
+    assert!(!flat.contains("HR_SM_USER_ACCOUNT"), "the table is HS_SM_USER_ACCOUNT: {flat}");
     for line in [
         "On a test environment, look up each login's password in the same query that finds the login, and propose it with the account.",
-        "The user accounts are generally in the HR_SM_USER_ACCOUNT table: look there first (with `db_query`) for the logins and their passwords.",
+        "The user accounts are generally in the HS_SM_USER_ACCOUNT table: look there first (with `db_query`) for the logins and their passwords.",
     ] {
         assert!(flat.contains(line), "{line}: {flat}");
     }
@@ -921,8 +922,8 @@ fn every_place_that_proposes_accounts_names_the_password_lookup_and_the_user_tab
         ("roles/gen-test-tools.md", flatten(include_str!("../../src/autorun/roles/gen-test-tools.md"))),
     ];
     for (name, text) in &places {
-        assert!(text.contains("HR_SM_USER_ACCOUNT"), "{name} does not name the user table");
-        assert!(!text.contains("HS_SM_USER_ACCOUNT"), "{name} misspells the user table");
+        assert!(text.contains("HS_SM_USER_ACCOUNT"), "{name} does not name the user table");
+        assert!(!text.contains("HR_SM_USER_ACCOUNT"), "{name} misspells the user table");
         assert!(text.contains("look there first (with `db_query`) for the logins and their passwords"), "{name}");
         assert!(text.contains("propose it with the account"), "{name}");
     }

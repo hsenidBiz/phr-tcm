@@ -83,6 +83,9 @@ pub const NO_SAVE_KEPT: &str =
 /// Said when a repair drops or changes a precondition it did not declare.
 pub const PRECONDITIONS_KEPT: &str = "a precondition was removed or changed but not declared - add one \"precondition\" edit ({ \"op\": \"remove\" or \"change\", \"flow\", \"stage\", \"to\" for a change, \"reason\" }) to the case's \"edits\" entry, or send every saved precondition back as it is";
 
+/// Said when a repair drops or changes a needed record it did not keep.
+pub const NEEDS_RECORDS_KEPT: &str = "a record the case needs (needs_records) was removed or changed - a repair keeps every saved needs_records entry as it is and may add new ones; a person changes or removes one in the app";
+
 /// Said when the preconditions sent differ from the saved ones by more
 /// than the one precondition edit declared.
 pub const PRECONDITIONS_UNDECLARED: &str = "the preconditions changed in more ways than the case's \"precondition\" edit declares - a repair changes one precondition per save; send the others as saved";
@@ -339,6 +342,14 @@ pub fn check_edits(old: &CaseScript, new: &CaseScript, declared: Option<&Edit>) 
                 return Err(PRECONDITIONS_KEPT.to_string());
             }
         }
+    }
+
+    // Rule 12b: needed records are held to the same rule as preconditions,
+    // without an edit to declare: a repair keeps every saved entry exactly
+    // and may add new ones. Only a person's save (the editor) or a
+    // script's first save changes them, and neither comes through here.
+    if old.needs_records.iter().any(|n| !new.needs_records.contains(n)) {
+        return Err(NEEDS_RECORDS_KEPT.to_string());
     }
 
     // Rule 13: a setup writes data in the application on every run of its

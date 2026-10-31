@@ -464,3 +464,8 @@ test("the open card lists each unchecked expectation with why and its stand-in",
   expect(within(list).getAllByRole("listitem")).toHaveLength(1);
   expect(list).toHaveTextContent("step 2: no access-denied message - the app never shows one (stand-in: expect_hidden)");
 });
+
+test("scriptFacts names each needed record with its reason", () => {
+  const facts = scriptFacts({ ...BARE, needs_records: [{ setup: "Rating scale", why: "the AUTOTEST scale" }] } as CaseScript);
+  expect(facts).toContainEqual({ label: "Needs records", value: "Rating scale (the AUTOTEST scale)" });
+});

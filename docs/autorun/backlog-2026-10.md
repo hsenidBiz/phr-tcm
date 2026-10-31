@@ -713,6 +713,12 @@ information in the slots the Playwright pipeline already reads; it never overrid
 
 ## Several writers at once (agreed 2026-10-28)
 
+    - **Done in 2.4.3-beta.9** (all but the API reset, which stays unbuilt): the environment's password
+      expiry and active-session queries (table `HS_SM_USER_ACCOUNT`), expiry on the proposals and a
+      run-window warning, the reset page detected as "password expired", and a "Reset expired passwords"
+      switch for test environments. Left: live checks of the queries, the reset page with the owner's
+      recipe, and the reset on a test environment.
+
 41. **What the first three-writer run found** (PBI 138416, QA Automation: writer-1 as common,
     writer-2 as automation15, writer-3 as gabriel then common, plus a coordinator). The
     isolation held: three browsers at once, no refusal, no `in_use_by`, no account kicked
@@ -964,6 +970,10 @@ three writers at once on emma, aiden and grace.
     The writer should record each kept record as a precondition (item 3) or a fixture the run
     can make, at the time it makes it.
 
+    - **Done in 2.4.3-beta.9.** Scripts name the records they rely on (`needs_records`, each a saved
+      setup and why); a run checks them through the setup's database find rule before sign-in and a
+      missing one is Blocked. Left: a live-org check that a missing record is Blocked.
+
 50. **Sign-in on a cold site.** With three sign-ins at once on a site that had been idle, two
     failed "never saw #sidebar-toggle-menu" after 30 s while the server already showed them as
     signed in (`HS_SM_ACTIVE_LOGIN`); a retry minutes later worked. ethan's sign-in "worked" but
@@ -996,6 +1006,10 @@ three writers at once on emma, aiden and grace.
     "Unable to load menus", or Self Service). Writers burned runs finding out. Item 40's "Check
     sign-in" should also walk to a chosen area and show, per account, "reaches <area>" or where
     it stopped.
+
+    - **Done in 2.4.3-beta.9.** Check sign-in in the Accounts dialog (and for the assistant) walks each
+      ticked account (up to three) to a chosen area and says "reaches" or where it stopped; proposals
+      prefer accounts that reached the area. Left: a live check on the seven HR-admin logins.
 
 54. **A refused upload fails discovery but not the replay.** dw-comps3's import cases (135285-
     135287) upload a malformed or oversized .xlsx; the server answers 422. In discovery the

@@ -105,6 +105,27 @@ fn stop_reason_is_some_when_the_sign_in_step_failed() {
 }
 
 #[test]
+fn stop_reason_names_an_expired_password_apart_from_a_failed_sign_in() {
+    let detail = format!("{} - the browser ended on /hr/security/PasswordReset", v2_lib::autorun::signin::PASSWORD_EXPIRED);
+    let case = CaseRecord {
+        steps: vec![StepRecord {
+            step_number: 0,
+            outcomes: vec![ActionOutcome::failed(&detail)],
+            screenshot: None,
+            downloads: vec![],
+            tab: None,
+            dialog: None,
+            components: Vec::new(), duration_ms: None,
+        }],
+        verdict: "Blocked".to_string(),
+        ..empty_case()
+    };
+    let said = stop_reason(&case).expect("a stop");
+    assert!(said.starts_with("the account's password has expired"), "{said}");
+    assert!(!said.starts_with("the sign-in failed"), "{said}");
+}
+
+#[test]
 fn stop_reason_is_some_when_the_browser_stopped_answering() {
     let starts_with_the_browser = CaseRecord {
         reason: "the browser did not open: connection refused".to_string(),
@@ -284,6 +305,7 @@ fn describe_failures_renders_the_exact_block_for_a_failed_case_with_a_script_and
         no_save: false,
         preconditions: vec![],
         precondition_repairs: vec![],
+        needs_records: vec![],
         setup: None,
         changes: vec![],
         needs_unchanged: vec![],
@@ -403,6 +425,7 @@ fn describe_failures_masks_a_fill_value_but_never_the_other_fields() {
         no_save: false,
         preconditions: vec![],
         precondition_repairs: vec![],
+        needs_records: vec![],
         setup: None,
         changes: vec![],
         needs_unchanged: vec![],
@@ -517,6 +540,7 @@ fn describe_failures_says_the_script_changed_when_the_action_index_is_gone() {
         no_save: false,
         preconditions: vec![],
         precondition_repairs: vec![],
+        needs_records: vec![],
         setup: None,
         changes: vec![],
         needs_unchanged: vec![],
@@ -660,6 +684,7 @@ fn describe_failures_names_the_scripts_area_when_it_has_one() {
         no_save: false,
         preconditions: vec![],
         precondition_repairs: vec![],
+        needs_records: vec![],
         setup: None,
         changes: vec![],
         needs_unchanged: vec![],

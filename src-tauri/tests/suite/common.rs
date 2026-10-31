@@ -1532,3 +1532,25 @@ pub async fn route_without_rules(
     };
     (status, roles::without_rules(&out, rules))
 }
+
+/// Runs the async test body `make` builds on a thread of its own with an
+/// 8 MB stack and a runtime of its own. The in-process bridge tests poll the
+/// whole route table's future in a debug build, which needs more than a test
+/// thread's default 2 MB. The body is built inside the thread, so it may hold
+/// guards that are not `Send`.
+pub fn on_big_stack<Fut: std::future::Future<Output = ()>>(make: impl FnOnce() -> Fut + Send + 'static) {
+    let joined = std::thread::Builder::new()
+        .stack_size(8 * 1024 * 1024)
+        .spawn(move || {
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("a runtime")
+                .block_on(make())
+        })
+        .expect("a thread")
+        .join();
+    if let Err(panic) = joined {
+        std::panic::resume_unwind(panic);
+    }
+}

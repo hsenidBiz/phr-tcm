@@ -287,6 +287,7 @@ fn saved_script(root: &std::path::Path, case_id: i32, area: Option<&str>) {
         no_save: false,
         preconditions: vec![],
         precondition_repairs: vec![],
+        needs_records: vec![],
         setup: None,
         changes: vec![],
         needs_unchanged: vec![],

@@ -90,6 +90,7 @@ fn script(case_id: i32, actions: Vec<Action>) -> CaseScript {
         no_save: false,
         preconditions: vec![],
         precondition_repairs: vec![],
+        needs_records: vec![],
         setup: None,
         changes: vec![],
         needs_unchanged: vec![],

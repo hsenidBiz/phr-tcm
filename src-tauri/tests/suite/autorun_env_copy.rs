@@ -22,6 +22,9 @@ fn env_named(name: &str) -> Environment {
         test_environment: false,
         test_prefix: "AUTOTEST".into(),
         db_auto_approve: false,
+        password_expiry_query: String::new(),
+        active_session_query: String::new(),
+        reset_expired_passwords: false,
     }
 }
 
@@ -769,6 +772,48 @@ mod one_case {
         assert_eq!(store::load_script(&p.b, 7).unwrap().unwrap().title, "Apply for leave");
         let kept: Vec<_> = std::fs::read_dir(p.b.join("deleted-scripts")).unwrap().flatten().collect();
         assert_eq!(kept.len(), 1, "the replaced script is kept aside");
+    }
+
+    fn saved_setup(name: &str, sql: &str) -> v2_lib::autorun::setups::SavedSetup {
+        serde_json::from_value(json!({
+            "name": name, "description": "d", "inputs": [], "actions": [],
+            "find": { "database": { "sql": sql, "id_column": "Id", "name_column": "Name" } },
+            "creates": [], "returns": 0, "version": 1, "changes": 0, "saved_at": 0
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn a_copy_brings_the_setups_needed_records_name_and_never_overwrites_one() {
+        use v2_lib::autorun::setups;
+        let _lock = crate::serial::autorun();
+        let p = pair();
+        let mut s = script(7, None, json!([{ "step_number": 1, "actions": [{ "kind": "check_text", "value": "ok" }] }]));
+        s.needs_records = serde_json::from_value(json!([
+            { "setup": "Rating scale", "why": "x" }, { "setup": "Tree", "why": "y" }, { "setup": "Ghost", "why": "z" }
+        ]))
+        .unwrap();
+        store::save_script(&p.a, &s).unwrap();
+        let sql = "SELECT Id, Name FROM dbo.T WHERE Name LIKE {prefix} + N'%'";
+        for name in ["Rating scale", "Tree"] {
+            assert!(setups::put_if_absent(&p.a, ORG, PROJECT, saved_setup(name, sql)).unwrap());
+        }
+        // The target has a different Tree already.
+        let other = "SELECT Id, Name FROM dbo.Other WHERE Name LIKE {prefix} + N'%'";
+        assert!(setups::put_if_absent(&p.b, ORG, PROJECT, saved_setup("Tree", other)).unwrap());
+
+        let plan = plan_case_copy(&p.a, &p.b, &p.b_id, ORG, PROJECT, 7).unwrap();
+        assert_eq!(plan.setups_added, vec!["Rating scale".to_string()]);
+        assert_eq!(plan.setups_kept, vec!["Tree".to_string()]);
+        assert_eq!(plan.missing_api, vec!["Ghost".to_string()], "in neither environment: named, not copied");
+        assert!(setups::find_setup(&setups::load_setups(&p.b, ORG, PROJECT).unwrap(), "Rating scale").is_none(), "the plan writes nothing");
+
+        let done = copy_case(&p.a, &p.b, &p.b_id, ORG, PROJECT, 7, false).unwrap();
+        assert_eq!(done, plan);
+        let file = setups::load_setups(&p.b, ORG, PROJECT).unwrap();
+        assert!(setups::find_setup(&file, "Rating scale").is_some());
+        let tree = setups::find_setup(&file, "Tree").unwrap();
+        assert_eq!(tree.find.database.as_ref().unwrap().sql, other, "the target's own is kept");
     }
 
     #[test]

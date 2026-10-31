@@ -10,7 +10,7 @@ under the writer's rules, with Test Case Manager's tools:
 - running the spec, npx playwright test, npm run qa: `replay_autorun_to_step`, or a run in the app.
 - users and test data: `get_accounts`, `propose_accounts`, `save_test_file`. On a test environment,
   look up each login's password in the same query that finds the login, and propose it with the
-  account. The user accounts are generally in the HR_SM_USER_ACCOUNT table: look there first (with
+  account. The user accounts are generally in the HS_SM_USER_ACCOUNT table: look there first (with
   `db_query`) for the logins and their passwords.
 - handing a case to playwright-test-healer: never dispatch that agent. Follow the healer's rules
   (`get_guide`, role healer) with `get_autorun_failures` and `replay_autorun_to_step`.

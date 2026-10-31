@@ -451,6 +451,7 @@ export const commands = {
 	autoRunCopyCaseFrom: (organization: string, project: string, caseId: number, activeId: string, sourceId: string, replace: boolean) => typedError<CaseCopyPlan, string>(__TAURI_INVOKE("auto_run_copy_case_from", { organization, project, caseId, activeId, sourceId, replace })),
 	envSetDefaultPassword: (id: string, password: string) => typedError<null, string>(__TAURI_INVOKE("env_set_default_password", { id, password })),
 	envClearDefaultPassword: (id: string) => typedError<null, string>(__TAURI_INVOKE("env_clear_default_password", { id })),
+	envSetResetExpiredPasswords: (id: string, on: boolean) => typedError<EnvListView, string>(__TAURI_INVOKE("env_set_reset_expired_passwords", { id, on })),
 	/**  The assistant's proposed accounts for the active environment. */
 	envProposals: () => typedError<ProposedAccount[], string>(__TAURI_INVOKE("env_proposals")),
 	/**  Dismiss the active environment's whole proposal. */
@@ -657,6 +658,15 @@ export const commands = {
 	 *  when there are any.
 	 */
 	precondition_repairs?: PreconditionRepair_Serialize[],
+	/**
+	 *  Kept records the case relies on and did not make, each one named by a
+	 *  saved setup whose database find rule looks for it. The run asks
+	 *  every one before it signs in (`needs_records`) and blocks the case,
+	 *  naming what is missing, when one is not there. Every save validates
+	 *  them. Written only when there are any, so an older script reads
+	 *  exactly as it always did.
+	 */
+	needs_records?: NeededRecord[],
 	/**
 	 *  The draft this case makes for itself before it signs in: a fixture
 	 *  the run performs on every run of the case. Its outputs reach
@@ -885,9 +895,10 @@ export const commands = {
 	autoRunListAccounts: () => typedError<Account[], string>(__TAURI_INVOKE("auto_run_list_accounts")),
 	/**
 	 *  Replace the accounts list. Returns the keys whose saved session was
-	 *  dropped, so the screen can say so.
+	 *  dropped, so the screen can say so. With `loaded_version` (from
+	 *  `auto_run_accounts_version`) a list that changed since is refused.
 	 */
-	autoRunSaveAccounts: (accounts: Account[]) => typedError<string[], string>(__TAURI_INVOKE("auto_run_save_accounts", { accounts })),
+	autoRunSaveAccounts: (accounts: Account[], loadedVersion: string | null) => typedError<string[], string>(__TAURI_INVOKE("auto_run_save_accounts", { accounts, loadedVersion })),
 	autoRunLoadRecipe: (organization: string, project: string) => typedError<{
 	/**  Where a fresh browser goes first. Absolute, http or https. */
 	start_url: string,
@@ -934,6 +945,11 @@ export const commands = {
 	wait_while_shown?: LoadingIndicator_Serialize[],
 	/**  Exactly one visible match of this means "signed in". */
 	signed_in: Target_Serialize,
+	/**
+	 *  The page a login whose password has expired is sent to, when the site
+	 *  has one: a sign-in that ends there fails as "password expired".
+	 */
+	password_reset?: PasswordResetPage_Serialize | null,
 	/**
 	 *  Other origins `navigate` may go to. The start address's own origin
 	 *  is always allowed.
@@ -1103,6 +1119,34 @@ export const commands = {
 	autoRunRecordingIsOpen: () => __TAURI_INVOKE<boolean>("auto_run_recording_is_open"),
 	/**  The same check a recording must pass, on a saved area. */
 	autoRunTryModulePath: (organization: string, project: string, area: string, account: string, browserName: string) => typedError<ModuleTryResult, string>(__TAURI_INVOKE("auto_run_try_module_path", { organization, project, area, account, browserName })),
+	/**
+	 *  Check the sign-in of one saved account, and walk it to `area` (an area
+	 *  name, optional). The Accounts dialog calls this for each account it ticks,
+	 *  one after another. One password is typed per attempt, in a browser of its
+	 *  own that is closed after, and is never in the answer.
+	 */
+	autoRunCheckSignIn: (organization: string, project: string, accountKey: string, area: string | null, dbReadAccess: boolean) => typedError<CheckedAccount, string>(__TAURI_INVOKE("auto_run_check_sign_in", { organization, project, accountKey, area, dbReadAccess })),
+	/**
+	 *  The last check of each account of the active environment, by key: when,
+	 *  whether it reached its area, and the words.
+	 */
+	autoRunSignInChecks: () => typedError<{ [key in string]: Mark }, string>(__TAURI_INVOKE("auto_run_sign_in_checks")),
+	/**
+	 *  What the active environment's accounts file looks like now: asked BEFORE
+	 *  the list is read, and sent back with the save, so a save of a list that
+	 *  something else changed in between (a reset by a sign-in check, a run) is
+	 *  refused rather than written over it. It carries no password.
+	 */
+	autoRunAccountsVersion: () => typedError<string, string>(__TAURI_INVOKE("auto_run_accounts_version")),
+	/**  End the sign-in check going, if any (the dialog's Cancel). */
+	autoRunCancelCheckSignIn: () => __TAURI_INVOKE<void>("auto_run_cancel_check_sign_in"),
+	/**
+	 *  The saved accounts (`account_key` names one; none means all) whose
+	 *  password is expired, forced to change or due within a week, one line
+	 *  each, for the run window's warning. Empty when the environment has no
+	 *  expiry query, reading the database is off or it does not answer.
+	 */
+	autoRunExpiringAccounts: (accountKey: string | null, dbReadAccess: boolean) => typedError<string[], string>(__TAURI_INVOKE("auto_run_expiring_accounts", { accountKey, dbReadAccess })),
 	/**
 	 *  Open a visible browser with nobody signed in, go to `start_url`, and
 	 *  listen. Each step arrives as a `RecordingEvent`.
@@ -2676,6 +2720,16 @@ export type AppSettings = {
 	page_size?: PageSize,
 };
 
+/**  Whether the account's menu leads to the area that was asked for. */
+export type AreaReach = 
+/**  The walk arrived where the area was recorded to arrive. */
+{ kind: "reached"; area: string } | 
+/**
+ *  The walk stopped: `at` is the walk's own sentence and where the page
+ *  stood (its path and title).
+ */
+{ kind: "stopped"; area: string; at: string };
+
 /**  One area of the discovery map, as the Discovery card shows it. */
 export type AreaView = {
 	/**  `""` is the bucket for what belongs to no area. */
@@ -3079,6 +3133,13 @@ export type CaseCopyPlan = {
 	 */
 	missing_components: string[],
 	/**
+	 *  Saved setups the script's needs_records name that the target lacks,
+	 *  brought across.
+	 */
+	setups_added: string[],
+	/**  Setups the target has under that name but different; its version is kept. */
+	setups_kept: string[],
+	/**
 	 *  Areas the case visits (its own, a `return_to_area`, those of its
 	 *  components) that the target lacks, brought across with their variants.
 	 */
@@ -3368,6 +3429,15 @@ export type CaseScript_Deserialize = {
 	 */
 	precondition_repairs?: PreconditionRepair_Deserialize[],
 	/**
+	 *  Kept records the case relies on and did not make, each one named by a
+	 *  saved setup whose database find rule looks for it. The run asks
+	 *  every one before it signs in (`needs_records`) and blocks the case,
+	 *  naming what is missing, when one is not there. Every save validates
+	 *  them. Written only when there are any, so an older script reads
+	 *  exactly as it always did.
+	 */
+	needs_records?: NeededRecord[],
+	/**
 	 *  The draft this case makes for itself before it signs in: a fixture
 	 *  the run performs on every run of the case. Its outputs reach
 	 *  the steps as `{{setup.<output>}}` (`setup`). A repair can never
@@ -3523,6 +3593,15 @@ export type CaseScript_Serialize = {
 	 */
 	precondition_repairs?: PreconditionRepair_Serialize[],
 	/**
+	 *  Kept records the case relies on and did not make, each one named by a
+	 *  saved setup whose database find rule looks for it. The run asks
+	 *  every one before it signs in (`needs_records`) and blocks the case,
+	 *  naming what is missing, when one is not there. Every save validates
+	 *  them. Written only when there are any, so an older script reads
+	 *  exactly as it always did.
+	 */
+	needs_records?: NeededRecord[],
+	/**
 	 *  The draft this case makes for itself before it signs in: a fixture
 	 *  the run performs on every run of the case. Its outputs reach
 	 *  the steps as `{{setup.<output>}}` (`setup`). A repair can never
@@ -3633,6 +3712,13 @@ export type ChangeOutcome = {
 	 *  The change itself was written.
 	 */
 	list_error: string | null,
+};
+
+/**  One account's check and its words, as the dialog shows them. */
+export type CheckedAccount = {
+	check: SignInCheck,
+	/**  `sign_in_check::summary`. */
+	summary: string,
 };
 
 /**  One line of the preview. */
@@ -4270,6 +4356,10 @@ export type EnvInput = {
 	 *  environment gets the default.
 	 */
 	test_prefix?: string | null,
+	/**  Left out, an edit keeps the environment's password expiry query. */
+	password_expiry_query?: string | null,
+	/**  Left out, an edit keeps the environment's active session query. */
+	active_session_query?: string | null,
 };
 
 export type EnvListView = {
@@ -4307,6 +4397,21 @@ export type EnvView = {
 	has_default_password: boolean,
 	/**  "Run database changes without asking", this environment's own. */
 	db_auto_approve: boolean,
+	/**
+	 *  The SELECT that reads when logins' passwords fall due; empty when not
+	 *  checked.
+	 */
+	password_expiry_query: string,
+	/**
+	 *  The SELECT that reads whether a login is signed in elsewhere; empty
+	 *  when not checked.
+	 */
+	active_session_query: string,
+	/**
+	 *  "Reset expired passwords", this environment's own. Matters only
+	 *  while it is marked a test environment.
+	 */
+	reset_expired_passwords: boolean,
 };
 
 export type Expect = {
@@ -4887,6 +4992,27 @@ export type MappingSummary = {
 	blocked_writes: number,
 };
 
+/**
+ *  What the last check of an account found, kept on this machine beside the
+ *  accounts so a later proposal can prefer the logins that reach an area.
+ *  Words only: no password, no host.
+ */
+export type Mark = {
+	/**
+	 *  Milliseconds since the epoch; a float because specta refuses a
+	 *  64-bit integer across IPC.
+	 */
+	checked_ms: number | null,
+	/**  The sign-in worked. */
+	signed_in?: boolean,
+	/**  An area was asked for and the walk arrived: only then. */
+	reached: boolean,
+	/**  The area the check was for; none for a sign-in alone. */
+	area: string | null,
+	/**  The check's summary line. */
+	outcome: string,
+};
+
 export type MaterializedDraft = {
 	path: string,
 	stamp: string,
@@ -5063,6 +5189,16 @@ export type NavView = {
 };
 
 /**
+ *  One kept record a case relies on: the saved `setup` whose database find
+ *  rule looks for it, and `why`, what the case needs it for (said in the
+ *  Blocked sentence when it is not there).
+ */
+export type NeededRecord = {
+	setup: string,
+	why: string,
+};
+
+/**
  *  One wait for the company network: the run found it gone before
  *  `before_case_id` (or after that case failed) and waited `waited_ms`.
  *  `outcome` is "resumed", "stopped" or "gave_up". Never a host or port.
@@ -5200,6 +5336,70 @@ export type ParameterChoice = {
 export type ParameterValue = {
 	name: string,
 	value: string,
+};
+
+/**
+ *  The page a site sends a login to when its password has expired, instead
+ *  of home. A sign-in that ends on it fails as "password expired"
+ *  (`signin::PASSWORD_EXPIRED`), not as a signed-in marker that never
+ *  appeared.
+ */
+export type PasswordResetPage = PasswordResetPage_Serialize | PasswordResetPage_Deserialize;
+
+/**
+ *  The page a site sends a login to when its password has expired, instead
+ *  of home. A sign-in that ends on it fails as "password expired"
+ *  (`signin::PASSWORD_EXPIRED`), not as a signed-in marker that never
+ *  appeared.
+ */
+export type PasswordResetPage_Deserialize = {
+	/**  Part of the page's PATH (case ignored): `/security/PasswordReset`. */
+	path_contains: string,
+	/**
+	 *  A field only that page has - recognised by it, not by the wording.
+	 *  It is also the page's current password field, which a reset fills.
+	 */
+	field: Target_Deserialize,
+	/**
+	 *  The new password field a reset fills; left out, the built-in
+	 *  `#txtNewPassword`.
+	 */
+	new?: Target_Deserialize | null,
+	/**  The confirmation field; left out, the built-in `#txtConfirmPassword`. */
+	confirm?: Target_Deserialize | null,
+	/**
+	 *  The button that sends the form - never the one that clears it; left
+	 *  out, the built-in `#btnsubmit`.
+	 */
+	submit?: Target_Deserialize | null,
+};
+
+/**
+ *  The page a site sends a login to when its password has expired, instead
+ *  of home. A sign-in that ends on it fails as "password expired"
+ *  (`signin::PASSWORD_EXPIRED`), not as a signed-in marker that never
+ *  appeared.
+ */
+export type PasswordResetPage_Serialize = {
+	/**  Part of the page's PATH (case ignored): `/security/PasswordReset`. */
+	path_contains: string,
+	/**
+	 *  A field only that page has - recognised by it, not by the wording.
+	 *  It is also the page's current password field, which a reset fills.
+	 */
+	field: Target_Serialize,
+	/**
+	 *  The new password field a reset fills; left out, the built-in
+	 *  `#txtNewPassword`.
+	 */
+	new?: Target_Serialize | null,
+	/**  The confirmation field; left out, the built-in `#txtConfirmPassword`. */
+	confirm?: Target_Serialize | null,
+	/**
+	 *  The button that sends the form - never the one that clears it; left
+	 *  out, the built-in `#btnsubmit`.
+	 */
+	submit?: Target_Serialize | null,
 };
 
 /**
@@ -5709,6 +5909,12 @@ export type ProposedAccount = {
 	 *  sees it beside the account.
 	 */
 	no_password: string | null,
+	/**
+	 *  What the environment's expiry and active session queries said of this
+	 *  login when it was proposed: `expired`, `due soon`, `signed in
+	 *  elsewhere`. Never a secret.
+	 */
+	marks: string[],
 };
 
 /**
@@ -6883,6 +7089,30 @@ export type SharedQueue_Serialize = {
 	warnings: string[],
 };
 
+/**  One account's check. */
+export type SignInCheck = {
+	/**  The account's key, never its login. */
+	account: string,
+	signed_in: boolean,
+	/**  The path the browser stood on after the sign-in. */
+	landed: string | null,
+	/**
+	 *  Why there was no sign-in: a sentence, the password reset page and a
+	 *  stop before any attempt included.
+	 */
+	stopped: string | null,
+	/**
+	 *  What the expiry query said about the password's due date, when it
+	 *  was asked and knew ("password due 2026-11-02, 3 days"). Words, never
+	 *  a password.
+	 */
+	password_due: string | null,
+	/**  What could not be checked, said beside the result. */
+	note: string | null,
+	/**  Only when an area was asked for and the sign-in arrived. */
+	area: AreaReach | null,
+};
+
 export type SignInDraftView = {
 	steps: DraftStepView[],
 	/**  The signed-in check in words; empty when none was picked. */
@@ -6956,6 +7186,11 @@ export type SignInRecipe_Deserialize = {
 	/**  Exactly one visible match of this means "signed in". */
 	signed_in: Target_Deserialize,
 	/**
+	 *  The page a login whose password has expired is sent to, when the site
+	 *  has one: a sign-in that ends there fails as "password expired".
+	 */
+	password_reset?: PasswordResetPage_Deserialize | null,
+	/**
 	 *  Other origins `navigate` may go to. The start address's own origin
 	 *  is always allowed.
 	 */
@@ -7010,6 +7245,11 @@ export type SignInRecipe_Serialize = {
 	wait_while_shown?: LoadingIndicator_Serialize[],
 	/**  Exactly one visible match of this means "signed in". */
 	signed_in: Target_Serialize,
+	/**
+	 *  The page a login whose password has expired is sent to, when the site
+	 *  has one: a sign-in that ends there fails as "password expired".
+	 */
+	password_reset?: PasswordResetPage_Serialize | null,
 	/**
 	 *  Other origins `navigate` may go to. The start address's own origin
 	 *  is always allowed.

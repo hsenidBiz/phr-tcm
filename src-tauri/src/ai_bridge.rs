@@ -760,6 +760,8 @@ pub async fn route_as(
         // closed, dialogs and its guard cleared, back home - keeping the
         // sign-in. Never the person's browser, never while a replay runs.
         ("POST", "/autorun-reset") => {
+            // A reset from any caller ends a sign-in check going.
+            crate::autorun::sign_in_check::cancel();
             crate::autorun::page_compact::forget(slot);
             with_other_holds(crate::commands::autorun::reset_for_assistant(slot, &ctx.org, &ctx.project).await, holder)
         }
@@ -805,7 +807,11 @@ pub async fn route_as(
         // The active environment's accounts: the assistant proposes logins
         // (never passwords) for a person to add, and reads the ones there -
         // passwords included only in an environment marked as a test one.
-        ("POST", "/accounts-propose") => accounts_propose(body),
+        ("POST", "/accounts-propose") => accounts_propose(ctx, body).await,
+        // Check sign-in: each account signed in once, in a browser of its own,
+        // and walked as far as an area. Uses no slot: the person's Auto Run
+        // browser and the assistant's own are left alone.
+        ("POST", "/autorun-check-sign-in") => autorun_check_sign_in(ctx, body).await,
         // With the project's Test files beside them, by name and size: what
         // a case uploads.
         ("GET", "/accounts") => accounts_read(ctx, crate::commands::autorun_slots::slot_if_any(caller)),
@@ -2804,7 +2810,7 @@ const NO_SUPERVISED_BROWSER: &str =
 /// kinds of session are never open at once.
 fn unattended_run_is_using_the_browser() -> Option<(u16, String)> {
     if crate::commands::autorun_replay::replay_is_running() {
-        Some((409, "an unattended run is going - wait for it".to_string()))
+        Some((409, crate::autorun::sign_in_check::going_sentence("an unattended run is going - wait for it")))
     } else {
         None
     }
@@ -7204,6 +7210,9 @@ pub async fn setup_save_for<S: crate::autorun::setup_find::RowSource>(
     };
     // A removal needs no explore session and no reason.
     if asked.remove {
+        if let Err(why) = crate::autorun::needs_records::refuse_while_named(root, org, project, &asked.name, "removed") {
+            return (409, why);
+        }
         return match setups::remove(root, org, project, &asked.name) {
             Ok(name) => {
                 crate::applog::info(format!("Auto Run setup {name}: removed"));
@@ -7273,6 +7282,17 @@ pub async fn setup_save_for<S: crate::autorun::setup_find::RowSource>(
             },
         }),
     };
+    if built.setup.find.database.is_none() {
+        if let Err(why) = crate::autorun::needs_records::refuse_while_named(
+            root,
+            org,
+            project,
+            &built.setup.name,
+            "saved without a database find rule",
+        ) {
+            return (409, why);
+        }
+    }
     let setup = built.setup.clone();
     let (replaced, cut) = (built.replaced.clone(), built.cut);
     let saved = match setups::save(root, org, project, built, asked.why.as_deref()) {
@@ -8769,8 +8789,16 @@ async fn autorun_discover_start(
         Err(refused) => return refused,
     };
     // No account, no recipe: said before a browser opens for nothing.
-    if let Err(why) = crate::autorun::signin::prepare(&root, &ctx.org, &ctx.project, &account) {
-        return (409, why);
+    let (username, session_minutes) = match crate::autorun::signin::prepare(&root, &ctx.org, &ctx.project, &account) {
+        Ok((recipe, acct)) => (acct.username, recipe.session_minutes),
+        Err(why) => return (409, why),
+    };
+    // Someone already signed in as the account is logged out by this
+    // sign-in: refused before a browser opens. An expired or nearly expired
+    // password only warns. A database that is off never blocks.
+    let gate = sign_in_gate(ctx, &root, &account, &username, session_minutes).await;
+    if let Some(refused) = gate.refused {
+        return (409, refused);
     }
     // None named: a browser the replay left is kept, whichever it is, and a
     // new one is the one last chosen (`open_for_discovery`). A guarded
@@ -8799,7 +8827,63 @@ async fn autorun_discover_start(
         crate::commands::autorun::answer_between_commands_in(n);
     }
     *seen = Some(crate::commands::autorun::overrides_of(&slot));
-    said_made_way(made_way, answer)
+    said_warnings(said_made_way(made_way, answer), &gate.warnings)
+}
+
+/// The two environment queries' checks of an account before a discovery
+/// signs in as it (`active_login::discovery_gate`). Nothing is asked when
+/// neither query is set; a database that is off is said once, never a
+/// refusal.
+async fn sign_in_gate(
+    ctx: &BridgeContext,
+    root: &std::path::Path,
+    key: &str,
+    username: &str,
+    session_minutes: u32,
+) -> crate::autorun::active_login::Gate {
+    use crate::autorun::active_login::{discovery_gate, Gate, StageRows, NOT_CHECKED_NOTE};
+    let Ok(env) = crate::environments::active(root) else { return Gate::default() };
+    if env.password_expiry_query.trim().is_empty() && env.active_session_query.trim().is_empty() {
+        return Gate::default();
+    }
+    let Ok(db) = stage_db(ctx) else {
+        return Gate { refused: None, warnings: vec![NOT_CHECKED_NOTE.to_string()] };
+    };
+    let ours = crate::autorun::active_login::session_ownership(
+        root,
+        &env.id,
+        key,
+        session_minutes,
+        crate::autorun::sessions::now_ms(),
+    );
+    discovery_gate(
+        &StageRows(&db),
+        &env.password_expiry_query,
+        &env.active_session_query,
+        key,
+        username,
+        ours,
+        &crate::autorun::password_expiry::today(),
+    )
+    .await
+}
+
+/// `answer` with the checks' warnings beside it: a `warnings` list in a JSON
+/// object answer, or lines after plain text. Nothing is added for no
+/// warnings or a refused call.
+pub fn said_warnings((status, text): (u16, String), warnings: &[String]) -> (u16, String) {
+    if warnings.is_empty() || status != 200 {
+        return (status, text);
+    }
+    match serde_json::from_str::<serde_json::Value>(&text) {
+        Ok(mut v @ serde_json::Value::Object(_)) => {
+            v["warnings"] = serde_json::json!(warnings);
+            (status, v.to_string())
+        }
+        _ => (status, format!("{text}
+Warning: {}", warnings.join("
+Warning: "))),
+    }
 }
 
 /// The case a discovery call names (`case_id`, optional) and whether it
@@ -11314,7 +11398,7 @@ pub const PROPOSAL_SHAPE_REFUSED: &str = "each account needs a key, a label and 
 /// and otherwise the whole call is refused. A password is never logged or
 /// repeated in an answer, and nothing reaches the accounts until a person
 /// adds it in the app.
-fn accounts_propose(body: &str) -> (u16, String) {
+async fn accounts_propose(ctx: &BridgeContext, body: &str) -> (u16, String) {
     use crate::environments::{
         active, proposed_password_missing, save_proposals, StoredProposal, PROPOSED_PASSWORD_NOT_TEST,
     };
@@ -11372,6 +11456,7 @@ fn accounts_propose(body: &str) -> (u16, String) {
                 role,
                 password: p.password,
                 no_password,
+                marks: vec![],
             }
         })
         .collect();
@@ -11404,6 +11489,32 @@ fn accounts_propose(body: &str) -> (u16, String) {
             p.no_password = None;
         }
     }
+    // Which logins can sign in at all: expired ones and ones someone is
+    // signed in as are marked, and the usable ones come first. A mark never
+    // carries a password.
+    let marks = propose_marks(ctx, &root, &env, &proposals).await;
+    if let Some(m) = &marks {
+        // Kept with the proposal, for the person ticking logins in the app.
+        for p in &mut proposals {
+            p.marks = m.marks_of(&p.key);
+        }
+        let order = m.usable_first(&proposals.iter().map(|p| p.key.clone()).collect::<Vec<_>>());
+        proposals.sort_by_key(|p| order.iter().position(|k| *k == p.key).unwrap_or(usize::MAX));
+    }
+    // Within the same marks, the logins an earlier Check sign-in found
+    // reaching their area come first, the never-checked next.
+    let checked = crate::autorun::sign_in_check::load_marks(&root, &env.id);
+    let wanted_area = serde_json::from_str::<serde_json::Value>(body)
+        .ok()
+        .and_then(|v| v.get("area").and_then(|a| a.as_str().map(str::to_string)))
+        .map(|a| a.trim().to_string())
+        .filter(|a| !a.is_empty());
+    let now = crate::autorun::sessions::now_ms();
+    if !checked.is_empty() {
+        proposals.sort_by_key(|p| {
+            crate::autorun::sign_in_check::proposal_rank(&p.marks, &checked, &p.key, wanted_area.as_deref(), now)
+        });
+    }
     if let Err(why) = save_proposals(&root, &env.id, &proposals) {
         return (400, why);
     }
@@ -11412,13 +11523,193 @@ fn accounts_propose(body: &str) -> (u16, String) {
         proposals.len(),
         env.name
     ));
-    (
-        200,
-        format!(
-            "proposed {} account(s) for the environment {}, {with_password} with a password - a person picks which to add in the app, and a proposed password is used unless they type another. Another call replaces this proposal.",
-            proposals.len(),
-            env.name
-        ),
+    let mut said = format!(
+        "proposed {} account(s) for the environment {}, {with_password} with a password - a person picks which to add in the app, and a proposed password is used unless they type another. Another call replaces this proposal.",
+        proposals.len(),
+        env.name
+    );
+    if let Some(m) = &marks {
+        let marked: Vec<String> = m
+            .marks
+            .iter()
+            .filter(|(_, marks)| !marks.is_empty())
+            .map(|(key, marks)| format!("{key} ({})", marks.join(", ")))
+            .collect();
+        if !marked.is_empty() {
+            said.push_str(&format!(
+                " Marked: {}. A login that is expired cannot sign in until its password is reset; one signed in elsewhere is logged out by a sign-in. The unmarked logins are listed first - prefer them.",
+                marked.join("; ")
+            ));
+        }
+        if let Some(note) = &m.note {
+            said.push_str(&format!(" Note: {note}."));
+        }
+    }
+    let earlier: Vec<String> = proposals
+        .iter()
+        .filter_map(|p| checked.get(&p.key).map(|m| format!("{} ({})", p.key, crate::autorun::sign_in_check::mark_phrase(m, now))))
+        .collect();
+    if !earlier.is_empty() {
+        said.push_str(&format!(
+            " Checked earlier with check_autorun_sign_in: {}. The ones that reached the area asked for (`area`) are listed first; a check for another area, or over a week old, does not rank.",
+            earlier.join("; ")
+        ));
+    }
+    (200, said)
+}
+
+/// What `POST /autorun-check-sign-in` reads: `accounts` (account keys, one
+/// to three) and `area` (an area name; the sign-in alone when absent).
+const CHECK_SIGN_IN_SHAPE: &str = "{ \"accounts\": [<an account key>, at most 3], \"area\": <an area name>, optional }";
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CheckSignInBody {
+    #[serde(default)]
+    accounts: Option<Vec<String>>,
+    #[serde(default)]
+    area: Option<String>,
+}
+
+/// `check_autorun_sign_in`, with the browsers, the database and the project
+/// given so a test can drive it: each named account (every saved one when
+/// none is) is signed in once, in a browser of its own, and walked to the
+/// area if one is named. Answers `{ checked: [{ account, summary, signed_in,
+/// landed, stopped, password, area }] }`. An account that is not saved is
+/// refused first, naming it, before any browser opens.
+pub async fn check_sign_in_in<B: crate::autorun::replay::Browsers, S: crate::autorun::setup_find::RowSource>(
+    browsers: &mut B,
+    rows: Option<&S>,
+    root: &std::path::Path,
+    organization: &str,
+    project: &str,
+    body: &str,
+) -> (u16, String) {
+    let asked: CheckSignInBody = match serde_json::from_str(if body.trim().is_empty() { "{}" } else { body }) {
+        Ok(a) => a,
+        Err(_) => return (400, format!("that is not what check_autorun_sign_in reads. Expected {CHECK_SIGN_IN_SHAPE}.")),
+    };
+    let saved = match crate::autorun::accounts::load_accounts(root) {
+        Ok(a) => a,
+        Err(e) => return (500, e),
+    };
+    let Some(named_keys) = asked.accounts else {
+        return (
+            400,
+            format!(
+                "check_autorun_sign_in needs `accounts`, the keys of the accounts to check (at most {} per call; get_accounts lists them). Expected {CHECK_SIGN_IN_SHAPE}.",
+                crate::autorun::sign_in_check::MOST_ACCOUNTS
+            ),
+        );
+    };
+    let keys: Vec<String> = named_keys.iter().map(|k| k.trim().to_string()).filter(|k| !k.is_empty()).collect();
+    if keys.is_empty() {
+        return (400, format!("`accounts` names no account. Expected {CHECK_SIGN_IN_SHAPE}."));
+    }
+    if keys.len() > crate::autorun::sign_in_check::MOST_ACCOUNTS {
+        return (
+            400,
+            format!(
+                "{} accounts in one call is too many - at most {} at a time, as each sign-in takes as long as one does. Split them across calls.",
+                keys.len(),
+                crate::autorun::sign_in_check::MOST_ACCOUNTS
+            ),
+        );
+    }
+    let strangers: Vec<&str> = keys.iter().filter(|k| !saved.iter().any(|a| &a.key == *k)).map(String::as_str).collect();
+    if !strangers.is_empty() {
+        return (
+            400,
+            format!(
+                "no account named {} is saved on this machine - get_accounts lists the keys",
+                strangers.iter().map(|k| format!("\"{k}\"")).collect::<Vec<_>>().join(", ")
+            ),
+        );
+    }
+    let area = named(asked.area.as_deref());
+    let env = match crate::environments::active(root) {
+        Ok(e) => e,
+        Err(e) => return (500, e),
+    };
+    let queries = (env.password_expiry_query.as_str(), env.active_session_query.as_str());
+    let done = crate::commands::autorun_check_signin::check_with(
+        browsers, rows, queries, root, organization, project, &keys, area.as_deref(),
+    )
+    .await;
+    match done {
+        Err(why) => (409, why),
+        Ok(list) => {
+            let checked: Vec<serde_json::Value> = list
+                .iter()
+                .map(|c| {
+                    let mut v = serde_json::to_value(c).unwrap_or_default();
+                    v["summary"] = serde_json::json!(crate::autorun::sign_in_check::summary(c));
+                    v
+                })
+                .collect();
+            (200, serde_json::json!({ "checked": checked }).to_string())
+        }
+    }
+}
+
+/// `POST /autorun-check-sign-in` in the app: real browsers (headless, the
+/// one last chosen), and the environment's database when reading it is on.
+async fn autorun_check_sign_in(ctx: &BridgeContext, body: &str) -> (u16, String) {
+    let root = match autorun_root() {
+        Ok(r) => r,
+        Err(refused) => return refused,
+    };
+    // Said before anything is read or started.
+    if let Some(busy) = crate::commands::autorun_check_signin::refusal() {
+        return (409, busy);
+    }
+    let db = stage_db(ctx).ok();
+    let rows = db.as_ref().map(crate::autorun::active_login::StageRows);
+    let mut browsers = crate::commands::autorun_replay::RealBrowsers::new(
+        crate::browser::launch::Browser::from_name(&crate::autorun::store::last_browser(&root)),
+        false,
+    );
+    check_sign_in_in(&mut browsers, rows.as_ref(), &root, &ctx.org, &ctx.project, body).await
+}
+
+/// The marks of the logins an assistant proposes, from the environment's
+/// password expiry and active session queries. `None` when neither is set
+/// (nothing asked, nothing said). A database that is off or does not answer
+/// marks nothing and says so once.
+async fn propose_marks(
+    ctx: &BridgeContext,
+    root: &std::path::Path,
+    env: &crate::environments::Environment,
+    proposals: &[crate::environments::StoredProposal],
+) -> Option<crate::autorun::active_login::Marks> {
+    use crate::autorun::active_login::{mark_logins, Marks, StageRows, NOT_CHECKED_NOTE};
+    if env.password_expiry_query.trim().is_empty() && env.active_session_query.trim().is_empty() {
+        return None;
+    }
+    let Ok(db) = stage_db(ctx) else {
+        return Some(Marks { marks: vec![], note: Some(NOT_CHECKED_NOTE.to_string()) });
+    };
+    let logins: Vec<(String, String)> = proposals.iter().map(|p| (p.key.clone(), p.username.clone())).collect();
+    let env_id = env.id.clone();
+    let minutes = crate::autorun::recipe::load_effective_recipe_if_any(root, &ctx.org, &ctx.project)
+        .ok()
+        .flatten()
+        .map_or(480, |r| r.session_minutes);
+    let root = root.to_path_buf();
+    // This app's own earlier sign-ins are not someone else's.
+    let ours = move |key: &str| {
+        crate::autorun::active_login::session_ownership(&root, &env_id, key, minutes, crate::autorun::sessions::now_ms())
+    };
+    Some(
+        mark_logins(
+            &StageRows(&db),
+            &env.password_expiry_query,
+            &env.active_session_query,
+            &logins,
+            &ours,
+            &crate::autorun::password_expiry::today(),
+        )
+        .await,
     )
 }
 
@@ -12527,6 +12818,7 @@ fn unchanged_script(old: &crate::autorun::CaseScript, sent: &crate::autorun::Cas
         && old.account == sent.account
         && old.no_save == sent.no_save
         && old.preconditions == sent.preconditions
+        && old.needs_records.iter().all(|n| sent.needs_records.contains(n))
         && old.setup == sent.setup
         && old.area_name().map(crate::autorun::nav::module_key) == sent.area_name().map(crate::autorun::nav::module_key)
         && old.steps.len() == sent.steps.len()
@@ -12728,6 +13020,8 @@ pub async fn save_autorun_scripts_carrying(
                 sent.case_id
             ));
         }
+        // A needed record whose setup is gone is not one a repair must keep.
+        let existing = existing.map(|old| crate::autorun::needs_records::forgive_stale(old, &root, &ctx.org, &ctx.project));
         match existing {
             // A re-send that changes nothing is not a repair. The count
             // is of changes made without a person looking, so an

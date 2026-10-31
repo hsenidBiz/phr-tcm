@@ -27,6 +27,15 @@ pub struct EnvView {
     pub has_default_password: bool,
     /// "Run database changes without asking", this environment's own.
     pub db_auto_approve: bool,
+    /// The SELECT that reads when logins' passwords fall due; empty when not
+    /// checked.
+    pub password_expiry_query: String,
+    /// The SELECT that reads whether a login is signed in elsewhere; empty
+    /// when not checked.
+    pub active_session_query: String,
+    /// "Reset expired passwords", this environment's own. Matters only
+    /// while it is marked a test environment.
+    pub reset_expired_passwords: bool,
 }
 
 #[derive(Debug, Clone, serde::Serialize, specta::Type)]
@@ -51,6 +60,12 @@ pub struct EnvInput {
     /// environment gets the default.
     #[serde(default)]
     pub test_prefix: Option<String>,
+    /// Left out, an edit keeps the environment's password expiry query.
+    #[serde(default)]
+    pub password_expiry_query: Option<String>,
+    /// Left out, an edit keeps the environment's active session query.
+    #[serde(default)]
+    pub active_session_query: Option<String>,
 }
 
 /// Said while an Auto Run browser holds a signed-in account: the person
@@ -97,6 +112,9 @@ fn view(store: &dyn SecretStore, file: EnvFile) -> EnvListView {
                 test_environment: e.test_environment,
                 test_prefix: e.test_prefix,
                 db_auto_approve: e.db_auto_approve,
+                password_expiry_query: e.password_expiry_query,
+                active_session_query: e.active_session_query,
+                reset_expired_passwords: e.reset_expired_passwords,
             })
             .collect(),
     }
@@ -169,6 +187,16 @@ pub async fn save_with(root: &Path, store: &dyn SecretStore, env: EnvInput) -> R
         .clone()
         .or_else(|| before.as_ref().map(|b| b.test_prefix.clone()))
         .unwrap_or_else(environments::default_test_prefix);
+    let password_expiry_query = env
+        .password_expiry_query
+        .clone()
+        .or_else(|| before.as_ref().map(|b| b.password_expiry_query.clone()))
+        .unwrap_or_default();
+    let active_session_query = env
+        .active_session_query
+        .clone()
+        .or_else(|| before.as_ref().map(|b| b.active_session_query.clone()))
+        .unwrap_or_default();
     let env = Environment {
         id: env.id,
         name: env.name,
@@ -180,6 +208,10 @@ pub async fn save_with(root: &Path, store: &dyn SecretStore, env: EnvInput) -> R
         // Not the form's to set: a save keeps what the file holds
         // (`environments::save_env_with`).
         db_auto_approve: false,
+        password_expiry_query,
+        active_session_query,
+        // Not the form's to set either (`set_reset_expired_passwords`).
+        reset_expired_passwords: false,
     };
     let unmarked = before.as_ref().is_some_and(|b| b.test_environment && !env.test_environment);
     let address_moved = before.as_ref().is_some_and(|b| b.start_url.trim() != env.start_url.trim());
@@ -224,6 +256,10 @@ pub async fn save_with(root: &Path, store: &dyn SecretStore, env: EnvInput) -> R
             )),
             _ => {}
         }
+        // The site is another one now: what was held for the old site and
+        // what its checks found do not carry over.
+        crate::autorun::accounts::forget_pending_for(root, &id);
+        crate::autorun::sign_in_check::forget_marks(root, &id);
     }
     drop(run_slot);
     drop(slots);
@@ -243,6 +279,12 @@ pub async fn save_with(root: &Path, store: &dyn SecretStore, env: EnvInput) -> R
 /// saved already, so a strip that fails is logged, not fatal: a password
 /// left behind is still never used or reported outside a test environment.
 fn strip_proposed_passwords(root: &Path, id: &str) {
+    // And it resets no expired password any more: the switch only means
+    // something on a test environment, and is off again if it is marked
+    // one later.
+    if let Err(e) = environments::set_reset_expired_passwords(root, id, false) {
+        crate::applog::warn(format!("Environments: the reset switch of an unmarked environment stayed on: {e}"));
+    }
     match environments::strip_proposed_passwords(root, id) {
         Ok(0) => {}
         Ok(n) => crate::applog::info(format!(
@@ -455,6 +497,18 @@ pub fn set_default_password_with(root: &Path, store: &dyn SecretStore, id: &str,
     store.put(&environments::password_target(id), password)
 }
 
+/// Switch "Reset expired passwords" for one environment. Only a test
+/// environment can have it turned on.
+pub fn set_reset_expired_passwords_with(root: &Path, store: &dyn SecretStore, id: &str, on: bool) -> Result<EnvListView, String> {
+    must_exist(root, id)?;
+    if on && !environments::load_or_init(root, None)?.environments.iter().any(|e| e.id == id && e.test_environment) {
+        return Err("mark this environment as a test environment first - an expired password is reset only on one".to_string());
+    }
+    let file = environments::set_reset_expired_passwords(root, id, on)?;
+    crate::applog::info(format!("Environments: resetting expired passwords is now {}", if on { "on" } else { "off" }));
+    Ok(view(store, file))
+}
+
 pub fn clear_default_password_with(root: &Path, store: &dyn SecretStore, id: &str) -> Result<(), String> {
     must_exist(root, id)?;
     store.remove(&environments::password_target(id))
@@ -531,10 +585,10 @@ pub fn add_proposals_with(
     picks: Vec<AccountInput>,
     replace: Vec<String>,
 ) -> Result<Vec<String>, String> {
-    use crate::autorun::accounts::{load_accounts_for, save_accounts_for, valid_key, Account};
+    use crate::autorun::accounts::{load_accounts_for, valid_key, Account};
     let env = environments::active(root)?;
     let env_id = env.id.clone();
-    let mut accounts = load_accounts_for(root, &env_id)?;
+    let accounts = load_accounts_for(root, &env_id)?;
     let proposed = usable_proposals(root, &env)?;
     let mut default: Option<Option<String>> = None;
     let mut seen = std::collections::HashSet::new();
@@ -588,15 +642,10 @@ pub fn add_proposals_with(
         return Ok(confirm);
     }
     let added: Vec<String> = ready.iter().map(|a| a.key.clone()).collect();
-    for a in ready {
-        match accounts.iter_mut().find(|e| e.key == a.key) {
-            Some(slot) => *slot = a,
-            None => accounts.push(a),
-        }
-    }
-    // Written back by the id it was read by: a switch in between must not
-    // put this environment's list into the next one.
-    save_accounts_for(root, &env_id, &accounts)?;
+    // Merged into the list as it is NOW, under the accounts lock, and by the
+    // id it was read by: a reset or a save made meanwhile is kept, and a
+    // switch in between must not put this environment's list into the next.
+    crate::autorun::accounts::merge_accounts_for(root, &env_id, ready)?;
     crate::applog::info(format!("Environments: added {} proposed account(s)", added.len()));
     // The accounts are saved: a proposal that will not update is logged,
     // not a failure of the add.
@@ -716,6 +765,17 @@ pub fn env_set_default_password(
     password: String,
 ) -> Result<(), String> {
     set_default_password_with(&super::autorun::root(&app)?, &*secrets.0, &id, &password)
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn env_set_reset_expired_passwords(
+    app: tauri::AppHandle,
+    secrets: State<'_, DbSecrets>,
+    id: String,
+    on: bool,
+) -> Result<EnvListView, String> {
+    set_reset_expired_passwords_with(&super::autorun::root(&app)?, &*secrets.0, &id, on)
 }
 
 #[tauri::command]

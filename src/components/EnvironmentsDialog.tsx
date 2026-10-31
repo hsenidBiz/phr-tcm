@@ -23,6 +23,10 @@ import { Switch } from "./ui/switch";
 export const TEST_ENVIRONMENT_WARNING =
   "The AI assistant can read the full logins of this environment's accounts. Use only for test environments.";
 
+/** What sits under the reset switch. */
+export const RESET_EXPIRED_HELP =
+  "When a sign-in lands on the site's password reset page, the app sets a simple new password and signs in with it. The account keeps the new password only once that sign-in works; until then the old one stays saved and the new one is held aside. Off unless you turn it on.";
+
 /** Said for an environment with no address of its own. */
 export const RECIPE_ADDRESS = "Using the sign-in recipe's address";
 
@@ -43,7 +47,17 @@ type Form = {
   test_environment: boolean;
   /** What every draft an Auto Run fixture or script makes here starts with. */
   test_prefix: string;
+  /** One read-only SELECT that says when logins' passwords fall due. */
+  password_expiry_query: string;
+  /** One read-only SELECT that says whether a login is signed in elsewhere. */
+  active_session_query: string;
 };
+
+/** What each query box says under it. */
+export const PASSWORD_EXPIRY_HINT =
+  "One read-only SELECT, with {users} where the logins go, answering user_id, reset_due and optionally prompt_change. Leave empty to skip the check.";
+export const ACTIVE_SESSION_HINT =
+  "One read-only SELECT, with {users} where the logins go (one call for all of them; {user} asks once per login), answering user_id, since and logged_to, and the site's session id as session if it has one, for sessions signed in now. Leave empty to skip the check.";
 
 /** The prefix a new environment starts with, as Rust's own default. */
 export const DEFAULT_TEST_PREFIX = "AUTOTEST";
@@ -57,6 +71,8 @@ function formFor(env: EnvView): Form {
     db_id: env.db_id,
     test_environment: env.test_environment,
     test_prefix: env.test_prefix,
+    password_expiry_query: env.password_expiry_query,
+    active_session_query: env.active_session_query,
   };
 }
 
@@ -76,6 +92,8 @@ function inputFor(form: Form): EnvInput {
     db_id: form.db_id,
     test_environment: form.test_environment,
     test_prefix: form.test_prefix.trim(),
+    password_expiry_query: form.password_expiry_query,
+    active_session_query: form.active_session_query,
   };
 }
 
@@ -130,6 +148,8 @@ export default function EnvironmentsDialog({ onClose }: { onClose: () => void })
       db_id: current?.db_id ?? databases.data?.[0]?.id ?? "",
       test_environment: false,
       test_prefix: DEFAULT_TEST_PREFIX,
+      password_expiry_query: "",
+      active_session_query: "",
     });
   };
 
@@ -178,6 +198,16 @@ export default function EnvironmentsDialog({ onClose }: { onClose: () => void })
       const res = await commands.envSetDefaultPassword(form.id, typed);
       if (res.status === "error") throw new Error(res.error);
       await qc.invalidateQueries({ queryKey: envKeys.list });
+    });
+
+  /** The reset switch changes at once, by its own command: a save of the
+   *  form never carries it. */
+  const setResetExpired = (on: boolean) =>
+    run(async () => {
+      if (!form?.id) return;
+      const res = await commands.envSetResetExpiredPasswords(form.id, on);
+      if (res.status === "error") throw new Error(res.error);
+      take(res.data);
     });
 
   const clearDefaultPassword = () =>
@@ -342,6 +372,26 @@ export default function EnvironmentsDialog({ onClose }: { onClose: () => void })
                 yours. 3 to 20 letters, digits or -.
               </span>
             </label>
+            <label className="block space-y-1">
+              <span className="text-xs font-medium text-muted">Password expiry query</span>
+              <Textarea
+                aria-label="Password expiry query"
+                className="min-h-[4rem] font-mono text-xs"
+                value={form.password_expiry_query}
+                onChange={(e) => setForm({ ...form, password_expiry_query: e.target.value })}
+              />
+              <span className="block text-xs text-faint">{PASSWORD_EXPIRY_HINT}</span>
+            </label>
+            <label className="block space-y-1">
+              <span className="text-xs font-medium text-muted">Active session query</span>
+              <Textarea
+                aria-label="Active session query"
+                className="min-h-[4rem] font-mono text-xs"
+                value={form.active_session_query}
+                onChange={(e) => setForm({ ...form, active_session_query: e.target.value })}
+              />
+              <span className="block text-xs text-faint">{ACTIVE_SESSION_HINT}</span>
+            </label>
             <div className="space-y-1">
               <div className="flex items-center gap-2">
                 <Switch
@@ -353,6 +403,21 @@ export default function EnvironmentsDialog({ onClose }: { onClose: () => void })
               </div>
               <p className="text-xs text-muted">{TEST_ENVIRONMENT_WARNING}</p>
             </div>
+
+            {form.id && editing?.test_environment && (
+              <div className="space-y-1">
+                <div className="flex items-center gap-2">
+                  <Switch
+                    checked={editing.reset_expired_passwords}
+                    ariaLabel="Reset expired passwords"
+                    disabled={busy}
+                    onCheckedChange={setResetExpired}
+                  />
+                  <span className="text-xs font-medium text-text">Reset expired passwords</span>
+                </div>
+                <p className="text-xs text-muted">{RESET_EXPIRED_HELP}</p>
+              </div>
+            )}
 
             {form.id ? (
               <div className="space-y-1">

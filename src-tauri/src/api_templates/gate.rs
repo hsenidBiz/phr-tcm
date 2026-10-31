@@ -35,6 +35,13 @@ pub trait StageDb {
 
     /// Runs one read. `Ok(true)` when it returned at least one row.
     fn read(&self, sql: &str) -> impl std::future::Future<Output = Result<bool, String>>;
+
+    /// Runs one read and returns its rows as `sqlcmd` prints them, for the
+    /// checks that look at a row's cells (a saved setup's find rule). A
+    /// database that cannot say answers with an error, never an empty set.
+    fn select(&self, _sql: &str) -> impl std::future::Future<Output = Result<String, String>> {
+        async { Err("this database cannot return rows".to_string()) }
+    }
 }
 
 /// The real database: `sqlcmd`, through `run_sql`, which asks the guard
@@ -60,6 +67,12 @@ impl<R: Runner> StageDb for SqlcmdStageDb<R> {
             Some(n) => Ok(n > 0),
             None => Err("the check's answer carried no row count".to_string()),
         }
+    }
+
+    async fn select(&self, sql: &str) -> Result<String, String> {
+        crate::db::query::run_query(&self.runner, &self.exe, &self.conn, false, sql)
+            .await
+            .map_err(|(_, said)| said)
     }
 }
 

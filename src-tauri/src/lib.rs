@@ -82,7 +82,7 @@ pub use state::SubmitCancel;
 pub fn specta_builder() -> Builder<tauri::Wry> {
     use commands::{
         ai_bridge, ai_tools, api_templates, app_settings, auth, autorun, autorun_publish, autorun_record,
-        autorun_divergence, autorun_record_signin, autorun_replay, autorun_setup, autorun_slots, board, bugs, cases, crystal, discovery, env_copy, environments, guide, misc, modules, prs, pw_export, pw_repo, pw_rules, queue, run_order, runs,
+        autorun_check_signin, autorun_divergence, autorun_record_signin, autorun_replay, autorun_setup, autorun_slots, board, bugs, cases, crystal, discovery, env_copy, environments, guide, misc, modules, prs, pw_export, pw_repo, pw_rules, queue, run_order, runs,
         test_files, testplan, workspace, writing_style,
     };
     Builder::<tauri::Wry>::new()
@@ -222,6 +222,7 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             env_copy::auto_run_copy_case_from,
             environments::env_set_default_password,
             environments::env_clear_default_password,
+            environments::env_set_reset_expired_passwords,
             environments::env_proposals,
             environments::env_dismiss_proposals,
             environments::env_add_proposals,
@@ -298,6 +299,11 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             autorun_record::auto_run_record_cancel,
             autorun_record::auto_run_recording_is_open,
             autorun_record::auto_run_try_module_path,
+            autorun_check_signin::auto_run_check_sign_in,
+            autorun_check_signin::auto_run_sign_in_checks,
+            autorun::auto_run_accounts_version,
+            autorun_check_signin::auto_run_cancel_check_sign_in,
+            autorun_check_signin::auto_run_expiring_accounts,
             autorun_record_signin::auto_run_record_sign_in_start,
             autorun_record_signin::auto_run_record_sign_in_pick,
             autorun_record_signin::auto_run_record_sign_in_stop,
