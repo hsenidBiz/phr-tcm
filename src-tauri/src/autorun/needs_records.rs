@@ -25,7 +25,10 @@ use std::path::Path;
 
 /// Said on the case, never blocking, when the Database Access module is off
 /// and its records could not be asked.
-pub const NOT_CHECKED: &str = "needs_records not checked: database read access is off";
+pub const NOT_CHECKED: &str = "records not checked: database read access is off";
+
+/// Said when a case declares needed records and no database is chosen.
+pub const NEED_DB: &str = "records need a database chosen on the AI Bridge tab";
 
 /// What asking for a case's needed records decided.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -46,7 +49,7 @@ pub fn check_declared(needed: &[NeededRecord], setups: &SetupFile) -> Vec<String
         .filter_map(|n| {
             let Some(setup) = setups::find_setup(setups, &n.setup) else {
                 return Some(format!(
-                    "needs_records names \"{}\", which is not a saved setup - save it with save_setup first",
+                    "needs_records names \"{}\", which is not a saved setup in this environment - save the setup, or remove the entry",
                     n.setup.trim()
                 ));
             };
@@ -103,7 +106,7 @@ pub async fn check_needed<S: RowSource>(
         // or its rule dropped is said, never taken for a record that is there.
         let Some(setup) = setups::find_setup(setups, &n.setup) else {
             return NeedsOutcome::Missing(format!(
-                "needs_records could not be checked: \"{}\" is not a saved setup any more",
+                "needs_records could not be checked: setup \"{}\" is not saved in this environment - remove the entry or save the setup",
                 n.setup.trim()
             ));
         };
@@ -162,7 +165,11 @@ pub async fn check_case_needs<D: StageDb>(
         PreconditionDb::ReadingOff => {
             return PreconditionCheck { blocked: None, notice: Some(NOT_CHECKED.to_string()) }
         }
-        PreconditionDb::Missing(why) => return PreconditionCheck { blocked: Some(why.clone()), notice: None },
+        PreconditionDb::Missing(why) => {
+            // The sentence for no database talks about preconditions; this case has none.
+            let said = if *why == super::preconditions::NEED_DB { NEED_DB.to_string() } else { why.clone() };
+            return PreconditionCheck { blocked: Some(said), notice: None };
+        }
         PreconditionDb::Ready(db) => db,
     };
     let file = match setups::load_setups(root, org, project) {
@@ -200,4 +207,54 @@ pub async fn check_script_case<D: StageDb>(
         (a, b) => a.or(b),
     };
     checked
+}
+
+/// How many cases a refusal names before it says how many more.
+const CASES_SHOWN: usize = 5;
+
+/// The case ids of the saved scripts in this project that name `setup` in
+/// `needs_records`, in order.
+pub fn cases_naming(root: &Path, org: &str, project: &str, setup: &str) -> Vec<i32> {
+    let key = super::nav::module_key(setup);
+    let same = |a: &Option<String>, b: &str| a.as_deref().is_none_or(|a| a.trim().eq_ignore_ascii_case(b.trim()));
+    let mut ids: Vec<i32> = super::store::list_scripts(root)
+        .into_iter()
+        .filter(|s| same(&s.organization, org) && same(&s.project, project))
+        .filter(|s| s.needs_records.iter().any(|n| super::nav::module_key(&n.setup) == key))
+        .map(|s| s.case_id)
+        .collect();
+    ids.sort_unstable();
+    ids.dedup();
+    ids
+}
+
+/// `Err` with a sentence naming the cases (up to 5, then "and N more") when
+/// any saved script names `setup` in `needs_records`. `what` finishes
+/// "{setup} cannot be ..." (`"removed"`, `"saved without a database find rule"`).
+pub fn refuse_while_named(root: &Path, org: &str, project: &str, setup: &str, what: &str) -> Result<(), String> {
+    let ids = cases_naming(root, org, project, setup);
+    if ids.is_empty() {
+        return Ok(());
+    }
+    let shown: Vec<String> = ids.iter().take(CASES_SHOWN).map(|i| i.to_string()).collect();
+    let more = ids.len().saturating_sub(CASES_SHOWN);
+    let more = if more > 0 { format!(" and {more} more") } else { String::new() };
+    Err(format!(
+        "setup \"{}\" cannot be {what} while saved cases name it in needs_records: case {}{more} - take it out of those cases first",
+        setup.trim(),
+        shown.join(", ")
+    ))
+}
+
+/// `old` as a repair is held to it: a needed record whose setup is no longer
+/// saved here is not one the repair must keep, so a repair (or a re-send)
+/// may drop it.
+pub fn forgive_stale(mut old: CaseScript, root: &Path, org: &str, project: &str) -> CaseScript {
+    if old.needs_records.is_empty() {
+        return old;
+    }
+    if let Ok(file) = setups::load_setups(root, org, project) {
+        old.needs_records.retain(|n| setups::find_setup(&file, &n.setup).is_some());
+    }
+    old
 }

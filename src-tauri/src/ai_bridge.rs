@@ -7204,6 +7204,9 @@ pub async fn setup_save_for<S: crate::autorun::setup_find::RowSource>(
     };
     // A removal needs no explore session and no reason.
     if asked.remove {
+        if let Err(why) = crate::autorun::needs_records::refuse_while_named(root, org, project, &asked.name, "removed") {
+            return (409, why);
+        }
         return match setups::remove(root, org, project, &asked.name) {
             Ok(name) => {
                 crate::applog::info(format!("Auto Run setup {name}: removed"));
@@ -7273,6 +7276,17 @@ pub async fn setup_save_for<S: crate::autorun::setup_find::RowSource>(
             },
         }),
     };
+    if built.setup.find.database.is_none() {
+        if let Err(why) = crate::autorun::needs_records::refuse_while_named(
+            root,
+            org,
+            project,
+            &built.setup.name,
+            "saved without a database find rule",
+        ) {
+            return (409, why);
+        }
+    }
     let setup = built.setup.clone();
     let (replaced, cut) = (built.replaced.clone(), built.cut);
     let saved = match setups::save(root, org, project, built, asked.why.as_deref()) {
@@ -12527,6 +12541,7 @@ fn unchanged_script(old: &crate::autorun::CaseScript, sent: &crate::autorun::Cas
         && old.account == sent.account
         && old.no_save == sent.no_save
         && old.preconditions == sent.preconditions
+        && old.needs_records.iter().all(|n| sent.needs_records.contains(n))
         && old.setup == sent.setup
         && old.area_name().map(crate::autorun::nav::module_key) == sent.area_name().map(crate::autorun::nav::module_key)
         && old.steps.len() == sent.steps.len()
@@ -12728,6 +12743,8 @@ pub async fn save_autorun_scripts_carrying(
                 sent.case_id
             ));
         }
+        // A needed record whose setup is gone is not one a repair must keep.
+        let existing = existing.map(|old| crate::autorun::needs_records::forgive_stale(old, &root, &ctx.org, &ctx.project));
         match existing {
             // A re-send that changes nothing is not a repair. The count
             // is of changes made without a person looking, so an

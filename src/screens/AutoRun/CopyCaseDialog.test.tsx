@@ -25,7 +25,7 @@ const env = (id: string, name: string) => ({
 const DEFAULT = env("env-00000001", "Default");
 const QA = env("env-00000002", "QA");
 const EMPTY_PLAN: CaseCopyPlan = {
-  target_has_script: false, components_added: [], components_kept: [], missing_components: [],
+  target_has_script: false, setups_added: [], setups_kept: [], components_added: [], components_kept: [], missing_components: [],
   areas_added: [], areas_kept: [], uses_default_area: false, recipe_added: false, recipe_address: null,
   missing_accounts: [], missing_api: [],
 };
@@ -70,6 +70,8 @@ test("lists what a case copy brings, keeps and lacks before copying", async () =
   const { calls, onClose } = mount({
     components_added: ["Login"],
     areas_added: ["Cycle Setup"],
+    setups_added: ["Rating scale"],
+    setups_kept: ["Tree"],
     recipe_added: true,
     recipe_address: "https://hr.example.com/",
     components_kept: ["Open menu"],
@@ -80,9 +82,9 @@ test("lists what a case copy brings, keeps and lacks before copying", async () =
     uses_default_area: true,
   });
   await pick("Copy to", "QA");
-  expect(await screen.findByText("Brings: component Login, area Cycle Setup, the sign-in recording.")).toBeInTheDocument();
+  expect(await screen.findByText("Brings: component Login, area Cycle Setup, setup Rating scale, the sign-in recording.")).toBeInTheDocument();
   expect(screen.getByText(/https:\/\/hr\.example\.com\//)).toBeInTheDocument();
-  expect(screen.getByText("Uses QA's own: component Open menu, area Manage Cycle.")).toBeInTheDocument();
+  expect(screen.getByText("Uses QA's own: component Open menu, area Manage Cycle, setup Tree.")).toBeInTheDocument();
   expect(screen.getByText("Add the account hr.admin in QA's Accounts before running.")).toBeInTheDocument();
   expect(screen.getByText(/Approve/)).toHaveTextContent("the case will fail until it is added");
   expect(screen.getByText("QA lacks the API data this case needs: fixture-1.")).toBeInTheDocument();

@@ -693,6 +693,18 @@ pub fn save(root: &Path, org: &str, project: &str, built: Built, why: Option<&st
     })
 }
 
+/// Puts `setup` into the file unless one with its name is already there.
+/// `true` when it was put in; an existing one is never touched.
+pub fn put_if_absent(root: &Path, org: &str, project: &str, setup: SavedSetup) -> Result<bool, String> {
+    update_with(root, org, project, |file| {
+        if find_setup(file, &setup.name).is_some() {
+            return Ok(false);
+        }
+        file.setups.push(setup);
+        Ok(true)
+    })
+}
+
 /// Takes the setup called `name` out of the file; the answer is the name it
 /// was saved under. A name the file does not hold is `no_such_setup`.
 pub fn remove(root: &Path, org: &str, project: &str, name: &str) -> Result<String, String> {

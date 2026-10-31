@@ -5231,3 +5231,65 @@ fn holds_join_a_json_answer_as_a_field_and_a_plain_one_as_text() {
     agents::clear();
     slots::clear();
 }
+
+// ---- needs_records through the assistant's save: the repair gate ----
+
+/// Case 7 saved with a needed record naming a saved setup.
+async fn case_7_needing_a_record(dir: &TempDir) -> (MockServer, AdoClient) {
+    set_root(dir.path().to_path_buf());
+    let setup: v2_lib::autorun::setups::SavedSetup = serde_json::from_value(serde_json::json!({
+        "name": "Rating scale", "description": "d", "inputs": [], "actions": [],
+        "find": { "database": { "sql": "SELECT Id, Name FROM dbo.Scale WHERE Name LIKE {prefix} + N'%'", "id_column": "Id", "name_column": "Name" } },
+        "creates": [], "returns": 0, "version": 1, "changes": 0, "saved_at": 0
+    }))
+    .unwrap();
+    std::fs::create_dir_all(dir.path().join("projects")).unwrap();
+    std::fs::write(
+        v2_lib::autorun::setups::setups_path(dir.path(), "acme", "Web"),
+        serde_json::to_string(&v2_lib::autorun::setups::SetupFile { setups: vec![setup] }).unwrap(),
+    )
+    .unwrap();
+    let (server, client) = client_with_cases(&[(7, "Save a rating", &["", "A toast says Saved"])]).await;
+    let mut body = case_7("#toast", "Saved");
+    body[0]["needs_records"] = serde_json::json!([{ "setup": "Rating scale", "why": "the scale" }]);
+    let body = body.to_string();
+    see_scripts(dir.path(), &body);
+    let (status, out) = route(&ctx(), Some(&client), "POST", "/autorun-script", &body, "1.0.0").await;
+    assert_eq!(status, 200, "{out}");
+    (server, client)
+}
+
+#[tokio::test]
+async fn a_resend_that_drops_or_changes_a_needed_record_is_refused_not_unchanged() {
+    let dir = TempDir::new();
+    let _root = crate::serial::autorun();
+    let (_server, client) = case_7_needing_a_record(&dir).await;
+    let save = |body: String| {
+        let client = &client;
+        async move { route(&ctx(), Some(client), "POST", "/autorun-script", &body, "1.0.0").await }
+    };
+    // Dropped, no edits.
+    let body = case_7("#toast", "Saved").to_string();
+    see_scripts(dir.path(), &body);
+    let (status, out) = save(body).await;
+    assert_eq!((status, out.as_str()), (400, v2_lib::autorun::edits::NEEDS_RECORDS_KEPT));
+    // Changed, no edits.
+    let mut changed = case_7("#toast", "Saved");
+    changed[0]["needs_records"] = serde_json::json!([{ "setup": "Rating scale", "why": "another reason" }]);
+    let (status, out) = save(changed.to_string()).await;
+    assert_eq!((status, out.as_str()), (400, v2_lib::autorun::edits::NEEDS_RECORDS_KEPT));
+    assert_eq!(load_script(dir.path(), 7).unwrap().unwrap().needs_records.len(), 1, "nothing was written");
+}
+
+#[tokio::test]
+async fn a_needed_record_whose_setup_is_gone_may_be_dropped_by_a_repair() {
+    let dir = TempDir::new();
+    let _root = crate::serial::autorun();
+    let (_server, client) = case_7_needing_a_record(&dir).await;
+    std::fs::remove_file(v2_lib::autorun::setups::setups_path(dir.path(), "acme", "Web")).unwrap();
+    let body = case_7("#toast", "Saved").to_string();
+    see_scripts(dir.path(), &body);
+    let (status, out) = route(&ctx(), Some(&client), "POST", "/autorun-script", &body, "1.0.0").await;
+    assert_eq!(status, 200, "{out}");
+    assert!(load_script(dir.path(), 7).unwrap().unwrap().needs_records.is_empty());
+}

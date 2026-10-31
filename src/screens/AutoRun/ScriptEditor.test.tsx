@@ -571,6 +571,31 @@ test("the editor keeps needs_records when saving", async () => {
   expect(saved[0]).toEqual(expect.objectContaining({ needs_records: needs }));
 });
 
+test("each needed record shows its setup and why, and Remove then Save sends the script without it", async () => {
+  const saved: unknown[] = [];
+  const keep = { setup: "Tree", why: "the tree" };
+  const gone = { setup: "Rating scale", why: "the scale" };
+  mountWith({ case_id: 7, title: "t", steps: ONE_STEP, needs_records: [gone, keep] }, ACCOUNTS, saved);
+  const list = await screen.findByRole("list", { name: "Needed records" });
+  expect(within(list).getAllByRole("listitem").map((r) => r.textContent)).toEqual([
+    expect.stringContaining("Rating scale"),
+    expect.stringContaining("Tree"),
+  ]);
+  fireEvent.click(screen.getByRole("button", { name: "Remove needed record Rating scale" }));
+  fireEvent.click(screen.getByRole("button", { name: "Save script" }));
+  await waitFor(() => expect(saved).toHaveLength(1));
+  expect(saved[0]).toEqual(expect.objectContaining({ needs_records: [keep] }));
+});
+
+test("removing the last needed record saves the script without the key", async () => {
+  const saved: unknown[] = [];
+  mountWith({ case_id: 7, title: "t", steps: ONE_STEP, needs_records: [{ setup: "A", why: "b" }] }, ACCOUNTS, saved);
+  fireEvent.click(await screen.findByRole("button", { name: "Remove needed record A" }));
+  fireEvent.click(screen.getByRole("button", { name: "Save script" }));
+  await waitFor(() => expect(saved).toHaveLength(1));
+  expect(saved[0]).not.toHaveProperty("needs_records");
+});
+
 test("a script with no needed records is saved without the key", async () => {
   const saved: unknown[] = [];
   mountWith({ case_id: 7, title: "t", steps: ONE_STEP }, ACCOUNTS, saved);
@@ -1058,7 +1083,7 @@ test("after a pull the editor shows the pulled script", async () => {
     test_environment: false, test_prefix: "AUTOTEST", has_default_password: false, db_auto_approve: false,
   });
   const plan = {
-    target_has_script: false, components_added: [], components_kept: [], missing_components: [],
+    target_has_script: false, setups_added: [], setups_kept: [], components_added: [], components_kept: [], missing_components: [],
     areas_added: [], areas_kept: [], uses_default_area: false, recipe_added: false, recipe_address: null,
     missing_accounts: [], missing_api: [],
   };

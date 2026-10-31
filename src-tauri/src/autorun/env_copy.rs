@@ -613,6 +613,11 @@ pub struct CaseCopyPlan {
     /// environment has. The copy still goes ahead; the case fails to run
     /// until the component is added.
     pub missing_components: Vec<String>,
+    /// Saved setups the script's needs_records name that the target lacks,
+    /// brought across.
+    pub setups_added: Vec<String>,
+    /// Setups the target has under that name but different; its version is kept.
+    pub setups_kept: Vec<String>,
     /// Areas the case visits (its own, a `return_to_area`, those of its
     /// components) that the target lacks, brought across with their variants.
     pub areas_added: Vec<String>,
@@ -638,6 +643,7 @@ struct CaseGather {
     target_script: Option<crate::autorun::CaseScript>,
     components: Vec<super::components::Component>,
     areas: Vec<super::nav::ModulePath>,
+    setups: Vec<super::setups::SavedSetup>,
     plan: CaseCopyPlan,
 }
 
@@ -665,6 +671,13 @@ fn collect_refs(actions: &[crate::browser::actions::Action], out: &mut Refs) {
     }
 }
 
+/// Two saved setups are the same when they differ only in the bookkeeping
+/// (when saved or last used).
+fn same_setup(a: &super::setups::SavedSetup, b: &super::setups::SavedSetup) -> bool {
+    let bare = |s: &super::setups::SavedSetup| super::setups::SavedSetup { saved_at: 0, last_used_at: 0, version: 0, changes: 0, ..s.clone() };
+    bare(a) == bare(b)
+}
+
 fn same<T: serde::Serialize>(a: &T, b: &T) -> bool {
     match (serde_json::to_value(a), serde_json::to_value(b)) {
         (Ok(a), Ok(b)) => a == b,
@@ -687,7 +700,7 @@ fn gather_case(
     project: &str,
     case_id: i32,
 ) -> Result<CaseGather, String> {
-    use super::{accounts, components, nav, recipe, store};
+    use super::{accounts, components, nav, recipe, setups, store};
     // Both ends must be real environment folders: in the flat layout a copy
     // would make `envs/` and the next start would skip the one-time update.
     let (Some(source_id), Some(target_id)) = (real_env_root(source), real_env_root(target)) else {
@@ -815,8 +828,39 @@ fn gather_case(
         note(&p.flow, !there);
     }
 
+    // The setups the script's needed records name, like components: brought
+    // when the target lacks one, never overwritten.
+    let (mut setups, mut setups_added, mut setups_kept) = (Vec::new(), Vec::new(), Vec::new());
+    if !script.needs_records.is_empty() {
+        let src_s = setups::load_setups(source, org, project)?;
+        let tgt_s = setups::load_setups(target, org, project)?;
+        let mut done: Vec<String> = Vec::new();
+        for n in &script.needs_records {
+            let k = nav::module_key(&n.setup);
+            if done.contains(&k) {
+                continue;
+            }
+            done.push(k);
+            match (setups::find_setup(&src_s, &n.setup), setups::find_setup(&tgt_s, &n.setup)) {
+                (Some(s), None) => {
+                    setups_added.push(s.name.clone());
+                    setups.push(s.clone());
+                }
+                (Some(s), Some(t)) => {
+                    if !same_setup(s, t) {
+                        setups_kept.push(t.name.clone());
+                    }
+                }
+                (None, Some(_)) => {}
+                (None, None) => note(n.setup.trim(), true),
+            }
+        }
+    }
+
     let plan = CaseCopyPlan {
         target_has_script: target_script.is_some(),
+        setups_added,
+        setups_kept,
         components_added: added.iter().map(|c| c.name.clone()).collect(),
         components_kept: kept,
         missing_components,
@@ -828,7 +872,7 @@ fn gather_case(
         missing_accounts,
         missing_api,
     };
-    Ok(CaseGather { script, target_script, components: added, areas, plan })
+    Ok(CaseGather { script, target_script, components: added, areas, setups, plan })
 }
 
 /// What copying case `case_id`'s script from `source` into `target` would
@@ -860,7 +904,7 @@ pub fn copy_case(
     case_id: i32,
     replace: bool,
 ) -> Result<CaseCopyPlan, String> {
-    use super::{components, nav, recipe, store};
+    use super::{components, nav, recipe, setups, store};
     let g = gather_case(source, target, target_env_id, org, project, case_id)?;
     if g.plan.target_has_script && !replace {
         return Err(CASE_COPY_NEEDS_CONFIRM.to_string());
@@ -884,6 +928,13 @@ pub fn copy_case(
         if !components::put_if_absent(target, org, project, c).map_err(|e| failed("components", e))? {
             plan.components_added.retain(|n| *n != name);
             plan.components_kept.push(name);
+        }
+    }
+    for s in g.setups {
+        let name = s.name.clone();
+        if !setups::put_if_absent(target, org, project, s).map_err(|e| failed("setups", e))? {
+            plan.setups_added.retain(|n| *n != name);
+            plan.setups_kept.push(name);
         }
     }
     for a in g.areas {

@@ -35,9 +35,14 @@ function Lines({ plan, dest }: { plan: CaseCopyPlan; dest: string }) {
   const brings = list([
     words("component", plan.components_added),
     words("area", plan.areas_added),
+    words("setup", plan.setups_added),
     plan.recipe_added ? "the sign-in recording" : "",
   ]);
-  const keeps = list([words("component", plan.components_kept), words("area", plan.areas_kept)]);
+  const keeps = list([
+    words("component", plan.components_kept),
+    words("area", plan.areas_kept),
+    words("setup", plan.setups_kept),
+  ]);
   return (
     <div className="space-y-1 text-xs text-text">
       {brings && <p>{`Brings: ${brings}.`}</p>}

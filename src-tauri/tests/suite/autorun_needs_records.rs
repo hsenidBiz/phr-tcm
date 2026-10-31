@@ -76,7 +76,7 @@ fn save_refuses_unknown_setup() {
     let said = check_declared(&[needs("Rating scale", "x")], &file);
     assert_eq!(
         said,
-        vec!["needs_records names \"Rating scale\", which is not a saved setup - save it with save_setup first".to_string()]
+        vec!["needs_records names \"Rating scale\", which is not a saved setup in this environment - save the setup, or remove the entry".to_string()]
     );
 }
 
@@ -119,8 +119,8 @@ async fn found_record_lets_case_run() {
 async fn database_off_is_said_not_blocked() {
     let file = setup_file(json!([setup("Rating scale", db_find())]));
     let out = check_needed(&Rows(Ok(EMPTY.into())), &[needs("Rating scale", "x")], &file, "AUTOTEST", false).await;
-    assert_eq!(out, NeedsOutcome::NotChecked("needs_records not checked: database read access is off".into()));
-    assert_eq!(NOT_CHECKED, "needs_records not checked: database read access is off");
+    assert_eq!(out, NeedsOutcome::NotChecked("records not checked: database read access is off".into()));
+    assert_eq!(NOT_CHECKED, "records not checked: database read access is off");
 }
 
 #[tokio::test]
@@ -167,7 +167,7 @@ async fn the_run_check_follows_the_database_choice() {
 
     let none: PreconditionDb<RunDb> = PreconditionDb::Missing(NEED_DB.into());
     let c = check_case_needs(&none, root, "acme", "Web", &needed).await;
-    assert_eq!(c.blocked.as_deref(), Some(NEED_DB));
+    assert_eq!(c.blocked.as_deref(), Some("records need a database chosen on the AI Bridge tab"));
 
     // Nothing declared: nothing asked, whatever the database is.
     let c = check_case_needs(&none, root, "acme", "Web", &[]).await;
@@ -223,4 +223,75 @@ async fn the_supervised_check_reads_a_script_that_only_declares_needed_records()
     let there = || PreconditionDb::Ready(RunDb(Ok(rows("4\tAUTOTEST Scale"))));
     let c = v2_lib::autorun::preconditions::check_script(root, "acme", "Web", 7, there).await.unwrap();
     assert!(c.blocked.is_none());
+}
+
+// ---- a setup that cases name stays ----
+
+struct NoRows;
+
+impl RowSource for NoRows {
+    async fn select(&self, _sql: &str) -> Result<String, String> {
+        Err("unused".into())
+    }
+}
+
+fn save_naming_scripts(root: &std::path::Path, ids: &[i32]) {
+    for id in ids {
+        let mut s = script(json!({ "needs_records": [{ "setup": "Rating scale", "why": "x" }] }));
+        s.case_id = *id;
+        v2_lib::autorun::store::save_script(root, &s).unwrap();
+    }
+}
+
+#[tokio::test]
+async fn save_setup_refuses_to_remove_a_setup_cases_name() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    save_setups(root, &setup_file(json!([setup("Rating scale", db_find())])));
+    save_naming_scripts(root, &[1, 2, 3, 4, 5, 6, 7]);
+    let (status, said) = v2_lib::ai_bridge::setup_save_for(
+        root, "acme", "Web", "nobody", r#"{"name":"Rating scale","remove":true}"#, None::<&NoRows>, 5,
+    )
+    .await;
+    assert_eq!(status, 409, "{said}");
+    assert!(said.contains("case 1, 2, 3, 4, 5 and 2 more"), "{said}");
+    // Nothing named: it goes.
+    save_setups(root, &setup_file(json!([setup("Other", db_find())])));
+    let (status, _) = v2_lib::ai_bridge::setup_save_for(
+        root, "acme", "Web", "nobody", r#"{"name":"Other","remove":true}"#, None::<&NoRows>, 5,
+    )
+    .await;
+    assert_eq!(status, 200);
+}
+
+#[tokio::test]
+async fn a_stale_entry_blocks_a_run_with_a_sentence_that_says_what_to_do() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    save_setups(root, &setup_file(json!([])));
+    let there = PreconditionDb::Ready(RunDb(Ok(rows("4\tAUTOTEST Scale"))));
+    let c = check_case_needs(&there, root, "acme", "Web", &[needs("Rating scale", "x")]).await;
+    assert_eq!(
+        c.blocked.as_deref(),
+        Some("needs_records could not be checked: setup \"Rating scale\" is not saved in this environment - remove the entry or save the setup")
+    );
+}
+
+#[test]
+fn a_capped_answer_with_a_test_record_in_it_still_means_met() {
+    use v2_lib::autorun::setup_find::{first_test_record, DbFind};
+    let db = DbFind { sql: "x".into(), id_column: "Id".into(), name_column: "Name".into() };
+    let capped = "rows: 200 (capped)\nId\tName\n--\t----\n4\tAUTOTEST Scale\n... cut\n";
+    assert!(first_test_record(capped, &db, "AUTOTEST").unwrap().is_some());
+    // No test record among the rows it kept: the answer is not "none".
+    let capped = "rows: 200 (capped)\nId\tName\n--\t----\n4\tOther\n... cut\n";
+    assert!(first_test_record(capped, &db, "AUTOTEST").is_err());
+}
+
+#[test]
+fn needs_records_ride_in_the_playwright_hand_over() {
+    let s = script(json!({ "needs_records": [{ "setup": "Rating scale", "why": "the AUTOTEST rating scale" }] }));
+    use v2_lib::pw_export::handover::{handover_for, HandoverInput};
+    let h = handover_for(&HandoverInput { script: &s, shared_drafts: &[], protected: &[], needs_ruling: None });
+    assert_eq!(h.preconditions, vec!["requires record: the AUTOTEST rating scale (setup Rating scale)".to_string()]);
 }

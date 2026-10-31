@@ -9,7 +9,7 @@ import { useCloseOnEnvironmentChange } from "../../hooks/useCloseOnEnvironmentCh
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { toast } from "../../lib/toast";
-import { commands, type Action, type Precondition, type StepScript } from "../../bindings";
+import { commands, type Action, type NeededRecord, type Precondition, type StepScript } from "../../bindings";
 import { useEnvironments } from "../../lib/environments";
 import { loadScript } from "../../lib/scriptBatch";
 import { Button } from "../../components/ui/button";
@@ -137,6 +137,11 @@ function ScriptEditorBody({
   // put back (by its place in the list of those repairs), also on Save;
   // the numbers are places in the list as put back.
   const [removedPre, setRemovedPre] = useState<Precondition[]>([]);
+  // The kept records the case needs, by what the person removed here. The
+  // save merges whatever was added since the editor opened.
+  const [removedNeeds, setRemovedNeeds] = useState<NeededRecord[]>([]);
+  const sameNeed = (a: NeededRecord, b: NeededRecord) => a.setup === b.setup && a.why === b.why;
+  const needsRecords = (existing.data?.needs_records ?? []).filter((n) => !removedNeeds.some((r) => sameNeed(r, n)));
   const [putBack, setPutBack] = useState<number[]>([]);
   const preconditionRepairs = existing.data?.precondition_repairs ?? [];
   const putBackList = putBackPreconditions(existing.data?.preconditions ?? [], preconditionRepairs, putBack);
@@ -209,6 +214,7 @@ function ScriptEditorBody({
     pickedNeeds !== null ||
     pickedState !== null ||
     removedPre.length > 0 ||
+    removedNeeds.length > 0 ||
     putBack.length > 0;
   const UNSAVED_REASON = "Save or discard your changes first";
 
@@ -246,6 +252,9 @@ function ScriptEditorBody({
     }
     const parsed = parseValue();
     if (!parsed) return;
+    // Records an assistant added since this editor opened are kept.
+    const latest = (await existing.refetch()).data?.needs_records ?? existing.data?.needs_records ?? [];
+    const keptNeeds = latest.filter((n) => !removedNeeds.some((r) => sameNeed(r, n)));
     const r = await commands.autoRunSaveScript(org, project, {
       case_id: caseId,
       title,
@@ -268,7 +277,7 @@ function ScriptEditorBody({
       ...(existing.data?.page_errors ? { page_errors: existing.data.page_errors } : {}),
       ...(existing.data?.ignore_page_errors?.length ? { ignore_page_errors: existing.data.ignore_page_errors } : {}),
       // Kept records the case needs are the assistant's to declare; the editor carries them through.
-      ...(existing.data?.needs_records?.length ? { needs_records: existing.data.needs_records } : {}),
+      ...(keptNeeds.length ? { needs_records: keptNeeds } : {}),
     });
     if (r.status === "error") {
       toast.error(`Could not save the script: ${r.error}`);
@@ -476,6 +485,28 @@ function ScriptEditorBody({
           <SettingRow settings={needsState} onChange={setPickedState} />
 
           <SetupSection org={org} project={project} caseId={caseId} />
+
+          {needsRecords.length > 0 && (
+            <div className="space-y-1">
+              <span className="text-xs font-medium text-muted">Needed records</span>
+              <ul aria-label="Needed records" className="space-y-1 text-xs">
+                {needsRecords.map((n) => (
+                  <li key={`${n.setup}|${n.why}`} className="flex items-center justify-between gap-2">
+                    <span className="min-w-0 break-words text-text">{`${n.setup}: ${n.why}`}</span>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      aria-label={`Remove needed record ${n.setup}`}
+                      onClick={() => setRemovedNeeds((r) => [...r, n])}
+                    >
+                      <IconRemove aria-hidden />
+                      Remove
+                    </Button>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
 
           {preconditions.length > 0 && (
             <div className="space-y-1">

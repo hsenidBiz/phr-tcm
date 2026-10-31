@@ -221,7 +221,13 @@ pub fn first_test_record(
     db: &DbFind,
     prefix: &str,
 ) -> Result<Option<FoundRecord>, String> {
-    if query::rows_affected(text).is_none() {
+    // An answer cut at the row cap opens with "rows: N (capped)" and has lost
+    // its footer: the rows it kept are still read, and a record among them
+    // is found.
+    let first_line = text.lines().next().map(str::trim).unwrap_or("");
+    let capped = first_line.starts_with("rows:") && first_line.ends_with("(capped)");
+    let text = if capped { text.split_once('\n').map_or("", |(_, rest)| rest) } else { text };
+    if !capped && query::rows_affected(text).is_none() {
         return Err("the find rule's answer carried no row count".to_string());
     }
     let mut lines = text.lines().skip_while(|l| l.trim().is_empty());
@@ -257,6 +263,9 @@ pub fn first_test_record(
         }
         let id = cells.get(id_at).map(|c| c.trim().to_string());
         return Ok(Some(FoundRecord { id, name: name.to_string() }));
+    }
+    if capped {
+        return Err("the find rule's answer was cut short before any test record - make its SELECT narrower".to_string());
     }
     Ok(None)
 }

@@ -252,6 +252,7 @@ pub fn handover_for(input: &HandoverInput) -> Handover {
         }
         h.preconditions.push(row);
     }
+    h.preconditions.extend(s.needs_records.iter().map(|n| format!("requires record: {} (setup {})", n.why.trim(), n.setup.trim())));
     h.preconditions.extend(s.needs_unchanged.iter().map(|m| format!("requires: {m} unchanged")));
     h.preconditions.extend(s.needs_state.iter().map(|(k, v)| format!("requires: {k} = {v}")));
     h.preconditions.extend(

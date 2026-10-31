@@ -64,7 +64,7 @@ export function scriptFacts(script: CaseScript): { label: string; value: string 
       label: "Preconditions",
       value: (script.preconditions ?? []).map((p) => `${p.flow}: ${p.stage}`).join(", "),
     },
-    { label: "Needs", value: (script.needs_records ?? []).map((n) => n.setup).join(", ") },
+    { label: "Needs records", value: (script.needs_records ?? []).map((n) => `${n.setup} (${n.why})`).join(", ") },
     { label: "Changes", value: (script.changes ?? []).join(", ") },
     { label: "Needs unchanged", value: (script.needs_unchanged ?? []).join(", ") },
     { label: "Last repair", value: script.last_repair?.trim() },

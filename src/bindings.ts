@@ -3088,6 +3088,13 @@ export type CaseCopyPlan = {
 	 */
 	missing_components: string[],
 	/**
+	 *  Saved setups the script's needs_records name that the target lacks,
+	 *  brought across.
+	 */
+	setups_added: string[],
+	/**  Setups the target has under that name but different; its version is kept. */
+	setups_kept: string[],
+	/**
 	 *  Areas the case visits (its own, a `return_to_area`, those of its
 	 *  components) that the target lacks, brought across with their variants.
 	 */
