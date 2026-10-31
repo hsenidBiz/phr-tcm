@@ -226,7 +226,9 @@ export const aiBridge: Screen = {
       does:
         "Adds, renames or removes environments, and sets each one's site address, database and test name prefix. " +
         "**Copy Auto Run data…** brings another environment's scripts, areas, components and API templates into this one; a removed environment's stay available there for 30 days. " +
-        "The **Test name prefix**, **AUTOTEST** unless you change it, starts the name of every draft a fixture or a script makes in that environment, so **Clean up drafts** can tell the tests' drafts from yours. It is 3 to 20 letters, digits or -.",
+        "The **Test name prefix**, **AUTOTEST** unless you change it, starts the name of every draft a fixture or a script makes in that environment, so **Clean up drafts** can tell the tests' drafts from yours. It is 3 to 20 letters, digits or -. " +
+        "**Password expiry query** and **Active session query** are two read-only SELECTs you write for your site's database, each with a placeholder for the logins asked about; leave one empty and that check is skipped. The first tells Auto Run when each account's password runs out, so the account list, the proposals and the run window can warn before a sign-in is stopped. The second tells it whether someone is already signed in as an account, and a discovery will not start as an account in use elsewhere. Both need database access on. " +
+        "On an environment marked **Test environment**, **Reset expired passwords** (off until you switch it on) lets a sign-in that reaches the password reset page set a new password itself and carry on. The new password is kept for the account only after a sign-in with it works, and an environment that is not a test one never resets.",
     },
     {
       id: "api-templates-switch",
