@@ -306,6 +306,13 @@ pub const PASSWORD_EXPIRED: &str = "password expired - the site sent the account
 /// go through. The short reason follows. The stored password is unchanged.
 pub const PASSWORD_RESET_FAILED: &str = "password expired - the reset did not go through: ";
 
+/// How the stop begins when the site may have taken a new password that no
+/// sign-in has proved: the old one stays stored and the new one is held.
+pub const PASSWORD_RESET_MAYBE: &str = "password expired - the reset may have gone through: ";
+
+/// The rest of that stop.
+const PENDING_WORDS: &str = "the site may now expect the other test password; check it in Accounts";
+
 /// What the plain "password expired" stop adds: the way to let the app reset
 /// it. Names the switch, never a password.
 pub const RESET_SWITCH_HINT: &str = "to let the app reset it, mark the environment as a test environment and turn on Reset expired passwords in the Environments dialog";
@@ -325,7 +332,7 @@ pub fn next_password(current: &str, refused: &[String]) -> Option<&'static str> 
 /// go through)? Read from where the words start, never searched for: a page
 /// can say anything.
 pub fn is_password_expired(detail: &str) -> bool {
-    detail.starts_with(PASSWORD_EXPIRED) || detail.starts_with(PASSWORD_RESET_FAILED)
+    detail.starts_with(PASSWORD_EXPIRED) || detail.starts_with(PASSWORD_RESET_FAILED) || detail.starts_with(PASSWORD_RESET_MAYBE)
 }
 
 /// The longest page title `landing_words` says.
@@ -449,12 +456,12 @@ fn short_reason(why: &str, secrets: &[&str]) -> String {
     text.chars().take(160).collect()
 }
 
-/// Fills the reset page's form and sends it: the old (current) password, the
-/// new one and its confirmation, then the form's submit button - never the
-/// one that clears it. The site's refusal leaves the page where it is, and
-/// the other of `RESET_PASSWORDS` is tried; never more than those two, one
-/// submit each. `Ok` is the new password the site accepted; `Err` is a short
-/// reason with no password in it. Nothing is stored here.
+/// Fills the reset page's form and sends it, ONCE: the old (current)
+/// password, the new one and its confirmation, then the form's submit
+/// button - never the one that clears it. `Ok` is the new password and means
+/// only that the browser left the reset page; whether it works is for a
+/// sign-in with it to say. `Err` is a short reason with no password in it.
+/// Nothing is stored here.
 async fn reset_expired<D: Driver>(
     d: &mut D,
     recipe: &SignInRecipe,
@@ -469,27 +476,26 @@ async fn reset_expired<D: Driver>(
         return Err("the reset page's fields are not known".to_string());
     };
     let secrets = [account.password.as_str(), RESET_PASSWORDS[0], RESET_PASSWORDS[1]];
-    let mut refused: Vec<String> = vec![];
-    while let Some(new) = next_password(&account.password, &refused) {
-        let fill = |selector: &Target, value: &str| Action::Fill { selector: selector.clone(), value: value.to_string() };
-        let actions = [
-            fill(&page.field, &account.password),
-            fill(&new_field, new),
-            fill(&confirm_field, new),
-            Action::Click { selector: submit.clone() },
-        ];
-        for action in &actions {
-            let out = execute_in(d, action, timing, &policy.as_runner()).await;
-            if !out.ok {
-                return Err(short_reason(&out.detail, &secrets));
-            }
+    let Some(new) = next_password(&account.password, &[]) else {
+        return Err("no new password to try".to_string());
+    };
+    let fill = |selector: &Target, value: &str| Action::Fill { selector: selector.clone(), value: value.to_string() };
+    let actions = [
+        fill(&page.field, &account.password),
+        fill(&new_field, new),
+        fill(&confirm_field, new),
+        Action::Click { selector: submit.clone() },
+    ];
+    for action in &actions {
+        let out = execute_in(d, action, timing, &policy.as_runner()).await;
+        if !out.ok {
+            return Err(short_reason(&out.detail, &secrets));
         }
-        if left_reset_page(d, &page, timing).await {
-            return Ok(new);
-        }
-        refused.push(new.to_string());
     }
-    Err("the site did not accept a new password".to_string())
+    if left_reset_page(d, &page, timing).await {
+        return Ok(new);
+    }
+    Err("the site did not accept the new password".to_string())
 }
 
 /// `expired_at_reset_page` on the heap, built in a frame of its own: the
@@ -545,21 +551,91 @@ async fn expired_at_reset_page<D: Driver>(
             return run.done(false, format!("{PASSWORD_RESET_FAILED}{why}"), false, false);
         }
     };
-    // The site has the new password now: the account must hold it too, or
-    // the next sign-in fails with the old one.
-    if let Err(e) = super::accounts::set_password_for(root, &env_id, &account.key, new) {
-        crate::applog::warn(format!("Auto Run: the expired password of {} was reset, but could not be saved: {e}", account.key));
+    // The browser left the reset page, which is not proof the new password
+    // works. The old one stays stored; the new one is held aside until a
+    // sign-in with it reaches the signed-in marker.
+    if let Err(e) = super::accounts::set_pending_password(root, &env_id, &account.key, new) {
+        crate::applog::warn(format!("Auto Run: the expired password of {} may have been reset, but could not be held: {e}", account.key));
         let said = format!(
-            "{PASSWORD_RESET_FAILED}the site accepted the new password but it could not be saved on the account ({}), so set the account's password in Auto Run, Accounts",
+            "{PASSWORD_RESET_MAYBE}the new password could not be held ({}), so check the account in Accounts",
             short_reason(&e, &[account.password.as_str(), new])
         );
         return run.done(false, said, false, false);
     }
-    crate::applog::info(format!("Auto Run: the expired password of {} was reset", account.key));
     drop(run);
     let renewed = Account { password: new.to_string(), ..account.clone() };
     // Once: the sign-in that follows cannot reset again.
-    Box::pin(sign_in_core(d, root, recipe, &renewed, timing, false, browser, false)).await
+    let out = Box::pin(sign_in_core(d, root, recipe, &renewed, timing, false, browser, false)).await;
+    confirm_pending(root, &env_id, account, new, out)
+}
+
+/// The sign-in made with a pending password has ended as `out`. Reached the
+/// marker: the pending password becomes the account's and is let go. Not:
+/// the old one stays stored, the pending one stays held, and the stop says
+/// so (a harness failure is the browser, not the password, and says its own).
+fn confirm_pending(root: &Path, env_id: &str, account: &Account, new: &str, mut out: SignInOutcome) -> SignInOutcome {
+    if out.ok {
+        match super::accounts::set_password_for(root, env_id, &account.key, new) {
+            Ok(()) => {
+                let _ = super::accounts::clear_pending_password(root, env_id, &account.key);
+                crate::applog::info(format!("Auto Run: the expired password of {} was reset", account.key));
+            }
+            Err(e) => {
+                crate::applog::warn(format!("Auto Run: the reset password of {} worked but could not be saved: {e}", account.key));
+                out.ok = false;
+                out.detail = format!(
+                    "{PASSWORD_RESET_MAYBE}the new password works but could not be saved on the account, so check it in Accounts"
+                );
+            }
+        }
+    } else if !out.harness {
+        crate::applog::info(format!("Auto Run: the reset of the expired password of {} is unconfirmed", account.key));
+        out.detail = PASSWORD_RESET_MAYBE.to_string() + PENDING_WORDS;
+    }
+    out
+}
+
+/// A pending password from an earlier reset, tried as the CURRENT password
+/// before anything else in the next sign-in: the account's stored one may be
+/// the old one the site no longer expects. `None` when there is none (or the
+/// environment cannot be read), or it did not work - it is then let go - and
+/// the sign-in goes on with the stored password.
+async fn try_pending<D: Driver>(
+    d: &mut D,
+    root: &Path,
+    recipe: &SignInRecipe,
+    account: &Account,
+    timing: &Timing,
+    browser: &str,
+) -> Option<SignInOutcome> {
+    let env_id = crate::environments::active_id(root).ok()?;
+    let pending = super::accounts::pending_password_for(root, &env_id, &account.key)?;
+    if pending == account.password {
+        let _ = super::accounts::clear_pending_password(root, &env_id, &account.key);
+        return None;
+    }
+    let renewed = Account { password: pending.clone(), ..account.clone() };
+    let out = Box::pin(sign_in_core(d, root, recipe, &renewed, timing, false, browser, false)).await;
+    if out.ok {
+        return Some(confirm_pending(root, &env_id, account, &pending, out));
+    }
+    if out.harness {
+        return Some(out);
+    }
+    let _ = super::accounts::clear_pending_password(root, &env_id, &account.key);
+    None
+}
+
+#[inline(never)]
+fn try_pending_boxed<'a, D: Driver>(
+    d: &'a mut D,
+    root: &'a Path,
+    recipe: &'a SignInRecipe,
+    account: &'a Account,
+    timing: &'a Timing,
+    browser: &'a str,
+) -> impl std::future::Future<Output = Option<SignInOutcome>> + 'a {
+    Box::pin(try_pending(d, root, recipe, account, timing, browser))
 }
 
 /// Is the browser on the recipe's password reset page: its path holds the
@@ -724,6 +800,9 @@ async fn sign_in_held<D: Driver>(
     try_saved_session: bool,
     browser: &str,
 ) -> SignInOutcome {
+    if let Some(done) = try_pending_boxed(d, root, recipe, account, timing, browser).await {
+        return done;
+    }
     sign_in_core(d, root, recipe, account, timing, try_saved_session, browser, true).await
 }
 

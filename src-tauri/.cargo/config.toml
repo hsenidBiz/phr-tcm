@@ -28,5 +28,7 @@ RUST_TEST_THREADS = "16"
 # A test thread has 2 MB by default, and the in-process bridge tests poll the
 # whole route table's future on it in a debug build: the crystal route test
 # was within about 10% of overflowing (STATUS_STACK_OVERFLOW) and any growth of
-# a sign-in future tipped it. Test threads get 8 MB; nothing else reads it.
+# a sign-in future tipped it. Test threads get 8 MB. Cargo applies [env] only
+# to processes it launches (rustc, test binaries, cargo run); the shipped exe
+# is started by the user and never sees it, so its runtime is unchanged.
 RUST_MIN_STACK = "8388608"

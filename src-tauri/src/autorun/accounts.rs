@@ -216,3 +216,55 @@ pub fn set_password_for(root: &Path, env_id: &str, key: &str, new: &str) -> Resu
     account.password = new.to_string();
     save_accounts_for(root, env_id, &all).map(|_| ())
 }
+
+/// Where an environment holds the passwords the app set on a site but has
+/// not yet seen work: `accounts/<env id>.pending.json`, key to password,
+/// beside the accounts file and kept like it (a plain file on this machine,
+/// never sent to the webview, never logged).
+pub fn pending_path_for(root: &Path, env_id: &str) -> PathBuf {
+    crate::autorun::roots::shared_of(root).join("accounts").join(format!("{env_id}.pending.json"))
+}
+
+fn read_pending(root: &Path, env_id: &str) -> std::collections::BTreeMap<String, String> {
+    std::fs::read_to_string(pending_path_for(root, env_id))
+        .ok()
+        .and_then(|s| serde_json::from_str(s.strip_prefix('\u{feff}').unwrap_or(&s)).ok())
+        .unwrap_or_default()
+}
+
+/// The password set on the site for `key` and not yet confirmed, if any.
+pub fn pending_password_for(root: &Path, env_id: &str, key: &str) -> Option<String> {
+    read_pending(root, env_id).remove(key).filter(|p| !p.is_empty())
+}
+
+/// Hold `password` for `key` until a sign-in with it works.
+pub fn set_pending_password(root: &Path, env_id: &str, key: &str, password: &str) -> Result<(), String> {
+    if !crate::environments::valid_id(env_id) || !valid_key(key) {
+        return Err("that account cannot hold a pending password".to_string());
+    }
+    let mut all = read_pending(root, env_id);
+    all.insert(key.to_string(), password.to_string());
+    write_pending(root, env_id, &all)
+}
+
+/// Let go of `key`'s pending password (confirmed, or found not to work).
+pub fn clear_pending_password(root: &Path, env_id: &str, key: &str) -> Result<(), String> {
+    let mut all = read_pending(root, env_id);
+    if all.remove(key).is_none() {
+        return Ok(());
+    }
+    write_pending(root, env_id, &all)
+}
+
+fn write_pending(root: &Path, env_id: &str, all: &std::collections::BTreeMap<String, String>) -> Result<(), String> {
+    let path = pending_path_for(root, env_id);
+    if all.is_empty() {
+        return match std::fs::remove_file(&path) {
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e.to_string()),
+            _ => Ok(()),
+        };
+    }
+    std::fs::create_dir_all(path.parent().expect("accounts folder")).map_err(|e| e.to_string())?;
+    let json = serde_json::to_string_pretty(all).map_err(|e| e.to_string())?;
+    crate::ai_tools::atomic_write(&path, &json)
+}
