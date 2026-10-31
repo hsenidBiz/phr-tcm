@@ -295,3 +295,46 @@ fn needs_records_ride_in_the_playwright_hand_over() {
     let h = handover_for(&HandoverInput { script: &s, shared_drafts: &[], protected: &[], needs_ruling: None });
     assert_eq!(h.preconditions, vec!["requires record: the AUTOTEST rating scale (setup Rating scale)".to_string()]);
 }
+
+/// A source that cannot connect, counting how often it was asked.
+struct NoConnection(std::sync::atomic::AtomicUsize);
+
+impl StageDb for NoConnection {
+    fn label(&self) -> String {
+        "down".into()
+    }
+    async fn read(&self, _sql: &str) -> Result<bool, String> {
+        Err("not used".into())
+    }
+    async fn select(&self, _sql: &str) -> Result<String, String> {
+        self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Err("TCP Provider: No connection could be made".into())
+    }
+}
+
+#[tokio::test]
+async fn a_database_that_did_not_answer_is_asked_once_per_run() {
+    use v2_lib::autorun::needs_records::{check_case_needs_in, RunMemory, DID_NOT_ANSWER};
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    save_setups(root, &setup_file(json!([setup("Rating scale", db_find())])));
+    let needed = [needs("Rating scale", "x")];
+    let db = PreconditionDb::Ready(NoConnection(Default::default()));
+    let PreconditionDb::Ready(inner) = &db else { unreachable!() };
+    let run = RunMemory::default();
+    for _ in 0..3 {
+        let c = check_case_needs_in(&db, root, "acme", "Web", &needed, &run).await;
+        assert_eq!(c.blocked.as_deref(), Some(DID_NOT_ANSWER));
+    }
+    assert_eq!(inner.0.load(std::sync::atomic::Ordering::SeqCst), 1, "only the first case asked");
+    // A new run asks again.
+    check_case_needs_in(&db, root, "acme", "Web", &needed, &RunMemory::default()).await;
+    assert_eq!(inner.0.load(std::sync::atomic::Ordering::SeqCst), 2);
+    // A query error is not a connection failure: it is not remembered.
+    let broken = PreconditionDb::Ready(RunDb(Err("Invalid column name".into())));
+    let run = RunMemory::default();
+    let c = check_case_needs_in(&broken, root, "acme", "Web", &needed, &run).await;
+    assert!(c.blocked.unwrap().contains("could not be checked"));
+    let fine = PreconditionDb::Ready(RunDb(Ok(rows("4\tAUTOTEST Scale"))));
+    assert!(check_case_needs_in(&fine, root, "acme", "Web", &needed, &run).await.blocked.is_none());
+}

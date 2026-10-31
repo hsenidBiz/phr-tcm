@@ -30,6 +30,26 @@ pub const NOT_CHECKED: &str = "records not checked: database read access is off"
 /// Said when a case declares needed records and no database is chosen.
 pub const NEED_DB: &str = "records need a database chosen on the AI Bridge tab";
 
+/// The Blocked sentence for a database that could not be reached.
+pub const DID_NOT_ANSWER: &str = "the case's needed records could not be checked: the database did not answer";
+
+/// What one run remembers about the database: once a check could not reach
+/// it, every later case that declares needed records is Blocked at once
+/// instead of waiting for the same failure. One per run, dropped with it.
+#[derive(Debug, Default)]
+pub struct RunMemory {
+    unanswered: std::sync::atomic::AtomicBool,
+}
+
+impl RunMemory {
+    fn is_unanswered(&self) -> bool {
+        self.unanswered.load(std::sync::atomic::Ordering::SeqCst)
+    }
+    fn note_unanswered(&self) {
+        self.unanswered.store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
 /// What asking for a case's needed records decided.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum NeedsOutcome {
@@ -39,6 +59,9 @@ pub enum NeedsOutcome {
     Missing(String),
     /// Nothing was asked (`NOT_CHECKED`); the case goes on.
     NotChecked(String),
+    /// The database could not be reached (`DID_NOT_ANSWER`): blocks the case,
+    /// and the rest of the run does not ask again (`RunMemory`).
+    Unanswered(String),
 }
 
 /// Every problem with a script's declaration against the project's saved
@@ -128,6 +151,9 @@ pub async fn check_needed<S: RowSource>(
             }
             DbOutcome::CouldNotRun(said) => {
                 crate::applog::warn(format!("Auto Run needs_records: the find rule of setup {} did not run: {said}", setup.name));
+                if crate::api_templates::gate::unreachable(&said) {
+                    return NeedsOutcome::Unanswered(DID_NOT_ANSWER.to_string());
+                }
                 return NeedsOutcome::Missing(format!(
                     "needs_records could not be checked: the find rule of setup \"{}\" did not run - see Settings, Logs",
                     setup.name
@@ -158,6 +184,19 @@ pub async fn check_case_needs<D: StageDb>(
     project: &str,
     needed: &[NeededRecord],
 ) -> PreconditionCheck {
+    check_case_needs_in(db, root, org, project, needed, &RunMemory::default()).await
+}
+
+/// [`check_case_needs`] inside a run: a database that did not answer is
+/// remembered in `memory`, and the cases after it are Blocked at once.
+pub async fn check_case_needs_in<D: StageDb>(
+    db: &PreconditionDb<D>,
+    root: &Path,
+    org: &str,
+    project: &str,
+    needed: &[NeededRecord],
+    memory: &RunMemory,
+) -> PreconditionCheck {
     if needed.is_empty() {
         return PreconditionCheck::default();
     }
@@ -172,6 +211,9 @@ pub async fn check_case_needs<D: StageDb>(
         }
         PreconditionDb::Ready(db) => db,
     };
+    if memory.is_unanswered() {
+        return PreconditionCheck { blocked: Some(DID_NOT_ANSWER.to_string()), notice: None };
+    }
     let file = match setups::load_setups(root, org, project) {
         Ok(f) => f,
         Err(why) => return PreconditionCheck { blocked: Some(format!("needs_records could not be checked: {why}")), notice: None },
@@ -183,6 +225,10 @@ pub async fn check_case_needs<D: StageDb>(
         NeedsOutcome::Met => PreconditionCheck::default(),
         NeedsOutcome::Missing(why) => PreconditionCheck { blocked: Some(why), notice: None },
         NeedsOutcome::NotChecked(said) => PreconditionCheck { blocked: None, notice: Some(said) },
+        NeedsOutcome::Unanswered(why) => {
+            memory.note_unanswered();
+            PreconditionCheck { blocked: Some(why), notice: None }
+        }
     }
 }
 
@@ -196,11 +242,23 @@ pub async fn check_script_case<D: StageDb>(
     project: &str,
     script: &CaseScript,
 ) -> PreconditionCheck {
+    check_script_case_in(db, root, org, project, script, &RunMemory::default()).await
+}
+
+/// [`check_script_case`] inside a run, sharing the run's `RunMemory`.
+pub async fn check_script_case_in<D: StageDb>(
+    db: &PreconditionDb<D>,
+    root: &Path,
+    org: &str,
+    project: &str,
+    script: &CaseScript,
+    memory: &RunMemory,
+) -> PreconditionCheck {
     let mut checked = super::preconditions::check_case(db, root, org, project, &script.preconditions).await;
     if checked.blocked.is_some() {
         return checked;
     }
-    let needs = check_case_needs(db, root, org, project, &script.needs_records).await;
+    let needs = check_case_needs_in(db, root, org, project, &script.needs_records, memory).await;
     checked.blocked = needs.blocked;
     checked.notice = match (checked.notice, needs.notice) {
         (Some(a), Some(b)) => Some(format!("{a}; {b}")),
