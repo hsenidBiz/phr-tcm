@@ -2669,6 +2669,10 @@ the answer says so; start a new one to explore again.
   page: the sign-in address is opened once more, the page is never
   reloaded and the form never sent twice; with the form still showing
   (wrong password, locked account, reset page) nothing is tried again.
+  A site that is slow to wake (the first page does not open) is given
+  about 2 minutes, opened again after 5, 15 and 30 seconds; it then fails
+  as "the site is slow to start", which is the site, not the browser and
+  not the script.
 - Replaying the same case to a later step carries on from where your last
   replay of it stood, when that browser is yours and nothing (a step, a
   try, a discovery action or another replay) has used it since; the

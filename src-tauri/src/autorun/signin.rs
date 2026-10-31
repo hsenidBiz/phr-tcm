@@ -289,6 +289,60 @@ pub fn session_complete(s: &crate::browser::session::SavedSession) -> bool {
 
 /// How `sign_in`'s words begin when the start address would not open.
 pub const PAGE_DID_NOT_OPEN: &str = "the sign-in page did not open: ";
+/// How long a cold site's first sign-in page is waited for in all: every
+/// try, wait and load counted.
+pub const FIRST_PAGE_BUDGET_MS: u64 = 120_000;
+/// The wait before the second, third and fourth try of the first page.
+pub const FIRST_PAGE_WAITS_MS: [u64; 3] = [5_000, 15_000, 30_000];
+/// What the failure says when the first page never opened in that time and
+/// the browser kept answering: the site's doing, not the browser's.
+pub const SITE_SLOW_TO_START: &str = "the site is slow to start - its sign-in page did not open within about 2 minutes";
+/// Logged for each wait-and-try-again of the first page (no address).
+pub const FIRST_PAGE_RETRY: &str = "the sign-in page did not open; waiting and opening it again (the site may be slow to start)";
+/// How long the browser is given to answer `1` before a failed first page
+/// is put down to the site.
+const BROWSER_ANSWER_MS: u64 = 2_000;
+/// What a page that timed out on its load says.
+const NAVIGATE_TIMEOUT: &str = "did not answer Page.navigate";
+/// Chrome's prefix for a request that failed at the network level.
+const NET_ERR: &str = "net::ERR_";
+
+/// The wait before the next try of the sign-in's first page, or `None` when
+/// it is not to be tried again: the browser stopped answering, the failure
+/// is not the load timing out or failing at the network level (`net::ERR_`,
+/// which a cold VPN or a waking site gives too), the tries are used up, or
+/// the wait and one more load would pass the budget. `nav_ms` is how long
+/// one load is given.
+pub fn slow_start_wait(tries_so_far: u32, elapsed_ms: u64, detail: &str, browser_answers: bool, nav_ms: u64) -> Option<u64> {
+    if !browser_answers || tries_so_far == 0 {
+        return None;
+    }
+    if !detail.contains(NAVIGATE_TIMEOUT) && !detail.contains(NET_ERR) {
+        return None;
+    }
+    let wait = *FIRST_PAGE_WAITS_MS.get(tries_so_far as usize - 1)?;
+    (elapsed_ms.saturating_add(wait).saturating_add(nav_ms) <= FIRST_PAGE_BUDGET_MS).then_some(wait)
+}
+
+/// `detail` with every address in it cut to its path.
+fn without_addresses(detail: &str) -> String {
+    detail
+        .split(' ')
+        .map(|w| {
+            if w.starts_with("http://") || w.starts_with("https://") {
+                crate::browser::save_guard::path_of(w)
+            } else {
+                w.to_string()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// Whether a sign-in's words say the site was slow to start.
+pub fn is_site_slow(detail: &str) -> bool {
+    detail.contains(SITE_SLOW_TO_START)
+}
 /// What `sign_in`'s words hold when the sign-in worked and `after_sign_in`
 /// did not.
 pub const AFTER_SIGN_IN_STOPPED: &str = ", but after_sign_in step ";
@@ -868,12 +922,51 @@ async fn sign_in_with<D: Driver>(
 /// The sign-in's way to its start page. Only once it has arrived there -
 /// the page the case was on is gone, with whatever it sent on the way out -
 /// is a no-save case's guard held.
+///
+/// A site that is waking up does not answer its first page at once: when the
+/// load times out or fails at the network level while the browser still
+/// answers, ONLY the navigation is repeated (after 5, 15 and 30 seconds,
+/// inside `FIRST_PAGE_BUDGET_MS`) - nothing is filled, typed or clicked
+/// here, so the form is never sent twice. If it never opens, the failure is
+/// the site's (`SITE_SLOW_TO_START`), not the browser's.
 async fn open_start<D: Driver>(d: &mut D, go: &Action, timing: &Timing, policy: &Policy) -> ActionOutcome {
-    let arrived = execute_in(d, go, timing, &policy.as_runner()).await;
-    if arrived.ok {
-        d.hold_saves(true);
+    let started = Instant::now();
+    let mut tries: u32 = 0;
+    loop {
+        tries += 1;
+        let arrived = execute_in(d, go, timing, &policy.as_runner()).await;
+        if arrived.ok {
+            d.hold_saves(true);
+            return arrived;
+        }
+        if !arrived.detail.contains(NAVIGATE_TIMEOUT) && !arrived.detail.contains(NET_ERR) {
+            return arrived;
+        }
+        let answers = d
+            .call_within("Runtime.evaluate", serde_json::json!({ "expression": "1" }), Duration::from_millis(BROWSER_ANSWER_MS))
+            .await
+            .is_ok();
+        let elapsed = started.elapsed().as_millis() as u64;
+        match slow_start_wait(tries, elapsed, &arrived.detail, answers, timing.nav_ms) {
+            Some(wait) => {
+                crate::applog::info(format!(
+                    "Auto Run: {FIRST_PAGE_RETRY} (try {} after {} s)",
+                    tries + 1,
+                    wait / 1000
+                ));
+                d.idle(Duration::from_millis(wait)).await;
+            }
+            None if !answers => return arrived,
+            None => {
+                let mut out = ActionOutcome::failed(format!(
+                    "{SITE_SLOW_TO_START} ({tries} tries; last: {})",
+                    without_addresses(&arrived.detail)
+                ));
+                out.harness = false;
+                return out;
+            }
+        }
     }
-    arrived
 }
 
 async fn sign_in_held<D: Driver>(
@@ -926,6 +1019,14 @@ async fn sign_in_core<D: Driver>(
         match session::restore(d, &saved).await {
             Ok(ids) => {
                 let arrived = open_start(d, &go, timing, &policy).await;
+                // A site that never woke says nothing about the saved
+                // session: it is kept, and the sign-in stops there.
+                if is_site_slow(&arrived.detail) {
+                    let why = arrived.detail.clone();
+                    let _ = session::clear(d, &origins).await;
+                    run.keep(arrived);
+                    return run.done(false, format!("{PAGE_DID_NOT_OPEN}{why}"), false, false);
+                }
                 // The application's own word that this session is no
                 // longer good ("Cookie has been tampered", an empty 400):
                 // dropped and signed in fresh below, without waiting for a

@@ -726,7 +726,7 @@ pub fn delete_in(list: &mut Vec<Quirk>, id: &str) -> Result<(), String> {
 // ------------------------------------------------------------ evidence
 
 fn about_the_app(c: &ErrorClass) -> bool {
-    !matches!(c, ErrorClass::Browser | ErrorClass::CannotRun)
+    !matches!(c, ErrorClass::Browser | ErrorClass::SiteSlow | ErrorClass::CannotRun)
 }
 
 /// The cases a quirk recorded on its own is about - `cases: [{ case_id,

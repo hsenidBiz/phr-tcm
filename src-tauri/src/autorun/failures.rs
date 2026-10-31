@@ -55,6 +55,12 @@ pub fn stop_reason(case: &CaseRecord) -> Option<String> {
                     .to_string(),
             );
         }
+        if step0.outcomes.last().is_some_and(|o| !o.ok && super::signin::is_site_slow(&o.detail)) {
+            return Some(
+                "the site was slow to start - its sign-in page did not open in time; rerun the case when it is up, and leave the script alone"
+                    .to_string(),
+            );
+        }
         if step0.outcomes.last().is_some_and(|o| !o.ok && super::signin::is_password_expired(&o.detail)) {
             return Some(
                 "the account's password has expired - the site sent it to its password reset page; the account needs a password reset (or another account), not a script change"

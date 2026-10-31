@@ -84,6 +84,9 @@ pub enum ErrorClass {
     /// The browser connection, not the page. Never a pattern about the
     /// application.
     Browser,
+    /// The site did not wake in time (`signin::SITE_SLOW_TO_START`): the
+    /// environment, not the application and not the script.
+    SiteSlow,
     Other,
 }
 
@@ -121,6 +124,7 @@ impl ErrorClass {
             ErrorClass::SaveBlocked => "no-save",
             ErrorClass::CannotRun => "cannot_run",
             ErrorClass::Browser => "browser",
+            ErrorClass::SiteSlow => "site_slow",
             ErrorClass::Other => "other",
         }
     }
@@ -157,6 +161,7 @@ impl ErrorClass {
             ErrorClass::SaveBlocked => "the page tried to save, and the script must not".to_string(),
             ErrorClass::CannotRun => "the action could not run".to_string(),
             ErrorClass::Browser => "the browser stopped answering".to_string(),
+            ErrorClass::SiteSlow => "the site was slow to start".to_string(),
             ErrorClass::Other => "failed another way".to_string(),
         }
     }
@@ -165,7 +170,7 @@ impl ErrorClass {
     /// browser connection dropping, or a script action refused before it
     /// ever reached the page.
     fn about_the_app(&self) -> bool {
-        !matches!(self, ErrorClass::Browser | ErrorClass::CannotRun)
+        !matches!(self, ErrorClass::Browser | ErrorClass::SiteSlow | ErrorClass::CannotRun)
     }
 }
 
@@ -264,6 +269,9 @@ fn tail<'a>(detail: &'a str, target: Option<&str>) -> &'a str {
 /// sentence's ending is read instead of its start.
 pub fn classify(detail: &str, target: Option<&str>) -> ErrorClass {
     let whole = detail.trim();
+    if super::signin::is_site_slow(whole) {
+        return ErrorClass::SiteSlow;
+    }
     if whole.starts_with(act::BROWSER_SILENT) || whole.starts_with("the browser closed") {
         return ErrorClass::Browser;
     }

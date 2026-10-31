@@ -302,3 +302,14 @@ fn a_save_the_site_was_busy_for_is_transient_and_a_refusal_is_not() {
     let case = failed_at_2("Failed", ActionOutcome::failed(refused));
     assert_eq!(is_transient(&case, Some(&script(click))), None);
 }
+
+/// A site that never woke for the sign-in's first page is the environment:
+/// one more go, and never a reason to touch the script.
+#[test]
+fn a_slow_site_is_transient() {
+    let slow = sign_in_failed(vec![
+        ActionOutcome::failed(format!("{} (4 tries; last: the browser did not answer Page.navigate within 30000ms)", v2_lib::autorun::signin::SITE_SLOW_TO_START)),
+    ]);
+    assert_eq!(is_transient(&slow, Some(&script(expect_save()))), Some(slow.reason.clone()));
+    assert!(is_transient(&slow, None).is_some());
+}
