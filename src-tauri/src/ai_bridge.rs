@@ -446,11 +446,12 @@ pub async fn route_as(
     let claimed = match (method, path) {
         ("POST", "/autorun-try" | "/autorun-discover-start" | "/autorun-replay") => claim_named_case(caller, body),
         ("POST", "/autorun-script") => claim_bundle_cases(caller, body),
-        _ => Ok(()),
+        _ => Ok(None),
     };
-    if let Err(refused) = claimed {
-        return refused;
-    }
+    let newly_claimed = match claimed {
+        Ok(case) => case,
+        Err(refused) => return refused,
+    };
     // The browser this call uses, found ONCE: every handler below locks,
     // publishes to and answers for that slot. A route that uses no
     // supervised browser (or one the caller must not be refused for) is
@@ -975,6 +976,12 @@ pub async fn route_as(
     };
     // A lease refusal in the answer of a route that signs in says whose
     // browser holds the account, once, here, whichever arm answered.
+    // A hold this discovery start made ends with it: no work began.
+    if let (Some(case), crate::autorun::agents::Caller::Agent(key), "/autorun-discover-start") = (newly_claimed, caller, path) {
+        if answer.0 != 200 && crate::autorun::claims::release_case(key, case) {
+            crate::applog::info(format!("Auto Run: case {case}'s hold ended - its discovery did not start"));
+        }
+    }
     name_the_holder(answer, caller, method, path)
 }
 
@@ -11916,16 +11923,16 @@ fn name_the_holder(
 /// tools) never claims, and is refused only by a LIVE assistant's claim, so
 /// with no assistant connected nothing is ever refused. The answer names the
 /// holder by label only.
-pub fn claim_for(caller: &crate::autorun::agents::Caller, case_id: i32) -> Result<(), (u16, String)> {
+pub fn claim_for(caller: &crate::autorun::agents::Caller, case_id: i32) -> Result<Option<i32>, (u16, String)> {
     use crate::autorun::{agents, claims};
     let now = crate::autorun::sessions::now_ms();
     match caller {
-        agents::Caller::Agent(key) => claims::claim(key, case_id, now).map_err(|why| (409, why)),
+        agents::Caller::Agent(key) => claims::claim(key, case_id, now).map(|made| made.then_some(case_id)).map_err(|why| (409, why)),
         agents::Caller::Default => {
             let live = claims::holder(case_id, now).and_then(|h| agents::info(&h)).filter(|i| i.gone_since_ms.is_none());
             match live {
-                Some(held_by) => Err((409, claims::case_claimed(case_id, &held_by.label))),
-                None => Ok(()),
+                Some(held_by) => Err((409, claims::case_claimed(case_id, &held_by.label, claims::held_for(case_id, now)))),
+                None => Ok(None),
             }
         }
     }
@@ -11939,17 +11946,17 @@ fn named_case_id(body: &str) -> Option<i32> {
 
 /// `claim_for` the case a try, a discovery start or a replay body names; a
 /// body that names none claims nothing (the call answers its own 400).
-fn claim_named_case(caller: &crate::autorun::agents::Caller, body: &str) -> Result<(), (u16, String)> {
+fn claim_named_case(caller: &crate::autorun::agents::Caller, body: &str) -> Result<Option<i32>, (u16, String)> {
     match named_case_id(body) {
         Some(case_id) => claim_for(caller, case_id),
-        None => Ok(()),
+        None => Ok(None),
     }
 }
 
 /// `claim_for` every case a save bundle names (a list of scripts, or an
 /// object with `scripts`), in the bundle's order, before any of the save's
 /// gates: the first refusal is the answer.
-fn claim_bundle_cases(caller: &crate::autorun::agents::Caller, body: &str) -> Result<(), (u16, String)> {
+fn claim_bundle_cases(caller: &crate::autorun::agents::Caller, body: &str) -> Result<Option<i32>, (u16, String)> {
     let v: serde_json::Value = serde_json::from_str(body).unwrap_or_default();
     let scripts = if v.is_array() { Some(&v) } else { v.get("scripts") };
     let mut seen: Vec<i32> = Vec::new();
@@ -11962,7 +11969,7 @@ fn claim_bundle_cases(caller: &crate::autorun::agents::Caller, body: &str) -> Re
             claim_for(caller, case_id)?;
         }
     }
-    Ok(())
+    Ok(None)
 }
 
 /// The refusal for a second mapping run: whose browser it is going in.

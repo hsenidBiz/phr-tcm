@@ -2165,7 +2165,8 @@ alone always uses the main one, as before.
 - Split the work so no two assistants share a case or an account. A case
   another assistant works on, or an account another browser holds, is refused
   at once: that is not an error to retry in a loop - take other work, or
-  report it.
+  report it. The refusal says how long the case has been held ("held for 37
+  minutes"); a discovery start that fails lets go of the case it claimed.
 - One mapping run at a time, whoever runs it.
 - The map, the areas, the components and the quirks are shared: read an area
   again just before you repair it.

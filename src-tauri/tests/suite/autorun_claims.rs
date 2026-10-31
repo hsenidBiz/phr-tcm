@@ -44,14 +44,14 @@ fn a_claimed_case_is_refused_to_another_agent_naming_the_holder() {
     fresh();
     register(ID_A);
     register(ID_B);
-    assert_eq!(claims::claim(&key(ID_A), 4521, T0), Ok(()));
-    assert_eq!(claims::claim(&key(ID_B), 4521, T0 + 1), Err(case_claimed(4521, "Assistant 1")));
+    assert_eq!(claims::claim(&key(ID_A), 4521, T0), Ok(true));
+    assert_eq!(claims::claim(&key(ID_B), 4521, T0 + 1), Err(case_claimed(4521, "Assistant 1", 0)));
     // Another case is free.
-    assert_eq!(claims::claim(&key(ID_B), 4522, T0 + 1), Ok(()));
+    assert_eq!(claims::claim(&key(ID_B), 4522, T0 + 1), Ok(true));
     assert_eq!(claims::holder(4521, T0 + 1), Some(key(ID_A)));
     assert_eq!(
-        case_claimed(4521, "Assistant 1"),
-        "case 4521 is being worked on by Assistant 1 - pick another case, or ask the person to release Assistant 1 on the Auto Run screen"
+        case_claimed(4521, "Assistant 1", 0),
+        "case 4521 is being worked on by Assistant 1 (held for less than a minute) - pick another case, or ask the person to release Assistant 1 on the Auto Run screen"
     );
     fresh();
 }
@@ -61,8 +61,8 @@ fn the_same_agent_may_claim_again() {
     let _g = serial::agents();
     fresh();
     register(ID_A);
-    assert_eq!(claims::claim(&key(ID_A), 4521, T0), Ok(()));
-    assert_eq!(claims::claim(&key(ID_A), 4521, T0 + 10), Ok(()));
+    assert_eq!(claims::claim(&key(ID_A), 4521, T0), Ok(true));
+    assert_eq!(claims::claim(&key(ID_A), 4521, T0 + 10), Ok(false));
     // Claiming again renews: the time is counted from the last claim.
     assert_eq!(claims::holder(4521, T0 + 10 + CLAIM_TIMEOUT_MS - 1), Some(key(ID_A)));
     fresh();
@@ -79,7 +79,7 @@ fn a_claim_times_out_after_20_minutes() {
     assert_eq!(claims::holder(4521, T0 + CLAIM_TIMEOUT_MS - 1), Some(key(ID_A)));
     assert_eq!(claims::holder(4521, T0 + CLAIM_TIMEOUT_MS), None);
     assert!(claims::claim(&key(ID_B), 4521, T0 + CLAIM_TIMEOUT_MS - 1).is_err());
-    assert_eq!(claims::claim(&key(ID_B), 4521, T0 + CLAIM_TIMEOUT_MS), Ok(()));
+    assert_eq!(claims::claim(&key(ID_B), 4521, T0 + CLAIM_TIMEOUT_MS), Ok(true));
     assert_eq!(claims::holder(4521, T0 + CLAIM_TIMEOUT_MS), Some(key(ID_B)));
     fresh();
 }
@@ -89,20 +89,20 @@ fn the_default_caller_is_refused_only_while_another_agent_is_live() {
     let _g = serial::agents();
     fresh();
     // Nobody is connected: nothing to be refused by.
-    assert_eq!(claim_for(&Caller::Default, 4521), Ok(()));
+    assert_eq!(claim_for(&Caller::Default, 4521), Ok(None));
     register(ID_A);
     let now = v2_lib::autorun::sessions::now_ms();
     claims::claim(&key(ID_A), 4521, now).unwrap();
-    assert_eq!(claim_for(&Caller::Default, 4521), Err((409, case_claimed(4521, "Assistant 1"))));
+    assert_eq!(claim_for(&Caller::Default, 4521), Err((409, case_claimed(4521, "Assistant 1", 0))));
     // Another case is free, and the default caller never claims.
-    assert_eq!(claim_for(&Caller::Default, 4522), Ok(()));
+    assert_eq!(claim_for(&Caller::Default, 4522), Ok(None));
     assert_eq!(claims::holder(4522, now), None);
     // The session ended: the claim no longer refuses anyone.
     agents::note_bye(ID_A, now);
-    assert_eq!(claim_for(&Caller::Default, 4521), Ok(()));
+    assert_eq!(claim_for(&Caller::Default, 4521), Ok(None));
     // Live again: refused again.
     agents::note_call(&caller(ID_A), &AgentHeaders { id: Some(ID_A.into()), ..Default::default() }, now);
-    assert_eq!(claim_for(&Caller::Default, 4521), Err((409, case_claimed(4521, "Assistant 1"))));
+    assert_eq!(claim_for(&Caller::Default, 4521), Err((409, case_claimed(4521, "Assistant 1", 0))));
     fresh();
 }
 
@@ -114,10 +114,10 @@ fn an_agent_is_refused_by_a_live_holder_and_not_by_a_gone_one() {
     register(ID_B);
     let now = v2_lib::autorun::sessions::now_ms();
     claims::claim(&key(ID_A), 4521, now).unwrap();
-    assert_eq!(claim_for(&caller(ID_B), 4521), Err((409, case_claimed(4521, "Assistant 1"))));
-    assert_eq!(claim_for(&caller(ID_A), 4521), Ok(()));
+    assert_eq!(claim_for(&caller(ID_B), 4521), Err((409, case_claimed(4521, "Assistant 1", 0))));
+    assert_eq!(claim_for(&caller(ID_A), 4521), Ok(None));
     agents::note_bye(ID_A, now);
-    assert_eq!(claim_for(&caller(ID_B), 4521), Ok(()));
+    assert_eq!(claim_for(&caller(ID_B), 4521), Ok(Some(4521)));
     assert_eq!(claims::holder(4521, now), Some(key(ID_B)));
     fresh();
 }
@@ -135,7 +135,7 @@ fn ending_an_agent_frees_its_claims() {
     assert_eq!(claims::holder(4521, T0), None);
     assert_eq!(claims::holder(4522, T0), None);
     assert_eq!(claims::holder(4523, T0), Some(key(ID_B)));
-    assert_eq!(claims::claim(&key(ID_B), 4521, T0), Ok(()));
+    assert_eq!(claims::claim(&key(ID_B), 4521, T0), Ok(true));
     claims::clear();
     assert_eq!(claims::holder(4523, T0), None);
     fresh();
@@ -333,7 +333,7 @@ async fn the_routes_refuse_a_case_another_assistant_works_on() {
     register(ID_B);
     let now = v2_lib::autorun::sessions::now_ms();
     claims::claim(&key(ID_A), 4521, now).unwrap();
-    let refusal = case_claimed(4521, "Assistant 1");
+    let refusal = case_claimed(4521, "Assistant 1", 0);
     // A holds main, so B opening gets slot 1 reserved before the refusal.
     slots::bind(SlotNo::MAIN, &key(ID_A));
     let try_body = serde_json::json!({ "action": { "type": "wait", "ms": 1 }, "case_id": 4521 }).to_string();
@@ -357,7 +357,7 @@ async fn the_routes_refuse_a_case_another_assistant_works_on() {
     let (status, said) = route_as(&Caller::Default, &ctx(), None, "POST", "/autorun-try", &try_body, "1.0.0").await;
     assert_eq!((status, said.as_str()), (409, refusal.as_str()));
     // A's own claim does not refuse A.
-    assert_eq!(claim_for(&caller(ID_A), 4521), Ok(()));
+    assert_eq!(claim_for(&caller(ID_A), 4521), Ok(None));
     // B's claim of 4520 landed before the refusal of 4521 in the bundle.
     assert_eq!(claims::holder(4520, now), Some(key(ID_B)));
     // A bundle that names no case claims nothing, and a try with no case
@@ -379,7 +379,7 @@ async fn a_refused_claim_binds_nothing_not_even_a_free_main() {
     register(ID_B);
     let now = v2_lib::autorun::sessions::now_ms();
     claims::claim(&key(ID_A), 4521, now).unwrap();
-    let refusal = case_claimed(4521, "Assistant 1");
+    let refusal = case_claimed(4521, "Assistant 1", 0);
     let try_body = serde_json::json!({ "action": { "type": "wait", "ms": 1 }, "case_id": 4521 }).to_string();
     let start = serde_json::json!({ "account": "hr_admin", "case_id": 4521 }).to_string();
     let replay = serde_json::json!({ "case_id": 4521, "step": 1 }).to_string();
@@ -480,4 +480,59 @@ fn the_bridge_ends_claims_on_a_release_that_left_a_persons_browser_open() {
     let at = bridge.find("release_for_assistant(slot).await").unwrap();
     let arm = &bridge[at..at + 700];
     assert!(arm.contains("PERSONS_BROWSER_OPEN") && arm.contains("end_claims_of"), "{arm}");
+}
+
+#[test]
+fn claim_says_whether_it_made_the_hold() {
+    let _g = serial::agents();
+    fresh();
+    register(ID_A);
+    assert_eq!(claims::claim(&key(ID_A), 4521, T0), Ok(true));
+    assert_eq!(claims::claim(&key(ID_A), 4521, T0 + 5), Ok(false));
+    // A holder the registry does not know is gone: its hold is taken over.
+    assert_eq!(claims::claim(&key(ID_B), 4522, T0), Ok(true));
+    assert_eq!(claims::claim(&key(ID_A), 4522, T0 + 5), Ok(true));
+    fresh();
+}
+
+#[test]
+fn refusal_says_how_long_the_case_is_held() {
+    let _g = serial::agents();
+    fresh();
+    register(ID_A);
+    register(ID_B);
+    let min = 60_000;
+    claims::claim(&key(ID_A), 4521, T0).unwrap();
+    // A renews inside each 20-minute window, so the hold is never lost.
+    assert_eq!(claims::claim(&key(ID_A), 4521, T0 + 15 * min), Ok(false));
+    assert_eq!(claims::claim(&key(ID_A), 4521, T0 + 30 * min), Ok(false));
+    let refused = claims::claim(&key(ID_B), 4521, T0 + 37 * min).unwrap_err();
+    assert!(refused.contains("(held for 37 minutes)"), "counted from the first claim: {refused}");
+    fresh();
+}
+
+#[test]
+fn held_words() {
+    assert_eq!(claims::held_words(0), "less than a minute");
+    assert_eq!(claims::held_words(61_000), "1 minute");
+    assert_eq!(claims::held_words(59 * 60_000), "59 minutes");
+    assert_eq!(claims::held_words(125 * 60_000), "2 h 5 min");
+}
+
+#[test]
+fn release_case_ends_one_hold_only() {
+    let _g = serial::agents();
+    fresh();
+    register(ID_A);
+    register(ID_B);
+    claims::claim(&key(ID_A), 4521, T0).unwrap();
+    claims::claim(&key(ID_A), 4522, T0).unwrap();
+    claims::claim(&key(ID_B), 4523, T0).unwrap();
+    assert!(!claims::release_case(&key(ID_B), 4521), "not B's hold");
+    assert!(claims::release_case(&key(ID_A), 4521));
+    assert!(!claims::release_case(&key(ID_A), 4521), "already ended");
+    assert_eq!(claims::holder(4521, T0), None);
+    assert_eq!(claims::holder(4522, T0), Some(key(ID_A)));
+    assert_eq!(claims::holder(4523, T0), Some(key(ID_B)));
+    fresh();
 }
