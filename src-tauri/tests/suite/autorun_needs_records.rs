@@ -100,7 +100,7 @@ async fn missing_record_blocks_with_sentence() {
     assert_eq!(
         out,
         NeedsOutcome::Missing(
-            "Blocked: the case needs the AUTOTEST rating scale (setup \"Rating scale\"), which is not there - run_setup Rating scale builds it".into()
+            "the case needs the AUTOTEST rating scale (setup \"Rating scale\"), which is not there - run_setup Rating scale builds it".into()
         )
     );
 }
@@ -154,7 +154,7 @@ async fn the_run_check_follows_the_database_choice() {
 
     let missing = PreconditionDb::Ready(RunDb(Ok(EMPTY.into())));
     let c = check_case_needs(&missing, root, "acme", "Web", &needed).await;
-    assert!(c.blocked.as_deref().unwrap().starts_with("Blocked: the case needs the AUTOTEST rating scale"));
+    assert!(c.blocked.as_deref().unwrap().starts_with("the case needs the AUTOTEST rating scale"));
 
     let there = PreconditionDb::Ready(RunDb(Ok(rows("4\tAUTOTEST Scale"))));
     let c = check_case_needs(&there, root, "acme", "Web", &needed).await;

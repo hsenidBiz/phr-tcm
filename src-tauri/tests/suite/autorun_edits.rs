@@ -723,3 +723,38 @@ fn a_declared_precondition_edit_accepts_the_preconditions_in_any_order() {
     assert!(!same_preconditions(&[pre("a", json!(1)), pre("a", json!(1))], &[pre("a", json!(1)), pre("b", json!(1))]));
     assert!(!same_preconditions(&[pre("a", json!(1))], &[pre("a", json!(1)), pre("a", json!(1))]));
 }
+
+/// A repair keeps every needed record the saved script declares, exactly,
+/// and may add new ones.
+#[test]
+fn a_repair_may_add_needed_records_but_never_drop_or_change_one() {
+    use v2_lib::autorun::edits::NEEDS_RECORDS_KEPT;
+    let with = |needs: serde_json::Value| {
+        script(json!({
+            "case_id": 1, "title": "t", "needs_records": needs,
+            "steps": [{ "step_number": 1, "actions": [{ "kind": "click", "selector": "#old" }] }]
+        }))
+    };
+    let scale = json!([{ "setup": "Rating scale", "why": "the scale" }]);
+    let old = with(scale.clone());
+    let declared = edit(&[1], "the button moved");
+    let mut fixed = with(scale.clone());
+    fixed.steps[0] = serde_json::from_value(json!({ "step_number": 1, "actions": [{ "kind": "click", "selector": "#new" }] })).unwrap();
+    assert_eq!(check_edits(&old, &fixed, Some(&declared)), Ok(()));
+
+    let mut dropped = fixed.clone();
+    dropped.needs_records.clear();
+    assert_eq!(check_edits(&old, &dropped, Some(&declared)), Err(NEEDS_RECORDS_KEPT.to_string()));
+
+    let mut changed = fixed.clone();
+    changed.needs_records[0].why = "something else".into();
+    assert_eq!(check_edits(&old, &changed, Some(&declared)), Err(NEEDS_RECORDS_KEPT.to_string()));
+
+    let mut added = fixed.clone();
+    added.needs_records.push(v2_lib::autorun::NeededRecord { setup: "Tree".into(), why: "the tree".into() });
+    assert_eq!(check_edits(&old, &added, Some(&declared)), Ok(()));
+    // A script that had none may gain some.
+    let mut first = fixed.clone();
+    first.steps = old.steps.clone();
+    assert_eq!(check_edits(&with(json!([])), &first, None), Ok(()));
+}

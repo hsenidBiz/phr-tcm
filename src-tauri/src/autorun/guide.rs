@@ -1265,12 +1265,13 @@ Before the case signs in, the run asks each setup's find rule on the active
 environment's database (read only). A record that is not there makes the case
 Blocked, not failed halfway:
 
-    Blocked: the case needs the AUTOTEST rating scale (setup "Rating scale"), which is not there - run_setup Rating scale builds it
+    the case needs the AUTOTEST rating scale (setup "Rating scale"), which is not there - run_setup Rating scale builds it
 
 While the Database Access module is off nothing is asked and the case goes on,
 saying `needs_records not checked: database read access is off`. A save refuses
 a setup that is not saved, or has no database find rule; a script that relies on
 a record and declares neither this nor a precondition only gets a note.
+A repair keeps every saved `needs_records` entry as it is (it may add new ones); a person changes or removes one in the app.
 
 A repair keeps every precondition the script has, and may add new ones.
 Send each existing precondition back exactly as it is: a repair that

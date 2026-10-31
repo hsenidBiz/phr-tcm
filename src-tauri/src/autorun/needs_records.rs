@@ -117,7 +117,7 @@ pub async fn check_needed<S: RowSource>(
             DbOutcome::Found(_) => {}
             DbOutcome::NotFound => {
                 return NeedsOutcome::Missing(format!(
-                    "Blocked: the case needs {} (setup \"{}\"), which is not there - run_setup {} builds it",
+                    "the case needs {} (setup \"{}\"), which is not there - run_setup {} builds it",
                     n.why.trim(),
                     setup.name,
                     setup.name
