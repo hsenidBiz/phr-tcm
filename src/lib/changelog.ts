@@ -27,6 +27,16 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.4.3-beta.9",
+    date: "2026-10-31",
+    items: [
+      "A script can list the records it relies on. Before signing in, each one is looked up in the database (read only), and a case whose record is missing is Blocked with what is missing, instead of failing halfway.",
+      "An expired password is now seen as such: a sign-in that lands on the password reset page stops with \"password expired\" instead of waiting, and the accounts the assistant proposes are marked when their password has expired or someone else is signed in.",
+      "Accounts has a Check sign-in section: it signs each chosen account in, one at a time, and says whether it reaches the area you pick or where it stopped. Run Tests warns about accounts whose password has expired or expires within 7 days.",
+      "On a test environment, a new Reset expired passwords switch (off by default, in Environments) lets Auto Run reset an expired password itself and carry on. The new password is kept only once a sign-in with it works.",
+    ],
+  },
+  {
     version: "2.4.3-beta.8",
     date: "2026-10-31",
     items: [
