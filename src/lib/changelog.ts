@@ -27,6 +27,17 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.4.3-beta.8",
+    date: "2026-10-31",
+    items: [
+      "Each environment now keeps its own Auto Run scripts, areas, components, quirks and API templates, so you can try things in one environment without touching another's. At this update, your existing scripts are copied into every environment once, so the first start may take a little longer.",
+      "Copy a whole environment's Auto Run data from another (Copy Auto Run data… in Environments), or one case's script to or from another environment (Copy to environment… and Copy from environment… in the script). A confirmation shows what will be copied and what the other environment keeps.",
+      "Playwright export now runs from one environment you choose on the Playwright tab (it starts as the active one). In any other environment, Export and Sync say which environment to switch to.",
+      "Removing an environment keeps its Auto Run data for 30 days, and Copy Auto Run data… can bring it back. You cannot switch environments while a run or an assistant's browser is in use.",
+      "Auto Run, API Templates and Playwright show which environment you are looking at, and reload when you switch.",
+    ],
+  },
+  {
     version: "2.4.3-beta.7",
     date: "2026-10-30",
     items: [
