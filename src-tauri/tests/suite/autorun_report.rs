@@ -1059,3 +1059,45 @@ fn a_run_with_none_unchecked_reads_as_before() {
     assert!(!html.to_lowercase().contains("unchecked"), "{html}");
     assert!(html.contains("<td class=\"b-passed\">Passed</td>"), "{html}");
 }
+
+#[test]
+fn a_report_for_an_environment_that_was_left_is_refused_and_makes_no_folder() {
+    use v2_lib::autorun::{roots, store};
+    use v2_lib::environments::{self, Environment};
+    struct Restore;
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            store::set_root(std::env::temp_dir().join("tcm-autorun-report-restored"));
+        }
+    }
+    let _lock = crate::serial::autorun();
+    let _restore = Restore;
+    let dir = TempDir::new();
+    store::set_shared_root(dir.path().to_path_buf());
+    let a = environments::load_or_init(dir.path(), Some("dev-read")).unwrap().active;
+    let qa = Environment {
+        id: String::new(),
+        name: "QA".into(),
+        start_url: String::new(),
+        allowed_origins: vec![],
+        db_id: "dev-read".into(),
+        test_environment: false,
+        test_prefix: "AUTOTEST".into(),
+        db_auto_approve: false,
+    };
+    let b = environments::save_env(dir.path(), qa, &["dev-read".to_string()])
+        .unwrap()
+        .environments
+        .into_iter()
+        .find(|e| e.name == "QA")
+        .unwrap()
+        .id;
+    store::select_environment(&a).unwrap();
+    let ra = store::configured_root().unwrap();
+    save_run(&ra, &run_of(SHOT)).unwrap();
+    store::select_environment(&b).unwrap();
+
+    let err = write_report_at(true, &ra, "Acme", "Web", "run-1786000200000", "x").unwrap_err();
+    assert_eq!(err, roots::ENVIRONMENT_SWITCHED);
+    assert!(!roots::env_root(dir.path(), &a).join("reports").exists());
+}

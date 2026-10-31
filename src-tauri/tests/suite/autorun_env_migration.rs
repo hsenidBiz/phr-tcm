@@ -286,8 +286,21 @@ fn a_failure_during_the_copy_leaves_no_envs_and_no_staging() {
     assert!(t.path().join("scripts/case-1.json").is_file());
 }
 
+/// The staging folders (not their marks) left under `t`.
+fn stagings(t: &Path) -> Vec<PathBuf> {
+    std::fs::read_dir(t)
+        .unwrap()
+        .flatten()
+        .filter(|e| {
+            let n = e.file_name().to_string_lossy().to_string();
+            n.starts_with(".envs-staging-") && !n.ends_with(".complete")
+        })
+        .map(|e| e.path())
+        .collect()
+}
+
 #[test]
-fn a_failure_during_the_rename_leaves_no_envs_and_no_staging() {
+fn a_failed_final_rename_keeps_the_finished_copy() {
     let t = tempfile::tempdir().unwrap();
     two_envs(t.path());
     put(t.path(), "scripts/case-1.json", "S");
@@ -295,14 +308,78 @@ fn a_failure_during_the_rename_leaves_no_envs_and_no_staging() {
         t.path(),
         MigrationOps {
             fan_out: &roots::fan_out,
-            rename: &mut |_, _| Err(std::io::Error::from(std::io::ErrorKind::NotFound)),
+            rename: &mut |_, _| Err(std::io::Error::from_raw_os_error(5)),
             sleep: &mut no_sleep,
         },
     );
     assert!(r.is_err());
-    assert_flat_and_no_envs(t.path());
-    // And the next try, with nothing in the way, succeeds.
-    assert!(roots::migrate_once(t.path()).unwrap().is_some());
+    assert!(!t.path().join("envs").exists(), "a half-built envs/ was left");
+    let kept = stagings(t.path());
+    assert_eq!(kept.len(), 1, "the finished copy was not kept");
+    assert!(kept[0].join(B).join("scripts/case-1.json").is_file());
+    assert!(t.path().join("scripts/case-1.json").is_file());
+}
+
+#[test]
+fn the_next_start_only_renames_the_kept_copy() {
+    let t = tempfile::tempdir().unwrap();
+    two_envs(t.path());
+    put(t.path(), "scripts/case-1.json", "S");
+    let first = roots::migrate_with(
+        t.path(),
+        MigrationOps {
+            fan_out: &roots::fan_out,
+            rename: &mut |_, _| Err(std::io::Error::from_raw_os_error(5)),
+            sleep: &mut no_sleep,
+        },
+    );
+    assert!(first.is_err());
+    let copies = RefCell::new(0);
+    let r = roots::migrate_with(
+        t.path(),
+        MigrationOps {
+            fan_out: &|f, s, i, a| {
+                *copies.borrow_mut() += 1;
+                roots::fan_out(f, s, i, a)
+            },
+            rename: &mut |a, b| std::fs::rename(a, b),
+            sleep: &mut no_sleep,
+        },
+    )
+    .unwrap()
+    .unwrap();
+    assert_eq!(*copies.borrow(), 0, "the copy was built again");
+    assert_eq!(r.environments, 2);
+    assert!(r.items >= 1);
+    assert_eq!(std::fs::read_to_string(at(t.path(), B, "scripts/case-1.json")).unwrap(), "S");
+    assert!(stagings(t.path()).is_empty());
+    assert!(std::fs::read_dir(t.path())
+        .unwrap()
+        .flatten()
+        .all(|e| !e.file_name().to_string_lossy().ends_with(".complete")));
+}
+
+#[test]
+fn a_staging_without_its_mark_is_rebuilt() {
+    let t = tempfile::tempdir().unwrap();
+    two_envs(t.path());
+    put(t.path(), "scripts/case-1.json", "S");
+    put(t.path(), ".envs-staging-5/env-0000000a/scripts/partial.json", "p");
+    let copies = RefCell::new(0);
+    let r = roots::migrate_with(
+        t.path(),
+        MigrationOps {
+            fan_out: &|f, s, i, a| {
+                *copies.borrow_mut() += 1;
+                roots::fan_out(f, s, i, a)
+            },
+            rename: &mut |a, b| std::fs::rename(a, b),
+            sleep: &mut no_sleep,
+        },
+    );
+    assert!(r.unwrap().is_some());
+    assert_eq!(*copies.borrow(), 1);
+    assert!(!at(t.path(), A, "scripts/partial.json").exists());
 }
 
 #[test]
@@ -485,7 +562,7 @@ fn the_migration_rename_waits_much_longer_than_an_ordinary_one() {
     assert!(r.is_err());
     let ms = *waited.borrow();
     assert!((14_000..=20_000).contains(&ms), "waited {ms} ms");
-    assert_flat_and_no_envs(t.path());
+    assert!(!t.path().join("envs").exists());
 }
 
 #[test]

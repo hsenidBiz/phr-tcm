@@ -580,3 +580,22 @@ fn reselecting_from_disk_never_makes_default() {
     assert_eq!(store::reselect_from_disk(), Err(store::NO_ENVIRONMENT_YET.to_string()));
     assert!(!t.path().join("environments.json").exists());
 }
+
+#[test]
+fn a_write_when_no_environment_is_selected_says_why_not_that_it_was_switched() {
+    let _log = crate::serial::log_tail();
+    let _lock = crate::serial::autorun();
+    let _restore = Restore;
+    let t = tempfile::tempdir().unwrap();
+    let root = roots::env_root(t.path(), A);
+
+    // The list cannot be read.
+    std::fs::write(t.path().join("environments.json"), "{ half a file").unwrap();
+    store::set_shared_root(t.path().to_path_buf());
+    assert_eq!(roots::guard(&root).map(drop), Err(store::ENVIRONMENTS_UNREADABLE.to_string()));
+
+    // There is none yet.
+    std::fs::remove_file(t.path().join("environments.json")).unwrap();
+    store::set_shared_root(t.path().to_path_buf());
+    assert_eq!(roots::guard(&root).map(drop), Err(store::NO_ENVIRONMENT_YET.to_string()));
+}

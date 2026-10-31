@@ -422,6 +422,21 @@ fn recover_finishes_a_copy_when_the_target_is_missing_or_holds_no_file() {
 }
 
 #[test]
+fn recover_never_finishes_a_copy_into_a_removed_environment() {
+    let _lock = crate::serial::autorun();
+    let t = tempfile::tempdir().unwrap();
+    let (_a, b, _c) = three_envs(t.path());
+    let staging = leftover(t.path(), &b, Some("kept"));
+    // `b` leaves the list while its copy waits.
+    let mut file = environments::load_or_init(t.path(), None).unwrap();
+    file.environments.retain(|e| e.id != b);
+    std::fs::write(t.path().join("environments.json"), serde_json::to_string(&file).unwrap()).unwrap();
+    assert_eq!(recover(t.path()), 0);
+    assert!(!roots::env_root(t.path(), &b).exists(), "the removed environment's folder was made again");
+    assert!(staging.is_dir(), "nothing is deleted");
+}
+
+#[test]
 fn recover_puts_history_back_only_where_the_target_has_none_and_deletes_nothing() {
     let _lock = crate::serial::autorun();
     for step in ["kept", "abandoned"] {

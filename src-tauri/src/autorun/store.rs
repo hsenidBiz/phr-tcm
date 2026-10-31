@@ -1458,14 +1458,21 @@ pub fn clear_scripts(root: &Path, case_ids: &[i32]) -> Result<usize, String> {
     // file into place, and a delete landing between would be undone.
     let _held = scripts_lock();
     let dir = scripts_dir(root);
+    // A clear aimed at a root that stopped being the active environment's
+    // removes nothing; each removal below is checked again.
+    super::roots::guard(root).map(drop)?;
     let mut removed: Vec<i32> = vec![];
     for id in case_ids {
         let path = dir.join(format!("case-{id}.json"));
-        match std::fs::remove_file(&path) {
+        match super::roots::remove_file(root, &path) {
             Ok(()) => removed.push(*id),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
             Err(e) => {
                 scripts_changed(root, &removed);
+                // A refusal is already a sentence; an I/O error names the file.
+                if e.raw_os_error().is_none() {
+                    return Err(e.to_string());
+                }
                 return Err(format!("could not remove {}: {e}", path.display()));
             }
         }

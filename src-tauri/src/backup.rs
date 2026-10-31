@@ -535,6 +535,8 @@ pub fn restore_files_held(
     let drop_flat = plan.pre_update && ids.is_empty();
     let mut restored = 0u32;
     let mut staged_applied = 0u32;
+    // `envs/` appeared in the middle of a session that reads the flat folder.
+    let mut built_in_a_flat_session = false;
     let mut shared_entries: Vec<(&BackupFile, Vec<u8>, PathBuf)> = Vec::new();
     for (f, bytes) in entries {
         if drop_flat && is_flat_original(&f.path) {
@@ -574,8 +576,18 @@ pub fn restore_files_held(
         out.playwright_export = Some(chosen);
         list_text = crate::environments::file_text(&out).ok();
     }
+    let records_arg = move_records
+        .as_ref()
+        .filter(|(from, to)| per_env_machine && roots::valid_folder_id(from) && roots::valid_folder_id(to))
+        .map(|(from, to)| (roots::env_root(&autorun, from), to.clone()));
     let replacing = match &import_staging {
-        Some(st) => match backup_import::prepare(st, &ids, plan.pre_update, list_text.as_deref()) {
+        Some(st) => match backup_import::prepare(
+            st,
+            &ids,
+            plan.pre_update,
+            list_text.as_deref(),
+            records_arg.as_ref().map(|(p, t)| (p.as_path(), t.as_str())),
+        ) {
             Ok(replacing) => replacing,
             Err(e) => {
                 clean();
@@ -586,7 +598,7 @@ pub fn restore_files_held(
     };
 
     // ---- Phase 3: write the shared files, then swap the folders in ----
-    let shared_phase = (|| -> Result<(), String> {
+    let shared_phase = (|| -> Result<Option<(Vec<u8>, bool)>, String> {
         // A backup from before environments: the machine-wide list, and no
         // environments file to say whose it is. Kept until the loop is done.
         let mut legacy_accounts: Option<Vec<u8>> = None;
@@ -641,11 +653,19 @@ pub fn restore_files_held(
                 let _ = std::fs::remove_dir_all(autorun.join("sessions"));
             }
         }
+        // With a swap coming, the old list waits for it: making Default now
+        // would hand it the machine's `_seed` before the backup's replaces it.
+        let mut deferred = None;
         if let Some(list) = legacy_accounts {
-            restore_legacy_accounts(&autorun, &list, has_environments)?;
+            if replacing {
+                deferred = Some((list, has_environments));
+            } else {
+                restore_legacy_accounts(&autorun, &list, has_environments)?;
+            }
         }
-        Ok(())
+        Ok(deferred)
     })();
+    let deferred_accounts = shared_phase.as_ref().ok().and_then(|d| d.clone());
     if let Err(e) = shared_phase {
         // The swap has not started: only copies of the backup's files are
         // staged, and the note goes first so no start replays this import.
@@ -657,6 +677,15 @@ pub fn restore_files_held(
         }
         return Err(e);
     }
+    // The export environment fell to another one: its records go with it,
+    // BEFORE anything moves. When the new export environment's folder is
+    // being replaced they are already in its built folder (`prepare`); else
+    // they are copied into its live folder now, so a swap that stops cannot
+    // leave them in a folder the next start moves aside.
+    let records_staged = replacing && move_records.as_ref().is_some_and(|(_, to)| ids.contains(to));
+    if let (Some((from, to)), false, true) = (&move_records, records_staged, per_env_machine) {
+        copy_records_across(&autorun, from, to);
+    }
     if let (Some(staging), true) = (&import_staging, replacing) {
         let names = |id: &str| {
             plan.replaces
@@ -667,7 +696,7 @@ pub fn restore_files_held(
                 .or_else(|| crate::environments::listed_name(&autorun, id))
                 .unwrap_or_default()
         };
-        backup_import::commit(
+        let committed = backup_import::commit(
             held,
             &autorun,
             staging,
@@ -676,8 +705,21 @@ pub fn restore_files_held(
             now,
             &mut |a, b| std::fs::rename(a, b),
             &roots::MIGRATION_RENAME_WAITS_MS,
-        )?;
+        );
+        // Now the backup's folders (the seed among them) are in place, so
+        // the first environment made from the old list takes THEM.
+        if let Some((list, has_environments)) = &deferred_accounts {
+            if let Err(e) = restore_legacy_accounts(&autorun, list, *has_environments) {
+                if committed.is_ok() {
+                    return Err(e);
+                }
+                crate::applog::warn(format!("Backup import: {e}"));
+            }
+        }
+        committed?;
         restored += staged_applied;
+    } else if let Some((list, has_environments)) = &deferred_accounts {
+        restore_legacy_accounts(&autorun, list, *has_environments)?;
     }
     if let (Some(staging), false) = (&envs_stage, plan.post_update) {
         let put = if staging.is_dir() {
@@ -697,17 +739,31 @@ pub fn restore_files_held(
             return Err(backup_import::IMPORT_FAILED.to_string());
         }
         restored += staged_applied;
+        built_in_a_flat_session = true;
     }
-    // The export environment fell to another one: its records go with it.
-    if let Some((from, to)) = move_records {
-        if roots::valid_folder_id(&from) && roots::valid_folder_id(&to) {
-            let moved = crate::environments::copy_export_records(&roots::env_root(&autorun, &from), &roots::env_root(&autorun, &to));
-            if let Err(e) = moved {
-                crate::applog::warn(format!("Backup import: the Playwright export records could not follow the export environment: {e}"));
-            }
-        }
+    // A machine that had no per-environment folders has them only now.
+    if let (Some((from, to)), false) = (&move_records, per_env_machine) {
+        copy_records_across(&autorun, from, to);
+    }
+    if built_in_a_flat_session {
+        // The files are in place, but this session keeps reading and writing
+        // the flat folder, which the next start never reads again.
+        crate::applog::info("Backup import: the environments' folders are in place; the app must restart to use them");
+        return Err(backup_import::IMPORT_UNFINISHED.to_string());
     }
     Ok(restored)
+}
+
+/// Copies the Playwright export records of environment `from` into
+/// environment `to`'s live folder. Logged, never fatal.
+fn copy_records_across(autorun: &Path, from: &str, to: &str) {
+    use crate::autorun::roots;
+    if roots::valid_folder_id(from) && roots::valid_folder_id(to) {
+        let moved = crate::environments::copy_export_records(&roots::env_root(autorun, from), &roots::env_root(autorun, to));
+        if let Err(e) = moved {
+            crate::applog::warn(format!("Backup import: the Playwright export records could not follow the export environment: {e}"));
+        }
+    }
 }
 
 /// The machine-wide `accounts.json` a backup restored. Nothing reads that

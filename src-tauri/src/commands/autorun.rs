@@ -3621,13 +3621,16 @@ pub fn write_report_at(
     );
     let dir = store::reports_dir(root);
     let path = dir.join(format!("{run_id}.html"));
-    std::fs::create_dir_all(&dir).map_err(|e| {
+    // Both through the switch guard: a report for a run of an environment
+    // that is no longer the active one must not recreate its folder.
+    let refusal = |e: &str| (e == crate::autorun::roots::ENVIRONMENT_SWITCHED).then(|| e.to_string());
+    crate::autorun::roots::create_dir_all(root, &dir).map_err(|e| {
         crate::applog::warn(format!("auto run report: the reports folder could not be made: {e}"));
-        REPORT_NOT_WRITTEN.to_string()
+        refusal(&e.to_string()).unwrap_or_else(|| REPORT_NOT_WRITTEN.to_string())
     })?;
-    crate::ai_tools::atomic_write(&path, &html).map_err(|e| {
+    crate::autorun::roots::write_file(root, &path, &html).map_err(|e| {
         crate::applog::warn(format!("auto run report for {run_id} could not be written: {e}"));
-        REPORT_NOT_WRITTEN.to_string()
+        refusal(&e).unwrap_or_else(|| REPORT_NOT_WRITTEN.to_string())
     })?;
     crate::applog::info(format!("auto run report for {run_id} written"));
     Ok(path)

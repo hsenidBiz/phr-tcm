@@ -436,7 +436,7 @@ pub fn copy_environment_full(
         if back && put_back(&done_moves, &mut *rename, waits_ms) {
             let _ = std::fs::remove_dir_all(&staging);
         } else {
-            crate::applog::warn("Environments: a copy did not finish and will be completed at the next start");
+            crate::applog::warn("Environments: a copy did not finish; its folder is kept aside for the next start to settle");
         }
         return Err(COPY_FAILED.to_string());
     }
@@ -525,6 +525,13 @@ pub fn recover(shared: &Path) -> usize {
         let newest = previous != Some(target_id.as_str());
         previous = Some(target_id.as_str());
         let target = roots::env_root(shared, target_id);
+        // A target that is no longer listed was removed meanwhile: nothing is
+        // finished into its folder or put back in it (that would make the
+        // folder again). The staging folder stays aside as it is.
+        if environments::listed_ids(shared).is_some_and(|listed| !listed.iter().any(|l| l == target_id)) {
+            crate::applog::warn("Environments: a copy that did not finish belongs to an environment that was removed, and was left aside");
+            continue;
+        }
         let marker: Option<Marker> = std::fs::read_to_string(staging.join(MARKER))
             .ok()
             .and_then(|t| serde_json::from_str(&t).ok())

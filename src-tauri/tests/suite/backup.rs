@@ -700,7 +700,10 @@ fn a_post_update_backup_on_a_machine_without_the_layout_builds_envs_whole() {
         entry("autorun/environments.json", &env_json(ENV_A, None)),
         entry(&format!("autorun/envs/{ENV_A}/scripts/case-1.json"), "from-backup"),
     ];
-    restore_files(&dst, &files).unwrap();
+    // The folders land, but this session still reads the flat one: it asks
+    // for the restart, as an unfinished import does.
+    let err = restore_files(&dst, &files).unwrap_err();
+    assert_eq!(err, v2_lib::autorun::backup_import::IMPORT_UNFINISHED);
     assert_eq!(read(&a, &format!("envs/{ENV_A}/scripts/case-1.json")).as_deref(), Some("from-backup"));
     assert!(no_staging_left(&a, ".envs-staging-"));
     assert_eq!(read(&a, "scripts/case-1.json").as_deref(), Some("flat-original"), "the flat originals stay as they are");
@@ -1045,6 +1048,68 @@ fn the_export_environment_stays_with_its_records_after_an_import() {
     restore_files(&dst, &files).unwrap();
     assert_eq!(v2_lib::environments::export_env(&a).unwrap().id, ENV_A);
     assert_eq!(read(&a, &format!("envs/{ENV_A}/projects/p.pwexport.json")).as_deref(), Some("record"));
+    let _ = std::fs::remove_dir_all(&dst);
+}
+
+/// The export environment is dropped by the imported list and the swap
+/// stops: its records must already be in the new export environment's built
+/// folder, because the next start moves the dropped folder aside.
+#[test]
+fn a_swap_that_stops_never_strands_the_export_records() {
+    use v2_lib::autorun::{backup_import, roots};
+    let dst = updated_machine("records-not-stranded");
+    let a = dst.join("autorun");
+    put(&a, "environments.json", &env_json(ENV_A, Some(ENV_B)));
+    put(&a, &format!("envs/{ENV_B}/projects/p.pwexport.json"), "record");
+    let staging = backup_import::staging_dir(&a, 5151);
+    put(&backup_import::flat_dir(&staging), "scripts/case-5.json", "from-backup");
+    let ids = vec![ENV_A.to_string()];
+    let list = one_env_json(ENV_A, "Alpha");
+    let from = roots::env_root(&a, ENV_B);
+    assert!(backup_import::prepare(&staging, &ids, true, Some(&list), Some((&from, ENV_A))).unwrap());
+    let names = |_: &str| "Alpha".to_string();
+    let mut fail = |f: &std::path::Path, t: &std::path::Path| {
+        if t.ends_with(ENV_A) && f.to_string_lossy().contains("built") {
+            Err(std::io::Error::other("held"))
+        } else {
+            std::fs::rename(f, t)
+        }
+    };
+    {
+        let held = roots::switch_lock().write().unwrap();
+        let err = backup_import::commit(&held, &a, &staging, &ids, &names, 5151, &mut fail, &[]).unwrap_err();
+        assert_eq!(err, backup_import::IMPORT_UNFINISHED);
+    }
+    // The next start: the list is in, the dropped export folder is moved aside,
+    // and only then is the swap finished.
+    put(&a, "environments.json", &list);
+    assert_eq!(roots::retire_unlisted(&a, 6000), 1);
+    assert_eq!(backup_import::recover(&a), 1);
+    assert_eq!(
+        read(&a, &format!("envs/{ENV_A}/projects/p.pwexport.json")).as_deref(),
+        Some("record"),
+        "the records reached the new export environment"
+    );
+    assert_eq!(read(&a, &format!("envs/{ENV_A}/scripts/case-5.json")).as_deref(), Some("from-backup"));
+    let _ = std::fs::remove_dir_all(&dst);
+}
+
+/// A pre-update backup onto a machine that has only the update's `_seed`
+/// and no list of environments: the first environment made takes the
+/// BACKUP's data, and the machine's old seed waits aside.
+#[test]
+fn a_pre_update_import_onto_a_seed_gives_the_first_environment_the_backups_data() {
+    let dst = tmpdir("seed-backup-wins");
+    let a = dst.join("autorun");
+    put(&a, "envs/_seed/scripts/old.json", "machine-seed");
+    let files = vec![
+        entry("autorun/accounts.json", "[]"),
+        entry("autorun/scripts/case-9.json", "from-backup"),
+    ];
+    restore_files(&dst, &files).unwrap();
+    let active = v2_lib::environments::active_id(&a).unwrap();
+    assert_eq!(read(&a, &format!("envs/{active}/scripts/case-9.json")).as_deref(), Some("from-backup"));
+    assert!(read(&a, &format!("envs/{active}/scripts/old.json")).is_none(), "the machine's seed is not mixed in");
     let _ = std::fs::remove_dir_all(&dst);
 }
 

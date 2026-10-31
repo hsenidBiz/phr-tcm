@@ -288,13 +288,19 @@ pub fn guard(root: &Path) -> Result<std::sync::RwLockReadGuard<'static, ()>, Str
     if env_id_of(root).is_none() {
         return Ok(held);
     }
-    if crate::autorun::store::configured_root().as_deref() == Some(root) {
+    let active = crate::autorun::store::resolve_root();
+    if active.as_ref().is_ok_and(|a| a == root) {
         return Ok(held);
     }
     if ALLOWED.lock().unwrap_or_else(|e| e.into_inner()).iter().any(|p| p == root) {
         return Ok(held);
     }
-    Err(ENVIRONMENT_SWITCHED.to_string())
+    // No environment is selected for a reason that is not a switch (the
+    // list cannot be read, or there is none yet): say that.
+    match active {
+        Err(why) => Err(why),
+        Ok(_) => Err(ENVIRONMENT_SWITCHED.to_string()),
+    }
 }
 
 /// Whether a change announced for `changed` concerns what the person is
@@ -499,7 +505,10 @@ pub fn retire_unlisted(shared: &Path, now_ms: u64) -> usize {
         if id == SEED_ID || listed.iter().any(|l| *l == id) {
             continue;
         }
-        match retire(shared, &id, "Removed environment", "removed", now_ms) {
+        // Dated, so several of these in the Copy dialog can be told apart.
+        let (y, m, d) = crate::applog::civil((now_ms / 86_400_000) as i64);
+        let name = format!("Removed environment ({y:04}-{m:02}-{d:02})");
+        match retire(shared, &id, &name, "removed", now_ms) {
             Ok(Some(_)) => retired += 1,
             Ok(None) => {}
             Err(e) => crate::applog::warn(format!("Auto Run: a removed environment's folder stayed in place: {e}")),
@@ -750,14 +759,14 @@ pub fn migrate_with(shared: &Path, ops: MigrationOps) -> Result<Option<Migration
         }
         return Ok(None);
     }
-    if let Ok(entries) = std::fs::read_dir(shared) {
-        for entry in entries.flatten() {
-            if entry.file_name().to_str().is_some_and(|n| n.starts_with(STAGING_PREFIX)) {
-                if let Err(e) = std::fs::remove_dir_all(entry.path()) {
-                    crate::applog::warn(format!("Auto Run: a leftover half-built copy could not be removed: {e}"));
-                }
-            }
-        }
+    // A copy that was built whole and failed only at the final rename is
+    // kept (see below): the next start retries just that rename. Every other
+    // staging folder is half-built and goes.
+    let finished = sweep_stagings(shared);
+    if let Some((staging, report)) = finished {
+        crate::ai_tools::rename_retrying_waits(&staging, &envs, ops.rename, ops.sleep, &MIGRATION_RENAME_WAITS_MS)?;
+        let _ = std::fs::remove_file(complete_marker(&staging));
+        return Ok(Some(report));
     }
     let mut any = false;
     for (name, _) in PER_ENV_ITEMS {
@@ -772,18 +781,82 @@ pub fn migrate_with(shared: &Path, ops: MigrationOps) -> Result<Option<Migration
         None => (vec![SEED_ID.to_string()], SEED_ID.to_string()),
     };
     let staging = shared.join(format!("{STAGING_PREFIX}{}", crate::cache::now_ms()));
-    let built = (ops.fan_out)(shared, &staging, &ids, Some(&active))
-        .and_then(|items| {
-            crate::ai_tools::rename_retrying_waits(&staging, &envs, ops.rename, ops.sleep, &MIGRATION_RENAME_WAITS_MS)
-                .map(|_| items)
-        });
-    match built {
-        Ok(items) => Ok(Some(MigrationReport { environments: ids.len(), items })),
+    let built = (ops.fan_out)(shared, &staging, &ids, Some(&active));
+    let items = match built {
+        Ok(items) => items,
         Err(e) => {
             let _ = std::fs::remove_dir_all(&staging);
+            return Err(e);
+        }
+    };
+    // The copy is whole: say so beside it, so a rename that fails (another
+    // program holding a file it just scanned) does not cost a second copy.
+    let report = MigrationReport { environments: ids.len(), items };
+    if let Err(e) = std::fs::write(complete_marker(&staging), format!("{} {}", report.environments, report.items)) {
+        crate::applog::debug(format!("Auto Run: the finished-copy mark could not be written: {e}"));
+    }
+    match crate::ai_tools::rename_retrying_waits(&staging, &envs, ops.rename, ops.sleep, &MIGRATION_RENAME_WAITS_MS) {
+        Ok(_) => {
+            let _ = std::fs::remove_file(complete_marker(&staging));
+            Ok(Some(report))
+        }
+        Err(e) => {
+            // Kept for the next start, which only renames it.
+            crate::applog::warn("Auto Run: the finished per-environment copy is kept and will be put in place at the next start");
             Err(e)
         }
     }
+}
+
+/// The small file beside a staging folder that says the copy in it is whole.
+fn complete_marker(staging: &Path) -> PathBuf {
+    let mut name = staging.file_name().map(|n| n.to_os_string()).unwrap_or_default();
+    name.push(".complete");
+    staging.with_file_name(name)
+}
+
+/// Removes every half-built staging folder (and stray marker) under
+/// `shared`, and returns the newest folder that has a readable marker with
+/// what it holds. Only that folder is kept.
+fn sweep_stagings(shared: &Path) -> Option<(PathBuf, MigrationReport)> {
+    let entries = std::fs::read_dir(shared).ok()?;
+    let mut whole: Vec<(u64, PathBuf, MigrationReport)> = vec![];
+    let mut doomed: Vec<PathBuf> = vec![];
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let Some(name) = entry.file_name().to_str().map(str::to_string) else { continue };
+        let Some(rest) = name.strip_prefix(STAGING_PREFIX) else { continue };
+        if rest.ends_with(".complete") {
+            // A mark whose folder is gone means nothing.
+            if !path.with_file_name(name.trim_end_matches(".complete")).is_dir() {
+                doomed.push(path);
+            }
+            continue;
+        }
+        if !entry.file_type().is_ok_and(|t| t.is_dir()) {
+            doomed.push(path);
+            continue;
+        }
+        let report = std::fs::read_to_string(complete_marker(&path)).ok().and_then(|t| {
+            let mut it = t.split_whitespace();
+            Some(MigrationReport { environments: it.next()?.parse().ok()?, items: it.next()?.parse().ok()? })
+        });
+        match (report, rest.parse::<u64>()) {
+            (Some(r), Ok(ms)) => whole.push((ms, path, r)),
+            _ => doomed.push(path),
+        }
+    }
+    whole.sort_by_key(|(ms, _, _)| *ms);
+    let keep = whole.pop();
+    doomed.extend(whole.into_iter().map(|(_, p, _)| p));
+    for path in doomed {
+        let gone = if path.is_dir() { std::fs::remove_dir_all(&path) } else { std::fs::remove_file(&path) };
+        if let Err(e) = gone {
+            crate::applog::warn(format!("Auto Run: a leftover half-built copy could not be removed: {e}"));
+        }
+        let _ = std::fs::remove_file(complete_marker(&path));
+    }
+    keep.map(|(_, p, r)| (p, r))
 }
 
 /// What start-up found, and which layout is in charge.

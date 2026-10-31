@@ -196,13 +196,32 @@ fn build_from_flat(staging: &Path, ids: &[String]) -> Result<usize, String> {
 /// when nothing in the backup describes an app (the staging folder is
 /// cleared, nothing is replaced). A failure clears the staging folder: it
 /// holds only copies of the backup's files until the swap starts.
-pub fn prepare(staging: &Path, ids: &[String], from_flat: bool, list: Option<&str>) -> Result<bool, String> {
+///
+/// `records` is the Playwright export records the import carries along when
+/// the export environment moves: `(the old export environment's folder, the
+/// new one's id)`. They are copied into the new one's BUILT folder before
+/// the note is written, so the swap (or a start that finishes it) brings
+/// them in and a failed swap can never strand them in a folder that
+/// `retire_unlisted` later moves aside. Nothing happens when the new
+/// export environment is not one of `ids` (the caller copies them then).
+pub fn prepare(
+    staging: &Path,
+    ids: &[String],
+    from_flat: bool,
+    list: Option<&str>,
+    records: Option<(&Path, &str)>,
+) -> Result<bool, String> {
     let made = (|| {
         if let Some(bad) = ids.iter().find(|i| !roots::valid_folder_id(i)) {
             return Err(format!("\"{bad}\" is not an environment id"));
         }
         if from_flat && build_from_flat(staging, ids)? == 0 {
             return Ok(false);
+        }
+        if let Some((from, to)) = records.filter(|(_, to)| ids.iter().any(|i| i == to)) {
+            let dir = staging.join(BUILT).join(to);
+            std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+            crate::environments::copy_export_records(from, &dir)?;
         }
         let note = Marker { ids: ids.to_vec(), step: STEP_BUILT.to_string(), list: list.map(str::to_string) };
         let text = serde_json::to_string(&note).map_err(|e| e.to_string())?;
@@ -274,7 +293,7 @@ pub fn replace_environments(
         let _ = std::fs::remove_dir_all(staging);
         return Err(roots::REMOVE_BUSY.to_string());
     }
-    if !prepare(staging, ids, from_flat, None)? {
+    if !prepare(staging, ids, from_flat, None, None)? {
         return Ok(0);
     }
     commit(held, shared, staging, ids, names, now_ms, rename, waits_ms)

@@ -70,6 +70,22 @@ fn a_save_with_a_root_from_before_a_switch_is_refused() {
 }
 
 #[test]
+fn a_clear_with_a_root_from_before_a_switch_removes_nothing() {
+    let _lock = crate::serial::autorun();
+    let _restore = Restore;
+    let t = tempfile::tempdir().unwrap();
+    let (a, b) = two_envs(t.path());
+    let ra = store::configured_root().unwrap();
+    store::save_scripts_atomically(&ra, &[crate::common::component_script(11)]).unwrap();
+    let file = roots::env_root(t.path(), &a).join("scripts").join("case-11.json");
+    assert!(file.is_file());
+    store::select_environment(&b).unwrap();
+
+    assert_eq!(store::clear_scripts(&ra, &[11]), Err(roots::ENVIRONMENT_SWITCHED.to_string()));
+    assert!(file.is_file(), "the script of the environment that was left is still there");
+}
+
+#[test]
 fn a_save_in_the_active_environment_goes_through() {
     let _lock = crate::serial::autorun();
     let _restore = Restore;

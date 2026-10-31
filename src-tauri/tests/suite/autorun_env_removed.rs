@@ -222,6 +222,8 @@ fn a_folder_that_could_not_be_moved_is_moved_at_the_next_start() {
     let listed = roots::removed_folders(t.path(), NOW);
     assert_eq!(listed.len(), 1);
     assert_eq!(listed[0].env_id, b);
+    // Dated, so several of them can be told apart in the Copy dialog.
+    assert_eq!(listed[0].name, "Removed environment (2128-06-11)");
     // Nothing more to do the second time.
     assert_eq!(roots::retire_unlisted(t.path(), NOW), 0);
 }
