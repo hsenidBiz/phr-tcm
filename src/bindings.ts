@@ -2071,8 +2071,9 @@ same_document?: boolean }) & { absent?: never; account?: never; answer?: never; 
  *  "[data-autorun-row]" }` (`repeat::ROW_SCOPE`) is resolved inside the
  *  marked row, so a protected row is never the one acted on. Matches
  *  that are all protected end the loop; unprotected ones still there
- *  after `max` passes fail it. `then` holds plain actions only, as a
- *  `when_visible`'s does. Carried out by the runner.
+ *  after `max` passes fail it. `then` holds plain actions,
+ *  `when_visible` (plain actions inside) and `expect_hidden`. Carried out
+ *  by the runner.
  */
 ({ kind: "repeat_while_visible"; selector: Target_Deserialize; max?: number | null; except?: string[]; then: Action_Deserialize[]; 
 /**
@@ -2351,8 +2352,9 @@ same_document?: boolean }) & { absent?: never; account?: never; answer?: never; 
  *  "[data-autorun-row]" }` (`repeat::ROW_SCOPE`) is resolved inside the
  *  marked row, so a protected row is never the one acted on. Matches
  *  that are all protected end the loop; unprotected ones still there
- *  after `max` passes fail it. `then` holds plain actions only, as a
- *  `when_visible`'s does. Carried out by the runner.
+ *  after `max` passes fail it. `then` holds plain actions,
+ *  `when_visible` (plain actions inside) and `expect_hidden`. Carried out
+ *  by the runner.
  */
 ({ kind: "repeat_while_visible"; selector: Target_Serialize; max?: number | null; except?: string[]; then: Action_Serialize[]; 
 /**

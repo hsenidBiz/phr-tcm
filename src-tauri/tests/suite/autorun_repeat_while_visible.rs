@@ -613,6 +613,22 @@ fn when_visible_in_a_loop_holds_no_loop() {
     assert!(why.contains("cannot hold another when_visible"), "{why}");
 }
 
+#[test]
+fn the_nested_when_visible_takes_the_loops_kind_refusals() {
+    for inner in [
+        json!({ "kind": "use_component", "component": "pick a date", "inputs": {} }),
+        json!({ "kind": "expire_session" }),
+        json!({ "kind": "open_tab", "name": "other", "url": "https://hr.example.internal/x" }),
+    ] {
+        let kind = action(inner.clone()).kind();
+        let why = refusal(loop_with(json!([
+            row_delete(),
+            { "kind": "when_visible", "selector": { "css": "#confirm" }, "then": [ inner ] }
+        ])));
+        assert!(why.contains(&format!("cannot hold {kind}")), "{why}");
+    }
+}
+
 #[tokio::test]
 async fn a_loop_confirms_only_when_the_dialog_shows() {
     let (mut d, rows) = goal_groups(vec!["Old A", "Old B"]);
@@ -680,10 +696,7 @@ fn the_export_indents_a_nested_when_visible_in_the_loop_body() {
           "then": [ { "kind": "click", "selector": { "css": "#confirm" } } ] },
         { "kind": "expect_hidden", "selector": { "css": ROW_SCOPE } }
     ]))]))
-    .unwrap()
-    .replace("
-", "
-");
+    .unwrap();
     assert!(spec.contains("waitFor({ timeout:"), "{spec}");
     assert!(spec.contains("toBeHidden") || spec.contains("toHaveCount(0"), "{spec}");
 }

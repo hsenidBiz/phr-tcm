@@ -1013,11 +1013,7 @@ fn contradicts_stated_count(case: &CaseText, n: i32, v: &CheckValue) -> Option<S
 pub fn check_count(script: &CaseScript) -> usize {
     let mut n = 0;
     for step in script.case_steps() {
-        walk(&step.actions, &mut |a| {
-            if a.is_check() {
-                n += 1;
-            }
-        });
+        n += step.actions.iter().flat_map(Action::judging).filter(|a| a.is_check()).count();
     }
     n
 }

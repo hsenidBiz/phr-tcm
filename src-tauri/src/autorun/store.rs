@@ -603,7 +603,7 @@ fn check_cleanup(sc: &CaseScript) -> Result<(), String> {
         }
         Some(Unchecked::Step(_)) => {}
     }
-    if step.actions.iter().any(|a| a.each().iter().any(|e| super::checks_in_cleanup(e))) {
+    if step.actions.iter().any(|a| a.judging().iter().any(|e| super::checks_in_cleanup(e))) {
         return Err(format!(
             "case {id} step {n}: a clean-up step checks nothing - its failures never fail the case, so move the check to a case step (an expect_dialog answering a confirm its own Delete opens is the one it may hold)"
         ));

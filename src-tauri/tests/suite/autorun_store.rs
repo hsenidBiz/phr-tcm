@@ -1583,6 +1583,25 @@ fn a_clean_up_may_answer_its_own_deletes_confirm() {
     );
 }
 
+/// A loop's `expect_hidden` is a wait for the row to go, not a check, so a
+/// clean-up may hold a loop that confirms only if shown and waits.
+#[test]
+fn a_clean_up_may_hold_a_loop_that_waits_for_its_row_to_go() {
+    let looped = serde_json::json!({
+        "kind": "repeat_while_visible", "selector": { "css": ".delete" }, "max": 5,
+        "then": [
+            { "kind": "click", "selector": [ { "css": "[data-autorun-row]" }, { "css": ".delete" } ] },
+            { "kind": "when_visible", "selector": { "css": "#confirm" }, "then": [ { "kind": "click", "selector": { "css": "#confirm" } } ] },
+            { "kind": "expect_hidden", "selector": { "css": "[data-autorun-row]" } }
+        ]
+    });
+    let sc = cleanup_script(serde_json::json!([
+        { "step_number": 1, "actions": [{ "kind": "check_text", "value": "a" }] },
+        { "step_number": 2, "actions": [looped], "cleanup": true, "unchecked": "removes what step 1 made" }
+    ]));
+    assert_eq!(v2_lib::autorun::store::check_scripts(&[sc]), Ok(()));
+}
+
 #[test]
 fn a_clean_up_step_alone_is_not_a_script() {
     let sc = cleanup_script(serde_json::json!([

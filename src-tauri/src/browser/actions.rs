@@ -255,8 +255,9 @@ pub enum Action {
     /// "[data-autorun-row]" }` (`repeat::ROW_SCOPE`) is resolved inside the
     /// marked row, so a protected row is never the one acted on. Matches
     /// that are all protected end the loop; unprotected ones still there
-    /// after `max` passes fail it. `then` holds plain actions only, as a
-    /// `when_visible`'s does. Carried out by the runner.
+    /// after `max` passes fail it. `then` holds plain actions,
+    /// `when_visible` (plain actions inside) and `expect_hidden`. Carried out
+    /// by the runner.
     RepeatWhileVisible {
         selector: Target,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -967,6 +968,23 @@ fn check_repeat(selector: &Target, max: Option<u32>, except: &[String], then: &[
         return Err("repeat_while_visible has nothing in \"then\" - say what to do on each pass".to_string());
     }
     for (i, a) in then.iter().enumerate() {
+        // The loop's kind refusals reach into a nested when_visible too.
+        if let Some(bad) = a.each().into_iter().skip(1).find(|x| {
+            matches!(
+                x,
+                Action::SignIn { .. }
+                    | Action::UseComponent { .. }
+                    | Action::ExpireSession
+                    | Action::OpenTab { .. }
+                    | Action::SwitchTab { .. }
+                    | Action::CloseTab { .. }
+            )
+        }) {
+            return Err(format!(
+                "repeat_while_visible \"then\" cannot hold {} - write it as an action of its own",
+                bad.kind()
+            ));
+        }
         let repeats_inside = match a {
             Action::RepeatWhileVisible { .. } => true,
             Action::WhenVisible { then, .. } => then.iter().any(|t| matches!(t, Action::RepeatWhileVisible { .. })),
@@ -1718,6 +1736,19 @@ impl Action {
             Action::WhenVisible { then, .. } | Action::RepeatWhileVisible { then, .. } => {
                 std::iter::once(self).chain(then.iter().flat_map(Action::each)).collect()
             }
+            _ => vec![self],
+        }
+    }
+
+    /// Like `each`, but without the `expect_hidden` a loop's `then` holds:
+    /// that is a wait for the row to go, not a check the case makes, so
+    /// every rule that counts or bars checks reads this list.
+    pub fn judging(&self) -> Vec<&Action> {
+        match self {
+            Action::RepeatWhileVisible { then, .. } => std::iter::once(self)
+                .chain(then.iter().filter(|t| !matches!(t, Action::ExpectHidden { .. })).flat_map(Action::judging))
+                .collect(),
+            Action::WhenVisible { then, .. } => std::iter::once(self).chain(then.iter().flat_map(Action::judging)).collect(),
             _ => vec![self],
         }
     }
