@@ -895,9 +895,10 @@ export const commands = {
 	autoRunListAccounts: () => typedError<Account[], string>(__TAURI_INVOKE("auto_run_list_accounts")),
 	/**
 	 *  Replace the accounts list. Returns the keys whose saved session was
-	 *  dropped, so the screen can say so.
+	 *  dropped, so the screen can say so. With `loaded_version` (from
+	 *  `auto_run_accounts_version`) a list that changed since is refused.
 	 */
-	autoRunSaveAccounts: (accounts: Account[]) => typedError<string[], string>(__TAURI_INVOKE("auto_run_save_accounts", { accounts })),
+	autoRunSaveAccounts: (accounts: Account[], loadedVersion: string | null) => typedError<string[], string>(__TAURI_INVOKE("auto_run_save_accounts", { accounts, loadedVersion })),
 	autoRunLoadRecipe: (organization: string, project: string) => typedError<{
 	/**  Where a fresh browser goes first. Absolute, http or https. */
 	start_url: string,
@@ -1121,8 +1122,8 @@ export const commands = {
 	/**
 	 *  Check the sign-in of one saved account, and walk it to `area` (an area
 	 *  name, optional). The Accounts dialog calls this for each account it ticks,
-	 *  one after another. The account's password is typed once, in a browser of
-	 *  its own that is closed after, and is never in the answer.
+	 *  one after another. One password is typed per attempt, in a browser of its
+	 *  own that is closed after, and is never in the answer.
 	 */
 	autoRunCheckSignIn: (organization: string, project: string, accountKey: string, area: string | null, dbReadAccess: boolean) => typedError<CheckedAccount, string>(__TAURI_INVOKE("auto_run_check_sign_in", { organization, project, accountKey, area, dbReadAccess })),
 	/**
@@ -1130,6 +1131,13 @@ export const commands = {
 	 *  whether it reached its area, and the words.
 	 */
 	autoRunSignInChecks: () => typedError<{ [key in string]: Mark }, string>(__TAURI_INVOKE("auto_run_sign_in_checks")),
+	/**
+	 *  What the active environment's accounts file looks like now: asked BEFORE
+	 *  the list is read, and sent back with the save, so a save of a list that
+	 *  something else changed in between (a reset by a sign-in check, a run) is
+	 *  refused rather than written over it. It carries no password.
+	 */
+	autoRunAccountsVersion: () => typedError<string, string>(__TAURI_INVOKE("auto_run_accounts_version")),
 	/**  End the sign-in check going, if any (the dialog's Cancel). */
 	autoRunCancelCheckSignIn: () => __TAURI_INVOKE<void>("auto_run_cancel_check_sign_in"),
 	/**

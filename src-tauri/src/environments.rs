@@ -830,6 +830,10 @@ pub fn remove_env(root: &Path, id: &str) -> Result<EnvFile, String> {
         gone(std::fs::remove_file(accounts_path_for(root, id)));
         gone(std::fs::remove_dir_all(sessions_dir_for(root, id)));
         gone(std::fs::remove_file(proposals_path_for(root, id)));
+        // A held password is a secret: deleted with the environment, not kept
+        // for the 30 days the folder waits. A check's marks go too.
+        crate::autorun::accounts::forget_pending_for(root, id);
+        crate::autorun::sign_in_check::forget_marks(root, id);
         (file, name)
     };
     // The Auto Run folder waits in the removed area for 30 days. This runs

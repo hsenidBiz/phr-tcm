@@ -53,6 +53,30 @@ function mergeAdded(local: Account[], saved: Account[], keys: string[]): Account
   return out;
 }
 
+const sameAccount = (a: Account, b: Account) =>
+  a.key === b.key && a.label === b.label && a.username === b.username && a.password === b.password;
+
+/** The rows on screen after the saved list changed under the dialog (a
+ * password reset by a sign-in check, a run): what the person has not touched
+ * takes the saved version; what they edited stays theirs, except the
+ * password of a row whose password they did not touch, which is the saved
+ * one - so a save never writes an old password back. A row they removed stays
+ * removed; a row they added stays. */
+export function reseedRows(cur: Account[], baseline: Account[], fresh: Account[]): Account[] {
+  const out: Account[] = [];
+  for (const f of fresh) {
+    const was = baseline.find((b) => b.key === f.key);
+    const mine = cur.find((c) => c.key === f.key);
+    if (was && !mine) continue;
+    if (!mine || !was || sameAccount(mine, was)) out.push(f);
+    else out.push(mine.password === was.password ? { ...mine, password: f.password } : mine);
+  }
+  for (const c of cur) {
+    if (!fresh.some((f) => f.key === c.key) && !baseline.some((b) => b.key === c.key)) out.push(c);
+  }
+  return out;
+}
+
 /** A last check older than this is shown as stale and does not rank. */
 const STALE_MS = 7 * 24 * 3600 * 1000;
 
@@ -69,10 +93,18 @@ export default function AccountsDialog({
   project?: string;
 }) {
   const qc = useQueryClient();
+  // What the accounts file looked like when the list was read: sent back
+  // with the save, which is refused when something else changed the file
+  // since. Asked before the list, so a change in between is never missed.
+  const loadedVersion = useRef<string | null>(null);
   const existing = useQuery({
     queryKey: ["autorun-accounts"],
-    queryFn: () => unwrapStr(commands.autoRunListAccounts()),
+    queryFn: async () => {
+      loadedVersion.current = await unwrapStr(commands.autoRunAccountsVersion());
+      return unwrapStr(commands.autoRunListAccounts());
+    },
     retry: false,
+    refetchOnWindowFocus: true,
   });
   // Read afresh on every open, and again whenever the assistant proposes
   // one while the dialog is open (useAutoRunDataSync).
@@ -110,9 +142,18 @@ export default function AccountsDialog({
   const [rows, setRows] = useState<Account[] | null>(null);
   const [show, setShow] = useState(false);
   const [problem, setProblem] = useState("");
+  // The list as last read, to tell what the person changed from what the
+  // saved list did.
+  const [baseline, setBaseline] = useState<Account[] | null>(null);
+  const baselineRef = useRef<Account[] | null>(null);
   useEffect(() => {
-    if (existing.data && rows === null) setRows(existing.data);
-  }, [existing.data, rows]);
+    const fresh = existing.data;
+    if (!fresh) return;
+    const was = baselineRef.current;
+    baselineRef.current = fresh;
+    setBaseline(fresh);
+    setRows((cur) => (cur === null || was === null ? fresh : reseedRows(cur, was, fresh)));
+  }, [existing.data]);
 
   // The proposals: which are ticked, the password typed for each, the
   // sentence the app answered a refused add with, and the keys that are
@@ -182,6 +223,7 @@ export default function AccountsDialog({
 
   /** Reads what the app saved and puts `keys` into the rows. */
   const takeAdded = async (keys: string[]) => {
+    loadedVersion.current = await unwrapStr(commands.autoRunAccountsVersion());
     const saved = await unwrapStr(commands.autoRunListAccounts());
     qc.setQueryData(["autorun-accounts"], saved);
     setRows((r) => mergeAdded(r ?? saved, saved, keys));
@@ -311,10 +353,13 @@ export default function AccountsDialog({
     }
     setChecking(false);
     await qc.invalidateQueries({ queryKey: ["autorun-sign-in-checks"] });
+    // A check can reset an expired password: read the list again so a save
+    // does not write the old one back.
+    await qc.invalidateQueries({ queryKey: ["autorun-accounts"] });
   };
 
   const save = useMutation({
-    mutationFn: () => unwrapStr(commands.autoRunSaveAccounts(rows ?? [])),
+    mutationFn: () => unwrapStr(commands.autoRunSaveAccounts(rows ?? [], loadedVersion.current)),
     onSuccess: (dropped) => {
       qc.invalidateQueries({ queryKey: ["autorun-accounts"] });
       toast.success(
@@ -335,6 +380,11 @@ export default function AccountsDialog({
   // there for why.
   const who = (a: Account, i: number) => a.key.trim() || `account ${i + 1}`;
   const blocked = existing.isLoading || existing.isError || rows === null;
+  // Nothing to save until the person has changed something.
+  const changed =
+    rows !== null &&
+    baseline !== null &&
+    (rows.length !== baseline.length || rows.some((r, i) => !sameAccount(r, baseline[i])));
 
   return (
     <Modal onClose={onClose} className={`${MODAL_LARGE} flex flex-col gap-3 p-5`}>
@@ -679,7 +729,7 @@ export default function AccountsDialog({
           <IconCancel aria-hidden />
           Cancel
         </Button>
-        <Button size="sm" disabled={blocked || save.isPending} onClick={() => { setProblem(""); save.mutate(); }}>
+        <Button size="sm" disabled={blocked || !changed || save.isPending} onClick={() => { setProblem(""); save.mutate(); }}>
           <IconConfirm aria-hidden />
           {save.isPending ? "Saving" : "Save accounts"}
         </Button>

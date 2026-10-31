@@ -25,7 +25,7 @@ export const TEST_ENVIRONMENT_WARNING =
 
 /** What sits under the reset switch. */
 export const RESET_EXPIRED_HELP =
-  "When a sign-in lands on the site's password reset page, the app sets a simple new password, saves it on that account and signs in. Off unless you turn it on.";
+  "When a sign-in lands on the site's password reset page, the app sets a simple new password and signs in with it. The account keeps the new password only once that sign-in works; until then the old one stays saved and the new one is held aside. Off unless you turn it on.";
 
 /** Said for an environment with no address of its own. */
 export const RECIPE_ADDRESS = "Using the sign-in recipe's address";
@@ -57,7 +57,7 @@ type Form = {
 export const PASSWORD_EXPIRY_HINT =
   "One read-only SELECT, with {users} where the logins go, answering user_id, reset_due and optionally prompt_change. Leave empty to skip the check.";
 export const ACTIVE_SESSION_HINT =
-  "One read-only SELECT, with {user} where the login goes, answering since and logged_to for sessions signed in now. Leave empty to skip the check.";
+  "One read-only SELECT, with {users} where the logins go (one call for all of them; {user} asks once per login), answering user_id, since and logged_to, and the site's session id as session if it has one, for sessions signed in now. Leave empty to skip the check.";
 
 /** The prefix a new environment starts with, as Rust's own default. */
 export const DEFAULT_TEST_PREFIX = "AUTOTEST";

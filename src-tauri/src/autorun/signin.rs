@@ -48,6 +48,13 @@ pub struct SignInOutcome {
     #[serde(skip)]
     #[specta(skip)]
     pub landed: Option<String>,
+    /// The site gave the password back: the marker never came and the login
+    /// form is still showing, which is what a wrong password looks like (a
+    /// slow site, a stopped step and a browser that died do not leave it).
+    /// Process-internal like `harness`.
+    #[serde(skip)]
+    #[specta(skip)]
+    pub wrong_password: bool,
 }
 
 pub fn redact(text: &str, account: &Account) -> String {
@@ -98,6 +105,7 @@ impl Run<'_> {
             harness,
             appeared: self.appeared,
             landed: self.landed,
+            wrong_password: false,
         }
     }
 }
@@ -310,6 +318,12 @@ pub const PASSWORD_RESET_FAILED: &str = "password expired - the reset did not go
 /// sign-in has proved: the old one stays stored and the new one is held.
 pub const PASSWORD_RESET_MAYBE: &str = "password expired - the reset may have gone through: ";
 
+/// Did a sign-in stop because a reset may have gone through but is not
+/// proved? The held password is the one the site may expect.
+pub fn is_reset_unconfirmed(detail: &str) -> bool {
+    detail.starts_with(PASSWORD_RESET_MAYBE)
+}
+
 /// The rest of that stop.
 const PENDING_WORDS: &str = "the site may now expect the other test password; check it in Accounts";
 
@@ -332,7 +346,7 @@ pub fn next_password(current: &str, refused: &[String]) -> Option<&'static str> 
 /// go through)? Read from where the words start, never searched for: a page
 /// can say anything.
 pub fn is_password_expired(detail: &str) -> bool {
-    detail.starts_with(PASSWORD_EXPIRED) || detail.starts_with(PASSWORD_RESET_FAILED) || detail.starts_with(PASSWORD_RESET_MAYBE)
+    detail.starts_with(PASSWORD_EXPIRED) || detail.starts_with(PASSWORD_RESET_FAILED)
 }
 
 /// The longest page title `landing_words` says.
@@ -428,6 +442,11 @@ fn reset_environment(root: &Path) -> Option<String> {
     (env.test_environment && env.reset_expired_passwords).then_some(env.id)
 }
 
+/// May the app reset an expired password in the active environment now.
+pub fn reset_enabled(root: &Path) -> bool {
+    reset_environment(root).is_some()
+}
+
 /// Is the browser somewhere that is NOT the reset page, positively: it said
 /// where it is and the path no longer holds the reset page's words. A
 /// browser that does not answer is not that.
@@ -456,46 +475,81 @@ fn short_reason(why: &str, secrets: &[&str]) -> String {
     text.chars().take(160).collect()
 }
 
-/// Fills the reset page's form and sends it, ONCE: the old (current)
-/// password, the new one and its confirmation, then the form's submit
-/// button - never the one that clears it. `Ok` is the new password and means
-/// only that the browser left the reset page; whether it works is for a
-/// sign-in with it to say. `Err` is a short reason with no password in it.
-/// Nothing is stored here.
-async fn reset_expired<D: Driver>(
+/// Resets refused or left unconfirmed in this app session, by data folder and
+/// account: the site said no (password history, a style rule), and every
+/// case that signs in as that account would only submit the same form
+/// again. Memory only; a reset that works, or a person's own change of the
+/// password, lets it go.
+static REFUSED: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+
+fn refused_marker(root: &Path, key: &str) -> String {
+    format!("{}|{key}", root.display())
+}
+
+fn reset_refused(root: &Path, key: &str) -> bool {
+    REFUSED.lock().unwrap_or_else(|e| e.into_inner()).contains(&refused_marker(root, key))
+}
+
+fn remember_refused(root: &Path, key: &str) {
+    let mut held = REFUSED.lock().unwrap_or_else(|e| e.into_inner());
+    let marker = refused_marker(root, key);
+    if !held.contains(&marker) {
+        held.push(marker);
+    }
+}
+
+fn forget_refused(root: &Path, key: &str) {
+    REFUSED.lock().unwrap_or_else(|e| e.into_inner()).retain(|m| *m != refused_marker(root, key));
+}
+
+/// The reset form, filled but not sent: the old (current) password, the new
+/// one and its confirmation. `Err` is a short reason with no password in it.
+async fn fill_reset_form<D: Driver>(
     d: &mut D,
     recipe: &SignInRecipe,
     account: &Account,
+    new: &str,
     timing: &Timing,
     policy: &Policy,
-) -> Result<&'static str, String> {
+) -> Result<super::recipe::PasswordResetPage, String> {
     let Some(page) = reset_page(recipe) else {
         return Err("this site's reset page is not known".to_string());
     };
-    let (Some(new_field), Some(confirm_field), Some(submit)) = (page.new.clone(), page.confirm.clone(), page.submit.clone()) else {
+    let (Some(new_field), Some(confirm_field)) = (page.new.clone(), page.confirm.clone()) else {
         return Err("the reset page's fields are not known".to_string());
     };
     let secrets = [account.password.as_str(), RESET_PASSWORDS[0], RESET_PASSWORDS[1]];
-    let Some(new) = next_password(&account.password, &[]) else {
-        return Err("no new password to try".to_string());
-    };
     let fill = |selector: &Target, value: &str| Action::Fill { selector: selector.clone(), value: value.to_string() };
-    let actions = [
-        fill(&page.field, &account.password),
-        fill(&new_field, new),
-        fill(&confirm_field, new),
-        Action::Click { selector: submit.clone() },
-    ];
-    for action in &actions {
-        let out = execute_in(d, action, timing, &policy.as_runner()).await;
+    for action in [fill(&page.field, &account.password), fill(&new_field, new), fill(&confirm_field, new)] {
+        let out = execute_in(d, &action, timing, &policy.as_runner()).await;
         if !out.ok {
             return Err(short_reason(&out.detail, &secrets));
         }
     }
-    if left_reset_page(d, &page, timing).await {
-        return Ok(new);
+    Ok(page)
+}
+
+/// Presses the form's submit button - never the one that clears it - ONCE.
+/// `Ok(true)` is that the browser then left the reset page, which says only
+/// that the site did something: whether the new password works is for a
+/// sign-in with it to say. `Ok(false)` is that it did not leave in time (a
+/// refusal, or a slow redirect: the site may still have taken it). `Err` is
+/// that the click itself did not finish, so the form may or may not have
+/// been sent. Nothing is stored here.
+async fn send_reset<D: Driver>(
+    d: &mut D,
+    page: &super::recipe::PasswordResetPage,
+    timing: &Timing,
+    policy: &Policy,
+) -> Result<bool, String> {
+    let Some(submit) = page.submit.clone() else {
+        return Err("the reset page's submit button is not known".to_string());
+    };
+    let out = execute_in(d, &Action::Click { selector: submit }, timing, &policy.as_runner()).await;
+    if !out.ok {
+        return Err(short_reason(&out.detail, &[]));
     }
-    Err("the site did not accept the new password".to_string())
+    Ok(left_reset_page(d, page, timing).await)
 }
 
 /// `expired_at_reset_page` on the heap, built in a frame of its own: the
@@ -519,12 +573,19 @@ fn expired_boxed<'a, D: Driver>(
     Box::pin(expired_at_reset_page(run, d, root, recipe, account, timing, policy, browser, may_reset))
 }
 
+/// The unconfirmed-reset stop: the site may now expect the held password.
+fn maybe_reset(why: &str) -> String {
+    format!("{PASSWORD_RESET_MAYBE}{why}{PENDING_WORDS}")
+}
+
 /// The sign-in ended on the site's password reset page. On a test
 /// environment with "Reset expired passwords" on, and only in the first
-/// sign-in (`may_reset`), the app resets the password: see `reset_expired`.
-/// Once the site accepted it, the new password is saved on the account -
-/// never before - and the sign-in goes on with it. Anywhere else, or
-/// switched off, it is the plain "password expired" stop.
+/// sign-in (`may_reset`), the app resets the password. The new password is
+/// written down BEFORE the form is sent, so that nothing that happens after
+/// (a cancel, a browser that dies, a slow redirect) can lose it. It becomes
+/// the account's only when a sign-in with it reaches the signed-in marker
+/// (`confirm_pending`). Anywhere else, or switched off, it is the plain
+/// "password expired" stop.
 #[allow(clippy::too_many_arguments)]
 async fn expired_at_reset_page<D: Driver>(
     run: Run<'_>,
@@ -544,23 +605,39 @@ async fn expired_at_reset_page<D: Driver>(
         let said = format!("{PASSWORD_RESET_FAILED}the site sent the account to its reset page again, so it was not tried a second time");
         return run.done(false, said, false, false);
     }
-    let new = match reset_expired(d, recipe, account, timing, policy).await {
-        Ok(new) => new,
+    if reset_refused(root, &account.key) {
+        let said = format!("{PASSWORD_RESET_FAILED}the site did not take a reset of this account earlier, so it was not tried again");
+        return run.done(false, said, false, false);
+    }
+    let Some(new) = next_password(&account.password, &[]) else {
+        return run.done(false, format!("{PASSWORD_RESET_FAILED}no new password to try"), false, false);
+    };
+    let page = match fill_reset_form(d, recipe, account, new, timing, policy).await {
+        Ok(page) => page,
         Err(why) => {
             crate::applog::info(format!("Auto Run: the expired password of {} was not reset: {why}", account.key));
             return run.done(false, format!("{PASSWORD_RESET_FAILED}{why}"), false, false);
         }
     };
-    // The browser left the reset page, which is not proof the new password
-    // works. The old one stays stored; the new one is held aside until a
-    // sign-in with it reaches the signed-in marker.
+    // Held first, then sent: the submit is the point of no return.
     if let Err(e) = super::accounts::set_pending_password(root, &env_id, &account.key, new) {
-        crate::applog::warn(format!("Auto Run: the expired password of {} may have been reset, but could not be held: {e}", account.key));
-        let said = format!(
-            "{PASSWORD_RESET_MAYBE}the new password could not be held ({}), so check the account in Accounts",
-            short_reason(&e, &[account.password.as_str(), new])
-        );
+        crate::applog::warn(format!("Auto Run: the new password of {} could not be held, so the reset was not sent: {e}", account.key));
+        let said = format!("{PASSWORD_RESET_FAILED}the new password could not be held first, so nothing was sent");
         return run.done(false, said, false, false);
+    }
+    match send_reset(d, &page, timing, policy).await {
+        Ok(true) => {}
+        Ok(false) => {
+            remember_refused(root, &account.key);
+            crate::applog::info(format!("Auto Run: the reset of the expired password of {} is unconfirmed", account.key));
+            let said = maybe_reset("the page did not move on after the form was sent; ");
+            return run.done(false, said, false, false);
+        }
+        Err(why) => {
+            crate::applog::info(format!("Auto Run: the reset of the expired password of {} may have been sent: {why}", account.key));
+            let said = maybe_reset("the form may have been sent; ");
+            return run.done(false, said, false, true);
+        }
     }
     drop(run);
     let renewed = Account { password: new.to_string(), ..account.clone() };
@@ -570,36 +647,43 @@ async fn expired_at_reset_page<D: Driver>(
 }
 
 /// The sign-in made with a pending password has ended as `out`. Reached the
-/// marker: the pending password becomes the account's and is let go. Not:
-/// the old one stays stored, the pending one stays held, and the stop says
-/// so (a harness failure is the browser, not the password, and says its own).
+/// marker: the pending password becomes the account's, keeping the session
+/// that sign-in saved, and is let go. The site said the password is wrong
+/// (the login form is still showing): it is let go and the old one stays.
+/// Anything else (a slow site, a step that stopped): the old one stays
+/// stored, the pending one stays held, and the stop says the reset may have
+/// gone through. A harness failure is the browser, not the password.
 fn confirm_pending(root: &Path, env_id: &str, account: &Account, new: &str, mut out: SignInOutcome) -> SignInOutcome {
     if out.ok {
-        match super::accounts::set_password_for(root, env_id, &account.key, new) {
+        match super::accounts::commit_pending_password(root, env_id, &account.key, new) {
             Ok(()) => {
-                let _ = super::accounts::clear_pending_password(root, env_id, &account.key);
+                forget_refused(root, &account.key);
                 crate::applog::info(format!("Auto Run: the expired password of {} was reset", account.key));
             }
             Err(e) => {
                 crate::applog::warn(format!("Auto Run: the reset password of {} worked but could not be saved: {e}", account.key));
                 out.ok = false;
-                out.detail = format!(
-                    "{PASSWORD_RESET_MAYBE}the new password works but could not be saved on the account, so check it in Accounts"
-                );
+                out.detail = maybe_reset("the new password works but could not be saved on the account; ");
             }
         }
+    } else if out.wrong_password {
+        let _ = super::accounts::clear_pending_password(root, env_id, &account.key);
+        remember_refused(root, &account.key);
+        out.detail = format!("{PASSWORD_RESET_FAILED}the site did not take the new password, so the stored password is unchanged");
     } else if !out.harness {
         crate::applog::info(format!("Auto Run: the reset of the expired password of {} is unconfirmed", account.key));
-        out.detail = PASSWORD_RESET_MAYBE.to_string() + PENDING_WORDS;
+        out.detail = maybe_reset(&format!("the sign-in with the new password did not finish ({}); ", short_reason(&out.detail, &[])));
     }
     out
 }
 
 /// A pending password from an earlier reset, tried as the CURRENT password
 /// before anything else in the next sign-in: the account's stored one may be
-/// the old one the site no longer expects. `None` when there is none (or the
-/// environment cannot be read), or it did not work - it is then let go - and
-/// the sign-in goes on with the stored password.
+/// the old one the site no longer expects. One password per attempt: while
+/// one is held, this attempt types only that one and the stored password is
+/// never typed beside it. `None` when none is held (or the environment
+/// cannot be read). It is let go only when the site said it is wrong; any
+/// other failure keeps it and stops.
 async fn try_pending<D: Driver>(
     d: &mut D,
     root: &Path,
@@ -615,15 +699,16 @@ async fn try_pending<D: Driver>(
         return None;
     }
     let renewed = Account { password: pending.clone(), ..account.clone() };
-    let out = Box::pin(sign_in_core(d, root, recipe, &renewed, timing, false, browser, false)).await;
-    if out.ok {
+    let mut out = Box::pin(sign_in_core(d, root, recipe, &renewed, timing, false, browser, false)).await;
+    if out.ok || out.harness {
         return Some(confirm_pending(root, &env_id, account, &pending, out));
     }
-    if out.harness {
+    if out.wrong_password {
+        let _ = super::accounts::clear_pending_password(root, &env_id, &account.key);
+        out.detail = "the password held from a reset was not accepted and has been let go - sign in again to use the account's stored password".to_string();
         return Some(out);
     }
-    let _ = super::accounts::clear_pending_password(root, &env_id, &account.key);
-    None
+    Some(confirm_pending(root, &env_id, account, &pending, out))
 }
 
 #[inline(never)]
@@ -1006,7 +1091,9 @@ async fn sign_in_core<D: Driver>(
                 said = format!("{said} - {w}");
             }
         }
-        return run.done(false, said, false, harness_failure);
+        let mut out = run.done(false, said, false, harness_failure);
+        out.wrong_password = form_still_there && !harness_failure;
+        return out;
     }
     run.land(d, false).await;
 

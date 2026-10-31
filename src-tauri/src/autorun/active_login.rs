@@ -59,6 +59,11 @@ pub const SINGLE_BUDGET: Duration = Duration::from_secs(30);
 pub struct ActiveRow {
     pub since: String,
     pub logged_to: String,
+    /// The site's id for the session, when the query answers a `session`
+    /// column: it is matched against the cookies this app saved, so the
+    /// app's own session is told from a person's by what it is, not by how
+    /// old it is. Empty when the query has no such column.
+    pub session: String,
 }
 
 fn uses_list(sql: &str) -> bool {
@@ -82,11 +87,13 @@ pub fn parse_rows(text: &str) -> Result<Vec<ActiveRow>, String> {
     let missing = |name: &str| format!("the active session query's answer has no column {name}");
     let since = column(&header, "since").ok_or_else(|| missing("since"))?;
     let to = column(&header, "logged_to");
+    let session = column(&header, "session");
     Ok(rows
         .iter()
         .map(|r| ActiveRow {
             since: cell(r, since).unwrap_or_default(),
             logged_to: to.and_then(|t| cell(r, t)).unwrap_or_default(),
+            session: session.and_then(|c| cell(r, c)).unwrap_or_default(),
         })
         .collect())
 }
@@ -98,6 +105,7 @@ pub fn parse_user_rows(text: &str) -> Result<Vec<(String, ActiveRow)>, String> {
     let user = column(&header, "user_id").ok_or_else(|| missing("user_id"))?;
     let since = column(&header, "since").ok_or_else(|| missing("since"))?;
     let to = column(&header, "logged_to");
+    let session = column(&header, "session");
     Ok(rows
         .iter()
         .filter_map(|r| {
@@ -106,6 +114,7 @@ pub fn parse_user_rows(text: &str) -> Result<Vec<(String, ActiveRow)>, String> {
                 ActiveRow {
                     since: cell(r, since).unwrap_or_default(),
                     logged_to: to.and_then(|t| cell(r, t)).unwrap_or_default(),
+                    session: session.and_then(|c| cell(r, c)).unwrap_or_default(),
                 },
             ))
         })
@@ -117,18 +126,79 @@ pub fn parse_user_rows(text: &str) -> Result<Vec<(String, ActiveRow)>, String> {
 fn when_words(since: &str) -> String {
     let t = since.trim();
     match t.split_once([' ', 'T']) {
-        Some((date, time)) if date.len() == 10 && time.len() >= 5 => format!("{date} {}", &time[..5]),
+        Some((date, time)) if date.len() == 10 && time.chars().count() >= 5 => {
+            format!("{date} {}", time.chars().take(5).collect::<String>())
+        }
         _ => t.to_string(),
     }
 }
 
-/// The warning for a login someone else is signed in as, or `None` when
-/// nobody is, or the only session is this app's own (`ours`).
-pub fn signed_in_elsewhere(key: &str, rows: &[ActiveRow], ours: bool) -> Option<String> {
-    if ours {
-        return None;
+/// Which of a login's active-session rows are this app's own.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Ours {
+    /// An Auto Run browser holds the account now: every row is ours.
+    held: bool,
+    /// The sign-in this app saved, still within `session_minutes`.
+    saved: Option<SavedFacts>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct SavedFacts {
+    saved_at_ms: u64,
+    /// The values of the cookies saved with it.
+    cookie_values: Vec<String>,
+}
+
+impl From<bool> for Ours {
+    /// `true`: all rows are ours; `false`: none.
+    fn from(all: bool) -> Self {
+        Ours { held: all, saved: None }
     }
-    let first = rows.first()?;
+}
+
+/// How far after the saved session's stamp a row may begin and still be the
+/// sign-in that made it (the stamp is taken a moment after the sign-in).
+const SAME_SIGN_IN_MS: u64 = 120_000;
+
+/// A database timestamp (`2026-10-30 09:40[:05]`, `T` allowed) as epoch
+/// milliseconds, read in this machine's time zone; `None` when it is not one.
+fn since_ms(since: &str) -> Option<u64> {
+    use chrono::TimeZone as _;
+    let t = since.trim();
+    let (date, time) = t.split_once([' ', 'T'])?;
+    let time: String = time.chars().take(8).collect();
+    let when = chrono::NaiveDateTime::parse_from_str(&format!("{date} {time}"), "%Y-%m-%d %H:%M:%S")
+        .or_else(|_| chrono::NaiveDateTime::parse_from_str(&format!("{date} {time}"), "%Y-%m-%d %H:%M"))
+        .ok()?;
+    let local = chrono::Local.from_local_datetime(&when).earliest()?;
+    u64::try_from(local.timestamp_millis()).ok()
+}
+
+impl Ours {
+    /// Is this row the session the app made? By its session id when the row
+    /// has one and the app saved cookies; otherwise by when it began: a row
+    /// that began after the app's last sign-in is someone else's.
+    pub fn owns(&self, row: &ActiveRow) -> bool {
+        if self.held {
+            return true;
+        }
+        let Some(saved) = &self.saved else { return false };
+        let id = row.session.trim();
+        if !id.is_empty() {
+            return saved.cookie_values.iter().any(|v| v == id || (id.len() >= 8 && v.contains(id)));
+        }
+        match since_ms(&row.since) {
+            Some(began) => began <= saved.saved_at_ms.saturating_add(SAME_SIGN_IN_MS),
+            None => true,
+        }
+    }
+}
+
+/// The warning for a login someone else is signed in as, or `None` when
+/// nobody is, or the only sessions are this app's own (`ours`).
+pub fn signed_in_elsewhere(key: &str, rows: &[ActiveRow], ours: impl Into<Ours>) -> Option<String> {
+    let ours = ours.into();
+    let first = rows.iter().find(|r| !ours.owns(r))?;
     let to = if first.logged_to.is_empty() { String::new() } else { format!(" ({})", first.logged_to) };
     Some(format!(
         "{key} is signed in elsewhere since {}{to} - signing in will log that session out",
@@ -139,10 +209,24 @@ pub fn signed_in_elsewhere(key: &str, rows: &[ActiveRow], ours: bool) -> Option<
 /// Whether the account's session is this app's own: an Auto Run browser
 /// holds it now, or its saved session is within `session_minutes` - the
 /// sign-in this app made earlier and still reuses, whose row the site keeps
-/// at flag 1 after the browser closes.
+/// at flag 1 after the browser closes. Row by row, see `session_ownership`.
 pub fn session_is_ours(root: &Path, env_id: &str, key: &str, session_minutes: u32, now_ms: u64) -> bool {
-    super::lease::holder_of(env_id, key).is_some()
-        || super::sessions::load_fresh_session(root, key, session_minutes, now_ms).is_some()
+    let o = session_ownership(root, env_id, key, session_minutes, now_ms);
+    o.held || o.saved.is_some()
+}
+
+/// What this app holds for the account, to judge each row of the site's
+/// answer by (`Ours::owns`).
+pub fn session_ownership(root: &Path, env_id: &str, key: &str, session_minutes: u32, now_ms: u64) -> Ours {
+    let saved = super::sessions::load_fresh_session(root, key, session_minutes, now_ms).map(|s| SavedFacts {
+        saved_at_ms: s.saved_at_ms,
+        cookie_values: s
+            .cookies
+            .iter()
+            .filter_map(|c| c.get("value").and_then(|v| v.as_str()).map(str::to_string))
+            .collect(),
+    });
+    Ours { held: super::lease::holder_of(env_id, key).is_some(), saved }
 }
 
 /// A run's database as a place the two queries are asked.
@@ -229,7 +313,7 @@ pub async fn discovery_gate<S: RowSource>(
     active_query: &str,
     key: &str,
     username: &str,
-    ours: bool,
+    ours: impl Into<Ours>,
     today: &str,
 ) -> Gate {
     let mut gate = Gate::default();
@@ -240,7 +324,7 @@ pub async fn discovery_gate<S: RowSource>(
                 for (_, e) in found {
                     match e {
                         Expiry::Expired { .. } => gate.warnings.push(format!(
-                            "{key}: {} - the sign-in will land on the site's password reset page and fail as password expired",
+                            "{key}: {} - the sign-in will land on the site's password reset page and fail as password expired, unless this is a test environment with Reset expired passwords on",
                             card_words(&e)
                         )),
                         Expiry::DueSoon { .. } | Expiry::ForcedChange => {
@@ -311,7 +395,7 @@ pub async fn mark_logins<S: RowSource>(
     expiry_query: &str,
     active_query: &str,
     logins: &[(String, String)],
-    ours: &(dyn Fn(&str) -> bool + Sync),
+    ours: &(dyn Fn(&str) -> Ours + Sync),
     today: &str,
 ) -> Marks {
     mark_logins_within(rows, expiry_query, active_query, logins, ours, today, SINGLE_BUDGET).await
@@ -330,7 +414,7 @@ pub async fn mark_logins_within<S: RowSource>(
     expiry_query: &str,
     active_query: &str,
     logins: &[(String, String)],
-    ours: &(dyn Fn(&str) -> bool + Sync),
+    ours: &(dyn Fn(&str) -> Ours + Sync),
     today: &str,
     budget: Duration,
 ) -> Marks {

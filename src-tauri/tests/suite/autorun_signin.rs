@@ -722,6 +722,23 @@ struct ResetApp {
     /// (the field's selector, what was typed into it), in order.
     typed: Arc<Mutex<Vec<(String, String)>>>,
     submits: Arc<std::sync::atomic::AtomicUsize>,
+    /// The password held for the account at each press of the submit button
+    /// (needs `Site::root`).
+    pending_at_submit: Arc<Mutex<Vec<Option<String>>>>,
+}
+
+/// How the fake site behaves besides what `reset_app` says.
+#[derive(Default, Clone)]
+struct Site {
+    new_works: bool,
+    start_accepted: bool,
+    /// After the reset the login form is gone from the page (a slow site,
+    /// not a wrong password).
+    form_gone: bool,
+    /// Pressing submit fails as if the browser died.
+    die_on_submit: bool,
+    /// Where to read the held password from at each submit.
+    root: Option<std::path::PathBuf>,
 }
 
 impl ResetApp {
@@ -738,20 +755,27 @@ impl ResetApp {
 /// of `accepts`; then the page goes to the login page, and the next sign-in
 /// (with whatever was typed) reaches the marker.
 fn reset_app(accepts: &'static [&'static str]) -> (ScriptedDriver, ResetApp) {
-    reset_app_with(accepts, true, false)
+    reset_app_site(accepts, Site { new_works: true, ..Site::default() })
 }
 
 /// `reset_app`; with `new_works` false, no sign-in after the reset reaches the
 /// marker (the page left the reset page but the password is not the site's);
 /// with `start_accepted`, the reset was already done.
 fn reset_app_with(accepts: &'static [&'static str], new_works: bool, start_accepted: bool) -> (ScriptedDriver, ResetApp) {
+    reset_app_site(accepts, Site { new_works, start_accepted, form_gone: true, ..Site::default() })
+}
+
+fn reset_app_site(accepts: &'static [&'static str], site: Site) -> (ScriptedDriver, ResetApp) {
+    let new_works = site.new_works;
+    let start_accepted = site.start_accepted;
     let (d, state) = stateful_app(false, None);
     let (signed_in, typed_flag) = (state.signed_in.clone(), state.typed_password.clone());
     let accepted = Arc::new(std::sync::atomic::AtomicBool::new(start_accepted));
     let last = Arc::new(Mutex::new(String::new()));
     let typed: Arc<Mutex<Vec<(String, String)>>> = Arc::default();
     let submits = Arc::new(std::sync::atomic::AtomicUsize::new(0));
-    let app = ResetApp { typed: typed.clone(), submits: submits.clone() };
+    let pending_at_submit: Arc<Mutex<Vec<Option<String>>>> = Arc::default();
+    let app = ResetApp { typed: typed.clone(), submits: submits.clone(), pending_at_submit: pending_at_submit.clone() };
     let d = d.answering_first(move |method, params| {
         let page_now = || {
             if !accepted.load(Ordering::SeqCst) {
@@ -786,6 +810,13 @@ fn reset_app_with(accepts: &'static [&'static str], new_works: bool, start_accep
             {
                 if last.lock().unwrap().as_str() == "#btnsubmit" {
                     submits.fetch_add(1, Ordering::SeqCst);
+                    if let Some(root) = &site.root {
+                        let id = v2_lib::environments::active_id(root).unwrap();
+                        pending_at_submit.lock().unwrap().push(v2_lib::autorun::accounts::pending_password_for(root, &id, KEY));
+                    }
+                    if site.die_on_submit {
+                        return Some(Err(CdpError::Closed));
+                    }
                     let into = |sel: &str| {
                         typed.lock().unwrap().iter().rev().find(|(s, _)| s == sel).map(|(_, t)| t.clone()).unwrap_or_default()
                     };
@@ -795,6 +826,13 @@ fn reset_app_with(accepts: &'static [&'static str], new_works: bool, start_accep
                     }
                 }
                 Some(Ok(json!({})))
+            }
+            "Runtime.getProperties"
+                if accepted.load(Ordering::SeqCst)
+                    && site.form_gone
+                    && matches!(last.lock().unwrap().as_str(), "#user" | "#pass" | "#go") =>
+            {
+                Some(Ok(json!({ "result": [] })))
             }
             "Runtime.getProperties" if accepted.load(Ordering::SeqCst) && last.lock().unwrap().as_str() == "#txtOldPassword" => {
                 Some(Ok(json!({ "result": [] })))
@@ -827,6 +865,10 @@ async fn reset_on_test_environment_saves_new_password_and_signs_in() {
     assert_eq!(app.count_of("Abc@123"), 3, "new, confirm and the sign-in again");
     assert_eq!(account_file_password(dir.path()), "Abc@123");
     assert!(pending_of(dir.path()).is_none(), "the pending password was kept after it was confirmed");
+    assert!(
+        v2_lib::autorun::accounts::session_path(dir.path(), KEY).unwrap().exists(),
+        "the session the confirming sign-in made was dropped with the password change"
+    );
     let log = v2_lib::applog::recent(6000);
     assert!(log.iter().any(|l| l.message.contains("the expired password of automation51 was reset")));
     assert!(!log.iter().any(|l| l.message.contains("Abc@123") || l.message.contains(PASSWORD)));
@@ -874,16 +916,17 @@ async fn no_reset_when_switch_off() {
 }
 
 #[tokio::test]
-async fn a_refused_new_password_is_submitted_once_not_retried() {
+async fn a_refused_new_password_is_submitted_once_and_held_as_unconfirmed() {
     let dir = reset_root(true, true);
     let (mut d, app) = reset_app(&["Test@1234"]);
     let out = sign_in(&mut d, dir.path(), &recipe_at_login(), &reset_account(), &quick()).await;
     assert!(!out.ok);
-    assert!(out.detail.starts_with(PASSWORD_RESET_FAILED), "{}", out.detail);
+    // The page did not move on: that might be a refusal or a slow redirect.
+    assert!(out.detail.starts_with(PASSWORD_RESET_MAYBE), "{}", out.detail);
     assert_eq!(app.typed_into("#txtNewPassword"), ["Abc@123"]);
     assert_eq!(app.submits.load(Ordering::SeqCst), 1);
     assert_eq!(account_file_password(dir.path()), PASSWORD);
-    assert!(pending_of(dir.path()).is_none());
+    assert_eq!(pending_of(dir.path()).as_deref(), Some("Abc@123"));
 }
 
 fn pending_of(root: &std::path::Path) -> Option<String> {
@@ -892,7 +935,43 @@ fn pending_of(root: &std::path::Path) -> Option<String> {
 }
 
 #[tokio::test]
-async fn a_reset_that_left_the_page_but_does_not_sign_in_keeps_the_old_password_and_holds_the_new() {
+async fn the_new_password_is_held_before_the_submit_is_pressed() {
+    let dir = reset_root(true, true);
+    let site = Site { new_works: true, root: Some(dir.path().to_path_buf()), ..Site::default() };
+    let (mut d, app) = reset_app_site(&["Abc@123"], site);
+    let out = sign_in(&mut d, dir.path(), &recipe_at_login(), &reset_account(), &quick()).await;
+    assert!(out.ok, "{}", out.detail);
+    assert_eq!(*app.pending_at_submit.lock().unwrap(), [Some("Abc@123".to_string())]);
+}
+
+#[tokio::test]
+async fn a_browser_that_stops_at_the_submit_still_leaves_the_new_password_held() {
+    let dir = reset_root(true, true);
+    let site = Site { new_works: true, die_on_submit: true, ..Site::default() };
+    let (mut d, app) = reset_app_site(&["Abc@123"], site);
+    let out = sign_in(&mut d, dir.path(), &recipe_at_login(), &reset_account(), &quick()).await;
+    assert!(!out.ok);
+    assert!(out.detail.starts_with(PASSWORD_RESET_MAYBE), "{}", out.detail);
+    assert_eq!(app.submits.load(Ordering::SeqCst), 1);
+    assert_eq!(pending_of(dir.path()).as_deref(), Some("Abc@123"));
+    assert_eq!(account_file_password(dir.path()), PASSWORD);
+}
+
+#[tokio::test]
+async fn a_fill_that_fails_before_the_submit_holds_nothing_and_sends_nothing() {
+    let dir = reset_root(true, true);
+    let (d, app) = reset_app(&["Abc@123"]);
+    let mut d = d.answering_first(|method, params| {
+        (method == "Input.insertText" && params["text"] == "Abc@123").then(|| Err(CdpError::Closed))
+    });
+    let out = sign_in(&mut d, dir.path(), &recipe_at_login(), &reset_account(), &quick()).await;
+    assert!(!out.ok);
+    assert_eq!(app.submits.load(Ordering::SeqCst), 0);
+    assert!(pending_of(dir.path()).is_none());
+}
+
+#[tokio::test]
+async fn a_slow_follow_up_sign_in_keeps_the_old_password_and_holds_the_new() {
     let _log = crate::serial::log_tail();
     let dir = reset_root(true, true);
     let (mut d, app) = reset_app_with(&["Abc@123"], false, false);
@@ -900,7 +979,8 @@ async fn a_reset_that_left_the_page_but_does_not_sign_in_keeps_the_old_password_
     assert!(!out.ok);
     assert!(out.detail.starts_with(PASSWORD_RESET_MAYBE), "{}", out.detail);
     assert!(out.detail.contains("check it in Accounts"), "{}", out.detail);
-    assert!(is_password_expired(&out.detail));
+    assert!(!is_password_expired(&out.detail));
+    assert!(v2_lib::autorun::signin::is_reset_unconfirmed(&out.detail));
     assert_eq!(app.submits.load(Ordering::SeqCst), 1);
     assert_eq!(account_file_password(dir.path()), PASSWORD, "the stored password was replaced on a path alone");
     assert_eq!(pending_of(dir.path()).as_deref(), Some("Abc@123"));
@@ -910,29 +990,52 @@ async fn a_reset_that_left_the_page_but_does_not_sign_in_keeps_the_old_password_
 }
 
 #[tokio::test]
-async fn a_pending_password_is_tried_first_and_committed_when_it_signs_in() {
+async fn a_wrong_password_from_the_site_after_the_reset_lets_the_new_one_go_and_is_not_retried() {
     let dir = reset_root(true, true);
-    let id = v2_lib::environments::active_id(dir.path()).unwrap();
-    v2_lib::autorun::accounts::set_pending_password(dir.path(), &id, KEY, "Abc@123").unwrap();
-    // The site already holds the new password; the old one is no longer good.
-    let (mut d, app) = reset_app_with(&["Abc@123"], true, true);
+    // The page left the reset page, but the login form is still showing.
+    let (mut d, app) = reset_app_site(&["Abc@123"], Site { new_works: false, ..Site::default() });
     let out = sign_in(&mut d, dir.path(), &recipe_at_login(), &reset_account(), &quick()).await;
-    assert!(out.ok, "{}", out.detail);
-    assert_eq!(app.count_of("Abc@123"), 1);
-    assert_eq!(app.count_of(PASSWORD), 0, "the stored password was typed first");
-    assert_eq!(account_file_password(dir.path()), "Abc@123");
+    assert!(!out.ok);
+    assert!(out.detail.starts_with(PASSWORD_RESET_FAILED), "{}", out.detail);
     assert!(pending_of(dir.path()).is_none());
+    assert_eq!(account_file_password(dir.path()), PASSWORD);
+    // The refusal is remembered: the next sign-in does not submit the form again.
+    let (mut d2, app2) = reset_app(&["Abc@123"]);
+    let again = sign_in(&mut d2, dir.path(), &recipe_at_login(), &reset_account(), &quick()).await;
+    assert!(!again.ok);
+    assert!(again.detail.starts_with(PASSWORD_RESET_FAILED), "{}", again.detail);
+    assert_eq!(app.submits.load(Ordering::SeqCst), 1);
+    assert_eq!(app2.submits.load(Ordering::SeqCst), 0);
 }
 
 #[tokio::test]
-async fn a_pending_password_that_does_not_work_is_let_go_and_the_stored_one_is_used() {
+async fn a_pending_password_the_site_calls_wrong_is_let_go_and_the_stored_one_is_not_typed() {
     let dir = reset_root(true, true);
     let id = v2_lib::environments::active_id(dir.path()).unwrap();
     v2_lib::autorun::accounts::set_pending_password(dir.path(), &id, KEY, "Abc@123").unwrap();
-    let (mut d, _app) = reset_app_with(&[], false, true);
+    // The login form stays: a wrong password.
+    let (mut d, app) = reset_app_site(&[], Site { start_accepted: true, ..Site::default() });
     let out = sign_in(&mut d, dir.path(), &recipe_at_login(), &reset_account(), &quick()).await;
     assert!(!out.ok);
+    assert!(out.detail.contains("has been let go"), "{}", out.detail);
     assert!(pending_of(dir.path()).is_none());
+    assert_eq!(app.count_of(PASSWORD), 0, "the stored password was typed in the same attempt");
+    assert_eq!(app.count_of("Abc@123"), 1);
+    assert_eq!(account_file_password(dir.path()), PASSWORD);
+}
+
+#[tokio::test]
+async fn a_pending_password_that_fails_for_another_reason_is_kept_and_nothing_else_is_typed() {
+    let dir = reset_root(true, true);
+    let id = v2_lib::environments::active_id(dir.path()).unwrap();
+    v2_lib::autorun::accounts::set_pending_password(dir.path(), &id, KEY, "Abc@123").unwrap();
+    // A slow site: the marker never comes, and the form is gone.
+    let (mut d, app) = reset_app_site(&[], Site { start_accepted: true, form_gone: true, ..Site::default() });
+    let out = sign_in(&mut d, dir.path(), &recipe_at_login(), &reset_account(), &quick()).await;
+    assert!(!out.ok);
+    assert!(out.detail.starts_with(PASSWORD_RESET_MAYBE), "{}", out.detail);
+    assert_eq!(pending_of(dir.path()).as_deref(), Some("Abc@123"));
+    assert_eq!(app.count_of(PASSWORD), 0, "the stored password was typed in the same attempt");
     assert_eq!(account_file_password(dir.path()), PASSWORD);
 }
 
@@ -942,11 +1045,25 @@ async fn a_reset_the_site_refuses_every_time_stops_and_leaves_the_password() {
     let (mut d, app) = reset_app(&[]);
     let out = sign_in(&mut d, dir.path(), &recipe_at_login(), &reset_account(), &quick()).await;
     assert!(!out.ok);
-    assert!(out.detail.starts_with(PASSWORD_RESET_FAILED), "{}", out.detail);
-    assert!(is_password_expired(&out.detail));
+    assert!(out.detail.starts_with(PASSWORD_RESET_MAYBE), "{}", out.detail);
     // One submit, then no more: it never loops.
     assert_eq!(app.submits.load(Ordering::SeqCst), 1);
     assert_eq!(account_file_password(dir.path()), PASSWORD);
     assert!(!out.detail.contains("Abc@123") && !out.detail.contains("Test@1234"), "{}", out.detail);
     no_password_anywhere(&out);
+}
+
+#[tokio::test]
+async fn a_pending_password_is_tried_first_and_committed_when_it_signs_in() {
+    let dir = reset_root(true, true);
+    let id = v2_lib::environments::active_id(dir.path()).unwrap();
+    v2_lib::autorun::accounts::set_pending_password(dir.path(), &id, KEY, "Abc@123").unwrap();
+    // The site already holds the new password; the old one is no longer good.
+    let (mut d, app) = reset_app_site(&["Abc@123"], Site { new_works: true, start_accepted: true, ..Site::default() });
+    let out = sign_in(&mut d, dir.path(), &recipe_at_login(), &reset_account(), &quick()).await;
+    assert!(out.ok, "{}", out.detail);
+    assert_eq!(app.count_of("Abc@123"), 1);
+    assert_eq!(app.count_of(PASSWORD), 0, "the stored password was typed first");
+    assert_eq!(account_file_password(dir.path()), "Abc@123");
+    assert!(pending_of(dir.path()).is_none());
 }

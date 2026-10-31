@@ -256,6 +256,10 @@ pub async fn save_with(root: &Path, store: &dyn SecretStore, env: EnvInput) -> R
             )),
             _ => {}
         }
+        // The site is another one now: what was held for the old site and
+        // what its checks found do not carry over.
+        crate::autorun::accounts::forget_pending_for(root, &id);
+        crate::autorun::sign_in_check::forget_marks(root, &id);
     }
     drop(run_slot);
     drop(slots);

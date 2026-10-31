@@ -5,7 +5,7 @@ import { clearMocks, mockIPC } from "@tauri-apps/api/mocks";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
-import AccountsDialog from "./AccountsDialog";
+import AccountsDialog, { reseedRows } from "./AccountsDialog";
 
 vi.mock("../../lib/toast", () => ({ toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn(), info: vi.fn() } }));
 // Whether a run or a discovery has the Auto Run browser, as the tests say.
@@ -61,6 +61,7 @@ test("what the app refuses is shown and the dialog stays open", async () => {
     throw new Error('the account "admin" has no username');
   });
   await screen.findByDisplayValue("kim");
+  fireEvent.change(screen.getByLabelText("Name for account 1"), { target: { value: "Changed" } });
   fireEvent.click(screen.getByRole("button", { name: "Save accounts" }));
   expect(await screen.findByText(/has no username/)).toBeInTheDocument();
   expect(onClose).not.toHaveBeenCalled();
@@ -697,4 +698,53 @@ test("a last check over a week old is shown as stale", async () => {
     admin: { checked_ms: Date.now() - 10 * 24 * 3600 * 1000, signed_in: true, reached: true, area: "Leave", outcome: "reaches Leave" },
   });
   expect(await screen.findByText(/\(stale\)/)).toBeInTheDocument();
+});
+
+test("Save is off until something is changed, and sends the version the list was read at", async () => {
+  const sent: Record<string, unknown>[] = [];
+  mockIPC((cmd, args) => {
+    if (cmd === "auto_run_accounts_version") return "12-345";
+    if (cmd === "auto_run_list_accounts") return [{ key: "admin", label: "A", username: "kim", password: "p" }];
+    if (cmd === "auto_run_save_accounts") {
+      sent.push(args as Record<string, unknown>);
+      return [];
+    }
+    return null;
+  });
+  render(
+    <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+      <AccountsDialog onClose={() => {}} />
+    </QueryClientProvider>,
+  );
+  await screen.findByDisplayValue("kim");
+  const save = screen.getByRole("button", { name: "Save accounts" });
+  expect(save).toBeDisabled();
+  fireEvent.change(screen.getByLabelText("Name for account 1"), { target: { value: "B" } });
+  expect(save).not.toBeDisabled();
+  fireEvent.click(save);
+  await waitFor(() => expect(sent).toHaveLength(1));
+  expect(sent[0].loadedVersion).toBe("12-345");
+});
+
+test("a list that changed under the dialog takes the saved password into untouched rows and untouched passwords", () => {
+  const base = [
+    { key: "a", label: "A", username: "u", password: "old" },
+    { key: "b", label: "B", username: "v", password: "pb" },
+  ];
+  const fresh = [
+    { key: "a", label: "A", username: "u", password: "Abc@123" },
+    { key: "b", label: "B", username: "v", password: "pb" },
+  ];
+  // Nothing touched: the saved list.
+  expect(reseedRows(base, base, fresh)).toEqual(fresh);
+  // A label edited: kept, but the password is the saved one.
+  const edited = [{ ...base[0], label: "Mine" }, base[1]];
+  expect(reseedRows(edited, base, fresh)[0]).toEqual({ ...fresh[0], label: "Mine" });
+  // A password the person typed stays theirs.
+  const typed = [{ ...base[0], password: "typed" }, base[1]];
+  expect(reseedRows(typed, base, fresh)[0].password).toBe("typed");
+  // A removed row stays removed; an added row stays.
+  expect(reseedRows([base[1]], base, fresh).map((r) => r.key)).toEqual(["b"]);
+  const added = { key: "c", label: "", username: "", password: "" };
+  expect(reseedRows([...base, added], base, fresh).map((r) => r.key)).toEqual(["a", "b", "c"]);
 });

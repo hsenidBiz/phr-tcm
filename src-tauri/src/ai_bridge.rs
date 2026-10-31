@@ -8849,7 +8849,7 @@ async fn sign_in_gate(
     let Ok(db) = stage_db(ctx) else {
         return Gate { refused: None, warnings: vec![NOT_CHECKED_NOTE.to_string()] };
     };
-    let ours = crate::autorun::active_login::session_is_ours(
+    let ours = crate::autorun::active_login::session_ownership(
         root,
         &env.id,
         key,
@@ -11698,7 +11698,7 @@ async fn propose_marks(
     let root = root.to_path_buf();
     // This app's own earlier sign-ins are not someone else's.
     let ours = move |key: &str| {
-        crate::autorun::active_login::session_is_ours(&root, &env_id, key, minutes, crate::autorun::sessions::now_ms())
+        crate::autorun::active_login::session_ownership(&root, &env_id, key, minutes, crate::autorun::sessions::now_ms())
     };
     Some(
         mark_logins(

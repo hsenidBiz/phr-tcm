@@ -5,7 +5,7 @@
 //! written for it.
 //!
 //! It is the normal sign-in (`signin::sign_in_leased`, saved session first,
-//! the recipe's steps otherwise, the password typed at most once) and the
+//! the recipe's steps otherwise, one password per attempt) and the
 //! walk a run makes (`nav::go_to_module`, menu paths for other menu shapes
 //! included). One account at a time, each in a browser of its own that is
 //! closed, and its account lease let go, before the next: never two
@@ -30,7 +30,7 @@ use super::nav::{self, Route, TripFrom};
 use super::password_expiry::{card_words, check_users, CheckFailed, Expiry, EXPIRED_MARK};
 use super::replay::Browsers;
 use super::setup_find::RowSource;
-use super::signin::{is_password_expired, redact, sign_in_leased, where_it_stands};
+use super::signin::{is_password_expired, is_reset_unconfirmed, redact, sign_in_leased, where_it_stands};
 use crate::browser::cdp::Driver;
 use crate::browser::timing::Timing;
 use std::collections::BTreeMap;
@@ -167,6 +167,9 @@ pub fn summary(c: &SignInCheck) -> String {
         if why.starts_with(NOT_TRIED) || why == CANCELLED {
             return why;
         }
+        if is_reset_unconfirmed(&why) {
+            return "the password may have been reset - check Accounts".to_string();
+        }
         if is_password_expired(&why) {
             return "stopped on the password reset page".to_string();
         }
@@ -239,7 +242,7 @@ pub async fn precheck<S: RowSource>(
     active_query: &str,
     key: &str,
     username: &str,
-    ours: bool,
+    ours: impl Into<super::active_login::Ours>,
     today: &str,
 ) -> Precheck {
     let mut pre = Precheck::default();
@@ -355,6 +358,12 @@ pub struct Mark {
 
 fn marks_path(root: &Path, env_id: &str) -> PathBuf {
     super::roots::shared_of(root).join("sign_in_checks").join(format!("{env_id}.json"))
+}
+
+/// Let go of an environment's marks: it was removed, or moved to another
+/// site, and what a check found there says nothing of the new one.
+pub fn forget_marks(root: &Path, env_id: &str) {
+    let _ = std::fs::remove_file(marks_path(root, env_id));
 }
 
 /// The last check of each account of one environment, by key. A file that is
@@ -492,7 +501,10 @@ fn ready(
         }
     };
     let asked = route.as_ref().map(|(name, _)| name.clone());
-    if let Some(words) = &pre.expired {
+    // An expired account is signed in anyway when the app may reset it (a
+    // test environment with Reset expired passwords on), as a run or a
+    // discovery would; otherwise the sign-in could only land on the reset page.
+    if let Some(words) = pre.expired.as_ref().filter(|_| !super::signin::reset_enabled(root)) {
         return Err(Stop { check: not_tried(key, words, pre), keep: true, area: asked });
     }
     if let Some(sentence) = &pre.elsewhere {
@@ -569,6 +581,7 @@ fn log_words(c: &SignInCheck) -> &'static str {
     match (&c.area, c.signed_in) {
         (_, false) if c.stopped.as_deref() == Some(CANCELLED) => "cancelled",
         (_, false) if c.stopped.as_deref().is_some_and(|s| s.starts_with(NOT_TRIED)) => "not tried",
+        (_, false) if c.stopped.as_deref().is_some_and(is_reset_unconfirmed) => "reset unconfirmed",
         (_, false) if c.stopped.as_deref().is_some_and(is_password_expired) => "password expired",
         (_, false) => "sign-in failed",
         (Some(AreaReach::Reached { .. }), true) => "reaches the area",

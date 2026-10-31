@@ -3757,15 +3757,32 @@ pub fn auto_run_list_accounts(
     crate::autorun::accounts::load_accounts(&root(&app)?)
 }
 
+/// What the active environment's accounts file looks like now: asked BEFORE
+/// the list is read, and sent back with the save, so a save of a list that
+/// something else changed in between (a reset by a sign-in check, a run) is
+/// refused rather than written over it. It carries no password.
+#[tauri::command(async)]
+#[specta::specta]
+pub fn auto_run_accounts_version(app: tauri::AppHandle) -> Result<String, String> {
+    let root = root(&app)?;
+    let env_id = crate::environments::active_id(&root)?;
+    Ok(crate::autorun::accounts::accounts_version(&root, &env_id))
+}
+
 /// Replace the accounts list. Returns the keys whose saved session was
-/// dropped, so the screen can say so.
+/// dropped, so the screen can say so. With `loaded_version` (from
+/// `auto_run_accounts_version`) a list that changed since is refused.
 #[tauri::command]
 #[specta::specta]
 pub fn auto_run_save_accounts(
     app: tauri::AppHandle,
     accounts: Vec<crate::autorun::accounts::Account>,
+    loaded_version: Option<String>,
 ) -> Result<Vec<String>, String> {
-    let dropped = crate::autorun::accounts::save_accounts(&root(&app)?, &accounts)?;
+    let root = root(&app)?;
+    let env_id = crate::environments::active_id(&root)?;
+    let dropped =
+        crate::autorun::accounts::save_accounts_checked(&root, &env_id, &accounts, loaded_version.as_deref())?;
     crate::applog::info(format!("Auto-run accounts saved ({} account(s))", accounts.len()));
     Ok(dropped)
 }

@@ -442,7 +442,7 @@ test("the reset switch shows only for a saved test environment, is off by defaul
   fireEvent.click(await screen.findByRole("button", { name: "Edit QA" }));
   const sw = await screen.findByRole("switch", { name: "Reset expired passwords" });
   expect(sw.getAttribute("aria-checked")).toBe("false");
-  expect(screen.getByText(/sets a simple new password, saves it on that account/)).toBeTruthy();
+  expect(screen.getByText(/the old one stays saved and the new one is held aside/)).toBeTruthy();
   fireEvent.click(sw);
   await waitFor(() => expect(calls.some((c) => c.cmd === "env_set_reset_expired_passwords")).toBe(true));
   expect(calls.find((c) => c.cmd === "env_set_reset_expired_passwords")!.args).toEqual({ id: TEST_QA.id, on: true });

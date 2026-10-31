@@ -1168,6 +1168,10 @@ Each environment has its own Auto Run scripts, areas, components, quirks, discov
     session. The refusal names the account, the date and time, and the way
     out: sign that session out on the site, wait for it to end, or clear the
     environment's active-session query. An account near its date only warns.
+    Have that query return the site's session id as a `session` column when
+    the site has one: the app's own sign-in is then told from a person's by
+    matching it with the cookies the app saved. Without it, a row that began
+    after the app's last sign-in is someone else's.
     A sign-in that lands on the site's password reset page (the built-in
     recipe's `/security/PasswordReset` with `#txtOldPassword`, which a recipe
     recorded earlier uses too) fails as "password expired", not as a missing
@@ -1176,11 +1180,17 @@ Each environment has its own Auto Run scripts, areas, components, quirks, discov
     reset the password. The app resets it itself only on an environment the
     person marked as a test environment AND gave "Reset expired passwords"
     (off unless they turn it on, in the Environments dialog): it then types
-    the current password and a simple new one, saves the new one on the
-    account and signs in, once per sign-in, and logs that it did so (never
-    the password). If the site refuses it, the stop reads "password expired
-    - the reset did not go through" and the saved password is unchanged. You
-    never type or see either password. A database that is off or does not answer never
+    the current password and a simple new one, and holds the new one aside
+    BEFORE it sends the form. The stored password is replaced only after a
+    sign-in with the new one reaches the signed-in marker; then the app logs
+    that it reset it (never the password). One password is typed per
+    attempt: while one is held, the next sign-in types only that one. If the
+    site refuses it, the stop reads "password expired - the reset did not go
+    through" and the stored password is unchanged. If the page did not move
+    on or the sign-in with the new one did not finish, the stop reads
+    "password expired - the reset may have gone through": the site may now
+    expect the held password, so do not reset it on the site again - tell
+    the person to check Accounts. You never type or see either password. A database that is off or does not answer never
     blocks a sign-in; the check is skipped and said once. A query that is
     wrong is said as that ("could not run"), not as a database that is down.
 - A password comes from the database, from the person or from the
@@ -1335,7 +1345,7 @@ Blocked, not failed halfway:
     the case needs the AUTOTEST rating scale (setup "Rating scale"), which is not there - run_setup Rating scale builds it
 
 While the Database Access module is off nothing is asked and the case goes on,
-saying `needs_records not checked: database read access is off`. A save refuses
+saying `records not checked: database read access is off`. A save refuses
 a setup that is not saved, or has no database find rule; a script that relies on
 a record and declares neither this nor a precondition only gets a note.
 A repair keeps every saved `needs_records` entry as it is (it may add new ones); a person changes or removes one in the app.

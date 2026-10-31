@@ -1826,3 +1826,19 @@ fn the_reset_switch_moves_only_by_its_own_command() {
     assert!(!active(root).unwrap().reset_expired_passwords);
     assert!(set_reset_expired_passwords(root, "env-nothere", true).is_err());
 }
+
+#[test]
+fn removing_an_environment_deletes_its_held_passwords_and_check_marks() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let (_first, qa) = two_envs(root);
+    let pending = v2_lib::autorun::accounts::pending_path_for(root, &qa);
+    std::fs::create_dir_all(pending.parent().unwrap()).unwrap();
+    std::fs::write(&pending, r#"{"a":"Abc@123"}"#).unwrap();
+    let marks = v2_lib::autorun::roots::shared_of(root).join("sign_in_checks").join(format!("{qa}.json"));
+    std::fs::create_dir_all(marks.parent().unwrap()).unwrap();
+    std::fs::write(&marks, "{}").unwrap();
+    remove_env(root, &qa).unwrap();
+    assert!(!pending.exists(), "a held password outlived its environment");
+    assert!(!marks.exists());
+}

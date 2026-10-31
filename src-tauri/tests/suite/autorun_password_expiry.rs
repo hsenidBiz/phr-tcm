@@ -94,7 +94,7 @@ fn query_refuses_a_write_or_a_second_statement() {
 }
 
 fn active_row(since: &str, to: &str) -> ActiveRow {
-    ActiveRow { since: since.into(), logged_to: to.into() }
+    ActiveRow { since: since.into(), logged_to: to.into(), session: String::new() }
 }
 
 #[test]
@@ -283,7 +283,7 @@ fn per_user() -> PerUser {
 
 #[tokio::test]
 async fn proposed_logins_are_marked_and_the_usable_come_first() {
-    let marks = mark_logins(&per_user(), EXPIRY_Q, ACTIVE_Q, &logins(), &|_| false, TODAY).await;
+    let marks = mark_logins(&per_user(), EXPIRY_Q, ACTIVE_Q, &logins(), &|_| false.into(), TODAY).await;
     let by_key = |k: &str| marks.marks_of(k);
     assert_eq!(by_key("old"), vec!["expired".to_string()]);
     assert_eq!(by_key("soon"), vec!["due soon".to_string()]);
@@ -297,19 +297,19 @@ async fn proposed_logins_are_marked_and_the_usable_come_first() {
 
 #[tokio::test]
 async fn a_login_whose_session_is_ours_is_not_marked_signed_in_elsewhere() {
-    let marks = mark_logins(&per_user(), EXPIRY_Q, ACTIVE_Q, &logins(), &|key| key == "busy", TODAY).await;
+    let marks = mark_logins(&per_user(), EXPIRY_Q, ACTIVE_Q, &logins(), &|key| (key == "busy").into(), TODAY).await;
     assert!(marks.marks_of("busy").is_empty());
 }
 
 #[tokio::test]
 async fn proposed_logins_without_a_database_are_unmarked_and_said_once() {
     let db = Answers { expiry: Err("Login timeout expired".into()), active: Err("Login timeout expired".into()) };
-    let marks = mark_logins(&db, EXPIRY_Q, ACTIVE_Q, &logins(), &|_| false, TODAY).await;
+    let marks = mark_logins(&db, EXPIRY_Q, ACTIVE_Q, &logins(), &|_| false.into(), TODAY).await;
     assert!(marks.marks.iter().all(|(_, m)| m.is_empty()));
     let note = marks.note.expect("said once");
     assert!(note.contains("not checked"), "{note}");
     // Nothing set: nothing asked, nothing said.
-    let marks = mark_logins(&db, "", "", &logins(), &|_| false, TODAY).await;
+    let marks = mark_logins(&db, "", "", &logins(), &|_| false.into(), TODAY).await;
     assert!(marks.note.is_none());
 }
 
@@ -344,12 +344,12 @@ async fn a_list_query_marks_every_login_in_one_call() {
         expiry_answer(&["old\t2026-09-01\t0", "soon\t2026-11-01\t0", "fine\t2027-03-01\t0", "busy\t2027-03-01\t0"]),
         batch_answer(&["BUSY\t2026-10-30 08:15:00.000\tehrm"]),
     );
-    let marks = mark_logins(&db, EXPIRY_Q, BATCH_Q, &logins(), &|_| false, TODAY).await;
+    let marks = mark_logins(&db, EXPIRY_Q, BATCH_Q, &logins(), &|_| false.into(), TODAY).await;
     assert_eq!(db.active_calls.load(Ordering::SeqCst), 1, "one active session call for all logins");
     assert_eq!(marks.marks_of("busy"), vec![SIGNED_ELSEWHERE_MARK.to_string()]);
     assert!(marks.marks_of("fine").is_empty());
     assert!(marks.note.is_none());
-    let marks = mark_logins(&db, EXPIRY_Q, BATCH_Q, &logins(), &|k| k == "busy", TODAY).await;
+    let marks = mark_logins(&db, EXPIRY_Q, BATCH_Q, &logins(), &|k| (k == "busy").into(), TODAY).await;
     assert!(marks.marks_of("busy").is_empty(), "our own session does not count");
 }
 
@@ -366,7 +366,7 @@ async fn a_list_query_serves_a_discovery_too() {
 async fn a_single_login_query_is_capped_and_the_rest_are_said_not_checked() {
     let many: Vec<(String, String)> = (0..40).map(|i| (format!("u{i}"), format!("u{i}"))).collect();
     let db = Counting::new(expiry_answer(&[]), active_answer(&[]));
-    let marks = mark_logins(&db, EXPIRY_Q, ACTIVE_Q, &many, &|_| false, TODAY).await;
+    let marks = mark_logins(&db, EXPIRY_Q, ACTIVE_Q, &many, &|_| false.into(), TODAY).await;
     assert_eq!(SINGLE_LOGIN_CAP, 25);
     assert_eq!(db.active_calls.load(Ordering::SeqCst), 25);
     let note = marks.note.expect("said");
@@ -376,7 +376,7 @@ async fn a_single_login_query_is_capped_and_the_rest_are_said_not_checked() {
 #[tokio::test]
 async fn a_single_login_query_stops_when_its_time_is_up() {
     let db = Counting::new(expiry_answer(&[]), active_answer(&[]));
-    let marks = mark_logins_within(&db, EXPIRY_Q, ACTIVE_Q, &logins(), &|_| false, TODAY, Duration::ZERO).await;
+    let marks = mark_logins_within(&db, EXPIRY_Q, ACTIVE_Q, &logins(), &|_| false.into(), TODAY, Duration::ZERO).await;
     assert_eq!(db.active_calls.load(Ordering::SeqCst), 0);
     assert!(marks.note.expect("said").contains("4 logins"));
 }
@@ -396,4 +396,66 @@ fn marks_travel_with_a_stored_proposal_and_never_a_password() {
     let view = serde_json::to_string(&p.view()).unwrap();
     assert!(view.contains("\"marks\":[\"expired\"]"), "{view}");
     assert!(!view.contains("hunter2"), "{view}");
+}
+
+// ----------------------------------------------- whose session a row is
+
+fn saved_for(root: &std::path::Path, key: &str, at_ms: u64, cookie_value: &str) {
+    use v2_lib::browser::session::SavedSession;
+    let saved = SavedSession {
+        saved_at_ms: at_ms,
+        cookies: vec![serde_json::json!({ "name": "sid", "value": cookie_value, "domain": "h.example", "path": "/" })],
+        local_storage: vec![],
+    };
+    v2_lib::autorun::sessions::save_session(root, key, &saved).unwrap();
+}
+
+fn local_ts(ms: u64) -> String {
+    use chrono::TimeZone as _;
+    chrono::Local.timestamp_millis_opt(ms as i64).unwrap().format("%Y-%m-%d %H:%M:%S").to_string()
+}
+
+#[test]
+fn a_row_with_the_apps_own_session_id_is_ours_and_another_id_is_not() {
+    let dir = tempfile::tempdir().unwrap();
+    let now = v2_lib::autorun::sessions::now_ms();
+    saved_for(dir.path(), "a", now, "sess-ABCDEF123456");
+    let ours = active_login::session_ownership(dir.path(), "env-00000001", "a", 480, now);
+    let mut mine = active_row(&local_ts(now), "x");
+    mine.session = "sess-ABCDEF123456".into();
+    let mut theirs = active_row(&local_ts(now), "x");
+    theirs.session = "sess-ZZZZZZ999999".into();
+    assert!(ours.owns(&mine));
+    assert!(!ours.owns(&theirs));
+    assert_eq!(signed_in_elsewhere("a", &[mine.clone()], ours.clone()), None);
+    assert!(signed_in_elsewhere("a", &[mine, theirs], ours).is_some());
+}
+
+#[test]
+fn without_a_session_column_a_row_that_began_after_the_apps_last_sign_in_is_not_ours() {
+    let dir = tempfile::tempdir().unwrap();
+    let now = v2_lib::autorun::sessions::now_ms();
+    let signed = now - 3_600_000;
+    saved_for(dir.path(), "a", signed, "abc");
+    let ours = active_login::session_ownership(dir.path(), "env-00000001", "a", 480, now);
+    // Began a moment before the stamp: the app's own sign-in.
+    assert!(ours.owns(&active_row(&local_ts(signed - 5_000), "")));
+    // Began half an hour after the app signed in: a person took the account over.
+    assert!(!ours.owns(&active_row(&local_ts(signed + 1_800_000), "")));
+    // Not a timestamp: today's rule (a fresh saved session makes it ours).
+    assert!(ours.owns(&active_row("sometime", "")));
+}
+
+#[test]
+fn no_saved_session_and_no_browser_means_no_row_is_ours() {
+    let dir = tempfile::tempdir().unwrap();
+    let now = v2_lib::autorun::sessions::now_ms();
+    let ours = active_login::session_ownership(dir.path(), "env-00000001", "nobody", 480, now);
+    assert!(!ours.owns(&active_row(&local_ts(now), "")));
+}
+
+#[test]
+fn a_since_with_a_multibyte_character_is_said_without_panicking() {
+    let said = signed_in_elsewhere("a", &[active_row("2026-10-30 \u{e9}\u{e9}\u{e9}", "")], false).unwrap();
+    assert!(said.contains("signed in elsewhere"), "{said}");
 }

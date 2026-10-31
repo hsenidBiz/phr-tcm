@@ -11,7 +11,7 @@
 //! discovery is using the Auto Run browser. Cancel ends it between
 //! accounts and closes the browser of the one it is on.
 
-use crate::autorun::active_login::session_is_ours;
+use crate::autorun::active_login::session_ownership;
 use crate::autorun::replay::Browsers;
 use crate::autorun::setup_find::RowSource;
 use crate::autorun::sign_in_check::{check_accounts, precheck, summary, Mark, Precheck, SignInCheck, BROWSER_IN_USE};
@@ -76,7 +76,7 @@ pub async fn check_with<B: Browsers, S: RowSource>(
     let mut pre: BTreeMap<String, Precheck> = BTreeMap::new();
     for key in keys {
         let Some(account) = accounts.iter().find(|a| &a.key == key) else { continue };
-        let ours = session_is_ours(root, &env_id, key, minutes, crate::autorun::sessions::now_ms());
+        let ours = session_ownership(root, &env_id, key, minutes, crate::autorun::sessions::now_ms());
         pre.insert(key.clone(), precheck(rows, queries.0, queries.1, key, &account.username, ours, &today).await);
     }
     Ok(check_accounts(browsers, root, org, project, keys, area, &pre, &crate::browser::timing::Timing::supervised()).await)
@@ -98,8 +98,8 @@ impl CheckedAccount {
 
 /// Check the sign-in of one saved account, and walk it to `area` (an area
 /// name, optional). The Accounts dialog calls this for each account it ticks,
-/// one after another. The account's password is typed once, in a browser of
-/// its own that is closed after, and is never in the answer.
+/// one after another. One password is typed per attempt, in a browser of its
+/// own that is closed after, and is never in the answer.
 #[tauri::command]
 #[specta::specta]
 pub async fn auto_run_check_sign_in(

@@ -164,10 +164,73 @@ pub fn save_accounts(root: &Path, accounts: &[Account]) -> Result<Vec<String>, S
     save_accounts_for(root, &env_id, accounts)
 }
 
+/// One process-wide lock around every read-modify-write of an environment's
+/// accounts file and its pending-passwords file. Several assistants (and the
+/// dialog) can reset and save at the same moment, and each writes a whole
+/// list: without this the last writer wins and a new password is lost.
+static FILES: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+fn files() -> std::sync::MutexGuard<'static, ()> {
+    FILES.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// Said when the dialog saves a list another writer changed since it loaded
+/// the list.
+pub const ACCOUNTS_CHANGED: &str = "an account changed while this was open - reopen Accounts";
+
+/// What the accounts file looks like now (its size and time), for a caller
+/// that wants to know later whether anything else wrote it. It carries no
+/// password.
+pub fn accounts_version(root: &Path, env_id: &str) -> String {
+    match std::fs::metadata(accounts_path_for(root, env_id)) {
+        Ok(m) => {
+            let when = m
+                .modified()
+                .ok()
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map_or(0, |d| d.as_nanos());
+            format!("{}-{when}", m.len())
+        }
+        Err(_) => "none".to_string(),
+    }
+}
+
 /// `save_accounts` for one environment by id - for a caller that read the
 /// list by that id and must write it back to the same environment, even
 /// if a switch lands in between.
 pub fn save_accounts_for(root: &Path, env_id: &str, accounts: &[Account]) -> Result<Vec<String>, String> {
+    save_accounts_checked(root, env_id, accounts, None)
+}
+
+/// `save_accounts_for`, refusing (`ACCOUNTS_CHANGED`) when `loaded_version`
+/// (from `accounts_version`, taken before the list was read) is not what the
+/// file looks like now.
+pub fn save_accounts_checked(
+    root: &Path,
+    env_id: &str,
+    accounts: &[Account],
+    loaded_version: Option<&str>,
+) -> Result<Vec<String>, String> {
+    let _held = files();
+    if let Some(v) = loaded_version {
+        if v != accounts_version(root, env_id) {
+            return Err(ACCOUNTS_CHANGED.to_string());
+        }
+    }
+    save_unlocked(root, env_id, accounts, None, true)
+}
+
+/// The write itself, under `files()`. A login that changed loses its saved
+/// session, except `keep_session_of`'s; a person's change of a password (so
+/// `person`) also lets go of any password held pending for it, which was set
+/// against the old one.
+fn save_unlocked(
+    root: &Path,
+    env_id: &str,
+    accounts: &[Account],
+    keep_session_of: Option<&str>,
+    person: bool,
+) -> Result<Vec<String>, String> {
     if !crate::environments::valid_id(env_id) {
         return Err(format!("\"{env_id}\" is not a usable environment id"));
     }
@@ -191,6 +254,12 @@ pub fn save_accounts_for(root: &Path, env_id: &str, accounts: &[Account]) -> Res
             .iter()
             .any(|a| a.key == old.key && a.username == old.username && a.password == old.password);
         if !same_login {
+            if person && accounts.iter().any(|a| a.key == old.key && a.password != old.password) {
+                let _ = clear_pending_unlocked(root, &env_id, &old.key);
+            }
+            if keep_session_of == Some(old.key.as_str()) {
+                continue;
+            }
             let p = session_path_for(root, &env_id, &old.key);
             if p.exists() {
                 let _ = std::fs::remove_file(&p);
@@ -201,11 +270,24 @@ pub fn save_accounts_for(root: &Path, env_id: &str, accounts: &[Account]) -> Res
     Ok(dropped)
 }
 
-/// Give one account of one environment a new password, as the app does
-/// after the site accepted a reset of an expired one. Everything else in the
-/// list stays as it is, and the account's saved session goes, as it does
-/// whenever a login changes (`save_accounts_for`). Never says either password.
+/// Give one account of one environment a new password. Everything else in
+/// the list stays as it is, and the account's saved session goes, as it does
+/// whenever a login changes. Never says either password.
 pub fn set_password_for(root: &Path, env_id: &str, key: &str, new: &str) -> Result<(), String> {
+    let _held = files();
+    change_password_unlocked(root, env_id, key, new, false)
+}
+
+/// A pending password that a sign-in has just proved becomes the account's,
+/// and is let go from the pending file, in one step under the lock. The
+/// session that sign-in saved is kept: it was made with this password.
+pub fn commit_pending_password(root: &Path, env_id: &str, key: &str, new: &str) -> Result<(), String> {
+    let _held = files();
+    change_password_unlocked(root, env_id, key, new, true)?;
+    clear_pending_unlocked(root, env_id, key)
+}
+
+fn change_password_unlocked(root: &Path, env_id: &str, key: &str, new: &str, keep_session: bool) -> Result<(), String> {
     if new.is_empty() {
         return Err("a new password is needed".to_string());
     }
@@ -214,7 +296,7 @@ pub fn set_password_for(root: &Path, env_id: &str, key: &str, new: &str) -> Resu
         return Err(format!("there is no account \"{key}\" on this machine"));
     };
     account.password = new.to_string();
-    save_accounts_for(root, env_id, &all).map(|_| ())
+    save_unlocked(root, env_id, &all, keep_session.then_some(key), false).map(|_| ())
 }
 
 /// Where an environment holds the passwords the app set on a site but has
@@ -234,14 +316,17 @@ fn read_pending(root: &Path, env_id: &str) -> std::collections::BTreeMap<String,
 
 /// The password set on the site for `key` and not yet confirmed, if any.
 pub fn pending_password_for(root: &Path, env_id: &str, key: &str) -> Option<String> {
+    let _held = files();
     read_pending(root, env_id).remove(key).filter(|p| !p.is_empty())
 }
 
-/// Hold `password` for `key` until a sign-in with it works.
+/// Hold `password` for `key` until a sign-in with it works. Written
+/// atomically, before anything is sent to the site.
 pub fn set_pending_password(root: &Path, env_id: &str, key: &str, password: &str) -> Result<(), String> {
     if !crate::environments::valid_id(env_id) || !valid_key(key) {
         return Err("that account cannot hold a pending password".to_string());
     }
+    let _held = files();
     let mut all = read_pending(root, env_id);
     all.insert(key.to_string(), password.to_string());
     write_pending(root, env_id, &all)
@@ -249,11 +334,24 @@ pub fn set_pending_password(root: &Path, env_id: &str, key: &str, password: &str
 
 /// Let go of `key`'s pending password (confirmed, or found not to work).
 pub fn clear_pending_password(root: &Path, env_id: &str, key: &str) -> Result<(), String> {
+    let _held = files();
+    clear_pending_unlocked(root, env_id, key)
+}
+
+fn clear_pending_unlocked(root: &Path, env_id: &str, key: &str) -> Result<(), String> {
     let mut all = read_pending(root, env_id);
     if all.remove(key).is_none() {
         return Ok(());
     }
     write_pending(root, env_id, &all)
+}
+
+/// Remove an environment's pending passwords. Called when the environment is
+/// removed: a held password is a secret, and an environment created later
+/// under the same name must not inherit it.
+pub fn forget_pending_for(root: &Path, env_id: &str) {
+    let _held = files();
+    let _ = std::fs::remove_file(pending_path_for(root, env_id));
 }
 
 fn write_pending(root: &Path, env_id: &str, all: &std::collections::BTreeMap<String, String>) -> Result<(), String> {
