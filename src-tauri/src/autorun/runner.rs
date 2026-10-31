@@ -1921,7 +1921,7 @@ async fn repeat_while_visible<D: Driver>(
         // Before the FIRST pass only: rows that cannot be told apart
         // delete nothing (`repeat::except_guard`).
         if passes == 0 && !except.is_empty() && !found.is_empty() && found.iter().all(|m| m.kept.is_none()) {
-            match repeat::except_on_page(d, except).await {
+            match repeat::except_on_page(d, except, &found).await {
                 Ok(on_page) => {
                     if let Some(why) = repeat::except_guard(&found, except, &on_page) {
                         return (ActionOutcome::failed(format!("{target}: {why}")), None);

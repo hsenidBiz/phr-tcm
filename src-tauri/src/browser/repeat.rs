@@ -20,7 +20,7 @@
 use super::cdp::{CdpError, Driver};
 use super::locator::{resolve, LocatorStep, Target};
 use super::page::{self, Handle};
-use serde_json::json;
+use serde_json::{json, Value};
 
 /// The css a `then` locator starts with to be resolved inside the row the
 /// pass is working on.
@@ -196,11 +196,24 @@ pub fn within_row(t: &Target) -> Option<Target> {
 }
 
 /// The `except` texts the page shows right now (`EXCEPT_ON_PAGE_JS`), as
-/// `except` wrote them.
-pub async fn except_on_page<D: Driver>(d: &mut D, except: &[String]) -> Result<Vec<String>, CdpError> {
+/// `except` wrote them: those the top document shows, and those shown by
+/// the document each of `found` sits in - a match inside a same-origin
+/// iframe lives in the frame's document, which the top one does not hold.
+pub async fn except_on_page<D: Driver>(d: &mut D, except: &[String], found: &[Match]) -> Result<Vec<String>, CdpError> {
+    let mut shown: Vec<String> = Vec::new();
+    let mut ask = |v: Value, shown: &mut Vec<String>| {
+        for t in v.as_array().into_iter().flatten().filter_map(|t| t.as_str()) {
+            if !shown.iter().any(|s| s == t) {
+                shown.push(t.to_string());
+            }
+        }
+    };
     let doc = page::document(d).await?;
-    let v = page::call_value(d, &doc, EXCEPT_ON_PAGE_JS, &[json!(except)]).await?;
-    Ok(v.as_array().map(|a| a.iter().filter_map(|t| t.as_str().map(str::to_string)).collect()).unwrap_or_default())
+    ask(page::call_value(d, &doc, EXCEPT_ON_PAGE_JS, &[json!(except)]).await?, &mut shown);
+    for m in found {
+        ask(page::call_value(d, &m.handle, EXCEPT_ON_PAGE_JS, &[json!(except)]).await?, &mut shown);
+    }
+    Ok(shown)
 }
 
 /// The fixed part of `except_guard`'s sentence, for telling it in an outcome.

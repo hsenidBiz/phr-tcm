@@ -68,6 +68,10 @@ struct Rows {
     blind: bool,
     /// What the page shows of the except texts, when it is not worked out.
     on_page: Option<Vec<String>>,
+    /// The except texts are shown only inside the rows' frame: the top document reads none.
+    in_frame: bool,
+    /// The read of the except texts fails.
+    read_fails: bool,
 }
 
 type Shared = Arc<Mutex<Rows>>;
@@ -98,7 +102,7 @@ fn goal_groups(names: Vec<&'static str>) -> (ScriptedDriver, Shared) {
 
 fn goal_groups_with(names: Vec<&'static str>, blind: bool, on_page: Option<Vec<&str>>) -> (ScriptedDriver, Shared) {
     let n = names.len();
-    let rows = Arc::new(Mutex::new(Rows { names, alive: vec![true; n], marked: None, armed: None, clicks: vec![], blind, on_page: on_page.map(|v| v.into_iter().map(String::from).collect()) }));
+    let rows = Arc::new(Mutex::new(Rows { names, alive: vec![true; n], marked: None, armed: None, clicks: vec![], blind, in_frame: false, read_fails: false, on_page: on_page.map(|v| v.into_iter().map(String::from).collect()) }));
     let page = rows.clone();
     let d = ScriptedDriver::new(move |method, params| {
         let f = params["functionDeclaration"].as_str().unwrap_or("");
@@ -152,6 +156,12 @@ fn goal_groups_with(names: Vec<&'static str>, blind: bool, on_page: Option<Vec<&
                     .as_array()
                     .map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_string)).collect())
                     .unwrap_or_default();
+                if r.read_fails {
+                    return Err(v2_lib::browser::cdp::CdpError::Protocol { method: method.into(), message: "gone".into() });
+                }
+                if r.in_frame && on == "doc" {
+                    return Ok(json!({ "result": { "value": [] } }));
+                }
                 let shown: Vec<String> = match &r.on_page {
                     Some(v) => v.clone(),
                     None => except
@@ -611,4 +621,34 @@ async fn a_loop_whose_protected_rows_are_not_on_the_page_still_runs() {
     let out = run(&mut d, vec![action(reset_goal_groups(10))]).await;
     assert!(out[0].ok, "{:?}", out[0]);
     assert!(left(&rows).is_empty());
+}
+
+fn blind_loop() -> Action {
+    action(json!({
+        "kind": "repeat_while_visible", "selector": { "css": ".delete" }, "max": 10, "except": ["Leadership Competencies"],
+        "then": [
+            { "kind": "click", "selector": [ { "css": ROW_SCOPE }, { "css": ".delete" } ] },
+            { "kind": "click", "selector": { "css": "#confirm" } }
+        ]
+    }))
+}
+
+#[tokio::test]
+async fn a_loop_whose_protected_text_is_only_in_the_rows_frame_deletes_nothing() {
+    let (mut d, rows) = goal_groups_with(vec!["Old A", "Old B"], true, Some(vec!["Leadership Competencies"]));
+    rows.lock().unwrap().in_frame = true;
+    let out = run(&mut d, vec![blind_loop()]).await;
+    assert!(!out[0].ok, "{:?}", out[0]);
+    assert!(out[0].detail.contains("Leadership Competencies"), "{}", out[0].detail);
+    assert!(clicks(&rows).is_empty(), "{:?}", clicks(&rows));
+}
+
+#[tokio::test]
+async fn a_loop_deletes_nothing_when_the_except_text_read_fails() {
+    let (mut d, rows) = goal_groups_with(vec!["Old A", "Old B"], true, None);
+    rows.lock().unwrap().read_fails = true;
+    let out = run(&mut d, vec![blind_loop()]).await;
+    assert!(!out[0].ok, "{:?}", out[0]);
+    assert!(out[0].detail.contains("nothing was deleted"), "{}", out[0].detail);
+    assert!(clicks(&rows).is_empty(), "{:?}", clicks(&rows));
 }
