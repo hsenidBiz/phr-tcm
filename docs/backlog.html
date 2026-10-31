@@ -80,6 +80,7 @@
     <div class="head"><span class="title">Each environment keeps its own Auto Run data</span><span class="status todo">Built, hand checks owed</span></div>
     <p>Scripts, areas, components, quirks, saved setups, API templates, fixtures and flows live in a folder per environment; run history stays with the environment that made it. The update copies the existing data into every environment once. Switching environment switches the folder, and is refused while a browser or run is busy. Copy Auto Run data in Edit environments, and Copy to environment and Copy from environment on a script, move data between environments (a removed environment's data is kept for 30 days). Playwright export and Sync work in one export environment, shown as Exports from.</p>
     <ul>
+      <li>Owed: retake the How To Use shots auto-run-selected and auto-run-setup with the environment label (their frames need a taller capture; the screenshot tool's light and dark passes placed the bottom-pinned selection bar differently).</li>
       <li>Hand check owed: the first start after the update on the owner's real data. Two environments with scripts in both, history only in the active one, the launch time noted, and the old flat layout untouched if the copy fails.</li>
       <li>Hand check owed: switching environment with a browser open is refused and says why; with Auto Run open and nothing busy, the list reloads and an open editor closes.</li>
       <li>Hand check owed: an assistant's save that was in flight during a switch is refused.</li>
