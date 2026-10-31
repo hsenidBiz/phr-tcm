@@ -585,10 +585,10 @@ pub fn add_proposals_with(
     picks: Vec<AccountInput>,
     replace: Vec<String>,
 ) -> Result<Vec<String>, String> {
-    use crate::autorun::accounts::{load_accounts_for, save_accounts_for, valid_key, Account};
+    use crate::autorun::accounts::{load_accounts_for, valid_key, Account};
     let env = environments::active(root)?;
     let env_id = env.id.clone();
-    let mut accounts = load_accounts_for(root, &env_id)?;
+    let accounts = load_accounts_for(root, &env_id)?;
     let proposed = usable_proposals(root, &env)?;
     let mut default: Option<Option<String>> = None;
     let mut seen = std::collections::HashSet::new();
@@ -642,15 +642,10 @@ pub fn add_proposals_with(
         return Ok(confirm);
     }
     let added: Vec<String> = ready.iter().map(|a| a.key.clone()).collect();
-    for a in ready {
-        match accounts.iter_mut().find(|e| e.key == a.key) {
-            Some(slot) => *slot = a,
-            None => accounts.push(a),
-        }
-    }
-    // Written back by the id it was read by: a switch in between must not
-    // put this environment's list into the next one.
-    save_accounts_for(root, &env_id, &accounts)?;
+    // Merged into the list as it is NOW, under the accounts lock, and by the
+    // id it was read by: a reset or a save made meanwhile is kept, and a
+    // switch in between must not put this environment's list into the next.
+    crate::autorun::accounts::merge_accounts_for(root, &env_id, ready)?;
     crate::applog::info(format!("Environments: added {} proposed account(s)", added.len()));
     // The accounts are saved: a proposal that will not update is logged,
     // not a failure of the add.

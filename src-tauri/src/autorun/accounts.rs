@@ -366,3 +366,19 @@ fn write_pending(root: &Path, env_id: &str, all: &std::collections::BTreeMap<Str
     let json = serde_json::to_string_pretty(all).map_err(|e| e.to_string())?;
     crate::ai_tools::atomic_write(&path, &json)
 }
+
+/// Add or replace `ready` (by key) in one environment's list, reading the
+/// list again under the accounts lock so that a change made since the caller
+/// looked (a reset, a save) is kept. Nothing else is taken while the lock is
+/// held, so it cannot meet another lock the other way round.
+pub fn merge_accounts_for(root: &Path, env_id: &str, ready: Vec<Account>) -> Result<Vec<String>, String> {
+    let _held = files();
+    let mut all = load_accounts_for(root, env_id)?;
+    for a in ready {
+        match all.iter_mut().find(|e| e.key == a.key) {
+            Some(slot) => *slot = a,
+            None => all.push(a),
+        }
+    }
+    save_unlocked(root, env_id, &all, None, true)
+}
