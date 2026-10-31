@@ -1292,7 +1292,7 @@ async fn run_expanded<D: Driver>(
                     // The account is this browser's from here, whichever
                     // way the sign-in goes.
                     Ok(()) => {
-                        let signed = signin::sign_in_in(d, root, &r, &who, timing, &lease.browser_words()).await;
+                        let signed = signin::sign_in_in_stoppable(d, root, &r, &who, timing, &lease.browser_words(), run.cancel).await;
                         *account = signed.ok.then(|| who.key.clone());
                         let print = match signed.ok {
                             true => crate::browser::session::cookie_print(d, &r.origins()).await,

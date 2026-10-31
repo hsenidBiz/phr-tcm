@@ -750,6 +750,7 @@ async fn try_pending<D: Driver>(
     account: &Account,
     timing: &Timing,
     browser: &str,
+    cancel: Option<&std::sync::atomic::AtomicBool>,
 ) -> Option<SignInOutcome> {
     let env_id = crate::environments::active_id(root).ok()?;
     let pending = super::accounts::pending_password_for(root, &env_id, &account.key)?;
@@ -758,7 +759,7 @@ async fn try_pending<D: Driver>(
         return None;
     }
     let renewed = Account { password: pending.clone(), ..account.clone() };
-    let mut out = Box::pin(sign_in_core(d, root, recipe, &renewed, timing, false, browser, false, None)).await;
+    let mut out = Box::pin(sign_in_core(d, root, recipe, &renewed, timing, false, browser, false, cancel)).await;
     if out.ok || out.harness {
         return Some(confirm_pending(root, &env_id, account, &pending, out));
     }
@@ -778,8 +779,9 @@ fn try_pending_boxed<'a, D: Driver>(
     account: &'a Account,
     timing: &'a Timing,
     browser: &'a str,
+    cancel: Option<&'a std::sync::atomic::AtomicBool>,
 ) -> impl std::future::Future<Output = Option<SignInOutcome>> + 'a {
-    Box::pin(try_pending(d, root, recipe, account, timing, browser))
+    Box::pin(try_pending(d, root, recipe, account, timing, browser, cancel))
 }
 
 /// Is the browser on the recipe's password reset page: its path holds the
@@ -860,9 +862,9 @@ pub async fn sign_in_in_stoppable<D: Driver>(
     account: &Account,
     timing: &Timing,
     browser: &str,
-    cancel: &std::sync::atomic::AtomicBool,
+    cancel: Option<&std::sync::atomic::AtomicBool>,
 ) -> SignInOutcome {
-    sign_in_with(d, root, recipe, account, timing, true, browser, Some(cancel)).await
+    sign_in_with(d, root, recipe, account, timing, true, browser, cancel).await
 }
 
 /// The supervised browser's sign-in as `account_key`: its account lease
@@ -1019,7 +1021,7 @@ async fn sign_in_held<D: Driver>(
     browser: &str,
     cancel: Option<&std::sync::atomic::AtomicBool>,
 ) -> SignInOutcome {
-    if let Some(done) = try_pending_boxed(d, root, recipe, account, timing, browser).await {
+    if let Some(done) = try_pending_boxed(d, root, recipe, account, timing, browser, cancel).await {
         return done;
     }
     sign_in_core(d, root, recipe, account, timing, try_saved_session, browser, true, cancel).await

@@ -1170,7 +1170,7 @@ async fn a_stop_during_the_first_page_wait_ends_the_sign_in_at_once() {
         }
         _ => None,
     });
-    let out = sign_in_in_stoppable(&mut d, dir.path(), &recipe_at_login(), &account(), &quick(), "this browser", &cancel).await;
+    let out = sign_in_in_stoppable(&mut d, dir.path(), &recipe_at_login(), &account(), &quick(), "this browser", Some(&cancel)).await;
     assert!(!out.ok);
     assert!(!out.harness, "{}", out.detail);
     assert!(out.detail.contains(SIGN_IN_STOPPED), "{}", out.detail);
@@ -1196,4 +1196,27 @@ async fn a_restored_session_whose_page_fails_fast_is_dropped_not_kept() {
     assert_eq!(d.calls_to("Page.navigate").len(), 5, "{:?}", d.methods());
     assert!(!session_path(dir.path(), "admin").unwrap().exists(), "the session was kept");
     assert!(out.detail.contains(SITE_SLOW_TO_START), "{}", out.detail);
+}
+
+#[tokio::test]
+async fn a_stop_during_a_pending_password_sign_ins_wait_ends_it_at_once() {
+    use v2_lib::autorun::signin::{sign_in_in_stoppable, SIGN_IN_STOPPED};
+    let dir = reset_root(true, true);
+    let id = v2_lib::environments::active_id(dir.path()).unwrap();
+    v2_lib::autorun::accounts::set_pending_password(dir.path(), &id, KEY, "Abc@123").unwrap();
+    let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let (mut d, _state) = stateful_app(false, None);
+    d.idle_clock = Some(Default::default());
+    let flag = cancel.clone();
+    let mut d = d.answering_first(move |method, _| match method {
+        "Page.navigate" => {
+            flag.store(true, Ordering::SeqCst);
+            Some(Err(CdpError::Timeout { what: "Page.navigate".into(), ms: 30_000 }))
+        }
+        _ => None,
+    });
+    let out = sign_in_in_stoppable(&mut d, dir.path(), &recipe_at_login(), &reset_account(), &quick(), "this browser", Some(&cancel)).await;
+    assert!(!out.ok);
+    assert!(out.detail.contains(SIGN_IN_STOPPED), "{}", out.detail);
+    assert_eq!(d.calls_to("Page.navigate").len(), 1, "{:?}", d.methods());
 }

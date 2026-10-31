@@ -2033,3 +2033,45 @@ async fn a_busy_or_expired_answer_is_not_a_refusal() {
         assert!(!out[0].detail.contains("the app refused"), "{status}: {}", out[0].detail);
     }
 }
+
+#[tokio::test]
+async fn a_stop_during_a_mid_script_sign_ins_wait_ends_it_at_once() {
+    use v2_lib::autorun::runner::{run_step_in_run, AreaRoute, InRun};
+    use v2_lib::autorun::signin::SIGN_IN_STOPPED;
+    let dir = tempfile::tempdir().unwrap();
+    let mut r = serde_json::to_value(recipe()).unwrap();
+    r["start_url"] = json!("https://hr.example.internal/hr/security/login");
+    save_recipe(dir.path(), "Acme", "Web", &serde_json::from_value(r).unwrap()).unwrap();
+    save_accounts(dir.path(), &[account()]).unwrap();
+    let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let (mut d, _) = stateful_app(false, None);
+    d.idle_clock = Some(Default::default());
+    let flag = cancel.clone();
+    let mut d = d.answering_first(move |method, _| match method {
+        "Page.navigate" => {
+            flag.store(true, Ordering::SeqCst);
+            Some(Err(CdpError::Timeout { what: "Page.navigate".into(), ms: 30_000 }))
+        }
+        _ => None,
+    });
+    let mut acc: Option<String> = None;
+    let mut lease = v2_lib::autorun::lease::Held::supervised();
+    let mut run = InRun { cancel: Some(&cancel), ..Default::default() };
+    let out = run_step_in_run(
+        &mut d,
+        dir.path(),
+        "Acme",
+        "Web",
+        &step(vec![Action::SignIn { account: "admin".into() }]),
+        &quick(),
+        &mut acc,
+        &mut lease,
+        None,
+        AreaRoute::Unknown("no area"),
+        &mut run,
+    )
+    .await
+    .unwrap();
+    assert!(!out[0].ok && out[0].detail.contains(SIGN_IN_STOPPED), "{:?}", out[0]);
+    assert_eq!(d.calls_to("Page.navigate").len(), 1, "{:?}", d.methods());
+}
