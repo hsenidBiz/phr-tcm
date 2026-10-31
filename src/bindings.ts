@@ -468,6 +468,11 @@ export const commands = {
 	 *  Auto Run's runs and Open browser wait while it is.
 	 */
 	autoRunDiscoveryActive: () => __TAURI_INVOKE<boolean>("auto_run_discovery_active"),
+	/**
+	 *  What the per-environment update did, once: the notice it left in the
+	 *  shared root, removed as it is read. `None` when there is none to say.
+	 */
+	autoRunMigrationNote: () => __TAURI_INVOKE<string | null>("auto_run_migration_note"),
 	/**  What discovery has mapped of this project, for the Discovery card. */
 	autoRunLoadMap: (organization: string, project: string) => typedError<MapView, string>(__TAURI_INVOKE("auto_run_load_map", { organization, project })),
 	/**

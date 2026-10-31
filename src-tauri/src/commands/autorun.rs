@@ -8,7 +8,7 @@
 
 use crate::autorun::replay_to::NotSignedIn;
 use crate::autorun::slots::{SlotNo, EXTRA_CAP, SLOT_COUNT};
-use crate::autorun::store;
+use crate::autorun::{roots, store};
 use crate::autorun::{CaseScript, LocalRun, StepScript};
 use crate::browser::actions::ActionOutcome;
 use crate::browser::cdp::{Cdp, Driver};
@@ -805,6 +805,15 @@ pub(crate) fn publish_discovery_in(n: SlotNo, slot: &Option<Session>) {
 #[specta::specta]
 pub fn auto_run_discovery_active() -> bool {
     discovery_active_in(SlotNo::MAIN)
+}
+
+/// What the per-environment update did, once: the notice it left in the
+/// shared root, removed as it is read. `None` when there is none to say.
+#[tauri::command]
+#[specta::specta]
+pub async fn auto_run_migration_note() -> Option<String> {
+    let root = store::resolve_root().ok()?;
+    roots::take_migration_note(&roots::shared_of(&root))
 }
 
 /// Whether a discovery holds slot `n`'s browser, as last published.

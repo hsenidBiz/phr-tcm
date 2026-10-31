@@ -7,6 +7,7 @@ use v2_lib::autorun::roots::{self, MigrationOps, MigrationReport};
 use v2_lib::autorun::store;
 use v2_lib::autorun::LocalRun;
 use v2_lib::environments::{self, Environment};
+use super::serial;
 
 const A: &str = "env-0000000a";
 const B: &str = "env-0000000b";
@@ -49,20 +50,25 @@ fn at(shared: &Path, id: &str, rel: &str) -> PathBuf {
 }
 
 #[test]
-fn migration_copies_every_item_into_each_environment() {
+fn migration_puts_every_item_only_in_the_active_environment() {
+    let _s = serial::autorun();
     let t = tempfile::tempdir().unwrap();
     two_envs(t.path());
     put(t.path(), "scripts/case-1.json", "S");
     put(t.path(), "projects/p.nav.json", "N");
-    put(t.path(), "templates/x/t.json", "T");
+    put(t.path(), "fixtures/f.json", "F");
+    put(t.path(), "templates/t.json", "T");
     let r = roots::migrate_once(t.path()).unwrap().unwrap();
     assert_eq!(r.environments, 2);
-    for id in [A, B] {
-        assert_eq!(std::fs::read_to_string(at(t.path(), id, "scripts/case-1.json")).unwrap(), "S");
-        assert_eq!(std::fs::read_to_string(at(t.path(), id, "projects/p.nav.json")).unwrap(), "N");
-        assert_eq!(std::fs::read_to_string(at(t.path(), id, "templates/x/t.json")).unwrap(), "T");
+    assert_eq!(r.items, 4);
+    assert_eq!(r.scripts, 1);
+    assert_eq!(r.active_name, "One");
+    for rel in ["scripts/case-1.json", "projects/p.nav.json", "fixtures/f.json", "templates/t.json"] {
+        assert!(at(t.path(), A, rel).is_file(), "{rel} is missing from the active environment");
+        assert!(!at(t.path(), B, rel).exists(), "{rel} reached the other environment");
     }
-    assert_eq!(r.items, 3);
+    assert!(at(t.path(), B, "").is_dir());
+    assert_eq!(std::fs::read_dir(at(t.path(), B, "")).unwrap().count(), 0);
 }
 
 #[test]
@@ -87,7 +93,8 @@ fn migration_puts_export_records_only_in_the_active_environment() {
     roots::migrate_once(t.path()).unwrap().unwrap();
     assert!(at(t.path(), A, "projects/p.pwexport.json").is_file());
     assert!(!at(t.path(), B, "projects/p.pwexport.json").exists());
-    assert!(at(t.path(), B, "projects/p.json").is_file());
+    assert!(!at(t.path(), B, "projects/p.json").exists());
+    assert!(at(t.path(), A, "projects/p.json").is_file());
 }
 
 #[test]
@@ -140,14 +147,14 @@ fn a_failed_migration_leaves_no_envs_folder_and_retries() {
     assert!(roots::migrate_once(t.path()).unwrap().is_some());
     assert!(t.path().join("envs").is_dir());
     assert!(!t.path().join(".envs-staging-1").exists());
-    assert!(at(t.path(), B, "scripts/case-1.json").is_file());
+    assert!(at(t.path(), A, "scripts/case-1.json").is_file());
 }
 
 #[test]
 fn fresh_install_gets_an_empty_envs_folder() {
     let t = tempfile::tempdir().unwrap();
     let r = roots::migrate_once(t.path()).unwrap().unwrap();
-    assert_eq!(r, MigrationReport { environments: 0, items: 0 });
+    assert_eq!(r, MigrationReport::default());
     assert!(t.path().join("envs").is_dir());
     assert_eq!(std::fs::read_dir(t.path().join("envs")).unwrap().count(), 0);
 }
@@ -175,10 +182,15 @@ fn a_second_new_environment_starts_empty() {
 
 #[test]
 fn migration_log_line_names_no_path() {
-    let line = roots::migration_log_line(&MigrationReport { environments: 2, items: 5 });
-    assert!(line.contains("2 environment(s)") && line.contains("5 item(s)"), "{line}");
-    assert!(!line.contains(':') || line.starts_with("Auto Run:"), "{line}");
-    assert!(!line.contains('\\') &&!line.contains('/'), "{line}");
+    let line = roots::migration_log_line(&MigrationReport {
+        environments: 2,
+        items: 5,
+        scripts: 3,
+        active_name: "Default".into(),
+        runs_by_env: vec![],
+    });
+    assert!(line.starts_with("Auto Run: Auto Run moved 3 scripts to Default"), "{line}");
+    assert!(!line.contains('\\') && !line.contains('/'), "{line}");
 }
 
 fn no_sleep(_: std::time::Duration) {}
@@ -319,7 +331,7 @@ fn a_failed_final_rename_keeps_the_finished_copy() {
     assert!(!t.path().join("envs").exists(), "a half-built envs/ was left");
     let kept = stagings(t.path());
     assert_eq!(kept.len(), 1, "the finished copy was not kept");
-    assert!(kept[0].join(B).join("scripts/case-1.json").is_file());
+    assert!(kept[0].join(A).join("scripts/case-1.json").is_file());
     assert!(t.path().join("scripts/case-1.json").is_file());
 }
 
@@ -354,7 +366,7 @@ fn the_next_start_only_renames_the_kept_copy() {
     assert_eq!(*copies.borrow(), 0, "the copy was built again");
     assert_eq!(r.environments, 2);
     assert!(r.items >= 1);
-    assert_eq!(std::fs::read_to_string(at(t.path(), B, "scripts/case-1.json")).unwrap(), "S");
+    assert_eq!(std::fs::read_to_string(at(t.path(), A, "scripts/case-1.json")).unwrap(), "S");
     assert!(stagings(t.path()).is_empty());
     assert!(std::fs::read_dir(t.path())
         .unwrap()
@@ -402,7 +414,7 @@ fn a_kept_copy_is_rebuilt_when_the_flat_folder_was_used_meanwhile() {
     std::thread::sleep(std::time::Duration::from_millis(50));
     put(t.path(), "scripts/case-1.json", "EDITED");
     assert!(counted_retry(t.path()) > 0, "the stale copy was reused");
-    assert_eq!(std::fs::read_to_string(at(t.path(), B, "scripts/case-1.json")).unwrap(), "EDITED");
+    assert_eq!(std::fs::read_to_string(at(t.path(), A, "scripts/case-1.json")).unwrap(), "EDITED");
     assert!(stagings(t.path()).is_empty());
 }
 
@@ -687,4 +699,196 @@ fn a_new_environment_gets_nothing_from_a_left_behind_seed() {
     let new = file.environments.iter().find(|e| e.name == "Second").unwrap();
     assert!(!at(t.path(), &new.id, "scripts").exists());
     assert!(at(t.path(), "_seed", "scripts/a.json").is_file());
+}
+
+// --- the update puts old data under the active environment, runs by name ---
+
+/// A shared root whose file lists Default (active) and "qa automation".
+fn default_and_qa(shared: &Path) {
+    let file = environments::EnvFile {
+        active: A.into(),
+        environments: vec![env_named(A, "Default"), env_named(B, "qa automation")],
+        auto_approve_adopted: false,
+        playwright_export: None,
+    };
+    put(shared, "environments.json", &serde_json::to_string(&file).unwrap());
+}
+
+/// A saved run in the flat folder naming `env`, with one screenshot per name in `shots`.
+fn flat_run(shared: &Path, id: &str, env: Option<&str>, shots: &[&str]) {
+    let mut run = a_run(id);
+    run.environment = env.map(str::to_string);
+    run.cases = vec![serde_json::from_value(serde_json::json!({
+        "case_id": 1, "title": "t", "verdict": "pass", "note": "",
+        "steps": shots.iter().map(|s| serde_json::json!({"step_number": 1, "outcomes": [], "screenshot": s})).collect::<Vec<_>>()
+    }))
+    .unwrap()];
+    put(shared, &format!("runs/{id}.json"), &serde_json::to_string(&run).unwrap());
+}
+
+#[test]
+fn runs_and_what_they_name_go_to_the_environment_they_name() {
+    let _s = serial::autorun();
+    let t = tempfile::tempdir().unwrap();
+    default_and_qa(t.path());
+    flat_run(t.path(), "run-1", Some("QA Automation"), &["shot-1-1.jpg"]);
+    flat_run(t.path(), "run-2", Some("Default"), &["shot-2-1.jpg"]);
+    put(t.path(), "shots/shot-1-1.jpg", "P1");
+    put(t.path(), "shots/shot-2-1.jpg", "P2");
+    put(t.path(), "reports/run-1.html", "H");
+    put(t.path(), "downloads/run-1/a.xlsx", "X");
+    let r = roots::migrate_once(t.path()).unwrap().unwrap();
+    for rel in ["runs/run-1.json", "reports/run-1.html", "downloads/run-1/a.xlsx", "shots/shot-1-1.jpg"] {
+        assert!(at(t.path(), B, rel).is_file(), "{rel} should be under QA");
+        assert!(!at(t.path(), A, rel).exists(), "{rel} should not be under Default");
+    }
+    for rel in ["runs/run-2.json", "shots/shot-2-1.jpg"] {
+        assert!(at(t.path(), A, rel).is_file(), "{rel} should be under Default");
+        assert!(!at(t.path(), B, rel).exists(), "{rel} should not be under QA");
+    }
+    assert_eq!(r.runs_by_env.len(), 2);
+}
+
+#[test]
+fn unnamed_or_unknown_runs_go_to_the_active_environment() {
+    let _s = serial::autorun();
+    let t = tempfile::tempdir().unwrap();
+    default_and_qa(t.path());
+    flat_run(t.path(), "run-1", None, &[]);
+    flat_run(t.path(), "run-2", Some(""), &[]);
+    flat_run(t.path(), "run-3", Some("Gone"), &[]);
+    put(t.path(), "shots/shot-9-9.jpg", "P");
+    put(t.path(), "downloads/supervised/x.pdf", "D");
+    roots::migrate_once(t.path()).unwrap().unwrap();
+    for rel in ["runs/run-1.json", "runs/run-2.json", "runs/run-3.json", "shots/shot-9-9.jpg", "downloads/supervised/x.pdf"] {
+        assert!(at(t.path(), A, rel).is_file(), "{rel}");
+        assert!(!at(t.path(), B, rel).exists(), "{rel}");
+    }
+}
+
+#[test]
+fn a_shot_two_environments_name_goes_to_both() {
+    let _s = serial::autorun();
+    let t = tempfile::tempdir().unwrap();
+    default_and_qa(t.path());
+    flat_run(t.path(), "run-1", Some("QA Automation"), &["shot-1-1.jpg"]);
+    flat_run(t.path(), "run-2", Some("Default"), &["shot-1-1.jpg"]);
+    put(t.path(), "shots/shot-1-1.jpg", "P");
+    roots::migrate_once(t.path()).unwrap().unwrap();
+    assert!(at(t.path(), A, "shots/shot-1-1.jpg").is_file());
+    assert!(at(t.path(), B, "shots/shot-1-1.jpg").is_file());
+}
+
+#[test]
+fn an_unreadable_run_goes_to_the_active_environment() {
+    let _s = serial::autorun();
+    let t = tempfile::tempdir().unwrap();
+    default_and_qa(t.path());
+    put(t.path(), "runs/run-3.json", "not json");
+    roots::migrate_once(t.path()).unwrap().unwrap();
+    assert!(at(t.path(), A, "runs/run-3.json").is_file());
+    assert!(!at(t.path(), B, "runs/run-3.json").exists());
+}
+
+#[test]
+fn an_order_with_no_scripted_case_is_not_carried() {
+    let _s = serial::autorun();
+    let t = tempfile::tempdir().unwrap();
+    default_and_qa(t.path());
+    put(t.path(), "scripts/case-2.json", "S");
+    put(t.path(), "orders/10.json", r#"{"case_ids": [1, 2]}"#);
+    put(t.path(), "orders/11.json", "[5]");
+    roots::migrate_once(t.path()).unwrap().unwrap();
+    assert!(at(t.path(), A, "orders/10.json").is_file());
+    assert!(!at(t.path(), A, "orders/11.json").exists());
+    assert!(!at(t.path(), B, "orders/10.json").exists());
+    assert!(t.path().join("orders/10.json").is_file() && t.path().join("orders/11.json").is_file());
+}
+
+/// Every file under `dir` with its bytes, by relative path.
+fn snapshot(dir: &Path) -> Vec<(String, Vec<u8>)> {
+    fn walk(base: &Path, dir: &Path, out: &mut Vec<(String, Vec<u8>)>) {
+        for e in std::fs::read_dir(dir).unwrap().flatten() {
+            let rel = e.path().strip_prefix(base).unwrap().to_string_lossy().replace('\\', "/");
+            if e.path().is_dir() {
+                out.push((format!("{rel}/"), vec![]));
+                walk(base, &e.path(), out);
+            } else {
+                out.push((rel, std::fs::read(e.path()).unwrap()));
+            }
+        }
+    }
+    let mut out = vec![];
+    walk(dir, dir, &mut out);
+    out.sort();
+    out
+}
+
+#[test]
+fn an_existing_envs_folder_is_never_migrated_again() {
+    let _s = serial::autorun();
+    let t = tempfile::tempdir().unwrap();
+    default_and_qa(t.path());
+    put(t.path(), &format!("envs/{A}/scripts/case-1.json"), "kept");
+    put(t.path(), "scripts/case-2.json", "flat");
+    flat_run(t.path(), "run-1", Some("qa automation"), &[]);
+    let before = snapshot(t.path());
+    assert!(roots::migrate_once(t.path()).unwrap().is_none());
+    let s = roots::start_up(t.path(), true);
+    assert!(s.per_env && s.report.is_none());
+    assert_eq!(snapshot(t.path()), before);
+    assert!(!t.path().join(roots::MIGRATION_NOTE_FILE).exists());
+}
+
+#[test]
+fn a_kept_copy_from_an_older_layout_is_rebuilt() {
+    let _s = serial::autorun();
+    let t = tempfile::tempdir().unwrap();
+    default_and_qa(t.path());
+    put(t.path(), "scripts/case-1.json", "S");
+    // What an earlier build left: a whole copy in every environment.
+    put(t.path(), &format!(".envs-staging-1/{A}/scripts/case-1.json"), "S");
+    put(t.path(), &format!(".envs-staging-1/{B}/scripts/case-1.json"), "S");
+    put(t.path(), ".envs-staging-1.complete", "2 7");
+    roots::migrate_once(t.path()).unwrap().unwrap();
+    assert!(at(t.path(), A, "scripts/case-1.json").is_file());
+    assert!(!at(t.path(), B, "scripts").exists(), "the old copy was put in place");
+    assert!(stagings(t.path()).is_empty());
+}
+
+#[test]
+fn migration_notice_counts_and_names_no_path() {
+    let r = MigrationReport {
+        environments: 2,
+        items: 9,
+        scripts: 117,
+        active_name: "Default".into(),
+        runs_by_env: vec![("QA Automation".into(), 70), ("Default".into(), 12)],
+    };
+    let said = roots::migration_notice(&r);
+    assert_eq!(
+        said,
+        "Auto Run moved 117 scripts to Default; other environments start empty. 70 runs went to QA Automation and 12 to Default, as each run names. The old Auto Run folders are kept as a backup and are no longer read."
+    );
+    let one = roots::migration_notice(&MigrationReport {
+        scripts: 1,
+        active_name: "Default".into(),
+        ..Default::default()
+    });
+    assert_eq!(
+        one,
+        "Auto Run moved 1 script to Default; other environments start empty. The old Auto Run folders are kept as a backup and are no longer read."
+    );
+    for text in [said, one] {
+        assert!(!text.contains('\\') && !text.contains('/'), "{text}");
+    }
+}
+
+#[test]
+fn the_migration_note_is_said_once() {
+    let t = tempfile::tempdir().unwrap();
+    assert_eq!(roots::take_migration_note(t.path()), None);
+    roots::write_migration_note(t.path(), "moved");
+    assert_eq!(roots::take_migration_note(t.path()), Some("moved".to_string()));
+    assert_eq!(roots::take_migration_note(t.path()), None);
 }

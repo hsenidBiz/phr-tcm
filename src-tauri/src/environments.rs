@@ -282,6 +282,13 @@ pub fn read_ids(root: &Path) -> Result<Option<(Vec<String>, String)>, String> {
     Ok(read(root)?.map(|f| (f.environments.into_iter().map(|e| e.id).collect(), f.active)))
 }
 
+/// `(id, name)` for each environment, and the active id, or `None` while
+/// there is no file. Never makes one. An unreadable file is an error.
+pub fn read_names(root: &Path) -> Result<Option<(Vec<(String, String)>, String)>, String> {
+    let _held = lock();
+    Ok(read(root)?.map(|f| (f.environments.into_iter().map(|e| (e.id, e.name)).collect(), f.active)))
+}
+
 /// Hands `envs/_seed` (what the update left for the first environment) to
 /// `id`, when there is one. Run AFTER the file that names `id` is saved, so
 /// a failed save never strands the data under an id nobody has. A failed
