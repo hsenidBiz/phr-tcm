@@ -116,6 +116,19 @@ pub struct ClosePopup {
     pub close: Target,
 }
 
+/// The page a site sends a login to when its password has expired, instead
+/// of home. A sign-in that ends on it fails as "password expired"
+/// (`signin::PASSWORD_EXPIRED`), not as a signed-in marker that never
+/// appeared.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, specta::Type)]
+#[serde(deny_unknown_fields)]
+pub struct PasswordResetPage {
+    /// Part of the page's PATH (case ignored): `/security/PasswordReset`.
+    pub path_contains: String,
+    /// A field only that page has - recognised by it, not by the wording.
+    pub field: Target,
+}
+
 /// A loading indicator the runner waits out by itself
 /// (`SignInRecipe::wait_while_shown`): while `shown` is VISIBLE, right
 /// before an action that touches or checks the page, the runner waits for
@@ -296,6 +309,10 @@ pub struct SignInRecipe {
     pub wait_while_shown: Vec<LoadingIndicator>,
     /// Exactly one visible match of this means "signed in".
     pub signed_in: Target,
+    /// The page a login whose password has expired is sent to, when the site
+    /// has one: a sign-in that ends there fails as "password expired".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub password_reset: Option<PasswordResetPage>,
     /// Other origins `navigate` may go to. The start address's own origin
     /// is always allowed.
     #[serde(default)]
@@ -558,6 +575,12 @@ impl SignInRecipe {
         check_popups(&self.close_when_shown)?;
         check_loaders(&self.wait_while_shown)?;
         self.signed_in.validate().map_err(|e| format!("signed_in: {e}"))?;
+        if let Some(page) = &self.password_reset {
+            if page.path_contains.trim().is_empty() || page.path_contains.contains(['?', '#']) {
+                return Err("password_reset: path_contains is part of the page's path, for example /security/PasswordReset".to_string());
+            }
+            page.field.validate().map_err(|e| format!("password_reset: {e}"))?;
+        }
         for o in &self.allowed_origins {
             if !is_bare_origin(o) {
                 return Err(format!(

@@ -1116,6 +1116,39 @@ Each environment has its own Auto Run scripts, areas, components, quirks, discov
   Accounts, ticks the ones they want and adds them, and can type another
   password over a proposed one. Each call replaces your previous proposal
   for the environment.
+- Expired passwords and other sign-ins. PeoplesHR sends a login whose
+  password is too old to a reset page instead of home, and signing in as a
+  login someone is already signed in as logs that session out. Two
+  per-environment settings (Edit environments, on the AI Bridge tab) let the
+  app see both before a sign-in; each is ONE read-only SELECT, empty means
+  not checked, and the database guard must accept it as a read.
+  - Password expiry query: `{users}` is its only placeholder, written by the
+    app as quoted names, and it answers `user_id`, `reset_due` and optionally
+    `prompt_change`. The date is worked out from
+    the user account table's `USRACC_PWD_ACTIVATE_DATE` plus the `Password_Valid_Days`
+    row of `HS_PR_PARAMETERS` (read that one row only: the table also holds
+    plain-text secrets, so never read it whole): one SELECT over the user
+    account table named above, with `USRACC_USER_ID AS user_id`,
+    `DATEADD(day, CONVERT(int, p.PAR_VALUE), USRACC_PWD_ACTIVATE_DATE) AS reset_due`
+    and `USRACC_PROMPT_CHANGE_PW AS prompt_change`, joined to the parameters
+    table row `p.PAR_NAME = 'Password_Valid_Days'`, and ending
+    `AND USRACC_USER_ID IN ({users})`.
+  - Active session query: `{user}` is its only placeholder (the login in lower
+    case, quoted by the app), and it answers `since` and `logged_to`. Read the
+    flag, not the log-off column (old rows have flag 0 and no log-off time):
+    `SELECT ACTLOG_DATETIME AS since, ACTLOG_LOGGED_TO AS logged_to FROM PeoplesHR.HS_SM_ACTIVE_LOGIN WHERE ACTLOG_USER_ID = {user} AND ACTLOG_ACT_FLG = 1`
+  - What each answer means: `propose_accounts` marks every proposed login
+    `expired` (past its date, or the site forces a change), `due soon` (under
+    7 days) or `signed in elsewhere`, and lists the unmarked ones first, so
+    prefer them; a mark never carries a password. `start_autorun_discovery`
+    is refused for an account someone else is signed in as (this app's own
+    open Auto Run browser does not count): pick another account or tell the
+    person. An account near its date only warns. A sign-in that lands on the
+    site's password reset page fails as "password expired", not as a missing
+    signed-in marker or a wrong password: that is the account's, not the
+    script's, and no repair helps - use another account or ask the person to
+    reset the password. A database that is off or does not answer never
+    blocks a sign-in; the check is skipped and said once.
 - A password comes from the database, from the person or from the
   environment's default password, so never invent a password, and never
   copy a password into a script or a template. If a case needs an account

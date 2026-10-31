@@ -70,15 +70,22 @@ pub fn starts_with_prefix(name: &str, prefix: &str) -> bool {
 /// Whether a `{prefix}` sits inside a quoted literal. A doubled quote stays
 /// inside the literal.
 fn prefix_inside_quotes(sql: &str) -> bool {
+    placeholder_inside_quotes(sql, PREFIX)
+}
+
+/// Whether `placeholder` sits inside a quoted literal of `sql`. A doubled
+/// quote stays inside the literal. Shared by the other read-only queries
+/// that take a placeholder the app writes as a quoted value.
+pub(crate) fn placeholder_inside_quotes(sql: &str, placeholder: &str) -> bool {
     let mut inside = false;
     let mut rest = sql;
     while let Some(c) = rest.chars().next() {
         if !inside || c != '\'' {
-            if inside && rest.starts_with(PREFIX) {
+            if inside && rest.starts_with(placeholder) {
                 return true;
             }
-            if !inside && rest.starts_with(PREFIX) {
-                rest = &rest[PREFIX.len()..];
+            if !inside && rest.starts_with(placeholder) {
+                rest = &rest[placeholder.len()..];
                 continue;
             }
         }
@@ -90,7 +97,7 @@ fn prefix_inside_quotes(sql: &str) -> bool {
     false
 }
 
-fn starts_with_select(sql: &str) -> bool {
+pub(crate) fn starts_with_select(sql: &str) -> bool {
     let t = sql.trim_start();
     t.len() >= 6
         && t.is_char_boundary(6)
@@ -98,7 +105,7 @@ fn starts_with_select(sql: &str) -> bool {
         && t[6..].chars().next().map_or(true, |c| !(c.is_alphanumeric() || c == '_'))
 }
 
-fn quoted_literal(prefix: &str) -> String {
+pub(crate) fn quoted_literal(prefix: &str) -> String {
     format!("N'{}'", prefix.replace('\'', "''"))
 }
 

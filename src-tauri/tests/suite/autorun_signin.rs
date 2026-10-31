@@ -574,3 +574,69 @@ async fn a_success_notes_where_it_landed_without_changing_its_words() {
     assert_eq!(out.landed.as_deref(), Some("/hr/home/index"));
     assert_eq!(out.detail, "signed in as Administrator");
 }
+
+// ------------------------------------------------- the password reset page
+
+use v2_lib::autorun::signin::{is_password_expired, PASSWORD_EXPIRED};
+
+const RESET_URL: &str = "https://hr.example.internal/hr/security/PasswordReset";
+
+/// `recipe_at_login` that knows the site's reset page; with `wait`, a
+/// `wait_for` of the marker ends the steps (as the built-in recipe's does).
+fn reset_recipe(wait: bool) -> v2_lib::autorun::recipe::SignInRecipe {
+    let mut v = serde_json::to_value(recipe_at_login()).unwrap();
+    v["password_reset"] = json!({ "path_contains": "/security/PasswordReset", "field": { "css": "#txtOldPassword" } });
+    if wait {
+        v["steps"].as_array_mut().unwrap().push(json!({ "kind": "wait_for", "selector": { "css": "#marker" }, "timeout_ms": 100 }));
+    }
+    serde_json::from_value(v).unwrap()
+}
+
+#[tokio::test]
+async fn reset_page_fails_as_password_expired() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut d, _state) = cold_app(RESET_URL, "Reset Password", false, true);
+    let out = sign_in(&mut d, dir.path(), &reset_recipe(false), &account(), &quick()).await;
+    assert!(!out.ok);
+    assert!(out.detail.starts_with(PASSWORD_EXPIRED), "{}", out.detail);
+    assert!(is_password_expired(&out.detail));
+    assert!(out.detail.contains("/hr/security/PasswordReset"), "{}", out.detail);
+    assert!(out.detail.contains("(page title: Reset Password)"), "{}", out.detail);
+    assert!(!out.detail.contains("hr.example.internal") && !out.detail.contains(PASSWORD), "{}", out.detail);
+    assert_eq!(out.landed.as_deref(), Some("/hr/security/PasswordReset"));
+    // Not slowness: the address was not opened again, the password typed once.
+    assert_eq!(d.calls_to("Page.navigate").len(), 1, "{:?}", d.methods());
+    assert_eq!(typed_count(&d), 1);
+    no_password_anywhere(&out);
+}
+
+#[tokio::test]
+async fn reset_page_after_a_wait_step_fails_as_password_expired_not_a_stopped_step() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut d, _state) = cold_app(RESET_URL, "Reset Password", false, true);
+    let out = sign_in(&mut d, dir.path(), &reset_recipe(true), &account(), &quick()).await;
+    assert!(!out.ok);
+    assert!(out.detail.starts_with(PASSWORD_EXPIRED), "{}", out.detail);
+    assert!(!out.detail.contains("sign-in stopped at step"), "{}", out.detail);
+    assert_eq!(typed_count(&d), 1);
+}
+
+#[tokio::test]
+async fn another_page_without_the_reset_field_is_not_password_expired() {
+    let dir = tempfile::tempdir().unwrap();
+    // The reset page's path, but the recipe has no reset page: as before.
+    let (mut d, _state) = cold_app(RESET_URL, "Reset Password", true, true);
+    let out = sign_in(&mut d, dir.path(), &recipe_at_login(), &account(), &quick()).await;
+    assert!(!is_password_expired(&out.detail), "{}", out.detail);
+    // The recipe knows the reset page and the browser is on the login page.
+    let (mut d, _state) = cold_app(LOGIN_URL, "Sign in", true, false);
+    let out = sign_in(&mut d, dir.path(), &reset_recipe(false), &account(), &quick()).await;
+    assert!(out.detail.starts_with(MARKER_NEVER_APPEARED), "{}", out.detail);
+}
+
+#[test]
+fn the_built_in_recipe_knows_the_reset_page() {
+    let page = v2_lib::autorun::recipe::builtin_recipe().password_reset.expect("the built-in recipe names the reset page");
+    assert_eq!(page.path_contains, "/security/PasswordReset");
+    assert_eq!(serde_json::to_value(&page.field).unwrap(), json!({ "css": "#txtOldPassword" }));
+}

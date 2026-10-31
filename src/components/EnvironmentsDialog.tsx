@@ -43,7 +43,17 @@ type Form = {
   test_environment: boolean;
   /** What every draft an Auto Run fixture or script makes here starts with. */
   test_prefix: string;
+  /** One read-only SELECT that says when logins' passwords fall due. */
+  password_expiry_query: string;
+  /** One read-only SELECT that says whether a login is signed in elsewhere. */
+  active_session_query: string;
 };
+
+/** What each query box says under it. */
+export const PASSWORD_EXPIRY_HINT =
+  "One read-only SELECT, with {users} where the logins go, answering user_id, reset_due and optionally prompt_change. Leave empty to skip the check.";
+export const ACTIVE_SESSION_HINT =
+  "One read-only SELECT, with {user} where the login goes, answering since and logged_to for sessions signed in now. Leave empty to skip the check.";
 
 /** The prefix a new environment starts with, as Rust's own default. */
 export const DEFAULT_TEST_PREFIX = "AUTOTEST";
@@ -57,6 +67,8 @@ function formFor(env: EnvView): Form {
     db_id: env.db_id,
     test_environment: env.test_environment,
     test_prefix: env.test_prefix,
+    password_expiry_query: env.password_expiry_query,
+    active_session_query: env.active_session_query,
   };
 }
 
@@ -76,6 +88,8 @@ function inputFor(form: Form): EnvInput {
     db_id: form.db_id,
     test_environment: form.test_environment,
     test_prefix: form.test_prefix.trim(),
+    password_expiry_query: form.password_expiry_query,
+    active_session_query: form.active_session_query,
   };
 }
 
@@ -130,6 +144,8 @@ export default function EnvironmentsDialog({ onClose }: { onClose: () => void })
       db_id: current?.db_id ?? databases.data?.[0]?.id ?? "",
       test_environment: false,
       test_prefix: DEFAULT_TEST_PREFIX,
+      password_expiry_query: "",
+      active_session_query: "",
     });
   };
 
@@ -341,6 +357,26 @@ export default function EnvironmentsDialog({ onClose }: { onClose: () => void })
                 Every draft a fixture or script makes here starts with this, so Clean up can tell it from
                 yours. 3 to 20 letters, digits or -.
               </span>
+            </label>
+            <label className="block space-y-1">
+              <span className="text-xs font-medium text-muted">Password expiry query</span>
+              <Textarea
+                aria-label="Password expiry query"
+                className="min-h-[4rem] font-mono text-xs"
+                value={form.password_expiry_query}
+                onChange={(e) => setForm({ ...form, password_expiry_query: e.target.value })}
+              />
+              <span className="block text-xs text-faint">{PASSWORD_EXPIRY_HINT}</span>
+            </label>
+            <label className="block space-y-1">
+              <span className="text-xs font-medium text-muted">Active session query</span>
+              <Textarea
+                aria-label="Active session query"
+                className="min-h-[4rem] font-mono text-xs"
+                value={form.active_session_query}
+                onChange={(e) => setForm({ ...form, active_session_query: e.target.value })}
+              />
+              <span className="block text-xs text-faint">{ACTIVE_SESSION_HINT}</span>
             </label>
             <div className="space-y-1">
               <div className="flex items-center gap-2">

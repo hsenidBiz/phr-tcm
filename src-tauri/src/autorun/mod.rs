@@ -7,6 +7,7 @@
 //! a person has reviewed a run and presses Send.
 
 pub mod accounts;
+pub mod active_login;
 pub mod action_help;
 pub mod agents;
 pub mod api_checks;
@@ -43,6 +44,7 @@ pub mod network;
 pub mod one_browser;
 pub mod overrides;
 pub mod page_compact;
+pub mod password_expiry;
 pub mod page_errors;
 pub mod patterns;
 pub mod plan;

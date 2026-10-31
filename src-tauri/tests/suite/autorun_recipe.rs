@@ -396,6 +396,7 @@ fn approved_builtin() -> serde_json::Value {
         { "name": "page loader", "shown": { "css": "#ehrmLoader" } }
       ],
       "signed_in": { "css": "#sidebar-toggle-menu" },
+      "password_reset": { "path_contains": "/security/PasswordReset", "field": { "css": "#txtOldPassword" } },
       "allowed_origins": [],
       "session_minutes": 480
     })

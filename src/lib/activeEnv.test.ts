@@ -20,7 +20,7 @@ const env = (id: string, name: string) => ({
   test_environment: false,
   test_prefix: "AUTOTEST",
   has_default_password: false,
-  db_auto_approve: false,
+  db_auto_approve: false, password_expiry_query: "", active_session_query: "",
 });
 const A = env("env-0000000a", "Default");
 const B = env("env-0000000b", "QA");

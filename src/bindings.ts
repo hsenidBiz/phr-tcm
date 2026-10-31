@@ -944,6 +944,11 @@ export const commands = {
 	/**  Exactly one visible match of this means "signed in". */
 	signed_in: Target_Serialize,
 	/**
+	 *  The page a login whose password has expired is sent to, when the site
+	 *  has one: a sign-in that ends there fails as "password expired".
+	 */
+	password_reset?: PasswordResetPage_Serialize | null,
+	/**
 	 *  Other origins `navigate` may go to. The start address's own origin
 	 *  is always allowed.
 	 */
@@ -4304,6 +4309,10 @@ export type EnvInput = {
 	 *  environment gets the default.
 	 */
 	test_prefix?: string | null,
+	/**  Left out, an edit keeps the environment's password expiry query. */
+	password_expiry_query?: string | null,
+	/**  Left out, an edit keeps the environment's active session query. */
+	active_session_query?: string | null,
 };
 
 export type EnvListView = {
@@ -4341,6 +4350,16 @@ export type EnvView = {
 	has_default_password: boolean,
 	/**  "Run database changes without asking", this environment's own. */
 	db_auto_approve: boolean,
+	/**
+	 *  The SELECT that reads when logins' passwords fall due; empty when not
+	 *  checked.
+	 */
+	password_expiry_query: string,
+	/**
+	 *  The SELECT that reads whether a login is signed in elsewhere; empty
+	 *  when not checked.
+	 */
+	active_session_query: string,
 };
 
 export type Expect = {
@@ -5244,6 +5263,40 @@ export type ParameterChoice = {
 export type ParameterValue = {
 	name: string,
 	value: string,
+};
+
+/**
+ *  The page a site sends a login to when its password has expired, instead
+ *  of home. A sign-in that ends on it fails as "password expired"
+ *  (`signin::PASSWORD_EXPIRED`), not as a signed-in marker that never
+ *  appeared.
+ */
+export type PasswordResetPage = PasswordResetPage_Serialize | PasswordResetPage_Deserialize;
+
+/**
+ *  The page a site sends a login to when its password has expired, instead
+ *  of home. A sign-in that ends on it fails as "password expired"
+ *  (`signin::PASSWORD_EXPIRED`), not as a signed-in marker that never
+ *  appeared.
+ */
+export type PasswordResetPage_Deserialize = {
+	/**  Part of the page's PATH (case ignored): `/security/PasswordReset`. */
+	path_contains: string,
+	/**  A field only that page has - recognised by it, not by the wording. */
+	field: Target_Deserialize,
+};
+
+/**
+ *  The page a site sends a login to when its password has expired, instead
+ *  of home. A sign-in that ends on it fails as "password expired"
+ *  (`signin::PASSWORD_EXPIRED`), not as a signed-in marker that never
+ *  appeared.
+ */
+export type PasswordResetPage_Serialize = {
+	/**  Part of the page's PATH (case ignored): `/security/PasswordReset`. */
+	path_contains: string,
+	/**  A field only that page has - recognised by it, not by the wording. */
+	field: Target_Serialize,
 };
 
 /**
@@ -7000,6 +7053,11 @@ export type SignInRecipe_Deserialize = {
 	/**  Exactly one visible match of this means "signed in". */
 	signed_in: Target_Deserialize,
 	/**
+	 *  The page a login whose password has expired is sent to, when the site
+	 *  has one: a sign-in that ends there fails as "password expired".
+	 */
+	password_reset?: PasswordResetPage_Deserialize | null,
+	/**
 	 *  Other origins `navigate` may go to. The start address's own origin
 	 *  is always allowed.
 	 */
@@ -7054,6 +7112,11 @@ export type SignInRecipe_Serialize = {
 	wait_while_shown?: LoadingIndicator_Serialize[],
 	/**  Exactly one visible match of this means "signed in". */
 	signed_in: Target_Serialize,
+	/**
+	 *  The page a login whose password has expired is sent to, when the site
+	 *  has one: a sign-in that ends there fails as "password expired".
+	 */
+	password_reset?: PasswordResetPage_Serialize | null,
 	/**
 	 *  Other origins `navigate` may go to. The start address's own origin
 	 *  is always allowed.

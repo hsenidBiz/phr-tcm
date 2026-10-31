@@ -295,6 +295,18 @@ pub const MARKER_NEVER_APPEARED: &str = "the recipe ran, but ";
 pub const COLD_SITE_RETRY: &str =
     "the signed-in marker did not show and the login form is gone; opened the sign-in address once more (a slow site)";
 
+/// How `sign_in`'s words begin when the site sent the account to its
+/// password reset page (`SignInRecipe::password_reset`) instead of home: its
+/// own failure, not a signed-in marker that never appeared. The words go on
+/// with where the browser ended, by path.
+pub const PASSWORD_EXPIRED: &str = "password expired - the site sent the account to its password reset page";
+
+/// Did a sign-in fail as `PASSWORD_EXPIRED`? Read from where the words
+/// start, never searched for: a page can say anything.
+pub fn is_password_expired(detail: &str) -> bool {
+    detail.starts_with(PASSWORD_EXPIRED)
+}
+
 /// The longest page title `landing_words` says.
 const TITLE_MAX: usize = 80;
 
@@ -332,6 +344,29 @@ impl Run<'_> {
         };
         Some(landing_words(&href, name.as_deref()))
     }
+
+    /// The sign-in ended on the site's password reset page.
+    async fn password_expired<D: Driver>(mut self, d: &mut D) -> SignInOutcome {
+        let said = match self.land(d, true).await {
+            Some(w) => format!("{PASSWORD_EXPIRED} - {w}"),
+            None => PASSWORD_EXPIRED.to_string(),
+        };
+        self.done(false, said, false, false)
+    }
+}
+
+/// Is the browser on the recipe's password reset page: its path holds the
+/// recipe's words and the field only that page has is showing. False when
+/// the recipe names no such page.
+async fn on_reset_page<D: Driver>(d: &mut D, recipe: &SignInRecipe, timing: &Timing) -> bool {
+    let Some(page) = &recipe.password_reset else { return false };
+    let Some(href) = page_address(d).await else { return false };
+    let path = crate::browser::save_guard::path_of(&href).to_lowercase();
+    if !path.contains(&page.path_contains.trim().to_lowercase()) {
+        return false;
+    }
+    let look = timing.expect_ms.min(SIGNED_IN_LOOK_MS);
+    expect(d, &page.field, Check::Visible, look, timing.poll_ms).await.ok
 }
 
 /// Does the page still show the sign-in's form - any field the recipe fills
@@ -588,12 +623,22 @@ async fn sign_in_held<D: Driver>(
     let steps = for_account(&recipe.steps, account);
     let prompts = Prompts::SignIn { login_field: login_field(&steps), written: &recipe.steps };
     if let Err((n, why, harness_failure)) = run_steps(d, &mut run, &steps, prompts, timing, &policy).await {
+        // The recipe's own wait for the signed-in marker is the step that
+        // stops on a login sent to the reset page.
+        if !harness_failure && on_reset_page(d, recipe, timing).await {
+            return run.password_expired(d).await;
+        }
         return run.done(false, format!("sign-in stopped at step {n}: {why}"), false, harness_failure);
     }
 
     let mut marker = expect(d, &recipe.signed_in, Check::Visible, timing.nav_ms, timing.poll_ms).await;
     let mut retried = false;
     let mut form_still_there = false;
+    // The reset page is no slow site and no wrong password: said as what it
+    // is, before anything is tried again.
+    if !marker.ok && !marker.harness && on_reset_page(d, recipe, timing).await {
+        return run.password_expired(d).await;
+    }
     if !marker.ok && !marker.harness && session_refused(d).await.is_none() {
         if login_form_showing(d, &recipe.steps, timing).await {
             // The form is still on screen: a wrong password, a locked

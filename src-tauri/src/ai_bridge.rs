@@ -805,7 +805,7 @@ pub async fn route_as(
         // The active environment's accounts: the assistant proposes logins
         // (never passwords) for a person to add, and reads the ones there -
         // passwords included only in an environment marked as a test one.
-        ("POST", "/accounts-propose") => accounts_propose(body),
+        ("POST", "/accounts-propose") => accounts_propose(ctx, body).await,
         // With the project's Test files beside them, by name and size: what
         // a case uploads.
         ("GET", "/accounts") => accounts_read(ctx, crate::commands::autorun_slots::slot_if_any(caller)),
@@ -8783,8 +8783,16 @@ async fn autorun_discover_start(
         Err(refused) => return refused,
     };
     // No account, no recipe: said before a browser opens for nothing.
-    if let Err(why) = crate::autorun::signin::prepare(&root, &ctx.org, &ctx.project, &account) {
-        return (409, why);
+    let username = match crate::autorun::signin::prepare(&root, &ctx.org, &ctx.project, &account) {
+        Ok((_, acct)) => acct.username,
+        Err(why) => return (409, why),
+    };
+    // Someone already signed in as the account is logged out by this
+    // sign-in: refused before a browser opens. An expired or nearly expired
+    // password only warns. A database that is off never blocks.
+    let gate = sign_in_gate(ctx, &root, &account, &username).await;
+    if let Some(refused) = gate.refused {
+        return (409, refused);
     }
     // None named: a browser the replay left is kept, whichever it is, and a
     // new one is the one last chosen (`open_for_discovery`). A guarded
@@ -8813,7 +8821,56 @@ async fn autorun_discover_start(
         crate::commands::autorun::answer_between_commands_in(n);
     }
     *seen = Some(crate::commands::autorun::overrides_of(&slot));
-    said_made_way(made_way, answer)
+    said_warnings(said_made_way(made_way, answer), &gate.warnings)
+}
+
+/// The two environment queries' checks of an account before a discovery
+/// signs in as it (`active_login::discovery_gate`). Nothing is asked when
+/// neither query is set; a database that is off is said once, never a
+/// refusal.
+async fn sign_in_gate(
+    ctx: &BridgeContext,
+    root: &std::path::Path,
+    key: &str,
+    username: &str,
+) -> crate::autorun::active_login::Gate {
+    use crate::autorun::active_login::{discovery_gate, Gate, StageRows, NOT_CHECKED_NOTE};
+    let Ok(env) = crate::environments::active(root) else { return Gate::default() };
+    if env.password_expiry_query.trim().is_empty() && env.active_session_query.trim().is_empty() {
+        return Gate::default();
+    }
+    let Ok(db) = stage_db(ctx) else {
+        return Gate { refused: None, warnings: vec![NOT_CHECKED_NOTE.to_string()] };
+    };
+    let ours = crate::autorun::lease::holder_of(&env.id, key).is_some();
+    discovery_gate(
+        &StageRows(&db),
+        &env.password_expiry_query,
+        &env.active_session_query,
+        key,
+        username,
+        ours,
+        &crate::autorun::password_expiry::today(),
+    )
+    .await
+}
+
+/// `answer` with the checks' warnings beside it: a `warnings` list in a JSON
+/// object answer, or lines after plain text. Nothing is added for no
+/// warnings or a refused call.
+pub fn said_warnings((status, text): (u16, String), warnings: &[String]) -> (u16, String) {
+    if warnings.is_empty() || status != 200 {
+        return (status, text);
+    }
+    match serde_json::from_str::<serde_json::Value>(&text) {
+        Ok(mut v @ serde_json::Value::Object(_)) => {
+            v["warnings"] = serde_json::json!(warnings);
+            (status, v.to_string())
+        }
+        _ => (status, format!("{text}
+Warning: {}", warnings.join("
+Warning: "))),
+    }
 }
 
 /// The case a discovery call names (`case_id`, optional) and whether it
@@ -11328,7 +11385,7 @@ pub const PROPOSAL_SHAPE_REFUSED: &str = "each account needs a key, a label and 
 /// and otherwise the whole call is refused. A password is never logged or
 /// repeated in an answer, and nothing reaches the accounts until a person
 /// adds it in the app.
-fn accounts_propose(body: &str) -> (u16, String) {
+async fn accounts_propose(ctx: &BridgeContext, body: &str) -> (u16, String) {
     use crate::environments::{
         active, proposed_password_missing, save_proposals, StoredProposal, PROPOSED_PASSWORD_NOT_TEST,
     };
@@ -11418,6 +11475,14 @@ fn accounts_propose(body: &str) -> (u16, String) {
             p.no_password = None;
         }
     }
+    // Which logins can sign in at all: expired ones and ones someone is
+    // signed in as are marked, and the usable ones come first. A mark never
+    // carries a password.
+    let marks = propose_marks(ctx, &env, &proposals).await;
+    if let Some(m) = &marks {
+        let order = m.usable_first(&proposals.iter().map(|p| p.key.clone()).collect::<Vec<_>>());
+        proposals.sort_by_key(|p| order.iter().position(|k| *k == p.key).unwrap_or(usize::MAX));
+    }
     if let Err(why) = save_proposals(&root, &env.id, &proposals) {
         return (400, why);
     }
@@ -11426,13 +11491,60 @@ fn accounts_propose(body: &str) -> (u16, String) {
         proposals.len(),
         env.name
     ));
-    (
-        200,
-        format!(
-            "proposed {} account(s) for the environment {}, {with_password} with a password - a person picks which to add in the app, and a proposed password is used unless they type another. Another call replaces this proposal.",
-            proposals.len(),
-            env.name
-        ),
+    let mut said = format!(
+        "proposed {} account(s) for the environment {}, {with_password} with a password - a person picks which to add in the app, and a proposed password is used unless they type another. Another call replaces this proposal.",
+        proposals.len(),
+        env.name
+    );
+    if let Some(m) = &marks {
+        let marked: Vec<String> = m
+            .marks
+            .iter()
+            .filter(|(_, marks)| !marks.is_empty())
+            .map(|(key, marks)| format!("{key} ({})", marks.join(", ")))
+            .collect();
+        if !marked.is_empty() {
+            said.push_str(&format!(
+                " Marked: {}. A login that is expired cannot sign in until its password is reset; one signed in elsewhere is logged out by a sign-in. The unmarked logins are listed first - prefer them.",
+                marked.join("; ")
+            ));
+        }
+        if let Some(note) = &m.note {
+            said.push_str(&format!(" Note: {note}."));
+        }
+    }
+    (200, said)
+}
+
+/// The marks of the logins an assistant proposes, from the environment's
+/// password expiry and active session queries. `None` when neither is set
+/// (nothing asked, nothing said). A database that is off or does not answer
+/// marks nothing and says so once.
+async fn propose_marks(
+    ctx: &BridgeContext,
+    env: &crate::environments::Environment,
+    proposals: &[crate::environments::StoredProposal],
+) -> Option<crate::autorun::active_login::Marks> {
+    use crate::autorun::active_login::{mark_logins, Marks, StageRows, NOT_CHECKED_NOTE};
+    if env.password_expiry_query.trim().is_empty() && env.active_session_query.trim().is_empty() {
+        return None;
+    }
+    let Ok(db) = stage_db(ctx) else {
+        return Some(Marks { marks: vec![], note: Some(NOT_CHECKED_NOTE.to_string()) });
+    };
+    let logins: Vec<(String, String)> = proposals.iter().map(|p| (p.key.clone(), p.username.clone())).collect();
+    let env_id = env.id.clone();
+    let ours = move |key: &str| crate::autorun::lease::holder_of(&env_id, key).is_some();
+    Some(
+        mark_logins(
+            &StageRows(&db),
+            &env.password_expiry_query,
+            &env.active_session_query,
+            &logins,
+            &ours,
+            &crate::autorun::password_expiry::today(),
+        )
+        .await,
     )
 }
 

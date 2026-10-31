@@ -109,6 +109,8 @@ fn a_database_an_environment_uses_cannot_be_removed() {
         test_environment: false,
         test_prefix: "AUTOTEST".into(),
         db_auto_approve: false,
+        password_expiry_query: String::new(),
+        active_session_query: String::new(),
     };
     let mut qa = save_env(&root, qa, &known).unwrap().environments.into_iter().find(|e| e.name == "QA").unwrap();
 

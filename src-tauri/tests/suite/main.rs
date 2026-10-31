@@ -103,6 +103,7 @@ mod autorun_page_errors;
 mod autorun_patterns;
 mod autorun_plan;
 mod autorun_preconditions;
+mod autorun_password_expiry;
 mod autorun_prompt_race;
 mod autorun_publish;
 mod autorun_pw_rules;

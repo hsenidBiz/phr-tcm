@@ -47,6 +47,14 @@ pub struct Environment {
     /// made from an older copy can never turn it back on.
     #[serde(default)]
     pub db_auto_approve: bool,
+    /// One SELECT that says when each login's password falls due (see
+    /// `autorun::password_expiry`). Empty means not checked.
+    #[serde(default)]
+    pub password_expiry_query: String,
+    /// One SELECT that says whether a login is signed in somewhere else
+    /// right now (see `autorun::active_login`). Empty means not checked.
+    #[serde(default)]
+    pub active_session_query: String,
 }
 
 /// What a new environment, and one saved before prefixes existed, uses.
@@ -205,6 +213,10 @@ pub fn validate(file: &EnvFile, known_db_ids: &[String]) -> Result<(), String> {
             }
         }
         validate_test_prefix(&e.test_prefix)?;
+        crate::autorun::password_expiry::check_query(&e.password_expiry_query)
+            .map_err(|why| format!("the password expiry query of \"{name}\": {why}"))?;
+        crate::autorun::active_login::check_query(&e.active_session_query)
+            .map_err(|why| format!("the active session query of \"{name}\": {why}"))?;
         if !known_db_ids.iter().any(|k| *k == e.db_id) {
             return Err(format!("\"{name}\" uses a database that is not set up - pick one"));
         }
@@ -311,6 +323,8 @@ fn load_or_init_locked(root: &Path, current_db: Option<&str>) -> Result<EnvFile,
             test_environment: false,
             test_prefix: default_test_prefix(),
             db_auto_approve: false,
+            password_expiry_query: String::new(),
+            active_session_query: String::new(),
         }],
         auto_approve_adopted: false,
         playwright_export: Some(first_id.clone()),
@@ -649,6 +663,8 @@ fn tidy(mut env: Environment) -> Environment {
     env.allowed_origins = env.allowed_origins.iter().map(|o| o.trim().to_string()).filter(|o| !o.is_empty()).collect();
     env.db_id = env.db_id.trim().to_string();
     env.test_prefix = env.test_prefix.trim().to_string();
+    env.password_expiry_query = env.password_expiry_query.trim().to_string();
+    env.active_session_query = env.active_session_query.trim().to_string();
     env
 }
 

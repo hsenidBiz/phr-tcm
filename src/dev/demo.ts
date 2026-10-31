@@ -516,7 +516,7 @@ let environments: EnvListView = {
       test_environment: true,
       test_prefix: "AUTOTEST",
       has_default_password: false,
-      db_auto_approve: false,
+      db_auto_approve: false, password_expiry_query: "", active_session_query: "",
     },
     {
       id: "qa",
@@ -527,7 +527,7 @@ let environments: EnvListView = {
       test_environment: true,
       test_prefix: "AUTOTEST",
       has_default_password: false,
-      db_auto_approve: false,
+      db_auto_approve: false, password_expiry_query: "", active_session_query: "",
     },
   ],
 };
@@ -1685,6 +1685,8 @@ function applyPatches() {
         has_default_password: old?.has_default_password ?? false,
         // Rust's to change, never a save's.
         db_auto_approve: old?.db_auto_approve ?? false,
+        password_expiry_query: env.password_expiry_query ?? old?.password_expiry_query ?? "",
+        active_session_query: env.active_session_query ?? old?.active_session_query ?? "",
       };
       environments = {
         ...environments,

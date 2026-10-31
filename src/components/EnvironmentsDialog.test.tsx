@@ -29,15 +29,19 @@ type Env = {
   test_environment: boolean;
   test_prefix: string;
   has_default_password: boolean;
+  password_expiry_query: string;
+  active_session_query: string;
 };
 
 const DEFAULT: Env = {
   id: "env-00000001", name: "Default", start_url: "", allowed_origins: [],
   db_id: "dev-read", test_environment: false, test_prefix: "AUTOTEST", has_default_password: false,
+  password_expiry_query: "", active_session_query: "",
 };
 const QA: Env = {
   id: "env-00000002", name: "QA", start_url: "https://qa.example.internal/", allowed_origins: [],
   db_id: "qa-read", test_environment: false, test_prefix: "QATEST", has_default_password: false,
+  password_expiry_query: "", active_session_query: "",
 };
 
 /** A small stand-in for the Rust side: the list, plus whatever each command
@@ -114,7 +118,48 @@ test("a new environment is saved with an empty id and the form's fields", async 
     db_id: "dev-read",
     test_environment: false,
     test_prefix: "AUTOTEST",
+    password_expiry_query: "",
+    active_session_query: "",
   });
+});
+
+test("the two sign-in queries are boxes that start empty, show an edited environment's own, and are saved as typed", async () => {
+  const withQueries: Env = {
+    ...QA,
+    password_expiry_query: "SELECT u AS user_id, d AS reset_due FROM t WHERE u IN ({users})",
+    active_session_query: "SELECT s AS since FROM a WHERE u = {user} AND f = 1",
+  };
+  const { calls } = mount({ env_save: () => ({ active: DEFAULT.id, environments: [DEFAULT, withQueries] }) }, [DEFAULT, withQueries]);
+  await screen.findByText("QA");
+  fireEvent.click(screen.getByRole("button", { name: "Add environment" }));
+  expect(((await screen.findByRole("textbox", { name: "Password expiry query" })) as HTMLTextAreaElement).value).toBe("");
+  expect((screen.getByRole("textbox", { name: "Active session query" }) as HTMLTextAreaElement).value).toBe("");
+  fireEvent.click(screen.getByRole("button", { name: "Discard" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Edit QA" }));
+  const expiry = (await screen.findByRole("textbox", { name: "Password expiry query" })) as HTMLTextAreaElement;
+  expect(expiry.value).toContain("{users}");
+  expect((screen.getByRole("textbox", { name: "Active session query" }) as HTMLTextAreaElement).value).toContain("{user}");
+  fireEvent.change(expiry, { target: { value: "SELECT 1 FROM t WHERE u IN ({users})" } });
+  fireEvent.click(screen.getByRole("button", { name: "Save environment" }));
+  await waitFor(() => expect(calls.some((c) => c.cmd === "env_save")).toBe(true));
+  const sent = calls.find((c) => c.cmd === "env_save")!.args.env as { password_expiry_query: string; active_session_query: string };
+  expect(sent.password_expiry_query).toBe("SELECT 1 FROM t WHERE u IN ({users})");
+  expect(sent.active_session_query).toContain("{user}");
+});
+
+test("a refused query shows the command's sentence and the form stays open", async () => {
+  mount({
+    env_save: () => {
+      throw "the password expiry query of \"Staging\": A password expiry query is one SELECT statement.";
+    },
+  });
+  await screen.findByText("QA");
+  fireEvent.click(screen.getByRole("button", { name: "Add environment" }));
+  fireEvent.change(await screen.findByRole("textbox", { name: "Name" }), { target: { value: "Staging" } });
+  fireEvent.change(screen.getByRole("textbox", { name: "Password expiry query" }), { target: { value: "DELETE FROM t" } });
+  fireEvent.click(screen.getByRole("button", { name: "Save environment" }));
+  expect(await screen.findByText(/is one SELECT statement/)).toBeInTheDocument();
+  expect(screen.getByRole("textbox", { name: "Password expiry query" })).toBeInTheDocument();
 });
 
 test("an environment's Test name prefix starts at AUTOTEST, is saved as typed and shows a refusal", async () => {

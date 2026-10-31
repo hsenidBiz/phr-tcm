@@ -22,6 +22,8 @@ fn env_named(name: &str) -> Environment {
         test_environment: false,
         test_prefix: "AUTOTEST".into(),
         db_auto_approve: false,
+        password_expiry_query: String::new(),
+        active_session_query: String::new(),
     }
 }
 

@@ -27,6 +27,12 @@ pub struct EnvView {
     pub has_default_password: bool,
     /// "Run database changes without asking", this environment's own.
     pub db_auto_approve: bool,
+    /// The SELECT that reads when logins' passwords fall due; empty when not
+    /// checked.
+    pub password_expiry_query: String,
+    /// The SELECT that reads whether a login is signed in elsewhere; empty
+    /// when not checked.
+    pub active_session_query: String,
 }
 
 #[derive(Debug, Clone, serde::Serialize, specta::Type)]
@@ -51,6 +57,12 @@ pub struct EnvInput {
     /// environment gets the default.
     #[serde(default)]
     pub test_prefix: Option<String>,
+    /// Left out, an edit keeps the environment's password expiry query.
+    #[serde(default)]
+    pub password_expiry_query: Option<String>,
+    /// Left out, an edit keeps the environment's active session query.
+    #[serde(default)]
+    pub active_session_query: Option<String>,
 }
 
 /// Said while an Auto Run browser holds a signed-in account: the person
@@ -97,6 +109,8 @@ fn view(store: &dyn SecretStore, file: EnvFile) -> EnvListView {
                 test_environment: e.test_environment,
                 test_prefix: e.test_prefix,
                 db_auto_approve: e.db_auto_approve,
+                password_expiry_query: e.password_expiry_query,
+                active_session_query: e.active_session_query,
             })
             .collect(),
     }
@@ -169,6 +183,16 @@ pub async fn save_with(root: &Path, store: &dyn SecretStore, env: EnvInput) -> R
         .clone()
         .or_else(|| before.as_ref().map(|b| b.test_prefix.clone()))
         .unwrap_or_else(environments::default_test_prefix);
+    let password_expiry_query = env
+        .password_expiry_query
+        .clone()
+        .or_else(|| before.as_ref().map(|b| b.password_expiry_query.clone()))
+        .unwrap_or_default();
+    let active_session_query = env
+        .active_session_query
+        .clone()
+        .or_else(|| before.as_ref().map(|b| b.active_session_query.clone()))
+        .unwrap_or_default();
     let env = Environment {
         id: env.id,
         name: env.name,
@@ -180,6 +204,8 @@ pub async fn save_with(root: &Path, store: &dyn SecretStore, env: EnvInput) -> R
         // Not the form's to set: a save keeps what the file holds
         // (`environments::save_env_with`).
         db_auto_approve: false,
+        password_expiry_query,
+        active_session_query,
     };
     let unmarked = before.as_ref().is_some_and(|b| b.test_environment && !env.test_environment);
     let address_moved = before.as_ref().is_some_and(|b| b.start_url.trim() != env.start_url.trim());
